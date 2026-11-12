@@ -95,6 +95,12 @@ void NixEvaluator::init_process() {
   ::sigaction(SIGUSR1, &sa, nullptr);
 }
 
+std::vector<std::string> NixEvaluator::substituters() {
+  std::vector<std::string> urls;
+  for (const auto& ref : nix::settings.getWorkerSettings().substituters.get()) urls.push_back(ref.render(false));
+  return urls;
+}
+
 struct NixEvaluator::Impl {
   std::string entry_text;
   std::vector<std::string> allowed;

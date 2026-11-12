@@ -9,7 +9,8 @@ import { terminalText } from '../model/terminalText'
 import { CardKey, cardState, errorText, formatDuration, formatMillis, key, path, ProjectSession, runState, StageRecord, stageRecords, TimelineEntry } from '../model/session'
 import { BOTTOM_ICONS, BOTTOM_TITLES, Workspace, WorkflowTab } from '../model/workspace'
 import { D, R, RPCFailure, s } from '../shared/rpc'
-import { Button, copyText, download, Empty, Segmented, Select, Spinner, Toggle } from './controls'
+import { Button, copyText, download, Empty, Segmented, Select, Sheet, Spinner, Toggle } from './controls'
+import { RunComparisonView } from './runComparison'
 import { Icon } from './icons'
 import { ProjectTerminalPanel } from './terminal'
 import { L } from '../i18n'
@@ -57,6 +58,7 @@ export function LogTimelinePanel({ workspace, session, tab }: { workspace: Works
 
 function RunPanel({ workspace, session, tab }: { workspace: Workspace; session: ProjectSession; tab: WorkflowTab }) {
   const [runs, setRuns] = useState<R.RunSummaryT[]>([])
+  const [comparing, setComparing] = useState(false)
   const [runId, setRunId] = useState<string>()
   const load = async () => {
     const rpc = session.rpc
@@ -88,8 +90,10 @@ function RunPanel({ workspace, session, tab }: { workspace: Workspace; session: 
             options={[{ value: '', label: L('全体') }, ...cards.map((k) => ({ value: k, label: k }))]} />
         )}
         <span className="spacer" />
+        <Button small disabled={runs.length < 2} onClick={() => setComparing(true)}>{L('実行を比較')}</Button>
         <Button kind="borderless" small iconOnly icon="xmark" help={L('閉じる（下部のアイコンでも開閉できます）')} onClick={() => workspace.set('showBottom', false)} />
       </div>
+      {comparing && <Sheet width={1200} onClose={() => setComparing(false)}><RunComparisonView session={session} runs={runs} initial={runId} onClose={() => setComparing(false)} /></Sheet>}
       {p === 'log' ? (
         runId && workspace.logCard ? (
           <StageLogView session={session} runId={runId} card={path(workspace.logCard)} invocation={workspace.logInvocation} focus={workspace.logStage} />

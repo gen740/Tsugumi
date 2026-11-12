@@ -12,6 +12,7 @@ import {
   snapToGrid,
 } from './canvasKit'
 import { arrangeCards } from './arrange'
+import { orderedPorts, PortOrder, untanglePorts } from './untangle'
 import { FigureState, figureMode } from './moduleThumbnails'
 import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
 import { Observable } from './observable'
@@ -224,6 +225,49 @@ export interface DisplaySnapshot {
   invocation: bigint
   revision: bigint
   value: DisplayValue
+}
+
+/** Decode a retained display without changing the live canvas. */
+export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
+  let value: DisplayValue
+  switch (d.valueType) {
+    case D.DisplayValue.DisplayText: {
+      const t = d.value as D.DisplayTextT
+      value = t.markdown ? { kind: 'markdown', text: s(t.text) } : { kind: 'text', text: s(t.text) }
+      break
+    }
+    case D.DisplayValue.DisplayScalar: {
+      const v = d.value as D.DisplayScalarT
+      value = { kind: 'scalar', value: v.value ?? 0, label: s(v.label) }
+      break
+    }
+    case D.DisplayValue.DisplayLineChart:
+      value = { kind: 'lineChart', series: (d.value as D.DisplayLineChartT).series.map((x) => ({ id: s(x.id), label: s(x.label), x: x.x, y: x.y })) }
+      break
+    case D.DisplayValue.DisplayTable: {
+      const t = d.value as D.DisplayTableT
+      value = { kind: 'table', columns: t.columns.map((c) => s(c)), rows: t.rows.map((r) => r.cells.map((c) => s(c))) }
+      break
+    }
+    case D.DisplayValue.DisplayImage: {
+      const im = d.value as D.DisplayImageT
+      value = { kind: 'image', mediaType: s(im.mediaType), data: Uint8Array.from(im.data), alt: s(im.alt) }
+      break
+    }
+    case D.DisplayValue.DisplayPointCloud: {
+      const p = d.value as D.DisplayPointCloudT
+      value = { kind: 'points', x: p.x, y: p.y, z: p.z, colors: p.colors }
+      break
+    }
+    case D.DisplayValue.DisplayModule: {
+      const m = d.value as D.DisplayModuleT
+      value = { kind: 'module', name: s(m.name), json: s(m.dataJson) }
+      break
+    }
+    default:
+      return
+  }
+  return { runId: s(d.runId), invocation: d.invocation ?? 0n, revision: d.revision ?? 0n, value }
 }
 
 export function displaySummary(d: DisplaySnapshot): string {
@@ -917,45 +961,8 @@ export class ProjectSession extends Observable {
     const rev = d.revision ?? 0n
     const old = this.displays.get(k)
     if (old && old.runId === s(d.runId) && old.revision >= rev) return // stale frame
-    let value: DisplayValue
-    switch (d.valueType) {
-      case D.DisplayValue.DisplayText: {
-        const t = d.value as D.DisplayTextT
-        value = t.markdown ? { kind: 'markdown', text: s(t.text) } : { kind: 'text', text: s(t.text) }
-        break
-      }
-      case D.DisplayValue.DisplayScalar: {
-        const v = d.value as D.DisplayScalarT
-        value = { kind: 'scalar', value: v.value ?? 0, label: s(v.label) }
-        break
-      }
-      case D.DisplayValue.DisplayLineChart:
-        value = { kind: 'lineChart', series: (d.value as D.DisplayLineChartT).series.map((x) => ({ id: s(x.id), label: s(x.label), x: x.x, y: x.y })) }
-        break
-      case D.DisplayValue.DisplayTable: {
-        const t = d.value as D.DisplayTableT
-        value = { kind: 'table', columns: t.columns.map((c) => s(c)), rows: t.rows.map((r) => r.cells.map((c) => s(c))) }
-        break
-      }
-      case D.DisplayValue.DisplayImage: {
-        const im = d.value as D.DisplayImageT
-        value = { kind: 'image', mediaType: s(im.mediaType), data: Uint8Array.from(im.data), alt: s(im.alt) }
-        break
-      }
-      case D.DisplayValue.DisplayPointCloud: {
-        const p = d.value as D.DisplayPointCloudT
-        value = { kind: 'points', x: p.x, y: p.y, z: p.z, colors: p.colors }
-        break
-      }
-      case D.DisplayValue.DisplayModule: {
-        const m = d.value as D.DisplayModuleT
-        value = { kind: 'module', name: s(m.name), json: s(m.dataJson) }
-        break
-      }
-      default:
-        return
-    }
-    this.displays.set(k, { runId: s(d.runId), invocation: d.invocation ?? 0n, revision: rev, value })
+    const display = recordedDisplay(d)
+    if (display) this.displays.set(k, display)
   }
 
   private recordTimeline(k: CardKey, inv: R.InvocationSummaryT) {
@@ -2931,8 +2938,21 @@ export class ProjectSession extends Observable {
   }
 
   /** Lays out a scope's Cards, output frames and notes (layout only, one undo):
-   *  see `arrangeCards`. Sizes and port positions are those of `CardGeometry`. */
+   *  see `arrangeCards`. Ports then take the order that crosses fewer wires, and
+   *  the Cards are placed once more for that order, so the wires the layout drew
+   *  straight are straight again. */
   arrange(scope: string[]) {
+    this.edit((x) => {
+      x.placeArranged(scope)
+      const orders = x.untangledOrders(scope)
+      if (!orders.length) return
+      x.applyPortOrders(scope, orders)
+      x.placeArranged(scope)
+    })
+  }
+
+  /** A step of an edit. Sizes and port positions are those of `CardGeometry`. */
+  private placeArranged(scope: string[]) {
     const ids = this.cards(scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x)
     const cards = ids.map((id) => {
       const g = this.geometry(key([...scope, id]))
@@ -2957,44 +2977,42 @@ export class ProjectSession extends Observable {
       return isObj(list) ? list.entries().map(([, v]) => ({ card: str(get(v, 'card')) ?? '', port: str(get(v, 'port')) ?? '' })) : []
     }
     const placed = arrangeCards({ flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, frames, notes, boundary: { inputs: bar('inputs'), outputs: bar('outputs') } })
-    this.edit((x) => {
-      for (const c of placed.cards) x.setPosition(key([...scope, c.id]), c)
-      x.updateLayout(scope, (l) => {
-        if (placed.frames.length) {
-          let displays = l.get('displays')
-          if (!isObj(displays)) {
-            displays = obj()
-            l.set('displays', displays)
-          }
-          for (const f of placed.frames) {
-            const lk = this.layoutKey(key([...scope, f.id]))
-            let d = (displays as JObj).get(lk)
-            if (!isObj(d)) {
-              d = obj()
-              ;(displays as JObj).set(lk, d)
-            }
-            ;(d as JObj).set('x', real(f.x))
-            ;(d as JObj).set('y', real(f.y))
-            // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
-            const size = frames.find((x) => x.id === f.id)!
-            ;(d as JObj).set('width', real(size.width))
-            ;(d as JObj).set('height', real(size.height))
-          }
+    for (const c of placed.cards) this.setPosition(key([...scope, c.id]), c)
+    this.updateLayout(scope, (l) => {
+      if (placed.frames.length) {
+        let displays = l.get('displays')
+        if (!isObj(displays)) {
+          displays = obj()
+          l.set('displays', displays)
         }
-        if (placed.notes.length) {
-          l.set('notes', (arr(l.get('notes')) ?? []).map((n) => {
-            const at = placed.notes.find((p) => p.id === str(get(n, 'id')))
-            const copy = clone(n)
-            if (at && isObj(copy) && (str(get(n, 'scope')) ?? '') === '') {
-              copy.set('x', real(at.x))
-              copy.set('y', real(at.y))
-            }
-            return copy
-          }))
+        for (const f of placed.frames) {
+          const lk = this.layoutKey(key([...scope, f.id]))
+          let d = (displays as JObj).get(lk)
+          if (!isObj(d)) {
+            d = obj()
+            ;(displays as JObj).set(lk, d)
+          }
+          ;(d as JObj).set('x', real(f.x))
+          ;(d as JObj).set('y', real(f.y))
+          // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
+          const size = frames.find((x) => x.id === f.id)!
+          ;(d as JObj).set('width', real(size.width))
+          ;(d as JObj).set('height', real(size.height))
         }
-        // The bars of a Card in Card go back to following the Cards.
-        l.set('boundary', undefined)
-      })
+      }
+      if (placed.notes.length) {
+        l.set('notes', (arr(l.get('notes')) ?? []).map((n) => {
+          const at = placed.notes.find((p) => p.id === str(get(n, 'id')))
+          const copy = clone(n)
+          if (at && isObj(copy) && (str(get(n, 'scope')) ?? '') === '') {
+            copy.set('x', real(at.x))
+            copy.set('y', real(at.y))
+          }
+          return copy
+        }))
+      }
+      // The bars of a Card in Card go back to following the Cards.
+      l.set('boundary', undefined)
     })
   }
 
@@ -3418,7 +3436,7 @@ auto run(Card::Input& input) -> Card::Output {
     const editing = kind === 'draft' && this.inlineDraft?.card === k
     return {
       title: path(k).pop() ?? k, kind, symbol: sym || undefined, summary: summary || undefined,
-      inputs: ports.inputs, outputs: opts.outputs ?? ports.outputs, params: this.inlineParams(k, opts.definition),
+      inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
       result: d ? displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined,
       state: kind === 'subgraph' ? this.compositeState(k) : state?.state, stage: this.stageProgress(k),
       invocation: state?.invocation ?? 0n, runContinues: this.runActive,
@@ -3436,6 +3454,117 @@ auto run(Card::Input& input) -> Card::Output {
   placedPosition(k: CardKey): Pt {
     const p = this.position(k)
     return prefs.showGrid ? { x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize) } : p
+  }
+
+  private visualPorts(k: CardKey, ports: PortData[], output: boolean): PortData[] {
+    if (!['code', 'draft', 'input', 'logger', 'subgraph'].includes(this.kind(k))) return ports
+    const saved = arr(get(this.layoutOf(path(k).slice(0, -1)), 'cards', this.layoutKey(k), output ? 'outputOrder' : 'inputOrder')) ?? []
+    return orderedPorts(ports, saved.flatMap(v => typeof v === 'string' ? [v] : []))
+  }
+
+  /** Keep the layout while reducing crossings; one undo restores every port. */
+  untangle(scope: string[]) {
+    const orders = this.untangledOrders(scope)
+    if (orders.length) this.edit(s => s.applyPortOrders(scope, orders))
+  }
+
+  /** A step of an edit that moved Cards: the ports of what moved and of the Cards
+   *  wired to it take a better order when that draws fewer crossings among their
+   *  wires. Other Cards retain their orders, and their wires still count. */
+  untangleAround(scope: string[], moved: Iterable<CardKey>) {
+    const ids = new Set<string>()
+    for (const k of moved) {
+      const p = path(k)
+      if (p.length === scope.length + 1 && scope.every((s, i) => s === p[i])) ids.add(p[p.length - 1])
+    }
+    if (ids.size) this.applyPortOrders(scope, this.untangledOrders(scope, ids))
+  }
+
+  /** Whether the canvas shows this Card's ports in an order of its own. */
+  hasPortOrder(k: CardKey): boolean {
+    const entry = get(this.layoutOf(path(k).slice(0, -1)), 'cards', this.layoutKey(k))
+    return !!(arr(get(entry, 'inputOrder'))?.length || arr(get(entry, 'outputOrder'))?.length)
+  }
+
+  /** Back to the declared order of the ports, in one undo step. */
+  resetPortOrder(keys: Iterable<CardKey>) {
+    const targets = [...keys].filter(k => this.hasPortOrder(k))
+    if (!targets.length) return
+    this.edit(x => {
+      for (const k of targets) x.updateLayout(path(k).slice(0, -1), l => {
+        const entry = get(l, 'cards', x.layoutKey(k))
+        if (!isObj(entry)) return
+        entry.set('inputOrder', undefined)
+        entry.set('outputOrder', undefined)
+      })
+    })
+  }
+
+  private untangledOrders(scope: string[], around?: Set<string>): PortOrder[] {
+    const ids = this.cards(scope).flatMap(c => { const id = str(get(c, 'id')); return id ? [id] : [] })
+    const cards = ids.map(id => {
+      const k = key([...scope, id]), g = this.geometry(k)
+      const ports = (names: string[], output: boolean) => names.map(name => ({ name, ...g.port(name, output) }))
+      return { id, ...this.placedPosition(k), ...g.size, inputs: ports(g.inputs, false), outputs: ports(g.outputs, true),
+        movable: ['code', 'draft', 'input', 'logger', 'subgraph'].includes(this.kind(k)) }
+    })
+    const wires = this.connections(scope).flatMap(c => {
+      const from = str(get(c, 'from', 'card')), fromPort = str(get(c, 'from', 'port')), to = str(get(c, 'to', 'card')), toPort = str(get(c, 'to', 'port'))
+      return from && fromPort && to && toPort ? [{ from, fromPort, to, toPort }] : []
+    })
+    // Boundary bars are fixed nodes, so reordering an inner port also accounts
+    // for its outer wire. Use the same positions as the canvas boundary bars.
+    if (scope.length) {
+      const boundary = this.boundary(key(scope))
+      const entries = (side: string): [string, J][] => { const v = get(boundary, side); return isObj(v) ? v.entries() : [] }
+      const ins = entries('inputs'), outs = entries('outputs')
+      if (ins.length || outs.length) {
+        const left = cards.length ? Math.min(...cards.map(c => c.x)) : 0, top = cards.length ? Math.min(...cards.map(c => c.y)) : 0
+        const right = cards.length ? Math.max(...cards.map(c => c.x + c.width)) : 240, bottom = cards.length ? Math.max(...cards.map(c => c.y + c.height)) : 120
+        const width = Math.max(right - left, Math.max(ins.length, outs.length) * 110 + 40), x = (left + right - width) / 2
+        for (const output of [false, true]) {
+          const side = output ? 'outputs' : 'inputs', list = output ? outs : ins, id = '\u0000' + side
+          const at = this.boundaryPosition(scope, side) ?? { x, y: output ? bottom + 56 : top - 96 }
+          const ports = list.map(([name], i) => ({ name, x: width * (i + 1) / (list.length + 1), y: output ? 0 : 40 }))
+          cards.push({ id, ...at, width, height: 40, movable: false, inputs: output ? ports : [], outputs: output ? [] : ports })
+          for (const [name, endpoint] of list) {
+            const card = str(get(endpoint, 'card')), port = str(get(endpoint, 'port'))
+            if (card && port) wires.push(output ? { from: card, fromPort: port, to: id, toPort: name } : { from: id, fromPort: name, to: card, toPort: port })
+          }
+        }
+      }
+    }
+    const frames = ids.map(id => key([...scope, id])).filter(k => (this.displays.has(k) || this.displayFrame(k) !== undefined) && bool(get(this.displayFrame(k), 'hidden')) !== true).map(k => {
+      const at = this.placedPosition(k), g = this.geometry(k), frame = this.displayFrame(k)
+      const x = dbl(get(frame, 'x')), y = dbl(get(frame, 'y'))
+      return { x: x ?? (this.flow === 'topToBottom' ? at.x + g.size.width + 40 : at.x),
+        y: y ?? (this.flow === 'topToBottom' ? at.y : at.y + g.height + 30),
+        width: dbl(get(frame, 'width')) ?? 320, height: dbl(get(frame, 'height')) ?? 170 }
+    })
+    if (!around) return untanglePorts(this.flow, cards, wires, frames)
+    // A move changes nothing among Cards that moved together, nor for a Card with no wires.
+    if (!wires.some(w => around.has(w.from) !== around.has(w.to))) return []
+    const neighbors = new Set(around)
+    for (const w of wires) {
+      if (around.has(w.from)) neighbors.add(w.to)
+      if (around.has(w.to)) neighbors.add(w.from)
+    }
+    return untanglePorts(this.flow, cards.map(c => ({ ...c, movable: c.movable && neighbors.has(c.id) })), wires, frames)
+  }
+
+  private applyPortOrders(scope: string[], orders: PortOrder[]) {
+    for (const order of orders) {
+      const k = key([...scope, order.id])
+      const at = this.position(k)
+      this.updateLayout(scope, l => {
+        let cards = l.get('cards')
+        if (!isObj(cards)) { cards = obj(); l.set('cards', cards) }
+        let entry = (cards as JObj).get(this.layoutKey(k))
+        if (!isObj(entry)) { entry = obj([['x', real(at.x)], ['y', real(at.y)]]); (cards as JObj).set(this.layoutKey(k), entry) }
+        ;(entry as JObj).set('inputOrder', order.inputs)
+        ;(entry as JObj).set('outputOrder', order.outputs)
+      })
+    }
   }
 
   geometry(k: CardKey): CardGeometry {

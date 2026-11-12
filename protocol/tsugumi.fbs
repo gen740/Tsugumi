@@ -385,9 +385,14 @@ table VersionGraphRequest { limit:uint32 = null (id: 0); }
 /// -> VersionCanvas: the Cards of a version and how they connect (a minimap).
 table VersionCanvasRequest { commit:string (id: 0, required); }
 
-/// -> VersionDiff: what a version changed from its first parent, in the text a
+/// -> VersionDiff: what a version changed from another version (its first parent
+/// by default), in the text a
 /// summary is written from. Only code and settings: never data files.
-table VersionDiffRequest { commit:string (id: 0, required); }
+table VersionDiffRequest {
+  commit:string (id: 0, required);
+  /// Compare from this version; absent means the first parent of commit.
+  from_commit:string (id: 1);
+}
 
 /// -> VersionResult. Keeps a client's summary of a version in the commit's own
 /// note (refs/notes/tsugumi-summary), replacing the one there.
@@ -569,6 +574,11 @@ table BuildEnvironment {
 table BuildEnvironmentPage {
   environments:[BuildEnvironment] (id: 0, required);
   next_offset:uint64 = null (id: 1);
+  /// The binary caches (URLs, without credentials) configured for the run's
+  /// builds, on every page. A store path may have been downloaded from any of
+  /// them or built locally: which, is not recorded. Empty for a run recorded
+  /// without this list.
+  substituters:[string] (id: 2);
 }
 
 table EnvironmentPathPage {
@@ -929,6 +939,8 @@ table InvocationRecord {
   input_sources:[InputSource] (id: 3, required);
   display:Tsugumi.Data.Display (id: 4);
   record_io:bool = null (id: 5);
+  /// Parameters captured from the run's immutable document; absent if unavailable.
+  params_json:string (id: 6);
 }
 
 table HistoryState {

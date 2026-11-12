@@ -632,6 +632,7 @@ struct GraphCanvas: View {
       Divider()
       Button("全体表示") { fitAll() }
       Button("整列") { session.arrange(tab.scope) }
+      Button("配線の交差を減らす") { session.untangle(tab.scope) }
       if !tab.selection.isEmpty { Button("選択をグループ化") { groupSelection() }.disabled(!session.connected) }
     }
   }

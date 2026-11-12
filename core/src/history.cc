@@ -60,6 +60,7 @@ std::string detail_json(const InvocationSummaryData& s) {
   *d.ready_at = s.ready_at.value_or(-1);
   *d.emulator = s.emulator;
   *d.environment_id = s.environment_id;
+  *d.params = s.params_json;
   return schema::encode(d);
 }
 
@@ -79,6 +80,7 @@ void detail_into(const std::string& text, InvocationSummaryData& s) {
   if (*d.ready_at >= 0) s.ready_at = *d.ready_at;
   s.emulator = *d.emulator;
   s.environment_id = *d.environment_id;
+  s.params_json = *d.params;
 }
 
 std::string sources_json(const std::vector<InputSourceData>& s) {
@@ -179,6 +181,8 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(build_environments(
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(environment_paths(
   run_id TEXT NOT NULL, environment_id TEXT NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL,
   PRIMARY KEY(run_id, environment_id, position));
+CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_substituters(
+  run_id TEXT NOT NULL, position INTEGER NOT NULL, url TEXT NOT NULL, PRIMARY KEY(run_id, position));
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_cards(run_id TEXT NOT NULL, card TEXT NOT NULL, PRIMARY KEY(run_id, card));
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_commits(run_id TEXT PRIMARY KEY, commit_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(invocations(
@@ -417,6 +421,14 @@ auto History::put_environment(sql::Db& db, const std::string& run_id, const Buil
   auto insert = db.prepare("INSERT INTO environment_paths VALUES(?,?,?,?)");
   for (size_t i = 0; i < e.paths.size(); ++i) {
     insert.bind(1, run_id).bind(2, e.id).bind(3, static_cast<uint64_t>(i)).bind(4, e.paths[i]).run();
+    insert.reset();
+  }
+}
+
+auto History::put_substituters(sql::Db& db, const std::string& run_id, const std::vector<std::string>& urls) -> void {
+  auto insert = db.prepare("INSERT OR IGNORE INTO run_substituters VALUES(?,?,?)");
+  for (size_t i = 0; i < urls.size(); ++i) {
+    insert.bind(1, run_id).bind(2, static_cast<uint64_t>(i)).bind(3, urls[i]).run();
     insert.reset();
   }
 }
@@ -743,7 +755,7 @@ std::optional<FailureData> History::latest_failure(sql::Db& db, const std::strin
 std::vector<StoredValueMeta> History::value_metas(sql::Db& db, const std::string& run_id,
                                                   const CardPath& card, uint64_t n, bool input) {
   auto st = db.prepare(
-      "SELECT v.port, v.kind, s.bfbs, v.root_type, v.size, v.artifact_id FROM ivalues v "
+      "SELECT v.port, v.kind, s.bfbs, v.root_type, v.size, v.artifact_id, v.hash FROM ivalues v "
       "JOIN schemas s ON s.hash=v.schema_hash WHERE run_id=? AND card=? AND invocation=? AND side=? "
       "ORDER BY v.port");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n).bind(4, input ? 0 : 1);
@@ -756,6 +768,7 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db, const std::string
     m.root_type = st.text(3);
     m.size_bytes = st.u64(4);
     if (!st.is_null(5)) m.artifact_id = st.text(5);
+    if (!st.is_null(6)) m.hash = st.text(6);
     out.push_back(std::move(m));
   }
   return out;
@@ -1059,6 +1072,7 @@ constexpr Copied kCopied[] = {
      "seq", false},
     {"build_environments", "run_id, id, derivation, manifest, system, path_count", "rowid", false},
     {"environment_paths", "run_id, environment_id, position, path", "rowid", false},
+    {"run_substituters", "run_id, position, url", "rowid", false},
     {"run_cards", "run_id, card", "rowid"},
     {"invocations",
      "run_id, card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, "

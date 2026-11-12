@@ -7,6 +7,7 @@ Start from the document that fits what you want to read. To read with moving fig
 
 | Document | Contents |
 | --- | --- |
+| [BinaryCaches.md](BinaryCaches.md) | Attic, Cachix and other signed binary caches, private authentication and VM-wide trust |
 | [INSTALL.md](INSTALL.md) | Installing and updating the desktop app and the `tsugumi` command (Mac, Linux, Windows), and building from source |
 | [Usage.md](Usage.md) | Getting started by following a demo's guide, and the operations you use most |
 | [CardGuide.md](CardGuide.md) | Your first Card: a Card that takes an input and computes, written in Python, bash, C++, R and Julia |
