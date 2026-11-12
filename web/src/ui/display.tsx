@@ -9,9 +9,13 @@ import { tablePage } from '../model/tablePage'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
 import { L } from '../i18n'
+import type { FigureState } from '../model/moduleThumbnails'
+import { ModuleThumbnail } from './moduleThumbnail'
+import { viewerLib, VIEWER_LIBS } from './moduleRenderer'
 
 /** Renders a Display value at `zoom` (on the canvas) or larger (`large`, the expanded viewer). */
-export function DisplayContent({ display, large = false, zoom = 1, emptyNote }: { display?: DisplaySnapshot; large?: boolean; zoom?: number; emptyNote?: string }) {
+/** `figure`: how a chart preview on the canvas follows the Card's results (its `displayMode`, and whether it or a Card upstream runs). */
+export function DisplayContent({ display, large = false, zoom = 1, emptyNote, figure }: { display?: DisplaySnapshot; large?: boolean; zoom?: number; emptyNote?: string; figure?: FigureState }) {
   const size = (small: number, big: number) => (large ? big : small) * zoom
   // Scrolls in the large viewer; on the canvas (where the wheel moves the
   // canvas) the content is cut at the frame, with no scroll bar.
@@ -51,7 +55,7 @@ export function DisplayContent({ display, large = false, zoom = 1, emptyNote }: 
     case 'points':
       return <PointCloudView x={v.x} y={v.y} z={v.z} colors={v.colors} />
     case 'module':
-      return <ModuleDisplayView name={v.name} json={v.json} large={large} zoom={zoom} />
+      return <ModuleDisplayView name={v.name} json={v.json} lineage={`${display?.runId}#${display?.invocation}`} large={large} zoom={zoom} figure={figure} />
   }
 }
 
@@ -180,14 +184,6 @@ function PointCloudView({ x, y, z, colors }: { x: number[]; y: number[]; z: numb
  *  module shows its data as formatted JSON. */
 /** The modules the viewer (/modules/viewer.html, ui/modules) draws. */
 const VIEWER_MODULES = new Set(['plotly', 'vega-lite'])
-/** The libraries the viewer may ask for (it is sandboxed and loads nothing itself). */
-const VIEWER_LIBS = new Set(['plotly.min.js', 'vega.min.js', 'vega-lite.min.js', 'vega-embed.min.js'])
-const libCode = new Map<string, Promise<string | undefined>>()
-function viewerLib(lib: string): Promise<string | undefined> {
-  if (!libCode.has(lib)) libCode.set(lib, fetch(`/modules/${lib}`).then((r) => (r.ok ? r.text() : undefined), () => undefined))
-  return libCode.get(lib)!
-}
-
 /** A Plotly figure or a Vega-Lite chart, drawn by the module viewer in a
  *  sandboxed frame: interactive in the expanded view, still on the canvas
  *  (where the mouse moves the canvas). */
@@ -218,7 +214,7 @@ function ViewerFrame({ name, json, large, zoom }: { name: string; json: string; 
       {/* Laid out at the display's own size and scaled with the canvas, like the other displays.
           Sandboxed by the server's policy for /modules/ (CSP sandbox allow-scripts). */}
       <div className="display-viewer-frame" style={{ borderRadius: 4 * zoom }}>
-        <iframe ref={ref} src="/modules/viewer.html" title={name === 'plotly' ? 'Plotly' : 'Vega-Lite'}
+        <iframe ref={ref} sandbox="allow-scripts" src="/modules/viewer.html" title={name === 'plotly' ? 'Plotly' : 'Vega-Lite'}
           style={{ width: `${100 / zoom}%`, height: `${100 / zoom}%`, transform: `scale(${zoom})` }} />
       </div>
       {error && <div className="secondary" style={{ fontSize: 10 * zoom }}>{error}</div>}
@@ -226,8 +222,8 @@ function ViewerFrame({ name, json, large, zoom }: { name: string; json: string; 
   )
 }
 
-function ModuleDisplayView({ name, json, large, zoom }: { name: string; json: string; large: boolean; zoom: number }) {
-  if (VIEWER_MODULES.has(name)) return <ViewerFrame name={name} json={json} large={large} zoom={zoom} />
+function ModuleDisplayView({ name, json, lineage, large, zoom, figure }: { name: string; json: string; lineage: string; large: boolean; zoom: number; figure?: FigureState }) {
+  if (VIEWER_MODULES.has(name)) return large ? <ViewerFrame name={name} json={json} large={large} zoom={zoom} /> : <ModuleThumbnail name={name} json={json} lineage={lineage} zoom={zoom} figure={figure} />
   return <JSONModuleView name={name} json={json} large={large} zoom={zoom} />
 }
 

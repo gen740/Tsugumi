@@ -187,6 +187,19 @@ extension ProjectSession {
     return .succeeded
   }
 
+  /// How the Card's figure on the canvas follows its results: its
+  /// `displayMode`, whether the Card runs, and whether one upstream of it does.
+  func figureState(_ k: CardKey) -> FigureState {
+    let mode = FigureMode(rawValue: cardSetting(k, "displayMode")?.string ?? "") ?? .update
+    guard runActive else { return FigureState(mode: mode) }
+    let busy: (CardKey) -> Bool = { c in
+      if let s = self.cardStates[c]?.state, [.ready, .preparing, .running].contains(s) { return true }
+      return self.compositeState(c) == .running
+    }
+    return FigureState(mode: mode, running: busy(k),
+                       stale: FigureState.upstreamBusy(k, connections: { self.connections(in: $0) }, busy: busy))
+  }
+
   /// The inner Card and port an outer output of a Card in Card comes from.
   func boundarySource(_ k: CardKey, output port: String) -> (CardKey, String)? {
     guard let ep = boundary(k)?["outputs"]?[port], let c = ep["card"]?.string, let p = ep["port"]?.string else { return nil }
