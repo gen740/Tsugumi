@@ -221,6 +221,8 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
 
 // Version of the local history's tables (PRAGMA user_version).
 constexpr int kHistoryVersion = 3;
+constexpr const char* kCopyFormat = "tsugumi-runs";
+constexpr const char* kCopyVersion = "3";
 
 }  // namespace
 
@@ -245,9 +247,83 @@ auto History::check_version() const -> void {
   if (stored == kHistoryVersion) return;
   auto tables = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1");
   if (stored == 0 && !tables.step()) return;
-  throw std::runtime_error("the run history " + path_.string() + " has schema version " +
+  throw IncompatibleHistory("the run history " + path_.string() + " has schema version " +
                            std::to_string(stored) + ", but this Tsugumi requires " +
-                           std::to_string(kHistoryVersion) + ". The history file is kept as it is.");
+                           std::to_string(kHistoryVersion) + ". The history file is kept as it is.",
+                           std::to_string(stored), std::to_string(kHistoryVersion), "local");
+}
+
+auto History::prepare_storage(const std::filesystem::path& local, const std::filesystem::path& copy,
+                              bool archive_incompatible) -> void {
+  std::vector<std::filesystem::path> incompatible;
+  std::optional<IncompatibleHistory> first;
+  // Validate both databases before moving anything. Corruption is not a version mismatch.
+  for (const auto& path : {local, copy}) {
+    if (!std::filesystem::exists(path)) continue;
+    if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(path)))
+      throw std::runtime_error("history is not a regular file: " + path.string());
+    sql::Db db(path.string(), true);
+    if (archive_incompatible) {
+      auto check = db.prepare("PRAGMA quick_check");
+      if (!check.step() || check.text(0) != "ok")
+        throw std::runtime_error("history integrity check failed: " + path.string());
+    }
+    std::string found, expected, source;
+    if (path == local) {
+      auto version = db.prepare("PRAGMA user_version");
+      const auto stored = version.step() ? version.i64(0) : 0;
+      auto tables = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1");
+      if (stored == kHistoryVersion || (stored == 0 && !tables.step())) continue;
+      found = std::to_string(stored);
+      expected = std::to_string(kHistoryVersion);
+      source = "local";
+    } else {
+      auto version = db.prepare("SELECT key, value FROM meta WHERE key IN ('format','version')");
+      std::map<std::string, std::string> meta;
+      while (version.step()) meta[version.text(0)] = version.text(1);
+      if (meta["format"] != kCopyFormat)
+        throw std::runtime_error("unrecognized history copy: " + path.string());
+      if (meta["version"] == kCopyVersion) continue;
+      found = meta["version"];
+      expected = kCopyVersion;
+      source = "portable";
+    }
+    incompatible.push_back(path);
+    if (!first) first.emplace("the run history " + path.string() + " has schema version " + found +
+        ", but this Tsugumi requires " + expected + ". The history file is kept as it is.",
+        found, expected, source);
+  }
+  if (incompatible.empty()) return;
+  if (!archive_incompatible) throw *first;
+  // A unique sibling directory keeps a database and its WAL together, on the same filesystem.
+  // Keep artifacts and saved files untouched; no old data is interpreted or migrated.
+  std::vector<std::pair<std::filesystem::path, std::filesystem::path>> moved;
+  try {
+    for (const auto& path : incompatible) {
+      auto archive = path.parent_path() / ("history-archive-" + crypto::uuid4());
+      std::filesystem::create_directory(archive);
+      std::filesystem::permissions(archive, std::filesystem::perms::owner_all);
+      for (const auto* suffix : {"", "-wal", "-shm", "-journal"}) {
+        auto from = std::filesystem::path(path.string() + suffix);
+        if (!std::filesystem::exists(std::filesystem::symlink_status(from))) continue;
+        if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(from)))
+          throw std::runtime_error("history sidecar is not a regular file: " + from.string());
+        auto to = archive / from.filename();
+        std::filesystem::rename(from, to);
+        moved.emplace_back(from, to);
+      }
+      fs::fsync_dir(archive);
+      fs::fsync_dir(path.parent_path());
+      log::info("incompatible history archived in " + archive.string());
+    }
+  } catch (...) {
+    for (auto it = moved.rbegin(); it != moved.rend(); ++it) {
+      std::error_code ec;
+      std::filesystem::rename(it->second, it->first, ec);
+      if (ec) log::error("history remains preserved at " + it->second.string());
+    }
+    throw;
+  }
 }
 
 History::~History() {
@@ -1006,8 +1082,7 @@ std::pair<int64_t, std::string> History::open_cursor(const std::string& cursor,
 
 namespace {
 
-constexpr const char* kCopyFormat = "tsugumi-runs";
-constexpr const char* kCopyVersion = "3";
+
 
 // The copy: the run tables (same names and columns as the history, so runs
 // move between the two with the same column lists, kCopied) and its format.

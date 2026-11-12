@@ -9,7 +9,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 - **Requests that change something**: carry an `op_id`, and a resend with the same `op_id` is applied only once. If a response is lost, check with `OperationGet`.
 - **The Agent's tools**: made from the same schema (`tsugumi.bfbs`) ([Features](features.md#9-agent)).
 
-There are 41 requests.
+There are 44 requests.
 
 ## Connection
 
@@ -39,6 +39,7 @@ There are 41 requests.
 | [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. |
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
 | [`ProjectImport`](#projectimport) | ProjectImportResult | definitions = [] imports every definition of the grant. |
+| [`ProjectShell`](#projectshell) | ProjectShellResult | Runs in the project VM as the project user, with the project directory as cwd. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream is capped at 262144 bytes. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Agent use requires explicit Shell access in addition to Read, Write and Run. After editing project definitions or tsugumi.json with a command, use ProjectReload before inspecting or running the changed project through core. |
 | [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Only while no run or SDK job is active. |
 | [`OperationGet`](#operationget) | OperationResult |  |
 
@@ -95,6 +96,14 @@ No fields.
 | `origin` | `string` | yes |  |
 | `source_grant` | `string` | yes |  |
 | `definitions` | `[string]` |  |  |
+
+### ProjectShell
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `op_id` | `string` | yes |  |
+| `command` | `string` | yes |  |
+| `timeout_ms` | `uint32` |  |  |
 
 ### ProjectCacheClear
 
@@ -170,7 +179,7 @@ No fields.
 | [`CardSDKPrepare`](#cardsdkprepare) | CardSDKPrepareResult | Accepted asynchronously. |
 | [`CardSDKStatus`](#cardsdkstatus) | CardSDKPrepareResult or Failure |  |
 | [`OutputTypes`](#outputtypes) | OutputTypesResult | Compiles an _outputs.fbs text (nothing is saved): its reflection schema (bfbs), from which a client lists the types. With port and type_name, also the text with that port's type and kind set (File / Directory: the tsugumi attribute). |
-| [`NixSourceResolve`](#nixsourceresolve) | NixSourceResolved | Looks a flake up for nixSources (nothing is saved): its current commit and hash, and the packages it has for this system. Slow the first time: it evaluates them, fetching what they need. |
+| [`NixSourceResolve`](#nixsourceresolve) | NixSourceResolved | Looks a flake up for nixSources (nothing is saved): its current commit and hash, and the packages it has for this system. To customize an approved package, save nixSources[].overrides = {"packageName":{"override":{"argument":"value"},"overrideAttrs":{"pname":"custom"}}}. Both maps contain JSON values, not Nix functions. A value {"fetchurl":{"url":"https://...","sha256":"..."}} fetches a hash-pinned source or patch in the external evaluator. Modifying these overrides needs user approval. Cards consume inputs.sources.<name>.packages.<packageName>, with the system already selected. Unsupported override/overrideAttrs functions return an actionable evaluation error. Slow the first time: it evaluates them, fetching what they need. |
 
 ### CardSDKPrepare
 
@@ -256,6 +265,8 @@ No fields.
 | [`ArtifactList`](#artifactlist) | ArtifactPage | invocation requires card. |
 | [`ArtifactRead`](#artifactread) | FileContent | member only for Directory artifacts. |
 | [`LogRange`](#logrange) | LogSlice | limit_bytes = 65536 (4..256 KiB). tail with offset != 0 is rejected. invocation requires card. |
+| [`RunEnvironments`](#runenvironments) | BuildEnvironmentPage | Recorded environments, in first-use order; no Nix evaluation. offset defaults to 0; limit defaults to 100 (maximum 500). |
+| [`RunEnvironmentPaths`](#runenvironmentpaths) | EnvironmentPathPage | Runtime closure, including the manifest, in store-path order. These are runtime references, not the full set of build-time dependencies. |
 
 ### RunHistory
 
@@ -340,6 +351,24 @@ No fields.
 | `tail` | `bool` |  |  |
 | `limit_bytes` | `uint32` |  |  |
 
+### RunEnvironments
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `run_id` | `string` | yes |  |
+| `offset` | `uint64` |  |  |
+| `limit` | `uint32` |  |  |
+
+### RunEnvironmentPaths
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `run_id` | `string` | yes |  |
+| `environment_id` | `string` | yes |  |
+| `offset` | `uint64` |  |  |
+| `limit` | `uint32` |  |  |
+| `query` | `string` |  | Case-insensitive literal substring search. Offset and total refer to matching paths. |
+
 ## Views
 
 | Request | Response | Description |
@@ -372,7 +401,7 @@ No fields.
 | [`VersionCheckout`](#versioncheckout) | SaveResult | Starts from a version: what is saved now is committed, then the project's files become those of `commit` and the document is read again (like ProjectReload). Only while no run is active. |
 | [`VersionGraph`](#versiongraph) | VersionGraph, newest first |  |
 | [`VersionCanvas`](#versioncanvas) | VersionCanvas: the Cards of a version and how they connect (a minimap) |  |
-| [`VersionDiff`](#versiondiff) | VersionDiff: what a version changed from its first parent, in the text a summary is written from | Only code and settings: never data files. |
+| [`VersionDiff`](#versiondiff) | VersionDiff: what a version changed from another version (its first parent by default), in the text a summary is written from | Only code and settings: never data files. |
 | [`VersionSummary`](#versionsummary) | VersionResult | Keeps a client's summary of a version in the commit's own note (refs/notes/tsugumi-summary), replacing the one there. |
 
 ### VersionInit
@@ -417,6 +446,7 @@ No fields.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `commit` | `string` | yes |  |
+| `from_commit` | `string` |  | Compare from this version; absent means the first parent of commit. |
 
 ### VersionSummary
 
