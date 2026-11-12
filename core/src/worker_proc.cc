@@ -529,14 +529,21 @@ WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id, const
           return outcome;
         }
         case W::WorkerPayload::WorkerFailure:
-          // A cooperative SDK can report cancelled after a deadline request.
-          // The host knows why it stopped the call, just as for WorkerResult.
           if (!outcome.failure) {
-            if (cancel_sent)
-              outcome.failure = timed_out ? FailureData::make(FailureKind::timeout, "the Card exceeded timeoutSeconds")
-                                          : FailureData::make(FailureKind::cancelled, "the invocation was cancelled");
-            else
-              outcome.failure = wire::failure(m->value_as_WorkerFailure()->failure());
+            auto reported = wire::failure(m->value_as_WorkerFailure()->failure());
+            if (cancel_sent) {
+              // The host knows why it stopped the call, just as for
+              // WorkerResult: a cooperative SDK reports "cancelled" for a
+              // deadline too. A different failure that arrives after the
+              // request keeps its text, so it is not lost behind the reason.
+              std::string why = timed_out ? "the Card exceeded timeoutSeconds" : "the invocation was cancelled";
+              if (reported.kind != FailureKind::cancelled && reported.kind != FailureKind::timeout)
+                why += std::string("; the worker then reported ") + failure_kind_name(reported.kind) +
+                       (reported.diagnostic && !reported.diagnostic->empty() ? ": " + *reported.diagnostic : "");
+              outcome.failure = FailureData::make(timed_out ? FailureKind::timeout : FailureKind::cancelled, why);
+            } else {
+              outcome.failure = std::move(reported);
+            }
           }
           read_logs(false);
           return outcome;
