@@ -19,6 +19,7 @@ import { VMEnvironmentManager, VMTerminal } from './vm'
 import { desktopRecents, desktopSettings, Recent } from './desktop'
 import { L, language } from './i18n'
 import { uninstall } from './uninstall'
+import { authorizeExecutionProject, loadExecutionServices, probeExecutionService, saveExecutionServices, startExecutionBroker } from './executionServices'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..', '..')
@@ -89,7 +90,10 @@ const vm = process.env.TSUGUMI_VMHOST
     }, () => origins)
   : undefined
 const desktop = vm && desktopSettings(vm)
-const envs: Environments = vm ?? new EnvironmentManager(bins, support, () => origins)
+const executionServiceSettings = vm?.options.support ?? support
+const managesExecutionBroker = !vm && !process.env.TSUGUMI_EXECUTION_BROKER
+const envs: Environments = vm ?? new EnvironmentManager(bins, support, () => origins,
+  managesExecutionBroker ? (identity, control) => authorizeExecutionProject(executionServiceSettings, identity, control) : undefined)
 
 // ---- Small JSON stores -----------------------------------------------------------
 
@@ -285,7 +289,8 @@ envs.observe((key, state) => broadcast({ type: 'env', key, state: publicState(st
 /** What the page may see of an environment (the token goes only to the same-origin UI). */
 function publicState(s: EnvState) {
   if (s.state !== 'ready') return s
-  return { state: 'ready', endpoint: s.endpoint, token: s.token, projectId: s.projectId, readyFile: s.readyFile }
+  return { state: 'ready', endpoint: s.endpoint, token: s.token, projectId: s.projectId, readyFile: s.readyFile,
+    executionScopeUnavailable: s.executionScopeUnavailable }
 }
 
 // ---- Terminals ---------------------------------------------------------------------
@@ -419,6 +424,9 @@ function projectDir(p: unknown): string {
 
 type Handler = (b: any, url: URL) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
+  'GET /api/execution-services': () => loadExecutionServices(executionServiceSettings),
+  'POST /api/execution-services': (body) => saveExecutionServices(executionServiceSettings, body),
+  'POST /api/execution-services/probe': (body) => probeExecutionService(body),
   'GET /api/status': () => ({
     setup: setupStatus(), demos: demos(), recents: recents(), home: os.homedir(), launchProject: launchProject ?? null, nixpkgsPin,
     // /host/<name> needs bubblewrap: on a Mac, the app's shared VM (core/src/worker_proc.cc).
@@ -644,6 +652,9 @@ async function openOnRunningServer(): Promise<boolean> {
 
 if (reuseServer && await openOnRunningServer()) process.exit(0)
 await desktop?.refresh()
+if (managesExecutionBroker) {
+  process.env.TSUGUMI_EXECUTION_BROKER = await startExecutionBroker(executionServiceSettings)
+}
 
 // The usual port keeps the page's own settings (localStorage) across runs; when
 // something else has it, any free port (unless one was asked for).

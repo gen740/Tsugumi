@@ -171,7 +171,12 @@ public actor EnvironmentManager {
     set(p.id, .starting(EnvironmentStage.startingDaemon.rawValue))
     let control = controlDir(p)
     try FileManager.default.createDirectory(at: control, withIntermediateDirectories: true)
-    chmod(control.path, 0o700)
+    // Restrict the host-side parent without changing the permissions of the
+    // control share that the project daemon uses inside the guest.
+    guard chmod(envDir(p).path, 0o700) == 0 else { throw POSIXError(.EACCES) }
+    try vm.executionBroker.authorize(p, control: control)
+    var connected = false
+    defer { if !connected { vm.executionBroker.revoke(p.id) } }
     let ready = control.appendingPathComponent("server.ready")
     try? FileManager.default.removeItem(at: ready)
     let grants = control.appendingPathComponent("grants.json")
@@ -222,7 +227,10 @@ public actor EnvironmentManager {
     set(p.id, .starting(EnvironmentStage.connecting.rawValue))
     let deadline = Date().addingTimeInterval(90)
     while Date() < deadline {
-      if let ep = try? readyEndpoint(p, port: bridge.port) { return ep }
+      if let ep = try? readyEndpoint(p, port: bridge.port) {
+        connected = true
+        return ep
+      }
       if let status = try? await vm.request("status"), !status.contains("\(p.id):") {
         throw LauncherError.startFailed(reason: "tsugumid exited during startup", log: tsugumidLog(p))
       }
@@ -245,6 +253,7 @@ public actor EnvironmentManager {
     }
     bridges[p.id]?.close()
     bridges[p.id] = nil
+    vm.executionBroker.revoke(p.id)
     try? FileManager.default.removeItem(at: controlDir(p).appendingPathComponent("server.ready"))
     set(p.id, .stopped)
   }

@@ -227,7 +227,7 @@ extension ProjectSession {
       symbol: (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
       summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
       params: inlineParams(k, definition: definition),
-      result: displays[k]?.summary ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
+      result: state?.executionState?.pendingLabel ?? displays[k]?.summary ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
       resultFailed: false,
       state: kind == .subgraph ? compositeState(k) : state?.state, stage: stageProgress(k),
       invocation: state?.invocation ?? 0, runContinues: runActive,

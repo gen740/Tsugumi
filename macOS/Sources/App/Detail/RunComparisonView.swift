@@ -138,7 +138,7 @@ struct ComparedRunField: Identifiable {
     }
     func method(_ v: Tsugumi_RPC_InvocationSummaryT?) -> String? {
       if let e = nonEmpty(v?.emulator) { return String(localized: "エミュレーション: \(e)") }
-      return service(v).map { _ in String(localized: "直接実行") }
+      return nonEmpty(v?.executionService).map { $0 == "local" ? String(localized: "直接実行") : "SSH" }
     }
     let recordedEnvironment = { (v: Tsugumi_RPC_InvocationSummaryT?) in !(v?.environmentId ?? "").isEmpty }
     var fields = [
@@ -147,6 +147,10 @@ struct ComparedRunField: Identifiable {
       field(String(localized: "実行方式"), method(a), method(b), known: method(a) != nil && method(b) != nil),
       field(String(localized: "実行サービス"), service(a), service(b), known: service(a) != nil && service(b) != nil),
     ]
+    let aSystem = nonEmpty(a?.executionSystem), bSystem = nonEmpty(b?.executionSystem)
+    if aSystem != nil || bSystem != nil {
+      fields.append(field(String(localized: "CPU アーキテクチャ"), aSystem, bSystem, known: aSystem != nil && bSystem != nil))
+    }
 
     // nil: the Card is absent from that run. `missing`: why that side's origins are not known.
     func side(_ c: ComparedRunCard?) -> (origins: [String: String], missing: String?) {

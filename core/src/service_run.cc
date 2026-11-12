@@ -159,6 +159,10 @@ void Service::run_plan(RequestIn& req) {
   auto doc = store_->current();
   check_at_rev(r->at_rev(), *doc);
   auto plan = Scheduler::plan(*doc->resolution, wire::card_arg(r->card()), r->propagate().value_or(true));
+  const auto services = remote_targets();
+  for (const auto& path : plan.targets)
+    if (auto diagnostic = execution_diagnostic(*doc->resolution->find(path), services))
+      plan.diagnostics.push_back(std::move(*diagnostic));
   FBB b;
   auto paths = [&](const std::vector<CardPath>& v) {
     std::vector<flatbuffers::Offset<D::CardPath>> o;

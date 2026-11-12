@@ -197,6 +197,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   public static let slotCount = 16
   private var fileSystems: [VZVirtioFileSystemDevice] = []
   private var socket: VZVirtioSocketDevice?
+  let executionBroker: ExecutionServiceBroker
   private var slots: [String: Int] = [:]  // project id -> slot
   /// Held while this app has the VM (under `lock`).
   private var hostLock: HostLock?
@@ -209,6 +210,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
 
   public init(directory: URL) {
     self.directory = directory
+    executionBroker = ExecutionServiceBroker(support: directory.deletingLastPathComponent())
   }
 
   public var state: State {
@@ -555,6 +557,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
         self.lock.withLock { self.current = ObjectIdentifier(vm) }
         self.fileSystems = vm.directorySharingDevices.compactMap { $0 as? VZVirtioFileSystemDevice }
         self.socket = vm.socketDevices.first as? VZVirtioSocketDevice
+        if let socket = self.socket { self.executionBroker.install(on: socket) }
         vm.start { result in
           switch result {
           case .success:
@@ -612,6 +615,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
         self.vm = nil
         self.fileSystems = []
         self.socket = nil
+        self.executionBroker.revokeAll()
       }
     }
     if let error {

@@ -484,6 +484,10 @@ private struct GeneralCategory: View {
   @State private var renaming = false
   @State private var renameError: String?
 
+  private var remote: Bool {
+    (model.definition?["executionService"]?.string ?? "local") != "local"
+  }
+
   var body: some View {
     Form {
       Section {
@@ -540,15 +544,25 @@ private struct GeneralCategory: View {
             executionSettings
             toggle("reuseWorker", label: "worker の状態を残す", fallback: false)
               .help("オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。")
+              .disabled(remote && model.definition?["reuseWorker"]?.bool != true)
+            if remote && model.definition?["reuseWorker"]?.bool == true {
+              Label("外部の実行サービスでは worker の状態を残せません。", systemImage: "exclamationmark.triangle")
+                .font(.caption)
+            }
             toggle("filesystem", label: "作業・出力領域を使う", fallback: false)
             toggle("sandbox", label: "ファイルアクセスを制限", fallback: true)
+              .disabled(remote && model.definition?["sandbox"]?.bool != false)
+            if remote && model.definition?["sandbox"]?.bool == false {
+              Label("外部の実行サービスにはファイルアクセスの制限が必要です。", systemImage: "exclamationmark.triangle")
+                .font(.caption)
+            }
           }
         }
         if model.kind == .code {
           Section {
             toggle("network", label: "ネットワークへのアクセスを許可する", fallback: false)
               .help("オフ（デフォルト）: preRun・run・postRun のどれからも外へ通信できません。")
-            HostFoldersEditor(model: model)
+            HostFoldersEditor(model: model, remote: remote)
           } header: {
             Label("Experimental", systemImage: "flask")
           }
@@ -571,23 +585,30 @@ private struct GeneralCategory: View {
 
   @ViewBuilder private var executionSettings: some View {
     let services = model.session.executionServices
-    let serviceId = model.definition?["executionService"]?.string ?? "local"
+    let serviceSetting = string("executionService", fallback: "local")
+    let serviceId = serviceSetting.wrappedValue
     let service = services.first { $0.id == serviceId }
     let nativeSystem = service?.nativeSystem ?? ""
     let systems = service?.systems.compactMap { $0 } ?? []
     let system = string("system", fallback: "")
     let selected = system.wrappedValue
 
-    LabeledContent("実行サービス") {
-      if nativeSystem.hasSuffix("-linux") {
-        Text(verbatim: "Linux (\(nativeSystem))")
-      } else if nativeSystem.hasSuffix("-darwin") {
-        Text(verbatim: "macOS (\(nativeSystem))")
-      } else if !services.isEmpty {
-        Text(verbatim: serviceId)
-      } else {
-        Text("情報なし")
+    if services.count > 1 || (service == nil && !services.isEmpty) {
+      Picker("実行サービス", selection: serviceSetting) {
+        ForEach(services, id: \.id) { entry in
+          Text(verbatim: serviceLabel(entry)).tag(entry.id).disabled(!entry.available)
+        }
+        if service == nil { Text(verbatim: serviceId).tag(serviceId).disabled(true) }
       }
+    } else {
+      LabeledContent("実行サービス", value: service.map(serviceLabel) ?? String(localized: "情報なし"))
+    }
+    if !model.session.identity.supportsExternalExecution {
+      Label("このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。", systemImage: "exclamationmark.triangle")
+        .font(.caption)
+    }
+    if serviceId != "local" && service?.available != true {
+      Label("選択した実行サービスに接続できません。", systemImage: "exclamationmark.triangle").font(.caption)
     }
     Picker("CPU アーキテクチャ", selection: system) {
       if nativeSystem.isEmpty {
@@ -602,11 +623,45 @@ private struct GeneralCategory: View {
         Text(verbatim: selected).tag(selected).disabled(true)
       }
     }
-    .help("実行環境の既定と異なる CPU アーキテクチャではエミュレーションを使います。")
+    .help("選択した実行サービスで利用できる CPU アーキテクチャを選びます。")
     if service != nil && !selected.isEmpty && !systems.contains(selected) {
       Label("この実行環境では \(selected) を実行できません。", systemImage: "exclamationmark.triangle")
         .font(.caption)
     }
+    if serviceId != "local" {
+      Text("外部の実行サービスでは CPU とメモリの上限を指定します。SSH ホストのリソースは他のジョブと共有します。").font(.caption).foregroundStyle(.secondary)
+      executionResource("cpuMillis", label: "CPU 上限（ミリコア）", example: "1000")
+      executionResource("memoryBytes", label: "メモリ上限（バイト）", example: "1073741824")
+    }
+    if model.definition?["executionResources"] != nil {
+      if serviceId == "local" {
+        Label("この実行サービスではリソースを指定できません。", systemImage: "exclamationmark.triangle").font(.caption)
+      }
+      Button("リソース指定を削除") { model.definition?["executionResources"] = nil }
+    }
+  }
+
+  private func serviceLabel(_ service: Tsugumi_RPC_ExecutionServiceT) -> String {
+    if service.id != "local" {
+      return service.available ? "SSH (\(service.id))" : String(localized: "SSH（\(service.id)、接続未確認）")
+    }
+    if service.nativeSystem.hasSuffix("-linux") { return "Linux (\(service.nativeSystem))" }
+    if service.nativeSystem.hasSuffix("-darwin") { return "macOS (\(service.nativeSystem))" }
+    return service.id
+  }
+
+  private func executionResource(_ name: String, label: LocalizedStringKey, example: String) -> some View {
+    TextField(label, text: Binding(
+      get: {
+        let value = model.definition?["executionResources"]?[name]
+        return value?.numberText ?? value?.string ?? ""
+      },
+      set: { value in
+        let text = value.trimmingCharacters(in: .whitespaces)
+        var resources = JSONValue.object(model.definition?["executionResources"]?.object ?? [])
+        resources[name] = text.isEmpty ? nil : (UInt64(text).map { .number(String($0)) } ?? .string(text))
+        model.definition?["executionResources"] = resources.object?.isEmpty == false ? resources : nil
+      }), prompt: Text(example))
   }
 
   private func rename() {
@@ -674,6 +729,7 @@ private struct GeneralCategory: View {
 /// folder's path is kept in the project.
 private struct HostFoldersEditor: View {
   @Bindable var model: CardEditorModel
+  let remote: Bool
 
   var body: some View {
     let folders = model.definition?["hostFolders"]?.array ?? []
@@ -681,7 +737,7 @@ private struct HostFoldersEditor: View {
       HStack {
         Text("ホストのフォルダへのアクセスを許可する")
         Spacer()
-        Button("フォルダを追加…") { add() }
+        Button("フォルダを追加…") { add() }.disabled(remote)
       }
       ForEach(folders.indices, id: \.self) { i in
         let f = folders[i]
@@ -692,7 +748,8 @@ private struct HostFoldersEditor: View {
           Image(systemName: present ? "folder" : "folder.badge.questionmark").foregroundStyle(present ? Color.secondary : Color.orange)
           VStack(alignment: .leading, spacing: 1) {
             Text(path).lineLimit(1).truncationMode(.middle).font(.callout)
-            Text(present ? "/host/\(f["name"]?.string ?? "")" : String(localized: "この Mac にはありません（実行すると失敗します）"))
+            Text(remote ? String(localized: "外部の実行サービスにはホストのフォルダを共有できません。")
+                        : present ? "/host/\(f["name"]?.string ?? "")" : String(localized: "この Mac にはありません（実行すると失敗します）"))
               .font(.caption).foregroundStyle(present ? Color.secondary : Color.orange)
           }
           Spacer()
@@ -700,11 +757,13 @@ private struct HostFoldersEditor: View {
             edit { $0[i]["write"] = v ? .bool(true) : nil }
           }))
           .toggleStyle(.checkbox)
+          .disabled(remote)
           .help("オフ（デフォルト）: 読み取り専用")
           Button { edit { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
         }
       }
-      Text("選んだフォルダだけを、この Card の worker から /host/<名前> として読めます。プロジェクトに保存するのはフォルダの場所だけです。追加・変更はプロジェクトを開き直すと反映されます。")
+      Text(remote ? String(localized: "外部の実行サービスにはホストのフォルダを共有できません。")
+                  : String(localized: "選んだフォルダだけを、この Card の worker から /host/<名前> として読めます。プロジェクトに保存するのはフォルダの場所だけです。追加・変更はプロジェクトを開き直すと反映されます。"))
         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
   }

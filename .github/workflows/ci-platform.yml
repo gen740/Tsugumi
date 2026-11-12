@@ -96,8 +96,12 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: CLI RPC
         run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_rpc_cli_tests"'
+      - name: Remote result manifests
+        run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_remote_result_tests"'
       - name: Project RPC with external doubles
         run: '"$CORE_TEST_ENV" python3 -m pytest -q --core-report -m "not environment" tests/core'
+      - name: Remote execution gateway and journal
+        run: 'PYTHONPATH=remote "$CORE_TEST_ENV" python3 -m unittest discover -s tests/remote'
 
   host:
     name: Worker and host isolation

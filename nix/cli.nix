@@ -4,7 +4,9 @@
   lib,
   runCommand,
   makeWrapper,
+  coreutils,
   nodejs,
+  openssh,
   tsugumid,
   web,
 }:
@@ -22,6 +24,12 @@ runCommand "tsugumi-${lib.fileContents ../VERSION}"
     ln -s ${web}/share/tsugumi $out/share/tsugumi
     makeWrapper ${nodejs}/bin/node $out/bin/tsugumi \
       --add-flags "${web}/share/tsugumi/web/dist/server.js --open --reuse" \
+      --prefix PATH : ${
+        lib.makeBinPath [
+          coreutils
+          openssh
+        ]
+      } \
       --set-default TSUGUMID ${tsugumid}/bin/tsugumid \
       --set-default TSUGUMI_AGENTD ${tsugumid}/bin/tsugumi-agentd \
       --set-default TSUGUMI_RPC_CLIENT ${tsugumid}/bin/tsugumi-rpc \

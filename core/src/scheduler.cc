@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <cstring>
 #include <deque>
+#include <fstream>
 #include <flatbuffers/reflection.h>
 #include <set>
 
 #include "execution_service.hh"
 #include "history.hh"
+#include "remote_invocation.hh"
 #include "schema.hh"
 #include "nix.hh"
 #include "service.hh"
@@ -26,6 +28,99 @@ using FBB = flatbuffers::FlatBufferBuilder;
 namespace {
 
 constexpr size_t kQueueCapacity = 16;
+
+struct RemoteDetached {};
+
+auto remote_execution_state(std::string_view state) -> RemoteExecutionState {
+  if (state == "queued") return RemoteExecutionState::queued;
+  if (state == "running") return RemoteExecutionState::running;
+  if (state == "cancelling") return RemoteExecutionState::cancelling;
+  if (state == "succeeded") return RemoteExecutionState::succeeded;
+  if (state == "failed") return RemoteExecutionState::failed;
+  if (state == "cancelled") return RemoteExecutionState::cancelled;
+  if (state == "interrupted") return RemoteExecutionState::interrupted;
+  throw BrokerDisconnected("execution gateway returned an unknown job state");
+}
+
+auto poll_remote_job(RemoteJobClient& client, RemoteJobRecord& job, bool may_submit = true) -> RemoteJobState {
+  const auto& s = job.invocation;
+  const auto fingerprint = crypto::sha256_hex(job.spec);
+  RemoteJobState reply;
+  if (job.cancel_requested) {
+    reply = client.cancel(s.execution_service, job.instance, s.execution_job_id, fingerprint);
+  } else {
+    reply = client.status(s.execution_service, job.instance, s.execution_job_id);
+    if (reply.state == "missing") {
+      if (job.accepted) return {"interrupted", fingerprint, {}, "the execution service lost a previously accepted job"};
+      if (may_submit) {
+        reply = client.submit(s.execution_service, job.instance, s.execution_job_id, job.spec);
+      } else {
+        reply = client.cancel(s.execution_service, job.instance, s.execution_job_id, fingerprint);
+        if (reply.state == "cancelled")
+          return {"interrupted", fingerprint, {}, "the external submission was not confirmed before the core restarted"};
+      }
+    }
+  }
+  if (reply.fingerprint != fingerprint)
+    return {"interrupted", fingerprint, {}, "the execution service returned a different job fingerprint"};
+  job.accepted = true;
+  return reply;
+}
+
+auto remote_failure(const RemoteJobState& result) -> FailureData {
+  auto kind = FailureKind::worker_failed;
+  if (result.state == "cancelled") kind = FailureKind::cancelled;
+  else if (result.state == "interrupted") kind = result.error.find("result timeout") != std::string::npos
+                                                      ? FailureKind::timeout : FailureKind::interrupted;
+  return FailureData::make(kind, result.error.empty() ? "external job " + result.state : result.error);
+}
+
+auto prepare_remote_artifact(const stdfs::path& run_dir, const stdfs::path& out_dir,
+                             const InvocationSummaryData& inv, Value& value) -> ArtifactData {
+  const auto source = path_value(value);
+  if (!source) throw Failed(FailureKind::output_invalid, "recovered artifact has no path");
+  const stdfs::path path(*source);
+  const auto relative = path.lexically_relative(out_dir);
+  if (relative.empty() || *relative.begin() == ".." || !fs::resolves_inside(out_dir, path))
+    throw Failed(FailureKind::output_invalid, "recovered artifact is outside the output directory");
+  const auto& id = inv.execution_job_id;
+  ArtifactData artifact;
+  artifact.artifact_id = id.substr(0, 8) + "-" + id.substr(8, 4) + "-" + id.substr(12, 4) + "-" +
+                         id.substr(16, 4) + "-" + id.substr(20, 12);
+  artifact.run_id = inv.run_id;
+  artifact.card = inv.card;
+  artifact.invocation = inv.invocation;
+  artifact.output = value.name;
+  artifact.kind = value.kind;
+  artifact.name = path.filename().string();
+  const auto destination = run_dir / "artifacts" / artifact.artifact_id;
+  stdfs::remove_all(destination);
+  stdfs::create_directories(destination);
+  const auto copy = [&](const stdfs::path& from, const std::string& name) {
+    const auto target = destination / remote::relative_path(name);
+    stdfs::create_directories(target.parent_path());
+    std::ofstream file(target, std::ios::binary);
+    if (!file) throw std::runtime_error("cannot stage recovered artifact");
+    crypto::Sha256 hash;
+    const auto size = fs::stream_beneath(out_dir, from, uint64_t{64} << 30, [&](std::string_view chunk) {
+      file.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
+      if (!file) throw std::runtime_error("cannot stage recovered artifact");
+      hash.update(chunk);
+    });
+    file.close();
+    if (!file) throw std::runtime_error("cannot store recovered artifact");
+    artifact.members.push_back({name, size, hash.finish_hex()});
+  };
+  if (value.kind == PortKind::File) copy(relative, artifact.name);
+  else {
+    const auto list = fs::list_beneath(out_dir, relative == "." ? stdfs::path{} : relative);
+    if (!list.links.empty() || list.files.size() > 1000)
+      throw Failed(FailureKind::output_invalid, "recovered artifact has symlinks or too many files");
+    for (const auto& file : list.files) copy(relative == "." ? stdfs::path(file) : relative / file, file);
+  }
+  value.artifact_id = artifact.artifact_id;
+  return artifact;
+}
 
 Note run_event_note(const std::string& run_id,
                     std::function<std::pair<R::RunEventValue, flatbuffers::Offset<void>>(FBB&)> body) {
@@ -159,40 +254,6 @@ void stage_close(InvocationSummaryData& s, StageOutcome o) {
   }
 }
 
-// Returns a copy of a File/Directory value whose `value` field is `p`.
-Value with_path(const Value& v, const std::string& p) {
-  Value out = v;
-  std::vector<uint8_t> buf(v.bytes.begin(), v.bytes.end());
-  const auto* root = v.type->root();
-  const auto* f = root->fields()->LookupByKey("value");
-  auto* t = flatbuffers::GetAnyRoot(buf.data());
-  const auto* s = flatbuffers::GetFieldS(*t, *f);
-  if (!s) throw Failed(FailureKind::output_invalid, "file value " + v.name + " has no path");
-  if (p.size() <= s->size()) {
-    // Shrinking in place: flatbuffers' ResizeContext erases the bytes before
-    // the string when it shrinks, which corrupts the buffer. A shorter string
-    // with trailing padding is still a valid buffer.
-    auto* at = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(s));
-    flatbuffers::WriteScalar<flatbuffers::uoffset_t>(at, static_cast<flatbuffers::uoffset_t>(p.size()));
-    std::memcpy(at + sizeof(flatbuffers::uoffset_t), p.c_str(), p.size() + 1);
-  } else {
-    flatbuffers::SetString(*v.type->schema(), p, s, &buf, root);
-  }
-  out.bytes.assign(reinterpret_cast<const char*>(buf.data()), buf.size());
-  return out;
-}
-
-// Reads the string `value` field of a File/Directory message.
-std::optional<std::string> path_value(const Value& v) {
-  const auto* root = v.type->root();
-  const auto* f = root->fields()->LookupByKey("value");
-  if (!f) return std::nullopt;
-  const auto* t = flatbuffers::GetAnyRoot(reinterpret_cast<const uint8_t*>(v.bytes.data()));
-  const auto* s = flatbuffers::GetFieldS(*t, *f);
-  if (!s) return std::nullopt;
-  return s->str();
-}
-
 }  // namespace
 
 Note display_note(const DisplayData& d) {
@@ -249,6 +310,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::lock_guard<std::mutex> l(mu_);
     // Once finalize() has taken the final status it is on its way to the history:
     // a "cancelling" written now would land after it and stay as the run's state.
+    if (interrupted) detaching_.store(true);
     if (!summary_.status.terminal() && !cancel_ && !finishing_) {
       cancel_ = true;
       interrupted_ = interrupted;
@@ -647,6 +709,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   struct Produced {
     std::vector<Value> outputs;
     std::optional<FailureData> failure;
+    std::vector<std::pair<LogStream, std::string>> remote_logs;
   };
 
   void invoke(Work& w, uint32_t lane) {
@@ -684,8 +747,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       }
       journal(phase_name(*s.phase), "started", node.path, w.invocation, "invocation started");
       try {
-        if (node.kind == Template::Code) out = run_code(rt, s, inputs, lane);
+        if (node.kind == Template::Code) out = run_code(rt, s, inputs, sources, lane);
         else out = run_builtin(rt, s, inputs);
+      } catch (const RemoteDetached&) {
+        svc_.history().clear_live(s);
+        return;
       } catch (const Failed& f) {
         out.failure = f.failure;
       } catch (const std::exception& e) {
@@ -734,16 +800,23 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       s.state = CardState::succeeded;
     }
     // Artifacts are copied before the completion becomes visible.
+    std::optional<ArtifactData> remote_artifact;
     if (!out.failure && node.settings.retain_artifact && node.settings.artifact_output) {
       for (auto& v : out.outputs)
         if (v.name == *node.settings.artifact_output) {
           try {
-            retain_artifact(node, w.invocation, v);
+            if (s.execution_job_id.empty()) retain_artifact(node, w.invocation, v);
+            else remote_artifact = prepare_remote_artifact(run_dir_, invocation_dir(node, w.invocation) / "out", s, v);
           } catch (const Failed& f) {
             s.state = CardState::failed;
             s.failure = f.failure;
             rec.summary = s;
             out.failure = f.failure;
+          } catch (const std::exception& error) {
+            s.state = CardState::failed;
+            s.failure = FailureData::make(FailureKind::output_invalid, error.what());
+            rec.summary = s;
+            out.failure = s.failure;
           }
         }
       if (rec.record_io) rec.outputs = out.outputs;
@@ -759,7 +832,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       rec.summary.emulator = done.emulator;
       try {
         History& h = svc_.history();
-        h.write_sync([&h, rec](sql::Db& db) { h.complete_invocation(db, rec); });
+        std::map<LogStream, std::vector<LogEnd>> remote_log_ends;
+        h.write_sync([&](sql::Db& db) {
+          if (remote_artifact && !out.failure) History::put_artifact(db, *remote_artifact);
+          for (const auto& [stream, text] : out.remote_logs)
+            remote_log_ends[stream] = h.append_log(db, s.run_id, s.card, s.invocation, stream, text);
+          h.complete_invocation(db, rec);
+        });
+        for (const auto& [_, ends] : remote_log_ends)
+          for (const auto& end : ends) svc_.server()->broadcast(log_note(end));
         // The record holds the save stage as closed just before its commit.
         s.stages = done.stages;
         h.clear_live(s);
@@ -1073,8 +1154,124 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   // ---- code Cards -------------------------------------------------------------
 
-  Produced run_code(NodeRt& rt, InvocationSummaryData& s, const std::vector<Value>& in, uint32_t lane) {
+  auto run_remote_code(NodeRt& rt, InvocationSummaryData& s, const std::vector<Value>& inputs,
+                       const std::vector<InputSourceData>& sources) -> Produced {
+    const auto& node = *rt.node;
+    const auto& settings = node.settings;
+    const auto targets = svc_.remote_targets();
+    if (auto diagnostic = svc_.execution_diagnostic(node, targets))
+      throw Failed(FailureKind::unsupported, diagnostic->message);
+    const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
+    const auto system = settings.system.empty() ? target->native_system : settings.system;
+    auto& client = svc_.remote_jobs();
+    const auto probe = client.probe(target->id);
+    if (std::ranges::find(probe.systems, system) == probe.systems.end())
+      throw Failed(FailureKind::unsupported, "external execution service no longer supports system " + system);
+    const auto& instance = probe.instance;
+    const auto directory = invocation_dir(node, s.invocation);
+    stdfs::create_directories(directory);
+    const auto archive = directory / (".derivation-" + crypto::uuid4());
+    struct RemoveArchive {
+      stdfs::path file;
+      ~RemoveArchive() { std::error_code ec; stdfs::remove(file, ec); }
+    } remove{archive};
+    BuildRequest build_request;
+    build_request.run_id = run_id_;
+    build_request.node = &node;
+    build_request.doc = doc_;
+    build_request.run_dir = run_dir_;
+    build_request.remote_system = system;
+    build_request.derivation_archive = archive;
+    build_request.timeout_seconds = settings.build_timeout_seconds;
+    build_request.cancel = &cancel_;
+    build_request.log = [&](const std::string& line) { card_log(node.path, s.invocation, LogStream::build, line); };
+    build_request.on_phase = [&](Phase phase) { stage_begin(s, phase); card_status(s); };
+    set_state(RunState::preparing);
+    auto build = svc_.nix().build(build_request);
+    const LocalExecutionRequest request{node, build, inputs, run_id_, s.invocation, directory, cancel_, {}, {}, {}};
+    auto spec = stage_remote_invocation(client, target->id, instance, svc_.project_id(), svc_.store().state_dir(), archive, request);
+    if (cancel_.load()) throw Failed(FailureKind::cancelled, "run cancelled before external submission");
+
+    s.execution_service = target->id;
+    s.execution_job_id = crypto::sha256_hex(svc_.project_id() + "\n" + run_id_ + "\n" + path_key(node.path) + "\n" +
+                                            std::to_string(s.invocation));
+    s.execution_system = system;
+    s.execution_resources = settings.execution_resources;
+    s.execution_state = RemoteExecutionState::queued;
+    s.worker_reused = false;
+    stage_begin(s, Phase::execute);
+    RemoteJobRecord job{s, instance, std::move(spec), remote_recovery_contract(node, inputs, sources),
+                        directory.lexically_relative(run_dir_).generic_string()};
+    auto& history = svc_.history();
+    history.write_sync([&](sql::Db& db) {
+      History::put_status(db, s);
+      History::put_remote_job(db, job);
+    });
+    card_status(s);
+    set_state(RunState::running);
+
+    Produced output;
+    while (!detaching_.load()) {
+      const auto before = s.execution_state;
+      const bool accepted = job.accepted;
+      if (cancel_.load() && !job.cancel_requested) {
+        job.cancel_requested = true;
+        history.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
+      }
+      std::optional<RemoteJobState> reply;
+      try {
+        reply = poll_remote_job(client, job);
+        s.execution_state = remote_execution_state(reply->state);
+      } catch (const BrokerInstanceChanged& error) {
+        s.execution_state = RemoteExecutionState::interrupted;
+        output.failure = FailureData::make(FailureKind::interrupted, error.what());
+        return output;
+      } catch (const BrokerRequestRejected& error) {
+        s.execution_state = RemoteExecutionState::failed;
+        output.failure = FailureData::make(FailureKind::invalid_request, error.what());
+        return output;
+      } catch (const std::exception&) {
+        reply.reset();
+        s.execution_state = RemoteExecutionState::disconnected;
+      }
+      if (s.execution_state != before || job.accepted != accepted) {
+        job.invocation = s;
+        history.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
+        card_status(s);
+      }
+      if (reply && reply->state == "succeeded") {
+        output.remote_logs.clear();
+        try {
+          auto result = import_remote_result(client, target->id, instance, reply->result_sha256, job.spec, directory,
+              node.outputs, [&](LogStream stream, const std::string& line) { output.remote_logs.emplace_back(stream, line); },
+              [&](const DisplayData& display) { on_display(rt, display); }, detaching_);
+          if (!result.environment.id.empty()) {
+            s.environment_id = result.environment.id;
+            s.build_cached = !result.built;
+            history.write_sync([&](sql::Db& db) { History::put_environment(db, run_id_, result.environment); });
+          }
+          output.failure = result.worker.failure;
+          if (output.failure) s.execution_state = RemoteExecutionState::failed;
+          else for (auto& [name, bytes] : result.worker.outputs)
+            output.outputs.push_back({std::move(name), PortKind::FlatBuffer, nullptr, std::move(bytes), {}});
+          return output;
+        } catch (const BrokerDisconnected&) {
+          s.execution_state = RemoteExecutionState::disconnected;
+          card_status(s);
+        }
+      } else if (reply && (reply->state == "failed" || reply->state == "cancelled" || reply->state == "interrupted")) {
+        output.failure = remote_failure(*reply);
+        return output;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(750));
+    }
+    throw RemoteDetached{};
+  }
+
+  Produced run_code(NodeRt& rt, InvocationSummaryData& s, const std::vector<Value>& in,
+                    const std::vector<InputSourceData>& sources, uint32_t lane) {
     const Node& node = *rt.node;
+    if (node.settings.execution_service != kLocalExecutionService) return run_remote_code(rt, s, in, sources);
     if (!rt.build) {
       if (s.phase != Phase::prepare) stage_begin(s, Phase::prepare);
       card_status(s);
@@ -1337,6 +1534,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   uint64_t token_seq_ = 0;
   std::vector<std::string> seed_notes_;  // journaled once the run has started
   std::atomic<bool> cancel_{false};
+  std::atomic<bool> detaching_{false};
   bool finishing_ = false;  // under mu_: the final status is decided, a cancel comes too late
   bool interrupted_ = false;
   std::optional<FailureData> first_failure_;
@@ -1365,7 +1563,8 @@ void Scheduler::recover_interrupted() {
       // In-progress invocations become interrupted failures; nothing is re-run.
       auto st = db.prepare("SELECT s.card, s.invocation, s.started_at, e.environment_id, s.execution_service FROM statuses AS s "
                            "LEFT JOIN active_environments AS e ON e.run_id=s.run_id AND e.card=s.card "
-                           "AND e.invocation=s.invocation WHERE s.run_id=?");
+                           "AND e.invocation=s.invocation WHERE s.run_id=? AND NOT EXISTS ("
+                           "SELECT 1 FROM remote_jobs AS j WHERE j.run_id=s.run_id AND j.card=s.card AND j.invocation=s.invocation)");
       st.bind(1, run_id);
       std::vector<InvocationRecordData> recs;
       while (st.step()) {
@@ -1393,6 +1592,141 @@ void Scheduler::recover_interrupted() {
     });
     log::warn("run " + run_id + " was interrupted by a restart");
   }
+}
+
+auto Scheduler::reconcile_remote_job(RemoteJobRecord& job) -> bool {
+  auto& h = svc_.history();
+  auto& client = svc_.remote_jobs();
+  auto& inv = job.invocation;
+  const auto before = inv.execution_state;
+  const auto accepted = job.accepted;
+  std::optional<RemoteJobState> reply;
+  try {
+    reply = poll_remote_job(client, job, false);
+    inv.execution_state = remote_execution_state(reply->state);
+  } catch (const BrokerInstanceChanged& error) {
+    inv.execution_state = RemoteExecutionState::interrupted;
+    reply = RemoteJobState{"interrupted", {}, {}, error.what()};
+  } catch (const BrokerRequestRejected& error) {
+    inv.execution_state = RemoteExecutionState::failed;
+    reply = RemoteJobState{"failed", {}, {}, error.what()};
+  } catch (const std::exception&) {
+    reply.reset();
+    inv.execution_state = RemoteExecutionState::disconnected;
+  }
+  if (inv.execution_state != before || job.accepted != accepted)
+    h.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
+  h.set_live(inv);
+  if (inv.execution_state != before) svc_.server()->broadcast(card_note(inv));
+  if (!reply || reply->state == "queued" || reply->state == "running" || reply->state == "cancelling") return false;
+  InvocationRecordData result;
+  std::vector<std::pair<LogStream, std::string>> logs;
+  std::optional<ArtifactData> artifact;
+  BuildEnvironmentData environment;
+  if (reply->state == "succeeded") {
+    try {
+      auto contract = remote_recovery_contract(job.contract);
+      const auto run_dir = svc_.store().state_dir() / "runs" / inv.run_id;
+      const auto directory = run_dir / remote::relative_path(job.directory);
+      auto imported = import_remote_result(client, inv.execution_service, job.instance, reply->result_sha256,
+          job.spec, directory, contract.outputs,
+          [&](LogStream stream, const std::string& line) { logs.emplace_back(stream, line); },
+          [&](DisplayData display) {
+            if (display.run_id == inv.run_id && display.invocation == inv.invocation && !display.validate()) {
+              display.card = inv.card;
+              result.display = std::move(display);
+            }
+          }, stop_recovery_);
+      environment = std::move(imported.environment);
+      if (!environment.id.empty()) {
+        inv.environment_id = environment.id;
+        inv.build_cached = !imported.built;
+      }
+      inv.failure = imported.worker.failure;
+      result.record_io = contract.record_io;
+      result.inputs = std::move(contract.inputs);
+      result.input_sources = std::move(contract.sources);
+      if (!inv.failure) {
+        for (auto& [name, bytes] : imported.worker.outputs) {
+          const auto port = std::ranges::find(contract.outputs, name, &types::PortType::name);
+          Value value{name, port->kind, port->type, std::move(bytes), {}};
+          if (!contract.artifact_output.empty() && name == contract.artifact_output)
+            artifact = prepare_remote_artifact(run_dir, directory / "out", inv, value);
+          if (result.record_io) result.outputs.push_back(std::move(value));
+        }
+      }
+    } catch (const BrokerDisconnected&) {
+      inv.execution_state = RemoteExecutionState::disconnected;
+      h.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
+      h.set_live(inv);
+      svc_.server()->broadcast(card_note(inv));
+      return false;
+    } catch (const Failed& error) {
+      inv.failure = error.failure;
+    } catch (const std::exception& error) {
+      inv.failure = FailureData::make(FailureKind::output_invalid, error.what());
+    }
+    if (inv.failure) inv.execution_state = RemoteExecutionState::failed;
+  } else {
+    inv.failure = remote_failure(*reply);
+  }
+  inv.state = !inv.failure ? CardState::succeeded : inv.failure->kind == FailureKind::cancelled
+               ? CardState::cancelled : CardState::failed;
+  inv.ended_at = now_ms();
+  if (inv.started_at) inv.duration_ms = static_cast<uint64_t>(std::max<int64_t>(0, *inv.ended_at - *inv.started_at));
+  stage_close(inv, !inv.failure ? StageOutcome::done : inv.state == CardState::cancelled
+                     ? StageOutcome::cancelled : StageOutcome::failed);
+  if (inv.failure) {
+    result.outputs.clear();
+    artifact.reset();
+  }
+  result.summary = inv;
+  std::map<LogStream, std::vector<LogEnd>> log_ends;
+  std::optional<CardPath> completed_card;
+  h.write_sync([&](sql::Db& db) {
+    // A Card may be renamed while its remote result is downloading. Resolve
+    // the current history key in the same transaction as its completion.
+    completed_card = History::remote_job_card(db, inv.execution_job_id);
+    if (!completed_card) return;
+    result.summary.card = *completed_card;
+    if (result.display) result.display->card = *completed_card;
+    if (artifact) artifact->card = *completed_card;
+    if (!environment.id.empty()) History::put_environment(db, inv.run_id, environment);
+    if (artifact) History::put_artifact(db, *artifact);
+    for (const auto& [stream, text] : logs)
+      log_ends[stream] = h.append_log(db, inv.run_id, *completed_card, inv.invocation, stream, text);
+    h.complete_invocation(db, result);
+  });
+  h.clear_live(inv);
+  if (!completed_card) return true;
+  h.clear_live(result.summary);
+  for (const auto& [_, ends] : log_ends)
+    for (const auto& end : ends) svc_.server()->broadcast(log_note(end));
+  svc_.server()->broadcast(card_note(result.summary));
+  svc_.schedule_export();
+  return true;
+}
+
+auto Scheduler::recover_remote_jobs() -> void {
+  const auto jobs = svc_.history().read([](sql::Db& db) { return History::remote_jobs(db); });
+  if (jobs.empty()) return;
+  std::set<std::string> pending;
+  for (const auto& job : jobs) pending.insert(job.invocation.execution_job_id);
+  remote_recovery_ = std::thread([this, pending = std::move(pending)]() mutable {
+    while (!stop_recovery_.load() && !pending.empty()) {
+      try {
+        auto jobs = svc_.history().read([](sql::Db& db) { return History::remote_jobs(db); });
+        for (auto& job : jobs) {
+          if (stop_recovery_.load()) return;
+          const auto& id = job.invocation.execution_job_id;
+          if (pending.contains(id) && reconcile_remote_job(job)) pending.erase(id);
+        }
+      } catch (const std::exception& error) {
+        log::warn(std::string("external job recovery: ") + error.what());
+      }
+      if (!pending.empty()) std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+  });
 }
 
 std::set<size_t> Scheduler::draft_waiting(const Resolution& res) {
@@ -1534,6 +1868,10 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
   std::lock_guard<std::mutex> l(mu_);
   if (active_) throw Failed(FailureKind::busy, "another run is active", {{"run_id", *active_->status().run_id}});
   auto plan = Scheduler::plan(*doc->resolution, p.card, p.propagate);
+  const auto services = svc_.remote_targets();
+  for (const auto& path : plan.targets)
+    if (auto diagnostic = svc_.execution_diagnostic(*doc->resolution->find(path), services))
+      plan.diagnostics.push_back(std::move(*diagnostic));
   std::vector<std::string> errors;
   for (const auto& d : plan.diagnostics) {
     if (!d.error) continue;
@@ -1581,6 +1919,7 @@ std::optional<RunStatusData> Scheduler::active_status() {
 }
 
 RunStatusData Scheduler::cancel(const std::string& run_id) {
+  svc_.history().write_sync([&](sql::Db& db) { History::cancel_remote_jobs(db, run_id); });
   std::shared_ptr<RunExec> exec;
   {
     std::lock_guard<std::mutex> l(mu_);
@@ -1720,6 +2059,8 @@ void Scheduler::finished(RunExec* exec) {
 }
 
 void Scheduler::shutdown() {
+  stop_recovery_.store(true);
+  if (remote_recovery_.joinable()) remote_recovery_.join();
   std::shared_ptr<RunExec> exec;
   {
     std::lock_guard<std::mutex> l(mu_);

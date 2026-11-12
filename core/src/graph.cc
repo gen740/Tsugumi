@@ -275,15 +275,32 @@ class Builder {
     if (const auto* v = schema::get(d.execution_service)) {
       if (n.kind != Template::Code)
         n.diags.push_back(diag(n.path, "invalid_setting", "executionService is only available on Code Cards"));
-      else if (*v != kLocalExecutionService)
-        n.diags.push_back(diag(n.path, "invalid_setting", "execution service " + *v + " is not available"));
+      else if (!valid_id(*v))
+        n.diags.push_back(diag(n.path, "invalid_setting", "executionService must be a valid service ID"));
       else
         s.execution_service = *v;
+    }
+    const bool remote = s.execution_service != kLocalExecutionService;
+    if (remote && (!s.sandbox || s.reuse_worker || s.timeout_seconds.value_or(3600) > 604800 ||
+                   schema::get(d.host_folders)))
+      n.diags.push_back(diag(n.path, "invalid_setting",
+          "external execution requires sandbox, no worker reuse or host folders, and a timeout of at most seven days"));
+    if (const auto* resources = schema::get(d.execution_resources)) {
+      const auto* cpu = schema::get(resources->cpu_millis);
+      const auto* memory = schema::get(resources->memory_bytes);
+      if (!remote)
+        n.diags.push_back(diag(n.path, "invalid_setting", "executionResources requires an external execution service"));
+      else if (!cpu || *cpu == 0 || *cpu > 256'000 || !memory || *memory == 0 || *memory > (uint64_t{1} << 40))
+        n.diags.push_back(diag(n.path, "invalid_setting", "executionResources requires 1–256000 cpuMillis and up to 1 TiB of memoryBytes"));
+      else
+        s.execution_resources = ExecutionResources{static_cast<uint32_t>(*cpu), *memory};
+    } else if (remote) {
+      n.diags.push_back(diag(n.path, "invalid_setting", "an external execution service requires executionResources"));
     }
     if (const auto* v = schema::get(d.display_mode); v && *v != "update" && *v != "live")
       n.diags.push_back(diag(n.path, "invalid_setting", "displayMode must be update or live"));
     if (const auto* v = schema::get(d.system)) {
-      if (*v == native_system())
+      if (!remote && *v == native_system())
         s.system.clear();
       else if (*v == "x86_64-linux" || *v == "aarch64-linux")
         s.system = *v;

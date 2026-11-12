@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { app } from '../model/app'
 import { artifactHTML } from '../model/artifactHTML'
 import { useObserve } from '../model/observable'
-import { CardKey, cardState, errorText, formatBytes, formatDuration, formatMillis, path, ProjectSession, runState } from '../model/session'
+import { CardKey, cardState, errorText, formatBytes, formatDuration, formatMillis, path, ProjectSession, remoteExecutionLabel, runState } from '../model/session'
 import { bool } from '../shared/json'
 import { describeValue } from '../shared/flatjson'
 import { D, R, s, segs } from '../shared/rpc'
@@ -35,6 +35,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
   const [loaded, setLoaded] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const [comparing, setComparing] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
 
   useEffect(() => {
     const rpc = session.rpc
@@ -53,23 +54,26 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
     return () => {
       alive = false
     }
-  }, [session.lastFinished, session.rpc, cardKey, attempt])
+  }, [session.lastFinished, session.remoteHistoryRevision, session.rpc, cardKey, attempt])
   // Another run: its own latest call is shown, never the previous run's number.
   useEffect(() => {
     setInvocation(undefined)
     setRecord(undefined)
+    setInvocations([])
+  }, [runId, cardKey])
+  useEffect(() => {
     const rpc = session.rpc
     if (!rpc || !runId) return setInvocations([])
     let alive = true
     void rpc.invocations(runId, path(cardKey)).then((p) => {
       if (!alive) return
       setInvocations(p.records)
-      setInvocation(p.records[p.records.length - 1]?.invocation ?? undefined)
+      setInvocation((current) => p.records.some((item) => item.invocation === current) ? current : p.records.at(-1)?.invocation ?? undefined)
     }).catch(() => alive && setInvocations([]))
     return () => {
       alive = false
     }
-  }, [runId, cardKey])
+  }, [runId, cardKey, session.rpc, session.remoteHistoryRevision])
   useEffect(() => {
     const rpc = session.rpc
     if (!rpc || !runId) return setRecord(undefined)
@@ -79,7 +83,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
     return () => {
       alive = false
     }
-  }, [runId, invocation, cardKey])
+  }, [runId, invocation, cardKey, session.rpc, session.remoteHistoryRevision])
 
   if (!loaded) return <div className="center-fill col gap8"><Spinner /><span className="secondary">{L('履歴を読み込んでいます…')}</span></div>
   if (!runs.length && error) {
@@ -96,6 +100,20 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
     return filter === 'all' || (filter === 'succeeded' ? st === D.RunState.succeeded : st === D.RunState.failed || st === D.RunState.cancelled)
   })
   const rec = record?.record
+  const summary = rec?.summary ?? invocations.find((item) => item.invocation === invocation)
+  const executionState = remoteExecutionLabel(summary?.executionState)
+  const recoveredRunId = s(record?.run?.status?.runId)
+  const recoveredRun = !!runId && recoveredRunId === runId && !!summary?.executionJobId &&
+    record?.run?.status?.failure?.kind === D.FailureKind.interrupted
+  const canCancel = recoveredRun && [D.RemoteExecutionState.queued, D.RemoteExecutionState.running, D.RemoteExecutionState.disconnected].some((state) => state === summary?.executionState)
+  async function cancelPending() {
+    const rpc = session.rpc
+    if (!rpc || !canCancel) return
+    setCancelling(true)
+    try { await rpc.cancel(recoveredRunId); setError(undefined) }
+    catch (e) { setError(errorText(e)) }
+    finally { setCancelling(false) }
+  }
   return (
     <HSplit sizes={[260, null]} min={[220, 380]}>
       {[
@@ -153,17 +171,26 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                     <Form>
                       <Section>
                         <Value label={L('状態')} value={cardState(record.status!.state).label} />
-                        {rec?.summary && (
+                        {summary && (
                           <>
-                            <Value label={L('呼び出し')} value={`#${rec.summary.invocation ?? 0n}`} />
-                            <Value label={L('段階')} value={D.Phase[rec.summary.phase] ?? ''} />
-                            <Value label={L('開始')} value={formatMillis(rec.summary.startedAt)} />
-                            <Value label={L('終了')} value={formatMillis(rec.summary.endedAt)} />
-                            {rec.summary.durationMs !== null && <Value label={L('所要時間')} value={formatDuration(Number(rec.summary.durationMs) / 1000)} />}
-                            {rec.summary.executionService && <Value label={L('実行サービス')} value={s(rec.summary.executionService) === 'local' ? L('プロジェクトの実行環境') : s(rec.summary.executionService)} />}
+                            <Value label={L('呼び出し')} value={`#${summary.invocation ?? 0n}`} />
+                            <Value label={L('段階')} value={D.Phase[summary.phase] ?? ''} />
+                            <Value label={L('開始')} value={formatMillis(summary.startedAt)} />
+                            <Value label={L('終了')} value={formatMillis(summary.endedAt)} />
+                            {summary.durationMs !== null && <Value label={L('所要時間')} value={formatDuration(Number(summary.durationMs) / 1000)} />}
+                            {summary.executionService && <Value label={L('実行サービス')} value={s(summary.executionService) === 'local' ? L('プロジェクトの実行環境') : s(summary.executionService)} />}
+                            {executionState && <Value label={L('実行サービスの状態')} value={executionState} />}
+                            {summary.executionSystem && <Value label={L('CPU アーキテクチャ')} value={s(summary.executionSystem)} />}
+                            {summary.executionJobId && <Value label={L('ジョブ ID')} value={s(summary.executionJobId)} />}
+                            {recoveredRun && (
+                              <Row><span className="caption secondary">{L('Tsugumi の再起動後は、このジョブの結果を回収します。下流の Card は改めて実行してください。')}</span></Row>
+                            )}
+                            {canCancel && <Row><Button kind="destructive" disabled={cancelling || !session.rpc} onClick={() => void cancelPending()}>{L('この実行の未完了ジョブを取り消す')}</Button></Row>}
+                            {summary.executionResources?.cpuMillis != null && <Value label={L('CPU 上限（ミリコア）')} value={String(summary.executionResources.cpuMillis)} />}
+                            {summary.executionResources?.memoryBytes != null && <Value label={L('メモリ上限（バイト）')} value={String(summary.executionResources.memoryBytes)} />}
                             {/* A Card built for another system (its `system` setting): what ran it. */}
-                            {rec.summary.emulator && <Value label={L('エミュレーター')} value={s(rec.summary.emulator)} />}
-                            {rec.summary.waitingInputs.length > 0 && <Value label={L('待っていた入力')} value={rec.summary.waitingInputs.map((w) => s(w.port)).join(', ')} />}
+                            {summary.emulator && <Value label={L('エミュレーター')} value={s(summary.emulator)} />}
+                            {summary.waitingInputs.length > 0 && <Value label={L('待っていた入力')} value={summary.waitingInputs.map((w) => s(w.port)).join(', ')} />}
                           </>
                         )}
                         {record.status!.failure && (

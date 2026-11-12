@@ -94,13 +94,22 @@ table RunStatus {
   commit:string (id: 8);
 }
 
-/// An execution service available to this project's core.
+enum ExecutionServiceKind:ubyte { local, ssh_direct }
+
+table ExecutionResources {
+  cpu_millis:uint32 = null (id: 0);
+  memory_bytes:uint64 = null (id: 1);
+}
+
+/// An execution service registered with this project's host.
 table ExecutionService {
   /// Logical ID used by Card settings, independent of the host's name.
   id:string (id: 0, required);
   native_system:string (id: 1, required);
   /// Systems enabled for execution. Builds also depend on Nix configuration.
   systems:[string] (id: 2, required);
+  kind:ExecutionServiceKind = local (id: 3);
+  available:bool = true (id: 4);
 }
 
 table ProjectSnapshot {
@@ -924,6 +933,10 @@ table InvocationSummary {
   environment_id:string (id: 16);
   /// Logical service that started this Card's execution, if any.
   execution_service:string (id: 17);
+  execution_job_id:string (id: 18);
+  execution_system:string (id: 19);
+  execution_resources:ExecutionResources (id: 20);
+  execution_state:Tsugumi.Data.RemoteExecutionState (id: 21);
 }
 
 table StageTime {

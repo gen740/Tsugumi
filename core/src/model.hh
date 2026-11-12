@@ -21,6 +21,7 @@ using Phase = Tsugumi::Data::Phase;
 using StageOutcome = Tsugumi::Data::StageOutcome;
 using LogStream = Tsugumi::Data::LogStream;
 using PortKind = Tsugumi::Data::PortKind;
+using RemoteExecutionState = Tsugumi::Data::RemoteExecutionState;
 
 int64_t now_ms();
 
@@ -103,6 +104,11 @@ struct BuildEnvironmentData {
   std::vector<std::string> paths;
 };
 
+struct ExecutionResources {
+  uint32_t cpu_millis;
+  uint64_t memory_bytes;
+};
+
 struct InvocationSummaryData {
   std::string run_id;
   CardPath card;
@@ -125,6 +131,10 @@ struct InvocationSummaryData {
   std::string environment_id;
   std::string params_json;  // the invocation's parameters, not the current document
   std::string execution_service;
+  std::string execution_job_id;
+  std::string execution_system;
+  std::optional<ExecutionResources> execution_resources;
+  std::optional<RemoteExecutionState> execution_state;
 };
 
 // A value travelling on a port. `type` is the port message type.
@@ -135,6 +145,9 @@ struct Value {
   std::string bytes;
   std::optional<std::string> artifact_id;
 };
+
+auto with_path(const Value& value, const std::string& path) -> Value;
+auto path_value(const Value& value) -> std::optional<std::string>;
 
 struct InputSourceData {
   std::string port;

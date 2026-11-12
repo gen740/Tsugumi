@@ -31,6 +31,7 @@ class Utf8Decoder {
 struct WorkerSpawn {
   std::string worker_binary;
   std::string bash;
+  std::string store_path = "/nix/store";
   CardBuild build;
   // The worker's own folder: work/ and tmp/ for Cards without filesystem:
   // true, scripts/ for preRun / a bash run / postRun. Created with the worker

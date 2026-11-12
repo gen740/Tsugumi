@@ -86,13 +86,19 @@ export function comparedConditions(left?: ComparedCard, right?: ComparedCard): C
     ({ name, left: x, right: y, difference: !a || !b ? 'changed' : !known ? 'unknown' : x === y ? 'same' : 'changed' })
   const environment = (v?: R.InvocationSummaryT) => v && (s(v.environmentId) || L('記録なし'))
   const service = (v?: R.InvocationSummaryT) => s(v?.executionService) === 'local' ? L('プロジェクトの実行環境') : s(v?.executionService) || undefined
-  const method = (v?: R.InvocationSummaryT) => s(v?.emulator) ? L('エミュレーション: {0}', s(v?.emulator)) : service(v) ? L('直接実行') : undefined
+  const method = (v?: R.InvocationSummaryT) => {
+    if (s(v?.emulator)) return L('エミュレーション: {0}', s(v?.emulator))
+    const id = s(v?.executionService)
+    return id === 'local' ? L('直接実行') : id ? 'SSH' : undefined
+  }
   const fields = [
     // Recorded on one side only (a Card that stopped before its build, say): not comparable.
     field(L('環境'), environment(a), environment(b), Boolean(s(a?.environmentId)) === Boolean(s(b?.environmentId))),
     field(L('実行方式'), method(a), method(b), !!method(a) && !!method(b)),
     field(L('実行サービス'), service(a), service(b), !!service(a) && !!service(b)),
   ]
+  const aSystem = s(a?.executionSystem) || undefined, bSystem = s(b?.executionSystem) || undefined
+  if (aSystem || bSystem) fields.push(field(L('CPU アーキテクチャ'), aSystem, bSystem, !!aSystem && !!bSystem))
   const x = left ? inputSources(left) : new Map<string, string>(), y = right ? inputSources(right) : new Map<string, string>()
   const available = (c: ComparedCard | undefined, source: string | undefined) => !c || !!source || !!c.record?.record && c.record.record.recordIo !== false
   const other = (c?: ComparedCard) => c?.record?.record ? L('この実行の Card からは届いていません') : undefined

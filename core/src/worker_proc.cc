@@ -226,7 +226,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
       throw Failed(FailureKind::permission_denied,
                    "sandbox: true needs bubblewrap, which this environment does not provide; refusing to run unsandboxed");
     spec.argv = {bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--cap-drop", "ALL",
-                 "--ro-bind", "/nix/store", "/nix/store", "--proc", "/proc", "--dev", "/dev",
+                 "--ro-bind", sp.store_path, "/nix/store", "--proc", "/proc", "--dev", "/dev",
                  "--tmpfs", "/tmp"};
     // A development build's worker lives outside /nix/store: that one file is
     // shown read-only, as the Seatbelt profile allows it (the image's is in the store).

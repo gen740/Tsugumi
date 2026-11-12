@@ -47,6 +47,8 @@ struct BuildRequest {
   uint32_t jobs = 1;
   uint32_t cores = 1;
   std::optional<uint64_t> timeout_seconds;
+  std::string remote_system;
+  std::filesystem::path derivation_archive;
   const std::atomic<bool>* cancel = nullptr;
   std::function<void(const std::string&)> log;  // build output lines
   std::function<void(Phase)> on_phase;          // evaluate, then build (only when the store lacks the result)

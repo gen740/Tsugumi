@@ -792,8 +792,9 @@ rec {
   #            Cards read through inputs.upstream."<path>".exports
   # Whether the worker stays across invocations and runs (reuseWorker) is a
   # setting of the Card (_card.json), not of its build.
-  manifest =
-    card:
+  manifest = manifestFor false;
+  manifestFor =
+    remote: card:
     let
       known = [ "sdk" "run" "preRun" "postRun" "exports" ];
       unknown = lib.subtractLists known (builtins.attrNames card);
@@ -806,7 +807,11 @@ rec {
     in
     assert lib.assertMsg (unknown == [ ]) "unknown Card attributes: ${toString unknown} (known: ${toString known})";
     pkgs.writeText "tsugumi-card.json" (builtins.toJSON (
-      { run = body; }
+      { run = body // lib.optionalAttrs remote { worker = "${worker}/bin/tsugumi-worker"; }; }
+      // lib.optionalAttrs remote {
+        shell = "${pkgs.bash}/bin/bash";
+        path = lib.makeBinPath (with pkgs; [ bash coreutils findutils gnugrep gnused gawk gnutar gzip jq ]);
+      }
       // lib.optionalAttrs (card ? preRun) { inherit (card) preRun; }
       // lib.optionalAttrs (card ? postRun) { inherit (card) postRun; }
     ));

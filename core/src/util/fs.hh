@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -42,6 +43,8 @@ bool resolves_inside(const stdfs::path& root, const stdfs::path& p);
 struct Listing {
   std::vector<std::string> files;
   std::vector<std::string> links;
+  std::vector<std::string> directories;
+  std::vector<std::string> special;
 };
 Listing list_tree(const stdfs::path& root);
 
@@ -50,7 +53,9 @@ Listing list_tree(const stdfs::path& root);
 // checked file for a link after the check gets an error, never another file.
 // `rel` is relative to root.
 std::string read_beneath(const stdfs::path& root, const stdfs::path& rel);
-Listing list_beneath(const stdfs::path& root, const stdfs::path& rel);
+auto stream_beneath(const stdfs::path& root, const stdfs::path& rel, uint64_t limit,
+                    const std::function<void(std::string_view)>& consume) -> uint64_t;
+Listing list_beneath(const stdfs::path& root, const stdfs::path& rel, size_t max_entries = SIZE_MAX);
 
 // Exclusive non blocking advisory lock held for the lifetime of the object.
 class FileLock {

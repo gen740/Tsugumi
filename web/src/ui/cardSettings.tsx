@@ -556,9 +556,9 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
       x.meta = meta
     }),
   })
-  const toggle = (n: string, label: string, fallback: boolean, help?: string) => (
+  const toggle = (n: string, label: string, fallback: boolean, help?: string, disabled = false) => (
     <Row label={label} help={help}>
-      <Toggle checked={bool(get(def, n)) ?? fallback} onChange={(v) => model.setSetting(n, v === fallback ? undefined : v)} />
+      <Toggle checked={bool(get(def, n)) ?? fallback} disabled={disabled} onChange={(v) => model.setSetting(n, v === fallback ? undefined : v)} />
     </Row>
   )
   const numberField = (n: string, label: string, fallback: string) => (
@@ -580,15 +580,33 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
   const params = arr(get(def, 'params')) ?? []
   const diags = session.resolution.get(model.cardKey)?.diagnostics ?? []
   const kind = model.kind
-  const serviceId = str(get(def, 'executionService')) ?? 'local'
+  const serviceSetting = string('executionService', 'local')
+  const serviceId = serviceSetting.value
   const service = session.executionServices.find((e) => s(e.id) === serviceId)
   const nativeSystem = s(service?.nativeSystem)
   const systems = service?.systems.map(s) ?? []
   const system = string('system', '')
   const unavailable = !!system.value && !systems.includes(system.value)
-  const serviceLabel = nativeSystem.endsWith('-linux') ? `Linux (${nativeSystem})`
-    : nativeSystem.endsWith('-darwin') ? `macOS (${nativeSystem})`
-      : session.executionServices.length ? serviceId : L('情報なし')
+  const serviceLabel = (entry: typeof service) => {
+    if (!entry) return session.executionServices.length ? serviceId : L('情報なし')
+    const id = s(entry.id), native = s(entry.nativeSystem)
+    if (id !== 'local') return entry.available ? `SSH (${id})` : L('SSH（{0}、接続未確認）', id)
+    if (native.endsWith('-linux')) return `Linux (${native})`
+    if (native.endsWith('-darwin')) return `macOS (${native})`
+    return id
+  }
+  const resources = get(def, 'executionResources')
+  const resource = (name: string, label: string, example: string) => (
+    <Row label={label}>
+      <TextField value={numText(get(resources, name)) ?? str(get(resources, name)) ?? ''} placeholder={example} style={{ width: 140 }}
+        onChange={(value) => {
+          const text = value.trim()
+          const next = isObj(resources) ? clone(resources) as JObj : obj()
+          next.set(name, !text ? undefined : /^[0-9]+$/.test(text) ? new JNum(text.replace(/^0+(?=\d)/, '')) : text)
+          model.setSetting('executionResources', next.size ? next : undefined)
+        }} />
+    </Row>
+  )
   return (
     <Form>
       <Section>
@@ -645,8 +663,21 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
           {kind === 'code' && (
             <>
               {timeoutField('buildTimeoutSeconds', L('ビルドの期限（秒）'))}
-              <Value label={L('実行サービス')} value={serviceLabel} />
-              <Row label={L('CPU アーキテクチャ')} help={L('実行環境の既定と異なる CPU アーキテクチャではエミュレーションを使います。')}>
+              {session.executionServices.length > 1 || !service && session.executionServices.length ? (
+                <Row label={L('実行サービス')}>
+                  <Select {...serviceSetting} options={[
+                    ...session.executionServices.map((entry) => ({ value: s(entry.id), label: serviceLabel(entry), disabled: !entry.available })),
+                    ...(!service ? [{ value: serviceId, label: serviceId, disabled: true }] : []),
+                  ]} />
+                </Row>
+              ) : <Value label={L('実行サービス')} value={serviceLabel(service)} />}
+              {session.environment.state === 'ready' && session.environment.executionScopeUnavailable && (
+                <Row><span className="caption">{L('このプロジェクトのフォルダで作成時刻を取得できないため、外部の実行サービスを使用できません。')}</span></Row>
+              )}
+              {serviceId !== 'local' && (!service || !service.available) && (
+                <Row><span className="caption">{L('選択した実行サービスに接続できません。')}</span></Row>
+              )}
+              <Row label={L('CPU アーキテクチャ')} help={L('選択した実行サービスで利用できる CPU アーキテクチャを選びます。')}>
                 <Select {...system} options={[
                   { value: '', label: nativeSystem ? L('この実行環境の既定（{0}）', nativeSystem) : L('この実行環境の既定') },
                   ...systems.map((value) => ({ value, label: value })),
@@ -656,13 +687,29 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
               {service && unavailable && (
                 <Row><span className="label caption"><Icon name="exclamationmark.triangle" />{L('この実行環境では {0} を実行できません。', system.value)}</span></Row>
               )}
+              {serviceId !== 'local' && <>
+                <Row><span className="caption secondary">{L('外部の実行サービスでは CPU とメモリの上限を指定します。SSH ホストのリソースは他のジョブと共有します。')}</span></Row>
+                {resource('cpuMillis', L('CPU 上限（ミリコア）'), '1000')}
+                {resource('memoryBytes', L('メモリ上限（バイト）'), '1073741824')}
+              </>}
+              {resources !== undefined && <Row>
+                {serviceId === 'local' && <span className="caption">{L('この実行サービスではリソースを指定できません。')}</span>}
+                <Button kind="borderless" onClick={() => model.setSetting('executionResources', undefined)}>{L('リソース指定を削除')}</Button>
+              </Row>}
               {toggle('reuseWorker', L('worker の状態を残す'), false,
-                L('オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。'))}
+                L('オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。'),
+                serviceId !== 'local' && bool(get(def, 'reuseWorker')) !== true)}
+              {serviceId !== 'local' && bool(get(def, 'reuseWorker')) === true && (
+                <Row><span className="caption">{L('外部の実行サービスでは worker の状態を残せません。')}</span></Row>
+              )}
               {toggle('filesystem', L('作業・出力領域を使う'), false)}
               <Row label={L('ファイルアクセスを制限')}>
-                <Toggle checked={bool(get(def, 'sandbox')) ?? true}
-                  onChange={(v) => (v ? model.setSetting('sandbox', undefined) : setConfirmSandboxOff(true))} />
+                <Toggle checked={bool(get(def, 'sandbox')) ?? true} disabled={serviceId !== 'local' && bool(get(def, 'sandbox')) !== false}
+                  onChange={(v) => (v ? model.setSetting('sandbox', undefined) : serviceId === 'local' && setConfirmSandboxOff(true))} />
               </Row>
+              {serviceId !== 'local' && bool(get(def, 'sandbox')) === false && (
+                <Row><span className="caption">{L('外部の実行サービスにはファイルアクセスの制限が必要です。')}</span></Row>
+              )}
               {confirmSandboxOff && (
                 <Confirm title={L('この Card を隔離なしで実行しますか？')} confirm={L('隔離なしで実行する')}
                   message={L('Web UI の tsugumid はこのマシンで直接動いています。隔離をやめると、この Card はあなたの権限でこのマシンのファイル・ネットワーク・プロセスに触れられます。Linux で他人の Card を動かすときは、tsugumid を隔離されたコンテナの中で動かしてください。')}
@@ -675,7 +722,7 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
       {kind === 'code' && (
         <Section title={<span className="label"><Icon name="flask" />Experimental</span>}>
           {toggle('network', L('ネットワークへのアクセスを許可する'), false, L('オフ（デフォルト）: preRun・run・postRun のどれからも外へ通信できません。'))}
-          <Row><HostFoldersEditor model={model} /></Row>
+          <Row><HostFoldersEditor model={model} remote={serviceId !== 'local'} /></Row>
         </Section>
       )}
       {diags.length > 0 && (
@@ -696,7 +743,7 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
 /** Folders of the host this Card's worker may read (Experimental): each at
  *  /host/<name> in the worker, read-only unless allowed to write. Only the
  *  folder's path is kept in the project. */
-function HostFoldersEditor({ model }: { model: CardEditorModel }) {
+function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: boolean }) {
   const folders = arr(get(model.definition, 'hostFolders')) ?? []
   const usable = app.status?.hostFolders ?? true
   const [picking, setPicking] = useState(false)
@@ -734,7 +781,7 @@ function HostFoldersEditor({ model }: { model: CardEditorModel }) {
       <div className="row center">
         <span>{L('ホストのフォルダへのアクセスを許可する')}</span>
         <span className="spacer" />
-        <Button disabled={!usable} onClick={() => setPicking(true)}>{L('フォルダを追加…')}</Button>
+        <Button disabled={!usable || remote} onClick={() => setPicking(true)}>{L('フォルダを追加…')}</Button>
       </div>
       {folders.map((f, i) => {
         const p = str(get(f, 'path')) ?? ''
@@ -745,16 +792,17 @@ function HostFoldersEditor({ model }: { model: CardEditorModel }) {
             <div className="col flex1 min0">
               <span className="callout ellipsis" title={p}>{p}</span>
               <span className="caption" style={{ color: ok && usable ? 'var(--secondary)' : 'var(--orange)' }}>
-                {!usable ? L('この Web UI では使えません（実行すると失敗します）') : ok ? `/host/${str(get(f, 'name')) ?? ''}` : L('このホストにはありません（実行すると失敗します）')}
+                {remote ? L('外部の実行サービスにはホストのフォルダを共有できません。') : !usable ? L('この Web UI では使えません（実行すると失敗します）') : ok ? `/host/${str(get(f, 'name')) ?? ''}` : L('このホストにはありません（実行すると失敗します）')}
               </span>
             </div>
-            <Toggle kind="checkbox" label={L('書き込み')} help={L('オフ（デフォルト）: 読み取り専用')} checked={bool(get(f, 'write')) ?? false}
+            <Toggle kind="checkbox" label={L('書き込み')} help={L('オフ（デフォルト）: 読み取り専用')} checked={bool(get(f, 'write')) ?? false} disabled={remote}
               onChange={(v) => edit((l) => isObj(l[i]) && (l[i] as JObj).set('write', v ? true : undefined))} />
             <Button kind="borderless" iconOnly icon="minus.circle" help={L('削除')} onClick={() => edit((l) => l.splice(i, 1))} />
           </div>
         )
       })}
-      {!usable && <div className="caption" style={{ color: 'var(--orange)' }}>{L('macOS 上の Web UI では、フォルダを Card に共有できません（Mac アプリの共通 VM が必要です）。この設定のある Card を実行すると失敗します。')}</div>}
+      {remote ? <div className="caption secondary">{L('外部の実行サービスにはホストのフォルダを共有できません。')}</div>
+        : !usable && <div className="caption" style={{ color: 'var(--orange)' }}>{L('macOS 上の Web UI では、フォルダを Card に共有できません（Mac アプリの共通 VM が必要です）。この設定のある Card を実行すると失敗します。')}</div>}
       <div className="caption secondary">{L('選んだフォルダだけを、この Card の worker から /host/<名前> として読めます。プロジェクトに保存するのはフォルダの場所だけです。追加・変更はプロジェクトを開き直すと反映されます。')}</div>
       {picking && <FolderPicker message={L('worker から読めるようにするフォルダを選んでください')} onClose={() => setPicking(false)} onPick={(p) => { setPicking(false); add(p) }} />}
     </div>

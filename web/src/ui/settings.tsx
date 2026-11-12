@@ -18,8 +18,9 @@ import { Icon } from './icons'
 import * as projectViews from './projectViews'
 import { FolderPicker } from './sidebar'
 import { adoptLanguage, L, language, type Language } from '../i18n'
+import { ExecutionServicesSettings } from './executionServices'
 
-type Category = 'general' | 'appearance' | 'editor' | 'shortcuts' | 'skills' | 'api' | 'connections'
+type Category = 'general' | 'appearance' | 'editor' | 'shortcuts' | 'skills' | 'api' | 'connections' | 'executionServices'
 const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
   { id: 'general', title: L('一般'), icon: 'gearshape', storage: L('このブラウザ（localStorage）') },
   { id: 'appearance', title: L('外観'), icon: 'paintpalette', storage: L('このブラウザ（localStorage）') },
@@ -28,6 +29,7 @@ const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
   { id: 'skills', title: 'Skills', icon: 'wand.and.stars', storage: L('このホスト（Tsugumi web サーバーの設定）') },
   { id: 'api', title: 'API', icon: 'key', storage: L('このホスト（API キーは macOS のキーチェーン）') },
   { id: 'connections', title: L('外部接続'), icon: 'network', storage: L('表示のみ（開いているプロジェクトの接続先）') },
+  { id: 'executionServices', title: L('実行サービス'), icon: 'network', storage: L('このホスト（Tsugumi web サーバーの設定）') },
 ]
 
 /** The settings of one project: kept in the project (or its environment). */
@@ -142,6 +144,9 @@ export function ApplicationSettings() {
               {category.id === 'skills' && <SkillSettings />}
               {category.id === 'api' && <APISettings />}
               {category.id === 'connections' && <ConnectionSettings />}
+              {category.id === 'executionServices' && <ExecutionServicesSettings changed={() => {
+                void Promise.allSettled(projects.map((p) => p.refreshExecutionServices()))
+              }} />}
             </>
           )}
         </div>

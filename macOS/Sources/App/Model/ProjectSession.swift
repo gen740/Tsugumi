@@ -88,6 +88,7 @@ struct CardRunState: Equatable {
   var invocation: UInt64
   var phase: Tsugumi_Data_Phase
   var failure: String?
+  var executionState: Tsugumi_Data_RemoteExecutionState?
   /// Stages of the latest invocation, in the order the core ran them.
   var stages: [StageRecord] = []
   var cached = false
@@ -101,6 +102,29 @@ struct CardRunState: Equatable {
   var readyAt: Int64?
 
   var stage: Stage? { stages.last.map(\.stage) ?? (state == .waiting || state == .ready ? .waiting : nil) }
+}
+
+extension Tsugumi_Data_RemoteExecutionState {
+  var label: String {
+    switch self {
+    case .queued: return String(localized: "実行サービスで待機中")
+    case .running: return String(localized: "実行中")
+    case .disconnected: return String(localized: "接続断（結果未確認）")
+    case .cancelling: return String(localized: "取り消し確認中")
+    case .succeeded: return String(localized: "成功")
+    case .failed: return String(localized: "失敗")
+    case .cancelled: return String(localized: "停止済み")
+    case .interrupted: return String(localized: "中断")
+    default: return String(localized: "不明")
+    }
+  }
+
+  var pendingLabel: String? {
+    switch self {
+    case .queued, .disconnected, .cancelling: return label
+    default: return nil
+    }
+  }
 }
 
 /// One invocation on the run timeline (times in ms since 1970, from the core).
@@ -420,6 +444,7 @@ final class ProjectSession {
   private(set) var cardStates: [CardKey: CardRunState] = [:]
   private(set) var displays: [CardKey: DisplaySnapshot] = [:]
   private(set) var lastFinished: Date?
+  private(set) var remoteHistoryRevision = 0
   /// Invocations of the current (or last) run, for the timeline.
   private(set) var timeline: [TimelineEntry] = []
   var runActive: Bool {
@@ -742,6 +767,7 @@ final class ProjectSession {
     let n = inv.invocation ?? 0
     if prev == nil || prev!.invocation <= n {
       var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.diagnostic)
+      next.executionState = inv.executionState
       // Each notification carries the invocation's stages so far.
       next.stages = inv.stages.compactMap { $0 }.compactMap { t in
         Stage(phase: t.phase).map { StageRecord(stage: $0, outcome: t.outcome, start: t.start, end: t.end) }
@@ -831,6 +857,12 @@ final class ProjectSession {
       }
     case .runcardchanged:
       if let inv = (v.value as? Tsugumi_RPC_RunCardChangedT)?.invocation {
+        if inv.executionState != .unspecified {
+          remoteHistoryRevision += 1
+          logRevision += 1
+          // Recovery also publishes events for runs already in history.
+          guard e.runId == currentRunId else { break }
+        }
         noteInvocation(inv)
         sampleClock(inv.endedAt ?? (inv.state == .running ? inv.stages.last??.start : nil))
         recordTimeline(key(inv.card.path), inv)
@@ -1395,6 +1427,11 @@ final class ProjectSession {
   }
 
   var rpc: RPCClient? { client }
+
+  func refreshExecutionServices() async {
+    guard let client, let snapshot = try? await client.inspect(), self.client === client else { return }
+    executionServices = snapshot.executionServices.compactMap { $0 }
+  }
 
   /// Duplicates the confirmed document of one revision into a new project:
   /// documents and sources read over RPC, revision re-checked after the last

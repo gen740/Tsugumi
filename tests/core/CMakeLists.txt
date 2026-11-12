@@ -65,7 +65,14 @@ add_dependencies(tsugumi_rpc_cli_tests tsugumi-rpc tsugumi-agentd tsugumid-mock)
 gtest_discover_tests(tsugumi_rpc_cli_tests TEST_PREFIX "core_rpc_cli." DISCOVERY_MODE PRE_TEST
   PROPERTIES TIMEOUT 30)
 
+add_executable(tsugumi_remote_result_tests remote_result_test.cc)
+target_include_directories(tsugumi_remote_result_tests PRIVATE ${_core_headers})
+target_link_libraries(tsugumi_remote_result_tests PRIVATE tsugumi_core GTest::gtest_main)
+target_compile_options(tsugumi_remote_result_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
+gtest_discover_tests(tsugumi_remote_result_tests TEST_PREFIX "core_remote." DISCOVERY_MODE PRE_TEST
+  PROPERTIES TIMEOUT 30)
+
 if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumid-mock tsugumi_agent_rpc_tests tsugumi_rpc_cli_tests
+  install(TARGETS tsugumid-mock tsugumi_agent_rpc_tests tsugumi_rpc_cli_tests tsugumi_remote_result_tests
     RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()
