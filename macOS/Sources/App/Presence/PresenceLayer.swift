@@ -201,7 +201,7 @@ struct PresenceLayer: View {
     let label = lead ? "Agent" : presence.label
     ZStack(alignment: .topLeading) {
       threads(at: t)
-      if avatar != .none, geometry.zoom >= WritingPanel.minimumZoom, let code = presence.liveCode(at: t) {
+      if WritingPanel.shows(avatar: avatar, zoom: geometry.zoom), let code = presence.liveCode(at: t) {
         WritingPanel(code: code, card: geometry.card(code.card), geometry: geometry,
                      clear: -BirdMetrics.feetToCenter.dy * CGFloat(geometry.zoom) + PresenceBubble.rise(avatar, zoom: z),
                      canvas: size, color: color, slot: presence.tint)
@@ -302,6 +302,8 @@ struct WritingPanel: View {
   /// (the bubble beside it does not scale at all).
   static let size = CGSize(width: 300, height: 112)
   static let minimumZoom = 0.5
+  /// Not when the Agent is hidden, and not where its lines would be too small to read.
+  static func shows(avatar: AgentAvatar, zoom: Double) -> Bool { avatar != .none && zoom >= minimumZoom }
   static let gap: CGFloat = 8
   static let lines = 5
   /// The window's bars float over the canvas here.

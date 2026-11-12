@@ -183,20 +183,23 @@ final class AgentPresence {
         beats[i].length = now.timeIntervalSince(beats[i].start) + Timing.codeStalled
       }
     } else if !w.done {
-      // Resume an unfinished stream whose earlier scene has ended.
+      // It waited behind the bird's other scenes, or its earlier scene has ended: it may have room now.
       startCode(LiveCode(card: key([id]), file: file, text: w.text, patch: w.patch), now: now)
     }
     if w.done { arrived(now: now) }
   }
 
   private func startCode(_ code: LiveCode, now: Date) {
-    // Current streamed work takes precedence over queued presentation.
-    beats.removeAll { $0.start >= now }
-    if let i = beats.indices.last, beats[i].end > now {
+    // The file arriving now replaces older files: one that still waits is not
+    // shown, and the one on the screen ends. The scenes of a change that was
+    // saved (its Cards written out, its wires threaded) are what happened and
+    // stay; the new file shows once they have played, with all that has arrived.
+    beats.removeAll { $0.code != nil && $0.start >= now }
+    if let i = beats.lastIndex(where: { $0.code != nil && $0.end > now }) {
       beats[i].length = now.timeIntervalSince(beats[i].start)
     }
     enqueue(.compose(code.card), now: now)
-    // Locate the new scene after enqueue has discarded expired scenes.
+    // Not there (too far behind): not shown yet. Not by the count: enqueue also drops old scenes.
     guard let i = beats.indices.last, beats[i].beat == .compose(code.card), beats[i].code == nil else { return }
     let id = nextCode
     nextCode += 1
@@ -210,7 +213,8 @@ final class AgentPresence {
   private func arrived(now: Date) {
     defer { liveID = nil }
     guard let liveID, let i = beats.indices.last, beats[i].code == liveID else { return }
-    beats[i].length = now.timeIntervalSince(beats[i].start) + Timing.codeHold
+    // One that still waits behind other scenes holds from when it starts.
+    beats[i].length = max(0, now.timeIntervalSince(beats[i].start)) + Timing.codeHold
   }
 
   /// The call ended, was asked again or was given up. What a call that went

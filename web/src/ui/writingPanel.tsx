@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 import { guide } from '../model/guide'
 import { birdColor, helperClear, HelperTeam, leadColor } from '../model/helperBirds'
-import { LiveCode, LiveCodePlayer, PANEL, panelFrame, panelFreeFrame, panelScale, panelTail } from '../model/liveCode'
+import { LiveCode, LiveCodePlayer, PANEL, panelFrame, panelFreeFrame, panelScale, panelsNow, panelsShown, panelTail } from '../model/liveCode'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
 import { CardKey } from '../model/session'
@@ -29,16 +29,12 @@ export function WritingPanels({ writers, team, known, rect, obstacles, screen, z
   useEffect(() => {
     // Frames only while there is something to show.
     const t = setInterval(() => {
-      const now = Date.now() / 1000
-      const next = [...writers].flatMap(([who, w]) => {
-        const code = w.at(now)
-        return code ? [{ ...code, who }] : []
-      })
+      const next = panelsNow(writers, Date.now() / 1000)
       setCodes((before) => (before.length || next.length ? next : before))
     }, 50)
     return () => clearInterval(t)
   }, [writers])
-  if (!guide.present || zoom < PANEL.minZoom) return null
+  if (!panelsShown(guide.present, zoom)) return null
   const m = PANEL.margins
   const view = { x: m.left, y: m.top, width: size.width - m.left - m.right, height: size.height - m.top - m.bottom }
   const s = panelScale(zoom)

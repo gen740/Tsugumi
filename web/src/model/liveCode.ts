@@ -194,6 +194,18 @@ export class LiveCodePlayer {
   }
 }
 
+/** What every writer shows at `now`: a panel for each (`who`: '' is the Agent, otherwise a helper's name),
+ *  also when two of them write the same file. */
+export function panelsNow(writers: Iterable<[string, LiveCodePlayer]>, now: number): (LiveCode & { who: string })[] {
+  return [...writers].flatMap(([who, w]) => {
+    const code = w.at(now)
+    return code ? [{ ...code, who }] : []
+  })
+}
+
+/** Not when the Agent is hidden, and not where the lines would be too small to read. */
+export const panelsShown = (agentPresent: boolean, zoom: number) => agentPresent && zoom >= PANEL.minZoom
+
 export interface Box { x: number; y: number; width: number; height: number }
 
 /** The panel at scale 1, its gap to what is around it and how many lines it shows. */

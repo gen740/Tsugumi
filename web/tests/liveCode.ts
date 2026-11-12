@@ -1,6 +1,6 @@
 // Actual streamed source text, including patches, is shown without synthetic typing.
 import assert from 'node:assert/strict'
-import { CODE_TIMING as T, fileOfCard, LiveCodePlayer, PANEL, panelFrame, panelFreeFrame, panelScale, panelTail, SourceWritingScanner } from '../src/model/liveCode'
+import { CODE_TIMING as T, fileOfCard, LiveCodePlayer, PANEL, panelFrame, panelFreeFrame, panelScale, panelsNow, panelsShown, panelTail, SourceWritingScanner } from '../src/model/liveCode'
 
 const args = JSON.stringify({ changes: [{ value_type: 'PutSource', value: { path: 'definitions/a/m.py', bytes: 'é\t"x"\n😀' } }] })
 for (let cut = 1; cut < args.length; cut++) {
@@ -22,6 +22,21 @@ for (let cut = 1; cut < patchArgs.length; cut++) {
   assert.equal(scanner.current?.text, '置換 😀', 'last replacement is not passed off as a whole file')
   assert.equal(scanner.current?.patch, true)
   assert.equal(scanner.current?.done, true)
+}
+// Escapes the model writes out, a surrogate pair among them, cut anywhere.
+{
+  const escapedArgs = '{"value":{"path":"definitions/a/b","bytes":"\\u3042\\ud83d\\ude00\\n"}}'
+  for (let cut = 1; cut < escapedArgs.length; cut++) {
+    const scanner = new SourceWritingScanner()
+    scanner.feed(escapedArgs.slice(0, cut)); scanner.feed(escapedArgs.slice(cut))
+    assert.equal(scanner.current?.text, 'あ\u{1F600}\n', `escaped text cut at ${cut}`)
+  }
+  // Half of the pair has arrived: not half a character on the screen.
+  const p = new LiveCodePlayer()
+  p.input(0, '{"value":{"path":"definitions/a/b","bytes":"\\u3042\\ud83d', 100)
+  assert.equal(p.at(100)?.text, 'あ')
+  p.input(0, '\\ude00', 100.1)
+  assert.equal(p.at(100.1)?.text, 'あ\u{1F600}')
 }
 assert.deepEqual(fileOfCard('definitions/a/src/m.py'), { card: 'a', file: 'src/m.py' })
 assert.equal(fileOfCard('layout.json'), undefined)
@@ -64,6 +79,62 @@ const file = (card: string, bytes = 'code') => JSON.stringify({ value: { path: `
   p.input(3, '{"changes":[{"value_type":"RemoveSource","value":{"path":"definitions/c/m.py"}}]}', 102)
   assert.equal(p.at(102), undefined, 'a path without source content is not code being written')
 }
+
+// What is not a Card's file never shows, and the next call starts afresh.
+{
+  const p = new LiveCodePlayer()
+  p.input(0, '{"changes":[{"value":{"path":"layout.json","bytes":"{', 100)
+  assert.equal(p.at(100), undefined, 'layout.json is not code being written')
+  p.input(0, '\\"cards\\":{}}"}}]}', 100.1)
+  assert.equal(p.at(100.1), undefined)
+  p.input(1, file('c'), 101)
+  assert.equal(p.at(101.5)?.card, 'c')
+}
+// A stream that stops half way leaves nothing: a failed call, or a stopped answer.
+{
+  const p = new LiveCodePlayer()
+  p.input(0, '{"changes":[{"value":{"path":"definitions/a/m.py","bytes":"half', 100)
+  assert.equal(p.at(100.2)?.text, 'half')
+  p.ended(false, 100.3)
+  assert.equal(p.at(100.3), undefined)
+  assert.equal(p.at(104), undefined)
+}
+// All of it has arrived and nothing more comes (the save waits for an approval):
+// never marked as saved, and gone after its hold.
+{
+  const p = new LiveCodePlayer()
+  p.input(0, file('a').slice(0, -1), 100)
+  assert.equal(p.at(100.1)?.saved, false)
+  assert.equal(p.at(100 + T.hold + 0.01), undefined)
+}
+// A run ends the window.
+{
+  const p = new LiveCodePlayer()
+  p.input(0, file('a'), 100)
+  p.ended(true, 100.1); p.saved(100.1)
+  assert.equal(p.at(100.2)?.saved, true)
+  p.stop()
+  assert.equal(p.at(100.2), undefined)
+}
+// Every writer has its own panel, also when two write the same file.
+{
+  const lead = new LiveCodePlayer(), first = new LiveCodePlayer(), second = new LiveCodePlayer(), idle = new LiveCodePlayer()
+  lead.input(0, file('a', 'lead'), 100)
+  first.input(0, file('a', 'one'), 100)
+  second.input(0, file('a', 'two'), 100)
+  const writers = new Map([['', lead], ['first', first], ['second', second], ['idle', idle]])
+  assert.deepEqual(panelsNow(writers, 100.1).map((c) => [c.who, c.card, c.file, c.text]),
+    [['', 'a', 'm.py', 'lead'], ['first', 'a', 'm.py', 'one'], ['second', 'a', 'm.py', 'two']])
+  // One of them fails: only its panel goes.
+  first.ended(false, 100.2)
+  assert.deepEqual(panelsNow(writers, 100.2).map((c) => c.who), ['', 'second'])
+  assert.deepEqual(panelsNow(writers, 100 + T.hold + 0.01), [])
+}
+// Hidden with the Agent, and where the lines could not be read.
+assert.equal(panelsShown(true, 1), true)
+assert.equal(panelsShown(true, PANEL.minZoom), true)
+assert.equal(panelsShown(true, 0.4), false)
+assert.equal(panelsShown(false, 1), false)
 
 // The lines shown.
 assert.deepEqual(panelTail('a\nb', 5), ['a', 'b'])
