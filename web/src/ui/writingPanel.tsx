@@ -4,7 +4,8 @@
 import { useEffect, useState } from 'react'
 import { guide } from '../model/guide'
 import { birdColor, helperClear, HelperTeam, leadColor } from '../model/helperBirds'
-import { LiveCode, LiveCodePlayer, PANEL, panelFrame, panelFreeFrame, panelScale, panelTail } from '../model/liveCode'
+import { LiveCode, LiveCodePlayer, PANEL, panelFrame, panelFreeFrame, panelScale, panelsNow, panelsShown, panelTail } from '../model/liveCode'
+import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
 import { CardKey } from '../model/session'
 import { L } from '../i18n'
@@ -23,19 +24,17 @@ export function WritingPanels({ writers, team, known, rect, obstacles, screen, z
   zoom: number
   size: { width: number; height: number }
 }) {
+  useObserve(guide, prefs)
   const [codes, setCodes] = useState<(LiveCode & { who: string })[]>([])
   useEffect(() => {
     // Frames only while there is something to show.
     const t = setInterval(() => {
-      const now = Date.now() / 1000
-      const next = [...writers].flatMap(([who, w]) => {
-        const code = w.at(now)
-        return code ? [{ ...code, who }] : []
-      })
+      const next = panelsNow(writers, Date.now() / 1000)
       setCodes((before) => (before.length || next.length ? next : before))
     }, 50)
     return () => clearInterval(t)
   }, [writers])
+  if (!panelsShown(guide.present, zoom)) return null
   const m = PANEL.margins
   const view = { x: m.left, y: m.top, width: size.width - m.left - m.right, height: size.height - m.top - m.bottom }
   const s = panelScale(zoom)
@@ -50,19 +49,20 @@ export function WritingPanels({ writers, team, known, rect, obstacles, screen, z
       const f = card ? panelFrame(card, clear, s, view, others) : panelFreeFrame(s, view, others, slot)
       if (!f) return null
       const color = c.who ? birdColor(team.tint(c.who), prefs.dark) : team.out(Date.now() / 1000) ? leadColor(prefs.dark) : undefined
-      const lines = panelTail(c.text)
+      const lines = panelTail(c.text, c.patch ? PANEL.lines - 1 : PANEL.lines)
       // To the right of the Card; the line is hidden where they overlap.
       const x = card && Math.min(f.x + f.width, card.x + card.width) - 20 * s
       const from = card && (f.y + f.height <= card.y ? f.y + f.height : card.y + card.height)
       const to = card && (f.y + f.height <= card.y ? card.y : f.y)
       return (
-        <div key={c.card + c.file} aria-hidden style={{ display: 'contents', ...(color && { ['--bird' as string]: color }) }}>
+        <div key={c.who} aria-hidden style={{ display: 'contents', ...(color && { ['--bird' as string]: color }) }}>
           {card && to! > from! && <span className="cv-writing-line" style={{ left: x, top: from, height: to! - from! }} />}
           <div className="cv-writing" data-writing-card={c.card} style={{ left: f.x, top: f.y, width: f.width, height: f.height, ['--s' as string]: s }}>
             <div className="cv-writing-head">
               <span className="cv-writing-file"><span>{card ? c.file : `${c.card}/${c.file}`}</span></span>
-              <span className="cv-writing-state">{c.saved ? L('保存済み') : L('保存前')}</span>
+              <span className="cv-writing-state">{c.patch ? (c.saved ? L('差分・保存済み') : L('差分・保存前')) : c.saved ? L('保存済み') : L('保存前')}</span>
             </div>
+            {c.patch && <span className="cv-writing-state">{L('置換テキスト')}</span>}
             {lines.map((l, i) => (
               // The line being written shows its end, the ones above their beginning.
               <div key={i} className={i === lines.length - 1 ? 'cv-writing-row writing' : 'cv-writing-row'}><span>{l || ' '}</span></div>

@@ -480,6 +480,7 @@ export class ChatController extends Observable {
     switch (e.kind) {
       case 'toolInput':
         // Many a second, so nothing else changes: the panel looks for itself.
+        if (!writesSources(e.name)) return true
         this.writer(who).input(e.index, e.delta, now)
         if (!who && !this.demoMode) guide.writer = this.writer()
         return true
