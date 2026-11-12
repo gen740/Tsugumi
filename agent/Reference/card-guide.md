@@ -272,3 +272,36 @@ log. No plotting library is included: use Vega-Lite (at most 1 MiB of JSON), or 
 3. Run from the trigger Card (`run` with the trigger's id); a single Card run only works on inputs
    saved by an earlier whole run.
 4. `run_status` until it ends, then `run_record` of each Card; `log_range` (stream 2) for errors.
+
+## C# / .NET
+
+Set `language: "csharp"`. The Card body is a public `Card : Tsugumi.ICard` in `src/Card.cs`; implement `ValueTask RunAsync(Context context)`. Select the generated typed bindings and pinned runtime in `default.nix`:
+
+```nix
+{ pkgs, inputs, params }:
+let sdk = inputs.tsugumi.sdk { languages = [ "csharp" ]; };
+in { run = inputs.tsugumi.csharpCard { inherit sdk; src = ./src; }; }
+```
+
+`context.Inputs.<Port>` unpacks the generated object API (`inputs.<port>.<schema namespace>.<Table>T`); optional ports are nullable. `context.Parameters` is `params.ParamsT`; scalar fields are nullable, so use `??` with a default or throw `new Failure("validation_failed", "missing parameter")`. Emit each port with `context.Outputs.<Port>(new outputs.<port>.<namespace>.<Table>T { ... })`. Port names capitalize their first character. Read the exact schema instead of guessing namespaces.
+
+`DisplayText`, `DisplayMarkdown`, `DisplayScalar`, `DisplayTable`, `DisplayImage`, `DisplayLineChart`, `DisplayPoints`, `DisplayModule` and `Log` write into the current invocation. File/Directory messages contain `Value` paths; write under `OutputDirectory`, then emit the generated message. Text must be valid UTF-8 without embedded NUL. Input/param bytes are managed copies; native callbacks on a retained Context reject use after its invocation.
+
+Await all work belonging to `RunAsync`; pass `context.CancellationToken` to cancellable Tasks. Fire-and-forget Tasks are not joined. `OnRunStartAsync(Context)` resets per-run state; the Card instance and CLR persist across invocations only with `reuseWorker: true`. Exceptions produce structured failures and do not cross the native ABI.
+
+NuGet packages need both `lock = ./packages.lock.json;` (NuGet's own lock file, in the Card's folder) and `hash = "sha256-...";` in `csharpCard`. The lock is the only package list (its `Direct` entries become the references); `hash` is the NAR hash of the `.nupkg` files the lock names, fetched as `<name>-nuget-lock-<lock id>`. The build restores offline in locked mode; nothing is fetched while a Card runs. Never invent a lock, a `contentHash` or a `hash`, and do not add packages on your own: the person chooses them. The bundled `demos/csharp-calibration/definitions/calibrate` is a complete typed, parameterized example with a locked dependency, between C++ and Python Cards.
+
+When asked to make or update a lock:
+
+1. In the project shell, create a temporary .NET project using the Card's
+   framework (net10.0 by default). Put the requested packages in
+   `PackageReference` items and set `RestorePackagesWithLockFile=true`. For
+   example, `<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />`.
+2. From that temporary directory, run
+   `nix shell nixpkgs#dotnet-sdk_10 -c env DOTNET_GENERATE_ASPNET_CERTIFICATE=false dotnet restore`.
+   Copy the resulting `packages.lock.json` beside the Card's `default.nix`,
+   reload the project and confirm the resolved versions.
+3. Give `csharpCard` the arguments `lock = ./packages.lock.json; hash = pkgs.lib.fakeHash;`
+   and run the Card. Copy the `got: sha256-…` value from that Card's build log
+   (`log_range`, stream 4) into `hash`. Run again to check the offline restore.
+   Keep the lock and hash together when updating dependencies.
