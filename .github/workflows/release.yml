@@ -6,7 +6,8 @@
 # install.sh and install.ps1 (cli/) with
 # the files they take, tsugumi-macos-arm64.tar.gz and tsugumi-linux.tar.gz.
 #
-# Started by a tag v<major.minor.patch> that matches VERSION
+# Started by a tag v<major.minor.patch> or v<major.minor.patch>-rc.<number>.
+# The numeric version must match VERSION. An RC tag publishes a prerelease.
 # (macOS/tools/release.sh makes and pushes one), or by hand with a version:
 # then VERSION is set to it on main, committed and tagged here.
 name: Release
@@ -47,13 +48,16 @@ jobs:
             git commit -qm "Release $v" VERSION
           fi
           git tag -a "v$v" -m "Tsugumi $v"
-          git push origin HEAD:refs/heads/main "refs/tags/v$v"
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/v$v"
           echo "TAG=v$v" >> "$GITHUB_ENV"
       - name: The tag is the version in VERSION
         run: |
           tag="${TAG:-$GITHUB_REF_NAME}"
+          [[ "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-rc\.[1-9][0-9]*)?$ ]] || { echo "not a release tag: $tag" >&2; exit 1; }
+          version="${BASH_REMATCH[1]}"
+          test "$(cat VERSION)" = "$version"
           echo "TAG=$tag" >> "$GITHUB_ENV"
-          test "v$(cat VERSION)" = "$tag"
+          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-nix
         with:
           cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
@@ -81,7 +85,7 @@ jobs:
           app=dist/Tsugumi.app
           codesign --verify --deep --strict "$app"
           test "$(/usr/libexec/PlistBuddy -c 'Print :TsugumiChannel' "$app/Contents/Info.plist")" = release
-          test "v$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$TAG"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$PACKAGE_VERSION"
           (cd dist && ditto -c -k --sequesterRsrc --keepParent Tsugumi.app Tsugumi.zip && shasum -a 256 Tsugumi.zip > Tsugumi.zip.sha256)
           mkdir dist/dmg && ditto "$app" dist/dmg/Tsugumi.app && ln -s /Applications dist/dmg/Applications
           codesign --verify --deep --strict dist/dmg/Tsugumi.app
@@ -95,7 +99,7 @@ jobs:
           cli/package-linux.sh
           mkdir dist/check
           tar -xzf dist/tsugumi-macos-arm64.tar.gz -C dist/check
-          test "v$(dist/check/tsugumi/tsugumi --version)" = "$TAG"
+          test "$(dist/check/tsugumi/tsugumi --version)" = "$PACKAGE_VERSION"
           codesign --verify --strict dist/check/tsugumi/bin/tsugumi-vmhost
           codesign -d --entitlements - dist/check/tsugumi/bin/tsugumi-vmhost 2>/dev/null | grep -q com.apple.security.virtualization
           rm -rf dist/check
@@ -103,7 +107,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cat > notes.md <<'NOTES'
+          set -euo pipefail
+          release_flags=()
+          if [[ "$TAG" == *-rc.* ]]; then
+            release_flags=(--prerelease --latest=false)
+            cat > notes.md <<'NOTES'
+          This is a pre-release for testing. Download the assets from this release to install it manually. The app requires Apple silicon and macOS 26 or later.
+
+          For the command-line installer, set `TSUGUMI_VERSION` to the tag without its initial `v`. The default installer selects the latest stable release.
+          NOTES
+          else
+            cat > notes.md <<'NOTES'
           Apple silicon Mac / macOS 26 以降。インストール済みの Tsugumi は自動でこの版に更新されます（次に終了したとき）。
 
           新しく入れる場合は Tsugumi.dmg を開いて Applications へ入れます。ad-hoc 署名のため、ブラウザでダウンロードしたものは Gatekeeper に止められます。一度だけ `xattr -dr com.apple.quarantine /Applications/Tsugumi.app` を実行してください。
@@ -124,7 +138,8 @@ jobs:
           irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
           ```
           NOTES
+          fi
           gh release create "$TAG" dist/Tsugumi.zip dist/Tsugumi.zip.sha256 dist/Tsugumi.dmg cli/install.sh cli/install.ps1 \
             dist/tsugumi-macos-arm64.tar.gz dist/tsugumi-macos-arm64.tar.gz.sha256 \
             dist/tsugumi-linux.tar.gz dist/tsugumi-linux.tar.gz.sha256 \
-            --verify-tag --title "Tsugumi ${TAG#v}" --notes-file notes.md --generate-notes
+            --verify-tag --title "Tsugumi ${TAG#v}" --notes-file notes.md --generate-notes ${release_flags[@]+"${release_flags[@]}"}
