@@ -74,6 +74,7 @@
 "Attic・Cachix などのバイナリキャッシュから、署名を検証してビルド済みのパッケージを取得します。登録した鍵は、この Mac の全プロジェクトの実行環境で信頼されます。" = "Download prebuilt packages from binary caches such as Attic and Cachix after verifying their signatures. The registered signing keys are trusted by the execution environment for every project on this Mac.";
 "C# の処理" = "C# Card";
 "C++ の処理" = "C++ step";
+"CPU アーキテクチャ" = "CPU architecture";
 "Canvas に追加" = "Add to Canvas";
 "Canvas に配置" = "Place on the canvas";
 "Canvas（フォーカスがあるとき）" = "Canvas (when focused)";
@@ -311,6 +312,9 @@
 "この実行では呼び出されていません" = "Not invoked in this run";
 "この実行にはありません" = "Absent from this run";
 "この実行の Card からは届いていません" = "Not sent by a Card of this run";
+"この実行環境では %@ を実行できません。" = "%@ cannot run in this execution environment.";
+"この実行環境の既定" = "Execution environment default";
+"この実行環境の既定（%@）" = "Execution environment default (%@)";
 "この形式の整形には対応していません" = "Formatting is not available for this file type";
 "この接続では版の要約を作りません。" = "This connection does not make version summaries.";
 "この操作はできません" = "This cannot be done";
@@ -319,7 +323,6 @@
 "この版から始める" = "Start from This Version";
 "この版から始める…" = "Start from This Version…";
 "この版での実行はありません。" = "No runs of this version.";
-"この環境と同じ" = "Same as this environment";
 "この環境の package はありません" = "No packages for this system";
 "この返事を送ります" = "Sends this reply";
 "この階層の Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。" = "Rewrites the Cards of this level in the chat as their open comments ask (adding Cards when a comment asks for it). Progress appears in the chat.";
@@ -513,7 +516,6 @@
 "ドラッグで動かせます" = "Drag to move";
 "ドラッグで移動できます" = "Drag to move";
 "ドラッグで範囲を拡大・横スクロールで移動" = "Drag to zoom into a range; scroll sideways to move";
-"ネイティブ" = "Native";
 "ネットワークへのアクセス" = "Network access";
 "ネットワークへのアクセスを許可する" = "Allow network access";
 "ネットワークを設定しています" = "Setting up the network";
@@ -555,6 +557,7 @@
 "プロジェクトの .tsugumi/runs.sqlite にある実行は、次に開いたときに読み込み直します。" = "Runs in the project's .tsugumi/runs.sqlite are read again the next time it opens.";
 "プロジェクトのファイル（tsugumi.json・layout.json・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。" = "Fix the format of the project's files (tsugumi.json, layout.json, files in definitions) and retry; your documents and history are kept.";
 "プロジェクトのフォルダを作成する場所を選んでください" = "Choose where to make the project's folder";
+"プロジェクトの実行環境" = "Project execution environment";
 "プロジェクトの実行環境が起動するとターミナルを使えます。" = "The terminal can be used once the project's environment is running.";
 "プロジェクトの環境 %lld 件を削除しました" = "Deleted %lld project environments";
 "プロジェクトの設定" = "Project Settings";
@@ -618,6 +621,7 @@
 "不明" = "Unknown";
 "並列実行数: %lld" = "Parallel runs: %lld";
 "中止" = "Cancel";
+"互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。" = "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app.";
 "今すぐ確認" = "Check Now";
 "今の内容に名前を付けて残します（git の tag）。" = "Names what you have now as a version (a git tag).";
 "今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。" = "What you have now is kept as a version first, then the project becomes this version. Changing and running from here starts a new branch.";
@@ -757,7 +761,6 @@
 "初期化を完了できませんでした（残りは保持しています。再試行できます）: " = "Could not finish resetting (the rest is kept; you can retry): ";
 "別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。" = "Upper limit of different Cards running at once (the same Card always runs serially). Used from the next run.";
 "別の Tsugumi の処理がこの実行環境を起動または停止しています。" = "Another Tsugumi process is starting or stopping this environment.";
-"別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。最初のビルドもエミュレーターで動くので時間がかかります。" = "A Card for another system (x86_64-linux) runs under an emulator (Rosetta on a Mac). Its first build runs under the emulator too, so it takes longer.";
 "別のターミナルを開きます（実行中のコマンドは続きます）" = "Opens another terminal (running commands continue)";
 "別のプロジェクトを開く…" = "Open Another Project…";
 "別の場所でも変更されました: %@。適用するとここでの編集が残ります。" = "Also changed elsewhere: %@. Applying keeps the edits made here.";
@@ -888,6 +891,7 @@
 "実行を比較" = "Compare Runs";
 "実行を選ぶか、実行してください。" = "Choose a run, or run the workflow.";
 "実行を選んでください" = "Choose a run";
+"実行サービス" = "Execution service";
 "実行ログを開く" = "Open Run Log";
 "実行中" = "Running";
 "実行中の接続線を動かす" = "Animate connections while running";
@@ -903,6 +907,8 @@
 "実行履歴" = "Run History";
 "実行履歴…" = "Run History…";
 "実行履歴なし" = "No runs";
+"実行履歴の形式が異なります" = "Incompatible Run History";
+"実行履歴の形式は %@ です。このバージョンの Tsugumi には %@ が必要です。" = "This run history uses format %@. This version of Tsugumi requires %@.";
 "実行履歴は VM の中に保存します。オンのときは、終わった実行の記録（値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。" = "The run history is kept in the VM. When on, finished runs (values, types, logs, the list of artifacts) are also written to the project's .tsugumi/runs.sqlite. A project copied or moved to another Mac reads the runs the VM lacks from there when it opens. When off, new runs are kept in the VM only.";
 "実行履歴はありません" = "No run history";
 "実行履歴はプロジェクトごとに VM のディスクに保存します。自動では削除しません。フォルダが見つからないプロジェクトの分も、ここから削除できます（そのプロジェクトのビルドの登録も外します）。" = "Each project's run history is kept on the VM's disk and never deleted automatically. Histories of projects whose folder is gone can be deleted here too (their build registrations are removed as well).";
@@ -921,6 +927,7 @@
 "実行環境の VM イメージがある" = "The environment's VM image is here";
 "実行環境のコンソール" = "Environment Console";
 "実行環境のデータ" = "Environment data";
+"実行環境の既定と異なる CPU アーキテクチャではエミュレーションを使います。" = "An architecture other than the execution environment's default uses emulation.";
 "実行環境の準備ができませんでした: %@" = "The environment could not get ready: %@";
 "実行環境の管理プロセスを起動しています" = "Starting the environment's supervisor";
 "実行環境は Nix で固定。同じ計算をもう一度確かめられるよ" = "The environment is pinned with Nix, so any result can be checked again.";
@@ -936,10 +943,13 @@
 "対象" = "Which";
 "小さく" = "Smaller";
 "展開" = "Expand";
+"履歴の退避が中断されました" = "History Archive Interrupted";
+"履歴の退避を再開して起動" = "Resume Archiving and Start";
 "履歴を検索" = "Search history";
 "履歴を読み込めません: %@" = "Cannot read the history: %@";
 "履歴を読み込めませんでした" = "Could not read the history";
 "履歴を読み込んでいます…" = "Reading the history…";
+"履歴を退避して起動" = "Archive History and Start";
 "左から右" = "Left to right";
 "左の実行" = "Left run";
 "差分が大きいため一部を表示しています。" = "The diff is large; only part is shown.";
@@ -955,6 +965,7 @@
 "思考の過程を描く: オン（使った token: 入力 %lld、出力 %lld）" = "Draw thoughts: on (tokens used: input %lld, output %lld)";
 "情報" = "Info";
 "情報がありません" = "No information";
+"情報なし" = "Unavailable";
 "成功" = "Succeeded";
 "成果物" = "Artifacts";
 "成果物…" = "Artifacts…";
@@ -1120,6 +1131,7 @@
 "異なる 2 つの実行を選んでください" = "Choose two different runs";
 "登録されていないビルド結果を共有 store から削除します。登録を外したプロジェクトの Card は、次の実行でビルドし直します。" = "Deletes build results nothing registers from the shared store. Cards of projects whose registration was removed build again on their next run.";
 "登録したキャッシュには、全プロジェクトのビルドで必要になったパッケージのハッシュが問い合わされます。認証情報は、同じホストから固定ハッシュで取得するビルドにも使われます。" = "Registered caches are asked for the hashes of the packages that builds of every project need. Credentials are also used by builds that fetch from the same host by a fixed hash.";
+"直接実行" = "Direct execution";
 "直近の入力トークン数（上限に近づくと自動で圧縮）" = "Recent input tokens (compacted automatically near the limit)";
 "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";
 "相違あり" = "Changed";

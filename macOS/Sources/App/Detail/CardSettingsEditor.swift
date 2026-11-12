@@ -537,12 +537,7 @@ private struct GeneralCategory: View {
           }
           if model.kind == .code {
             timeoutField("buildTimeoutSeconds", label: "ビルドの期限（秒）")
-            Picker("システム", selection: string("system", fallback: "")) {
-              Text("この環境と同じ").tag("")
-              Text(verbatim: "x86_64-linux").tag("x86_64-linux")
-              Text(verbatim: "aarch64-linux").tag("aarch64-linux")
-            }
-            .help("別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。最初のビルドもエミュレーターで動くので時間がかかります。")
+            executionSettings
             toggle("reuseWorker", label: "worker の状態を残す", fallback: false)
               .help("オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。")
             toggle("filesystem", label: "作業・出力領域を使う", fallback: false)
@@ -572,6 +567,46 @@ private struct GeneralCategory: View {
     .formStyle(.grouped)
     .onAppear { name = model.session.displayName(model.cardKey) }
     .onChange(of: model.cardKey) { name = model.session.displayName(model.cardKey) }
+  }
+
+  @ViewBuilder private var executionSettings: some View {
+    let services = model.session.executionServices
+    let serviceId = model.definition?["executionService"]?.string ?? "local"
+    let service = services.first { $0.id == serviceId }
+    let nativeSystem = service?.nativeSystem ?? ""
+    let systems = service?.systems.compactMap { $0 } ?? []
+    let system = string("system", fallback: "")
+    let selected = system.wrappedValue
+
+    LabeledContent("実行サービス") {
+      if nativeSystem.hasSuffix("-linux") {
+        Text(verbatim: "Linux (\(nativeSystem))")
+      } else if nativeSystem.hasSuffix("-darwin") {
+        Text(verbatim: "macOS (\(nativeSystem))")
+      } else if !services.isEmpty {
+        Text(verbatim: serviceId)
+      } else {
+        Text("情報なし")
+      }
+    }
+    Picker("CPU アーキテクチャ", selection: system) {
+      if nativeSystem.isEmpty {
+        Text("この実行環境の既定").tag("")
+      } else {
+        Text("この実行環境の既定（\(nativeSystem)）").tag("")
+      }
+      ForEach(systems, id: \.self) { value in
+        Text(verbatim: value).tag(value)
+      }
+      if !selected.isEmpty && !systems.contains(selected) {
+        Text(verbatim: selected).tag(selected).disabled(true)
+      }
+    }
+    .help("実行環境の既定と異なる CPU アーキテクチャではエミュレーションを使います。")
+    if service != nil && !selected.isEmpty && !systems.contains(selected) {
+      Label("この実行環境では \(selected) を実行できません。", systemImage: "exclamationmark.triangle")
+        .font(.caption)
+    }
   }
 
   private func rename() {

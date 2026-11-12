@@ -257,6 +257,7 @@ final class ProjectSession {
   private(set) var sources: [String: (hash: String, size: UInt64)] = [:]
   private(set) var resolution: [CardKey: ResolvedCard] = [:]
   private(set) var diagnostics: [Diagnostic] = []
+  private(set) var executionServices: [Tsugumi_RPC_ExecutionServiceT] = []
 
   // Draft: edits not saved yet. Every edit is saved at once (`edit`), so the
   // draft holds only what is on its way to the core, or what could not be
@@ -459,7 +460,10 @@ final class ProjectSession {
   func start() {
     // Shown as starting at once: the loading card, never a "stopped" page
     // for the moment before the environment reports its state.
-    if case .stopped = environment { environment = .starting("") }
+    switch environment {
+    case .stopped, .incompatibleHistory: environment = .starting("")
+    default: break
+    }
     Task { [weak self] in
       guard let self else { return }
       if observerToken == nil, endpointOverride == nil {
@@ -503,11 +507,21 @@ final class ProjectSession {
   /// The waits between tries to reach a tsugumid that has just started (seconds).
   @ObservationIgnored var connectRetryDelays: [Double] = [0.2, 0.4, 0.8, 1.6, 2.0]
 
-  private func connect() async {
+  func archiveHistoryAndStart() {
+    guard !closed, case .incompatibleHistory = environment else { return }
+    environment = .starting(EnvironmentStage.startingDaemon.rawValue)
+    Task { [weak self] in await self?.connect(archiveIncompatibleHistory: true) }
+  }
+
+  private func connect(archiveIncompatibleHistory: Bool = false) async {
     connectionMessage = nil
     do {
       let ep: Endpoint
-      if let o = endpointOverride { ep = o } else { ep = try await environments.start(identity) }
+      if let o = endpointOverride {
+        ep = o
+      } else {
+        ep = try await environments.start(identity, archiveIncompatibleHistory: archiveIncompatibleHistory)
+      }
       let c = try await reach(ep)
       let opened = try await c.open(viewId: viewId)
       client = c
@@ -528,6 +542,9 @@ final class ProjectSession {
       setConnected(false)
       connectionFailed = error is Unreached
       connectionMessage = "\(error)"
+      if let launcher = error as? LauncherError, case .incompatibleHistory(let issue) = launcher {
+        environment = .incompatibleHistory(issue)
+      }
     }
   }
 
@@ -581,6 +598,7 @@ final class ProjectSession {
         if Task.isCancelled { return }
         await connect()
         if connected { return }
+        if case .incompatibleHistory = environment { return }
         try? await Task.sleep(for: .milliseconds(min(5000, 250 * (attempt + 1))))
       }
       // Given up: a problem page with its retry, never a loading card forever.
@@ -673,6 +691,7 @@ final class ProjectSession {
   private func apply(snapshot s: Tsugumi_RPC_ProjectSnapshotT, resetDraft: Bool) {
     rev = s.rev ?? 0
     executionRev = s.executionRev ?? 0
+    executionServices = s.executionServices.compactMap { $0 }
     confirmedProject = (try? JSONValue.parse(s.projectJson)) ?? .object([])
     confirmedLayout = (try? JSONValue.parse(s.layoutJson)) ?? .object([])
     confirmedDefinitions = [:]

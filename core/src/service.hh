@@ -27,7 +27,7 @@ namespace tsugumi {
 
 class Scheduler;
 class NixRunner;
-class WorkerPool;
+class LocalExecutionService;
 
 struct ServiceOptions {
   std::filesystem::path root;
@@ -52,6 +52,7 @@ struct ServiceOptions {
   // project's .tsugumi. The shared VM keeps it on the VM's disk; finished
   // runs are then also kept in the project (.tsugumi/runs.sqlite).
   std::filesystem::path history_dir;
+  bool archive_incompatible_history = false;
   // Folders of the Mac the app shares with this project, one per path at
   // <host_folders>/<sha256(path)[:16]> (the shared VM). Empty: the paths as
   // they are (a tsugumid on the Mac itself).
@@ -95,7 +96,7 @@ class Service : public RequestSink {
   // credentials or query strings), fixed when the project opens.
   const std::vector<std::string>& substituters() const { return substituters_; }
   NixRunner& nix() { return *nix_; }
-  WorkerPool& workers() { return *workers_; }
+  auto execution_service(const std::string& id) -> LocalExecutionService&;
   // A run finished: its record goes to the project's copy soon.
   void schedule_export();
   // A run ended: its result goes to the note of the version it started from.
@@ -189,7 +190,7 @@ class Service : public RequestSink {
   std::mutex verified_mu_;
   std::map<std::string, std::pair<uint64_t, int64_t>> verified_;
   std::unique_ptr<NixRunner> nix_;
-  std::unique_ptr<WorkerPool> workers_;
+  std::unique_ptr<LocalExecutionService> execution_service_;
   std::unique_ptr<Scheduler> scheduler_;
   std::unique_ptr<Lane> mutation_lane_;
   std::unique_ptr<Lane> read_pool_;

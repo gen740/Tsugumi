@@ -66,34 +66,36 @@ assert.equal(valueDifference(v, undefined), 'changed')
   assert.ok(html.includes('comparison-field unknown') && html.includes('比較できません'), 'an omitted value is marked not comparable')
 }
 
-// Execution conditions beyond parameters: environment, emulation and where inputs came from.
+// Execution conditions beyond parameters: environment, service, emulation and input sources.
 {
-  const side = (run: string, env: string | null, emulator: string | null) => {
+  const side = (run: string, env: string | null, emulator: string | null, executionService: string | null = null) => {
     const r = record(run, 'bands', '{}')
-    Object.assign(r.record!.summary!, { environmentId: env, emulator })
+    Object.assign(r.record!.summary!, { environmentId: env, emulator, executionService })
     return { summary: r.record!.summary!, record: r }
   }
   const source = (port: string, card: string, invocation: bigint) => Object.assign(new R.InputSourceT(), { port, card: cardPath([card]), invocation })
   const value = (name: string) => Object.assign(new D.NamedValueT(), { name, rootType: 'Events', inlineBytes: [1], sizeBytes: 1n })
-  const x = side('left', 'env-a', null), y = side('right', 'env-b', 'qemu-x86_64')
+  const x = side('left', 'env-a', null, 'local'), y = side('right', 'env-b', 'qemu-x86_64', 'local')
   // Left ran after `load` in the same run; right ran alone on the value an earlier run saved.
   x.record.record!.inputs = [value('events')]; x.record.record!.inputSources = [source('events', 'load', 2n)]
   y.record.record!.inputs = [value('events')]
   const fields = comparedConditions(x, y)
-  assert.deepEqual(fields.map(f => f.difference), ['changed', 'changed', 'changed'])
+  assert.deepEqual(fields.map(f => f.difference), ['changed', 'changed', 'same', 'changed'])
   assert.deepEqual([fields[0].left, fields[0].right], ['env-a', 'env-b'])
-  assert.deepEqual([fields[1].left, fields[1].right], ['ネイティブ', 'エミュレーション: qemu-x86_64'])
-  assert.deepEqual([fields[2].name, fields[2].left, fields[2].right], ['入力元 events', 'load #2', '保存した入力'])
+  assert.deepEqual([fields[1].left, fields[1].right], ['直接実行', 'エミュレーション: qemu-x86_64'])
+  assert.deepEqual([fields[2].name, fields[2].left, fields[2].right], ['実行サービス', 'プロジェクトの実行環境', 'プロジェクトの実行環境'])
+  assert.deepEqual([fields[3].name, fields[3].left, fields[3].right], ['入力元 events', 'load #2', '保存した入力'])
   // Without recorded inputs a saved value cannot be told from no value: say only what is known.
   y.record.record!.inputs = []
-  assert.equal(comparedConditions(x, y)[2].right, 'この実行の Card からは届いていません')
-  assert.deepEqual(comparedConditions(x, x).map(f => f.difference), ['same', 'same', 'same'])
+  assert.equal(comparedConditions(x, y)[3].right, 'この実行の Card からは届いていません')
+  assert.deepEqual(comparedConditions(x, x).map(f => f.difference), ['same', 'same', 'same', 'same'])
+  assert.deepEqual(comparedConditions(x, side('older', 'env-a', null)).slice(1, 3).map(f => [f.right, f.difference]), [[undefined, 'unknown'], [undefined, 'unknown']])
   // An environment recorded on one side only is not comparable; on neither side there is nothing to differ.
   assert.equal(comparedConditions(x, side('right', null, null))[0].difference, 'unknown')
   assert.equal(comparedConditions(side('left', null, null), side('right', null, null))[0].difference, 'same')
   assert.equal(comparedConditions(x, undefined)[0].difference, 'changed')
   const html = renderToStaticMarkup(<ComparedCardView row={{ card: 'bands', left: x, right: y }} />)
-  for (const text of ['実行条件', 'env-a', 'env-b', 'qemu-x86_64', 'load #2']) assert.ok(html.includes(text), text)
+  for (const text of ['実行条件', 'env-a', 'env-b', 'qemu-x86_64', 'プロジェクトの実行環境', 'load #2']) assert.ok(html.includes(text), text)
 }
 
 // Run scope: where each run started and whether it went on downstream.

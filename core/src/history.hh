@@ -12,6 +12,8 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -19,6 +21,13 @@
 #include "util/sqlite.hh"
 
 namespace tsugumi {
+
+struct IncompatibleHistory : std::runtime_error {
+  std::string found, expected, source;
+  IncompatibleHistory(std::string message, std::string stored, std::string required, std::string location)
+      : std::runtime_error(std::move(message)), found(std::move(stored)),
+        expected(std::move(required)), source(std::move(location)) {}
+};
 
 struct InvocationRecordData {
   InvocationSummaryData summary;
@@ -61,6 +70,9 @@ class History {
   // `fault` (tests only): "history_invocation" makes every invocation record write fail.
   History(const std::filesystem::path& db_path, std::string cursor_secret, std::string fault = {});
   ~History();
+  // Called under the project lock before opening either database for writing.
+  static auto prepare_storage(const std::filesystem::path& local, const std::filesystem::path& copy,
+                              bool archive_incompatible, std::string_view fault) -> void;
 
   using Work = std::function<void(sql::Db&)>;
   // Ordered async write. Blocks while the queue is full (backpressure).
@@ -201,7 +213,7 @@ class History {
  private:
   void writer_loop();
   void init_schema(sql::Db& db);
-  void migrate();
+  auto check_version() const -> void;
   sql::Db& reader();
 
   std::filesystem::path path_;

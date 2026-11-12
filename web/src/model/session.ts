@@ -414,6 +414,7 @@ export class ProjectSession extends Observable {
   sources = new Map<string, { hash: string; size: bigint }>()
   resolution = new Map<CardKey, ResolvedCard>()
   diagnostics: Diagnostic[] = []
+  executionServices: R.ExecutionServiceT[] = []
 
   // Draft
   project: J = obj()
@@ -600,16 +601,24 @@ export class ProjectSession extends Observable {
 
   start() {
     // Shown as starting at once: the loading card, never a "stopped" page.
-    if (this.environment.state === 'stopped') this.environment = { state: 'starting', message: '' }
+    if (this.environment.state === 'stopped' || (this.environment.state === 'failed' && this.environment.historyVersionMismatch)) {
+      this.environment = { state: 'starting', message: '' }
+    }
     void this.openConnection()
   }
 
-  private async openConnection() {
+  archiveHistoryAndStart() {
+    if (this.closed || this.environment.state !== 'failed' || !this.environment.historyVersionMismatch) return
+    this.environment = { state: 'starting', message: '' }
+    void this.openConnection('/api/env/archive-history')
+  }
+
+  private async openConnection(route: '/api/env/start' | '/api/env/archive-history' = '/api/env/start') {
     if (this.closed) return
     this.connectionMessage = undefined
     this.changed()
     try {
-      const env = await api<EnvPublicState>('/api/env/start', { path: this.dir })
+      const env = await api<EnvPublicState>(route, { path: this.dir })
       this.environment = env
       this.changed()
       if (env.state !== 'ready') return
@@ -681,7 +690,7 @@ export class ProjectSession extends Observable {
       for (let attempt = 0; attempt < 20; attempt++) {
         if (this.closed) break
         await this.openConnection()
-        if (this.connected) break
+        if (this.connected || (this.environment.state === 'failed' && this.environment.historyVersionMismatch)) break
         await sleep(Math.min(5000, 250 * (attempt + 1)))
       }
       this.reconnecting = false
@@ -828,6 +837,7 @@ export class ProjectSession extends Observable {
   }
 
   private apply(snap: R.ProjectSnapshotT, resetDraft: boolean) {
+    this.executionServices = snap.executionServices
     this.rev = snap.rev ?? 0n
     this.executionRev = snap.executionRev ?? 0n
     this.confirmedProject = tryParse(s(snap.projectJson)) ?? obj()

@@ -126,12 +126,12 @@ def test_recorded_values_carry_a_content_digest_that_tells_runs_apart(core_facto
     assert first["big"] == first["big_same"] != first["big_other"]
 
 
-def test_a_project_copy_keeps_recorded_parameters_and_digests(core_factory, project, tmp_path):
-    """Parameters and value digests travel with the project's own history file.
+def test_a_project_copy_keeps_recorded_invocation_details(core_factory, project, tmp_path):
+    """The execution service, parameters and digests travel with project history.
 
     Given a run recorded in a project that saves its run history,
     when the project folder is copied and opened with an empty history disk,
-    then the restored record has the same parameters and the same digest.
+    then the restored record has the same execution service, parameters and digest.
     """
     original = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history-original")
     client = original.connect()
@@ -156,3 +156,4 @@ def test_a_project_copy_keeps_recorded_parameters_and_digests(core_factory, proj
     result, params = recorded_params(copied.connect(), run_id, "work")
     assert params == {"boundary": 1650}, "the parameters of the run, not of the copied document"
     assert text(result.record.outputs[0].contentHash) == digest
+    assert text(result.record.summary.executionService) == "local"

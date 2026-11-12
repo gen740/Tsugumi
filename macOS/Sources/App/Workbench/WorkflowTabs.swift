@@ -216,7 +216,7 @@ enum EnvironmentOverlay {
     guard !session.connected else { return nil }
     let dirty = session.dirty
     switch session.environment {
-    case .failed, .stopped:
+    case .failed, .stopped, .incompatibleHistory:
       return nil
     case .reconnecting:
       return LoadingContent(title: String(localized: "再接続しています…"),
@@ -261,7 +261,7 @@ enum EnvironmentOverlay {
   static func hasProblem(_ s: ProjectSession) -> Bool {
     guard !s.connected else { return false }
     switch s.environment {
-    case .failed, .stopped: return true
+    case .failed, .stopped, .incompatibleHistory: return true
     case .ready: return s.connectionMessage != nil
     case .reconnecting, .preparing, .starting: return false
     }
@@ -285,6 +285,7 @@ struct EnvironmentProblemView: View {
     var recovery: String?
     var log: String
     var canStop = true
+    var historyArchiveAction: String?
     /// The line of the log that says why (tsugumid's last error).
     var cause: String?
   }
@@ -298,6 +299,12 @@ struct EnvironmentProblemView: View {
 
   private var problem: Problem {
     switch session.environment {
+    case .incompatibleHistory(let issue):
+      let error = LauncherError.incompatibleHistory(issue)
+      let title = issue.archiveInterrupted ? error.description : String(localized: "実行履歴の形式が異なります")
+      let action = issue.archiveInterrupted ? String(localized: "履歴の退避を再開して起動") : String(localized: "履歴を退避して起動")
+      return Problem(symbol: "clock.arrow.circlepath", color: .orange, title: title,
+                     message: issue.archiveInterrupted ? "" : error.description, recovery: error.recovery, log: "", historyArchiveAction: action)
     case .failed(let m, let recovery, let log):
       var p = Problem(symbol: "xmark.octagon.fill", color: .red, title: String(localized: "実行環境を起動できませんでした"),
                       message: m, recovery: recovery.isEmpty ? nil : recovery, log: log)
@@ -359,7 +366,11 @@ struct EnvironmentProblemView: View {
         HStack(spacing: 10) {
           Button(p.canStop ? "再試行" : "起動") { session.start() }
             .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-          if p.canStop { Button("環境を停止") { session.stopEnvironment() } }
+          if let action = p.historyArchiveAction {
+            Button(action) { session.archiveHistoryAndStart() }
+          } else if p.canStop {
+            Button("環境を停止") { session.stopEnvironment() }
+          }
           OpenConsoleButton()
           Spacer()
           if let onSwitchProject { Button("別のプロジェクトを開く…", action: onSwitchProject) }

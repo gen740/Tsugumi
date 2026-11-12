@@ -272,11 +272,23 @@ class Builder {
     boolean(d.sandbox, s.sandbox);
     boolean(d.reuse_worker, s.reuse_worker);
     boolean(d.network, s.network);
+    if (const auto* v = schema::get(d.execution_service)) {
+      if (n.kind != Template::Code)
+        n.diags.push_back(diag(n.path, "invalid_setting", "executionService is only available on Code Cards"));
+      else if (*v != kLocalExecutionService)
+        n.diags.push_back(diag(n.path, "invalid_setting", "execution service " + *v + " is not available"));
+      else
+        s.execution_service = *v;
+    }
     if (const auto* v = schema::get(d.display_mode); v && *v != "update" && *v != "live")
       n.diags.push_back(diag(n.path, "invalid_setting", "displayMode must be update or live"));
     if (const auto* v = schema::get(d.system)) {
-      if (*v == "x86_64-linux" || *v == "aarch64-linux") s.system = *v == native_system() ? "" : *v;
-      else n.diags.push_back(diag(n.path, "invalid_setting", "system must be x86_64-linux or aarch64-linux"));
+      if (*v == native_system())
+        s.system.clear();
+      else if (*v == "x86_64-linux" || *v == "aarch64-linux")
+        s.system = *v;
+      else
+        n.diags.push_back(diag(n.path, "invalid_setting", "system must be the native system, x86_64-linux or aarch64-linux"));
     }
     if (const auto* v = schema::get(d.artifact_output)) s.artifact_output = *v;
     if (const auto* folders = schema::get(d.host_folders)) {

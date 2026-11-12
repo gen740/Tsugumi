@@ -81,6 +81,7 @@ class NixRunner {
   static types::TypeRef params_type(const Node& node);
 
   CardBuild build(const BuildRequest& req);
+  static auto execution_systems() -> std::vector<std::string>;
 
   // CardSDKPrepare / CardSDKStatus.
   SDKJob prepare_sdk(const std::string& op_id, const Node& node, uint64_t rev);

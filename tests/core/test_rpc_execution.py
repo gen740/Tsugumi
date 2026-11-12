@@ -86,12 +86,17 @@ def test_gate_controls_a_downstream_worker_without_mocking_the_scheduler(core_fa
         gate.action(),
         {"op": "echo", "input": "in", "port": "out"},
         {"op": "display_text", "text": "received input"},
-    ], inputs=[{"name": "in"}])
+    ], inputs=[{"name": "in"}], executionService="local")
     graph.connect("source", "out", "sink", "in").save(client)
 
     run_id = run(client, "source")
     gate.wait()
-    assert client.call("RunRecordRequest", runId=run_id, card=path("source")).status.state == CardState.succeeded
+    source = client.call("RunRecordRequest", runId=run_id, card=path("source"))
+    assert source.status.state == CardState.succeeded
+    assert text(source.record.summary.executionService) == "local"
+    sink = client.call("RunInvocationsRequest", runId=run_id, card=path("sink")).records[0]
+    assert sink.state == CardState.running
+    assert text(sink.executionService) == "local"
     gate.release()
     assert wait_run(client, run_id).state == RunState.succeeded
     assert read_output(client, run_id, card="sink") == read_output(client, run_id, card="source")

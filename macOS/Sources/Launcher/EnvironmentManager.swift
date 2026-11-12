@@ -110,12 +110,15 @@ public actor EnvironmentManager {
   /// Returns the endpoint of a running environment, starting the VM and the
   /// project's tsugumid when needed. Concurrent callers share one start.
   @discardableResult
-  public func start(_ p: ProjectIdentity) async throws -> Endpoint {
+  public func start(_ p: ProjectIdentity, archiveIncompatibleHistory: Bool = false) async throws -> Endpoint {
     if let resident {
       await observeHost()
       set(p.id, .starting(EnvironmentStage.connecting.rawValue))
       do {
-        let result = try await resident.call("start", ["path": p.url.path, "origins": allowedOrigins, "folders": extraFolders[p.id] ?? []])
+        let result = try await resident.call("start", [
+          "path": p.url.path, "origins": allowedOrigins, "folders": extraFolders[p.id] ?? [],
+          "archive_incompatible_history": archiveIncompatibleHistory,
+        ])
         guard let url = (result["endpoint"] as? String).flatMap(URL.init(string:)),
               let token = result["token"] as? String, let projectId = result["projectId"] as? String,
               let serverInstanceId = result["serverInstanceId"] as? String else { throw LauncherError.notReady("VM host returned an invalid endpoint") }
@@ -124,7 +127,11 @@ public actor EnvironmentManager {
         return endpoint
       } catch {
         let launcher = error as? LauncherError
-        set(p.id, .failed(message: "\(error)", recovery: launcher?.recovery ?? "Retry the connection.", log: ""))
+        if case .incompatibleHistory(let issue)? = launcher {
+          set(p.id, .incompatibleHistory(issue))
+        } else {
+          set(p.id, .failed(message: "\(error)", recovery: launcher?.recovery ?? "Retry the connection.", log: ""))
+        }
         throw error
       }
     }
@@ -138,7 +145,7 @@ public actor EnvironmentManager {
       bridges[p.id] = nil
     }
     if let t = starting[p.id] { return try await t.value }
-    let t = Task { try await self.startProject(p) }
+    let t = Task { try await self.startProject(p, archiveIncompatibleHistory: archiveIncompatibleHistory) }
     starting[p.id] = t
     defer { starting[p.id] = nil }
     do {
@@ -146,9 +153,13 @@ public actor EnvironmentManager {
       set(p.id, .ready(ep))
       return ep
     } catch let e as LauncherError {
-      var log = ""
-      if case .startFailed(_, let l) = e { log = l }
-      set(p.id, .failed(message: e.description, recovery: e.recovery, log: log))
+      if case .incompatibleHistory(let issue) = e {
+        set(p.id, .incompatibleHistory(issue))
+      } else {
+        var log = ""
+        if case .startFailed(_, let l) = e { log = l }
+        set(p.id, .failed(message: e.description, recovery: e.recovery, log: log))
+      }
       throw e
     } catch {
       set(p.id, .failed(message: "\(error)", recovery: "Retry; if it persists, quit Tsugumi and open the project again.", log: ""))
@@ -156,7 +167,7 @@ public actor EnvironmentManager {
     }
   }
 
-  private func startProject(_ p: ProjectIdentity) async throws -> Endpoint {
+  private func startProject(_ p: ProjectIdentity, archiveIncompatibleHistory: Bool) async throws -> Endpoint {
     guard let image else { throw LauncherError.imageMissing }
     // The VM's own progress is the project's progress until it runs.
     let first = !FileManager.default.fileExists(atPath: vm.directory.appendingPathComponent("store.img").path)
@@ -174,6 +185,10 @@ public actor EnvironmentManager {
     chmod(control.path, 0o700)
     let ready = control.appendingPathComponent("server.ready")
     try? FileManager.default.removeItem(at: ready)
+    let startupError = control.appendingPathComponent("server.startup-error.json")
+    if FileManager.default.fileExists(atPath: startupError.path) {
+      try FileManager.default.removeItem(at: startupError)
+    }
     let grants = control.appendingPathComponent("grants.json")
     if !FileManager.default.fileExists(atPath: grants.path) {
       try Data(#"{"grants":{}}"#.utf8).write(to: grants, options: .atomic)
@@ -203,10 +218,11 @@ public actor EnvironmentManager {
     // The share may take a moment to show new folders in the VM.
     var started = false
     var lastError = ""
+    let command = archiveIncompatibleHistory ? "archive-history" : "start"
     for _ in 0..<50 {
       do {
         let origins = allowedOrigins.isEmpty ? "" : " " + allowedOrigins.joined(separator: ",")
-        try await vm.request("start \(p.id) \(resources.cpus) \(hostName(p)) \(slot)\(origins)")
+        try await vm.request("\(command) \(p.id) \(resources.cpus) \(hostName(p)) \(slot)\(origins)")
         started = true
         break
       } catch {
@@ -224,6 +240,11 @@ public actor EnvironmentManager {
     while Date() < deadline {
       if let ep = try? readyEndpoint(p, port: bridge.port) { return ep }
       if let status = try? await vm.request("status"), !status.contains("\(p.id):") {
+        if let data = try? Data(contentsOf: startupError),
+           let details = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let issue = HistoryVersionMismatch(diagnostic: details) {
+          throw LauncherError.incompatibleHistory(issue)
+        }
         throw LauncherError.startFailed(reason: "tsugumid exited during startup", log: tsugumidLog(p))
       }
       try await Task.sleep(for: .milliseconds(100))

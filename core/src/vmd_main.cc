@@ -433,7 +433,7 @@ std::string mount_slot(int slot) {
   return "";
 }
 
-std::string start_project(const std::string& id, int cpus, const std::string& name, int slot, const std::string& origins) {
+std::string start_project(const std::string& id, int cpus, const std::string& name, int slot, const std::string& origins, bool archive_history = false) {
   std::unique_lock<std::mutex> l(mu);
   if (auto it = projects.find(id); it != projects.end() && it->second.running)
     return "ok " + id;
@@ -507,6 +507,7 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
                "--cpus", std::to_string(cpus), "--allow-missing-origin",
                "--gcroots-dir", kRoots + "/" + id, "--history-dir", "/history",
                "--host-folders", "/run/tsugumi/host", "--chat-folders", "/run/tsugumi/chat", "--project-shell"};
+  if (archive_history) args.argv.push_back("--archive-incompatible-history");
   // The binary caches of this VM's nix-daemon, for the run records. A project
   // cannot read the daemon's settings (they sit beside the caches' credentials
   // under /run/tsugumi, which its view replaces); /init wrote this list.
@@ -802,8 +803,8 @@ void control(int conn) {
   if (w.empty()) r = "error empty request";
   else if (w[0] == "ping") r = "ok";
   else if (w[0] == "status") r = status();
-  else if (w[0] == "start" && (w.size() == 5 || w.size() == 6) && valid_id(w[1]))
-    r = start_project(w[1], std::max(1, std::atoi(w[2].c_str())), w[3], std::atoi(w[4].c_str()), w.size() == 6 ? w[5] : "");
+  else if ((w[0] == "start" || w[0] == "archive-history") && (w.size() == 5 || w.size() == 6) && valid_id(w[1]))
+    r = start_project(w[1], std::max(1, std::atoi(w[2].c_str())), w[3], std::atoi(w[4].c_str()), w.size() == 6 ? w[5] : "", w[0] == "archive-history");
   else if (w[0] == "stop" && w.size() == 2 && valid_id(w[1])) r = stop_project(w[1]);
   else if (w[0] == "forget" && w.size() == 2 && valid_id(w[1])) r = forget_project(w[1]);
   else if (w[0] == "gc" && w.size() == 1) r = collect_garbage();

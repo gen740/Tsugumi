@@ -39,6 +39,14 @@ using Opt = t::Optional<K, E>;
 
 // ---- tsugumi.json ----------------------------------------------------------
 
+struct StartupError {
+  t::String<"kind"> kind;
+  t::String<"found"> found;
+  t::String<"expected"> expected;
+  t::String<"source"> source;
+  t::String<"message"> message;
+};
+
 struct Endpoint {
   Opt<"card", v::String> card;
   Opt<"port", v::String> port;
@@ -133,6 +141,7 @@ struct CardDefinition {
   Opt<"sandbox", v::Bool> sandbox;
   Opt<"reuseWorker", v::Bool> reuse_worker;  // Keep worker state across invocations and runs. Default false.
   Opt<"network", v::Bool> network;           // Experimental, default false
+  Opt<"executionService", v::String> execution_service;
   // The Nix system the Card is built for and runs as: "x86_64-linux" or
   // "aarch64-linux". Default: this machine's. Another one runs emulated.
   Opt<"system", v::String> system;
@@ -310,13 +319,14 @@ struct StageJson {
 };
 
 struct InvocationDetailJson {
-  t::Array<"stages", Obj<StageJson>> stages;
-  t::Int64<"worker_reused"> worker_reused;
-  t::Array<"outputs_sent", v::String> outputs_sent;
-  t::Int64<"ready_at"> ready_at;
-  t::String<"emulator"> emulator;  // "" = ran natively
-  t::String<"environment_id"> environment_id;
-  t::String<"params"> params;
+  Opt<"stages", v::Array<Obj<StageJson>>> stages;
+  Opt<"worker_reused", v::Int64> worker_reused;
+  Opt<"outputs_sent", v::Array<v::String>> outputs_sent;
+  Opt<"ready_at", v::Int64> ready_at;
+  Opt<"emulator", v::String> emulator;
+  Opt<"environment_id", v::String> environment_id;
+  Opt<"params", v::String> params;
+  Opt<"execution_service", v::String> execution_service;
 };
 
 struct InputSourceJson {

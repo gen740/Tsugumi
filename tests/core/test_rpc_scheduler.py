@@ -104,6 +104,7 @@ def test_all_takes_one_value_per_input_and_optional_output_does_not_fire(env):
     # The record says which output carried the value and which stages ran.
     rec = c.call("RunInvocationsRequest", runId=run_id, card=path("gate")).records[0]
     assert [text(p) for p in rec.outputsSent] == ["a"]
+    assert not rec.executionService
     assert [(st.phase, st.outcome) for st in rec.stages] == [(Phase.execute, StageOutcome.done),
                                                              (Phase.validate, StageOutcome.done),
                                                              (Phase.save, StageOutcome.done)]

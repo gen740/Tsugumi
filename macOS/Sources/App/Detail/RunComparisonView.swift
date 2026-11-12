@@ -133,14 +133,19 @@ struct ComparedRunField: Identifiable {
     func environment(_ v: Tsugumi_RPC_InvocationSummaryT?) -> String? {
       v.map { nonEmpty($0.environmentId) ?? String(localized: "記録なし") }
     }
-    func system(_ v: Tsugumi_RPC_InvocationSummaryT?) -> String? {
-      v.map { s in nonEmpty(s.emulator).map { String(localized: "エミュレーション: \($0)") } ?? String(localized: "ネイティブ") }
+    func service(_ v: Tsugumi_RPC_InvocationSummaryT?) -> String? {
+      nonEmpty(v?.executionService).map { $0 == "local" ? String(localized: "プロジェクトの実行環境") : $0 }
+    }
+    func method(_ v: Tsugumi_RPC_InvocationSummaryT?) -> String? {
+      if let e = nonEmpty(v?.emulator) { return String(localized: "エミュレーション: \(e)") }
+      return service(v).map { _ in String(localized: "直接実行") }
     }
     let recordedEnvironment = { (v: Tsugumi_RPC_InvocationSummaryT?) in !(v?.environmentId ?? "").isEmpty }
     var fields = [
       // An environment missing from a record (a Card that stopped before its build, say) is not comparable.
       field(String(localized: "環境"), environment(a), environment(b), known: recordedEnvironment(a) && recordedEnvironment(b)),
-      field(String(localized: "実行方式"), system(a), system(b), known: true),
+      field(String(localized: "実行方式"), method(a), method(b), known: method(a) != nil && method(b) != nil),
+      field(String(localized: "実行サービス"), service(a), service(b), known: service(a) != nil && service(b) != nil),
     ]
 
     // nil: the Card is absent from that run. `missing`: why that side's origins are not known.

@@ -1,15 +1,12 @@
 #include "scheduler.hh"
 
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
-
 #include <algorithm>
 #include <cstring>
 #include <deque>
 #include <flatbuffers/reflection.h>
 #include <set>
 
+#include "execution_service.hh"
 #include "history.hh"
 #include "schema.hh"
 #include "nix.hh"
@@ -18,15 +15,6 @@
 #include "util/fs.hh"
 #include "util/log.hh"
 #include "wire.hh"
-#include "worker_pool.hh"
-#include "worker_proc.hh"
-
-#ifndef TSUGUMI_CARD_PATH
-#define TSUGUMI_CARD_PATH "/usr/bin:/bin"
-#endif
-#ifndef TSUGUMI_BASH
-#define TSUGUMI_BASH "/bin/bash"
-#endif
 
 namespace tsugumi {
 
@@ -38,9 +26,6 @@ using FBB = flatbuffers::FlatBufferBuilder;
 namespace {
 
 constexpr size_t kQueueCapacity = 16;
-constexpr uid_t kCardUid = 65534;  // unprivileged identity for Card processes
-// Descriptor slot of the output folder passed to a sandboxed worker.
-constexpr int32_t kOutSlot = 900;
 
 Note run_event_note(const std::string& run_id,
                     std::function<std::pair<R::RunEventValue, flatbuffers::Offset<void>>(FBB&)> body) {
@@ -1130,6 +1115,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     s.environment_id = rt.build->environment.id;
     s.build_cached = rt.build->cached;
     s.emulator = rt.build->emulator;
+    auto& execution = svc_.execution_service(node.settings.execution_service);
+    s.execution_service = node.settings.execution_service;
     stage_begin(s, Phase::execute);
     // The environment and its invocation association must survive a crash
     // before the worker can execute any code, including a reused build.
@@ -1140,139 +1127,23 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       });
     } catch (...) {
       s.environment_id.clear();
+      s.execution_service.clear();
       throw;
     }
     card_status(s);
     set_state(RunState::running);
-    // Cards run as nobody: switched to by root (container), or mapped in
-    // bubblewrap's user namespace when tsugumid is not root (shared VM).
-    std::optional<uid_t> uid;
-    if (::geteuid() == 0 || !std::string(TSUGUMI_BWRAP).empty()) uid = kCardUid;
-    WorkerSpawn sp;
-    // A package of another system is loaded by the worker its build made for
-    // that system, which the kernel runs under the emulator.
-    sp.worker_binary = rt.build->worker.empty() ? svc_.options().worker_binary.string() : rt.build->worker;
-    sp.bash = TSUGUMI_BASH;
-    sp.build = *rt.build;
-    sp.sandbox = node.settings.sandbox;
-    sp.uid = uid;
-    sp.gid = uid;
-    // Every File / Directory input lives in these trees: one set of binds
-    // serves any input, so the worker is reused whatever the paths.
-    sp.ro_paths = {(svc_.store().state_dir() / "runs").string(), (svc_.store().state_dir() / "inputs").string()};
-    // Another system's binaries run with the emulator the kernel opened when it
-    // was registered; Rosetta also reads its own folder while it runs.
-    if (const auto& e = rt.build->emulator; !e.empty() && !e.starts_with("/nix/store/"))
-      sp.ro_paths.push_back(stdfs::path(e).parent_path().string());
-    if (!svc_.options().grants_file.empty()) sp.hidden_paths.push_back(svc_.options().grants_file.parent_path().string());
-    sp.hidden_paths.push_back(svc_.store().state_dir().string());
-    sp.network = node.settings.network;
-    sp.card = path_key(node.path);
-    for (const auto& f : node.settings.host_folders) {
-      std::string source = f.path;
-      if (const auto& root = svc_.options().host_folders; !root.empty())
-        source = (root / crypto::sha256_hex(f.path).substr(0, 16)).string();
-      std::error_code ec;
-      if (!stdfs::is_directory(source, ec))
-        throw Failed(FailureKind::not_found,
-                     "the folder " + f.path + " (/host/" + f.name +
-                         ") is not available here: it is missing on this Mac, or the project must be opened again to share it",
-                     {{"path", f.path}});
-      sp.binds.push_back({source, "/host/" + f.name, f.write});
-    }
-    // The resident worker of this Card, if it runs the same build under the same conditions.
-    std::string key = rt.build->package.value_or("") + "|" + rt.build->bash.value_or("") + "|" + rt.build->pre_run +
-                      "|" + rt.build->post_run + "|" + (sp.sandbox ? "s" : "u") + "|" +
-                      (uid ? std::to_string(*uid) : "-") + "|" + (sp.network ? "n" : "-") + "|" + sp.worker_binary;
-    for (const auto& b : sp.binds) key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
-    std::string card_key = path_key(node.path);
-    auto lease = svc_.workers().acquire(card_key, key, sp, rt.node->settings.reuse_worker);
-    auto& worker = *lease.worker;
-    s.worker_reused = lease.reused;
-    // Folders: without filesystem: true, work/ and tmp/ are the worker's own
-    // (local, emptied between calls); out/ exists only for Cards with File or
-    // Directory outputs and stays (downstream Cards and artifacts use it).
-    bool needs_out = false;
-    for (const auto& o : node.outputs) needs_out |= o.kind != PortKind::FlatBuffer;
-    auto dir = invocation_dir(node, s.invocation);
-    std::string work = worker.work_dir();
-    std::string tmp = worker.tmp_dir();
-    std::string out;
-    std::vector<std::pair<std::string, int32_t>> project_dirs;  // real path, descriptor slot
-    auto make_dir = [&](const stdfs::path& d) {
-      stdfs::create_directories(d);
-      if (::geteuid() == 0 && worker_uid_on_host()) ::chown(d.c_str(), kCardUid, kCardUid);
-      return d.string();
-    };
-    if (needs_out) out = make_dir(dir / "out");
-    // Under bubblewrap the call's output folder reaches the Card as a
-    // descriptor (/proc/self/fd/<slot>); the run trees are bound read-only.
-    // Working folders are never passed that way (a current directory outside
-    // the sandbox has no path): with filesystem: true they are copied into
-    // the run after the call.
-    std::vector<int> fds;
-    std::vector<int32_t> slots;
-    rt.out_alias.reset();
-    auto pass = [&](std::string& path, int32_t slot) {
-      if (path.empty() || !worker.passes_directories()) return;
-      int fd = ::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-      if (fd < 0) throw Failed(FailureKind::worker_failed, "cannot open " + path);
-      fds.push_back(fd);
-      slots.push_back(slot);
-      std::string alias = "/proc/self/fd/" + std::to_string(slot);
-      if (slot == kOutSlot) rt.out_alias = std::make_pair(alias, path);
-      path = alias;
-    };
-    struct Close {
-      std::vector<int>& fds;
-      ~Close() { for (int f : fds) ::close(f); }
-    } close_fds{fds};
-    pass(out, kOutSlot);
-    auto ptype = NixRunner::params_type(node);
-    std::string params = NixRunner::params_buffer(node);
-    std::vector<std::pair<std::string, std::string>> env = {
-        {"PATH", TSUGUMI_CARD_PATH},
-        {"HOME", work},
-        {"LANG", "C.UTF-8"},
-        {"TSUGUMI_RUN_ID", run_id_},
-        {"TSUGUMI_CARD", path_key(node.path)},
-        {"TSUGUMI_INVOCATION", std::to_string(s.invocation)},
-        {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(node, false)},
-        {"TSUGUMI_WORKER", sp.worker_binary},
-    };
-    std::optional<uint64_t> deadline_ms;
-    std::optional<std::chrono::steady_clock::time_point> deadline;
-    if (node.settings.timeout_seconds) {
-      deadline_ms = *node.settings.timeout_seconds * 1000;
-      deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(*deadline_ms + 500);
-    }
-    uint64_t call_id = worker.next_call_id();
-    std::string frame = worker_call_frame(call_id, run_id_, node.path, s.invocation, in, ptype->bfbs,
-                                          ptype->root_type, params, node.outputs, work, tmp, out, env, deadline_ms,
-                                          slots);
-    // Logs and displays of this call belong to this run and invocation.
     CardPath card = node.path;
-    uint64_t inv = s.invocation;
-    worker.set_logs([this, card, inv](LogStream stream, const std::string& text) { card_log(card, inv, stream, text); });
-    int64_t t0 = now_ms();
-    auto outcome = worker.call(frame, call_id, fds, &cancel_, deadline, [this, &rt](const DisplayData& d) {
-      on_display(rt, d);
-    });
-    svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, Phase::execute, lane, t0, now_ms()));
-    if (node.settings.filesystem) {
-      // Kept for inspection in the run (CacheClear removes it).
-      std::error_code ec;
-      for (const auto& [from, to] : {std::pair{worker.work_dir(), dir / "work"}, std::pair{worker.tmp_dir(), dir / "tmp"}}) {
-        stdfs::create_directories(to, ec);
-        stdfs::copy(from, to, stdfs::copy_options::recursive | stdfs::copy_options::overwrite_existing |
-                                  stdfs::copy_options::copy_symlinks, ec);
-      }
-    }
-    worker.clear_scratch();
-    // Kept only after a clean call: a failed, cancelled or timed out worker
-    // (and anything it started) ends.
-    svc_.workers().release(card_key, key, std::move(lease.worker),
-                           rt.node->settings.reuse_worker && !outcome.failure);
+    uint64_t invocation = s.invocation;
+    auto outcome = execution.run(
+        {node, *rt.build, in, run_id_, invocation, invocation_dir(node, invocation), cancel_,
+         [this, card, invocation](LogStream stream, const std::string& text) {
+           card_log(card, invocation, stream, text);
+         },
+         [this, &rt](const DisplayData& display) { on_display(rt, display); },
+         [&](int64_t begin, int64_t end) {
+           svc_.server()->broadcast(timeline_note(run_id_, node.path, invocation, Phase::execute, lane, begin, end));
+         }},
+        s.worker_reused, rt.out_alias);
     Produced p;
     p.failure = outcome.failure;
     if (!p.failure)
@@ -1492,7 +1363,7 @@ void Scheduler::recover_interrupted() {
       r->status.ended_at = now_ms();
       History::update_run(db, r->status);
       // In-progress invocations become interrupted failures; nothing is re-run.
-      auto st = db.prepare("SELECT s.card, s.invocation, s.started_at, e.environment_id FROM statuses AS s "
+      auto st = db.prepare("SELECT s.card, s.invocation, s.started_at, e.environment_id, s.execution_service FROM statuses AS s "
                            "LEFT JOIN active_environments AS e ON e.run_id=s.run_id AND e.card=s.card "
                            "AND e.invocation=s.invocation WHERE s.run_id=?");
       st.bind(1, run_id);
@@ -1513,6 +1384,7 @@ void Scheduler::recover_interrupted() {
         rec.summary.invocation = st.u64(1);
         rec.summary.started_at = st.opt_i64(2);
         rec.summary.environment_id = st.text(3);
+        rec.summary.execution_service = st.text(4);
         rec.summary.state = CardState::failed;
         rec.summary.failure = r->status.failure;
         recs.push_back(std::move(rec));

@@ -94,6 +94,15 @@ table RunStatus {
   commit:string (id: 8);
 }
 
+/// An execution service available to this project's core.
+table ExecutionService {
+  /// Logical ID used by Card settings, independent of the host's name.
+  id:string (id: 0, required);
+  native_system:string (id: 1, required);
+  /// Systems enabled for execution. Builds also depend on Nix configuration.
+  systems:[string] (id: 2, required);
+}
+
 table ProjectSnapshot {
   project_id:string (id: 0, required);
   rev:uint64 = null (id: 1);
@@ -108,6 +117,7 @@ table ProjectSnapshot {
   view:ViewState (id: 10);
   view_id:string (id: 11);
   view_rev:uint64 = null (id: 12);
+  execution_services:[ExecutionService] (id: 13);
 }
 
 // ---- Document changes --------------------------------------------------------
@@ -912,6 +922,8 @@ table InvocationSummary {
   emulator:string (id: 15);
   /// Recorded Nix environment, queryable through RunEnvironmentsRequest.
   environment_id:string (id: 16);
+  /// Logical service that started this Card's execution, if any.
+  execution_service:string (id: 17);
 }
 
 table StageTime {

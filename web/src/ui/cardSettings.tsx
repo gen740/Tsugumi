@@ -580,6 +580,15 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
   const params = arr(get(def, 'params')) ?? []
   const diags = session.resolution.get(model.cardKey)?.diagnostics ?? []
   const kind = model.kind
+  const serviceId = str(get(def, 'executionService')) ?? 'local'
+  const service = session.executionServices.find((e) => s(e.id) === serviceId)
+  const nativeSystem = s(service?.nativeSystem)
+  const systems = service?.systems.map(s) ?? []
+  const system = string('system', '')
+  const unavailable = !!system.value && !systems.includes(system.value)
+  const serviceLabel = nativeSystem.endsWith('-linux') ? `Linux (${nativeSystem})`
+    : nativeSystem.endsWith('-darwin') ? `macOS (${nativeSystem})`
+      : session.executionServices.length ? serviceId : L('情報なし')
   return (
     <Form>
       <Section>
@@ -636,11 +645,17 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
           {kind === 'code' && (
             <>
               {timeoutField('buildTimeoutSeconds', L('ビルドの期限（秒）'))}
-              <Row label={L('システム')} help={L('別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。最初のビルドもエミュレーターで動くので時間がかかります。')}>
-                <Select {...string('system', '')} options={[
-                  { value: '', label: L('この環境と同じ') }, { value: 'x86_64-linux', label: 'x86_64-linux' }, { value: 'aarch64-linux', label: 'aarch64-linux' },
+              <Value label={L('実行サービス')} value={serviceLabel} />
+              <Row label={L('CPU アーキテクチャ')} help={L('実行環境の既定と異なる CPU アーキテクチャではエミュレーションを使います。')}>
+                <Select {...system} options={[
+                  { value: '', label: nativeSystem ? L('この実行環境の既定（{0}）', nativeSystem) : L('この実行環境の既定') },
+                  ...systems.map((value) => ({ value, label: value })),
+                  ...(unavailable ? [{ value: system.value, label: system.value, disabled: true }] : []),
                 ]} />
               </Row>
+              {service && unavailable && (
+                <Row><span className="label caption"><Icon name="exclamationmark.triangle" />{L('この実行環境では {0} を実行できません。', system.value)}</span></Row>
+              )}
               {toggle('reuseWorker', L('worker の状態を残す'), false,
                 L('オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。'))}
               {toggle('filesystem', L('作業・出力領域を使う'), false)}

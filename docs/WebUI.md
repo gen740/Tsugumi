@@ -5,7 +5,7 @@ File paths and commands on this page are relative to the root of the repository.
 
 ## Architecture
 
-The `web/` server runs a `tsugumid` per project in one of two ways. On a Mac, the [`tsugumi` command](#the-tsugumi-command) runs it inside the same shared Linux VM as the macOS app; otherwise (the `tsugumi` command on Linux, or starting from the repository) it runs **directly on this host**. The diagram below and "Isolation (macOS host)" describe the latter.
+The `web/` server runs a `tsugumid` per project. The installed [`tsugumi` command](#the-tsugumi-command) runs Cards directly on Linux, in the same shared Linux VM as the macOS app on a Mac, and in WSL2 on Windows. When starting from the repository for development, the server can run the daemon directly on the host. The diagram below describes a daemon running directly.
 The browser connects **directly** to `tsugumid`'s WebSocket `/rpc` with the FlatBuffers RPC, as an equal client using the same contract as the macOS app and the Agent.
 
 ```text
@@ -100,7 +100,7 @@ The TypeScript bindings and `tsugumi.bfbs` are generated into `web/src/gen` by `
 
 ## Isolation (macOS host)
 
-Isolation when running directly on a Mac host from the repository. The `tsugumi` command uses the VM, so this does not apply to it.
+Isolation for the development setup running directly on a Mac host from the repository. The installed `tsugumi` command runs Cards in the shared Linux VM.
 
 A `tsugumid` running directly on the host isolates `sandbox: true` Cards with `sandbox-exec` (Seatbelt; deprecated, but it works on current macOS) instead of bubblewrap (`core/src/worker_proc.cc`).
 

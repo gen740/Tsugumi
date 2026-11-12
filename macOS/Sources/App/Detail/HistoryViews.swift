@@ -233,6 +233,9 @@ struct CardExecutionView: View {
           LabeledContent("開始", value: formatMillis(s.startedAt))
           LabeledContent("終了", value: formatMillis(s.endedAt))
           if let d = s.durationMs { LabeledContent("所要時間", value: formatDuration(Double(d) / 1000)) }
+          if let service = s.executionService, !service.isEmpty {
+            LabeledContent("実行サービス", value: service == "local" ? String(localized: "プロジェクトの実行環境") : service)
+          }
           // A Card built for another system (its `system` setting): what ran it.
           if let e = s.emulator, !e.isEmpty { LabeledContent("エミュレーター", value: e).textSelection(.enabled) }
           if !s.waitingInputs.isEmpty {

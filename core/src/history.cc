@@ -1,7 +1,12 @@
 #include "history.hh"
 
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
 #include <cstdio>
 #include <functional>
+#include <system_error>
 
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -47,40 +52,44 @@ std::vector<WaitingInputData> waiting_from(const std::string& s) {
 
 std::string detail_json(const InvocationSummaryData& s) {
   schema::InvocationDetailJson d;
+  auto& stages = d.stages->emplace();
   for (const auto& st : s.stages) {
     schema::StageJson j;
     *j.phase = static_cast<int>(st.phase);
     *j.outcome = static_cast<int>(st.outcome);
     *j.start = st.start;
     *j.end = st.end.value_or(-1);
-    d.stages->push_back(std::move(j));
+    stages.push_back(std::move(j));
   }
   *d.worker_reused = s.worker_reused ? (*s.worker_reused ? 1 : 0) : -1;
-  for (const auto& p : s.outputs_sent) d.outputs_sent->push_back(p);
+  *d.outputs_sent = s.outputs_sent;
   *d.ready_at = s.ready_at.value_or(-1);
   *d.emulator = s.emulator;
   *d.environment_id = s.environment_id;
   *d.params = s.params_json;
+  *d.execution_service = s.execution_service;
   return schema::encode(d);
 }
 
 void detail_into(const std::string& text, InvocationSummaryData& s) {
   schema::InvocationDetailJson d;
   if (text.empty() || schema::decode(text, d)) return;
-  for (const auto& j : *d.stages) {
-    StageTimeData st;
-    st.phase = static_cast<Phase>(*j.phase);
-    st.outcome = static_cast<StageOutcome>(*j.outcome);
-    st.start = *j.start;
-    if (*j.end >= 0) st.end = *j.end;
-    s.stages.push_back(st);
-  }
-  if (*d.worker_reused >= 0) s.worker_reused = *d.worker_reused == 1;
-  for (const auto& p : *d.outputs_sent) s.outputs_sent.push_back(p);
-  if (*d.ready_at >= 0) s.ready_at = *d.ready_at;
-  s.emulator = *d.emulator;
-  s.environment_id = *d.environment_id;
-  s.params_json = *d.params;
+  if (const auto* stages = schema::get(d.stages))
+    for (const auto& j : *stages) {
+      StageTimeData st;
+      st.phase = static_cast<Phase>(*j.phase);
+      st.outcome = static_cast<StageOutcome>(*j.outcome);
+      st.start = *j.start;
+      if (*j.end >= 0) st.end = *j.end;
+      s.stages.push_back(st);
+    }
+  if (auto reused = d.worker_reused->value_or(-1); reused >= 0) s.worker_reused = reused == 1;
+  if (const auto* outputs = schema::get(d.outputs_sent)) s.outputs_sent = *outputs;
+  if (auto ready = d.ready_at->value_or(-1); ready >= 0) s.ready_at = ready;
+  s.emulator = d.emulator->value_or("");
+  s.environment_id = d.environment_id->value_or("");
+  s.params_json = d.params->value_or("");
+  if (const auto* service = schema::get(d.execution_service)) s.execution_service = *service;
 }
 
 std::string sources_json(const std::vector<InputSourceData>& s) {
@@ -145,7 +154,7 @@ constexpr const char* kRunCols =
     "target, propagate, (SELECT commit_id FROM run_commits c WHERE c.run_id = runs.run_id)";
 
 InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id, int cached_col = -1,
-                              int detail_col = -1) {
+                              int detail_col = -1, int service_col = -1) {
   // Columns: card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting
   InvocationSummaryData s;
   s.run_id = run_id;
@@ -160,6 +169,7 @@ InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id, in
   s.waiting = waiting_from(st.text(8));
   if (cached_col >= 0 && !st.is_null(cached_col)) s.build_cached = st.i64(cached_col) != 0;
   if (detail_col >= 0 && !st.is_null(detail_col)) detail_into(st.text(detail_col), s);
+  if (service_col >= 0 && !st.is_null(service_col)) s.execution_service = st.text(service_col);
   return s;
 }
 
@@ -214,42 +224,111 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
 )SQL";
 }
 
-// Version of the history's tables (PRAGMA user_version). An older history
-// is migrated step by step (kMigrations); a newer one is refused and kept.
-constexpr int kHistoryVersion = 2;
+// Version of the local history's tables (PRAGMA user_version).
+constexpr int kHistoryVersion = 3;
+constexpr const char* kCopyFormat = "tsugumi-runs";
+constexpr const char* kCopyVersion = "3";
 
-bool has_column(sql::Db& db, const char* table, const char* column) {
-  auto st = db.prepare(std::string("SELECT name FROM pragma_table_info('") + table + "')");
-  while (st.step())
-    if (st.text(0) == column) return true;
-  return false;
+namespace stdfs = std::filesystem;
+
+constexpr const char* kHistorySuffixes[] = {"", "-wal", "-shm", "-journal"};
+
+struct HistoryArchive {
+  stdfs::path database;
+  stdfs::path directory;
+  std::string id;
+  bool pending;
+};
+
+auto history_file(const stdfs::path& path, const char* suffix) -> stdfs::path {
+  return path.string() + suffix;
 }
 
-// kMigrations[v - 1] takes the tables from version v to v + 1.
-const std::vector<std::function<void(sql::Db&)>> kMigrations = {
-    // 1 -> 2: a value's hash stored beside it (ranged reads); the build cache
-    // flag and detail of an invocation.
-    [](sql::Db& db) {
-      if (!has_column(db, "ivalues", "hash")) {
-        db.exec("ALTER TABLE ivalues ADD COLUMN hash TEXT NOT NULL DEFAULT ''");
-        std::vector<std::pair<int64_t, std::string>> rows;
-        {
-          auto st = db.prepare("SELECT rowid, bytes FROM ivalues");
-          while (st.step()) rows.emplace_back(st.i64(0), crypto::sha256_hex(st.blob(1)));
-        }
-        for (const auto& [id, h] : rows) db.prepare("UPDATE ivalues SET hash=? WHERE rowid=?").bind(1, h).bind(2, id).run();
-      }
-      if (!has_column(db, "invocations", "build_cached")) db.exec("ALTER TABLE invocations ADD COLUMN build_cached INTEGER");
-      if (!has_column(db, "invocations", "detail")) db.exec("ALTER TABLE invocations ADD COLUMN detail TEXT");
-    },
-};
-static_assert(kHistoryVersion >= 1);
+auto regular_history_file(const stdfs::path& path) -> bool {
+  const auto status = stdfs::symlink_status(path);
+  if (!stdfs::exists(status)) return false;
+  if (!stdfs::is_regular_file(status)) throw std::runtime_error("history is not a regular file: " + path.string());
+  return true;
+}
+
+auto archive_intent(const stdfs::path& database) -> stdfs::path {
+  return history_file(database, ".archive-pending");
+}
+
+auto read_archive_id(const stdfs::path& intent) -> std::string {
+  // Read one UUID, with space for an extra byte to reject longer contents.
+  char buffer[37];
+  const int fd = ::open(intent.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+  if (fd < 0) throw std::system_error(errno, std::generic_category(), "open " + intent.string());
+  ssize_t count;
+  do { count = ::read(fd, buffer, sizeof buffer); } while (count < 0 && errno == EINTR);
+  const int error = errno;
+  ::close(fd);
+  if (count < 0) throw std::system_error(error, std::generic_category(), "read " + intent.string());
+  const std::string id(buffer, static_cast<size_t>(count));
+  if (!crypto::is_uuid(id)) throw std::runtime_error("invalid history archive intent: " + intent.string());
+  return id;
+}
+
+auto sync_history_directory(const stdfs::path& directory) -> void {
+  const int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (fd < 0) throw std::system_error(errno, std::generic_category(), "open " + directory.string());
+  int result;
+  do { result = ::fsync(fd); } while (result < 0 && errno == EINTR);
+  const int error = errno;
+  ::close(fd);
+  if (result < 0) throw std::system_error(error, std::generic_category(), "sync " + directory.string());
+}
+
+auto history_archive(const stdfs::path& database, std::string id, bool pending) -> HistoryArchive {
+  const auto directory = database.parent_path() / ("history-archive-" + id);
+  const auto status = stdfs::symlink_status(directory);
+  if (stdfs::exists(status) && (!pending || !stdfs::is_directory(status)))
+    throw std::runtime_error("invalid history archive directory: " + directory.string());
+  for (const auto* suffix : kHistorySuffixes) {
+    const auto source = history_file(database, suffix);
+    const auto destination = directory / source.filename();
+    const bool has_source = regular_history_file(source);
+    const bool has_destination = regular_history_file(destination);
+    if (has_source && has_destination)
+      throw std::runtime_error("history archive has both source and destination: " + source.string());
+    if (!*suffix && !has_source && !has_destination)
+      throw std::runtime_error("history archive is missing its database: " + database.string());
+  }
+  return {database, directory, std::move(id), pending};
+}
+
+auto finish_history_archive(const HistoryArchive& archive, std::string_view fault) -> void {
+  const auto intent = archive_intent(archive.database);
+  if (!archive.pending) {
+    fs::write_atomic(intent, archive.id, 0600);
+    sync_history_directory(intent.parent_path());
+  }
+  // The project lock excludes other Tsugumi processes. Leave the intent on
+  // any failure so no startup can create a fresh database over its old WAL.
+  stdfs::create_directory(archive.directory);
+  stdfs::permissions(archive.directory, stdfs::perms::owner_all);
+  for (const auto* suffix : kHistorySuffixes) {
+    const auto source = history_file(archive.database, suffix);
+    if (!regular_history_file(source)) continue;
+    const auto destination = archive.directory / source.filename();
+    if (regular_history_file(destination))
+      throw std::runtime_error("history archive destination already exists: " + destination.string());
+    stdfs::rename(source, destination);
+    if (!*suffix && fault == "history_archive_after_main") ::_exit(97);
+  }
+  sync_history_directory(archive.directory);
+  sync_history_directory(intent.parent_path());
+  fs::remove_file_durable(intent);
+  sync_history_directory(intent.parent_path());
+  log::info("incompatible history archived in " + archive.directory.string());
+}
 
 }  // namespace
 
 History::History(const std::filesystem::path& db_path, std::string cursor_secret, std::string fault)
     : path_(db_path), secret_(std::move(cursor_secret)), fault_(std::move(fault)) {
-  if (std::filesystem::exists(path_)) migrate();
+  if (std::filesystem::exists(path_)) check_version();
   writer_db_ = std::make_unique<sql::Db>(path_.string());
   // Single process owns the database (guarded by the project lock).
   writer_db_->exec("PRAGMA journal_mode=WAL");
@@ -259,39 +338,75 @@ History::History(const std::filesystem::path& db_path, std::string cursor_secret
   writer_ = std::thread([this] { writer_loop(); });
 }
 
-// Brings an existing history to kHistoryVersion: refused when it is newer
-// (a later Tsugumi wrote it; it is kept as it is), migrated in one
-// transaction when older, after a copy of it (history.sqlite.v<N>).
-void History::migrate() {
-  sql::Db db(path_.string());
-  int64_t version = 0;
-  int64_t tables = 0;
-  {
-    auto v = db.prepare("PRAGMA user_version");
-    if (v.step()) version = v.i64(0);
-    auto t = db.prepare("SELECT count(*) FROM sqlite_master WHERE type='table'");
-    if (t.step()) tables = t.i64(0);
+// A fresh database has no tables or version. A history written with a
+// different schema is rejected before the writer opens it.
+auto History::check_version() const -> void {
+  sql::Db db(path_.string(), true);
+  auto version = db.prepare("PRAGMA user_version");
+  const auto stored = version.step() ? version.i64(0) : 0;
+  if (stored == kHistoryVersion) return;
+  auto tables = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1");
+  if (stored == 0 && !tables.step()) return;
+  throw IncompatibleHistory("the run history " + path_.string() + " has schema version " +
+                           std::to_string(stored) + ", but this Tsugumi requires " +
+                           std::to_string(kHistoryVersion) + ". The history file is kept as it is.",
+                           std::to_string(stored), std::to_string(kHistoryVersion), "local");
+}
+
+auto History::prepare_storage(const stdfs::path& local, const stdfs::path& copy,
+                              bool archive_incompatible, std::string_view fault) -> void {
+  std::vector<HistoryArchive> archives;
+  std::optional<IncompatibleHistory> first;
+  // Validate both databases before moving anything. Corruption is not a version mismatch.
+  for (const auto& path : {local, copy}) {
+    const bool is_local = path == local;
+    const std::string expected = is_local ? std::to_string(kHistoryVersion) : kCopyVersion;
+    const char* source = is_local ? "local" : "portable";
+    const auto intent = archive_intent(path);
+    if (regular_history_file(intent)) {
+      archives.push_back(history_archive(path, read_archive_id(intent), true));
+      if (!first) first.emplace("the run history " + path.string() +
+          " has an unfinished archive. Resume the archive to open the project.", "pending", expected, source);
+      continue;
+    }
+    const bool present = regular_history_file(path);
+    for (const auto* suffix : {"-wal", "-shm", "-journal"}) {
+      const auto sidecar = history_file(path, suffix);
+      if (regular_history_file(sidecar) && !present)
+        throw std::runtime_error("history sidecar has no database: " + sidecar.string());
+    }
+    if (!present) continue;
+
+    sql::Db db(path.string(), true);
+    if (archive_incompatible) {
+      auto check = db.prepare("PRAGMA quick_check");
+      if (!check.step() || check.text(0) != "ok")
+        throw std::runtime_error("history integrity check failed: " + path.string());
+    }
+    std::string found;
+    if (is_local) {
+      auto version = db.prepare("PRAGMA user_version");
+      const auto stored = version.step() ? version.i64(0) : 0;
+      auto tables = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1");
+      if (stored == kHistoryVersion || (stored == 0 && !tables.step())) continue;
+      found = std::to_string(stored);
+    } else {
+      auto version = db.prepare("SELECT key, value FROM meta WHERE key IN ('format','version')");
+      std::map<std::string, std::string> meta;
+      while (version.step()) meta[version.text(0)] = version.text(1);
+      if (meta["format"] != kCopyFormat || meta["version"].empty())
+        throw std::runtime_error("unrecognized history copy: " + path.string());
+      if (meta["version"] == kCopyVersion) continue;
+      found = meta["version"];
+    }
+    archives.push_back(history_archive(path, crypto::uuid4(), false));
+    if (!first) first.emplace("the run history " + path.string() + " has schema version " + found +
+        ", but this Tsugumi requires " + expected + ". The history file is kept as it is.",
+        found, expected, source);
   }
-  if (tables == 0 || version == kHistoryVersion) return;
-  if (version > kHistoryVersion)
-    throw std::runtime_error("the run history " + path_.string() + " is version " + std::to_string(version) +
-                             ", newer than this Tsugumi (" + std::to_string(kHistoryVersion) +
-                             "); it is kept as it is: use a newer Tsugumi");
-  if (version < 1) throw std::runtime_error("the run history " + path_.string() + " has no version: it is kept as it is");
-  auto backup = path_.string() + ".v" + std::to_string(version);
-  std::filesystem::remove(backup);
-  db.prepare("VACUUM INTO ?").bind(1, backup).run();
-  log::info("history: migrating " + path_.string() + " from version " + std::to_string(version) + " to " +
-            std::to_string(kHistoryVersion) + " (the previous one is kept as " + backup + ")");
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    for (int64_t v = version; v < kHistoryVersion; ++v) kMigrations.at(static_cast<size_t>(v - 1))(db);
-    db.exec("PRAGMA user_version=" + std::to_string(kHistoryVersion));
-    db.exec("COMMIT");
-  } catch (...) {
-    db.exec("ROLLBACK");
-    throw;
-  }
+  if (!first) return;
+  if (!archive_incompatible) throw *first;
+  for (const auto& archive : archives) finish_history_archive(archive, fault);
 }
 
 History::~History() {
@@ -312,7 +427,7 @@ CREATE TABLE IF NOT EXISTS active_environments(
 CREATE TABLE IF NOT EXISTS statuses(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
   state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, failure BLOB, waiting TEXT,
-  updated_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL, execution_service TEXT NOT NULL,
   PRIMARY KEY(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS last_inputs(
   card TEXT PRIMARY KEY, run_id TEXT NOT NULL, invocation INTEGER NOT NULL, inputs TEXT NOT NULL);
@@ -459,16 +574,17 @@ void History::put_status(sql::Db& db, const InvocationSummaryData& s) {
     db.prepare("INSERT OR REPLACE INTO active_environments VALUES(?,?,?,?)")
         .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, s.environment_id).run();
   auto st = db.prepare(
-      "INSERT INTO statuses(run_id, card, invocation, state, phase, started_at, failure, waiting, updated_at) "
-      "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(run_id, card, invocation) DO UPDATE SET "
+      "INSERT INTO statuses(run_id, card, invocation, state, phase, started_at, failure, waiting, updated_at, execution_service) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(run_id, card, invocation) DO UPDATE SET "
       "state=excluded.state, phase=excluded.phase, started_at=excluded.started_at, "
-      "failure=excluded.failure, waiting=excluded.waiting, updated_at=excluded.updated_at");
+      "failure=excluded.failure, waiting=excluded.waiting, updated_at=excluded.updated_at, "
+      "execution_service=excluded.execution_service");
   st.bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, static_cast<int>(s.state));
   if (s.phase) st.bind(5, static_cast<int>(*s.phase));
   else st.bind_null(5);
   st.bind(6, s.started_at);
   bind_failure(st, 7, s.failure);
-  st.bind(8, waiting_json(s.waiting)).bind(9, now_ms()).run();
+  st.bind(8, waiting_json(s.waiting)).bind(9, now_ms()).bind(10, s.execution_service).run();
   db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)")
       .bind(1, s.run_id).bind(2, key(s.card)).run();
 }
@@ -644,16 +760,16 @@ std::optional<std::string> History::run_receipt_digest(sql::Db& db, const std::s
 
 std::vector<InvocationSummaryData> History::latest_invocations(sql::Db& db, const std::string& run_id) {
   auto st = db.prepare(
-      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail "
+      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail, NULL "
       "FROM invocations i WHERE run_id=?1 AND invocation=(SELECT MAX(invocation) FROM invocations WHERE run_id=?1 AND card=i.card) "
-      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, NULL "
+      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, NULL, execution_service "
       "FROM statuses s WHERE run_id=?1 AND invocation=(SELECT MAX(invocation) FROM statuses WHERE run_id=?1 AND card=s.card) "
       "AND invocation > COALESCE((SELECT MAX(invocation) FROM invocations WHERE run_id=?1 AND card=s.card), 0) "
       "ORDER BY card, invocation");
   st.bind(1, run_id);
   std::vector<InvocationSummaryData> out;
   while (st.step()) {
-    auto row = inv_row(st, run_id, 9, 10);
+    auto row = inv_row(st, run_id, 9, 10, 11);
     // A status newer than the Card's last record is the one a client wants.
     if (!out.empty() && out.back().card == row.card) out.back() = std::move(row);
     else out.push_back(std::move(row));
@@ -666,15 +782,15 @@ std::vector<InvocationSummaryData> History::invocations(sql::Db& db, const std::
                                                         uint64_t limit) {
   // Completed records and in-progress statuses, ascending invocation number.
   auto st = db.prepare(
-      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail "
+      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail, NULL "
       "FROM invocations WHERE run_id=?1 AND card=?2 AND invocation>?3 "
-      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, NULL "
+      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, NULL, execution_service "
       "FROM statuses WHERE run_id=?1 AND card=?2 AND invocation>?3 AND invocation NOT IN "
       "(SELECT invocation FROM invocations WHERE run_id=?1 AND card=?2) "
       "ORDER BY invocation LIMIT ?4");
   st.bind(1, run_id).bind(2, key(card)).bind(3, after).bind(4, limit);
   std::vector<InvocationSummaryData> out;
-  while (st.step()) out.push_back(inv_row(st, run_id, 9, 10));
+  while (st.step()) out.push_back(inv_row(st, run_id, 9, 10, 11));
   return out;
 }
 
@@ -696,11 +812,11 @@ std::optional<InvocationRecordData> History::invocation(sql::Db& db, const std::
 std::optional<InvocationSummaryData> History::status(sql::Db& db, const std::string& run_id,
                                                      const CardPath& card, uint64_t n) {
   auto st = db.prepare(
-      "SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, updated_at "
+      "SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, execution_service "
       "FROM statuses WHERE run_id=? AND card=? AND invocation=?");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n);
   if (!st.step()) return std::nullopt;
-  return inv_row(st, run_id);
+  return inv_row(st, run_id, -1, -1, 9);
 }
 
 std::optional<uint64_t> History::latest_invocation(sql::Db& db, const std::string& run_id,
@@ -1049,8 +1165,7 @@ std::pair<int64_t, std::string> History::open_cursor(const std::string& cursor,
 
 namespace {
 
-constexpr const char* kCopyFormat = "tsugumi-runs";
-constexpr const char* kCopyVersion = "3";
+
 
 // The copy: the run tables (same names and columns as the history, so runs
 // move between the two with the same column lists, kCopied) and its format.

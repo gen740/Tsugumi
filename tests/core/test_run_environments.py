@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import sqlite3
 
 import pytest
 
@@ -9,6 +10,28 @@ from harness.fixtures import worker_project
 from harness.scenario import Project, STRING_OUTPUT, run, wait_run
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
+
+
+@pytest.mark.parametrize("version", [2, 4], ids=["older", "newer"])
+def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
+    """The daemon refuses an incompatible local history database and leaves its contents intact."""
+    history_dir = tmp_path / "history"
+    history_dir.mkdir()
+    database = history_dir / "history.sqlite"
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("CREATE TABLE fixture (note TEXT NOT NULL)")
+        connection.execute("INSERT INTO fixture VALUES ('retained')")
+        connection.execute(f"PRAGMA user_version={version}")
+        connection.commit()
+    finally:
+        connection.close()
+    original = database.read_bytes()
+
+    with pytest.raises(RuntimeError, match=rf"has schema version {version}, but this Tsugumi requires 3"):
+        core_factory(history_dir=history_dir)
+
+    assert database.read_bytes() == original
 
 
 def inventory(client, run_id, card="work"):
@@ -263,7 +286,7 @@ def test_shipped_cli_can_inspect_the_environment_inventory(core_factory, project
 
 
 def test_interrupted_execution_keeps_its_environment_after_a_crash(core_factory, project, tmp_path):
-    """Crash recovery preserves the environment associated before a worker began executing."""
+    """Crash recovery preserves the environment and service of an interrupted execution."""
     from harness.scenario import Gate
     daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history")
     client = daemon.connect()
@@ -274,17 +297,23 @@ def test_interrupted_execution_keeps_its_environment_after_a_crash(core_factory,
     rows = client.call("RunLatestInvocationsRequest", runId=run_id).records
     environment_id = text(rows[0].environmentId)
     assert environment_id
+    assert text(rows[0].executionService) == "local"
     daemon.stop(crash=True)
     daemon.start()
     client = daemon.connect()
     status = client.call("RunStatusRequest", runId=run_id)
     assert status.state == RunState.failed
     assert inventory(client, run_id)[0] == environment_id
+    rows = client.call("RunLatestInvocationsRequest", runId=run_id).records
+    assert text(rows[0].executionService) == "local"
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
     restored = core_factory(project_root=copied_project, history_dir=tmp_path / "restored-history")
-    assert inventory(restored.connect(), run_id)[0] == environment_id
+    copied_client = restored.connect()
+    assert inventory(copied_client, run_id)[0] == environment_id
+    rows = copied_client.call("RunLatestInvocationsRequest", runId=run_id).records
+    assert text(rows[0].executionService) == "local"
 
 
 def test_dependency_search_is_literal_case_insensitive_and_paginated(core_factory, project, tmp_path):

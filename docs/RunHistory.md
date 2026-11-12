@@ -10,6 +10,8 @@ Open a run to see what its Cards received, produced and kept. A run can contain 
 
 For example, open **Visualization → report**, run it, and inspect a figure Card's input and output. A stopped or failed invocation can have a log and status even when there is no output.
 
+The **Info** tab shows the execution service used by a Code Card once its backend starts. The **Packages** tab shows the recorded Nix system. [Execution service](features.md#execution-service)
+
 ## Compare two runs
 
 1. Run a Workflow, change one condition, and run it again. For example, change the `offset` of the aggregate Card in **Visualization → report**.
@@ -39,5 +41,7 @@ When the Agent cites a result in a chat reply, open its evidence link to inspect
 ## Copy or delete history
 
 With **Save run history in the project** enabled, finished records are written to `.tsugumi/runs.sqlite` as well as to the local history. Copy the whole project, including its hidden `.tsugumi` directory, to keep its saved run records and files with it. The project's git history holds versions of the document and code. Outputs and logs live in run history.
+
+If Tsugumi cannot open the project because its run history uses a different format, the startup page shows the versions involved. Choose **Archive History and Start** to keep the incompatible database files in a separate archive and open the project. If the archive is interrupted, choose **Resume Archiving and Start**. Records kept only in the archive are unavailable in the app. **Retry** attempts to open the project again without archiving. See the archive locations under [Where the run history lives](Development.md#main-design-decisions).
 
 **Delete Run History** in the project settings deletes the selected history and retained artifacts. Saved last inputs used for partial runs remain available. This action is unavailable during a run. **Delete the build cache** operates on build registrations and work files. [History storage](features.md#6-run-history-and-artifacts) · [Build results](features.md#keeping-build-results)
