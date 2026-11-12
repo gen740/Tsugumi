@@ -1245,5 +1245,13 @@
  "この呼び出しで記録されたものです。ビルド時だけに使う依存関係は含まれません。": "Recorded for this invocation. Build-only dependencies are not included.",
  "依存パスを検索": "Search dependencies",
  "検索結果を 100 件ずつ表示します。": "Showing 100 matching paths per page.",
- "一致する依存パスはありません": "No matching dependencies."
+ "一致する依存パスはありません": "No matching dependencies.",
+ "Nix 参照（記述どおり）": "Nix references (as written)",
+ "保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。": "Shows the Card references written in saved default.nix files. References through aliases or computed names are not included.",
+ "Nix 参照一覧": "Nix reference list",
+ "参照元 → 参照先。保存済みの default.nix にある静的な Card 参照を表示します。": "Referencing Card → referenced Card. Shows static Card references in saved default.nix files.",
+ "Card 間の Nix 参照はありません": "No Nix references between Cards.",
+ "参照を解決できません。Nix 定義と診断を確認してください。": "This reference is invalid. Check the Nix definition and diagnostics.",
+ "Nix 定義を開く": "Open Nix definition",
+ "一覧": "List"
 }

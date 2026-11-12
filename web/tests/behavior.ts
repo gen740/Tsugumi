@@ -67,3 +67,6 @@ await import("./guideScript")
 await import("./demoReplay")
 await import("./evidence")
 await import('./environments')
+
+await import('./nixReferences')
+await import('./nixReferenceOverlay')
