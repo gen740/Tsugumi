@@ -68,3 +68,5 @@ await import("./demoReplay")
 await import("./evidence")
 
 await import('./untangle')
+await import('./nixReferences')
+await import('./nixReferenceOverlay')
