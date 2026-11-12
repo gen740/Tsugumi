@@ -932,7 +932,6 @@
  "実行環境の既定と異なる CPU アーキテクチャではエミュレーションを使います。": "An architecture other than the execution environment's default uses emulation.",
  "この実行環境では {0} を実行できません。": "{0} cannot run in this execution environment.",
  "情報なし": "Unavailable",
- "システム": "System",
  "手分けして進めています": "Splitting the work among helpers",
  "手分けして進めました": "Split the work among helpers",
  "手動でビルドする場合:": "To build by hand:",
