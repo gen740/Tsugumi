@@ -1,3 +1,4 @@
+import { NixReferenceControls } from './nixReferences'
 // The canvas with its floating controls: the project's title (with where the
 // canvas is), the run control, Drafts and the project's actions at the top;
 // zoom and layout controls at the bottom.
@@ -46,6 +47,7 @@ export function CanvasWorkspace({ workspace, session, tab, onSwitchProject, bott
       </div>
       <div className="cv-bottom">
         <ViewControls session={session} tab={tab} />
+        <NixReferenceControls session={session} tab={tab} />
         <span className="cv-spacer" />
         {bottomTrailing}
       </div>
