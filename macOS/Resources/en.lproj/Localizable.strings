@@ -308,7 +308,6 @@
 "こんにちは、ツグミです。何をしてみますか？" = "Hello, I'm Tsugumi. What would you like to try?";
 "こんにちは、ツグミです。動くデモを一緒に見てみますか？" = "Hello, I'm Tsugumi. Shall we look at a working demo together?";
 "すべて" = "All";
-"すべてのターミナルを閉じます（実行中のコマンドは終了します）" = "Closes all terminals (running commands end)";
 "すべての入力が揃ったとき" = "When every input has arrived";
 "すべての実行" = "All runs";
 "すべての実行履歴を削除しますか？" = "Delete the whole run history?";
@@ -435,6 +434,7 @@
 "ターミナル %lld" = "Terminal %lld";
 "ターミナルがありません" = "No Terminals";
 "ターミナルの表示切替" = "Toggle Terminal";
+"ターミナルは同時に %lld 個までです" = "Up to %lld terminals can be open at once";
 "ターミナルは終了しました" = "The terminal ended";
 "ターミナルを閉じます（実行中のコマンドは終了します）" = "Closes this terminal (its running command ends)";
 "ターミナルを開けませんでした" = "Could not open the terminal";
@@ -496,6 +496,7 @@
 "パス" = "Path";
 "パスをコピー" = "Copy Path";
 "パス（例: src/util.py）" = "Path (e.g. src/util.py)";
+"パネルを隠します（ターミナルは開いたままで、実行中のコマンドは続きます）" = "Hides the panel (terminals stay open and running commands continue)";
 "パラメータ" = "Parameters";
 "ビルドの期限（秒）" = "Build timeout (s)";
 "ビルドキャッシュ" = "Build Cache";
