@@ -9,7 +9,7 @@ static uint64_t arrival_value(const Card::Input& input) {
   return Card::visit(input.arrival.value, [](const auto& v) { return v.value; });
 }
 
-// The worker stays across runs (reuseWorker); each run starts empty.
+// This Card sets reuseWorker: true, so the worker stays across invocations and runs; each run starts empty.
 static std::vector<uint64_t> values;
 
 auto onRunStart() -> void { values.clear(); }

@@ -1,7 +1,7 @@
 """The Collatz demo in all four languages (C++, Python, Julia and R), run for real.
 
 test_demos.py runs the loop of C++ and Python in CI (a copy of the demo without the other two). Here the whole demo
-runs, so Julia and R are built and start a process for every step (three to six minutes for 27): 27 gives the same
+runs, with all four languages using resident workers: 27 gives the same
 112 values in every language, and a value R cannot hold exactly fails its Card while Julia keeps the exact sequence.
 """
 

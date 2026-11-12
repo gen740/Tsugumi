@@ -52,6 +52,11 @@ std::unique_ptr<WorkerProc> WorkerPool::spawn(WorkerSpawn sp) {
 
 WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string& key, const WorkerSpawn& sp,
                                       bool reuse) {
+  std::string standby_key = key;
+#ifdef __APPLE__
+  // Seatbelt grants each worker write access to this Card's outputs.
+  if (sp.sandbox) standby_key += "|" + card;
+#endif
   Lease lease;
   std::vector<std::unique_ptr<WorkerProc>> ended;
   {
@@ -61,11 +66,11 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
         ++it;
         continue;
       }
-      if (it->key == key && it->worker->alive() && !lease.worker) {
+      if (reuse && it->key == key && it->worker->alive() && !lease.worker) {
         lease.worker = std::move(it->worker);
         lease.reused = true;
-      } else if (it->key != key || !it->worker->alive()) {
-        // Another build or setting of this Card (or a worker that died idle).
+      } else if (!reuse || it->key != key || !it->worker->alive()) {
+        // Reuse was disabled, the build changed, or the worker died idle.
         ended.push_back(std::move(it->worker));
       } else {
         ++it;
@@ -74,7 +79,7 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
       it = resident_.erase(it);
     }
     if (!lease.worker && !reuse) {
-      if (auto it = standby_.find(key); it != standby_.end()) {
+      if (auto it = standby_.find(standby_key); it != standby_.end()) {
         if (it->second.worker->alive()) lease.worker = std::move(it->second.worker);
         else ended.push_back(std::move(it->second.worker));
         standby_.erase(it);
@@ -83,7 +88,7 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
   }
   ended.clear();  // outside the lock: ending a worker waits for it
   if (!lease.worker) lease.worker = spawn(sp);
-  if (!reuse) refill(key, sp);
+  if (!reuse) refill(standby_key, sp);
   return lease;
 }
 
@@ -125,7 +130,9 @@ void WorkerPool::release(const std::string& card, const std::string& key, std::u
 void WorkerPool::refill(const std::string& key, WorkerSpawn sp) {
   {
     std::lock_guard<std::mutex> l(mu_);
-    if (stopping_ || standby_.count(key) || refilling_[key]) return;
+    if (stopping_ || standby_.contains(key) || refilling_.contains(key) ||
+        standby_.size() + refilling_.size() >= limits_.max_standby)
+      return;
     refilling_[key] = true;
     pending_.emplace_back(key, std::move(sp));
   }
