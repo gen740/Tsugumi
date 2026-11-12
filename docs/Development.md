@@ -156,3 +156,43 @@ On an Apple silicon macOS development host, with sandboxing disabled, the second
 | Julia 1.13.2 | 119.070 s | 0.493 s | 186.880 s | 0.364 s |
 
 This comparison used the SDK at `03837b42` as the baseline and nixpkgs `1c89083e451e891152365b799595cf7790a43325`. The sum of execute stages includes concurrent Cards, so it can exceed wall time. These are two runs per configuration on one development machine, not a cross-platform benchmark. The resident first runs took 17.125 s (R) and 10.667 s (Julia), including new shim builds; their execute totals were 3.186 s and 5.273 s. The baseline first runs used already-built packages and took 97.803 s and 123.141 s. No Python/C++ demo Cards or UI rendering are included in this measurement.
+
+## Module display performance checks
+
+`web/tools/module-perf.tsx` uses the production display component with three deterministic cases: eight Plotly traces of 5,000 points, a Vega-Lite scatter plot of 50,000 points, and twelve mixed Plotly/Vega-Lite figures of 2,000 points each. It records initial output readiness, 120 animation-frame intervals while changing the display size and position as in canvas pan/zoom, retained iframe count, and `performance.memory.usedJSHeapSize` when available.
+
+Build the comparison fixtures with:
+
+```sh
+node web/tools/module-perf.mjs /tmp/modules-before 03837b42
+node web/tools/module-perf.mjs /tmp/modules-after
+python3 -m http.server 8771 --bind 127.0.0.1 --directory /tmp/modules-before
+# In another terminal:
+python3 -m http.server 8772 --bind 127.0.0.1 --directory /tmp/modules-after
+```
+
+The baseline fixture adds the same iframe sandbox that the production server applies through CSP. Open both pages in a background browser with at least a 1280 × 720 viewport. For each case choose the scene, Render, wait for the results line, then Measure pan and zoom. Close all between cases. New result changes the data without changing its length; Open expanded uses the full interactive viewer.
+
+The Web canvas now retains images instead of one plotting runtime per figure. Visible frames share one serial renderer with a 32 MiB preview-cache budget (encoded data plus decoded-pixel cost); it is removed one second after the queue empties. Hidden frames release their displayed image and cancel queued work. The full JSON and dimensions identify a preview, and small rounding changes during zoom reuse its dimensions. Initial PNG generation has a cost, especially for many figures; the optimization removes retained runtimes, rather than promising a shorter first render in every case.
+
+A manual comparison on 2026-11-12 used the same background Chromium browser at 1280 × 720. The baseline was `03837b42`, with the production sandbox applied. Each row is one run, not a statistical estimate; other work on the shared Mac can affect timings.
+
+| Scene | Initial output, before → after | Pan/zoom frame interval p50 / p95 / max, before → after | Retained iframes, before → after |
+| --- | --- | --- | --- |
+| Complex Plotly (2,251,466 source bytes) | 355.5 → 402.7 ms | 16.7 / 18.3 / 18.7 → 16.7 / 18.3 / 18.5 ms | 1 → 0 |
+| Large Vega-Lite (3,991,328 source bytes) | 253.5 → 352.9 ms | 16.7 / 18.3 / 18.7 → 16.7 / 18.3 / 18.6 ms | 1 → 0 |
+| Twelve mixed figures (2,332,516 source bytes) | 505.9 → 605.7 ms | 16.7 / 18.3 / 150.0 → 16.7 / 18.3 / 33.4 ms | 12 → 0 |
+
+For completeness, `usedJSHeapSize` readings in bytes were 20,152,105 → 23,707,679 (complex), 22,134,281 → 27,472,890 (large), and 22,050,521 → 22,556,428 (twelve figures). These are consecutive same-tab readings, not controlled memory profiles.
+
+The twelve-figure case displayed all twelve previews; another result with the same-sized data displayed all twelve updated previews in 603.6 ms. Its expanded view showed the updated revision, zoom changed the axis ticks, and closing it removed the interactive iframe. Initial export was slower in all three cases; steady-state median and p95 frame intervals were essentially unchanged. The lower maximum in the twelve-figure run is an observation from this sample, not a guaranteed latency bound. JavaScript heap readings are not used as evidence of a memory reduction: they may omit isolated iframe heaps and are not whole-process RSS. Retained iframe counts demonstrate the runtime-lifetime change; measuring total browser memory requires a separate process-level profile.
+
+The viewer uses [Plotly image export](https://plotly.com/javascript/plotlyjs-function-reference/#plotlytoimage) and [Vega view finalization](https://vega.github.io/vega/docs/api/view/#view_finalize) at their documented lifecycle boundaries.
+
+The common viewer's lifecycle check also runs in real, offscreen macOS WKWebViews, without opening or activating a window:
+
+```sh
+swift macOS/tools/perf/module-viewer.swift /tmp/modules-after/modules
+```
+
+This creates and closes three viewers, verifies rapid same-sized Plotly updates show the latest values, exports PNG, replaces Vega views five times, and switches back to Plotly. On 2026-11-12 it passed in 1.2–2.0 seconds across repeated checks. Against the baseline viewer it failed because none of the five replaced Vega views were finalized. The Node behavior suite separately tests queued-update coalescing, stale completion suppression, zero initial iframe viewport dimensions, cache eviction, cancellation, and idle cleanup. These checks complement the existing macOS canvas measurements in commit `03837b42`; this change does not replace that native thumbnail implementation.

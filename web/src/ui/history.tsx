@@ -10,14 +10,16 @@ import { D, R, s, segs } from '../shared/rpc'
 import { Button, download, Empty, Form, HSplit, Row, Section, Segmented, Select, Spinner, TextField, Value } from './controls'
 import { ArtifactHTMLPreview } from './artifactHTMLPreview'
 import { DisplayContent } from './display'
+import { InvocationPackages } from './environments'
 import { Icon } from './icons'
 import { RunLogView } from './logs'
 import { L } from '../i18n'
 
 type Filter = 'all' | 'succeeded' | 'failed'
-type Detail = 'io' | 'log' | 'info'
+type Detail = 'io' | 'log' | 'packages' | 'info'
 
 /** Runs of one Card (filter by success/failure) → invocations → I/O, log, info.
+ *  The packages are those recorded for the invocation.
  *  Loading, failed and empty are said plainly, never as an empty split view. */
 export function CardExecutionView({ session, cardKey }: { session: ProjectSession; cardKey: CardKey }) {
   useObserve(session)
@@ -124,7 +126,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                     label: `#${i.invocation ?? 0n} · ${cardState(i.state).label}` + (i.durationMs !== null ? ` · ${formatDuration(Number(i.durationMs) / 1000)}` : ''),
                   })) : [{ value: '', label: L('呼び出しなし') }]} />
                 <span className="spacer" />
-                <Segmented<Detail> small width={220} value={detail} onChange={setDetail} options={[{ value: 'io', label: L('入出力') }, { value: 'log', label: L('ログ') }, { value: 'info', label: L('情報') }]} />
+                <Segmented<Detail> small width={300} value={detail} onChange={setDetail} options={[{ value: 'io', label: L('入出力') }, { value: 'log', label: L('ログ') }, { value: 'packages', label: L('依存 package') }, { value: 'info', label: L('情報') }]} />
               </div>
               <div className="flex1 col min0">
                 {detail === 'io' && (rec ? (
@@ -139,6 +141,9 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                   </div>
                 ) : record?.exists === false ? <Empty title={L('この実行では呼び出されていません')} icon="circle.dotted" /> : <Empty title={L('記録がありません')} icon="tray" />)}
                 {detail === 'log' && <RunLogView session={session} runId={runId} card={path(cardKey)} invocation={invocation} />}
+                {/* What this invocation ran with, from its record; never the current definition. */}
+                {detail === 'packages' && (record?.exists === false ? <Empty title={L('この実行では呼び出されていません')} icon="circle.dotted" />
+                  : <InvocationPackages session={session} runId={runId} environmentId={s(rec?.summary?.environmentId)} />)}
                 {detail === 'info' && (record ? (
                   <div className="scroll">
                     <Form>

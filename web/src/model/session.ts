@@ -13,6 +13,7 @@ import {
   snapToGrid,
 } from './canvasKit'
 import { arrangeCards } from './arrange'
+import { FigureState, figureMode } from './moduleThumbnails'
 import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
 import { Observable } from './observable'
 import { FlowDirection, prefs } from './prefs'
@@ -3361,6 +3362,36 @@ auto run(Card::Input& input) -> Card::Output {
     if (this.runActive && inner.some((x) => x === D.CardState.waiting || x === D.CardState.ready)) return D.CardState.running
     if (inner.includes(D.CardState.blocked)) return D.CardState.blocked
     return D.CardState.succeeded
+  }
+
+  /** How the Card's figure on the canvas follows its results: its
+   *  `displayMode`, whether the Card runs, and whether one upstream of it
+   *  does (its figure is about to be replaced). */
+  figureState(k: CardKey): FigureState {
+    const mode = figureMode(str(this.cardSetting(k, 'displayMode')))
+    if (!this.runActive) return { mode, running: false, stale: false }
+    const busy = (c: CardKey) => {
+      const st = this.cardStates.get(c)?.state
+      return st === D.CardState.ready || st === D.CardState.preparing || st === D.CardState.running || this.compositeState(c) === D.CardState.running
+    }
+    // Upstream in the Card's own Workflow, then upstream of each Card in Card it is inside.
+    const upstream = (c: CardKey): boolean => {
+      const scope = path(c).slice(0, -1)
+      const conns = this.connections(scope)
+      const seen = new Set<string>(), todo = [path(c)[scope.length]]
+      while (todo.length) {
+        const id = todo.pop()!
+        for (const conn of conns) {
+          const from = str(get(conn, 'from', 'card'))
+          if (!from || str(get(conn, 'to', 'card')) !== id || seen.has(from)) continue
+          seen.add(from)
+          if (busy(key([...scope, from]))) return true
+          todo.push(from)
+        }
+      }
+      return scope.length > 0 && upstream(key(scope))
+    }
+    return { mode, running: busy(k), stale: upstream(k) }
   }
 
   /** The inner Card and port an outer output of a Card in Card comes from. */

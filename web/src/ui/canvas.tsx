@@ -10,6 +10,7 @@ import { WritingPanels } from './writingPanel'
 import { Boundary, canvasFor, linkEnds, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
 import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
+import { holdsDisplay } from '../model/moduleThumbnails'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
   CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parseParam, path, ProjectSession, TEMPLATES, templateIcon,
@@ -967,7 +968,12 @@ function ResizeHandle({ onEnd }: { onEnd: (dx: number, dy: number) => void }) {
 function OutputFrameView({ session, cardKey, zoom: z, selected, onExpand, onClose, onResize, ...ev }: {
   session: ProjectSession; cardKey: CardKey; zoom: number; selected: boolean; onExpand: () => void; onClose: () => void; onResize: (dx: number, dy: number) => void
 } & ItemEvents) {
-  const d = session.displays.get(cardKey)
+  const figure = session.figureState(cardKey)
+  const latest = session.displays.get(cardKey)
+  const hold = holdsDisplay(figure)
+  const settled = useRef(hold ? undefined : latest)
+  useLayoutEffect(() => { if (!hold) settled.current = latest }, [hold, latest])
+  const d = hold ? settled.current : latest
   const stop = (e: React.PointerEvent | React.MouseEvent) => e.stopPropagation()
   return (
     <div className={`cv-frame${selected ? ' selected' : ''}`} {...ev} style={{ ...ev.style, padding: 8 * z, borderRadius: 8 * z, gap: 4 * z }}>
@@ -987,7 +993,9 @@ function OutputFrameView({ session, cardKey, zoom: z, selected, onExpand, onClos
           <Icon name="xmark" size={11 * z} />
         </button>
       </div>
-      <div className="cv-frame-body"><DisplayContent display={d} zoom={z} emptyNote={session.noResultNote(cardKey)} /></div>
+      <div className="cv-frame-body" aria-busy={hold} style={{ opacity: hold ? 0.4 : 1 }}>
+        <DisplayContent display={d} zoom={z} emptyNote={session.noResultNote(cardKey)} figure={figure.mode === 'live' ? figure : undefined} />
+      </div>
       <ResizeHandle onEnd={onResize} />
     </div>
   )

@@ -533,6 +533,13 @@ private struct GeneralCategory: View {
               .help("オン: 受け取った文字列（文字列のフィールドが 1 つのメッセージ）を Markdown と数式（$…$、$$…$$）で表示します。ほかのメッセージは JSON をコードとして表示します。")
           }
           if model.kind == .code {
+            Picker("グラフの更新", selection: string("displayMode", fallback: "update")) {
+              Text("更新（実行中は薄く表示）").tag("update")
+              Text("ライブ（実行中も追う）").tag("live")
+            }
+            .help("更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。")
+          }
+          if model.kind == .code {
             timeoutField("buildTimeoutSeconds", label: "ビルドの期限（秒）")
             Picker("システム", selection: string("system", fallback: "")) {
               Text("この環境と同じ").tag("")
