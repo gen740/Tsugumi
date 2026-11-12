@@ -62,7 +62,7 @@ std::string detail_json(const InvocationSummaryData& s) {
   *d.emulator = s.emulator;
   *d.environment_id = s.environment_id;
   *d.params = s.params_json;
-  if (!s.execution_service.empty()) *d.execution_service = s.execution_service;
+  *d.execution_service = s.execution_service;
   return schema::encode(d);
 }
 

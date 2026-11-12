@@ -91,9 +91,9 @@ def test_gate_controls_a_downstream_worker_without_mocking_the_scheduler(core_fa
 
     run_id = run(client, "source")
     gate.wait()
-    source = client.call("RunRecordRequest", runId=run_id, card=path("source")).status
-    assert source.state == CardState.succeeded
-    assert text(source.executionService) == "local"
+    source = client.call("RunRecordRequest", runId=run_id, card=path("source"))
+    assert source.status.state == CardState.succeeded
+    assert text(source.record.summary.executionService) == "local"
     sink = client.call("RunInvocationsRequest", runId=run_id, card=path("sink")).records[0]
     assert sink.state == CardState.running
     assert text(sink.executionService) == "local"

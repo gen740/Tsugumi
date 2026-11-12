@@ -156,4 +156,4 @@ def test_a_project_copy_keeps_recorded_invocation_details(core_factory, project,
     result, params = recorded_params(copied.connect(), run_id, "work")
     assert params == {"boundary": 1650}, "the parameters of the run, not of the copied document"
     assert text(result.record.outputs[0].contentHash) == digest
-    assert text(result.status.executionService) == "local"
+    assert text(result.record.summary.executionService) == "local"

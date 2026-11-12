@@ -114,9 +114,9 @@ def test_an_unavailable_foreign_system_stops_the_run(tmp_path):
         c = daemon.connect()
         run_id, status = run_and_wait(c, "start")
         assert status.state == RunState.failed
-        summary = c.call("RunRecordRequest", runId=run_id, card=path("x")).status
-        assert not summary.executionService
-        failure = summary.failure
+        record = c.call("RunRecordRequest", runId=run_id, card=path("x"))
+        assert not record.record.summary.executionService
+        failure = record.status.failure
         assert failure.kind == FailureKind.unsupported
         message = text(failure.diagnostic)
         assert FOREIGN in message and "binfmt_misc" in message, message
