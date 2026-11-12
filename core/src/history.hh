@@ -36,6 +36,7 @@ struct StoredValueMeta {
   std::string root_type;
   uint64_t size_bytes = 0;
   std::optional<std::string> artifact_id;
+  std::string hash;  // SHA-256 of the bytes, stored with the value
 };
 
 struct LogEnd {
@@ -73,6 +74,9 @@ class History {
   // --- write helpers (call inside a Work) ---
   static auto put_environment(sql::Db& db, const std::string& run_id, const BuildEnvironmentData& environment)
       -> void;
+  // The binary caches configured while the run built its environments. A
+  // run's first list stays (the daemon's settings are fixed for its life).
+  static auto put_substituters(sql::Db& db, const std::string& run_id, const std::vector<std::string>& urls) -> void;
   static void insert_run(sql::Db& db, const RunSummaryData& s, const std::string& op_id);
   static void update_run(sql::Db& db, const RunStatusData& s);
   static void put_status(sql::Db& db, const InvocationSummaryData& s);

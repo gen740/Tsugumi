@@ -1,0 +1,4 @@
+namespace readings;
+table Table { x:[double]; y:[double]; }
+table Outputs { data:Table (required); }
+root_type Outputs;

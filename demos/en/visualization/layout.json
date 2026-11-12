@@ -1,0 +1,33 @@
+{
+  "flow": "topToBottom",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "aggregate": {
+      "x": 0,
+      "y": 180
+    },
+    "share": {
+      "x": 0,
+      "y": 360
+    },
+    "line": {
+      "x": -500,
+      "y": 540
+    },
+    "scatter": {
+      "x": 0,
+      "y": 540
+    },
+    "histogram": {
+      "x": 500,
+      "y": 540
+    },
+    "report": {
+      "x": 0,
+      "y": 900
+    }
+  }
+}
