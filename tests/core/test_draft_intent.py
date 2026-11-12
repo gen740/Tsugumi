@@ -15,7 +15,7 @@ from harness.permissions import permissions, save
 from tsugumi_client import RpcFailure, change, text
 
 PLAN = {"description": "Count words", "content": "Split the text and count.", "outputs": [{"name": "summary"}]}
-IMPLEMENTED = {"template": "logger"}
+IMPLEMENTED = {"template": "fork"}
 
 
 def implement(meta=None, cid="plan", body=IMPLEMENTED, **fills):

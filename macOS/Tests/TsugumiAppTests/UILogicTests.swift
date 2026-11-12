@@ -146,7 +146,7 @@ import Testing
   let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
   s.project = try JSONValue.parse(document)
   let start = s.addCard(template: .trigger, in: [], at: .zero, name: "start")
-  let log = s.addCard(template: .logger, in: [], at: CGPoint(x: 600, y: 0), name: "log")
+  let log = s.addCard(template: .python, in: [], at: CGPoint(x: 600, y: 0), name: "log")
   let draft = s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 0), name: "plan")
 
   #expect(s.isDraftWire(from: draft, to: log), "from a Draft")

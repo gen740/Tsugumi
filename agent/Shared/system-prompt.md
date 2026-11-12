@@ -86,7 +86,7 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
     Use project:<path> for a file relative to the Card's own project root (also inside an external project).
     When it runs, the file is copied into the run and the next Card receives its path. Fixed values are params of
     the same names as the fields of its output table (demos/report/definitions/settings). Other built-ins: fork,
-    branch, merge, logger (card-guide.md).
+    branch, merge (card-guide.md).
   * Otherwise a code Card: set "language" ("python", "cpp", "go", "rust", "csharp", "bash", "r", "julia" or "ruby") and remove "template" in _card.json, write
     _outputs.fbs (one table per output port; the root table Outputs), default.nix and the sources in src/.
     For Go, Rust, C#, R, Julia and Ruby, card-guide.md has the entry points and Nix helpers.

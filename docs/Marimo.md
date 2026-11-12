@@ -32,7 +32,7 @@ The static HTML includes ordinary Markdown/HTML, text and Matplotlib figures. It
 
 A notebook error fails the Card and emits no typed result. Logs list source-cell names and source lines before execution, then retain the Python/marimo traceback. The failure diagnostic names the notebook; the source editor opens that saved or current `.py` file. Graph errors, missing bindings, absent selected variables and nonnumeric selected values are errors rather than partial successful reports.
 
-In the bilingual **marimo notebook → typed result** demo, the upstream Card scales a measurement of 7 by `factor = 2`. The notebook visualizes the original and scaled values and sends the selected value of 14 to a logger. Change `factor` on the upstream Card to 3 and rerun it to get 21 and a new snapshot.
+In the bilingual **marimo notebook → typed result** demo, the upstream Card scales a measurement of 7 by `factor = 2`. The notebook visualizes the original and scaled values and sends the selected value of 14 to an ordinary Bash Card that logs and displays it. Change `factor` on the upstream Card to 3 and rerun it to get 21 and a new snapshot.
 
 ## Interactive editing is a later stage
 

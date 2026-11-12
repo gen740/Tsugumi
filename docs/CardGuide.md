@@ -44,7 +44,6 @@ The whole project:
 {
   "name": "Your first Card",
   "pkgsPath": "tsugumi:default",
-  "databaseConnections": [],
   "canvas": {
     "cards": [{"id": "start"}, {"id": "settings"}, {"id": "multiply"}],
     "connections": [
@@ -255,6 +254,22 @@ Delete `src/`, set `language` to `bash`, and write a string in `run` of `default
 Here `"nix": true` is set and `factor` is read from the Nix expression. This param is passed to Nix, so changing it rebuilds the Card. To read params at run time instead, all of them are in `$TSUGUMI_PARAMS_JSON` (the JSON text).
 
 For a display, write JSON to `$TSUGUMI_DISPLAY`: one of `{"markdown": "**bold**"}`, `text`, `table` (`columns` and `rows`), `image` (`path` and `alt`) or `module` (`name` and `data`). It is shown when the script ends normally.
+
+To log and show a value of any connected type, see the ordinary Bash Card in
+[`demos/en/marimo/definitions/result`](../demos/en/marimo/definitions/result).
+It declares a required `in` port and lets the connection supply its type.
+In `text` mode, the worker's formatted value goes to stdout and to the
+Canvas as text. The format can include `nan` and `inf`, so it is meant for
+inspection and does not promise strict JSON. Byte vectors appear as arrays of
+numbers. File and Directory messages show their staged paths.
+
+Set `format` to `markdown` to render a string field (named `value` by default).
+Set `markdown_field` to select another top-level field. This mode reads the
+input as an object and fails if the selected field is missing or is not a
+string. The full formatted message still goes to stdout. Canvas displays
+larger than 1 MiB are shortened with a marker, independently of the normal
+worker and log limits. Each run logs and displays the value again, even when
+the Card's build is reused.
 
 ### C++
 

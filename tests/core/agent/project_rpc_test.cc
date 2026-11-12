@@ -332,7 +332,7 @@ TEST_F(AgentProjectFixture,
   const auto original = JsonString(Inspect(conversation).Json(), "/text");
   const auto initial_revision = JsonString(original, "/value/rev");
   const auto document =
-      R"({"name":"RENAMED_BY_MODEL","pkgsPath":"tsugumi:default","databaseConnections":[],"canvas":{"cards":[],"connections":[]}})";
+      R"({"name":"RENAMED_BY_MODEL","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
   const auto arguments =
       "{\"base_rev\":" + Quote(initial_revision) +
       ",\"changes\":[{\"value_type\":\"SetProject\",\"value\":{\"json\":" +

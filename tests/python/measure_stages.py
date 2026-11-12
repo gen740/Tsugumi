@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(__file__))
 
 from conftest import ROOT, Daemon, real_environment  # noqa: E402
-from projects import card, conn, put, write  # noqa: E402
+from projects import SINK, card, conn, put, write  # noqa: E402
 from tsugumi_client import new_id, path, text  # noqa: E402
 from Tsugumi.Data.Phase import Phase  # noqa: E402
 from Tsugumi.RPC.NotificationPayload import NotificationPayload  # noqa: E402
@@ -33,13 +33,13 @@ PHASES = {v: k for k, v in vars(Phase).items() if not k.startswith("_")}
 
 
 def builtin_chain(root: Path, n: int = 40) -> str:
-    """trigger → input → n × (fork → merge) → logger: many short builtin invocations."""
+    """trigger → input → n × (fork → merge) → sink: many short builtin invocations."""
     fbs = "namespace m; table Msg { text:string; } table Outputs { msg:Msg (required); } root_type Outputs;"
     defs = {"trigger": {"template": "trigger"},
             "msg": {"template": "input", "params": [{"name": "text", "type": "string", "data": "x"}], "_outputs": fbs},
             "fork": {"template": "fork"},
             "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
-            "log": {"template": "logger"}}
+            "sink": SINK}
     cards = [card("start", "trigger"), card("src", "msg")]
     conns = [conn("start", "out", "src", "start")]
     prev = ("src", "msg")
@@ -47,7 +47,7 @@ def builtin_chain(root: Path, n: int = 40) -> str:
         cards += [card(f"f{i}", "fork"), card(f"m{i}", "merge")]
         conns += [conn(prev[0], prev[1], f"f{i}", "in"), conn(f"f{i}", "out1", f"m{i}", "a")]
         prev = (f"m{i}", "out")
-    cards.append(card("out", "log"))
+    cards.append(card("out", "sink"))
     conns.append(conn(prev[0], prev[1], "out", "in"))
     write(root, defs, cards, conns)
     return "start"

@@ -37,10 +37,10 @@ def read_output(client, run_id, *, card="work", port="out"):
                       invocation=1, side=ValueSide.output, port=port)
 
 
-def decode_scalar(payload, kind="string"):
-    """Decode the fixture's one-field value schema, independently of its encoder."""
+def decode_scalar(payload, kind="string", *, field=0):
+    """Decode a scalar field of a fixture, independently of its encoder."""
     table = Table(payload, struct.unpack_from("<I", payload)[0])
-    offset = table.Offset(4)
+    offset = table.Offset(4 + 2 * field)
     if kind == "string":
         return table.String(table.Pos + offset).decode()
     flags = {

@@ -140,11 +140,10 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
 
 // ---- Project settings --------------------------------------------------------------
 
-export type ProjectSettingsPane = 'general' | 'canvas' | 'databases' | 'history' | 'cache'
+export type ProjectSettingsPane = 'general' | 'canvas' | 'history' | 'cache'
 export const PROJECT_SETTINGS_PANES: { id: ProjectSettingsPane; title: string; icon: string }[] = [
   { id: 'general', title: L('名前と実行環境'), icon: 'folder.badge.gearshape' },
   { id: 'canvas', title: 'Canvas', icon: 'rectangle.3.group' },
-  { id: 'databases', title: L('データベース接続先'), icon: 'cylinder.split.1x2' },
   { id: 'history', title: L('実行履歴'), icon: 'clock.arrow.circlepath' },
   { id: 'cache', title: L('ビルドキャッシュ'), icon: 'shippingbox' },
 ]
@@ -155,7 +154,6 @@ export function ProjectSettingsContent({ pane, session }: { pane: ProjectSetting
   switch (pane) {
     case 'general': return <GeneralProjectSettings key={session.key} session={session} />
     case 'canvas': return <CanvasProjectSettings session={session} />
-    case 'databases': return <DatabaseSettings key={session.key} session={session} />
     case 'history': return <RunHistorySettings key={session.key} session={session} />
     case 'cache': return <CacheSettings key={session.key} session={session} />
   }
@@ -319,48 +317,6 @@ function CanvasProjectSettings({ session }: { session: ProjectSession }) {
           </Row>
         </Section>
       </Form>
-    </div>
-  )
-}
-
-function DatabaseSettings({ session }: { session: ProjectSession }) {
-  const read = () => (arr(get(session.project, 'databaseConnections')) ?? []).map((c, i) => ({ id: i, name: str(get(c, 'name')) ?? '', url: str(get(c, 'url')) ?? '' }))
-  const [rows, setRows] = useState(read)
-  const [base, setBase] = useState(rows)
-  const [message, setMessage] = useState<string>()
-  const changed = JSON.stringify(rows.map((r) => [r.name, r.url])) !== JSON.stringify(base.map((r) => [r.name, r.url]))
-  const load = () => {
-    const r = read()
-    setRows(r)
-    setBase(r)
-    setMessage(undefined)
-  }
-  const save = async () => {
-    session.edit((x) => setProject(x, 'databaseConnections', rows.map((r) => obj([['name', r.name], ['url', r.url]]))))
-    await session.save()
-    setMessage(session.saveError ?? L('保存しました。'))
-    if (!session.saveError) load()
-  }
-  return (
-    <div className="col fill">
-      <div className="callout secondary pad12">{L('記録 Card が外部 DB にログを保存するときの接続先です。core の履歴とは独立しています。')}</div>
-      <div className="table flex1">
-        <div className="table-head"><span>{L('名前')}</span><span>URL</span><span /></div>
-        {rows.map((r) => (
-          <div key={r.id} className="table-row">
-            <TextField small value={r.name} onChange={(v) => setRows(rows.map((x) => (x.id === r.id ? { ...x, name: v } : x)))} />
-            <TextField small value={r.url} placeholder="postgresql://…" onChange={(v) => setRows(rows.map((x) => (x.id === r.id ? { ...x, url: v } : x)))} />
-            <Button kind="borderless" iconOnly icon="minus.circle" help={L('削除')} onClick={() => setRows(rows.filter((x) => x.id !== r.id))} />
-          </div>
-        ))}
-      </div>
-      <div className="detail-foot">
-        <Button onClick={() => setRows([...rows, { id: Date.now(), name: `db${rows.length + 1}`, url: '' }])}>{L('追加')}</Button>
-        {message && <span className="callout secondary selectable">{message}</span>}
-        <span className="spacer" />
-        <Button onClick={load}>{L('再読込')}</Button>
-        <Button kind="prominent" disabled={!changed || !session.isEditable} onClick={() => void save()}>{L('保存')}</Button>
-      </div>
     </div>
   )
 }

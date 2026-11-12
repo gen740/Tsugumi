@@ -136,7 +136,6 @@
 "Mac のフォルダを読む" = "Read folders of the Mac";
 "Manage usage" = "Manage usage";
 "Manage usage（chatgpt.com/settings/usage）" = "Manage usage (chatgpt.com/settings/usage)";
-"Markdown として表示" = "Show as Markdown";
 "Markdown（見出し・太字・リスト・表・コード）と数式（$…$、$$…$$）を使えます。付箋は実行には参加しません。" = "Markdown (headings, bold, lists, tables, code) and math ($…$, $$…$$) can be used. Notes take no part in runs.";
 "Matplotlib（PNG / SVG / PDF）" = "Matplotlib (PNG / SVG / PDF)";
 "Nix store の保存領域を作っています" = "Making the Nix store's space";
@@ -376,7 +375,6 @@
 "オフ（デフォルト）: preRun・run・postRun のどれからも外へ通信できません。" = "Off (default): nothing in preRun, run or postRun can reach the outside.";
 "オフ（デフォルト）: 読み取り専用" = "Off (default): read only";
 "オン" = "On";
-"オン: 受け取った文字列（文字列のフィールドが 1 つのメッセージ）を Markdown と数式（$…$、$$…$$）で表示します。ほかのメッセージは JSON をコードとして表示します。" = "On: a received string (a message with one string field) is shown as Markdown with math ($…$, $$…$$). Other messages are shown as JSON code.";
 "オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。" = "On: the loaded worker is used for later calls and runs too, keeping its state (static variables and the like). Off: a new worker for every call.";
 "オンにする" = "Turn On";
 "オンにすると、小さなモデルが各版の変更を短い文にします（コードと設定を送ります）" = "When on, a small model writes each version's change in a short sentence (code and settings are sent)";
@@ -507,7 +505,6 @@
 "デモを見せて" = "Show me a demo";
 "デモを見る" = "Browse Demos";
 "デモを見る…" = "Show Demos…";
-"データベース接続先" = "Database Connections";
 "ドラッグして Canvas に配置できます。" = "Drag onto the canvas to place.";
 "ドラッグしてサイズ変更" = "Drag to resize";
 "ドラッグして入力ポートへ接続" = "Drag to an input port to connect";
@@ -1139,7 +1136,7 @@
 "終わりました" = "Finished";
 "終了" = "Ended";
 "終了しました" = "Ended";
-"組み込みの Card を追加（入力値・スイッチ・Draft・開始・分配・分岐・合流・記録・処理）" = "Add a built-in Card (input, Switch, Draft, start, fork, branch, merge, logger, code)";
+"組み込みの Card を追加（入力値・スイッチ・Draft・開始・分配・分岐・合流・処理）" = "Add a built-in Card (input, Switch, Draft, start, fork, branch, merge, code)";
 "結果" = "Result";
 "結果はまだありません" = "No result yet";
 "結果を確認" = "Check the result";
@@ -1182,8 +1179,6 @@
 "解決済み（%lld）" = "Resolved (%lld)";
 "言語" = "Language";
 "言語の変更はアプリの再起動後に反映されます。プロジェクトの git に書く実行の記録もこの言語になります。" = "The language changes after restarting the app. What it writes into a project's git (the run's record) is in this language too.";
-"記録" = "Logger";
-"記録 Card が外部 DB にログを保存するときの接続先です。core の履歴とは独立しています。" = "Connections used by logger Cards to store logs in an external database, independent of the core history.";
 "記録がありません" = "No record";
 "記録された出来事はありません" = "No events were recorded";
 "記録された段階の出来事はありません。" = "No stage events were recorded.";

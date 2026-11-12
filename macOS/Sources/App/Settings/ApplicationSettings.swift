@@ -143,7 +143,7 @@ private struct StorageNote: View {
 
 /// The settings of one project: kept in the project (or its environment).
 enum ProjectSettingsPane: String, CaseIterable, Identifiable {
-  case general, canvas, databases, history, cache
+  case general, canvas, history, cache
   var id: String { rawValue }
   /// The settings window's selection for this pane.
   var selection: String { "project." + rawValue }
@@ -151,7 +151,6 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     switch self {
     case .general: return String(localized: "名前と実行環境")
     case .canvas: return "Canvas"
-    case .databases: return String(localized: "データベース接続先")
     case .history: return String(localized: "実行履歴")
     case .cache: return String(localized: "ビルドキャッシュ")
     }
@@ -160,7 +159,6 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     switch self {
     case .general: return "folder.badge.gearshape"
     case .canvas: return "rectangle.3.group"
-    case .databases: return "cylinder.split.1x2"
     case .history: return "clock.arrow.circlepath"
     case .cache: return "shippingbox"
     }
@@ -168,7 +166,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
   func storage(_ s: ProjectSession) -> String {
     let name = s.identity.url.lastPathComponent
     switch self {
-    case .general, .databases: return String(localized: "このプロジェクト（\(name)/tsugumi.json）")
+    case .general: return String(localized: "このプロジェクト（\(name)/tsugumi.json）")
     case .canvas: return String(localized: "このプロジェクト（\(name)/layout.json）")
     case .history: return String(localized: "このプロジェクトの実行環境（書き出しは \(name)/.tsugumi/runs.sqlite）")
     case .cache: return String(localized: "このプロジェクトの実行環境（VM の中）")

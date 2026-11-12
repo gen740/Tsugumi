@@ -13,7 +13,7 @@ import time
 import pytest
 
 from harness.daemon import ROOT
-from projects import MSG_FBS, builtin_project, card, conn, run_and_wait, write
+from projects import SINK, MSG_FBS, builtin_project, card, conn, run_and_wait, write
 from tsugumi_client import RpcFailure, _request_class, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -185,8 +185,8 @@ def test_a_run_note_says_what_ran(tmp_path, core_factory):
                 "source": {"template": "input", "params": [{"name": "text", "type": "string", "data": "first"}], "_outputs": MSG_FBS},
                 "fork": {"template": "fork"},
                 "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
-                "log": {"template": "logger", "maxRuns": 4}},
-          cards=[card("start", "trigger"), card("src", "source"), card("split", "fork"), card("both", "merge"), card("sink", "log")],
+                "sink": dict(SINK, maxRuns=4)},
+          cards=[card("start", "trigger"), card("src", "source"), card("split", "fork"), card("both", "merge"), card("sink", "sink")],
           conns=[conn("src", "msg", "split", "in"), conn("split", "out1", "both", "a"),
                  conn("split", "out2", "both", "b"), conn("both", "out", "sink", "in")])
     daemon = core_factory(project_root=root)
@@ -222,8 +222,8 @@ def test_a_run_is_recorded_in_the_language_of_the_connection_that_started_it(tmp
                 "source": {"template": "input", "params": [{"name": "text", "type": "string", "data": "first"}], "_outputs": MSG_FBS},
                 "fork": {"template": "fork"},
                 "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
-                "log": {"template": "logger", "maxRuns": 4}},
-          cards=[card("start", "trigger"), card("src", "source"), card("split", "fork"), card("both", "merge"), card("sink", "log")],
+                "sink": dict(SINK, maxRuns=4)},
+          cards=[card("start", "trigger"), card("src", "source"), card("split", "fork"), card("both", "merge"), card("sink", "sink")],
           conns=[conn("src", "msg", "split", "in"), conn("split", "out1", "both", "a"),
                  conn("split", "out2", "both", "b"), conn("both", "out", "sink", "in")])
     daemon = core_factory(project_root=root)
@@ -252,7 +252,7 @@ def test_a_run_is_recorded_in_the_language_of_the_connection_that_started_it(tmp
 def test_a_run_note_names_a_card_that_ran_and_failed(tmp_path, core_factory):
     """A run summary identifies the Card that exceeded its execution limit."""
     root = tmp_path / "p"
-    builtin_project(root, extra_cards=[card("feed", "source"), card("split", "fork"), card("both", "merge"), card("sink", "log")],
+    builtin_project(root, extra_cards=[card("feed", "source"), card("split", "fork"), card("both", "merge"), card("sink", "sink")],
                     extra_conns=[conn("feed", "msg", "split", "in"), conn("split", "out1", "both", "a"),
                                  conn("split", "out2", "both", "b"), conn("both", "out", "sink", "in")])
     daemon = core_factory(project_root=root)
@@ -297,7 +297,7 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
     canvas = c.call("VersionCanvasRequest", commit=first)
     cards = {text(k.id): k for k in canvas.cards}
     assert {k: text(v.kind) for k, v in cards.items()} == {
-        "start": "trigger", "src": "input", "out": "logger", "f": "fork", "wide": "fork", "b": "branch", "m": "merge"}
+        "start": "trigger", "src": "input", "out": "fork", "f": "fork", "wide": "fork", "b": "branch", "m": "merge"}
     assert (cards["f"].fan, cards["wide"].fan, cards["m"].fan, cards["b"].fan, cards["out"].fan) == (2, 3, 2, 0, 0)
     # Columns by depth run left to right, whatever the layout says.
     assert text(canvas.flow) == "leftToRight" and not any(k.collapsed for k in canvas.cards)

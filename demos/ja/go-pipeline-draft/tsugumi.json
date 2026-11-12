@@ -1,7 +1,6 @@
 {
   "name": "Go pipeline",
   "pkgsPath": "tsugumi:default",
-  "databaseConnections": [],
   "canvas": {
     "cards": [
       {

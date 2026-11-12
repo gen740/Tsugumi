@@ -5,7 +5,7 @@
   {"id":"a","kind":"draft","summary":false,"params":0,"inputs":[],"outputs":[],"display":false},
   {"id":"b","kind":"code","summary":true,"params":0,"inputs":["x"],"outputs":["y"],"display":false},
   {"id":"c","kind":"input","summary":false,"params":3,"inputs":[],"outputs":["v"],"display":true},
-  {"id":"d","kind":"logger","summary":false,"params":0,"inputs":["in"],"outputs":[],"display":false},
+  {"id":"d","kind":"code","summary":false,"params":0,"inputs":["in"],"outputs":[],"display":false},
   {"id":"e","kind":"code","summary":false,"params":0,"inputs":[],"outputs":[],"display":false}
 ],"wires":[],"frames":[{"id":"c","width":320,"height":170}],"notes":[{"id":"n","width":240,"height":120}]},
 {"name":"many-isolated","flow":"leftToRight","cards":[
@@ -35,7 +35,7 @@
   {"id":"step","kind":"code","summary":true,"params":0,"inputs":["v"],"outputs":["v"],"display":false},
   {"id":"test","kind":"branch","summary":false,"params":0,"inputs":["value","condition"],"outputs":["a","b"],"display":false},
   {"id":"check","kind":"code","summary":true,"params":0,"inputs":["v"],"outputs":["ok"],"display":false},
-  {"id":"done","kind":"logger","summary":false,"params":0,"inputs":["in"],"outputs":[],"display":false}
+  {"id":"done","kind":"code","summary":false,"params":0,"inputs":["in"],"outputs":[],"display":false}
 ],"wires":[{"from":"init","fromPort":"v","to":"loop","toPort":"init"},{"from":"loop","fromPort":"out","to":"step","toPort":"v"},{"from":"step","fromPort":"v","to":"test","toPort":"value"},{"from":"step","fromPort":"v","to":"check","toPort":"v"},{"from":"check","fromPort":"ok","to":"test","toPort":"condition"},{"from":"test","fromPort":"a","to":"loop","toPort":"next"},{"from":"test","fromPort":"b","to":"done","toPort":"in"}],"frames":[],"notes":[{"id":"n","width":240,"height":120}]},
 {"name":"inner-scope","flow":"topToBottom","cards":[
   {"id":"p","kind":"code","summary":true,"params":0,"inputs":["a"],"outputs":["x"],"display":true},

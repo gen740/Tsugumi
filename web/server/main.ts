@@ -175,7 +175,7 @@ function createProject(parent: string, name: string, flow: unknown): string {
   const dir = path.join(parent, name.replace(/[/\\]/g, '-'))
   if (fs.existsSync(dir)) throw new HttpError(409, L('{0} は既に存在します', dir))
   fs.mkdirSync(dir, { recursive: true })
-  const project = { name, pkgsPath: nixpkgsPin ?? 'tsugumi:default', databaseConnections: [], canvas: { cards: [], connections: [] } }
+  const project = { name, pkgsPath: nixpkgsPin ?? 'tsugumi:default', canvas: { cards: [], connections: [] } }
   fs.writeFileSync(path.join(dir, 'tsugumi.json'), JSON.stringify(project, null, 2) + '\n')
   // The direction the new project's Cards are laid out in (the app's default).
   const f = typeof flow === 'string' && FLOWS.includes(flow) ? flow : 'topToBottom'

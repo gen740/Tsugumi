@@ -27,6 +27,9 @@ root_type Outputs;
 attribute "tsugumi";
 """
 
+# A zero-branch fork consumes its required input without emitting another value.
+SINK = {"template": "fork", "params": [{"name": "branches", "type": "string[]", "data": []}]}
+
 ENDED = (RunState.succeeded, RunState.failed, RunState.cancelled)
 
 
@@ -99,25 +102,25 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
         if not any(rel.startswith(p) for p in defs_names):
             put(root / rel, data)
     put(root / "tsugumi.json", json.dumps({
-        "name": name, "pkgsPath": "tsugumi:default", "databaseConnections": [],
+        "name": name, "pkgsPath": "tsugumi:default",
         "canvas": {"cards": [{"id": c["id"]} for c in cards], "connections": conns}}))
     put(root / "layout.json", "{}")
 
 
 def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns=()) -> None:
-    """input(text) -> logger (and a trigger), builtin Cards only."""
+    """An input Card wired to a sink, with a trigger for whole-workflow runs."""
     defs = {
         "trigger": {"template": "trigger"},
         "source": {"template": "input", "params": [{"name": "text", "type": "string", "data": "x"},
                                                    {"name": "value", "type": "bool", "data": True}],
                    "_outputs": MSG_FBS},
-        "log": {"template": "logger"},
+        "sink": SINK,
         "fork": {"template": "fork"},
         "branch": {"template": "branch"},
         "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
     }
-    # The input Card is a start Card (no inputs); the logger reads its message.
-    write(root, defs, [card("start", "trigger"), card("src", "source", params={"text": text}), card("out", "log"),
+    # The input Card is a start Card (no inputs).
+    write(root, defs, [card("start", "trigger"), card("src", "source", params={"text": text}), card("out", "sink"),
                        *extra_cards],
           [conn("src", "msg", "out", "in"), *extra_conns], name="builtin")
 

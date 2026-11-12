@@ -175,7 +175,7 @@ enum SyncState: Equatable {
 
 enum DisplayValue {
   case text(String)
-  /// Markdown with TeX math (the SDK's markdown display, a logger in Markdown mode).
+  /// Markdown with TeX math (the SDK's Markdown display).
   case markdown(String)
   case scalar(Double, String)
   case lineChart([(id: String, label: String, x: [Double], y: [Double])])
@@ -799,7 +799,7 @@ final class ProjectSession {
     refreshExternals()
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
     if let presenceBefore { notePresence(d, before: presenceBefore) }
-    // A Draft implemented (or any Card that became code or a logger) sends its displays too.
+    // A Draft implemented (or any Card that became code) sends its displays too.
     if displayedCards != shown { Task { await refreshVisibleDisplays() } }
     if wasClean {
       // Nothing local to keep: follow the confirmed document.
@@ -1337,7 +1337,7 @@ final class ProjectSession {
 
   /// Cards whose displays the canvas shows: what a Card shows is up to its
   /// code (the display SDK), so every Card that can run may send displays.
-  var displayedCards: Set<CardKey> { Set(resolution.keys.filter { [.code, .logger].contains(kind($0)) }) }
+  var displayedCards: Set<CardKey> { Set(resolution.keys.filter { kind($0) == .code }) }
 
   /// A Card that took a name another Card had starts without that Card's result and run state.
   func forgetResult(_ k: CardKey) {

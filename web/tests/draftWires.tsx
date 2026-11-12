@@ -45,7 +45,7 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
 {
   const s = session()
   const start = s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
-  const log = s.addCard('logger', [], { x: 600, y: 0 }, 'log')
+  const log = s.addCard('python', [], { x: 600, y: 0 }, 'log')
   const draft = s.addCard('draft', [], { x: 300, y: 0 }, 'plan')
   s.connect([start, 'out'], [log, 'in'], [])
   assert.deepEqual(dotted(s), { 'start>log': false }, 'Cards with code keep their solid wire')
@@ -77,7 +77,7 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   // In a Card in Card: its bars' wires to an inner Draft are dotted, the wires of the Card itself are not.
   const s = session()
   const start = s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
-  const log = s.addCard('logger', [], { x: 600, y: 0 }, 'log')
+  const log = s.addCard('python', [], { x: 600, y: 0 }, 'log')
   const draft = s.addCard('draft', [], { x: 300, y: 0 }, 'plan')
   s.connect([start, 'out'], [draft, NEW_PORT], [])
   s.connect([draft, NEW_PORT], [log, 'in'], [])

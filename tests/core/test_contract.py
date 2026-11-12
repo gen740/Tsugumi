@@ -7,6 +7,7 @@ import time
 
 import pytest
 
+from harness.fixtures import worker_project
 from harness.proxy import ReplyProxy
 from harness.scenario import wait_run
 from projects import builtin_project
@@ -36,7 +37,7 @@ def project_json(snapshot) -> dict:
 
 
 def save_name(c: Client, rev: int, name: str, op: str | None = None, base_doc: dict | None = None):
-    doc = dict(base_doc or {"pkgsPath": "tsugumi:default", "databaseConnections": [],
+    doc = dict(base_doc or {"pkgsPath": "tsugumi:default",
                             "canvas": {"cards": [], "connections": []}})
     doc["name"] = name
     return c.call("ProjectSaveRequest", baseRev=rev, opId=op or new_id(), origin="test",
@@ -183,17 +184,28 @@ def test_document_validation(client):
     """Invalid document fields, card paths and connections cannot be saved."""
     snap = client.open().snapshot
     bad = [
-        '{"name":"a","name":"b","pkgsPath":"x","databaseConnections":[],"canvas":{"cards":[],"connections":[]}}',
-        '{"name":"a","pkgsPath":"x","databaseConnections":[],"canvas":{"cards":[],"connections":[]},"typo":1}',
-        '{"name":"a","pkgsPath":"x","databaseConnections":[],"canvas":{"cards":[{"id":"a/b"}],"connections":[]}}',
-        '{"name":"a","pkgsPath":"x","databaseConnections":[],"canvas":{"cards":[{"id":"x","definition":"nope"}],"connections":[]}}',
-        '{"name":"a","pkgsPath":"x","databaseConnections":[],"canvas":{"cards":[],"connections":[{"from":{"card":"q","port":"o"},"to":{"card":"r","port":"i"}}]}}',
+        '{"name":"a","name":"b","pkgsPath":"x","canvas":{"cards":[],"connections":[]}}',
+        '{"name":"a","pkgsPath":"x","canvas":{"cards":[],"connections":[]},"typo":1}',
+        '{"name":"a","pkgsPath":"x","canvas":{"cards":[{"id":"a/b"}],"connections":[]}}',
+        '{"name":"a","pkgsPath":"x","canvas":{"cards":[{"id":"x","definition":"nope"}],"connections":[]}}',
+        '{"name":"a","pkgsPath":"x","canvas":{"cards":[],"connections":[{"from":{"card":"q","port":"o"},"to":{"card":"r","port":"i"}}]}}',
     ]
     for j in bad:
         with pytest.raises(RpcFailure) as e:
             client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
                         changes=[change("SetProject", json=j)])
         assert e.value.kind == "invalid_document", j
+
+
+def test_retired_database_connections_field_is_rejected(client):
+    """A project cannot save the removed Logger database settings."""
+    snap = client.open().snapshot
+    doc = dict(project_json(snap), databaseConnections=[])
+    with pytest.raises(RpcFailure) as error:
+        client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
+                    changes=[change("SetProject", json=json.dumps(doc))])
+    assert error.value.kind == "invalid_document"
+    assert "databaseConnections" in text(error.value.failure.diagnostic)
 
 
 def test_source_operations(client):
@@ -469,27 +481,33 @@ def test_import_through_launcher_grant(builtin_daemon, tmp_path):
     assert e.value.kind == "permission_denied"
 
 
-def test_builtin_run_logs_and_display(project, core_factory):
-    """A builtin run publishes its display, paged UTF-8 log and completed history."""
-    builtin_project(project, text="日本語のログ" * 50)
-    c = core_factory().connect()
+def test_run_logs_and_display(project, tmp_path, core_factory):
+    """A worker run publishes its display, paged UTF-8 log and completed history."""
+    message = "日本語のログ" * 50
+    c = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    worker_project(c, project, tmp_path, [
+        {"op": "display_text", "text": message},
+        {"op": "log", "stream": "stdout", "text": message},
+    ], recordIO=False)
+    shown = path("work")
     opened = c.open()
     sub = text(opened.subscriptionId)
-    c.call("ViewSetVisibleRequest", subscriptionId=sub, cards=[path("out")])
-    acc = c.call("RunRequest", baseRev=opened.snapshot.rev, opId=new_id(), origin="t", card=path("start"))
+    c.call("ViewSetVisibleRequest", subscriptionId=sub, cards=[shown])
+    acc = c.call("RunRequest", baseRev=opened.snapshot.rev, opId=new_id(), origin="t", card=shown)
     run_id = text(acc.run.runId)
     fin = c.wait_notification(lambda n: n.valueType == NotificationPayload.RunEvent and
                               n.value.valueType == RunEventValue.RunFinished)
     assert fin.value.value.summary.status.state == RunState.succeeded
     disp = c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated)
     assert "日本語のログ" in text(disp.value.display.value.text)
-    rec = c.call("RunRecordRequest", runId=run_id, card=path("out"))
+    rec = c.call("RunRecordRequest", runId=run_id, card=shown)
     assert rec.exists and rec.recordingDisabled is True
     # Read the stdout log in small chunks; never split a character.
-    whole = c.call("LogRangeRequest", runId=run_id, card=path("out"), invocation=1, stream=LogStream.stdout, limitBytes=262144)
+    whole = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout, limitBytes=262144)
+    assert text(whole.text) == message + "\n"
     pieces, off = [], 0
     while True:
-        s = c.call("LogRangeRequest", runId=run_id, card=path("out"), invocation=1, stream=LogStream.stdout,
+        s = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout,
                    offset=off, limitBytes=7)
         pieces.append(text(s.text))
         if s.nextOffset == off:
@@ -498,11 +516,11 @@ def test_builtin_run_logs_and_display(project, core_factory):
         if off >= s.sizeBytes:
             break
     assert "".join(pieces) == text(whole.text)
-    tail = c.call("LogRangeRequest", runId=run_id, card=path("out"), invocation=1, stream=LogStream.stdout, tail=True, limitBytes=10)
+    tail = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout, tail=True, limitBytes=10)
     assert text(whole.text).endswith(text(tail.text)) and tail.truncated
     inside = text(whole.text).encode().index("日".encode()) + 1  # inside a 3-byte character
     with pytest.raises(RpcFailure) as e:
-        c.call("LogRangeRequest", runId=run_id, card=path("out"), invocation=1, stream=LogStream.stdout, offset=inside)
+        c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout, offset=inside)
     assert e.value.kind == "invalid_range"
     with pytest.raises(RpcFailure):
         c.call("LogRangeRequest", runId=run_id, stream=LogStream.stdout, tail=True, offset=3)

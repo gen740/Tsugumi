@@ -16,7 +16,7 @@ class AgentProjectFixture : public AgentFixture {
   auto StartProject(bool shell = false) -> void {
     Write(
         directory.path / "project/tsugumi.json",
-        R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","databaseConnections":[],"canvas":{"cards":[],"connections":[]}})");
+        R"({"name":"PRIVATE_PROJECT_SENTINEL","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
     Write(directory.path / "project/layout.json", "{}");
     std::vector<std::string> args{TSUGUMI_PROJECT_BINARY,
                                   "--project",

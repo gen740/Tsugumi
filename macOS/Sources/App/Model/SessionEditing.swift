@@ -4,7 +4,7 @@ import TsugumiRPC
 
 /// What a Card is, for choosing what the canvas and the editor offer.
 enum CardKind: String {
-  case trigger, input, fork, branch, merge, logger, draft, subgraph, code
+  case trigger, input, fork, branch, merge, draft, subgraph, code
   case switchCard = "switch"
 
   var editsValueOnCanvas: Bool { self == .input || self == .switchCard }
@@ -17,7 +17,6 @@ enum CardKind: String {
     case .fork: return String(localized: "分配")
     case .branch: return String(localized: "分岐")
     case .merge: return String(localized: "合流")
-    case .logger: return String(localized: "記録")
     case .draft: return "Draft"
     case .subgraph: return "Card in Card"
     case .code: return String(localized: "処理")
@@ -32,7 +31,6 @@ enum CardKind: String {
     case .fork: return "arrow.triangle.branch"
     case .branch: return "arrow.triangle.swap"
     case .merge: return "arrow.triangle.merge"
-    case .logger: return "list.bullet.rectangle"
     case .draft: return "pencil.and.outline"
     case .subgraph: return "link"
     case .code: return "chevron.left.forwardslash.chevron.right"
@@ -43,7 +41,7 @@ enum CardKind: String {
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
-  case python, cpp, go, rust, ruby, csharp, input, draft, trigger, fork, branch, merge, logger
+  case python, cpp, go, rust, ruby, csharp, input, draft, trigger, fork, branch, merge
   case report_rmarkdown, report_quarto
   case switchCard = "switch"
   /// Visualization starting points: ordinary Python Cards, one per plotting library.
@@ -76,7 +74,6 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .fork: return String(localized: "分配")
     case .branch: return String(localized: "分岐")
     case .merge: return String(localized: "合流")
-    case .logger: return String(localized: "記録")
     }
   }
   var symbol: String { isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (rawValue.hasPrefix("report_") || [.python, .cpp, .go, .rust, .ruby, .csharp, .marimo].contains(self) ? .code : .draft)).symbol }
@@ -949,7 +946,6 @@ extension ProjectSession {
       let root = scopePrefix.isEmpty ? s.project : (s.external(scopePrefix)?.project ?? .object([]))
       var e = ExternalProject(project: .object([
         ("name", .string(newId)), ("pkgsPath", root["pkgsPath"] ?? .string("tsugumi:default")),
-        ("databaseConnections", .array([])),
         ("canvas", .object([("cards", .array(inner)), ("connections", .array(innerConns))])),
         ("boundary", .object([("inputs", .object(inputs)), ("outputs", .object(outputs))])),
       ]), layout: .object([]), definitions: [:])
@@ -1335,7 +1331,7 @@ extension ProjectSession {
       }
       return UntangleCard(card: ArrangeCard(id: id, width: g.size.width, height: g.size.height,
         inputs: ports(g.inputs, output: false), outputs: ports(g.outputs, output: true)), x: at.x, y: at.y,
-        movable: [.code, .draft, .input, .logger, .subgraph].contains(kind(k)))
+        movable: [.code, .draft, .input, .subgraph].contains(kind(k)))
     }
     var wires: [ArrangeWire] = connections(in: scope).compactMap { c in
       guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
@@ -1447,7 +1443,7 @@ extension ProjectSession {
       for (file, text) in files where file != "_card.json" && file != "_meta.json" { putSource(dir + file, text) }
     case .draft:
       set(.object([("template", .string("draft"))]), meta: .object([("description", .string("")), ("content", .string(""))]))
-    case .trigger, .fork, .branch, .logger:
+    case .trigger, .fork, .branch:
       set(.object([("template", .string(t.rawValue))]))
     case .merge:
       set(.object([
