@@ -55,6 +55,7 @@ struct ServiceOptions {
   // project's .tsugumi. The shared VM keeps it on the VM's disk; finished
   // runs are then also kept in the project (.tsugumi/runs.sqlite).
   std::filesystem::path history_dir;
+  bool archive_incompatible_history = false;
   // Folders of the Mac the app shares with this project, one per path at
   // <host_folders>/<sha256(path)[:16]> (the shared VM). Empty: the paths as
   // they are (a tsugumid on the Mac itself).

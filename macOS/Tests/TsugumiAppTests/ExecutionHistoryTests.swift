@@ -1,8 +1,69 @@
+import Darwin
 import Foundation
 import Testing
 @testable import TsugumiLauncher
 @testable import TsugumiApp
 @testable import TsugumiRPC
+
+@MainActor @Test func executionHistoryRecoveryRequiresExplicitArchive() async throws {
+  let dir = try SyncTests.project()
+  defer { try? FileManager.default.removeItem(at: dir) }
+  let support = dir.appendingPathComponent("test-support")
+  try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+  let socket = VMHostIPC.socketPath(support: support)
+  let listener = try VMHostIPC.listen(path: socket)
+  defer { Darwin.close(listener); unlink(socket) }
+  let host = Task.detached { () throws -> [Bool] in
+    let peer = accept(listener, nil, nil)
+    try #require(peer >= 0)
+    defer { Darwin.close(peer) }
+    var timeout = timeval(tv_sec: 5, tv_usec: 0)
+    setsockopt(peer, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+    var archives: [Bool] = []
+    for attempt in 0..<3 {
+      let request = try #require(try VMHostIPC.read(peer))
+      #expect(request["op"] as? String == "start")
+      archives.append(request["archive_incompatible_history"] as? Bool == true)
+      let kind = attempt < 2 ? "incompatible_history" : "database_corrupt"
+      try VMHostIPC.write([
+        "id": try #require(request["id"] as? String),
+        "error": "cannot open history",
+        "startup_error": ["kind": kind, "found": "2", "expected": "3"],
+      ], to: peer)
+    }
+    return archives
+  }
+  let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(support: support, image: nil))
+  func waitForProblem() async throws {
+    for _ in 0..<200 {
+      if EnvironmentOverlay.hasProblem(session), session.connectionMessage != nil { return }
+      try await Task.sleep(for: .milliseconds(10))
+    }
+    Issue.record("Expected a startup problem")
+  }
+  session.start()
+  try await waitForProblem()
+  guard case .incompatibleHistory(let mismatch) = session.environment else {
+    Issue.record("Expected a typed history mismatch")
+    await session.close()
+    return
+  }
+  #expect(mismatch.found == "2")
+  #expect(mismatch.expected == "3")
+  session.start()
+  try await waitForProblem()
+  session.archiveHistoryAndStart()
+  try await waitForProblem()
+  #expect(try await host.value == [false, false, true])
+  guard case .failed = session.environment else {
+    Issue.record("Expected an ordinary startup failure for a corrupt database")
+    await session.close()
+    return
+  }
+  session.archiveHistoryAndStart()
+  if case .failed = session.environment {} else { Issue.record("A corrupt database cannot be archived here") }
+  await session.close()
+}
 
 @Test func executionHistoryFindsTheActiveRunWithoutReplacingAHistoricalSelection() {
   let runs = ["active", "stopped", "older"]

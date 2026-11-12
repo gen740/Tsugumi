@@ -1,6 +1,8 @@
 // Calls to the host server (files, processes, the Agent). Mutating calls
 // carry a header that a cross-origin page cannot send.
 
+import type { HistoryVersionMismatch } from './shared/historyVersion'
+
 export class ApiError extends Error {}
 
 export async function api<T = any>(path: string, body?: unknown): Promise<T> {
@@ -73,6 +75,7 @@ export interface EnvPublicState {
   fraction?: number
   recovery?: string
   log?: string
+  historyVersionMismatch?: HistoryVersionMismatch
   endpoint?: string
   token?: string
   projectId?: string

@@ -11,6 +11,24 @@ public struct Endpoint: Sendable, Equatable {
   public let serverInstanceId: String
 }
 
+/// The daemon cannot open a history database written by a different version.
+public struct HistoryVersionMismatch: Sendable, Equatable {
+  public let found: String
+  public let expected: String
+
+  public init?(diagnostic: [String: Any]) {
+    guard diagnostic["kind"] as? String == "incompatible_history",
+          let found = diagnostic["found"] as? String, !found.isEmpty,
+          let expected = diagnostic["expected"] as? String, !expected.isEmpty else { return nil }
+    self.found = found
+    self.expected = expected
+  }
+
+  public var diagnostic: [String: String] {
+    ["kind": "incompatible_history", "found": found, "expected": expected]
+  }
+}
+
 public enum EnvironmentState: Sendable, Equatable {
   case stopped
   case preparing(String)  // first-time preparation (image load, volume)
@@ -18,6 +36,7 @@ public enum EnvironmentState: Sendable, Equatable {
   case ready(Endpoint)
   case reconnecting
   case failed(message: String, recovery: String, log: String)
+  case incompatibleHistory(HistoryVersionMismatch)
 
   public var label: String {
     switch self {
@@ -27,6 +46,7 @@ public enum EnvironmentState: Sendable, Equatable {
     case .ready: return "Ready"
     case .reconnecting: return "Reconnecting"
     case .failed(let m, _, _): return "Failed: \(m)"
+    case .incompatibleHistory(let issue): return "Incompatible history: \(issue.found), expected \(issue.expected)"
     }
   }
 }

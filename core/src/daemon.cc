@@ -39,6 +39,7 @@ struct Options {
   uint32_t cpus = 2;
   stdfs::path gcroots_dir;
   stdfs::path history_dir;
+  bool archive_incompatible_history = false;
   stdfs::path host_folders;
   stdfs::path chat_folders;
   bool project_shell = false;
@@ -51,6 +52,7 @@ void usage() {
                "usage: tsugumid --project DIR [--unix PATH] [--listen HOST:PORT] [--control-dir DIR]\n"
                "                [--allow-origin ORIGIN]... [--allow-missing-origin] [--sdk-dir DIR]\n"
                "                [--worker PATH] [--cpus N] [--gcroots-dir DIR] [--history-dir DIR]\n"
+               "                [--archive-incompatible-history]\n"
                "                [--host-folders DIR] [--chat-folders DIR] [--substituters-file FILE]\n");
 }
 
@@ -79,6 +81,7 @@ std::optional<Options> parse(int argc, char** argv) {
     else if (a == "--cpus") o.cpus = static_cast<uint32_t>(std::stoul(next()));
     else if (a == "--gcroots-dir") o.gcroots_dir = next();
     else if (a == "--history-dir") o.history_dir = next();
+    else if (a == "--archive-incompatible-history") o.archive_incompatible_history = true;
     else if (a == "--host-folders") o.host_folders = next();
     else if (a == "--chat-folders") o.chat_folders = next();
     else if (a == "--project-shell") o.project_shell = true;
@@ -168,6 +171,7 @@ int run_daemon(int argc, char** argv) {
   so.env_cpus = opt.cpus;
   so.gcroots_dir = opt.gcroots_dir;
   so.history_dir = opt.history_dir;
+  so.archive_incompatible_history = opt.archive_incompatible_history;
   so.host_folders = opt.host_folders;
   so.chat_folders = opt.chat_folders;
   so.project_shell = opt.project_shell;
@@ -179,9 +183,25 @@ int run_daemon(int argc, char** argv) {
   sigaddset(&set, SIGINT);
   ::pthread_sigmask(SIG_BLOCK, &set, nullptr);
 
+  if (!opt.control_dir.empty()) {
+    stdfs::create_directories(opt.control_dir);
+    stdfs::remove(opt.control_dir / "server.startup-error.json");
+  }
   Service service(so);
   try {
     service.open();
+  } catch (const IncompatibleHistory& e) {
+    if (!opt.control_dir.empty()) {
+      schema::StartupError error;
+      *error.kind = "incompatible_history";
+      *error.found = e.found;
+      *error.expected = e.expected;
+      *error.source = e.source;
+      *error.message = e.what();
+      fs::write_atomic(opt.control_dir / "server.startup-error.json", schema::encode(error), 0600);
+    }
+    log::error(std::string("cannot open the project: ") + e.what());
+    return 6;
   } catch (const std::exception& e) {
     log::error(std::string("cannot open the project: ") + e.what());
     return 6;
