@@ -18,8 +18,8 @@ void *g_host = nullptr;
 
 // The ABI structs as this compiler lays them out from abi.h. The managed
 // mirror (sdk/csharp/Context.cs) is checked against it before the first call
-// (Layout.cs), so a field added to abi.h (an ABI 4 callback, say) without
-// its C# counterpart stops the Card at load instead of misreading memory.
+// (Layout.cs), so a field added to abi.h without its C# counterpart
+// stops the Card at load with a layout error.
 // Every field of every struct the worker passes to the Card is listed.
 struct Field {
   const char *name;
@@ -67,6 +67,10 @@ constexpr Field k_layout[] = {
     TSUGUMI_FIELD(tsugumi_call, display_points),
     TSUGUMI_FIELD(tsugumi_call, display_module),
     TSUGUMI_FIELD(tsugumi_call, display_markdown),
+    TSUGUMI_FIELD(tsugumi_call, input_json),
+    TSUGUMI_FIELD(tsugumi_call, params_json),
+    TSUGUMI_FIELD(tsugumi_call, emit_json),
+    TSUGUMI_FIELD(tsugumi_call, display_json),
 };
 #undef TSUGUMI_FIELD
 #undef TSUGUMI_STRUCT

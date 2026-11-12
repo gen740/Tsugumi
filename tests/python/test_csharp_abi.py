@@ -7,7 +7,7 @@ field and sdk/csharp/Layout.cs compares them with the managed layout (a drift
 fails tsugumi_load). These checks need no .NET: they read the sources and
 compare field order, field types and callback signatures, and that the two
 layout tables (host.cc, Layout.cs) name every field. Appending a callback to
-abi.h (ABI 4) without the C# side fails here.
+abi.h without the C# side fails here.
 
 Runs with pytest, or alone: python3 tests/python/test_csharp_abi.py
 """
@@ -104,7 +104,7 @@ def test_managed_structs_mirror_abi_h():
 
 
 def test_appending_a_callback_without_csharp_is_detected():
-    """The check itself: an ABI 4 style callback appended to tsugumi_call only."""
+    """The check itself: a callback appended to tsugumi_call only."""
     abi = ABI.read_text().replace(
         "} tsugumi_call;", "  int (*display_progress)(void* host, double fraction);\n} tsugumi_call;")
     assert abi != ABI.read_text()
@@ -112,7 +112,7 @@ def test_appending_a_callback_without_csharp_is_detected():
     assert errors and "display_progress" in errors[0], errors
     # A matching C# field makes it whole again.
     context = CONTEXT.read_text().replace(
-        "Markdown;\n}", "Markdown;\n    internal delegate* unmanaged[Cdecl]<void*, double, int> Progress;\n}")
+        "DisplayJson;\n}", "DisplayJson;\n    internal delegate* unmanaged[Cdecl]<void*, double, int> Progress;\n}")
     assert not mirror_errors(abi, context)
 
 

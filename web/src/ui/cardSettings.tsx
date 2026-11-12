@@ -636,7 +636,7 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
                   { value: '', label: L('この環境と同じ') }, { value: 'x86_64-linux', label: 'x86_64-linux' }, { value: 'aarch64-linux', label: 'aarch64-linux' },
                 ]} />
               </Row>
-              {toggle('reuseWorker', L('worker の状態を残す'), true,
+              {toggle('reuseWorker', L('worker の状態を残す'), false,
                 L('オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。'))}
               {toggle('filesystem', L('作業・出力領域を使う'), false)}
               <Row label={L('ファイルアクセスを制限')}>

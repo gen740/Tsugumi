@@ -243,7 +243,7 @@ auto run(Card::Input& input) -> Card::Output {
 
 ### R
 
-R has no FlatBuffers code generator, so an R Card runs in a separate process and exchanges port values as JSON (the worker converts them by the port's type).
+An R Card embeds R in the Card's worker. Messages are lists: the worker converts them in memory using the port’s FlatBuffers type, with no JSON files. Every invocation starts a new interpreter unless the Card turns `reuseWorker` on ([worker lifecycle](#r-and-julia-worker-lifecycle)).
 
 `definitions/multiply/_card.json` (R)
 
@@ -278,7 +278,7 @@ Packages come from nixpkgs' `rPackages` (`packages = ps: [ ps.survival ps.ggplot
 
 ### Julia
 
-A Julia Card also runs in a separate process and exchanges values as JSON.
+A Julia Card embeds Julia in the Card's worker. Messages are Dicts, converted in memory using each port’s FlatBuffers type. Every invocation starts a new interpreter unless the Card turns `reuseWorker` on.
 
 `definitions/multiply/_card.json` (Julia)
 
@@ -309,7 +309,25 @@ function main(ctx)
 end
 ```
 
-It runs with the standard library alone. Packages from the General registry are pinned at build time with `packages = [ "JuMP" ];`. For a figure, pass a Vega-Lite spec as a Dict to `display_vegalite(ctx, spec)` and it is shown as an interactive chart.
+It runs with the standard library alone. The Nix helper retains `packages = [ "JuMP" ];`, but the pinned nixpkgs implementation uses import-from-derivation, which the Card evaluator disables; registry package resolution is currently rejected before the build. This limitation is independent of interpreter reuse. For a figure, pass a Vega-Lite spec as a Dict to `display_vegalite(ctx, spec)` and it is shown as an interactive chart.
+
+### R and Julia worker lifecycle
+
+**A Card keeps no state by default.** Every invocation gets a new worker and a new interpreter, which loads the source and then calls `main(ctx)`: nothing an earlier invocation or run did (globals, loaded packages, `options()`, the position of the random number generator) reaches the next one. Run it again by hand with the same inputs and it starts from the same place.
+
+**To keep state, set `reuseWorker: true` in `_card.json`** ("Keep the worker's state" in the Card's settings). The Card then loads its source once and the same interpreter serves later invocations and runs. This is also what makes a Card that is called many times in a loop fast. What carries over from one call to the next:
+
+- globals and module-level variables, and anything `library()` / `using` loaded or redefined;
+- R's `options()`, `par()` and open graphics devices;
+- the position of the random number generator (`.Random.seed`, Julia's default RNG): a second run continues the sequence where the first stopped unless the Card seeds it, in `main(ctx)` or in the hook below.
+
+The working directory and environment variables do not carry over: the worker sets both again for every call. The optional `on_run_start(ctx)` hook runs once before the first invocation of each run; reset per-run state there. Each invocation's record says whether its worker had served an earlier call. The kept interpreter ends when the Card's source or packages change, after a failed, stopped or timed out call, and under the limits in [Resident workers](features.md#resident-workers); the next call then starts a new one.
+
+Source loading happens before any invocation; read inputs and params inside `main(ctx)` or `on_run_start(ctx)`.
+
+Every invocation receives a fresh context. Do not retain the context or use its functions from background threads: interpreter calls and host callbacks belong to the worker's main thread. `ctx$cancelled()` / `cancelled(ctx)` allow cooperative stopping; `ctx$remaining_ms()` / `remaining_ms(ctx)` return the remaining deadline in milliseconds, or `-1` without a deadline. A stop or expired deadline also terminates an uncooperative worker. Exceptions fail the invocation and appear in its log.
+
+Displays publish immediately, including before a long calculation finishes. Each new display replaces the previous one. File and Directory inputs still use the worker's read-only paths, and outputs belong in the invocation's `output_directory`; those paths change on the next call. Nix continues to pin the interpreter and packages.
 
 ## What to read next
 

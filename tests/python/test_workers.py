@@ -85,7 +85,7 @@ auto run(Card::Input& input) -> Card::Output {
 }
 """
 
-# reuseWorker = false: a new process per call, each starting with calls = 1.
+# Without reuseWorker (the default): a new process per call, each starting with calls = 1.
 FRESH = r"""
 #include <card.hh>
 
@@ -128,7 +128,7 @@ def invocations(c, run_id, card_id):
 
 def test_resident_worker_serves_later_runs(env):
     c = load(env, {"trigger": {"template": "trigger"},
-                   "count": {"language": "cpp", "_outputs": NUM, "_nix": CPP_NIX}},
+                   "count": {"language": "cpp", "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},
              [card("start", "trigger"), card("count", "count")], [])
     put(env.project / "definitions" / "count" / "src" / "card.cc", COUNT)
     from test_cards_container import reload
@@ -152,7 +152,7 @@ def test_file_inputs_keep_the_worker_and_stay_read_only(env):
                 'echo "line $TSUGUMI_INVOCATION-$RANDOM" > "$TSUGUMI_OUTPUT_DIR/a.txt" && '
                 'printf \'{"doc":{"value":"%s"}}\' "$TSUGUMI_OUTPUT_DIR/a.txt" > "$TSUGUMI_OUTPUT"', outputs=DOC)
     c = load(env, {"trigger": {"template": "trigger"}, "make": make,
-                   "read": {"language": "cpp", "inputs": [{"name": "doc"}], "_outputs": NUM, "_nix": CPP_NIX}},
+                   "read": {"language": "cpp", "inputs": [{"name": "doc"}], "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},
              [card("start", "trigger"), card("make", "make"), card("read", "read")],
              [conn("make", "doc", "read", "doc")])
     put(env.project / "definitions" / "read" / "src" / "card.cc", READ)
@@ -178,7 +178,7 @@ def test_fresh_worker_per_call(env):
     seed = bash('echo \'{"out":{"value":3}}\' > "$TSUGUMI_OUTPUT"')
     c = load(env, {"trigger": {"template": "trigger"}, "seed": seed,
                    "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
-                   "fresh": {"language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10, "reuseWorker": False,
+                   "fresh": {"language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10,  # no reuseWorker: the default
                              "_outputs": out, "_nix": nix}},
              [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("fresh", "fresh")],
              [conn("seed", "out", "loop", "init"), conn("loop", "out", "fresh", "x"), conn("fresh", "again", "loop", "again")])
