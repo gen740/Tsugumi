@@ -10,6 +10,8 @@ Open a run to see what its Cards received, produced and kept. A run can contain 
 
 For example, open **Visualization → report**, run it, and inspect a figure Card's input and output. A stopped or failed invocation can have a log and status even when there is no output.
 
+The **Info** tab shows the execution service used by a Code Card once its backend starts. The **Packages** tab shows the recorded Nix system. [Execution service](features.md#execution-service)
+
 ## Compare two runs
 
 1. Run a Workflow, change one condition, and run it again. For example, change the `offset` of the aggregate Card in **Visualization → report**.

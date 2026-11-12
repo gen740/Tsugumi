@@ -1,5 +1,4 @@
 #include "service.hh"
-#include "worker_pool.hh"
 
 #include <unistd.h>
 
@@ -9,6 +8,7 @@
 #include <fstream>
 
 #include "comments.hh"
+#include "execution_service.hh"
 #include "nix.hh"
 #include "scheduler.hh"
 #include "permissions.hh"
@@ -230,11 +230,17 @@ void Service::open() {
   nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
   substituters_ = configured_substituters(opts_.substituters_file);
   for (const char* d : {"runs", "inputs"}) stdfs::create_directories(store_->state_dir() / d);
-  workers_ = std::make_unique<WorkerPool>(scratch / "workers");
+  execution_service_ = std::make_unique<LocalExecutionService>(*this, scratch / "workers");
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();
   exporter_ = std::thread([this] { export_loop(); });
   schedule_export();  // runs that ended before (and interrupted ones)
+}
+
+auto Service::execution_service(const std::string& id) -> LocalExecutionService& {
+  if (id != kLocalExecutionService)
+    throw Failed(FailureKind::unsupported, "execution service " + id + " is not available");
+  return *execution_service_;
 }
 
 void Service::shutdown() {
@@ -245,7 +251,7 @@ void Service::shutdown() {
   }
   if (shell_lane_) shell_lane_->stop();
   if (scheduler_) scheduler_->shutdown();
-  workers_.reset();  // the project's resident and standby workers end
+  execution_service_.reset();  // the project's resident and standby workers end
   if (exporter_.joinable()) {
     {
       std::lock_guard<std::mutex> l(export_mu_);
@@ -661,6 +667,10 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(FBB& b, const Document
   auto pid = b.CreateString(store_->project_id());
   auto pj = b.CreateString(doc.project_json);
   auto lj = b.CreateString(doc.layout_json);
+  auto local = R::CreateExecutionService(b, b.CreateString(kLocalExecutionService),
+                                         b.CreateString(native_system()),
+                                         b.CreateVectorOfStrings(NixRunner::execution_systems()));
+  auto execution_services = b.CreateVector(&local, 1);
   flatbuffers::Offset<R::ViewState> view;
   flatbuffers::Offset<flatbuffers::String> vid;
   std::optional<uint64_t> vrev;
@@ -684,6 +694,7 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(FBB& b, const Document
   sb.add_resolution(res);
   sb.add_diagnostics(diags);
   sb.add_run(run);
+  sb.add_execution_services(execution_services);
   if (view_id) {
     if (!view.IsNull()) sb.add_view(view);
     sb.add_view_id(vid);
@@ -1336,7 +1347,7 @@ void Service::cache_clear(RequestIn& req) {
   try {
     if (scheduler_->active_status() || nix_->sdk_jobs_active())
       throw Failed(FailureKind::busy, "cache can only be cleared while no run or SDK job is active");
-    workers_->clear();  // resident workers hold the builds being removed
+    execution_service_->clear();  // resident workers hold the builds being removed
     auto result = nix_->clear_cache();
     FBB b;
     std::vector<flatbuffers::Offset<flatbuffers::String>> del;

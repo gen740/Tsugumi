@@ -257,6 +257,7 @@ final class ProjectSession {
   private(set) var sources: [String: (hash: String, size: UInt64)] = [:]
   private(set) var resolution: [CardKey: ResolvedCard] = [:]
   private(set) var diagnostics: [Diagnostic] = []
+  private(set) var executionServices: [Tsugumi_RPC_ExecutionServiceT] = []
 
   // Draft: edits not saved yet. Every edit is saved at once (`edit`), so the
   // draft holds only what is on its way to the core, or what could not be
@@ -673,6 +674,7 @@ final class ProjectSession {
   private func apply(snapshot s: Tsugumi_RPC_ProjectSnapshotT, resetDraft: Bool) {
     rev = s.rev ?? 0
     executionRev = s.executionRev ?? 0
+    executionServices = s.executionServices.compactMap { $0 }
     confirmedProject = (try? JSONValue.parse(s.projectJson)) ?? .object([])
     confirmedLayout = (try? JSONValue.parse(s.layoutJson)) ?? .object([])
     confirmedDefinitions = [:]

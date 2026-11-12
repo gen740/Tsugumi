@@ -37,6 +37,9 @@ std::string binfmt_interpreter(const std::string& system) {
   const stdfs::path dir = "/proc/sys/fs/binfmt_misc";
   std::error_code ec;
   if (machine.empty() || !stdfs::is_directory(dir, ec)) return "";
+  std::ifstream status(dir / "status");
+  std::string state;
+  if (!std::getline(status, state) || state != "enabled") return "";
   for (const auto& e : stdfs::directory_iterator(dir, ec)) {
     auto name = e.path().filename().string();
     if (name == "register" || name == "status") continue;
@@ -436,6 +439,16 @@ stdfs::path NixRunner::content_dir(const char* kind, const std::string& digest,
   }
   written_.insert(dir.string());
   return dir;
+}
+
+auto NixRunner::execution_systems() -> std::vector<std::string> {
+  std::string native = native_system();
+  std::vector<std::string> systems{native};
+  if (native.ends_with("-linux"))
+    for (const char* system : {"aarch64-linux", "x86_64-linux"})
+      if (native != system && !binfmt_interpreter(system).empty())
+        systems.emplace_back(system);
+  return systems;
 }
 
 CardBuild NixRunner::build(const BuildRequest& req) {

@@ -124,6 +124,7 @@ struct InvocationSummaryData {
   std::string emulator;
   std::string environment_id;
   std::string params_json;  // the invocation's parameters, not the current document
+  std::string execution_service;
 };
 
 // A value travelling on a port. `type` is the port message type.

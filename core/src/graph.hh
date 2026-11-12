@@ -40,6 +40,8 @@ struct HostFolder {
   bool write = false;
 };
 
+inline constexpr char kLocalExecutionService[] = "local";
+
 struct Settings {
   std::string name;  // the Card id
   std::string symbol;
@@ -55,6 +57,7 @@ struct Settings {
   bool sandbox = true;
   bool reuse_worker = false;
   bool network = false;
+  std::string execution_service = kLocalExecutionService;
   std::string system;     // "" = native_system(); another one runs emulated (binfmt)
   std::vector<HostFolder> host_folders;
   std::vector<ParamDef> params;  // with their values in data

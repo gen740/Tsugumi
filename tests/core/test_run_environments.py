@@ -263,7 +263,7 @@ def test_shipped_cli_can_inspect_the_environment_inventory(core_factory, project
 
 
 def test_interrupted_execution_keeps_its_environment_after_a_crash(core_factory, project, tmp_path):
-    """Crash recovery preserves the environment associated before a worker began executing."""
+    """Crash recovery preserves the environment and service of an interrupted execution."""
     from harness.scenario import Gate
     daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history")
     client = daemon.connect()
@@ -274,17 +274,23 @@ def test_interrupted_execution_keeps_its_environment_after_a_crash(core_factory,
     rows = client.call("RunLatestInvocationsRequest", runId=run_id).records
     environment_id = text(rows[0].environmentId)
     assert environment_id
+    assert text(rows[0].executionService) == "local"
     daemon.stop(crash=True)
     daemon.start()
     client = daemon.connect()
     status = client.call("RunStatusRequest", runId=run_id)
     assert status.state == RunState.failed
     assert inventory(client, run_id)[0] == environment_id
+    rows = client.call("RunLatestInvocationsRequest", runId=run_id).records
+    assert text(rows[0].executionService) == "local"
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
     restored = core_factory(project_root=copied_project, history_dir=tmp_path / "restored-history")
-    assert inventory(restored.connect(), run_id)[0] == environment_id
+    copied_client = restored.connect()
+    assert inventory(copied_client, run_id)[0] == environment_id
+    rows = copied_client.call("RunLatestInvocationsRequest", runId=run_id).records
+    assert text(rows[0].executionService) == "local"
 
 
 def test_dependency_search_is_literal_case_insensitive_and_paginated(core_factory, project, tmp_path):

@@ -202,6 +202,7 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   auto ov = b.CreateVector(sent);
   auto em = s.emulator.empty() ? Off<flatbuffers::String>() : b.CreateString(s.emulator);
   auto env = s.environment_id.empty() ? Off<flatbuffers::String>() : b.CreateString(s.environment_id);
+  auto execution = s.execution_service.empty() ? Off<flatbuffers::String>() : b.CreateString(s.execution_service);
   R::InvocationSummaryBuilder ib(b);
   ib.add_run_id(run);
   ib.add_card(card);
@@ -220,6 +221,7 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   if (s.ready_at) ib.add_ready_at(*s.ready_at);
   if (!s.emulator.empty()) ib.add_emulator(em);
   if (!s.environment_id.empty()) ib.add_environment_id(env);
+  if (!execution.IsNull()) ib.add_execution_service(execution);
   return ib.Finish();
 }
 

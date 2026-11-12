@@ -20,6 +20,27 @@ import Testing
     #expect(a.record?.record?.paramsJson == #"{"low":600,"boundary":1650}"#)
   }
 
+  @Test func executionServiceAndMethodComeFromTheInvocation() {
+    let local = Tsugumi_RPC_InvocationSummaryT()
+    local.executionService = "local"
+    let emulated = Tsugumi_RPC_InvocationSummaryT()
+    emulated.executionService = "local"
+    emulated.emulator = "qemu-x86_64"
+    let old = Tsugumi_RPC_InvocationSummaryT()
+    let a = ComparedRunCard(summary: local, record: nil)
+    let b = ComparedRunCard(summary: emulated, record: nil)
+    let older = ComparedRunCard(summary: old, record: nil)
+
+    let fields = RunComparison.conditions(a, b)
+    #expect(fields[1].difference == .changed)
+    #expect(fields[2].difference == .same)
+    #expect(fields[2].left != nil)
+
+    let missing = RunComparison.conditions(a, older)
+    #expect(missing[1].difference == .unknown && missing[1].right == nil)
+    #expect(missing[2].difference == .unknown && missing[2].right == nil)
+  }
+
   @Test func retainedDisplayEqualityIgnoresIdentityButChecksContent() {
     let first = DisplaySnapshot(runId: "left", invocation: 1, revision: 1, value: .table(columns: ["Band", "Photons"], rows: [["red", "101187"]]))
     let equal = DisplaySnapshot(runId: "right", invocation: 3, revision: 9, value: first.value)

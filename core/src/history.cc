@@ -47,40 +47,44 @@ std::vector<WaitingInputData> waiting_from(const std::string& s) {
 
 std::string detail_json(const InvocationSummaryData& s) {
   schema::InvocationDetailJson d;
+  auto& stages = d.stages->emplace();
   for (const auto& st : s.stages) {
     schema::StageJson j;
     *j.phase = static_cast<int>(st.phase);
     *j.outcome = static_cast<int>(st.outcome);
     *j.start = st.start;
     *j.end = st.end.value_or(-1);
-    d.stages->push_back(std::move(j));
+    stages.push_back(std::move(j));
   }
   *d.worker_reused = s.worker_reused ? (*s.worker_reused ? 1 : 0) : -1;
-  for (const auto& p : s.outputs_sent) d.outputs_sent->push_back(p);
+  *d.outputs_sent = s.outputs_sent;
   *d.ready_at = s.ready_at.value_or(-1);
   *d.emulator = s.emulator;
   *d.environment_id = s.environment_id;
   *d.params = s.params_json;
+  if (!s.execution_service.empty()) *d.execution_service = s.execution_service;
   return schema::encode(d);
 }
 
 void detail_into(const std::string& text, InvocationSummaryData& s) {
   schema::InvocationDetailJson d;
   if (text.empty() || schema::decode(text, d)) return;
-  for (const auto& j : *d.stages) {
-    StageTimeData st;
-    st.phase = static_cast<Phase>(*j.phase);
-    st.outcome = static_cast<StageOutcome>(*j.outcome);
-    st.start = *j.start;
-    if (*j.end >= 0) st.end = *j.end;
-    s.stages.push_back(st);
-  }
-  if (*d.worker_reused >= 0) s.worker_reused = *d.worker_reused == 1;
-  for (const auto& p : *d.outputs_sent) s.outputs_sent.push_back(p);
-  if (*d.ready_at >= 0) s.ready_at = *d.ready_at;
-  s.emulator = *d.emulator;
-  s.environment_id = *d.environment_id;
-  s.params_json = *d.params;
+  if (const auto* stages = schema::get(d.stages))
+    for (const auto& j : *stages) {
+      StageTimeData st;
+      st.phase = static_cast<Phase>(*j.phase);
+      st.outcome = static_cast<StageOutcome>(*j.outcome);
+      st.start = *j.start;
+      if (*j.end >= 0) st.end = *j.end;
+      s.stages.push_back(st);
+    }
+  if (auto reused = d.worker_reused->value_or(-1); reused >= 0) s.worker_reused = reused == 1;
+  if (const auto* outputs = schema::get(d.outputs_sent)) s.outputs_sent = *outputs;
+  if (auto ready = d.ready_at->value_or(-1); ready >= 0) s.ready_at = ready;
+  s.emulator = d.emulator->value_or("");
+  s.environment_id = d.environment_id->value_or("");
+  s.params_json = d.params->value_or("");
+  if (const auto* service = schema::get(d.execution_service)) s.execution_service = *service;
 }
 
 std::string sources_json(const std::vector<InputSourceData>& s) {
@@ -145,7 +149,7 @@ constexpr const char* kRunCols =
     "target, propagate, (SELECT commit_id FROM run_commits c WHERE c.run_id = runs.run_id)";
 
 InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id, int cached_col = -1,
-                              int detail_col = -1) {
+                              int detail_col = -1, int service_col = -1) {
   // Columns: card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting
   InvocationSummaryData s;
   s.run_id = run_id;
@@ -160,6 +164,7 @@ InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id, in
   s.waiting = waiting_from(st.text(8));
   if (cached_col >= 0 && !st.is_null(cached_col)) s.build_cached = st.i64(cached_col) != 0;
   if (detail_col >= 0 && !st.is_null(detail_col)) detail_into(st.text(detail_col), s);
+  if (service_col >= 0 && !st.is_null(service_col)) s.execution_service = st.text(service_col);
   return s;
 }
 
@@ -312,7 +317,7 @@ CREATE TABLE IF NOT EXISTS active_environments(
 CREATE TABLE IF NOT EXISTS statuses(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
   state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, failure BLOB, waiting TEXT,
-  updated_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL, execution_service TEXT NOT NULL,
   PRIMARY KEY(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS last_inputs(
   card TEXT PRIMARY KEY, run_id TEXT NOT NULL, invocation INTEGER NOT NULL, inputs TEXT NOT NULL);
@@ -459,16 +464,17 @@ void History::put_status(sql::Db& db, const InvocationSummaryData& s) {
     db.prepare("INSERT OR REPLACE INTO active_environments VALUES(?,?,?,?)")
         .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, s.environment_id).run();
   auto st = db.prepare(
-      "INSERT INTO statuses(run_id, card, invocation, state, phase, started_at, failure, waiting, updated_at) "
-      "VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(run_id, card, invocation) DO UPDATE SET "
+      "INSERT INTO statuses(run_id, card, invocation, state, phase, started_at, failure, waiting, updated_at, execution_service) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(run_id, card, invocation) DO UPDATE SET "
       "state=excluded.state, phase=excluded.phase, started_at=excluded.started_at, "
-      "failure=excluded.failure, waiting=excluded.waiting, updated_at=excluded.updated_at");
+      "failure=excluded.failure, waiting=excluded.waiting, updated_at=excluded.updated_at, "
+      "execution_service=excluded.execution_service");
   st.bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, static_cast<int>(s.state));
   if (s.phase) st.bind(5, static_cast<int>(*s.phase));
   else st.bind_null(5);
   st.bind(6, s.started_at);
   bind_failure(st, 7, s.failure);
-  st.bind(8, waiting_json(s.waiting)).bind(9, now_ms()).run();
+  st.bind(8, waiting_json(s.waiting)).bind(9, now_ms()).bind(10, s.execution_service).run();
   db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)")
       .bind(1, s.run_id).bind(2, key(s.card)).run();
 }
@@ -644,16 +650,16 @@ std::optional<std::string> History::run_receipt_digest(sql::Db& db, const std::s
 
 std::vector<InvocationSummaryData> History::latest_invocations(sql::Db& db, const std::string& run_id) {
   auto st = db.prepare(
-      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail "
+      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail, NULL "
       "FROM invocations i WHERE run_id=?1 AND invocation=(SELECT MAX(invocation) FROM invocations WHERE run_id=?1 AND card=i.card) "
-      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, NULL "
+      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, NULL, execution_service "
       "FROM statuses s WHERE run_id=?1 AND invocation=(SELECT MAX(invocation) FROM statuses WHERE run_id=?1 AND card=s.card) "
       "AND invocation > COALESCE((SELECT MAX(invocation) FROM invocations WHERE run_id=?1 AND card=s.card), 0) "
       "ORDER BY card, invocation");
   st.bind(1, run_id);
   std::vector<InvocationSummaryData> out;
   while (st.step()) {
-    auto row = inv_row(st, run_id, 9, 10);
+    auto row = inv_row(st, run_id, 9, 10, 11);
     // A status newer than the Card's last record is the one a client wants.
     if (!out.empty() && out.back().card == row.card) out.back() = std::move(row);
     else out.push_back(std::move(row));
@@ -666,15 +672,15 @@ std::vector<InvocationSummaryData> History::invocations(sql::Db& db, const std::
                                                         uint64_t limit) {
   // Completed records and in-progress statuses, ascending invocation number.
   auto st = db.prepare(
-      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail "
+      "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail, NULL "
       "FROM invocations WHERE run_id=?1 AND card=?2 AND invocation>?3 "
-      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, NULL "
+      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, NULL, execution_service "
       "FROM statuses WHERE run_id=?1 AND card=?2 AND invocation>?3 AND invocation NOT IN "
       "(SELECT invocation FROM invocations WHERE run_id=?1 AND card=?2) "
       "ORDER BY invocation LIMIT ?4");
   st.bind(1, run_id).bind(2, key(card)).bind(3, after).bind(4, limit);
   std::vector<InvocationSummaryData> out;
-  while (st.step()) out.push_back(inv_row(st, run_id, 9, 10));
+  while (st.step()) out.push_back(inv_row(st, run_id, 9, 10, 11));
   return out;
 }
 
@@ -696,11 +702,11 @@ std::optional<InvocationRecordData> History::invocation(sql::Db& db, const std::
 std::optional<InvocationSummaryData> History::status(sql::Db& db, const std::string& run_id,
                                                      const CardPath& card, uint64_t n) {
   auto st = db.prepare(
-      "SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, updated_at "
+      "SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, execution_service "
       "FROM statuses WHERE run_id=? AND card=? AND invocation=?");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n);
   if (!st.step()) return std::nullopt;
-  return inv_row(st, run_id);
+  return inv_row(st, run_id, -1, -1, 9);
 }
 
 std::optional<uint64_t> History::latest_invocation(sql::Db& db, const std::string& run_id,

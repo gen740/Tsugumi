@@ -414,6 +414,7 @@ export class ProjectSession extends Observable {
   sources = new Map<string, { hash: string; size: bigint }>()
   resolution = new Map<CardKey, ResolvedCard>()
   diagnostics: Diagnostic[] = []
+  executionServices: R.ExecutionServiceT[] = []
 
   // Draft
   project: J = obj()
@@ -828,6 +829,7 @@ export class ProjectSession extends Observable {
   }
 
   private apply(snap: R.ProjectSnapshotT, resetDraft: boolean) {
+    this.executionServices = snap.executionServices
     this.rev = snap.rev ?? 0n
     this.executionRev = snap.executionRev ?? 0n
     this.confirmedProject = tryParse(s(snap.projectJson)) ?? obj()

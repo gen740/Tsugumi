@@ -84,15 +84,15 @@ export function Segmented<T extends string | number | null>({ value, options, on
 }
 
 export function Select<T extends string | number>({ value, options, onChange, disabled, label, style, help }: {
-  value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; disabled?: boolean; label?: string; style?: CSSProperties; help?: string
+  value: T; options: { value: T; label: string; disabled?: boolean }[]; onChange: (v: T) => void; disabled?: boolean; label?: string; style?: CSSProperties; help?: string
 }) {
   const sel = (
     <select className="select" value={String(value)} disabled={disabled} title={help} style={style}
       onChange={(e) => {
         const o = options.find((x) => String(x.value) === e.target.value)
-        if (o) onChange(o.value)
+        if (o && !o.disabled) onChange(o.value)
       }}>
-      {options.map((o) => <option key={String(o.value)} value={String(o.value)}>{o.label}</option>)}
+      {options.map((o) => <option key={String(o.value)} value={String(o.value)} disabled={o.disabled}>{o.label}</option>)}
     </select>
   )
   if (!label) return sel
