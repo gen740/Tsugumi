@@ -164,11 +164,13 @@ Normal call completion closes its context and joins its cancellation monitor.
 Error/cancellation paths close the context before returning; the failed worker
 is discarded. Cancellation/deadlines kill all its goroutines. Untracked user
 `go` statements are the Card author's responsibility and a panic in one can
-crash the worker, which the daemon reports as a failure.
+crash the worker, which the daemon reports as a failure. Shell hooks may run
+with the Go runtime already loaded. The child does only process setup and
+execs Bash, while the original worker owns the Go threads and state.
 
 The generated SDK contains FlatBuffers' Go runtime from nixpkgs' fixed
-FlatBuffers source. Other modules use go.mod/go.sum plus buildGoModule's
-fixed-output proxy cache (`vendorHash`). The actual Card build has network
+FlatBuffers source. Other modules use the Card's explicit `lock` (go.sum)
+and `hash` for buildGoModule's fixed-output proxy cache. The actual Card build has network
 resolution disabled and uses `-mod=readonly`. There is one root package,
 not a selectable Go workspace/package list. The source of both UI scaffolds
 is `sdk/go/template`; run `python3 sdk/codegen/scaffold_go.py` to synchronize

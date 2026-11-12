@@ -305,14 +305,17 @@ and `DisplayModule` return errors; propagate them. Displays stream while the
 Card runs. Return `tsugumi.Fail("output_invalid", "explanation")` for a
 structured failure, or an ordinary error for `worker_failed`.
 
-The default scaffold uses only the standard library and FlatBuffers' Go
-runtime from the same pinned nixpkgs source as `flatc`. Its empty `go.sum` is
-intentional. For external modules, commit go.mod/go.sum and supply the fixed
-module-cache `vendorHash` to `goCard`. Use a fake hash once to obtain Nix's
-reported actual hash, then commit that exact hash. Builds use `-mod=readonly`
-and a local immutable module cache; Cards never fetch dependencies at runtime.
+The default scaffold uses the standard library and FlatBuffers' Go runtime
+from the same pinned nixpkgs source as `flatc`. For external modules, keep
+`go.mod` and `go.sum` in the Card's `src` and name the lock in `default.nix`:
+`goCard { inherit sdk; src = ./src; lock = ./src/go.sum; hash = pkgs.lib.fakeHash; }`.
+Run the Card once and copy the actual `got: sha256-…` value from the build log
+into `hash`. Builds use a local immutable module cache and never update the
+lock. A Card without `lock` and `hash` cannot fetch external modules.
 Native libraries use `buildInputs`, and build tools use `nativeBuildInputs`.
-To update dependencies with Go on PATH, run
-`python3 <sdk>/go/update-lock.py <card>/src`; it resolves in a temporary copy
-and writes only go.mod/go.sum, leaving no generated SDK in the source. The
-helper accepts `--offline` for a populated module cache.
+
+To make or update the lock on request, use the project shell with Go on PATH:
+`python3 <sdk>/go/update-lock.py <card>/src`. The helper runs `go mod tidy` in
+a temporary copy and writes only `go.mod` and `go.sum` to the Card's source
+directory. It accepts `--offline` for a populated module cache. Reload the
+project after generating the files, then obtain the hash as above.

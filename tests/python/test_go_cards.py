@@ -1,6 +1,7 @@
 """Go Cards own their buffers and guard callbacks for the life of each call."""
 import base64
 import json
+import shutil
 import subprocess
 
 import pytest
@@ -9,6 +10,8 @@ from conftest import ROOT
 from projects import run_and_wait, start_run, wait_run
 from test_language_cards import project, write_project as write_language_project
 from tsugumi_client import path, text
+from Tsugumi.Data.FailureKind import FailureKind
+from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
 
 NIX='{ pkgs, inputs, params }: let sdk=inputs.tsugumi.sdk {languages=["go"];}; in {run=inputs.tsugumi.goCard {inherit sdk;src=./src;};}'
@@ -93,13 +96,20 @@ func run(ctx *tsugumi.Context,_ tsugumi.Input)(tsugumi.Output,error){
  err:=ctx.Go(func()error{return ctx.DisplayText(fmt.Sprintf("%d %d",runs,calls))})
  return tsugumi.Output{},err
 }'''
-    write_project(root,{'count':go(source,reuseWorker=reuse)},[])
+    card = go(source, reuseWorker=reuse)
+    card['nix'] = NIX.replace(
+        'in {run=',
+        "in { preRun = ''echo before-go >&2''; postRun = ''echo after-go >&2''; run=",
+    )
+    write_project(root, {'count': card}, [])
     c=connect()
     for n in (1,2):
         run=succeeded(c);expected=n if reuse else 1
         assert text(shown(c,run,'count').value.text)==f'{expected} {expected}'
         rec=c.call('RunInvocationsRequest',runId=run,card=path('count')).records[0]
         assert bool(rec.workerReused)==(reuse and n==2)
+        log = text(c.call('LogRangeRequest', runId=run, card=path('count'), stream=LogStream.stderr).text)
+        assert 'before-go' in log and 'after-go' in log
 
 
 @pytest.mark.parametrize('body,reason',[
@@ -107,6 +117,7 @@ func run(ctx *tsugumi.Context,_ tsugumi.Input)(tsugumi.Output,error){
     ('panic("panic on purpose")','panic on purpose'),
     ('return tsugumi.Output{},ctx.Go(func()error{panic("task panic")})','task panic'),
     ('return tsugumi.Output{},badError{}','Go error reporting panicked'),
+    ('go func(){panic("raw goroutine panic")}();select{}','raw goroutine panic'),
 ])
 def test_error_and_panic_recovery(project,body,reason):
     root,connect=project
@@ -122,6 +133,8 @@ func run(ctx *tsugumi.Context,_ tsugumi.Input)(tsugumi.Output,error){
     write_project(root,{'fail':go(source,params=[{'name':'fail','type':'bool','data':True}])},[])
     c=connect();run,status=run_and_wait(c,'start',timeout=1800)
     assert status.state==RunState.failed
+    kind = FailureKind.output_invalid if 'tsugumi.Fail(' in body else FailureKind.worker_failed
+    assert status.failure.kind == kind
     assert reason in text(c.call('LogRangeRequest',runId=run,card=path('fail'),stream=2,limitBytes=65536).text)
     from test_demos import edit_card,set_param
     edit_card(None,c,'fail',lambda card:set_param(card,'fail',False))
@@ -165,7 +178,7 @@ func run(ctx *tsugumi.Context,_ tsugumi.Input)(tsugumi.Output,error){
     write_project(root,{'slow':go(source,timeoutSeconds=2,params=[{'name':'slow','type':'bool','data':True}])},[])
     c=connect();run,status=run_and_wait(c,'start',timeout=1800)
     assert status.state==RunState.failed, (text(c.call('LogRangeRequest',runId=run,card=path('slow'),stream=2,limitBytes=65536).text), vars(c.call('RunRecordRequest',runId=run,card=path('slow')).status))
-    assert c.call('RunRecordRequest',runId=run,card=path('slow')).status.failure.kind==14
+    assert c.call('RunRecordRequest',runId=run,card=path('slow')).status.failure.kind == FailureKind.timeout
     edit_card(None,c,'slow',lambda card:set_param(card,'slow',False))
     recovered=succeeded(c)
     assert text(shown(c,recovered,'slow').value.text)=='recovered'
@@ -241,12 +254,56 @@ func run(ctx *tsugumi.Context,input tsugumi.Input)(tsugumi.Output,error){
         assert json.loads(text(shown(c,succeeded(c),'check').value.text))=={'value':9007199254740993}
 
 
-def test_external_module_is_pinned_and_built_offline(project):
-    root,connect=project
+def external_module_card(arguments):
     card=go('package main\nimport("tsugumi";"github.com/google/uuid")\nfunc run(ctx *tsugumi.Context,_ tsugumi.Input)(tsugumi.Output,error){\n return tsugumi.Output{},ctx.DisplayText(uuid.MustParse("550e8400-e29b-41d4-a716-446655440000").String())\n}')
     card['src']['go.mod']='module tsugumi-card\n\ngo 1.26\n\nrequire tsugumi v0.0.0\n\nreplace tsugumi => ./tsugumi\n\nrequire github.com/google/uuid v1.6.0\n'
     card['src']['go.sum']='github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=\ngithub.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=\n'
-    card['nix']=NIX.replace('src=./src;','src=./src;vendorHash="sha256-SuU3c1yjGaE9bhQm0Tr6F16h2l2f35a6dpSC7vGaZ5o=";')
-    write_project(root,{'go':card},[])
-    c=connect()
-    assert text(shown(c,succeeded(c),'go').value.text)=='550e8400-e29b-41d4-a716-446655440000'
+    card['nix'] = NIX.replace('src=./src;', 'src=./src;' + arguments)
+    return card
+
+
+UUID_HASH = "sha256-SuU3c1yjGaE9bhQm0Tr6F16h2l2f35a6dpSC7vGaZ5o="
+
+
+def test_external_module_is_pinned_and_built_offline(project):
+    root, connect = project
+    card = external_module_card(f'lock = ./src/go.sum; hash = "{UUID_HASH}";')
+    write_project(root, {'go': card}, [])
+    c = connect()
+    assert text(shown(c, succeeded(c), 'go').value.text) == '550e8400-e29b-41d4-a716-446655440000'
+
+
+@pytest.mark.parametrize(('arguments', 'message'), [
+    ('lock = ./src/go.sum;', 'give `lock = ./src/go.sum;` and `hash` together'),
+    ('lock = ./src/go.sum; hash = pkgs.lib.fakeHash;', 'hash mismatch'),
+])
+def test_go_rejects_an_invalid_pin(project, arguments, message):
+    root, connect = project
+    write_project(root, {'go': external_module_card(arguments)}, [])
+    c = connect()
+    run_id, status = run_and_wait(c, 'start', timeout=1800)
+    log = text(c.call('LogRangeRequest', runId=run_id, card=path('go'), stream=LogStream.build).text)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, log
+    assert message in text(status.failure.diagnostic) + log
+
+
+def test_go_rejects_missing_required_output(project):
+    root, connect = project
+    card = go("""package main
+import "tsugumi"
+func run(*tsugumi.Context,tsugumi.Input)(tsugumi.Output,error){
+ return tsugumi.Output{},nil
+}""")
+    card['outputs'] = NUMBER
+    write_project(root, {'go': card}, [])
+    _, status = run_and_wait(connect(), 'start', timeout=1800)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.output_invalid
+
+
+@pytest.mark.parametrize('language', ['ja', 'en'])
+def test_bundled_go_pipeline_runs_in_the_sandbox(project, language):
+    root, connect = project
+    shutil.copytree(ROOT / 'demos' / language / 'go-pipeline', root, dirs_exist_ok=True)
+    c = connect()
+    run_id = succeeded(c)
+    assert text(shown(c, run_id, 'check').value.text) == '21'
