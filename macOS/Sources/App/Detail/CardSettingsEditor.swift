@@ -540,7 +540,7 @@ private struct GeneralCategory: View {
               Text(verbatim: "aarch64-linux").tag("aarch64-linux")
             }
             .help("別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。最初のビルドもエミュレーターで動くので時間がかかります。")
-            toggle("reuseWorker", label: "worker の状態を残す", fallback: true)
+            toggle("reuseWorker", label: "worker の状態を残す", fallback: false)
               .help("オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。")
             toggle("filesystem", label: "作業・出力領域を使う", fallback: false)
             toggle("sandbox", label: "ファイルアクセスを制限", fallback: true)
@@ -1152,7 +1152,7 @@ private struct SourceCategory: View {
       if only != nil {
         if let f = files.first { model.openFile(f) }
       } else if model.shownFile == nil || (model.shownFile?.hasSuffix("/default.nix") ?? false) {
-        if let f = files.first(where: { $0.hasSuffix(".py") || $0.hasSuffix(".cc") }) ?? files.first { model.openFile(f) }
+        if let f = files.first(where: { $0.hasSuffix(".py") || $0.hasSuffix(".cc") || $0.hasSuffix(".cs") }) ?? files.first { model.openFile(f) }
       }
     }
     .alert("ファイルを作成", isPresented: $showNew) {

@@ -52,6 +52,18 @@ const SH_KEYWORDS = ['case', 'do', 'done', 'echo', 'elif', 'else', 'esac', 'expo
 
 function rules(language: string): Rules | undefined {
   switch (language.toLowerCase()) {
+    case 'cs': case 'csharp':
+      return {
+        claim: [[String.raw`//[^\n]*`, 'comment'], [String.raw`/\*[\s\S]*?\*/`, 'comment'],
+          [String.raw`\$*"""[\s\S]*?"""`, 'string'], [String.raw`(?:\$@|@\$|@)"(?:""|[^"])*"`, 'string'],
+          [String.raw`\$?"(?:\\.|[^"\\\n])*"`, 'string'], [String.raw`'(?:\\.|[^'\\\n])'`, 'string']],
+        paint: [[NUMBER, 'number'], [words(['true', 'false', 'null']), 'constant'],
+          [words(['bool', 'byte', 'char', 'decimal', 'double', 'float', 'int', 'long', 'object', 'sbyte', 'short', 'string', 'uint', 'ulong', 'ushort', 'void']), 'type'],
+          [String.raw`\b(?:class|struct|interface|enum|record|namespace)\s+([A-Za-z_]\w*)`, 'type', 1],
+          [words(['abstract', 'as', 'async', 'await', 'base', 'break', 'case', 'catch', 'checked', 'class', 'const', 'continue', 'default', 'delegate', 'do', 'else', 'enum', 'event', 'extern', 'finally', 'fixed', 'for', 'foreach', 'if', 'in', 'interface', 'internal', 'is', 'lock', 'namespace', 'new', 'out', 'override', 'params', 'partial', 'private', 'protected', 'public', 'readonly', 'record', 'ref', 'required', 'return', 'sealed', 'sizeof', 'stackalloc', 'static', 'struct', 'switch', 'this', 'throw', 'try', 'typeof', 'unchecked', 'unsafe', 'using', 'var', 'virtual', 'volatile', 'while', 'yield']), 'keyword'],
+          [CALL, 'function', 1], [String.raw`\.([A-Za-z_]\w*)\b(?!\s*\()`, 'property', 1]],
+        keywords: ['if', 'for', 'foreach', 'while', 'switch', 'catch', 'using', 'lock', 'typeof', 'sizeof'], flags: 'm',
+      }
     case 'cpp': case 'cc': case 'hpp': case 'h': case 'hh': case 'cxx': case 'c':
       return {
         claim: [[String.raw`//[^\n]*`, 'comment'], [String.raw`/\*[\s\S]*?\*/`, 'comment'], [DQ, 'string'], [String.raw`'(?:\\.|[^'\\\n])'`, 'string']],

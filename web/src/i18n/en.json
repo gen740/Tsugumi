@@ -1241,6 +1241,17 @@
  "配線の交差を減らす": "Untangle Wires",
  "配線の交差を減らす（Card の位置は保持）": "Untangle wires (keep Card positions)",
  "ポートの並びを元に戻す": "Reset Port Order",
+ "依存 package": "Packages",
+ "この呼び出しの環境は記録されていません": "No environment was recorded for this invocation.",
+ "依存 package は実行時に記録されたものだけを表示します。現在の Nix 定義からは求めません。": "Packages are shown only as recorded when the Card ran. They are not derived from the current Nix definition.",
+ "実行時の依存パス": "Runtime dependencies",
+ "この呼び出しで記録されたものです。ビルド時だけに使う依存関係は含まれません。": "Recorded for this invocation. Build-only dependencies are not included.",
+ "依存パスを検索": "Search dependencies",
+ "検索結果を 100 件ずつ表示します。": "Showing 100 matching paths per page.",
+ "一致する依存パスはありません": "No matching dependencies.",
+ "差分・保存前": "Patch · not saved",
+ "差分・保存済み": "Patch · saved",
+ "置換テキスト": "Replacement text",
  "Nix 参照（記述どおり）": "Nix references (as written)",
  "保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。": "Shows the Card references written in saved default.nix files. References through aliases or computed names are not included.",
  "Nix 参照一覧": "Nix reference list",
@@ -1248,5 +1259,6 @@
  "Card 間の Nix 参照はありません": "No Nix references between Cards.",
  "参照を解決できません。Nix 定義と診断を確認してください。": "This reference is invalid. Check the Nix definition and diagnostics.",
  "Nix 定義を開く": "Open Nix definition",
- "一覧": "List"
+ "一覧": "List",
+ "C# の処理": "C# Card"
 }

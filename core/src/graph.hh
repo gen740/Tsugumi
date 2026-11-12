@@ -43,7 +43,7 @@ struct HostFolder {
 struct Settings {
   std::string name;  // the Card id
   std::string symbol;
-  std::string language;  // "", cpp, python, bash, r, julia
+  std::string language;  // "", cpp, python, csharp, bash, r, julia
   bool any_mode = false;  // trigger "eachInput"
   uint64_t max_runs = 1;
   std::optional<uint64_t> timeout_seconds;        // nullopt = no deadline
@@ -53,7 +53,7 @@ struct Settings {
   std::optional<std::string> artifact_output;
   bool filesystem = false;
   bool sandbox = true;
-  bool reuse_worker = true;
+  bool reuse_worker = false;
   bool network = false;
   bool markdown = false;  // logger: shows the text it receives as Markdown
   std::string system;     // "" = native_system(); another one runs emulated (binfmt)
