@@ -7,7 +7,7 @@ Start from the document that fits what you want to read. To read with moving fig
 
 | Document | Contents |
 | --- | --- |
-| [features.md](features.md) | Find a feature by task and open its workbench, language or environment reference |
+| [features.md](features.md) | Find a feature by task on the development branch, including the upcoming 0.7 prerelease |
 | [INSTALL.md](INSTALL.md) | Installing and updating the desktop app and the `tsugumi` command (Mac, Linux, Windows), and building from source |
 | [Usage.md](Usage.md) | Canvas tools, running from a Card, chart updates and the project terminal |
 | [Demos.md](Demos.md) | How the bundled demos work: how each demo's Cards connect, what each Card does, and what to try |
