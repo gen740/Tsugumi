@@ -84,9 +84,36 @@ Params: `{"name": "low", "type": "double", "data": 600}`; types `bool`, `int64`,
 
 - Python: `demos/report/definitions/generate/default.nix`. Packages from nixpkgs:
   `inputs.tsugumi.pythonCard { inherit sdk; src = ./src; packages = ps: [ ps.numpy ps.astropy ps.pillow ]; }`.
+  Prefer `packages`. A package or version nixpkgs lacks comes from PyPI only through an explicit lock
+  (see "Python packages from PyPI" below); never write `pip install` or fetch packages when a Card runs.
 - C++: `demos/collatz/externals/collatz-cpp/definitions/halve/default.nix`. Libraries:
   `inputs.tsugumi.cppCard { inherit sdk; src = ./src; buildInputs = [ pkgs.cfitsio ]; }`.
 - bash: `demos/report/externals/archive/definitions/copy/default.nix` (`run` is the script text).
+
+### Python packages from PyPI (uv lock)
+
+Nothing is resolved when a Card is built. A Card gets PyPI packages only when its `default.nix` names
+its own lock and the hash of the wheels: `pythonCard { inherit sdk; src = ./src; lock = ./uv.lock;
+hash = "sha256-..."; }`. The lock belongs to the Card: `pyproject.toml` and `uv.lock` sit beside
+`default.nix`. One without the other, a lock that no longer matches `pyproject.toml` and a wrong hash
+fail with `nix_failed` and a message. When the user asks for such a package, make the lock yourself:
+
+1. Save `definitions/<card>/pyproject.toml`: `[project]`, `name = "card"`, `version = "0"`,
+   `requires-python = ">=3.11"`, `dependencies = ["tabulate==0.9.0"]` (pin exact versions).
+2. Make the lock with the project shell (needs Shell access; ask the user to grant it, or to run the
+   command in the project's terminal, if you do not have it):
+   `cd definitions/<card> && nix shell nixpkgs#uv nixpkgs#python3 --command env UV_PYTHON_DOWNLOADS=never uv lock`.
+   The first call downloads uv and may reach the time limit: run it again. Then reload the project
+   (the file was written by a command) and read `uv.lock` to check that it names the packages.
+3. Save `default.nix` with `lock = ./uv.lock; hash = pkgs.lib.fakeHash;` and run the Card. The Card's build log contains `hash mismatch` and `got: sha256-...`. Save `default.nix` again with
+   `hash = "<that value>";` and run. Never invent a hash and never copy one from another Card.
+4. To change a dependency, edit `pyproject.toml` and repeat 2 and 3; the old hash is refused.
+
+Only wheels are installed (no wheel for the Card's Python and system: use `packages` from nixpkgs
+instead, and say so). Compiled wheels have one hash per system: `hash = { aarch64-linux = "sha256-...";
+x86_64-linux = "sha256-..."; };` (a missing system fails and names itself; run on it to get its hash).
+A compiled wheel needing another shared library: `libraries = [ pkgs.libGL ];`. Tell the user which
+packages and versions the lock pins.
 
 ### Data fixed by Nix
 
