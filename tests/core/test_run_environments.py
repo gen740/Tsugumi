@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import sqlite3
 
 import pytest
 
@@ -9,6 +10,28 @@ from harness.fixtures import worker_project
 from harness.scenario import Project, STRING_OUTPUT, run, wait_run
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
+
+
+@pytest.mark.parametrize("version", [2, 4], ids=["older", "newer"])
+def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
+    """The daemon refuses an incompatible local history database and leaves its contents intact."""
+    history_dir = tmp_path / "history"
+    history_dir.mkdir()
+    database = history_dir / "history.sqlite"
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute("CREATE TABLE fixture (note TEXT NOT NULL)")
+        connection.execute("INSERT INTO fixture VALUES ('retained')")
+        connection.execute(f"PRAGMA user_version={version}")
+        connection.commit()
+    finally:
+        connection.close()
+    original = database.read_bytes()
+
+    with pytest.raises(RuntimeError, match=rf"has schema version {version}, but this Tsugumi requires 3"):
+        core_factory(history_dir=history_dir)
+
+    assert database.read_bytes() == original
 
 
 def inventory(client, run_id, card="work"):

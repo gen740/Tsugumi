@@ -201,7 +201,7 @@ class History {
  private:
   void writer_loop();
   void init_schema(sql::Db& db);
-  void migrate();
+  auto check_version() const -> void;
   sql::Db& reader();
 
   std::filesystem::path path_;
