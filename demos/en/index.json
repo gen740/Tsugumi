@@ -505,6 +505,29 @@
         "Python",
         "C++"
       ]
+    },
+    {
+      "id": "rust-pipeline",
+      "title": "Rust pipeline",
+      "description": "Python → Rust → C++: typed borrowed inputs, owned outputs and pinned crates.",
+      "path": "rust-pipeline",
+      "tags": [
+        "Rust",
+        "Python",
+        "C++"
+      ],
+      "field": "Learn the basics"
+    },
+    {
+      "id": "rust-pipeline-draft",
+      "title": "Rust pipeline (Draft)",
+      "description": "Python → Rust → C++: typed borrowed inputs, owned outputs and pinned crates.",
+      "path": "rust-pipeline-draft",
+      "tags": [
+        "Rust",
+        "Python",
+        "C++"
+      ]
     }
   ]
 }

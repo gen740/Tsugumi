@@ -43,7 +43,7 @@ enum CardKind: String {
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
-  case python, cpp, go, csharp, input, draft, trigger, fork, branch, merge, logger
+  case python, cpp, go, rust, csharp, input, draft, trigger, fork, branch, merge, logger
   case report_rmarkdown, report_quarto
   case switchCard = "switch"
   /// Visualization starting points: ordinary Python Cards, one per plotting library.
@@ -68,6 +68,7 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .cpp: return String(localized: "C++ の処理")
     case .go: return String(localized: "Go の処理")
     case .csharp: return String(localized: "C# の処理")
+    case .rust: return String(localized: "Rust の処理")
     case .input: return String(localized: "入力値")
     case .switchCard: return String(localized: "スイッチ")
     case .trigger: return String(localized: "開始")
@@ -77,12 +78,12 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .logger: return String(localized: "記録")
     }
   }
-  var symbol: String { isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (rawValue.hasPrefix("report_") || [.python, .cpp, .go, .csharp, .marimo].contains(self) ? .code : .draft)).symbol }
+  var symbol: String { isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (rawValue.hasPrefix("report_") || [.python, .cpp, .go, .rust, .csharp, .marimo].contains(self) ? .code : .draft)).symbol }
   /// A name for the new Card (its id; made unique).
   var baseName: String {
     switch self {
     case .matplotlib, .plotly, .altair: return "visualization"
-    case .python, .cpp, .go, .csharp: return "card"
+    case .python, .cpp, .go, .rust, .csharp: return "card"
     case .trigger: return "start"
     default: return rawValue
     }
@@ -1483,6 +1484,11 @@ extension ProjectSession {
       putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"go\" ]; };\nin { run = inputs.tsugumi.goCard { inherit sdk; src = ./src; }; }\n")
       putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
       for (name, source) in GoScaffold.files { putSource(dir + "src/" + name, source) }
+    case .rust:
+      set(.object([("language", .string("rust")), ("inputs", .array([.object([("name", .string("in"))])]))]))
+      putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"rust\" ]; };\nin { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }\n")
+      putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
+      for (name, source) in RustScaffold.files { putSource(dir + "src/" + name, source) }
     case .cpp:
       set(.object([("language", .string("cpp")), ("inputs", .array([.object([("name", .string("in"))])]))]))
       putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; };\nin\n{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n")

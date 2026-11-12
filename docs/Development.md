@@ -235,3 +235,38 @@ swift macOS/tools/perf/module-viewer.swift /tmp/modules-after/modules
 ```
 
 This creates and closes three viewers, verifies rapid same-sized Plotly updates show the latest values, exports PNG, replaces Vega views five times, and switches back to Plotly. On 2026-11-12 it passed in 1.2–2.0 seconds across repeated checks. Against the baseline viewer it failed because none of the five replaced Vega views were finalized. The Node behavior suite separately tests queued-update coalescing, stale completion suppression, zero initial iframe viewport dimensions, cache eviction, cancellation, and idle cleanup. These checks complement the existing macOS canvas measurements in commit `03837b42`; this change does not replace that native thumbnail implementation.
+
+## Rust Card implementation
+
+Rust uses a `cdylib` loaded by the existing resident worker. A subprocess/JSON
+adapter would simplify the ABI boundary but add serialization and process setup,
+lose FlatBuffers borrow checking and require a second state/display protocol.
+The library adapter reuses cancellation, deadlines, sandboxing and streamed
+Display callbacks. Its C shim (`sdk/src/rust_host.c`) compiles against the current
+ABI header; Rust receives an opaque call pointer instead of duplicating that
+layout. There is no dependency on the R/Julia JSON adapter.
+
+`sdk/codegen/card_rust.py` generates verified borrowed `Input` views, owned
+`Output` objects, params and the exported entry points. The safe context ties
+views to the call and is neither `Send` nor `Sync`; only the runtime touches raw
+pointers. `Result` failures and unwind panics become structured Card failures.
+The release profile uses unwinding; the panic payload is forgotten so that a
+custom payload's destructor cannot panic across C. The failed worker is then
+discarded. Native aborts and double panics remain worker crashes, isolated from
+the daemon.
+
+`rustCard` uses the FlatBuffers Rust runtime from the same pinned source as
+flatc. For a Card without registry dependencies, a lock in the SDK pins its
+own supporting crates. For external crates, the Card's `lock` and `hash` pin
+a vendored directory built from Cargo.lock. Edits to Rust source reuse that
+directory. Cargo still recompiles the dependency code on a Card rebuild.
+The SDK builds a single package with a `cdylib`. `buildInputs` supplies
+native libraries and `nativeBuildInputs` supplies tools. The lock helper
+resolves in a temporary source copy and leaves only Cargo.lock behind.
+
+The UI scaffold's source is `sdk/rust/template/`; after changing it, run
+`python3 sdk/codegen/scaffold_rust.py` to update both Swift and TypeScript.
+`tests/python/test_rust_cards.py` exercises the real host sandbox (Seatbelt on
+macOS, bubblewrap on Linux), typed Python/Rust/C++ data, borrow-check failures,
+worker state, panic recovery, cancellation/deadlines, file artifacts and every
+Display kind. The bilingual `rust-pipeline` demo is the small end-to-end example.

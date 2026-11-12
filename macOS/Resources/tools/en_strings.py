@@ -640,6 +640,7 @@ EN = {
 "C++ の処理": "C++ step",
     "Go の処理": "Go step",
     "C# の処理": "C# Card",
+    "Rust の処理": "Rust step",
 "Canvas に配置": "Place on the canvas",
 "Card が見つかりません": "Card not found",
 "Card はありません": "No Cards",

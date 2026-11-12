@@ -1501,7 +1501,7 @@ struct BuiltinCardItems: View {
         Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
       }
     }
-    ForEach([DefinitionTemplate.python, .cpp, .go, .csharp, .draft, .marimo], id: \.self) { t in
+    ForEach([DefinitionTemplate.python, .cpp, .go, .rust, .csharp, .draft, .marimo], id: \.self) { t in
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
     }
     Menu("可視化（図を描く Card）") {

@@ -44,6 +44,7 @@ const PY_KEYWORDS = ['and', 'as', 'assert', 'async', 'await', 'break', 'class', 
   'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while',
   'with', 'yield', 'self', 'cls']
 const GO_KEYWORDS = ['break', 'case', 'chan', 'const', 'continue', 'default', 'defer', 'else', 'fallthrough', 'for', 'func', 'go', 'goto', 'if', 'import', 'interface', 'map', 'package', 'range', 'return', 'select', 'struct', 'switch', 'type', 'var']
+const RUST_KEYWORDS = ['as', 'async', 'await', 'break', 'const', 'continue', 'crate', 'dyn', 'else', 'enum', 'extern', 'fn', 'for', 'if', 'impl', 'in', 'let', 'loop', 'match', 'mod', 'move', 'mut', 'pub', 'ref', 'return', 'self', 'Self', 'static', 'struct', 'super', 'trait', 'type', 'unsafe', 'use', 'where', 'while']
 const NIX_KEYWORDS = ['assert', 'else', 'if', 'import', 'in', 'inherit', 'let', 'rec', 'then', 'with']
 const FBS_KEYWORDS = ['attribute', 'enum', 'file_identifier', 'file_extension', 'include', 'namespace', 'root_type', 'rpc_service', 'struct', 'table', 'union']
 const FBS_TYPES = ['bool', 'byte', 'ubyte', 'short', 'ushort', 'int', 'uint', 'long', 'ulong', 'float', 'double', 'string',
@@ -79,6 +80,14 @@ function rules(language: string): Rules | undefined {
         paint: [[NUMBER, 'number'], [words(['bool', 'byte', 'rune', 'string', 'int', 'uint', 'uint8', 'uint16', 'uint32', 'uint64', 'int8', 'int16', 'int32', 'int64', 'uintptr', 'float32', 'float64', 'complex64', 'complex128', 'error', 'any']), 'type'],
           [words(['true', 'false', 'nil', 'iota']), 'constant'], [words(GO_KEYWORDS), 'keyword'], [CALL, 'function', 1]],
         keywords: GO_KEYWORDS,
+      }
+    case 'rs': case 'rust':
+      return {
+        claim: [[String.raw`//[^\n]*`, 'comment'], [String.raw`/\*[\s\S]*?\*/`, 'comment'], [String.raw`r#"[\s\S]*?"#`, 'string'], [DQ, 'string'], [String.raw`'(?:\\.|[^'\\\n])'`, 'string']],
+        paint: [[NUMBER, 'number'], [words(['bool', 'char', 'str', 'u8', 'u16', 'u32', 'u64', 'usize', 'i8', 'i16', 'i32', 'i64', 'isize', 'f32', 'f64']), 'type'],
+          [String.raw`\b[A-Z][A-Za-z_0-9]*\b`, 'type'], [words(['true', 'false', 'None']), 'constant'], [words(RUST_KEYWORDS), 'keyword'],
+          [CALL, 'function', 1], [String.raw`\b([A-Za-z_]\w*)!`, 'function', 1]],
+        keywords: RUST_KEYWORDS,
       }
     case 'py': case 'python':
       return {

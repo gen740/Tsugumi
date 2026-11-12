@@ -1,0 +1,10 @@
+[package]
+name = "tsugumi-card"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tsugumi = { path = "tsugumi" }
