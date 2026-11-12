@@ -221,120 +221,142 @@ import Testing
   #expect(LayoutTidy.makeRoom(columns, across: true).map(\.id) == ["card:c"])
 }
 
-@MainActor @Test func theFileBeingWrittenShowsWhatHasArrivedAtThePaceItArrives() {
-  typealias T = AgentPresence.Timing
+
+@MainActor @Test func theFileBeingWrittenShowsReceivedTextImmediately() {
+  let p = AgentPresence()
+  let start = Date(timeIntervalSinceReferenceDate: 1000)
+  p.turnStarted(now: start)
+  p.toolInput(index: 0, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/a/main.py","bytes":"import os"#, now: start)
+  #expect(p.liveCode(at: start)?.text == "import os")
+  #expect(p.liveCode(at: start.addingTimeInterval(0.2))?.text == "import os")
+  p.toolInput(index: 0, tool: "project_save", delta: "\\nprint", now: start.addingTimeInterval(0.3))
+  #expect(p.liveCode(at: start.addingTimeInterval(0.3))?.text == "import os\nprint")
+  p.toolInput(index: 0, tool: "project_save", delta: #""}},{"value":{"path":"definitions/b/main.py","patches":[{"text":"replacement"#, now: start.addingTimeInterval(0.4))
+  let patch = p.liveCode(at: start.addingTimeInterval(0.4))
+  #expect(patch?.card == "b" && patch?.patch == true && patch?.text == "replacement")
+  p.toolInput(index: 0, tool: "project_save", delta: #""},{"text":""#, now: start.addingTimeInterval(0.5))
+  #expect(p.liveCode(at: start.addingTimeInterval(0.5))?.text == "")
+  p.toolInput(index: 0, tool: "project_save", delta: #""}]}}]}"#, now: start.addingTimeInterval(0.6))
+  p.saved(written: [("b", reveal: false)], wires: [], now: start.addingTimeInterval(0.7))
+  p.toolInputEnded(ok: true, now: start.addingTimeInterval(0.7))
+  #expect(p.liveCode(at: start.addingTimeInterval(0.8))?.saved == true)
+  #expect(p.liveCode(at: start.addingTimeInterval(1.5)) == nil)
+}
+
+@MainActor @Test func aNewFileKeepsTheScenesOfTheChangeThatWasSaved() {
   let p = AgentPresence()
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   let at = { (s: Double) in t0.addingTimeInterval(s) }
-  // Outside a turn, or from a tool that writes no files, nothing shows.
-  p.toolInput(index: 0, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/load/a.py","bytes":"x"#, now: t0)
-  #expect(p.liveCode(at: t0) == nil)
+  let wire = AgentPresence.Wire(from: "a", fromPort: "out", to: "c", toPort: "in")
   p.turnStarted(now: t0)
-  p.toolInput(index: 1, tool: "run", delta: #"{"value":{"path":"definitions/load/a.py","bytes":"x"#, now: t0)
-  #expect(p.liveCode(at: t0) == nil && p.beats.isEmpty)
-
-  p.toolInput(index: 2, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/load/src/main.py","bytes":"import os"#, now: t0)
-  // The bird goes there and says so; what has arrived is written out up to the next lump.
-  #expect(p.beats.map(\.beat) == [.compose("load")])
-  #expect(p.line(at: t0)?.text == "load を書いています")
-  #expect(p.liveCode(at: t0)?.text == "")
-  #expect(p.liveCode(at: at(T.codeEase / 2))?.text == "impo")
-  #expect(p.liveCode(at: at(T.codeEase + 0.01))?.text == "import os")
-  #expect(p.liveCode(at: t0)?.file == "src/main.py")
-  // A lump in many pieces at once, none lost, on the same scene: from where it had got to.
-  p.toolInput(index: 2, tool: "project_save", delta: "\\nimp", now: at(1))
-  p.toolInput(index: 2, tool: "project_save", delta: "ort", now: at(1.001))
-  #expect(p.liveCode(at: at(1.001))?.text == "import os")
-  #expect(p.liveCode(at: at(1.001 + T.codeEase / 2))?.text == "import os\nim")
-  #expect(p.liveCode(at: at(1.001 + T.codeEase + 0.01))?.text == "import os\nimport")
-  #expect(p.beats.count == 1)
-  // The next lump before this one has been written out: on from where it has got to, never back.
-  p.toolInput(index: 2, tool: "project_save", delta: " x", now: at(2))
-  p.toolInput(index: 2, tool: "project_save", delta: " y", now: at(2 + T.codeEase / 2))
-  let inLump = p.liveCode(at: at(2 + T.codeEase / 2))?.text.count ?? 0
-  #expect(inLump == "import os\nimport x".count - 1)
-  #expect(p.liveCode(at: at(2 + T.codeEase * 1.5 + 0.01))?.text == "import os\nimport x y")
-
-  // A slow model: the scene lasts as long as the file arrives, a pause included.
-  p.toolInput(index: 2, tool: "project_save", delta: " a", now: at(30))
-  #expect(p.liveCode(at: at(30 + T.codeStalled - 0.1))?.text == "import os\nimport x y a")
-
-  // The next file comes: the one on the screen has been seen long enough, so it
-  // does not hold, and the next shows at once.
-  p.toolInput(index: 2, tool: "project_save", delta: #""}},{"value":{"path":"definitions/rgb/src/main.py","bytes":"from"#, now: at(31))
-  #expect(p.beats.map(\.beat) == [.compose("load"), .compose("rgb")])
-  #expect(p.liveCode(at: at(31))?.card == "rgb")
-  #expect(p.liveCode(at: at(31 + T.codeEase + 0.01))?.text == "from")
-
-  // The last file has arrived and the save goes through: it says so for its hold,
-  // and is gone by then.
-  p.toolInput(index: 2, tool: "project_save", delta: #" a"}}]}"#, now: at(33))
-  p.saved(written: [("rgb", reveal: true)], wires: [], now: at(33.1))
-  p.toolInputEnded(ok: true, now: at(33.1))
-  #expect(p.liveCode(at: at(33.2))?.saved == true)
-  #expect(p.liveCode(at: at(33 + T.codeHold + 0.01)) == nil)
+  // A save went through: its Card is written out and its wire threaded.
+  p.saved(written: [("a", reveal: true)], wires: [wire], now: t0)
+  // The next file starts to arrive while those scenes still play.
+  p.toolInput(index: 0, tool: "project_save", delta: #"{"value":{"path":"definitions/b/main.py","bytes":"now"#, now: at(0.1))
+  #expect(p.beats.map(\.beat) == [.write("a", reveal: true), .thread(wire), .compose("b")])
+  // What was saved is still shown as it was: written out, then threaded.
+  #expect(p.writing("a", at: at(0.8))?.reveal != nil)
+  let threading = p.beats[1].start.addingTimeInterval(AgentPresence.Timing.threadStart + AgentPresence.Timing.threadLength / 2)
+  #expect(p.thread(wire, at: threading) != .plain && p.thread(wire, at: threading) != .hidden)
+  // The new file waits for them, then shows all that has arrived, as unsaved.
+  #expect(p.liveCode(at: at(0.1)) == nil)
+  p.toolInput(index: 0, tool: "project_save", delta: " more", now: at(1))
+  let shown = p.liveCode(at: p.beats[2].start)
+  #expect(shown?.card == "b" && shown?.text == "now more" && shown?.saved == false)
 }
 
-@MainActor @Test func aShortFileStaysLongEnoughToSeeAndTheWindowDoesNotFallBehind() {
-  typealias T = AgentPresence.Timing
+@MainActor @Test func aNewFileReplacesAnOlderFileAtOnce() {
   let p = AgentPresence()
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   let at = { (s: Double) in t0.addingTimeInterval(s) }
   let file = { (card: String) in #"{"value":{"path":"definitions/\#(card)/m.py","bytes":"code"}},"# }
   p.turnStarted(now: t0)
   p.toolInput(index: 0, tool: "project_save", delta: file("a"), now: t0)
-  // Alone, it is seen for its shortest stay and holds.
-  #expect(p.beats[0].length == T.codeShortest + T.codeHold)
-  // More come at once: the first keeps its shortest stay, then only the newest shows.
-  p.toolInput(index: 0, tool: "project_save", delta: file("b"), now: at(0.1))
-  p.toolInput(index: 0, tool: "project_save", delta: file("c"), now: at(0.2))
-  #expect(p.beats.map(\.beat) == [.compose("a"), .compose("c")])
-  #expect(p.beats[1].start == at(T.codeShortest))
-  #expect(p.liveCode(at: at(T.codeShortest - 0.01))?.card == "a")
-  #expect(p.liveCode(at: at(T.codeShortest + 0.01))?.card == "c")
+  #expect(p.liveCode(at: at(0.1))?.card == "a")
+  // No shortest stay: the file arriving now is the one on the screen.
+  p.toolInput(index: 0, tool: "project_save", delta: file("b"), now: at(0.2))
+  #expect(p.liveCode(at: at(0.2))?.card == "b")
+  #expect(p.beats.map(\.beat) == [.compose("a"), .compose("b")])
+  #expect(p.beats[0].end == at(0.2))
 }
 
-@MainActor @Test func aFileWaitsNoLongerThanTheBirdIsBehindAndShowsWhenItCan() {
+@MainActor @Test func aFileTooFarBehindTheBirdShowsWhenItCan() {
   typealias T = AgentPresence.Timing
   let p = AgentPresence()
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   let at = { (s: Double) in t0.addingTimeInterval(s) }
   p.turnStarted(now: t0)
   // The bird is threading the wires of the last save, far behind.
-  for n in 0..<8 { p.enqueue(.thread(AgentPresence.Wire(from: "a", fromPort: "o", to: "b\(n)", toPort: "i")), now: t0) }
+  let wires = (0..<8).map { AgentPresence.Wire(from: "a", fromPort: "o", to: "b\($0)", toPort: "i") }
+  p.saved(written: [], wires: wires, now: t0)
   let free = p.beats.last!.end.timeIntervalSince(t0)
   #expect(free > T.maxBacklog)
   p.toolInput(index: 0, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/a/m.py","bytes":"x"#, now: t0)
-  #expect(!p.beats.contains { $0.code != nil })
-  // Once it is close enough, the file still being written gets its scene, whole so far.
+  // None of the threading is given up for it.
+  #expect(p.beats.map(\.beat) == wires.map { AgentPresence.Beat.thread($0) })
+  #expect(p.liveCode(at: t0) == nil)
+  // Once the bird is close enough, the file still being written gets its scene, whole so far.
   p.toolInput(index: 0, tool: "project_save", delta: "y", now: at(free))
-  #expect(p.liveCode(at: at(free + T.codeEase + 0.01))?.text == "xy")
+  #expect(p.liveCode(at: at(free))?.text == "xy")
 }
 
-@MainActor @Test func aSaveEndsWhatWaitsAndARunEndsTheWindow() {
+@MainActor @Test func aRunEndsTheWindowAndKeepsTheScenesOfTheSave() {
+  let p = AgentPresence()
+  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+  let at = { (s: Double) in t0.addingTimeInterval(s) }
+  p.turnStarted(now: t0)
+  p.toolInput(index: 0, tool: "project_save", delta: #"{"value":{"path":"definitions/c/m.py","bytes":"code"}},"#, now: t0)
+  p.saved(written: [("c", reveal: true)], wires: [], now: at(0.1))
+  p.toolInputEnded(ok: true, now: at(0.1))
+  #expect(p.liveCode(at: at(0.2))?.card == "c" && p.liveCode(at: at(0.2))?.saved == true)
+  // The workflow starts: the window goes at once, and the Card is still written out.
+  p.stopShowingCode(now: at(0.2))
+  #expect(p.liveCode(at: at(0.2)) == nil && p.liveCode(at: at(1)) == nil)
+  #expect(p.beats.contains { $0.beat == .write("c", reveal: true) })
+}
+
+@MainActor @Test func aStoppedTurnOrAnUnansweredApprovalLeavesNoUnsavedText() {
   typealias T = AgentPresence.Timing
   let p = AgentPresence()
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   let at = { (s: Double) in t0.addingTimeInterval(s) }
-  let file = { (card: String) in #"{"value":{"path":"definitions/\#(card)/m.py","bytes":"code"}},"# }
+  // Stopped while the file still arrives.
   p.turnStarted(now: t0)
-  p.toolInput(index: 0, tool: "project_save", delta: file("a"), now: t0)
-  p.toolInput(index: 0, tool: "project_save", delta: file("b"), now: at(0.1))
-  // The save has gone through: b, still waiting, is not shown any more.
-  p.saved(written: [("a", reveal: true), ("b", reveal: true)], wires: [], now: at(0.2))
-  p.toolInputEnded(ok: true, now: at(0.2))
-  #expect(p.beats.filter { $0.code != nil }.count == 1)
-  #expect(p.liveCode(at: at(0.3))?.saved == true)
-  #expect(p.liveCode(at: at(T.codeShortest + 0.01)) == nil)
-  // The workflow starts within a's shortest stay: the window goes at once, and
-  // the bird's scenes that were queued behind it stay.
-  p.toolInput(index: 1, tool: "project_save", delta: file("c"), now: at(10))
-  p.saved(written: [("c", reveal: true)], wires: [], now: at(10.1))
-  p.toolInputEnded(ok: true, now: at(10.1))
-  #expect(p.liveCode(at: at(10.2))?.card == "c")
-  p.stopShowingCode(now: at(10.2))
-  #expect(p.liveCode(at: at(10.2)) == nil && p.liveCode(at: at(11)) == nil)
-  #expect(p.beats.contains { $0.beat == .write("c", reveal: true) })
+  p.toolInput(index: 0, tool: "project_save", delta: #"{"value":{"path":"definitions/a/m.py","bytes":"half"#, now: t0)
+  #expect(p.liveCode(at: at(0.2))?.text == "half")
+  p.turnEnded(.stopped, now: at(0.3))
+  #expect(p.liveCode(at: at(0.3)) == nil && p.liveCode(at: at(2)) == nil)
+  // All of it has arrived and the save waits for an approval: it is never
+  // marked as saved, it is gone after its hold, and a refusal takes it away at once.
+  p.turnStarted(now: at(10))
+  p.toolInput(index: 1, tool: "project_save", delta: #"{"value":{"path":"definitions/a/m.py","bytes":"whole"}}"#, now: at(10))
+  #expect(p.liveCode(at: at(10.1))?.saved == false)
+  #expect(p.liveCode(at: at(10 + T.codeHold + 0.01)) == nil)
+  p.toolInput(index: 2, tool: "project_save", delta: #"{"value":{"path":"definitions/a/m.py","bytes":"again"}}"#, now: at(20))
+  p.toolInputEnded(ok: false, now: at(20.1))
+  #expect(p.liveCode(at: at(20.1)) == nil)
+}
+
+@MainActor @Test func helpersWritingTheSameFileEachShowTheirOwnText() {
+  let t0 = Date(timeIntervalSinceReferenceDate: 1000)
+  let birds = ["first", "second"].map { (text: String) -> AgentPresence in
+    let p = AgentPresence()
+    p.turnStarted(now: t0)
+    p.toolInput(index: 0, tool: "project_save", delta: #"{"value":{"path":"definitions/a/m.py","bytes":"\#(text)"#, now: t0)
+    return p
+  }
+  #expect(birds.map { $0.liveCode(at: t0)?.text } == ["first", "second"])
+  #expect(birds.map { $0.liveCode(at: t0)?.card } == ["a", "a"])
+  // One fails: only its panel goes.
+  birds[0].toolInputEnded(ok: false, now: t0)
+  #expect(birds[0].liveCode(at: t0) == nil && birds[1].liveCode(at: t0)?.text == "second")
+}
+
+@Test func thePanelIsHiddenWithTheAgentAndWhereItCouldNotBeRead() {
+  #expect(WritingPanel.shows(avatar: .bird, zoom: 1))
+  #expect(WritingPanel.shows(avatar: .dot, zoom: WritingPanel.minimumZoom))
+  #expect(!WritingPanel.shows(avatar: .bird, zoom: 0.4))
+  #expect(!WritingPanel.shows(avatar: .none, zoom: 1))
 }
 
 @Test func thePanelOfACardNotOnTheCanvasGoesWhereThereIsRoom() {
@@ -364,7 +386,7 @@ import Testing
   p.turnStarted(now: t0)
   p.toolInput(index: 0, tool: "project_save", delta: file("a"), now: t0)
   p.toolInput(index: 0, tool: "project_save", delta: file("b"), now: t0)
-  #expect(p.beats.count == 2)
+  #expect(p.beats.count == 1)
   p.toolInputEnded(ok: false, now: at(0.5))
   #expect(p.liveCode(at: at(0.5)) == nil && p.liveCode(at: at(4)) == nil)
   // What is not a Card's file shows nothing, and the next call starts afresh.
@@ -378,7 +400,7 @@ import Testing
   p.turnStarted(now: at(10))
   p.toolInput(index: 3, tool: "project_save", delta: file("d"), now: at(10))
   p.turnEnded(.done, now: at(10.1))
-  #expect(p.liveCode(at: at(11))?.card == "d")
+  #expect(p.liveCode(at: at(10.2))?.card == "d")
 }
 
 @Test func thePanelShowsTheLastLines() {
