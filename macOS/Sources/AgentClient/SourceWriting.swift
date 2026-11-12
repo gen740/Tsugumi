@@ -2,23 +2,26 @@ import Foundation
 
 /// A file as it arrives in the arguments of a save (`project_save`) while the
 /// model writes them: `path` is nil until its key has come, `text` is what has
-/// come of `bytes`, and `done` says the change is complete.
+/// come of `bytes` or the current patch replacement, and `done` says the change is complete.
 public struct SourceWriting: Equatable, Sendable {
   public var path: String?
   public var text = ""
   public var done = false
+  public var patch = false
+  public var sequence = 0
+  public var ready = false
 }
 
 /// Reads the JSON of tool arguments as it streams in, one piece at a time and
-/// at any cut, for the object being written that has `path` and `bytes` (a
-/// PutSource). Nothing is parsed twice and nothing waits for the JSON to end.
+/// at any cut, for PutSource bytes or PatchSource replacement text. Nothing is parsed twice and nothing waits for the JSON to end.
 public struct SourceWritingScanner {
   public private(set) var current: SourceWriting?
 
-  private struct Object { var key: String?; var awaitingKey = true; var isFile = false }
-  private enum Container { case object(Object), array }
-  private enum StringRole { case key, path, bytes, other }
+  private struct Object { var key: String?; var awaitingKey = true; var isFile = false; var patch = false }
+  private enum Container { case object(Object), array(patches: Bool) }
+  private enum StringRole { case key, path, bytes, patchText, other }
 
+  private var sequence = 0
   private var stack: [Container] = []
   private var role: StringRole?
   private var token = String.UnicodeScalarView()
@@ -36,8 +39,19 @@ public struct SourceWritingScanner {
 
   private mutating func structure(_ c: Unicode.Scalar) {
     switch c {
-    case "{": stack.append(.object(Object()))
-    case "[": stack.append(.array)
+    case "{":
+      let patch: Bool
+      if case .array(patches: true)? = stack.last { patch = true } else { patch = false }
+      if patch {
+        sequence += 1
+        current = SourceWriting(path: current?.path, patch: true, sequence: sequence)
+      }
+      stack.append(.object(Object(patch: patch)))
+    case "[":
+      let patches: Bool
+      if case .object(let o)? = stack.last, o.key == "patches" { patches = true; startFile() }
+      else { patches = false }
+      stack.append(.array(patches: patches))
     case "}", "]":
       if case .object(let o)? = stack.popLast(), o.isFile { current?.done = true }
     case ",":
@@ -50,9 +64,13 @@ public struct SourceWritingScanner {
       } else if o.key == "path" {
         role = .path
         startFile()
+      } else if o.patch && o.key == "text" {
+        role = .patchText
+        current?.ready = true
       } else if o.key == "bytes" {
         role = .bytes
         startFile()
+        current?.ready = true
       } else {
         role = .other
       }
@@ -100,7 +118,7 @@ public struct SourceWritingScanner {
   }
 
   private mutating func append(_ c: Unicode.Scalar) {
-    if role == .bytes {
+    if role == .bytes || role == .patchText {
       current?.text.unicodeScalars.append(c)
     } else if role == .key || role == .path {
       token.append(c)
@@ -122,7 +140,8 @@ public struct SourceWritingScanner {
   /// The object at the top is the file being written from its first `path` or `bytes`.
   private mutating func startFile() {
     guard case .object(let o)? = stack.last, !o.isFile else { return }
-    current = SourceWriting()
+    sequence += 1
+    current = SourceWriting(sequence: sequence)
     withTop { $0.isFile = true }
   }
 
