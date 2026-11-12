@@ -1161,7 +1161,7 @@ function SourceCategory({ model, only }: { model: CardEditorModel; only?: string
     if (only) {
       if (files[0]) model.openFile(files[0])
     } else if (shown === undefined || shown.endsWith('/default.nix')) {
-      const f = files.find((x) => x.endsWith('.py') || x.endsWith('.cc') || /\.(rmd|qmd)$/i.test(x)) ?? files[0]
+      const f = files.find((x) => x.endsWith('.py') || x.endsWith('.cc') || x.endsWith('.cs') || /\.(rmd|qmd)$/i.test(x)) ?? files[0]
       if (f) model.openFile(f)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

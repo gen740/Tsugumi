@@ -395,3 +395,7 @@ Displays publish immediately, including before a long calculation finishes. Each
 | Examples of code that runs | [demos/](../demos/) (`report`, `collatz` and others) |
 | Leaving implementation to the Agent | [the Agent in Features](features.md#9-agent) |
 | What the words mean | [Glossary](Glossary.md) |
+
+## C#
+
+Choose Processing (C#) for a .NET Card. The [C# guide](CSharp.md) covers typed inputs, outputs and parameters, asynchronous work, NuGet dependencies and the cross-language demo.
