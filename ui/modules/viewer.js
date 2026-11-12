@@ -33,22 +33,30 @@ function load(src) {
 const view = document.getElementById('view')
 const error = document.getElementById('error')
 let drawn = ''   // the module drawn now
-let current = 0  // the latest request (a slower earlier one does not draw over it)
+let current = 0
+let pending
+let working = false
+let vegaResult
 
-function done(state, message) {
+function releaseVega() {
+  if (vegaResult) { vegaResult.finalize(); view.replaceChildren() }
+  vegaResult = undefined
+}
+
+function done(state, message, requestId, image) {
   document.body.dataset.state = state
   error.textContent = message ?? ''
-  const msg = { tsugumi: 'state', state, message: message ?? '' }
+  const msg = { tsugumi: 'state', state, message: message ?? '', requestId, image }
   if (window.parent !== window) window.parent.postMessage(msg, '*')
   window.webkit?.messageHandlers?.tsugumi?.postMessage(msg)
 }
 
-async function plotly(spec, interactive) {
-  await load('plotly.min.js')
+async function plotly(spec, interactive, size) {
   // The display frame decides the size.
   const layout = { ...(spec.layout ?? {}), autosize: true }
   delete layout.width
   delete layout.height
+  if (size) Object.assign(layout, { width: size.width, height: size.height, autosize: false })
   await window.Plotly.react(view, spec.data ?? [], layout, {
     responsive: true, staticPlot: !interactive, displaylogo: false, displayModeBar: interactive ? 'hover' : false,
   })
@@ -56,7 +64,6 @@ async function plotly(spec, interactive) {
 
 // Not named vegaLite: the library sets that global, and a second chart on the page would call it.
 async function drawVegaLite(spec, interactive) {
-  for (const s of ['vega.min.js', 'vega-lite.min.js', 'vega-embed.min.js']) await load(s)
   const composite = ['hconcat', 'vconcat', 'concat', 'facet', 'repeat'].some((k) => k in spec)
   if (!composite) {
     // A single view fills the frame; a composite keeps its size (and scrolls when interactive).
@@ -68,27 +75,67 @@ async function drawVegaLite(spec, interactive) {
   const loader = window.vega.loader()
   loader.load = loader.sanitize = async (uri) => { throw new Error(`a Card's chart cannot load ${uri}: put its data in the spec`) }
   view.replaceChildren()
-  await window.vegaEmbed(view, spec, {
+  vegaResult = await window.vegaEmbed(view, spec, {
     actions: interactive ? { export: true, source: false, compiled: false, editor: false } : false,
     loader, renderer: 'canvas', tooltip: interactive,
   })
 }
 
-async function render({ name, json, interactive }) {
+// Only one library may mutate the view at a time. While it is busy, keep the
+// newest request, so live updates cannot create an unbounded rendering queue.
+function render(message) {
   const n = ++current
-  try {
-    const spec = JSON.parse(json)
-    document.body.classList.toggle('still', !interactive)
-    if (drawn === 'plotly' && name !== 'plotly') window.Plotly?.purge(view)
-    if (name === 'plotly') await plotly(spec, interactive)
-    else if (name === 'vega-lite') await drawVegaLite(spec, interactive)
-    else throw new Error(`no viewer for the module ${name}`)
-    drawn = name
-    if (n === current) done('ok')
-  } catch (e) {
-    if (n === current) done('error', String(e?.message ?? e))
-  }
+  return new Promise(resolve => {
+    pending?.resolve(false)
+    pending = { message, n, resolve }
+    void drawPending()
+  })
 }
+
+async function drawPending() {
+  if (working) return
+  working = true
+  while (pending) {
+    const { message, n, resolve } = pending
+    pending = undefined
+    const { name, json, interactive, requestId, snapshot } = message
+    const size = snapshot ? { width: Number(message.width), height: Number(message.height) } : undefined
+    try {
+      if (name === 'plotly') await load('plotly.min.js')
+      else if (name === 'vega-lite') {
+        for (const lib of ['vega.min.js', 'vega-lite.min.js', 'vega-embed.min.js']) await load(lib)
+      } else throw new Error(`no viewer for the module ${name}`)
+      if (n !== current) { resolve(false); continue }
+      if (size && (!Number.isFinite(size.width) || !Number.isFinite(size.height) || size.width < 16 || size.height < 16 || size.width > 1600 || size.height > 1200)) throw new Error('Invalid chart preview dimensions')
+      const spec = JSON.parse(json)
+      document.body.classList.toggle('still', !interactive)
+      document.body.classList.remove('scroll')
+      releaseVega()
+      if (drawn === 'plotly' && name !== 'plotly') window.Plotly?.purge(view)
+      // Record the owner before drawing, so a failed partial draw is cleaned too.
+      drawn = name
+      if (name === 'plotly') await plotly(spec, interactive, size)
+      else await drawVegaLite(spec, interactive)
+      let image
+      if (snapshot && n === current) {
+        image = name === 'plotly'
+          ? await window.Plotly.toImage(view, { format: 'png', width: size.width, height: size.height, scale: 2 })
+          : await vegaResult.view.toImageURL('png', 2)
+      }
+      if (n === current) done('ok', '', requestId, image)
+      resolve(n === current)
+    } catch (e) {
+      if (n === current) done('error', String(e?.message ?? e), requestId)
+      resolve(false)
+    }
+  }
+  working = false
+}
+
+window.addEventListener('pagehide', () => {
+  releaseVega()
+  if (drawn === 'plotly') window.Plotly?.purge(view)
+})
 
 // The app calls this; the web UI posts {name, json, interactive}.
 window.tsugumiRender = render

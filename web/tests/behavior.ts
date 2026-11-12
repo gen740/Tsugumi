@@ -70,5 +70,8 @@ await import("./demoReplay")
 await import("./evidence")
 await import('./environments')
 
+await import('./moduleThumbnails')
+await import('./moduleViewer')
+await import('./figurePreview')
 await import('./nixReferences')
 await import('./nixReferenceOverlay')
