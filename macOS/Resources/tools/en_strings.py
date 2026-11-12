@@ -62,7 +62,9 @@ EN = {
     '保存した入力': 'Saved input',
     'この実行の Card からは届いていません': 'Not sent by a Card of this run',
     '呼び出しの記録を読み込めませんでした': 'The invocation record could not be read',
-
+    '配線の交差を減らす': 'Untangle Wires',
+    '配線の交差を減らす（Card の位置は保持）': 'Untangle wires (keep Card positions)',
+    'ポートの並びを元に戻す': 'Reset Port Order',
     '根拠の記録': 'Evidence record',
     'このプロジェクトに根拠の記録がありません': 'This evidence is not available in this project',
     '位置': 'Position',

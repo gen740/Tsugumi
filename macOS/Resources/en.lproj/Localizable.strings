@@ -561,6 +561,7 @@
 "ページ" = "Page";
 "ホストのフォルダへのアクセスを許可する" = "Allow access to folders of the host";
 "ホーム" = "Home";
+"ポートの並びを元に戻す" = "Reset Port Order";
 "メッセージ（%@ で送信）" = "Message (send with %@)";
 "メモ" = "Note";
 "メンバーを選択" = "Select Members";
@@ -1213,6 +1214,8 @@
 "選択をグループ化" = "Group Selection";
 "選択対象を削除" = "Delete Selection";
 "選択済み" = "Selected";
+"配線の交差を減らす" = "Untangle Wires";
+"配線の交差を減らす（Card の位置は保持）" = "Untangle wires (keep Card positions)";
 "配置されていない定義" = "Definitions not placed";
 "配色" = "Colors";
 "閉じる" = "Close";
