@@ -119,6 +119,19 @@ Inside the child Workflow (the same shape in all four):
 - Set `initial` to a large value such as 2^60: R's `check` fails, saying it is "not below 2^53" (Julia, C++ and Python return 61 values).
 - Open `collatz-jl` or `collatz-r` and look at the record of `collect`: each invocation's display is the sequence so far.
 
+### Signal detection sweep (`signal-sweep`)
+
+Run **start** to compare three signal strengths (8, 12, 16) with two detection
+thresholds (10, 14). **samples** emits the three signals. **score** reads the
+thresholds from `inputs.signal.thresholds` in its Nix definition and makes six
+comparisons. Open its batch history to see which signal and threshold each
+invocation used.
+
+**collect** turns the six results into one typed vector. **summary** reads the
+vector and shows three detections out of six comparisons. Edit the thresholds
+in `samples/default.nix` and run from **start** again to see which detections
+change. [Run lists and Collect](features.md#run-lists-and-collect)
+
 ### Live Stream (`live-stream`)
 
 Makes one value of a random walk every 100 ms and draws the latest values as a line chart in real time.

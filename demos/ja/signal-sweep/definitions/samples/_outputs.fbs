@@ -1,0 +1,3 @@
+table Signal { value:uint; }
+table Outputs { out:Signal (required); }
+root_type Outputs;

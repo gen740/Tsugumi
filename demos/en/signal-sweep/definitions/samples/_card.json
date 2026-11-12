@@ -1,0 +1,9 @@
+{
+  "language": "bash",
+  "inputs": [
+    {
+      "name": "start"
+    }
+  ],
+  "recordIO": true
+}

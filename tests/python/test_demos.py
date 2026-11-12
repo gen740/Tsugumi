@@ -121,6 +121,29 @@ def test_every_listed_demo_resolves(tmp_path, demo, language):
         env.cleanup()
 
 
+@pytest.mark.parametrize(("language", "expected"), [
+    ("en", "3 of 6 comparisons passed across 2 thresholds."),
+    ("ja", "2 個のしきい値で比較し、6 件のうち 3 件を検出しました。"),
+])
+def test_signal_sweep_collects_all_comparisons(tmp_path, language, expected):
+    """Run both versions through real Nix evaluation and the ordinary Card worker."""
+    env = demo_environment(tmp_path, "signal-sweep", language=language)
+    try:
+        client = connect(env)
+        run_id = start_run(client, ["start"])
+        status = wait_run(client, run_id)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        comparisons = client.call("RunInvocationsRequest", runId=run_id, card=path("score"))
+        assert [row.implementationIndex for row in comparisons.records] == [1, 2] * 3
+        batch, = comparisons.batches
+        assert batch.complete and not batch.failed and batch.invocationCount == 6
+        summary = client.call("RunInvocationsRequest", runId=run_id, card=path("summary"))
+        assert len(summary.records) == 1
+        assert display_text(client, run_id, "summary") == expected
+    finally:
+        env.cleanup()
+
+
 def without_julia_and_r(dst):
     """The Collatz demo of C++ and Python alone, as CI runs it: Julia and R (large Nix closures, a process for every
     step) are left out of the copy, and `compare` loses their two inputs but keeps the rest of its code. The four

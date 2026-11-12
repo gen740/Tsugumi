@@ -1,7 +1,7 @@
 # Writing Tsugumi Cards (for the in-app Agent)
 
-Read with `reference_read`. Every example named here is a working file under
-`demos/`; copy from those rather than guessing.
+Use `demo_list` and `demo_read` to find the working examples under `demos/`.
+Start with those files when implementing a Card.
 
 ## A Card's folder
 
@@ -12,7 +12,7 @@ Read with `reference_read`. Every example named here is a working file under
 | `_card.json` | All settings: `language` or `template`, `inputs`, `params`, run settings |
 | `_meta.json` | The intent, for every kind of Card: `description` (its summary, shown on the Canvas and in Card settings; `_card.json` has none), `content`, `context`, port descriptions. The save implementing a Draft keeps what it has and fills an empty `description` and `context` (only from what the user and the Draft say); `"keep_meta": true` only when nothing is empty |
 | `_outputs.fbs` | One table per output port, root table `Outputs` |
-| `default.nix` | Code Cards only: a function `{ pkgs, inputs, params }:` returning `{ run = ...; }` |
+| `default.nix` | Code Cards only: a function `{ pkgs, inputs, params }:` returning `{ run = ...; }` with one implementation or an ordered list |
 | `src/` | Code Cards only: the sources |
 
 Never write `_inputs.fbs`: input types come from the connected outputs.
@@ -26,6 +26,7 @@ Never write `_inputs.fbs`: input types come from the connected outputs.
 | `fork` | in `in`, outs `out1`, `out2` (param `branches`: string[] for other names) | Sends one value to several Cards (an output has one wire: this is how a value reaches several inputs) |
 | `branch` | ins `value`, `condition` (a table with `value:bool`), outs `a` (true), `b` (false) | Sends to one side |
 | `merge` | ins as declared in `inputs`, out `out` (a union of them) | Joins paths of a loop |
+| `collect` | in `in`, out `out` (derived from the input) | Sends a batch as one typed vector or Directory |
 
 To show a received value without choosing its type in advance, use an ordinary
 Bash Card with an untyped input. The marimo demo's `result` Card logs
@@ -102,6 +103,35 @@ directory and environment variables are set again for every call either way.
 - C++: `demos/collatz/externals/collatz-cpp/definitions/halve/default.nix`. Libraries:
   `inputs.tsugumi.cppCard { inherit sdk; src = ./src; buildInputs = [ pkgs.cfitsio ]; }`.
 - bash: `demos/report/externals/archive/definitions/copy/default.nix` (`run` is the script text).
+
+### Run lists and connected Nix exports
+
+Use `demos/en/signal-sweep` for a parameter sweep. The `samples` Card uses a Nix
+function to make three Bash implementations and declares shared
+`exports.thresholds = [ 10 14 ];`. The `score` Card receives `samples.out` on its
+`signal` port. Its `default.nix` reads `inputs.signal.thresholds` and uses
+`run = map compare thresholds;` to make two implementations. Each implementation
+reads the runtime signal from `$JSON_SIGNAL`. Nix exports hold build-time values,
+functions or derivations. The port message carries the runtime value.
+
+The three input items and two implementations produce six invocations, in input
+item order with implementation order varying fastest. Every batch input is an
+independent axis. `maxRuns` counts triggers, and a failed member cancels the
+rest of the batch. Inspect each member's history for its inputs and result.
+An empty list yields an empty batch.
+
+Add a built-in `collect` after `score` to send one ordinary port value with an
+`items` vector. The next Bash Card can read `.items` from its `$JSON_RESULTS` input file, as
+`summary/default.nix` does. Collect turns File or Directory batches into a
+Directory. The ordered `items` records contain each original name and a path
+relative to the Directory root.
+
+Refer to Nix exports as `inputs.<destination-port>`. Fork, Collect, Branch's
+`value` input and Workflow boundaries preserve a unique Code producer. Use a
+direct connection to that Code Card if the producer would otherwise be
+ambiguous. The `score` Card also exports `thresholdCount`, which `summary` reads through
+Collect as `inputs.results.thresholdCount`. Each run implementation shares
+the same exports.
 
 ### Python packages from PyPI (uv lock)
 

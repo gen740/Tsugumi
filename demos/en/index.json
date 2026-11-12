@@ -43,6 +43,18 @@
       ]
     },
     {
+      "id": "signal-sweep",
+      "title": "Signal detection sweep",
+      "field": "Learn the basics",
+      "description": "Compare three signal strengths against two detection thresholds, inspect all six runs, and collect them into one result.",
+      "path": "signal-sweep",
+      "tags": [
+        "Bash",
+        "Run lists",
+        "Collect"
+      ]
+    },
+    {
       "id": "live-stream",
       "title": "Live Stream",
       "field": "Learn the basics",

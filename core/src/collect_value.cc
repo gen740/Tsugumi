@@ -292,6 +292,7 @@ auto collect_files(const types::PortType& source, const types::PortType& output,
   try {
     Staging staging(output_dir);
     Budget budget;
+    budget.entries -= members.size();
     std::vector<Entry> entries;
     entries.reserve(sources.size());
     for (size_t i = 0; i < sources.size(); ++i) {

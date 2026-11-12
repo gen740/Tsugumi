@@ -43,6 +43,18 @@
       ]
     },
     {
+      "id": "signal-sweep",
+      "title": "信号の検出しきい値を比較",
+      "field": "基本の機能を知る",
+      "description": "3 つの信号強度を 2 つの検出しきい値と比較し、6 件の履歴を確認して結果を集約する。",
+      "path": "signal-sweep",
+      "tags": [
+        "Bash",
+        "実行リスト",
+        "Collect"
+      ]
+    },
+    {
       "id": "live-stream",
       "title": "Live Stream",
       "field": "基本の機能を知る",

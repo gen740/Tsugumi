@@ -248,6 +248,47 @@ TEST(CollectValue, FlatBufferRejectsInvalidMemberAndCancel) {
   }
 }
 
+TEST(CollectValue, RejectsACollectedVectorLargerThan16MiB) {
+  const auto in = message_type();
+  const types::PortType source{"in", PortKind::FlatBuffer, false, in};
+  std::string error;
+  const types::PortType output{"out", PortKind::FlatBuffer, false, collect_output_type(source, error)};
+  ASSERT_TRUE(output.type) << error;
+  const std::string label(size_t{9} << 20, 'a');
+  const std::vector<Value> members{message(in, label, 1, 1.0, std::nullopt), message(in, label, 2, 2.0, std::nullopt)};
+  const std::atomic<bool> cancel{false};
+  try {
+    (void)collect_values(source, output, members, {}, {}, cancel);
+    FAIL() << "a vector larger than the worker value limit was accepted";
+  } catch (const Failed& failure) {
+    EXPECT_EQ(failure.failure.kind, FailureKind::output_invalid);
+    EXPECT_NE(failure.failure.diagnostic.value_or("").find("16 MiB"), std::string::npos);
+  }
+}
+
+TEST_F(CollectFiles, RejectsMoreThanOneThousandFiles) {
+  const auto source = state / "runs" / "tree";
+  for (size_t index = 0; index <= 1000; ++index) write_text(source / std::to_string(index), "");
+  const auto member = path_value_of(path_type(), PortKind::Directory, source);
+  try {
+    (void)collect(PortKind::Directory, {member});
+    FAIL() << "the file count limit was ignored";
+  } catch (const Failed& failure) {
+    EXPECT_EQ(failure.failure.kind, FailureKind::output_invalid);
+    EXPECT_NE(failure.failure.diagnostic.value_or("").find("1,000"), std::string::npos);
+  }
+  EXPECT_FALSE(stdfs::exists(output_dir));
+}
+
+TEST_F(CollectFiles, CountsMembersAgainstTheFilesystemEntryLimit) {
+  const auto source = state / "runs" / "tree";
+  stdfs::create_directories(source);
+  for (size_t index = 0; index < 10000; ++index) stdfs::create_directory(source / std::to_string(index));
+  const auto member = path_value_of(path_type(), PortKind::Directory, source);
+  EXPECT_THROW((void)collect(PortKind::Directory, {member}), Failed);
+  EXPECT_FALSE(stdfs::exists(output_dir));
+}
+
 TEST_F(CollectFiles, SavedArtifactCopyKeepsItsHashAndDiscardsCancelledWrites) {
   const auto source = state / "runs" / "source.bin";
   const auto destination = state / "inputs" / "destination.bin";

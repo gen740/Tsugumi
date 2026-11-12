@@ -356,3 +356,130 @@ def test_interrupted_batch_recovers_each_running_members_position(core_factory, 
     assert all(row.state == CardState.failed and row.failure.kind == FailureKind.interrupted for row in page.records)
     batch, = page.batches
     assert batch.complete and batch.failed and not batch.outputs
+
+
+def test_collect_keeps_input_order_when_members_finish_in_reverse(core_factory, project, tmp_path):
+    """The consumer sees list order even when workers finish in the opposite order."""
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    gates = [Gate(tmp_path, str(index)) for index in range(3)]
+    scenarios = [[gate.action(), {"op": "output", "port": "out", "type": "uint64", "value": index}]
+                 for index, gate in enumerate(gates)]
+    graph = Project(project).card("work", {"language": "bash", "sandbox": False}, outputs=NUMBER,
+                                  manifest={"runs": scripted_implementations(tmp_path, scenarios)})
+    connect_collect(graph)
+    graph.save(client)
+
+    run_id = run(client, propagate=True, maxConcurrency=3)
+    for gate in gates:
+        gate.wait()
+    for index in reversed(range(len(gates))):
+        gates[index].release()
+        deadline = time.monotonic() + 5
+        while invocation_page(client, run_id, "work").records[index].state != CardState.succeeded:
+            assert time.monotonic() < deadline, f"member {index + 1} did not finish"
+            time.sleep(0.01)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    assert collected(client, tmp_path / "decode", run_id) == [{"value": 0}, {"value": 1}, {"value": 2}]
+
+
+def test_eight_worker_cap_and_user_cancel_leave_no_partial_batch(core_factory, project, tmp_path):
+    """A Run can cancel the workers occupying all eight slots without publishing a partial batch."""
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    gates = [Gate(tmp_path, str(index)) for index in range(9)]
+    scenarios = [[{"op": "hang", "entered": str(gate.entered)}] for gate in gates]
+    graph = Project(project).card("work", {"language": "bash", "sandbox": False}, outputs=NUMBER,
+                                  manifest={"runs": scripted_implementations(tmp_path, scenarios)})
+    connect_collect(graph)
+    graph.save(client)
+
+    run_id = run(client, propagate=True, maxConcurrency=64)
+    for gate in gates[:8]:
+        gate.wait(timeout=10)
+    assert not gates[8].entered.exists()
+    client.call("RunCancelRequest", runId=run_id)
+    assert wait_run(client, run_id, timeout=20).state == RunState.cancelled
+    assert not gates[8].entered.exists()
+    page = invocation_page(client, run_id, "work")
+    assert [row.state for row in page.records] == [CardState.cancelled] * 8
+    batch, = page.batches
+    assert batch.invocationCount == 9 and batch.complete and batch.failed and not batch.outputs
+    latest = client.call("RunLatestInvocationsRequest", runId=run_id)
+    assert not any(row.card.segments == [b"collect"] and row.state == CardState.succeeded
+                   for row in latest.records)
+
+
+def test_each_input_code_consumes_one_complete_batch_per_arrival(core_factory, project, tmp_path):
+    client = core_factory(mocked_builds=True).connect()
+    graph = Project(project).card("start", {"template": "trigger"})
+    producer(graph, "left", [10, 20])
+    producer(graph, "right", [30, 40, 50])
+    graph.card("work", {"language": "bash", "sandbox": False, "recordIO": True,
+                        "trigger": "eachInput", "maxRuns": 2,
+                        "inputs": [{"name": "left", "optional": True}, {"name": "right", "optional": True}]},
+               outputs=NUMBER, manifest={"run": implementation(1)})
+    graph.connect("left", "out", "work", "left").connect("right", "out", "work", "right").save(client)
+
+    run_id = run(client, "start", propagate=True)
+    assert wait_run(client, run_id, timeout=20).state == RunState.succeeded
+    rows = invocation_page(client, run_id, "work").records
+    assert len(rows) == 5
+    assert {row.batchActivation for row in rows} == {1, 2}
+    arrivals = {}
+    for row in rows:
+        record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=row.invocation).record
+        value, = record.inputs
+        port = text(value.name)
+        item = recorded_input_json(client, tmp_path / "decode", run_id, "work", invocation=row.invocation, port=port)
+        arrivals.setdefault(row.batchActivation, []).append((port, item["value"]))
+    assert sorted(arrivals.values()) == [[("left", 10), ("left", 20)], [("right", 30), ("right", 40), ("right", 50)]]
+    for activation, members in arrivals.items():
+        assert [row.batchIndex for row in rows if row.batchActivation == activation] == list(range(1, len(members) + 1))
+
+
+def test_merge_feedback_counts_batch_activations_toward_max_runs(core_factory, project):
+    """A two-item batch takes two passes around a feedback loop before maxRuns stops it."""
+    client = core_factory(mocked_builds=True).connect()
+    graph = Project(project).card("start", {"template": "trigger"})
+    producer(graph, "seed", [10, 20])
+    graph.card("merge", {"template": "merge", "maxRuns": 2, "inputs": [{"name": "seed"}, {"name": "feedback"}]})
+    graph.card("work", {"language": "bash", "sandbox": False, "maxRuns": 3, "inputs": [{"name": "in"}]},
+               outputs=NUMBER, manifest={"run": implementation(1)})
+    graph.connect("seed", "out", "merge", "seed").connect("merge", "out", "work", "in")
+    graph.connect("work", "out", "merge", "feedback").save(client)
+
+    run_id = run(client, "start", propagate=True)
+    status = wait_run(client, run_id, timeout=20)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.execution_limit
+    assert "maxRuns 2" in text(status.failure.diagnostic)
+    work = invocation_page(client, run_id, "work")
+    assert [(row.batchActivation, row.batchIndex, row.batchSize) for row in work.records] == [
+        (1, 1, 2), (1, 2, 2), (2, 1, 2), (2, 2, 2)]
+    failed, = invocation_page(client, run_id, "merge").batches
+    assert failed.activation == 3 and failed.complete and failed.failed and not failed.outputs
+
+
+def test_per_run_worker_budget_stops_before_starting_an_over_budget_batch(core_factory, project, tmp_path):
+    """The 4,096-worker limit covers all activations, including the source of a loop."""
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    body, = scripted_implementations(tmp_path, [[{"op": "output", "port": "out", "type": "uint64", "value": 1}]])
+    graph = Project(project).card("start", {"template": "trigger"})
+    graph.card("seed", {"language": "bash", "sandbox": False}, outputs=NUMBER,
+               manifest={"runs": [body] * 256})
+    graph.card("merge", {"template": "merge", "maxRuns": 20, "inputs": [{"name": "seed"}, {"name": "feedback"}]})
+    graph.card("work", {"language": "bash", "sandbox": False, "reuseWorker": True, "maxRuns": 20,
+                        "inputs": [{"name": "in"}]}, outputs=NUMBER, manifest={"run": body})
+    graph.connect("seed", "out", "merge", "seed").connect("merge", "out", "work", "in")
+    graph.connect("work", "out", "merge", "feedback").save(client)
+
+    run_id = run(client, "start", propagate=True, maxConcurrency=8)
+    status = wait_run(client, run_id, timeout=180)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.execution_limit
+    assert "4096 worker invocations" in text(status.failure.diagnostic)
+    seed, = invocation_page(client, run_id, "seed").batches
+    work, = invocation_page(client, run_id, "work").batches
+    assert seed.complete and not seed.failed and seed.invocationCount == 256
+    assert work.complete and work.failed and not work.outputs and work.invocationCount == 256
+    assert work.activation == 16  # seed and fifteen completed work batches used the whole budget
+    latest = client.call("RunLatestInvocationsRequest", runId=run_id)
+    rejected = next(row for row in latest.records if row.card.segments == [b"work"])
+    assert rejected.batchActivation == 16 and rejected.state == CardState.failed and not rejected.executionService

@@ -1,0 +1,33 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "samples": {
+      "x": 250,
+      "y": 0
+    },
+    "score": {
+      "x": 500,
+      "y": 0
+    },
+    "collect": {
+      "x": 750,
+      "y": 0
+    },
+    "summary": {
+      "x": 1000,
+      "y": 0
+    }
+  },
+  "displays": {
+    "summary": {
+      "x": 970,
+      "y": 140,
+      "width": 330,
+      "height": 90
+    }
+  }
+}
