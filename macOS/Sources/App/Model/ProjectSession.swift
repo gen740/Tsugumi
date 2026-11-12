@@ -222,6 +222,8 @@ final class ProjectSession {
   // Connection
   private(set) var environment: EnvironmentState = .stopped
   private(set) var connected = false
+  /// The project's terminal tabs and their shells (Workbench/ProjectTerminal.swift).
+  let terminals: ProjectTerminals
   /// Closed for good (close): it will not connect again.
   private(set) var closed = false
   private(set) var connectionMessage: String?
@@ -439,6 +441,9 @@ final class ProjectSession {
   init(identity: ProjectIdentity, environments: EnvironmentManager) {
     self.identity = identity
     self.environments = environments
+    terminals = ProjectTerminals(identity: identity) { [environments] identity, rows, cols in
+      try await environments.openTerminal(identity, rows: rows, cols: cols)
+    }
     // A stable view id per project and machine keeps camera/selection across launches.
     let keyName = "view.\(identity.id)"
     if let s = UserDefaults.standard.string(forKey: keyName), let id = UUID(uuidString: s) {
@@ -466,16 +471,23 @@ final class ProjectSession {
     }
   }
 
+  /// The one place `connected` changes: terminals open their shells on it.
+  private func setConnected(_ value: Bool) {
+    connected = value
+    terminals.environment(connected: value)
+  }
+
   /// The last window detaches its connection and observations. The resident
   /// host keeps project execution alive. The caller first settles unsaved edits.
   func close() async {
     closed = true
+    terminals.closeAll()
     listenTask?.cancel()
     reconnectTask?.cancel()
     reconnectTask = nil
     await client?.close()
     client = nil
-    connected = false
+    setConnected(false)
     if let t = observerToken {
       await environments.stopObserving(identity, t)
       observerToken = nil
@@ -503,7 +515,7 @@ final class ProjectSession {
       apply(snapshot: opened.snapshot, resetDraft: !dirty)
       subscription = opened.subscriptionId
       lastSeq = opened.seq ?? 1
-      connected = true
+      setConnected(true)
       listen(c)
       if makeRepositoryOnConnect {
         makeRepositoryOnConnect = false
@@ -513,7 +525,7 @@ final class ProjectSession {
       await refreshVisibleDisplays()
       await restoreCardStates(c)
     } catch {
-      connected = false
+      setConnected(false)
       connectionFailed = error is Unreached
       connectionMessage = "\(error)"
     }
@@ -564,7 +576,7 @@ final class ProjectSession {
       defer { reconnectTask = nil }
       await client?.close()
       client = nil
-      connected = false
+      setConnected(false)
       for attempt in 0..<20 {
         if Task.isCancelled { return }
         await connect()
@@ -586,7 +598,7 @@ final class ProjectSession {
     reconnectTask = nil
     await client?.close()
     client = nil
-    connected = false
+    setConnected(false)
     try? await environments.stop(identity)
     await connect()
   }
@@ -594,7 +606,7 @@ final class ProjectSession {
   func stopEnvironment() {
     Task {
       await client?.close()
-      connected = false
+      setConnected(false)
       try? await environments.stop(identity)
     }
   }
@@ -621,7 +633,7 @@ final class ProjectSession {
       }
       receiver.cancel()
       guard let self, !Task.isCancelled else { return }
-      self.connected = false
+      self.setConnected(false)
       self.reconnect()
     }
   }

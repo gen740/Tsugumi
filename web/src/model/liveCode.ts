@@ -3,21 +3,21 @@
 // they have arrived, and placed clear of the bird by its Card.
 
 /** A file as it arrives in the arguments of a save (project_save): `path` is undefined until its key has come, `text` is what
- *  has come of `bytes`, and `done` says the change is complete. */
-export interface SourceWriting { path?: string; text: string; done: boolean }
+ *  has come of `bytes` or the current patch replacement, and `done` says the change is complete. */
+export interface SourceWriting { path?: string; text: string; done: boolean; patch?: boolean; sequence?: number; ready?: boolean }
 
-type Frame = { object: false } | { object: true; key?: string; awaitingKey: boolean; isFile: boolean }
-type Role = 'key' | 'path' | 'bytes' | 'other'
+type Frame = { object: false; patches: boolean } | { object: true; key?: string; awaitingKey: boolean; isFile: boolean; patch: boolean }
+type Role = 'key' | 'path' | 'bytes' | 'patchText' | 'other'
 
 /** Reads the JSON of tool arguments as it streams in, one piece at a time and
- *  at any cut, for the object being written that has `path` and `bytes` (a
- *  PutSource). Nothing is parsed twice and nothing waits for the JSON to end. */
+ *  at any cut, for PutSource bytes or PatchSource replacement text. Nothing is parsed twice and nothing waits for the JSON to end. */
 export class SourceWritingScanner {
   current?: SourceWriting
   private stack: Frame[] = []
   private role?: Role
   private token = ''
   private escaped = false
+  private sequence = 0
   private hex?: string
 
   feed(delta: string) {
@@ -33,8 +33,18 @@ export class SourceWritingScanner {
   }
 
   private structure(c: string) {
-    if (c === '{') this.stack.push({ object: true, awaitingKey: true, isFile: false })
-    else if (c === '[') this.stack.push({ object: false })
+    if (c === '{') {
+      const parent = this.stack[this.stack.length - 1]
+      const patch = !!parent && !parent.object && parent.patches
+      if (patch) this.current = { path: this.current?.path, text: '', done: false, patch: true, sequence: ++this.sequence }
+      this.stack.push({ object: true, awaitingKey: true, isFile: false, patch })
+    } else if (c === '[') {
+      const t = this.top(), patches = t?.key === 'patches'
+      if (patches && t && !t.isFile) {
+        this.current = { text: '', done: false, patch: true, sequence: ++this.sequence }; t.isFile = true
+      }
+      this.stack.push({ object: false, patches })
+    }
     else if (c === '}' || c === ']') {
       const t = this.stack.pop()
       if (t?.object && t.isFile && this.current) this.current.done = true
@@ -46,13 +56,15 @@ export class SourceWritingScanner {
       const t = this.top()
       if (!t) this.role = 'other'
       else if (t.awaitingKey) this.role = 'key'
+      else if (t.patch && t.key === 'text') { this.role = 'patchText'; if (this.current) this.current.ready = true }
       else if (t.key === 'path' || t.key === 'bytes') {
         this.role = t.key
         // The object at the top is the file being written from its first `path` or `bytes`.
         if (!t.isFile) {
-          this.current = { text: '', done: false }
+          this.current = { text: '', done: false, sequence: ++this.sequence }
           t.isFile = true
         }
+        if (t.key === 'bytes' && this.current) this.current.ready = true
       } else this.role = 'other'
     }
   }
@@ -80,7 +92,7 @@ export class SourceWritingScanner {
   }
 
   private append(c: string) {
-    if (this.role === 'bytes') { if (this.current) this.current.text += c }
+    if (this.role === 'bytes' || this.role === 'patchText') { if (this.current) this.current.text += c }
     else if (this.role === 'key' || this.role === 'path') this.token += c
   }
 }
@@ -94,55 +106,41 @@ export function fileOfCard(path: string): { card: string; file: string } | undef
   return parts.length >= 3 && parts[0] === 'definitions' ? { card: parts[1], file: parts.slice(2).join('/') } : undefined
 }
 
-export interface LiveCode { card: string; file: string; text: string; saved: boolean }
+export interface LiveCode { card: string; file: string; text: string; saved: boolean; patch?: boolean }
 
-/** The API sends a file in lumps of about 200 characters, about every 0.43 s
- *  (measured with claude-sonnet-5-5), which at once would replace the panel's lines each
- *  time: what arrives is written out over `ease`, up to the next lump. A short file
- *  is seen `shortest` at the least; its last lines stay `hold` when no other file
- *  comes after it; a pause in what arrives may last `stalled` before its scene ends
- *  by itself (seconds). */
-export const CODE_TIMING = { ease: 0.45, shortest: 1.5, hold: 0.8, stalled: 5 }
+/** Keep the last received text briefly; never animate characters that already arrived. */
+export const CODE_TIMING = { hold: 0.8, stalled: 5 }
 
-interface Scene { start: number; length: number; code: LiveCode; shownFrom: number; grewAt: number }
-
-/** How many characters of the scene's file are shown at `now`. */
-function shownOf(s: Scene, now: number): number {
-  const all = s.code.text.length
-  const u = (now - s.grewAt) / CODE_TIMING.ease
-  return u >= 1 ? all : Math.min(all, s.shownFrom + Math.floor((all - s.shownFrom) * Math.max(0, u)))
-}
+interface Scene { start: number; length: number; code: LiveCode }
 
 /** The files a model writes, a scene each, one after another. Times in seconds. */
 export class LiveCodePlayer {
   private scenes: Scene[] = []
   private scanner = new SourceWritingScanner()
   private index?: number
-  private path?: string
+  private sequence?: number
   private live?: Scene
 
   /** A piece of a tool call's arguments as the model writes them. */
   input(index: number, delta: string, now: number) {
     if (this.index !== index) {
       this.arrived(now)
-      this.path = undefined
+      this.sequence = undefined
       this.index = index
       this.scanner = new SourceWritingScanner()
     }
     this.scanner.feed(delta)
     const w = this.scanner.current
     const at = w?.path ? fileOfCard(w.path) : undefined
-    if (!w?.path || !at) {
+    if (!w?.path || !at || !w.ready) {
       if (w) this.arrived(now)
       return
     }
-    if (this.path !== w.path) {
+    if (this.sequence !== w.sequence) {
       this.arrived(now)
-      this.path = w.path
-      this.startScene({ ...at, text: w.text, saved: false }, now)
+      this.sequence = w.sequence
+      this.startScene({ ...at, text: w.text, saved: false, patch: w.patch }, now)
     } else if (this.live) {
-      this.live.shownFrom = shownOf(this.live, now)
-      this.live.grewAt = now
       this.live.code.text = w.text
       // It goes on arriving: its scene goes on.
       if (this.live.start + this.live.length < now + CODE_TIMING.stalled / 2) this.live.length = now - this.live.start + CODE_TIMING.stalled
@@ -151,20 +149,16 @@ export class LiveCodePlayer {
   }
 
   private startScene(code: LiveCode, now: number) {
-    // The file being written goes first: one that has all arrived and still
-    // waits is not shown, and the one on the screen gives up its hold. So the
-    // window is never further behind than `shortest`.
-    this.scenes = this.scenes.filter((s) => s.start <= now && s.start + s.length > now)
-    const last = this.scenes[this.scenes.length - 1]
-    if (last) last.length = Math.max(now - last.start, CODE_TIMING.shortest)
-    this.live = { start: last ? last.start + last.length : now, length: CODE_TIMING.stalled, code, shownFrom: 0, grewAt: now }
+    // Current streamed work replaces old playback immediately.
+    this.scenes = []
+    this.live = { start: now, length: CODE_TIMING.stalled, code }
     this.scenes.push(this.live)
   }
 
   /** The file has all arrived: its scene holds its end. */
   private arrived(now: number) {
     if (!this.live) return
-    this.live.length = Math.max(now - this.live.start, CODE_TIMING.shortest) + CODE_TIMING.hold
+    this.live.length = now - this.live.start + CODE_TIMING.hold
     this.live = undefined
   }
 
@@ -172,7 +166,7 @@ export class LiveCodePlayer {
    *  through wrote holds its last lines; `ok` false: it is not on the screen any more. */
   ended(ok: boolean, now: number) {
     this.arrived(now)
-    this.path = undefined
+    this.sequence = undefined
     this.index = undefined
     if (!ok) this.stop()
   }
@@ -189,21 +183,33 @@ export class LiveCodePlayer {
     for (const s of this.scenes) s.code.saved = true
   }
 
-  /** The file to show at `now`, as far as it has been written out, never past what has arrived. */
+  /** The file to show at `now`, exactly as received, without synthetic typing. */
   at(now: number): LiveCode | undefined {
     const s = this.scenes.find((x) => x.start <= now && now < x.start + x.length)
     if (!s) return undefined
-    let text = s.code.text.slice(0, shownOf(s, now))
+    let text = s.code.text
     // Not half of a character outside the BMP.
     if (/[\ud800-\udbff]$/.test(text)) text = text.slice(0, -1)
     return { ...s.code, text }
   }
 }
 
+/** What every writer shows at `now`: a panel for each (`who`: '' is the Agent, otherwise a helper's name),
+ *  also when two of them write the same file. */
+export function panelsNow(writers: Iterable<[string, LiveCodePlayer]>, now: number): (LiveCode & { who: string })[] {
+  return [...writers].flatMap(([who, w]) => {
+    const code = w.at(now)
+    return code ? [{ ...code, who }] : []
+  })
+}
+
+/** Not when the Agent is hidden, and not where the lines would be too small to read. */
+export const panelsShown = (agentPresent: boolean, zoom: number) => agentPresent && zoom >= PANEL.minZoom
+
 export interface Box { x: number; y: number; width: number; height: number }
 
 /** The panel at scale 1, its gap to what is around it and how many lines it shows. */
-export const PANEL = { width: 300, height: 112, gap: 8, lines: 5, margins: { top: 52, left: 12, bottom: 48, right: 12 } }
+export const PANEL = { minZoom: 0.5, width: 300, height: 112, gap: 8, lines: 5, margins: { top: 52, left: 12, bottom: 48, right: 12 } }
 
 /** Scaled with the canvas only as far as stays readable. */
 export const panelScale = (zoom: number) => Math.min(1.3, Math.max(0.8, zoom))

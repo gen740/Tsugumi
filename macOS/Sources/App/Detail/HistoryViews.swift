@@ -56,9 +56,16 @@ struct CardExecutionView: View {
   }
 
   enum Detail: String, CaseIterable, Identifiable {
-    case io, log, info
+    case io, log, packages, info
     var id: String { rawValue }
-    var title: String { self == .io ? String(localized: "入出力") : (self == .log ? String(localized: "ログ") : String(localized: "情報")) }
+    var title: String {
+      switch self {
+      case .io: return String(localized: "入出力")
+      case .log: return String(localized: "ログ")
+      case .packages: return String(localized: "依存 package")
+      case .info: return String(localized: "情報")
+      }
+    }
   }
 
   /// Loading, failed and empty are said plainly, never as an empty split view.
@@ -141,7 +148,7 @@ struct CardExecutionView: View {
               .frame(maxWidth: 320)
               Spacer()
               Picker("", selection: $detail) { ForEach(Detail.allCases) { Text($0.title).tag($0) } }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                .pickerStyle(.segmented).labelsHidden().frame(width: 300)
             }
             .padding(6)
             Divider()
@@ -149,6 +156,13 @@ struct CardExecutionView: View {
             case .io: ioView
             case .log:
               if let runId { StageLogView(session: session, runId: runId, card: path(cardKey), invocation: invocation) }
+            case .packages:
+              // What this invocation ran with, from its record; never the current definition.
+              if record?.exists == false {
+                ContentUnavailableView("この実行では呼び出されていません", systemImage: "circle.dotted")
+              } else if let runId {
+                InvocationPackagesView(session: session, runId: runId, environmentId: record?.record?.summary.environmentId ?? "")
+              }
             case .info: infoView
             }
           }
@@ -300,6 +314,7 @@ struct CardArtifactsView: View {
   @State private var loaded = false
 
   enum Preview {
+    case html(String)
     case text(String)
     case image(NSImage)
     case binary(Int)
@@ -372,6 +387,8 @@ struct CardArtifactsView: View {
         .frame(minWidth: 220, idealWidth: 280)
         Group {
           switch preview {
+          case .html(let html)?:
+            ArtifactHTMLPreview(html: html)
           case .text(let t)?:
             ScrollView { Text(t).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(8) }
           case .image(let i)?:
@@ -418,7 +435,10 @@ struct CardArtifactsView: View {
     guard let rpc = session.rpc, let a = selectedArtifact, let member else { return }
     do {
       let data = try await rpc.readArtifact(id: a.artifactId, member: a.kind == .directory ? member : nil)
-      if let img = NSImage(data: data), ["png", "jpg", "jpeg", "gif", "tiff", "pdf", "svg"].contains((member as NSString).pathExtension.lowercased()) {
+      guard !Task.isCancelled else { return }
+      if let html = ArtifactHTMLPreview.text(member: member, data: data) {
+        preview = .html(html)
+      } else if let img = NSImage(data: data), ["png", "jpg", "jpeg", "gif", "tiff", "pdf", "svg"].contains((member as NSString).pathExtension.lowercased()) {
         preview = .image(img)
       } else if let s = String(data: data.prefix(256 * 1024), encoding: .utf8) {
         preview = .text(s + (data.count > 256 * 1024 ? String(localized: "\n…（先頭 256 KiB を表示）") : ""))

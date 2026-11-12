@@ -137,7 +137,7 @@ struct CardDefinition {
   Opt<"artifactOutput", v::String> artifact_output;
   Opt<"filesystem", v::Bool> filesystem;
   Opt<"sandbox", v::Bool> sandbox;
-  Opt<"reuseWorker", v::Bool> reuse_worker;  // default true: the worker keeps its state across runs
+  Opt<"reuseWorker", v::Bool> reuse_worker;  // Keep worker state across invocations and runs. Default false.
   Opt<"network", v::Bool> network;           // Experimental, default false
   // The Nix system the Card is built for and runs as: "x86_64-linux" or
   // "aarch64-linux". Default: this machine's. Another one runs emulated.

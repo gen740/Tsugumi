@@ -1,6 +1,7 @@
 // Run history, artifacts and the enlarged output display of one Card.
 import { useEffect, useMemo, useState } from 'react'
 import { app } from '../model/app'
+import { artifactHTML } from '../model/artifactHTML'
 import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, formatBytes, formatDuration, formatMillis, path, ProjectSession, runState } from '../model/session'
 import { bool } from '../shared/json'
@@ -8,15 +9,18 @@ import { describeValue } from '../shared/flatjson'
 import { D, R, s, segs } from '../shared/rpc'
 import { Button, download, Empty, Form, HSplit, Row, Section, Segmented, Select, Sheet, Spinner, TextField, Value } from './controls'
 import { RunComparisonView } from './runComparison'
+import { ArtifactHTMLPreview } from './artifactHTMLPreview'
 import { DisplayContent } from './display'
+import { InvocationPackages } from './environments'
 import { Icon } from './icons'
 import { RunLogView } from './logs'
 import { L } from '../i18n'
 
 type Filter = 'all' | 'succeeded' | 'failed'
-type Detail = 'io' | 'log' | 'info'
+type Detail = 'io' | 'log' | 'packages' | 'info'
 
 /** Runs of one Card (filter by success/failure) → invocations → I/O, log, info.
+ *  The packages are those recorded for the invocation.
  *  Loading, failed and empty are said plainly, never as an empty split view. */
 export function CardExecutionView({ session, cardKey }: { session: ProjectSession; cardKey: CardKey }) {
   useObserve(session)
@@ -126,7 +130,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                     label: `#${i.invocation ?? 0n} · ${cardState(i.state).label}` + (i.durationMs !== null ? ` · ${formatDuration(Number(i.durationMs) / 1000)}` : ''),
                   })) : [{ value: '', label: L('呼び出しなし') }]} />
                 <span className="spacer" />
-                <Segmented<Detail> small width={220} value={detail} onChange={setDetail} options={[{ value: 'io', label: L('入出力') }, { value: 'log', label: L('ログ') }, { value: 'info', label: L('情報') }]} />
+                <Segmented<Detail> small width={300} value={detail} onChange={setDetail} options={[{ value: 'io', label: L('入出力') }, { value: 'log', label: L('ログ') }, { value: 'packages', label: L('依存 package') }, { value: 'info', label: L('情報') }]} />
               </div>
               <div className="flex1 col min0">
                 {detail === 'io' && (rec ? (
@@ -141,6 +145,9 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                   </div>
                 ) : record?.exists === false ? <Empty title={L('この実行では呼び出されていません')} icon="circle.dotted" /> : <Empty title={L('記録がありません')} icon="tray" />)}
                 {detail === 'log' && <RunLogView session={session} runId={runId} card={path(cardKey)} invocation={invocation} />}
+                {/* What this invocation ran with, from its record; never the current definition. */}
+                {detail === 'packages' && (record?.exists === false ? <Empty title={L('この実行では呼び出されていません')} icon="circle.dotted" />
+                  : <InvocationPackages session={session} runId={runId} environmentId={s(rec?.summary?.environmentId)} />)}
                 {detail === 'info' && (record ? (
                   <div className="scroll">
                     <Form>
@@ -194,7 +201,7 @@ function ValueBox({ v }: { v: D.NamedValueT }) {
   return <pre className="value-box selectable">{text}</pre>
 }
 
-type Preview = { kind: 'text'; text: string } | { kind: 'image'; url: string } | { kind: 'binary'; size: number }
+type Preview = { kind: 'html'; html: string } | { kind: 'text'; text: string } | { kind: 'image'; url: string } | { kind: 'binary'; size: number }
 const IMAGE_TYPES: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', tiff: 'image/tiff', svg: 'image/svg+xml', webp: 'image/webp', pdf: 'application/pdf',
 }
@@ -256,7 +263,10 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
     void read(selected, member).then((data) => {
       if (!alive) return
       const ext = member.split('.').pop()?.toLowerCase() ?? ''
-      if (IMAGE_TYPES[ext]) {
+      const html = artifactHTML(member, data)
+      if (html !== undefined) {
+        setPreview({ kind: 'html', html })
+      } else if (IMAGE_TYPES[ext]) {
         url = URL.createObjectURL(new Blob([data as BlobPart], { type: IMAGE_TYPES[ext] }))
         setPreview({ kind: 'image', url })
       } else {
@@ -330,6 +340,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
               </div>
             </div>,
             <div key="p" className="fill scroll">
+              {preview?.kind === 'html' && <ArtifactHTMLPreview html={preview.html} />}
               {preview?.kind === 'text' && <pre className="pad8 mono selectable small-text wrap-pre">{preview.text}</pre>}
               {preview?.kind === 'image' && (member?.endsWith('.pdf') ? <iframe title="preview" src={preview.url} className="fill" /> : <img src={preview.url} alt={member} className="preview-image" />)}
               {preview?.kind === 'binary' && <Empty title={L('プレビューできません')} icon="doc.questionmark" description={L('バイナリ {0} bytes。書き出して確認してください。', preview.size)} />}

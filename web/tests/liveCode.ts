@@ -1,101 +1,140 @@
-// The file the Agent is writing (as the Mac app's PresenceTests): it is read out
-// of the save's arguments at any cut, shown as far as it has arrived, goes when
-// the save is through or the call fails, and its panel stays clear of the bird
-// and inside the view.
+// Actual streamed source text, including patches, is shown without synthetic typing.
 import assert from 'node:assert/strict'
-import { CODE_TIMING as T, fileOfCard, LiveCodePlayer, PANEL, panelFrame, panelFreeFrame, panelScale, panelTail, SourceWritingScanner } from '../src/model/liveCode'
+import { CODE_TIMING as T, fileOfCard, LiveCodePlayer, PANEL, panelFrame, panelFreeFrame, panelScale, panelsNow, panelsShown, panelTail, SourceWritingScanner } from '../src/model/liveCode'
 
-// The arguments, cut anywhere.
-const args = JSON.stringify({ base_rev: '1', changes: [
-  { value_type: 'PutDefinition', value: { id: 'a', card_json: '{"path":"no"}' } },
-  { value_type: 'PutSource', value: { path: 'definitions/a/m.py', bytes: 'é\t"x"\n\u{1F600}' } },
-] })
-for (const cut of [1, 2, 3, 7, 24]) {
-  const s = new SourceWritingScanner()
-  for (let i = 0; i < args.length; i += cut) s.feed(args.slice(i, i + cut))
-  assert.deepEqual(s.current, { path: 'definitions/a/m.py', text: 'é\t"x"\n\u{1F600}', done: true }, `cut every ${cut}`)
+const args = JSON.stringify({ changes: [{ value_type: 'PutSource', value: { path: 'definitions/a/m.py', bytes: 'é\t"x"\n😀' } }] })
+for (let cut = 1; cut < args.length; cut++) {
+  const scanner = new SourceWritingScanner()
+  scanner.feed(args.slice(0, cut)); scanner.feed(args.slice(cut))
+  assert.equal(scanner.current?.path, 'definitions/a/m.py')
+  assert.equal(scanner.current?.text, 'é\t"x"\n😀')
+  assert.equal(scanner.current?.done, true)
+  assert.equal(scanner.current?.ready, true)
 }
-const escaped = new SourceWritingScanner()
-escaped.feed('{"value":{"path":"definitions/a/b","bytes":"\\u3042\\ud83d\\ude00')
-assert.equal(escaped.current?.text, 'あ\u{1F600}')
+const patchArgs = JSON.stringify({ changes: [{ value_type: 'PatchSource', value: {
+  patches: [{ offset: 4, remove: 1, text: 'first' }, { text: '置換 😀', offset: 9, remove: 2 }],
+  path: 'definitions/a/main.py', base_hash: 'hash',
+} }] })
+for (let cut = 1; cut < patchArgs.length; cut++) {
+  const scanner = new SourceWritingScanner()
+  scanner.feed(patchArgs.slice(0, cut)); scanner.feed(patchArgs.slice(cut))
+  assert.equal(scanner.current?.path, 'definitions/a/main.py', 'late path reaches patch text')
+  assert.equal(scanner.current?.text, '置換 😀', 'last replacement is not passed off as a whole file')
+  assert.equal(scanner.current?.patch, true)
+  assert.equal(scanner.current?.done, true)
+}
+// Escapes the model writes out, a surrogate pair among them, cut anywhere.
+{
+  const escapedArgs = '{"value":{"path":"definitions/a/b","bytes":"\\u3042\\ud83d\\ude00\\n"}}'
+  for (let cut = 1; cut < escapedArgs.length; cut++) {
+    const scanner = new SourceWritingScanner()
+    scanner.feed(escapedArgs.slice(0, cut)); scanner.feed(escapedArgs.slice(cut))
+    assert.equal(scanner.current?.text, 'あ\u{1F600}\n', `escaped text cut at ${cut}`)
+  }
+  // Half of the pair has arrived: not half a character on the screen.
+  const p = new LiveCodePlayer()
+  p.input(0, '{"value":{"path":"definitions/a/b","bytes":"\\u3042\\ud83d', 100)
+  assert.equal(p.at(100)?.text, 'あ')
+  p.input(0, '\\ude00', 100.1)
+  assert.equal(p.at(100.1)?.text, 'あ\u{1F600}')
+}
 assert.deepEqual(fileOfCard('definitions/a/src/m.py'), { card: 'a', file: 'src/m.py' })
 assert.equal(fileOfCard('layout.json'), undefined)
-
 const file = (card: string, bytes = 'code') => JSON.stringify({ value: { path: `definitions/${card}/m.py`, bytes } }) + ','
 
-// What has arrived is written out up to the next lump, never past what has arrived.
 {
   const p = new LiveCodePlayer()
   p.input(0, '{"changes":[{"value":{"path":"definitions/load/m.py","bytes":"import os', 100)
-  assert.equal(p.at(100)?.text, '')
-  assert.equal(p.at(100 + T.ease / 2)?.text, 'impo')
-  assert.equal(p.at(100 + T.ease + 0.01)?.text, 'import os')
-  assert.equal(p.at(100)?.card, 'load')
-  // The next lump, before this one has been written out: on from where it has got to, never back.
-  p.input(0, ' 1', 100 + T.ease / 2)
-  assert.equal(p.at(100 + T.ease / 2)?.text, 'impo')
-  assert.equal(p.at(100 + T.ease * 1.5 + 0.01)?.text, 'import os 1')
-  assert.equal(p.at(100)?.file, 'm.py')
-  // A slow model: the scene lasts as long as the file arrives, a pause included.
+  assert.equal(p.at(100)?.text, 'import os')
+  assert.equal(p.at(100.2)?.text, 'import os', 'a clock tick does not type additional characters')
+  p.input(0, ' 1', 100.3)
+  assert.equal(p.at(100.3)?.text, 'import os 1')
   p.input(0, ' a', 130)
   assert.equal(p.at(130 + T.stalled - 0.1)?.text, 'import os 1 a')
-  // The next file comes: the one on the screen has been seen long enough, so it
-  // does not hold, and the next shows at once.
   p.input(0, '"}},{"value":{"path":"definitions/rgb/m.py","bytes":"from', 131)
   assert.equal(p.at(131)?.card, 'rgb')
-  assert.equal(p.at(131 + T.ease + 0.01)?.text, 'from')
-  // The last file has arrived and the save goes through: it says so for its hold,
-  // and is gone by then.
+  assert.equal(p.at(131)?.text, 'from')
   p.input(0, ' a"}}]}', 133)
-  p.ended(true, 133.1)
-  p.saved(133.1)
+  p.ended(true, 133.1); p.saved(133.1)
   assert.equal(p.at(133.2)?.saved, true)
   assert.equal(p.at(133 + T.hold + 0.01), undefined)
 }
-
-// A short file stays long enough to see, and the window does not fall behind.
 {
   const p = new LiveCodePlayer()
   p.input(0, file('a'), 100)
-  assert.equal(p.at(100 + T.shortest + T.hold - 0.01)?.card, 'a')
-  assert.equal(p.at(100 + T.shortest + T.hold + 0.01), undefined)
-  // More come at once: the first keeps its shortest stay, then only the newest shows.
   p.input(0, file('b'), 100.1)
   p.input(0, file('c'), 100.2)
-  assert.equal(p.at(100 + T.shortest - 0.01)?.card, 'a')
-  assert.equal(p.at(100 + T.shortest + 0.01)?.card, 'c')
-}
-
-// A save ends what waits, and a run ends the window.
-{
-  const p = new LiveCodePlayer()
-  p.input(0, file('a'), 100)
-  p.input(0, file('b'), 100.1)
-  p.saved(100.2)
-  p.ended(true, 100.2)
-  assert.equal(p.at(100.3)?.saved, true)
-  assert.equal(p.at(100 + T.shortest + 0.01), undefined)
-  p.input(1, file('c'), 110)
-  p.saved(110.1)
-  p.ended(true, 110.1)
-  assert.equal(p.at(110.2)?.card, 'c')
+  assert.equal(p.at(100.2)?.card, 'c', 'current work replaces old presentation immediately')
+  p.input(1, '{"changes":[{"value":{"path":"definitions/c/m.py","patches":[{"offset":0,"remove":2,"text":"new', 100.3)
+  assert.equal(p.at(100.3)?.text, 'new')
+  assert.equal(p.at(100.3)?.patch, true)
+  p.input(1, '"},{"offset":5,"remove":3,"text":"', 100.4)
+  assert.equal(p.at(100.4)?.text, '', 'an empty replacement cannot retain the previous patch')
+  p.input(1, '"}]}}]}', 100.5)
+  p.ended(false, 100.6)
+  assert.equal(p.at(100.6), undefined)
+  p.input(2, file('c'), 101)
   p.stop()
-  assert.equal(p.at(110.2), undefined)
+  assert.equal(p.at(101), undefined)
+  p.input(3, '{"changes":[{"value_type":"RemoveSource","value":{"path":"definitions/c/m.py"}}]}', 102)
+  assert.equal(p.at(102), undefined, 'a path without source content is not code being written')
 }
 
-// What a failed or stopped call wrote goes at once; what is not a Card's file never shows.
+// What is not a Card's file never shows, and the next call starts afresh.
+{
+  const p = new LiveCodePlayer()
+  p.input(0, '{"changes":[{"value":{"path":"layout.json","bytes":"{', 100)
+  assert.equal(p.at(100), undefined, 'layout.json is not code being written')
+  p.input(0, '\\"cards\\":{}}"}}]}', 100.1)
+  assert.equal(p.at(100.1), undefined)
+  p.input(1, file('c'), 101)
+  assert.equal(p.at(101.5)?.card, 'c')
+}
+// A stream that stops half way leaves nothing: a failed call, or a stopped answer.
+{
+  const p = new LiveCodePlayer()
+  p.input(0, '{"changes":[{"value":{"path":"definitions/a/m.py","bytes":"half', 100)
+  assert.equal(p.at(100.2)?.text, 'half')
+  p.ended(false, 100.3)
+  assert.equal(p.at(100.3), undefined)
+  assert.equal(p.at(104), undefined)
+}
+// All of it has arrived and nothing more comes (the save waits for an approval):
+// never marked as saved, and gone after its hold.
+{
+  const p = new LiveCodePlayer()
+  p.input(0, file('a').slice(0, -1), 100)
+  assert.equal(p.at(100.1)?.saved, false)
+  assert.equal(p.at(100 + T.hold + 0.01), undefined)
+}
+// A run ends the window.
 {
   const p = new LiveCodePlayer()
   p.input(0, file('a'), 100)
-  p.input(0, file('b'), 100)
-  p.ended(false, 100.5)
-  assert.equal(p.at(100.5), undefined)
-  assert.equal(p.at(104), undefined)
-  p.input(1, '{"changes":[{"value":{"path":"layout.json","bytes":"{', 101)
-  assert.equal(p.at(101), undefined)
-  p.input(2, file('c'), 102)
-  assert.equal(p.at(102.5)?.card, 'c')
+  p.ended(true, 100.1); p.saved(100.1)
+  assert.equal(p.at(100.2)?.saved, true)
+  p.stop()
+  assert.equal(p.at(100.2), undefined)
 }
+// Every writer has its own panel, also when two write the same file.
+{
+  const lead = new LiveCodePlayer(), first = new LiveCodePlayer(), second = new LiveCodePlayer(), idle = new LiveCodePlayer()
+  lead.input(0, file('a', 'lead'), 100)
+  first.input(0, file('a', 'one'), 100)
+  second.input(0, file('a', 'two'), 100)
+  const writers = new Map([['', lead], ['first', first], ['second', second], ['idle', idle]])
+  assert.deepEqual(panelsNow(writers, 100.1).map((c) => [c.who, c.card, c.file, c.text]),
+    [['', 'a', 'm.py', 'lead'], ['first', 'a', 'm.py', 'one'], ['second', 'a', 'm.py', 'two']])
+  // One of them fails: only its panel goes.
+  first.ended(false, 100.2)
+  assert.deepEqual(panelsNow(writers, 100.2).map((c) => c.who), ['', 'second'])
+  assert.deepEqual(panelsNow(writers, 100 + T.hold + 0.01), [])
+}
+// Hidden with the Agent, and where the lines could not be read.
+assert.equal(panelsShown(true, 1), true)
+assert.equal(panelsShown(true, PANEL.minZoom), true)
+assert.equal(panelsShown(true, 0.4), false)
+assert.equal(panelsShown(false, 1), false)
 
 // The lines shown.
 assert.deepEqual(panelTail('a\nb', 5), ['a', 'b'])

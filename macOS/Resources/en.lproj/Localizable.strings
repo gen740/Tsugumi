@@ -70,6 +70,7 @@
 "Anthropic API（API キー）" = "Anthropic API (API key)";
 "Anthropic の API キー" = "Anthropic API key";
 "Apple silicon の Mac と macOS 26 以降が必要です。" = "An Apple silicon Mac and macOS 26 or later are needed.";
+"C# の処理" = "C# Card";
 "C++ の処理" = "C++ step";
 "Canvas に追加" = "Add to Canvas";
 "Canvas に配置" = "Place on the canvas";
@@ -293,6 +294,8 @@
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）" = "Not available for this model (only models checked against the official documents)";
 "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。" = "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).";
+"この呼び出しで記録されたものです。ビルド時だけに使う依存関係は含まれません。" = "Recorded for this invocation. Build-only dependencies are not included.";
+"この呼び出しの環境は記録されていません" = "No environment was recorded for this invocation.";
 "この実行では、この Card はまだ動いていません" = "This Card has not run in this Run yet";
 "この実行では、この Card はまだ動いていません。" = "This Card has not run in this Run yet.";
 "この実行では呼び出されていません" = "Not invoked in this run";
@@ -441,9 +444,12 @@
 "タブを閉じる" = "Close tab";
 "タブを閉じる（内容は保持されます）" = "Close the tab (its contents are kept)";
 "ターミナル" = "Terminal";
+"ターミナル %lld" = "Terminal %lld";
+"ターミナルがありません" = "No Terminals";
 "ターミナルの表示切替" = "Toggle Terminal";
+"ターミナルは同時に %lld 個までです" = "Up to %lld terminals can be open at once";
 "ターミナルは終了しました" = "The terminal ended";
-"ターミナルを開き直します（実行中のコマンドは終了します）" = "Opens the terminal again (a running command ends)";
+"ターミナルを閉じます（実行中のコマンドは終了します）" = "Closes this terminal (its running command ends)";
 "ターミナルを開けませんでした" = "Could not open the terminal";
 "ダウンロードしたアプリが正しくありません（%@）" = "The downloaded app is not valid (%@)";
 "ダウンロードしたファイルのチェックサムが一致しません" = "The checksum of the downloaded file does not match";
@@ -504,6 +510,7 @@
 "パス" = "Path";
 "パスをコピー" = "Copy Path";
 "パス（例: src/util.py）" = "Path (e.g. src/util.py)";
+"パネルを隠します（ターミナルは開いたままで、実行中のコマンドは続きます）" = "Hides the panel (terminals stay open and running commands continue)";
 "パラメータ" = "Parameters";
 "パラメータの記録がありません" = "Parameters were not recorded";
 "ビルドの期限（秒）" = "Build timeout (s)";
@@ -577,6 +584,7 @@
 "ワークフローを実行" = "Run Workflow";
 "一致する Skill はありません" = "No matching Skill";
 "一致するアイコンはありません" = "No icon matches";
+"一致する依存パスはありません" = "No matching dependencies.";
 "一般" = "General";
 "一覧" = "List";
 "一覧から削除" = "Remove from the list";
@@ -623,6 +631,9 @@
 "使用中" = "In use";
 "使用中のアカウント" = "Account in use";
 "例: y 軸を対数にしてください" = "e.g. Make the y axis logarithmic";
+"依存 package" = "Packages";
+"依存 package は実行時に記録されたものだけを表示します。現在の Nix 定義からは求めません。" = "Packages are shown only as recorded when the Card ran. They are not derived from the current Nix definition.";
+"依存パスを検索" = "Search dependencies";
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
 "保存した入力" = "Saved input";
@@ -727,6 +738,7 @@
 "別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。" = "Upper limit of different Cards running at once (the same Card always runs serially). Used from the next run.";
 "別の Tsugumi の処理がこの実行環境を起動または停止しています。" = "Another Tsugumi process is starting or stopping this environment.";
 "別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。最初のビルドもエミュレーターで動くので時間がかかります。" = "A Card for another system (x86_64-linux) runs under an emulator (Rosetta on a Mac). Its first build runs under the emulator too, so it takes longer.";
+"別のターミナルを開きます（実行中のコマンドは続きます）" = "Opens another terminal (running commands continue)";
 "別のプロジェクトを開く…" = "Open Another Project…";
 "別の場所でも変更されました: %@。適用するとここでの編集が残ります。" = "Also changed elsewhere: %@. Applying keeps the edits made here.";
 "別ウインドウで開く" = "Open in New Window";
@@ -877,6 +889,7 @@
 "実行待ち" = "Ready";
 "実行後に保存" = "Save after the run";
 "実行方式" = "Execution";
+"実行時の依存パス" = "Runtime dependencies";
 "実行条件" = "Execution conditions";
 "実行状況はありません" = "No run activity";
 "実行環境が起動の途中で止まりました: %@" = "The environment stopped while starting: %@";
@@ -891,6 +904,7 @@
 "実行環境の管理プロセスを起動しています" = "Starting the environment's supervisor";
 "実行環境は Nix で固定。同じ計算をもう一度確かめられるよ" = "The environment is pinned with Nix, so any result can be checked again.";
 "実行環境は停止しています" = "The environment is stopped";
+"実行環境への接続を待っています" = "Waiting for the Execution Environment";
 "実行環境を停止してから再試行してください。続くときは実行環境のデータを削除します（文書は消えません）。" = "Stop the environment and retry. If it keeps failing, delete the environment data (documents are kept).";
 "実行環境を準備中" = "Preparing the environment";
 "実行環境を起動できませんでした" = "The environment could not start";
@@ -908,6 +922,8 @@
 "左から右" = "Left to right";
 "左の実行" = "Left run";
 "差分が大きいため一部を表示しています。" = "The diff is large; only part is shown.";
+"差分・保存前" = "Patch · not saved";
+"差分・保存済み" = "Patch · saved";
 "幅 %lld" = "Width %lld";
 "待っていた入力" = "Waited for inputs";
 "待機中" = "Idle";
@@ -949,6 +965,7 @@
 "接続" = "Connection";
 "接続から生成されるファイルです（手で編集しません）" = "A file generated from the connections (not edited by hand)";
 "接続して始める" = "Connect and Start";
+"接続するとターミナルが自動で開きます。" = "Terminals open automatically when the environment connects.";
 "接続を確かめられませんでした（%@）。キーを入れ直すか、ネットワークを確かめて再試行してください。" = "Could not confirm the connection (%@). Enter the key again, or check the network and try again.";
 "接続中" = "Connected";
 "接続先" = "Provider";
@@ -970,6 +987,7 @@
 "新しいウインドウ" = "New Window";
 "新しいタブで開く" = "Open in New Tab";
 "新しいターミナル" = "New Terminal";
+"新しいターミナルを開いてください。" = "Open a new terminal to start a shell.";
 "新しいパス" = "New path";
 "新しいプロジェクト" = "New Project";
 "新しいプロジェクト…" = "New Project…";
@@ -1027,6 +1045,7 @@
 "根拠の記録" = "Evidence record";
 "桃" = "Pink";
 "検索" = "Search";
+"検索結果を 100 件ずつ表示します。" = "Showing 100 matching paths per page.";
 "検証" = "Validate";
 "検証しています" = "Validating";
 "概要" = "Description";
@@ -1106,6 +1125,7 @@
 "編集…" = "Edit…";
 "編集中の _outputs.fbs（未適用・型は適用後に解決）" = "_outputs.fbs being edited (not applied; types resolve after applying)";
 "縮小" = "Zoom Out";
+"置換テキスト" = "Replacement text";
 "考えています" = "Thinking";
 "考えています…" = "Thinking…";
 "興味のあること（例: 画像処理）" = "What interests you (e.g. image processing)";
