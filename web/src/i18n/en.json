@@ -1250,5 +1250,7 @@
  "認証情報を保存": "Save credentials",
  "認証情報を削除": "Delete credentials",
  "認証情報を更新しました。": "Credentials updated.",
- "プロジェクトと履歴には保存しません。接続先 URL を変更したら再登録してください。": "Not saved in the project or its history. Register again after changing the connection URL."
+ "プロジェクトと履歴には保存しません。接続先 URL を変更したら再登録してください。": "Not saved in the project or its history. Register again after changing the connection URL.",
+ "保存しない": "Do Not Save",
+ "接続先": "Connection"
 }
