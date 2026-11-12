@@ -199,7 +199,7 @@ TEST_P(RpcCli, PreservesEscapedKeysAndOpaqueJsonStrings) {
 TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
   Write(
       directory.path / "project/tsugumi.json",
-      R"({"name":"Before","pkgsPath":"tsugumi:default","databaseConnections":[],"canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"Before","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   Write(directory.path / "project/layout.json", "{}");
   project.Start({TSUGUMI_PROJECT_BINARY, "--project",
                  (directory.path / "project").string(), "--unix",
@@ -224,7 +224,7 @@ TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
       << inspect.replies[1];
   const auto revision = JsonUInt(inspect.replies[1], "/payload/value/rev");
   const std::string document =
-      R"({"name":"After 日本語","pkgsPath":"tsugumi:default","databaseConnections":[],"canvas":{"cards":[],"connections":[]}})";
+      R"({"name":"After 日本語","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
   const auto save =
       "{\"changes\":[{\"value\":{\"json\":" + Quote(document) +
       "},\"value_type\":\"SetProject\"}],\"origin\":\"user\",\"op_id\":"

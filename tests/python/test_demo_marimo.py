@@ -26,6 +26,7 @@ def test_notebook_passes_typed_result_and_keeps_snapshot(tmp_path):
         assert record and '14' in text(record.display.value.text)
         downstream = c.call('RunRecordRequest', runId=rid, card=path('result')).record
         assert downstream and downstream.summary.invocation == 1
+        assert json.loads(text(downstream.display.value.text)) == {'value': 14}
         art = next(a for a in c.call('ArtifactListRequest', runId=rid).artifacts if text(a.output) == 'report')
         def read(member):
             return read_pages(c, 'ArtifactReadRequest', artifactId=text(art.artifactId), member=member, page_bytes=256*1024)
@@ -46,6 +47,8 @@ def test_notebook_passes_typed_result_and_keeps_snapshot(tmp_path):
         updated = start_run(c, ['source'], propagate=True)
         assert wait_run(c,updated,timeout=600).state == RunState.succeeded, stderr(c,updated,'notebook')
         assert '21' in text(c.call('RunRecordRequest',runId=updated,card=path('notebook')).record.display.value.text)
+        downstream = c.call('RunRecordRequest', runId=updated, card=path('result')).record
+        assert json.loads(text(downstream.display.value.text)) == {'value': 21}
         assert read('index.html') == html
         if hasattr(env,'start'):
             env.stop();env.start();c=connect(env)

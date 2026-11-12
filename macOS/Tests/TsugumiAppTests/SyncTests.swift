@@ -55,18 +55,48 @@ import Testing
     }
   }
 
-  /// A project with a trigger and a few loggers (no connections yet).
+  static let sinkCard = #"{"language":"bash","inputs":[{"name":"in"}]}"#
+  static let sinkSources = [
+    "_outputs.fbs": "table Outputs {}\nroot_type Outputs;\n",
+    "default.nix": #"""
+      { pkgs, inputs, params }:
+      {
+        run = ''
+          test -r "$JSON_IN" || exit 1
+          printf '%s' '{"text":"Received input"}' > "$TSUGUMI_DISPLAY"
+        '';
+      }
+      """#,
+  ]
+
+  static func implementSink(_ id: String, showMarkdown: Bool = false) -> [Tsugumi_RPC_DocumentChangeT] {
+    [Change.putDefinition(id: id, cardJSON: sinkCard, metaJSON: nil)] + sinkSources.sorted(by: { $0.key < $1.key }).map {
+      let (name, contents) = $0
+      let source = showMarkdown && name == "default.nix"
+        ? contents.replacingOccurrences(of: #""text":"Received input""#, with: #""markdown":"**Received input**""#)
+        : contents
+      return Change.putSource(path: "definitions/\(id)/\(name)", bytes: Data(source.utf8), baseHash: nil)
+    }
+  }
+
+  /// A project with a trigger and a few Bash sinks (no connections yet).
   static func project() throws -> URL {
     let p = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("sync-\(UUID().uuidString.prefix(8))")
     let fm = FileManager.default
-    let cards = ["start": "trigger", "a": "logger", "b": "logger", "c": "logger"]
-    for (id, t) in cards {
+    let cards = ["a", "b", "c", "start"]
+    for id in cards {
       let d = p.appendingPathComponent("definitions/\(id)")
       try fm.createDirectory(at: d, withIntermediateDirectories: true)
-      try Data("{\"template\": \"\(t)\"}".utf8).write(to: d.appendingPathComponent("_card.json"))
+      let definition = id == "start" ? #"{"template":"trigger"}"# : sinkCard
+      try Data(definition.utf8).write(to: d.appendingPathComponent("_card.json"))
+      if id != "start" {
+        for (name, contents) in sinkSources {
+          try Data(contents.utf8).write(to: d.appendingPathComponent(name))
+        }
+      }
     }
-    let list = cards.keys.sorted().map { "{\"id\": \"\($0)\"}" }.joined(separator: ", ")
-    try Data("{\"name\": \"sync\", \"pkgsPath\": \"tsugumi:default\", \"databaseConnections\": [], \"canvas\": {\"cards\": [\(list)], \"connections\": []}}".utf8)
+    let list = cards.map { "{\"id\": \"\($0)\"}" }.joined(separator: ", ")
+    try Data("{\"name\": \"sync\", \"pkgsPath\": \"tsugumi:default\", \"canvas\": {\"cards\": [\(list)], \"connections\": []}}".utf8)
       .write(to: p.appendingPathComponent("tsugumi.json"))
     try Data("{}".utf8).write(to: p.appendingPathComponent("layout.json"))
     return p
@@ -94,6 +124,11 @@ import Testing
   static func connected(_ s: ProjectSession) async throws {
     for _ in 0..<200 where !s.connected { try await Task.sleep(for: .milliseconds(25)) }
     #expect(s.connected, "\(s.connectionMessage ?? "")")
+  }
+
+  static func waitForSuccessfulRun(_ s: ProjectSession) async throws {
+    for _ in 0..<200 where s.runActive { try await Task.sleep(for: .milliseconds(25)) }
+    try #require(s.runStatus?.state == .succeeded)
   }
 
   /// A tsugumid that cannot be reached is tried again for a moment and then
@@ -189,6 +224,7 @@ import Testing
     s.connect(from: (key(["start"]), "out"), to: (b, "in"), in: [])
     await s.save()
     try await s.run(card: ["start"], propagate: true)
+    try await Self.waitForSuccessfulRun(s)
     for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
     #expect(s.displays[b] != nil && s.displayFrame(b) == nil, "shown beside its Card, with no frame in the layout")
 
@@ -522,6 +558,7 @@ import Testing
     place(b)
     await s.save()
     try await s.run(card: ["start"], propagate: true)
+    try await Self.waitForSuccessfulRun(s)
     try await eventually("the Card shows its result") { s.displays[b] != nil }
 
     // Renamed: frame and result follow the Card, and nothing stays at the old name.
@@ -536,11 +573,11 @@ import Testing
     try await settled()
     noFrame(b)
 
-    // The Draft implemented (here as a logger): the old run's result does not come to it.
+    // The Draft implemented as a Bash Card: the old run's result does not come to it.
     let rpc = try #require(s.rpc)
     _ = try await rpc.save(baseRev: s.rev, opId: UUID(), origin: "elsewhere",
-                           changes: [Change.putDefinition(id: "b", cardJSON: "{\"template\": \"logger\"}", metaJSON: nil)])
-    try await eventually("the Draft became a logger") { s.displayedCards.contains(b) }
+                           changes: Self.implementSink("b"))
+    try await eventually("the Draft became a Bash Card") { s.displayedCards.contains(b) }
     try await settled()
     noFrame(b)
 
@@ -571,15 +608,19 @@ import Testing
     let other = s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 1200), name: "kept")
     await s.save()
     _ = try await rpc.save(baseRev: s.rev, opId: UUID(), origin: "elsewhere",
-                           changes: [Change.putDefinition(id: "kept", cardJSON: "{\"template\": \"logger\", \"markdown\": true}", metaJSON: nil)])
-    try await eventually("the Draft became a logger") { s.displayedCards.contains(other) }
+                           changes: Self.implementSink("kept", showMarkdown: true))
+    try await eventually("the Draft became a Bash Card") { s.displayedCards.contains(other) }
     try await settled()
     noFrame(other)
     s.deleteCards([b], in: [])
     s.connect(from: (key(["start"]), "out"), to: (other, "in"), in: [])
     await s.save()
     try await s.run(card: ["start"], propagate: true)
-    try await eventually("its own run shows") { s.displays[other] != nil }
+    try await Self.waitForSuccessfulRun(s)
+    try await eventually("its own Markdown result shows") {
+      guard case .markdown(let text) = s.displays[other]?.value else { return false }
+      return text == "**Received input**"
+    }
   }
 
   /// The Agent renames a Card with its own save: its frame (the core's save) and
@@ -604,6 +645,7 @@ import Testing
     }
     await s.save()
     try await s.run(card: ["start"], propagate: true)
+    try await Self.waitForSuccessfulRun(s)
     for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
     #expect(s.displays[b] != nil)
 
@@ -639,17 +681,17 @@ import Testing
     await s.save()
 
     // The Agent deletes the Card, then makes another under its name.
-    func agentSave(_ edit: ([JSONValue]) -> [JSONValue], _ change: Tsugumi_RPC_DocumentChangeT) async throws {
+    func agentSave(_ edit: ([JSONValue]) -> [JSONValue], _ changes: [Tsugumi_RPC_DocumentChangeT]) async throws {
       let snap = try await s.rpc!.inspect()
       var proj = try JSONValue.parse(snap.projectJson)
       let cards = proj["canvas"]?["cards"]?.array ?? []
       proj["canvas"]?["cards"] = .array(edit(cards))
-      _ = try await s.rpc!.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: [Change.setProject(proj.serialized()), change])
+      _ = try await s.rpc!.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: [Change.setProject(proj.serialized())] + changes)
     }
-    try await agentSave({ $0.filter { $0["id"]?.string != "renamed" } }, Change.removeDefinition(id: "renamed"))
+    try await agentSave({ $0.filter { $0["id"]?.string != "renamed" } }, [Change.removeDefinition(id: "renamed")])
     for _ in 0..<200 where s.resolution[renamed] != nil { try await Task.sleep(for: .milliseconds(25)) }
     try await agentSave({ $0 + [.object([("id", .string("renamed"))])] },
-                        Change.putDefinition(id: "renamed", cardJSON: "{\"template\": \"logger\", \"markdown\": true}", metaJSON: nil))
+                        Self.implementSink("renamed", showMarkdown: true))
     for _ in 0..<200 where s.resolution[renamed] == nil { try await Task.sleep(for: .milliseconds(25)) }
     try await Task.sleep(for: .milliseconds(300))
     #expect(s.displays[renamed] == nil && s.displayFrame(renamed) == nil && !s.framedCards(in: []).contains(renamed))
@@ -747,7 +789,7 @@ import Testing
     s.endpointOverride = d.endpoint
     s.start()
     try await Self.connected(s)
-    let k = s.addCard(template: .logger, in: [], at: .zero, name: "plot")
+    let k = s.addCard(template: .python, in: [], at: .zero, name: "plot")
     #expect(s.comments(k).isEmpty && s.nodeData(k).openComments == 0)
 
     s.addComment(k, "  y 軸を対数に  ")
@@ -923,7 +965,7 @@ import Testing
     for id in ["b", "c"] {
       let snap = try await agent.inspect()
       _ = try await agent.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",
-                               changes: [Change.putDefinition(id: id, cardJSON: #"{"template": "logger", "maxRuns": 3}"#, metaJSON: nil)])
+                               changes: [Change.putDefinition(id: id, cardJSON: #"{"language":"bash","inputs":[{"name":"in"}],"maxRuns":3}"#, metaJSON: nil)])
     }
     for _ in 0..<100 where !s.presence.beats.contains(where: { $0.beat == .write("c", reveal: false) }) {
       try await Task.sleep(for: .milliseconds(20))
@@ -1019,7 +1061,7 @@ import Testing
     _ = try await other.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
     let snap = try await other.inspect()
     _ = try await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: [
-      Change.putDefinition(id: "a", cardJSON: "{\"template\": \"logger\", \"maxRuns\": 3, \"symbol\": \"theirs\"}", metaJSON: nil),
+      Change.putDefinition(id: "a", cardJSON: #"{"language":"bash","inputs":[{"name":"in"}],"maxRuns":3,"symbol":"theirs"}"#, metaJSON: nil),
     ])
     for _ in 0..<100 where s.cardDefinition("a")?["maxRuns"] == nil { try await Task.sleep(for: .milliseconds(20)) }
     m.follow()
@@ -1059,7 +1101,7 @@ import Testing
     // Inside: wire and move Cards, add one; the external's own files change.
     s.connect(from: (key([name, "start"]), "out"), to: (key([name, "a"]), "in"), in: [name])
     s.edit { $0.setPosition(key([name, "a"]), CGPoint(x: 123, y: 45)) }
-    let added = s.addCard(template: .logger, in: [name], at: CGPoint(x: 0, y: 200))
+    let added = s.addCard(template: .python, in: [name], at: CGPoint(x: 0, y: 200))
     await s.save()
     #expect(s.saveError == nil && !s.dirty)
     let proj = try JSONValue.parse(String(decoding: try Data(contentsOf: ext.appendingPathComponent("tsugumi.json")), as: UTF8.self))
@@ -1076,7 +1118,7 @@ import Testing
     let copy = await s.placeDefinitionCopy(prefix: "externals/\(name)/", id: "c", in: [], at: .zero)
     await s.save()
     #expect(copy == "c-2")
-    #expect(s.confirmedDefinitions["c-2"]?["template"]?.string == "logger")
+    #expect(s.confirmedDefinitions["c-2"]?["language"]?.string == "bash")
 
     // Undo of the copy, then of the inner move, one operation each.
     s.undo()

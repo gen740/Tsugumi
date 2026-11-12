@@ -92,9 +92,6 @@ bool has_string_value(const Type& t);
 // Builds a FlatBuffer of `t` from JSON text. Returns false with error text.
 bool json_to_flatbuffer(const Type& t, const std::string& json, std::string* out,
                         std::string* error);
-// Renders a FlatBuffer of `t` as JSON (strict, verified first).
-bool flatbuffer_to_json(const Type& t, const std::string& bytes, std::string* out,
-                        std::string* error);
 // Builds a buffer of `merged` (a table whose `value` is a union with one
 // member per input port) holding the table `bytes` of `member` as the member
 // `port`, by copying the table directly (no JSON round trip). `bytes` must

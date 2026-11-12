@@ -18,8 +18,8 @@ const session = () => {
   s.confirmedProject = parse('{"name":"t","canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}}')
   s.layout = parse('{}')
   s.confirmedLayout = parse('{}')
-  s.confirmedDefinitions.set('a', { card: parse('{"template":"logger"}') })
-  s.confirmedDefinitions.set('b', { card: parse('{"template":"logger"}') })
+  s.confirmedDefinitions.set('a', { card: parse('{"language":"bash","inputs":[{"name":"in"}]}') })
+  s.confirmedDefinitions.set('b', { card: parse('{"language":"bash","inputs":[{"name":"in"}]}') })
   s.scheduleSave = () => {} // saved by hand below
   s.connected = true
   return s

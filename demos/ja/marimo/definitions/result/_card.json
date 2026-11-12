@@ -1,3 +1,22 @@
 {
-  "template": "logger"
+  "language": "bash",
+  "inputs": [
+    {
+      "name": "in"
+    }
+  ],
+  "params": [
+    {
+      "name": "format",
+      "type": "string",
+      "data": "text",
+      "nix": true
+    },
+    {
+      "name": "markdown_field",
+      "type": "string",
+      "data": "value",
+      "nix": true
+    }
+  ]
 }

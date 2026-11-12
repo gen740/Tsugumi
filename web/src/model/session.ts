@@ -215,7 +215,7 @@ export interface LineSeries {
 
 export type DisplayValue =
   | { kind: 'text'; text: string }
-  /** Markdown with TeX math (the SDK's markdown display, a logger in Markdown mode). */
+  /** Markdown with TeX math (the SDK's Markdown display). */
   | { kind: 'markdown'; text: string }
   | { kind: 'scalar'; value: number; label: string }
   | { kind: 'lineChart'; series: LineSeries[] }
@@ -909,7 +909,7 @@ export class ProjectSession extends Observable {
     for (const p of d.sourcesRemoved) this.sources.delete(s(p))
     this.refreshExternals()
     this.applyResolution(d.resolution, d.diagnostics)
-    // A Draft implemented (or any Card that became code or a logger) sends its displays too.
+    // A Draft implemented (or any Card that became code) sends its displays too.
     if ([...this.displayedCards].sort().join('|') !== shown) void this.refreshVisibleDisplays()
     if (wasClean) {
       // Nothing local to keep: follow the confirmed document.
@@ -1554,7 +1554,7 @@ export class ProjectSession extends Observable {
 
   /** Cards whose displays the canvas shows: every Card that can run may send displays. */
   get displayedCards(): Set<CardKey> {
-    return new Set([...this.resolution.keys()].filter((k) => ['code', 'logger'].includes(this.kind(k))))
+    return new Set([...this.resolution.keys()].filter((k) => this.kind(k) === 'code'))
   }
 
   async refreshVisibleDisplays() {
@@ -2722,7 +2722,7 @@ export class ProjectSession extends Observable {
       const root = scopePrefix === '' ? x.project : x.external(scopePrefix)?.project ?? obj()
       const e: ExternalProject = {
         project: obj([
-          ['name', newId], ['pkgsPath', clone(get(root, 'pkgsPath')) ?? 'tsugumi:default'], ['databaseConnections', []],
+          ['name', newId], ['pkgsPath', clone(get(root, 'pkgsPath')) ?? 'tsugumi:default'],
           ['canvas', obj([['cards', inner], ['connections', innerConns]])],
           ['boundary', obj([['inputs', new JObj(inputs)], ['outputs', new JObj(outputs)]])],
         ]),
@@ -3077,7 +3077,7 @@ export class ProjectSession extends Observable {
       case 'draft':
         set(obj([['template', 'draft']]), obj([['description', ''], ['content', '']]))
         break
-      case 'trigger': case 'fork': case 'branch': case 'logger':
+      case 'trigger': case 'fork': case 'branch':
         set(obj([['template', t]]))
         break
       case 'merge':
@@ -3489,7 +3489,7 @@ auto run(Card::Input& input) -> Card::Output {
   }
 
   private visualPorts(k: CardKey, ports: PortData[], output: boolean): PortData[] {
-    if (!['code', 'draft', 'input', 'logger', 'subgraph'].includes(this.kind(k))) return ports
+    if (!['code', 'draft', 'input', 'subgraph'].includes(this.kind(k))) return ports
     const saved = arr(get(this.layoutOf(path(k).slice(0, -1)), 'cards', this.layoutKey(k), output ? 'outputOrder' : 'inputOrder')) ?? []
     return orderedPorts(ports, saved.flatMap(v => typeof v === 'string' ? [v] : []))
   }
@@ -3538,7 +3538,7 @@ auto run(Card::Input& input) -> Card::Output {
       const k = key([...scope, id]), g = this.geometry(k)
       const ports = (names: string[], output: boolean) => names.map(name => ({ name, ...g.port(name, output) }))
       return { id, ...this.placedPosition(k), ...g.size, inputs: ports(g.inputs, false), outputs: ports(g.outputs, true),
-        movable: ['code', 'draft', 'input', 'logger', 'subgraph'].includes(this.kind(k)) }
+        movable: ['code', 'draft', 'input', 'subgraph'].includes(this.kind(k)) }
     })
     const wires = this.connections(scope).flatMap(c => {
       const from = str(get(c, 'from', 'card')), fromPort = str(get(c, 'from', 'port')), to = str(get(c, 'to', 'card')), toPort = str(get(c, 'to', 'port'))
@@ -3621,16 +3621,16 @@ export class ExternalCopy {
 // ---- Kinds, templates and labels ------------------------------------------------------
 
 /** What a Card is, for choosing what the canvas and the editor offer. */
-export type CardKind = 'trigger' | 'input' | 'switch' | 'fork' | 'branch' | 'merge' | 'logger' | 'draft' | 'subgraph' | 'code'
-const KINDS: CardKind[] = ['trigger', 'input', 'switch', 'fork', 'branch', 'merge', 'logger', 'draft', 'subgraph', 'code']
+export type CardKind = 'trigger' | 'input' | 'switch' | 'fork' | 'branch' | 'merge' | 'draft' | 'subgraph' | 'code'
+const KINDS: CardKind[] = ['trigger', 'input', 'switch', 'fork', 'branch', 'merge', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
-  trigger: L('開始'), input: L('入力'), switch: L('スイッチ'), fork: L('分配'), branch: L('分岐'), merge: L('合流'), logger: L('記録'), draft: 'Draft', subgraph: 'Card in Card', code: L('処理'),
+  trigger: L('開始'), input: L('入力'), switch: L('スイッチ'), fork: L('分配'), branch: L('分岐'), merge: L('合流'), draft: 'Draft', subgraph: 'Card in Card', code: L('処理'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
   trigger: 'play.circle', input: 'slider.horizontal.3', switch: 'switch.2', fork: 'arrow.triangle.branch', branch: 'arrow.triangle.swap',
-  merge: 'arrow.triangle.merge', logger: 'list.bullet.rectangle', draft: 'pencil.and.outline', subgraph: 'link',
+  merge: 'arrow.triangle.merge', draft: 'pencil.and.outline', subgraph: 'link',
   code: 'chevron.left.forwardslash.chevron.right',
 }
 
@@ -3645,7 +3645,7 @@ export function definitionKind(def: J | undefined): CardKind {
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
+export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'ruby', label: L('Ruby の処理') },
   { id: 'rust', label: L('Rust の処理') },
@@ -3657,7 +3657,7 @@ export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
   { id: 'switch', label: L('スイッチ') },
   { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') }, { id: 'fork', label: L('分配') },
-  { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'logger', label: L('記録') },
+  { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') },
 ]
 export const templateIcon = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'chart.xyaxis.line' : KIND_ICON[t.startsWith('report_') || t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' || t === 'marimo' ? 'code' : (t as CardKind)]
 /** A name for the new Card (its id; made unique). */

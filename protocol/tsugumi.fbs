@@ -754,7 +754,7 @@ table VersionCanvasCard {
   x:double (id: 1);
   y:double (id: 2);
   /// What it is, which decides its shape: trigger, input, fork, branch, merge,
-  /// logger, draft, subgraph or code.
+  /// draft, subgraph or code.
   kind:string (id: 3, required);
   /// The ports a fork or merge fans over, which decide its width; 0 for others.
   fan:uint32 (id: 4);

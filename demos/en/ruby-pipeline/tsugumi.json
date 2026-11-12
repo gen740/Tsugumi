@@ -1,7 +1,6 @@
 {
   "name": "Ruby pipeline",
   "pkgsPath": "tsugumi:default",
-  "databaseConnections": [],
   "canvas": {
     "cards": [
       {

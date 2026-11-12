@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 
-from projects import builtin_project, card, card_in_card, write
+from projects import SINK, builtin_project, card, card_in_card, write
 from harness.permissions import save
 from tsugumi_client import _request_class, change, new_id, text
 
@@ -19,7 +19,7 @@ OTHER = {"id": "c2", "text": "Name the axis", "author": "user"}
 
 
 def put(comments, cid="plan", body=None, **meta):
-    return change("PutDefinition", id=cid, cardJson=json.dumps(body or {"template": "logger"}),
+    return change("PutDefinition", id=cid, cardJson=json.dumps(body or SINK),
                   metaJson=json.dumps({"comments": comments, **meta}))
 
 
@@ -35,7 +35,7 @@ def told(result):
 @pytest.fixture
 def comment_client(tmp_path, core_factory):
     root = tmp_path / "p"
-    builtin_project(root, extra_cards=[card("plan", "log")])
+    builtin_project(root, extra_cards=[card("plan", "sink")])
     (root / "definitions/plan/_meta.json").write_text(json.dumps({"description": "Plots", "comments": [ASK, OTHER]}))
     d = core_factory(project_root=root)
     c = d.connect()
@@ -45,7 +45,7 @@ def comment_client(tmp_path, core_factory):
 def test_a_model_resolving_a_comment_is_recorded_with_what_it_changed(comment_client):
     """A model resolving a comment is recorded with what it changed."""
     done = {**ASK, "resolved": True, "resolution": "Logarithmic y axis"}
-    result = save(comment_client, [put([done, OTHER], body={"template": "logger", "markdown": True}, description="Plots")])
+    result = save(comment_client, [put([done, OTHER], body=dict(SINK, maxRuns=2), description="Plots")])
     assert comments_of(comment_client) == [{**done, "stateBy": "agent", "cards": ["plan"]}, OTHER]
     assert told(result) == [("plan", "Use a log scale", "resolved", "agent")]
     assert text(result.comments[0].resolution) == "Logarithmic y axis"
@@ -92,7 +92,7 @@ def test_a_model_may_delete_a_comment_and_it_says_so(comment_client):
 
 def test_keep_meta_keeps_the_comments(comment_client):
     """Keep meta keeps the comments."""
-    result = save(comment_client, [change("PutDefinition", id="plan", cardJson=json.dumps({"template": "logger", "markdown": True}), keepMeta=True)])
+    result = save(comment_client, [change("PutDefinition", id="plan", cardJson=json.dumps(dict(SINK, maxRuns=2)), keepMeta=True)])
     assert comments_of(comment_client) == [ASK, OTHER]
     assert not result.comments
 
@@ -169,7 +169,7 @@ def test_a_draft_takes_comments_as_any_card(tmp_path, core_factory):
 def test_comments_inside_a_card_in_card_are_recorded_too(tmp_path, core_factory):
     """Comments inside a card in card are recorded too."""
     root = tmp_path / "p"
-    write(root, {"log": {"template": "logger"}}, [card_in_card("outer", [card("plan", "log")], [], {"inputs": {}, "outputs": {}})], [])
+    write(root, {"sink": SINK}, [card_in_card("outer", [card("plan", "sink")], [], {"inputs": {}, "outputs": {}})], [])
     (root / "externals/outer/definitions/plan/_meta.json").write_text(json.dumps({"comments": [ASK]}))
     d = core_factory(project_root=root)
     c = d.connect()
@@ -190,7 +190,7 @@ def changes_of(commit):
 def test_each_version_says_what_it_did_to_the_comments(tmp_path, core_factory):
     """Each version says what it did to the comments."""
     root = tmp_path / "p"
-    builtin_project(root, extra_cards=[card("plan", "log")])
+    builtin_project(root, extra_cards=[card("plan", "sink")])
     d = core_factory(project_root=root)
     c = d.connect()
     c.call("VersionInitRequest", opId=new_id(), origin="user")
@@ -213,7 +213,7 @@ def test_each_version_says_what_it_did_to_the_comments(tmp_path, core_factory):
         ("plan", "Use a log scale", "added", "user", None, []),
     ]
 
-    save(c, [put([{**ASK, "resolved": True, "resolution": "Log y"}, OTHER], body={"template": "logger", "markdown": True})])
+    save(c, [put([{**ASK, "resolved": True, "resolution": "Log y"}, OTHER], body=dict(SINK, maxRuns=2))])
     mark("resolved")
     assert at("resolved") == [("plan", "Use a log scale", "resolved", "agent", "Log y", ["plan"])]
 

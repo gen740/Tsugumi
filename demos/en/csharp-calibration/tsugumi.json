@@ -1,7 +1,6 @@
 {
   "name": "Cross-language calibration (C#)",
   "pkgsPath": "tsugumi:default",
-  "databaseConnections": [],
   "canvas": {
     "cards": [
       {

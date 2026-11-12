@@ -746,7 +746,7 @@ export const PreviewSamples = {
     }
     const gate: CardNodeData = { ...base, title: L('偶数？'), kind: 'branch', inputs: [port('value'), port('condition')], outputs: [port('a'), port('b')] }
     const out: CardNodeData = {
-      ...base, title: L('結果'), kind: 'logger', inputs: [port('in')], outputs: [], result: '[27, 82, 41, …]', state: D.CardState.succeeded, invocation: 1n,
+      ...base, title: L('結果'), kind: 'code', inputs: [port('in')], outputs: [], result: '[27, 82, 41, …]', hasDisplay: true, state: D.CardState.succeeded, invocation: 1n,
     }
     return [
       { id: 'input', data: input, origin: { x: 0, y: 0 } },

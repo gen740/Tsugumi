@@ -694,4 +694,4 @@ A typed aggregate fans out to line, scatter and histogram Cards, then a Python r
 
 ## marimo notebook → typed result (`marimo`)
 
-The upstream Card scales a measurement of 7 by its `factor` of 2. A marimo notebook visualizes the original and scaled values, and a logger consumes the selected result of 14. The notebook invocation retains static HTML, a figure, source cells and binding and result metadata. Set the upstream `factor` to 3 and rerun it to save a result of 21. See [marimo Cards](Marimo.md).
+The upstream Card scales a measurement of 7 by its `factor` of 2. A marimo notebook visualizes the original and scaled values, and a Bash Card logs and displays the selected result of 14. The notebook invocation retains static HTML, a figure, source cells and binding and result metadata. Set the upstream `factor` to 3 and rerun it to save a result of 21. See [marimo Cards](Marimo.md).

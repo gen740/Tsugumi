@@ -24,7 +24,7 @@ const session = () => {
 
 {
   const { s, saves } = session()
-  const k = s.addCard('logger', [], { x: 0, y: 0 })
+  const k = s.addCard('python', [], { x: 0, y: 0 })
   assert.deepEqual(s.comments(k), [])
   assert.equal(get(s.cardMeta(k), 'comments'), undefined)
 
@@ -69,7 +69,7 @@ const session = () => {
 {
   // What else the Card's _meta.json says is kept, and undo takes a comment back.
   const { s } = session()
-  const k = s.addCard('logger', [], { x: 0, y: 0 })
+  const k = s.addCard('python', [], { x: 0, y: 0 })
   s.edit((x) => x.updateMeta(k, (m) => m.set('description', 'Plots')))
   s.addComment(k, 'one')
   assert.equal(str(get(s.cardMeta(k), 'description')), 'Plots')
@@ -81,7 +81,7 @@ const session = () => {
 {
   // A Card in Card has a _meta.json too, though its settings are not edited here.
   const { s } = session()
-  const k = s.addCard('logger', [], { x: 0, y: 0 })
+  const k = s.addCard('python', [], { x: 0, y: 0 })
   s.setCardDefinition(k, { card: parse('{}'), link: parse('{"external":"inner"}') })
   s.addComment(k, 'split this')
   assert.equal(s.comments(k).length, 1)
@@ -91,7 +91,7 @@ const session = () => {
 {
   // A copy keeps what the Card says, comments too, as comments of its own.
   const { s } = session()
-  const k = s.addCard('logger', [], { x: 0, y: 0 })
+  const k = s.addCard('python', [], { x: 0, y: 0 })
   s.edit((x) => x.updateMeta(k, (m) => m.set('description', 'Plots')))
   s.addComment(k, 'one')
   const made = [...await s.duplicate(new Set([k]), [])]
@@ -113,7 +113,7 @@ const session = () => {
 {
   // Who did what: the user's marks here, and what the core recorded of the Agent's.
   const { s } = session()
-  const k = s.addCard('logger', [], { x: 0, y: 0 })
+  const k = s.addCard('python', [], { x: 0, y: 0 })
   s.addComment(k, 'mine')
   const [c] = s.comments(k)
   assert.equal(c.author, 'user')

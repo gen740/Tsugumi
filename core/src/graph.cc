@@ -25,7 +25,6 @@ const char* template_name(Template t) {
     case Template::Fork: return "fork";
     case Template::Branch: return "branch";
     case Template::Merge: return "merge";
-    case Template::Logger: return "logger";
     case Template::Subgraph: return "subgraph";
     case Template::Draft: return "draft";
   }
@@ -144,7 +143,7 @@ Template template_of(const DefinitionDoc* def) {
   if (!t || *t == "none" || t->empty()) return Template::Code;
   static const std::map<std::string, Template> m = {
       {"trigger", Template::Trigger}, {"input", Template::Input},   {"fork", Template::Fork},
-      {"branch", Template::Branch},   {"merge", Template::Merge},   {"logger", Template::Logger},
+      {"branch", Template::Branch},   {"merge", Template::Merge},
       {"draft", Template::Draft}, {"switch", Template::Switch},
   };
   auto it = m.find(*t);
@@ -273,7 +272,6 @@ class Builder {
     boolean(d.sandbox, s.sandbox);
     boolean(d.reuse_worker, s.reuse_worker);
     boolean(d.network, s.network);
-    boolean(d.markdown, s.markdown);
     if (const auto* v = schema::get(d.display_mode); v && *v != "update" && *v != "live")
       n.diags.push_back(diag(n.path, "invalid_setting", "displayMode must be update or live"));
     if (const auto* v = schema::get(d.system)) {
@@ -481,9 +479,6 @@ class Builder {
           if (n.input_defs.empty())
             n.diags.push_back(diag(n.path, "invalid_setting", "merge needs declared inputs"));
           for (auto& in : n.input_defs) in.optional = true;
-          break;
-        case Template::Logger:
-          n.input_defs = {{"in", false}};
           break;
         case Template::Draft:
           // A Draft can be wired before it is implemented: its outputs are the

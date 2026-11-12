@@ -21,7 +21,7 @@ from conftest import ROOT, Daemon  # noqa: E402
 from tsugumi_client import Client, text  # noqa: E402
 
 FIXTURE = ROOT / "tests" / "fixtures" / "arrange-demos.json"
-KINDS = {"trigger", "input", "fork", "branch", "merge", "logger", "draft", "subgraph", "code"}
+KINDS = {"trigger", "input", "fork", "branch", "merge", "draft", "subgraph", "code"}
 INLINE_PARAMS = {"int64", "uint64", "double", "bool", "string"}
 
 

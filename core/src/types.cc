@@ -1,6 +1,5 @@
 #include "types.hh"
 
-#include "tsugumi/message_json.hh"
 #include "util/crypto.hh"
 
 #include <flatbuffers/idl.h>
@@ -721,21 +720,6 @@ bool json_to_flatbuffer(const Type& t, const std::string& json, std::string* out
   }
   out->assign(reinterpret_cast<const char*>(p->builder_.GetBufferPointer()),
               p->builder_.GetSize());
-  return true;
-}
-
-bool flatbuffer_to_json(const Type& t, const std::string& bytes, std::string* out,
-                        std::string* error) {
-  if (!verify(t, bytes)) {
-    *error = "buffer does not verify against " + t.root_type;
-    return false;
-  }
-  auto p = parser_from_type(t, error);
-  if (!p) return false;
-  if (const char* e = message_json::gen_text(*p, bytes.data(), out)) {
-    *error = e;
-    return false;
-  }
   return true;
 }
 

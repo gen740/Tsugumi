@@ -1,7 +1,6 @@
 {
   "name": "言語をまたぐ校正（C#）",
   "pkgsPath": "tsugumi:default",
-  "databaseConnections": [],
   "canvas": {
     "cards": [
       {

@@ -203,7 +203,7 @@ export class CardGeometry {
     this.summary = d.summary !== undefined && !isRouting(d) && d.kind !== 'trigger' && !this.draft
     this.params = d.params.length
     // Rows are reserved by kind, so a run never makes a Card grow or shrink.
-    this.result = d.kind === 'logger' || d.hasDisplay
+    this.result = d.hasDisplay
     this.stages = d.kind === 'code'
     this.shape = shapeOf(d.kind)
     this.grid = d.portGrid

@@ -37,7 +37,7 @@ NO_OUTPUTS = "namespace t;\ntable Outputs { }\nroot_type Outputs;\n"
 
 def write_project(root, cards: dict, connections: list):
     """cards: {id: {"card": _card.json, "nix": default.nix, "outputs": fbs, "src": {name: text}}}."""
-    project = {"name": "languages", "pkgsPath": "tsugumi:default", "databaseConnections": [], "canvas": {
+    project = {"name": "languages", "pkgsPath": "tsugumi:default", "canvas": {
         "cards": [{"id": "start"}] + [{"id": i} for i in cards],
         "connections": [{"from": {"card": a, "port": p}, "to": {"card": b, "port": q}} for a, p, b, q in connections]}}
     put(root / "tsugumi.json", json.dumps(project))

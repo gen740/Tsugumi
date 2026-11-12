@@ -248,7 +248,7 @@ extension ProjectSession {
   }
 
   private func visualPorts(_ k: CardKey, _ ports: [PortData], output: Bool) -> [PortData] {
-    guard [.code, .draft, .input, .logger, .subgraph].contains(kind(k)) else { return ports }
+    guard [.code, .draft, .input, .subgraph].contains(kind(k)) else { return ports }
     let saved = layout(of: Array(path(k).dropLast()))["cards"]?[layoutKey(k)]?[output ? "outputOrder" : "inputOrder"]?.array?.compactMap(\.string) ?? []
     return orderedPorts(ports, saved: saved)
   }

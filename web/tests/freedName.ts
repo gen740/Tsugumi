@@ -93,7 +93,7 @@ const clean = (s: Session, k: string) => {
 {
   // Copies of Cards start clean too.
   const s = session([])
-  const a = s.addCard('logger', [], { x: 0, y: 0 }, 'a')
+  const a = s.addCard('python', [], { x: 0, y: 0 }, 'a')
   framed(s, 'a-2')
   const made = await s.duplicate(new Set([a]), [])
   assert.deepEqual([...made], ['a-2'])

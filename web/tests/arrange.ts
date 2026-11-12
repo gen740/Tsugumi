@@ -189,7 +189,7 @@ for (const [name, target] of Object.entries(targets)) {
   s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   s.layout = parse('{"flow":"topToBottom"}')
   s.scheduleSave = () => {} // no tsugumid here
-  const a = s.addCard('trigger', [], { x: 500, y: 500 }), b = s.addCard('python', [], { x: 0, y: 0 }), c = s.addCard('logger', [], { x: 7, y: 9 })
+  const a = s.addCard('trigger', [], { x: 500, y: 500 }), b = s.addCard('python', [], { x: 0, y: 0 }), c = s.addCard('python', [], { x: 7, y: 9 })
   const note = s.addNote([], { x: 3, y: 4 })
   s.updateDisplayFrame(b, (d) => { d.set('width', parse('300')); d.set('height', parse('200')) })
   s.setCollapsed([c], true)

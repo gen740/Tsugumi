@@ -528,10 +528,6 @@ private struct GeneralCategory: View {
           }
           numberField("maxRuns", label: "最大実行回数", fallback: "1")
           timeoutField("timeoutSeconds", label: "実行の期限（秒）")
-          if model.kind == .logger {
-            toggle("markdown", label: "Markdown として表示", fallback: false)
-              .help("オン: 受け取った文字列（文字列のフィールドが 1 つのメッセージ）を Markdown と数式（$…$、$$…$$）で表示します。ほかのメッセージは JSON をコードとして表示します。")
-          }
           if model.kind == .code {
             Picker("グラフの更新", selection: string("displayMode", fallback: "update")) {
               Text("更新（実行中は薄く表示）").tag("update")

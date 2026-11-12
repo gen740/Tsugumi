@@ -217,7 +217,6 @@ final class AppModel {
     {
       "name": \(JSONValueLiteral.quote(name)),
       "pkgsPath": \(JSONValueLiteral.quote(NixpkgsPin.current ?? "tsugumi:default")),
-      "databaseConnections": [],
       "canvas": { "cards": [], "connections": [] }
     }
 

@@ -626,8 +626,6 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
           )}
           {numberField('maxRuns', L('最大実行回数'), '1')}
           {timeoutField('timeoutSeconds', L('実行の期限（秒）'))}
-          {kind === 'logger' && toggle('markdown', L('Markdown として表示'), false,
-            L('オン: 受け取った文字列（文字列のフィールドが 1 つのメッセージ）を Markdown と数式（$…$、$$…$$）で表示します。ほかのメッセージは JSON をコードとして表示します。'))}
           {kind === 'code' && (
             <Row label={L('グラフの更新')} help={L('更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。')}>
               <Select {...string('displayMode', 'update')} options={[

@@ -14,7 +14,7 @@
 
 namespace tsugumi {
 
-enum class Template { Code, Trigger, Input, Switch, Fork, Branch, Merge, Logger, Subgraph, Draft };
+enum class Template { Code, Trigger, Input, Switch, Fork, Branch, Merge, Subgraph, Draft };
 const char* template_name(Template t);
 // What a definition is; no definition at all is a Draft.
 Template template_of(const DefinitionDoc* def);
@@ -55,7 +55,6 @@ struct Settings {
   bool sandbox = true;
   bool reuse_worker = false;
   bool network = false;
-  bool markdown = false;  // logger: shows the text it receives as Markdown
   std::string system;     // "" = native_system(); another one runs emulated (binfmt)
   std::vector<HostFolder> host_folders;
   std::vector<ParamDef> params;  // with their values in data

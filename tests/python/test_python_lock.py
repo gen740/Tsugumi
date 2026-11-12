@@ -89,7 +89,7 @@ def nix(arguments: str) -> str:
 
 
 def write_project(root, arguments: str, main: str, pyproject: str | None = PYPROJECT, sandbox: bool = True):
-    project = {"name": "lock", "pkgsPath": "tsugumi:default", "databaseConnections": [], "canvas": {
+    project = {"name": "lock", "pkgsPath": "tsugumi:default", "canvas": {
         "cards": [{"id": "start"}, {"id": "card"}],
         "connections": [{"from": {"card": "start", "port": "out"}, "to": {"card": "card", "port": "start"}}]}}
     put(root / "tsugumi.json", json.dumps(project))

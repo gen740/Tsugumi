@@ -26,7 +26,11 @@ Never write `_inputs.fbs`: input types come from the connected outputs.
 | `fork` | in `in`, outs `out1`, `out2` (param `branches`: string[] for other names) | Sends one value to several Cards (an output has one wire: this is how a value reaches several inputs) |
 | `branch` | ins `value`, `condition` (a table with `value:bool`), outs `a` (true), `b` (false) | Sends to one side |
 | `merge` | ins as declared in `inputs`, out `out` (a union of them) | Joins paths of a loop |
-| `logger` | in `in` | Shows what it receives (`"markdown": true` shows a text as Markdown) |
+
+To show a received value without choosing its type in advance, use an ordinary
+Bash Card with an untyped input. The marimo demo's `result` Card logs
+`$JSON_IN` to stdout and sends it as text to `$TSUGUMI_DISPLAY`. For Markdown,
+select the string field to display explicitly.
 
 ### An input Card with fixed values
 
