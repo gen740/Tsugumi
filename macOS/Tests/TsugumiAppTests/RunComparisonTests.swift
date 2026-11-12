@@ -5,11 +5,11 @@ import Testing
 
 @MainActor struct RunComparisonTests {
   @Test func parametersAlignByNameAndRetainMissingSides() {
-    func record(_ json: String) -> Tsugumi_RPC_RecordResultT {
+    func record(_ json: String) -> ComparedRunCard {
       let result = Tsugumi_RPC_RecordResultT()
       result.record = Tsugumi_RPC_InvocationRecordT()
       result.record?.paramsJson = json
-      return result
+      return ComparedRunCard(summary: Tsugumi_RPC_InvocationSummaryT(), record: result)
     }
     let a = record(#"{"low":600,"boundary":1650}"#), b = record(#"{"boundary":1800,"low":600,"added":true}"#)
     let fields = RunComparison.params(a, b)
@@ -17,7 +17,7 @@ import Testing
     #expect(fields.map(\.changed) == [true, true, false])
     #expect(fields[0].left == nil)
     #expect(fields[1].left == "1650" && fields[1].right == "1800")
-    #expect(a.record?.paramsJson == #"{"low":600,"boundary":1650}"#)
+    #expect(a.record?.record?.paramsJson == #"{"low":600,"boundary":1650}"#)
   }
 
   @Test func retainedDisplayEqualityIgnoresIdentityButChecksContent() {
@@ -49,18 +49,34 @@ import Testing
   }
 
   @Test func retainedCopyIdentityDoesNotChangeTheRecordedValue() {
-    func record(_ id: String, _ bytes: [UInt8]) -> Tsugumi_RPC_RecordResultT {
+    func record(_ id: String, _ bytes: [UInt8]) -> ComparedRunCard {
       let value = Tsugumi_Data_NamedValueT()
       value.name = "photons"; value.rootType = "Counts"; value.inlineBytes = bytes; value.artifactId = id
       let result = Tsugumi_RPC_RecordResultT()
       result.record = Tsugumi_RPC_InvocationRecordT()
       result.record?.outputs = [value]
-      return result
+      return ComparedRunCard(summary: Tsugumi_RPC_InvocationSummaryT(), record: result)
     }
     let a = record("copy-left", [1, 2]), b = record("copy-right", [1, 2])
     #expect(RunComparison.values(true, a, b).first?.changed == false)
-    #expect(a.record?.outputs.first??.artifactId == "copy-left")
-    b.record?.outputs.first??.inlineBytes = [1, 3]
+    #expect(a.record?.record?.outputs.first??.artifactId == "copy-left")
+    b.record?.record?.outputs.first??.inlineBytes = [1, 3]
     #expect(RunComparison.values(true, a, b).first?.changed == true)
   }
+  @Test func omittedValuesCompareByContentHashAndType() {
+    let a = Tsugumi_Data_NamedValueT(), b = Tsugumi_Data_NamedValueT()
+    a.sizeBytes = 4096; b.sizeBytes = 4096
+    a.rootType = "Counts"; b.rootType = "Counts"
+    #expect(RunComparison.valueDifference(a, b) == .unknown)
+    a.contentHash = "digest"
+    #expect(RunComparison.valueDifference(a, b) == .unknown)
+    b.contentHash = "digest"
+    #expect(RunComparison.valueDifference(a, b) == .same)
+    b.contentHash = "other"
+    #expect(RunComparison.valueDifference(a, b) == .changed)
+    b.contentHash = "digest"
+    b.rootType = "Other"
+    #expect(RunComparison.valueDifference(a, b) == .changed)
+  }
+
 }

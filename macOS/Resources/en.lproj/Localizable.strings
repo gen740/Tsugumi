@@ -13,8 +13,10 @@
 "%@ · 対象 %@" = "%@ · target %@";
 "%@ から %@ へつないでいます" = "Connecting %@ to %@";
 "%@ からサインアウトしました。" = "Signed out of %@.";
+"%@ から下流" = "From %@ downstream";
 "%@ から実行しています" = "Running from %@";
 "%@ が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。" = "%@ was changed outside Tsugumi. Reload to take it in (the changes are kept).";
+"%@ だけ（保存した入力）" = "%@ only (saved inputs)";
 "%@ でサインインしました。" = "Signed in as %@.";
 "%@ と同じ文書です" = "Same document as %@";
 "%@ に書き込めないため、このアプリを更新できません。" = "This app cannot be updated because %@ is not writable.";
@@ -291,6 +293,7 @@
 "この実行では、この Card はまだ動いていません。" = "This Card has not run in this Run yet.";
 "この実行では呼び出されていません" = "Not invoked in this run";
 "この実行にはありません" = "Absent from this run";
+"この実行の Card からは届いていません" = "Not sent by a Card of this run";
 "この形式の整形には対応していません" = "Formatting is not available for this file type";
 "この接続では版の要約を作りません。" = "This connection does not make version summaries.";
 "この操作はできません" = "This cannot be done";
@@ -347,6 +350,7 @@
 "インデントガイドを表示" = "Show indent guides";
 "インデント幅" = "Indent width";
 "エディター" = "Editor";
+"エミュレーション: %@" = "Emulated: %@";
 "エミュレーター" = "Emulator";
 "エラー: %@" = "Error: %@";
 "オフ" = "Off";
@@ -487,6 +491,7 @@
 "ドラッグで動かせます" = "Drag to move";
 "ドラッグで移動できます" = "Drag to move";
 "ドラッグで範囲を拡大・横スクロールで移動" = "Drag to zoom into a range; scroll sideways to move";
+"ネイティブ" = "Native";
 "ネットワークへのアクセス" = "Network access";
 "ネットワークへのアクセスを許可する" = "Allow network access";
 "ネットワークを設定しています" = "Setting up the network";
@@ -615,6 +620,7 @@
 "例: y 軸を対数にしてください" = "e.g. Make the y axis logarithmic";
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
+"保存した入力" = "Saved input";
 "保存しています" = "Saving";
 "保存して終了" = "Save and Quit";
 "保存しました。" = "Saved.";
@@ -661,6 +667,7 @@
 "入力ポートの名前" = "Input port name";
 "入力値" = "Input value";
 "入力元" = "Input sources";
+"入力元 %@" = "Source of %@";
 "入力待ち" = "Waiting";
 "全 %lld 行・先頭 %lld 行のプレビュー（拡大して全行表示）" = "%lld rows · preview of the first %lld (expand to view all)";
 "全体" = "All";
@@ -761,6 +768,7 @@
 "呼び出し #%llu" = "Invocation #%llu";
 "呼び出し %llu · 成功 %llu · 失敗 %llu" = "Invocations %llu · succeeded %llu · failed %llu";
 "呼び出しなし" = "No invocations";
+"呼び出しの記録を読み込めませんでした" = "The invocation record could not be read";
 "問題 %lld 件" = "%lld issues";
 "問題 %lld 件（一覧から対象の Card やログへ移動できます）" = "%lld problems (go to their Card or log from the list)";
 "問題はありません" = "No issues";
@@ -829,6 +837,7 @@
 "実行すると表示されます。" = "Appears after a run.";
 "実行の期限（秒）" = "Run timeout (s)";
 "実行の様子を見ています" = "Looking at the run";
+"実行の範囲" = "Run scope";
 "実行の終わりを待っています" = "Waiting for the run to end";
 "実行の結果" = "Run Results";
 "実行の記録を見ています" = "Reading the run's record";
@@ -859,6 +868,8 @@
 "実行履歴をプロジェクトに保存する" = "Save the run history in the project";
 "実行待ち" = "Ready";
 "実行後に保存" = "Save after the run";
+"実行方式" = "Execution";
+"実行条件" = "Execution conditions";
 "実行状況はありません" = "No run activity";
 "実行環境が起動の途中で止まりました: %@" = "The environment stopped while starting: %@";
 "実行環境との接続が切れました" = "Lost the connection to the environment";
@@ -1018,6 +1029,7 @@
 "残す" = "Keep";
 "残り %lld 行を表示" = "Show the remaining %lld lines";
 "段階" = "Phase";
+"比較できません" = "Not comparable";
 "流れの向き" = "Flow direction";
 "添えられたフォルダを読んでいます" = "Reading the attached folder";
 "添付を外す" = "Remove the attachment";
@@ -1044,6 +1056,7 @@
 "版管理されていません" = "Not versioned";
 "版管理を始める" = "Start Versioning";
 "状態" = "State";
+"環境" = "Environment";
 "環境を停止" = "Stop Environment";
 "生命・医療" = "Life and medicine";
 "生成" = "Generated";
@@ -1118,6 +1131,7 @@
 "記録された出来事はありません" = "No events were recorded";
 "記録された段階の出来事はありません。" = "No stage events were recorded.";
 "記録と成果物" = "Recording and artifacts";
+"記録なし" = "Not recorded";
 "設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。" = "Choose “Retain artifact” and an output in Settings > Ports to keep them.";
 "設定…" = "Settings…";
 "設定しました。Home に戻ると、ツグミが「何をしてみますか？」と尋ねます。" = "Done. Back on Home, Tsugumi will ask what you would like to try.";
@@ -1183,6 +1197,7 @@
 "開けません" = "Cannot open";
 "開けませんでした" = "Could not open";
 "開始" = "Start";
+"開始した Card" = "Started at";
 "隔離（sandbox）なしで実行" = "Run without isolation (sandbox)";
 "集計" = "Totals";
 "青" = "Blue";

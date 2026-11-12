@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ComparedCard, ComparedField, ComparedRow, comparedParams, comparedValues, loadRunComparison, sameDisplay } from '../model/runComparison'
+import { ComparedCard, ComparedField, ComparedRow, Difference, comparedConditions, comparedParams, comparedValues, loadRunComparison, runScope, sameDisplay } from '../model/runComparison'
 import { ProjectSession, cardState, errorText, formatDuration, formatMillis, recordedDisplay, runState } from '../model/session'
 import { R, s } from '../shared/rpc'
 import { Button, Empty, Select, Spinner } from './controls'
@@ -44,12 +44,8 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
       {left === right || !left || !right ? <Empty title={L('異なる 2 つの実行を選んでください')} icon="arrow.triangle.swap" />
         : error ? <div role="alert">{error}<Button onClick={() => setAttempt(attempt + 1)}>{L('再試行')}</Button></div>
         : !rows ? <Spinner /> : <>
-          <details className="comparison-card" open={false}>
-            <summary>{L('コードと設定の差分')} · {from.slice(0, 8) || '—'} → {to.slice(0, 8) || '—'}</summary>
-            {!from || !to ? <p>{L('版が記録されていないため差分を表示できません。')}</p>
-              : from === to ? <p>{L('同じ版です')}</p> : diffError ? <p role="alert">{diffError}</p>
-              : !diff ? <Spinner /> : <><pre className="value-box selectable">{s(diff.text) || L('変更はありません')}</pre>{diff.truncated && <p>{L('差分が大きいため一部を表示しています。')}</p>}</>}
-          </details>
+          <RunScopes left={a} right={b} />
+          <VersionDifference from={from} to={to} diff={diff} error={diffError} />
           {!rows.length && <Empty title={L('記録がありません')} icon="tray" />}
           {rows.map(row => <ComparedCardView key={row.card} row={row} />)}
         </>}
@@ -57,9 +53,31 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
   </div>
 }
 
+/** The code and settings between the two runs' versions. A run without a recorded
+ *  version, and a diff cut short, are said in words: neither reads as "no changes". */
+export function VersionDifference({ from, to, diff, error }: { from: string; to: string; diff?: R.VersionDiffT; error?: string }) {
+  return <details className="comparison-card" open={false}>
+    <summary>{L('コードと設定の差分')} · {from.slice(0, 8) || '—'} → {to.slice(0, 8) || '—'}</summary>
+    {!from || !to ? <p>{L('版が記録されていないため差分を表示できません。')}</p>
+      : from === to ? <p>{L('同じ版です')}</p> : error ? <p role="alert">{error}</p>
+      : !diff ? <Spinner /> : <><pre className="value-box selectable">{s(diff.text) || L('変更はありません')}</pre>{diff.truncated && <p>{L('差分が大きいため一部を表示しています。')}</p>}</>}
+  </details>
+}
+
+/** `unknown` is said in words: an unmarked field would read as unchanged. */
+function DifferenceMark({ difference }: { difference: Difference }) {
+  return difference === 'same' ? null : <span className="caption">· {difference === 'changed' ? L('相違あり') : L('比較できません')}</span>
+}
+
+/** Where each run started and how far it went: a partial run reuses saved inputs. */
+export function RunScopes({ left, right }: { left?: R.RunSummaryT; right?: R.RunSummaryT }) {
+  const a = runScope(left), b = runScope(right)
+  return <ComparedFields title={L('実行の範囲')} fields={[{ name: L('開始した Card'), left: a, right: b, difference: a === b ? 'same' : 'changed' }]} />
+}
+
 function ComparedFields({ title, fields }: { title: string; fields: ComparedField[] }) {
-  return <section><h4>{title}</h4>{!fields.length && <p className="secondary">{L('なし')}</p>}{fields.map(f => <div key={f.name} className={`comparison-field${f.changed ? ' changed' : ''}`}>
-    <b>{f.name} {f.changed && <span className="caption">· {L('相違あり')}</span>}</b>
+  return <section><h4>{title}</h4>{!fields.length && <p className="secondary">{L('なし')}</p>}{fields.map(f => <div key={f.name} className={`comparison-field${f.difference === 'same' ? '' : ` ${f.difference}`}`}>
+    <b>{f.name} <DifferenceMark difference={f.difference} /></b>
     <div className="comparison-pair"><pre className="value-box selectable">{f.left ?? L('この実行にはありません')}</pre><pre className="value-box selectable">{f.right ?? L('この実行にはありません')}</pre></div>
   </div>)}</section>
 }
@@ -67,7 +85,9 @@ function ComparedFields({ title, fields }: { title: string; fields: ComparedFiel
 function SideStatus({ side }: { side?: ComparedCard }) {
   if (!side) return <p className="secondary">{L('この実行にはありません')}</p>
   const v = side.record?.record?.summary ?? side.summary, state = cardState(side.record?.status?.state ?? v.state)
+  const calls = side.record?.aggregate?.calls ?? v.invocation ?? 0n
   return <div><b style={{ color: `var(--${state.color})` }}>{state.label}</b> · #{String(v.invocation ?? 0n)} · {v.durationMs === null ? '—' : formatDuration(Number(v.durationMs) / 1000)}
+    {calls > 1n && <p className="caption">{L('{0} 回の呼び出しのうち最後の 1 回', calls)}</p>}
     {side.record?.aggregate && <p className="caption secondary">{L('呼び出し {0} · 成功 {1} · 失敗 {2}', side.record.aggregate.calls ?? 0n, side.record.aggregate.succeeded ?? 0n, side.record.aggregate.failed ?? 0n)}</p>}
     {(side.error || s(v.failure?.diagnostic)) && <p role="alert">{side.error || s(v.failure?.diagnostic)}</p>}
     {side.record?.record?.recordIo === false && <p className="secondary">{L('入出力は記録されていません')}</p>}
@@ -80,10 +100,11 @@ export function ComparedCardView({ row }: { row: ComparedRow }) {
   const a = row.left?.record, b = row.right?.record
   const leftDisplay = a?.record?.display ? recordedDisplay(a.record.display) : undefined, rightDisplay = b?.record?.display ? recordedDisplay(b.record.display) : undefined
   const statusChanged = row.left?.summary.state !== row.right?.summary.state || row.left?.summary.durationMs !== row.right?.summary.durationMs
-  const displayChanged = !sameDisplay(a?.record?.display, b?.record?.display)
+  const displayChanged = !sameDisplay(leftDisplay, rightDisplay)
   return <details className="comparison-card" open>
     <summary>{row.card}</summary>
     <div className={`comparison-pair pad8${statusChanged ? ' changed' : ''}`}><SideStatus side={row.left} /><SideStatus side={row.right} /></div>
+    <ComparedFields title={L('実行条件')} fields={comparedConditions(row.left, row.right)} />
     <ComparedFields title={L('パラメータ')} fields={comparedParams(a, b)} />
     <ComparedFields title={L('入力')} fields={comparedValues('inputs', a, b)} />
     <ComparedFields title={L('出力')} fields={comparedValues('outputs', a, b)} />

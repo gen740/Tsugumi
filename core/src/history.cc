@@ -745,7 +745,7 @@ std::optional<FailureData> History::latest_failure(sql::Db& db, const std::strin
 std::vector<StoredValueMeta> History::value_metas(sql::Db& db, const std::string& run_id,
                                                   const CardPath& card, uint64_t n, bool input) {
   auto st = db.prepare(
-      "SELECT v.port, v.kind, s.bfbs, v.root_type, v.size, v.artifact_id FROM ivalues v "
+      "SELECT v.port, v.kind, s.bfbs, v.root_type, v.size, v.artifact_id, v.hash FROM ivalues v "
       "JOIN schemas s ON s.hash=v.schema_hash WHERE run_id=? AND card=? AND invocation=? AND side=? "
       "ORDER BY v.port");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n).bind(4, input ? 0 : 1);
@@ -758,6 +758,7 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db, const std::string
     m.root_type = st.text(3);
     m.size_bytes = st.u64(4);
     if (!st.is_null(5)) m.artifact_id = st.text(5);
+    if (!st.is_null(6)) m.hash = st.text(6);
     out.push_back(std::move(m));
   }
   return out;

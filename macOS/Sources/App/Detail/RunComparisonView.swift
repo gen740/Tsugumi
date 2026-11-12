@@ -12,13 +12,16 @@ struct ComparedRunRow: Identifiable {
   let left: ComparedRunCard?
   let right: ComparedRunCard?
 }
+/// `unknown`: the records do not hold enough to tell, so it is never shown as unchanged.
+enum ComparedDifference: Equatable { case same, changed, unknown }
+
 struct ComparedRunField: Identifiable {
   var id: String { name }
   let name: String
   let left: String?
   let right: String?
-  var different = false
-  var changed: Bool { different || left != right }
+  var difference: ComparedDifference
+  var changed: Bool { difference != .same }
 }
 
 @MainActor enum RunComparison {
@@ -41,33 +44,146 @@ struct ComparedRunField: Identifiable {
     return Set(first.keys).union(second.keys).sorted().map { ComparedRunRow(card: $0, left: first[$0], right: second[$0]) }
   }
 
-  static func paired(_ a: [String: String], _ b: [String: String]) -> [ComparedRunField] {
-    Set(a.keys).union(b.keys).sorted().map { ComparedRunField(name: $0, left: a[$0], right: b[$0]) }
+  private static func names<V>(_ a: [String: V], _ b: [String: V]) -> [String] { Set(a.keys).union(b.keys).sorted() }
+
+  /// Said for a side whose Card ran but whose invocation record did not arrive:
+  /// it is neither "no inputs" nor "removed".
+  static var unreadable: String { String(localized: "呼び出しの記録を読み込めませんでした") }
+
+  // MARK: Parameters
+
+  /// A side that has the Card but no recorded parameters (or no readable record) cannot be compared.
+  static func paramsUnavailable(_ c: ComparedRunCard?) -> Bool {
+    guard let c else { return false }
+    return (c.record?.record?.paramsJson ?? "").isEmpty
   }
 
-  static func params(_ left: Tsugumi_RPC_RecordResultT?, _ right: Tsugumi_RPC_RecordResultT?) -> [ComparedRunField] {
-    func values(_ r: Tsugumi_RPC_RecordResultT?) -> [String: String] {
-      guard let text = r?.record?.paramsJson, let json = try? JSONValue.parse(text), let entries = json.object else { return [:] }
-      return Dictionary(uniqueKeysWithValues: entries.map { ($0.0, $0.1.serialized().trimmingCharacters(in: .whitespacesAndNewlines)) })
+  /// Parameters pair by name and compare as serialized JSON.
+  static func params(_ left: ComparedRunCard?, _ right: ComparedRunCard?) -> [ComparedRunField] {
+    func values(_ c: ComparedRunCard?) -> [String: String] {
+      guard let text = c?.record?.record?.paramsJson, let json = try? JSONValue.parse(text), let entries = json.object else { return [:] }
+      return Dictionary(entries.map { ($0.0, $0.1.serialized().trimmingCharacters(in: .whitespacesAndNewlines)) }, uniquingKeysWith: { x, _ in x })
     }
-    return paired(values(left), values(right))
+    let a = values(left), b = values(right), unknown = paramsUnavailable(left) || paramsUnavailable(right)
+    return names(a, b).map {
+      ComparedRunField(name: $0, left: a[$0], right: b[$0], difference: unknown ? .unknown : a[$0] == b[$0] ? .same : .changed)
+    }
   }
 
-  static func values(_ output: Bool, _ left: Tsugumi_RPC_RecordResultT?, _ right: Tsugumi_RPC_RecordResultT?) -> [ComparedRunField] {
-    func values(_ r: Tsugumi_RPC_RecordResultT?) -> [String: String] {
-      let list = (output ? r?.record?.outputs : r?.record?.inputs) ?? []
-      return Dictionary(uniqueKeysWithValues: list.compactMap { $0 }.map { ($0.name, describeValue($0, includeArtifact: false)) })
+  // MARK: Inputs and outputs
+
+  /// The reply leaves a large or truncated value's bytes out. An empty payload counts as
+  /// the value only when the record says it is empty.
+  static func omitted(_ v: Tsugumi_Data_NamedValueT) -> Bool { v.inlineBytes.isEmpty && v.sizeBytes != 0 }
+
+  /// Compares the type and content digest, or the payload when both are available.
+  static func valueDifference(_ a: Tsugumi_Data_NamedValueT?, _ b: Tsugumi_Data_NamedValueT?) -> ComparedDifference {
+    guard let a, let b else { return a == nil && b == nil ? .same : .changed }
+    if a.kind != b.kind || a.rootType != b.rootType || a.schemaBfbs != b.schemaBfbs { return .changed }
+    if let x = a.contentHash, !x.isEmpty, let y = b.contentHash, !y.isEmpty { return x == y ? .same : .changed }
+    if omitted(a) || omitted(b) { return .unknown }
+    return a.inlineBytes == b.inlineBytes ? .same : .changed
+  }
+
+  /// Why a side's values are not known (nil when they are, or the Card is absent there).
+  private static func valuesMissing(_ c: ComparedRunCard?) -> String? {
+    guard let c else { return nil }
+    guard let r = c.record?.record else { return unreadable }
+    return r.recordIo == false ? String(localized: "入出力は記録されていません") : nil
+  }
+
+  static func valuesUnavailable(_ left: ComparedRunCard?, _ right: ComparedRunCard?) -> Bool {
+    valuesMissing(left) != nil || valuesMissing(right) != nil
+  }
+
+  static func values(_ output: Bool, _ left: ComparedRunCard?, _ right: ComparedRunCard?) -> [ComparedRunField] {
+    func values(_ c: ComparedRunCard?) -> [String: Tsugumi_Data_NamedValueT] {
+      let list = (output ? c?.record?.record?.outputs : c?.record?.record?.inputs) ?? []
+      return Dictionary(list.compactMap { $0 }.map { ($0.name, $0) }, uniquingKeysWith: { x, _ in x })
     }
-    var fields = paired(values(left), values(right))
-    let a = (output ? left?.record?.outputs : left?.record?.inputs) ?? []
-    let b = (output ? right?.record?.outputs : right?.record?.inputs) ?? []
-    for i in fields.indices {
-      if let x = a.compactMap({ $0 }).first(where: { $0.name == fields[i].name }),
-         let y = b.compactMap({ $0 }).first(where: { $0.name == fields[i].name }) {
-        fields[i].different = x.inlineBytes != y.inlineBytes || x.schemaBfbs != y.schemaBfbs || x.kind != y.kind
+    let a = values(left), b = values(right), ma = valuesMissing(left), mb = valuesMissing(right)
+    return names(a, b).map { name in
+      let x = a[name], y = b[name]
+      // A value absent from a side whose values are unknown is not a removed value.
+      let difference: ComparedDifference = (x == nil && ma != nil) || (y == nil && mb != nil) ? .unknown : valueDifference(x, y)
+      return ComparedRunField(name: name, left: x.map { describeValue($0, includeArtifact: false) } ?? ma,
+                              right: y.map { describeValue($0, includeArtifact: false) } ?? mb, difference: difference)
+    }
+  }
+
+  // MARK: Execution conditions
+
+  /// Where each input came from: a Card of the same run and its invocation, or the
+  /// saved input for a recorded input that no Card of the run sent.
+  private static func origins(_ r: Tsugumi_RPC_InvocationRecordT) -> [String: String] {
+    var out = Dictionary(r.inputs.compactMap { $0 }.map { ($0.name, String(localized: "保存した入力")) }, uniquingKeysWith: { x, _ in x })
+    for s in r.inputSources.compactMap({ $0 }) { out[s.port] = "\(s.card.path.joined(separator: "/")) #\(s.invocation ?? 0)" }
+    return out
+  }
+
+  /// What a Card ran under besides its parameters and code: the recorded Nix
+  /// environment, the system it ran as, and where each input came from.
+  static func conditions(_ left: ComparedRunCard?, _ right: ComparedRunCard?) -> [ComparedRunField] {
+    func summary(_ c: ComparedRunCard?) -> Tsugumi_RPC_InvocationSummaryT? { c.map { $0.record?.record?.summary ?? $0.summary } }
+    let a = summary(left), b = summary(right)
+    func field(_ name: String, _ x: String?, _ y: String?, known: Bool) -> ComparedRunField {
+      ComparedRunField(name: name, left: x, right: y, difference: a == nil || b == nil ? .changed : !known ? .unknown : x == y ? .same : .changed)
+    }
+    func nonEmpty(_ s: String?) -> String? { s.flatMap { $0.isEmpty ? nil : $0 } }
+    func environment(_ v: Tsugumi_RPC_InvocationSummaryT?) -> String? {
+      v.map { nonEmpty($0.environmentId) ?? String(localized: "記録なし") }
+    }
+    func system(_ v: Tsugumi_RPC_InvocationSummaryT?) -> String? {
+      v.map { s in nonEmpty(s.emulator).map { String(localized: "エミュレーション: \($0)") } ?? String(localized: "ネイティブ") }
+    }
+    let recordedEnvironment = { (v: Tsugumi_RPC_InvocationSummaryT?) in !(v?.environmentId ?? "").isEmpty }
+    var fields = [
+      // An environment missing from a record (a Card that stopped before its build, say) is not comparable.
+      field(String(localized: "環境"), environment(a), environment(b), known: recordedEnvironment(a) && recordedEnvironment(b)),
+      field(String(localized: "実行方式"), system(a), system(b), known: true),
+    ]
+
+    // nil: the Card is absent from that run. `missing`: why that side's origins are not known.
+    func side(_ c: ComparedRunCard?) -> (origins: [String: String], missing: String?) {
+      guard let c else { return ([:], nil) }
+      guard let r = c.record?.record else { return ([:], unreadable) }
+      return (origins(r), r.recordIo == false ? String(localized: "入出力は記録されていません") : nil)
+    }
+    let x = side(left), y = side(right)
+    // A port known on one side only reached the other side from no Card of its run.
+    func text(_ s: (origins: [String: String], missing: String?), _ c: ComparedRunCard?, _ port: String) -> String? {
+      guard c != nil else { return nil }
+      return s.origins[port] ?? s.missing ?? String(localized: "この実行の Card からは届いていません")
+    }
+    let ports = names(x.origins, y.origins)
+    for port in ports {
+      let known = (x.origins[port] != nil || x.missing == nil) && (y.origins[port] != nil || y.missing == nil)
+      fields.append(field(String(localized: "入力元 \(port)"), text(x, left, port), text(y, right, port), known: known))
+    }
+    // Neither side named a port, but one side's record is missing: that is not "no inputs".
+    if ports.isEmpty, x.missing != nil || y.missing != nil {
+      func none(_ s: (origins: [String: String], missing: String?), _ c: ComparedRunCard?) -> String? {
+        c == nil ? nil : s.missing ?? String(localized: "なし")
       }
+      fields.append(field(String(localized: "入力元"), none(x, left), none(y, right), known: false))
     }
     return fields
+  }
+
+  // MARK: Run scope
+
+  /// A run starts at one Card and either goes on downstream or runs that Card alone
+  /// with its saved inputs (`propagate` is true unless recorded false).
+  static func runScope(_ run: Tsugumi_RPC_RunSummaryT?) -> String? {
+    guard let run else { return nil }
+    let target = run.target.path.isEmpty ? "—" : run.target.path.joined(separator: "/")
+    return run.propagate == false ? String(localized: "\(target) だけ（保存した入力）") : String(localized: "\(target) から下流")
+  }
+
+  static func scope(_ left: Tsugumi_RPC_RunSummaryT?, _ right: Tsugumi_RPC_RunSummaryT?) -> ComparedRunField {
+    let a = runScope(left), b = runScope(right)
+    return ComparedRunField(name: String(localized: "開始した Card"), left: a, right: b,
+                            difference: a == nil || b == nil ? .unknown : a == b ? .same : .changed)
   }
 
   static func sameDisplay(_ a: DisplaySnapshot?, _ b: DisplaySnapshot?) -> Bool {
@@ -105,8 +221,9 @@ struct RunComparisonView: View {
     _right = State(initialValue: runs.first { $0.status.runId != first }?.status.runId ?? "")
   }
 
-  private var from: String { runs.first { $0.status.runId == left }?.status.commit ?? "" }
-  private var to: String { runs.first { $0.status.runId == right }?.status.commit ?? "" }
+  private func run(_ id: String) -> Tsugumi_RPC_RunSummaryT? { runs.first { $0.status.runId == id } }
+  private var from: String { run(left)?.status.commit ?? "" }
+  private var to: String { run(right)?.status.commit ?? "" }
 
   var body: some View {
     VStack(spacing: 0) {
@@ -126,6 +243,8 @@ struct RunComparisonView: View {
             Text(error).foregroundStyle(.red)
             Button("再試行") { attempt += 1 }
           } else if let rows {
+            // Where each run started and how far it went: a partial run reuses saved inputs.
+            ComparedFieldsView(title: "実行の範囲", values: [RunComparison.scope(run(left), run(right))])
             versionDifference
             if rows.isEmpty { ContentUnavailableView("記録がありません", systemImage: "tray") }
             ForEach(rows) { ComparedRunCardView(row: $0) }
@@ -199,9 +318,13 @@ private struct ComparedRunCardView: View {
             status(row.left).frame(maxWidth: .infinity, alignment: .leading)
             status(row.right).frame(maxWidth: .infinity, alignment: .leading)
           }.padding(6).background(row.left?.summary.state != row.right?.summary.state || row.left?.summary.durationMs != row.right?.summary.durationMs ? changed : .clear)
-          fields("パラメータ", RunComparison.params(a, b))
-          fields("入力", RunComparison.values(false, a, b))
-          fields("出力", RunComparison.values(true, a, b))
+          ComparedFieldsView(title: "実行条件", values: RunComparison.conditions(row.left, row.right))
+          ComparedFieldsView(title: "パラメータ", values: RunComparison.params(row.left, row.right),
+                             unavailable: RunComparison.paramsUnavailable(row.left) || RunComparison.paramsUnavailable(row.right))
+          ComparedFieldsView(title: "入力", values: RunComparison.values(false, row.left, row.right),
+                             unavailable: RunComparison.valuesUnavailable(row.left, row.right))
+          ComparedFieldsView(title: "出力", values: RunComparison.values(true, row.left, row.right),
+                             unavailable: RunComparison.valuesUnavailable(row.left, row.right))
           if leftDisplay != nil || rightDisplay != nil {
             HStack { Text("表示").bold(); if !RunComparison.sameDisplay(leftDisplay, rightDisplay) { Text("相違あり").font(.caption) } }
             HStack(alignment: .top, spacing: 12) {
@@ -242,23 +365,41 @@ private struct ComparedRunCardView: View {
         if let error = side.error ?? v.failure?.diagnostic { Text(error).foregroundStyle(.red) }
         if side.record?.record?.recordIo == false { Text("入出力は記録されていません").foregroundStyle(.secondary) }
         if side.record?.truncated == true { Text("大きな値は概要のみ表示しています。").foregroundStyle(.secondary) }
-        if side.record != nil, side.record?.record?.paramsJson == nil { Text("パラメータの記録がありません").foregroundStyle(.secondary) }
+        if side.record != nil, (side.record?.record?.paramsJson ?? "").isEmpty { Text("パラメータの記録がありません").foregroundStyle(.secondary) }
       }
     } else { Text("この実行にはありません").foregroundStyle(.secondary) }
   }
+}
 
-  private func fields(_ title: LocalizedStringKey, _ values: [ComparedRunField]) -> some View {
+/// Named values side by side. `unknown` is said in words: an unmarked field would read as unchanged.
+private struct ComparedFieldsView: View {
+  let title: LocalizedStringKey
+  let values: [ComparedRunField]
+  /// With no fields, a side whose record cannot tell makes the section "not comparable", not "none".
+  var unavailable = false
+  private let changed = Color.accentColor.opacity(0.09)
+  private let unknown = Color.orange.opacity(0.08)
+
+  var body: some View {
     VStack(alignment: .leading, spacing: 5) {
       Text(title).bold()
-      if values.isEmpty { Text("なし").foregroundStyle(.secondary) }
+      if values.isEmpty, unavailable { Text("比較できません").foregroundStyle(.secondary) }
+      else if values.isEmpty { Text("なし").foregroundStyle(.secondary) }
       ForEach(values) { field in
         VStack(alignment: .leading, spacing: 4) {
-          HStack { Text(field.name).font(.callout.bold()); if field.changed { Text("相違あり").font(.caption) } }
+          HStack {
+            Text(field.name).font(.callout.bold())
+            switch field.difference {
+            case .same: EmptyView()
+            case .changed: Text("相違あり").font(.caption)
+            case .unknown: Text("比較できません").font(.caption).foregroundStyle(.secondary)
+            }
+          }
           HStack(alignment: .top, spacing: 12) {
             value(field.left).frame(maxWidth: .infinity, alignment: .leading)
             value(field.right).frame(maxWidth: .infinity, alignment: .leading)
           }
-        }.padding(6).background(field.changed ? changed : .clear)
+        }.padding(6).background(field.difference == .changed ? changed : field.difference == .unknown ? unknown : .clear)
       }
     }
   }

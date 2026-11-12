@@ -485,6 +485,7 @@ void Service::run_record(RequestIn& req) {
           truncated = true;
         }
         auto art = m.artifact_id ? b.CreateString(*m.artifact_id) : flatbuffers::Offset<flatbuffers::String>();
+        auto hash = m.hash.empty() ? flatbuffers::Offset<flatbuffers::String>() : b.CreateString(m.hash);
         D::NamedValueBuilder nb(b);
         nb.add_name(name);
         nb.add_kind(m.kind);
@@ -493,6 +494,7 @@ void Service::run_record(RequestIn& req) {
         nb.add_size_bytes(m.size_bytes);
         if (include) nb.add_inline_bytes(inl);
         if (m.artifact_id) nb.add_artifact_id(art);
+        if (!hash.IsNull()) nb.add_content_hash(hash);
         v.push_back(nb.Finish());
       }
       return b.CreateVector(v);
