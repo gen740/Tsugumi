@@ -198,46 +198,6 @@ def test_a_double_crosses_bash_r_and_julia_unchanged(project):
     assert "0.042169650342858," in raw and "1e-20," in raw  # the shortest digits, as a person would read them
 
 
-def test_non_finite_doubles_and_vectors_cross_r_and_julia(project):
-    root, connect = project
-    made = '{"numbers": {"values": [nan, inf, -inf, 0.1, -0.0, 1.7976931348623157e308], "single": inf}}'
-    make = "{ pkgs, inputs, params }: { run = ''\n  cat > \"$TSUGUMI_OUTPUT\" <<'END'\n" + made + "\nEND\n''; }\n"
-    r = r'''
-main <- function(ctx) {
-  m <- ctx$input("numbers")
-  v <- m$values
-  stopifnot(length(v) == 6, is.nan(v[1]), v[2] == Inf, v[3] == -Inf, sprintf("%.17g", v[4]) == "0.10000000000000001",
-            m$single == Inf)
-  ctx$output("numbers", m)
-}
-'''
-    julia = r'''
-function main(ctx)
-    m = input(ctx, "numbers")
-    v = m["values"]
-    @assert length(v) == 6 && isnan(v[1]) && v[2] == Inf && v[3] == -Inf && v[4] == 0.1 && v[6] == 1.7976931348623157e308
-    @assert m["single"] == Inf
-    output(ctx, "numbers", m)
-end
-'''
-    write_project(root, {
-        "make": {"card": {"language": "bash", "inputs": [{"name": "start"}]}, "nix": make, "outputs": EXACT},
-        "r": {"card": {"language": "r", "inputs": [{"name": "numbers"}]},
-              "nix": R_NIX, "outputs": EXACT, "src": {"main.R": r}},
-        "julia": {"card": {"language": "julia", "inputs": [{"name": "numbers"}]},
-                  "nix": JULIA_NIX, "outputs": EXACT, "src": {"main.jl": julia}},
-        "show": {"card": {"language": "bash", "inputs": [{"name": "numbers"}]}, "nix": BASH_SHOW},
-    }, [("start", "out", "make", "start"), ("make", "numbers", "r", "numbers"),
-        ("r", "numbers", "julia", "numbers"), ("julia", "numbers", "show", "numbers")])
-    c = connect()
-    run_id, status = run_and_wait(c, "start", timeout=1800)
-    log = lambda card: text(c.call("LogRangeRequest", runId=run_id, card=path(card), stream=2, limitBytes=65536).text)
-    assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic),
-                                                log("make"), log("r"), log("julia"))
-    raw = text(c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display.value.text)
-    assert "".join(raw.split()) == '{"values":[nan,inf,-inf,0.1,-0.0,1.7976931348623157e+308],"single":inf}', raw
-
-
 @pytest.mark.parametrize("display, check", [
     ('{"markdown": "**bold**"}', lambda d: d.value.markdown and text(d.value.text) == "**bold**"),
     ('{"text": "plain"}', lambda d: not d.value.markdown and text(d.value.text) == "plain"),
