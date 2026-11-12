@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import base64
 import csv
-import importlib
 import json
 from pathlib import Path
 
-from tsugumi import Failure
+from tsugumi import Failure, contract
 
 __all__ = ["input_rows", "figure_directory", "embed_font", "emit_figure"]
 
@@ -50,16 +49,10 @@ def input_rows(ctx, field="", member="data.csv"):
     CSV or JSON; a Directory input reads its `member`. `field` is a
     dot-separated path to the rows (a list of tables) or to equally sized
     column arrays inside the value."""
-    contract = json.loads((Path(__file__).parent.parent / "_contract.json").read_text())
-    port = next((p for p in contract["inputs"] if p["name"] == "data"), None)
+    port = contract.port("data")
     if port is None:
         _fail("Connect an upstream output to data before running this Visualization Card")
-    module = importlib.import_module(port["type"])
-    name = port["type"].rsplit(".", 1)[-1]
-    root = ctx.input("data", getattr(module, name))
-    if root is None:
-        _fail("Connect an upstream output to data before running this Visualization Card")
-    value = _plain(getattr(module, name + "T").InitFromObj(root))
+    value = _plain(contract.input_object(ctx, "data"))
     if port["kind"] != "flatbuffer":
         source = Path(value["value"])
         if port["kind"] == "directory":

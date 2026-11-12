@@ -51,6 +51,7 @@ import csv, json, sys, importlib.util
 from pathlib import Path
 import flatbuffers
 import tsugumi
+from tsugumi import contract
 HERE = Path(sys.argv[1])
 TEMPLATES = json.loads((HERE / 'templates.json').read_text())
 
@@ -95,6 +96,7 @@ def load(library):
 
 def use(kind, typename='Table'):
     (HERE / '_contract.json').write_text(json.dumps({'inputs': [{'name': 'data', 'type': 'inputs.data.example.' + typename, 'kind': kind, 'required': True}], 'outputs': []}))
+    contract._contract.cache_clear()
 
 def table(x, y, group=None):
     """The `data` input as typed equally sized columns (inputs.data.example.Table)."""
@@ -295,5 +297,6 @@ ctx = Context('matplotlib', pack(file))
 assert input_rows(ctx, member='data.csv')[0]['y'] == '3'
 expect_failure('validation_failed', lambda: input_rows(ctx, member='../outside.csv'), 'relative member')
 (HERE / '_contract.json').write_text(json.dumps({'inputs': [], 'outputs': []}))
+contract._contract.cache_clear()
 expect_failure('validation_failed', lambda: input_rows(ctx), 'Connect')
 ''')

@@ -64,7 +64,7 @@ Analysis software can require complex environments. Tsugumi uses Nix to pin each
 
 - Each Card's environment (its language toolchain and libraries) is built by Nix from that Card's `default.nix`. The definition stays with the project's version, so the same environment can be built on another machine.
 - A heavy computation (a long simulation, say) can be a Nix build with its seed and conditions written in. While the definition and the dependencies do not change, its output is reused from the Nix store, so the later analysis or plotting can be tried any number of times.
-- The same environment does not by itself guarantee the same result. If a result depends on random numbers, external data, arrival order (an `any` Card) or state kept by a resident worker, the Card has to decide that condition: make the seed a parameter, write per-run initialisation in `onRunStart` / `on_run_start`, and so on.
+- The same environment does not by itself guarantee the same result. If a result depends on random numbers, external data, arrival order (an `any` Card) or state kept by a resident worker (only a Card that sets `reuseWorker: true` has one; by default every invocation starts fresh), the Card has to decide that condition: make the seed a parameter, write per-run initialisation in `onRunStart` / `on_run_start`, and so on.
 
 ## What is recorded, and where
 
@@ -141,7 +141,7 @@ The layout on screen is kept apart from the computation's definition, too: a sav
 
 If a computation of a few lines split into a Card started the Nix evaluator or a language runtime every time, preparation would take longer than the computation.
 
-The Nix evaluator is built into `tsugumid`, and the evaluated state of nixpkgs and the daemon connection are reused across Cards and runs. C++ / Python Cards are called by a resident worker that loads their shared library (R and Julia Cards start a process per invocation, so this does not reach them). Even with a fresh worker per invocation, the next worker is started and its library loaded ahead of time.
+The Nix evaluator is built into `tsugumid`, and the evaluated state of nixpkgs and the daemon connection are reused across Cards and runs. C++, Python, R and Julia Cards are called by a worker that loads their shared library. By default each invocation gets a fresh worker, so that a Card keeps no hidden state, and the next worker is started and its library loaded ahead of time; a Card that sets `reuseWorker: true` keeps one resident worker, with its interpreter and module state, across invocations.
 
 A reused worker's state carries across runs, and the initialisation it needs can be written in `onRunStart` / `on_run_start`. On failure, cancellation, a deadline or a memory limit, the worker is ended. **The cost of starting is lowered, while computations that keep state, and when they initialise, stay explicit.**
 

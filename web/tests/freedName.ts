@@ -33,7 +33,7 @@ const framed = (s: Session, k: string) => {
 // What the core says is in the document after a save.
 const resolved = (s: Session, cards: string[]) =>
   (s as unknown as { applyResolution(r: unknown[], d: unknown[]): void }).applyResolution(
-    cards.map((id) => ({ card: { segments: [id] }, inputs: [], outputs: [], diagnostics: [] })), [])
+    cards.map((id) => ({ card: { segments: [id] }, inputs: [], outputs: [], diagnostics: [], nixReferences: [] })), [])
 const clean = (s: Session, k: string) => {
   assert.equal(s.displays.has(k), false, 'no result of the Card that had the name')
   assert.equal(s.displayFrame(k), undefined, 'no frame of the Card that had the name')

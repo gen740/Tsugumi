@@ -22,6 +22,7 @@ struct WorkerLimits {
   std::chrono::seconds idle{600};            // a resident or standby worker unused this long ends
   uint64_t max_rss_bytes = 2ull << 30;       // larger workers end instead of staying
   size_t max_resident = 32;                  // the least recently used idle ones end first
+  size_t max_standby = 32;                   // idle and pending fresh workers
 };
 
 class WorkerPool {
@@ -35,9 +36,9 @@ class WorkerPool {
   };
 
   // A worker for `card` running `key` (build and execution conditions; the
-  // spawn spec without its scratch folder): the resident one when it is idle,
-  // else a standby, else a new one. Resident workers of `card` with another
-  // key (a changed build or setting) end here.
+  // spawn spec without its scratch folder): lease an idle resident worker
+  // only when reuse is enabled. Otherwise take a fresh standby or start one.
+  // Residents of this Card end when reuse is disabled or the key changes.
   Lease acquire(const std::string& card, const std::string& key, const WorkerSpawn& spawn, bool reuse);
   // Gives the worker back after a call. A clean call of a reusing Card keeps
   // it resident; anything else ends it.

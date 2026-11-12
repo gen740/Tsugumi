@@ -11,7 +11,7 @@ page.matchMedia ??= () => ({ matches: false, addEventListener() {} })
 page.EventSource ??= class { addEventListener() {} close() {} }
 const { ProjectSession } = await import('../src/model/session')
 
-const resolved = (id: string) => ({ card: { segments: [id] }, inputs: [], outputs: [], diagnostics: [] }) as unknown as R.ResolvedCardT
+const resolved = (id: string) => ({ card: { segments: [id] }, inputs: [], outputs: [], diagnostics: [], nixReferences: [] }) as unknown as R.ResolvedCardT
 const definition = (id: string, card: string) => Object.assign(new R.DefinitionT(), { id, cardJson: card })
 const delta = (rev: bigint, fields: Partial<R.DocumentDeltaT>) =>
   Object.assign(new R.DocumentDeltaT(), { baseRev: rev, rev: rev + 1n, resolution: [resolved('a')], diagnostics: [], ...fields })
