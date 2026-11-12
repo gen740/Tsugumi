@@ -257,22 +257,42 @@ rec {
   # Static R Markdown / Quarto reports use a separate process per invocation.
   # HTML embeds its resources so history previews do not depend on live paths.
   reportCard =
-    { src, entry ? "report.Rmd", packages ? (ps: [ ]), fonts ? [ pkgs.dejavu_fonts pkgs.ipaexfont ] }:
+    {
+      src,
+      entry ? "report.Rmd",
+      packages ? (ps: [ ]),
+      fonts ? [
+        pkgs.dejavu_fonts
+        pkgs.ipaexfont
+      ],
+    }:
     let
       quarto = lib.hasSuffix ".qmd" entry;
       r = pkgs.rWrapper.override {
-        packages = [ pkgs.rPackages.jsonlite pkgs.rPackages.knitr pkgs.rPackages.rmarkdown ] ++ packages pkgs.rPackages;
+        packages = [
+          pkgs.rPackages.jsonlite
+          pkgs.rPackages.knitr
+          pkgs.rPackages.rmarkdown
+        ]
+        ++ packages pkgs.rPackages;
       };
       # Disable the unused Python environment; the selected engine is knitr.
-      q = pkgs.quarto.override { rWrapper = null; python3 = null; };
+      q = pkgs.quarto.override {
+        rWrapper = null;
+        python3 = null;
+      };
     in
-    assert lib.assertMsg (quarto || lib.hasSuffix ".Rmd" entry) "reportCard: entry must be .Rmd or .qmd (HTML only; PDF is not supported)";
+    assert lib.assertMsg (
+      quarto || lib.hasSuffix ".Rmd" entry
+    ) "reportCard: entry must be .Rmd or .qmd (HTML only; PDF is not supported)";
     ''
       export FONTCONFIG_FILE=${pkgs.makeFontsConf { fontDirectories = fonts; }}
       export RSTUDIO_PANDOC=${pkgs.pandoc}/bin
       export QUARTO_R=${r}/bin/R
       ${lib.optionalString quarto "export TSUGUMI_QUARTO=${q}/bin/quarto"}
-      exec ${r}/bin/Rscript --vanilla ${sdkRoot + "/r/report.R"} ${src} ${lib.escapeShellArg entry} ${if quarto then "quarto" else "rmarkdown"}
+      exec ${r}/bin/Rscript --vanilla ${sdkRoot + "/r/report.R"} ${src} ${lib.escapeShellArg entry} ${
+        if quarto then "quarto" else "rmarkdown"
+      }
     '';
 
   # A Julia Card: `src/main.jl` defines `main(ctx)` (sdk/julia/tsugumi.jl),
