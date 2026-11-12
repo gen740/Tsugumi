@@ -44,7 +44,7 @@ macOS (host)                                       Shared Linux VM (one per app)
 
 - An output port carries one wire. To send one value to several Cards it goes through a fork Card (so there is one way to write it, and the distribution is visible on the Canvas as a Card). An output with two or more wires is reported as `fan_out` and cannot run. Drawing another wire from an output already in use on the Canvas inserts a fork automatically (if the output is a fork or connects to one, that fork gets another branch).
 - An output port's type is declared in a FlatBuffers schema (`_outputs.fbs`), and the type of each downstream input port is derived automatically from upstream. Structural compatibility is checked when wiring, and a merge builds a union type automatically.
-- Values flow between Cards as FlatBuffers bytes. Automated tests check that 64-bit integers, enums, structs, unions and File / Directory pass between C++ / Python / bash (and R and Julia, converted to JSON) without loss.
+- Values flow between Cards as FlatBuffers bytes. Automated tests check that 64-bit integers, enums, structs, unions and File / Directory pass between C++ / Python / bash (and R and Julia through an in-memory JSON adapter) without loss.
 
 ### Execution semantics (scheduler)
 
@@ -137,14 +137,15 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
   The worker loads the built shared library `lib/main.so` into memory and calls it directly (no process is started per invocation).
 - **Python**: implement `main(ctx)` and, optionally, the initialisation hook `on_run_start(ctx)`.
 - **bash**: inputs arrive per port as `JSON_P` (the path of a JSON file) / `FILE_P` / `DIR_P`; the JSON written to `$TSUGUMI_OUTPUT` is the output, type-checked per port.
-- **R and Julia** (`rCard`, `juliaCard`): inputs and outputs are passed converted to JSON. A process is started per invocation, so resident workers do not help them. How to write them is in [Your first Card](CardGuide.md).
+- **R and Julia** (`rCard`, `juliaCard`): their interpreters live in the same ABI worker as C++/Python. An invocation starts a new interpreter unless `reuseWorker` is on, which keeps the interpreter and its module state; displays publish during execution. The list/Dict interface uses in-memory JSON conversion against each port’s FlatBuffers schema, without per-call processes or JSON files. How to write them is in [Your first Card](CardGuide.md).
 - What does not depend on the port contract (visualisation, logs, the run context) is gathered in the common runtime `libtsugumi_card.so`, so all that is built per Card is the type definitions and a thin adapter.
 
 ### Resident workers
 
-- A worker with `reuseWorker` (default `true`) stays resident across runs and keeps its state, static variables included (`onRunStart` / `on_run_start` is called before the first invocation of each run).
+- By default a Card keeps no state: `reuseWorker` is `false`, and every invocation gets a new worker (a new process, a new interpreter).
+- A worker of a Card with `reuseWorker = true` stays resident across invocations and runs and keeps its state, static variables included (`onRunStart` / `on_run_start` is called before the first invocation of each run). Each invocation records whether its worker was reused.
 - It ends automatically when its build conditions change, on failure or cancellation, after 10 minutes unused, above 2 GiB of memory, or when more than 32 are resident.
-- For a Card with `reuseWorker = false`, the new worker for next time is started ahead in the background (sandbox started, `.so` loaded, Python imports done) and kept waiting.
+- For a Card without `reuseWorker`, the new worker for next time is started ahead in the background (sandbox started, `.so` loaded, Python imports done, the R or Julia source loaded) and kept waiting.
 
 ### Another system (x86_64-linux)
 
@@ -152,7 +153,7 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
   - **Mac (the shared VM):** Rosetta when it is installed on the Mac. qemu (`qemu-user` from cache.nixos.org) only when asked for with `TSUGUMI_VM_X86=qemu`, for a Mac without Rosetta or to try the qemu path. The app never installs Rosetta itself.
   - **Linux:** whatever the system registered, such as `boot.binfmt.emulatedSystems` on NixOS (with Nix's `extra-platforms`).
 - Each invocation records the emulator that ran it (its path; qemu's includes its version), shown in the Info tab of the Card's run history. Rosetta and qemu need not give the same numbers, so the record tells them apart.
-- Every language works. bash, R and Julia Cards are programs the kernel hands to the emulator. C++ and Python Cards are a `main.so` the worker loads, so their build also makes a worker for that system (`worker` of the Nix SDK) from the Card's own nixpkgs, and the kernel runs it under the emulator: the worker and the Card share one glibc, libstdc++ and libpython. It is built once per nixpkgs and system, under emulation the first time (on an M3 Max: the first C++ Card's build stage took 2 min 16 s with Rosetta, the x86_64 compiler's download included, and the worker alone 4 min with qemu), and reused from the store after that by every such Card, whichever emulator built it.
+- Every language works. bash Cards are programs the kernel hands to the emulator. C++, Python, R and Julia Cards are a `main.so` the worker loads, so their build also makes a worker for that system (`worker` of the Nix SDK) from the Card's own nixpkgs, and the kernel runs it under the emulator: the worker and the Card share one glibc, libstdc++ and libpython. It is built once per nixpkgs and system, under emulation the first time (on an M3 Max: the first C++ Card's build stage took 2 min 16 s with Rosetta, the x86_64 compiler's download included, and the worker alone 4 min with qemu), and reused from the store after that by every such Card, whichever emulator built it.
 - Without an emulator, the run stops before building, saying what is missing.
 
 ### Outside access (Experimental)
@@ -291,7 +292,7 @@ How they differ from sticky notes: a sticky note is a memo for people, placed an
 While the Agent works, a thrush flies over the Canvas showing what it is doing (it does not take clicks).
 
 - Reading a Card, it perches on that Card; writing a Draft up into a code Card, it draws as if drawing a line; for a new connection it threads a string; running, it flies to the start Card. Its speech bubble says what it is doing now.
-- While the Agent writes a file into a save's arguments, the file name and the last few lines written appear next to that Card at the speed the model writes them (marked "before saving" or "saved"; they disappear when the save fails or a run starts; the timing is in `macOS/Sources/App/Presence/AgentPresence.swift` and `web/src/ui/writingPanel.tsx`).
+- While the Agent writes a file into a save's arguments, the file name and the last few received lines appear next to that Card without simulated typing. `PutSource` shows file content; `PatchSource` shows only the current replacement text, explicitly marked as a patch. The latest file or patch replaces the previous one immediately, and a late path reveals the content already received. On the Mac the bird plays its scenes one at a time, and the scenes of a change that was already saved (writing its Cards out, threading its wires) are not cut for the next file: that file's panel appears once they have played, with everything received by then. Panels say "before saving" until the save succeeds, disappear on failure/cancellation or when a run starts, and follow the Agent visibility setting. They take no clicks and hide below 50% canvas zoom. Helpers each have one panel in their own color.
 - When the work is split, a thrush of a different colour is added for each helper, and the parent Agent's thrush is gold, named "Agent".
 - Turn on "Draw thoughts" (the button under the input field) and a small model summarises the Agent's messages and tool results into one sentence for the speech bubble (it uses tokens apart from the Agent, so it asks the first time it is turned on).
 - Its look is chosen under "The Agent at work" in "Appearance" of the settings: a thrush, a dot or nothing.

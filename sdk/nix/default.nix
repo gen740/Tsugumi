@@ -91,7 +91,7 @@ let
       dir = sdkRoot + "/worker";
     in
     assert lib.assertMsg (builtins.pathExists dir)
-      "a C++ or Python Card of another system needs the worker's sources, installed with tsugumid (share/tsugumi/sdk/worker); this SDK has none";
+      "a package Card of another system needs the worker's sources, installed with tsugumid (share/tsugumi/sdk/worker); this SDK has none";
     pkgs.stdenv.mkDerivation {
       name = "tsugumi-worker";
       src = lib.fileset.toSource {
@@ -329,34 +329,55 @@ rec {
       '';
     };
 
-  # An R Card: `src/main.R` defines `main(ctx)` (sdk/r/tsugumi.R). R has no
-  # FlatBuffers generator, so the Card is a process that exchanges the port
-  # messages as JSON: `run` is a bash script and the result has no `sdk`.
-  # `packages` picks from nixpkgs' rPackages. `fonts`: what plots draw with
-  # (Latin, then Japanese); a Card has no system fonts in its sandbox.
+  # R and Julia Cards embed one interpreter in the resident ABI worker.
+  # Their list/Dict API uses the worker's in-memory FlatBuffers JSON adapter.
   rCard =
     {
       src,
+      name ? "tsugumi-r-card",
       packages ? (ps: [ ]),
-      fonts ? [ pkgs.dejavu_fonts pkgs.ipaexfont ],
+      fonts ? [
+        pkgs.dejavu_fonts
+        pkgs.ipaexfont
+      ],
+    }:
+    pkgs.stdenv.mkDerivation {
+      inherit name src;
+      buildInputs = [
+        pkgs.R
+        pkgs.rPackages.jsonlite
+      ]
+      ++ pkgs.rWrapper.recommendedPackages
+      ++ packages pkgs.rPackages;
+      dontConfigure = true;
+      buildPhase = ''
+        runHook preBuild
+        $CC -O2 -fPIC -shared -Wall -Wextra -Werror ${sdkRoot}/src/r_main.c -o $NIX_BUILD_TOP/main.so \
+          -I${sdkRoot}/include -I${pkgs.R}/lib/R/include -L${pkgs.R}/lib/R/lib -lR \
+          -Wl,-rpath,${pkgs.R}/lib/R/lib \
+          -DTSUGUMI_LIBR='"${pkgs.R}/lib/R/lib/libR${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
+          -DTSUGUMI_R_HOME='"${pkgs.R}/lib/R"' -DTSUGUMI_R_LIBS='"'"$R_LIBS_SITE"'"' \
+          -DTSUGUMI_R_FONTS='"${pkgs.makeFontsConf { fontDirectories = fonts; }}"' \
+          -DTSUGUMI_R_SDK='"'$out'/lib/tsugumi.R"' -DTSUGUMI_R_SOURCE='"'$out'/lib/card"'
+        runHook postBuild
+      '';
+      installPhase = ''
+        mkdir -p $out/lib/card
+        cp -r --no-preserve=mode ./. $out/lib/card/
+        cp ${sdkRoot}/r/tsugumi.R $out/lib/tsugumi.R
+        cp $NIX_BUILD_TOP/main.so $out/lib/main.so
+      '';
+    };
+
+  # Packages are fixed by the same nixpkgs Julia wrapper as standalone Cards.
+  juliaCard =
+    {
+      src,
+      name ? "tsugumi-julia-card",
+      packages ? [ ],
     }:
     let
-      r = pkgs.rWrapper.override { packages = [ pkgs.rPackages.jsonlite ] ++ packages pkgs.rPackages; };
-    in
-    ''
-      export FONTCONFIG_FILE=${pkgs.makeFontsConf { fontDirectories = fonts; }}
-      exec ${r}/bin/Rscript --vanilla ${sdkRoot + "/r/tsugumi.R"} ${src}
-    '';
-
-  # A Julia Card: `src/main.jl` defines `main(ctx)` (sdk/julia/tsugumi.jl),
-  # a process that exchanges JSON as rCard does. `packages` are names from the
-  # General registry, fixed at build time by julia-bin.withPackages.
-  juliaCard =
-    { src, packages ? [ ] }:
-    let
-      # Linux takes it from the binary cache. A macOS host (development only:
-      # the app runs Cards in the Linux VM) would run Julia's whole test suite
-      # first, which takes over half an hour.
+      # macOS host development avoids Julia’s expensive upstream install tests.
       base =
         if pkgs.stdenv.hostPlatform.isDarwin then
           pkgs.julia-bin.overrideAttrs { doInstallCheck = false; }
@@ -364,9 +385,32 @@ rec {
           pkgs.julia-bin;
       julia = if packages == [ ] then base else base.withPackages packages;
     in
-    ''
-      exec ${julia}/bin/julia --startup-file=no --history-file=no ${sdkRoot + "/julia/tsugumi.jl"} ${src}
-    '';
+    pkgs.stdenv.mkDerivation {
+      inherit name src;
+      dontConfigure = true;
+      # Runtime headers are external; keep warnings fatal for our shim.
+      buildPhase = ''
+        runHook preBuild
+        $CC -O2 -fPIC -shared -Wall -Wextra -Werror ${sdkRoot}/src/julia_main.c -o $NIX_BUILD_TOP/main.so \
+          -I${sdkRoot}/include -isystem ${base}/include/julia -L${base}/lib -ljulia \
+          -Wl,-rpath,${base}/lib \
+          -DTSUGUMI_LIBJULIA='"${base}/lib/libjulia${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
+          -DTSUGUMI_JULIA_ENV='"'$out'/lib/julia-env"' -DTSUGUMI_SHIM='"'$out'/lib/main.so"' \
+          -DTSUGUMI_JULIA_SDK='"'$out'/lib/tsugumi.jl"' -DTSUGUMI_JULIA_SOURCE='"'$out'/lib/card"'
+        # Keep only wrapper settings, never a builder's HOME or temporary depot.
+        JULIA_DEPOT_PATH= ${julia}/bin/julia --startup-file=no --history-file=no -e '
+          for key in ["JULIA_DEPOT_PATH", "JULIA_PROJECT", "JULIA_LOAD_PATH", "LD_LIBRARY_PATH", "FONTCONFIG_FILE", "PYTHONHOME", "PYTHONPATH", "PYTHON", "JULIA_PYTHONCALL_EXE", "JULIA_CONDAPKG_OFFLINE", "JULIA_CONDAPKG_BACKEND"]
+            haskey(ENV, key) && println(key, "=", ENV[key])
+          end' > $NIX_BUILD_TOP/julia-env
+        runHook postBuild
+      '';
+      installPhase = ''
+        mkdir -p $out/lib/card
+        cp -r --no-preserve=mode ./. $out/lib/card/
+        cp ${sdkRoot}/julia/tsugumi.jl $out/lib/tsugumi.jl
+        cp $NIX_BUILD_TOP/main.so $NIX_BUILD_TOP/julia-env $out/lib/
+      '';
+    };
 
   # Serializes the Card attribute set for tsugumid. Store paths in the
   # strings keep their closures alive through string context.

@@ -63,8 +63,8 @@ def test_which_systems_and_cards(tmp_path):
     with Daemon(root) as daemon:
         c = daemon.connect()
         assert "invalid_setting" in diagnostics(c, "unknown")
-        # bash, R and Julia run as programs the kernel hands to the emulator;
-        # C++ and Python in a worker built for that system.
+        # bash runs as a program the kernel hands to the emulator;
+        # C++, Python, R and Julia in a worker built for that system.
         for ok in ("py", "cc", "sh", "r"):
             assert "invalid_setting" not in diagnostics(c, ok), ok
         if NATIVE.endswith("-linux"):
