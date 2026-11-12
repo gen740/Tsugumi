@@ -50,6 +50,8 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
   case plotly = "visualization_plotly"
   case altair = "visualization_altair"
 
+  case marimo
+
   var id: String { rawValue }
   var isVisualization: Bool { self == .matplotlib || self == .plotly || self == .altair }
   var label: String {
@@ -58,6 +60,7 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .plotly: return String(localized: "Plotly（対話型 HTML）")
     case .altair: return String(localized: "Altair（対話型 HTML）")
     case .draft: return String(localized: "Draft（未実装の計画）")
+    case .marimo: return String(localized: "marimo ノートブック")
     case .python: return String(localized: "Python の処理")
     case .cpp: return String(localized: "C++ の処理")
     case .csharp: return String(localized: "C# の処理")
@@ -70,7 +73,7 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .logger: return String(localized: "記録")
     }
   }
-  var symbol: String { isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? ([.python, .cpp, .csharp].contains(self) ? .code : .draft)).symbol }
+  var symbol: String { isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? ([.python, .cpp, .csharp, .marimo].contains(self) ? .code : .draft)).symbol }
   /// A name for the new Card (its id; made unique).
   var baseName: String {
     switch self {
@@ -1426,6 +1429,10 @@ extension ProjectSession {
       for (file, text) in files where file != "_card.json" { putSource(dir + file, text) }
     case .matplotlib, .plotly, .altair:
       let files = VisualizationTemplates.files(t)!
+      set(try! JSONValue.parse(files["_card.json"]!), meta: try! JSONValue.parse(files["_meta.json"]!))
+      for (file, text) in files where file != "_card.json" && file != "_meta.json" { putSource(dir + file, text) }
+    case .marimo:
+      let files = MarimoTemplate.files
       set(try! JSONValue.parse(files["_card.json"]!), meta: try! JSONValue.parse(files["_meta.json"]!))
       for (file, text) in files where file != "_card.json" && file != "_meta.json" { putSource(dir + file, text) }
     case .draft:

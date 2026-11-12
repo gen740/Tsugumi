@@ -444,6 +444,18 @@
         "Artifacts"
       ],
       "field": "Programming and visualization"
+    },
+    {
+      "id": "marimo",
+      "path": "marimo",
+      "title": "marimo notebook → typed result",
+      "description": "Pass typed input and params into a notebook and retain its static HTML, figures and selected result.",
+      "tags": [
+        "Python",
+        "marimo",
+        "Artifacts"
+      ],
+      "field": "Programming and visualization"
     }
   ]
 }

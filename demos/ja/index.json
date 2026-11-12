@@ -444,6 +444,18 @@
         "Artifacts"
       ],
       "field": "プログラミングと可視化"
+    },
+    {
+      "id": "marimo",
+      "path": "marimo",
+      "title": "marimo ノートブック → 型付き結果",
+      "description": "型付き入力と params をノートブックへ渡し、静的 HTML・図・選択した結果を保存します。",
+      "tags": [
+        "Python",
+        "marimo",
+        "Artifacts"
+      ],
+      "field": "プログラミングと可視化"
     }
   ]
 }

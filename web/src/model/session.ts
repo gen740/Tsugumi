@@ -17,6 +17,7 @@ import { FigureState, figureMode } from './moduleThumbnails'
 import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
 import { Observable } from './observable'
 import { VisualizationTemplate, visualizationFiles, visualizationTemplates } from './visualizationTemplates'
+import marimoFiles from '../../../ui/templates/marimo.json'
 import { FlowDirection, prefs } from './prefs'
 import { cardPermissions } from './permissions'
 import { L, language } from '../i18n'
@@ -3060,6 +3061,10 @@ export class ProjectSession extends Observable {
         set(tryParse(csharpFiles['_card.json'])!)
         for (const [file, text] of Object.entries(csharpFiles)) if (file !== '_card.json') this.putSource(dir + file, text)
         break
+      case 'marimo':
+        set(tryParse(marimoFiles['_card.json'])!, tryParse(marimoFiles['_meta.json']))
+        for (const [file, text] of Object.entries(marimoFiles)) if (file !== '_card.json' && file !== '_meta.json') this.putSource(dir + file, text)
+        break
       case 'draft':
         set(obj([['template', 'draft']]), obj([['description', ''], ['content', '']]))
         break
@@ -3613,16 +3618,17 @@ export function definitionKind(def: J | undefined): CardKind {
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'csharp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
+export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'csharp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger' | 'marimo'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'csharp', label: L('C# の処理') },
   ...visualizationTemplates,
+  { id: 'marimo', label: L('marimo ノートブック') },
   { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
   { id: 'switch', label: L('スイッチ') },
   { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') }, { id: 'fork', label: L('分配') },
   { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'logger', label: L('記録') },
 ]
-export const templateIcon = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'chart.xyaxis.line' : KIND_ICON[t === 'python' || t === 'cpp' || t === 'csharp' ? 'code' : (t as CardKind)]
+export const templateIcon = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'chart.xyaxis.line' : KIND_ICON[t === 'python' || t === 'cpp' || t === 'csharp' || t === 'marimo' ? 'code' : (t as CardKind)]
 /** A name for the new Card (its id; made unique). */
 export const templateBaseName = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'visualization' : (t === 'python' || t === 'cpp' || t === 'csharp' ? 'card' : t)
 

@@ -211,6 +211,7 @@
 "macOS Keychain（このデバイスのみ・ロック解除中に使用）" = "macOS Keychain (this device only, used while unlocked)";
 "macOS が隔離した場所から起動しているため更新できません。Tsugumi.app を「アプリケーション」フォルダへ移してから開き直してください。" = "Tsugumi was opened from a location macOS isolates (App Translocation) and cannot update itself. Move Tsugumi.app to the Applications folder and open it again.";
 "macOS/Container/build-image.sh で作り直すか、アプリを入れ直してください。" = "Rebuild it with macOS/Container/build-image.sh, or reinstall the app.";
+"marimo ノートブック" = "marimo notebook";
 "root_type がありません" = "There is no root_type";
 "root_type の table %@ が見つかりません" = "The root_type table %@ is not found";
 "stderr への出力はありません" = "Nothing on stderr";

@@ -20,4 +20,5 @@ python.withPackages (ps: [
   ps.plotly
   ps.altair
   ps.vl-convert-python
+  ps.marimo
 ])

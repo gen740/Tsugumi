@@ -60,6 +60,7 @@ await import("./saveFailure")
 await import("./draftDisplays")
 
 await import("./nixSources")
+await import("./marimoTemplate")
 
 await import("./sessionRestore")
 await import("./sessionConnect")
