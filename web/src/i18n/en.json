@@ -1248,5 +1248,6 @@
  "Card 間の Nix 参照はありません": "No Nix references between Cards.",
  "参照を解決できません。Nix 定義と診断を確認してください。": "This reference is invalid. Check the Nix definition and diagnostics.",
  "Nix 定義を開く": "Open Nix definition",
- "一覧": "List"
+ "一覧": "List",
+ "C# の処理": "C# Card"
 }
