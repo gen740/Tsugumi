@@ -170,6 +170,26 @@ def main(ctx):
 
 As long as the input and output types are the same, what is inside can be replaced while the wires on the Canvas and the Cards around it stay as they are.
 
+### Python, with plain objects
+
+The generated Python classes also come in an object form (`NumberT`, `ResultT`, `ParamsT`): plain attributes named after the schema's fields (`photon_count` becomes `photonCount`), and `Pack` to build an output. `tsugumi.contract` gives an input or the params in that form without importing the class by name, and lists the Card's ports (`contract.ports()`, `contract.port("number")["kind"]`). It is meant for code shared by many Cards, which cannot know the port types when it is written.
+
+`definitions/multiply/src/main.py` (Python objects)
+
+```python
+from outputs.result.hello.Result import ResultT
+from tsugumi import contract
+
+def main(ctx):
+    n = contract.input_object(ctx, "number").value
+    factor = contract.params_object(ctx).factor
+    result = ResultT()
+    result.value = n * factor
+    b = ctx.builder()
+    ctx.output("result", b, result.Pack(b))
+    ctx.display_text(f"{n} × {factor} = {n * factor}")
+```
+
 ### bash
 
 Delete `src/`, set `language` to `bash`, and write a string in `run` of `default.nix`. Inputs are `$JSON_<PORT>` (the path of a JSON file); write the output as JSON to `$TSUGUMI_OUTPUT`.
