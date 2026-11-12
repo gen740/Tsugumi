@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import ast
 import html
-import importlib
 import json
 import keyword
 import os
@@ -32,17 +31,13 @@ def _plain(value):
 
 def bindings(ctx, mapping):
     """Resolve notebook variable -> input.<port>.<field> or param.<field>."""
-    from tsugumi import Failure
-    from params.Params import ParamsT
+    from tsugumi import Failure, contract
     if not isinstance(mapping, dict):
         raise Failure('validation_failed', 'bindings must be a JSON object mapping variable names to input/param paths')
-    contract = json.loads((Path(__file__).parent.parent / '_contract.json').read_text())
-    values = {'input': {}, 'param': _plain(ParamsT.InitFromObj(ctx.params()))}
-    for port in contract['inputs']:
-        module = importlib.import_module(port['type'])
-        name = port['type'].rsplit('.', 1)[-1]
-        root = ctx.input(port['name'], getattr(module, name))
-        values['input'][port['name']] = _plain(getattr(module, name + 'T').InitFromObj(root))
+    values = {
+        'input': {port['name']: _plain(contract.input_object(ctx, port['name'])) for port in contract.ports()},
+        'param': _plain(contract.params_object(ctx)),
+    }
     result = {}
     for name, path in mapping.items():
         if not name.isidentifier() or keyword.iskeyword(name) or not isinstance(path, str):

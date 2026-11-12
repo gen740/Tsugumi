@@ -80,13 +80,49 @@ size, SHA-256) in the display or the log.
 Params: `{"name": "low", "type": "double", "data": 600}`; types `bool`, `int64`, `uint64`, `double`,
 `string` and their arrays (`double[]`, ...). Python reads them with `ctx.params().Low()`.
 
+A Card keeps no state: every invocation runs in a new worker (a new process and interpreter), so
+globals, statics, loaded modules, `options()` and the random number generator's position never reach the
+next invocation or run. Write Cards that way, and pass what the next step needs in a message. Add
+`"reuseWorker": true` only when the Card must remember across invocations (a running window of a
+stream, say) or is called many times in a loop and should not start an interpreter each time; one
+worker then serves later invocations and runs, all of the above carries over, and per-run state is reset
+in `on_run_start(ctx)` (C++: `onRunStart()`), called before the first invocation of each run. The working
+directory and environment variables are set again for every call either way.
+
 ### default.nix
 
 - Python: `demos/report/definitions/generate/default.nix`. Packages from nixpkgs:
   `inputs.tsugumi.pythonCard { inherit sdk; src = ./src; packages = ps: [ ps.numpy ps.astropy ps.pillow ]; }`.
+  Prefer `packages`. A package or version nixpkgs lacks comes from PyPI only through an explicit lock
+  (see "Python packages from PyPI" below); never write `pip install` or fetch packages when a Card runs.
 - C++: `demos/collatz/externals/collatz-cpp/definitions/halve/default.nix`. Libraries:
   `inputs.tsugumi.cppCard { inherit sdk; src = ./src; buildInputs = [ pkgs.cfitsio ]; }`.
 - bash: `demos/report/externals/archive/definitions/copy/default.nix` (`run` is the script text).
+
+### Python packages from PyPI (uv lock)
+
+Nothing is resolved when a Card is built. A Card gets PyPI packages only when its `default.nix` names
+its own lock and the hash of the wheels: `pythonCard { inherit sdk; src = ./src; lock = ./uv.lock;
+hash = "sha256-..."; }`. The lock belongs to the Card: `pyproject.toml` and `uv.lock` sit beside
+`default.nix`. One without the other, a lock that no longer matches `pyproject.toml` and a wrong hash
+fail with `nix_failed` and a message. When the user asks for such a package, make the lock yourself:
+
+1. Save `definitions/<card>/pyproject.toml`: `[project]`, `name = "card"`, `version = "0"`,
+   `requires-python = ">=3.11"`, `dependencies = ["tabulate==0.9.0"]` (pin exact versions).
+2. Make the lock with the project shell (needs Shell access; ask the user to grant it, or to run the
+   command in the project's terminal, if you do not have it):
+   `cd definitions/<card> && nix shell nixpkgs#uv nixpkgs#python3 --command env UV_PYTHON_DOWNLOADS=never uv lock`.
+   The first call downloads uv and may reach the time limit: run it again. Then reload the project
+   (the file was written by a command) and read `uv.lock` to check that it names the packages.
+3. Save `default.nix` with `lock = ./uv.lock; hash = pkgs.lib.fakeHash;` and run the Card. The Card's build log contains `hash mismatch` and `got: sha256-...`. Save `default.nix` again with
+   `hash = "<that value>";` and run. Never invent a hash and never copy one from another Card.
+4. To change a dependency, edit `pyproject.toml` and repeat 2 and 3; the old hash is refused.
+
+Only wheels are installed (no wheel for the Card's Python and system: use `packages` from nixpkgs
+instead, and say so). Compiled wheels have one hash per system: `hash = { aarch64-linux = "sha256-...";
+x86_64-linux = "sha256-..."; };` (a missing system fails and names itself; run on it to get its hash).
+A compiled wheel needing another shared library: `libraries = [ pkgs.libGL ];`. Tell the user which
+packages and versions the lock pins.
 
 ### Data fixed by Nix
 
@@ -164,7 +200,7 @@ beyond that, plot fewer points or use matplotlib (an image). Charts cannot load 
 The whole SDK: `sdk/python/tsugumi/__init__.py`. More: `demos/report/definitions/aggregate`
 (reads a File input, makes a table), `demos/collatz/definitions/compare`.
 
-`src/main.py` is imported once when the worker starts, before any `preRun`; the worker stays, and
+`src/main.py` is imported once when the worker starts, before any `preRun`, and
 `preRun` runs before every call. So `preRun`'s exports and `cd` reach `main` (in `os.environ` too)
 but not the module's top. Native libraries often read their settings as they load: limit threads
 at the top of `main.py`, before the imports, and it lasts for the worker:
@@ -213,7 +249,7 @@ Params are in `$TSUGUMI_PARAMS_JSON` (the JSON text itself). To show something, 
 
 `_card.json`: `{"language": "r", ...}`; `default.nix`: `run = inputs.tsugumi.rCard { src = ./src; packages = ps: [
 ps.survival ps.ggplot2 ]; };` (from nixpkgs' `rPackages`). No `sdk`, no generated classes: messages and params are
-lists, exchanged as JSON and checked against the port's type by the worker.
+lists, converted in memory and checked against the port's FlatBuffers type by the worker.
 
 ```r
 main <- function(ctx) {
@@ -225,16 +261,17 @@ main <- function(ctx) {
 ```
 
 `ctx$params$low`, `ctx$output_directory`, `ctx$temporary_directory`. `stop("why")` fails the Card and
-goes to its log; `print()` and `message()` go to the log. One display: the last shown. Call `set.seed` yourself. An
-integer from 2^53 to 2^63 is read as a string (a double cannot hold it); larger ones are rounded.
+goes to its log; `print()` and `message()` go to the log. One display: the last shown. Call `set.seed` yourself: a
+new interpreter starts unseeded, and with `reuseWorker: true` a later run continues the earlier run's random sequence. An
+integer outside the exact double range (±(2^53 − 1)) is read as a decimal string, including the full signed and unsigned 64-bit ranges.
 A `long`/`ulong` field takes an R integer (`27L`) or a string of digits (`sprintf("%.0f", x)`), not a double: `27` is written as
 `27.0` and the type rejects it.
 
 ### Julia (`src/main.jl`)
 
 `_card.json`: `{"language": "julia", ...}`; `default.nix`: `run = inputs.tsugumi.juliaCard { src = ./src; };`, with
-`packages = [ "JuMP" ];` for General registry packages (fixed at build time). Prefer the standard library when it
-does the job: packages take long to build.
+the standard library. The existing `packages = [ "JuMP" ];` path uses nixpkgs import-from-derivation and is
+currently rejected by the Card evaluator; do not rely on registry package resolution.
 
 ```julia
 function main(ctx)

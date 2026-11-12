@@ -18,6 +18,7 @@ await import("./folderAttachments")
 await import("./switchCard")
 
 await import("./table")
+await import("./artifactHTML")
 
 await import("./draft")
 await import("./comments")
@@ -58,6 +59,7 @@ await import("./saveFailure")
 await import("./draftDisplays")
 
 await import("./nixSources")
+await import("./marimoTemplate")
 
 await import("./sessionRestore")
 await import("./sessionConnect")
@@ -67,4 +69,5 @@ await import("./guideScript")
 await import("./demoReplay")
 await import("./evidence")
 
-await import("./marimoTemplate")
+await import('./nixReferences')
+await import('./nixReferenceOverlay')

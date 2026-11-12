@@ -124,6 +124,44 @@ A Card's summary goes in `_meta.json`. It appears on the Canvas and in the Card'
 
 The environment goes in `default.nix`. To use `numpy` and the like, add `packages = ps: [ ps.numpy ];` to `pythonCard`.
 
+A package that nixpkgs does not have, or a version it does not carry, comes from PyPI through a lock that belongs to the Card. Nothing is resolved when a Card is built: a Card uses PyPI packages only when its `default.nix` names both the lock and the hash of what the lock fetches.
+
+1. Put a `pyproject.toml` in the Card's folder, beside `default.nix`:
+
+   ```toml
+   [project]
+   name = "card"
+   version = "0"
+   requires-python = ">=3.11"
+   dependencies = ["tabulate==0.9.0"]
+   ```
+
+2. Make `uv.lock` beside it. In the project's terminal (the lock is made by uv, which needs the network once):
+
+   ```sh
+   cd definitions/multiply
+   nix shell nixpkgs#uv nixpkgs#python3 --command env UV_PYTHON_DOWNLOADS=never uv lock
+   ```
+
+3. Name the lock in `default.nix`, with a placeholder hash:
+
+   ```nix
+   run = inputs.tsugumi.pythonCard {
+     inherit sdk;
+     src = ./src;
+     lock = ./uv.lock;
+     hash = pkgs.lib.fakeHash;
+   };
+   ```
+
+4. Run the Card once. The Card’s build log reports `hash mismatch ... got: sha256-...`. Replace `pkgs.lib.fakeHash` with that hash (`hash = "sha256-...";`) and run again.
+
+From then on the Card is built from exactly those files, without the network. To change a dependency, edit `pyproject.toml`, repeat steps 2 to 4, and keep `pyproject.toml`, `uv.lock` and `default.nix` together in the Card's folder. A lock that no longer matches `pyproject.toml`, a lock without a hash and a hash that does not match are errors that say so; an old hash never lets the previous packages through.
+
+- Only wheels are installed. A package that has no wheel for the Card's Python and system fails with a message; take such a package from nixpkgs with `packages`. `packages` and `lock` can be used together, and a locked package wins over one of the same name from nixpkgs.
+- Compiled wheels differ per system, so their hash does too. Give one per system the Card is built for: `hash = { aarch64-linux = "sha256-..."; x86_64-linux = "sha256-..."; };`.
+- A compiled wheel that loads a shared library beyond the C and C++ runtimes and zlib gets it from `libraries = [ pkgs.libGL ];`.
+
 `definitions/multiply/default.nix`
 
 ```nix
@@ -169,6 +207,26 @@ def main(ctx):
 ## Writing the same Card in another language
 
 As long as the input and output types are the same, what is inside can be replaced while the wires on the Canvas and the Cards around it stay as they are.
+
+### Python, with plain objects
+
+The generated Python classes also come in an object form (`NumberT`, `ResultT`, `ParamsT`): plain attributes named after the schema's fields (`photon_count` becomes `photonCount`), and `Pack` to build an output. `tsugumi.contract` gives an input or the params in that form without importing the class by name, and lists the Card's ports (`contract.ports()`, `contract.port("number")["kind"]`). It is meant for code shared by many Cards, which cannot know the port types when it is written.
+
+`definitions/multiply/src/main.py` (Python objects)
+
+```python
+from outputs.result.hello.Result import ResultT
+from tsugumi import contract
+
+def main(ctx):
+    n = contract.input_object(ctx, "number").value
+    factor = contract.params_object(ctx).factor
+    result = ResultT()
+    result.value = n * factor
+    b = ctx.builder()
+    ctx.output("result", b, result.Pack(b))
+    ctx.display_text(f"{n} × {factor} = {n * factor}")
+```
 
 ### bash
 
@@ -243,7 +301,7 @@ auto run(Card::Input& input) -> Card::Output {
 
 ### R
 
-R has no FlatBuffers code generator, so an R Card runs in a separate process and exchanges port values as JSON (the worker converts them by the port's type).
+An R Card embeds R in the Card's worker. Messages are lists: the worker converts them in memory using the port’s FlatBuffers type, with no JSON files. Every invocation starts a new interpreter unless the Card turns `reuseWorker` on ([worker lifecycle](#r-and-julia-worker-lifecycle)).
 
 `definitions/multiply/_card.json` (R)
 
@@ -278,7 +336,7 @@ Packages come from nixpkgs' `rPackages` (`packages = ps: [ ps.survival ps.ggplot
 
 ### Julia
 
-A Julia Card also runs in a separate process and exchanges values as JSON.
+A Julia Card embeds Julia in the Card's worker. Messages are Dicts, converted in memory using each port’s FlatBuffers type. Every invocation starts a new interpreter unless the Card turns `reuseWorker` on.
 
 `definitions/multiply/_card.json` (Julia)
 
@@ -309,7 +367,25 @@ function main(ctx)
 end
 ```
 
-It runs with the standard library alone. Packages from the General registry are pinned at build time with `packages = [ "JuMP" ];`. For a figure, pass a Vega-Lite spec as a Dict to `display_vegalite(ctx, spec)` and it is shown as an interactive chart.
+It runs with the standard library alone. The Nix helper retains `packages = [ "JuMP" ];`, but the pinned nixpkgs implementation uses import-from-derivation, which the Card evaluator disables; registry package resolution is currently rejected before the build. This limitation is independent of interpreter reuse. For a figure, pass a Vega-Lite spec as a Dict to `display_vegalite(ctx, spec)` and it is shown as an interactive chart.
+
+### R and Julia worker lifecycle
+
+**A Card keeps no state by default.** Every invocation gets a new worker and a new interpreter, which loads the source and then calls `main(ctx)`: nothing an earlier invocation or run did (globals, loaded packages, `options()`, the position of the random number generator) reaches the next one. Run it again by hand with the same inputs and it starts from the same place.
+
+**To keep state, set `reuseWorker: true` in `_card.json`** ("Keep the worker's state" in the Card's settings). The Card then loads its source once and the same interpreter serves later invocations and runs. This is also what makes a Card that is called many times in a loop fast. What carries over from one call to the next:
+
+- globals and module-level variables, and anything `library()` / `using` loaded or redefined;
+- R's `options()`, `par()` and open graphics devices;
+- the position of the random number generator (`.Random.seed`, Julia's default RNG): a second run continues the sequence where the first stopped unless the Card seeds it, in `main(ctx)` or in the hook below.
+
+The working directory and environment variables do not carry over: the worker sets both again for every call. The optional `on_run_start(ctx)` hook runs once before the first invocation of each run; reset per-run state there. Each invocation's record says whether its worker had served an earlier call. The kept interpreter ends when the Card's source or packages change, after a failed, stopped or timed out call, and under the limits in [Resident workers](features.md#resident-workers); the next call then starts a new one.
+
+Source loading happens before any invocation; read inputs and params inside `main(ctx)` or `on_run_start(ctx)`.
+
+Every invocation receives a fresh context. Do not retain the context or use its functions from background threads: interpreter calls and host callbacks belong to the worker's main thread. `ctx$cancelled()` / `cancelled(ctx)` allow cooperative stopping; `ctx$remaining_ms()` / `remaining_ms(ctx)` return the remaining deadline in milliseconds, or `-1` without a deadline. A stop or expired deadline also terminates an uncooperative worker. Exceptions fail the invocation and appear in its log.
+
+Displays publish immediately, including before a long calculation finishes. Each new display replaces the previous one. File and Directory inputs still use the worker's read-only paths, and outputs belong in the invocation's `output_directory`; those paths change on the next call. Nix continues to pin the interpreter and packages.
 
 ## What to read next
 
