@@ -149,6 +149,7 @@ class GatewayTest(unittest.TestCase):
                      "KillMode=control-group", "MemoryAccounting=yes", "CPUAccounting=yes"):
             self.assertIn(f"--property={prop}", argv)
         self.assertEqual(argv[:2] + [argv[3]], ["systemd-run", "--user", "--no-block"])
+        self.assertIn(f"--setenv=PATH={os.environ.get('PATH', os.defpath)}", argv)
         tail = argv[argv.index("--") + 1:]
         self.assertEqual(tail, [os.path.abspath(sys.executable), os.path.abspath(rg.__file__),
                                 "--supervise", os.path.abspath(self.root), job, WORKER])

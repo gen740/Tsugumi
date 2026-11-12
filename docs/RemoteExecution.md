@@ -42,6 +42,8 @@ Progress reporting during SSH jobs is tracked in [SSH execution follow-ups](http
 
 The gateway keeps job metadata and content-addressed blobs for build inputs, input values and files, and results, including output files, logs and displays. There is no automatic expiry. Deleting a run from the Workflow's history does not remove this data from the SSH host.
 
+Archiving incompatible local run history leaves existing SSH jobs on the gateway. The new history does not reconnect to those jobs. Whenever possible, confirm remote jobs have finished or been cancelled before archiving. The gateway's files remain available to the SSH host administrator.
+
 Each job builds in a private Nix store under the gateway's work directory. The gateway attempts to remove it when the supervisor exits normally. A forced stop or failed cleanup can leave that workspace on disk.
 
 To remove a gateway's data, stop submitting jobs and wait for its active jobs to finish or cancel them. On the SSH host, delete the gateway's state directory described above, or the directory set by `TSUGUMI_REMOTE_STATE_DIR`. This removes jobs and blobs for every project using that directory. Once the directory is deleted, clients can no longer reconnect to those jobs.

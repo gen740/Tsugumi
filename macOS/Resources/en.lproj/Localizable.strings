@@ -636,7 +636,7 @@
 "並列実行数: %lld" = "Parallel runs: %lld";
 "中断" = "Interrupted";
 "中止" = "Cancel";
-"互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。" = "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app.";
+"互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 実行中の SSH ジョブは実行先で継続し、新しい履歴には引き継がれません。" = "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app. Running SSH jobs continue on the remote host and will be unavailable in the new history.";
 "今すぐ確認" = "Check Now";
 "今の内容に名前を付けて残します（git の tag）。" = "Names what you have now as a version (a git tag).";
 "今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。" = "What you have now is kept as a version first, then the project becomes this version. Changing and running from here starts a new branch.";

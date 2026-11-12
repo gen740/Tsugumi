@@ -289,7 +289,7 @@ function EnvironmentProblemView({ session, onSwitchProject }: { session: Project
   if (historyMismatch) {
     p = { icon: 'clock.arrow.circlepath', color: 'orange', title: L('実行履歴の形式が異なります'),
       message: L('実行履歴の形式は {0} です。このバージョンの Tsugumi には {1} が必要です。', historyMismatch.found, historyMismatch.expected),
-      recovery: L('互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。'),
+      recovery: L('互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 実行中の SSH ジョブは実行先で継続し、新しい履歴には引き継がれません。'),
       log: '', canStop: true }
   } else if (env.state === 'failed') {
     const log = env.log ?? ''

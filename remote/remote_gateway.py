@@ -286,6 +286,9 @@ class Gateway:
         cpu_percent = f"{whole}.{fraction}" if fraction else str(whole)
         return [
             "systemd-run", "--user", f"--unit={self.unit(job_id)}", "--no-block", "--expand-environment=no",
+            # The user manager has its own PATH. Keep the gateway package's Nix
+            # executable available to the embedded evaluator's build hook.
+            f"--setenv=PATH={os.environ.get('PATH', os.defpath)}",
             "--property=Type=exec",
             f"--property=CPUQuota={cpu_percent}%",
             "--property=CPUQuotaPeriodSec=1s",
