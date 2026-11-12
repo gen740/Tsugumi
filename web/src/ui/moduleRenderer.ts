@@ -9,7 +9,8 @@ export function viewerLib(lib: string): Promise<string | undefined> {
 
 /** Only this hidden, sandboxed frame renders canvas thumbnails. Expanded views
  *  keep their own interactive frame. An idle or failed renderer is destroyed. */
-class FrameRenderer implements ThumbnailRenderer {
+export class FrameRenderer implements ThumbnailRenderer {
+  constructor(private timeoutMs = 30000) {}
   private frame?: HTMLIFrameElement
   private ready?: Promise<void>
   private readyResolve?: () => void
@@ -58,7 +59,7 @@ class FrameRenderer implements ThumbnailRenderer {
             frame.contentWindow?.postMessage({ name: request.name, json: request.json, interactive: false, snapshot: true, width: request.width, height: request.height, requestId: id }, '*')
           })
         })(),
-        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Chart preview timed out')), 30000) }),
+        new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Chart preview timed out')), this.timeoutMs) }),
       ])
       // Composite Vega figures may be larger than the requested frame. Count
       // their actual PNG dimensions, not the frame size, against the cache.

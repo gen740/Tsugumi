@@ -326,6 +326,18 @@ def test_trigger_setting(tmp_path, core_factory):
     assert "invalid_setting" in diagnostics(c, ["out"])
 
 
+def test_display_mode_setting(tmp_path, core_factory):
+    """displayMode is update or live; anything else is reported on the Card."""
+    for value, valid in (("update", True), ("live", True), ("smooth", False)):
+        root = tmp_path / value
+        builtin_project(root)
+        card = json.loads((root / "definitions" / "out" / "_card.json").read_text())
+        card["displayMode"] = value
+        put(root / "definitions" / "out" / "_card.json", json.dumps(card))
+        c = core_factory(project_root=root).connect()
+        assert ("invalid_setting" not in diagnostics(c, ["out"])) == valid, value
+
+
 def test_output_types_lists_and_rewrites_a_port(tmp_path, core_factory):
     """Output type edits preserve unrelated schema text and reject incompatible types."""
     root = tmp_path / "p"

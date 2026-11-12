@@ -274,6 +274,8 @@ class Builder {
     boolean(d.reuse_worker, s.reuse_worker);
     boolean(d.network, s.network);
     boolean(d.markdown, s.markdown);
+    if (const auto* v = schema::get(d.display_mode); v && *v != "update" && *v != "live")
+      n.diags.push_back(diag(n.path, "invalid_setting", "displayMode must be update or live"));
     if (const auto* v = schema::get(d.system)) {
       if (*v == "x86_64-linux" || *v == "aarch64-linux") s.system = *v == native_system() ? "" : *v;
       else n.diags.push_back(diag(n.path, "invalid_setting", "system must be x86_64-linux or aarch64-linux"));

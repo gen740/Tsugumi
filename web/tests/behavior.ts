@@ -69,3 +69,4 @@ await import("./evidence")
 
 await import('./moduleThumbnails')
 await import('./moduleViewer')
+await import('./figurePreview')

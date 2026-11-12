@@ -58,3 +58,18 @@ for (const zoom of [0.83, 0.31, 1.21, 2]) {
   assert.equal(settledThumbnailSize(Math.round(264 * zoom), Math.round(200 * zoom), zoom, size), size)
 }
 assert.notDeepEqual(settledThumbnailSize(500, 300, 1, size), size, 'resizing creates a new preview')
+
+{
+  // A figure followed live keeps the renderer loaded between its revisions;
+  // once nothing asks for that any more, the usual idle release applies again.
+  let closed = 0
+  const renderer = { async draw(request: ThumbnailRequest) { return { image: request.key, pixelBytes: 4 } }, close() { closed++ } }
+  const queue = new ModuleThumbnailQueue(renderer, 1000, 5)
+  await queue.request(req('live-1'), new AbortController().signal, 60)
+  await sleep(25); assert.equal(closed, 0, 'kept for the next revision')
+  await queue.request(req('live-2'), new AbortController().signal, 60)
+  await sleep(25); assert.equal(closed, 0)
+  await sleep(60); assert.equal(closed, 1, 'released once the stream stopped')
+  await queue.request(req('still'), new AbortController().signal)
+  await sleep(25); assert.equal(closed, 2, 'a figure not followed does not hold it')
+}

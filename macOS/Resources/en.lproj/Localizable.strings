@@ -377,6 +377,7 @@
 "クリックでスキップ" = "Click to skip";
 "クリックで次のヒント" = "Click for the next tip";
 "グラフの描画が終わりませんでした" = "The chart did not finish drawing";
+"グラフの更新" = "Chart updates";
 "グラフを表示するには？" = "How do I show a chart?";
 "グリッド" = "Grid";
 "グリッドを表示（移動時に吸着）" = "Show grid (snap when moving)";
@@ -550,6 +551,7 @@
 "モデル一覧を取得" = "List Models";
 "モデル（接続先: %@）" = "Model (provider: %@)";
 "ライト" = "Light";
+"ライブ（実行中も追う）" = "Live (follow while running)";
 "リリースの一覧（GitHub）" = "Releases (GitHub)";
 "ログ" = "Log";
 "ログのフォルダ" = "Log folder";
@@ -958,6 +960,8 @@
 "日時" = "Date";
 "日本語" = "日本語";
 "更新" = "Update";
+"更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。" = "Update: shows the last chart, dimmed while this Card or a Card upstream of it is running, and replaces it when the new result arrives. Live: replaces the chart with each one that arrives during the run, keeping the previous one on screen until the next is ready.";
+"更新（実行中は薄く表示）" = "Update (dimmed while running)";
 "書き出す…" = "Export…";
 "書き方を調べています" = "Looking up how to write it";
 "書き込み" = "Write";

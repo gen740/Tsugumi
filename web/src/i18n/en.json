@@ -1239,5 +1239,10 @@
  "先頭 64 KiB を表示": "Showing the first 64 KiB",
  "バイナリの成果物です": "This artifact contains binary data",
  "グラフのプレビュー（拡大して操作）": "Chart preview (expand to interact)",
- "グラフのプレビューを作成中…": "Preparing chart preview…"
+ "グラフのプレビューを作成中…": "Preparing chart preview…",
+ "グラフのプレビュー（前の結果。更新を待っています）": "Chart preview (previous result, waiting for the update)",
+ "グラフの更新": "Chart updates",
+ "更新（実行中は薄く表示）": "Update (dimmed while running)",
+ "ライブ（実行中も追う）": "Live (follow while running)",
+ "更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。": "Update: shows the last chart, dimmed while this Card or a Card upstream of it is running, and replaces it when the new result arrives. Live: replaces the chart with each one that arrives during the run, keeping the previous one on screen until the next is ready."
 }
