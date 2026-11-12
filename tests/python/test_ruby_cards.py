@@ -248,7 +248,7 @@ def test_ruby_gems_are_locked_built_offline_and_native_extensions_load(ruby_proj
 
 @pytest.mark.parametrize('expression,kind', [
     ("ctx.display_text('text')", 1),
-    ("ctx.display_markdown('**bold**')", 2),
+    ("ctx.display_markdown('**bold**')", 1),
     ("ctx.display_image(['89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082'].pack('H*'), alt: 'pixel')", 5),
     ("ctx.display_plotly(data: [{x: [1], y: [2], type: 'scatter'}])", 7),
 ])
@@ -259,6 +259,8 @@ def test_ruby_display_bridge_owns_bytes(ruby_project, expression, kind):
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     display = c.call('RunRecordRequest', runId=rid, card=path('ruby')).record.display
     assert display.valueType == kind
+    if 'display_markdown' in expression:
+        assert display.value.markdown
     if kind == 5:
         assert bytes(display.value.data).startswith(b'\x89PNG')
         assert text(display.value.alt) == 'pixel'
