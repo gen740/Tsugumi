@@ -71,5 +71,8 @@ await import("./evidence")
 await import('./environments')
 
 await import('./runComparison')
+await import('./moduleThumbnails')
+await import('./moduleViewer')
+await import('./figurePreview')
 await import('./nixReferences')
 await import('./nixReferenceOverlay')

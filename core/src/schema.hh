@@ -143,6 +143,11 @@ struct CardDefinition {
   // "aarch64-linux". Default: this machine's. Another one runs emulated.
   Opt<"system", v::String> system;
   Opt<"markdown", v::Bool> markdown;         // logger: show the received text as Markdown
+  // How a figure on the canvas follows the Card's results: "update" (the
+  // default: the last figure, dimmed while the Card or one upstream runs) or
+  // "live" (each revision of a running Card replaces the last one in place).
+  // The clients read it; core only checks the value.
+  Opt<"displayMode", v::String> display_mode;
   Opt<"hostFolders", v::Array<Obj<HostFolder>>> host_folders;  // Experimental
 };
 
