@@ -357,6 +357,7 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
   const auto offset = r->offset().value_or(0);
   const auto limit = page_limit(r->limit());
   if (offset > INT64_MAX) throw Failed(FailureKind::invalid_request, "offset is too large");
+  const auto query = r->query() ? r->query()->str() : std::string{};
   FBB b;
   std::vector<flatbuffers::Offset<flatbuffers::String>> paths;
   uint64_t total = 0;
@@ -365,10 +366,18 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
     environment.bind(1, run).bind(2, id);
     if (!environment.step()) throw Failed(FailureKind::not_found, "unknown run environment");
     total = environment.u64(0);
-    auto q = db.prepare(
-        "SELECT path FROM environment_paths WHERE run_id=? AND environment_id=? "
-        "AND position>=? ORDER BY position LIMIT ?");
-    q.bind(1, run).bind(2, id).bind(3, offset).bind(4, static_cast<int>(limit));
+    const auto predicate = std::string{
+        "FROM environment_paths AS p WHERE run_id=? AND environment_id=? "
+        "AND instr(lower(path), lower(?))>0 "};
+    if (!query.empty()) {
+      auto count = db.prepare("SELECT count(*) " + predicate);
+      count.bind(1, run).bind(2, id).bind(3, query);
+      count.step();
+      total = count.u64(0);
+    }
+    auto q = db.prepare("SELECT path " + predicate + "ORDER BY position LIMIT ? OFFSET ?");
+    q.bind(1, run).bind(2, id).bind(3, query)
+        .bind(4, static_cast<int>(limit)).bind(5, offset);
     while (q.step()) {
       const auto path = q.text(0);
       if (path.size() + 16 > kPagePayload)

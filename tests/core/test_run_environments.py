@@ -285,3 +285,26 @@ def test_interrupted_execution_keeps_its_environment_after_a_crash(core_factory,
     shutil.copytree(project, copied_project, symlinks=True)
     restored = core_factory(project_root=copied_project, history_dir=tmp_path / "restored-history")
     assert inventory(restored.connect(), run_id)[0] == environment_id
+
+
+def test_dependency_search_is_literal_case_insensitive_and_paginated(core_factory, project, tmp_path):
+    """Search covers the recorded closure, with offsets and totals over matching paths."""
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    worker_project(client, project, tmp_path, [])
+    run_id = run(client)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    environment_id, paths = inventory(client, run_id)
+    for query in ["", "NIX", paths[-1].split("/")[-1], "%", "_", "'", "no-such-package"]:
+        expected = [p for p in paths if query.lower() in p.lower()]
+        found = []
+        offset = 0
+        while True:
+            page = client.call("RunEnvironmentPathsRequest", runId=run_id,
+                               environmentId=environment_id, query=query, offset=offset, limit=1)
+            assert page.total == len(expected)
+            found.extend(text(p) for p in page.paths)
+            if page.nextOffset is None:
+                break
+            assert page.nextOffset > offset
+            offset = page.nextOffset
+        assert found == expected
