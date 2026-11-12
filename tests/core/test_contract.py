@@ -312,7 +312,7 @@ def test_ui_layout_fields_and_draft_outputs(client):
     only (no execution change); a Draft can declare provisional outputs."""
     snap = client.open().snapshot
     layout = {
-        "cards": {"src": {"x": 0, "y": 0, "collapsed": True}},
+        "cards": {"src": {"x": 0, "y": 0, "collapsed": True, "inputOrder": ["b", "a"], "outputOrder": ["out"]}},
         "notes": [{"id": "n", "scope": "", "text": "**memo**", "color": "blue", "x": 1, "y": 2, "width": 240, "height": 120}],
         "displays": {"src": {"x": 0, "y": 200, "width": 300, "height": 160, "hidden": True}},
         "groups": [{"id": "g", "scope": "", "name": "G", "color": "green", "cards": ["src"],
@@ -322,6 +322,7 @@ def test_ui_layout_fields_and_draft_outputs(client):
                       changes=[change("SetLayout", json=json.dumps(layout))])
     assert json.loads(text(res.delta.layoutJson))["groups"][0]["name"] == "G"
     assert res.executionRev == snap.executionRev  # layout never re-resolves computation
+    assert json.loads(text(res.delta.layoutJson))["cards"]["src"]["inputOrder"] == ["b", "a"]
     with pytest.raises(RpcFailure) as e:
         client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
                     changes=[change("SetLayout", json=json.dumps({"groups": [{"id": "g", "typo": 1}]}))])

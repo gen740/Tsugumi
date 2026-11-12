@@ -66,6 +66,9 @@ table NamedValue {
   size_bytes:uint64 = null (id: 4);
   inline_bytes:[ubyte] (id: 5);
   artifact_id:string (id: 6);
+  /// SHA-256 (hex) of a recorded value's bytes, present on values read from
+  /// the run history; it tells two values apart when inline_bytes is omitted.
+  content_hash:string (id: 7);
 }
 
 // ---- Display ---------------------------------------------------------------

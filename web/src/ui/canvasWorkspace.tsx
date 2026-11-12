@@ -251,6 +251,7 @@ function ViewControls({ session, tab }: { session: ProjectSession; tab: Workflow
       <Button kind="borderless" small iconOnly icon="arrow.up.left.and.down.right.magnifyingglass" help={tip(L('全体表示'), 'fitAll')} onClick={() => cv.fitAll()} />
       {/* Notes, groups and folding are in the canvas's context menu and the menu, where they are named. */}
       <Button kind="borderless" small iconOnly icon="rectangle.grid.2x2" help={L('整列（配置だけを変更）')} onClick={() => session.arrange(tab.scope)} />
+      <Button kind="borderless" small iconOnly icon="arrow.triangle.swap" help={L('配線の交差を減らす（Card の位置は保持）')} onClick={() => session.untangle(tab.scope)} />
       <Divider vertical />
       <Button kind="borderless" small iconOnly icon="grid" pressed={prefs.showGrid} help={L('グリッド')} onClick={() => prefs.set('showGrid', !prefs.showGrid)} />
     </div>

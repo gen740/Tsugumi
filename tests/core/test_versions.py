@@ -10,10 +10,11 @@ import json
 import shutil
 import subprocess
 import time
+import pytest
 
 from harness.daemon import ROOT
 from projects import MSG_FBS, builtin_project, card, conn, run_and_wait, write
-from tsugumi_client import RpcFailure, _request_class, change, new_id, text
+from tsugumi_client import RpcFailure, _request_class, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
 
@@ -374,3 +375,38 @@ def test_a_version_has_its_canvas_diff_and_summary(tmp_path, core_factory):
         raise AssertionError("no such version")
     except RpcFailure as e:
         assert e.kind == "not_found"
+
+
+def test_compare_runs_keeps_parameters_and_diffs_the_selected_versions(tmp_path, core_factory):
+    """Comparison reads immutable parameters and a direct diff, without checkout or writes."""
+    root = tmp_path / "compare"
+    builtin_project(root, text="first")
+    daemon = core_factory(project_root=root)
+    c = daemon.connect()
+    c.call("VersionInitRequest", opId=new_id(), origin="test")
+    run1, first = run_and_wait(c, "src")
+    set_text(c, "intermediate")
+    run_and_wait(c, "src")
+    set_text(c, "third")
+    run3, third = run_and_wait(c, "src")
+    before = c.call("ProjectInspectRequest")
+    head = text(graph(c).head)
+    direct = c.call("VersionDiffRequest", commit=text(third.commit), fromCommit=text(first.commit))
+    patch = text(direct.text)
+    assert '"first"' in patch and '"third"' in patch and '"intermediate"' not in patch
+    assert not text(c.call("VersionDiffRequest", commit=head, fromCommit=head).text)
+    assert text(graph(c).head) == head
+    assert c.call("ProjectInspectRequest").rev == before.rev
+    with pytest.raises(RpcFailure) as failure:
+        c.call("VersionDiffRequest", commit=head, fromCommit="0" * 40)
+    assert failure.value.kind == "not_found"
+    set_text(c, "current document")
+
+    def check(client):
+        for run_id, expected in [(run1, "first"), (run3, "third")]:
+            result = client.call("RunRecordRequest", runId=run_id, card=path("src"))
+            assert json.loads(text(result.record.paramsJson))["text"] == expected
+
+    check(c)
+    daemon.restart()
+    check(daemon.connect())

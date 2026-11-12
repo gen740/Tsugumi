@@ -632,6 +632,7 @@ struct GraphCanvas: View {
       Divider()
       Button("全体表示") { fitAll() }
       Button("整列") { session.arrange(tab.scope) }
+      Button("配線の交差を減らす") { session.untangle(tab.scope) }
       if !tab.selection.isEmpty { Button("選択をグループ化") { groupSelection() }.disabled(!session.connected) }
     }
   }
@@ -1500,8 +1501,13 @@ struct BuiltinCardItems: View {
         Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
       }
     }
-    ForEach([DefinitionTemplate.python, .cpp, .csharp, .draft], id: \.self) { t in
+    ForEach([DefinitionTemplate.python, .cpp, .csharp, .draft, .marimo], id: \.self) { t in
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
+    }
+    Menu("可視化（図を描く Card）") {
+      ForEach([DefinitionTemplate.matplotlib, .plotly, .altair], id: \.self) { t in
+        Button(t.label) { add(t) }
+      }
     }
     Divider()
     ForEach([DefinitionTemplate.trigger, .input, .switchCard, .fork, .branch, .merge, .logger], id: \.self) { t in

@@ -581,7 +581,8 @@ export class CanvasController extends Observable implements CanvasOverlay {
   }
 
   /** Moves a selection (world units) as one edit: one save, one undo. Layout
-   *  only: no computation is re-resolved for a move. With a grid (`snap`) the
+   *  only: no computation is re-resolved for a move. Ports around the moved Cards
+   *  are reordered in the same edit when that removes wire crossings. With a grid (`snap`) the
    *  Cards go by whole grids from where they are drawn, and what moves with them
    *  goes by the same step, so the arrangement stays. Notes and frames alone land
    *  on whole numbers, as when dragged alone. */
@@ -607,6 +608,8 @@ export class CanvasController extends Observable implements CanvasOverlay {
         const from = snap ? { x: snapToGrid(p.x, snap), y: snapToGrid(p.y, snap) } : p
         x.setPosition(k, { x: from.x + dx, y: from.y + dy })
       }
+      // Wires that the move made cross: the same edit, so one undo takes both back.
+      x.untangleAround(this.tab.scope, cards)
       for (const id of notes) {
         x.changeNote(id, (n) => {
           const r = noteRect(n)

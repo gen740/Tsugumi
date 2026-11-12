@@ -111,3 +111,16 @@
 .symbol-cell:hover { background: var(--hover); }
 .symbol-cell.selected { background: color-mix(in srgb, var(--accent) 25%, transparent); border-color: var(--accent); }
 
+
+/* Retained runs share row labels and a stable pair of columns. */
+.run-comparison { height: min(86vh, 1000px); min-height: 300px; }
+.comparison-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.comparison-pair > * { min-width: 0; }
+.comparison-card { border: 1px solid var(--separator); border-radius: 8px; padding: 10px; }
+.comparison-card > summary { cursor: pointer; font-weight: 600; padding: 4px; }
+.comparison-card h4 { margin: 10px 0 6px; }
+.run-comparison .changed { background: color-mix(in srgb, var(--accent) 9%, transparent); border-radius: 5px; }
+/* Not comparable is neither changed nor unchanged: outlined, never left plain. */
+.run-comparison .unknown { outline: 1px dashed var(--orange); outline-offset: -1px; border-radius: 5px; }
+.comparison-field { padding: 4px 8px; }
+.comparison-display { display: flex; flex-direction: column; max-height: 400px; min-height: 0; overflow: auto; }

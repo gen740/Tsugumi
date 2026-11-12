@@ -434,6 +434,30 @@
       ]
     },
     {
+      "id": "visualization",
+      "path": "visualization",
+      "title": "可視化 → レポート",
+      "description": "型付きの測定値を集計して3種類の図を作り、PNG・SVG・PDFと描いた値をオフラインのレポートへ渡します。",
+      "tags": [
+        "Python",
+        "Visualization",
+        "Artifacts"
+      ],
+      "field": "プログラミングと可視化"
+    },
+    {
+      "id": "marimo",
+      "path": "marimo",
+      "title": "marimo ノートブック → 型付き結果",
+      "description": "型付き入力と params をノートブックへ渡し、静的 HTML・図・選択した結果を保存します。",
+      "tags": [
+        "Python",
+        "marimo",
+        "Artifacts"
+      ],
+      "field": "プログラミングと可視化"
+    },
+    {
       "id": "r-reports",
       "path": "r-reports",
       "title": "R レポート: R Markdown と Quarto",
