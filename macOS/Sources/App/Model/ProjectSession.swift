@@ -40,6 +40,7 @@ struct ResolvedCard {
   let inputs: [PortInfo]
   let outputs: [PortInfo]
   let diagnostics: [Diagnostic]
+  var nixReferences: [CardNixReference] = []
 }
 
 /// Decode a retained display without changing the live canvas.
@@ -707,7 +708,10 @@ final class ProjectSession {
       let port = { (x: Tsugumi_Data_PortT) -> PortInfo in PortInfo(name: x.name, kind: x.kind, optional: x.optional_ ?? false, rootType: x.rootType) }
       let d = rc.diagnostics.compactMap { $0 }.map(Diagnostic.init)
       r[key(p)] = ResolvedCard(path: p, inputs: rc.inputs.compactMap { $0 }.map(port),
-                               outputs: rc.outputs.compactMap { $0 }.map(port), diagnostics: d)
+                               outputs: rc.outputs.compactMap { $0 }.map(port), diagnostics: d,
+                               nixReferences: rc.nixReferences.compactMap { $0 }.map {
+                                 CardNixReference(source: key(p), target: key($0.target.path), name: $0.name, local: $0.local, valid: $0.valid)
+                               })
       all += d
     }
     resolution = r

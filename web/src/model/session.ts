@@ -48,6 +48,7 @@ export interface ResolvedCard {
   inputs: PortInfo[]
   outputs: PortInfo[]
   diagnostics: Diagnostic[]
+  nixReferences: { target: string[]; name: string; local: boolean; valid: boolean }[]
 }
 
 /** One stage of an invocation as the core recorded it (core clock, ms). */
@@ -860,7 +861,7 @@ export class ProjectSession extends Observable {
     for (const rc of res) {
       const p = segs(rc.card)
       const d = rc.diagnostics.map(diag)
-      r.set(key(p), { path: p, inputs: rc.inputs.map(port), outputs: rc.outputs.map(port), diagnostics: d })
+      r.set(key(p), { path: p, inputs: rc.inputs.map(port), outputs: rc.outputs.map(port), diagnostics: d, nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name), local: r.local, valid: r.valid })) })
       all.push(...d)
     }
     this.resolution = r
