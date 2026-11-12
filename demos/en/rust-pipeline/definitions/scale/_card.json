@@ -1,0 +1,15 @@
+{
+  "language": "rust",
+  "inputs": [
+    {
+      "name": "number"
+    }
+  ],
+  "params": [
+    {
+      "name": "factor",
+      "type": "uint64",
+      "data": 3
+    }
+  ]
+}

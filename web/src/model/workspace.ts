@@ -22,6 +22,27 @@ export class WorkflowTab extends Observable {
   readonly id = uuid()
   back: string[][] = []
   selectedConnection?: number
+  showNixReferences = false
+  showNixList = false
+  selectedNixReference?: string
+  hoveredNixCard?: CardKey
+  toggleNixReferences() {
+    this.showNixReferences = !this.showNixReferences
+    this.hoveredNixCard = undefined
+    this.changed()
+  }
+  /** A link picked on the canvas is the selected row of the reference list. */
+  selectNixReference(id: string) {
+    this.selectedNixReference = id
+    this.showNixList = true
+    this.changed()
+  }
+  hoverNixCard(card: CardKey | undefined) {
+    if (!this.showNixReferences) card = undefined
+    if (this.hoveredNixCard === card) return
+    this.hoveredNixCard = card
+    this.changed()
+  }
   /** Sticky notes (ids) and Cards' output frames caught by a marquee. */
   selectedNotes = new Set<string>()
   selectedFrames = new Set<CardKey>()

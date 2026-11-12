@@ -1,0 +1,26 @@
+---
+params:
+  tsugumi: null
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+data <- params$tsugumi$inputs$data
+settings <- params$tsugumi$params
+```
+
+# `r settings$title`
+
+The input and settings below belong to this saved invocation.
+
+```{r input-table}
+knitr::kable(as.data.frame(data))
+```
+
+```{r input-plot}
+values <- unlist(data, use.names = FALSE)
+if (is.numeric(values)) plot(values, type = "b", xlab = "Observation", ylab = "Value")
+```
+
+File and Directory input paths are available through
+`params$tsugumi$paths$data`. Add R packages in `default.nix`.

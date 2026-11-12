@@ -1,0 +1,6 @@
+attribute "tsugumi";
+namespace notebook;
+table Number { value:double; }
+table Files { value:string; }
+table Outputs { value:Number (required); report:Files (required, tsugumi: "directory"); }
+root_type Outputs;

@@ -144,6 +144,53 @@ def test_timeout_ends_a_worker_that_ignores_cancellation(core_factory, project, 
     assert record.status.failure.kind == FailureKind.timeout
 
 
+def test_deadline_is_the_reason_when_a_cooperative_worker_reports_cancelled(core_factory, project, tmp_path):
+    """A worker that stops when asked does not turn a deadline into a cancellation.
+
+    Given a worker that answers the stop request by reporting cancelled,
+    when its deadline expires,
+    then the run and the Card record the timeout, the reason the host stopped it.
+    """
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
+    client = daemon.connect()
+    gate = Gate(tmp_path, "cooperative-worker")
+    worker_project(client, project, tmp_path, [{"op": "hang", "entered": str(gate.entered)}], timeoutSeconds=1)
+
+    run_id = run(client)
+    gate.wait()
+    status = wait_run(client, run_id, timeout=6)
+    assert status.state == RunState.failed
+    assert status.failure.kind == FailureKind.timeout
+    record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
+    assert record.status.failure.kind == FailureKind.timeout
+
+
+@pytest.mark.parametrize("deadline", [True, False], ids=["deadline", "user-cancel"])
+def test_a_failure_after_the_stop_request_keeps_its_text(core_factory, project, tmp_path, deadline):
+    """A failure of the worker's own that races with a stop request stays readable.
+
+    Given a worker that reports output_invalid just after it was asked to stop,
+    when the stop came from the deadline or from the user,
+    then the Card records why the host stopped it, and the diagnostic still carries the worker's failure.
+    """
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
+    client = daemon.connect()
+    gate = Gate(tmp_path, "racing-worker")
+    actions = [{"op": "failure_after_cancel", "entered": str(gate.entered),
+                "kind": "output_invalid", "message": "scripted rejection"}]
+    worker_project(client, project, tmp_path, actions, **({"timeoutSeconds": 1} if deadline else {}))
+
+    run_id = run(client)
+    gate.wait()
+    if not deadline:
+        client.call("RunCancelRequest", runId=run_id)
+    status = wait_run(client, run_id, timeout=6)
+    assert status.state == (RunState.failed if deadline else RunState.cancelled)
+    failure = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1).status.failure
+    assert failure.kind == (FailureKind.timeout if deadline else FailureKind.cancelled)
+    assert "output_invalid: scripted rejection" in text(failure.diagnostic)
+
+
 @pytest.mark.parametrize("cancel", [True, False], ids=["user-cancels-build", "build-deadline-expires"])
 def test_build_wait_can_be_interrupted(core_factory, project, cancel):
     """A waiting build can be cancelled or stopped by its deadline.

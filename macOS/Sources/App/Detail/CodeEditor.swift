@@ -20,6 +20,15 @@ enum SyntaxHighlighter {
 
   static func rules(for language: String) -> Rules? {
     switch language.lowercased() {
+    case "cs", "csharp":
+      return Rules(comment: [#"//[^\n]*"#, #"/\*[\s\S]*?\*/"#],
+                   string: [#"\$*\"\"\"[\s\S]*?\"\"\""#, #"(?:\$@|@\$|@)"(?:""|[^"])*""#, #"\$?"(?:\\.|[^"\\\n])*""#, #"'(?:\\.|[^'\\\n])'"#],
+                   keywords: ["abstract", "as", "async", "await", "base", "bool", "break", "byte", "case", "catch", "char", "checked", "class",
+                              "const", "continue", "decimal", "default", "delegate", "do", "double", "else", "enum", "event", "extern", "false", "finally",
+                              "fixed", "float", "for", "foreach", "if", "in", "int", "interface", "internal", "is", "lock", "long", "namespace", "new", "null",
+                              "object", "out", "override", "params", "partial", "private", "protected", "public", "readonly", "record", "ref", "required", "return",
+                              "sbyte", "sealed", "short", "sizeof", "stackalloc", "static", "string", "struct", "switch", "this", "throw", "true", "try", "typeof",
+                              "uint", "ulong", "unchecked", "unsafe", "ushort", "using", "var", "virtual", "void", "volatile", "while", "yield"])
     case "cpp", "cc", "hpp", "h", "cxx":
       return Rules(comment: [#"//[^\n]*"#, #"/\*[\s\S]*?\*/"#], string: [#""(?:\\.|[^"\\\n])*""#, #"'(?:\\.|[^'\\\n])'"#],
                    keywords: ["auto", "bool", "break", "case", "class", "const", "constexpr", "continue", "double", "else", "enum",
@@ -374,10 +383,10 @@ class LineNumberRuler: NSRulerView {
 }
 
 /// A recorded input/output value as pretty JSON (decoded with its own BFBS).
-func describeValue(_ v: Tsugumi_Data_NamedValueT) -> String {
+func describeValue(_ v: Tsugumi_Data_NamedValueT, includeArtifact: Bool = true) -> String {
   var head = "\(v.name) : \(v.rootType)"
   if let n = v.sizeBytes { head += " · \(n) bytes" }
-  if let a = v.artifactId { head += String(localized: " · 成果物 ") + a }
+  if includeArtifact, let a = v.artifactId { head += String(localized: " · 成果物 ") + a }
   guard !v.inlineBytes.isEmpty else { return head + "\n" + String(localized: "（内容は記録されていません）") }
   guard let schema = try? BFBS(data: Data(v.schemaBfbs)),
         let (index, _) = schema.object(named: v.rootType) ??

@@ -274,6 +274,8 @@ class Builder {
     boolean(d.reuse_worker, s.reuse_worker);
     boolean(d.network, s.network);
     boolean(d.markdown, s.markdown);
+    if (const auto* v = schema::get(d.display_mode); v && *v != "update" && *v != "live")
+      n.diags.push_back(diag(n.path, "invalid_setting", "displayMode must be update or live"));
     if (const auto* v = schema::get(d.system)) {
       if (*v == "x86_64-linux" || *v == "aarch64-linux") s.system = *v == native_system() ? "" : *v;
       else n.diags.push_back(diag(n.path, "invalid_setting", "system must be x86_64-linux or aarch64-linux"));
@@ -432,10 +434,10 @@ class Builder {
       switch (n.kind) {
         case Template::Code:
           if (n.settings.language != "cpp" && n.settings.language != "python" &&
-              n.settings.language != "bash" && n.settings.language != "r" && n.settings.language != "julia" &&
-              n.settings.language != "ruby")
+              n.settings.language != "csharp" && n.settings.language != "bash" && n.settings.language != "r" && n.settings.language != "julia" &&
+              n.settings.language != "go" && n.settings.language != "rust" && n.settings.language != "ruby")
             n.exec_diags.push_back(diag(n.path, "invalid_language",
-                                        "language must be cpp, python, bash, r, julia or ruby"));
+                                        "language must be cpp, python, go, rust, csharp, bash, r, julia or ruby"));
           if (!doc_.sources.count(n.def_dir + "default.nix"))
             n.exec_diags.push_back(diag(n.path, "missing_nix", "default.nix is missing", true,
                                         n.def_dir + "default.nix"));
@@ -855,6 +857,13 @@ class Builder {
         for (const auto& part : path_from_key(name)) target.push_back(part);
         std::string key = path_key(target);
         auto found = res_->index.find(key);
+        const bool valid = (!local || target.size() == n.path.size()) && target != n.path &&
+                           found != res_->index.end() &&
+                           std::find(allowed.begin(), allowed.end(), found->second) != allowed.end();
+        if (std::none_of(n.nix_references.begin(), n.nix_references.end(), [&](const auto& ref) {
+              return ref.local == local && ref.name == name;
+            }))
+          n.nix_references.push_back({target, name, local, valid});
         if (local && target.size() != n.path.size()) {
           n.diags.push_back(diag(n.path, "nix_reference_unknown",
                                  "default.nix references local." + name + ", but local names a Card of this level only (use upstream.\"" +

@@ -1,0 +1,15 @@
+{
+  "language": "r",
+  "inputs": [
+    {
+      "name": "start"
+    }
+  ],
+  "params": [
+    {
+      "name": "scale",
+      "type": "double",
+      "data": 1.0
+    }
+  ]
+}

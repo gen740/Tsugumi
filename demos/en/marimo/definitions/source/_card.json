@@ -1,0 +1,20 @@
+{
+  "language": "bash",
+  "inputs": [
+    {
+      "name": "start"
+    }
+  ],
+  "params": [
+    {
+      "name": "measurement",
+      "type": "double",
+      "data": 7
+    },
+    {
+      "name": "factor",
+      "type": "double",
+      "data": 2
+    }
+  ]
+}

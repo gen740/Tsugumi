@@ -315,9 +315,13 @@ auto Service::run_environments(RequestIn& req) -> void {
   if (offset > INT64_MAX) throw Failed(FailureKind::invalid_request, "offset is too large");
   FBB b;
   std::vector<flatbuffers::Offset<R::BuildEnvironment>> rows;
+  std::vector<flatbuffers::Offset<flatbuffers::String>> caches;
   bool more = false;
   history_->read([&](sql::Db& db) {
     if (!History::run(db, run)) throw Failed(FailureKind::not_found, "unknown run");
+    auto s = db.prepare("SELECT url FROM run_substituters WHERE run_id=? ORDER BY position");
+    s.bind(1, run);
+    while (s.step()) caches.push_back(b.CreateString(s.text(0)));
     auto q = db.prepare(
         "SELECT id, derivation, manifest, system, path_count FROM build_environments "
         "WHERE run_id=? ORDER BY rowid LIMIT ? OFFSET ?");
@@ -336,8 +340,10 @@ auto Service::run_environments(RequestIn& req) -> void {
     }
   });
   auto values = b.CreateVector(rows);
+  auto substituters = b.CreateVector(caches);
   R::BuildEnvironmentPageBuilder page(b);
   page.add_environments(values);
+  page.add_substituters(substituters);
   if (more) page.add_next_offset(offset + rows.size());
   auto off = page.Finish();
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::BuildEnvironmentPage, off.Union()));
@@ -351,6 +357,7 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
   const auto offset = r->offset().value_or(0);
   const auto limit = page_limit(r->limit());
   if (offset > INT64_MAX) throw Failed(FailureKind::invalid_request, "offset is too large");
+  const auto query = r->query() ? r->query()->str() : std::string{};
   FBB b;
   std::vector<flatbuffers::Offset<flatbuffers::String>> paths;
   uint64_t total = 0;
@@ -359,10 +366,18 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
     environment.bind(1, run).bind(2, id);
     if (!environment.step()) throw Failed(FailureKind::not_found, "unknown run environment");
     total = environment.u64(0);
-    auto q = db.prepare(
-        "SELECT path FROM environment_paths WHERE run_id=? AND environment_id=? "
-        "AND position>=? ORDER BY position LIMIT ?");
-    q.bind(1, run).bind(2, id).bind(3, offset).bind(4, static_cast<int>(limit));
+    const auto predicate = std::string{
+        "FROM environment_paths AS p WHERE run_id=? AND environment_id=? "
+        "AND instr(lower(path), lower(?))>0 "};
+    if (!query.empty()) {
+      auto count = db.prepare("SELECT count(*) " + predicate);
+      count.bind(1, run).bind(2, id).bind(3, query);
+      count.step();
+      total = count.u64(0);
+    }
+    auto q = db.prepare("SELECT path " + predicate + "ORDER BY position LIMIT ? OFFSET ?");
+    q.bind(1, run).bind(2, id).bind(3, query)
+        .bind(4, static_cast<int>(limit)).bind(5, offset);
     while (q.step()) {
       const auto path = q.text(0);
       if (path.size() + 16 > kPagePayload)
@@ -485,6 +500,7 @@ void Service::run_record(RequestIn& req) {
           truncated = true;
         }
         auto art = m.artifact_id ? b.CreateString(*m.artifact_id) : flatbuffers::Offset<flatbuffers::String>();
+        auto hash = m.hash.empty() ? flatbuffers::Offset<flatbuffers::String>() : b.CreateString(m.hash);
         D::NamedValueBuilder nb(b);
         nb.add_name(name);
         nb.add_kind(m.kind);
@@ -493,6 +509,7 @@ void Service::run_record(RequestIn& req) {
         nb.add_size_bytes(m.size_bytes);
         if (include) nb.add_inline_bytes(inl);
         if (m.artifact_id) nb.add_artifact_id(art);
+        if (!hash.IsNull()) nb.add_content_hash(hash);
         v.push_back(nb.Finish());
       }
       return b.CreateVector(v);
@@ -507,6 +524,7 @@ void Service::run_record(RequestIn& req) {
     auto sum = wire::invocation(b, summary);
     flatbuffers::Offset<D::Display> disp;
     if (o.record && o.record->display) disp = wire::display(b, *o.record->display);
+    auto params = summary.params_json.empty() ? flatbuffers::Offset<flatbuffers::String>() : b.CreateString(summary.params_json);
     R::InvocationRecordBuilder rb(b);
     rb.add_summary(sum);
     rb.add_inputs(ins);
@@ -514,6 +532,7 @@ void Service::run_record(RequestIn& req) {
     rb.add_input_sources(srcv);
     if (!disp.IsNull()) rb.add_display(disp);
     rb.add_record_io(o.record ? o.record->record_io : false);
+    if (!params.IsNull()) rb.add_params_json(params);
     rec = rb.Finish();
   }
   auto run = wire::run_summary(b, o.run);

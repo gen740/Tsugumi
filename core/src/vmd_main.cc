@@ -271,6 +271,9 @@ std::string history_dir(const std::string& id) { return kHistory + "/" + id; }
 // Per project: the folder of its tsugumid's socket (0700, the project's user).
 const std::string kRpc = "/run/tsugumi-rpc";
 std::string rpc_dir(const std::string& id) { return kRpc + "/" + id; }
+// The nix-daemon's binary caches, one URL per line (no keys, no credentials):
+// written by /init, readable by every project.
+const std::string kSubstituters = "/run/tsugumi-substituters";
 
 // Mount namespace of one project: its folder and control folder at /project
 // and /control, its run history at /history, the folders of the Mac it was
@@ -504,6 +507,10 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
                "--cpus", std::to_string(cpus), "--allow-missing-origin",
                "--gcroots-dir", kRoots + "/" + id, "--history-dir", "/history",
                "--host-folders", "/run/tsugumi/host", "--chat-folders", "/run/tsugumi/chat", "--project-shell"};
+  // The binary caches of this VM's nix-daemon, for the run records. A project
+  // cannot read the daemon's settings (they sit beside the caches' credentials
+  // under /run/tsugumi, which its view replaces); /init wrote this list.
+  if (::access(kSubstituters.c_str(), R_OK) == 0) args.argv.insert(args.argv.end(), {"--substituters-file", kSubstituters});
   // The pages that may connect (the Mac's tsugumi command): comma-separated.
   // Without any, as for the app, a browser's request is refused.
   for (size_t at = 0; at < origins.size();) {
@@ -678,6 +685,14 @@ void shell(int conn, const std::string& id, int rows, int cols) {
   auto ev = cstrings(env);
   pid_t pid = ::fork();
   if (pid == 0) {
+    // This wrapper waits for the shell instead of execing. Close all inherited
+    // sockets and PTYs except this shell's slave, even the CLOEXEC descriptors.
+    // Otherwise another tab's wrapper can keep its PTY master alive after it closes.
+    const auto first = static_cast<unsigned int>(STDERR_FILENO + 1);
+    const auto terminal = static_cast<unsigned int>(slave);
+    if ((terminal > first && ::syscall(SYS_close_range, first, terminal - 1, 0) != 0) ||
+        ::syscall(SYS_close_range, terminal + 1, ~0u, 0) != 0)
+      die("close inherited terminal descriptors");
     // Join the project's namespaces (the PID namespace applies to the next
     // child). All are opened first: /proc changes with the mount namespace.
     int nsfd[4];

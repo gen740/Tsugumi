@@ -1,0 +1,10 @@
+{
+  "description": "C++ で結果を確かめる",
+  "inputs": [
+    {
+      "name": "number",
+      "description": "Integer value"
+    }
+  ],
+  "content": "C++ で number.value をテキスト表示する。出力ポートは作らない。"
+}

@@ -57,6 +57,11 @@ class NixEvaluator {
  public:
   // Must run on the main thread before other threads start (Boehm GC).
   static void init_process();
+  // The binary caches this process's Nix configuration names (after
+  // init_process), in order. Where a launcher hides part of the daemon's
+  // configuration from this process, it passes the daemon's list instead
+  // (ServiceOptions::substituters_file).
+  static std::vector<std::string> substituters();
 
   // `entry` is the entry function's source; `allowed` the folders evaluation
   // may read (restricted mode): the SDK and the evaluation folder.

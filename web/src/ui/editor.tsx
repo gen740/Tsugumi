@@ -43,6 +43,8 @@ const CPP_KEYWORDS = ['break', 'case', 'catch', 'class', 'const', 'constexpr', '
 const PY_KEYWORDS = ['and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally',
   'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while',
   'with', 'yield', 'self', 'cls']
+const GO_KEYWORDS = ['break', 'case', 'chan', 'const', 'continue', 'default', 'defer', 'else', 'fallthrough', 'for', 'func', 'go', 'goto', 'if', 'import', 'interface', 'map', 'package', 'range', 'return', 'select', 'struct', 'switch', 'type', 'var']
+const RUST_KEYWORDS = ['as', 'async', 'await', 'break', 'const', 'continue', 'crate', 'dyn', 'else', 'enum', 'extern', 'fn', 'for', 'if', 'impl', 'in', 'let', 'loop', 'match', 'mod', 'move', 'mut', 'pub', 'ref', 'return', 'self', 'Self', 'static', 'struct', 'super', 'trait', 'type', 'unsafe', 'use', 'where', 'while']
 const RUBY_KEYWORDS = ["alias", "and", "begin", "break", "case", "class", "def", "defined?", "do", "else", "elsif", "end", "ensure", "false", "for", "if", "in", "module", "next", "nil", "not", "or", "redo", "rescue", "retry", "return", "self", "super", "then", "true", "undef", "unless", "until", "when", "while", "yield"]
 const NIX_KEYWORDS = ['assert', 'else', 'if', 'import', 'in', 'inherit', 'let', 'rec', 'then', 'with']
 const FBS_KEYWORDS = ['attribute', 'enum', 'file_identifier', 'file_extension', 'include', 'namespace', 'root_type', 'rpc_service', 'struct', 'table', 'union']
@@ -53,6 +55,18 @@ const SH_KEYWORDS = ['case', 'do', 'done', 'echo', 'elif', 'else', 'esac', 'expo
 
 function rules(language: string): Rules | undefined {
   switch (language.toLowerCase()) {
+    case 'cs': case 'csharp':
+      return {
+        claim: [[String.raw`//[^\n]*`, 'comment'], [String.raw`/\*[\s\S]*?\*/`, 'comment'],
+          [String.raw`\$*"""[\s\S]*?"""`, 'string'], [String.raw`(?:\$@|@\$|@)"(?:""|[^"])*"`, 'string'],
+          [String.raw`\$?"(?:\\.|[^"\\\n])*"`, 'string'], [String.raw`'(?:\\.|[^'\\\n])'`, 'string']],
+        paint: [[NUMBER, 'number'], [words(['true', 'false', 'null']), 'constant'],
+          [words(['bool', 'byte', 'char', 'decimal', 'double', 'float', 'int', 'long', 'object', 'sbyte', 'short', 'string', 'uint', 'ulong', 'ushort', 'void']), 'type'],
+          [String.raw`\b(?:class|struct|interface|enum|record|namespace)\s+([A-Za-z_]\w*)`, 'type', 1],
+          [words(['abstract', 'as', 'async', 'await', 'base', 'break', 'case', 'catch', 'checked', 'class', 'const', 'continue', 'default', 'delegate', 'do', 'else', 'enum', 'event', 'extern', 'finally', 'fixed', 'for', 'foreach', 'if', 'in', 'interface', 'internal', 'is', 'lock', 'namespace', 'new', 'out', 'override', 'params', 'partial', 'private', 'protected', 'public', 'readonly', 'record', 'ref', 'required', 'return', 'sealed', 'sizeof', 'stackalloc', 'static', 'struct', 'switch', 'this', 'throw', 'try', 'typeof', 'unchecked', 'unsafe', 'using', 'var', 'virtual', 'volatile', 'while', 'yield']), 'keyword'],
+          [CALL, 'function', 1], [String.raw`\.([A-Za-z_]\w*)\b(?!\s*\()`, 'property', 1]],
+        keywords: ['if', 'for', 'foreach', 'while', 'switch', 'catch', 'using', 'lock', 'typeof', 'sizeof'], flags: 'm',
+      }
     case 'cpp': case 'cc': case 'hpp': case 'h': case 'hh': case 'cxx': case 'c':
       return {
         claim: [[String.raw`//[^\n]*`, 'comment'], [String.raw`/\*[\s\S]*?\*/`, 'comment'], [DQ, 'string'], [String.raw`'(?:\\.|[^'\\\n])'`, 'string']],
@@ -60,6 +74,21 @@ function rules(language: string): Rules | undefined {
           [String.raw`\b([A-Za-z_]\w*)::`, 'type', 1], [words(['true', 'false', 'nullptr', 'NULL']), 'constant'], [words(CPP_KEYWORDS), 'keyword'],
           [String.raw`^[ \t]*#[ \t]*\w+`, 'keyword'], [CALL, 'function', 1], [String.raw`(?:\.|->)([A-Za-z_]\w*)\b(?!\s*\()`, 'property', 1]],
         keywords: CPP_KEYWORDS, flags: 'm',
+      }
+    case 'go':
+      return {
+        claim: [[String.raw`//[^\n]*`, 'comment'], [String.raw`/\*[\s\S]*?\*/`, 'comment'], [String.raw`\x60[^\x60]*\x60`, 'string'], [DQ, 'string'], [String.raw`'(?:\\.|[^'\\\n])'`, 'string']],
+        paint: [[NUMBER, 'number'], [words(['bool', 'byte', 'rune', 'string', 'int', 'uint', 'uint8', 'uint16', 'uint32', 'uint64', 'int8', 'int16', 'int32', 'int64', 'uintptr', 'float32', 'float64', 'complex64', 'complex128', 'error', 'any']), 'type'],
+          [words(['true', 'false', 'nil', 'iota']), 'constant'], [words(GO_KEYWORDS), 'keyword'], [CALL, 'function', 1]],
+        keywords: GO_KEYWORDS,
+      }
+    case 'rs': case 'rust':
+      return {
+        claim: [[String.raw`//[^\n]*`, 'comment'], [String.raw`/\*[\s\S]*?\*/`, 'comment'], [String.raw`r#"[\s\S]*?"#`, 'string'], [DQ, 'string'], [String.raw`'(?:\\.|[^'\\\n])'`, 'string']],
+        paint: [[NUMBER, 'number'], [words(['bool', 'char', 'str', 'u8', 'u16', 'u32', 'u64', 'usize', 'i8', 'i16', 'i32', 'i64', 'isize', 'f32', 'f64']), 'type'],
+          [String.raw`\b[A-Z][A-Za-z_0-9]*\b`, 'type'], [words(['true', 'false', 'None']), 'constant'], [words(RUST_KEYWORDS), 'keyword'],
+          [CALL, 'function', 1], [String.raw`\b([A-Za-z_]\w*)!`, 'function', 1]],
+        keywords: RUST_KEYWORDS,
       }
     case 'py': case 'python':
       return {
