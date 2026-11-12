@@ -1,13 +1,14 @@
-import { ReportPreview, staticReportHTML } from './reportPreview'
 // Run history, artifacts and the enlarged output display of one Card.
 import { useEffect, useMemo, useState } from 'react'
 import { app } from '../model/app'
+import { artifactHTML } from '../model/artifactHTML'
 import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, formatBytes, formatDuration, formatMillis, path, ProjectSession, runState } from '../model/session'
 import { bool } from '../shared/json'
 import { describeValue } from '../shared/flatjson'
 import { D, R, s, segs } from '../shared/rpc'
 import { Button, download, Empty, Form, HSplit, Row, Section, Segmented, Select, Spinner, TextField, Value } from './controls'
+import { ArtifactHTMLPreview } from './artifactHTMLPreview'
 import { DisplayContent } from './display'
 import { Icon } from './icons'
 import { RunLogView } from './logs'
@@ -253,8 +254,9 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
     void read(selected, member).then((data) => {
       if (!alive) return
       const ext = member.split('.').pop()?.toLowerCase() ?? ''
-      if ((ext === 'html' || ext === 'htm') && data.length <= 32 * 1024 * 1024) {
-        setPreview({ kind: 'html', html: staticReportHTML(new TextDecoder('utf-8', { fatal: true }).decode(data)) })
+      const html = artifactHTML(member, data)
+      if (html !== undefined) {
+        setPreview({ kind: 'html', html })
       } else if (IMAGE_TYPES[ext]) {
         url = URL.createObjectURL(new Blob([data as BlobPart], { type: IMAGE_TYPES[ext] }))
         setPreview({ kind: 'image', url })
@@ -329,7 +331,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
               </div>
             </div>,
             <div key="p" className="fill scroll">
-              {preview?.kind === 'html' && <ReportPreview html={preview.html} />}
+              {preview?.kind === 'html' && <ArtifactHTMLPreview html={preview.html} />}
               {preview?.kind === 'text' && <pre className="pad8 mono selectable small-text wrap-pre">{preview.text}</pre>}
               {preview?.kind === 'image' && (member?.endsWith('.pdf') ? <iframe title="preview" src={preview.url} className="fill" /> : <img src={preview.url} alt={member} className="preview-image" />)}
               {preview?.kind === 'binary' && <Empty title={L('プレビューできません')} icon="doc.questionmark" description={L('バイナリ {0} bytes。書き出して確認してください。', preview.size)} />}

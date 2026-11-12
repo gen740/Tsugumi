@@ -371,7 +371,7 @@ struct CardArtifactsView: View {
         Group {
           switch preview {
           case .html(let html)?:
-            ReportPreview(html: html)
+            ArtifactHTMLPreview(html: html)
           case .text(let t)?:
             ScrollView { Text(t).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(8) }
           case .image(let i)?:
@@ -419,7 +419,7 @@ struct CardArtifactsView: View {
     do {
       let data = try await rpc.readArtifact(id: a.artifactId, member: a.kind == .directory ? member : nil)
       guard !Task.isCancelled else { return }
-      if ["html", "htm"].contains((member as NSString).pathExtension.lowercased()), data.count <= 32 * 1024 * 1024, let html = String(data: data, encoding: .utf8) {
+      if let html = ArtifactHTMLPreview.text(member: member, data: data) {
         preview = .html(html)
       } else if let img = NSImage(data: data), ["png", "jpg", "jpeg", "gif", "tiff", "pdf", "svg"].contains((member as NSString).pathExtension.lowercased()) {
         preview = .image(img)
