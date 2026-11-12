@@ -107,6 +107,9 @@ struct EvidenceView: View {
             }.buttonStyle(.link).disabled((row.invocation ?? 0) == 0)
           }
           if let r = record?.record {
+            if let display = r.display.flatMap(recordedDisplay) {
+              DisplayContent(display: display, large: true).frame(height: 360)
+            }
             Text("入力").font(.headline)
             ForEach(Array(r.inputs.compactMap { $0 }.enumerated()), id: \.offset) { _, value in Text(describeValue(value)).monospaced().textSelection(.enabled) }
             Text("出力").font(.headline)

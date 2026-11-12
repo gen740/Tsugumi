@@ -102,7 +102,7 @@ class Service : public RequestSink {
   NixRunner& nix() { return *nix_; }
   // The backend that runs the Cards naming execution service `id`.
   auto execution_service(const std::string& id) -> ExecutionService&;
-  // The backend of the SSH execution services, which also recovers their jobs.
+  // The daemon backend also recovers its jobs.
   auto remote_execution() -> RemoteExecutionService&;
   auto remote_targets() const -> std::vector<RemoteTarget>;
   static auto execution_diagnostic(const Node& node, const std::vector<RemoteTarget>& targets) -> std::optional<Diag>;

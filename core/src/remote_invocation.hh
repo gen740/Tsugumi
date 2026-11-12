@@ -26,14 +26,20 @@ struct InvocationJson {
 };
 
 struct JobJson {
-  schema::t::String<"system"> system;
-  schema::t::String<"derivation"> derivation;
-  schema::t::String<"output"> output;
-  schema::t::String<"invocation_sha256"> invocation_sha256;
-  schema::t::Array<"input_blobs", schema::v::String> input_blobs;
-  schema::t::Uint64<"cpu_millis"> cpu_millis;
-  schema::t::Uint64<"memory_bytes"> memory_bytes;
-  schema::t::Uint64<"timeout_seconds"> timeout_seconds;
+  schema::Opt<"system", schema::v::String> system;
+  schema::Opt<"derivation", schema::v::String> derivation;
+  schema::Opt<"output", schema::v::String> output;
+  schema::Opt<"invocation_sha256", schema::v::String> invocation_sha256;
+  schema::Opt<"input_blobs", schema::v::Array<schema::v::String>> input_blobs;
+  schema::Opt<"cpu_millis", schema::v::Uint64> cpu_millis;
+  schema::Opt<"memory_bytes", schema::v::Uint64> memory_bytes;
+  schema::Opt<"timeout_seconds", schema::v::Uint64> timeout_seconds;
+
+  auto has_required_fields() const -> bool {
+    return schema::get(system) && schema::get(derivation) && schema::get(output) &&
+           schema::get(invocation_sha256) && schema::get(input_blobs) && schema::get(timeout_seconds) &&
+           (static_cast<bool>(schema::get(cpu_millis)) == static_cast<bool>(schema::get(memory_bytes)));
+  }
 };
 
 struct ResultFileJson {
@@ -83,15 +89,16 @@ auto remote_recovery_contract(const Node& node, const std::vector<Value>& inputs
                               const std::vector<InputSourceData>& sources) -> std::string;
 auto remote_recovery_contract(const std::string& encoded) -> RemoteRecoveryContract;
 
-auto stage_remote_archive(const RemoteJobClient& client, const std::string& service, const std::string& instance,
-                          const std::filesystem::path& archive, const std::atomic<bool>& cancel) -> std::string;
+auto stage_remote_archive(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
+                          const std::string& instance, const std::filesystem::path& archive,
+                          const std::atomic<bool>& cancel) -> std::string;
 
-auto stage_remote_invocation(const RemoteJobClient& client, const std::string& service, const std::string& instance,
-                             const std::string& project_id,
+auto stage_remote_invocation(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
+                             const std::string& instance, const std::string& project_id,
                              const std::filesystem::path& state, const std::string& archive_digest,
                              const ExecutionRequest& request) -> std::string;
-auto import_remote_result(const RemoteJobClient& client, const std::string& service, const std::string& instance,
-                          const std::string& result_digest,
+auto import_remote_result(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
+                          const std::string& instance, const std::string& result_digest,
                           const std::string& spec, const std::filesystem::path& directory,
                           const std::vector<types::PortType>& outputs, const WorkerProc::LogSink& log,
                           const WorkerProc::DisplaySink& display, const std::atomic<bool>& stop) -> RemoteInvocationResult;

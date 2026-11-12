@@ -3,7 +3,7 @@
 // validates, records and routes what comes back. A backend configures the
 // build it needs (prepare) and runs the invocation (execute):
 // LocalExecutionService on a local tsugumi-worker process,
-// RemoteExecutionService on an SSH execution service with durable jobs.
+// RemoteExecutionService on a remote execution daemon with durable jobs.
 #pragma once
 
 #include <atomic>

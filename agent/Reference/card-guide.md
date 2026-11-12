@@ -86,9 +86,9 @@ Params: `{"name": "low", "type": "double", "data": 600}`; types `bool`, `int64`,
 `string` and their arrays (`double[]`, ...). Python reads them with `ctx.params().Low()`.
 
 Omit `executionService` for local execution. An external Code Card uses a host-registered ID,
-for example `"executionService": "compute"`, with
-`"executionResources": {"cpuMillis": 1000, "memoryBytes": 4294967296}`.
-These cap the SSH job's CPU and memory, including its build. Selecting or changing an external
+for example `"executionService": "compute"`. When the service advertises resource limits,
+`"executionResources": {"cpuMillis": 1000, "memoryBytes": 4294967296}` caps the job's CPU and memory,
+including its build. Selecting or changing an external
 service in an Agent save requires approval. Connection details and credentials are configured
 by the host application. External execution requires sandboxing and uses fresh workers.
 

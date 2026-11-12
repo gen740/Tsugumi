@@ -41,6 +41,7 @@ struct InvocationRecordData {
 struct RemoteJobRecord {
   InvocationSummaryData invocation;
   std::string instance;
+  std::string server_id;
   std::string spec;
   std::string contract;
   std::string directory;

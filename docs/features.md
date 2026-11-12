@@ -200,8 +200,8 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 
 - Card settings show the **Execution service** for a Code Card. Set `"executionService": "local"` in `_card.json` to select the service of the connected project daemon explicitly. Omitting the field uses the same local service.
 - The supported app and CLI installations run Cards on Linux. On macOS they use the shared Linux VM, and on Windows the command runs in WSL2. Running a macOS daemon directly is a development route with its own capabilities.
-- The project daemon reports the local service and registered SSH services. **CPU architecture** selects the Nix build and execution target within the selected service. A project keeps its saved service selection on installations where that service is unavailable. The selector shows the saved choice, and running stops with a diagnostic until the user registers that service or selects another one.
-- To build and run a Code Card on another Linux machine, add an SSH host in **Settings → Execution service**, then choose it in Card settings and set its CPU and memory limits. [Run a Card on an SSH host](RemoteExecution.md)
+- The project daemon reports the local service and registered execution daemons. **CPU architecture** selects the Nix build and execution target within the selected service. A project keeps its saved service selection on installations where that service is unavailable. The selector shows the saved choice, and running stops with a diagnostic until the user registers that service or selects another one.
+- To build and run a Code Card on another Linux machine, register its daemon endpoint in **Settings → Execution service** and choose it in Card settings. The daemon reports whether it can enforce CPU and memory limits. [Run a Card on an execution daemon](RemoteExecution.md)
 
 ### Another system (x86_64-linux)
 
@@ -312,6 +312,20 @@ Besides Anthropic's Messages API, OpenAI's API and the ChatGPT plan are supporte
 - Search uses the provider's feature (Anthropic's `web_search`, OpenAI's `web_search`; the same with the ChatGPT plan). Tsugumi does not connect to a search service. The local fixture has no search.
 - A search appears in the chat as a row like other tools, so its terms and the URLs found can be followed. Sources the response cites appear as links under it. With the ChatGPT plan, only the cited sources appear (because `include` is not sent).
 - Only the chat's Agent can use it; helpers and the guide's thrush do not search.
+
+### Links to the evidence
+
+Links in chat can open the current Card and an exact saved result. Mac and Web resolve these addresses within the open project. Missing Cards, runs, invocations, logs and artifacts appear as unavailable text. An invocation link opens its recorded display and input/output values while the Canvas keeps showing the current result.
+
+| Markdown destination | Opens |
+| --- | --- |
+| `card:<id>` or `card:<outer>/<inner>` | The current Card on the Canvas |
+| `run:<UUID>` | The run and its Card records |
+| `run:<UUID>/<Card path>#<invocation>` | The cited invocation's saved result |
+| `log:<UUID>/<Card path>?invocation=<number>&stream=stderr&offset=<bytes>` | The log at that byte offset (`stdout`, `stderr`, `build`, or `journal`) |
+| `artifact:<UUID>?id=<artifact id>&path=<member>` | The saved artifact; omit `path` for the whole artifact |
+
+Use these as Markdown links, such as `[spectrum](card:spectrum)`. URL-encode the query values. A Card link points to its present definition. An invocation link identifies the particular result you want to share.
 
 ### Generating Cards from Drafts
 

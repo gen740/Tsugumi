@@ -125,7 +125,9 @@ class SubmitTests(JournalTestCase):
 
     def test_public_state_shape(self):
         job_id, _, fp = self.submit_job()
-        self.assertEqual(self.j.status(job_id), {
+        state = self.j.status(job_id)
+        self.assertIsInstance(state.pop("deadline"), float)
+        self.assertEqual(state, {
             "state": "queued", "fingerprint": fp, "claimant": None,
             "result_sha256": None, "error": None,
             "cancel_requested": False, "outcome_sha256": None,
@@ -138,6 +140,23 @@ class SubmitTests(JournalTestCase):
         for bad in ("../" + "0" * 61, "0" * 64 + "/x", "F" * 64):
             with self.assertRaises(ValidationError):
                 self.j.status(bad)
+
+    def test_resource_limits_are_an_optional_pair(self):
+        spec = json.loads(self.spec_bytes())
+        del spec["cpu_millis"], spec["memory_bytes"]
+        self.assertEqual(self.j.submit(secrets.token_hex(32), json.dumps(spec).encode())["state"], "queued")
+        for key in ("cpu_millis", "memory_bytes"):
+            partial = json.loads(self.spec_bytes())
+            del partial[key]
+            job_id = secrets.token_hex(32)
+            with self.subTest(missing=key), self.assertRaises(ValidationError):
+                self.j.submit(job_id, json.dumps(partial).encode())
+            self.assertIsNone(self.j.status(job_id))
+
+    def test_job_ids(self):
+        first, _, _ = self.submit_job()
+        second, _, _ = self.submit_job()
+        self.assertEqual(self.j.job_ids(), sorted([first, second]))
 
     def test_missing_input_blob_rejected(self):
         inv = self.put(b"invocation")

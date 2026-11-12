@@ -4,7 +4,7 @@ import TsugumiLauncher
 struct ExecutionServicesSettings: View {
   @Environment(AppModel.self) private var model
   @State private var entries: [ExecutionServiceConnection] = []
-  @State private var draft: ExecutionServiceConnection?
+  @State private var draft: ExecutionServiceRegistration?
   @State private var original: String?
   @State private var busy = false
   @State private var message: String?
@@ -15,51 +15,52 @@ struct ExecutionServicesSettings: View {
       Section("実行サービス") {
         ForEach(entries) { entry in
           LabeledContent {
-            Text(entry.nativeSystem ?? String(localized: "接続未確認"))
+            Text(entry.capabilities.nativeSystem)
           } label: {
-            Button("\(entry.name) (\(entry.id))") { choose(entry, original: entry.id) }
+            Button("\(entry.name) (\(entry.id))") { choose(entry) }
           }
         }
-        Button { choose(ExecutionServiceConnection()) } label: { Label("実行サービスを追加", systemImage: "plus") }
+        Button { choose(nil) } label: { Label("実行サービスを追加", systemImage: "plus") }
       }
       if let entry = draft {
         Section {
           TextField("名前", text: field(\.name))
           TextField("サービス ID", text: field(\.id)).disabled(original != nil).monospaced()
-          LabeledContent("接続方法", value: "SSH")
-          LabeledContent("実行方式", value: String(localized: "SSH ホストで直接実行"))
-          TextField("SSH ホスト", text: field(\.sshHost, connection: true)).monospaced()
-            .help("SSH 設定ファイルにあるホストの別名を使います。")
-          TextField("ゲートウェイ実行ファイル", text: Binding(get: { draft?.gateway ?? "" }, set: { path in
-            draft?.gateway = path.isEmpty ? nil : path
-            draft?.nativeSystem = nil
-            draft?.systems = nil
+          TextField("実行デーモンの接続先", text: field(\.endpoint), prompt: Text(verbatim: "https://compute.example.org:8781"))
+            .monospaced().help("HTTPS の接続先、またはループバックアドレスの HTTP 接続先を入力してください。")
+          SecureField("認証トークン", text: Binding(get: { draft?.token ?? "" }, set: { value in
+            draft?.token = value.isEmpty ? nil : value
             message = nil
-          }), prompt: Text(verbatim: "tsugumi-remote-gateway")).monospaced()
-            .help("既定名で起動できない場合は、SSH 先の絶対パスを指定します。")
-          if let systems = entry.systems, !systems.isEmpty {
-            LabeledContent("CPU アーキテクチャ", value: systems.joined(separator: ", "))
+          }), prompt: saved == nil ? nil : Text("保存済みトークンを使用"))
+            .help("認証トークンは小文字の16進数64文字です。")
+          if let caps = saved?.capabilities {
+            LabeledContent("CPU アーキテクチャ", value: caps.systems.joined(separator: ", "))
+            LabeledContent("隔離方式", value: String(localized: "PID 名前空間"))
+            LabeledContent("CPU とメモリの上限", value: caps.resourceLimits ? String(localized: "対応") : String(localized: "非対応"))
+            LabeledContent("最大同時ジョブ数", value: String(caps.maxConcurrentJobs))
           }
           HStack {
-            Button("接続をテスト") {
+            Button(original == nil ? "接続を確認して登録" : "接続を確認して更新") {
               busy = true
               message = nil
               Task {
                 defer { busy = false }
                 do {
-                  draft = try await ExecutionServiceRegistry.probe(entry)
+                  entries = try await ExecutionServiceRegistry.register(entry, support: model.environments.support)
+                  choose(entries.first { $0.id == entry.id })
+                  refreshServices()
                   report(String(localized: "接続を確認しました。"))
                 } catch { report(error.localizedDescription, failed: true) }
               }
-            }.disabled(!valid(entry))
-            Button("保存") {
-              save(entries.filter { $0.id != original } + [entry])
-              if !failed { original = entry.id }
             }.buttonStyle(.borderedProminent).disabled(!valid(entry))
             if let original {
               Button("削除", role: .destructive) {
-                save(entries.filter { $0.id != original })
-                if !failed { draft = nil; self.original = nil }
+                do {
+                  entries = try ExecutionServiceRegistry.remove(id: original, support: model.environments.support)
+                  draft = nil
+                  self.original = nil
+                  refreshServices()
+                } catch { report(error.localizedDescription, failed: true) }
               }
             }
             if busy { ProgressView().controlSize(.small) }
@@ -78,31 +79,38 @@ struct ExecutionServicesSettings: View {
     }
   }
 
-  private func choose(_ entry: ExecutionServiceConnection, original: String? = nil) {
-    draft = entry
-    self.original = original
+  private var saved: ExecutionServiceConnection? {
+    entries.first { $0.id == original && $0.endpoint == draft?.endpoint.trimmingCharacters(in: .whitespacesAndNewlines) }
+  }
+
+  private func choose(_ entry: ExecutionServiceConnection?) {
+    var next = ExecutionServiceRegistration()
+    if let entry {
+      next.id = entry.id
+      next.name = entry.name
+      next.endpoint = entry.endpoint
+    }
+    draft = next
+    original = entry?.id
     message = nil
   }
 
-  private func field(_ key: WritableKeyPath<ExecutionServiceConnection, String>, connection: Bool = false) -> Binding<String> {
+  private func field(_ key: WritableKeyPath<ExecutionServiceRegistration, String>) -> Binding<String> {
     Binding(get: { draft?[keyPath: key] ?? "" }, set: { value in
       draft?[keyPath: key] = value
-      if connection { draft?.nativeSystem = nil; draft?.systems = nil }
+      if key == \.endpoint { draft?.token = nil }
       message = nil
     })
   }
 
-  private func valid(_ entry: ExecutionServiceConnection) -> Bool {
-    [entry.id, entry.name, entry.sshHost].allSatisfy { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+  private func valid(_ entry: ExecutionServiceRegistration) -> Bool {
+    guard [entry.id, entry.name, entry.endpoint].allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return false }
+    if let token = entry.token { return token.range(of: #"\A[a-f0-9]{64}\z"#, options: .regularExpression) != nil }
+    return saved != nil
   }
 
-  private func save(_ next: [ExecutionServiceConnection]) {
-    do {
-      try ExecutionServiceRegistry.save(next, support: model.environments.support)
-      entries = next
-      for session in model.sessions.values { Task { await session.refreshExecutionServices() } }
-      report(String(localized: "保存しました。"))
-    } catch { report(error.localizedDescription, failed: true) }
+  private func refreshServices() {
+    for session in model.sessions.values { Task { await session.refreshExecutionServices() } }
   }
 
   private func report(_ message: String, failed: Bool = false) {

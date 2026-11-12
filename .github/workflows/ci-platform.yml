@@ -130,8 +130,8 @@ jobs:
         if: runner.os == 'macOS'
         run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py'
 
-  ssh-execution:
-    name: Real SSH execution
+  remote-execution:
+    name: Real remote daemon execution
     if: inputs.system == 'x86_64-linux'
     needs: native
     runs-on: ${{ inputs.runner }}
@@ -148,8 +148,10 @@ jobs:
           artifact-name: native-${{ inputs.system }}
           artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
           out-link: build-ci
-      - name: Build and run Cards through localhost SSH
-        run: bash tests/ci-remote-ssh.sh
+      - name: Allow user namespaces for sandboxed jobs
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build and run Cards through the loopback execution daemon
+        run: bash tests/ci-remote-daemon.sh
 
   web-contracts:
     name: Web types and behavior

@@ -93,7 +93,7 @@ table RunStatus {
   commit:string (id: 8);
 }
 
-enum ExecutionServiceKind:ubyte { local, ssh_direct }
+enum ExecutionServiceKind:ubyte { local, remote_daemon }
 
 table ExecutionResources {
   cpu_millis:uint32 = null (id: 0);
@@ -109,6 +109,10 @@ table ExecutionService {
   systems:[string] (id: 2, required);
   kind:ExecutionServiceKind = local (id: 3);
   available:bool = true (id: 4);
+  /// Whether the daemon can enforce requested CPU and memory caps.
+  resource_limits:bool (id: 5);
+  /// The daemon's concurrent job capacity across its projects, when known.
+  max_jobs:uint32 = null (id: 6);
 }
 
 table ProjectSnapshot {

@@ -589,6 +589,7 @@ private struct GeneralCategory: View {
     let serviceSetting = string("executionService", fallback: "local")
     let serviceId = serviceSetting.wrappedValue
     let service = services.first { $0.id == serviceId }
+    let resourceLimits = serviceId != "local" && service?.resourceLimits == true
     let nativeSystem = service?.nativeSystem ?? ""
     let systems = service?.systems.compactMap { $0 } ?? []
     let system = string("system", fallback: "")
@@ -629,13 +630,13 @@ private struct GeneralCategory: View {
       Label("この実行環境では \(selected) を実行できません。", systemImage: "exclamationmark.triangle")
         .font(.caption)
     }
-    if serviceId != "local" {
-      Text("外部の実行サービスでは CPU とメモリの上限を指定します。SSH ホストのリソースは他のジョブと共有します。").font(.caption).foregroundStyle(.secondary)
+    if resourceLimits {
+      Text("CPU とメモリの上限を指定します。実行先のリソースは他のジョブと共有します。").font(.caption).foregroundStyle(.secondary)
       executionResource("cpuMillis", label: "CPU 上限（ミリコア）", example: "1000")
       executionResource("memoryBytes", label: "メモリ上限（バイト）", example: "1073741824")
     }
     if model.definition?["executionResources"] != nil {
-      if serviceId == "local" {
+      if !resourceLimits {
         Label("この実行サービスではリソースを指定できません。", systemImage: "exclamationmark.triangle").font(.caption)
       }
       Button("リソース指定を削除") { model.definition?["executionResources"] = nil }
@@ -644,7 +645,7 @@ private struct GeneralCategory: View {
 
   private func serviceLabel(_ service: Tsugumi_RPC_ExecutionServiceT) -> String {
     if service.id != "local" {
-      return service.available ? "SSH (\(service.id))" : String(localized: "SSH（\(service.id)、接続未確認）")
+      return service.available ? service.id : String(localized: "\(service.id)（接続未確認）")
     }
     if service.nativeSystem.hasSuffix("-linux") { return "Linux (\(service.nativeSystem))" }
     if service.nativeSystem.hasSuffix("-darwin") { return "macOS (\(service.nativeSystem))" }

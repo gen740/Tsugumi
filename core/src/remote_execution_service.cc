@@ -33,15 +33,15 @@ auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job, bool m
   const auto fingerprint = crypto::sha256_hex(job.spec);
   RemoteJobState reply;
   if (job.cancel_requested) {
-    reply = client.cancel(s.execution_service, job.instance, s.execution_job_id, fingerprint);
+    reply = client.cancel(s.execution_service, job.server_id, job.instance, s.execution_job_id, fingerprint);
   } else {
-    reply = client.status(s.execution_service, job.instance, s.execution_job_id);
+    reply = client.status(s.execution_service, job.server_id, job.instance, s.execution_job_id);
     if (reply.state == "missing") {
       if (job.accepted) return {"interrupted", fingerprint, {}, "the execution service lost a previously accepted job"};
       if (may_submit) {
-        reply = client.submit(s.execution_service, job.instance, s.execution_job_id, job.spec);
+        reply = client.submit(s.execution_service, job.server_id, job.instance, s.execution_job_id, job.spec);
       } else {
-        reply = client.cancel(s.execution_service, job.instance, s.execution_job_id, fingerprint);
+        reply = client.cancel(s.execution_service, job.server_id, job.instance, s.execution_job_id, fingerprint);
         if (reply.state == "cancelled")
           return {"interrupted", fingerprint, {}, "the external submission was not confirmed before the core restarted"};
       }
@@ -56,8 +56,8 @@ auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job, bool m
 auto remote_failure(const RemoteJobState& result) -> FailureData {
   auto kind = FailureKind::worker_failed;
   if (result.state == "cancelled") kind = FailureKind::cancelled;
-  else if (result.state == "interrupted") kind = result.error.find("result timeout") != std::string::npos
-                                                      ? FailureKind::timeout : FailureKind::interrupted;
+  else if (result.error.starts_with("timed out after ")) kind = FailureKind::timeout;
+  else if (result.state == "interrupted") kind = FailureKind::interrupted;
   return FailureData::make(kind, result.error.empty() ? "external job " + result.state : result.error);
 }
 
@@ -70,11 +70,12 @@ auto run_dir_of(Service& service, const std::string& run_id) -> stdfs::path {
 class PreparedRemoteExecution final : public PreparedExecution {
  public:
   PreparedRemoteExecution(Service& service, const RemoteJobClient& client, std::string target, std::string system,
-                          std::string instance, stdfs::path archive)
+                          std::string server_id, std::string instance, stdfs::path archive)
       : service_(service),
         client_(client),
         target_(std::move(target)),
         system_(std::move(system)),
+        server_id_(std::move(server_id)),
         instance_(std::move(instance)),
         archive_(std::move(archive)) {}
   PreparedRemoteExecution(const PreparedRemoteExecution&) = delete;
@@ -87,7 +88,7 @@ class PreparedRemoteExecution final : public PreparedExecution {
   auto archive() const -> const stdfs::path& { return archive_; }
   auto system() const -> const std::string& { return system_; }
   auto stage(const std::atomic<bool>& cancel) -> void override {
-    archive_digest_ = stage_remote_archive(client_, target_, instance_, archive_, cancel);
+    archive_digest_ = stage_remote_archive(client_, target_, server_id_, instance_, archive_, cancel);
   }
   auto cancel_batch(sql::Db& db, const std::string& run, const CardPath& card, uint64_t activation) -> void override {
     History::cancel_remote_batch(db, run, card, activation);
@@ -99,6 +100,7 @@ class PreparedRemoteExecution final : public PreparedExecution {
   const RemoteJobClient& client_;
   std::string target_;
   std::string system_;
+  std::string server_id_;
   std::string instance_;
   stdfs::path archive_;
   std::string archive_digest_;
@@ -109,7 +111,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
   const auto& settings = node.settings;
   auto& s = request.summary;
   stdfs::create_directories(request.directory);
-  auto spec = stage_remote_invocation(client_, target_, instance_, service_.project_id(), service_.store().state_dir(),
+  auto spec = stage_remote_invocation(client_, target_, server_id_, instance_, service_.project_id(), service_.store().state_dir(),
                                       archive_digest_, request);
   if (request.cancel.load()) throw Failed(FailureKind::cancelled, "run cancelled before external submission");
 
@@ -120,7 +122,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
   s.execution_resources = settings.execution_resources;
   s.execution_state = RemoteExecutionState::queued;
   s.worker_reused = false;
-  RemoteJobRecord job{{}, instance_, std::move(spec), remote_recovery_contract(node, request.inputs, request.sources),
+  RemoteJobRecord job{{}, instance_, server_id_, std::move(spec), remote_recovery_contract(node, request.inputs, request.sources),
                       request.directory.lexically_relative(run_dir_of(service_, s.run_id)).generic_string()};
   // The job is durable before it can be submitted.
   request.start([&](sql::Db& db) {
@@ -165,7 +167,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
     if (reply && reply->state == "succeeded") {
       output.logs.clear();
       try {
-        auto result = import_remote_result(client_, target_, instance_, reply->result_sha256, job.spec, request.directory,
+        auto result = import_remote_result(client_, target_, server_id_, instance_, reply->result_sha256, job.spec, request.directory,
             node.outputs, [&](LogStream stream, const std::string& line) { output.logs.emplace_back(stream, line); },
             request.display, request.detach);
         if (!result.environment.id.empty()) {
@@ -202,11 +204,14 @@ auto RemoteExecutionService::prepare(const Node& node, const stdfs::path& direct
     throw Failed(FailureKind::unsupported, diagnostic->message);
   const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
   auto system = settings.system.empty() ? target->native_system : settings.system;
-  auto probe = client_.probe(target->id);
+  auto probe = client_.probe(target->id, target->server_id);
+  if (settings.execution_resources && !probe.resource_limits)
+    throw Failed(FailureKind::unsupported, "the remote execution daemon cannot enforce resource limits");
   if (std::ranges::find(probe.systems, system) == probe.systems.end())
     throw Failed(FailureKind::unsupported, "external execution service no longer supports system " + system);
   stdfs::create_directories(directory);
   auto prepared = std::make_unique<PreparedRemoteExecution>(service_, client_, target->id, std::move(system),
+                                                            std::move(probe.server_id),
                                                             std::move(probe.instance),
                                                             directory / (".derivation-" + crypto::uuid4()));
   build.remote_system = prepared->system();
@@ -246,7 +251,7 @@ auto RemoteExecutionService::recover(RemoteJobRecord& job, const RemoteJobState&
     auto contract = remote_recovery_contract(job.contract);
     const auto run_dir = run_dir_of(service_, inv.run_id);
     const auto directory = run_dir / remote::relative_path(job.directory);
-    auto imported = import_remote_result(client_, inv.execution_service, job.instance, reply.result_sha256,
+    auto imported = import_remote_result(client_, inv.execution_service, job.server_id, job.instance, reply.result_sha256,
         job.spec, directory, contract.outputs,
         [&](LogStream stream, const std::string& line) { recovered.logs.emplace_back(stream, line); },
         [&](DisplayData display) {

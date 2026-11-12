@@ -1,14 +1,15 @@
-"""Opt-in SSH execution against a disposable, already configured runner.
+"""Opt-in execution against a disposable Linux daemon.
 
-Set TSUGUMI_REMOTE_TEST_SSH_HOST to an SSH config alias and
-TSUGUMI_REMOTE_TEST_GATEWAY to the absolute gateway executable on that host.
-Run these cases with tsugumi-test-env and pytest -m environment.
+Set TSUGUMI_REMOTE_TEST_DAEMON to start a packaged daemon on loopback.
+For a daemon already running, set TSUGUMI_REMOTE_TEST_ENDPOINT and
+TSUGUMI_REMOTE_TEST_TOKEN_FILE. Use tsugumi-test-env and pytest -m environment.
 """
 
 import hashlib
 import json
 import os
 import select
+import secrets
 import shutil
 import socket
 import struct
@@ -29,11 +30,10 @@ from tsugumi_client import RpcFailure, path, text
 pytestmark = pytest.mark.environment
 
 RUN_LIST_OUTPUT = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
-# Each SSH job realizes its dependencies in a private store, even during a batch.
+# Each remote job realizes its dependencies in a private store, even during a batch.
 RUN_LIST_TIMEOUT_SECONDS = 1200
 RUN_LIST_REMOTE = {
-    "language": "bash", "recordIO": True, "executionService": "ssh-test",
-    "executionResources": {"cpuMillis": 1000, "memoryBytes": 2 << 30},
+    "language": "bash", "recordIO": True, "executionService": "remote-test",
     "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS, "_outputs": RUN_LIST_OUTPUT,
 }
 
@@ -41,8 +41,8 @@ BROKER = """
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-const [modulePath, support, project, copy, host, gateway] = process.argv.slice(2);
-const { authorizeExecutionProject, probeExecutionService, saveExecutionServices, startExecutionBroker } =
+const [modulePath, support, project, copy, endpoint, tokenFile] = process.argv.slice(2);
+const { authorizeExecutionProject, registerExecutionService, startExecutionBroker } =
   await import(pathToFileURL(modulePath));
 const authorize = (project, name) => {
   const control = path.join(support, name);
@@ -52,32 +52,84 @@ const authorize = (project, name) => {
 };
 const token = authorize(project, "control");
 const copyToken = authorize(copy, "copy-control");
-const entry = await probeExecutionService({id: "ssh-test", name: "SSH test", sshHost: host, gateway});
-saveExecutionServices(support, [entry]);
-const endpoint = await startExecutionBroker(support);
-console.log(JSON.stringify({endpoint, token, copyToken}));
+const entries = await registerExecutionService(support, {id: "remote-test", name: "Remote test", endpoint,
+                                                         token: fs.readFileSync(tokenFile, "utf8").trim()});
+const broker = await startExecutionBroker(support);
+console.log(JSON.stringify({endpoint: broker, token, copyToken, serverId: entries[0].capabilities.serverId}));
 setInterval(() => {}, 30000);
 """
 
 
 @pytest.fixture
-def remote_broker(project, tmp_path, monkeypatch):
-    host = os.environ.get("TSUGUMI_REMOTE_TEST_SSH_HOST")
-    gateway = os.environ.get("TSUGUMI_REMOTE_TEST_GATEWAY")
-    if not host or not gateway:
-        pytest.skip("set TSUGUMI_REMOTE_TEST_SSH_HOST and TSUGUMI_REMOTE_TEST_GATEWAY for a dedicated SSH runner")
+def remote_daemon(tmp_path):
+    binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
+    if not binary:
+        endpoint = os.environ.get("TSUGUMI_REMOTE_TEST_ENDPOINT")
+        token_file = os.environ.get("TSUGUMI_REMOTE_TEST_TOKEN_FILE")
+        if not endpoint or not token_file:
+            pytest.skip("set TSUGUMI_REMOTE_TEST_DAEMON or a dedicated endpoint and token file")
+        yield endpoint, token_file, None
+        return
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    token_file = tmp_path / "daemon-token"
+    with os.fdopen(os.open(token_file, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600), "w") as token:
+        token.write(secrets.token_hex(32) + "\n")
+    env = {**os.environ, "TSUGUMI_REMOTE_STATE_DIR": str(tmp_path / "daemon-state")}
+    command = [binary, "--host", "127.0.0.1", "--port", str(port), "--token-file", str(token_file)]
+    daemon_log = tmp_path / "execution-daemon.log"
+    process = None
+
+    def start():
+        nonlocal process
+        with daemon_log.open("ab") as log:
+            process = subprocess.Popen(command, env=env, stdout=log, stderr=log)
+        until = time.monotonic() + 10
+        while time.monotonic() < until:
+            if process.poll() is not None:
+                raise RuntimeError(daemon_log.read_text())
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                    return
+            except OSError:
+                time.sleep(0.05)
+        raise TimeoutError("the test execution daemon did not listen")
+
+    def restart():
+        process.kill()
+        process.wait(timeout=5)
+        start()
+
+    try:
+        start()
+        yield f"http://127.0.0.1:{port}", str(token_file), restart
+    finally:
+        if process and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+
+@pytest.fixture
+def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
+    endpoint, token_file, _ = remote_daemon
     script = tmp_path / "broker.mjs"
     script.write_text(BROKER)
     copy = tmp_path / "copied-project"
     shutil.copytree(project, copy)
     module = Path(__file__).resolve().parents[3] / "web/server/executionServices.ts"
     process = subprocess.Popen(["node", str(script), str(module), str(tmp_path / "support"),
-                                str(project), str(copy), host, gateway], stdout=subprocess.PIPE, text=True)
+                                str(project), str(copy), endpoint, token_file], stdout=subprocess.PIPE, text=True)
     try:
         ready, _, _ = select.select([process.stdout], [], [], 30)
-        assert ready, "SSH broker did not start"
+        assert ready, "execution broker did not start"
         line = process.stdout.readline()
-        assert line, "SSH broker exited before starting"
+        assert line, "execution broker exited before starting"
         ready = json.loads(line)
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", ready["endpoint"])
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER_TOKEN_FILE", ready["token"])
@@ -91,9 +143,9 @@ def remote_broker(project, tmp_path, monkeypatch):
             process.wait(timeout=5)
 
 
-def broker_request(endpoint, token_file, operation, body=b"", **fields):
-    request = json.dumps({"version": 1, "operation": operation, "service": "ssh-test",
-                          "broker_token": Path(token_file).read_text().strip(), **fields}).encode()
+def broker_request(endpoint, token_file, server_id, operation, body=b"", **fields):
+    request = json.dumps({"version": 1, "operation": operation, "service": "remote-test",
+                          "broker_token": Path(token_file).read_text().strip(), "server_id": server_id, **fields}).encode()
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(30)
         connection.connect(endpoint.removeprefix("unix:"))
@@ -104,21 +156,21 @@ def broker_request(endpoint, token_file, operation, body=b"", **fields):
             return json.loads(response.read(size)), response.read()
 
 
-def test_ssh_broker_isolates_copies_of_a_project(remote_broker):
-    endpoint, original, copy = (remote_broker[name] for name in ("endpoint", "token", "copyToken"))
-    first, _ = broker_request(endpoint, original, "probe")
-    second, _ = broker_request(endpoint, copy, "probe")
+def test_remote_broker_isolates_copies_of_a_project(remote_broker):
+    endpoint, original, copy, server_id = (remote_broker[name] for name in ("endpoint", "token", "copyToken", "serverId"))
+    first, _ = broker_request(endpoint, original, server_id, "probe")
+    second, _ = broker_request(endpoint, copy, server_id, "probe")
     assert first["ok"] and second["ok"] and first["instance_id"] != second["instance_id"]
 
     value = b"private to the original project\n"
     digest = hashlib.sha256(value).hexdigest()
-    uploaded, _ = broker_request(endpoint, original, "put_blob", value, instance_id=first["instance_id"],
+    uploaded, _ = broker_request(endpoint, original, server_id, "put_blob", value, instance_id=first["instance_id"],
                                  sha256=digest, size=len(value))
     assert uploaded["ok"]
-    accepted, body = broker_request(endpoint, original, "get_blob", instance_id=first["instance_id"], sha256=digest)
+    accepted, body = broker_request(endpoint, original, server_id, "get_blob", instance_id=first["instance_id"], sha256=digest)
     assert accepted["ok"] and body == value
     for instance in (first["instance_id"], second["instance_id"]):
-        refused, body = broker_request(endpoint, copy, "get_blob", instance_id=instance, sha256=digest)
+        refused, body = broker_request(endpoint, copy, server_id, "get_blob", instance_id=instance, sha256=digest)
         assert not refused["ok"] and not body
 
 
@@ -127,7 +179,7 @@ def fixture(project):
       set -e
       test "$(uname -s)" = Linux
       test ! -e /etc/hostname
-      test -z "$SSH_AUTH_SOCK"
+      test -z "$TSUGUMI_REMOTE_TOKEN"
       printf 'remote-card-stdout\\n'
       printf '%s' '{"text":"remote Card display"}' > "$TSUGUMI_DISPLAY"
       cp "$FILE_IN" "$TSUGUMI_OUTPUT_DIR/copied.txt"
@@ -137,7 +189,7 @@ def fixture(project):
               "_outputs": FILE_FBS}
     settings = {
         "language": "bash", "inputs": [{"name": "in"}], "_outputs": FILE_FBS,
-        "executionService": "ssh-test", "executionResources": {"cpuMillis": 2500, "memoryBytes": 4 << 30},
+        "executionService": "remote-test",
         "retainArtifact": True, "artifactOutput": "doc", "recordIO": True, "timeoutSeconds": 600,
     }
     definitions = {
@@ -173,11 +225,10 @@ def check_success(client, run_id, name, system):
     summary = record.summary
     assert summary.state == CardState.succeeded, summary.failure and text(summary.failure.diagnostic)
     assert summary.executionState == RemoteExecutionState.succeeded
-    assert text(summary.executionService) == "ssh-test"
+    assert text(summary.executionService) == "remote-test"
     assert text(summary.executionSystem) == system
     assert len(text(summary.executionJobId)) == 64
-    assert summary.executionResources.cpuMillis == 2500
-    assert summary.executionResources.memoryBytes == 4 << 30
+    assert not summary.executionResources
     assert text(record.display.value.text) == "remote Card display"
     output, = record.outputs
     assert text(output.rootType) == "files.Doc"
@@ -192,12 +243,12 @@ def check_success(client, run_id, name, system):
     return summary
 
 
-def test_ssh_card_roundtrip_reconnect_and_cancel(project, core_factory, remote_broker):
+def test_remote_card_roundtrip_reconnect_and_cancel(project, core_factory, remote_broker, remote_daemon):
     fixture(project)
     daemon = core_factory()
     client = daemon.connect()
     services = client.call("ProjectInspectRequest").executionServices
-    remote = next(service for service in services if text(service.id) == "ssh-test")
+    remote = next(service for service in services if text(service.id) == "remote-test")
     assert remote.available
     system = text(remote.nativeSystem)
     assert system in ("aarch64-linux", "x86_64-linux")
@@ -212,14 +263,16 @@ def test_ssh_card_roundtrip_reconnect_and_cancel(project, core_factory, remote_b
         return row.executionState == RemoteExecutionState.running
 
     started = wait_invocation(client, run_id, "slow", running)
+    if restart := remote_daemon[2]:
+        restart()
     daemon.restart(crash=True)
     client = daemon.connect()
     wait_invocation(client, run_id, "slow", lambda row: row.endedAt is not None)
     recovered = check_success(client, run_id, "slow", system)
     assert text(recovered.executionJobId) == text(started.executionJobId)
     assert client.call("RunStatusRequest", runId=run_id).state == RunState.failed
-    after = client.call("RunInvocationsRequest", runId=run_id, card=path("after"))
-    assert not any(row.state == CardState.succeeded for row in after.records or [])
+    after = client.call("RunRecordRequest", runId=run_id, card=path("after"))
+    assert not after.exists
 
     run_id = start_run(client, "later")
     wait_invocation(client, run_id, "slow", running)
@@ -230,7 +283,7 @@ def test_ssh_card_roundtrip_reconnect_and_cancel(project, core_factory, remote_b
     assert not client.call("ArtifactListRequest", runId=run_id, card=path("slow")).artifacts
 
 
-def test_ssh_run_list_preserves_implementation_order(project, core_factory, remote_broker, tmp_path):
+def test_remote_run_list_preserves_implementation_order(project, core_factory, remote_broker, tmp_path):
     definitions = {
         "source": {
             "language": "bash", "_outputs": RUN_LIST_OUTPUT,
@@ -270,7 +323,8 @@ def test_ssh_run_list_preserves_implementation_order(project, core_factory, remo
             for row in page.records] == [(1, 1, 4, 1), (1, 2, 4, 2), (1, 3, 4, 1), (1, 4, 4, 2)]
     for row in page.records:
         assert row.executionState == RemoteExecutionState.succeeded
-        assert text(row.executionService) == "ssh-test"
+        assert text(row.executionService) == "remote-test"
+        assert row.executionResources is None
         assert len(text(row.executionJobId)) == 64
     assert len({text(row.executionJobId) for row in page.records}) == 4
 
@@ -282,7 +336,7 @@ def test_ssh_run_list_preserves_implementation_order(project, core_factory, remo
     assert collected["items"] == [{"value": value} for value in (110, 210, 120, 220)]
 
 
-def test_ssh_run_list_failure_cancels_running_sibling(project, core_factory, remote_broker):
+def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, remote_broker):
     definitions = {
         "fails": {
             **RUN_LIST_REMOTE,

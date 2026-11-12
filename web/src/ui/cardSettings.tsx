@@ -590,11 +590,12 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
   const serviceLabel = (entry: typeof service) => {
     if (!entry) return session.executionServices.length ? serviceId : L('情報なし')
     const id = s(entry.id), native = s(entry.nativeSystem)
-    if (id !== 'local') return entry.available ? `SSH (${id})` : L('SSH（{0}、接続未確認）', id)
+    if (id !== 'local') return entry.available ? id : L('{0}（接続未確認）', id)
     if (native.endsWith('-linux')) return `Linux (${native})`
     if (native.endsWith('-darwin')) return `macOS (${native})`
     return id
   }
+  const resourceLimits = serviceId !== 'local' && service?.resourceLimits === true
   const resources = get(def, 'executionResources')
   const resource = (name: string, label: string, example: string) => (
     <Row label={label}>
@@ -687,13 +688,13 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
               {service && unavailable && (
                 <Row><span className="label caption"><Icon name="exclamationmark.triangle" />{L('この実行環境では {0} を実行できません。', system.value)}</span></Row>
               )}
-              {serviceId !== 'local' && <>
-                <Row><span className="caption secondary">{L('外部の実行サービスでは CPU とメモリの上限を指定します。SSH ホストのリソースは他のジョブと共有します。')}</span></Row>
+              {resourceLimits && <>
+                <Row><span className="caption secondary">{L('CPU とメモリの上限を指定します。実行先のリソースは他のジョブと共有します。')}</span></Row>
                 {resource('cpuMillis', L('CPU 上限（ミリコア）'), '1000')}
                 {resource('memoryBytes', L('メモリ上限（バイト）'), '1073741824')}
               </>}
               {resources !== undefined && <Row>
-                {serviceId === 'local' && <span className="caption">{L('この実行サービスではリソースを指定できません。')}</span>}
+                {!resourceLimits && <span className="caption">{L('この実行サービスではリソースを指定できません。')}</span>}
                 <Button kind="borderless" onClick={() => model.setSetting('executionResources', undefined)}>{L('リソース指定を削除')}</Button>
               </Row>}
               {toggle('reuseWorker', L('worker の状態を残す'), false,

@@ -53,20 +53,26 @@ def emulator_registered(system: str) -> bool:
 
 
 def diagnostics(c, card_id: str) -> list[str]:
-    for r in c.call("ProjectInspectRequest").resolution:
+    snapshot = c.call("ProjectInspectRequest")
+    service = [text(d.code) for d in snapshot.diagnostics
+               if d.card is not None and [text(s) for s in d.card.segments] == [card_id]]
+    for r in snapshot.resolution:
         if [text(s) for s in r.card.segments] == [card_id]:
-            return [text(d.code) for d in r.diagnostics]
+            return service + [text(d.code) for d in r.diagnostics]
     raise KeyError(card_id)
 
 
 @pytest.fixture
-def registered_remote(monkeypatch):
+def registered_remote(monkeypatch, resource_limits):
     class Catalog(socketserver.StreamRequestHandler):
         def handle(self):
             size = struct.unpack(">I", self.rfile.read(4))[0]
             assert json.loads(self.rfile.read(size)) == {"version": 1, "operation": "catalog"}
             reply = json.dumps({"version": 1, "ok": True, "services": [{
-                "id": "cluster", "native_system": FOREIGN, "systems": [FOREIGN], "available": True,
+                "id": "cluster", "server_id": "2" * 64, "native_system": FOREIGN,
+                "systems": [FOREIGN], "available": True, "executor": "daemon",
+                "isolation": "pid_namespace", "resource_limits": resource_limits,
+                "max_jobs": 8, "worker_contract": 2,
             }]}).encode()
             self.wfile.write(struct.pack(">I", len(reply)) + reply)
 
@@ -84,15 +90,18 @@ def registered_remote(monkeypatch):
                 thread.join()
 
 
-@pytest.mark.parametrize("settings,message", [
-    ({"executionService": "cluster"}, "requires executionResources"),
-    ({"executionService": "local", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}},
+@pytest.mark.parametrize("resource_limits,settings,message", [
+    (False, {"executionService": "cluster"}, None),
+    (True, {"executionService": "local", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}},
      "requires an external execution service"),
-    ({"executionService": "cluster", "system": NATIVE.split("-")[0] + "-linux",
+    (True, {"executionService": "cluster", "system": NATIVE.split("-")[0] + "-linux",
       "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, "does not support system"),
-    ({"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, None),
-], ids=["missing-resources", "local-resources", "wrong-system", "remote-native"])
-def test_external_service_validation_uses_host_catalog(project, core_factory, registered_remote, settings, message):
+    (True, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, None),
+    (False, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}},
+     "cannot enforce resource limits"),
+], ids=["unlimited", "local-resources", "wrong-system", "remote-native", "unsupported-limits"])
+def test_external_service_validation_uses_host_catalog(
+        project, core_factory, registered_remote, resource_limits, settings, message):
     """The service's advertised system and resource rules apply before accepting a run."""
     definition = {"language": "bash", "_outputs": MSG_FBS,
                   "_nix": '{ pkgs, inputs, params }: { run = "true"; }', **settings}
@@ -100,8 +109,10 @@ def test_external_service_validation_uses_host_catalog(project, core_factory, re
     client = core_factory().connect()
     services = client.call("ProjectInspectRequest").executionServices
     assert [text(service.id) for service in services] == ["local", "cluster"]
-    assert services[1].kind == ExecutionServiceKind.ssh_direct
+    assert services[1].kind == ExecutionServiceKind.remote_daemon
     assert text(services[1].nativeSystem) == FOREIGN
+    assert services[1].resourceLimits == resource_limits
+    assert services[1].maxJobs == 8
     validation = client.call("ProjectValidateRequest")
     if message is None:
         assert validation.valid, [text(diagnostic.message) for diagnostic in validation.diagnostics]
@@ -120,6 +131,8 @@ def test_snapshot_lists_the_systems_the_local_service_can_run(client):
     assert [text(service.id) for service in services] == ["local"]
     service = services[0]
     assert text(service.nativeSystem) == NATIVE
+    assert not service.resourceLimits
+    assert service.maxJobs is None
     expected = {NATIVE}
     if sys.platform == "linux" and emulator_registered(FOREIGN):
         expected.add(FOREIGN)

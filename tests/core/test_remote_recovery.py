@@ -27,12 +27,15 @@ from tsugumi_client import RpcFailure, path, text
 
 class Gateway(socketserver.UnixStreamServer):
     instance = "1" * 64
+    server_id = "2" * 64
     system = "x86_64-linux"
 
     def __init__(self, endpoint):
         super().__init__(endpoint, Handler)
         self.online = True
-        self.worker_contract = 2
+        self.registered_server = self.server_id
+        self.resource_limits = True
+        self.probe_overrides = {}
         self.receipts = {}
         self.submit_count = 0
         self.blobs = set()
@@ -76,14 +79,20 @@ class Gateway(socketserver.UnixStreamServer):
 
     def operation(self, header, body):
         operation = header["operation"]
+        capabilities = {
+            "server_id": self.registered_server, "native_system": self.system, "systems": [self.system],
+            "executor": "daemon", "isolation": "pid_namespace", "resource_limits": self.resource_limits,
+            "max_jobs": 8, "worker_contract": 2,
+        }
         if operation == "catalog":
-            return {"services": [{"id": "cluster", "native_system": self.system,
-                                  "systems": [self.system], "available": True}]}
+            return {"services": [{"id": "cluster", "available": True, **capabilities}]}
+        assert header["server_id"] == self.server_id
+        if header["server_id"] != self.registered_server:
+            return {"ok": False, "code": "registration_changed", "error": "execution service was replaced"}
         if operation == "probe":
-            response = {"instance_id": self.instance, "native_system": self.system, "systems": [self.system]}
-            if self.worker_contract is not None:
-                response["worker_contract"] = self.worker_contract
-            return response
+            return {key: value for key, value in {
+                "instance_id": self.instance, **capabilities, **self.probe_overrides,
+            }.items() if value is not None}
         assert header["instance_id"] == self.instance
         if operation == "put_blob":
             assert hashlib.sha256(body).hexdigest() == header["sha256"]
@@ -99,8 +108,12 @@ class Gateway(socketserver.UnixStreamServer):
             spec = json.loads(body)
             assert set(spec["input_blobs"]) <= self.blobs
             assert spec["system"] == self.system
-            assert spec["cpu_millis"] == 500
-            assert spec["memory_bytes"] == 256 << 20
+            if self.resource_limits:
+                assert spec["cpu_millis"] == 500
+                assert spec["memory_bytes"] == 256 << 20
+            else:
+                assert "cpu_millis" not in spec
+                assert "memory_bytes" not in spec
             self.receipts[job] = {"state": "running", "fingerprint": hashlib.sha256(body).hexdigest()}
             return None  # the durable receipt exists, but its response was lost
         if operation == "cancel":
@@ -189,17 +202,38 @@ def running_job(project, remote_gateway, core_factory, tmp_path):
         remote_gateway.resume.set()
 
 
-@pytest.mark.parametrize("worker_contract", [None, 1, 99])
-def test_remote_worker_contract_mismatch_prevents_upload(project, remote_gateway, core_factory, tmp_path, worker_contract):
-    remote_gateway.worker_contract = worker_contract
+@pytest.mark.parametrize("field,value,diagnostic", [
+    ("worker_contract", None, "Rebuild the daemon with this Tsugumi revision"),
+    ("worker_contract", 1, "Rebuild the daemon with this Tsugumi revision"),
+    ("worker_contract", 99, "Rebuild the daemon with this Tsugumi revision"),
+    ("executor", None, "Start the Tsugumi remote execution daemon"),
+    ("executor", "direct", "Start the Tsugumi remote execution daemon"),
+    ("server_id", "3" * 64, "server ID changed"),
+    ("isolation", None, "does not provide PID namespace isolation"),
+    ("resource_limits", False, "cannot enforce resource limits"),
+    ("max_jobs", 0, "did not report a valid concurrent job limit"),
+])
+def test_incompatible_remote_gateway_prevents_upload(project, remote_gateway, core_factory, tmp_path, field, value, diagnostic):
+    remote_gateway.probe_overrides[field] = value
     client = core_factory(mocked_builds=True).connect()
     worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
                    executionResources={"cpuMillis": 500, "memoryBytes": 256 << 20})
     run_id = start_run(client, "work", propagate=False)
     status = wait_run(client, run_id, timeout=10)
     assert status.state == RunState.failed
-    assert "Rebuild the gateway with this Tsugumi revision" in text(status.failure.diagnostic)
+    assert diagnostic in text(status.failure.diagnostic)
     assert not remote_gateway.blobs and remote_gateway.submit_count == 0
+
+
+def test_remote_job_without_resource_limits(project, remote_gateway, core_factory, tmp_path):
+    remote_gateway.resource_limits = False
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster")
+    run_id = start_run(client, "work", propagate=False)
+    live = wait_for_state(client, run_id, RemoteExecutionState.running)
+    assert live.executionResources is None
+    remote_gateway.finish(text(live.executionJobId))
+    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
 
 
 @pytest.mark.parametrize("fault", ["type", "escape", "oversize"])
@@ -221,10 +255,14 @@ def assert_cancelled(client, gateway, run_id, job_id):
     assert gateway.submit_count == 1
 
 
-def test_core_restart_reattaches_to_the_same_external_job(running_job):
+@pytest.mark.parametrize("outage", ["offline", "registration_replaced"])
+def test_core_restart_reattaches_to_the_same_external_job(running_job, outage):
     """An unknown transport outcome remains pending, and cancellation survives reconnection."""
     gateway, daemon, client, run_id, job_id = running_job
-    gateway.online = False
+    if outage == "offline":
+        gateway.online = False
+    else:
+        gateway.registered_server = "3" * 64
     wait_for_state(client, run_id, RemoteExecutionState.disconnected)
     daemon.restart(crash=True)
     client = daemon.connect()
@@ -234,6 +272,7 @@ def test_core_restart_reattaches_to_the_same_external_job(running_job):
 
     client.call("RunCancelRequest", runId=run_id)
     gateway.online = True
+    gateway.registered_server = gateway.server_id
     assert_cancelled(client, gateway, run_id, job_id)
 
 
@@ -243,7 +282,7 @@ def test_core_restart_reattaches_to_the_same_external_job(running_job):
     ("blackhole", "status", False),
 ])
 def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, operation, request_cancel):
-    """SIGTERM stops waiting for SSH; only explicit cancellation survives as intent."""
+    """SIGTERM stops waiting for the executor and keeps any explicit cancellation intent."""
     gateway, daemon, client, run_id, job_id = running_job
     gateway.stall_operation = operation
     gateway.stall = mode

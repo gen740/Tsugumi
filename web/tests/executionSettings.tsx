@@ -41,7 +41,7 @@ assert.doesNotMatch(darwin, /<option value="x86_64-linux"/)
 
 session.executionServices = [
   Object.assign(new R.ExecutionServiceT(), { id: 'local', nativeSystem: 'aarch64-linux', systems: ['aarch64-linux'] }),
-  Object.assign(new R.ExecutionServiceT(), { id: 'worker', nativeSystem: 'x86_64-linux', systems: ['x86_64-linux'] }),
+  Object.assign(new R.ExecutionServiceT(), { id: 'worker', nativeSystem: 'x86_64-linux', systems: ['x86_64-linux'], resourceLimits: true }),
 ]
 session.updateCard(card, (def) => {
   def.set('executionService', 'worker')
@@ -49,7 +49,7 @@ session.updateCard(card, (def) => {
   def.set('sandbox', false)
 })
 const remote = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
-assert.match(remote, /<option value="worker" selected="">SSH \(worker\)/)
+assert.match(remote, /<option value="worker" selected="">worker/)
 assert.match(remote, /この実行環境の既定（x86_64-linux）/)
 assert.doesNotMatch(remote, /<option value="aarch64-linux"/)
 assert.match(remote, /CPU 上限（ミリコア）/)
