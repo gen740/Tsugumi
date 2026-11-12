@@ -295,6 +295,8 @@
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）" = "Not available for this model (only models checked against the official documents)";
 "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。" = "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).";
+"この呼び出しで記録されたものです。ビルド時だけに使う依存関係は含まれません。" = "Recorded for this invocation. Build-only dependencies are not included.";
+"この呼び出しの環境は記録されていません" = "No environment was recorded for this invocation.";
 "この実行では、この Card はまだ動いていません" = "This Card has not run in this Run yet";
 "この実行では、この Card はまだ動いていません。" = "This Card has not run in this Run yet.";
 "この実行では呼び出されていません" = "Not invoked in this run";
@@ -385,6 +387,7 @@
 "クリックでスキップ" = "Click to skip";
 "クリックで次のヒント" = "Click for the next tip";
 "グラフの描画が終わりませんでした" = "The chart did not finish drawing";
+"グラフの更新" = "Chart updates";
 "グラフを表示するには？" = "How do I show a chart?";
 "グリッド" = "Grid";
 "グリッドを表示（移動時に吸着）" = "Show grid (snap when moving)";
@@ -562,6 +565,7 @@
 "モデル一覧を取得" = "List Models";
 "モデル（接続先: %@）" = "Model (provider: %@)";
 "ライト" = "Light";
+"ライブ（実行中も追う）" = "Live (follow while running)";
 "リリースの一覧（GitHub）" = "Releases (GitHub)";
 "ログ" = "Log";
 "ログのフォルダ" = "Log folder";
@@ -577,6 +581,7 @@
 "ワークフローを実行" = "Run Workflow";
 "一致する Skill はありません" = "No matching Skill";
 "一致するアイコンはありません" = "No icon matches";
+"一致する依存パスはありません" = "No matching dependencies.";
 "一般" = "General";
 "一覧" = "List";
 "一覧から削除" = "Remove from the list";
@@ -623,6 +628,9 @@
 "使用中" = "In use";
 "使用中のアカウント" = "Account in use";
 "例: y 軸を対数にしてください" = "e.g. Make the y axis logarithmic";
+"依存 package" = "Packages";
+"依存 package は実行時に記録されたものだけを表示します。現在の Nix 定義からは求めません。" = "Packages are shown only as recorded when the Card ran. They are not derived from the current Nix definition.";
+"依存パスを検索" = "Search dependencies";
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
 "保存しています" = "Saving";
@@ -867,6 +875,7 @@
 "実行履歴をプロジェクトに保存する" = "Save the run history in the project";
 "実行待ち" = "Ready";
 "実行後に保存" = "Save after the run";
+"実行時の依存パス" = "Runtime dependencies";
 "実行状況はありません" = "No run activity";
 "実行環境が起動の途中で止まりました: %@" = "The environment stopped while starting: %@";
 "実行環境との接続が切れました" = "Lost the connection to the environment";
@@ -981,6 +990,8 @@
 "日時" = "Date";
 "日本語" = "日本語";
 "更新" = "Update";
+"更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。" = "Update: shows the last chart, dimmed while this Card or a Card upstream of it is running, and replaces it when the new result arrives. Live: replaces the chart with each one that arrives during the run, keeping the previous one on screen until the next is ready.";
+"更新（実行中は薄く表示）" = "Update (dimmed while running)";
 "書き出す…" = "Export…";
 "書き方を調べています" = "Looking up how to write it";
 "書き込み" = "Write";
@@ -1019,6 +1030,7 @@
 "根拠の記録" = "Evidence record";
 "桃" = "Pink";
 "検索" = "Search";
+"検索結果を 100 件ずつ表示します。" = "Showing 100 matching paths per page.";
 "検証" = "Validate";
 "検証しています" = "Validating";
 "概要" = "Description";
