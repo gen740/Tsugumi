@@ -8,7 +8,8 @@
 #
 # The worker uses the same FlatBuffers ABI as C++/Python. Its in-memory adapter
 # presents messages as Dicts; no files or subprocess protocol carry values.
-# Module state persists with reuseWorker. Displays publish during the call.
+# A Card keeps no state by default (a new interpreter per invocation); module
+# state persists with reuseWorker: true. Displays publish during the call.
 module Tsugumi
 
 export input, path, output, display_text, display_markdown, display_table, display_image, display_module, display_vegalite, cancelled, remaining_ms

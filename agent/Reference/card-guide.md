@@ -80,6 +80,15 @@ size, SHA-256) in the display or the log.
 Params: `{"name": "low", "type": "double", "data": 600}`; types `bool`, `int64`, `uint64`, `double`,
 `string` and their arrays (`double[]`, ...). Python reads them with `ctx.params().Low()`.
 
+A Card keeps no state: every invocation runs in a new worker (a new process and interpreter), so
+globals, statics, loaded modules, `options()` and the random number generator's position never reach the
+next invocation or run. Write Cards that way, and pass what the next step needs in a message. Add
+`"reuseWorker": true` only when the Card must remember across invocations (a running window of a
+stream, say) or is called many times in a loop and should not start an interpreter each time; one
+worker then serves later invocations and runs, all of the above carries over, and per-run state is reset
+in `on_run_start(ctx)` (C++: `onRunStart()`), called before the first invocation of each run. The working
+directory and environment variables are set again for every call either way.
+
 ### default.nix
 
 - Python: `demos/report/definitions/generate/default.nix`. Packages from nixpkgs:
@@ -164,7 +173,7 @@ beyond that, plot fewer points or use matplotlib (an image). Charts cannot load 
 The whole SDK: `sdk/python/tsugumi/__init__.py`. More: `demos/report/definitions/aggregate`
 (reads a File input, makes a table), `demos/collatz/definitions/compare`.
 
-`src/main.py` is imported once when the worker starts, before any `preRun`; the worker stays, and
+`src/main.py` is imported once when the worker starts, before any `preRun`, and
 `preRun` runs before every call. So `preRun`'s exports and `cd` reach `main` (in `os.environ` too)
 but not the module's top. Native libraries often read their settings as they load: limit threads
 at the top of `main.py`, before the imports, and it lasts for the worker:
@@ -192,7 +201,7 @@ Params are in `$TSUGUMI_PARAMS_JSON` (the JSON text itself). To show something, 
 
 `_card.json`: `{"language": "r", ...}`; `default.nix`: `run = inputs.tsugumi.rCard { src = ./src; packages = ps: [
 ps.survival ps.ggplot2 ]; };` (from nixpkgs' `rPackages`). No `sdk`, no generated classes: messages and params are
-lists, converted in memory and checked against the port's FlatBuffers type by the resident worker.
+lists, converted in memory and checked against the port's FlatBuffers type by the worker.
 
 ```r
 main <- function(ctx) {
@@ -204,7 +213,8 @@ main <- function(ctx) {
 ```
 
 `ctx$params$low`, `ctx$output_directory`, `ctx$temporary_directory`. `stop("why")` fails the Card and
-goes to its log; `print()` and `message()` go to the log. One display: the last shown. Call `set.seed` yourself. An
+goes to its log; `print()` and `message()` go to the log. One display: the last shown. Call `set.seed` yourself: a
+new interpreter starts unseeded, and with `reuseWorker: true` a later run continues the earlier run's random sequence. An
 integer outside the exact double range (±(2^53 − 1)) is read as a decimal string, including the full signed and unsigned 64-bit ranges.
 A `long`/`ulong` field takes an R integer (`27L`) or a string of digits (`sprintf("%.0f", x)`), not a double: `27` is written as
 `27.0` and the type rejects it.

@@ -1,19 +1,22 @@
 """R and Julia Cards (rCard, juliaCard) and the display of bash Cards: params,
 messages and File outputs cross between languages through the port types, and
 each display kind reaches the Card's record. Their interpreters live in the
-resident ABI worker; exceptions fail the Card. With
-TSUGUMI_TEST_CONTAINER=1 they run in the shared VM's sandbox."""
+ABI worker; exceptions fail the Card. A Card keeps no interpreter state unless
+its settings say `reuseWorker: true`: by default every invocation starts a new
+interpreter. Linux CI runs them under bubblewrap, as in the shared VM.
+TSUGUMI_TEST_CONTAINER=1 also exercises the app's VM on macOS."""
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 
 import pytest
 
 from conftest import Daemon, real_environment
 from projects import put, run_and_wait
-from tsugumi_client import path, text
+from tsugumi_client import new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
 NUMBERS = """attribute "tsugumi";
@@ -42,7 +45,10 @@ def write_project(root, cards: dict, connections: list):
     put(root / "definitions/start/_card.json", json.dumps({"template": "trigger"}))
     for id_, c in cards.items():
         d = root / "definitions" / id_
-        put(d / "_card.json", json.dumps({**c["card"], **({} if IN_VM else {"sandbox": False})}))
+        settings = c["card"].copy()
+        if not IN_VM and sys.platform != "linux":
+            settings["sandbox"] = False
+        put(d / "_card.json", json.dumps(settings))
         put(d / "default.nix", c["nix"])
         put(d / "_outputs.fbs", c.get("outputs", NO_OUTPUTS))
         for name, source in c.get("src", {}).items():
@@ -192,6 +198,46 @@ def test_a_double_crosses_bash_r_and_julia_unchanged(project):
     assert "0.042169650342858," in raw and "1e-20," in raw  # the shortest digits, as a person would read them
 
 
+def test_non_finite_doubles_and_vectors_cross_r_and_julia(project):
+    root, connect = project
+    made = '{"numbers": {"values": [nan, inf, -inf, 0.1, -0.0, 1.7976931348623157e308], "single": inf}}'
+    make = "{ pkgs, inputs, params }: { run = ''\n  cat > \"$TSUGUMI_OUTPUT\" <<'END'\n" + made + "\nEND\n''; }\n"
+    r = r'''
+main <- function(ctx) {
+  m <- ctx$input("numbers")
+  v <- m$values
+  stopifnot(length(v) == 6, is.nan(v[1]), v[2] == Inf, v[3] == -Inf, sprintf("%.17g", v[4]) == "0.10000000000000001",
+            m$single == Inf)
+  ctx$output("numbers", m)
+}
+'''
+    julia = r'''
+function main(ctx)
+    m = input(ctx, "numbers")
+    v = m["values"]
+    @assert length(v) == 6 && isnan(v[1]) && v[2] == Inf && v[3] == -Inf && v[4] == 0.1 && v[6] == 1.7976931348623157e308
+    @assert m["single"] == Inf
+    output(ctx, "numbers", m)
+end
+'''
+    write_project(root, {
+        "make": {"card": {"language": "bash", "inputs": [{"name": "start"}]}, "nix": make, "outputs": EXACT},
+        "r": {"card": {"language": "r", "inputs": [{"name": "numbers"}]},
+              "nix": R_NIX, "outputs": EXACT, "src": {"main.R": r}},
+        "julia": {"card": {"language": "julia", "inputs": [{"name": "numbers"}]},
+                  "nix": JULIA_NIX, "outputs": EXACT, "src": {"main.jl": julia}},
+        "show": {"card": {"language": "bash", "inputs": [{"name": "numbers"}]}, "nix": BASH_SHOW},
+    }, [("start", "out", "make", "start"), ("make", "numbers", "r", "numbers"),
+        ("r", "numbers", "julia", "numbers"), ("julia", "numbers", "show", "numbers")])
+    c = connect()
+    run_id, status = run_and_wait(c, "start", timeout=1800)
+    log = lambda card: text(c.call("LogRangeRequest", runId=run_id, card=path(card), stream=2, limitBytes=65536).text)
+    assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic),
+                                                log("make"), log("r"), log("julia"))
+    raw = text(c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display.value.text)
+    assert "".join(raw.split()) == '{"values":[nan,inf,-inf,0.1,-0.0,1.7976931348623157e+308],"single":inf}', raw
+
+
 @pytest.mark.parametrize("display, check", [
     ('{"markdown": "**bold**"}', lambda d: d.value.markdown and text(d.value.text) == "**bold**"),
     ('{"text": "plain"}', lambda d: not d.value.markdown and text(d.value.text) == "plain"),
@@ -281,6 +327,235 @@ def test_interpreter_state_and_run_hook(project, language, reuse):
         assert text(shown.value.text) == f"{expected} {expected}"
         inv = c.call("RunInvocationsRequest", runId=run_id, card=path("count")).records[0]
         assert bool(inv.workerReused) == (reuse and n == 2)
+
+
+# What an interpreter could carry from one invocation to the next: a global,
+# an option, the position of the random number generator (seeded while the
+# source loads), an environment variable and the working directory.
+CARRIED = {
+    "r": (R_NIX, "main.R", r'''
+set.seed(1)
+calls <- 0L
+main <- function(ctx) {
+  calls <<- calls + 1L
+  seen <- getOption("tsugumi.carried", 0L)
+  options(tsugumi.carried = seen + 1L)
+  env <- Sys.getenv("TSUGUMI_CARRIED")
+  Sys.setenv(TSUGUMI_CARRIED = "set")
+  moved <- identical(basename(getwd()), "elsewhere")
+  dir.create("elsewhere", showWarnings = FALSE)
+  setwd("elsewhere")
+  ctx$display_text(sprintf("calls=%d options=%d env=%s moved=%s random=%.9f",
+                           calls, seen, env, tolower(moved), runif(1)))
+}
+'''),
+    "julia": (JULIA_NIX, "main.jl", r'''
+using Random
+Random.seed!(1)
+calls = 0
+carried = Dict{String,Int}()
+function main(ctx)
+    global calls += 1
+    seen = get(carried, "n", 0)
+    carried["n"] = seen + 1
+    env = get(ENV, "TSUGUMI_CARRIED", "")
+    ENV["TSUGUMI_CARRIED"] = "set"
+    moved = basename(pwd()) == "elsewhere"
+    mkpath("elsewhere")
+    cd("elsewhere")
+    display_text(ctx, "calls=$calls options=$seen env=$env moved=$moved random=$(rand())")
+end
+'''),
+}
+
+
+def shown_text(c, run_id, card):
+    return text(c.call("RunRecordRequest", runId=run_id, card=path(card)).record.display.value.text)
+
+
+def reused(c, run_id, card):
+    return bool(c.call("RunInvocationsRequest", runId=run_id, card=path(card)).records[0].workerReused)
+
+
+def reload(c):
+    snap = c.call("ProjectInspectRequest")
+    c.call("ProjectReloadRequest", baseRev=snap.rev, opId=new_id(), origin="test")
+
+
+@pytest.mark.parametrize("language", ["r", "julia"])
+def test_a_card_keeps_no_interpreter_state_by_default(project, language):
+    # No reuseWorker in the settings: the second run must not be able to tell
+    # that there was a first one.
+    root, connect = project
+    nix, name, source = CARRIED[language]
+    write_project(root, {"probe": {"card": {"language": language}, "nix": nix, "src": {name: source}}}, [])
+    c = connect()
+    seen = []
+    for _ in range(2):
+        run_id, status = run_and_wait(c, "start", timeout=1800)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        seen.append(shown_text(c, run_id, "probe"))
+        assert not reused(c, run_id, "probe")
+    assert seen[0].startswith("calls=1 options=0 env= moved=false random="), seen
+    assert seen[0] == seen[1], seen
+
+
+@pytest.mark.parametrize("language", ["r", "julia"])
+def test_reuse_worker_carries_globals_options_and_the_random_position(project, language):
+    # What carries with reuseWorker: true is pinned here so that a change is
+    # deliberate. The worker resets the environment and the working directory
+    # for every call, so those two never carry.
+    root, connect = project
+    nix, name, source = CARRIED[language]
+    write_project(root, {"probe": {"card": {"language": language, "reuseWorker": True},
+                                  "nix": nix, "src": {name: source}}}, [])
+    c = connect()
+    seen = []
+    for n in (1, 2):
+        run_id, status = run_and_wait(c, "start", timeout=1800)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        seen.append(shown_text(c, run_id, "probe"))
+        assert reused(c, run_id, "probe") == (n == 2)
+    first, second = (dict(item.split("=", 1) for item in shown.split(" ")) for shown in seen)
+    assert (first["calls"], first["options"], first["env"], first["moved"]) == ("1", "0", "", "false"), seen
+    assert (second["calls"], second["options"], second["env"], second["moved"]) == ("2", "1", "", "false"), seen
+    assert first["random"] != second["random"], seen
+
+
+VERSIONED = {
+    "r": (R_NIX, "main.R", 'calls <- 0L\nmain <- function(ctx) {\n  calls <<- calls + 1L\n'
+                           '  ctx$display_text(sprintf("VERSION %d", calls))\n}\n'),
+    "julia": (JULIA_NIX, "main.jl", 'calls = 0\nfunction main(ctx)\n    global calls += 1\n'
+                                    '    display_text(ctx, "VERSION $calls")\nend\n'),
+}
+
+
+@pytest.mark.parametrize("language", ["r", "julia"])
+def test_disabling_reuse_drops_the_previous_interpreter(project, language):
+    root, connect = project
+    nix, name, source = VERSIONED[language]
+    settings = {"language": language, "reuseWorker": True}
+    write_project(root, {"count": {"card": settings, "nix": nix,
+                                  "src": {name: source.replace("VERSION", "calls")}}}, [])
+    c = connect()
+
+    def expect(calls, again):
+        run_id, status = run_and_wait(c, "start", timeout=1800)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        assert shown_text(c, run_id, "count") == f"calls {calls}"
+        assert reused(c, run_id, "count") == again
+
+    expect(1, False)
+    expect(2, True)
+    settings.pop("reuseWorker")
+    put(root / "definitions/count/_card.json", json.dumps(settings))
+    reload(c)
+    expect(1, False)
+
+
+@pytest.mark.parametrize("language", ["r", "julia"])
+def test_a_changed_source_replaces_the_resident_interpreter(project, language):
+    root, connect = project
+    nix, name, source = VERSIONED[language]
+    write_project(root, {"count": {"card": {"language": language, "reuseWorker": True},
+                                  "nix": nix, "src": {name: source.replace("VERSION", "first")}}}, [])
+    c = connect()
+    for expected, again in (("first 1", False), ("first 2", True)):
+        run_id, status = run_and_wait(c, "start", timeout=1800)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        assert shown_text(c, run_id, "count") == expected and reused(c, run_id, "count") == again
+    put(root / "definitions" / "count" / "src" / name, source.replace("VERSION", "second"))
+    reload(c)
+    run_id, status = run_and_wait(c, "start", timeout=1800)
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    # The new source runs in a new interpreter: nothing of the old one is left.
+    assert shown_text(c, run_id, "count") == "second 1" and not reused(c, run_id, "count")
+
+
+def test_changed_r_packages_replace_the_resident_interpreter(project):
+    root, connect = project
+    _, name, source = VERSIONED["r"]
+    write_project(root, {"count": {"card": {"language": "r", "reuseWorker": True}, "nix": R_NIX,
+                                  "src": {name: source.replace("VERSION", "calls")}}}, [])
+    c = connect()
+    for expected in ("calls 1", "calls 2"):
+        run_id, status = run_and_wait(c, "start", timeout=1800)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        assert shown_text(c, run_id, "count") == expected
+    put(root / "definitions" / "count" / "default.nix",
+        "{ pkgs, inputs, params }: { run = inputs.tsugumi.rCard { src = ./src; packages = ps: [ ps.digest ]; }; }\n")
+    reload(c)
+    run_id, status = run_and_wait(c, "start", timeout=1800)
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    assert shown_text(c, run_id, "count") == "calls 1" and not reused(c, run_id, "count")
+
+
+# The second call of a resident interpreter ends badly in one of four ways.
+BAD_SECOND_CALL = {
+    "r": (R_NIX, "main.R", r'''
+calls <- 0L
+main <- function(ctx) {
+  calls <<- calls + 1L
+  ctx$display_text(sprintf("call %d", calls))
+  if (calls != 2L) return(invisible(NULL))
+  how <- "HOW"
+  if (how == "fail") stop("on purpose")
+  if (how == "exit") quit(save = "no", status = 3)
+  if (how == "crash") tools::pskill(Sys.getpid(), tools::SIGKILL)
+  while (!ctx$cancelled()) Sys.sleep(0.01)
+}
+'''),
+    "julia": (JULIA_NIX, "main.jl", r'''
+calls = 0
+function main(ctx)
+    global calls += 1
+    display_text(ctx, "call $calls")
+    calls == 2 || return
+    how = "HOW"
+    how == "fail" && error("on purpose")
+    how == "exit" && exit(3)
+    how == "crash" && ccall(:kill, Cint, (Cint, Cint), getpid(), 9)
+    while !cancelled(ctx)
+        sleep(0.01)
+    end
+end
+'''),
+}
+
+
+@pytest.mark.parametrize("language", ["r", "julia"])
+@pytest.mark.parametrize("how", ["fail", "cancel", "exit", "crash"])
+def test_a_resident_interpreter_is_not_reused_after_a_bad_call(project, language, how):
+    # An error, a cancellation, the interpreter leaving by itself (quit/exit)
+    # and the process being killed all end the worker: the next run starts a
+    # new interpreter, and the daemon goes on serving.
+    from projects import start_run, wait_run
+    from Tsugumi.RPC.NotificationPayload import NotificationPayload
+    root, connect = project
+    nix, name, source = BAD_SECOND_CALL[language]
+    write_project(root, {"count": {"card": {"language": language, "reuseWorker": True},
+                                  "nix": nix, "src": {name: source.replace("HOW", how)}}}, [])
+    c = connect()
+    run_id, status = run_and_wait(c, "start", timeout=1800)
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    assert shown_text(c, run_id, "count") == "call 1"
+    if how == "cancel":
+        opened = c.open()
+        c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("count")])
+        run_id = start_run(c, "start")
+        c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated
+                            and text(n.value.display.value.text) == "call 2", timeout=600)
+        c.call("RunCancelRequest", runId=run_id)
+        assert wait_run(c, run_id, 30).state == RunState.cancelled
+    else:
+        run_id, status = run_and_wait(c, "start", timeout=1800)
+        assert status.state == RunState.failed
+        failure = c.call("RunRecordRequest", runId=run_id, card=path("count")).status.failure
+        assert failure is not None and failure.kind != 14  # not a timeout: the call ended at once
+    c.call("ProjectInspectRequest")
+    run_id, status = run_and_wait(c, "start", timeout=1800)
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    assert shown_text(c, run_id, "count") == "call 1" and not reused(c, run_id, "count")
 
 
 LIVE = {

@@ -10,8 +10,10 @@
 # presents messages as lists without temporary JSON files. A length-1 vector
 # is written as a scalar: wrap a vector field in I() to keep it an array.
 # Integers too large for an exact R double are decimal strings; NA/NaN are null.
-# Module-level state persists while reuseWorker is enabled. Each call gets a
-# fresh ctx; display functions publish immediately.
+# A Card keeps no state by default: each invocation loads this file and the
+# Card's source in a new interpreter. With reuseWorker: true the interpreter
+# and module-level state persist. Each call gets a fresh ctx; display
+# functions publish immediately.
 
 .tsugumi_context <- function() {
   # FlatBuffers reads a union's discriminator before its value.

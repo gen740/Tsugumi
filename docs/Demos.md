@@ -96,9 +96,9 @@ Inside the child Workflow (the same shape in all four):
 | `check` | code | Outputs nothing if the value is 1 (ending the loop); otherwise outputs the value and its parity. `maxRuns` (200) bounds the iterations |
 | `route` | branch | Fires only `a` (`halve`) for even, or only `b` (`triple`) for odd |
 | `halve` / `triple` | code | Compute `n/2` and `3n+1`. `triple` fails with `integer overflow` beyond 64-bit integers |
-| `collect` | code | Collects and displays the values that arrive, and outputs the sequence when 1 arrives. C++ and Python clear the resident worker's state for each run in `onRunStart` |
+| `collect` | code | Collects and displays the values that arrive, and outputs the sequence when 1 arrives. C++ and Python keep the values in the worker (`reuseWorker: true`) and clear them for each run in `onRunStart` |
 
-**How the Julia and R sides differ.** All four languages now retain state in resident workers. This demo keeps the Julia and R sequence explicit in the messages: the value going back to `loop` carries "the sequence so far" (`Walk`: `value` and `path`), and `collect` outputs `path` as the sequence when 1 arrives. Because the message carries the process, the record of any Card shows the sequence up to that point.
+**How the Julia and R sides differ.** Every code Card of the four loops sets `reuseWorker: true`, so one worker per Card serves all the iterations instead of a new interpreter for each. Only the C++ and Python `collect` use the state that this keeps. This demo keeps the Julia and R sequence explicit in the messages: the value going back to `loop` carries "the sequence so far" (`Walk`: `value` and `path`), and `collect` outputs `path` as the sequence when 1 arrives. Because the message carries the process, the record of any Card shows the sequence up to that point.
 
 **R's range.** R's numbers are doubles, so integers are exact only below 2^53. Larger values are passed by the worker as strings, so R's `check` and `halve` fail rather than round silently, and `triple` fails before computing when `3n+1` would reach 2^53. Within this range the four sequences agree. Julia computes in 64-bit integers (`UInt64`), and its `triple`, like C++ and Python, fails with `integer overflow` when `3n+1` exceeds 64 bits.
 

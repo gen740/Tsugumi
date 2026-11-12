@@ -135,14 +135,15 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
   The worker loads the built shared library `lib/main.so` into memory and calls it directly (no process is started per invocation).
 - **Python**: implement `main(ctx)` and, optionally, the initialisation hook `on_run_start(ctx)`.
 - **bash**: inputs arrive per port as `JSON_P` (the path of a JSON file) / `FILE_P` / `DIR_P`; the JSON written to `$TSUGUMI_OUTPUT` is the output, type-checked per port.
-- **R and Julia** (`rCard`, `juliaCard`): their interpreters live in the same resident ABI worker as C++/Python. Module state is retained when `reuseWorker` is enabled; displays publish during execution. The list/Dict interface uses in-memory JSON conversion against each port’s FlatBuffers schema, without per-call processes or JSON files. How to write them is in [Your first Card](CardGuide.md).
+- **R and Julia** (`rCard`, `juliaCard`): their interpreters live in the same ABI worker as C++/Python. An invocation starts a new interpreter unless `reuseWorker` is on, which keeps the interpreter and its module state; displays publish during execution. The list/Dict interface uses in-memory JSON conversion against each port’s FlatBuffers schema, without per-call processes or JSON files. How to write them is in [Your first Card](CardGuide.md).
 - What does not depend on the port contract (visualisation, logs, the run context) is gathered in the common runtime `libtsugumi_card.so`, so all that is built per Card is the type definitions and a thin adapter.
 
 ### Resident workers
 
-- A worker with `reuseWorker` (default `true`) stays resident across runs and keeps its state, static variables included (`onRunStart` / `on_run_start` is called before the first invocation of each run).
+- By default a Card keeps no state: `reuseWorker` is `false`, and every invocation gets a new worker (a new process, a new interpreter).
+- A worker of a Card with `reuseWorker = true` stays resident across invocations and runs and keeps its state, static variables included (`onRunStart` / `on_run_start` is called before the first invocation of each run). Each invocation records whether its worker was reused.
 - It ends automatically when its build conditions change, on failure or cancellation, after 10 minutes unused, above 2 GiB of memory, or when more than 32 are resident.
-- For a Card with `reuseWorker = false`, the new worker for next time is started ahead in the background (sandbox started, `.so` loaded, Python imports done) and kept waiting.
+- For a Card without `reuseWorker`, the new worker for next time is started ahead in the background (sandbox started, `.so` loaded, Python imports done, the R or Julia source loaded) and kept waiting.
 
 ### Another system (x86_64-linux)
 
