@@ -2,7 +2,7 @@
 
 Set TSUGUMI_REMOTE_TEST_SSH_HOST to an SSH config alias and
 TSUGUMI_REMOTE_TEST_GATEWAY to the absolute gateway executable on that host.
-Run this case with tsugumi-test-env and pytest -m environment.
+Run these cases with tsugumi-test-env and pytest -m environment.
 """
 
 import json
@@ -23,6 +23,15 @@ from Tsugumi.Data.RunState import RunState
 from tsugumi_client import RpcFailure, path, text
 
 pytestmark = pytest.mark.environment
+
+RUN_LIST_OUTPUT = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
+# Each SSH job realizes its dependencies in a private store, even during a batch.
+RUN_LIST_TIMEOUT_SECONDS = 1200
+RUN_LIST_REMOTE = {
+    "language": "bash", "recordIO": True, "executionService": "ssh-test",
+    "executionResources": {"cpuMillis": 1000, "memoryBytes": 2 << 30},
+    "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS, "_outputs": RUN_LIST_OUTPUT,
+}
 
 BROKER = """
 import fs from "node:fs";
@@ -171,15 +180,9 @@ def test_ssh_card_roundtrip_reconnect_and_cancel(project, core_factory, remote_b
 
 
 def test_ssh_run_list_preserves_implementation_order(project, core_factory, remote_broker, tmp_path):
-    number = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
-    settings = {
-        "language": "bash", "recordIO": True, "executionService": "ssh-test",
-        "executionResources": {"cpuMillis": 1000, "memoryBytes": 2 << 30},
-        "timeoutSeconds": 600,
-    }
     definitions = {
         "source": {
-            "language": "bash", "_outputs": number,
+            "language": "bash", "_outputs": RUN_LIST_OUTPUT,
             "_nix": """
                 { pkgs, inputs, params }: {
                   run = [
@@ -190,7 +193,7 @@ def test_ssh_run_list_preserves_implementation_order(project, core_factory, remo
             """,
         },
         "work": {
-            **settings, "inputs": [{"name": "in"}], "_outputs": number,
+            **RUN_LIST_REMOTE, "inputs": [{"name": "in"}],
             "_nix": """
                 { pkgs, inputs, params }: {
                   run = [
@@ -200,23 +203,12 @@ def test_ssh_run_list_preserves_implementation_order(project, core_factory, remo
                 }
             """,
         },
-        "fails": {
-            **settings, "_outputs": number,
-            "_nix": """
-                { pkgs, inputs, params }: {
-                  run = [
-                    "sleep 15; exit 17"
-                    "sleep 180; exit 99"
-                  ];
-                }
-            """,
-        },
         "collect": {"template": "collect", "recordIO": True},
     }
     write(project, definitions, [card(name, name) for name in definitions],
           [conn("source", "out", "work", "in"), conn("work", "out", "collect", "in")])
     client = core_factory().connect()
-    run_id, run = run_and_wait(client, "source")
+    run_id, run = run_and_wait(client, "source", timeout=RUN_LIST_TIMEOUT_SECONDS + 60)
     assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
 
     page = client.call("RunInvocationsRequest", runId=run_id, card=path("work"))
@@ -238,11 +230,39 @@ def test_ssh_run_list_preserves_implementation_order(project, core_factory, remo
                                root_type=text(output.rootType))
     assert collected["items"] == [{"value": value} for value in (110, 210, 120, 220)]
 
-    run_id, run = run_and_wait(client, "fails", propagate=False, timeout=120, concurrency=2)
-    assert run.state == RunState.failed
+
+def test_ssh_run_list_failure_cancels_running_sibling(project, core_factory, remote_broker):
+    definitions = {
+        "fails": {
+            **RUN_LIST_REMOTE,
+            "_nix": """
+                { pkgs, inputs, params }: {
+                  run = [
+                    "sleep 15; echo expected-batch-member-failure >&2; exit 17"
+                    "sleep 180; exit 99"
+                  ];
+                }
+            """,
+        },
+        "collect": {"template": "collect", "recordIO": True},
+    }
+    write(project, definitions, [card(name, name) for name in definitions],
+          [conn("fails", "out", "collect", "in")])
+    client = core_factory().connect()
+    run_id = start_run(client, "fails", concurrency=2)
+    running = wait_invocation(client, run_id, "fails", lambda row: row.batchIndex == 2 and
+                              row.executionState == RemoteExecutionState.running)
+    assert wait_run(client, run_id, timeout=RUN_LIST_TIMEOUT_SECONDS + 60).state == RunState.failed
     page = client.call("RunInvocationsRequest", runId=run_id, card=path("fails"))
     batch, = page.batches
     assert batch.complete and batch.failed and not batch.outputs
-    assert [row.executionState for row in page.records] == [
-        RemoteExecutionState.failed, RemoteExecutionState.cancelled,
-    ]
+    failed, cancelled = page.records
+    assert failed.executionState == RemoteExecutionState.failed
+    assert cancelled.executionState == RemoteExecutionState.cancelled
+    assert text(cancelled.executionJobId) == text(running.executionJobId)
+    log = client.call("LogRangeRequest", runId=run_id, card=path("fails"),
+                      invocation=failed.invocation, stream=LogStream.stderr)
+    assert "expected-batch-member-failure" in text(log.text)
+    downstream = client.call("RunInvocationsRequest", runId=run_id, card=path("collect"))
+    blocked, = downstream.records
+    assert blocked.state == CardState.blocked and not downstream.batches
