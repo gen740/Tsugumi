@@ -8,9 +8,11 @@ from projects import start_run, wait_run
 from test_demos import connect, edit_card, set_param, stderr
 from harness.observations import read_pages
 from tsugumi_client import path, text
+from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
 
-pytestmark = pytest.mark.skipif(os.environ.get('TSUGUMI_TEST_DEMO_RUNS') != '1', reason='Runs Nix-backed notebook Cards')
+extra_demo_runs = pytest.mark.skipif(os.environ.get('TSUGUMI_TEST_DEMO_RUNS') != '1',
+                                    reason='Runs additional notebook daemon cases')
 
 
 def test_notebook_passes_typed_result_and_keeps_snapshot(tmp_path):
@@ -28,11 +30,20 @@ def test_notebook_passes_typed_result_and_keeps_snapshot(tmp_path):
         def read(member):
             return read_pages(c, 'ArtifactReadRequest', artifactId=text(art.artifactId), member=member, page_bytes=256*1024)
         html = read('index.html')
-        assert b'The selected result is' in html and b'data:image/png;base64,' in html
+        assert '変換後の値は'.encode() in html and b'data:image/png;base64,' in html
         assert json.loads(read('result.json')) == {'result':14}
-        assert {'source/notebook.py','assets/cell-2.png','metadata.json','bindings.json'} <= {text(m.path) for m in art.members}
-        edit_card(env,c,'notebook',lambda card:set_param(card,'factor',3))
-        updated=start_run(c,['notebook'],propagate=True)
+        members = {text(m.path) for m in art.members}
+        assert {'source/notebook.py', 'metadata.json', 'bindings.json'} <= members
+        figure = next(name for name in members if name.startswith('assets/cell-') and name.endswith('.png'))
+        assert read(figure).startswith(b'\x89PNG\r\n\x1a\n')
+        assert json.loads(read('metadata.json')) == {
+            'source': 'notebook.py', 'run_id': rid, 'card': 'notebook',
+            'invocation': record.summary.invocation,
+        }
+        assert text(art.card.segments[0]) == 'notebook'
+        assert art.invocation == record.summary.invocation
+        edit_card(env, c, 'source', lambda card: set_param(card, 'factor', 3))
+        updated = start_run(c, ['source'], propagate=True)
         assert wait_run(c,updated,timeout=600).state == RunState.succeeded, stderr(c,updated,'notebook')
         assert '21' in text(c.call('RunRecordRequest',runId=updated,card=path('notebook')).record.display.value.text)
         assert read('index.html') == html
@@ -43,6 +54,40 @@ def test_notebook_passes_typed_result_and_keeps_snapshot(tmp_path):
         env.cleanup()
 
 
+@pytest.mark.parametrize("problem", ["binding", "cell"])
+def test_a_failed_notebook_sends_no_downstream_result(tmp_path, problem):
+    def edit(root):
+        notebook = root / 'definitions/notebook'
+        if problem == 'binding':
+            settings = notebook / '_card.json'
+            card = json.loads(settings.read_text())
+            set_param(card, 'bindings', '{"source":"input.data.source","result":"input.data.unknown"}')
+            settings.write_text(json.dumps(card))
+        else:
+            source = notebook / 'src/notebook.py'
+            source.write_text(source.read_text().replace(
+                'def explanation(result):', 'def explanation(result):\n    raise RuntimeError("notebook test failure")'
+            ))
+
+    env = demo_environment(tmp_path, 'marimo', edit=edit)
+    try:
+        client = connect(env)
+        rid = start_run(client, ['start'], propagate=True)
+        state = wait_run(client, rid, timeout=600)
+        assert state.state == RunState.failed
+        failure = client.call('RunRecordRequest', runId=rid, card=path('notebook')).status.failure
+        expected = 'has no source' if problem == 'binding' else 'notebook test failure'
+        assert expected in text(failure.diagnostic)
+        downstream = client.call('RunInvocationsRequest', runId=rid, card=path('result'))
+        assert len(downstream.records) == 1
+        blocked = downstream.records[0]
+        assert blocked.state == CardState.blocked and blocked.startedAt is None and not blocked.stages
+        assert not client.call('ArtifactListRequest', runId=rid).artifacts
+    finally:
+        env.cleanup()
+
+
+@extra_demo_runs
 @pytest.mark.parametrize('ending',['failure','cancel','deadline','project_stop'])
 def test_project_owns_notebook_process_tree(tmp_path,ending):
     if os.environ.get('TSUGUMI_TEST_CONTAINER')=='1':
@@ -83,12 +128,15 @@ print("NOTEBOOK_PROCESSES",os.getpid(),child.pid,flush=True)
     finally:env.cleanup()
 
 
+@extra_demo_runs
 def test_two_cards_run_the_same_notebook_without_shared_state(tmp_path):
     import shutil
     def edit(root):
         shutil.copytree(root/'definitions/notebook',root/'definitions/notebook_b')
         other=root/'definitions/notebook_b/_card.json'
-        card=json.loads(other.read_text());set_param(card,'factor',5);other.write_text(json.dumps(card))
+        card = json.loads(other.read_text())
+        set_param(card, 'selected', 'source')
+        other.write_text(json.dumps(card))
         fork=root/'definitions/share';fork.mkdir()
         (fork/'_card.json').write_text(json.dumps({'template':'fork','params':[{'name':'branches','type':'string[]','data':['a','b']}]}))
         project_file=root/'tsugumi.json';project=json.loads(project_file.read_text())
@@ -103,9 +151,10 @@ def test_two_cards_run_the_same_notebook_without_shared_state(tmp_path):
         c=connect(env);rid=start_run(c,['start'],propagate=True)
         assert wait_run(c,rid,timeout=600).state==RunState.succeeded,stderr(c,rid,'notebook_b')
         artifacts=c.call('ArtifactListRequest',runId=rid).artifacts
-        for name,value in [('notebook',14),('notebook_b',35)]:
+        for name,value in [('notebook',14),('notebook_b',7)]:
             art=next(a for a in artifacts if text(a.card.segments[0])==name)
             def read(member):return read_pages(c,'ArtifactReadRequest',artifactId=text(art.artifactId),member=member,page_bytes=256*1024)
-            assert json.loads(read('result.json'))=={'result':value}
+            selected = 'result' if name == 'notebook' else 'source'
+            assert json.loads(read('result.json')) == {selected: value}
             assert json.loads(read('metadata.json'))['card']==name
     finally:env.cleanup()

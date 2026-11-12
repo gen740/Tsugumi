@@ -1,4 +1,4 @@
-namespace source;
-table Number { value:double; }
-table Outputs { value:Number (required); }
+namespace notebook;
+table Measurement { source:double; result:double; }
+table Outputs { value:Measurement (required); }
 root_type Outputs;

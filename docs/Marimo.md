@@ -28,11 +28,11 @@ The `report` Directory is retained as an artifact and includes:
 - `result.json`, `bindings.json`, `metadata.json`: selected definitions, supplied values and run/Card/invocation identity;
 - `source/`: the exact notebook and adapter source copied for that invocation.
 
-The static HTML includes ordinary Markdown/HTML, text and Matplotlib figures. It needs no JavaScript, CDN or running kernel. Frontend-only custom widgets are replaced by a note pointing to the saved source; this is a snapshot, not marimo's complete interactive frontend. The normal artifact preview introduced with report Cards displays this same self-contained HTML in both clients with scripts disabled. A saved result can be reopened from history after restarting the project. Editing the downloaded HTML does not change recorded results or send downstream messages.
+The static HTML includes ordinary Markdown/HTML, text and Matplotlib figures. It needs no JavaScript, CDN or running kernel. Frontend-only custom widgets are replaced by a note pointing to the saved source; this is a snapshot, not marimo's complete interactive frontend. The shared static HTML preview displays this self-contained HTML in both clients with scripts disabled. A saved result can be reopened from history after restarting the project. Editing the downloaded HTML does not change recorded results or send downstream messages.
 
 A notebook error fails the Card and emits no typed result. Logs list source-cell names and source lines before execution, then retain the Python/marimo traceback. The failure diagnostic names the notebook; the source editor opens that saved or current `.py` file. Graph errors, missing bindings, absent selected variables and nonnumeric selected values are errors rather than partial successful reports.
 
-The bilingual **marimo notebook → typed result** demo sends 7 into a notebook, multiplies it by `factor = 2`, displays a figure and sends 14 to a downstream logger. Changing `factor` to 3 produces 21 and another saved snapshot. This demonstrates a committed computation, not a live notebook session.
+In the bilingual **marimo notebook → typed result** demo, the upstream Card scales a measurement of 7 by `factor = 2`. The notebook visualizes the original and scaled values and sends the selected value of 14 to a logger. Change `factor` on the upstream Card to 3 and rerun it to get 21 and a new snapshot.
 
 ## Interactive editing is a later stage
 

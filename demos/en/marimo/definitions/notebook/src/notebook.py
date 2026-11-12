@@ -1,4 +1,4 @@
-"""A normal marimo notebook; Tsugumi overrides the configuration cell."""
+"""Visualize a measurement and the value computed by the upstream Card."""
 import marimo
 
 app = marimo.App()
@@ -7,14 +7,8 @@ app = marimo.App()
 @app.cell
 def configuration():
     source = 4.0
-    factor = 2.0
-    return source, factor
-
-
-@app.cell
-def calculation(source, factor):
-    result = source * factor
-    return result,
+    result = 8.0
+    return source, result
 
 
 @app.cell
@@ -29,7 +23,7 @@ def figure(source, result):
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots()
     ax.bar(["Input", "Result"], [source, result])
-    ax.set_title("One committed notebook invocation")
+    ax.set_title("Measurement and scaled value")
     fig
     return fig, ax, plt
 

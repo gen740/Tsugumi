@@ -1,4 +1,4 @@
-"""A normal marimo notebook; Tsugumi overrides the configuration cell."""
+"""測定値と、上流カードで計算した値を可視化します。"""
 import marimo
 
 app = marimo.App()
@@ -7,20 +7,14 @@ app = marimo.App()
 @app.cell
 def configuration():
     source = 4.0
-    factor = 2.0
-    return source, factor
-
-
-@app.cell
-def calculation(source, factor):
-    result = source * factor
-    return result,
+    result = 8.0
+    return source, result
 
 
 @app.cell
 def explanation(result):
     import marimo as mo
-    mo.md(f"## Notebook result\n\nThe selected result is **{result:g}**.")
+    mo.md(f"## ノートブックの結果\n\n変換後の値は **{result:g}** です。")
     return mo,
 
 
@@ -28,8 +22,8 @@ def explanation(result):
 def figure(source, result):
     import matplotlib.pyplot as plt
     fig, ax = plt.subplots()
-    ax.bar(["Input", "Result"], [source, result])
-    ax.set_title("One committed notebook invocation")
+    ax.bar(["測定値", "変換後"], [source, result])
+    ax.set_title("測定値と変換後の値")
     fig
     return fig, ax, plt
 
