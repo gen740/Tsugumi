@@ -16,14 +16,15 @@ import Testing
     let dir: URL
     var ready: [String: Any] = [:]
 
-    init(project: URL) throws {
+    init(project: URL, mockedBuilds: Bool = false) throws {
       dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("tsg-\(UUID().uuidString.prefix(8))")
       try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
       let env = ProcessInfo.processInfo.environment
       let build = env["TSUGUMI_BUILD_DIR"].map { URL(fileURLWithPath: $0) }
         ?? SyncTests.root.appendingPathComponent("build")
-      process.executableURL = env["TSUGUMID"].map { URL(fileURLWithPath: $0) }
-        ?? build.appendingPathComponent("core/tsugumid")
+      let binary = mockedBuilds ? ("TSUGUMI_MOCK_DAEMON", "tests/core/tsugumid-mock") : ("TSUGUMID", "core/tsugumid")
+      process.executableURL = env[binary.0].map { URL(fileURLWithPath: $0) } ?? build.appendingPathComponent(binary.1)
+      if mockedBuilds { process.environment = env.merging(["TSUGUMI_MOCK_CONTROL": dir.path]) { _, value in value } }
       process.arguments = ["--project", project.path, "--unix", dir.appendingPathComponent("s").path,
                            "--control-dir", dir.appendingPathComponent("control").path,
                            "--worker", env["TSUGUMI_WORKER"] ?? build.appendingPathComponent("sdk/tsugumi-worker").path,
