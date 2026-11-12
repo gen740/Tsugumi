@@ -328,11 +328,12 @@ def test_trigger_setting(tmp_path, core_factory):
 
 def test_display_mode_setting(tmp_path, core_factory):
     """displayMode is update or live; anything else is reported on the Card."""
-    for value, valid in (("update", True), ("live", True), ("smooth", False)):
+    for value, reuse_worker, valid in (("update", False, True), ("live", True, True), ("smooth", True, False)):
         root = tmp_path / value
         builtin_project(root)
         card = json.loads((root / "definitions" / "out" / "_card.json").read_text())
         card["displayMode"] = value
+        card["reuseWorker"] = reuse_worker
         put(root / "definitions" / "out" / "_card.json", json.dumps(card))
         c = core_factory(project_root=root).connect()
         assert ("invalid_setting" not in diagnostics(c, ["out"])) == valid, value

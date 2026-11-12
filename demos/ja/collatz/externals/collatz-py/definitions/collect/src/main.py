@@ -23,7 +23,7 @@ def arrival(ctx):
 import outputs.sequence.collatz.Sequence as seq_out
 from inputs.arrival.tsugumi.merge.Arrival import Arrival as _A
 
-values = []  # the worker stays across runs (reuseWorker); each run starts empty
+values = []  # kept by the worker (this Card sets reuseWorker: true); each run starts empty
 
 
 def on_run_start(ctx):
