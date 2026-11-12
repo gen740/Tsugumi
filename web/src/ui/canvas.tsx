@@ -823,6 +823,9 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
     get(session.displayFrame(k), 'hidden') === true && {
       label: L('出力表示を戻す'), action: () => session.updateDisplayFrame(k, (f) => f.set('hidden', undefined)),
     },
+    [...targets].some((t) => session.hasPortOrder(t)) && {
+      label: L('ポートの並びを元に戻す'), disabled: !editable, action: () => session.resetPortOrder(targets),
+    },
     {
       label: L('グループ化（見た目だけ）'), action: () => {
         if (!tab.selection.has(k)) tab.setSelection([k])

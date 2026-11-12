@@ -33,6 +33,7 @@ def specifiers(s: str) -> list[str]:
 EN = {
     '配線の交差を減らす': 'Untangle Wires',
     '配線の交差を減らす（Card の位置は保持）': 'Untangle wires (keep Card positions)',
+    'ポートの並びを元に戻す': 'Reset Port Order',
 
     '根拠の記録': 'Evidence record',
     'このプロジェクトに根拠の記録がありません': 'This evidence is not available in this project',

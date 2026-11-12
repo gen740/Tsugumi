@@ -541,6 +541,7 @@
 "ページ" = "Page";
 "ホストのフォルダへのアクセスを許可する" = "Allow access to folders of the host";
 "ホーム" = "Home";
+"ポートの並びを元に戻す" = "Reset Port Order";
 "メッセージ（%@ で送信）" = "Message (send with %@)";
 "メモ" = "Note";
 "メンバーを選択" = "Select Members";

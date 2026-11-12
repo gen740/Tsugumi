@@ -2,6 +2,8 @@ import SwiftUI
 
 /// The same bounded search as web/src/model/untangle.ts. Names move between
 /// visual slots; the graph's named endpoints and the Cards' places never change.
+/// A Card's proposal is kept on its own when the router then draws fewer crossing
+/// pairs, so one Card that would get worse does not hold back another.
 struct UntangleCard {
   var card: ArrangeCard
   var x: Double
@@ -56,6 +58,9 @@ func crossingPairs(_ paths: [[CGPoint]], ends: [(a: CGPoint, b: CGPoint)]) -> In
   return count
 }
 
+/// Every trial routes all the wires given, so a call makes at most this many.
+let untangleTrials = 96
+
 func untanglePorts(flow: FlowDirection, cards: [UntangleCard], wires: [ArrangeWire], extra: [CGRect] = []) -> [PortOrder] {
   var current = cards
   func endpoints(_ cs: [UntangleCard]) -> [(a: CGPoint, b: CGPoint)] {
@@ -72,15 +77,13 @@ func untanglePorts(flow: FlowDirection, cards: [UntangleCard], wires: [ArrangeWi
     let paths = ends.indices.map { corners[$0] ?? router.curvePoints(ends[$0].a, ends[$0].b) }
     return crossingPairs(paths, ends: ends)
   }
-  var best = score(current)
-  for _ in 0..<4 {
+  var best = score(current), trials = 0
+  search: for _ in 0..<4 {
     if best == 0 { break }
     var improved = false
     for output in [true, false] {
-      var proposed = current
-      var changed = false
-      for i in proposed.indices {
-        let c = proposed[i]
+      for i in current.indices {
+        let c = current[i]
         if !c.movable { continue }
         var ports = output ? c.card.outputs : c.card.inputs
         let attached: [(name: String, slot: Int, value: Double)] = ports.enumerated().compactMap { slot, p in
@@ -93,15 +96,19 @@ func untanglePorts(flow: FlowDirection, cards: [UntangleCard], wires: [ArrangeWi
           return values.isEmpty ? nil : (p.name, slot, values.reduce(0, +) / Double(values.count))
         }
         let sorted = attached.sorted { $0.value == $1.value ? $0.slot < $1.slot : $0.value < $1.value }
-        for (j, p) in attached.enumerated() {
-          if p.name != sorted[j].name { changed = true }
-          ports[p.slot].name = sorted[j].name
-        }
+        if zip(attached, sorted).allSatisfy({ $0.name == $1.name }) { continue }
+        if trials >= untangleTrials { break search }
+        trials += 1
+        for (j, p) in attached.enumerated() { ports[p.slot].name = sorted[j].name }
+        var proposed = current
         if output { proposed[i].card.outputs = ports } else { proposed[i].card.inputs = ports }
+        let count = score(proposed)
+        if count >= best { continue }
+        current = proposed
+        best = count
+        improved = true
+        if best == 0 { break search }
       }
-      if !changed { continue }
-      let count = score(proposed)
-      if count < best { current = proposed; best = count; improved = true }
     }
     if !improved { break }
   }

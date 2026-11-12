@@ -2928,8 +2928,21 @@ export class ProjectSession extends Observable {
   }
 
   /** Lays out a scope's Cards, output frames and notes (layout only, one undo):
-   *  see `arrangeCards`. Sizes and port positions are those of `CardGeometry`. */
+   *  see `arrangeCards`. Ports then take the order that crosses fewer wires, and
+   *  the Cards are placed once more for that order, so the wires the layout drew
+   *  straight are straight again. */
   arrange(scope: string[]) {
+    this.edit((x) => {
+      x.placeArranged(scope)
+      const orders = x.untangledOrders(scope)
+      if (!orders.length) return
+      x.applyPortOrders(scope, orders)
+      x.placeArranged(scope)
+    })
+  }
+
+  /** A step of an edit. Sizes and port positions are those of `CardGeometry`. */
+  private placeArranged(scope: string[]) {
     const ids = this.cards(scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x)
     const cards = ids.map((id) => {
       const g = this.geometry(key([...scope, id]))
@@ -2954,45 +2967,42 @@ export class ProjectSession extends Observable {
       return isObj(list) ? list.entries().map(([, v]) => ({ card: str(get(v, 'card')) ?? '', port: str(get(v, 'port')) ?? '' })) : []
     }
     const placed = arrangeCards({ flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, frames, notes, boundary: { inputs: bar('inputs'), outputs: bar('outputs') } })
-    this.edit((x) => {
-      for (const c of placed.cards) x.setPosition(key([...scope, c.id]), c)
-      x.updateLayout(scope, (l) => {
-        if (placed.frames.length) {
-          let displays = l.get('displays')
-          if (!isObj(displays)) {
-            displays = obj()
-            l.set('displays', displays)
-          }
-          for (const f of placed.frames) {
-            const lk = this.layoutKey(key([...scope, f.id]))
-            let d = (displays as JObj).get(lk)
-            if (!isObj(d)) {
-              d = obj()
-              ;(displays as JObj).set(lk, d)
-            }
-            ;(d as JObj).set('x', real(f.x))
-            ;(d as JObj).set('y', real(f.y))
-            // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
-            const size = frames.find((x) => x.id === f.id)!
-            ;(d as JObj).set('width', real(size.width))
-            ;(d as JObj).set('height', real(size.height))
-          }
+    for (const c of placed.cards) this.setPosition(key([...scope, c.id]), c)
+    this.updateLayout(scope, (l) => {
+      if (placed.frames.length) {
+        let displays = l.get('displays')
+        if (!isObj(displays)) {
+          displays = obj()
+          l.set('displays', displays)
         }
-        if (placed.notes.length) {
-          l.set('notes', (arr(l.get('notes')) ?? []).map((n) => {
-            const at = placed.notes.find((p) => p.id === str(get(n, 'id')))
-            const copy = clone(n)
-            if (at && isObj(copy) && (str(get(n, 'scope')) ?? '') === '') {
-              copy.set('x', real(at.x))
-              copy.set('y', real(at.y))
-            }
-            return copy
-          }))
+        for (const f of placed.frames) {
+          const lk = this.layoutKey(key([...scope, f.id]))
+          let d = (displays as JObj).get(lk)
+          if (!isObj(d)) {
+            d = obj()
+            ;(displays as JObj).set(lk, d)
+          }
+          ;(d as JObj).set('x', real(f.x))
+          ;(d as JObj).set('y', real(f.y))
+          // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
+          const size = frames.find((x) => x.id === f.id)!
+          ;(d as JObj).set('width', real(size.width))
+          ;(d as JObj).set('height', real(size.height))
         }
-        // The bars of a Card in Card go back to following the Cards.
-        l.set('boundary', undefined)
-      })
-      x.applyPortOrders(scope, x.untangledOrders(scope))
+      }
+      if (placed.notes.length) {
+        l.set('notes', (arr(l.get('notes')) ?? []).map((n) => {
+          const at = placed.notes.find((p) => p.id === str(get(n, 'id')))
+          const copy = clone(n)
+          if (at && isObj(copy) && (str(get(n, 'scope')) ?? '') === '') {
+            copy.set('x', real(at.x))
+            copy.set('y', real(at.y))
+          }
+          return copy
+        }))
+      }
+      // The bars of a Card in Card go back to following the Cards.
+      l.set('boundary', undefined)
     })
   }
 
@@ -3408,7 +3418,39 @@ auto run(Card::Input& input) -> Card::Output {
     if (orders.length) this.edit(s => s.applyPortOrders(scope, orders))
   }
 
-  private untangledOrders(scope: string[]): PortOrder[] {
+  /** A step of an edit that moved Cards: the ports of what moved and of the Cards
+   *  wired to it take a better order when that draws fewer crossings among their
+   *  wires. Other Cards retain their orders, and their wires still count. */
+  untangleAround(scope: string[], moved: Iterable<CardKey>) {
+    const ids = new Set<string>()
+    for (const k of moved) {
+      const p = path(k)
+      if (p.length === scope.length + 1 && scope.every((s, i) => s === p[i])) ids.add(p[p.length - 1])
+    }
+    if (ids.size) this.applyPortOrders(scope, this.untangledOrders(scope, ids))
+  }
+
+  /** Whether the canvas shows this Card's ports in an order of its own. */
+  hasPortOrder(k: CardKey): boolean {
+    const entry = get(this.layoutOf(path(k).slice(0, -1)), 'cards', this.layoutKey(k))
+    return !!(arr(get(entry, 'inputOrder'))?.length || arr(get(entry, 'outputOrder'))?.length)
+  }
+
+  /** Back to the declared order of the ports, in one undo step. */
+  resetPortOrder(keys: Iterable<CardKey>) {
+    const targets = [...keys].filter(k => this.hasPortOrder(k))
+    if (!targets.length) return
+    this.edit(x => {
+      for (const k of targets) x.updateLayout(path(k).slice(0, -1), l => {
+        const entry = get(l, 'cards', x.layoutKey(k))
+        if (!isObj(entry)) return
+        entry.set('inputOrder', undefined)
+        entry.set('outputOrder', undefined)
+      })
+    })
+  }
+
+  private untangledOrders(scope: string[], around?: Set<string>): PortOrder[] {
     const ids = this.cards(scope).flatMap(c => { const id = str(get(c, 'id')); return id ? [id] : [] })
     const cards = ids.map(id => {
       const k = key([...scope, id]), g = this.geometry(k)
@@ -3449,7 +3491,15 @@ auto run(Card::Input& input) -> Card::Output {
         y: y ?? (this.flow === 'topToBottom' ? at.y : at.y + g.height + 30),
         width: dbl(get(frame, 'width')) ?? 320, height: dbl(get(frame, 'height')) ?? 170 }
     })
-    return untanglePorts(this.flow, cards, wires, frames)
+    if (!around) return untanglePorts(this.flow, cards, wires, frames)
+    // A move changes nothing among Cards that moved together, nor for a Card with no wires.
+    if (!wires.some(w => around.has(w.from) !== around.has(w.to))) return []
+    const neighbors = new Set(around)
+    for (const w of wires) {
+      if (around.has(w.from)) neighbors.add(w.to)
+      if (around.has(w.to)) neighbors.add(w.from)
+    }
+    return untanglePorts(this.flow, cards.map(c => ({ ...c, movable: c.movable && neighbors.has(c.id) })), wires, frames)
   }
 
   private applyPortOrders(scope: string[], orders: PortOrder[]) {

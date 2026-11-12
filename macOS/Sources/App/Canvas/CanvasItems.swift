@@ -49,6 +49,10 @@ struct CardMenu: View {
     if session.displayFrame(cardKey)?["hidden"]?.bool == true {
       Button("出力表示を戻す") { session.updateDisplayFrame(cardKey) { $0["hidden"] = nil } }
     }
+    if targets.contains(where: { session.hasPortOrder($0) }) {
+      Button("ポートの並びを元に戻す") { session.resetPortOrder(targets) }
+        .disabled(!session.isEditable)
+    }
     Button("グループ化（見た目だけ）") {
       if !tab.selection.contains(cardKey) { tab.selection = [cardKey] }
       onGroup()

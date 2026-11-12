@@ -1,6 +1,8 @@
-// Reorder named ports without changing a connection or moving a Card. Proposals
-// follow the opposite ends of the wires and are kept only when the actual router
-// draws fewer crossing pairs. Arrange uses the same pass after placing Cards.
+// Reorder named ports without changing a connection or moving a Card. Each Card's
+// proposal follows the opposite ends of its wires and is kept, Card by Card, only
+// when the actual router then draws fewer crossing pairs: one Card that would get
+// worse does not hold back another. Arrange runs the pass after placing Cards, and
+// the end of a drag runs it for the Cards around what moved.
 import { Pt, Rect, WireEnds, WireRouter } from './canvasKit'
 import { ArrangeCard, ArrangeWire } from './arrange'
 import { FlowDirection } from './prefs'
@@ -42,9 +44,11 @@ export function crossingPairs(paths: Pt[][], ends: WireEnds[]): number {
   return count
 }
 
+/** Every trial routes all the wires given, so a call makes at most this many. */
+export const UNTANGLE_TRIALS = 96
+
 export function untanglePorts(flow: FlowDirection, cards: UntangleCard[], wires: ArrangeWire[], extra: Rect[] = []): PortOrder[] {
-  const copy = (cs: UntangleCard[]) => cs.map(c => ({ ...c, inputs: c.inputs.map(p => ({ ...p })), outputs: c.outputs.map(p => ({ ...p })) }))
-  let current = copy(cards)
+  let current = cards.map(c => ({ ...c, inputs: c.inputs.map(p => ({ ...p })), outputs: c.outputs.map(p => ({ ...p })) }))
   const endpoints = (cs: UntangleCard[]) => wires.flatMap(w => {
     const f = cs.find(c => c.id === w.from), t = cs.find(c => c.id === w.to)
     const a = f?.outputs.find(p => p.name === w.fromPort), b = t?.inputs.find(p => p.name === w.toPort)
@@ -55,30 +59,32 @@ export function untanglePorts(flow: FlowDirection, cards: UntangleCard[], wires:
     const routes = new WireRouter(flow, [...cs, ...extra]).routeAll(ends)
     return crossingPairs(routes.map(r => r.pts), ends)
   }
-  let best = score(current)
-  for (let pass = 0; pass < 4 && best > 0; pass++) {
+  let best = score(current), trials = 0
+  search: for (let pass = 0; pass < 4 && best > 0; pass++) {
     let improved = false
-    for (const output of [true, false]) {
-      const proposed = copy(current)
-      let changed = false
-      for (const c of proposed) {
-        if (!c.movable) continue
-        const ports = output ? c.outputs : c.inputs
-        const attached = ports.map((p, slot) => {
-          const values = wires.flatMap(w => {
-            if ((output ? w.from !== c.id || w.fromPort !== p.name : w.to !== c.id || w.toPort !== p.name)) return []
-            const other = current.find(n => n.id === (output ? w.to : w.from))
-            const port = (output ? other?.inputs : other?.outputs)?.find(n => n.name === (output ? w.toPort : w.fromPort))
-            return other && port ? [flow === 'topToBottom' ? other.x + port.x : other.y + port.y] : []
-          })
-          return { name: p.name, slot, value: values.length ? values.reduce((a, b) => a + b, 0) / values.length : undefined }
-        }).filter(p => p.value !== undefined)
-        const sorted = [...attached].sort((a, b) => a.value! - b.value! || a.slot - b.slot)
-        attached.forEach((p, i) => { if (p.name !== sorted[i].name) changed = true; ports[p.slot].name = sorted[i].name })
-      }
-      if (!changed) continue
+    for (const output of [true, false]) for (let i = 0; i < current.length; i++) {
+      const c = current[i]
+      if (!c.movable) continue
+      const ports = output ? c.outputs : c.inputs
+      const attached = ports.map((p, slot) => {
+        const values = wires.flatMap(w => {
+          if ((output ? w.from !== c.id || w.fromPort !== p.name : w.to !== c.id || w.toPort !== p.name)) return []
+          const other = current.find(n => n.id === (output ? w.to : w.from))
+          const port = (output ? other?.inputs : other?.outputs)?.find(n => n.name === (output ? w.toPort : w.fromPort))
+          return other && port ? [flow === 'topToBottom' ? other.x + port.x : other.y + port.y] : []
+        })
+        return { name: p.name, slot, value: values.length ? values.reduce((a, b) => a + b, 0) / values.length : undefined }
+      }).filter(p => p.value !== undefined)
+      const sorted = [...attached].sort((a, b) => a.value! - b.value! || a.slot - b.slot)
+      if (attached.every((p, j) => p.name === sorted[j].name)) continue
+      if (trials++ >= UNTANGLE_TRIALS) break search
+      const moved = ports.map(p => ({ ...p }))
+      attached.forEach((p, j) => { moved[p.slot].name = sorted[j].name })
+      const proposed = current.map((n, j) => j !== i ? n : output ? { ...n, outputs: moved } : { ...n, inputs: moved })
       const count = score(proposed)
-      if (count < best) { current = proposed; best = count; improved = true }
+      if (count >= best) continue
+      current = proposed; best = count; improved = true
+      if (best === 0) break search
     }
     if (!improved) break
   }
