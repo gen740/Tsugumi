@@ -33,6 +33,7 @@ struct PortInfo: Hashable {
   let kind: Tsugumi_Data_PortKind
   let optional: Bool
   let rootType: String?
+  var executionShape: Tsugumi_Data_ExecutionShape = .unspecified
 }
 
 struct ResolvedCard {
@@ -86,6 +87,7 @@ struct CardRunState: Equatable {
   var state: Tsugumi_Data_CardState
   /// Number of the latest invocation in this run (1, 2, …); 0 = not run.
   var invocation: UInt64
+  var batchActivation: UInt64?
   var phase: Tsugumi_Data_Phase
   var failure: String?
   var executionState: Tsugumi_Data_RemoteExecutionState?
@@ -138,6 +140,7 @@ struct TimelineEntry: Identifiable, Hashable {
   var id: String { "\(card)#\(invocation)" }
   let card: CardKey
   let invocation: UInt64
+  var batchActivation: UInt64?
   var state: Tsugumi_Data_CardState
   var startedAt: Int64?
   var endedAt: Int64?
@@ -445,6 +448,8 @@ final class ProjectSession {
   private(set) var displays: [CardKey: DisplaySnapshot] = [:]
   private(set) var lastFinished: Date?
   private(set) var remoteHistoryRevision = 0
+  private(set) var batchHistoryRevision = 0
+  private var runBatches: [CardKey: Tsugumi_RPC_RunBatchT] = [:]
   /// Invocations of the current (or last) run, for the timeline.
   private(set) var timeline: [TimelineEntry] = []
   var runActive: Bool {
@@ -713,6 +718,7 @@ final class ProjectSession {
     for src in s.sources.compactMap({ $0 }) { sources[src.path] = (src.hash ?? "", src.sizeBytes ?? 0) }
     refreshExternals()
     applyResolution(s.resolution.compactMap { $0 }, s.diagnostics.compactMap { $0 })
+    if currentRunId != s.run.runId { runBatches = [:] }
     runStatus = s.run
     if let v = s.view {
       viewRev = s.viewRev ?? 0
@@ -744,12 +750,14 @@ final class ProjectSession {
     var all = diags.map(Diagnostic.init)
     for rc in res {
       let p = rc.card.path
-      let port = { (x: Tsugumi_Data_PortT) -> PortInfo in PortInfo(name: x.name, kind: x.kind, optional: x.optional_ ?? false, rootType: x.rootType) }
+      let port = { (x: Tsugumi_Data_PortT) -> PortInfo in
+        PortInfo(name: x.name, kind: x.kind, optional: x.optional_ ?? false, rootType: x.rootType, executionShape: x.executionShape)
+      }
       let d = rc.diagnostics.compactMap { $0 }.map(Diagnostic.init)
       r[key(p)] = ResolvedCard(path: p, inputs: rc.inputs.compactMap { $0 }.map(port),
                                outputs: rc.outputs.compactMap { $0 }.map(port), diagnostics: d,
                                nixReferences: rc.nixReferences.compactMap { $0 }.map {
-                                 CardNixReference(source: key(p), target: key($0.target.path), name: $0.name, local: $0.local, valid: $0.valid)
+                                 CardNixReference(source: key(p), target: key($0.target.path), name: $0.name, valid: $0.valid)
                                })
       all += d
     }
@@ -767,6 +775,7 @@ final class ProjectSession {
     let n = inv.invocation ?? 0
     if prev == nil || prev!.invocation <= n {
       var next = CardRunState(state: inv.state, invocation: n, phase: inv.phase, failure: inv.failure?.diagnostic)
+      next.batchActivation = inv.batchActivation
       next.executionState = inv.executionState
       // Each notification carries the invocation's stages so far.
       next.stages = inv.stages.compactMap { $0 }.compactMap { t in
@@ -783,12 +792,53 @@ final class ProjectSession {
     }
   }
 
+  private func noteBatch(_ batch: Tsugumi_RPC_RunBatchT) {
+    let card = key(batch.card.path)
+    if let current = runBatches[card] {
+      guard batch.activation > current.activation ||
+        (batch.activation == current.activation && (!current.complete || batch.complete)) else { return }
+    }
+    runBatches[card] = batch
+    if batch.executionList, batch.complete, !batch.failed, batch.invocationCount == 0 {
+      // Nix preparation can use a provisional invocation before it finds an empty list.
+      if cardStates[card]?.batchActivation == batch.activation { cardStates[card] = nil }
+      timeline.removeAll { $0.card == card && $0.batchActivation == batch.activation }
+    }
+  }
+
+  func executionBatch(_ card: CardKey) -> Tsugumi_RPC_RunBatchT? {
+    guard let batch = runBatches[card], currentRunId != nil, runStatus?.executionRev == executionRev, !computationDirty else { return nil }
+    return batch
+  }
+
+  func canvasCardState(_ card: CardKey) -> Tsugumi_Data_CardState? {
+    if let batch = executionBatch(card), batch.executionList {
+      if runStatus?.state == .cancelled, !batch.complete || batch.failed { return .cancelled }
+      return batch.complete ? (batch.failed ? .failed : .succeeded) : .running
+    }
+    return cardStates[card]?.state
+  }
+
+  func executionWire(_ card: CardKey, _ port: String, output: Bool = true) -> (executionList: Bool, count: UInt32?) {
+    if output, kind(card) == .subgraph, let inner = boundarySource(card, output: port) {
+      return executionWire(inner.0, inner.1)
+    }
+    let batch = output ? executionBatch(card) : nil
+    if let emitted = batch?.outputs.compactMap({ $0 }).first(where: { $0.port == port }) {
+      return (emitted.executionList, emitted.executionList ? emitted.count : nil)
+    }
+    let ports = output ? resolution[card]?.outputs : resolution[card]?.inputs
+    let knownList = ports?.first(where: { $0.name == port })?.executionShape == .list
+    return (knownList || (batch?.executionList == true && kind(card) != .collect), nil)
+  }
+
   /// The Cards of the last run, for a project just opened: their notifications were sent before it was.
   private func restoreCardStates(_ c: RPCClient) async {
     guard let run = runStatus?.runId, let page = try? await c.latestInvocations(runId: run),
       runStatus?.runId == run  // a run started meanwhile has its own states
     else { return }
     for inv in page.records.compactMap({ $0 }) { noteInvocation(inv) }
+    for batch in page.batches.compactMap({ $0 }) { noteBatch(batch) }
   }
 
   private func applyDelta(_ d: Tsugumi_RPC_DocumentDeltaT, fromSave: Bool = false) {
@@ -845,7 +895,8 @@ final class ProjectSession {
     guard let v = e.value else { return }
     switch v.type {
     case .runacceptedevent:
-      if let s = (v.value as? Tsugumi_RPC_RunAcceptedEventT)?.status {
+      if let s = (v.value as? Tsugumi_RPC_RunAcceptedEventT)?.status, currentRunId != s.runId {
+        runBatches = [:]
         runStatus = s
         cardStates = [:]
         timeline = []
@@ -857,6 +908,12 @@ final class ProjectSession {
       }
     case .runcardchanged:
       if let inv = (v.value as? Tsugumi_RPC_RunCardChangedT)?.invocation {
+        if inv.batchActivation != nil {
+          batchHistoryRevision += 1
+          guard e.runId == currentRunId else { break }
+          if let batch = runBatches[key(inv.card.path)], batch.activation == inv.batchActivation,
+             batch.executionList, batch.complete, !batch.failed, batch.invocationCount == 0 { break }
+        }
         if inv.executionState != .unspecified {
           remoteHistoryRevision += 1
           logRevision += 1
@@ -866,6 +923,11 @@ final class ProjectSession {
         noteInvocation(inv)
         sampleClock(inv.endedAt ?? (inv.state == .running ? inv.stages.last??.start : nil))
         recordTimeline(key(inv.card.path), inv)
+      }
+    case .runbatchchanged:
+      if let batch = (v.value as? Tsugumi_RPC_RunBatchChangedT)?.batch {
+        batchHistoryRevision += 1
+        if e.runId == currentRunId { noteBatch(batch) }
       }
     case .runfinished:
       if let s = (v.value as? Tsugumi_RPC_RunFinishedT)?.summary.status { runStatus = s }
@@ -893,7 +955,7 @@ final class ProjectSession {
       timeline[i].endedAt = inv.endedAt ?? timeline[i].endedAt
       if !stages.isEmpty { timeline[i].stages = stages }
     } else {
-      timeline.append(TimelineEntry(card: k, invocation: n, state: inv.state, startedAt: inv.startedAt, endedAt: inv.endedAt,
+      timeline.append(TimelineEntry(card: k, invocation: n, batchActivation: inv.batchActivation, state: inv.state, startedAt: inv.startedAt, endedAt: inv.endedAt,
                                     stages: stages))
     }
   }
@@ -1411,9 +1473,13 @@ final class ProjectSession {
     let parallel = UInt32(max(1, min(64, AppPreferences.shared.maxConcurrency)))
     do {
       let accepted = try await client.run(baseRev: rev, opId: op, card: card, propagate: propagate, maxConcurrency: parallel)
-      runStatus = accepted.run
-      cardStates = [:]
-      timeline = []
+      // A fast or empty run may already have reported newer state.
+      if currentRunId != accepted.run.runId {
+        runBatches = [:]
+        runStatus = accepted.run
+        cardStates = [:]
+        timeline = []
+      }
     } catch RPCError.disconnected {
       // Never re-send blindly: look the operation up after reconnecting.
       reconnect()

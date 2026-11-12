@@ -96,6 +96,7 @@ Off<D::Port> port(FBB& b, const types::PortType& p) {
   pb.add_name(name);
   pb.add_kind(p.kind);
   pb.add_optional(p.optional);
+  pb.add_execution_shape(p.execution_shape);
   if (p.type) {
     pb.add_schema_bfbs(bfbs);
     pb.add_root_type(root);
@@ -114,7 +115,7 @@ Off<R::ResolvedCard> resolved(FBB& b, const Node& n) {
     if (!d.card) d.card = n.path;
   std::vector<Off<R::CardNixReference>> refs;
   for (const auto& ref : n.nix_references)
-    refs.push_back(R::CreateCardNixReference(b, path(b, ref.target), b.CreateString(ref.name), ref.local, ref.valid));
+    refs.push_back(R::CreateCardNixReference(b, path(b, ref.target), b.CreateString(ref.name), ref.valid));
   return R::CreateResolvedCard(b, path(b, n.path), b.CreateVector(ins), b.CreateVector(outs),
                                diagnostics(b, diags), b.CreateVector(refs));
 }
@@ -231,7 +232,19 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   if (!system.IsNull()) ib.add_execution_system(system);
   if (!resources.IsNull()) ib.add_execution_resources(resources);
   if (s.execution_state) ib.add_execution_state(*s.execution_state);
+  if (s.batch_activation) ib.add_batch_activation(*s.batch_activation);
+  if (s.batch_index) ib.add_batch_index(*s.batch_index);
+  if (s.batch_size) ib.add_batch_size(*s.batch_size);
+  if (s.implementation_index) ib.add_implementation_index(*s.implementation_index);
   return ib.Finish();
+}
+
+auto run_batch(FBB& b, const RunBatchData& batch) -> Off<R::RunBatch> {
+  std::vector<Off<R::RunBatchOutput>> outputs;
+  for (const auto& output : batch.outputs)
+    outputs.push_back(R::CreateRunBatchOutput(b, b.CreateString(output.port), output.count, output.execution_list));
+  return R::CreateRunBatch(b, path(b, batch.card), batch.activation, batch.invocation_count, batch.execution_list,
+                          batch.complete, batch.failed, b.CreateVector(outputs));
 }
 
 Off<D::Display> display(FBB& b, const DisplayData& d) {

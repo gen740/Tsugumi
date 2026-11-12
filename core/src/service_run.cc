@@ -264,17 +264,24 @@ void Service::run_latest_invocations(RequestIn& req) {
   const auto* r = req.request()->value_as_RunLatestInvocationsRequest();
   require_uuid(r->run_id(), "run_id");
   std::string run_id = r->run_id()->str();
-  auto rows = history_->read([&](sql::Db& db) {
-    if (!History::run(db, run_id)) throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
-    return History::latest_invocations(db, run_id);
+  const auto fingerprint = store_->current()->execution_fingerprint;
+  auto [rows, batches] = history_->read([&](sql::Db& db) {
+    const auto run = History::run(db, run_id);
+    if (!run) throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
+    auto latest = run->source_hash == fingerprint ? History::latest_batches(db, run_id) : std::vector<RunBatchData>{};
+    return std::pair{History::latest_invocations(db, run_id), std::move(latest)};
   });
   for (auto& s : rows) history_->overlay(s);
   FBB b;
   std::vector<flatbuffers::Offset<R::InvocationSummary>> out;
   for (const auto& s : rows) out.push_back(wire::invocation(b, s));
   auto v = b.CreateVector(out);
+  std::vector<flatbuffers::Offset<R::RunBatch>> batch_rows;
+  for (const auto& batch : batches) batch_rows.push_back(wire::run_batch(b, batch));
+  auto bv = b.CreateVector(batch_rows);
   R::InvocationPageBuilder pb(b);
   pb.add_records(v);
+  pb.add_batches(bv);
   auto off = pb.Finish();
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::InvocationPage, off.Union()));
 }
@@ -288,11 +295,11 @@ void Service::run_invocations(RequestIn& req) {
   std::string qd = crypto::sha256_hex("invocations|" + run_id + "|" + path_key(card));
   uint64_t after = 0;
   if (r->cursor()) after = std::stoull(history_->open_cursor(r->cursor()->str(), qd).second);
-  auto rows = history_->read([&](sql::Db& db) {
+  auto [rows, batches] = history_->read([&](sql::Db& db) {
     if (!History::run(db, run_id)) throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
     if (!History::run_has_card(db, run_id, card))
       throw Failed(FailureKind::not_found, "the run has no record of " + path_key(card), {{"card", path_key(card)}});
-    return History::invocations(db, run_id, card, after, limit + 1);
+    return std::pair{History::invocations(db, run_id, card, after, limit + 1), History::latest_batches(db, run_id, card)};
   });
   for (auto& s : rows) history_->overlay(s);
   FBB b;
@@ -303,8 +310,12 @@ void Service::run_invocations(RequestIn& req) {
   auto v = b.CreateVector(out);
   auto cur = more ? b.CreateString(history_->make_cursor(qd, 0, std::to_string(rows.back().invocation)))
                   : flatbuffers::Offset<flatbuffers::String>();
+  std::vector<flatbuffers::Offset<R::RunBatch>> batch_rows;
+  for (const auto& batch : batches) batch_rows.push_back(wire::run_batch(b, batch));
+  auto bv = b.CreateVector(batch_rows);
   R::InvocationPageBuilder pb(b);
   pb.add_records(v);
+  pb.add_batches(bv);
   if (more) pb.add_next_cursor(cur);
   auto off = pb.Finish();
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::InvocationPage, off.Union()));

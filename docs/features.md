@@ -10,7 +10,7 @@ This reference follows `main` and covers the 0.7 pre-release series. If you are 
 
 - **Sketch before writing code.** Add a Draft with `E`, describe a step, and draw its wires. Add an Input, Switch, Fork, Branch or Merge when you already know how data should flow. [Canvas tools](Usage.md#canvas-tools) · [Kinds of Card](#kinds-of-card)
 - **Organise a larger graph.** Right-click the Canvas and choose **Arrange** to place Cards or **Untangle Wires** to reduce crossings while keeping their positions. Group related Cards visually, or open a Card in Card to see its child Workflow and boundary ports. [Canvas tools](Usage.md#canvas-tools) · [Cards and Workflows](#2-cards-and-workflows)
-- **See references between Card definitions.** Turn on **Nix references (as written)**, then hover a Card or open the list. For example, follow a saved `inputs.upstream.clean` reference back to the definition of `clean`. [Nix references](Usage.md#canvas-tools)
+- **See references between Card definitions.** Turn on **Nix references (as written)**, then hover a Card or open the list. Follow `inputs.data` to the Card connected to the `data` input. [Nix references](Usage.md#canvas-tools)
 
 ### Run, inspect and compare
 
@@ -64,7 +64,8 @@ macOS (host)                                       Shared Linux VM (one per app)
 | trigger | Where a Workflow's run starts (output port `out`) |
 | input | Sends a value following the type in `_outputs.fbs`, edited directly on the Canvas (for a File type, the chosen file is copied into the run) |
 | switch | Sends an editable Boolean on `value`, for example to the `condition` of a Branch |
-| fork / branch / merge | Distribution, conditional branching (only one of `a` / `b` fires, depending on `condition`) and merging (a union type named by input port). There is no dedicated Card for bounded feedback loops: a loop is made by sending a value back through a merge, and the `maxRuns` of the Cards on the loop bounds its iterations |
+| fork / branch / merge | Distribution, conditional branching and merging (a union type named by input port). A scalar Branch sends its value to `a` or `b`. A Branch that receives a batch sends the filtered results to both outputs, including empty batches. For bounded feedback, send a value back through a Merge and use the Cards' `maxRuns` settings to limit iterations |
+| Collect | Turns a batch into one value. Typed values become an `items` vector, and Files or Directories become a Directory |
 | subgraph (Card in Card) | Handles a child Workflow as one Card. `boundary` maps the outer ports to Cards inside |
 | Draft | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (its ports follow the wires and have no types). The Agent can later generate its implementation |
 
@@ -76,11 +77,19 @@ macOS (host)                                       Shared Linux VM (one per app)
 
 ### Execution semantics (scheduler)
 
-- A Code Card can wait for all required inputs (`allInputs`) or run for each value as it arrives (`eachInput`). The scheduler calls these `all` and `any`. A Merge consumes one arrival at a time.
-- Bounded queues with backpressure, parallelism from 1 to 64, cancellation, a deadline (one for the whole invocation) and an iteration limit (`maxRuns`).
-- Downstream of a path a branch did not take is `skipped`; a Card that depends on a Draft or a failed upstream Card is `blocked`, with a reason; paths independent of them keep running.
+- A Code Card can wait for an arrival on all required inputs (`allInputs`) or trigger on each arrival (`eachInput`). An arrival is a single value or a batch of values. The scheduler calls these `all` and `any`. A Merge consumes one arrival at a time.
+- Bounded queues with backpressure, cancellation and a deadline for each invocation. A Run can request concurrency from 1 to 64, with up to eight Code workers active at once. The iteration limit (`maxRuns`) counts how often the Card receives a set of inputs that triggers it.
+- Downstream of an unselected scalar Branch output is `skipped`. A Card that depends on a Draft or a failed upstream Card is `blocked`, with a reason. Independent paths keep running.
 - A run that was in progress when the process ended abnormally or restarted is recorded as `interrupted`.
 - Partial runs with "Run from Here Downstream" or "Run Only This Card (Last Inputs)" reuse the inputs saved last time (including the contents of Files). When "Run from Here Downstream" reaches a merge, a Card that waits for all its inputs fills only the ports that receive nothing this time with saved inputs (an `any` Card runs with only the values that arrived).
+
+### Run lists and Collect
+
+- A Code Card can supply a list of implementations in its Nix `run` attribute, such as `run = [ "echo first" "echo second" ];`. For each trigger, the runtime runs every combination of those implementations and the items arriving on its input ports. A single value or implementation contributes one choice. For example, two implementations and batches of three and four input values give 24 invocations. Nested implementation lists are invalid.
+- Results follow the input port order, the item order within each input batch and the implementation order in `run`. Parallel workers can finish in a different order. The Canvas uses thicker wires for batches and shows how many items they carry.
+- An empty implementation list or input batch produces an empty output batch and starts no workers. Collect turns an empty batch into a typed empty vector or an empty Directory. With File or Directory inputs, Collect keeps each item in a numbered subdirectory, preserving its original name and any empty directories. Each entry in the Directory's ordered `items` has a `name` and relative `path`. Other File and Directory metadata remains in the producer's individual invocation records.
+- There are at most 256 combinations per trigger, 4,096 worker invocations per Run and 32 MiB of serialized port values per input or output batch. If one invocation fails, the runtime cancels its siblings and withholds the batch. The history keeps each invocation's outcome. A partial rerun with last inputs uses the whole saved batch, including saved Files and Directories.
+- A collected value can be at most 16 MiB. Collect can copy up to 1,000 files and 64 GiB, with a total limit of 10,000 batch members and filesystem entries. Directory collection rejects symbolic links and special files.
 
 ### Graph previews on the canvas
 
@@ -107,12 +116,12 @@ in
 - Nix evaluation uses restricted eval and forbids IFD (Import From Derivation), and the URLs it may fetch are limited to nixpkgs archives.
 - Builds reuse outputs already in the Nix store. A signed [binary cache](BinaryCaches.md) can supply a missing store path before Nix builds it locally.
 
-### Referring to upstream definitions (`inputs.upstream`)
+### Sharing Nix exports through connections
 
-- From `default.nix`, a Card can refer to the definitions (the functions and values of `run`, `preRun` and `exports`) of the upstream Cards that **always run first, whichever path fires it**.
-- Whether a Card always runs first is decided by static analysis that takes into account `all` / `any`, multiple paths, loops (a greatest fixed point) and nesting. A Card on only one side of a branch, a downstream Card or the Card itself cannot be referred to, and such a reference is a static diagnostic (`nix_reference_*`). `inputs.local.<id>` refers only to Cards at the same level.
-- The static diagnostics tell you about references as written, before evaluation (they do not read comments or the bodies of strings; an indirect reference through an alias or the like is found at evaluation). The extent that can be referred to is itself guaranteed by the evaluator passing only the Cards that always run first in `inputs.upstream`.
-- Only the definitions actually referred to are evaluated, lazily, and branches not chosen at run time are not built.
+- Set `exports` in the upstream Code Card's `default.nix`. If a downstream Code Card receives its output on the `data` port, that Card can use the exported attributes through `inputs.data`. The same exports are available to each implementation in a run list.
+- The name after `inputs.` is the downstream input port name. The port must resolve to one Code Card that always runs first. `tsugumi` and `sources` are reserved for the SDK and configured sources.
+- Fork, Collect, the value input of a Branch and Workflow boundaries preserve the Code producer's exports. A Merge can pass them through when all its inputs come from the same Code producer. A wire with several possible producers still carries its data, but a Nix reference to that input is ambiguous.
+- Static diagnostics describe directly written references and flag unknown or ambiguous ports. Nix also checks references reached through an alias during evaluation.
 
 - The [Canvas overlay](Usage.md#canvas-tools) draws the static references from this resolution. Nested targets meet their visible container and the list preserves the full paths. An invalid reference remains visible with its diagnostic. Saving a source refreshes the resolution.
 

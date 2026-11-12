@@ -21,6 +21,7 @@ import { L } from '../i18n'
 
 /** "Invocation #3 · Succeeded" and the like; undefined before the first invocation. */
 export function runText(d: CardNodeData): string | undefined {
+  if (d.executionList && d.state !== undefined) return cardState(d.state).label
   if (d.state === undefined || d.invocation <= 0n) return undefined
   let s = L('実行 #{0}', d.invocation)
   const cur = currentStage(d.stage)
@@ -297,7 +298,7 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
           {g.stages && (
             <div className="cv-stage-row" style={{ height: s(CardGeometry.stageRow), padding: `0 ${s(8)}px` }}>
               {data.stage && data.invocation > 0n
-                ? <StageStrip progress={data.stage} zoom={z} onTap={p.onStageTap} caption={rt ?? ''} />
+                ? <StageStrip progress={data.stage} zoom={z} onTap={p.onStageTap} caption={data.executionList ? L('実行 #{0}', data.invocation) : rt ?? ''} />
                 : <span className="secondary cv-ellipsis" style={{ fontSize: font(10) }}>{idleText(data)}</span>}
             </div>
           )}
@@ -520,6 +521,9 @@ export interface WireDraw {
   style: WireStyle
   /** A wire to or from a Draft is dotted, whatever its style. */
   dotted?: boolean
+  executionList?: boolean
+  countLabel?: string
+  countAt?: Pt
 }
 
 /** A Draft's wires: round dots, spaced so that they flow without a jump at the
@@ -545,9 +549,15 @@ export function WireLayer({ wires, animate = false, zoom = 1, width, height }: {
     <svg className="cv-wires" width={Math.max(1, width)} height={Math.max(1, height)} aria-hidden>
       {wires.map((wire, i) => {
         const st = stroke[wire.style]
+        const thick = st.width + (wire.executionList ? 2.8 : 0)
         return (
-          <path key={i} d={wire.d} fill="none" stroke={st.color} strokeWidth={wire.dotted ? Math.max(st.width, WIRE_DOT_MIN) : st.width} strokeLinecap="round" strokeLinejoin="round"
-            strokeDasharray={wire.dotted ? (wire.style === 'selected' ? WIRE_DOT_SELECTED : WIRE_DOT) : st.dash} className={wire.style === 'active' && anyActive ? 'cv-wire-moving' : undefined} />
+          <g key={i}>
+            <path d={wire.d} fill="none" stroke={st.color} strokeWidth={wire.dotted ? Math.max(thick, WIRE_DOT_MIN) : thick} strokeLinecap="round" strokeLinejoin="round"
+              strokeDasharray={wire.dotted ? (wire.style === 'selected' ? WIRE_DOT_SELECTED : WIRE_DOT) : st.dash} className={wire.style === 'active' && anyActive ? 'cv-wire-moving' : undefined} />
+            {wire.countLabel && wire.countAt && <text x={wire.countAt.x} y={wire.countAt.y - 7} textAnchor="middle"
+              fill="var(--label)" stroke="var(--window-bg)" strokeWidth={3} paintOrder="stroke" className="mono"
+              fontSize={11}>{wire.countLabel}</text>}
+          </g>
         )
       })}
     </svg>

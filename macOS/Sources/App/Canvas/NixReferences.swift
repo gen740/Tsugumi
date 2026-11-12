@@ -4,12 +4,12 @@ struct CardNixReference: Identifiable {
   let source: CardKey
   let target: CardKey
   let name: String
-  let local: Bool
   let valid: Bool
-  var id: String { [source, local ? "local" : "upstream", name].joined(separator: "\u{0}") }
+  var id: String { [source, target, name].joined(separator: "\u{0}") }
   var expression: String {
     let quoted = String(data: try! JSONEncoder().encode(name), encoding: .utf8)!
-    return "inputs.\(local ? "local" : "upstream").\(quoted)"
+    let attr = name.range(of: #"^[A-Za-z_][A-Za-z0-9_'-]*$"#, options: .regularExpression) == nil ? quoted : name
+    return "inputs.\(attr).export"
   }
 }
 

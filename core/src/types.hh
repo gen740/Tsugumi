@@ -20,6 +20,7 @@ struct Object;
 namespace tsugumi::types {
 
 using PortKind = Tsugumi::Data::PortKind;
+using ExecutionShape = Tsugumi::Data::ExecutionShape;
 
 struct Type {
   std::string bfbs;       // reflection schema, root_table = root message
@@ -35,6 +36,7 @@ struct PortType {
   PortKind kind = PortKind::FlatBuffer;
   bool optional = false;
   TypeRef type;  // null when unresolved
+  ExecutionShape execution_shape = ExecutionShape::unspecified;
 };
 
 struct CatalogResult {

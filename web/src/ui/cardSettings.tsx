@@ -561,8 +561,8 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
       <Toggle checked={bool(get(def, n)) ?? fallback} disabled={disabled} onChange={(v) => model.setSetting(n, v === fallback ? undefined : v)} />
     </Row>
   )
-  const numberField = (n: string, label: string, fallback: string) => (
-    <Row label={label}>
+  const numberField = (n: string, label: string, fallback: string, help?: string) => (
+    <Row label={label} help={help}>
       <TextField value={numText(get(def, n)) ?? str(get(def, n)) ?? ''} placeholder={fallback} style={{ width: 140 }}
         onChange={(v) => {
           const t = v.trim()
@@ -651,7 +651,7 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
               ]} />
             </Row>
           )}
-          {numberField('maxRuns', L('最大実行回数'), '1')}
+          {numberField('maxRuns', L('最大発火回数'), '1', L('実行リスト内の呼び出しはまとめて 1 回の発火として数えます。'))}
           {timeoutField('timeoutSeconds', L('実行の期限（秒）'))}
           {kind === 'code' && (
             <Row label={L('グラフの更新')} help={L('更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。')}>

@@ -16,6 +16,8 @@
 
 namespace tsugumi {
 
+inline constexpr uint32_t kMaxExecutionBatchSize = 256;
+
 struct NixCall {
   std::string pin_url;   // nixpkgs: a fetchTarball URL
   std::string pin_hash;  // nixpkgs: its sha256 (SRI)
@@ -32,6 +34,7 @@ struct NixCall {
   // For an external execution service, export the derivation and its inputs
   // to this file instead of realising it on the central core's store.
   std::filesystem::path derivation_archive;
+  uint32_t max_implementations = kMaxExecutionBatchSize;
   const std::atomic<bool>* cancel = nullptr;
   std::optional<std::chrono::steady_clock::time_point> deadline;
   std::function<void(const std::string&)> log;  // evaluation messages and build output
@@ -44,6 +47,8 @@ struct NixResult {
   std::string derivation, system;
   std::vector<std::string> closure;  // runtime references, including the manifest
   bool built = false;    // false: the result was already in the store
+  bool execution_list = false;
+  uint32_t implementation_count = 1;
   std::filesystem::path root;
 };
 
@@ -102,6 +107,10 @@ class NixEvaluator {
 struct NixInterrupted : std::runtime_error {
   bool timed_out;
   NixInterrupted(bool t, const std::string& m) : std::runtime_error(m), timed_out(t) {}
+};
+
+struct NixImplementationLimit : std::runtime_error {
+  using std::runtime_error::runtime_error;
 };
 
 }  // namespace tsugumi

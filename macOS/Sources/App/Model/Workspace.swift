@@ -146,6 +146,7 @@ final class Workspace {
   var bottomPanel: BottomPanel = .log
   /// Log filter chosen from elsewhere (an issue, a Card menu, a stage icon).
   var logCard: CardKey?
+  var logRunId: String?
   var logInvocation: UInt64?
   var logStream: Tsugumi_Data_LogStream = .journal
   /// Stage whose log section to open (a click on a stage icon).
@@ -154,6 +155,10 @@ final class Workspace {
   var active: WorkflowTab? { tabs.first { $0.id == activeTab } ?? tabs.first }
 
   func open(_ s: ProjectSession) {
+    if session !== s {
+      logRunId = nil
+      logInvocation = nil
+    }
     session = s
     let tab = WorkflowTab(scope: s.initialScope, selection: s.initialSelection)
     tabs = [tab]
@@ -191,7 +196,8 @@ final class Workspace {
     if showBottom && bottomPanel == p { showBottom = false } else { bottomPanel = p; showBottom = true }
   }
 
-  func showLog(for card: CardKey?, stage: Stage? = nil, invocation: UInt64? = nil) {
+  func showLog(for card: CardKey?, stage: Stage? = nil, invocation: UInt64? = nil, runId: String? = nil) {
+    if let runId { logRunId = runId }
     logCard = card
     logInvocation = invocation
     logStage = stage

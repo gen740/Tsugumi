@@ -46,6 +46,8 @@ enum Severity : ubyte { unspecified = 0, error = 1, warning = 2 }
 
 enum PortKind : ubyte { unspecified = 0, File = 1, Directory = 2, FlatBuffer = 3 }
 
+enum ExecutionShape : ubyte { unspecified = 0, single = 1, list = 2 }
+
 enum RunState : ubyte {
   unspecified = 0, idle = 1, queued = 2, preparing = 3, running = 4,
   cancelling = 5, succeeded = 6, failed = 7, cancelled = 8,

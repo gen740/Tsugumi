@@ -108,6 +108,7 @@ export interface CardNodeData {
   params: ParamData[]
   result?: string
   state?: D.CardState
+  executionList?: boolean
   stage?: StageProgress
   /** Invocation number in the current run (0: not run in this run). */
   invocation: bigint
@@ -131,10 +132,10 @@ export interface CardNodeData {
   openComments?: number
 }
 
-export const isRouting = (d: CardNodeData) => d.kind === 'fork' || d.kind === 'branch' || d.kind === 'merge'
+export const isRouting = (d: CardNodeData) => d.kind === 'fork' || d.kind === 'branch' || d.kind === 'merge' || d.kind === 'collect'
 
-export type CardShape = 'card' | 'branch' | 'fork' | 'merge' | 'start' | 'switch'
-export const shapeOf = (k: CardKind): CardShape => (k === 'trigger' ? 'start' : k === 'branch' || k === 'fork' || k === 'merge' || k === 'switch' ? k : 'card')
+export type CardShape = 'card' | 'branch' | 'fork' | 'merge' | 'collect' | 'start' | 'switch'
+export const shapeOf = (k: CardKind): CardShape => (k === 'trigger' ? 'start' : k === 'branch' || k === 'fork' || k === 'merge' || k === 'collect' || k === 'switch' ? k : 'card')
 
 /** Whether a wire is drawn dotted: either end is a Draft, with no code behind
  *  it yet (no `to` at the bar of a Card in Card's outputs or inputs). */
@@ -216,6 +217,7 @@ export class CardGeometry {
       case 'branch': return { width: this.grid ? 4 * CardGeometry.rowPitch(this.grid) : 60, height: 48 }
       case 'fork': return { width: this.fanWidth(this.outputs.length), height: this.fanLength(this.outputs.length) }
       case 'merge': return { width: this.fanWidth(this.inputs.length), height: this.fanLength(this.inputs.length) }
+      case 'collect': return { width: this.grid ? gridLengthAtLeast(64, this.grid) : 64, height: 44 }
       // The start Card: its name and a run button, nothing more.
       case 'start':
         if (!this.grid) return { width: 116, height: 34 }
@@ -379,6 +381,14 @@ export class CardGeometry {
         return roundedRect(r, r.height / 2)
       case 'branch':
         return roundedPolygon([P(r.x + r.width / 2, r.y), P(r.x + r.width, r.y + r.height / 2), P(r.x + r.width / 2, r.y + r.height), P(r.x, r.y + r.height / 2)], 6 * cornerScale)
+      case 'collect': {
+        const point = (across: number, along: number) => this.flow === 'topToBottom'
+          ? P(r.x + r.width * across, r.y + r.height * along)
+          : P(r.x + r.width * along, r.y + r.height * across)
+        return roundedPolygon([
+          point(0, 0), point(1, 0), point(0.65, 0.57), point(0.65, 1), point(0.35, 1), point(0.35, 0.57),
+        ], 3 * cornerScale)
+      }
       default: {
         // Triangle: apex upstream (fork) or downstream (merge). The apex is listed
         // twice so it stays sharp: the ports of that side are on its very tip.
@@ -399,7 +409,7 @@ export class CardGeometry {
   /** Where the icon of a routing Card sits in the outline `r`: on the axis of the
    *  flow, and in a triangle toward the wide edge, where it has room. */
   iconCenter(r: Rect): Pt {
-    const along = this.shape === 'fork' ? 0.62 : this.shape === 'merge' ? 0.38 : 0.5
+    const along = this.shape === 'fork' ? 0.62 : this.shape === 'merge' || this.shape === 'collect' ? 0.38 : 0.5
     return this.flow === 'topToBottom' ? { x: r.x + r.width / 2, y: r.y + r.height * along } : { x: r.x + r.width * along, y: r.y + r.height / 2 }
   }
 
@@ -435,7 +445,7 @@ export class CardGeometry {
     if (this.draft) return false
     if (this.shape === 'card' && this.collapsed) return false
     if (this.shape === 'start' || this.shape === 'switch') return false
-    if (this.shape === 'fork' || this.shape === 'merge') return false
+    if (this.shape === 'fork' || this.shape === 'merge' || this.shape === 'collect') return false
     if (this.shape === 'branch') return true
     return this.spacing(input) >= CardGeometry.minLabel
   }

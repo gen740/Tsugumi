@@ -4,10 +4,12 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <future>
 #include <flatbuffers/reflection.h>
 #include <set>
 
 #include "execution_service.hh"
+#include "collect_value.hh"
 #include "history.hh"
 #include "remote_invocation.hh"
 #include "schema.hh"
@@ -28,6 +30,9 @@ using FBB = flatbuffers::FlatBufferBuilder;
 namespace {
 
 constexpr size_t kQueueCapacity = 16;
+constexpr uint32_t kMaxRunWorkers = 4096;
+constexpr uint32_t kMaxParallelWorkers = 8;
+constexpr size_t kMaxBatchBytes = 32u << 20;
 
 struct RemoteDetached {};
 
@@ -315,6 +320,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     if (!summary_.status.terminal() && !cancel_ && !finishing_) {
       cancel_ = true;
       interrupted_ = interrupted;
+      for (auto& node : nodes_)
+        if (node.cancellation) node.cancellation->stop.store(true);
       summary_.status.state = RunState::cancelling;
       persist_status_locked();
     }
@@ -327,8 +334,17 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     Value value;
     CardPath from;
     uint64_t from_inv = 0;
+  };
+  struct TokenGroup {
+    std::string port;
+    bool execution_list = false;
+    std::vector<Token> members;
     uint64_t seq = 0;
-    int64_t arrived_at = now_ms();  // when it entered the queue
+    int64_t arrived_at = now_ms();
+  };
+  struct BatchCancellation {
+    std::atomic<bool> stop{false};
+    std::atomic<bool> failed{false};
   };
   struct NodeRt {
     const Node* node = nullptr;
@@ -336,28 +352,42 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     bool in_targets = false;
     bool start = false;
     bool start_fired = false;
-    std::map<std::string, std::deque<Token>> queues;  // connected inputs only
+    std::map<std::string, std::deque<TokenGroup>> queues;  // connected inputs only
     uint64_t invocations = 0;
+    uint64_t executed = 0;
+    uint64_t activations = 0;
     bool running = false;
     bool halted = false;  // failed hard (e.g. maxRuns) and no longer scheduled
     bool saved_inputs = false;  // some of its inputs are saved values, not this run's
     CardState last = CardState::not_started;
     std::optional<FailureData> last_failure;
-    std::optional<CardBuild> build;
+    std::optional<CardBuildPlan> build;
+    std::shared_ptr<BatchCancellation> cancellation;
     uint64_t display_rev = 0;
-    // The call's output folder as the Card sees it (a passed descriptor) and its real path.
-    std::optional<std::pair<std::string, std::string>> out_alias;
     std::optional<DisplayData> display;
-    // Inputs of the latest invocation; saved for single-Card runs at the end of the run.
-    std::optional<std::pair<uint64_t, std::vector<Value>>> last_inputs;
-    std::map<std::string, std::pair<uint64_t, Value>> last_port_inputs;  // latest value per port
+    // Groups of the latest activation, saved at the end of the run.
+    std::optional<std::pair<uint64_t, std::vector<SavedInputGroup>>> last_inputs;
+    std::map<std::string, std::pair<uint64_t, SavedInputGroup>> last_port_inputs;
   };
   struct Work {
-    size_t node;
-    uint64_t invocation;
+    size_t node = 0;
+    uint64_t invocation = 0;
     std::vector<Token> inputs;
     bool from_saved = false;  // single-Card run on the saved inputs
     int64_t ready_at = now_ms();  // all inputs there (or the start fired)
+    uint64_t activation = 0;
+    std::vector<TokenGroup> groups;
+    std::shared_ptr<BatchCancellation> cancellation;
+    std::optional<InvocationSummaryData> prepared;
+    const CardBuild* implementation = nullptr;
+    std::filesystem::path archive;
+    std::string archive_digest;
+    std::string remote_instance;
+    std::optional<uint32_t> batch_index, batch_size;
+    bool execution_list = false;
+    std::optional<std::pair<std::string, std::string>> out_alias;
+    std::optional<DisplayData> display;
+    std::optional<FailureData> preparation_failure;
   };
 
   // ---- persistence helpers -------------------------------------------------
@@ -464,49 +494,52 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     for (const auto& j : plan.joins) seed_saved(nodes_[res.index.at(path_key(j.card))], j.saved_ports);
   }
 
-  // Queues the saved values of ports the run itself will not fill. All of them
-  // come from one saved invocation.
-  void seed_saved(NodeRt& n, const std::set<std::string>& outside) {
-    auto fail = [&](FailureKind k, const std::string& msg) {
-      start_failure_ = FailureData::make(k, msg, {{"card", path_key(n.node->path)}});
-      n.halted = true;
-      n.last = CardState::failed;
-      n.last_failure = start_failure_;
-    };
-    // `all` Cards take every outside port from one saved invocation; `any`
-    // Cards consume one port per invocation, so each port has its own latest value.
-    auto last = svc_.history().read([&](sql::Db& db) { return History::last_input(db, n.node->path); });
-    if (!last) return fail(FailureKind::input_missing, "no saved inputs for " + path_key(n.node->path) +
-                                                           "; run the workflow from its trigger Card once first (it saves every Card's inputs)");
-    for (const auto& port : outside) {
-      std::optional<History::LastInput> one;
-      if (n.node->settings.any_mode)
-        one = svc_.history().read([&](sql::Db& db) { return History::last_port_input(db, n.node->path, port); });
-      const auto& pool = one ? one->inputs : last->inputs;
-      const Value* v = nullptr;
-      for (const auto& x : pool)
-        if (x.name == port) v = &x;
-      if (!v) return fail(FailureKind::input_missing, "the saved inputs of " + path_key(n.node->path) + " have no " + port);
-      const auto* p = n.node->input(port);
-      if (!p || !p->type || !types::compatible(*p->type, *v->type))
-        return fail(FailureKind::type_mismatch, "saved input " + port + " of " + path_key(n.node->path) +
-                                                    " no longer matches the port type");
-      if (v->kind != PortKind::FlatBuffer) {
-        auto path = path_value(*v);
+  auto saved_group(const NodeRt& node, const SavedInputGroup& saved, uint64_t activation) -> TokenGroup {
+    const auto* port = node.node->input(saved.port);
+    if (!port || !port->type) throw Failed(FailureKind::type_mismatch, "saved input no longer matches " + saved.port);
+    TokenGroup group{saved.port, saved.execution_list, {}, ++token_seq_};
+    for (const auto& value : saved.values) {
+      if (value.kind != port->kind || !value.type || !types::compatible(*port->type, *value.type))
+        throw Failed(FailureKind::type_mismatch, "saved input no longer matches " + saved.port);
+      if (value.kind != PortKind::FlatBuffer) {
+        const auto path = path_value(value);
         std::error_code ec;
         if (!path || !stdfs::exists(*path, ec))
-          return fail(FailureKind::input_missing, "the saved file for " + port + " no longer exists");
+          throw Failed(FailureKind::input_missing, "the saved file for " + saved.port + " no longer exists");
       }
-      Token t;
-      t.value = *v;
-      t.from_inv = last->invocation;
-      t.seq = ++token_seq_;
-      n.queues[port].push_back(std::move(t));
-      n.saved_inputs = true;
-      // No Card of this run sent it: the record says where it comes from.
-      seed_notes_.push_back(path_key(n.node->path) + "." + port + " uses the saved value from run " +
-                            (one ? one->run_id : last->run_id) + ", invocation " +
-                            std::to_string(one ? one->invocation : last->invocation));
+      group.members.push_back({value, {}, activation});
+    }
+    return group;
+  }
+
+  auto reject_start(NodeRt& node, const FailureData& failure) -> void {
+    start_failure_ = failure;
+    node.halted = true;
+    node.last = CardState::failed;
+    node.last_failure = failure;
+  }
+
+  // Queue one complete saved group per external port. Required groups are
+  // from the same saved activation, unless eachInput consumes them separately.
+  void seed_saved(NodeRt& node, const std::set<std::string>& outside) {
+    try {
+      const auto last = svc_.history().read([&](sql::Db& db) { return History::last_input(db, node.node->path); });
+      if (!last) throw Failed(FailureKind::input_missing, "no saved inputs for " + path_key(node.node->path));
+      for (const auto& port : outside) {
+        std::optional<History::LastInput> one;
+        if (node.node->settings.any_mode)
+          one = svc_.history().read([&](sql::Db& db) { return History::last_port_input(db, node.node->path, port); });
+        const auto& prior = one ? *one : *last;
+        const auto group = std::ranges::find(prior.groups, port, &SavedInputGroup::port);
+        if (group == prior.groups.end())
+          throw Failed(FailureKind::input_missing, "the saved inputs have no " + port);
+        node.queues[port].push_back(saved_group(node, *group, prior.invocation));
+        node.saved_inputs = true;
+        seed_notes_.push_back(path_key(node.node->path) + "." + port + " uses the saved values from run " +
+                              prior.run_id + ", activation " + std::to_string(prior.invocation));
+      }
+    } catch (const Failed& failure) {
+      reject_start(node, failure.failure);
     }
   }
 
@@ -524,90 +557,62 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   std::optional<Work> take_ready(NodeRt& n) {
     if (!n.in_targets || n.running || n.halted || n.node->is_virtual) return std::nullopt;
-    Work w{n.idx, 0, {}};
+    Work w;
+    w.node = n.idx;
     if (n.start && !n.start_fired) {
       if (!downstream_has_space(n)) return std::nullopt;
       n.start_fired = true;
       if (!n.queues.empty()) {
-        // A start Card with connected inputs runs on its last saved inputs.
-        auto last = svc_.history().read([&](sql::Db& db) { return History::last_input(db, n.node->path); });
-        if (!last) {
-          start_failure_ = FailureData::make(FailureKind::input_missing,
-                                             "no saved inputs for " + path_key(n.node->path) +
-                                                 "; run the workflow from its trigger Card once first (it saves every Card's inputs)",
-                                             {{"card", path_key(n.node->path)}});
-          n.halted = true;
-          n.last = CardState::failed;
-          n.last_failure = start_failure_;
+        try {
+          const auto last = svc_.history().read([&](sql::Db& db) { return History::last_input(db, n.node->path); });
+          if (!last) throw Failed(FailureKind::input_missing, "no saved inputs for " + path_key(n.node->path));
+          for (const auto& port : n.node->inputs)
+            if (!port.optional && std::ranges::find(last->groups, port.name, &SavedInputGroup::port) == last->groups.end())
+              throw Failed(FailureKind::input_missing, "the saved inputs have no value for " + port.name);
+          for (const auto& group : last->groups) w.groups.push_back(saved_group(n, group, last->invocation));
+          w.from_saved = true;
+          n.saved_inputs = true;
+        } catch (const Failed& failure) {
+          reject_start(n, failure.failure);
           return std::nullopt;
-        }
-        auto fail_start = [&](FailureKind k, const std::string& msg, const std::string& port) {
-          start_failure_ = FailureData::make(k, msg, {{"card", path_key(n.node->path)}, {"port", port}});
-          n.halted = true;
-          n.last = CardState::failed;
-          n.last_failure = start_failure_;
-        };
-        for (const auto& port : n.node->inputs) {
-          bool have = false;
-          for (const auto& v : last->inputs) have |= v.name == port.name;
-          if (!have && !port.optional) {
-            fail_start(FailureKind::input_missing, "the saved inputs have no value for " + port.name, port.name);
-            return std::nullopt;
-          }
-        }
-        w.from_saved = true;
-        n.saved_inputs = true;
-        for (auto& v : last->inputs) {
-          if (v.kind != PortKind::FlatBuffer) {
-            auto p = path_value(v);
-            std::error_code ec;
-            if (!p || !stdfs::exists(*p, ec)) {
-              fail_start(FailureKind::input_missing, "the saved file for input " + v.name + " no longer exists", v.name);
-              return std::nullopt;
-            }
-          }
-          const auto* port = n.node->input(v.name);
-          if (!port || !port->type || !types::compatible(*port->type, *v.type)) {
-            start_failure_ = FailureData::make(FailureKind::type_mismatch,
-                                               "saved input " + v.name + " no longer matches the port type",
-                                               {{"card", path_key(n.node->path)}, {"port", v.name}});
-            n.halted = true;
-            n.last = CardState::failed;
-            n.last_failure = start_failure_;
-            return std::nullopt;
-          }
-          w.inputs.push_back({v, {}, last->invocation, 0});
         }
       }
       return w;
     }
     if (n.queues.empty()) return std::nullopt;
     if (n.node->settings.any_mode) {
-      std::deque<Token>* best = nullptr;
-      for (auto& [_, q] : n.queues)
-        if (!q.empty() && (!best || q.front().seq < best->front().seq)) best = &q;
+      std::deque<TokenGroup>* best = nullptr;
+      for (auto& [_, queue] : n.queues)
+        if (!queue.empty() && (!best || queue.front().seq < best->front().seq)) best = &queue;
       if (!best || !downstream_has_space(n)) return std::nullopt;
-      w.inputs.push_back(std::move(best->front()));
+      w.groups.push_back(std::move(best->front()));
       best->pop_front();
     } else {
-      for (auto& [_, q] : n.queues)
-        if (q.empty()) return std::nullopt;
+      for (auto& [_, queue] : n.queues)
+        if (queue.empty()) return std::nullopt;
       if (!downstream_has_space(n)) return std::nullopt;
-      for (auto& [_, q] : n.queues) {
-        w.inputs.push_back(std::move(q.front()));
-        q.pop_front();
+      for (auto& [_, queue] : n.queues) {
+        w.groups.push_back(std::move(queue.front()));
+        queue.pop_front();
       }
     }
+    w.ready_at = 0;
+    for (const auto& group : w.groups) w.ready_at = std::max(w.ready_at, group.arrived_at);
     return w;
   }
 
   void main() {
     stdfs::create_directories(run_dir_);
-    prepare_graph();
+    {
+      std::lock_guard lock(mu_);
+      prepare_graph();
+    }
     set_state(RunState::preparing);
     journal("run", "started", std::nullopt, std::nullopt, "run started");
     for (const auto& note : seed_notes_) journal("run", "seeded", std::nullopt, std::nullopt, note);
-    // Execution pool.
+    for (uint32_t lane = 0; lane < std::min(p_.max_concurrency, kMaxParallelWorkers); ++lane)
+      workers_.emplace_back([this, lane] { worker_loop(lane); });
+    // Coordinators wait for complete activations without occupying a worker slot.
     for (uint32_t lane = 0; lane < p_.max_concurrency; ++lane)
       pool_.emplace_back([this, lane] { pool_loop(lane); });
     {
@@ -623,7 +628,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
               auto w = take_ready(n);
               if (!w) continue;
               n.running = true;
-              w->invocation = ++n.invocations;
+              w->activation = ++n.activations;
+              w->cancellation = std::make_shared<BatchCancellation>();
+              n.cancellation = w->cancellation;
               ++running_;
               tasks_.push_back(std::move(*w));
               task_cv_.notify_one();
@@ -646,6 +653,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     task_cv_.notify_all();
     for (auto& t : pool_) t.join();
+    worker_cv_.notify_all();
+    for (auto& t : workers_) t.join();
     // Workers stay in the project's pool (resident across runs).
     finalize();
   }
@@ -695,10 +704,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         w = std::move(tasks_.front());
         tasks_.pop_front();
       }
-      invoke(w, lane);
+      invoke_batch(w, lane);
       {
         std::lock_guard<std::mutex> l(mu_);
         nodes_[w.node].running = false;
+        nodes_[w.node].cancellation.reset();
         --running_;
       }
       cv_.notify_all();
@@ -711,20 +721,401 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::vector<Value> outputs;
     std::optional<FailureData> failure;
     std::vector<std::pair<LogStream, std::string>> remote_logs;
+    bool detached = false;
+    std::optional<InvocationSummaryData> unpublished;
   };
 
-  void invoke(Work& w, uint32_t lane) {
-    NodeRt& rt = nodes_[w.node];
-    const Node& node = *rt.node;
+  auto worker_loop(uint32_t lane) -> void {
+    while (true) {
+      std::function<void(uint32_t)> task;
+      {
+        std::unique_lock lock(mu_);
+        worker_cv_.wait(lock, [&] { return pool_stop_ || !worker_tasks_.empty(); });
+        if (worker_tasks_.empty()) return;
+        task = std::move(worker_tasks_.front());
+        worker_tasks_.pop_front();
+      }
+      task(lane);
+    }
+  }
+
+  auto publish_batch(const RunBatchData& batch, const std::vector<Produced>& members = {}) -> void {
+    svc_.history().write_sync([&](sql::Db& db) {
+      History::put_batch(db, batch);
+      if (batch.failed) return;
+      for (const auto& member : members) {
+        if (!member.unpublished) continue;
+        auto summary = *member.unpublished;
+        for (const auto& output : member.outputs) summary.outputs_sent.push_back(output.name);
+        History::update_detail(db, summary);
+      }
+    });
+    svc_.server()->broadcast(run_event_note(run_id_, [batch](FBB& b) {
+      const auto data = wire::run_batch(b, batch);
+      return std::make_pair(R::RunEventValue::RunBatchChanged, R::CreateRunBatchChanged(b, data).Union());
+    }));
+  }
+
+  auto prepare_code(NodeRt& rt, Work& work, uint32_t max_implementations, uint32_t lane) -> const CardBuildPlan& {
+    const auto& node = *rt.node;
+    auto& s = *work.prepared;
+    if (rt.build && node.settings.execution_service == kLocalExecutionService) {
+      stage_begin(s, Phase::evaluate, StageOutcome::reused);
+      stage_begin(s, Phase::build, StageOutcome::reused);
+      return *rt.build;
+    }
+    BuildRequest request;
+    request.run_id = run_id_;
+    request.node = &node;
+    request.doc = doc_;
+    request.run_dir = run_dir_;
+    request.jobs = p_.nix_jobs;
+    request.cores = p_.nix_cores;
+    request.timeout_seconds = node.settings.build_timeout_seconds;
+    request.max_implementations = max_implementations;
+    request.cancel = &work.cancellation->stop;
+    if (node.settings.execution_service != kLocalExecutionService) {
+      const auto targets = svc_.remote_targets();
+      if (auto diagnostic = svc_.execution_diagnostic(node, targets))
+        throw Failed(FailureKind::unsupported, diagnostic->message);
+      const auto target = std::ranges::find(targets, node.settings.execution_service, &RemoteTarget::id);
+      request.remote_system = node.settings.system.empty() ? target->native_system : node.settings.system;
+      const auto probe = svc_.remote_jobs().probe(target->id);
+      if (std::ranges::find(probe.systems, request.remote_system) == probe.systems.end())
+        throw Failed(FailureKind::unsupported, "external execution service no longer supports system " + request.remote_system);
+      work.remote_instance = probe.instance;
+      work.archive = run_dir_ / (".derivation-" + crypto::uuid4());
+      request.derivation_archive = work.archive;
+    }
+    request.log = [&](const std::string& line) { card_log(node.path, s.invocation, LogStream::build, line); };
+    auto started = now_ms();
+    const auto trace_phase = [&] {
+      svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, *s.phase, lane, started, now_ms()));
+    };
+    request.on_phase = [&](Phase phase) {
+      trace_phase();
+      started = now_ms();
+      stage_begin(s, phase);
+      card_status(s);
+    };
+    set_state(RunState::preparing);
+    rt.build = svc_.nix().build(request);
+    trace_phase();
+    if (request.remote_system.empty()) {
+      journal("build", "output", node.path, s.invocation,
+              rt.build->common.cached ? "evaluated; the store already had the result" : "built");
+      if (rt.build->common.cached) stage_begin(s, Phase::build, StageOutcome::cached);
+    }
+    return *rt.build;
+  }
+
+  auto batch_limit(const Node& node, std::string message) -> Failed {
+    return Failed(FailureKind::execution_limit, std::move(message), {{"card", path_key(node.path)}});
+  }
+
+  auto input_combinations(const Node& node, const std::vector<TokenGroup>& groups) -> uint32_t {
+    size_t bytes = 0;
+    for (const auto& group : groups) {
+      for (const auto& member : group.members) {
+        if (member.value.bytes.size() > kMaxBatchBytes - bytes)
+          throw batch_limit(node, "input batch exceeds 32 MiB");
+        bytes += member.value.bytes.size();
+      }
+    }
+    if (node.kind == Template::Collect) return 1;
+    if (std::ranges::any_of(groups, [](const auto& group) { return group.members.empty(); })) return 0;
+    uint32_t count = 1;
+    for (const auto& group : groups) {
+      if (group.members.size() > kMaxExecutionBatchSize / count)
+        throw batch_limit(node, "input and run list expansion exceeds 256 combinations");
+      count *= static_cast<uint32_t>(group.members.size());
+    }
+    return count;
+  }
+
+  auto batch_inputs(const Node& node, const std::vector<TokenGroup>& groups, uint32_t index) -> std::vector<Token> {
+    std::vector<Token> inputs;
+    if (node.kind == Template::Collect) {
+      if (!groups.empty()) inputs = groups.front().members;
+      return inputs;
+    }
+    for (auto it = groups.rbegin(); it != groups.rend(); ++it) {
+      inputs.push_back(it->members.at(index % it->members.size()));
+      index /= static_cast<uint32_t>(it->members.size());
+    }
+    std::ranges::reverse(inputs);
+    return inputs;
+  }
+
+  auto remember_inputs(NodeRt& rt, const Work& batch) -> void {
+    if (batch.from_saved || (rt.node->kind != Template::Code && batch.groups.empty())) return;
+    std::vector<SavedInputGroup> saved;
+    for (const auto& group : batch.groups) {
+      SavedInputGroup values{group.port, group.execution_list, {}};
+      for (const auto& member : group.members) values.values.push_back(member.value);
+      rt.last_port_inputs[group.port] = std::make_pair(batch.activation, values);
+      saved.push_back(std::move(values));
+    }
+    rt.last_inputs = std::make_pair(batch.activation, std::move(saved));
+  }
+
+  auto route_batch(NodeRt& rt, const RunBatchData& batch, const std::vector<Produced>& members, uint64_t first) -> void {
+    for (const auto& output : batch.outputs) {
+      if (!output.execution_list && output.count == 0) continue;
+      const auto edge = out_edges_.find({rt.idx, output.port});
+      if (edge == out_edges_.end()) continue;
+      TokenGroup group{output.port, output.execution_list, {}};
+      for (size_t index = 0; index < members.size(); ++index) {
+        const auto value = std::ranges::find(members[index].outputs, output.port, &Value::name);
+        if (value != members[index].outputs.end())
+          group.members.push_back({*value, rt.node->path, first + index});
+      }
+      for (const auto& [to, port] : edge->second) {
+        if (!nodes_[to].in_targets) continue;
+        group.port = port;
+        group.seq = ++token_seq_;
+        for (auto& member : group.members) member.value.name = port;
+        nodes_[to].queues.at(port).push_back(group);
+      }
+    }
+  }
+
+  auto invoke_batch(Work& work, uint32_t lane) -> void {
+    auto& rt = nodes_[work.node];
+    const auto& node = *rt.node;
+    const auto first = rt.invocations + 1;
+    work.invocation = first;
+    RunBatchData batch;
+    batch.run_id = run_id_;
+    batch.card = node.path;
+    batch.activation = work.activation;
+    batch.execution_list = node.kind != Template::Collect &&
+        std::ranges::any_of(work.groups, &TokenGroup::execution_list);
+    struct RemoveArchive {
+      const stdfs::path& path;
+      ~RemoveArchive() {
+        if (path.empty()) return;
+        std::error_code error;
+        stdfs::remove(path, error);
+      }
+    } remove_archive{work.archive};
+
+    std::vector<CardBuild> implementations;
+    uint32_t count = 0;
+    bool reserved = false;
+    const bool code = node.kind == Template::Code;
+    std::optional<FailureData> failure;
+    try {
+      if (work.activation > node.settings.max_runs)
+        throw Failed(FailureKind::execution_limit, "maxRuns " + std::to_string(node.settings.max_runs) + " exceeded",
+                     {{"card", path_key(node.path)}, {"max_runs", std::to_string(node.settings.max_runs)}});
+      count = input_combinations(node, work.groups);
+      remember_inputs(rt, work);
+      if (code && count != 0) {
+        work.prepared = new_invocation(work);
+        auto& s = *work.prepared;
+        s.state = CardState::running;
+        stage_begin(s, Phase::prepare);
+        card_status(s, true);
+        journal("prepare", "started", node.path, s.invocation, "invocation started");
+        const auto& plan = prepare_code(rt, work, kMaxExecutionBatchSize / count, lane);
+        batch.execution_list |= plan.execution_list;
+        if (plan.implementations.size() > kMaxExecutionBatchSize / count)
+          throw batch_limit(node, "input and run list expansion exceeds 256 combinations");
+        for (size_t index = 0; index < plan.implementations.size(); ++index)
+          implementations.push_back(plan.implementation(index));
+        count *= static_cast<uint32_t>(implementations.size());
+      }
+      batch.invocation_count = count;
+      if (code) {
+        std::lock_guard lock(mu_);
+        if (count > kMaxRunWorkers - worker_budget_)
+          throw batch_limit(node, "run exceeds the limit of 4096 worker invocations");
+        worker_budget_ += count;
+        reserved = true;
+      }
+      publish_batch(batch);
+      if (count != 0 && !work.archive.empty())
+        work.archive_digest = stage_remote_archive(svc_.remote_jobs(), node.settings.execution_service,
+                                                   work.remote_instance, work.archive, work.cancellation->stop);
+    } catch (const Failed& error) {
+      failure = error.failure;
+    } catch (const std::exception& error) {
+      failure = FailureData::make(FailureKind::internal_error, error.what());
+    }
+
+    std::vector<Produced> members(failure ? 0 : count);
+    std::atomic<uint32_t> started{0};
+    std::mutex outcome_mu;
+    size_t bytes = 0;
+    auto execute = [&](uint32_t index, uint32_t worker_lane) {
+      // The provisional preparation record belongs to the first member.
+      if (index != 0 && work.cancellation->stop.load()) return;
+      started.fetch_add(1);
+      Work member;
+      member.node = work.node;
+      member.activation = work.activation;
+      member.invocation = first + index;
+      member.ready_at = work.ready_at;
+      member.cancellation = work.cancellation;
+      member.batch_index = index + 1;
+      member.batch_size = count;
+      member.archive_digest = work.archive_digest;
+      member.execution_list = batch.execution_list;
+      member.remote_instance = work.remote_instance;
+      if (index == 0) member.prepared = std::move(work.prepared);
+      if (code) member.implementation = &implementations.at(index % implementations.size());
+      const auto inputs_index = code ? index / static_cast<uint32_t>(implementations.size()) : index;
+      member.inputs = batch_inputs(node, work.groups, inputs_index);
+      auto produced = invoke(member, worker_lane);
+      bool stop_siblings = false;
+      {
+        std::lock_guard lock(outcome_mu);
+        if (!produced.failure && !produced.detached) {
+          for (const auto& output : produced.outputs) {
+            if (output.bytes.size() > kMaxBatchBytes - bytes) {
+              produced.failure = FailureData::make(FailureKind::execution_limit, "output batch exceeds 32 MiB",
+                                                   {{"card", path_key(node.path)}});
+              break;
+            }
+            bytes += output.bytes.size();
+          }
+        }
+        if ((produced.failure || produced.detached) &&
+            (!failure || (failure->kind == FailureKind::cancelled && produced.failure &&
+                          produced.failure->kind != FailureKind::cancelled))) {
+          failure = produced.failure.value_or(FailureData::make(FailureKind::interrupted, "batch interrupted"));
+          work.cancellation->failed.store(!produced.detached && !detaching_.load());
+          work.cancellation->stop.store(true);
+          stop_siblings = work.cancellation->failed.load();
+        }
+        if (failure) produced.outputs.clear();
+        members[index] = std::move(produced);
+      }
+      if (stop_siblings && code && node.settings.execution_service != kLocalExecutionService) {
+        try {
+          svc_.history().write_sync([&](sql::Db& db) {
+            History::cancel_remote_batch(db, run_id_, node.path, work.activation);
+          });
+        } catch (const Failed&) {
+          persistence_lost("cancelling external batch of " + path_key(node.path));
+        }
+      }
+    };
+
+    if (failure) {
+      work.preparation_failure = failure;
+      invoke(work, lane);
+      ++rt.invocations;
+    } else if (count == 0) {
+      if (work.prepared) {
+        // Build logs for an empty plan keep their own ID.
+        ++rt.invocations;
+        const auto& s = *work.prepared;
+        svc_.history().clear_live(s);
+        try {
+          svc_.history().write_sync([&](sql::Db& db) {
+            db.prepare("DELETE FROM statuses WHERE run_id=? AND card=? AND invocation=?")
+                .bind(1, s.run_id).bind(2, path_key(s.card)).bind(3, s.invocation).run();
+          });
+        } catch (const Failed&) {
+          persistence_lost("clearing preparation of " + path_key(node.path));
+        }
+      }
+    } else if (!code) {
+      for (uint32_t index = 0; index < count && !work.cancellation->stop.load(); ++index) execute(index, lane);
+      rt.invocations += started.load();
+    } else {
+      std::vector<std::future<void>> pending;
+      {
+        std::lock_guard lock(mu_);
+        const bool serial = node.settings.reuse_worker;
+        const auto jobs = serial ? 1u : count;
+        for (uint32_t index = 0; index < jobs; ++index) {
+          auto task = std::make_shared<std::packaged_task<void(uint32_t)>>([&, index, serial](uint32_t worker_lane) {
+            if (serial) {
+              for (uint32_t member = 0; member < count && !work.cancellation->stop.load(); ++member)
+                execute(member, worker_lane);
+              if (started.load() == 0) execute(0, worker_lane);
+            } else {
+              execute(index, worker_lane);
+            }
+          });
+          pending.push_back(task->get_future());
+          worker_tasks_.push_back([task](uint32_t worker_lane) { (*task)(worker_lane); });
+        }
+      }
+      worker_cv_.notify_all();
+      for (auto& future : pending) {
+        try {
+          future.get();
+        } catch (const std::exception& error) {
+          std::lock_guard lock(outcome_mu);
+          if (!failure) failure = FailureData::make(FailureKind::internal_error, error.what());
+        }
+      }
+      // Assigned IDs are stable even when cancellation skipped queued members.
+      rt.invocations += count;
+    }
+    rt.executed += started.load();
+    if (reserved) {
+      std::lock_guard lock(mu_);
+      worker_budget_ -= count - started.load();
+    }
+    // Cancellation and publication are ordered by the same mutex. A
+    // committed batch is complete and routes all its output groups.
+    std::lock_guard lock(mu_);
+    if (cancel_.load()) failure = FailureData::make(FailureKind::cancelled, "run cancelled");
+
+    batch.complete = true;
+    batch.failed = failure.has_value();
+    if (!batch.failed) {
+      for (const auto& port : node.outputs) {
+        uint32_t sent = 0;
+        for (const auto& member : members)
+          if (std::ranges::find(member.outputs, port.name, &Value::name) != member.outputs.end()) ++sent;
+        batch.outputs.push_back({port.name, sent, batch.execution_list});
+      }
+    }
+    try {
+      publish_batch(batch, members);
+    } catch (const Failed&) {
+      persistence_lost("batch of " + path_key(node.path));
+      failure = persist_failure();
+    }
+    if (failure) {
+      const bool cancelled = failure->kind == FailureKind::cancelled;
+      rt.last = cancelled ? CardState::cancelled : CardState::failed;
+      rt.last_failure = failure;
+      if (!first_failure_ && !cancelled) first_failure_ = failure;
+      if (failure->kind == FailureKind::execution_limit) rt.halted = true;
+    } else {
+      rt.last = CardState::succeeded;
+      route_batch(rt, batch, members, first);
+    }
+  }
+
+  auto new_invocation(const Work& w) -> InvocationSummaryData {
+    const auto& node = *nodes_[w.node].node;
     InvocationSummaryData s;
     s.run_id = run_id_;
     s.card = node.path;
     s.params_json = NixRunner::params_json(node, false);
     s.invocation = w.invocation;
+    s.batch_activation = w.activation;
     s.started_at = now_ms();
-    // Ready when the last consumed input arrived (a start Card: when it fired).
-    s.ready_at = w.inputs.empty() ? w.ready_at : 0;
-    for (const auto& t : w.inputs) s.ready_at = std::max(*s.ready_at, t.arrived_at);
+    s.ready_at = w.ready_at;
+    return s;
+  }
+
+  auto invoke(Work& w, uint32_t lane) -> Produced {
+    NodeRt& rt = nodes_[w.node];
+    const Node& node = *rt.node;
+    const bool prepared = w.prepared.has_value();
+    auto s = prepared ? std::move(*w.prepared) : new_invocation(w);
+    s.batch_index = w.batch_index;
+    s.batch_size = w.batch_size;
+    if (w.implementation) s.implementation_index = w.implementation->implementation_index;
     std::vector<Value> inputs;
     std::vector<InputSourceData> sources;
     for (const auto& t : w.inputs) {
@@ -732,27 +1123,29 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (!t.from.empty()) sources.push_back({t.value.name, t.from, t.from_inv});
     }
     Produced out;
-    if (w.invocation > node.settings.max_runs) {
-      out.failure = FailureData::make(FailureKind::execution_limit,
-                                      "maxRuns " + std::to_string(node.settings.max_runs) + " exceeded",
-                                      {{"card", path_key(node.path)}, {"max_runs", std::to_string(node.settings.max_runs)}});
+    if (w.preparation_failure) {
+      out.failure = w.preparation_failure;
     } else {
       s.state = CardState::running;
-      stage_begin(s, node.kind == Template::Code ? Phase::prepare : Phase::execute);
-      card_status(s, true);
-      // The Card's saved inputs are written once at the end of the run.
-      if ((node.kind == Template::Code || !inputs.empty()) && !w.from_saved) {
-        std::lock_guard<std::mutex> l(mu_);
-        rt.last_inputs = std::make_pair(w.invocation, inputs);
-        for (const auto& v : inputs) rt.last_port_inputs[v.name] = std::make_pair(w.invocation, v);
+      if (!prepared) {
+        if (node.kind == Template::Code) {
+          stage_begin(s, Phase::prepare, StageOutcome::reused);
+          stage_begin(s, Phase::evaluate, StageOutcome::reused);
+          stage_begin(s, Phase::build, StageOutcome::reused);
+        } else {
+          stage_begin(s, Phase::execute);
+        }
+        card_status(s, true);
+        journal(phase_name(*s.phase), "started", node.path, w.invocation, "invocation started");
       }
-      journal(phase_name(*s.phase), "started", node.path, w.invocation, "invocation started");
       try {
-        if (node.kind == Template::Code) out = run_code(rt, s, inputs, sources, lane);
-        else out = run_builtin(rt, s, inputs);
+        if (w.cancellation->stop.load()) throw Failed(FailureKind::cancelled, "batch cancelled before execution");
+        if (node.kind == Template::Code) out = run_code(rt, w, s, inputs, sources, lane);
+        else out = run_builtin(rt, w, s, inputs);
       } catch (const RemoteDetached&) {
         svc_.history().clear_live(s);
-        return;
+        out.detached = true;
+        return out;
       } catch (const Failed& f) {
         out.failure = f.failure;
       } catch (const std::exception& e) {
@@ -760,19 +1153,20 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       }
       if (!out.failure) {
         stage_begin(s, Phase::validate);
-        int64_t vs = now_ms();
+        const auto started = now_ms();
         try {
-          validate_outputs(rt, w.invocation, out.outputs, inputs);
+          validate_outputs(node, w, out.outputs, inputs);
         } catch (const Failed& f) {
           out.failure = f.failure;
           out.outputs.clear();
         }
-        svc_.server()->broadcast(timeline_note(run_id_, node.path, w.invocation, Phase::validate, lane, vs, now_ms()));
+        svc_.server()->broadcast(timeline_note(run_id_, node.path, w.invocation, Phase::validate, lane, started, now_ms()));
       }
     }
     bool was_cancel = out.failure && out.failure->kind == FailureKind::cancelled;
     if (out.failure) stage_close(s, was_cancel ? StageOutcome::cancelled : StageOutcome::failed);
-    else for (const auto& v : out.outputs) s.outputs_sent.push_back(v.name);
+    else if (!w.execution_list)
+      for (const auto& v : out.outputs) s.outputs_sent.push_back(v.name);
     s.ended_at = now_ms();
     s.duration_ms = static_cast<uint64_t>(*s.ended_at - *s.started_at);
     if (out.failure && out.failure->args.empty()) out.failure->args.emplace_back("card", path_key(node.path));
@@ -786,13 +1180,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     rec.record_io = node.settings.record_io;
     rec.input_sources = sources;
     if (rec.record_io) {
-      rec.inputs = inputs;
+      if (node.kind != Template::Collect || inputs.size() <= 1) rec.inputs = inputs;
       rec.outputs = out.outputs;
     }
-    {
-      std::lock_guard<std::mutex> l(mu_);
-      rec.display = rt.display && rt.display->invocation == w.invocation ? rt.display : std::nullopt;
-    }
+    rec.display = w.display;
     if (s.state == CardState::succeeded) {
       // Records, artifacts and saved values are written in the save stage.
       stage_begin(s, Phase::save);
@@ -806,10 +1197,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       for (auto& v : out.outputs)
         if (v.name == *node.settings.artifact_output) {
           try {
-            if (s.execution_job_id.empty()) retain_artifact(node, w.invocation, v);
+            if (s.execution_job_id.empty()) retain_artifact(node, w.invocation, v, w.cancellation->stop);
             else remote_artifact = prepare_remote_artifact(run_dir_, invocation_dir(node, w.invocation) / "out", s, v);
           } catch (const Failed& f) {
-            s.state = CardState::failed;
+            was_cancel = f.failure.kind == FailureKind::cancelled;
+            s.state = was_cancel ? CardState::cancelled : CardState::failed;
             s.failure = f.failure;
             rec.summary = s;
             out.failure = f.failure;
@@ -820,13 +1212,18 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
             out.failure = s.failure;
           }
         }
+      if (out.failure) {
+        s.outputs_sent.clear();
+        out.outputs.clear();
+      }
       if (rec.record_io) rec.outputs = out.outputs;
     }
     // The completion is durable before it is announced or its outputs move on.
     // The record holds the save stage as done; a failed write reports it failed.
     {
       auto done = s;
-      stage_close(done, out.failure ? StageOutcome::failed : StageOutcome::done);
+      stage_close(done, was_cancel ? StageOutcome::cancelled :
+                                      out.failure ? StageOutcome::failed : StageOutcome::done);
       rec.summary.stages = done.stages;
       rec.summary.outputs_sent = done.outputs_sent;
       rec.summary.worker_reused = done.worker_reused;
@@ -834,7 +1231,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       try {
         History& h = svc_.history();
         std::map<LogStream, std::vector<LogEnd>> remote_log_ends;
+        const bool failed_remote = out.failure && node.kind == Template::Code &&
+                                   node.settings.execution_service != kLocalExecutionService && !detaching_.load();
+        if (failed_remote) {
+          w.cancellation->failed.store(true);
+          w.cancellation->stop.store(true);
+        }
         h.write_sync([&](sql::Db& db) {
+          if (failed_remote) History::cancel_remote_batch(db, run_id_, node.path, w.activation);
           if (remote_artifact && !out.failure) History::put_artifact(db, *remote_artifact);
           for (const auto& [stream, text] : out.remote_logs)
             remote_log_ends[stream] = h.append_log(db, s.run_id, s.card, s.invocation, stream, text);
@@ -861,92 +1265,97 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
             s.state == CardState::succeeded ? "succeeded" : s.state == CardState::cancelled ? "cancelled" : "failed",
             node.path, w.invocation,
             out.failure ? std::string(failure_kind_name(out.failure->kind)) + ": " + out.failure->diagnostic.value_or("") : "ok");
-    std::lock_guard<std::mutex> l(mu_);
-    rt.last = s.state;
-    if (out.failure) {
-      rt.last_failure = out.failure;
-      if (!first_failure_ && !was_cancel) first_failure_ = out.failure;
-      if (out.failure->kind == FailureKind::execution_limit) rt.halted = true;
-      return;
-    }
-    // Route outputs downstream. Never forward invalid output.
-    for (auto& v : out.outputs) {
-      auto it = out_edges_.find({rt.idx, v.name});
-      if (it == out_edges_.end()) continue;
-      for (const auto& [to, port] : it->second) {
-        if (!nodes_[to].in_targets) continue;
-        Token t;
-        t.value = v;
-        t.value.name = port;
-        t.from = node.path;
-        t.from_inv = w.invocation;
-        t.seq = ++token_seq_;
-        nodes_[to].queues[port].push_back(std::move(t));
-      }
-    }
+    if (w.execution_list && !out.failure) out.unpublished = std::move(s);
+    return out;
   }
 
-  // The inputs of the Card's latest invocation become its saved inputs for a
-  // later single-Card run (and each port keeps its latest value). Written
-  // once per Card at the end of the run. File/Directory contents are copied
-  // out of the run's work area (which CacheClear removes) and the saved values
-  // point to the copy. Exactly one invocation's set is kept, never a mix of runs.
-  void save_last_inputs(const Node& node, uint64_t inv, const std::vector<Value>& inputs,
-                        const std::map<std::string, std::pair<uint64_t, Value>>& ports) {
-    auto base = svc_.store().state_dir() / "inputs" / path_key(node.path);
-    auto dir = base / (run_id_ + "-" + std::to_string(inv));
-    std::vector<Value> saved;
-    std::vector<std::pair<uint64_t, Value>> per_port;
-    bool copied = false;
-    auto copy_into = [&](const Value& v, const stdfs::path& where) -> Value {
-      if (v.kind == PortKind::FlatBuffer) return v;
-      auto src = path_value(v);
-      if (!src) throw Failed(FailureKind::output_invalid, "input " + v.name + " has no path");
-      copied = true;
-      auto dest = where / stdfs::path(*src).filename();
-      std::error_code ec;
-      stdfs::remove_all(where, ec);
-      stdfs::create_directories(where);
-      auto [root, rel] = beneath(*src);
-      if (v.kind == PortKind::File) {
-        fs::write_atomic(dest, fs::read_beneath(root, rel), 0644);
+  // Save all groups from the latest activation. A per-port snapshot lets an
+  // eachInput join reuse the last arrival on each outside port independently.
+  auto save_last_inputs(const Node& node, uint64_t inv, const std::vector<SavedInputGroup>& inputs,
+                        const std::map<std::string, std::pair<uint64_t, SavedInputGroup>>& ports) -> void {
+    if (cancel_.load()) return;
+    const auto base = svc_.store().state_dir() / "inputs" / path_key(node.path);
+    const auto snapshot = run_id_ + "-" + std::to_string(inv);
+    const auto directory = base / snapshot;
+    std::vector<SavedInputGroup> saved;
+    std::vector<std::pair<uint64_t, SavedInputGroup>> per_port;
+    std::vector<stdfs::path> port_copies;
+    const auto remove_candidates = [](const stdfs::path& main, const std::vector<stdfs::path>& candidates) {
+      std::error_code error;
+      stdfs::remove_all(main, error);
+      for (const auto& candidate : candidates) stdfs::remove_all(candidate, error);
+    };
+    const auto check_cancel = [&] {
+      if (cancel_.load()) throw Failed(FailureKind::cancelled, "saving inputs was cancelled");
+    };
+    const auto copy_into = [&](const Value& value, const stdfs::path& where) -> Value {
+      check_cancel();
+      if (value.kind == PortKind::FlatBuffer) return value;
+      const auto source = path_value(value);
+      if (!source) throw Failed(FailureKind::output_invalid, "input " + value.name + " has no path");
+      const auto [root, rel] = beneath(*source);
+      const auto destination = where / rel.filename();
+      const auto copy_file = [&](const stdfs::path& file, const stdfs::path& to) {
+        check_cancel();
+        fs::copy_beneath(root, file, to, [&](std::string_view) { check_cancel(); });
+      };
+      if (value.kind == PortKind::File) {
+        copy_file(rel, destination);
       } else {
-        auto listing = fs::list_beneath(root, rel);
-        stdfs::create_directories(dest);
-        for (const auto& f : listing.files) fs::write_atomic(dest / f, fs::read_beneath(root, rel / f), 0644);
+        const auto listing = fs::list_beneath(root, rel);
+        stdfs::create_directories(destination);
+        for (const auto& child : listing.directories) {
+          check_cancel();
+          stdfs::create_directories(destination / child);
+        }
+        for (const auto& child : listing.files) copy_file(rel / child, destination / child);
       }
-      return with_path(v, dest.string());
+      return with_path(value, destination.string());
+    };
+    const auto copy_group = [&](const SavedInputGroup& group, const stdfs::path& where) -> SavedInputGroup {
+      SavedInputGroup result{group.port, group.execution_list, {}};
+      for (size_t index = 0; index < group.values.size(); ++index)
+        result.values.push_back(copy_into(group.values[index], where / std::to_string(index)));
+      return result;
     };
     try {
-      for (const auto& v : inputs) saved.push_back(copy_into(v, dir / v.name));
-      for (const auto& [name, p] : ports) per_port.emplace_back(p.first, copy_into(p.second, base / ("port-" + name)));
-    } catch (const std::exception& e) {
-      persistence_lost(std::string("saved inputs of ") + path_key(node.path) + ": " + e.what());
+      for (const auto& group : inputs) saved.push_back(copy_group(group, directory / group.port));
+      for (const auto& [name, p] : ports) {
+        auto& candidate = port_copies.emplace_back(base / ("port-" + name) / snapshot);
+        per_port.emplace_back(p.first, copy_group(p.second, candidate));
+      }
+      check_cancel();
+    } catch (const std::exception& error) {
+      remove_candidates(directory, port_copies);
+      if (!cancel_.load()) persistence_lost("saved inputs of " + path_key(node.path) + ": " + error.what());
       return;
     }
-    auto card = node.path;
-    auto run = run_id_;
-    svc_.history().submit([card, run, inv, saved, per_port](sql::Db& db) {
-                            History::put_last_input(db, card, run, inv, saved);
-                            for (const auto& [i, v] : per_port) History::put_last_port_input(db, card, run, i, v);
-                          },
-                          [self = shared_from_this(), base, dir, card, copied](bool ok) {
-                            if (!ok) {
-                              self->persistence_lost("saved inputs of " + path_key(card));
-                              return;
-                            }
-                            if (!copied) return;
-                            // Older saved copies of this Card are no longer referenced.
-                            std::error_code ec;
-                            if (stdfs::is_directory(base, ec))
-                              for (const auto& e : stdfs::directory_iterator(base, ec))
-                                if (e.path() != dir && !e.path().filename().string().starts_with("port-"))
-                                  stdfs::remove_all(e.path(), ec);
-                          });
+    const auto card = node.path;
+    const auto run = run_id_;
+    svc_.history().submit(
+        [card, run, inv, saved = std::move(saved), per_port = std::move(per_port)](sql::Db& db) {
+          History::put_last_input(db, card, run, inv, saved);
+          for (const auto& [activation, group] : per_port) History::put_last_port_input(db, card, run, activation, group);
+        },
+        [self = shared_from_this(), card, base, directory, port_copies = std::move(port_copies), remove_candidates](bool ok) {
+          if (!ok) {
+            remove_candidates(directory, port_copies);
+            self->persistence_lost("saved inputs of " + path_key(card));
+            return;
+          }
+          // Prior snapshots may still be read until the history commits.
+          std::error_code error;
+          for (const auto& entry : stdfs::directory_iterator(base, error))
+            if (entry.path() != directory && !entry.path().filename().string().starts_with("port-"))
+              stdfs::remove_all(entry.path(), error);
+          for (const auto& candidate : port_copies)
+            for (const auto& entry : stdfs::directory_iterator(candidate.parent_path(), error))
+              if (entry.path() != candidate) stdfs::remove_all(entry.path(), error);
+        });
   }
 
-  void validate_outputs(NodeRt& rt, uint64_t inv, std::vector<Value>& outputs, const std::vector<Value>& inputs) {
-    const Node& node = *rt.node;
+  auto validate_outputs(const Node& node, const Work& w, std::vector<Value>& outputs,
+                        const std::vector<Value>& inputs) -> void {
     // Files received as inputs may be passed on unchanged (fork, branch, a
     // Card forwarding its input); anything else must be newly produced in the
     // invocation's own output directory.
@@ -969,14 +1378,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (v.kind != PortKind::FlatBuffer) {
         auto p = path_value(v);
         // A path under the passed output descriptor is the output folder's real path.
-        if (p && rt.out_alias) {
-          const auto& [alias, real] = *rt.out_alias;
+        if (p && w.out_alias) {
+          const auto& [alias, real] = *w.out_alias;
           if (*p == alias || p->starts_with(alias + "/")) {
             v = with_path(v, real + p->substr(alias.size()));
             p = path_value(v);
           }
         }
-        auto out_dir = invocation_dir(node, inv) / "out";
+        auto out_dir = invocation_dir(node, w.invocation) / "out";
         std::error_code ec;
         bool is_forward = p && forwarded.count(stdfs::path(*p).lexically_normal().string());
         if (!p || !stdfs::path(*p).is_absolute() || (!is_forward && !fs::resolves_inside(out_dir, *p)))
@@ -1012,7 +1421,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     return run_dir_ / "work" / path_key(node.path) / std::to_string(inv);
   }
 
-  void retain_artifact(const Node& node, uint64_t inv, Value& v) {
+  auto retain_artifact(const Node& node, uint64_t inv, Value& v, const std::atomic<bool>& stop) -> void {
     auto src = path_value(v);
     if (!src) throw Failed(FailureKind::output_invalid, "artifact output has no path");
     ArtifactData a;
@@ -1023,26 +1432,44 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     a.output = v.name;
     a.kind = v.kind;
     a.name = stdfs::path(*src).filename().string();
-    auto dest = run_dir_ / "artifacts" / a.artifact_id;
-    auto [root, rel] = beneath(*src);
-    if (v.kind == PortKind::File) {
-      auto data = fs::read_beneath(root, rel);
-      fs::write_atomic(dest / a.name, data, 0644);
-      a.members.push_back({a.name, data.size(), crypto::sha256_hex(data)});
-    } else {
-      auto listing = fs::list_beneath(root, rel);
-      if (!listing.links.empty())
-        throw Failed(FailureKind::output_invalid, "artifact directory contains symlink " + listing.links.front());
-      if (listing.files.size() > 1000)
-        throw Failed(FailureKind::resource_limit, "artifact directory exceeds 1,000 files");
-      for (const auto& f : listing.files) {
-        auto data = fs::read_beneath(root, rel / f);
-        fs::write_atomic(dest / f, data, 0644);
-        a.members.push_back({f, data.size(), crypto::sha256_hex(data)});
+    const auto destination = run_dir_ / "artifacts" / a.artifact_id;
+    const auto [root, rel] = beneath(*src);
+    const auto check_cancel = [&] {
+      if (stop.load()) throw Failed(FailureKind::cancelled, "retaining artifact was cancelled");
+    };
+    const auto retain_file = [&](const stdfs::path& file, const std::string& name) {
+      check_cancel();
+      crypto::Sha256 hash;
+      const auto size = fs::copy_beneath(root, file, destination / name, [&](std::string_view chunk) {
+        check_cancel();
+        hash.update(chunk);
+      });
+      a.members.push_back({name, size, hash.finish_hex()});
+    };
+    try {
+      if (v.kind == PortKind::File) {
+        retain_file(rel, a.name);
+      } else {
+        const auto listing = fs::list_beneath(root, rel);
+        if (!listing.links.empty())
+          throw Failed(FailureKind::output_invalid, "artifact directory contains symlink " + listing.links.front());
+        if (listing.files.size() > 1000)
+          throw Failed(FailureKind::resource_limit, "artifact directory exceeds 1,000 files");
+        stdfs::create_directories(destination);
+        for (const auto& child : listing.directories) {
+          check_cancel();
+          stdfs::create_directories(destination / child);
+        }
+        for (const auto& child : listing.files) retain_file(rel / child, child);
       }
+      check_cancel();
+      svc_.history().write_sync([&](sql::Db& db) { History::put_artifact(db, a); });
+    } catch (...) {
+      std::error_code error;
+      stdfs::remove_all(destination, error);
+      throw;
     }
     v.artifact_id = a.artifact_id;
-    svc_.history().write_sync([a](sql::Db& db) { History::put_artifact(db, a); });
   }
 
   // ---- builtins --------------------------------------------------------------
@@ -1053,7 +1480,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     return nullptr;
   }
 
-  Produced run_builtin(NodeRt& rt, InvocationSummaryData& s, const std::vector<Value>& in) {
+  auto run_builtin(NodeRt& rt, const Work& w, InvocationSummaryData& s, const std::vector<Value>& in) -> Produced {
     const Node& node = *rt.node;
     Produced p;
     int64_t t0 = now_ms();
@@ -1123,6 +1550,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         card_log(node.path, s.invocation, LogStream::stdout, std::string("branch -> ") + (cond ? "a" : "b") + "\n");
         break;
       }
+      case Template::Collect:
+        p.outputs.push_back(collect_values(*node.input("in"), node.outputs.front(), in, svc_.store().state_dir(),
+                                           invocation_dir(node, s.invocation) / "out", w.cancellation->stop));
+        break;
       case Template::Merge: {
         if (in.size() != 1) throw Failed(FailureKind::input_missing, "merge consumes exactly one arrival");
         const Value& v = in.front();
@@ -1141,7 +1572,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     return p;
   }
 
-  void on_display(NodeRt& rt, DisplayData d) {
+  auto on_display(NodeRt& rt, Work& w, DisplayData d) -> void {
     if (d.card != rt.node->path || d.run_id != run_id_)
       throw Failed(FailureKind::output_invalid, "display addressed another card or run");
     if (auto err = d.validate()) throw Failed(FailureKind::output_invalid, *err);
@@ -1149,54 +1580,31 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       std::lock_guard<std::mutex> l(mu_);
       d.revision = ++rt.display_rev;
       rt.display = d;
+      w.display = d;
     }
     sched_.publish_display(d);
   }
 
   // ---- code Cards -------------------------------------------------------------
 
-  auto run_remote_code(NodeRt& rt, InvocationSummaryData& s, const std::vector<Value>& inputs,
+  auto run_remote_code(NodeRt& rt, Work& w, InvocationSummaryData& s, const std::vector<Value>& inputs,
                        const std::vector<InputSourceData>& sources) -> Produced {
     const auto& node = *rt.node;
     const auto& settings = node.settings;
-    const auto targets = svc_.remote_targets();
-    if (auto diagnostic = svc_.execution_diagnostic(node, targets))
-      throw Failed(FailureKind::unsupported, diagnostic->message);
-    const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
-    const auto system = settings.system.empty() ? target->native_system : settings.system;
+    const auto& service = settings.execution_service;
+    const auto& build = *w.implementation;
+    const auto& instance = w.remote_instance;
     auto& client = svc_.remote_jobs();
-    const auto probe = client.probe(target->id);
-    if (std::ranges::find(probe.systems, system) == probe.systems.end())
-      throw Failed(FailureKind::unsupported, "external execution service no longer supports system " + system);
-    const auto& instance = probe.instance;
     const auto directory = invocation_dir(node, s.invocation);
     stdfs::create_directories(directory);
-    const auto archive = directory / (".derivation-" + crypto::uuid4());
-    struct RemoveArchive {
-      stdfs::path file;
-      ~RemoveArchive() { std::error_code ec; stdfs::remove(file, ec); }
-    } remove{archive};
-    BuildRequest build_request;
-    build_request.run_id = run_id_;
-    build_request.node = &node;
-    build_request.doc = doc_;
-    build_request.run_dir = run_dir_;
-    build_request.remote_system = system;
-    build_request.derivation_archive = archive;
-    build_request.timeout_seconds = settings.build_timeout_seconds;
-    build_request.cancel = &cancel_;
-    build_request.log = [&](const std::string& line) { card_log(node.path, s.invocation, LogStream::build, line); };
-    build_request.on_phase = [&](Phase phase) { stage_begin(s, phase); card_status(s); };
-    set_state(RunState::preparing);
-    auto build = svc_.nix().build(build_request);
-    const LocalExecutionRequest request{node, build, inputs, run_id_, s.invocation, directory, cancel_, {}, {}, {}};
-    auto spec = stage_remote_invocation(client, target->id, instance, svc_.project_id(), svc_.store().state_dir(), archive, request);
-    if (cancel_.load()) throw Failed(FailureKind::cancelled, "run cancelled before external submission");
+    const LocalExecutionRequest request{node, build, inputs, run_id_, s.invocation, directory, w.cancellation->stop, {}, {}, {}};
+    auto spec = stage_remote_invocation(client, service, instance, svc_.project_id(), svc_.store().state_dir(), w.archive_digest, request);
+    if (w.cancellation->stop.load()) throw Failed(FailureKind::cancelled, "batch cancelled before external submission");
 
-    s.execution_service = target->id;
+    s.execution_service = service;
     s.execution_job_id = crypto::sha256_hex(svc_.project_id() + "\n" + run_id_ + "\n" + path_key(node.path) + "\n" +
                                             std::to_string(s.invocation));
-    s.execution_system = system;
+    s.execution_system = build.environment.system;
     s.execution_resources = settings.execution_resources;
     s.execution_state = RemoteExecutionState::queued;
     s.worker_reused = false;
@@ -1208,7 +1616,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       History::put_status(db, s);
       // RunCancel sets the flag before its synchronous database update. An
       // insertion ordered after that update must carry the same intent.
-      job.cancel_requested = explicit_cancel_.load();
+      job.cancel_requested = explicit_cancel_.load() || w.cancellation->failed.load();
       History::put_remote_job(db, job);
     });
     card_status(s);
@@ -1218,7 +1626,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     while (!detaching_.load()) {
       const auto before = s.execution_state;
       const bool accepted = job.accepted;
-      if (explicit_cancel_.load() && !job.cancel_requested) {
+      if ((explicit_cancel_.load() || w.cancellation->failed.load()) && !job.cancel_requested) {
         job.cancel_requested = true;
         history.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
       }
@@ -1247,9 +1655,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (reply && reply->state == "succeeded") {
         output.remote_logs.clear();
         try {
-          auto result = import_remote_result(client, target->id, instance, reply->result_sha256, job.spec, directory,
+          auto result = import_remote_result(client, service, instance, reply->result_sha256, job.spec, directory,
               node.outputs, [&](LogStream stream, const std::string& line) { output.remote_logs.emplace_back(stream, line); },
-              [&](const DisplayData& display) { on_display(rt, display); }, detaching_);
+              [&](const DisplayData& display) { on_display(rt, w, display); }, detaching_);
           if (!result.environment.id.empty()) {
             s.environment_id = result.environment.id;
             s.build_cached = !result.built;
@@ -1273,50 +1681,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     throw RemoteDetached{};
   }
 
-  Produced run_code(NodeRt& rt, InvocationSummaryData& s, const std::vector<Value>& in,
-                    const std::vector<InputSourceData>& sources, uint32_t lane) {
+  auto run_code(NodeRt& rt, Work& w, InvocationSummaryData& s, const std::vector<Value>& in,
+                const std::vector<InputSourceData>& sources, uint32_t lane) -> Produced {
     const Node& node = *rt.node;
-    if (node.settings.execution_service != kLocalExecutionService) return run_remote_code(rt, s, in, sources);
-    if (!rt.build) {
-      if (s.phase != Phase::prepare) stage_begin(s, Phase::prepare);
-      card_status(s);
-      set_state(RunState::preparing);
-      int64_t t0 = now_ms();
-      BuildRequest br;
-      br.run_id = run_id_;
-      br.node = &node;
-      br.doc = doc_;
-      br.run_dir = run_dir_;
-      br.jobs = p_.nix_jobs;
-      br.cores = p_.nix_cores;
-      br.timeout_seconds = node.settings.build_timeout_seconds;
-      br.cancel = &cancel_;
-      uint64_t inv = s.invocation;
-      CardPath card = node.path;
-      br.log = [this, card, inv](const std::string& line) { card_log(card, inv, LogStream::build, line); };
-      int64_t stage_start = t0;
-      br.on_phase = [&](Phase p) {
-        // Closing the previous stage on the timeline, then reporting the new one.
-        svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, *s.phase, lane, stage_start, now_ms()));
-        stage_start = now_ms();
-        stage_begin(s, p);
-        card_status(s);
-      };
-      rt.build = svc_.nix().build(br);
-      svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, *s.phase, lane, stage_start, now_ms()));
-      journal("build", "output", node.path, s.invocation,
-              rt.build->cached ? "evaluated; the store already had the result" : "built");
-      // Evaluated (the resident evaluator reuses nixpkgs); nothing to build.
-      if (rt.build->cached) stage_begin(s, Phase::build, StageOutcome::cached);
-    } else {
-      // Built by an earlier invocation of this run.
-      stage_close(s, StageOutcome::reused);
-      stage_begin(s, Phase::evaluate, StageOutcome::reused);
-      stage_begin(s, Phase::build, StageOutcome::reused);
-    }
-    s.environment_id = rt.build->environment.id;
-    s.build_cached = rt.build->cached;
-    s.emulator = rt.build->emulator;
+    if (node.settings.execution_service != kLocalExecutionService) return run_remote_code(rt, w, s, in, sources);
+    const auto& build = *w.implementation;
+    s.environment_id = build.environment.id;
+    s.build_cached = build.cached;
+    s.emulator = build.emulator;
     auto& execution = svc_.execution_service(node.settings.execution_service);
     s.execution_service = node.settings.execution_service;
     stage_begin(s, Phase::execute);
@@ -1324,7 +1696,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // before the worker can execute any code, including a reused build.
     try {
       svc_.history().write_sync([&](sql::Db& db) {
-        History::put_environment(db, run_id_, rt.build->environment);
+        History::put_environment(db, run_id_, build.environment);
         History::put_status(db, s);
       });
     } catch (...) {
@@ -1337,15 +1709,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     CardPath card = node.path;
     uint64_t invocation = s.invocation;
     auto outcome = execution.run(
-        {node, *rt.build, in, run_id_, invocation, invocation_dir(node, invocation), cancel_,
+        {node, build, in, run_id_, invocation, invocation_dir(node, invocation), w.cancellation->stop,
          [this, card, invocation](LogStream stream, const std::string& text) {
            card_log(card, invocation, stream, text);
          },
-         [this, &rt](const DisplayData& display) { on_display(rt, display); },
+         [this, &rt, &w](const DisplayData& display) { on_display(rt, w, display); },
          [&](int64_t begin, int64_t end) {
            svc_.server()->broadcast(timeline_note(run_id_, node.path, invocation, Phase::execute, lane, begin, end));
          }},
-        s.worker_reused, rt.out_alias);
+        s.worker_reused, w.out_alias);
     Produced p;
     p.failure = outcome.failure;
     if (!p.failure)
@@ -1371,13 +1743,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (!n.in_targets || n.node->is_virtual) continue;
       const std::string key = path_key(n.node->path);
       // The trigger of a whole run only starts it.
-      if (n.invocations > 0 && !(whole && n.node->kind == Template::Trigger)) {
-        ran.push_back(n.invocations > 1 ? key + " ×" + std::to_string(n.invocations) : key);
+      if (n.executed > 0 && !(whole && n.node->kind == Template::Trigger)) {
+        ran.push_back(n.executed > 1 ? key + " ×" + std::to_string(n.executed) : key);
         saved |= n.saved_inputs;
       }
       if (n.last_failure && n.last_failure->kind != FailureKind::cancelled)
         failed.push_back(key + (en ? " (" : "（") + failure_kind_name(n.last_failure->kind) + (en ? ")" : "）"));
-      else if (n.invocations == 0 && (final[n.idx] == CardState::blocked || final[n.idx] == CardState::cancelled))
+      else if (n.activations == 0 && (final[n.idx] == CardState::blocked || final[n.idx] == CardState::cancelled))
         never.push_back(key);
     }
     auto names = [en](const std::vector<std::string>& v) {
@@ -1402,13 +1774,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::vector<std::vector<WaitingInputData>> waiting(nodes_.size());
     for (auto& n : nodes_) {
       if (!n.in_targets || n.node->is_virtual) continue;
-      final[n.idx] = n.invocations > 0 || n.halted ? n.last : CardState::skipped;
+      final[n.idx] = n.activations > 0 || n.halted ? n.last : CardState::skipped;
     }
     // Never invoked: blocked when an upstream failed/blocked, or partial inputs arrived.
     for (bool changed = true; changed;) {
       changed = false;
       for (auto& n : nodes_) {
-        if (!n.in_targets || n.node->is_virtual || n.invocations > 0 || n.halted) continue;
+        if (!n.in_targets || n.node->is_virtual || n.activations > 0 || n.halted) continue;
         if (final[n.idx] == CardState::blocked || final[n.idx] == CardState::cancelled) continue;
         bool partial = false;
         for (auto& [_, q] : n.queues) partial |= !q.empty();
@@ -1426,7 +1798,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     std::optional<FailureData> blocked_failure;
     for (auto& n : nodes_) {
-      if (!n.in_targets || n.node->is_virtual || n.invocations > 0 || n.halted) continue;
+      if (!n.in_targets || n.node->is_virtual || n.activations > 0 || n.halted) continue;
       CardState st = final[n.idx];
       if (st == CardState::blocked) {
         for (auto& [port, q] : n.queues) {
@@ -1499,6 +1871,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         [sum, displays](sql::Db& db) {
           for (const auto& d : displays) History::put_display(db, d);
           History::update_run(db, sum.status);
+          History::interrupt_batches(db, *sum.status.run_id);
           // Detached external invocations are still pending after the local
           // graph ends. Keep their progress until recovery commits a result.
           db.prepare("DELETE FROM statuses WHERE run_id=? AND NOT EXISTS ("
@@ -1537,6 +1910,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   std::map<std::pair<size_t, std::string>, std::vector<std::pair<size_t, std::string>>> out_edges_;
   std::deque<Work> tasks_;
   std::vector<std::thread> pool_;
+  std::condition_variable worker_cv_;
+  std::deque<std::function<void(uint32_t)>> worker_tasks_;
+  std::vector<std::thread> workers_;
+  uint32_t worker_budget_ = 0;
   bool pool_stop_ = false;
   uint32_t running_ = 0;
   uint64_t token_seq_ = 0;
@@ -1569,30 +1946,20 @@ void Scheduler::recover_interrupted() {
       r->status.failure = FailureData::make(FailureKind::interrupted, "tsugumid restarted while the run was active");
       r->status.ended_at = now_ms();
       History::update_run(db, r->status);
+      History::interrupt_batches(db, run_id);
       // In-progress invocations become interrupted failures; nothing is re-run.
-      auto st = db.prepare("SELECT s.card, s.invocation, s.started_at, e.environment_id, s.execution_service FROM statuses AS s "
+      auto st = db.prepare("SELECT s.card, s.invocation, e.environment_id FROM statuses AS s "
                            "LEFT JOIN active_environments AS e ON e.run_id=s.run_id AND e.card=s.card "
                            "AND e.invocation=s.invocation WHERE s.run_id=? AND NOT EXISTS ("
                            "SELECT 1 FROM remote_jobs AS j WHERE j.run_id=s.run_id AND j.card=s.card AND j.invocation=s.invocation)");
       st.bind(1, run_id);
       std::vector<InvocationRecordData> recs;
       while (st.step()) {
+        auto summary = History::status(db, run_id, path_from_key(st.text(0)), st.u64(1));
+        if (!summary) continue;
         InvocationRecordData rec;
-        rec.summary.run_id = run_id;
-        CardPath p;
-        std::string key = st.text(0);
-        size_t s = 0;
-        while (true) {
-          size_t e = key.find('/', s);
-          p.push_back(key.substr(s, e == std::string::npos ? std::string::npos : e - s));
-          if (e == std::string::npos) break;
-          s = e + 1;
-        }
-        rec.summary.card = p;
-        rec.summary.invocation = st.u64(1);
-        rec.summary.started_at = st.opt_i64(2);
-        rec.summary.environment_id = st.text(3);
-        rec.summary.execution_service = st.text(4);
+        rec.summary = std::move(*summary);
+        if (rec.summary.environment_id.empty()) rec.summary.environment_id = st.text(2);
         rec.summary.state = CardState::failed;
         rec.summary.failure = r->status.failure;
         recs.push_back(std::move(rec));
@@ -1700,6 +2067,12 @@ auto Scheduler::reconcile_remote_job(RemoteJobRecord& job) -> bool {
     result.summary.card = *completed_card;
     if (result.display) result.display->card = *completed_card;
     if (artifact) artifact->card = *completed_card;
+    // A restart may have happened before the failing member could commit
+    // its cancellation intent. A terminal worker failure still stops siblings.
+    if (inv.batch_activation && inv.failure &&
+        (reply->state == "failed" || reply->state == "succeeded" || inv.failure->kind == FailureKind::timeout))
+      History::cancel_remote_batch(db, inv.run_id, *completed_card, *inv.batch_activation);
+
     if (!environment.id.empty()) History::put_environment(db, inv.run_id, environment);
     if (artifact) History::put_artifact(db, *artifact);
     for (const auto& [stream, text] : logs)

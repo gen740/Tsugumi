@@ -17,10 +17,10 @@ import Testing
 
 @Test func nixReferenceLinksHighlightTheHoveredCardOrThePickedLink() {
   let refs = [
-    CardNixReference(source: "analysis", target: "source", name: "source", local: false, valid: true),
-    CardNixReference(source: "report", target: "analysis", name: "analysis", local: true, valid: true),
-    CardNixReference(source: "report", target: "missing", name: "missing", local: false, valid: false),
-    CardNixReference(source: "report", target: "child/inner", name: "child/inner", local: false, valid: true),
+    CardNixReference(source: "analysis", target: "source", name: "source", valid: true),
+    CardNixReference(source: "report", target: "analysis", name: "analysis", valid: true),
+    CardNixReference(source: "report", target: "missing", name: "missing", valid: false),
+    CardNixReference(source: "report", target: "child/inner", name: "child/inner", valid: true),
   ]
   let links = visibleNixLinks(refs, scope: [], visible: ["source", "analysis", "report", "other", "child"])
   let ends = { (l: [NixLink]) in l.map { "\($0.source)>\($0.target)" } }
@@ -31,5 +31,5 @@ import Testing
   #expect(activeNixLinks(links, hovered: "other", selected: nil).isEmpty)
   #expect(ends(activeNixLinks(links, hovered: nil, selected: links[1].reference.id)) == ["report>analysis"])
   #expect(activeNixLinks(links, hovered: nil, selected: nil).isEmpty)
-  #expect(refs[1].expression == "inputs.local.\"analysis\"")
+  #expect(refs[1].expression == "inputs.analysis.export")
 }

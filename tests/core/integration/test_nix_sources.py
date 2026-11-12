@@ -60,6 +60,44 @@ def run(core_factory, root, *card_path, expected=RunState.succeeded):
     return out, err
 
 
+def test_connected_nix_exports_are_shared_by_run_list_implementations(core_factory, tmp_path):
+    """Two Bash implementations read the same function through a connected input port."""
+    root = tmp_path / "run-list"
+    number = 'table Number { value:ulong; } table Outputs { out:Number; } root_type Outputs;'
+    producer = nix('''{
+      exports.greet = name: "hello ${name}";
+      run = ''printf '%s' '{"out":{"value":1}}' > "$TSUGUMI_OUTPUT"'';
+    }''')
+    consumer = nix('''{
+      run = [
+        "echo '${inputs.data.greet \"first\"}'"
+        "echo '${inputs.data.greet \"second\"}'"
+      ];
+    }''')
+    definitions = {
+        "start": {"template": "trigger"},
+        "producer": {"language": "bash", "_outputs": number, "_nix": producer},
+        "consumer": {"language": "bash", "inputs": [{"name": "data"}], "_outputs": OUTPUTS, "_nix": consumer},
+    }
+    write(root, definitions, [card(name, name) for name in definitions],
+          [conn("producer", "out", "consumer", "data")])
+    out, _ = run(core_factory, root, "consumer")
+    assert sorted(out.splitlines()) == ["hello first", "hello second"]
+
+
+def test_nix_rejects_a_nested_run_list(core_factory, tmp_path):
+    """An implementation is a shell body or package, so nested lists fail before execution."""
+    root = tmp_path / "nested-run-list"
+    definitions = {
+        "start": {"template": "trigger"},
+        "work": {"language": "bash", "_outputs": OUTPUTS,
+                 "_nix": nix('{ run = [ [ "echo nested" ] ]; }')},
+    }
+    write(root, definitions, [card(name, name) for name in definitions], [])
+    out, _ = run(core_factory, root, "work", expected=RunState.failed)
+    assert not out
+
+
 def test_a_card_gets_the_packages_of_the_flake_its_project_opted_in_to(core_factory, tmp_path):
     """A card gets the packages of the flake its project opted in to."""
     root = tmp_path / "p"

@@ -16,10 +16,10 @@ const { WorkflowTab } = await import('../src/model/workspace')
 const { activeNixLinks, nixLinks, nixReferences } = await import('../src/model/nixReferences')
 const { NixReferenceControls, NixReferenceList } = await import('../src/ui/nixReferences')
 
-type Ref = { target: string[]; name: string; local?: boolean; valid?: boolean }
+type Ref = { target: string[]; name: string; valid?: boolean }
 const resolved = (id: string, refs: Ref[] = []) => ({
   card: { segments: id.split('/') }, inputs: [], outputs: [], diagnostics: [],
-  nixReferences: refs.map(r => ({ target: { segments: r.target }, name: r.name, local: r.local ?? false, valid: r.valid ?? true })),
+  nixReferences: refs.map(r => ({ target: { segments: r.target }, name: r.name, valid: r.valid ?? true })),
 }) as unknown as R.ResolvedCardT
 
 const session = new ProjectSession('/p', 'k', 'p')
@@ -43,23 +43,23 @@ const shown = () => nixReferences(session).map(r => [r.source, r.target, r.expre
 inner.applyResolution(all({}), [])
 assert.deepEqual(shown(), [])
 delta(all({ analysis: [{ target: ['source'], name: 'source' }] }))
-assert.deepEqual(shown(), [['analysis', 'source', 'inputs.upstream."source"', true]])
+assert.deepEqual(shown(), [['analysis', 'source', 'inputs.source.export', true]])
 delta(all({
   analysis: [{ target: ['source'], name: 'source' }],
-  report: [{ target: ['analysis'], name: 'analysis', local: true }, { target: ['missing'], name: 'missing', valid: false }],
+  report: [{ target: ['analysis'], name: 'analysis' }, { target: ['missing'], name: 'missing', valid: false }],
 }))
 assert.deepEqual(shown(), [
-  ['analysis', 'source', 'inputs.upstream."source"', true],
-  ['report', 'analysis', 'inputs.local."analysis"', true],
-  ['report', 'missing', 'inputs.upstream."missing"', false],
+  ['analysis', 'source', 'inputs.source.export', true],
+  ['report', 'analysis', 'inputs.analysis.export', true],
+  ['report', 'missing', 'inputs.missing.export', false],
 ])
-delta(all({ report: [{ target: ['analysis'], name: 'analysis', local: true }] }))
-assert.deepEqual(shown(), [['report', 'analysis', 'inputs.local."analysis"', true]], 'a removed reference leaves with the delta that removed it')
+delta(all({ report: [{ target: ['analysis'], name: 'analysis' }] }))
+assert.deepEqual(shown(), [['report', 'analysis', 'inputs.analysis.export', true]], 'a removed reference leaves with the delta that removed it')
 
 // What the canvas draws, and the three interactions on it.
 delta(all({
   analysis: [{ target: ['source'], name: 'source' }],
-  report: [{ target: ['analysis'], name: 'analysis', local: true }, { target: ['missing'], name: 'missing', valid: false }],
+  report: [{ target: ['analysis'], name: 'analysis' }, { target: ['missing'], name: 'missing', valid: false }],
 }))
 const tab = new WorkflowTab([])
 const visible = new Set(cards)

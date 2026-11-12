@@ -35,19 +35,21 @@ The steps are in the README's [First steps](../README.md#first-steps). The first
 
 ## Canvas tools
 
-Right-click the Canvas to add a Code Card, a Switch, a Fork, a Branch or a Merge. A Switch can feed the `condition` input of a Branch so you can try both paths without editing code. Connect a value to the Branch's other input, then run once with the Switch on and once with it off. The timeline shows which branch ran. [Card types and execution](features.md#2-cards-and-workflows)
+Right-click the Canvas to add a Code Card, a Switch, a Fork, a Branch, a Merge or a Collect Card. A Switch can feed the `condition` input of a Branch so you can try both paths without editing code. Connect a value to the Branch's other input, then run once with the Switch on and once with it off. The timeline shows which branch ran. [Card types and execution](features.md#2-cards-and-workflows)
 
 Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires** when the Cards are already where you want them. Both are available from the Canvas context menu and can be undone. Untangling changes the visual order of ports while preserving the connections and the way the Workflow runs.
 
 Select several Cards and choose **Group Selection** to keep them together on the Canvas. To reuse another Workflow, use the import button by **Add Card** in the sidebar. It copies the selected project into `externals` as a Card in Card. Its boundary maps the outer ports to steps inside, which you can open by double-clicking the Card.
 
-Use **Nix references (as written)** in the Canvas controls to see references between saved `default.nix` files. Hover a Card to highlight its references or open **List** to jump to a Card or the reference's source. The overlay shows directly written references such as `inputs.upstream.clean`. Aliases and expressions are resolved during evaluation. [Nix reference rules](features.md#referring-to-upstream-definitions-inputsupstream)
+Use **Nix references (as written)** in the Canvas controls to see references between saved `default.nix` files. Hover a Card to highlight its references or open **List** to jump to a Card or the reference's source. The overlay shows directly written references such as `inputs.data`, where `data` is the Card's input port name. Aliases and expressions are resolved during evaluation. [Nix reference rules](features.md#sharing-nix-exports-through-connections)
 
 ## Run from a Card
 
 Run the Workflow once to save its inputs. For example, open a copy of **Visualization → report**, run it, and change the aggregate Card's `offset`. Choose **Run from Here Downstream** on that Card to update the figures and report without running unrelated steps. Choose **Run Only This Card (Last Inputs)** to test just one figure using its saved input. A Card that needs an input without a saved value reports it as missing.
 
 Use the bottom **Timeline** to see which steps ran. Select a Card there to inspect its log, or open **Card settings → Run History** to choose an earlier invocation. [Run history](RunHistory.md)
+
+A thick wire carries a batch of values. Its count shows how many items are in that batch. Connect it to a Collect Card to pass one vector or Directory to the next step. [Run lists and Collect](features.md#run-lists-and-collect)
 
 ## Chart updates
 

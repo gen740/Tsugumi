@@ -96,6 +96,7 @@ export class Workspace extends Observable {
   bottomPanel: BottomPanel = 'log'
   /** Log filter chosen from elsewhere (an issue, a Card menu, a stage icon). */
   logCard?: CardKey
+  logRunId?: string
   logInvocation?: bigint
   logStream: D.LogStream = D.LogStream.journal
   /** Stage whose log section to open (a click on a stage icon). */
@@ -109,6 +110,10 @@ export class Workspace extends Observable {
   }
 
   open(s: ProjectSession, scope?: string[]) {
+    if (this.session !== s) {
+      this.logRunId = undefined
+      this.logInvocation = undefined
+    }
     this.session = s
     const tab = new WorkflowTab(scope ?? s.initialScope, scope ? new Set() : new Set(s.initialSelection))
     this.tabs = [tab]
@@ -149,7 +154,7 @@ export class Workspace extends Observable {
     this.changed()
   }
 
-  set<K extends 'showChat' | 'showSidebar' | 'showBottom' | 'bottomPanel' | 'logCard' | 'logInvocation' | 'logStream' | 'logStage'>(k: K, v: Workspace[K]) {
+  set<K extends 'showChat' | 'showSidebar' | 'showBottom' | 'bottomPanel' | 'logCard' | 'logRunId' | 'logInvocation' | 'logStream' | 'logStage'>(k: K, v: Workspace[K]) {
     ;(this as Workspace)[k] = v
     this.changed()
   }
@@ -166,7 +171,8 @@ export class Workspace extends Observable {
   }
 
   /** Opens the log of a Card (or of the whole run), at a stage's section. */
-  showLog(card: CardKey | undefined, stage?: Stage, invocation?: bigint) {
+  showLog(card: CardKey | undefined, stage?: Stage, invocation?: bigint, runId?: string) {
+    if (runId !== undefined) this.logRunId = runId
     this.logCard = card
     this.logInvocation = invocation
     this.logStage = stage

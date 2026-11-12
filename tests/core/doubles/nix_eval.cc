@@ -39,15 +39,24 @@ auto valid_gate(const std::string& name) -> bool {
   });
 }
 
-auto manifest_text(const BuildPlan& plan) -> std::string {
+auto manifest_text(const BuildPlan& plan, const NixCall& call, NixResult& result) -> std::string {
   const auto* value = schema::get(plan.manifest);
   if (!value) throw std::runtime_error("mock-build.json needs manifest or error");
   schema::CardManifest manifest;
   if (auto error = schema::decode(*value, manifest))
     throw std::runtime_error("mock build manifest is invalid: " + error->message);
   const auto* run = schema::get(manifest.run);
-  if (!run || (schema::get(run->bash) != nullptr) == (schema::get(run->package) != nullptr))
-    throw std::runtime_error("mock build manifest needs exactly one of run.bash and run.package");
+  const auto* runs = schema::get(manifest.runs);
+  const auto valid = [](const auto& body) {
+    return (schema::get(body.bash) != nullptr) != (schema::get(body.package) != nullptr);
+  };
+  if ((run != nullptr) == (runs != nullptr) || (run && !valid(*run)) ||
+      (runs && !std::ranges::all_of(*runs, valid)))
+    throw std::runtime_error("mock build manifest needs one or more valid run implementations, or an empty run list");
+  result.execution_list = runs != nullptr;
+  result.implementation_count = runs ? static_cast<uint32_t>(runs->size()) : 1;
+  if (result.implementation_count > call.max_implementations)
+    throw NixImplementationLimit("input and run list expansion exceeds 256 combinations");
   return schema::text(*value);
 }
 
@@ -90,8 +99,9 @@ auto NixEvaluator::build(const NixCall& call) -> NixResult {
     throw std::runtime_error("invalid mock-build.json: " + error->message);
   // Reject incomplete plans before announcing a gate. An error plan may omit
   // its product, while malformed products never fall back to real Nix.
+  NixResult result;
   std::string manifest;
-  if (schema::get(plan.manifest)) manifest = manifest_text(plan);
+  if (schema::get(plan.manifest)) manifest = manifest_text(plan, call, result);
   if (!schema::get(plan.error) && manifest.empty())
     throw std::runtime_error("mock-build.json needs manifest or error");
   if (call.on_phase) call.on_phase(false);
@@ -112,7 +122,6 @@ auto NixEvaluator::build(const NixCall& call) -> NixResult {
     // The broker scenario verifies the archive is staged and the invocation
     // is attached by its persisted receipt. Its fake runner does not build.
     fs::write_atomic(call.derivation_archive, "test Nix derivation archive", 0600);
-    NixResult result;
     result.derivation = "/nix/store/00000000000000000000000000000000-mock.drv";
     result.out = "/nix/store/00000000000000000000000000000000-mock";
     result.system = call.system;
@@ -124,7 +133,6 @@ auto NixEvaluator::build(const NixCall& call) -> NixResult {
   const bool cached = schema::get(plan.cached) ? *schema::get(plan.cached) : std::filesystem::exists(product);
   if (!cached && call.on_phase) call.on_phase(true);
   fs::write_atomic(product, manifest, 0444);
-  NixResult result;
   result.out = product.string();
   result.derivation = result.out + ".drv";
   result.system = call.system.empty() ? "mock-system" : call.system;

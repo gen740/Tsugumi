@@ -13,7 +13,9 @@ import time
 from pathlib import Path
 
 import pytest
-from projects import FILE_FBS, card, conn, start_run, wait_run, write
+from harness.observations import read_output
+from harness.values import reference_json
+from projects import FILE_FBS, card, conn, run_and_wait, start_run, wait_run, write
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
@@ -166,3 +168,81 @@ def test_ssh_card_roundtrip_reconnect_and_cancel(project, core_factory, remote_b
     cancelled = client.call("RunRecordRequest", runId=run_id, card=path("slow")).record.summary
     assert cancelled.executionState == RemoteExecutionState.cancelled
     assert not client.call("ArtifactListRequest", runId=run_id, card=path("slow")).artifacts
+
+
+def test_ssh_run_list_preserves_implementation_order(project, core_factory, remote_broker, tmp_path):
+    number = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
+    settings = {
+        "language": "bash", "recordIO": True, "executionService": "ssh-test",
+        "executionResources": {"cpuMillis": 1000, "memoryBytes": 2 << 30},
+        "timeoutSeconds": 600,
+    }
+    definitions = {
+        "source": {
+            "language": "bash", "_outputs": number,
+            "_nix": """
+                { pkgs, inputs, params }: {
+                  run = [
+                    ''printf '%s' '{"out":{"value":10}}' > "$TSUGUMI_OUTPUT"''
+                    ''printf '%s' '{"out":{"value":20}}' > "$TSUGUMI_OUTPUT"''
+                  ];
+                }
+            """,
+        },
+        "work": {
+            **settings, "inputs": [{"name": "in"}], "_outputs": number,
+            "_nix": """
+                { pkgs, inputs, params }: {
+                  run = [
+                    ''printf '{"out":{"value":%s}}' "$(( $(jq -r .value "$JSON_IN") + 100 ))" > "$TSUGUMI_OUTPUT"''
+                    ''printf '{"out":{"value":%s}}' "$(( $(jq -r .value "$JSON_IN") + 200 ))" > "$TSUGUMI_OUTPUT"''
+                  ];
+                }
+            """,
+        },
+        "fails": {
+            **settings, "_outputs": number,
+            "_nix": """
+                { pkgs, inputs, params }: {
+                  run = [
+                    "sleep 15; exit 17"
+                    "sleep 180; exit 99"
+                  ];
+                }
+            """,
+        },
+        "collect": {"template": "collect", "recordIO": True},
+    }
+    write(project, definitions, [card(name, name) for name in definitions],
+          [conn("source", "out", "work", "in"), conn("work", "out", "collect", "in")])
+    client = core_factory().connect()
+    run_id, run = run_and_wait(client, "source")
+    assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
+
+    page = client.call("RunInvocationsRequest", runId=run_id, card=path("work"))
+    batch, = page.batches
+    assert batch.complete and not batch.failed and batch.executionList
+    assert batch.activation == 1 and batch.invocationCount == 4
+    assert [(row.batchActivation, row.batchIndex, row.batchSize, row.implementationIndex)
+            for row in page.records] == [(1, 1, 4, 1), (1, 2, 4, 2), (1, 3, 4, 1), (1, 4, 4, 2)]
+    for row in page.records:
+        assert row.executionState == RemoteExecutionState.succeeded
+        assert text(row.executionService) == "ssh-test"
+        assert len(text(row.executionJobId)) == 64
+    assert len({text(row.executionJobId) for row in page.records}) == 4
+
+    record = client.call("RunRecordRequest", runId=run_id, card=path("collect")).record
+    output, = record.outputs
+    payload = read_output(client, run_id, card="collect")
+    collected = reference_json(tmp_path / "decode", bytes(output.schemaBfbs), payload,
+                               root_type=text(output.rootType))
+    assert collected["items"] == [{"value": value} for value in (110, 210, 120, 220)]
+
+    run_id, run = run_and_wait(client, "fails", propagate=False, timeout=120, concurrency=2)
+    assert run.state == RunState.failed
+    page = client.call("RunInvocationsRequest", runId=run_id, card=path("fails"))
+    batch, = page.batches
+    assert batch.complete and batch.failed and not batch.outputs
+    assert [row.executionState for row in page.records] == [
+        RemoteExecutionState.failed, RemoteExecutionState.cancelled,
+    ]

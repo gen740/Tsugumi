@@ -227,7 +227,7 @@ struct CanvasRunControl: View {
       } label: { Image(systemName: "plus") }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .disabled(!session.isEditable)
-        .help("組み込みの Card を追加（入力値・スイッチ・Draft・開始・分配・分岐・合流・処理）")
+        .help("Card を追加")
         .accessibilityLabel("Card を追加")
     }
     .font(.callout)

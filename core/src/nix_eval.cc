@@ -380,12 +380,22 @@ struct NixEvaluator::Impl {
     state->callFunction(**entry, vpkgs, *partial, nix::noPos);
     auto* vres = state->allocValue();
     state->callFunction(*partial, *vargs, *vres, nix::noPos);
-    state->forceValue(*vres, nix::noPos);
-    auto drv = nix::getDerivation(*state, *vres, false);
+    state->forceAttrs(*vres, nix::noPos, "while evaluating the Card execution plan");
+    auto attr = [&](const char* name) -> nix::Value& {
+      return *state->getAttr(state->symbols.create(name), vres->attrs(), "while reading the Card execution plan")->value;
+    };
+    NixResult r;
+    r.execution_list = state->forceBool(attr("executionList"), nix::noPos, "while reading the Card run shape");
+    const auto count = state->forceInt(attr("implementationCount"), nix::noPos, "while counting Card implementations").value;
+    if (count < 0 || count > c.max_implementations)
+      throw NixImplementationLimit("input and run list expansion exceeds 256 combinations");
+    r.implementation_count = static_cast<uint32_t>(count);
+    auto& manifest = attr("manifest");
+    state->forceValue(manifest, nix::noPos);
+    auto drv = nix::getDerivation(*state, manifest, false);
     if (!drv) throw std::runtime_error("the Card manifest is not a derivation");
     auto out = drv->queryOutPath();
     auto drv_path = drv->requireDrvPath();
-    NixResult r;
     r.out = store->printStorePath(out);
     r.derivation = store->printStorePath(drv_path);
     r.system = c.system.empty() ? eval_settings->getCurrentSystem() : c.system;

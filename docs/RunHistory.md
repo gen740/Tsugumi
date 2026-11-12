@@ -10,6 +10,8 @@ Open a run to see what its Cards received, produced and kept. A run can contain 
 
 For example, open **Visualization → report**, run it, and inspect a figure Card's input and output. A stopped or failed invocation can have a log and status even when there is no output.
 
+When a Card runs a batch, its history keeps each invocation separately, including which implementation and batch position it used. A failed batch retains the individual results and diagnostics in the history. The next Card receives a batch only after all its invocations succeed. [Run lists and Collect](features.md#run-lists-and-collect)
+
 The **Info** tab shows the execution service recorded for a Code Card. For an SSH job, it also shows the job ID, architecture, requested CPU and memory limits, and the last reported state. The **Packages** tab shows the recorded Nix system. [Run a Card on an SSH host](RemoteExecution.md)
 
 ## Compare two runs

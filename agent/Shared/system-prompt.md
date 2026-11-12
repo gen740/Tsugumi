@@ -25,7 +25,7 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   folder lists every file under it, and "" lists what there is.
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<name>"} only and
   definitions/<id>/_card.json holds all of its settings (params with their values in "data", trigger
-  "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, ...). Change a
+  "allInputs"/"eachInput", maxRuns (the number of times the Card may trigger per Run), timeoutSeconds, recordIO, reuseWorker, ...). Change a
   setting with PutDefinition of that Card. "system": "x86_64-linux" builds and runs a Card (any language)
   for x86_64 under an emulator (for software that has no aarch64 build); leave it out otherwise. What a Card may do beyond computing (network, sandbox, hostFolders,
   and nixSources in tsugumi.json, flakes pinned by the user in the project's settings, whose packages a default.nix uses as inputs.sources.<name>.packages.<attr>)

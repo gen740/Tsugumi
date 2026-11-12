@@ -50,6 +50,12 @@
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body { font: 13px/1.35 var(--font); color: var(--label); background: var(--window-bg); -webkit-font-smoothing: antialiased; overflow: hidden; user-select: none; }
+.cv-batch { position: relative; transform: translateX(-100%); z-index: 2; }
+.cv-batch-count { padding: 1px 5px; border: 1px solid var(--separator-strong); border-radius: 7px; background: var(--control-bg); color: var(--label); font-size: 11px; cursor: pointer; }
+.cv-batch-panel { padding: 10px; }
+.cv-batch-rows { max-height: 260px; overflow: auto; }
+.cv-batch-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 6px; border: 0; background: transparent; color: var(--label); cursor: pointer; font: inherit; }
+.cv-batch-row:hover, .cv-batch-row:focus-visible { background: var(--window-bg); }
 .selectable, .selectable * { user-select: text; cursor: text; }
 button { font: inherit; color: inherit; }
 h1 { font-size: 26px; margin: 0; display: flex; align-items: center; gap: 10px; }

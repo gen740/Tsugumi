@@ -59,13 +59,21 @@ export function LogTimelinePanel({ workspace, session, tab }: { workspace: Works
 function RunPanel({ workspace, session, tab }: { workspace: Workspace; session: ProjectSession; tab: WorkflowTab }) {
   const [runs, setRuns] = useState<R.RunSummaryT[]>([])
   const [comparing, setComparing] = useState(false)
-  const [runId, setRunId] = useState<string>()
+  const runId = workspace.logRunId
+  const selectRun = (id: string | undefined) => {
+    if (workspace.logRunId === id) return
+    workspace.set('logInvocation', undefined)
+    workspace.set('logRunId', id)
+  }
   const load = async () => {
     const rpc = session.rpc
     if (!rpc) return
     const list = (await rpc.history(null, false, 50).catch(() => undefined))?.runs ?? []
     setRuns(list)
-    setRunId((cur) => (cur && list.some((r) => s(r.status!.runId) === cur) ? cur : session.currentRunId ?? (list[0] ? s(list[0].status!.runId) : undefined)))
+    const current = workspace.logRunId
+    if (!current || !list.some((r) => s(r.status!.runId) === current)) {
+      selectRun(session.currentRunId ?? (list[0] ? s(list[0].status!.runId) : undefined))
+    }
   }
   useEffect(() => {
     void load()
@@ -73,7 +81,7 @@ function RunPanel({ workspace, session, tab }: { workspace: Workspace; session: 
   useEffect(() => {
     const id = session.currentRunId
     if (id) {
-      setRunId(id)
+      selectRun(id)
       void load()
     }
   }, [session.currentRunId])
@@ -83,10 +91,10 @@ function RunPanel({ workspace, session, tab }: { workspace: Workspace; session: 
     <>
       <div className="panel-bar">
         <span className="label headline callout"><Icon name={BOTTOM_ICONS[p]} />{BOTTOM_TITLES[p]}</span>
-        <Select label={L('実行')} value={runId ?? ''} onChange={(v) => setRunId(v || undefined)} style={{ maxWidth: 320 }}
+        <Select label={L('実行')} value={runId ?? ''} onChange={(v) => selectRun(v || undefined)} style={{ maxWidth: 320 }}
           options={runs.length ? runs.map((r) => ({ value: s(r.status!.runId), label: `${formatMillis(r.status!.acceptedAt)} · ${runState(r.status!.state).label}` })) : [{ value: '', label: L('実行履歴なし') }]} />
         {p === 'log' && (
-          <Select label="Card" value={workspace.logCard ?? ''} onChange={(v) => workspace.set('logCard', v || undefined)} style={{ maxWidth: 240 }}
+          <Select label="Card" value={workspace.logCard ?? ''} onChange={(v) => { workspace.set('logInvocation', undefined); workspace.set('logCard', v || undefined) }} style={{ maxWidth: 240 }}
             options={[{ value: '', label: L('全体') }, ...cards.map((k) => ({ value: k, label: k }))]} />
         )}
         <span className="spacer" />

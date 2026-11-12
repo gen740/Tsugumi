@@ -781,7 +781,8 @@ rec {
   #            lib/main.so and calls it in memory; for another system,
   #            run.worker names the worker built for it) or a bash script (string;
   #            inputs as $JSON_<PORT> files and $FILE_<PORT> / $DIR_<PORT>
-  #            paths, outputs as JSON written to $TSUGUMI_OUTPUT)
+  #            paths, outputs as JSON written to $TSUGUMI_OUTPUT), or an ordered
+  #            list of those implementations
   #   preRun   bash before the body, every invocation (also with a resident
   #            worker); no Card inputs; its environment and `cd` carry over
   #            to the call, not to the loading of a package, which comes first
@@ -789,30 +790,59 @@ rec {
   #            cannot turn a failure into success), not after a stop or a
   #            missed deadline (the invocation is ended at once)
   #   exports  free-form values, functions and derivations that downstream
-  #            Cards read through inputs.upstream."<path>".exports
+  #            Cards read through inputs.<destination-port>
   # Whether the worker stays across invocations and runs (reuseWorker) is a
   # setting of the Card (_card.json), not of its build.
   manifest = manifestFor false;
   manifestFor =
     remote: card:
     let
-      known = [ "sdk" "run" "preRun" "postRun" "exports" ];
+      known = [
+        "sdk"
+        "run"
+        "preRun"
+        "postRun"
+        "exports"
+      ];
       unknown = lib.subtractLists known (builtins.attrNames card);
       body =
-        if !(card ? run) then throw "a Card needs `run`: a package (derivation) or a bash script (string)"
-        else if lib.isDerivation card.run then { package = "${card.run}"; }
-          // lib.optionalAttrs foreign { worker = "${worker}/bin/tsugumi-worker"; }
-        else if builtins.isString card.run then { bash = card.run; }
-        else throw "run must be a package (derivation) or a bash script (string)";
+        run:
+        (
+          if lib.isDerivation run then
+            { package = "${run}"; } // lib.optionalAttrs foreign { worker = "${worker}/bin/tsugumi-worker"; }
+          else if builtins.isString run then
+            { bash = run; }
+          else
+            throw "each run implementation must be a package (derivation) or a bash script (string)"
+        )
+        // lib.optionalAttrs remote { worker = "${worker}/bin/tsugumi-worker"; };
+      runs = if builtins.isList card.run then { runs = map body card.run; } else { run = body card.run; };
     in
-    assert lib.assertMsg (unknown == [ ]) "unknown Card attributes: ${toString unknown} (known: ${toString known})";
-    pkgs.writeText "tsugumi-card.json" (builtins.toJSON (
-      { run = body // lib.optionalAttrs remote { worker = "${worker}/bin/tsugumi-worker"; }; }
-      // lib.optionalAttrs remote {
-        shell = "${pkgs.bash}/bin/bash";
-        path = lib.makeBinPath (with pkgs; [ bash coreutils findutils gnugrep gnused gawk gnutar gzip jq ]);
-      }
-      // lib.optionalAttrs (card ? preRun) { inherit (card) preRun; }
-      // lib.optionalAttrs (card ? postRun) { inherit (card) postRun; }
-    ));
+    assert lib.assertMsg (
+      unknown == [ ]
+    ) "unknown Card attributes: ${toString unknown} (known: ${toString known})";
+    pkgs.writeText "tsugumi-card.json" (
+      builtins.toJSON (
+        runs
+        // lib.optionalAttrs remote {
+          shell = "${pkgs.bash}/bin/bash";
+          path = lib.makeBinPath (
+            with pkgs;
+            [
+              bash
+              coreutils
+              findutils
+              gnugrep
+              gnused
+              gawk
+              gnutar
+              gzip
+              jq
+            ]
+          );
+        }
+        // lib.optionalAttrs (card ? preRun) { inherit (card) preRun; }
+        // lib.optionalAttrs (card ? postRun) { inherit (card) postRun; }
+      )
+    );
 }

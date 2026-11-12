@@ -47,7 +47,7 @@ function cardFiles(dir) {
   })
 }
 
-const KINDS = new Set(['trigger', 'input', 'fork', 'branch', 'merge', 'draft'])
+const KINDS = new Set(['trigger', 'input', 'fork', 'branch', 'merge', 'collect', 'draft'])
 
 /** As definitionKind in web/src/model/session.ts. */
 function kindOf(dir, def) {

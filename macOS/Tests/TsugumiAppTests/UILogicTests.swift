@@ -37,6 +37,21 @@ import Testing
   #expect(VersionMiniMapLayout([], flow: .leftToRight, width: 284, height: 132).cards.isEmpty)
 }
 
+@Test func collectFunnelFollowsTheCanvasFlow() {
+  let data = CardNodeData(title: "collect", kind: .collect, inputs: [PortData(name: "in")], outputs: [PortData(name: "out")])
+  for flow in [FlowDirection.topToBottom, .leftToRight] {
+    let geometry = CardGeometry(data, flow: flow)
+    let input = geometry.port("in", output: false)
+    let output = geometry.port("out", output: true)
+    #expect(geometry.shape == .collect)
+    if flow == .topToBottom {
+      #expect(input.x == output.x && input.y < output.y)
+    } else {
+      #expect(input.y == output.y && input.x < output.x)
+    }
+  }
+}
+
 @Test func aVersionsMinimapDrawsWhatIsNotACardWithItsCanvasShape() {
   func canvas(_ kind: CardKind, fan: Int = 0, flow: FlowDirection = .leftToRight) -> CardGeometry {
     CardGeometry(VersionMiniMapLayout.Card(id: "c", x: 0, y: 0, kind: kind, fan: fan).data, flow: flow)

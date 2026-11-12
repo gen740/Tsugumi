@@ -130,14 +130,17 @@ void fsync_dir(const stdfs::path& dir) {
   ::close(fd);
 }
 
-void write_atomic(const stdfs::path& p, std::string_view data, unsigned mode) {
+namespace {
+
+template <class Write>
+auto write_atomic_using(const stdfs::path& p, unsigned mode, Write write) -> void {
   stdfs::create_directories(p.parent_path());
   stdfs::path tmp = p;
   tmp += ".tsugumi-tmp-" + crypto::random_token(6);
   int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode);
   if (fd < 0) throw Error("create " + tmp.string() + ": " + std::strerror(errno));
   try {
-    write_all(fd, data.data(), data.size(), tmp);
+    write(fd, tmp);
     if (::fsync(fd) != 0) throw Error("fsync " + tmp.string() + ": " + std::strerror(errno));
   } catch (...) {
     ::close(fd);
@@ -151,6 +154,14 @@ void write_atomic(const stdfs::path& p, std::string_view data, unsigned mode) {
     throw Error("rename " + p.string() + ": " + std::strerror(e));
   }
   fsync_dir(p.parent_path());
+}
+
+}  // namespace
+
+void write_atomic(const stdfs::path& p, std::string_view data, unsigned mode) {
+  write_atomic_using(p, mode, [&](int fd, const stdfs::path& tmp) {
+    write_all(fd, data.data(), data.size(), tmp);
+  });
 }
 
 void remove_file_durable(const stdfs::path& p) {
@@ -291,6 +302,18 @@ auto stream_beneath(const stdfs::path& root, const stdfs::path& rel, uint64_t li
     consume({buf, static_cast<size_t>(n)});
     size += static_cast<uint64_t>(n);
   }
+  return size;
+}
+
+auto copy_beneath(const stdfs::path& root, const stdfs::path& rel, const stdfs::path& destination,
+                  const std::function<void(std::string_view)>& on_chunk) -> uint64_t {
+  uint64_t size = 0;
+  write_atomic_using(destination, 0644, [&](int fd, const stdfs::path& temporary) {
+    size = stream_beneath(root, rel, UINT64_MAX, [&](std::string_view chunk) {
+      on_chunk(chunk);
+      write_all(fd, chunk.data(), chunk.size(), temporary);
+    });
+  });
   return size;
 }
 

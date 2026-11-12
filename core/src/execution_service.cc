@@ -82,10 +82,12 @@ auto LocalExecutionService::run(const LocalExecutionRequest& request, std::optio
   // The resident worker of this Card, if it runs the same build under the same conditions.
   std::string key = build.package.value_or("") + "|" + build.bash.value_or("") + "|" + build.pre_run + "|" +
                     build.post_run + "|" + (sp.sandbox ? "s" : "u") + "|" + (uid ? std::to_string(*uid) : "-") +
-                    "|" + (sp.network ? "n" : "-") + "|" + sp.worker_binary;
+                    "|" + (sp.network ? "n" : "-") + "|" + sp.worker_binary + "|" + build.key +
+                    "|" + std::to_string(build.implementation_index);
   for (const auto& b : sp.binds) key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
   const bool reuse = node.settings.reuse_worker;
-  auto lease = workers_.acquire(card_key, key, sp, reuse);
+  const auto worker_card = card_key + "|" + std::to_string(build.implementation_index);
+  auto lease = workers_.acquire(worker_card, key, sp, reuse);
   WorkerProc& worker = *lease.worker;
   worker_reused = lease.reused;
 
@@ -171,7 +173,7 @@ auto LocalExecutionService::run(const LocalExecutionRequest& request, std::optio
   worker.clear_scratch();
   // Kept only after a clean call: a failed, cancelled or timed out worker
   // (and anything it started) ends.
-  workers_.release(card_key, key, std::move(lease.worker), reuse && !outcome.failure);
+  workers_.release(worker_card, key, std::move(lease.worker), reuse && !outcome.failure);
   return outcome;
 }
 

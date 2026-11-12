@@ -68,12 +68,17 @@ std::string detail_json(const InvocationSummaryData& s) {
   *d.execution_cpu_millis = s.execution_resources ? s.execution_resources->cpu_millis : 0;
   *d.execution_memory_bytes = s.execution_resources ? s.execution_resources->memory_bytes : 0;
   *d.execution_state = s.execution_state ? static_cast<int64_t>(*s.execution_state) : -1;
+  *d.batch_activation = s.batch_activation.value_or(0);
+  *d.batch_index = s.batch_index.value_or(0);
+  *d.batch_size = s.batch_size.value_or(0);
+  *d.implementation_index = s.implementation_index.value_or(0);
   return schema::encode(d);
 }
 
 void detail_into(const std::string& text, InvocationSummaryData& s) {
   schema::InvocationDetailJson d;
   if (text.empty() || schema::decode(text, d)) return;
+  s.stages.clear();
   if (const auto* stages = schema::get(d.stages))
     for (const auto& j : *stages) {
       StageTimeData st;
@@ -99,6 +104,14 @@ void detail_into(const std::string& text, InvocationSummaryData& s) {
   const auto state = d.execution_state->value_or(-1);
   if (state >= 0 && state <= static_cast<int64_t>(RemoteExecutionState::interrupted))
     s.execution_state = static_cast<RemoteExecutionState>(state);
+  if (const auto activation = d.batch_activation->value_or(0); activation > 0) s.batch_activation = activation;
+  if (const auto index = d.batch_index->value_or(0); index > 0 && index <= UINT32_MAX)
+    s.batch_index = static_cast<uint32_t>(index);
+  if (const auto size = d.batch_size->value_or(0); size > 0 && size <= UINT32_MAX)
+    s.batch_size = static_cast<uint32_t>(size);
+  if (const auto implementation = d.implementation_index->value_or(0);
+      implementation > 0 && implementation <= UINT32_MAX)
+    s.implementation_index = static_cast<uint32_t>(implementation);
 }
 
 std::string sources_json(const std::vector<InputSourceData>& s) {
@@ -203,6 +216,10 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(environment_paths(
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_substituters(
   run_id TEXT NOT NULL, position INTEGER NOT NULL, url TEXT NOT NULL, PRIMARY KEY(run_id, position));
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_cards(run_id TEXT NOT NULL, card TEXT NOT NULL, PRIMARY KEY(run_id, card));
+CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_batches(
+  run_id TEXT NOT NULL, card TEXT NOT NULL, activation INTEGER NOT NULL, invocation_count INTEGER NOT NULL,
+  execution_list INTEGER NOT NULL, complete INTEGER NOT NULL, failed INTEGER NOT NULL, outputs TEXT NOT NULL,
+  PRIMARY KEY(run_id, card, activation));
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_commits(run_id TEXT PRIMARY KEY, commit_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(invocations(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
@@ -234,7 +251,7 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-constexpr int kHistoryVersion = 3;
+constexpr int kHistoryVersion = 4;
 
 }  // namespace
 
@@ -282,12 +299,12 @@ CREATE TABLE IF NOT EXISTS active_environments(
 CREATE TABLE IF NOT EXISTS statuses(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
   state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, failure BLOB, waiting TEXT,
-  updated_at INTEGER NOT NULL, execution_service TEXT NOT NULL,
+  updated_at INTEGER NOT NULL, execution_service TEXT NOT NULL, detail TEXT NOT NULL,
   PRIMARY KEY(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS remote_jobs(
   job_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
   instance TEXT NOT NULL, spec TEXT NOT NULL, contract TEXT NOT NULL, directory TEXT NOT NULL,
-  accepted INTEGER NOT NULL, cancel_requested INTEGER NOT NULL, detail TEXT NOT NULL,
+  accepted INTEGER NOT NULL, cancel_requested INTEGER NOT NULL, detail TEXT NOT NULL, batch_activation INTEGER NOT NULL,
   UNIQUE(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS last_inputs(
   card TEXT PRIMARY KEY, run_id TEXT NOT NULL, invocation INTEGER NOT NULL, inputs TEXT NOT NULL);
@@ -434,33 +451,62 @@ void History::put_status(sql::Db& db, const InvocationSummaryData& s) {
     db.prepare("INSERT OR REPLACE INTO active_environments VALUES(?,?,?,?)")
         .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, s.environment_id).run();
   auto st = db.prepare(
-      "INSERT INTO statuses(run_id, card, invocation, state, phase, started_at, failure, waiting, updated_at, execution_service) "
-      "VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(run_id, card, invocation) DO UPDATE SET "
+      "INSERT INTO statuses(run_id, card, invocation, state, phase, started_at, failure, waiting, updated_at, execution_service, detail) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(run_id, card, invocation) DO UPDATE SET "
       "state=excluded.state, phase=excluded.phase, started_at=excluded.started_at, "
       "failure=excluded.failure, waiting=excluded.waiting, updated_at=excluded.updated_at, "
-      "execution_service=excluded.execution_service");
+      "execution_service=excluded.execution_service, detail=excluded.detail");
   st.bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, static_cast<int>(s.state));
   if (s.phase) st.bind(5, static_cast<int>(*s.phase));
   else st.bind_null(5);
   st.bind(6, s.started_at);
   bind_failure(st, 7, s.failure);
-  st.bind(8, waiting_json(s.waiting)).bind(9, now_ms()).bind(10, s.execution_service).run();
+  st.bind(8, waiting_json(s.waiting)).bind(9, now_ms()).bind(10, s.execution_service).bind(11, detail_json(s)).run();
   db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)")
       .bind(1, s.run_id).bind(2, key(s.card)).run();
 }
 
+auto History::put_batch(sql::Db& db, const RunBatchData& batch) -> void {
+  schema::BatchOutputList outputs;
+  for (const auto& output : batch.outputs) {
+    schema::BatchOutputJson entry;
+    *entry.port = output.port;
+    *entry.count = output.count;
+    *entry.execution_list = output.execution_list;
+    outputs.outputs->push_back(std::move(entry));
+  }
+  const auto card = key(batch.card);
+  db.prepare("INSERT OR REPLACE INTO run_batches VALUES(?,?,?,?,?,?,?,?)")
+      .bind(1, batch.run_id).bind(2, card).bind(3, batch.activation)
+      .bind(4, static_cast<uint64_t>(batch.invocation_count)).bind(5, batch.execution_list)
+      .bind(6, batch.complete).bind(7, batch.failed).bind(8, schema::encode(outputs)).run();
+  db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)").bind(1, batch.run_id).bind(2, card).run();
+}
+
+auto History::interrupt_batches(sql::Db& db, const std::string& run_id) -> void {
+  db.prepare("UPDATE run_batches SET complete=1, failed=1, outputs=? WHERE run_id=? AND complete=0")
+      .bind(1, schema::encode(schema::BatchOutputList{})).bind(2, run_id).run();
+}
+
 auto History::put_remote_job(sql::Db& db, const RemoteJobRecord& job) -> void {
   const auto& inv = job.invocation;
-  auto st = db.prepare("INSERT INTO remote_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET "
+  auto st = db.prepare("INSERT INTO remote_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET "
                        "accepted=max(accepted,excluded.accepted), cancel_requested=max(cancel_requested,excluded.cancel_requested), "
                        "detail=excluded.detail");
   st.bind(1, inv.execution_job_id).bind(2, inv.run_id).bind(3, key(inv.card)).bind(4, inv.invocation)
       .bind(5, job.instance).bind(6, job.spec).bind(7, job.contract).bind(8, job.directory)
-      .bind(9, job.accepted).bind(10, job.cancel_requested).bind(11, detail_json(inv)).run();
+      .bind(9, job.accepted).bind(10, job.cancel_requested).bind(11, detail_json(inv))
+      .bind(12, inv.batch_activation.value_or(0)).run();
 }
 
 auto History::cancel_remote_jobs(sql::Db& db, const std::string& run_id) -> void {
   db.prepare("UPDATE remote_jobs SET cancel_requested=1 WHERE run_id=?").bind(1, run_id).run();
+}
+
+auto History::cancel_remote_batch(sql::Db& db, const std::string& run_id, const CardPath& card,
+                                  uint64_t activation) -> void {
+  db.prepare("UPDATE remote_jobs SET cancel_requested=1 WHERE run_id=? AND card=? AND batch_activation=?")
+      .bind(1, run_id).bind(2, key(card)).bind(3, activation).run();
 }
 
 auto History::has_remote_jobs(sql::Db& db) -> bool {
@@ -538,20 +584,25 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
   }
 }
 
-void History::put_last_input(sql::Db& db, const CardPath& card, const std::string& run_id,
-                             uint64_t invocation, const std::vector<Value>& inputs) {
+auto History::put_last_input(sql::Db& db, const CardPath& card, const std::string& run_id,
+                             uint64_t activation, const std::vector<SavedInputGroup>& groups) -> void {
   schema::SavedInputList list;
-  for (const auto& v : inputs) {
-    schema::SavedInputJson j;
-    *j.name = v.name;
-    *j.kind = static_cast<int>(v.kind);
-    *j.schema = put_schema(db, *v.type);
-    *j.root_type = v.type->root_type;
-    *j.data_b64 = crypto::base64(v.bytes);
-    list.items->push_back(std::move(j));
+  for (const auto& group : groups) {
+    schema::SavedInputGroupJson entry;
+    *entry.port = group.port;
+    *entry.execution_list = group.execution_list;
+    for (const auto& v : group.values) {
+      schema::SavedInputJson j;
+      *j.kind = static_cast<int>(v.kind);
+      *j.schema = put_schema(db, *v.type);
+      *j.root_type = v.type->root_type;
+      *j.data_b64 = crypto::base64(v.bytes);
+      entry.values->push_back(std::move(j));
+    }
+    list.groups->push_back(std::move(entry));
   }
   db.prepare("INSERT OR REPLACE INTO last_inputs(card, run_id, invocation, inputs) VALUES(?,?,?,?)")
-      .bind(1, key(card)).bind(2, run_id).bind(3, invocation).bind(4, schema::encode(list)).run();
+      .bind(1, key(card)).bind(2, run_id).bind(3, activation).bind(4, schema::encode(list)).run();
 }
 
 void History::put_artifact(sql::Db& db, const ArtifactData& a) {
@@ -668,7 +719,7 @@ std::vector<InvocationSummaryData> History::latest_invocations(sql::Db& db, cons
   auto st = db.prepare(
       "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail, NULL "
       "FROM invocations i WHERE run_id=?1 AND invocation=(SELECT MAX(invocation) FROM invocations WHERE run_id=?1 AND card=i.card) "
-      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, NULL, execution_service "
+      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, detail, execution_service "
       "FROM statuses s WHERE run_id=?1 AND invocation=(SELECT MAX(invocation) FROM statuses WHERE run_id=?1 AND card=s.card) "
       "AND invocation > COALESCE((SELECT MAX(invocation) FROM invocations WHERE run_id=?1 AND card=s.card), 0) "
       "ORDER BY card, invocation");
@@ -683,6 +734,44 @@ std::vector<InvocationSummaryData> History::latest_invocations(sql::Db& db, cons
   return out;
 }
 
+namespace {
+
+auto batch_row(const sql::Stmt& row, const std::string& run_id) -> RunBatchData {
+  RunBatchData batch;
+  batch.run_id = run_id;
+  batch.card = unkey(row.text(0));
+  batch.activation = row.u64(1);
+  const auto count = row.u64(2);
+  if (count > UINT32_MAX) throw std::runtime_error("invalid invocation count in run batch history");
+  batch.invocation_count = static_cast<uint32_t>(count);
+  batch.execution_list = row.i64(3) != 0;
+  batch.complete = row.i64(4) != 0;
+  batch.failed = row.i64(5) != 0;
+  schema::BatchOutputList outputs;
+  if (schema::decode(row.text(6), outputs)) throw std::runtime_error("invalid outputs in run batch history");
+  for (const auto& entry : *outputs.outputs) {
+    if (*entry.count > UINT32_MAX) throw std::runtime_error("invalid output count in run batch history");
+    batch.outputs.push_back({*entry.port, static_cast<uint32_t>(*entry.count), *entry.execution_list});
+  }
+  return batch;
+}
+
+}  // namespace
+
+auto History::latest_batches(sql::Db& db, const std::string& run_id, const std::optional<CardPath>& card)
+    -> std::vector<RunBatchData> {
+  auto st = db.prepare(
+      "SELECT card, activation, invocation_count, execution_list, complete, failed, outputs FROM run_batches b "
+      "WHERE run_id=?1 AND (?2 IS NULL OR card=?2) AND activation=(SELECT MAX(activation) FROM run_batches "
+      "WHERE run_id=?1 AND card=b.card) ORDER BY card");
+  st.bind(1, run_id);
+  if (card) st.bind(2, key(*card));
+  else st.bind_null(2);
+  std::vector<RunBatchData> out;
+  while (st.step()) out.push_back(batch_row(st, run_id));
+  return out;
+}
+
 std::vector<InvocationSummaryData> History::invocations(sql::Db& db, const std::string& run_id,
                                                         const CardPath& card, uint64_t after,
                                                         uint64_t limit) {
@@ -690,7 +779,7 @@ std::vector<InvocationSummaryData> History::invocations(sql::Db& db, const std::
   auto st = db.prepare(
       "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail, NULL "
       "FROM invocations WHERE run_id=?1 AND card=?2 AND invocation>?3 "
-      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, NULL, execution_service "
+      "UNION ALL SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, NULL, detail, execution_service "
       "FROM statuses WHERE run_id=?1 AND card=?2 AND invocation>?3 AND invocation NOT IN "
       "(SELECT invocation FROM invocations WHERE run_id=?1 AND card=?2) "
       "ORDER BY invocation LIMIT ?4");
@@ -718,11 +807,11 @@ std::optional<InvocationRecordData> History::invocation(sql::Db& db, const std::
 std::optional<InvocationSummaryData> History::status(sql::Db& db, const std::string& run_id,
                                                      const CardPath& card, uint64_t n) {
   auto st = db.prepare(
-      "SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, execution_service "
+      "SELECT card, invocation, state, phase, started_at, NULL, NULL, failure, waiting, detail, execution_service "
       "FROM statuses WHERE run_id=? AND card=? AND invocation=?");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n);
   if (!st.step()) return std::nullopt;
-  return inv_row(st, run_id, -1, -1, 9);
+  return inv_row(st, run_id, -1, 9, 10);
 }
 
 std::optional<uint64_t> History::latest_invocation(sql::Db& db, const std::string& run_id,
@@ -819,12 +908,12 @@ std::optional<std::string> History::value_bytes(sql::Db& db, const std::string& 
   return st.blob(0);
 }
 
-void History::put_last_port_input(sql::Db& db, const CardPath& card, const std::string& run_id, uint64_t invocation,
-                                  const Value& value) {
+auto History::put_last_port_input(sql::Db& db, const CardPath& card, const std::string& run_id, uint64_t activation,
+                                  const SavedInputGroup& group) -> void {
   // Stored beside the per-Card rows under "<card>#<port>" ('#' never appears in ids).
   CardPath k = card;
-  k.back() += "#" + value.name;
-  put_last_input(db, k, run_id, invocation, {value});
+  k.back() += "#" + group.port;
+  put_last_input(db, k, run_id, activation, {group});
 }
 
 std::optional<History::LastInput> History::last_port_input(sql::Db& db, const CardPath& card, const std::string& port) {
@@ -869,20 +958,29 @@ std::optional<History::LastInput> History::last_input(sql::Db& db, const CardPat
   li.invocation = st.u64(1);
   schema::SavedInputList list;
   if (schema::decode(st.text(2), list)) return std::nullopt;
-  for (const auto& o : *list.items) {
-    Value v;
-    v.name = *o.name;
-    v.kind = static_cast<PortKind>(*o.kind);
-    auto t = std::make_shared<types::Type>();
-    auto sst = db.prepare("SELECT bfbs FROM schemas WHERE hash=?");
-    sst.bind(1, *o.schema);
-    if (!sst.step()) return std::nullopt;
-    t->bfbs = sst.blob(0);
-    t->hash = *o.schema;
-    t->root_type = *o.root_type;
-    v.type = t;
-    crypto::base64_decode(*o.data_b64, v.bytes);
-    li.inputs.push_back(std::move(v));
+  std::map<std::pair<std::string, std::string>, types::TypeRef> loaded_types;
+  for (const auto& entry : *list.groups) {
+    SavedInputGroup group{*entry.port, *entry.execution_list, {}};
+    for (const auto& value : *entry.values) {
+      Value v;
+      v.name = group.port;
+      v.kind = static_cast<PortKind>(*value.kind);
+      auto [type, inserted] = loaded_types.try_emplace(std::make_pair(*value.schema, *value.root_type));
+      if (inserted) {
+        auto schema_row = db.prepare("SELECT bfbs FROM schemas WHERE hash=?");
+        schema_row.bind(1, *value.schema);
+        if (!schema_row.step()) return std::nullopt;
+        auto decoded = std::make_shared<types::Type>();
+        decoded->bfbs = schema_row.blob(0);
+        decoded->hash = *value.schema;
+        decoded->root_type = *value.root_type;
+        type->second = std::move(decoded);
+      }
+      if (!crypto::base64_decode(*value.data_b64, v.bytes)) return std::nullopt;
+      v.type = type->second;
+      group.values.push_back(std::move(v));
+    }
+    li.groups.push_back(std::move(group));
   }
   return li;
 }
@@ -1072,7 +1170,7 @@ std::pair<int64_t, std::string> History::open_cursor(const std::string& cursor,
 namespace {
 
 constexpr const char* kCopyFormat = "tsugumi-runs";
-constexpr const char* kCopyVersion = "3";
+constexpr const char* kCopyVersion = "4";
 
 // The copy: the run tables (same names and columns as the history, so runs
 // move between the two with the same column lists, kCopied) and its format.
@@ -1096,6 +1194,7 @@ constexpr Copied kCopied[] = {
     {"environment_paths", "run_id, environment_id, position, path", "rowid", false},
     {"run_substituters", "run_id, position, url", "rowid", false},
     {"run_cards", "run_id, card", "rowid"},
+    {"run_batches", "run_id, card, activation, invocation_count, execution_list, complete, failed, outputs", "rowid"},
     {"invocations",
      "run_id, card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, "
      "record_io, input_sources, display, build_cached, detail",
@@ -1227,8 +1326,12 @@ const std::string kUuidGlob = [] {
 
 size_t copy_runs(sql::Db& db, const std::string& from, const std::string& to) {
   db.exec("CREATE TEMP TABLE IF NOT EXISTS moving(run_id TEXT PRIMARY KEY); DELETE FROM temp.moving");
+  // A finished run can still have detached jobs to reconcile. Export only
+  // after they have written their final invocation records.
+  const std::string pending = from == "main" ? " AND run_id NOT IN (SELECT run_id FROM main.remote_jobs)" : "";
   db.exec("INSERT INTO temp.moving SELECT run_id FROM " + from + ".runs WHERE state IN (" + finished_states() +
-          ") AND run_id GLOB " + kUuidGlob + " AND run_id NOT IN (SELECT run_id FROM " + to + ".runs) ORDER BY seq");
+          ") AND run_id GLOB " + kUuidGlob + " AND run_id NOT IN (SELECT run_id FROM " + to + ".runs)" +
+          pending + " ORDER BY seq");
   size_t n = static_cast<size_t>(db.changes());
   if (n == 0) return 0;
   for (const auto& c : kCopied)
@@ -1268,7 +1371,8 @@ size_t History::export_runs(const std::filesystem::path& copy) {
     bool none;
     {
       auto st = probe.prepare("SELECT count(*) FROM main.runs WHERE state IN (" + finished_states() +
-                              ") AND run_id NOT IN (SELECT run_id FROM ex.runs)");
+                              ") AND run_id NOT IN (SELECT run_id FROM ex.runs) "
+                              "AND run_id NOT IN (SELECT run_id FROM main.remote_jobs)");
       none = st.step() && st.i64(0) == 0;
     }
     probe.exec("DETACH DATABASE ex");

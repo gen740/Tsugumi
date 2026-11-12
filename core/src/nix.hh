@@ -37,6 +37,14 @@ struct CardBuild {
   BuildEnvironmentData environment;
   std::string key;      // the manifest's store path
   bool cached = false;  // the store already had the result: nothing was built
+  uint32_t implementation_index = 1;
+};
+
+struct CardBuildPlan {
+  CardBuild common;
+  std::vector<schema::ManifestRun> implementations;
+  bool execution_list = false;
+  auto implementation(size_t index) const -> CardBuild;
 };
 
 struct BuildRequest {
@@ -46,6 +54,7 @@ struct BuildRequest {
   std::filesystem::path run_dir;
   uint32_t jobs = 1;
   uint32_t cores = 1;
+  uint32_t max_implementations = kMaxExecutionBatchSize;
   std::optional<uint64_t> timeout_seconds;
   std::string remote_system;
   std::filesystem::path derivation_archive;
@@ -82,7 +91,7 @@ class NixRunner {
   static std::string params_buffer(const Node& node);
   static types::TypeRef params_type(const Node& node);
 
-  CardBuild build(const BuildRequest& req);
+  auto build(const BuildRequest& req) -> CardBuildPlan;
   static auto execution_systems() -> std::vector<std::string>;
 
   // CardSDKPrepare / CardSDKStatus.

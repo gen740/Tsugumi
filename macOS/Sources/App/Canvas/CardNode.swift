@@ -38,6 +38,11 @@ extension ProjectSession {
     }
     // A Draft's ports change with its wires, before they are resolved again.
     let draft = kind(k) == .draft
+    if kind(k) == .collect {
+      let r = resolution[k]
+      return ([PortData(name: "in", typeName: r?.inputs.first { $0.name == "in" }?.rootType, note: note("inputs", "in"))],
+              [PortData(name: "out", typeName: r?.outputs.first { $0.name == "out" }?.rootType, note: note("outputs", "out"))])
+    }
     if definition == nil, !draft, let r = resolution[k] {
       return (r.inputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("inputs", $0.name)) },
               r.outputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("outputs", $0.name)) })
@@ -177,7 +182,7 @@ extension ProjectSession {
   /// State of a Card in Card from the Cards inside it: failed or running
   /// when one of them is, succeeded when every one that ran succeeded.
   func compositeState(_ k: CardKey) -> Tsugumi_Data_CardState? {
-    let inner = cardStates.filter { $0.key.hasPrefix(k + "/") }.map(\.value.state)
+    let inner = Set(cardStates.keys).union(resolution.keys).filter { $0.hasPrefix(k + "/") }.compactMap(canvasCardState)
     guard !inner.isEmpty else { return nil }
     if inner.contains(.failed) { return .failed }
     if inner.contains(.cancelled) { return .cancelled }
@@ -193,7 +198,7 @@ extension ProjectSession {
     let mode = FigureMode(rawValue: cardSetting(k, "displayMode")?.string ?? "") ?? .update
     guard runActive else { return FigureState(mode: mode) }
     let busy: (CardKey) -> Bool = { c in
-      if let s = self.cardStates[c]?.state, [.ready, .preparing, .running].contains(s) { return true }
+      if let s = self.canvasCardState(c), [.ready, .preparing, .running].contains(s) { return true }
       return self.compositeState(c) == .running
     }
     return FigureState(mode: mode, running: busy(k),
@@ -206,10 +211,21 @@ extension ProjectSession {
     return (key(path(k) + [c]), p)
   }
 
+  func boundaryInputSource(_ scope: [String], port: String) -> (CardKey, String)? {
+    guard let container = scope.last else { return nil }
+    let parent = Array(scope.dropLast())
+    let links = connections(in: parent).filter { $0["to"]?["card"]?.string == container && $0["to"]?["port"]?.string == port }
+    guard links.count == 1, let from = links[0]["from"]?["card"]?.string, let output = links[0]["from"]?["port"]?.string else { return nil }
+    return (key(parent + [from]), output)
+  }
+
   func nodeData(_ k: CardKey, definition: JSONValue? = nil, meta: JSONValue? = nil,
                 collapsed: Bool? = nil, outputs: [PortData]? = nil) -> CardNodeData {
     let kind = self.kind(k)
     let state = cardStates[k]
+    let batch = executionBatch(k)
+    let executionList = batch?.executionList == true
+    let empty = executionList && batch?.complete == true && batch?.failed == false && batch?.invocationCount == 0
     let diags = resolution[k]?.diagnostics ?? []
     let ports = portData(k, definition: definition, meta: meta)
     let def = definition ?? cardDefinition(k)
@@ -227,10 +243,10 @@ extension ProjectSession {
       symbol: (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
       summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
       params: inlineParams(k, definition: definition),
-      result: state?.executionState?.pendingLabel ?? displays[k]?.summary ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
+      result: state?.executionState?.pendingLabel ?? displays[k].map { (executionList ? "#\($0.invocation) · " : "") + $0.summary } ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
       resultFailed: false,
-      state: kind == .subgraph ? compositeState(k) : state?.state, stage: stageProgress(k),
-      invocation: state?.invocation ?? 0, runContinues: runActive,
+      state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),
+      invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive,
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
       errors: diags.filter(\.error).map(\.message), warnings: diags.filter { !$0.error }.map(\.message),
       collapsed: !editing && (collapsed ?? self.collapsed(k)), hasDisplay: display, permissions: CardPermission.of(def),
