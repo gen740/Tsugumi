@@ -1,11 +1,15 @@
 """Render real R Markdown/Quarto reports through the public Card contract."""
 import json
+import os
+import subprocess
 import time
+import uuid
 
 import pytest
 
 from test_language_cards import NUMBERS, project, write_project
 from conftest import Daemon
+from harness.observations import read_pages
 from projects import run_and_wait, start_run, wait_run
 from tsugumi_client import new_id, path, text
 from Tsugumi.Data.RunState import RunState
@@ -77,6 +81,12 @@ def test_report_html_assets_and_typed_downstream(project, extension):
         if part.eof:
             break
     rendered = html.decode()
+    summary = client.call('RunRecordRequest', runId=run, card=path('report')).record.summary
+    metadata = json.loads(read_pages(client, 'ArtifactReadRequest', artifactId=text(artifact.artifactId),
+                                    member='metadata.json', page_bytes=262144))
+    assert metadata == {'source': 'report.' + extension, 'run_id': run, 'card': 'report',
+                        'invocation': summary.invocation}
+    assert '<details open>' in rendered and '<summary>Source: report.' + extension in rendered
     assert 'Total: 12' in rendered and 'data:image/png;base64,' in rendered
     assert 'data:image/svg+xml' in rendered
     display = client.call('RunRecordRequest', runId=run, card=path('read')).record.display
@@ -109,12 +119,24 @@ def test_quarto_project_output_directory(project, nested):
         definition.write_text(definition.read_text().replace('report.qmd', 'nested/report.qmd'))
         downstream = root / 'definitions/read/default.nix'
         downstream.write_text(downstream.read_text().replace('/index.html', '/nested/index.html'))
+    freeze = (source / 'nested' if nested else source) / '_freeze'
+    freeze.mkdir()
+    (freeze / 'old-result.json').write_text('{"stale": true}')
     client = connect()
-    run, state = run_and_wait(client, 'start', timeout=1800)
-    assert state.state == RunState.succeeded, text(client.call('LogRangeRequest', runId=run, card=path('report'), stream=2, limitBytes=65536).text)
-    artifact = next(a for a in client.call('ArtifactListRequest', runId=run).artifacts if text(a.output) == 'report')
     expected = 'nested/index.html' if nested else 'index.html'
-    assert expected in [text(m.path) for m in artifact.members]
+    for result in (12, 24):
+        run, state = run_and_wait(client, 'start', timeout=1800)
+        assert state.state == RunState.succeeded, text(client.call('LogRangeRequest', runId=run, card=path('report'), stream=2, limitBytes=65536).text)
+        artifact = next(a for a in client.call('ArtifactListRequest', runId=run).artifacts if text(a.output) == 'report')
+        members = [text(m.path) for m in artifact.members]
+        assert expected in members and not any(name.endswith('old-result.json') for name in members)
+        page = read_pages(client, 'ArtifactReadRequest', artifactId=text(artifact.artifactId),
+                          member=expected, page_bytes=262144)
+        assert f'Total: {result}'.encode() in page
+        if result == 12:
+            upstream = root / 'definitions/data/default.nix'
+            upstream.write_text(upstream.read_text().replace('[1,2,3]', '[2,4,6]'))
+            reload(client)
 
 
 def reload(client):
@@ -156,7 +178,15 @@ stopifnot(readLines(file.path(params$tsugumi$paths$folder, "data.txt")) == "file
 @pytest.mark.parametrize('extension', ['Rmd', 'qmd'])
 def test_report_cancel_deadline_and_recovery(project, extension):
     root, connect = project
-    slow = REPORT.replace('plot(values, type="b")', 'cat("report-sleeping\\n", file=stderr()); Sys.sleep(60)')
+    marker = f'tsugumi-report-child-{uuid.uuid4().hex}'
+    slow = REPORT.replace('plot(values, type="b")',
+                          f'system2("bash", c("-c", shQuote("exec -a {marker} sleep 60")), wait = FALSE)\n'
+                          'cat("report-sleeping\\n", file=stderr()); Sys.sleep(60)')
+
+    def child_alive():
+        args = subprocess.check_output(['ps', '-axww', '-o', 'command='], text=True)
+        return any(line.startswith(marker + ' ') for line in args.splitlines())
+
     report_project(root, extension, slow)
     client = connect()
     run = start_run(client, 'start')
@@ -168,9 +198,19 @@ def test_report_cancel_deadline_and_recovery(project, extension):
         assert time.monotonic() < until
         assert client.call('RunStatusRequest', runId=run).state not in (RunState.failed, RunState.succeeded)
         time.sleep(.1)
+    if os.environ.get('TSUGUMI_TEST_CONTAINER') != '1':
+        until = time.monotonic() + 5
+        while not child_alive():
+            assert time.monotonic() < until, 'The renderer did not start the child process'
+            time.sleep(.05)
     client.call('RunCancelRequest', runId=run)
     assert wait_run(client, run, timeout=15).state == RunState.cancelled
     assert not client.call('ArtifactListRequest', runId=run).artifacts
+    if os.environ.get('TSUGUMI_TEST_CONTAINER') != '1':
+        until = time.monotonic() + 5
+        while child_alive():
+            assert time.monotonic() < until, 'The renderer child survived cancellation'
+            time.sleep(.05)
     card_file = root / 'definitions/report/_card.json'
     card = json.loads(card_file.read_text())
     card['timeoutSeconds'] = 2

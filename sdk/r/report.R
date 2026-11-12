@@ -8,8 +8,11 @@ if (grepl("(^/|(^|/)\\.\\.(/|$))", entry)) stop("report entry must stay inside s
 work <- tempfile("report-", tmpdir = Sys.getenv("TSUGUMI_TMP_DIR"))
 dir.create(work, recursive = TRUE)
 files <- list.files(src, all.files = TRUE, no.. = TRUE, full.names = TRUE)
-files <- files[!grepl("(^|/)(_freeze|\\.quarto|.*_cache)$", files)]
 if (length(files) && !all(file.copy(files, work, recursive = TRUE, copy.mode = FALSE))) stop("could not copy report sources")
+# A nested Quarto project can have its own cached results.
+dirs <- list.dirs(work, recursive = TRUE, full.names = TRUE)
+caches <- grepl("^(_freeze|[.]quarto|.*_cache)$", basename(dirs))
+unlink(dirs[caches], recursive = TRUE)
 setwd(work)
 if (!file.exists(entry)) stop("missing report entry: ", entry)
 
@@ -39,7 +42,8 @@ if (engine == "rmarkdown") {
   status <- system2(Sys.getenv("TSUGUMI_QUARTO"), c("render", shQuote(basename(entry)), "--to", "html",
                     "--output", "index.html", "--output-dir", ".",
                     "--execute", "--no-cache", "--embed-resources",
-                    "--execute-params", shQuote(file.path(work, "tsugumi-params.json")), "-M", "engine:knitr", "-M", "execute.error:false"))
+                    "--execute-params", shQuote(file.path(work, "tsugumi-params.json")), "-M", "engine:knitr",
+                    "-M", "execute.error:false", "-M", "execute.freeze:false"))
   setwd(work)
   if (status != 0) stop("Quarto failed for src/", entry, " (exit ", status, ")")
 } else stop("unknown report engine: ", engine)
@@ -47,12 +51,27 @@ if (engine == "rmarkdown") {
 html <- file.path(dirname(entry), "index.html")
 if (engine == "rmarkdown") html <- "index.html"
 if (!file.exists(html)) stop("renderer did not produce ", html)
+# Native HTML details keep the source available even in a script-free preview.
+source_text <- paste(readLines(entry, encoding = "UTF-8", warn = FALSE), collapse = "\n")
+source_panel <- as.character(htmltools::tags$details(open = NA,
+  htmltools::tags$summary(paste("Source:", entry)), htmltools::tags$pre(source_text)))
+rendered <- paste(readLines(html, encoding = "UTF-8", warn = FALSE), collapse = "\n")
+closing <- regexpr("</body>[[:space:]]*</html>[[:space:]]*$", rendered, ignore.case = TRUE)[[1]]
+if (closing < 0L) {
+  rendered <- paste(rendered, source_panel, sep = "\n")
+} else {
+  rendered <- paste0(substr(rendered, 1L, closing - 1L), source_panel, substr(rendered, closing, nchar(rendered)))
+}
+writeLines(enc2utf8(rendered), html, useBytes = TRUE)
 destination <- file.path(Sys.getenv("TSUGUMI_OUTPUT_DIR"), "report")
 if (!nzchar(Sys.getenv("TSUGUMI_OUTPUT_DIR"))) stop("report Card requires filesystem access")
 dir.create(destination, recursive = TRUE)
 # Preserve source, parameter provenance and related assets with the rendered HTML.
 if (!all(file.copy(list.files(work, all.files = TRUE, no.. = TRUE, full.names = TRUE), destination,
                    recursive = TRUE, copy.mode = FALSE))) stop("could not save report artifacts")
+metadata <- list(source = entry, run_id = Sys.getenv("TSUGUMI_RUN_ID"), card = Sys.getenv("TSUGUMI_CARD"),
+                 invocation = as.numeric(Sys.getenv("TSUGUMI_INVOCATION")))
+writeLines(json(metadata), file.path(destination, "metadata.json"), useBytes = TRUE)
 writeLines(json(list(report = list(value = destination), html = list(value = file.path(destination, html)))),
            Sys.getenv("TSUGUMI_OUTPUT"), useBytes = TRUE)
 writeLines(json(list(markdown = "Report rendered. Open **Artifacts** to preview the saved HTML and inspect its source and assets.")),
