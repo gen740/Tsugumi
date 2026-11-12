@@ -1,0 +1,4 @@
+attribute "tsugumi"; namespace sample;
+table Location { value:string; }
+table Outputs { report:Location (required, tsugumi:"file"); }
+root_type Outputs;

@@ -71,7 +71,15 @@ let
     done
   '';
 
-  languagesKnown = [ "cpp" "python" ];
+  csharpFace = dir: pkgs.runCommand "tsugumi-card-sdk-csharp" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+    mkdir -p $out
+    for f in ${lib.concatStringsSep " " schemas}; do
+      ${flatc} --csharp --gen-object-api --cs-global-alias -o $out ${dir}/$f.fbs
+    done
+    python3 ${sdkRoot}/codegen/card_csharp.py ${dir}/_contract.json $out/CardBindings.cs ${sdkRoot}/include/tsugumi/sdk/abi.h
+  '';
+
+  languagesKnown = [ "cpp" "python" "csharp" ];
 
   # Whether this Card is built for another system than the one evaluating it
   # (x86_64-linux in the aarch64 VM): its binaries run under the emulator the
@@ -139,7 +147,10 @@ rec {
       contract = dir;
       cpp = if want "cpp" then cppFace dir else null;
       python = if want "python" then pythonFace dir else null;
+      csharp = if want "csharp" then csharpFace dir else null;
     };
+
+  csharpCard = import ./csharp.nix { inherit pkgs sdkRoot; };
 
   # A C++ Card: every *.cc below `src` (with `sdk`: plus the generated
   # adapter) compiled into lib/main.so, linked against the shared runtime.

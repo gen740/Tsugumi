@@ -235,3 +235,21 @@ log. No plotting library is included: use Vega-Lite (at most 1 MiB of JSON), or 
 3. Run from the trigger Card (`run` with the trigger's id); a single Card run only works on inputs
    saved by an earlier whole run.
 4. `run_status` until it ends, then `run_record` of each Card; `log_range` (stream 2) for errors.
+
+## C# / .NET
+
+Set `language: "csharp"`. The Card body is a public `Card : Tsugumi.ICard` in `src/Card.cs`; implement `ValueTask RunAsync(Context context)`. Select the generated typed bindings and pinned runtime in `default.nix`:
+
+```nix
+{ pkgs, inputs, params }:
+let sdk = inputs.tsugumi.sdk { languages = [ "csharp" ]; };
+in { run = inputs.tsugumi.csharpCard { inherit sdk; src = ./src; }; }
+```
+
+`context.Inputs.<Port>` unpacks the generated object API (`inputs.<port>.<schema namespace>.<Table>T`); optional ports are nullable. `context.Parameters` is `params.ParamsT`; scalar fields are nullable, so use `??` with a default or throw `new Failure("validation_failed", "missing parameter")`. Emit each port with `context.Outputs.<Port>(new outputs.<port>.<namespace>.<Table>T { ... })`. Port names capitalize their first character. Read the exact schema instead of guessing namespaces.
+
+`DisplayText`, `DisplayMarkdown`, `DisplayScalar`, `DisplayTable`, `DisplayImage`, `DisplayLineChart`, `DisplayPoints`, `DisplayModule` and `Log` write into the current invocation. File/Directory messages contain `Value` paths; write under `OutputDirectory`, then emit the generated message. Text must be valid UTF-8 without embedded NUL. Input/param bytes are managed copies; native callbacks on a retained Context reject use after its invocation.
+
+Await all work belonging to `RunAsync`; pass `context.CancellationToken` to cancellable Tasks. Fire-and-forget Tasks are not joined. `OnRunStartAsync(Context)` resets per-run state; the Card instance and CLR persist in a resident worker. `reuseWorker: false` starts fresh. Exceptions produce structured failures and do not cross the native ABI.
+
+NuGet packages are declared as `packages = [{ name = "Newtonsoft.Json"; version = "13.0.3"; }]; nugetDeps = ./nuget-deps.json;` in `csharpCard`. The JSON lists every package's `pname`, `version` and content `hash` (the pinned nixpkgs `buildDotnetModule` format). Packages without a fixed dependency file are rejected; invocation does not restore packages. The bundled `demos/csharp-calibration/definitions/calibrate` is a complete typed, parameterized example with a pinned dependency, between C++ and Python Cards.

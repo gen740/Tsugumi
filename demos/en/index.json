@@ -418,6 +418,20 @@
         "Machine learning",
         "Branch, fork and merge"
       ]
+    },
+    {
+      "id": "csharp-calibration",
+      "title": "Cross-language calibration (C#)",
+      "field": "Learn the basics",
+      "description": "C++ → C# → Python with typed ports, a calibration parameter and a retained CSV.",
+      "path": "csharp-calibration",
+      "tags": [
+        "C#",
+        "C++",
+        "Python",
+        "NuGet",
+        "Artifacts"
+      ]
     }
   ]
 }

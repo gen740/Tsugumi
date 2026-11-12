@@ -68,6 +68,7 @@
 "Anthropic API（API キー）" = "Anthropic API (API key)";
 "Anthropic の API キー" = "Anthropic API key";
 "Apple silicon の Mac と macOS 26 以降が必要です。" = "An Apple silicon Mac and macOS 26 or later are needed.";
+"C# の処理" = "C# Card";
 "C++ の処理" = "C++ step";
 "Canvas に追加" = "Add to Canvas";
 "Canvas に配置" = "Place on the canvas";

@@ -8,6 +8,7 @@ install(DIRECTORY include/ DESTINATION share/tsugumi/sdk/include)
 install(DIRECTORY nix/ DESTINATION share/tsugumi/sdk/nix)
 install(DIRECTORY python/ DESTINATION share/tsugumi/sdk/python)
 install(DIRECTORY r/ DESTINATION share/tsugumi/sdk/r)
+install(DIRECTORY csharp/ DESTINATION share/tsugumi/sdk/csharp)
 install(DIRECTORY julia/ DESTINATION share/tsugumi/sdk/julia)
 install(FILES src/python_main.c src/card_runtime.cc src/worker_main.cc DESTINATION share/tsugumi/sdk/src)
 # What else the worker is built from, for a Card of another system: its Nix

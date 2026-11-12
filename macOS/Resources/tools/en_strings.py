@@ -590,6 +590,7 @@ EN = {
 "100% に戻す": "Reset to 100%",
 "API キー": "API key",
 "C++ の処理": "C++ step",
+    "C# の処理": "C# Card",
 "Canvas に配置": "Place on the canvas",
 "Card が見つかりません": "Card not found",
 "Card はありません": "No Cards",

@@ -673,3 +673,7 @@ start → load → prepare → share ─┬→ knn ──────┐
 - **What is checked:** each Draft's description has the steps of the computation and `assert`s. Besides the counts, the 0–9 range and a minimum accuracy, they check properties that each method's result must have (kNN agreeing with brute force in numpy, logistic regression's predictions agreeing with the weighted sums, the forest's predictions agreeing with the average of its trees, formulas for the networks' parameter counts and so on). `compare` checks that the digests agree and that the accuracies agree with values recomputed from the predictions.
 - **Why the counts are small:** a project can run only one run at a time, so the helpers' runs wait their turn (at most 900 seconds per wait). So it uses 5000 training and 1000 test images, smaller than the finished version (10000 and 2000).
 - **The answers:** neither this demo nor the finished `mnist-classifiers` appears in the Agent's `reference_read` list or can be read with it.
+
+## csharp-calibration
+
+The **Cross-language calibration (C#)** demo passes three C++ readings (1.25, 2.5, 3.75) through a C# Card with `factor = 1.6`, then summarizes the typed result in Python and retains a CSV. The expected calibrated values are 2, 4 and 6: sum 12 and mean 4. Change `calibrate.factor` to 2 and rerun; the sum becomes 15 and mean 5. The C# log uses a fixed-hash Newtonsoft.Json dependency. Each Card's source and the saved CSV remain available to inspect. See [C# Cards](CSharp.md) for the SDK and worker lifetime.
