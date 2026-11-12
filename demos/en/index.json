@@ -420,6 +420,93 @@
       ]
     },
     {
+      "id": "csharp-calibration",
+      "title": "Cross-language calibration (C#)",
+      "field": "Learn the basics",
+      "description": "C++ → C# → Python with typed ports, a calibration parameter and a retained CSV.",
+      "path": "csharp-calibration",
+      "tags": [
+        "C#",
+        "C++",
+        "Python",
+        "NuGet",
+        "Artifacts"
+      ]
+    },
+    {
+      "id": "visualization",
+      "path": "visualization",
+      "title": "Visualization → report",
+      "description": "Aggregate typed measurements, draw three figures, and pass PNG/SVG/PDF and the plotted values to an offline report.",
+      "tags": [
+        "Python",
+        "Visualization",
+        "Artifacts"
+      ],
+      "field": "Programming and visualization"
+    },
+    {
+      "id": "marimo",
+      "path": "marimo",
+      "title": "marimo notebook → typed result",
+      "description": "Pass typed input and params into a notebook and retain its static HTML, figures and selected result.",
+      "tags": [
+        "Python",
+        "marimo",
+        "Artifacts"
+      ],
+      "field": "Programming and visualization"
+    },
+    {
+      "id": "r-reports",
+      "path": "r-reports",
+      "title": "R reports: R Markdown and Quarto",
+      "field": "Learn the basics",
+      "description": "Aggregate observations, render parameterized reports with tables and figures, and keep their HTML artifacts.",
+      "tags": [
+        "R",
+        "Quarto",
+        "R Markdown",
+        "Artifacts"
+      ]
+    },
+    {
+      "id": "r-reports-draft",
+      "path": "r-reports-draft",
+      "title": "R reports: R Markdown and Quarto (Draft)",
+      "description": "Aggregate observations, render parameterized reports with tables and figures, and keep their HTML artifacts.",
+      "tags": [
+        "R",
+        "Quarto",
+        "R Markdown",
+        "Artifacts",
+        "Draft"
+      ]
+    },
+    {
+      "id": "go-pipeline",
+      "title": "Go pipeline",
+      "description": "Python → Go → C++: owned typed values and managed goroutines.",
+      "path": "go-pipeline",
+      "tags": [
+        "Go",
+        "Python",
+        "C++"
+      ],
+      "field": "Learn the basics"
+    },
+    {
+      "id": "go-pipeline-draft",
+      "title": "Go pipeline (Draft)",
+      "description": "Python → Go → C++: owned typed values and managed goroutines.",
+      "path": "go-pipeline-draft",
+      "tags": [
+        "Go",
+        "Python",
+        "C++"
+      ]
+    },
+    {
       "id": "rust-pipeline",
       "title": "Rust pipeline",
       "description": "Python → Rust → C++: typed borrowed inputs, owned outputs and pinned crates.",

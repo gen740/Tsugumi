@@ -163,6 +163,7 @@ struct GraphCanvas: View {
             .padding(m)
             WireLayer(wires: routed.map { WireDraw(path: $0.path.applying(toLayer), style: $0.style, dotted: $0.dotted, thread: $0.thread) },
                       animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presences: session.presences)
+            if tab.showNixReferences { nixLayer(transform: toLayer) }
             ZStack(alignment: .topLeading) { panned(routed) }
               .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
               .coordinateSpace(name: "canvas")
@@ -271,6 +272,9 @@ struct GraphCanvas: View {
       // A scope shown for the first time (no saved camera) shows its whole flow
       // as soon as its Cards are there.
       .onChange(of: cardKeys.count) { fitIfNew() }
+      .onChange(of: tab.revealNixCard) { _, card in
+        if let card { reveal(card); tab.revealNixCard = nil }
+      }
       .onChange(of: geo.size) { size = geo.size }
       .onReceive(NotificationCenter.default.publisher(for: .canvasFitAll)) { n in
         if (n.object as? UUID) == tab.id || n.object == nil { fitAll() }
@@ -406,6 +410,40 @@ struct GraphCanvas: View {
 
   /// The selection's move in progress (screen translation), from whichever of its items is dragged.
   private var selectionMove: CGSize? { selectionDrag ?? drag?.offset }
+
+  private var nixLinks: [NixLink] {
+    guard tab.showNixReferences else { return [] }
+    return visibleNixLinks(nixReferences(session), scope: tab.scope, visible: Set(cardKeys))
+  }
+
+  private func nixLayer(transform: CGAffineTransform) -> some View {
+    let links = nixLinks
+    let active = activeNixLinks(links, hovered: tab.hoveredNixCard, selected: tab.selectedNixReference)
+    let highlighted = Set(active.flatMap { [$0.source, $0.target] })
+    return Canvas { context, _ in
+      for link in links {
+        let a = cardRect(link.source), b = cardRect(link.target)
+        let selected = active.contains { $0.reference.id == link.reference.id }
+        let color = (link.reference.valid ? Color.purple : Color.orange)
+          .opacity(tab.hoveredNixCard != nil && !selected ? 0.2 : 0.9)
+        context.stroke(nixCurve(a, b).applying(transform), with: .color(color),
+                       style: StrokeStyle(lineWidth: selected ? 3 : 1.5, dash: [7, 4]))
+        let right = b.midX >= a.midX
+        let tip = CGPoint(x: right ? b.minX : b.maxX, y: b.midY).applying(transform)
+        let dx: CGFloat = right ? -9 : 9
+        let arrow = Path { p in
+          p.move(to: tip); p.addLine(to: CGPoint(x: tip.x + dx, y: tip.y - 4))
+          p.addLine(to: CGPoint(x: tip.x + dx, y: tip.y + 4)); p.closeSubpath()
+        }
+        context.fill(arrow, with: .color(color))
+      }
+      for card in highlighted {
+        let rect = cardRect(card).applying(transform).insetBy(dx: -3, dy: -3)
+        context.stroke(Path(roundedRect: rect, cornerRadius: 10), with: .color(.purple), lineWidth: 3)
+      }
+    }
+    .allowsHitTesting(false)
+  }
 
   // MARK: - Wires
 
@@ -594,6 +632,7 @@ struct GraphCanvas: View {
       Divider()
       Button("全体表示") { fitAll() }
       Button("整列") { session.arrange(tab.scope) }
+      Button("配線の交差を減らす") { session.untangle(tab.scope) }
       if !tab.selection.isEmpty { Button("選択をグループ化") { groupSelection() }.disabled(!session.connected) }
     }
   }
@@ -935,6 +974,8 @@ struct GraphCanvas: View {
     hoverAt = p
     guard !interacting else { clearHover(); return }
     let w = world(p)
+    let over = cardKeys.reversed().first(where: { cardRect($0).contains(w) })
+    if tab.showNixReferences { tab.hoveredNixCard = over }
     var target: HoverTarget?
     if let k = cardKeys.reversed().first(where: { cardRect($0).contains(w) }) {
       // A Draft being written has its details in front of it.
@@ -959,6 +1000,7 @@ struct GraphCanvas: View {
   }
 
   private func clearHover() {
+    tab.hoveredNixCard = nil
     hoverTask?.cancel()
     hoverTask = nil
     if hover != nil { hover = nil }
@@ -1075,6 +1117,14 @@ struct GraphCanvas: View {
     // A click near a wire selects it (the path as drawn); elsewhere clears the selection.
     let w = world(loc)
     let tolerance = max(5, 7 / camera.zoom)
+    if tab.showNixReferences, let ref = nixLinks.first(where: {
+      nixCurve(cardRect($0.source), cardRect($0.target)).strokedPath(StrokeStyle(lineWidth: tolerance * 2)).contains(w)
+    }) {
+      tab.selectedNixReference = ref.reference.id
+      tab.showNixList = true
+      return
+    }
+    tab.selectedNixReference = nil
     if let i = routedWires().first(where: { r in
       r.connection != nil && r.path.strokedPath(StrokeStyle(lineWidth: tolerance * 2)).contains(w)
     })?.connection {
@@ -1446,8 +1496,18 @@ struct BuiltinCardItems: View {
   let add: (DefinitionTemplate) -> Void
 
   var body: some View {
-    ForEach([DefinitionTemplate.python, .cpp, .rust, .draft], id: \.self) { t in
+    Menu("レポート（HTML・PDF 未対応）") {
+      ForEach([DefinitionTemplate.report_rmarkdown, .report_quarto], id: \.self) { t in
+        Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
+      }
+    }
+    ForEach([DefinitionTemplate.python, .cpp, .go, .rust, .csharp, .draft, .marimo], id: \.self) { t in
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
+    }
+    Menu("可視化（図を描く Card）") {
+      ForEach([DefinitionTemplate.matplotlib, .plotly, .altair], id: \.self) { t in
+        Button(t.label) { add(t) }
+      }
     }
     Divider()
     ForEach([DefinitionTemplate.trigger, .input, .switchCard, .fork, .branch, .merge, .logger], id: \.self) { t in

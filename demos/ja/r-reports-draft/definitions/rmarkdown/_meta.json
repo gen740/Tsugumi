@@ -1,0 +1,12 @@
+{
+  "description": "観測値を集計し、params を使う表・図入りレポートを作成して HTML 成果物を保存します。",
+  "content": "rmarkdown: Receive numeric data and title params. Render a table and plot with reportCard using report.Rmd. Save HTML and its source as a Directory artifact.",
+  "outputs": [
+    {
+      "name": "report"
+    },
+    {
+      "name": "html"
+    }
+  ]
+}

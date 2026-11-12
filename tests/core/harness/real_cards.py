@@ -100,7 +100,7 @@ def python_probe_project(main: str, pre: str | None = None) -> tuple:
     """(defs, cards, conns, files) of a trigger and a Python Card `show`."""
     attrs = f" preRun = {nix_string(pre)};" if pre else ""
     defs = {"trigger": {"template": "trigger"},
-            "show": {"language": "python", "_outputs": PYTHON_OUTPUTS, "_nix": PYTHON_NIX % attrs}}
+            "show": {"language": "python", "reuseWorker": True, "_outputs": PYTHON_OUTPUTS, "_nix": PYTHON_NIX % attrs}}
     return defs, [card("start", "trigger"), card("show", "show")], [], {"definitions/show/src/main.py": main}
 
 

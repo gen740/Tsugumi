@@ -329,8 +329,8 @@ export class RPCClient {
   versionCanvas(commit: string) {
     return this.call<R.VersionCanvasT>(RequestPayload.VersionCanvasRequest, Object.assign(new R.VersionCanvasRequestT(), { commit }))
   }
-  versionDiff(commit: string) {
-    return this.call<R.VersionDiffT>(RequestPayload.VersionDiffRequest, Object.assign(new R.VersionDiffRequestT(), { commit }))
+  versionDiff(commit: string, fromCommit: string | null = null) {
+    return this.call<R.VersionDiffT>(RequestPayload.VersionDiffRequest, Object.assign(new R.VersionDiffRequestT(), { commit, fromCommit }))
   }
   versionSummary(opId: string, origin: string, commit: string, summary: string) {
     return this.call<R.VersionResultT>(RequestPayload.VersionSummaryRequest, Object.assign(new R.VersionSummaryRequestT(), { opId, origin, commit, summary }))

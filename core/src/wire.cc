@@ -112,8 +112,11 @@ Off<R::ResolvedCard> resolved(FBB& b, const Node& n) {
   diags.insert(diags.end(), n.exec_diags.begin(), n.exec_diags.end());
   for (auto& d : diags)
     if (!d.card) d.card = n.path;
+  std::vector<Off<R::CardNixReference>> refs;
+  for (const auto& ref : n.nix_references)
+    refs.push_back(R::CreateCardNixReference(b, path(b, ref.target), b.CreateString(ref.name), ref.local, ref.valid));
   return R::CreateResolvedCard(b, path(b, n.path), b.CreateVector(ins), b.CreateVector(outs),
-                               diagnostics(b, diags));
+                               diagnostics(b, diags), b.CreateVector(refs));
 }
 
 Off<flatbuffers::Vector<Off<R::ResolvedCard>>> resolution(FBB& b, const Resolution& r) {

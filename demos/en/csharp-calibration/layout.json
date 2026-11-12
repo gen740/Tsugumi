@@ -1,0 +1,21 @@
+{
+  "flow": "topToBottom",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "readings": {
+      "x": 0,
+      "y": 180
+    },
+    "calibrate": {
+      "x": 0,
+      "y": 360
+    },
+    "report": {
+      "x": 0,
+      "y": 540
+    }
+  }
+}

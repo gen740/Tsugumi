@@ -201,7 +201,7 @@ struct PresenceLayer: View {
     let label = lead ? "Agent" : presence.label
     ZStack(alignment: .topLeading) {
       threads(at: t)
-      if avatar != .none, let code = presence.liveCode(at: t) {
+      if WritingPanel.shows(avatar: avatar, zoom: geometry.zoom), let code = presence.liveCode(at: t) {
         WritingPanel(code: code, card: geometry.card(code.card), geometry: geometry,
                      clear: -BirdMetrics.feetToCenter.dy * CGFloat(geometry.zoom) + PresenceBubble.rise(avatar, zoom: z),
                      canvas: size, color: color, slot: presence.tint)
@@ -301,6 +301,9 @@ struct WritingPanel: View {
   /// Points at scale 1: scaled with the canvas only as far as stays readable
   /// (the bubble beside it does not scale at all).
   static let size = CGSize(width: 300, height: 112)
+  static let minimumZoom = 0.5
+  /// Not when the Agent is hidden, and not where its lines would be too small to read.
+  static func shows(avatar: AgentAvatar, zoom: Double) -> Bool { avatar != .none && zoom >= minimumZoom }
   static let gap: CGFloat = 8
   static let lines = 5
   /// The window's bars float over the canvas here.
@@ -358,7 +361,7 @@ struct WritingPanel: View {
       return CGRect(x: a.x, y: a.y, width: b.x - a.x, height: b.y - a.y)
     }
     if let f = onScreen.map({ Self.frame(card: $0, clear: clear, scale: z, in: view, others: others) }) ?? Self.frame(scale: z, in: view, others: others, slot: slot) {
-      let shown = Self.tail(code.text)
+      let shown = Self.tail(code.text, lines: code.patch ? Self.lines - 1 : Self.lines)
       if let onScreen {
         // To the right of the Card, where the bird and a short bubble are not.
         let x = min(f.maxX, onScreen.maxX) - 20 * z
@@ -377,10 +380,11 @@ struct WritingPanel: View {
         HStack {
           Text(onScreen == nil ? "\(path(code.card).last ?? code.card)/\(code.file)" : code.file).lineLimit(1).truncationMode(.head)
           Spacer(minLength: 8 * z)
-          Text(code.saved ? "保存済み" : "保存前").fixedSize()
+          Text(code.patch ? (code.saved ? "差分・保存済み" : "差分・保存前") : (code.saved ? "保存済み" : "保存前")).fixedSize()
         }
         .font(.system(size: 9.5 * z, design: .monospaced))
         .foregroundStyle(Color.white.opacity(0.55))
+        if code.patch { Text("置換テキスト").font(.system(size: 9 * z)).foregroundStyle(.secondary) }
         VStack(alignment: .leading, spacing: 2 * z) {
           ForEach(Array(shown.enumerated()), id: \.offset) { n, line in
             // Every row the same height, also with a font fallback's taller glyphs.

@@ -629,6 +629,13 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
           {kind === 'logger' && toggle('markdown', L('Markdown として表示'), false,
             L('オン: 受け取った文字列（文字列のフィールドが 1 つのメッセージ）を Markdown と数式（$…$、$$…$$）で表示します。ほかのメッセージは JSON をコードとして表示します。'))}
           {kind === 'code' && (
+            <Row label={L('グラフの更新')} help={L('更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。')}>
+              <Select {...string('displayMode', 'update')} options={[
+                { value: 'update', label: L('更新（実行中は薄く表示）') }, { value: 'live', label: L('ライブ（実行中も追う）') },
+              ]} />
+            </Row>
+          )}
+          {kind === 'code' && (
             <>
               {timeoutField('buildTimeoutSeconds', L('ビルドの期限（秒）'))}
               <Row label={L('システム')} help={L('別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。最初のビルドもエミュレーターで動くので時間がかかります。')}>
@@ -636,7 +643,7 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
                   { value: '', label: L('この環境と同じ') }, { value: 'x86_64-linux', label: 'x86_64-linux' }, { value: 'aarch64-linux', label: 'aarch64-linux' },
                 ]} />
               </Row>
-              {toggle('reuseWorker', L('worker の状態を残す'), true,
+              {toggle('reuseWorker', L('worker の状態を残す'), false,
                 L('オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。'))}
               {toggle('filesystem', L('作業・出力領域を使う'), false)}
               <Row label={L('ファイルアクセスを制限')}>
@@ -1161,7 +1168,7 @@ function SourceCategory({ model, only }: { model: CardEditorModel; only?: string
     if (only) {
       if (files[0]) model.openFile(files[0])
     } else if (shown === undefined || shown.endsWith('/default.nix')) {
-      const f = files.find((x) => x.endsWith('.py') || x.endsWith('.cc')) ?? files[0]
+      const f = files.find((x) => x.endsWith('.py') || x.endsWith('.cc') || x.endsWith('.cs') || /\.(rmd|qmd)$/i.test(x)) ?? files[0]
       if (f) model.openFile(f)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

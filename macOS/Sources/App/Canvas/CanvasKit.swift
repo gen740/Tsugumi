@@ -1989,6 +1989,12 @@ struct WireRouter {
     return path
   }
 
+  /// The same samples as the Web router, for comparing wire crossings.
+  func curvePoints(_ a: CGPoint, _ b: CGPoint) -> [CGPoint] {
+    let (c1, c2) = controls(a, b)
+    return (0...32).map { Self.bezier(a, c1, c2, b, CGFloat($0) / 32) }
+  }
+
   /// A polyline with rounded corners.
   func orthogonal(_ pts: [CGPoint], radius: CGFloat) -> Path {
     Path { p in

@@ -1,0 +1,15 @@
+{
+  "language": "csharp",
+  "inputs": [
+    {
+      "name": "numbers"
+    }
+  ],
+  "params": [
+    {
+      "name": "factor",
+      "type": "double",
+      "data": 1.6
+    }
+  ]
+}

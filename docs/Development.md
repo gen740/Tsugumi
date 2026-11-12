@@ -35,7 +35,7 @@ Shared VM (one per app, Virtualization.framework)                 macOS
 CMakeLists.txt, flake.nix/flake.lock  C++ build (CMake/Ninja) and pinned dependencies (Nix)
 protocol/          tsugumi.fbs (external RPC) / worker.fbs / data.fbs / tsugumi_enums.fbs
 core/              tsugumid (include/tsugumi/core public API, src implementation)
-sdk/               Card ABI, common runtime (libtsugumi_card), C++ codegen (card.hh), Python SDK and embedded shim, R and Julia SDKs (separate process), Nix SDK, tsugumi-worker
+sdk/               Card ABI, common runtime (libtsugumi_card), C++ codegen (card.hh), Python, R and Julia SDKs and embedded shims, Nix SDK, tsugumi-worker
 macOS/             SwiftPM: Sources/App (SwiftUI), Sources/RPC, Sources/Launcher, Sources/Renderer*,
                    Container/ (image definitions, builds, versions), Tests/
 ui/renderer/       Dawn rendering layer (C API, dylib)
@@ -83,7 +83,8 @@ Generated bindings (C++/Python/Swift) and BFBS are made by `flatc` into each bui
 - **The Card SDK**: `default.nix` makes the SDK from the contract, and the Card's body is written in `run`. If it is a derivation (package), the worker loads its `lib/main.so` and calls it in memory; if it is a string, it runs as bash (one or the other). The SDK generates and builds only the languages listed in `languages`, and the parts that do not depend on the contract (visualisation, context, logs and so on) are the common `libtsugumi_card.so`, built once per environment (what is made per Card is just the types and a thin adapter). inputs / outputs / params can also be passed explicitly to `sdk { languages = [ … ]; }`. Examples of `default.nix` and of each language's code are in [Your first Card](CardGuide.md) and [Features §3 and §4](features.md#3-reproducible-environments-with-nix).
 
   `Card::Input` has a member per input port (`std::optional` for optional inputs, a union named by input port for a merge), `Card::Output` has a `std::optional` per output port (only those set are sent), and `Card::params()` gives the params (numbers and bools are `flatbuffers::Optional`, which can represent unset, so read them with `.value()` / `.value_or(x)`). File / Directory are paths in `.value`, and the output location is `tsugumi::context().output_directory`. Fail with `throw tsugumi::Failure(kind, message)`, and check for stopping with `tsugumi::cancelled()`. Python has `main(ctx)` and an optional `on_run_start(ctx)`. A Card need not include generated headers (`_inputs_generated.h` and the like).
-- **Workers**: the project's worker pool holds a worker per Card. A worker with `reuseWorker` (default true) stays resident across runs (static state included; `onRunStart` / `on_run_start` at the start of each run), and ends when build or run conditions change, on failure, cancellation or a deadline, when the project stops, after 10 minutes unused, above 2 GiB of memory, or as the oldest once more than 32 are resident. For a `reuseWorker = false` Card, the next fresh worker is started ahead each time it is used (the sandbox, starting the worker, loading `lib/main.so` and Python imports; preRun is per invocation). Loading happens in the worker's own `work/`. The body's environment variables are, from weakest to strongest: the values when the worker started, the invocation's values, values the Card set while loading (at the top of `main.py`; they last while resident), and preRun's exports; Python's `os.environ` is aligned to this per invocation too. Loading comes before preRun, so settings libraries read when loading (thread counts for OpenBLAS or libgomp, say) must be set at the top of `main.py`, before the imports. The SDK does not import `flatbuffers`, which loads numpy, first, so this is in time. Workers are started on a long-lived thread of the pool (bubblewrap's `--die-with-parent` stops the worker when the thread that started it ends). For `filesystem: false` Cards, `work` and `tmp`, and the files of preRun / bash's run / postRun, are in a per-worker temporary area inside the VM (not the project's shared folder), emptied between invocations. `out` is made only for Cards with File / Directory outputs, and kept for downstream and artifacts. From inside the sandbox, what is visible is the project's `runs` and saved inputs (read-only, bound once at start) and the worker's own temporary area; the invocation's output folder is passed as an FD with `SCM_RIGHTS` and shown as `/proc/self/fd/900`, and the core maps it back to its real path and validates it. The working folder is not passed as an FD (`getcwd` fails for a current folder pointing outside the sandbox). `filesystem: true` Cards also run in the temporary area, and `work` and `tmp` are copied into the run's folder after the invocation. Inputs are not passed as FDs because reopening through `/proc/self/fd/N` can break read-only (inputs are protected with read-only mounts). The Mac development environment (without bubblewrap) uses the real paths as they are.
+- **Dependency locks**: a Card's lock belongs to the Card (a file in its folder), and external packages are used only when the Card's `default.nix` names the lock and the hash of what it fetches (`pythonCard { lock = ./uv.lock; hash = "sha256-..."; }`). Nothing locks automatically: making or updating a lock is an explicit act of a person or the Agent, so a Card never changes its dependencies on its own between two runs. For Python, a fixed-output derivation runs the pinned `uv export --locked` and `pip download --require-hashes --only-binary :all:` for the Card's interpreter, and a second derivation installs those wheels offline (`autoPatchelfHook` on Linux) into a directory that precedes the nixpkgs environment on the embedded interpreter's path. The fixed-output derivation's name carries the hash of `uv.lock` and `pyproject.toml`, so an edited lock with the old `hash` is a hash mismatch, not the previous wheels. Wheels only: a source distribution built inside a fixed-output derivation would not have stable bytes. This is done in the SDK rather than with a flake input such as uv2nix, which reads the lock while evaluating and would add an input to every project's pinned sources; the evaluator rejects import-from-derivation, and here the lock is only hashed at evaluation time.
+- **Workers**: the project's worker pool holds a worker per Card. By default (`reuseWorker` false) every invocation gets a fresh worker, so a Card keeps no state; the next fresh worker is started ahead each time one is used (the sandbox, starting the worker, loading `lib/main.so` and Python imports; preRun is per invocation). A worker with `reuseWorker = true` stays resident across invocations and runs (static state included; `onRunStart` / `on_run_start` at the start of each run), and ends when build or run conditions change, on failure, cancellation or a deadline, when the project stops, after 10 minutes unused, above 2 GiB of memory, or as the oldest once more than 32 are resident. Loading happens in the worker's own `work/`. The body's environment variables are, from weakest to strongest: the values when the worker started, the invocation's values, values the Card set while loading (at the top of `main.py`; they last while resident), and preRun's exports; Python's `os.environ` is aligned to this per invocation too. Loading comes before preRun, so settings libraries read when loading (thread counts for OpenBLAS or libgomp, say) must be set at the top of `main.py`, before the imports. The SDK does not import `flatbuffers`, which loads numpy, first, so this is in time. Workers are started on a long-lived thread of the pool (bubblewrap's `--die-with-parent` stops the worker when the thread that started it ends). For `filesystem: false` Cards, `work` and `tmp`, and the files of preRun / bash's run / postRun, are in a per-worker temporary area inside the VM (not the project's shared folder), emptied between invocations. `out` is made only for Cards with File / Directory outputs, and kept for downstream and artifacts. From inside the sandbox, what is visible is the project's `runs` and saved inputs (read-only, bound once at start) and the worker's own temporary area; the invocation's output folder is passed as an FD with `SCM_RIGHTS` and shown as `/proc/self/fd/900`, and the core maps it back to its real path and validates it. The working folder is not passed as an FD (`getcwd` fails for a current folder pointing outside the sandbox). `filesystem: true` Cards also run in the temporary area, and `work` and `tmp` are copied into the run's folder after the invocation. Inputs are not passed as FDs because reopening through `/proc/self/fd/N` can break read-only (inputs are protected with read-only mounts). The Mac development environment (without bubblewrap) uses the real paths as they are.
 - **bash inputs**: for each port `P`, `JSON_P` (the path of a JSON file, with no size limit; `jq` is available), and for File/Directory, `FILE_P`/`DIR_P`. The input JSON and its converter are made only when running a bash `run`. The output is the JSON in `$TSUGUMI_OUTPUT`, type-checked per port (separate from the artifact's `out`, so it works for Cards without artifacts).
 - **Nix upstream references**: `default.nix` can refer with `inputs.upstream."<Card path>"` (`inputs.local.<id>` for the same level) to the attribute sets (`run`, `preRun`, the functions and values of `exports`, store context) of the code Cards that **always run first, whichever path fires it**. Several paths into the same port take the intersection, `all` the union of required inputs, `any` the intersection of all inputs, and loops a greatest fixed point; Cards on only one side of a branch, downstream Cards and the Card itself are not passed (the static diagnostics `nix_reference_*`). Only what is referred to is evaluated, lazily, and unchosen branches are not built. What Nix is given is the sources (except `_card.json` and `_meta.json`), the input types, the Nix params and the upstream definitions referred to; run-time-only params are not included. There is no Tsugumi-specific build key or cache record: if the result of the evaluated derivation (outPath) is in the store, nothing is built. There is one evaluator per tsugumid, reusing the loading of nixpkgs, the evaluation state and the daemon connection across Cards and runs (cancellation and `buildTimeoutSeconds` stop only the evaluator's thread).
 - **Card in Card**: a child Workflow maps outer ports to inner Cards' ports with `boundary.inputs/outputs`, and from outside it is connected and run like an ordinary Card (it can be the target of a Run; run alone, it uses saved values at its boundary inputs). State and history are told apart by full Card path. It is a different thing from visual-only groups (layout.json).
@@ -142,6 +143,98 @@ The CI definitions are [ci.yml](../.github/workflows/ci.yml) and [ci-platform.ym
 | `tests/prompt/` | Offline prompt probe scoring |
 
 For documentation changes, run `npm --prefix docs/site run build` and `npm --prefix docs/site test`. Changes to the demo player also require `node docs/site/player/build.mjs --check`.
+
+### R and Julia worker measurement
+
+`tests/python/measure_language_workers.py` runs each R/Julia branch of the Collatz demo alone, starting at 27 (112 values, 335 language Card invocations). The demo's Cards set `reuseWorker: true`, so the "Resident" columns measure a kept interpreter. A Card without that setting starts a new interpreter per invocation and is not what these numbers describe; that default path has not been measured. Run it with `TSUGUMI_SDK_DIR` and `TSUGUMI_WORKER` pointing at the old and new SDK/worker, keeping the daemon and nixpkgs fixed. It checks the final sequence length and prints each run's wall time, stage totals and worker reuse count.
+
+On an Apple silicon macOS development host, with sandboxing disabled, the second run in the same daemon measured:
+
+| Language | Before: wall | Resident: wall | Before: execute total | Resident: execute total |
+| --- | ---: | ---: | ---: | ---: |
+| R 4.6.1 | 102.284 s | 0.357 s | 161.112 s | 0.270 s |
+| Julia 1.13.2 | 119.070 s | 0.493 s | 186.880 s | 0.364 s |
+
+This comparison used the SDK at `03837b42` as the baseline and nixpkgs `1c89083e451e891152365b799595cf7790a43325`. The sum of execute stages includes concurrent Cards, so it can exceed wall time. These are two runs per configuration on one development machine, not a cross-platform benchmark. The resident first runs took 17.125 s (R) and 10.667 s (Julia), including new shim builds; their execute totals were 3.186 s and 5.273 s. The baseline first runs used already-built packages and took 97.803 s and 123.141 s. No Python/C++ demo Cards or UI rendering are included in this measurement.
+
+## Go Card implementation
+
+Go uses `-buildmode=c-shared` and the existing C ABI. A subprocess/JSON adapter
+would add serialization and a separate child lifetime/display protocol; the
+library path reuses the worker's typed validation, sandbox, cancellation,
+deadline and resident-state behavior. A worker loads one package and never
+calls `dlclose`, so the Go runtime lives until that worker process exits.
+
+The C shim uses the current `abi.h`. `Context` holds a shared guarded state,
+not a copyable raw pointer: every callback locks the guard, and closing the
+invocation clears it before C returns. The SDK copies C input buffers to Go
+memory and unpacks them; it does not expose C-backed slices. Output bytes and
+numeric arrays cross cgo only for a synchronous callback that copies them.
+String pointer arrays are allocated in C, with C-owned strings. These rules
+follow [cgo's pointer ownership contract](https://pkg.go.dev/cmd/cgo#hdr-Passing_pointers).
+
+`ctx.Go` tracks tasks, recovers their panics and waits before output packing.
+Normal call completion closes its context and joins its cancellation monitor.
+Error/cancellation paths close the context before returning; the failed worker
+is discarded. Cancellation/deadlines kill all its goroutines. Untracked user
+`go` statements are the Card author's responsibility and a panic in one can
+crash the worker, which the daemon reports as a failure. Shell hooks may run
+with the Go runtime already loaded. The child does only process setup and
+execs Bash, while the original worker owns the Go threads and state.
+
+The generated SDK contains FlatBuffers' Go runtime from nixpkgs' fixed
+FlatBuffers source. Other modules use the Card's explicit `lock` (go.sum)
+and `hash` for buildGoModule's fixed-output proxy cache. The actual Card build has network
+resolution disabled and uses `-mod=readonly`. There is one root package,
+not a selectable Go workspace/package list. The source of both UI scaffolds
+is `sdk/go/template`; run `python3 sdk/codegen/scaffold_go.py` to synchronize
+Swift and TypeScript after changing it.
+
+`tests/python/test_go_cards.py` runs real host sandboxes and covers typed
+Python/Go/C++ data, stale context copies, retained owned inputs, managed task
+outputs (also with `GOEXPERIMENT=cgocheck2`), lifecycle, panic/error recovery,
+cancellation/deadlines, files and every display kind. The bilingual
+`go-pipeline` example and its Draft are bundled demos.
+
+## Module display performance checks
+
+`web/tools/module-perf.tsx` uses the production display component with three deterministic cases: eight Plotly traces of 5,000 points, a Vega-Lite scatter plot of 50,000 points, and twelve mixed Plotly/Vega-Lite figures of 2,000 points each. It records initial output readiness, 120 animation-frame intervals while changing the display size and position as in canvas pan/zoom, retained iframe count, and `performance.memory.usedJSHeapSize` when available.
+
+Build the comparison fixtures with:
+
+```sh
+node web/tools/module-perf.mjs /tmp/modules-before 03837b42
+node web/tools/module-perf.mjs /tmp/modules-after
+python3 -m http.server 8771 --bind 127.0.0.1 --directory /tmp/modules-before
+# In another terminal:
+python3 -m http.server 8772 --bind 127.0.0.1 --directory /tmp/modules-after
+```
+
+The baseline fixture adds the same iframe sandbox that the production server applies through CSP. Open both pages in a background browser with at least a 1280 × 720 viewport. For each case choose the scene, Render, wait for the results line, then Measure pan and zoom. Close all between cases. New result changes the data without changing its length; Open expanded uses the full interactive viewer.
+
+The Web canvas now retains images instead of one plotting runtime per figure. Visible frames share one serial renderer with a 32 MiB preview-cache budget (encoded data plus decoded-pixel cost); it is removed one second after the queue empties. Hidden frames release their displayed image and cancel queued work. The full JSON and dimensions identify a preview, and small rounding changes during zoom reuse its dimensions. Initial PNG generation has a cost, especially for many figures; the optimization removes retained runtimes, rather than promising a shorter first render in every case.
+
+A manual comparison on 2026-11-12 used the same background Chromium browser at 1280 × 720. The baseline was `03837b42`, with the production sandbox applied. Each row is one run, not a statistical estimate; other work on the shared Mac can affect timings.
+
+| Scene | Initial output, before → after | Pan/zoom frame interval p50 / p95 / max, before → after | Retained iframes, before → after |
+| --- | --- | --- | --- |
+| Complex Plotly (2,251,466 source bytes) | 355.5 → 402.7 ms | 16.7 / 18.3 / 18.7 → 16.7 / 18.3 / 18.5 ms | 1 → 0 |
+| Large Vega-Lite (3,991,328 source bytes) | 253.5 → 352.9 ms | 16.7 / 18.3 / 18.7 → 16.7 / 18.3 / 18.6 ms | 1 → 0 |
+| Twelve mixed figures (2,332,516 source bytes) | 505.9 → 605.7 ms | 16.7 / 18.3 / 150.0 → 16.7 / 18.3 / 33.4 ms | 12 → 0 |
+
+For completeness, `usedJSHeapSize` readings in bytes were 20,152,105 → 23,707,679 (complex), 22,134,281 → 27,472,890 (large), and 22,050,521 → 22,556,428 (twelve figures). These are consecutive same-tab readings, not controlled memory profiles.
+
+The twelve-figure case displayed all twelve previews; another result with the same-sized data displayed all twelve updated previews in 603.6 ms. Its expanded view showed the updated revision, zoom changed the axis ticks, and closing it removed the interactive iframe. Initial export was slower in all three cases; steady-state median and p95 frame intervals were essentially unchanged. The lower maximum in the twelve-figure run is an observation from this sample, not a guaranteed latency bound. JavaScript heap readings are not used as evidence of a memory reduction: they may omit isolated iframe heaps and are not whole-process RSS. Retained iframe counts demonstrate the runtime-lifetime change; measuring total browser memory requires a separate process-level profile.
+
+The viewer uses [Plotly image export](https://plotly.com/javascript/plotlyjs-function-reference/#plotlytoimage) and [Vega view finalization](https://vega.github.io/vega/docs/api/view/#view_finalize) at their documented lifecycle boundaries.
+
+The common viewer's lifecycle check also runs in real, offscreen macOS WKWebViews, without opening or activating a window:
+
+```sh
+swift macOS/tools/perf/module-viewer.swift /tmp/modules-after/modules
+```
+
+This creates and closes three viewers, verifies rapid same-sized Plotly updates show the latest values, exports PNG, replaces Vega views five times, and switches back to Plotly. On 2026-11-12 it passed in 1.2–2.0 seconds across repeated checks. Against the baseline viewer it failed because none of the five replaced Vega views were finalized. The Node behavior suite separately tests queued-update coalescing, stale completion suppression, zero initial iframe viewport dimensions, cache eviction, cancellation, and idle cleanup. These checks complement the existing macOS canvas measurements in commit `03837b42`; this change does not replace that native thumbnail implementation.
 
 ## Rust Card implementation
 

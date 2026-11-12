@@ -96,9 +96,9 @@ Inside the child Workflow (the same shape in all four):
 | `check` | code | Outputs nothing if the value is 1 (ending the loop); otherwise outputs the value and its parity. `maxRuns` (200) bounds the iterations |
 | `route` | branch | Fires only `a` (`halve`) for even, or only `b` (`triple`) for odd |
 | `halve` / `triple` | code | Compute `n/2` and `3n+1`. `triple` fails with `integer overflow` beyond 64-bit integers |
-| `collect` | code | Collects and displays the values that arrive, and outputs the sequence when 1 arrives. C++ and Python clear the resident worker's state for each run in `onRunStart` |
+| `collect` | code | Collects and displays the values that arrive, and outputs the sequence when 1 arrives. C++ and Python keep the values in the worker (`reuseWorker: true`) and clear them for each run in `onRunStart` |
 
-**How the Julia and R sides differ.** Julia and R Cards run in a separate process per invocation and remember nothing ([Limitations](Limitations.md)). So `collect` cannot collect values; instead the value going back to `loop` carries "the sequence so far" (`Walk`: `value` and `path`), and `collect` outputs `path` as the sequence when 1 arrives. Because the message carries the process, the record of any Card shows the sequence up to that point.
+**How the Julia and R sides differ.** Every code Card of the four loops sets `reuseWorker: true`, so one worker per Card serves all the iterations instead of a new interpreter for each. Only the C++ and Python `collect` use the state that this keeps. This demo keeps the Julia and R sequence explicit in the messages: the value going back to `loop` carries "the sequence so far" (`Walk`: `value` and `path`), and `collect` outputs `path` as the sequence when 1 arrives. Because the message carries the process, the record of any Card shows the sequence up to that point.
 
 **R's range.** R's numbers are doubles, so integers are exact only below 2^53. Larger values are passed by the worker as strings, so R's `check` and `halve` fail rather than round silently, and `triple` fails before computing when `3n+1` would reach 2^53. Within this range the four sequences agree. Julia computes in 64-bit integers (`UInt64`), and its `triple`, like C++ and Python, fails with `integer overflow` when `3n+1` exceeds 64 bits.
 
@@ -673,3 +673,15 @@ start → load → prepare → share ─┬→ knn ──────┐
 - **What is checked:** each Draft's description has the steps of the computation and `assert`s. Besides the counts, the 0–9 range and a minimum accuracy, they check properties that each method's result must have (kNN agreeing with brute force in numpy, logistic regression's predictions agreeing with the weighted sums, the forest's predictions agreeing with the average of its trees, formulas for the networks' parameter counts and so on). `compare` checks that the digests agree and that the accuracies agree with values recomputed from the predictions.
 - **Why the counts are small:** a project can run only one run at a time, so the helpers' runs wait their turn (at most 900 seconds per wait). So it uses 5000 training and 1000 test images, smaller than the finished version (10000 and 2000).
 - **The answers:** neither this demo nor the finished `mnist-classifiers` appears in the Agent's `reference_read` list or can be read with it.
+
+## csharp-calibration
+
+The **Cross-language calibration (C#)** demo passes three C++ readings (1.25, 2.5, 3.75) through a C# Card with `factor = 1.6`, then summarizes the typed result in Python and retains a CSV. The expected calibrated values are 2, 4 and 6: sum 12 and mean 4. Change `calibrate.factor` to 2 and rerun; the sum becomes 15 and mean 5. The C# log uses a fixed-hash Newtonsoft.Json dependency. Each Card's source and the saved CSV remain available to inspect. See [C# Cards](CSharp.md) for the SDK and worker lifetime.
+
+## Visualization → report (`visualization`)
+
+A typed aggregate fans out to line, scatter and histogram Cards, then a Python report collects their saved PNG/SVG/PDF figures and plotted values. Change `aggregate.offset` to produce different figures with the same data size. The [Visualization guide](Visualization.md) describes the three library templates and their parameters.
+
+## marimo notebook → typed result (`marimo`)
+
+The upstream Card scales a measurement of 7 by its `factor` of 2. A marimo notebook visualizes the original and scaled values, and a logger consumes the selected result of 14. The notebook invocation retains static HTML, a figure, source cells and binding and result metadata. Set the upstream `factor` to 3 and rerun it to save a result of 21. See [marimo Cards](Marimo.md).

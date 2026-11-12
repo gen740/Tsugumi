@@ -1,0 +1,21 @@
+{
+  "flow": "topToBottom",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "source": {
+      "x": 0,
+      "y": 190
+    },
+    "notebook": {
+      "x": 0,
+      "y": 380
+    },
+    "result": {
+      "x": 0,
+      "y": 570
+    }
+  }
+}

@@ -49,6 +49,10 @@ struct CardMenu: View {
     if session.displayFrame(cardKey)?["hidden"]?.bool == true {
       Button("出力表示を戻す") { session.updateDisplayFrame(cardKey) { $0["hidden"] = nil } }
     }
+    if targets.contains(where: { session.hasPortOrder($0) }) {
+      Button("ポートの並びを元に戻す") { session.resetPortOrder(targets) }
+        .disabled(!session.isEditable)
+    }
     Button("グループ化（見た目だけ）") {
       if !tab.selection.contains(cardKey) { tab.selection = [cardKey] }
       onGroup()
@@ -170,13 +174,24 @@ struct OutputFrameView: View {
   let onClose: () -> Void
   let onResize: (CGSize) -> Void
   @Environment(\.canvasZoom) private var z
+  @State private var settled: DisplaySnapshot?
+
+  private struct DisplayChange: Equatable {
+    let hold: Bool
+    let runId: String?
+    let invocation: UInt64?
+    let revision: UInt64?
+  }
 
   var body: some View {
+    let figure = session.figureState(cardKey)
+    let latest = session.displays[cardKey]
+    let display = figure.holdsDisplay ? settled : latest
     VStack(alignment: .leading, spacing: 4 * z) {
       HStack(spacing: 6 * z) {
         Image(systemName: "chart.xyaxis.line").font(.system(size: 10 * z)).foregroundStyle(.purple)
         Text(session.displayName(cardKey)).font(.system(size: 10 * z, weight: .bold)).lineLimit(1)
-        if let d = session.displays[cardKey] {
+        if let d = display {
           Text("Run \(String(d.runId.prefix(6))) · 実行 #\(d.invocation)").font(.system(size: 9 * z).monospacedDigit()).foregroundStyle(.secondary)
             .help("Run \(d.runId) の中で、この Card の \(d.invocation) 回目の実行の結果")
         }
@@ -187,7 +202,13 @@ struct OutputFrameView: View {
           .buttonStyle(.borderless).help("枠を削除（Card は残ります）")
       }
       .foregroundStyle(.secondary)
-      DisplayContent(display: session.displays[cardKey], zoom: z, emptyNote: session.noResultNote(cardKey))
+      DisplayContent(display: display, zoom: z, emptyNote: session.noResultNote(cardKey),
+                     figure: figure.mode == .live ? figure : FigureState())
+        .opacity(figure.holdsDisplay ? 0.4 : 1)
+    }
+    .onChange(of: DisplayChange(hold: figure.holdsDisplay, runId: latest?.runId, invocation: latest?.invocation,
+                                revision: latest?.revision), initial: true) {
+      if !figure.holdsDisplay { settled = latest }
     }
     .padding(8 * z)
     .background(RoundedRectangle(cornerRadius: 8 * z).fill(Color(nsColor: .windowBackgroundColor)))
@@ -205,6 +226,8 @@ struct DisplayContent: View {
   var zoom: CGFloat = 1
   /// Why there is no result, when it is not that nothing has run yet.
   var emptyNote: String?
+  /// How a chart preview on the canvas follows the Card's results.
+  var figure = FigureState()
 
   @State private var tablePage = 0
 
@@ -297,7 +320,7 @@ struct DisplayContent: View {
       if large {
         ModuleViewer(name: name, json: json, interactive: true, zoom: zoom)
       } else {
-        ModuleThumbnail(name: name, json: json, lineage: "\(display?.runId ?? "")#\(display?.invocation ?? 0)", zoom: zoom)
+        ModuleThumbnail(name: name, json: json, lineage: "\(display?.runId ?? "")#\(display?.invocation ?? 0)", zoom: zoom, figure: figure)
       }
     case .module(let name, let json)?:
       ModuleDisplayView(name: name, json: json, large: large, zoom: zoom)

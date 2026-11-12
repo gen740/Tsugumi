@@ -53,6 +53,30 @@ def test_projects_share_the_store_but_not_users_views_or_processes(tmp_path):
         b.stop()
 
 
+def test_project_cannot_read_cache_credentials_or_change_daemon_trust(tmp_path):
+    env = project(tmp_path / "cache-trust", "true", "cache-trust")
+
+    try:
+        hidden = env.exec(
+            "test ! -e /run/tsugumi/binary-caches/netrc && "
+            "test ! -e /run/tsugumi/binary-caches/nix.conf && echo hidden"
+        )
+        assert hidden.strip().endswith("hidden"), hidden
+        probe = env.exec("echo probe > /tmp/cache-trust-probe; nix-store --add /tmp/cache-trust-probe")
+        store_path = probe.strip().splitlines()[-1]
+        assert store_path.startswith("/nix/store/"), probe
+        attempt = env.exec(
+            "nix-store --realise "
+            "--option substituters https://unconfigured.invalid "
+            "--option trusted-public-keys probe:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc= "
+            f"{store_path} 2>&1"
+        )
+        assert "ignoring untrusted substituter" in attempt, attempt
+        assert "trusted-public-keys" in attempt and "restricted setting" in attempt, attempt
+    finally:
+        env.stop()
+
+
 def test_stopping_one_project_keeps_the_other_running(tmp_path):
     slow = project(tmp_path / "slow", 'sleep 6; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', "slow")
     other = project(tmp_path / "other", 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', "other")
