@@ -354,7 +354,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     bool start_fired = false;
     std::map<std::string, std::deque<TokenGroup>> queues;  // connected inputs only
     uint64_t invocations = 0;
-    uint64_t executed = 0;
+    uint64_t recorded_invocations = 0;
     uint64_t activations = 0;
     bool running = false;
     bool halted = false;  // failed hard (e.g. maxRuns) and no longer scheduled
@@ -512,6 +512,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     return group;
   }
 
+  auto missing_saved_inputs(const Node& node) -> Failed {
+    const auto card = path_key(node.path);
+    return Failed(FailureKind::input_missing, "no saved inputs for " + card +
+                  "; run the workflow from its trigger Card once first (it saves every Card's inputs)", {{"card", card}});
+  }
+
   auto reject_start(NodeRt& node, const FailureData& failure) -> void {
     start_failure_ = failure;
     node.halted = true;
@@ -524,7 +530,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   void seed_saved(NodeRt& node, const std::set<std::string>& outside) {
     try {
       const auto last = svc_.history().read([&](sql::Db& db) { return History::last_input(db, node.node->path); });
-      if (!last) throw Failed(FailureKind::input_missing, "no saved inputs for " + path_key(node.node->path));
+      if (!last) throw missing_saved_inputs(*node.node);
       for (const auto& port : outside) {
         std::optional<History::LastInput> one;
         if (node.node->settings.any_mode)
@@ -565,7 +571,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (!n.queues.empty()) {
         try {
           const auto last = svc_.history().read([&](sql::Db& db) { return History::last_input(db, n.node->path); });
-          if (!last) throw Failed(FailureKind::input_missing, "no saved inputs for " + path_key(n.node->path));
+          if (!last) throw missing_saved_inputs(*n.node);
           for (const auto& port : n.node->inputs)
             if (!port.optional && std::ranges::find(last->groups, port.name, &SavedInputGroup::port) == last->groups.end())
               throw Failed(FailureKind::input_missing, "the saved inputs have no value for " + port.name);
@@ -1007,6 +1013,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       work.preparation_failure = failure;
       invoke(work, lane);
       ++rt.invocations;
+      ++rt.recorded_invocations;
     } else if (count == 0) {
       if (work.prepared) {
         // Build logs for an empty plan keep their own ID.
@@ -1057,7 +1064,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       // Assigned IDs are stable even when cancellation skipped queued members.
       rt.invocations += count;
     }
-    rt.executed += started.load();
+    rt.recorded_invocations += started.load();
     if (reserved) {
       std::lock_guard lock(mu_);
       worker_budget_ -= count - started.load();
@@ -1743,8 +1750,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (!n.in_targets || n.node->is_virtual) continue;
       const std::string key = path_key(n.node->path);
       // The trigger of a whole run only starts it.
-      if (n.executed > 0 && !(whole && n.node->kind == Template::Trigger)) {
-        ran.push_back(n.executed > 1 ? key + " ×" + std::to_string(n.executed) : key);
+      if (n.recorded_invocations > 0 && !(whole && n.node->kind == Template::Trigger)) {
+        ran.push_back(n.recorded_invocations > 1 ? key + " ×" + std::to_string(n.recorded_invocations) : key);
         saved |= n.saved_inputs;
       }
       if (n.last_failure && n.last_failure->kind != FailureKind::cancelled)
