@@ -813,7 +813,7 @@ function bubblePosition(at: Pt, size: { width: number; height: number }, view: {
 /** The built-in Cards, for the canvas menu and the + button. */
 export function builtinCardItems(add: (t: DefinitionTemplate) => void): MenuItem[] {
   const item = (id: DefinitionTemplate): MenuItem => ({ label: TEMPLATES.find((t) => t.id === id)?.label ?? id, action: () => add(id) })
-  return [item('python'), item('cpp'), item('go'), item('draft'), 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge'), item('logger')]
+  return [item('python'), item('cpp'), item('go'), item('csharp'), item('draft'), 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge'), item('logger')]
 }
 export { templateIcon }
 

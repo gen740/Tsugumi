@@ -87,9 +87,9 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
     When it runs, the file is copied into the run and the next Card receives its path. Fixed values are params of
     the same names as the fields of its output table (demos/report/definitions/settings). Other built-ins: fork,
     branch, merge, logger (card-guide.md).
-  * Otherwise a code Card: set "language" ("python", "cpp", "go", "bash", "r" or "julia") and remove "template" in _card.json, write
+  * Otherwise a code Card: set "language" ("python", "cpp", "go", "csharp", "bash", "r" or "julia") and remove "template" in _card.json, write
     _outputs.fbs (one table per output port; the root table Outputs), default.nix and the sources in src/.
-    For Go, R and Julia, card-guide.md has the entry points and Nix helpers.
+    For Go, C#, R and Julia, card-guide.md has the entry points and Nix helpers.
     default.nix is a function of { pkgs, inputs, params }. Python (demos/report/definitions/generate/default.nix):
       { pkgs, inputs, params }:
       let
@@ -191,9 +191,10 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   * C++: sources are `#include <card.hh>` and `auto run(Card::Input& input) -> Card::Output` with one member per
     port (input.<port>, Output's ports are std::optional); visualization is
     tsugumi::visualization::text/markdown/scalar/line_chart/table/image/points/module.
-  * The worker stays across runs, so reset static state in `auto onRunStart() -> void` (Python:
-    on_run_start(ctx)). Input types come from the connected outputs; never write _inputs.fbs. Optional preRun /
-    postRun are bash without the Card inputs.
+  * Each invocation starts a fresh worker by default. Set `reuseWorker: true` in _card.json to keep this Card's
+    state across invocations and runs. To reset that state at the start of each run, use `auto onRunStart() -> void`
+    (Python: on_run_start(ctx)). Input types come from the connected outputs; never write _inputs.fbs.
+    Optional preRun / postRun are bash without the Card inputs.
   Keep each reply short enough to finish: one Card per project_save, long sources in saves of their own.
   Write all the Drafts first, upstream first (write first, run afterwards: see the rule above): write and save each.
   When they are all saved, check them once with project_validate and fix what it reports. Then run once from the

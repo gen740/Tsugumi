@@ -1,4 +1,5 @@
 import { GO_SCAFFOLD } from './go-scaffold'
+import csharpFiles from '../../../ui/templates/csharp.json'
 // One open project: shared by every view showing it. Owns the RPC
 // connection, the confirmed document (from tsugumid), the local draft with
 // undo/redo, run progress, displays and logs. Every edit is saved at once:
@@ -3030,6 +3031,10 @@ export class ProjectSession extends Observable {
     const ns = id.replace(/[-.]/g, '_')
     const set = (card: J, meta?: J) => this.setCardDefinition(k, { card, meta })
     switch (t) {
+      case 'csharp':
+        set(tryParse(csharpFiles['_card.json'])!)
+        for (const [file, text] of Object.entries(csharpFiles)) if (file !== '_card.json') this.putSource(dir + file, text)
+        break
       case 'draft':
         set(obj([['template', 'draft']]), obj([['description', ''], ['content', '']]))
         break
@@ -3448,16 +3453,16 @@ export function definitionKind(def: J | undefined): CardKind {
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = 'python' | 'cpp' | 'go' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
+export type DefinitionTemplate = 'python' | 'cpp' | 'go' | 'csharp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
-  { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'go', label: L('Go の処理') }, { id: 'input', label: L('入力値') },
+  { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'go', label: L('Go の処理') }, { id: 'csharp', label: L('C# の処理') }, { id: 'input', label: L('入力値') },
   { id: 'switch', label: L('スイッチ') },
   { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') }, { id: 'fork', label: L('分配') },
   { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'logger', label: L('記録') },
 ]
-export const templateIcon = (t: DefinitionTemplate) => KIND_ICON[t === 'python' || t === 'cpp' || t === 'go' ? 'code' : (t as CardKind)]
+export const templateIcon = (t: DefinitionTemplate) => KIND_ICON[t === 'python' || t === 'cpp' || t === 'go' || t === 'csharp' ? 'code' : (t as CardKind)]
 /** A name for the new Card (its id; made unique). */
-export const templateBaseName = (t: DefinitionTemplate) => (t === 'python' || t === 'cpp' || t === 'go' ? 'card' : t)
+export const templateBaseName = (t: DefinitionTemplate) => (t === 'python' || t === 'cpp' || t === 'go' || t === 'csharp' ? 'card' : t)
 
 export const NOTE_COLORS: { id: string; label: string }[] = [
   { id: 'yellow', label: L('黄') }, { id: 'blue', label: L('青') }, { id: 'green', label: L('緑') }, { id: 'pink', label: L('桃') }, { id: 'gray', label: L('灰') },

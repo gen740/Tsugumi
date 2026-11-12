@@ -1,10 +1,6 @@
-/* Tsugumi Card ABI, version 2 (version 1 plus the display functions at the
- * end of tsugumi_call; Cards built for version 1 keep working).
- *
- * A Card package provides lib/main.so exporting tsugumi_main. C++ and Python
- * Cards use the same ABI (Python packages ship a main.so that embeds the
- * interpreter). The worker host owns every pointer passed in; they are valid
- * only during the call.
+/* Tsugumi Card ABI. A Card package provides lib/main.so exporting
+ * tsugumi_main. The worker owns every pointer passed in; they are valid only
+ * during the call. Language runtimes stay with the resident worker.
  */
 #ifndef TSUGUMI_SDK_ABI_H
 #define TSUGUMI_SDK_ABI_H
@@ -16,7 +12,7 @@
 extern "C" {
 #endif
 
-#define TSUGUMI_ABI_VERSION 3u
+#define TSUGUMI_ABI_VERSION 4u
 
 enum tsugumi_port_kind { TSUGUMI_FILE = 1, TSUGUMI_DIRECTORY = 2, TSUGUMI_FLATBUFFER = 3 };
 
@@ -74,6 +70,16 @@ typedef struct tsugumi_call {
   int (*display_module)(void* host, const char* name, const char* data_json);
   /* ABI 3. Markdown text (with TeX math) shown as formatted text. */
   int (*display_markdown)(void* host, const char* text);
+  /* ABI 4. In-memory adapters for languages without a FlatBuffers generator.
+   * Inputs/params are decoded using their actual schema; outputs are encoded
+   * and validated as FlatBuffers. Returned strings last until the call ends.
+   * NULL means an absent input (or a conversion failure, recorded by the host).
+   * No JSON files or subprocess protocol are involved. */
+  const char* (*input_json)(void* host, const char* port);
+  const char* (*params_json)(void* host);
+  int (*emit_json)(void* host, const char* port, const char* json);
+  int (*display_json)(void* host, const char* json);
+
 } tsugumi_call;
 
 typedef int (*tsugumi_main_fn)(const tsugumi_call* call);

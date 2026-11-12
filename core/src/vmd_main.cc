@@ -678,6 +678,14 @@ void shell(int conn, const std::string& id, int rows, int cols) {
   auto ev = cstrings(env);
   pid_t pid = ::fork();
   if (pid == 0) {
+    // This wrapper waits for the shell instead of execing. Close all inherited
+    // sockets and PTYs except this shell's slave, even the CLOEXEC descriptors.
+    // Otherwise another tab's wrapper can keep its PTY master alive after it closes.
+    const auto first = static_cast<unsigned int>(STDERR_FILENO + 1);
+    const auto terminal = static_cast<unsigned int>(slave);
+    if ((terminal > first && ::syscall(SYS_close_range, first, terminal - 1, 0) != 0) ||
+        ::syscall(SYS_close_range, terminal + 1, ~0u, 0) != 0)
+      die("close inherited terminal descriptors");
     // Join the project's namespaces (the PID namespace applies to the next
     // child). All are opened first: /proc changes with the mount namespace.
     int nsfd[4];
