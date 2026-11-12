@@ -180,12 +180,12 @@ def test_report_cancel_deadline_and_recovery(project, extension):
     root, connect = project
     marker = f'tsugumi-report-child-{uuid.uuid4().hex}'
     slow = REPORT.replace('plot(values, type="b")',
-                          f'system2("bash", c("-c", shQuote("exec -a {marker} sleep 60")), wait = FALSE)\n'
+                          f'system2("bash", c("-c", shQuote("sleep 60; :"), "{marker}"), wait = FALSE)\n'
                           'cat("report-sleeping\\n", file=stderr()); Sys.sleep(60)')
 
     def child_alive():
         args = subprocess.check_output(['ps', '-axww', '-o', 'command='], text=True)
-        return any(line.startswith(marker + ' ') for line in args.splitlines())
+        return any(marker in line for line in args.splitlines())
 
     report_project(root, extension, slow)
     client = connect()
