@@ -125,8 +125,9 @@ def postgres(tmp_path):
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
+    # Tests use TCP only. CI temporary paths can exceed Darwin's Unix socket limit.
     subprocess.run(["pg_ctl", "-D", str(directory), "-l", str(tmp_path / "postgres.log"),
-                    "-o", f"-h 127.0.0.1 -p {port} -k {tmp_path}", "-w", "start"], check=True, capture_output=True)
+                    "-o", f"-h 127.0.0.1 -p {port} -c unix_socket_directories=\"\"", "-w", "start"], check=True, capture_output=True)
     try:
         yield f"postgresql://127.0.0.1:{port}/postgres?sslmode=disable", password
     finally:
