@@ -893,6 +893,8 @@
  "実行履歴の形式は {0} です。このバージョンの Tsugumi には {1} が必要です。": "This run history uses format {0}. This version of Tsugumi requires {1}.",
  "互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。": "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app.",
  "履歴を退避して起動": "Archive History and Start",
+ "履歴の退避が中断されました": "History Archive Interrupted",
+ "履歴の退避を再開して起動": "Resume Archiving and Start",
  "実行環境を起動できませんでした": "The environment could not start",
  "実行環境（Nixpkgs）": "Environment (Nixpkgs)",
  "実際の実行での経過時間（記録）": "Elapsed time in the real run (recorded)",

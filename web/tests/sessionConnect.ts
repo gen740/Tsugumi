@@ -55,13 +55,14 @@ try {
     const routes: string[] = []
     globalThis.fetch = (async (url) => {
       routes.push(String(url))
-      return new Response(JSON.stringify({ state: 'failed', historyVersionMismatch: mismatch }))
+      return new Response(JSON.stringify({ state: 'failed', historyVersionMismatch: { ...mismatch, found: 'pending' } }))
     }) as typeof fetch
     const session = new ProjectSession('/p', 'k', 'p')
     session.archiveHistoryAndStart()
     assert.deepEqual(routes, [])
     await (session as unknown as Inner).openConnection()
     assert.equal(session.environment.state, 'failed')
+    assert.equal(session.environment.historyVersionMismatch?.found, 'pending')
     session.archiveHistoryAndStart()
     session.archiveHistoryAndStart()
     assert.deepEqual(routes, ['/api/env/start', '/api/env/archive-history'])

@@ -285,7 +285,7 @@ struct EnvironmentProblemView: View {
     var recovery: String?
     var log: String
     var canStop = true
-    var canArchiveHistory = false
+    var historyArchiveAction: String?
     /// The line of the log that says why (tsugumid's last error).
     var cause: String?
   }
@@ -301,8 +301,10 @@ struct EnvironmentProblemView: View {
     switch session.environment {
     case .incompatibleHistory(let issue):
       let error = LauncherError.incompatibleHistory(issue)
-      return Problem(symbol: "clock.arrow.circlepath", color: .orange, title: String(localized: "実行履歴の形式が異なります"),
-                     message: error.description, recovery: error.recovery, log: "", canArchiveHistory: true)
+      let title = issue.archiveInterrupted ? error.description : String(localized: "実行履歴の形式が異なります")
+      let action = issue.archiveInterrupted ? String(localized: "履歴の退避を再開して起動") : String(localized: "履歴を退避して起動")
+      return Problem(symbol: "clock.arrow.circlepath", color: .orange, title: title,
+                     message: issue.archiveInterrupted ? "" : error.description, recovery: error.recovery, log: "", historyArchiveAction: action)
     case .failed(let m, let recovery, let log):
       var p = Problem(symbol: "xmark.octagon.fill", color: .red, title: String(localized: "実行環境を起動できませんでした"),
                       message: m, recovery: recovery.isEmpty ? nil : recovery, log: log)
@@ -364,8 +366,8 @@ struct EnvironmentProblemView: View {
         HStack(spacing: 10) {
           Button(p.canStop ? "再試行" : "起動") { session.start() }
             .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-          if p.canArchiveHistory {
-            Button("履歴を退避して起動") { session.archiveHistoryAndStart() }
+          if let action = p.historyArchiveAction {
+            Button(action) { session.archiveHistoryAndStart() }
           } else if p.canStop {
             Button("環境を停止") { session.stopEnvironment() }
           }

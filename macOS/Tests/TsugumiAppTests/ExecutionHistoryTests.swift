@@ -28,7 +28,7 @@ import Testing
       try VMHostIPC.write([
         "id": try #require(request["id"] as? String),
         "error": "cannot open history",
-        "startup_error": ["kind": kind, "found": "2", "expected": "3"],
+        "startup_error": ["kind": kind, "found": attempt == 1 ? "pending" : "2", "expected": "3"],
       ], to: peer)
     }
     return archives
@@ -50,8 +50,15 @@ import Testing
   }
   #expect(mismatch.found == "2")
   #expect(mismatch.expected == "3")
+  #expect(!mismatch.archiveInterrupted)
   session.start()
   try await waitForProblem()
+  if case .incompatibleHistory(let pending) = session.environment {
+    #expect(pending.archiveInterrupted)
+    #expect(!LauncherError.incompatibleHistory(pending).description.contains("pending"))
+  } else {
+    Issue.record("Expected an interrupted archive")
+  }
   session.archiveHistoryAndStart()
   try await waitForProblem()
   #expect(try await host.value == [false, false, true])

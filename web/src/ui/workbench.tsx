@@ -285,10 +285,11 @@ function EnvironmentProblemView({ session, onSwitchProject }: { session: Project
   const [copied, setCopied] = useState(false)
   const env = session.environment
   const historyMismatch = env.state === 'failed' ? env.historyVersionMismatch : undefined
+  const archiveInterrupted = historyMismatch?.found === 'pending'
   let p: Problem
   if (historyMismatch) {
-    p = { icon: 'clock.arrow.circlepath', color: 'orange', title: L('実行履歴の形式が異なります'),
-      message: L('実行履歴の形式は {0} です。このバージョンの Tsugumi には {1} が必要です。', historyMismatch.found, historyMismatch.expected),
+    p = { icon: 'clock.arrow.circlepath', color: 'orange', title: archiveInterrupted ? L('履歴の退避が中断されました') : L('実行履歴の形式が異なります'),
+      message: archiveInterrupted ? '' : L('実行履歴の形式は {0} です。このバージョンの Tsugumi には {1} が必要です。', historyMismatch.found, historyMismatch.expected),
       recovery: L('互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。'),
       log: '', canStop: true }
   } else if (env.state === 'failed') {
@@ -332,7 +333,7 @@ function EnvironmentProblemView({ session, onSwitchProject }: { session: Project
         <div className="row gap8 center">
           <Button kind="prominent" onClick={() => session.start()}>{p.canStop ? L('再試行') : L('起動')}</Button>
           {historyMismatch
-            ? <Button onClick={() => session.archiveHistoryAndStart()}>{L('履歴を退避して起動')}</Button>
+            ? <Button onClick={() => session.archiveHistoryAndStart()}>{archiveInterrupted ? L('履歴の退避を再開して起動') : L('履歴を退避して起動')}</Button>
             : p.canStop && <Button onClick={() => void session.stopEnvironment()}>{L('環境を停止')}</Button>}
           <span className="spacer" />
           {onSwitchProject && <Button onClick={onSwitchProject}>{L('別のプロジェクトを開く…')}</Button>}

@@ -26,6 +26,7 @@ FAULTS = {
     "save_after_prepare": "after_journal",
     "save_during_apply": "partial_apply",
     "invocation_record": "history_invocation",
+    "archive_after_main_move": "history_archive_after_main",
     "save_exception": "save_throws",
 }
 

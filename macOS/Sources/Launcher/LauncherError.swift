@@ -19,6 +19,9 @@ public enum LauncherError: Error, CustomStringConvertible, Sendable {
     case .startFailed(let reason, _):
       return String(localized: "実行環境が起動の途中で止まりました: \(Self.reasonText(reason))", bundle: .main)
     case .incompatibleHistory(let issue):
+      if issue.archiveInterrupted {
+        return String(localized: "履歴の退避が中断されました", bundle: .main)
+      }
       return String(localized: "実行履歴の形式は \(issue.found) です。このバージョンの Tsugumi には \(issue.expected) が必要です。", bundle: .main)
     case .notReady(let s):
       return String(localized: "実行環境の準備ができませんでした: \(s)", bundle: .main)
