@@ -168,7 +168,7 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
     try {
       let inv = invocation ?? null
       if (card && inv === null) {
-        inv = session.cardStates.get(key(card))?.invocation ?? null
+        if (runId === session.currentRunId) inv = session.cardStates.get(key(card))?.invocation ?? null
         if (inv === null) inv = (await rpc.record(runId, card).catch(() => undefined))?.selectedInvocation ?? null
       }
       for (;;) {

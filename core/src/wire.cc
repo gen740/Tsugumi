@@ -203,6 +203,11 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   auto em = s.emulator.empty() ? Off<flatbuffers::String>() : b.CreateString(s.emulator);
   auto env = s.environment_id.empty() ? Off<flatbuffers::String>() : b.CreateString(s.environment_id);
   auto execution = s.execution_service.empty() ? Off<flatbuffers::String>() : b.CreateString(s.execution_service);
+  auto job = s.execution_job_id.empty() ? Off<flatbuffers::String>() : b.CreateString(s.execution_job_id);
+  auto system = s.execution_system.empty() ? Off<flatbuffers::String>() : b.CreateString(s.execution_system);
+  auto resources = s.execution_resources ? R::CreateExecutionResources(b, s.execution_resources->cpu_millis,
+                                                                     s.execution_resources->memory_bytes)
+                                         : Off<R::ExecutionResources>();
   R::InvocationSummaryBuilder ib(b);
   ib.add_run_id(run);
   ib.add_card(card);
@@ -222,6 +227,10 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   if (!s.emulator.empty()) ib.add_emulator(em);
   if (!s.environment_id.empty()) ib.add_environment_id(env);
   if (!execution.IsNull()) ib.add_execution_service(execution);
+  if (!job.IsNull()) ib.add_execution_job_id(job);
+  if (!system.IsNull()) ib.add_execution_system(system);
+  if (!resources.IsNull()) ib.add_execution_resources(resources);
+  if (s.execution_state) ib.add_execution_state(*s.execution_state);
   return ib.Finish();
 }
 

@@ -29,6 +29,9 @@ struct NixCall {
   // symlink (registered as an indirect root outside /nix/var/nix/gcroots).
   std::filesystem::path root_dir;
   std::string root_prefix;
+  // For an external execution service, export the derivation and its inputs
+  // to this file instead of realising it on the central core's store.
+  std::filesystem::path derivation_archive;
   const std::atomic<bool>* cancel = nullptr;
   std::optional<std::chrono::steady_clock::time_point> deadline;
   std::function<void(const std::string&)> log;  // evaluation messages and build output
@@ -72,6 +75,11 @@ class NixEvaluator {
   // Throws std::runtime_error with Nix's message; Interrupted as `cancelled`
   // or `timed_out` set in `what`.
   NixResult build(const NixCall& call);
+
+  // Realise a centrally evaluated derivation in the runner's own chroot store.
+  static auto realise_remote(const std::filesystem::path& archive, const std::filesystem::path& store_root,
+                             const std::string& derivation, const std::string& output,
+                             const std::function<void(const std::string&)>& log) -> NixResult;
 
   // A flake a project opted in to, evaluated apart from every Card: its own
   // state has getFlake and runs as `nix build` does (pure, no IFD). A Card only

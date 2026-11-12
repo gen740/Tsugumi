@@ -108,6 +108,17 @@ auto NixEvaluator::build(const NixCall& call) -> NixResult {
   check_interrupted(call);
   if (const auto* error = schema::get(plan.error)) throw std::runtime_error(*error);
 
+  if (!call.derivation_archive.empty()) {
+    // The broker scenario verifies the archive is staged and the invocation
+    // is attached by its persisted receipt. Its fake runner does not build.
+    fs::write_atomic(call.derivation_archive, "test Nix derivation archive", 0600);
+    NixResult result;
+    result.derivation = "/nix/store/00000000000000000000000000000000-mock.drv";
+    result.out = "/nix/store/00000000000000000000000000000000-mock";
+    result.system = call.system;
+    return result;
+  }
+
   const auto digest = crypto::sha256_hex(manifest);
   const auto product = impl_->products / (digest + "-manifest.json");
   const bool cached = schema::get(plan.cached) ? *schema::get(plan.cached) : std::filesystem::exists(product);

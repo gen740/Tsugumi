@@ -19,6 +19,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 | [ui/](ui/) | Dawn's rendering layer, the viewer for charts (Plotly, Vega-Lite) |
 | [agent/](agent/) | The Agent (model connections, conversations, tools derived from the RPC). The contract shared with the Web is in [agent/Shared/](agent/Shared/) |
 | [web/](web/) | The browser UI and its host server |
+| [remote/](remote/) | The Python execution daemon and durable job journal on the remote Linux host |
 | [cli/](cli/) | The `tsugumi` command (`install.sh` for Mac and Linux, `install.ps1` for Windows, building the distributions) |
 | [plugins/](plugins/) | The Claude Code plugin (installed from `.claude-plugin/marketplace.json`; [docs/claude-code.md](docs/claude-code.md)) |
 | [nix/](nix/) | Package definitions of `tsugumid`, the worker, the Card SDK and the `tsugumi` command |

@@ -204,6 +204,7 @@ namespace {
 
 // An fd of `rel` below `root`, walking each component with O_NOFOLLOW.
 int open_beneath(const stdfs::path& root, const stdfs::path& rel, int flags) {
+  if (rel.is_absolute()) throw Error("file path must be relative to its root");
   int dir = ::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   if (dir < 0) throw Error("open " + root.string() + ": " + std::strerror(errno));
   std::vector<std::string> parts;
@@ -224,61 +225,81 @@ int open_beneath(const stdfs::path& root, const stdfs::path& rel, int flags) {
   return dir;
 }
 
-void list_fd(int dir, const std::string& prefix, Listing& out) {
+void list_fd(int dir, const std::string& prefix, Listing& out, size_t& remaining) {
   DIR* d = ::fdopendir(dir);
   if (!d) {
     ::close(dir);
     throw Error("list: " + std::string(std::strerror(errno)));
   }
+  struct CloseDir {
+    DIR* dir;
+    ~CloseDir() { ::closedir(dir); }
+  } close{d};
   std::vector<std::string> subdirs;
   while (auto* e = ::readdir(d)) {
     std::string name = e->d_name;
     if (name == "." || name == "..") continue;
+    if (remaining == 0) throw Error("directory exceeds its transfer entry limit");
+    --remaining;
     struct stat st{};
     if (::fstatat(::dirfd(d), name.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0) continue;
     if (S_ISLNK(st.st_mode)) out.links.push_back(prefix + name);
-    else if (S_ISDIR(st.st_mode)) subdirs.push_back(name);
+    else if (S_ISDIR(st.st_mode)) {
+      subdirs.push_back(name);
+      out.directories.push_back(prefix + name);
+    }
     else if (S_ISREG(st.st_mode)) out.files.push_back(prefix + name);
+    else out.special.push_back(prefix + name);
   }
   for (const auto& s : subdirs) {
     int fd = ::openat(::dirfd(d), s.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0) out.links.push_back(prefix + s);  // replaced since it was read
-    else list_fd(fd, prefix + s + "/", out);
+    else list_fd(fd, prefix + s + "/", out, remaining);
   }
-  ::closedir(d);
 }
 
 }  // namespace
 
 std::string read_beneath(const stdfs::path& root, const stdfs::path& rel) {
-  int fd = open_beneath(root, rel, O_RDONLY);
-  struct stat st{};
-  if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
-    ::close(fd);
-    throw Error((root / rel).string() + " is not a regular file");
-  }
   std::string out;
+  stream_beneath(root, rel, UINT64_MAX, [&](std::string_view chunk) { out.append(chunk); });
+  return out;
+}
+
+auto stream_beneath(const stdfs::path& root, const stdfs::path& rel, uint64_t limit,
+                    const std::function<void(std::string_view)>& consume) -> uint64_t {
+  const int fd = open_beneath(root, rel, O_RDONLY | O_NONBLOCK);
+  struct Close {
+    int fd;
+    ~Close() { ::close(fd); }
+  } close{fd};
+  struct stat st{};
+  if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode))
+    throw Error((root / rel).string() + " is not a regular file");
+  if (st.st_size < 0 || static_cast<uint64_t>(st.st_size) > limit) throw Error("file exceeds its transfer limit");
+  uint64_t size = 0;
   char buf[1 << 16];
   for (;;) {
     ssize_t n = ::read(fd, buf, sizeof buf);
     if (n < 0) {
       if (errno == EINTR) continue;
       int err = errno;
-      ::close(fd);
       throw Error("read " + (root / rel).string() + ": " + std::strerror(err));
     }
     if (n == 0) break;
-    out.append(buf, static_cast<size_t>(n));
+    if (static_cast<uint64_t>(n) > limit - size) throw Error("file exceeds its transfer limit");
+    consume({buf, static_cast<size_t>(n)});
+    size += static_cast<uint64_t>(n);
   }
-  ::close(fd);
-  return out;
+  return size;
 }
 
-Listing list_beneath(const stdfs::path& root, const stdfs::path& rel) {
+Listing list_beneath(const stdfs::path& root, const stdfs::path& rel, size_t max_entries) {
   Listing out;
-  list_fd(open_beneath(root, rel, O_RDONLY | O_DIRECTORY), "", out);
+  list_fd(open_beneath(root, rel, O_RDONLY | O_DIRECTORY), "", out, max_entries);
   std::sort(out.files.begin(), out.files.end());
   std::sort(out.links.begin(), out.links.end());
+  std::sort(out.directories.begin(), out.directories.end());
   return out;
 }
 

@@ -17,6 +17,7 @@
 
 #include "history.hh"
 #include "lanes.hh"
+#include "remote_job.hh"
 #include "schema.hh"
 #include "server.hh"
 #include "store.hh"
@@ -27,7 +28,9 @@ namespace tsugumi {
 
 class Scheduler;
 class NixRunner;
+class ExecutionService;
 class LocalExecutionService;
+class RemoteExecutionService;
 
 struct ServiceOptions {
   std::filesystem::path root;
@@ -76,6 +79,7 @@ class Service : public RequestSink {
 
   void open();  // recovers state; must succeed before the server starts
   void attach(Server* server) { server_ = server; }
+  auto recover_remote_jobs() -> void;
   void shutdown();  // interrupts runs and stops lanes
   std::string project_id() const { return store_->project_id(); }
 
@@ -96,7 +100,12 @@ class Service : public RequestSink {
   // credentials or query strings), fixed when the project opens.
   const std::vector<std::string>& substituters() const { return substituters_; }
   NixRunner& nix() { return *nix_; }
-  auto execution_service(const std::string& id) -> LocalExecutionService&;
+  // The backend that runs the Cards naming execution service `id`.
+  auto execution_service(const std::string& id) -> ExecutionService&;
+  // The daemon backend also recovers its jobs.
+  auto remote_execution() -> RemoteExecutionService&;
+  auto remote_targets() const -> std::vector<RemoteTarget>;
+  static auto execution_diagnostic(const Node& node, const std::vector<RemoteTarget>& targets) -> std::optional<Diag>;
   // A run finished: its record goes to the project's copy soon.
   void schedule_export();
   // A run ended: its result goes to the note of the version it started from.
@@ -191,6 +200,8 @@ class Service : public RequestSink {
   std::map<std::string, std::pair<uint64_t, int64_t>> verified_;
   std::unique_ptr<NixRunner> nix_;
   std::unique_ptr<LocalExecutionService> execution_service_;
+  RemoteJobClient remote_jobs_;
+  std::unique_ptr<RemoteExecutionService> remote_execution_;
   std::unique_ptr<Scheduler> scheduler_;
   std::unique_ptr<Lane> mutation_lane_;
   std::unique_ptr<Lane> read_pool_;

@@ -38,6 +38,17 @@ struct InvocationRecordData {
   bool record_io = false;
 };
 
+struct RemoteJobRecord {
+  InvocationSummaryData invocation;
+  std::string instance;
+  std::string server_id;
+  std::string spec;
+  std::string contract;
+  std::string directory;
+  bool accepted = false;
+  bool cancel_requested = false;
+};
+
 struct StoredValueMeta {
   std::string name;
   PortKind kind;
@@ -92,6 +103,11 @@ class History {
   static void insert_run(sql::Db& db, const RunSummaryData& s, const std::string& op_id);
   static void update_run(sql::Db& db, const RunStatusData& s);
   static void put_status(sql::Db& db, const InvocationSummaryData& s);
+  static auto put_remote_job(sql::Db& db, const RemoteJobRecord& job) -> void;
+  static auto cancel_remote_jobs(sql::Db& db, const std::string& run_id) -> void;
+  static auto remote_jobs(sql::Db& db) -> std::vector<RemoteJobRecord>;
+  static auto has_remote_jobs(sql::Db& db) -> bool;
+  static auto remote_job_card(sql::Db& db, const std::string& job_id) -> std::optional<CardPath>;
   void complete_invocation(sql::Db& db, const InvocationRecordData& r) const;
   // Waits until every write submitted before this call has been committed or failed.
   void flush();

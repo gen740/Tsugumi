@@ -56,6 +56,8 @@ enum CardState : ubyte {
   running = 5, succeeded = 6, failed = 7, blocked = 8, cancelled = 9, skipped = 10,
 }
 
+enum RemoteExecutionState : ubyte { unspecified = 0, queued, running, disconnected, cancelling, succeeded, failed, cancelled, interrupted }
+
 /// Stages of one invocation, in order: prepare (input/output contracts and
 /// SDK files) -> evaluate (Nix) -> build -> execute -> validate (outputs) ->
 /// save (records, artifacts). Stages a Card does not need are skipped.

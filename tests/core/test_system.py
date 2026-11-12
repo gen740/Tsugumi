@@ -7,8 +7,13 @@ and with qemu (TSUGUMI_VM_X86=qemu): docs/Development.md#tests.
 """
 from __future__ import annotations
 
+import json
 import platform
+import socketserver
+import struct
 import sys
+import tempfile
+import threading
 from pathlib import Path
 
 import pytest
@@ -19,6 +24,7 @@ from projects import MSG_FBS, card, conn, run_and_wait, write
 from tsugumi_client import RpcFailure, path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
+from Tsugumi.RPC.ExecutionServiceKind import ExecutionServiceKind
 
 MACHINE = {"arm64": "aarch64", "aarch64": "aarch64", "x86_64": "x86_64", "amd64": "x86_64"}[platform.machine().lower()]
 NATIVE = f"{MACHINE}-{'darwin' if sys.platform == 'darwin' else 'linux'}"
@@ -47,10 +53,76 @@ def emulator_registered(system: str) -> bool:
 
 
 def diagnostics(c, card_id: str) -> list[str]:
-    for r in c.call("ProjectInspectRequest").resolution:
+    snapshot = c.call("ProjectInspectRequest")
+    service = [text(d.code) for d in snapshot.diagnostics
+               if d.card is not None and [text(s) for s in d.card.segments] == [card_id]]
+    for r in snapshot.resolution:
         if [text(s) for s in r.card.segments] == [card_id]:
-            return [text(d.code) for d in r.diagnostics]
+            return service + [text(d.code) for d in r.diagnostics]
     raise KeyError(card_id)
+
+
+@pytest.fixture
+def registered_remote(monkeypatch, resource_limits):
+    class Catalog(socketserver.StreamRequestHandler):
+        def handle(self):
+            size = struct.unpack(">I", self.rfile.read(4))[0]
+            assert json.loads(self.rfile.read(size)) == {"version": 1, "operation": "catalog"}
+            reply = json.dumps({"version": 1, "ok": True, "services": [{
+                "id": "cluster", "server_id": "2" * 64, "native_system": FOREIGN,
+                "systems": [FOREIGN], "available": True, "executor": "daemon",
+                "isolation": "pid_namespace", "resource_limits": resource_limits,
+                "max_jobs": 8, "worker_contract": 1,
+            }]}).encode()
+            self.wfile.write(struct.pack(">I", len(reply)) + reply)
+
+    with tempfile.TemporaryDirectory(prefix="tsg-broker-", dir="/tmp") as directory:
+        endpoint = str(Path(directory) / "socket")
+        monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", "unix:" + endpoint)
+        monkeypatch.delenv("TSUGUMI_EXECUTION_BROKER_TOKEN_FILE", raising=False)
+        with socketserver.UnixStreamServer(endpoint, Catalog) as server:
+            thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02})
+            thread.start()
+            try:
+                yield
+            finally:
+                server.shutdown()
+                thread.join()
+
+
+@pytest.mark.parametrize("resource_limits,settings,message", [
+    (False, {"executionService": "cluster"}, None),
+    (True, {"executionService": "local", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}},
+     "requires an external execution service"),
+    (True, {"executionService": "cluster", "system": NATIVE.split("-")[0] + "-linux",
+      "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, "does not support system"),
+    (True, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, None),
+    (False, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}},
+     "cannot enforce resource limits"),
+], ids=["unlimited", "local-resources", "wrong-system", "remote-native", "unsupported-limits"])
+def test_external_service_validation_uses_host_catalog(
+        project, core_factory, registered_remote, resource_limits, settings, message):
+    """The service's advertised system and resource rules apply before accepting a run."""
+    definition = {"language": "bash", "_outputs": MSG_FBS,
+                  "_nix": '{ pkgs, inputs, params }: { run = "true"; }', **settings}
+    write(project, {"work": definition}, [card("work", "work")], [])
+    client = core_factory().connect()
+    services = client.call("ProjectInspectRequest").executionServices
+    assert [text(service.id) for service in services] == ["local", "cluster"]
+    assert services[1].kind == ExecutionServiceKind.remote_daemon
+    assert text(services[1].nativeSystem) == FOREIGN
+    assert services[1].resourceLimits == resource_limits
+    assert services[1].maxJobs == 8
+    validation = client.call("ProjectValidateRequest")
+    if message is None:
+        assert validation.valid, [text(diagnostic.message) for diagnostic in validation.diagnostics]
+    else:
+        assert not validation.valid
+        assert any(message in text(diagnostic.message) for diagnostic in validation.diagnostics)
+        with pytest.raises(RpcFailure) as failure:
+            run(client)
+        assert failure.value.kind == "validation_failed"
+        assert not client.call("RunHistoryRequest").runs
 
 
 def test_snapshot_lists_the_systems_the_local_service_can_run(client):
@@ -59,6 +131,8 @@ def test_snapshot_lists_the_systems_the_local_service_can_run(client):
     assert [text(service.id) for service in services] == ["local"]
     service = services[0]
     assert text(service.nativeSystem) == NATIVE
+    assert not service.resourceLimits
+    assert service.maxJobs is None
     expected = {NATIVE}
     if sys.platform == "linux" and emulator_registered(FOREIGN):
         expected.add(FOREIGN)

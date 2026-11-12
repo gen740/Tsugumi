@@ -9,6 +9,7 @@
 
 #include "comments.hh"
 #include "execution_service.hh"
+#include "remote_execution_service.hh"
 #include "nix.hh"
 #include "scheduler.hh"
 #include "permissions.hh"
@@ -232,19 +233,51 @@ void Service::open() {
   substituters_ = configured_substituters(opts_.substituters_file);
   for (const char* d : {"runs", "inputs"}) stdfs::create_directories(store_->state_dir() / d);
   execution_service_ = std::make_unique<LocalExecutionService>(*this, scratch / "workers");
+  remote_execution_ = std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();
   exporter_ = std::thread([this] { export_loop(); });
   schedule_export();  // runs that ended before (and interrupted ones)
 }
 
-auto Service::execution_service(const std::string& id) -> LocalExecutionService& {
-  if (id != kLocalExecutionService)
-    throw Failed(FailureKind::unsupported, "execution service " + id + " is not available");
-  return *execution_service_;
+auto Service::execution_service(const std::string& id) -> ExecutionService& {
+  // Any other id names a registered execution daemon; its backend checks that the
+  // service is available when an invocation is prepared.
+  if (id == kLocalExecutionService) return *execution_service_;
+  return *remote_execution_;
+}
+
+auto Service::remote_execution() -> RemoteExecutionService& { return *remote_execution_; }
+
+auto Service::remote_targets() const -> std::vector<RemoteTarget> {
+  try {
+    return remote_jobs_.catalog();
+  } catch (const std::exception&) {
+    return {};
+  }
+}
+
+auto Service::recover_remote_jobs() -> void { scheduler_->recover_remote_jobs(); }
+
+auto Service::execution_diagnostic(const Node& node, const std::vector<RemoteTarget>& targets) -> std::optional<Diag> {
+  const auto& settings = node.settings;
+  if (settings.execution_service == kLocalExecutionService) return std::nullopt;
+  const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
+  const auto error = [&](std::string message) -> Diag {
+    return {true, "invalid_setting", std::move(message), node.path, {}, {}};
+  };
+  if (target == targets.end() || !target->available)
+    return error("execution service " + settings.execution_service + " is not available");
+  if (settings.execution_resources && !target->resource_limits)
+    return error("execution service " + target->id + " cannot enforce resource limits");
+  const auto& system = settings.system.empty() ? target->native_system : settings.system;
+  if (std::ranges::find(target->systems, system) == target->systems.end())
+    return error("execution service " + target->id + " does not support system " + system);
+  return std::nullopt;
 }
 
 void Service::shutdown() {
+  remote_jobs_.stop();
   {
     std::lock_guard lock(shell_mu_);
     shell_stopping_ = true;
@@ -663,7 +696,11 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(FBB& b, const Document
   auto defs_v = b.CreateVector(defs);
   auto src = manifest(b, doc, nullptr);
   auto res = wire::resolution(b, *doc.resolution);
-  auto diags = wire::diagnostics(b, doc.resolution->diags);
+  const auto targets = remote_targets();
+  auto diagnostics = doc.resolution->diags;
+  for (const auto& node : doc.resolution->nodes)
+    if (auto diagnostic = execution_diagnostic(node, targets)) diagnostics.push_back(std::move(*diagnostic));
+  auto diags = wire::diagnostics(b, diagnostics);
   auto run = wire::run_status(b, current_run_status());
   auto pid = b.CreateString(store_->project_id());
   auto pj = b.CreateString(doc.project_json);
@@ -671,7 +708,12 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(FBB& b, const Document
   auto local = R::CreateExecutionService(b, b.CreateString(kLocalExecutionService),
                                          b.CreateString(native_system()),
                                          b.CreateVectorOfStrings(NixRunner::execution_systems()));
-  auto execution_services = b.CreateVector(&local, 1);
+  std::vector<flatbuffers::Offset<R::ExecutionService>> services{local};
+  for (const auto& target : targets)
+    services.push_back(R::CreateExecutionService(b, b.CreateString(target.id), b.CreateString(target.native_system),
+        b.CreateVectorOfStrings(target.systems), R::ExecutionServiceKind::remote_daemon, target.available,
+        target.resource_limits, target.max_jobs ? flatbuffers::Optional(target.max_jobs) : flatbuffers::nullopt));
+  auto execution_services = b.CreateVector(services);
   flatbuffers::Offset<R::ViewState> view;
   flatbuffers::Offset<flatbuffers::String> vid;
   std::optional<uint64_t> vrev;
@@ -1348,6 +1390,8 @@ void Service::cache_clear(RequestIn& req) {
   try {
     if (scheduler_->active_status() || nix_->sdk_jobs_active())
       throw Failed(FailureKind::busy, "cache can only be cleared while no run or SDK job is active");
+    if (history_->read(History::has_remote_jobs))
+      throw Failed(FailureKind::busy, "cache cannot be cleared while external job results are pending");
     execution_service_->clear();  // resident workers hold the builds being removed
     auto result = nix_->clear_cache();
     FBB b;
@@ -1453,9 +1497,12 @@ void Service::validate(RequestIn& req) {
   else if (mode != D::ValidateMode::structure && mode != D::ValidateMode::executable)
     throw Failed(FailureKind::invalid_request, "unknown validate mode");
   bool exec = mode == D::ValidateMode::executable;
+  const auto services = remote_targets();
   std::vector<Diag> diags;
   if (!r->targets() || r->targets()->size() == 0) {
     diags = doc->resolution->all_diagnostics(exec);
+    for (const auto& node : doc->resolution->nodes)
+      if (auto diagnostic = execution_diagnostic(node, services)) diags.push_back(std::move(*diagnostic));
   } else {
     diags = doc->resolution->diags;
     for (const auto* t : *r->targets()) {
@@ -1464,6 +1511,7 @@ void Service::validate(RequestIn& req) {
       if (!n) throw Failed(FailureKind::not_found, "unknown card " + path_key(p), {{"card", path_key(p)}});
       diags.insert(diags.end(), n->diags.begin(), n->diags.end());
       if (exec) diags.insert(diags.end(), n->exec_diags.begin(), n->exec_diags.end());
+      if (auto diagnostic = execution_diagnostic(*n, services)) diags.push_back(std::move(*diagnostic));
     }
   }
   bool valid = std::none_of(diags.begin(), diags.end(), [](const Diag& d) { return d.error; });

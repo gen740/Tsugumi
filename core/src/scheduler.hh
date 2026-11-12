@@ -20,6 +20,7 @@ namespace tsugumi {
 
 class Service;
 class RunExec;
+struct RemoteJobRecord;
 
 struct RunPlanData {
   std::vector<CardPath> targets;
@@ -60,6 +61,7 @@ class Scheduler {
 
   // Marks runs left unfinished by a previous process as failed/interrupted.
   void recover_interrupted();
+  auto recover_remote_jobs() -> void;
   static RunPlanData plan(const Resolution& res, const CardPath& card, bool propagate);
   /// Drafts and the Cards that need their outputs (they do not run).
   static std::set<size_t> draft_waiting(const Resolution& res);
@@ -80,10 +82,13 @@ class Scheduler {
   void finished(RunExec* exec);
 
  private:
+  auto reconcile_remote_job(RemoteJobRecord& job) -> bool;
   Service& svc_;
   std::mutex mu_;
   std::shared_ptr<RunExec> active_;
   std::vector<std::thread> reapers_;
+  std::atomic<bool> stop_recovery_{false};
+  std::thread remote_recovery_;
   std::map<std::string, DisplayData> displays_;  // latest per card key (any run)
   // Cards that left the document, with what they were made of. Their name can
   // come back: the same Card (an undo, an older version) has its display again,

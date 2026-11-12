@@ -67,6 +67,7 @@ export function onServerEvent(fn: Listener): () => void {
 }
 
 export interface EnvPublicState {
+  executionScopeUnavailable?: boolean
   state: 'stopped' | 'starting' | 'ready' | 'failed'
   message?: string
   /** While starting in the VM: the step, and how far along the start is. */

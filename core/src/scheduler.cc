@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <cstring>
 #include <deque>
+#include <fstream>
 #include <flatbuffers/reflection.h>
 #include <set>
 
 #include "execution_service.hh"
 #include "history.hh"
+#include "remote_execution_service.hh"
 #include "schema.hh"
 #include "nix.hh"
 #include "service.hh"
@@ -159,40 +161,6 @@ void stage_close(InvocationSummaryData& s, StageOutcome o) {
   }
 }
 
-// Returns a copy of a File/Directory value whose `value` field is `p`.
-Value with_path(const Value& v, const std::string& p) {
-  Value out = v;
-  std::vector<uint8_t> buf(v.bytes.begin(), v.bytes.end());
-  const auto* root = v.type->root();
-  const auto* f = root->fields()->LookupByKey("value");
-  auto* t = flatbuffers::GetAnyRoot(buf.data());
-  const auto* s = flatbuffers::GetFieldS(*t, *f);
-  if (!s) throw Failed(FailureKind::output_invalid, "file value " + v.name + " has no path");
-  if (p.size() <= s->size()) {
-    // Shrinking in place: flatbuffers' ResizeContext erases the bytes before
-    // the string when it shrinks, which corrupts the buffer. A shorter string
-    // with trailing padding is still a valid buffer.
-    auto* at = const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(s));
-    flatbuffers::WriteScalar<flatbuffers::uoffset_t>(at, static_cast<flatbuffers::uoffset_t>(p.size()));
-    std::memcpy(at + sizeof(flatbuffers::uoffset_t), p.c_str(), p.size() + 1);
-  } else {
-    flatbuffers::SetString(*v.type->schema(), p, s, &buf, root);
-  }
-  out.bytes.assign(reinterpret_cast<const char*>(buf.data()), buf.size());
-  return out;
-}
-
-// Reads the string `value` field of a File/Directory message.
-std::optional<std::string> path_value(const Value& v) {
-  const auto* root = v.type->root();
-  const auto* f = root->fields()->LookupByKey("value");
-  if (!f) return std::nullopt;
-  const auto* t = flatbuffers::GetAnyRoot(reinterpret_cast<const uint8_t*>(v.bytes.data()));
-  const auto* s = flatbuffers::GetFieldS(*t, *f);
-  if (!s) return std::nullopt;
-  return s->str();
-}
-
 }  // namespace
 
 Note display_note(const DisplayData& d) {
@@ -249,6 +217,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::lock_guard<std::mutex> l(mu_);
     // Once finalize() has taken the final status it is on its way to the history:
     // a "cancelling" written now would land after it and stay as the run's state.
+    if (interrupted) detaching_.store(true);
+    if (!interrupted && !summary_.status.terminal() && !finishing_) explicit_cancel_.store(true);
     if (!summary_.status.terminal() && !cancel_ && !finishing_) {
       cancel_ = true;
       interrupted_ = interrupted;
@@ -647,6 +617,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   struct Produced {
     std::vector<Value> outputs;
     std::optional<FailureData> failure;
+    std::vector<std::pair<LogStream, std::string>> remote_logs;
   };
 
   void invoke(Work& w, uint32_t lane) {
@@ -684,8 +655,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       }
       journal(phase_name(*s.phase), "started", node.path, w.invocation, "invocation started");
       try {
-        if (node.kind == Template::Code) out = run_code(rt, s, inputs, lane);
+        if (node.kind == Template::Code) out = run_code(rt, s, inputs, sources, lane);
         else out = run_builtin(rt, s, inputs);
+      } catch (const ExecutionDetached&) {
+        svc_.history().clear_live(s);
+        return;
       } catch (const Failed& f) {
         out.failure = f.failure;
       } catch (const std::exception& e) {
@@ -734,16 +708,23 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       s.state = CardState::succeeded;
     }
     // Artifacts are copied before the completion becomes visible.
+    std::optional<ArtifactData> remote_artifact;
     if (!out.failure && node.settings.retain_artifact && node.settings.artifact_output) {
       for (auto& v : out.outputs)
         if (v.name == *node.settings.artifact_output) {
           try {
-            retain_artifact(node, w.invocation, v);
+            if (s.execution_job_id.empty()) retain_artifact(node, w.invocation, v);
+            else remote_artifact = prepare_remote_artifact(run_dir_, invocation_dir(node, w.invocation) / "out", s, v);
           } catch (const Failed& f) {
             s.state = CardState::failed;
             s.failure = f.failure;
             rec.summary = s;
             out.failure = f.failure;
+          } catch (const std::exception& error) {
+            s.state = CardState::failed;
+            s.failure = FailureData::make(FailureKind::output_invalid, error.what());
+            rec.summary = s;
+            out.failure = s.failure;
           }
         }
       if (rec.record_io) rec.outputs = out.outputs;
@@ -759,7 +740,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       rec.summary.emulator = done.emulator;
       try {
         History& h = svc_.history();
-        h.write_sync([&h, rec](sql::Db& db) { h.complete_invocation(db, rec); });
+        std::map<LogStream, std::vector<LogEnd>> remote_log_ends;
+        h.write_sync([&](sql::Db& db) {
+          if (remote_artifact && !out.failure) History::put_artifact(db, *remote_artifact);
+          for (const auto& [stream, text] : out.remote_logs)
+            remote_log_ends[stream] = h.append_log(db, s.run_id, s.card, s.invocation, stream, text);
+          h.complete_invocation(db, rec);
+        });
+        for (const auto& [_, ends] : remote_log_ends)
+          for (const auto& end : ends) svc_.server()->broadcast(log_note(end));
         // The record holds the save stage as closed just before its commit.
         s.stages = done.stages;
         h.clear_live(s);
@@ -1073,25 +1062,33 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   // ---- code Cards -------------------------------------------------------------
 
-  Produced run_code(NodeRt& rt, InvocationSummaryData& s, const std::vector<Value>& in, uint32_t lane) {
+  Produced run_code(NodeRt& rt, InvocationSummaryData& s, const std::vector<Value>& in,
+                    const std::vector<InputSourceData>& sources, uint32_t lane) {
     const Node& node = *rt.node;
-    if (!rt.build) {
+    auto& execution = svc_.execution_service(node.settings.execution_service);
+    const stdfs::path directory = invocation_dir(node, s.invocation);
+    uint64_t inv = s.invocation;
+    CardPath card = node.path;
+    BuildRequest br;
+    br.run_id = run_id_;
+    br.node = &node;
+    br.doc = doc_;
+    br.run_dir = run_dir_;
+    br.jobs = p_.nix_jobs;
+    br.cores = p_.nix_cores;
+    br.timeout_seconds = node.settings.build_timeout_seconds;
+    br.cancel = &cancel_;
+    br.log = [this, card, inv](const std::string& line) { card_log(card, inv, LogStream::build, line); };
+    // The backend checks that it can run the invocation and adds its part of
+    // the build; what it prepared lives until the invocation ends.
+    auto prepared = execution.prepare(node, directory, br);
+    // A build of this invocation only, for a backend that does not reuse builds.
+    std::optional<CardBuild> own_build;
+    if (!execution.reuses_builds() || !rt.build) {
       if (s.phase != Phase::prepare) stage_begin(s, Phase::prepare);
       card_status(s);
       set_state(RunState::preparing);
       int64_t t0 = now_ms();
-      BuildRequest br;
-      br.run_id = run_id_;
-      br.node = &node;
-      br.doc = doc_;
-      br.run_dir = run_dir_;
-      br.jobs = p_.nix_jobs;
-      br.cores = p_.nix_cores;
-      br.timeout_seconds = node.settings.build_timeout_seconds;
-      br.cancel = &cancel_;
-      uint64_t inv = s.invocation;
-      CardPath card = node.path;
-      br.log = [this, card, inv](const std::string& line) { card_log(card, inv, LogStream::build, line); };
       int64_t stage_start = t0;
       br.on_phase = [&](Phase p) {
         // Closing the previous stage on the timeline, then reporting the new one.
@@ -1100,54 +1097,45 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         stage_begin(s, p);
         card_status(s);
       };
-      rt.build = svc_.nix().build(br);
+      auto& built = execution.reuses_builds() ? rt.build : own_build;
+      built = svc_.nix().build(br);
       svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation, *s.phase, lane, stage_start, now_ms()));
       journal("build", "output", node.path, s.invocation,
-              rt.build->cached ? "evaluated; the store already had the result" : "built");
+              built->cached ? "evaluated; the store already had the result" : "built");
       // Evaluated (the resident evaluator reuses nixpkgs); nothing to build.
-      if (rt.build->cached) stage_begin(s, Phase::build, StageOutcome::cached);
+      if (built->cached) stage_begin(s, Phase::build, StageOutcome::cached);
     } else {
       // Built by an earlier invocation of this run.
       stage_close(s, StageOutcome::reused);
       stage_begin(s, Phase::evaluate, StageOutcome::reused);
       stage_begin(s, Phase::build, StageOutcome::reused);
     }
-    s.environment_id = rt.build->environment.id;
-    s.build_cached = rt.build->cached;
-    s.emulator = rt.build->emulator;
-    auto& execution = svc_.execution_service(node.settings.execution_service);
-    s.execution_service = node.settings.execution_service;
-    stage_begin(s, Phase::execute);
-    // The environment and its invocation association must survive a crash
-    // before the worker can execute any code, including a reused build.
-    try {
-      svc_.history().write_sync([&](sql::Db& db) {
-        History::put_environment(db, run_id_, rt.build->environment);
-        History::put_status(db, s);
-      });
-    } catch (...) {
-      s.environment_id.clear();
-      s.execution_service.clear();
-      throw;
-    }
-    card_status(s);
-    set_state(RunState::running);
-    CardPath card = node.path;
-    uint64_t invocation = s.invocation;
-    auto outcome = execution.run(
-        {node, *rt.build, in, run_id_, invocation, invocation_dir(node, invocation), cancel_,
-         [this, card, invocation](LogStream stream, const std::string& text) {
-           card_log(card, invocation, stream, text);
-         },
+    const CardBuild& build = own_build ? *own_build : *rt.build;
+    rt.out_alias.reset();
+    auto result = prepared->execute(
+        {node, build, in, sources, s, directory, cancel_, explicit_cancel_, detaching_,
+         [this, card, inv](LogStream stream, const std::string& text) { card_log(card, inv, stream, text); },
          [this, &rt](const DisplayData& display) { on_display(rt, display); },
          [&](int64_t begin, int64_t end) {
-           svc_.server()->broadcast(timeline_note(run_id_, node.path, invocation, Phase::execute, lane, begin, end));
-         }},
-        s.worker_reused, rt.out_alias);
+           svc_.server()->broadcast(timeline_note(run_id_, node.path, inv, Phase::execute, lane, begin, end));
+         },
+         [&](const std::function<void(sql::Db&)>& records) {
+           stage_begin(s, Phase::execute);
+           svc_.history().write_sync([&](sql::Db& db) {
+             History::put_status(db, s);
+             if (records) records(db);
+           });
+           card_status(s);
+           set_state(RunState::running);
+         },
+         [&] { card_status(s); }});
+    rt.out_alias = std::move(result.out_alias);
     Produced p;
-    p.failure = outcome.failure;
+    p.failure = result.outcome.failure;
+    p.remote_logs = std::move(result.logs);
     if (!p.failure)
-      for (auto& [name, bytes] : outcome.outputs) p.outputs.push_back({name, PortKind::FlatBuffer, nullptr, std::move(bytes), {}});
+      for (auto& [name, bytes] : result.outcome.outputs)
+        p.outputs.push_back({name, PortKind::FlatBuffer, nullptr, std::move(bytes), {}});
     return p;
   }
 
@@ -1297,8 +1285,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         [sum, displays](sql::Db& db) {
           for (const auto& d : displays) History::put_display(db, d);
           History::update_run(db, sum.status);
-          // Progress rows never outlive their run (a lost completion leaves no "running" card).
-          db.prepare("DELETE FROM statuses WHERE run_id=?").bind(1, *sum.status.run_id).run();
+          // Detached external invocations are still pending after the local
+          // graph ends. Keep their progress until recovery commits a result.
+          db.prepare("DELETE FROM statuses WHERE run_id=? AND NOT EXISTS ("
+                     "SELECT 1 FROM remote_jobs AS j WHERE j.run_id=statuses.run_id AND j.card=statuses.card "
+                     "AND j.invocation=statuses.invocation)").bind(1, *sum.status.run_id).run();
         },
         [self, sum](bool ok) mutable {
           if (!ok && sum.status.state == RunState::succeeded) {
@@ -1337,6 +1328,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   uint64_t token_seq_ = 0;
   std::vector<std::string> seed_notes_;  // journaled once the run has started
   std::atomic<bool> cancel_{false};
+  std::atomic<bool> explicit_cancel_{false};
+  std::atomic<bool> detaching_{false};
   bool finishing_ = false;  // under mu_: the final status is decided, a cancel comes too late
   bool interrupted_ = false;
   std::optional<FailureData> first_failure_;
@@ -1365,7 +1358,8 @@ void Scheduler::recover_interrupted() {
       // In-progress invocations become interrupted failures; nothing is re-run.
       auto st = db.prepare("SELECT s.card, s.invocation, s.started_at, e.environment_id, s.execution_service FROM statuses AS s "
                            "LEFT JOIN active_environments AS e ON e.run_id=s.run_id AND e.card=s.card "
-                           "AND e.invocation=s.invocation WHERE s.run_id=?");
+                           "AND e.invocation=s.invocation WHERE s.run_id=? AND NOT EXISTS ("
+                           "SELECT 1 FROM remote_jobs AS j WHERE j.run_id=s.run_id AND j.card=s.card AND j.invocation=s.invocation)");
       st.bind(1, run_id);
       std::vector<InvocationRecordData> recs;
       while (st.step()) {
@@ -1393,6 +1387,91 @@ void Scheduler::recover_interrupted() {
     });
     log::warn("run " + run_id + " was interrupted by a restart");
   }
+}
+
+auto Scheduler::reconcile_remote_job(RemoteJobRecord& job) -> bool {
+  auto& h = svc_.history();
+  auto& backend = svc_.remote_execution();
+  auto& inv = job.invocation;
+  const auto before = inv.execution_state;
+  const auto accepted = job.accepted;
+  const auto reply = backend.poll_recovered(job);
+  if (inv.execution_state != before || job.accepted != accepted)
+    h.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
+  h.set_live(inv);
+  if (inv.execution_state != before) svc_.server()->broadcast(card_note(inv));
+  if (!reply || reply->state == "queued" || reply->state == "running" || reply->state == "cancelling") return false;
+  RecoveredRemoteJob recovered;
+  try {
+    recovered = backend.recover(job, *reply, stop_recovery_);
+  } catch (const BrokerDisconnected&) {
+    inv.execution_state = RemoteExecutionState::disconnected;
+    h.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
+    h.set_live(inv);
+    svc_.server()->broadcast(card_note(inv));
+    return false;
+  }
+  auto& result = recovered.record;
+  const auto& logs = recovered.logs;
+  auto& artifact = recovered.artifact;
+  const auto& environment = recovered.environment;
+  inv.state = !inv.failure ? CardState::succeeded : inv.failure->kind == FailureKind::cancelled
+               ? CardState::cancelled : CardState::failed;
+  inv.ended_at = now_ms();
+  if (inv.started_at) inv.duration_ms = static_cast<uint64_t>(std::max<int64_t>(0, *inv.ended_at - *inv.started_at));
+  stage_close(inv, !inv.failure ? StageOutcome::done : inv.state == CardState::cancelled
+                     ? StageOutcome::cancelled : StageOutcome::failed);
+  if (inv.failure) {
+    result.outputs.clear();
+    artifact.reset();
+  }
+  result.summary = inv;
+  std::map<LogStream, std::vector<LogEnd>> log_ends;
+  std::optional<CardPath> completed_card;
+  h.write_sync([&](sql::Db& db) {
+    // A Card may be renamed while its remote result is downloading. Resolve
+    // the current history key in the same transaction as its completion.
+    completed_card = History::remote_job_card(db, inv.execution_job_id);
+    if (!completed_card) return;
+    result.summary.card = *completed_card;
+    if (result.display) result.display->card = *completed_card;
+    if (artifact) artifact->card = *completed_card;
+    if (!environment.id.empty()) History::put_environment(db, inv.run_id, environment);
+    if (artifact) History::put_artifact(db, *artifact);
+    for (const auto& [stream, text] : logs)
+      log_ends[stream] = h.append_log(db, inv.run_id, *completed_card, inv.invocation, stream, text);
+    h.complete_invocation(db, result);
+  });
+  h.clear_live(inv);
+  if (!completed_card) return true;
+  h.clear_live(result.summary);
+  for (const auto& [_, ends] : log_ends)
+    for (const auto& end : ends) svc_.server()->broadcast(log_note(end));
+  svc_.server()->broadcast(card_note(result.summary));
+  svc_.schedule_export();
+  return true;
+}
+
+auto Scheduler::recover_remote_jobs() -> void {
+  const auto jobs = svc_.history().read([](sql::Db& db) { return History::remote_jobs(db); });
+  if (jobs.empty()) return;
+  std::set<std::string> pending;
+  for (const auto& job : jobs) pending.insert(job.invocation.execution_job_id);
+  remote_recovery_ = std::thread([this, pending = std::move(pending)]() mutable {
+    while (!stop_recovery_.load() && !pending.empty()) {
+      try {
+        auto jobs = svc_.history().read([](sql::Db& db) { return History::remote_jobs(db); });
+        for (auto& job : jobs) {
+          if (stop_recovery_.load()) return;
+          const auto& id = job.invocation.execution_job_id;
+          if (pending.contains(id) && reconcile_remote_job(job)) pending.erase(id);
+        }
+      } catch (const std::exception& error) {
+        log::warn(std::string("external job recovery: ") + error.what());
+      }
+      if (!pending.empty()) std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+  });
 }
 
 std::set<size_t> Scheduler::draft_waiting(const Resolution& res) {
@@ -1534,6 +1613,10 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
   std::lock_guard<std::mutex> l(mu_);
   if (active_) throw Failed(FailureKind::busy, "another run is active", {{"run_id", *active_->status().run_id}});
   auto plan = Scheduler::plan(*doc->resolution, p.card, p.propagate);
+  const auto services = svc_.remote_targets();
+  for (const auto& path : plan.targets)
+    if (auto diagnostic = svc_.execution_diagnostic(*doc->resolution->find(path), services))
+      plan.diagnostics.push_back(std::move(*diagnostic));
   std::vector<std::string> errors;
   for (const auto& d : plan.diagnostics) {
     if (!d.error) continue;
@@ -1586,7 +1669,10 @@ RunStatusData Scheduler::cancel(const std::string& run_id) {
     std::lock_guard<std::mutex> l(mu_);
     if (active_ && active_->status().run_id == run_id) exec = active_;
   }
-  if (exec) return exec->request_cancel(false);
+  std::optional<RunStatusData> active;
+  if (exec) active = exec->request_cancel(false);
+  svc_.history().write_sync([&](sql::Db& db) { History::cancel_remote_jobs(db, run_id); });
+  if (active) return *active;
   auto r = svc_.history().read([&](sql::Db& db) { return History::run(db, run_id); });
   if (!r) throw Failed(FailureKind::not_found, "unknown run " + run_id, {{"run_id", run_id}});
   return r->status;
@@ -1720,15 +1806,15 @@ void Scheduler::finished(RunExec* exec) {
 }
 
 void Scheduler::shutdown() {
+  stop_recovery_.store(true);
   std::shared_ptr<RunExec> exec;
   {
     std::lock_guard<std::mutex> l(mu_);
     exec = active_;
   }
-  if (exec) {
-    exec->request_cancel(true);
-    exec->join();
-  }
+  if (exec) exec->request_cancel(true);
+  if (remote_recovery_.joinable()) remote_recovery_.join();
+  if (exec) exec->join();
   std::vector<std::thread> reapers;
   {
     std::lock_guard<std::mutex> l(mu_);

@@ -24,6 +24,8 @@ The command installed by `curl … | sh` ([Installation](INSTALL.md#using-it-in-
 
 The command is the single `tsugumi` on Mac, Linux and Windows alike. How it runs is decided by the environment, never by the user, so there are no other names.
 
+To run an individual Code Card on another Linux machine, register its daemon endpoint in **Settings → Execution service**. [Run a Card on an execution daemon](RemoteExecution.md)
+
 **On a Mac**, the server (`web/server/vm.ts`) runs `tsugumi-vmhost` (`macOS/Sources/VMHost`) over standard input and output. Running the VM needs a signature with the virtualization entitlement, so only the VM is in a separate process. Inside, it is the same `EnvironmentManager` as the app.
 
 ```text

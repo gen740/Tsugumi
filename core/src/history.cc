@@ -68,6 +68,11 @@ std::string detail_json(const InvocationSummaryData& s) {
   *d.environment_id = s.environment_id;
   *d.params = s.params_json;
   *d.execution_service = s.execution_service;
+  *d.execution_job_id = s.execution_job_id;
+  *d.execution_system = s.execution_system;
+  *d.execution_cpu_millis = s.execution_resources ? s.execution_resources->cpu_millis : 0;
+  *d.execution_memory_bytes = s.execution_resources ? s.execution_resources->memory_bytes : 0;
+  *d.execution_state = s.execution_state ? static_cast<int64_t>(*s.execution_state) : -1;
   return schema::encode(d);
 }
 
@@ -90,6 +95,15 @@ void detail_into(const std::string& text, InvocationSummaryData& s) {
   s.environment_id = d.environment_id->value_or("");
   s.params_json = d.params->value_or("");
   if (const auto* service = schema::get(d.execution_service)) s.execution_service = *service;
+  s.execution_job_id = d.execution_job_id->value_or("");
+  s.execution_system = d.execution_system->value_or("");
+  const auto cpu = d.execution_cpu_millis->value_or(0);
+  const auto memory = d.execution_memory_bytes->value_or(0);
+  if (cpu > 0 && cpu <= UINT32_MAX && memory > 0)
+    s.execution_resources = ExecutionResources{static_cast<uint32_t>(cpu), memory};
+  const auto state = d.execution_state->value_or(-1);
+  if (state >= 0 && state <= static_cast<int64_t>(RemoteExecutionState::interrupted))
+    s.execution_state = static_cast<RemoteExecutionState>(state);
 }
 
 std::string sources_json(const std::vector<InputSourceData>& s) {
@@ -429,6 +443,11 @@ CREATE TABLE IF NOT EXISTS statuses(
   state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, failure BLOB, waiting TEXT,
   updated_at INTEGER NOT NULL, execution_service TEXT NOT NULL,
   PRIMARY KEY(run_id, card, invocation));
+CREATE TABLE IF NOT EXISTS remote_jobs(
+  job_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
+  instance TEXT NOT NULL, server_id TEXT NOT NULL, spec TEXT NOT NULL, contract TEXT NOT NULL, directory TEXT NOT NULL,
+  accepted INTEGER NOT NULL, cancel_requested INTEGER NOT NULL, detail TEXT NOT NULL,
+  UNIQUE(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS last_inputs(
   card TEXT PRIMARY KEY, run_id TEXT NOT NULL, invocation INTEGER NOT NULL, inputs TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS receipts(
@@ -589,6 +608,52 @@ void History::put_status(sql::Db& db, const InvocationSummaryData& s) {
       .bind(1, s.run_id).bind(2, key(s.card)).run();
 }
 
+auto History::put_remote_job(sql::Db& db, const RemoteJobRecord& job) -> void {
+  const auto& inv = job.invocation;
+  auto st = db.prepare("INSERT INTO remote_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET "
+                       "accepted=max(accepted,excluded.accepted), cancel_requested=max(cancel_requested,excluded.cancel_requested), "
+                       "detail=excluded.detail");
+  st.bind(1, inv.execution_job_id).bind(2, inv.run_id).bind(3, key(inv.card)).bind(4, inv.invocation)
+      .bind(5, job.instance).bind(6, job.server_id).bind(7, job.spec).bind(8, job.contract).bind(9, job.directory)
+      .bind(10, job.accepted).bind(11, job.cancel_requested).bind(12, detail_json(inv)).run();
+}
+
+auto History::cancel_remote_jobs(sql::Db& db, const std::string& run_id) -> void {
+  db.prepare("UPDATE remote_jobs SET cancel_requested=1 WHERE run_id=?").bind(1, run_id).run();
+}
+
+auto History::has_remote_jobs(sql::Db& db) -> bool {
+  auto st = db.prepare("SELECT 1 FROM remote_jobs LIMIT 1");
+  return st.step();
+}
+
+auto History::remote_job_card(sql::Db& db, const std::string& job_id) -> std::optional<CardPath> {
+  auto st = db.prepare("SELECT card FROM remote_jobs WHERE job_id=?");
+  st.bind(1, job_id);
+  if (!st.step()) return std::nullopt;
+  return path_from_key(st.text(0));
+}
+
+auto History::remote_jobs(sql::Db& db) -> std::vector<RemoteJobRecord> {
+  auto st = db.prepare("SELECT run_id,card,invocation,instance,server_id,spec,contract,directory,accepted,cancel_requested,detail,job_id "
+                       "FROM remote_jobs ORDER BY run_id,card,invocation");
+  std::vector<RemoteJobRecord> jobs;
+  while (st.step()) {
+    const auto id = st.text(0);
+    if (!crypto::is_uuid(id) || !crypto::is_sha256_hex(st.text(3)) || !crypto::is_sha256_hex(st.text(4)) ||
+        !crypto::is_sha256_hex(st.text(11)))
+      throw std::runtime_error("invalid saved remote job identity");
+    const auto card = path_from_key(st.text(1));
+    auto inv = status(db, id, card, st.u64(2));
+    if (!inv) throw std::runtime_error("remote job has no invocation status");
+    detail_into(st.text(10), *inv);
+    if (inv->execution_job_id != st.text(11)) throw std::runtime_error("remote job identity differs from its invocation");
+    jobs.push_back({std::move(*inv), st.text(3), st.text(4), st.text(5), st.text(6), st.text(7),
+                    st.i64(8) != 0, st.i64(9) != 0});
+  }
+  return jobs;
+}
+
 void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) const {
   if (fault_ == "history_invocation") throw sql::Error("injected fault: invocation record write failed");
   const auto& s = r.summary;
@@ -613,6 +678,8 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
       .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).run();
   db.prepare("DELETE FROM statuses WHERE run_id=? AND card=? AND invocation=?")
       .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).run();
+  if (!s.execution_job_id.empty())
+    db.prepare("DELETE FROM remote_jobs WHERE job_id=?").bind(1, s.execution_job_id).run();
   db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)")
       .bind(1, s.run_id).bind(2, key(s.card)).run();
   if (r.record_io) {
@@ -1391,6 +1458,7 @@ std::vector<std::string> History::delete_runs(const std::filesystem::path& copy,
                             finished_states() + ") AND (?1 IS NULL OR ended_at < ?1)");
       st.bind(1, ended_before).run();
     }
+    db->exec("DELETE FROM temp.moving WHERE run_id IN (SELECT run_id FROM main.remote_jobs)");
     auto st = db->prepare("SELECT run_id FROM temp.moving");
     while (st.step()) ids.push_back(st.text(0));
     for (const auto& s : schemas) {
@@ -1444,6 +1512,7 @@ void History::rename_card(const std::filesystem::path& copy, const std::string& 
     if (s == "main") {
       rewrite(s, "statuses", "card");
       rewrite(s, "active_environments", "card");
+      rewrite(s, "remote_jobs", "card");
       rewrite(s, "last_inputs", "card");
     }
   }

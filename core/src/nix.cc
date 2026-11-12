@@ -72,7 +72,7 @@ std::string entry_nix() {
 # inputs.sources.<name> contains the selected packages of a pinned flake the
 # project opts in to through nixSources. Approved JSON customizations are applied
 # in the source evaluator before these derivation references are reconstructed.
-pkgs: { sdk, gen, upstream, card }:
+pkgs: { sdk, gen, upstream, card, remote ? false }:
 let
   # upstream.json is read here only: it names folders of this evaluator, so it
   # is kept out of `gen`, which builds take in by content.
@@ -121,7 +121,7 @@ let
   params = builtins.fromJSON (builtins.readFile (gen + "/params-nix.json"));
   self = import (card + "/default.nix") { inherit pkgs params; inputs = inputsFor tsugumi gen up.deps; };
 in
-tsugumi.manifest self
+tsugumi.manifestFor remote self
 )NIX";
 }
 
@@ -491,7 +491,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
     for (const auto& s : n.nix_sources) {
       if (nix.find("sources") == std::string::npos || nix.find(s.name) == std::string::npos) continue;
       NixCall lookup;
-      lookup.system = n.settings.system;
+      lookup.system = req.remote_system.empty() ? n.settings.system : req.remote_system;
       lookup.source_overrides = s.overrides;
       lookup.cancel = req.cancel;
       if (req.timeout_seconds) lookup.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(*req.timeout_seconds);
@@ -512,7 +512,7 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   // Another system's binaries run through the kernel's binfmt_misc: without
   // an entry for it, Nix would refuse the build with a less helpful message.
   std::string emulator;
-  if (!node.settings.system.empty()) {
+  if (req.remote_system.empty() && !node.settings.system.empty()) {
     emulator = binfmt_interpreter(node.settings.system);
     if (emulator.empty())
       throw Failed(FailureKind::unsupported,
@@ -568,11 +568,12 @@ CardBuild NixRunner::build(const BuildRequest& req) {
   NixCall call;
   call.pin_url = *pin.url;
   call.pin_hash = *pin.nar_hash;
-  call.system = node.settings.system;
+  call.system = req.remote_system.empty() ? node.settings.system : req.remote_system;
+  call.derivation_archive = req.derivation_archive;
   call.definition_dir = def;
   call.args = "{ sdk = /. + " + nix_quote(sdk_dir_.string()) + "; gen = /. + " + nix_quote(gen.string()) +
               "; upstream = /. + " + nix_quote((upstream / "upstream.json").string()) +
-              "; card = /. + " + nix_quote(def.string()) + "; }";
+              "; card = /. + " + nix_quote(def.string()) + (req.remote_system.empty() ? "; }" : "; remote = true; }");
   call.cancel = req.cancel;
   if (req.timeout_seconds) call.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(*req.timeout_seconds);
   call.log = req.log;
@@ -596,6 +597,13 @@ CardBuild NixRunner::build(const BuildRequest& req) {
     throw Failed(FailureKind::cancelled, e.what());
   } catch (const std::exception& e) {
     throw Failed(FailureKind::nix_failed, e.what(), {{"card", path_key(node.path)}});
+  }
+  if (!req.derivation_archive.empty()) {
+    CardBuild b;
+    b.environment.derivation = std::move(res.derivation);
+    b.environment.manifest = std::move(res.out);
+    b.environment.system = std::move(res.system);
+    return b;
   }
   // Older results of this Card lose their roots.
   prune_roots(prefix, res.root.filename().string());

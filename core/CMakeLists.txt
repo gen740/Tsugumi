@@ -40,6 +40,9 @@ add_library(tsugumi_core STATIC
   src/worker_proc.cc
   src/worker_pool.cc
   src/execution_service.cc
+  src/remote_job.cc
+  src/remote_invocation.cc
+  src/remote_execution_service.cc
   src/scheduler.cc
   src/service.cc
   src/service_run.cc
@@ -73,6 +76,13 @@ add_executable(tsugumid src/main.cc)
 target_include_directories(tsugumid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(tsugumid PRIVATE tsugumi_core)
 install(TARGETS tsugumid RUNTIME DESTINATION bin)
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_executable(tsugumi-remote-worker src/remote_worker_main.cc)
+  target_include_directories(tsugumi-remote-worker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(tsugumi-remote-worker PRIVATE tsugumi_core)
+  install(TARGETS tsugumi-remote-worker RUNTIME DESTINATION bin)
+endif()
 
 # Agent state and model execution live in the core, independently of project
 # lifetimes. Frontends only connect to this service through agent.fbs.

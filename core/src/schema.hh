@@ -122,6 +122,11 @@ struct HostFolder {
   Opt<"write", v::Bool> write;  // default false: read-only
 };
 
+struct ExecutionResourcesJson {
+  Opt<"cpuMillis", v::Uint64> cpu_millis;
+  Opt<"memoryBytes", v::Uint64> memory_bytes;
+};
+
 struct CardDefinition {
   Opt<"symbol", v::String> symbol;
   Opt<"language", v::String> language;
@@ -142,6 +147,7 @@ struct CardDefinition {
   Opt<"reuseWorker", v::Bool> reuse_worker;  // Keep worker state across invocations and runs. Default false.
   Opt<"network", v::Bool> network;           // Experimental, default false
   Opt<"executionService", v::String> execution_service;
+  Opt<"executionResources", Obj<ExecutionResourcesJson>> execution_resources;
   // The Nix system the Card is built for and runs as: "x86_64-linux" or
   // "aarch64-linux". Default: this machine's. Another one runs emulated.
   Opt<"system", v::String> system;
@@ -327,6 +333,11 @@ struct InvocationDetailJson {
   Opt<"environment_id", v::String> environment_id;
   Opt<"params", v::String> params;
   Opt<"execution_service", v::String> execution_service;
+  Opt<"execution_job_id", v::String> execution_job_id;
+  Opt<"execution_system", v::String> execution_system;
+  Opt<"execution_cpu_millis", v::Uint64> execution_cpu_millis;
+  Opt<"execution_memory_bytes", v::Uint64> execution_memory_bytes;
+  Opt<"execution_state", v::Int64> execution_state;
 };
 
 struct InputSourceJson {
@@ -404,6 +415,8 @@ struct ManifestRun {
 
 struct CardManifest {
   Opt<"run", Obj<ManifestRun>> run;
+  Opt<"shell", v::String> shell;
+  Opt<"path", v::String> path;
   Opt<"preRun", v::String> pre_run;
   Opt<"postRun", v::String> post_run;
 };

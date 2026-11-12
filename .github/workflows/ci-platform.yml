@@ -96,8 +96,12 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: CLI RPC
         run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_rpc_cli_tests"'
+      - name: Remote result manifests
+        run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_remote_result_tests"'
       - name: Project RPC with external doubles
         run: '"$CORE_TEST_ENV" python3 -m pytest -q --core-report -m "not environment" tests/core'
+      - name: Remote execution gateway and journal
+        run: 'PYTHONPATH=remote "$CORE_TEST_ENV" python3 -m unittest discover -s tests/remote'
 
   host:
     name: Worker and host isolation
@@ -125,6 +129,29 @@ jobs:
       - name: macOS host isolation
         if: runner.os == 'macOS'
         run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py'
+
+  remote-execution:
+    name: Real remote daemon execution
+    if: inputs.system == 'x86_64-linux'
+    needs: native
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-nix
+        with:
+          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+      - uses: ./.github/actions/fetch-nix
+        with:
+          package: ci-core
+          system: ${{ inputs.system }}
+          artifact-name: native-${{ inputs.system }}
+          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+          out-link: build-ci
+      - name: Allow user namespaces for sandboxed jobs
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build and run Cards through the loopback execution daemon
+        run: bash tests/ci-remote-daemon.sh
 
   web-contracts:
     name: Web types and behavior

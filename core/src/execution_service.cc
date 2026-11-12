@@ -7,6 +7,7 @@
 #include <chrono>
 #include <system_error>
 
+#include "history.hh"
 #include "service.hh"
 #include "store.hh"
 #include "util/crypto.hh"
@@ -27,6 +28,15 @@ constexpr uid_t kCardUid = 65534;
 // The descriptor slot through which a call's out/ folder reaches the Card.
 constexpr int32_t kOutSlot = 900;
 
+class PreparedLocalExecution final : public PreparedExecution {
+ public:
+  explicit PreparedLocalExecution(LocalExecutionService& service) : service_(service) {}
+  auto execute(const ExecutionRequest& request) -> ExecutionResult override { return service_.run(request); }
+
+ private:
+  LocalExecutionService& service_;
+};
+
 }  // namespace
 
 LocalExecutionService::LocalExecutionService(Service& service, std::filesystem::path scratch_root)
@@ -34,10 +44,30 @@ LocalExecutionService::LocalExecutionService(Service& service, std::filesystem::
 
 auto LocalExecutionService::clear() -> void { workers_.clear(); }
 
-auto LocalExecutionService::run(const LocalExecutionRequest& request, std::optional<bool>& worker_reused,
-                                std::optional<std::pair<std::string, std::string>>& out_alias) -> WorkerOutcome {
+auto LocalExecutionService::prepare(const Node& /*node*/, const std::filesystem::path& /*directory*/,
+                                    BuildRequest& /*build*/) -> std::unique_ptr<PreparedExecution> {
+  return std::make_unique<PreparedLocalExecution>(*this);
+}
+
+auto LocalExecutionService::run(const ExecutionRequest& request) -> ExecutionResult {
   const Node& node = request.node;
   const CardBuild& build = request.build;
+  InvocationSummaryData& s = request.summary;
+  ExecutionResult result;
+
+  s.environment_id = build.environment.id;
+  s.build_cached = build.cached;
+  s.emulator = build.emulator;
+  s.execution_service = node.settings.execution_service;
+  // The environment and its invocation association must survive a crash
+  // before the worker can execute any code, including a reused build.
+  try {
+    request.start([&](sql::Db& db) { History::put_environment(db, s.run_id, build.environment); });
+  } catch (...) {
+    s.environment_id.clear();
+    s.execution_service.clear();
+    throw;
+  }
 
   // Cards run as nobody: switched to by root (container), or mapped in
   // bubblewrap's user namespace when tsugumid is not root (shared VM).
@@ -87,7 +117,7 @@ auto LocalExecutionService::run(const LocalExecutionRequest& request, std::optio
   const bool reuse = node.settings.reuse_worker;
   auto lease = workers_.acquire(card_key, key, sp, reuse);
   WorkerProc& worker = *lease.worker;
-  worker_reused = lease.reused;
+  s.worker_reused = lease.reused;
 
   // Folders: without filesystem: true, work/ and tmp/ are the worker's own
   // (local, emptied between calls); out/ exists only for Cards with File or
@@ -118,14 +148,13 @@ auto LocalExecutionService::run(const LocalExecutionRequest& request, std::optio
       for (int f : fds) ::close(f);
     }
   } close_fds{fds};
-  out_alias.reset();
   if (!out.empty() && worker.passes_directories()) {
     int fd = ::open(out.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     if (fd < 0) throw Failed(FailureKind::worker_failed, "cannot open " + out);
     fds.push_back(fd);
     slots.push_back(kOutSlot);
     std::string alias = "/proc/self/fd/" + std::to_string(kOutSlot);
-    out_alias = std::make_pair(alias, out);
+    result.out_alias = std::make_pair(alias, out);
     out = alias;
   }
 
@@ -135,9 +164,9 @@ auto LocalExecutionService::run(const LocalExecutionRequest& request, std::optio
       {"PATH", TSUGUMI_CARD_PATH},
       {"HOME", work},
       {"LANG", "C.UTF-8"},
-      {"TSUGUMI_RUN_ID", request.run_id},
+      {"TSUGUMI_RUN_ID", s.run_id},
       {"TSUGUMI_CARD", card_key},
-      {"TSUGUMI_INVOCATION", std::to_string(request.invocation)},
+      {"TSUGUMI_INVOCATION", std::to_string(s.invocation)},
       {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(node, false)},
       {"TSUGUMI_WORKER", sp.worker_binary},
   };
@@ -148,13 +177,13 @@ auto LocalExecutionService::run(const LocalExecutionRequest& request, std::optio
     deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(*deadline_ms + 500);
   }
   uint64_t call_id = worker.next_call_id();
-  std::string frame = worker_call_frame(call_id, request.run_id, node.path, request.invocation, request.inputs,
+  std::string frame = worker_call_frame(call_id, s.run_id, node.path, s.invocation, request.inputs,
                                         ptype->bfbs, ptype->root_type, params, node.outputs, work, tmp, out, env,
                                         deadline_ms, slots);
   // Logs and displays of this call belong to this run and invocation.
   worker.set_logs(request.log);
   int64_t t0 = now_ms();
-  WorkerOutcome outcome = worker.call(frame, call_id, fds, &request.cancel, deadline, request.display);
+  result.outcome = worker.call(frame, call_id, fds, &request.cancel, deadline, request.display);
   request.on_timing(t0, now_ms());
 
   if (node.settings.filesystem) {
@@ -171,8 +200,8 @@ auto LocalExecutionService::run(const LocalExecutionRequest& request, std::optio
   worker.clear_scratch();
   // Kept only after a clean call: a failed, cancelled or timed out worker
   // (and anything it started) ends.
-  workers_.release(card_key, key, std::move(lease.worker), reuse && !outcome.failure);
-  return outcome;
+  workers_.release(card_key, key, std::move(lease.worker), reuse && !result.outcome.failure);
+  return result;
 }
 
 }  // namespace tsugumi

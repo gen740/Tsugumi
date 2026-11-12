@@ -10,7 +10,7 @@ Open a run to see what its Cards received, produced and kept. A run can contain 
 
 For example, open **Visualization → report**, run it, and inspect a figure Card's input and output. A stopped or failed invocation can have a log and status even when there is no output.
 
-The **Info** tab shows the execution service used by a Code Card once its backend starts. The **Packages** tab shows the recorded Nix system. [Execution service](features.md#execution-service)
+The **Info** tab shows the execution service recorded for a Code Card. For a remote job, it also shows the job ID, architecture, any requested CPU and memory limits, and the last reported state. The **Packages** tab shows the recorded Nix system. [Run a Card on an execution daemon](RemoteExecution.md)
 
 ## Compare two runs
 

@@ -61,7 +61,6 @@ def test_changed_shell_steps_are_used_on_the_next_run(project, core_factory):
     assert decode_scalar(read_output(client, second)) == "old"
 
 
-@pytest.mark.xfail(strict=True, raises=ConnectionError, reason="Artifact I/O exceptions escape the run thread")
 def test_invalid_artifact_is_a_run_failure_not_a_service_crash(project, core_factory, tmp_path):
     """An unreadable artifact fails its run while the project stays available."""
     daemon = core_factory(mocked_builds=True, mocked_worker=True)

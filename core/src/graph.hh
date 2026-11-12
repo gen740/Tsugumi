@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "document.hh"
+#include "model.hh"
 #include "types.hh"
 
 namespace tsugumi {
@@ -58,7 +59,8 @@ struct Settings {
   bool reuse_worker = false;
   bool network = false;
   std::string execution_service = kLocalExecutionService;
-  std::string system;     // "" = native_system(); another one runs emulated (binfmt)
+  std::optional<ExecutionResources> execution_resources;
+  std::string system;     // "" = the execution service's native system
   std::vector<HostFolder> host_folders;
   std::vector<ParamDef> params;  // with their values in data
 };

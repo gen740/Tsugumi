@@ -118,6 +118,7 @@ export interface CardRunState {
   invocation: bigint
   phase: D.Phase
   failure?: string
+  executionState?: D.RemoteExecutionState | null
   /** Stages of the latest invocation, in the order the core ran them. */
   stages: StageRecord[]
   cached: boolean
@@ -128,6 +129,20 @@ export interface CardRunState {
   startedAt?: number
   endedAt?: number
   readyAt?: number
+}
+
+export function remoteExecutionLabel(state: D.RemoteExecutionState | null | undefined): string | undefined {
+  switch (state) {
+    case D.RemoteExecutionState.queued: return L('実行サービスで待機中')
+    case D.RemoteExecutionState.running: return L('実行中')
+    case D.RemoteExecutionState.disconnected: return L('接続断（結果未確認）')
+    case D.RemoteExecutionState.cancelling: return L('取り消し確認中')
+    case D.RemoteExecutionState.succeeded: return L('成功')
+    case D.RemoteExecutionState.failed: return L('失敗')
+    case D.RemoteExecutionState.cancelled: return L('停止済み')
+    case D.RemoteExecutionState.interrupted: return L('中断')
+    default: return undefined
+  }
 }
 
 export const runStateStage = (st: CardRunState): Stage | undefined =>
@@ -462,6 +477,7 @@ export class ProjectSession extends Observable {
   cardStates = new Map<CardKey, CardRunState>()
   displays = new Map<CardKey, DisplaySnapshot>()
   lastFinished = 0
+  remoteHistoryRevision = 0
   timeline: TimelineEntry[] = []
   /** Browser clock minus core clock (ms): the smallest difference seen. */
   coreClockOffset?: number
@@ -591,6 +607,15 @@ export class ProjectSession extends Observable {
 
   get rpc(): RPCClient | undefined {
     return this.client
+  }
+
+  async refreshExecutionServices() {
+    const client = this.client
+    if (!client) return
+    const snapshot = await client.call<R.ProjectSnapshotT>(R.RequestPayload.ProjectInspectRequest, new R.ProjectInspectRequestT())
+    if (this.client !== client) return
+    this.executionServices = snapshot.executionServices
+    this.changed()
   }
 
   get isEditable(): boolean {
@@ -767,6 +792,7 @@ export class ProjectSession extends Observable {
       const sent = new Set(inv.outputsSent.map((x) => s(x)))
       this.cardStates.set(k, {
         state: inv.state, invocation: n, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
+        executionState: inv.executionState,
         // Each notification carries the invocation's stages so far.
         stages: stageRecords(inv.stages), cached: !!inv.buildCached, workerReused: !!inv.workerReused,
         sent, sentInRun: new Set([...(prev?.sentInRun ?? []), ...sent]),
@@ -954,6 +980,12 @@ export class ProjectSession extends Observable {
       case R.RunEventValue.RunCardChanged: {
         const inv = (e.value as R.RunCardChangedT).invocation
         if (!inv) break
+        if (inv.executionState !== D.RemoteExecutionState.unspecified) {
+          this.remoteHistoryRevision++
+          this.logRevision++
+          // Recovery also publishes events for runs already in history.
+          if (s(e.runId) !== this.currentRunId) break
+        }
         this.noteInvocation(inv)
         const lastStart = inv.stages.length ? inv.stages[inv.stages.length - 1].start : null
         this.sampleClock(inv.endedAt ?? (inv.state === D.CardState.running ? lastStart : null))
@@ -3476,10 +3508,12 @@ auto run(Card::Input& input) -> Card::Output {
     const d = this.displays.get(k)
     const sym = str(get(def, 'symbol'))
     const editing = kind === 'draft' && this.inlineDraft?.card === k
+    const pending = state?.executionState === D.RemoteExecutionState.queued || state?.executionState === D.RemoteExecutionState.disconnected ||
+      state?.executionState === D.RemoteExecutionState.cancelling ? remoteExecutionLabel(state.executionState) : undefined
     return {
       title: path(k).pop() ?? k, kind, symbol: sym || undefined, summary: summary || undefined,
       inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
-      result: d ? displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined,
+      result: pending ?? (d ? displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
       state: kind === 'subgraph' ? this.compositeState(k) : state?.state, stage: this.stageProgress(k),
       invocation: state?.invocation ?? 0n, runContinues: this.runActive,
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,
