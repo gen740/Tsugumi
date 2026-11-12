@@ -28,7 +28,9 @@ namespace tsugumi {
 
 class Scheduler;
 class NixRunner;
+class ExecutionService;
 class LocalExecutionService;
+class RemoteExecutionService;
 
 struct ServiceOptions {
   std::filesystem::path root;
@@ -53,6 +55,7 @@ struct ServiceOptions {
   // project's .tsugumi. The shared VM keeps it on the VM's disk; finished
   // runs are then also kept in the project (.tsugumi/runs.sqlite).
   std::filesystem::path history_dir;
+  bool archive_incompatible_history = false;
   // Folders of the Mac the app shares with this project, one per path at
   // <host_folders>/<sha256(path)[:16]> (the shared VM). Empty: the paths as
   // they are (a tsugumid on the Mac itself).
@@ -97,8 +100,10 @@ class Service : public RequestSink {
   // credentials or query strings), fixed when the project opens.
   const std::vector<std::string>& substituters() const { return substituters_; }
   NixRunner& nix() { return *nix_; }
-  auto execution_service(const std::string& id) -> LocalExecutionService&;
-  auto remote_jobs() -> RemoteJobClient& { return remote_jobs_; }
+  // The backend that runs the Cards naming execution service `id`.
+  auto execution_service(const std::string& id) -> ExecutionService&;
+  // The backend of the SSH execution services, which also recovers their jobs.
+  auto remote_execution() -> RemoteExecutionService&;
   auto remote_targets() const -> std::vector<RemoteTarget>;
   static auto execution_diagnostic(const Node& node, const std::vector<RemoteTarget>& targets) -> std::optional<Diag>;
   // A run finished: its record goes to the project's copy soon.
@@ -196,6 +201,7 @@ class Service : public RequestSink {
   std::unique_ptr<NixRunner> nix_;
   std::unique_ptr<LocalExecutionService> execution_service_;
   RemoteJobClient remote_jobs_;
+  std::unique_ptr<RemoteExecutionService> remote_execution_;
   std::unique_ptr<Scheduler> scheduler_;
   std::unique_ptr<Lane> mutation_lane_;
   std::unique_ptr<Lane> read_pool_;

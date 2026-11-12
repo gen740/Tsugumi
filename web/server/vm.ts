@@ -8,6 +8,7 @@ import path from 'node:path'
 import { createInterface } from 'node:readline'
 import { EnvState, Environments, projectKey, writeGrant } from './env'
 import { L } from './i18n'
+import { HistoryVersionMismatch, historyVersionMismatch } from '../src/shared/historyVersion'
 
 export interface VMHostOptions {
   /** The tsugumi-vmhost binary. */
@@ -45,7 +46,7 @@ const STAGES: Record<string, string> = {
 }
 
 class HostError extends Error {
-  constructor(message: string, readonly recovery: string, readonly log: string) {
+  constructor(message: string, readonly recovery: string, readonly log: string, readonly historyVersionMismatch?: HistoryVersionMismatch) {
     super(message)
   }
 }
@@ -140,7 +141,7 @@ export class VMEnvironmentManager implements Environments {
       const w = this.waiting.get(m.id)
       this.waiting.delete(m.id)
       if (w) clearTimeout(w.timer)
-      if (m.error !== undefined) w?.reject(new HostError(m.error, m.recovery ?? '', m.log ?? ''))
+      if (m.error !== undefined) w?.reject(new HostError(m.error, m.recovery ?? '', m.log ?? '', historyVersionMismatch(m.startup_error)))
       else w?.resolve(m.result)
     } else if (m.event === 'progress') {
       const e = this.envs.get(m.key)
@@ -205,11 +206,11 @@ export class VMEnvironmentManager implements Environments {
   }
 
   /** Starts or reuses the project's tsugumid; the helper knows whether it still runs. */
-  async start(dir: string): Promise<EnvState> {
+  async start(dir: string, archiveIncompatibleHistory = false): Promise<EnvState> {
     const e = this.env(dir)
     if (e.state.state !== 'ready') this.set(e, { state: 'starting', message: L('実行環境を起動しています') })
     try {
-      const r = await this.call('start', { path: e.project, origins: this.origins() })
+      const r = await this.call('start', { path: e.project, origins: this.origins(), archive_incompatible_history: archiveIncompatibleHistory })
       const s: EnvState = { state: 'ready', endpoint: r.endpoint, token: r.token, projectId: r.projectId, readyFile: r.readyFile }
       this.set(e, s)
       return s
@@ -293,5 +294,5 @@ export class VMEnvironmentManager implements Environments {
 
 function failure(error: unknown): EnvState {
   const e = error as HostError
-  return { state: 'failed', message: e.message ?? String(e), recovery: e.recovery ?? L('再試行してください。'), log: e.log ?? '' }
+  return { state: 'failed', message: e.message ?? String(e), recovery: e.recovery ?? L('再試行してください。'), log: e.log ?? '', historyVersionMismatch: e.historyVersionMismatch }
 }

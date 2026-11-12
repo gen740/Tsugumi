@@ -85,6 +85,13 @@ size, SHA-256) in the display or the log.
 Params: `{"name": "low", "type": "double", "data": 600}`; types `bool`, `int64`, `uint64`, `double`,
 `string` and their arrays (`double[]`, ...). Python reads them with `ctx.params().Low()`.
 
+Omit `executionService` for local execution. An external Code Card uses a host-registered ID,
+for example `"executionService": "compute"`, with
+`"executionResources": {"cpuMillis": 1000, "memoryBytes": 4294967296}`.
+These cap the SSH job's CPU and memory, including its build. Selecting or changing an external
+service in an Agent save requires approval. Connection details and credentials are configured
+by the host application. External execution requires sandboxing and uses fresh workers.
+
 A Card keeps no state: every invocation runs in a new worker (a new process and interpreter), so
 globals, statics, loaded modules, `options()` and the random number generator's position never reach the
 next invocation or run. Write Cards that way, and pass what the next step needs in a message. Add

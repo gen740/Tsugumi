@@ -1,3 +1,4 @@
+import CoreFoundation
 import CryptoKit
 import Darwin
 import Foundation
@@ -90,7 +91,9 @@ final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @u
       var timeout = timeval(tv_sec: 60, tv_usec: 0)
       setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
       setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-      forward(fd)
+      forward(fd) { entry, request, guest in
+        _ = try Self.remote(entry, request: request, guest: guest)
+      }
       Darwin.shutdown(fd, SHUT_RDWR)
     }
     return true
@@ -101,7 +104,7 @@ final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @u
     init(_ connection: VZVirtioSocketConnection) { self.connection = connection }
   }
 
-  private func forward(_ fd: Int32) {
+  func forward(_ fd: Int32, send: (ExecutionServiceConnection, [String: Any], Int32) throws -> Void) {
     var forwarding = false
     do {
       var request = try Frame.read(from: fd)
@@ -126,7 +129,7 @@ final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @u
       }
       request["project_scope"] = scope
       forwarding = true
-      _ = try Self.remote(entry, request: request, guest: fd)
+      try send(entry, request, fd)
     } catch {
       // EOF preserves an unconfirmed outcome after an SSH interruption.
       if !forwarding {
@@ -139,9 +142,19 @@ final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @u
   static func probe(_ entry: ExecutionServiceConnection) throws -> ExecutionServiceConnection {
     try ExecutionServiceRegistry.validate([entry])
     let reply = try remote(entry, request: ["version": 1, "operation": "probe", "service": entry.id])
+    return try checkedProbe(entry, reply: reply)
+  }
+
+  static func checkedProbe(_ entry: ExecutionServiceConnection, reply: [String: Any]) throws -> ExecutionServiceConnection {
     guard reply["ok"] as? Bool == true, let native = reply["native_system"] as? String,
           let systems = reply["systems"] as? [String] else {
       throw BrokerError(reply["error"] as? String ?? "The execution service probe failed.")
+    }
+    let workerContract = 2
+    let reported = reply["worker_contract"] as? NSNumber
+    let actual = reported.flatMap { CFGetTypeID($0) == CFBooleanGetTypeID() ? nil : ($0 as? Int) }
+    guard actual == workerContract else {
+      throw BrokerError("SSH gateway worker contract is \(actual.map(String.init) ?? "unreported"). Expected \(workerContract). Rebuild the gateway with this Tsugumi revision.")
     }
     var checked = entry
     checked.nativeSystem = native
@@ -150,17 +163,20 @@ final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @u
     return checked
   }
 
+  static func sshArguments(_ entry: ExecutionServiceConnection) -> [String] {
+    // The executable is a fixed name or a validated absolute path from
+    // app settings. OpenSSH invokes the remote shell. Requests use stdin.
+    let command = entry.gateway.map { "'\($0)'" } ?? "tsugumi-remote-gateway"
+    return ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
+            "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
+            "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "--", entry.sshHost, command]
+  }
+
   private static func remote(_ entry: ExecutionServiceConnection, request: [String: Any],
                              guest: Int32? = nil) throws -> [String: Any] {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-    // The executable is a fixed name or a validated absolute path from
-    // app settings. OpenSSH invokes the remote shell. Requests use stdin.
-    let command = entry.gateway.map { "'\($0)'" } ?? "tsugumi-remote-gateway"
-    process.arguments = ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
-                         "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
-                         "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "--", entry.sshHost,
-                         command]
+    process.arguments = sshArguments(entry)
     let stdin = Pipe(), stdout = Pipe()
     process.standardInput = stdin
     process.standardOutput = stdout

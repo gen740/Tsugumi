@@ -39,6 +39,14 @@ using Opt = t::Optional<K, E>;
 
 // ---- tsugumi.json ----------------------------------------------------------
 
+struct StartupError {
+  t::String<"kind"> kind;
+  t::String<"found"> found;
+  t::String<"expected"> expected;
+  t::String<"source"> source;
+  t::String<"message"> message;
+};
+
 struct Endpoint {
   Opt<"card", v::String> card;
   Opt<"port", v::String> port;

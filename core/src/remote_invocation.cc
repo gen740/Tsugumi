@@ -189,7 +189,7 @@ auto stage_remote_archive(const RemoteJobClient& client, const std::string& serv
 auto stage_remote_invocation(const RemoteJobClient& client, const std::string& service, const std::string& instance,
                              const std::string& project_id,
                              const stdfs::path& state, const std::string& archive_digest,
-                             const LocalExecutionRequest& request) -> std::string {
+                             const ExecutionRequest& request) -> std::string {
   remote::InvocationJson invocation;
   *invocation.project_id = project_id;
   *invocation.network = request.node.settings.network;
@@ -257,7 +257,7 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
   const std::vector<std::pair<std::string, std::string>> env{
       {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(request.node, false)},
   };
-  auto call = worker_call_frame(1, request.run_id, request.node.path, request.invocation, inputs,
+  auto call = worker_call_frame(1, request.summary.run_id, request.node.path, request.summary.invocation, inputs,
       ptype->bfbs, ptype->root_type, params, request.node.outputs, "", "", "", env, {}, {});
   *invocation.call_sha256 = upload(client, service, instance, call, request.cancel);
   blobs.insert(*invocation.call_sha256);

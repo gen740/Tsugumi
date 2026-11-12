@@ -11,7 +11,7 @@
 #include "execution_service.hh"
 #include "collect_value.hh"
 #include "history.hh"
-#include "remote_invocation.hh"
+#include "remote_execution_service.hh"
 #include "schema.hh"
 #include "nix.hh"
 #include "service.hh"
@@ -33,99 +33,6 @@ constexpr size_t kQueueCapacity = 16;
 constexpr uint32_t kMaxRunWorkers = 4096;
 constexpr uint32_t kMaxParallelWorkers = 8;
 constexpr size_t kMaxBatchBytes = 32u << 20;
-
-struct RemoteDetached {};
-
-auto remote_execution_state(std::string_view state) -> RemoteExecutionState {
-  if (state == "queued") return RemoteExecutionState::queued;
-  if (state == "running") return RemoteExecutionState::running;
-  if (state == "cancelling") return RemoteExecutionState::cancelling;
-  if (state == "succeeded") return RemoteExecutionState::succeeded;
-  if (state == "failed") return RemoteExecutionState::failed;
-  if (state == "cancelled") return RemoteExecutionState::cancelled;
-  if (state == "interrupted") return RemoteExecutionState::interrupted;
-  throw BrokerDisconnected("execution gateway returned an unknown job state");
-}
-
-auto poll_remote_job(RemoteJobClient& client, RemoteJobRecord& job, bool may_submit = true) -> RemoteJobState {
-  const auto& s = job.invocation;
-  const auto fingerprint = crypto::sha256_hex(job.spec);
-  RemoteJobState reply;
-  if (job.cancel_requested) {
-    reply = client.cancel(s.execution_service, job.instance, s.execution_job_id, fingerprint);
-  } else {
-    reply = client.status(s.execution_service, job.instance, s.execution_job_id);
-    if (reply.state == "missing") {
-      if (job.accepted) return {"interrupted", fingerprint, {}, "the execution service lost a previously accepted job"};
-      if (may_submit) {
-        reply = client.submit(s.execution_service, job.instance, s.execution_job_id, job.spec);
-      } else {
-        reply = client.cancel(s.execution_service, job.instance, s.execution_job_id, fingerprint);
-        if (reply.state == "cancelled")
-          return {"interrupted", fingerprint, {}, "the external submission was not confirmed before the core restarted"};
-      }
-    }
-  }
-  if (reply.fingerprint != fingerprint)
-    return {"interrupted", fingerprint, {}, "the execution service returned a different job fingerprint"};
-  job.accepted = true;
-  return reply;
-}
-
-auto remote_failure(const RemoteJobState& result) -> FailureData {
-  auto kind = FailureKind::worker_failed;
-  if (result.state == "cancelled") kind = FailureKind::cancelled;
-  else if (result.state == "interrupted") kind = result.error.find("result timeout") != std::string::npos
-                                                      ? FailureKind::timeout : FailureKind::interrupted;
-  return FailureData::make(kind, result.error.empty() ? "external job " + result.state : result.error);
-}
-
-auto prepare_remote_artifact(const stdfs::path& run_dir, const stdfs::path& out_dir,
-                             const InvocationSummaryData& inv, Value& value) -> ArtifactData {
-  const auto source = path_value(value);
-  if (!source) throw Failed(FailureKind::output_invalid, "recovered artifact has no path");
-  const stdfs::path path(*source);
-  const auto relative = path.lexically_relative(out_dir);
-  if (relative.empty() || *relative.begin() == ".." || !fs::resolves_inside(out_dir, path))
-    throw Failed(FailureKind::output_invalid, "recovered artifact is outside the output directory");
-  const auto& id = inv.execution_job_id;
-  ArtifactData artifact;
-  artifact.artifact_id = id.substr(0, 8) + "-" + id.substr(8, 4) + "-" + id.substr(12, 4) + "-" +
-                         id.substr(16, 4) + "-" + id.substr(20, 12);
-  artifact.run_id = inv.run_id;
-  artifact.card = inv.card;
-  artifact.invocation = inv.invocation;
-  artifact.output = value.name;
-  artifact.kind = value.kind;
-  artifact.name = path.filename().string();
-  const auto destination = run_dir / "artifacts" / artifact.artifact_id;
-  stdfs::remove_all(destination);
-  stdfs::create_directories(destination);
-  const auto copy = [&](const stdfs::path& from, const std::string& name) {
-    const auto target = destination / remote::relative_path(name);
-    stdfs::create_directories(target.parent_path());
-    std::ofstream file(target, std::ios::binary);
-    if (!file) throw std::runtime_error("cannot stage recovered artifact");
-    crypto::Sha256 hash;
-    const auto size = fs::stream_beneath(out_dir, from, uint64_t{64} << 30, [&](std::string_view chunk) {
-      file.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
-      if (!file) throw std::runtime_error("cannot stage recovered artifact");
-      hash.update(chunk);
-    });
-    file.close();
-    if (!file) throw std::runtime_error("cannot store recovered artifact");
-    artifact.members.push_back({name, size, hash.finish_hex()});
-  };
-  if (value.kind == PortKind::File) copy(relative, artifact.name);
-  else {
-    const auto list = fs::list_beneath(out_dir, relative == "." ? stdfs::path{} : relative);
-    if (!list.links.empty() || list.files.size() > 1000)
-      throw Failed(FailureKind::output_invalid, "recovered artifact has symlinks or too many files");
-    for (const auto& file : list.files) copy(relative == "." ? stdfs::path(file) : relative / file, file);
-  }
-  value.artifact_id = artifact.artifact_id;
-  return artifact;
-}
 
 Note run_event_note(const std::string& run_id,
                     std::function<std::pair<R::RunEventValue, flatbuffers::Offset<void>>(FBB&)> body) {
@@ -380,9 +287,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::shared_ptr<BatchCancellation> cancellation;
     std::optional<InvocationSummaryData> prepared;
     const CardBuild* implementation = nullptr;
-    std::filesystem::path archive;
-    std::string archive_digest;
-    std::string remote_instance;
+    PreparedExecution* execution = nullptr;
     std::optional<uint32_t> batch_index, batch_size;
     bool execution_list = false;
     std::optional<std::pair<std::string, std::string>> out_alias;
@@ -762,14 +667,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }));
   }
 
-  auto prepare_code(NodeRt& rt, Work& work, uint32_t max_implementations, uint32_t lane) -> const CardBuildPlan& {
+  auto prepare_code(NodeRt& rt, Work& work, uint32_t max_implementations, uint32_t lane,
+                    std::unique_ptr<PreparedExecution>& prepared) -> const CardBuildPlan& {
     const auto& node = *rt.node;
     auto& s = *work.prepared;
-    if (rt.build && node.settings.execution_service == kLocalExecutionService) {
-      stage_begin(s, Phase::evaluate, StageOutcome::reused);
-      stage_begin(s, Phase::build, StageOutcome::reused);
-      return *rt.build;
-    }
+    auto& execution = svc_.execution_service(node.settings.execution_service);
     BuildRequest request;
     request.run_id = run_id_;
     request.node = &node;
@@ -780,18 +682,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     request.timeout_seconds = node.settings.build_timeout_seconds;
     request.max_implementations = max_implementations;
     request.cancel = &work.cancellation->stop;
-    if (node.settings.execution_service != kLocalExecutionService) {
-      const auto targets = svc_.remote_targets();
-      if (auto diagnostic = svc_.execution_diagnostic(node, targets))
-        throw Failed(FailureKind::unsupported, diagnostic->message);
-      const auto target = std::ranges::find(targets, node.settings.execution_service, &RemoteTarget::id);
-      request.remote_system = node.settings.system.empty() ? target->native_system : node.settings.system;
-      const auto probe = svc_.remote_jobs().probe(target->id);
-      if (std::ranges::find(probe.systems, request.remote_system) == probe.systems.end())
-        throw Failed(FailureKind::unsupported, "external execution service no longer supports system " + request.remote_system);
-      work.remote_instance = probe.instance;
-      work.archive = run_dir_ / (".derivation-" + crypto::uuid4());
-      request.derivation_archive = work.archive;
+    prepared = execution.prepare(node, invocation_dir(node, work.invocation), request);
+    if (rt.build && execution.reuses_builds()) {
+      stage_begin(s, Phase::evaluate, StageOutcome::reused);
+      stage_begin(s, Phase::build, StageOutcome::reused);
+      return *rt.build;
     }
     request.log = [&](const std::string& line) { card_log(node.path, s.invocation, LogStream::build, line); };
     auto started = now_ms();
@@ -807,7 +702,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     set_state(RunState::preparing);
     rt.build = svc_.nix().build(request);
     trace_phase();
-    if (request.remote_system.empty()) {
+    if (execution.reuses_builds()) {
       journal("build", "output", node.path, s.invocation,
               rt.build->common.cached ? "evaluated; the store already had the result" : "built");
       if (rt.build->common.cached) stage_begin(s, Phase::build, StageOutcome::cached);
@@ -897,15 +792,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     batch.activation = work.activation;
     batch.execution_list = node.kind != Template::Collect &&
         std::ranges::any_of(work.groups, &TokenGroup::execution_list);
-    struct RemoveArchive {
-      const stdfs::path& path;
-      ~RemoveArchive() {
-        if (path.empty()) return;
-        std::error_code error;
-        stdfs::remove(path, error);
-      }
-    } remove_archive{work.archive};
-
+    std::unique_ptr<PreparedExecution> prepared;
     std::vector<CardBuild> implementations;
     uint32_t count = 0;
     bool reserved = false;
@@ -924,7 +811,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         stage_begin(s, Phase::prepare);
         card_status(s, true);
         journal("prepare", "started", node.path, s.invocation, "invocation started");
-        const auto& plan = prepare_code(rt, work, kMaxExecutionBatchSize / count, lane);
+        const auto& plan = prepare_code(rt, work, kMaxExecutionBatchSize / count, lane, prepared);
         batch.execution_list |= plan.execution_list;
         if (plan.implementations.size() > kMaxExecutionBatchSize / count)
           throw batch_limit(node, "input and run list expansion exceeds 256 combinations");
@@ -941,9 +828,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         reserved = true;
       }
       publish_batch(batch);
-      if (count != 0 && !work.archive.empty())
-        work.archive_digest = stage_remote_archive(svc_.remote_jobs(), node.settings.execution_service,
-                                                   work.remote_instance, work.archive, work.cancellation->stop);
+      if (count != 0 && prepared) prepared->stage(work.cancellation->stop);
     } catch (const Failed& error) {
       failure = error.failure;
     } catch (const std::exception& error) {
@@ -966,9 +851,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       member.cancellation = work.cancellation;
       member.batch_index = index + 1;
       member.batch_size = count;
-      member.archive_digest = work.archive_digest;
+      member.execution = prepared.get();
       member.execution_list = batch.execution_list;
-      member.remote_instance = work.remote_instance;
       if (index == 0) member.prepared = std::move(work.prepared);
       if (code) member.implementation = &implementations.at(index % implementations.size());
       const auto inputs_index = code ? index / static_cast<uint32_t>(implementations.size()) : index;
@@ -998,13 +882,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         if (failure) produced.outputs.clear();
         members[index] = std::move(produced);
       }
-      if (stop_siblings && code && node.settings.execution_service != kLocalExecutionService) {
+      if (stop_siblings && prepared) {
         try {
           svc_.history().write_sync([&](sql::Db& db) {
-            History::cancel_remote_batch(db, run_id_, node.path, work.activation);
+            prepared->cancel_batch(db, run_id_, node.path, work.activation);
           });
         } catch (const Failed&) {
-          persistence_lost("cancelling external batch of " + path_key(node.path));
+          persistence_lost("cancelling batch of " + path_key(node.path));
         }
       }
     };
@@ -1149,7 +1033,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         if (w.cancellation->stop.load()) throw Failed(FailureKind::cancelled, "batch cancelled before execution");
         if (node.kind == Template::Code) out = run_code(rt, w, s, inputs, sources, lane);
         else out = run_builtin(rt, w, s, inputs);
-      } catch (const RemoteDetached&) {
+      } catch (const ExecutionDetached&) {
         svc_.history().clear_live(s);
         out.detached = true;
         return out;
@@ -1238,14 +1122,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       try {
         History& h = svc_.history();
         std::map<LogStream, std::vector<LogEnd>> remote_log_ends;
-        const bool failed_remote = out.failure && node.kind == Template::Code &&
-                                   node.settings.execution_service != kLocalExecutionService && !detaching_.load();
-        if (failed_remote) {
+        const bool failed_batch = out.failure && w.execution && !detaching_.load();
+        if (failed_batch) {
           w.cancellation->failed.store(true);
           w.cancellation->stop.store(true);
         }
         h.write_sync([&](sql::Db& db) {
-          if (failed_remote) History::cancel_remote_batch(db, run_id_, node.path, w.activation);
+          if (failed_batch) w.execution->cancel_batch(db, run_id_, node.path, w.activation);
           if (remote_artifact && !out.failure) History::put_artifact(db, *remote_artifact);
           for (const auto& [stream, text] : out.remote_logs)
             remote_log_ends[stream] = h.append_log(db, s.run_id, s.card, s.invocation, stream, text);
@@ -1594,141 +1477,35 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   // ---- code Cards -------------------------------------------------------------
 
-  auto run_remote_code(NodeRt& rt, Work& w, InvocationSummaryData& s, const std::vector<Value>& inputs,
-                       const std::vector<InputSourceData>& sources) -> Produced {
-    const auto& node = *rt.node;
-    const auto& settings = node.settings;
-    const auto& service = settings.execution_service;
-    const auto& build = *w.implementation;
-    const auto& instance = w.remote_instance;
-    auto& client = svc_.remote_jobs();
-    const auto directory = invocation_dir(node, s.invocation);
-    stdfs::create_directories(directory);
-    const LocalExecutionRequest request{node, build, inputs, run_id_, s.invocation, directory, w.cancellation->stop, {}, {}, {}};
-    auto spec = stage_remote_invocation(client, service, instance, svc_.project_id(), svc_.store().state_dir(), w.archive_digest, request);
-    if (w.cancellation->stop.load()) throw Failed(FailureKind::cancelled, "batch cancelled before external submission");
-
-    s.execution_service = service;
-    s.execution_job_id = crypto::sha256_hex(svc_.project_id() + "\n" + run_id_ + "\n" + path_key(node.path) + "\n" +
-                                            std::to_string(s.invocation));
-    s.execution_system = build.environment.system;
-    s.execution_resources = settings.execution_resources;
-    s.execution_state = RemoteExecutionState::queued;
-    s.worker_reused = false;
-    stage_begin(s, Phase::execute);
-    RemoteJobRecord job{s, instance, std::move(spec), remote_recovery_contract(node, inputs, sources),
-                        directory.lexically_relative(run_dir_).generic_string()};
-    auto& history = svc_.history();
-    history.write_sync([&](sql::Db& db) {
-      History::put_status(db, s);
-      // RunCancel sets the flag before its synchronous database update. An
-      // insertion ordered after that update must carry the same intent.
-      job.cancel_requested = explicit_cancel_.load() || w.cancellation->failed.load();
-      History::put_remote_job(db, job);
-    });
-    card_status(s);
-    set_state(RunState::running);
-
-    Produced output;
-    while (!detaching_.load()) {
-      const auto before = s.execution_state;
-      const bool accepted = job.accepted;
-      if ((explicit_cancel_.load() || w.cancellation->failed.load()) && !job.cancel_requested) {
-        job.cancel_requested = true;
-        history.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
-      }
-      std::optional<RemoteJobState> reply;
-      try {
-        reply = poll_remote_job(client, job);
-        s.execution_state = remote_execution_state(reply->state);
-      } catch (const BrokerInstanceChanged& error) {
-        s.execution_state = RemoteExecutionState::interrupted;
-        output.failure = FailureData::make(FailureKind::interrupted, error.what());
-        return output;
-      } catch (const BrokerRequestRejected& error) {
-        s.execution_state = RemoteExecutionState::failed;
-        output.failure = FailureData::make(FailureKind::invalid_request, error.what());
-        return output;
-      } catch (const std::exception&) {
-        reply.reset();
-        s.execution_state = RemoteExecutionState::disconnected;
-      }
-      if (detaching_.load()) throw RemoteDetached{};
-      if (s.execution_state != before || job.accepted != accepted) {
-        job.invocation = s;
-        history.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
-        card_status(s);
-      }
-      if (reply && reply->state == "succeeded") {
-        output.remote_logs.clear();
-        try {
-          auto result = import_remote_result(client, service, instance, reply->result_sha256, job.spec, directory,
-              node.outputs, [&](LogStream stream, const std::string& line) { output.remote_logs.emplace_back(stream, line); },
-              [&](const DisplayData& display) { on_display(rt, w, display); }, detaching_);
-          if (!result.environment.id.empty()) {
-            s.environment_id = result.environment.id;
-            s.build_cached = !result.built;
-            history.write_sync([&](sql::Db& db) { History::put_environment(db, run_id_, result.environment); });
-          }
-          output.failure = result.worker.failure;
-          if (output.failure) s.execution_state = RemoteExecutionState::failed;
-          else for (auto& [name, bytes] : result.worker.outputs)
-            output.outputs.push_back({std::move(name), PortKind::FlatBuffer, nullptr, std::move(bytes), {}});
-          return output;
-        } catch (const BrokerDisconnected&) {
-          s.execution_state = RemoteExecutionState::disconnected;
-          card_status(s);
-        }
-      } else if (reply && (reply->state == "failed" || reply->state == "cancelled" || reply->state == "interrupted")) {
-        output.failure = remote_failure(*reply);
-        return output;
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(750));
-    }
-    throw RemoteDetached{};
-  }
-
   auto run_code(NodeRt& rt, Work& w, InvocationSummaryData& s, const std::vector<Value>& in,
                 const std::vector<InputSourceData>& sources, uint32_t lane) -> Produced {
     const Node& node = *rt.node;
-    if (node.settings.execution_service != kLocalExecutionService) return run_remote_code(rt, w, s, in, sources);
-    const auto& build = *w.implementation;
-    s.environment_id = build.environment.id;
-    s.build_cached = build.cached;
-    s.emulator = build.emulator;
-    auto& execution = svc_.execution_service(node.settings.execution_service);
-    s.execution_service = node.settings.execution_service;
-    stage_begin(s, Phase::execute);
-    // The environment and its invocation association must survive a crash
-    // before the worker can execute any code, including a reused build.
-    try {
-      svc_.history().write_sync([&](sql::Db& db) {
-        History::put_environment(db, run_id_, build.environment);
-        History::put_status(db, s);
-      });
-    } catch (...) {
-      s.environment_id.clear();
-      s.execution_service.clear();
-      throw;
-    }
-    card_status(s);
-    set_state(RunState::running);
-    CardPath card = node.path;
-    uint64_t invocation = s.invocation;
-    auto outcome = execution.run(
-        {node, build, in, run_id_, invocation, invocation_dir(node, invocation), w.cancellation->stop,
-         [this, card, invocation](LogStream stream, const std::string& text) {
-           card_log(card, invocation, stream, text);
-         },
-         [this, &rt, &w](const DisplayData& display) { on_display(rt, w, display); },
+    const auto inv = s.invocation;
+    auto result = w.execution->execute(
+        {node, *w.implementation, in, sources, s, invocation_dir(node, inv), w.cancellation->stop,
+         [&] { return explicit_cancel_.load() || w.cancellation->failed.load(); }, detaching_,
+         [&](LogStream stream, const std::string& text) { card_log(node.path, inv, stream, text); },
+         [&](const DisplayData& display) { on_display(rt, w, display); },
          [&](int64_t begin, int64_t end) {
-           svc_.server()->broadcast(timeline_note(run_id_, node.path, invocation, Phase::execute, lane, begin, end));
-         }},
-        s.worker_reused, w.out_alias);
+           svc_.server()->broadcast(timeline_note(run_id_, node.path, inv, Phase::execute, lane, begin, end));
+         },
+         [&](const std::function<void(sql::Db&)>& records) {
+           stage_begin(s, Phase::execute);
+           svc_.history().write_sync([&](sql::Db& db) {
+             History::put_status(db, s);
+             if (records) records(db);
+           });
+           card_status(s);
+           set_state(RunState::running);
+         },
+         [&] { card_status(s); }});
+    w.out_alias = std::move(result.out_alias);
     Produced p;
-    p.failure = outcome.failure;
+    p.failure = result.outcome.failure;
+    p.remote_logs = std::move(result.logs);
     if (!p.failure)
-      for (auto& [name, bytes] : outcome.outputs) p.outputs.push_back({name, PortKind::FlatBuffer, nullptr, std::move(bytes), {}});
+      for (auto& [name, bytes] : result.outcome.outputs)
+        p.outputs.push_back({name, PortKind::FlatBuffer, nullptr, std::move(bytes), {}});
     return p;
   }
 
@@ -1979,80 +1756,30 @@ void Scheduler::recover_interrupted() {
 
 auto Scheduler::reconcile_remote_job(RemoteJobRecord& job) -> bool {
   auto& h = svc_.history();
-  auto& client = svc_.remote_jobs();
+  auto& backend = svc_.remote_execution();
   auto& inv = job.invocation;
   const auto before = inv.execution_state;
   const auto accepted = job.accepted;
-  std::optional<RemoteJobState> reply;
-  try {
-    reply = poll_remote_job(client, job, false);
-    inv.execution_state = remote_execution_state(reply->state);
-  } catch (const BrokerInstanceChanged& error) {
-    inv.execution_state = RemoteExecutionState::interrupted;
-    reply = RemoteJobState{"interrupted", {}, {}, error.what()};
-  } catch (const BrokerRequestRejected& error) {
-    inv.execution_state = RemoteExecutionState::failed;
-    reply = RemoteJobState{"failed", {}, {}, error.what()};
-  } catch (const std::exception&) {
-    reply.reset();
-    inv.execution_state = RemoteExecutionState::disconnected;
-  }
+  const auto reply = backend.poll_recovered(job);
   if (inv.execution_state != before || job.accepted != accepted)
     h.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
   h.set_live(inv);
   if (inv.execution_state != before) svc_.server()->broadcast(card_note(inv));
   if (!reply || reply->state == "queued" || reply->state == "running" || reply->state == "cancelling") return false;
-  InvocationRecordData result;
-  std::vector<std::pair<LogStream, std::string>> logs;
-  std::optional<ArtifactData> artifact;
-  BuildEnvironmentData environment;
-  if (reply->state == "succeeded") {
-    try {
-      auto contract = remote_recovery_contract(job.contract);
-      const auto run_dir = svc_.store().state_dir() / "runs" / inv.run_id;
-      const auto directory = run_dir / remote::relative_path(job.directory);
-      auto imported = import_remote_result(client, inv.execution_service, job.instance, reply->result_sha256,
-          job.spec, directory, contract.outputs,
-          [&](LogStream stream, const std::string& line) { logs.emplace_back(stream, line); },
-          [&](DisplayData display) {
-            if (display.run_id == inv.run_id && display.invocation == inv.invocation && !display.validate()) {
-              display.card = inv.card;
-              result.display = std::move(display);
-            }
-          }, stop_recovery_);
-      environment = std::move(imported.environment);
-      if (!environment.id.empty()) {
-        inv.environment_id = environment.id;
-        inv.build_cached = !imported.built;
-      }
-      inv.failure = imported.worker.failure;
-      result.record_io = contract.record_io;
-      result.inputs = std::move(contract.inputs);
-      result.input_sources = std::move(contract.sources);
-      if (!inv.failure) {
-        for (auto& [name, bytes] : imported.worker.outputs) {
-          const auto port = std::ranges::find(contract.outputs, name, &types::PortType::name);
-          Value value{name, port->kind, port->type, std::move(bytes), {}};
-          if (!contract.artifact_output.empty() && name == contract.artifact_output)
-            artifact = prepare_remote_artifact(run_dir, directory / "out", inv, value);
-          if (result.record_io) result.outputs.push_back(std::move(value));
-        }
-      }
-    } catch (const BrokerDisconnected&) {
-      inv.execution_state = RemoteExecutionState::disconnected;
-      h.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
-      h.set_live(inv);
-      svc_.server()->broadcast(card_note(inv));
-      return false;
-    } catch (const Failed& error) {
-      inv.failure = error.failure;
-    } catch (const std::exception& error) {
-      inv.failure = FailureData::make(FailureKind::output_invalid, error.what());
-    }
-    if (inv.failure) inv.execution_state = RemoteExecutionState::failed;
-  } else {
-    inv.failure = remote_failure(*reply);
+  RecoveredRemoteJob recovered;
+  try {
+    recovered = backend.recover(job, *reply, stop_recovery_);
+  } catch (const BrokerDisconnected&) {
+    inv.execution_state = RemoteExecutionState::disconnected;
+    h.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
+    h.set_live(inv);
+    svc_.server()->broadcast(card_note(inv));
+    return false;
   }
+  auto& result = recovered.record;
+  const auto& logs = recovered.logs;
+  auto& artifact = recovered.artifact;
+  const auto& environment = recovered.environment;
   inv.state = !inv.failure ? CardState::succeeded : inv.failure->kind == FailureKind::cancelled
                ? CardState::cancelled : CardState::failed;
   inv.ended_at = now_ms();

@@ -14,12 +14,12 @@ OUT = ROOT / "docs" / "Protocol.md"
 GROUPS = [
     ("Connection", ["SessionHello"]),
     ("Projects and saving", ["ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave", "ProjectReload",
-                       "ProjectValidate", "ProjectImport", "ProjectCacheClear", "OperationGet"]),
+                       "ProjectValidate", "ProjectImport", "ProjectShell", "ProjectCacheClear", "OperationGet"]),
     ("Files", ["ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "AttachedFolderRead"]),
     ("Card SDKs and types", ["CardSDKPrepare", "CardSDKStatus", "OutputTypes", "NixSourceResolve"]),
     ("Running", ["RunPlan", "Run", "RunCancel", "RunStatus"]),
     ("History and artifacts", ["RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "RunHistoryDelete",
-                 "ArtifactList", "ArtifactRead", "LogRange"]),
+                 "ArtifactList", "ArtifactRead", "LogRange", "RunEnvironments", "RunEnvironmentPaths"]),
     ("Views", ["ViewSetVisible", "ViewSave"]),
     ("Versions", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionSummary"]),
 ]
@@ -119,6 +119,9 @@ def render() -> str:
 
     out += ["## Notifications", "", "Sent from `tsugumid` to connected clients.", ""]
     for n in union_members(text, "NotificationPayload"):
+        out.append(f"- `{n}`")
+    out += ["", "### Run events", "", "The `value` inside a `RunEvent` has one of these types.", ""]
+    for n in union_members(text, "RunEventValue"):
         out.append(f"- `{n}`")
     return "\n".join(out) + "\n"
 

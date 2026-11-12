@@ -154,7 +154,7 @@ let observed = Observed()
         }
       }
     }
-    let endpoint = try await manager.start(p)
+    let endpoint = try await manager.start(p, archiveIncompatibleHistory: request["archive_incompatible_history"] as? Bool == true)
     return ["endpoint": endpoint.url.absoluteString, "token": endpoint.token, "projectId": endpoint.projectId,
             "serverInstanceId": endpoint.serverInstanceId, "readyFile": manager.controlDir(p).appendingPathComponent("server.ready").path]
   case "stop": try await manager.stop(try project(request)); return [:]
@@ -221,6 +221,7 @@ let observed = Observed()
       if let launcher = error as? LauncherError {
         failure["recovery"] = launcher.recovery
         if case .startFailed(_, let log) = launcher { failure["log"] = log }
+        if case .incompatibleHistory(let issue) = launcher { failure["startup_error"] = issue.diagnostic }
       }
       peer.emit(failure)
     }

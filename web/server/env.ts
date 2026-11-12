@@ -6,6 +6,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { L } from './i18n'
+import { HistoryVersionMismatch, historyVersionMismatch } from '../src/shared/historyVersion'
 
 export interface Binaries {
   tsugumid: string
@@ -19,7 +20,7 @@ export type EnvState =
   | { state: 'starting'; message: string; stage?: string; fraction?: number }
   // unix: the Agent's raw socket; a tsugumid in the VM (vm.ts) has only the endpoint.
   | { state: 'ready'; endpoint: string; token: string; projectId: string; unix?: string; pid?: number; readyFile: string; executionScopeUnavailable?: boolean }
-  | { state: 'failed'; message: string; recovery: string; log: string }
+  | { state: 'failed'; message: string; recovery: string; log: string; historyVersionMismatch?: HistoryVersionMismatch }
 
 /** Where the server runs each project's tsugumid: on this host
  *  (EnvironmentManager) or in the Mac's shared VM (VMEnvironmentManager, vm.ts). */
@@ -27,7 +28,7 @@ export interface Environments {
   observe(fn: (key: string, s: EnvState) => void): () => boolean
   controlDir(key: string): string
   state(dir: string): EnvState
-  start(dir: string): Promise<EnvState>
+  start(dir: string, archiveIncompatibleHistory?: boolean): Promise<EnvState>
   stop(dir: string): Promise<void>
   stopAll(): Promise<void[]>
   /** The folders a project's chats may read now. */
@@ -142,10 +143,10 @@ export class EnvironmentManager implements Environments {
   }
 
   /** Starts (or reuses) the project's tsugumid and waits for server.ready. */
-  start(dir: string): Promise<EnvState> {
+  start(dir: string, archiveIncompatibleHistory = false): Promise<EnvState> {
     const e = this.env(dir)
     // Opened again while it stops: a new one starts once the old one has gone.
-    if (e.stopping) return e.stopping.then(() => this.start(dir))
+    if (e.stopping) return e.stopping.then(() => this.start(dir, archiveIncompatibleHistory))
     const identity = this.authorizeExecution ? projectExecutionScope(e.project) : undefined
     e.executionScopeUnavailable = !!this.authorizeExecution && !identity
     fs.mkdirSync(e.control, { recursive: true, mode: 0o700 })
@@ -156,7 +157,7 @@ export class EnvironmentManager implements Environments {
     const running = this.readReady(e)
     if (running) { this.set(e, running); return Promise.resolve(running) }
     if (e.starting) return e.starting
-    e.starting = this.launch(e, identity).finally(() => (e.starting = undefined))
+    e.starting = this.launch(e, archiveIncompatibleHistory, identity).finally(() => (e.starting = undefined))
     return e.starting
   }
 
@@ -172,7 +173,7 @@ export class EnvironmentManager implements Environments {
     } catch { return undefined }
   }
 
-  private async launch(e: Env, identity?: string): Promise<EnvState> {
+  private async launch(e: Env, archiveIncompatibleHistory: boolean, identity?: string): Promise<EnvState> {
     for (const [what, p] of [['tsugumid', this.bins.tsugumid], ['tsugumi-worker', this.bins.worker]] as const) {
       if (!fs.existsSync(p)) {
         const s: EnvState = { state: 'failed', message: L('{0} が見つかりません: {1}', what, p), recovery: L('リポジトリで core をビルドしてください（README の「Web UI」）。'), log: '' }
@@ -196,10 +197,13 @@ export class EnvironmentManager implements Environments {
     if (!fs.existsSync(grants)) fs.writeFileSync(grants, '{"grants":{}}')
     const ready = path.join(e.control, 'server.ready')
     fs.rmSync(ready, { force: true })
+    const startupErrorFile = path.join(e.control, 'server.startup-error.json')
+    fs.rmSync(startupErrorFile, { force: true })
     const unix = path.join(e.sockDir, 's')
     fs.rmSync(unix, { force: true })
     const args = ['--project', e.project, '--listen', '127.0.0.1:0', '--unix', unix, '--control-dir', e.control,
       '--worker', this.bins.worker, '--sdk-dir', this.bins.sdkDir, '--cpus', String(Math.max(1, os.cpus().length))]
+    if (archiveIncompatibleHistory) args.push('--archive-incompatible-history')
     for (const o of this.origins()) args.push('--allow-origin', o)
     e.log = ''
     const logFile = path.join(e.control, 'server.log')
@@ -231,11 +235,14 @@ export class EnvironmentManager implements Environments {
     while (Date.now() < deadline) {
       if (startupError || proc.exitCode !== null || proc.signalCode !== null) {
         e.log = startupError?.message ?? fs.readFileSync(logFile, 'utf8').slice(-64 * 1024)
+        let mismatch: HistoryVersionMismatch | undefined
+        try { mismatch = historyVersionMismatch(JSON.parse(fs.readFileSync(startupErrorFile, 'utf8'))) } catch {}
         const s: EnvState = {
           state: 'failed',
           message: L('tsugumid が起動中に終了しました'),
           recovery: e.log.includes('already owns') ? L('同じプロジェクトを別の tsugumid（macOS アプリなど）が使っています。そちらを閉じてから再試行してください。') : L('ログを確認してください。'),
           log: e.log,
+          historyVersionMismatch: mismatch,
         }
         this.set(e, s)
         return s

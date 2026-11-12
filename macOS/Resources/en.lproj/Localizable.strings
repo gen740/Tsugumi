@@ -636,6 +636,7 @@
 "並列実行数: %lld" = "Parallel runs: %lld";
 "中断" = "Interrupted";
 "中止" = "Cancel";
+"互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 実行中の SSH ジョブは実行先で継続し、新しい履歴には引き継がれません。" = "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app. Running SSH jobs continue on the remote host and will be unavailable in the new history.";
 "今すぐ確認" = "Check Now";
 "今の内容に名前を付けて残します（git の tag）。" = "Names what you have now as a version (a git tag).";
 "今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。" = "What you have now is kept as a version first, then the project becomes this version. Changing and running from here starts a new branch.";
@@ -935,6 +936,8 @@
 "実行履歴" = "Run History";
 "実行履歴…" = "Run History…";
 "実行履歴なし" = "No runs";
+"実行履歴の形式が異なります" = "Incompatible Run History";
+"実行履歴の形式は %@ です。このバージョンの Tsugumi には %@ が必要です。" = "This run history uses format %@. This version of Tsugumi requires %@.";
 "実行履歴は VM の中に保存します。オンのときは、終わった実行の記録（値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。" = "The run history is kept in the VM. When on, finished runs (values, types, logs, the list of artifacts) are also written to the project's .tsugumi/runs.sqlite. A project copied or moved to another Mac reads the runs the VM lacks from there when it opens. When off, new runs are kept in the VM only.";
 "実行履歴はありません" = "No run history";
 "実行履歴はプロジェクトごとに VM のディスクに保存します。自動では削除しません。フォルダが見つからないプロジェクトの分も、ここから削除できます（そのプロジェクトのビルドの登録も外します）。" = "Each project's run history is kept on the VM's disk and never deleted automatically. Histories of projects whose folder is gone can be deleted here too (their build registrations are removed as well).";
@@ -968,10 +971,13 @@
 "対象" = "Which";
 "小さく" = "Smaller";
 "展開" = "Expand";
+"履歴の退避が中断されました" = "History Archive Interrupted";
+"履歴の退避を再開して起動" = "Resume Archiving and Start";
 "履歴を検索" = "Search history";
 "履歴を読み込めません: %@" = "Cannot read the history: %@";
 "履歴を読み込めませんでした" = "Could not read the history";
 "履歴を読み込んでいます…" = "Reading the history…";
+"履歴を退避して起動" = "Archive History and Start";
 "左から右" = "Left to right";
 "左の実行" = "Left run";
 "差分が大きいため一部を表示しています。" = "The diff is large; only part is shown.";

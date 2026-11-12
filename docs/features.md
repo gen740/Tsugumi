@@ -200,7 +200,7 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 
 - Card settings show the **Execution service** for a Code Card. Set `"executionService": "local"` in `_card.json` to select the service of the connected project daemon explicitly. Omitting the field uses the same local service.
 - The supported app and CLI installations run Cards on Linux. On macOS they use the shared Linux VM, and on Windows the command runs in WSL2. Running a macOS daemon directly is a development route with its own capabilities.
-- The project daemon reports the local service and registered SSH services. **CPU architecture** selects the Nix build and execution target within the selected service. An unavailable selection stops the run with a diagnostic.
+- The project daemon reports the local service and registered SSH services. **CPU architecture** selects the Nix build and execution target within the selected service. A project keeps its saved service selection on installations where that service is unavailable. The selector shows the saved choice, and running stops with a diagnostic until the user registers that service or selects another one.
 - To build and run a Code Card on another Linux machine, add an SSH host in **Settings → Execution service**, then choose it in Card settings and set its CPU and memory limits. [Run a Card on an SSH host](RemoteExecution.md)
 
 ### Another system (x86_64-linux)

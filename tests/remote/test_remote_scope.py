@@ -67,7 +67,7 @@ class ScopeTests(unittest.TestCase):
 
     def test_unscoped_probe_only_exposes_capabilities(self):
         code, probe, body = self.request("probe")
-        self.assertEqual((code, probe["native_system"], body), (0, NATIVE, b""))
+        self.assertEqual((code, probe["native_system"], probe["worker_contract"], body), (0, NATIVE, 2, b""))
         self.assertNotIn("instance_id", probe)
         for scope in (None, "../" + SCOPE_A):
             code, reply, body = self.request("status", scope=scope, job_id=JOB)

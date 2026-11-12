@@ -133,7 +133,7 @@ class GatewayTest(unittest.TestCase):
         code, resp, rest = self.request(operation="probe", service="tsugumi")
         self.assertEqual((code, rest), (0, b""))
         self.assertEqual(resp, {"version": 1, "ok": True, "instance_id": self.journal.instance_id,
-                                "native_system": NATIVE, "systems": [NATIVE]})
+                                "worker_contract": 2, "native_system": NATIVE, "systems": [NATIVE]})
 
     def test_submit_uses_opaque_unit_and_fixed_argv(self):
         job, spec = "b" * 64, self.spec(cpu=1500)
@@ -149,6 +149,7 @@ class GatewayTest(unittest.TestCase):
                      "KillMode=control-group", "MemoryAccounting=yes", "CPUAccounting=yes"):
             self.assertIn(f"--property={prop}", argv)
         self.assertEqual(argv[:2] + [argv[3]], ["systemd-run", "--user", "--no-block"])
+        self.assertIn(f"--setenv=PATH={os.environ.get('PATH', os.defpath)}", argv)
         tail = argv[argv.index("--") + 1:]
         self.assertEqual(tail, [os.path.abspath(sys.executable), os.path.abspath(rg.__file__),
                                 "--supervise", os.path.abspath(self.root), job, WORKER])

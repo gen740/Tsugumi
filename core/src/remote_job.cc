@@ -27,6 +27,7 @@ namespace tsugumi {
 namespace {
 
 constexpr uint32_t kProtocolVersion = 1;
+constexpr uint32_t kWorkerContract = 2;
 constexpr uint32_t kMaxHeaderBytes = 64 * 1024;
 using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
@@ -161,6 +162,7 @@ struct RemoteJobClient::Reply {
   schema::Opt<"size", schema::v::Uint64> size;
   schema::Opt<"services", schema::v::Array<schema::Obj<TargetJson>>> services;
   schema::Opt<"instance_id", schema::v::String> instance_id;
+  schema::Opt<"worker_contract", schema::v::Uint64> worker_contract;
   schema::Opt<"native_system", schema::v::String> native_system;
   schema::Opt<"systems", schema::v::Array<schema::v::String>> systems;
   schema::Opt<"state", schema::v::String> state;
@@ -317,6 +319,11 @@ auto RemoteJobClient::catalog() const -> std::vector<RemoteTarget> {
 
 auto RemoteJobClient::probe(std::string_view service) const -> RemoteProbe {
   auto reply = request("probe", service);
+  const auto* contract = schema::get(reply.worker_contract);
+  if (!contract || *contract != kWorkerContract)
+    throw Failed(FailureKind::unsupported,
+                 "SSH gateway worker contract is " + (contract ? std::to_string(*contract) : "unreported") +
+                     "; expected " + std::to_string(kWorkerContract) + ". Rebuild the gateway with this Tsugumi revision.");
   auto instance = string_or_empty(reply.instance_id);
   const auto* systems = schema::get(reply.systems);
   if (!crypto::is_sha256_hex(instance) || !systems) throw BrokerDisconnected("execution gateway did not identify its journal");

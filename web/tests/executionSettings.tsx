@@ -56,6 +56,11 @@ assert.match(remote, /CPU 上限（ミリコア）/)
 assert.match(remote, /メモリ上限（バイト）/)
 assert.match(remote, /外部の実行サービスにはファイルアクセスの制限が必要です。/)
 
+session.executionServices = session.executionServices.filter((entry) => entry.id === 'local')
+const missingService = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
+assert.match(missingService, /<option value="worker" disabled="" selected="">worker/)
+assert.match(missingService, /選択した実行サービスに接続できません。/)
+
 const runEvents = session as unknown as { applyRunEvent(event: R.RunEventT): void }
 session.runStatus = Object.assign(new R.RunStatusT(), { runId: 'current', state: D.RunState.running })
 const event = (runId: string, state: D.CardState, executionState: D.RemoteExecutionState) =>

@@ -17,7 +17,7 @@ Use an external execution service when one Code Card needs a different Linux mac
 ## Register a service and choose it for a Card
 
 1. In **Settings → Execution service**, add a connection. Enter a name, a service ID such as `my-executor`, and the SSH alias in **SSH host**. IDs use lowercase ASCII letters, digits and hyphens and start with a letter. The built-in service uses the ID `local`.
-2. Enter the absolute path to the executable on the Linux host in **Gateway executable**, for example `/home/alice/.tsugumi-remote-gateway/bin/tsugumi-remote-gateway`. Leave it blank if the SSH session can find `tsugumi-remote-gateway` by name. Select **Test connection** and then **Save**. The test confirms the gateway and reports its CPU architecture.
+2. Enter the absolute path to the executable on the Linux host in **Gateway executable**, for example `/home/alice/.tsugumi-remote-gateway/bin/tsugumi-remote-gateway`. Leave it blank if the SSH session can find `tsugumi-remote-gateway` by name. Select **Test connection** and then **Save**. The test verifies the worker contract and reports the gateway's CPU architecture. If the contract is missing or incompatible, rebuild the gateway with the client's Tsugumi revision.
 3. Open the Code Card's settings and select **Execution service → SSH (my-executor)**. Keep **CPU architecture** at the execution environment's default to use the SSH host's native architecture.
 4. Enter both **CPU limit (millicores)** and **Memory limit (bytes)**, for example `1000` and `4294967296` for one CPU and 4 GiB. **Run timeout (s)** defaults to one hour for external runs and can be up to seven days. The CPU, memory and time limits cap the remote systemd unit, including the build and Card processes. Jobs share the SSH host’s resources. Choose a memory limit of at least one host memory page. The host rounds it down to a whole number of pages.
 5. Save and run the Card. In **Card settings → Run History → Info**, select the invocation to see the service ID, remote job ID, architecture, requested limits and last confirmed state. **Packages** shows the recorded Nix environment when available.
@@ -35,3 +35,15 @@ The host keeps the registry in its app settings. Project files contain the servi
 Renaming a project folder on the same filesystem preserves its remote jobs. A copied project has its own remote jobs. External execution requires a filesystem that reports the project folder's creation time.
 
 SSH Direct currently runs each invocation in a fresh worker with file access restrictions enabled. Host folder grants and worker reuse are unavailable for external execution. The gateway advertises its native Linux architecture. Logs and displays return with the result, so a chart does not update live while the Card runs remotely. Local execution is available for Cards that need host folders or a resident worker.
+
+Progress reporting during SSH jobs is tracked in [SSH execution follow-ups](https://github.com/gen740/Tsugumi/issues/221).
+
+## Retention on the SSH host
+
+The gateway keeps job metadata and content-addressed blobs for build inputs, input values and files, and results, including output files, logs and displays. There is no automatic expiry. Deleting a run from the Workflow's history does not remove this data from the SSH host.
+
+Archiving incompatible local run history leaves existing SSH jobs on the gateway. The new history does not reconnect to those jobs. Before updating the client or archiving a history, confirm that remote jobs have finished or been cancelled. The gateway's files remain available to the SSH host administrator.
+
+Each job builds in a private Nix store under the gateway's work directory. The gateway attempts to remove it when the supervisor exits normally. A forced stop or failed cleanup can leave that workspace on disk.
+
+To remove a gateway's data, stop submitting jobs and wait for its active jobs to finish or cancel them. On the SSH host, delete the gateway's state directory described above, or the directory set by `TSUGUMI_REMOTE_STATE_DIR`. This removes jobs and blobs for every project using that directory. Once the directory is deleted, clients can no longer reconnect to those jobs.

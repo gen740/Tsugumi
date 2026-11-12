@@ -240,7 +240,11 @@ actor ResidentVMHost {
     timers.removeValue(forKey: id)?.cancel()
     guard let reply = pending.removeValue(forKey: id) else { return }
     if let error = object["error"] as? String {
-      reply.resume(throwing: LauncherError.startFailed(reason: error, log: object["log"] as? String ?? ""))
+      if let details = object["startup_error"] as? [String: Any], let issue = HistoryVersionMismatch(diagnostic: details) {
+        reply.resume(throwing: LauncherError.incompatibleHistory(issue))
+      } else {
+        reply.resume(throwing: LauncherError.startFailed(reason: error, log: object["log"] as? String ?? ""))
+      }
     } else { reply.resume(returning: object["result"] as? [String: Any] ?? [:]) }
   }
 

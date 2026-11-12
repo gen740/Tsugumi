@@ -44,4 +44,8 @@ When the Agent cites a result in a chat reply, open its evidence link to inspect
 
 With **Save run history in the project** enabled, finished records are written to `.tsugumi/runs.sqlite` as well as to the local history. Copy the whole project, including its hidden `.tsugumi` directory, to keep its saved run records and files with it. The project's git history holds versions of the document and code. Outputs and logs live in run history.
 
+If Tsugumi cannot open the project because its run history uses a different format, the startup page shows the versions involved. Choose **Archive History and Start** to keep the incompatible database files in a separate archive and open the project. If the archive is interrupted, choose **Resume Archiving and Start**. Records kept only in the archive are unavailable in the app. **Retry** attempts to open the project again without archiving. See the archive locations under [Where the run history lives](Development.md#main-design-decisions).
+
+Archiving leaves active SSH jobs running on their host and does not move them into the new history. Confirm that these jobs have finished or been cancelled before updating Tsugumi or archiving. The archive keeps the old history, and the SSH host keeps its job records. [Remote execution](RemoteExecution.md#retention-on-the-ssh-host)
+
 **Delete Run History** in the project settings deletes the selected history and retained artifacts. Saved last inputs used for partial runs remain available. This action is unavailable during a run. **Delete the build cache** operates on build registrations and work files. [History storage](features.md#6-run-history-and-artifacts) · [Build results](features.md#keeping-build-results)

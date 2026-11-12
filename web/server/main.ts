@@ -473,6 +473,12 @@ const routes: Record<string, Handler> = {
     return { stopped: false }
   },
   'POST /api/env/start': async (b) => publicState(await envs.start(projectDir(b.path))),
+  'POST /api/env/archive-history': async (b) => {
+    const dir = projectDir(b.path)
+    const state = envs.state(dir)
+    if (state.state !== 'failed' || !state.historyVersionMismatch) return publicState(state)
+    return publicState(await envs.start(dir, true))
+  },
   'POST /api/env/stop': async (b) => {
     await envs.stop(projectDir(b.path))
     return { ok: true }

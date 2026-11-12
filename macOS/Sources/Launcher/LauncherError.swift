@@ -4,6 +4,7 @@ import Foundation
 public enum LauncherError: Error, CustomStringConvertible, Sendable {
   case imageMissing
   case startFailed(reason: String, log: String)
+  case incompatibleHistory(HistoryVersionMismatch)
   case notReady(String)
   case locked
   case invalidProject(String)
@@ -17,6 +18,11 @@ public enum LauncherError: Error, CustomStringConvertible, Sendable {
       return String(localized: "Tsugumi の実行環境のイメージが見つかりません。", bundle: .main)
     case .startFailed(let reason, _):
       return String(localized: "実行環境が起動の途中で止まりました: \(Self.reasonText(reason))", bundle: .main)
+    case .incompatibleHistory(let issue):
+      if issue.archiveInterrupted {
+        return String(localized: "履歴の退避が中断されました", bundle: .main)
+      }
+      return String(localized: "実行履歴の形式は \(issue.found) です。このバージョンの Tsugumi には \(issue.expected) が必要です。", bundle: .main)
     case .notReady(let s):
       return String(localized: "実行環境の準備ができませんでした: \(s)", bundle: .main)
     case .locked:
@@ -43,6 +49,8 @@ public enum LauncherError: Error, CustomStringConvertible, Sendable {
       return String(localized: "macOS/Container/build-image.sh で作り直すか、アプリを入れ直してください。", bundle: .main)
     case .startFailed:
       return String(localized: "下の原因とログを確かめてください。直したら再試行します。文書と実行履歴は消えません。", bundle: .main)
+    case .incompatibleHistory:
+      return String(localized: "互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 実行中の SSH ジョブは実行先で継続し、新しい履歴には引き継がれません。", bundle: .main)
     case .notReady:
       return String(localized: "実行環境を停止してから再試行してください。続くときは実行環境のデータを削除します（文書は消えません）。", bundle: .main)
     case .locked:

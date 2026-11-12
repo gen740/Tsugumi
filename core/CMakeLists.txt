@@ -43,6 +43,7 @@ add_library(tsugumi_core STATIC
   src/execution_service.cc
   src/remote_job.cc
   src/remote_invocation.cc
+  src/remote_execution_service.cc
   src/scheduler.cc
   src/service.cc
   src/service_run.cc

@@ -9,6 +9,7 @@
 
 #include "comments.hh"
 #include "execution_service.hh"
+#include "remote_execution_service.hh"
 #include "nix.hh"
 #include "scheduler.hh"
 #include "permissions.hh"
@@ -215,6 +216,7 @@ void Service::open() {
   store_->open();
   auto history_db = (opts_.history_dir.empty() ? store_->state_dir() : opts_.history_dir) / "history.sqlite";
   if (!opts_.history_dir.empty()) stdfs::create_directories(opts_.history_dir);
+  History::prepare_storage(history_db, runs_copy(), opts_.archive_incompatible_history, opts_.fault);
   history_ = std::make_unique<History>(history_db, cursor_secret_, opts_.fault);
   versions_ = std::make_unique<Versions>(opts_.root);
   // Runs kept in the project and missing here (a copied or moved project).
@@ -231,17 +233,21 @@ void Service::open() {
   substituters_ = configured_substituters(opts_.substituters_file);
   for (const char* d : {"runs", "inputs"}) stdfs::create_directories(store_->state_dir() / d);
   execution_service_ = std::make_unique<LocalExecutionService>(*this, scratch / "workers");
+  remote_execution_ = std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();
   exporter_ = std::thread([this] { export_loop(); });
   schedule_export();  // runs that ended before (and interrupted ones)
 }
 
-auto Service::execution_service(const std::string& id) -> LocalExecutionService& {
-  if (id != kLocalExecutionService)
-    throw Failed(FailureKind::unsupported, "execution service " + id + " is not available");
-  return *execution_service_;
+auto Service::execution_service(const std::string& id) -> ExecutionService& {
+  // Any other id names an SSH execution service; its backend checks that the
+  // service is available when an invocation is prepared.
+  if (id == kLocalExecutionService) return *execution_service_;
+  return *remote_execution_;
 }
+
+auto Service::remote_execution() -> RemoteExecutionService& { return *remote_execution_; }
 
 auto Service::remote_targets() const -> std::vector<RemoteTarget> {
   try {
