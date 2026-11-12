@@ -13,36 +13,56 @@ import Testing
   let socket = VMHostIPC.socketPath(support: support)
   let listener = try VMHostIPC.listen(path: socket)
   defer { Darwin.close(listener); unlink(socket) }
-  let host = Task.detached { () throws -> [Bool] in
-    let peer = accept(listener, nil, nil)
-    try #require(peer >= 0)
-    defer { Darwin.close(peer) }
-    var timeout = timeval(tv_sec: 5, tv_usec: 0)
-    setsockopt(peer, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-    var archives: [Bool] = []
-    for attempt in 0..<3 {
-      let request = try #require(try VMHostIPC.read(peer))
-      #expect(request["op"] as? String == "start")
-      archives.append(request["archive_incompatible_history"] as? Bool == true)
-      let kind = attempt < 2 ? "incompatible_history" : "database_corrupt"
-      try VMHostIPC.write([
-        "id": try #require(request["id"] as? String),
-        "error": "cannot open history",
-        "startup_error": ["kind": kind, "found": attempt == 1 ? "pending" : "2", "expected": "3"],
-      ], to: peer)
+  let host = Task {
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[Bool], Error>) in
+      // The fake host blocks on its socket, independently of Swift test tasks.
+      Thread.detachNewThread {
+        continuation.resume(with: Result {
+          var incoming = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
+          guard poll(&incoming, 1, 60_000) == 1 else { throw POSIXError(.ETIMEDOUT) }
+          let peer = accept(listener, nil, nil)
+          guard peer >= 0 else { throw POSIXError(.ECONNABORTED) }
+          defer { Darwin.close(peer) }
+          // The application suite can hold the main actor while it launches other test daemons.
+          var timeout = timeval(tv_sec: 60, tv_usec: 0)
+          setsockopt(peer, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+          var archives: [Bool] = []
+          for attempt in 0..<3 {
+            guard let request = try VMHostIPC.read(peer), request["op"] as? String == "start",
+                  let id = request["id"] as? String else { throw POSIXError(.EPROTO) }
+            archives.append(request["archive_incompatible_history"] as? Bool == true)
+            let kind = attempt < 2 ? "incompatible_history" : "database_corrupt"
+            try VMHostIPC.write([
+              "id": id,
+              "error": "cannot open history",
+              "startup_error": ["kind": kind, "found": attempt == 1 ? "pending" : "2", "expected": "3"],
+            ], to: peer)
+          }
+          return archives
+        })
+      }
     }
-    return archives
   }
   let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(support: support, image: nil))
-  func waitForProblem() async throws {
-    for _ in 0..<200 {
-      if EnvironmentOverlay.hasProblem(session), session.connectionMessage != nil { return }
+  func waitForProblem(found: String?) async throws {
+    let deadline = ContinuousClock.now + .seconds(60)
+    while true {
+      if EnvironmentOverlay.hasProblem(session), session.connectionMessage != nil {
+        switch session.environment {
+        case .incompatibleHistory(let issue) where issue.found == found: return
+        case .failed where found == nil: return
+        default: break
+        }
+      }
+      guard ContinuousClock.now < deadline else {
+        Issue.record("Expected history startup state \(found ?? "failed"), got \(session.environment.label)")
+        throw POSIXError(.ETIMEDOUT)
+      }
       try await Task.sleep(for: .milliseconds(10))
     }
-    Issue.record("Expected a startup problem")
   }
   session.start()
-  try await waitForProblem()
+  try await waitForProblem(found: "2")
   guard case .incompatibleHistory(let mismatch) = session.environment else {
     Issue.record("Expected a typed history mismatch")
     await session.close()
@@ -52,7 +72,7 @@ import Testing
   #expect(mismatch.expected == "3")
   #expect(!mismatch.archiveInterrupted)
   session.start()
-  try await waitForProblem()
+  try await waitForProblem(found: "pending")
   if case .incompatibleHistory(let pending) = session.environment {
     #expect(pending.archiveInterrupted)
     #expect(!LauncherError.incompatibleHistory(pending).description.contains("pending"))
@@ -60,7 +80,7 @@ import Testing
     Issue.record("Expected an interrupted archive")
   }
   session.archiveHistoryAndStart()
-  try await waitForProblem()
+  try await waitForProblem(found: nil)
   #expect(try await host.value == [false, false, true])
   guard case .failed = session.environment else {
     Issue.record("Expected an ordinary startup failure for a corrupt database")
