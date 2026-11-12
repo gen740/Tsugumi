@@ -1499,8 +1499,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         [sum, displays](sql::Db& db) {
           for (const auto& d : displays) History::put_display(db, d);
           History::update_run(db, sum.status);
-          // Progress rows never outlive their run (a lost completion leaves no "running" card).
-          db.prepare("DELETE FROM statuses WHERE run_id=?").bind(1, *sum.status.run_id).run();
+          // Detached external invocations are still pending after the local
+          // graph ends. Keep their progress until recovery commits a result.
+          db.prepare("DELETE FROM statuses WHERE run_id=? AND NOT EXISTS ("
+                     "SELECT 1 FROM remote_jobs AS j WHERE j.run_id=statuses.run_id AND j.card=statuses.card "
+                     "AND j.invocation=statuses.invocation)").bind(1, *sum.status.run_id).run();
         },
         [self, sum](bool ok) mutable {
           if (!ok && sum.status.state == RunState::succeeded) {
