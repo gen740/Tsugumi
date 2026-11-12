@@ -244,7 +244,7 @@ Besides Anthropic's Messages API, OpenAI's API and the ChatGPT plan are supporte
 
 ### Links to the evidence
 
-Agent reports can link to the current Card and the exact saved result they cite. Both Mac and Web resolve these addresses only within the open project; missing Cards, runs, invocations, logs and artifacts appear as unavailable text. A result opens its recorded display and input/output values, without replacing the current Canvas result.
+Links in chat can open the current Card and an exact saved result. Mac and Web resolve these addresses within the open project. Missing Cards, runs, invocations, logs and artifacts appear as unavailable text. An invocation link opens its recorded display and input/output values while the Canvas keeps showing the current result.
 
 | Markdown destination | Opens |
 | --- | --- |
@@ -254,7 +254,7 @@ Agent reports can link to the current Card and the exact saved result they cite.
 | `log:<UUID>/<Card path>?invocation=<number>&stream=stderr&offset=<bytes>` | The log at that byte offset (`stdout`, `stderr`, `build`, or `journal`) |
 | `artifact:<UUID>?id=<artifact id>&path=<member>` | The saved artifact; omit `path` for the whole artifact |
 
-Use these as Markdown links, such as `[spectrum](card:spectrum)`. Query values are URL-encoded. The Agent takes identifiers from the records it reads and cites them beside its findings. A Card link points to its present definition; a run link preserves which result supported the statement.
+Use these as Markdown links, such as `[spectrum](card:spectrum)`. URL-encode the query values. A Card link points to its present definition. An invocation link identifies the particular result you want to share.
 
 ### Generating Cards from Drafts
 
