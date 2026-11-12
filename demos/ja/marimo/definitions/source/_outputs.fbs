@@ -1,0 +1,4 @@
+namespace source;
+table Number { value:double; }
+table Outputs { value:Number (required); }
+root_type Outputs;

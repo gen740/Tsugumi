@@ -1,0 +1,10 @@
+{
+  "template": "input",
+  "params": [
+    {
+      "name": "value",
+      "type": "double",
+      "data": 7
+    }
+  ]
+}

@@ -19,4 +19,5 @@ python.withPackages (ps: [
   ps.matplotlib
   ps.plotly
   ps.altair
+  ps.marimo
 ])

@@ -178,6 +178,27 @@ import numpy as np
 
 What `main` or `on_run_start` sets in `os.environ` lasts for that call only.
 
+### marimo notebooks
+
+The Mac/Web `marimo notebook` starting point is an ordinary Python Card. Its
+complete runnable contract is `demos/en/marimo/definitions/notebook`; shared
+source files are in `ui/templates/marimo.json`. `src/notebook.py` defines a normal
+`marimo.App`. The adapter uses `tsugumi.notebook.bindings(ctx, mapping)` for
+`input.<port>.<field>` / `param.<field>` variable bindings and
+`run(ctx, source_directory, notebook, definitions, selected)` to execute it once
+in a fresh child process. It returns selected JSON-compatible definitions and a
+saved Directory. The ordinary adapter packs those values into its declared
+output schema only after success.
+
+The example emits a finite number on `value` and retains the Directory on
+`report` (`retainArtifact: true`, `artifactOutput: "report"`). `reuseWorker: false`
+keeps process lifetime per invocation. Nix dependencies include `ps.marimo` and
+`ps.matplotlib`; add other imports there. The static snapshot keeps Markdown/HTML,
+text, figures, source and run metadata. Frontend-only widgets have a static note.
+There is no interactive server or reactive downstream emission. `docs/Marimo.md`
+describes configuration-cell override rules, errors and the future editor-session
+boundary. The bilingual demo passes 7 and factor 2 to the notebook and emits 14.
+
 ### bash
 
 Inputs are `$JSON_<PORT>` (a JSON file of the message), `$FILE_<PORT>` / `$DIR_<PORT>` (paths);

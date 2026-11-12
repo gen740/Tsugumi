@@ -673,3 +673,7 @@ start → load → prepare → share ─┬→ knn ──────┐
 - **What is checked:** each Draft's description has the steps of the computation and `assert`s. Besides the counts, the 0–9 range and a minimum accuracy, they check properties that each method's result must have (kNN agreeing with brute force in numpy, logistic regression's predictions agreeing with the weighted sums, the forest's predictions agreeing with the average of its trees, formulas for the networks' parameter counts and so on). `compare` checks that the digests agree and that the accuracies agree with values recomputed from the predictions.
 - **Why the counts are small:** a project can run only one run at a time, so the helpers' runs wait their turn (at most 900 seconds per wait). So it uses 5000 training and 1000 test images, smaller than the finished version (10000 and 2000).
 - **The answers:** neither this demo nor the finished `mnist-classifiers` appears in the Agent's `reference_read` list or can be read with it.
+
+## marimo notebook → typed result (`marimo`)
+
+A typed input supplies 7 to a marimo notebook. Its `factor` param defaults to 2, so the selected `result` is 14; a logger consumes the typed output. The same invocation retains static HTML, a figure, source cells and the binding/result metadata. Set `factor` to 3 and rerun to save a distinct result of 21. See [marimo Cards](Marimo.md).

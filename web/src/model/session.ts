@@ -13,6 +13,7 @@ import {
 import { arrangeCards } from './arrange'
 import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
 import { Observable } from './observable'
+import marimoFiles from '../../../ui/templates/marimo.json'
 import { FlowDirection, prefs } from './prefs'
 import { cardPermissions } from './permissions'
 import { L, language } from '../i18n'
@@ -3028,6 +3029,10 @@ export class ProjectSession extends Observable {
     const ns = id.replace(/[-.]/g, '_')
     const set = (card: J, meta?: J) => this.setCardDefinition(k, { card, meta })
     switch (t) {
+      case 'marimo':
+        set(tryParse(marimoFiles['_card.json'])!, tryParse(marimoFiles['_meta.json']))
+        for (const [file, text] of Object.entries(marimoFiles)) if (file !== '_card.json' && file !== '_meta.json') this.putSource(dir + file, text)
+        break
       case 'draft':
         set(obj([['template', 'draft']]), obj([['description', ''], ['content', '']]))
         break
@@ -3440,14 +3445,15 @@ export function definitionKind(def: J | undefined): CardKind {
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = 'python' | 'cpp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
+export type DefinitionTemplate = 'marimo' | 'python' | 'cpp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
+  { id: 'marimo', label: L('marimo ノートブック') },
   { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
   { id: 'switch', label: L('スイッチ') },
   { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') }, { id: 'fork', label: L('分配') },
   { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'logger', label: L('記録') },
 ]
-export const templateIcon = (t: DefinitionTemplate) => KIND_ICON[t === 'python' || t === 'cpp' ? 'code' : (t as CardKind)]
+export const templateIcon = (t: DefinitionTemplate) => KIND_ICON[t === 'python' || t === 'cpp' || t === 'marimo' ? 'code' : (t as CardKind)]
 /** A name for the new Card (its id; made unique). */
 export const templateBaseName = (t: DefinitionTemplate) => (t === 'python' || t === 'cpp' ? 'card' : t)
 

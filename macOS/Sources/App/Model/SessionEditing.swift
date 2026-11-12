@@ -45,10 +45,13 @@ enum CardKind: String {
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
   case python, cpp, input, draft, trigger, fork, branch, merge, logger
   case switchCard = "switch"
+  case marimo
+
   var id: String { rawValue }
   var label: String {
     switch self {
     case .draft: return String(localized: "Draft（未実装の計画）")
+    case .marimo: return String(localized: "marimo ノートブック")
     case .python: return String(localized: "Python の処理")
     case .cpp: return String(localized: "C++ の処理")
     case .input: return String(localized: "入力値")
@@ -60,7 +63,7 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .logger: return String(localized: "記録")
     }
   }
-  var symbol: String { (CardKind(rawValue: rawValue) ?? (self == .python || self == .cpp ? .code : .draft)).symbol }
+  var symbol: String { (CardKind(rawValue: rawValue) ?? (self == .python || self == .cpp || self == .marimo ? .code : .draft)).symbol }
   /// A name for the new Card (its id; made unique).
   var baseName: String {
     switch self {
@@ -1290,6 +1293,10 @@ extension ProjectSession {
     let ns = id.replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: ".", with: "_")
     func set(_ card: JSONValue, meta: JSONValue? = nil) { setCardDefinition(k, DefinitionDraft(card: card, meta: meta)) }
     switch t {
+    case .marimo:
+      let files = MarimoTemplate.files
+      set(try! JSONValue.parse(files["_card.json"]!), meta: try! JSONValue.parse(files["_meta.json"]!))
+      for (file, text) in files where file != "_card.json" && file != "_meta.json" { putSource(dir + file, text) }
     case .draft:
       set(.object([("template", .string("draft"))]), meta: .object([("description", .string("")), ("content", .string(""))]))
     case .trigger, .fork, .branch, .logger:
