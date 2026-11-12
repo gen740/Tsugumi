@@ -5,15 +5,19 @@ TSUGUMI_REMOTE_TEST_GATEWAY to the absolute gateway executable on that host.
 Run this case with tsugumi-test-env and pytest -m environment.
 """
 
+import hashlib
 import json
 import os
 import select
+import shutil
+import socket
+import struct
 import subprocess
 import time
 from pathlib import Path
 
 import pytest
-from projects import FILE_FBS, card, conn, start_run, wait_run, write
+from projects import FILE_FBS, SINK, card, conn, start_run, wait_run, write
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
@@ -26,17 +30,21 @@ BROKER = """
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-const [modulePath, support, project, host, gateway] = process.argv.slice(2);
+const [modulePath, support, project, copy, host, gateway] = process.argv.slice(2);
 const { authorizeExecutionProject, probeExecutionService, saveExecutionServices, startExecutionBroker } =
   await import(pathToFileURL(modulePath));
-const control = path.join(support, "control");
-fs.mkdirSync(control, {recursive: true, mode: 0o700});
-const st = fs.statSync(project, {bigint: true});
-const token = authorizeExecutionProject(support, [st.dev, st.ino, st.birthtimeNs || st.ctimeNs].join(":"), control);
+const authorize = (project, name) => {
+  const control = path.join(support, name);
+  fs.mkdirSync(control, {recursive: true, mode: 0o700});
+  const st = fs.statSync(project, {bigint: true});
+  return authorizeExecutionProject(support, [st.dev, st.ino, st.birthtimeNs || st.ctimeNs].join(":"), control);
+};
+const token = authorize(project, "control");
+const copyToken = authorize(copy, "copy-control");
 const entry = await probeExecutionService({id: "ssh-test", name: "SSH test", sshHost: host, gateway});
 saveExecutionServices(support, [entry]);
 const endpoint = await startExecutionBroker(support);
-console.log(JSON.stringify({TSUGUMI_EXECUTION_BROKER: endpoint, TSUGUMI_EXECUTION_BROKER_TOKEN_FILE: token}));
+console.log(JSON.stringify({endpoint, token, copyToken}));
 setInterval(() => {}, 30000);
 """
 
@@ -49,17 +57,20 @@ def remote_broker(project, tmp_path, monkeypatch):
         pytest.skip("set TSUGUMI_REMOTE_TEST_SSH_HOST and TSUGUMI_REMOTE_TEST_GATEWAY for a dedicated SSH runner")
     script = tmp_path / "broker.mjs"
     script.write_text(BROKER)
+    copy = tmp_path / "copied-project"
+    shutil.copytree(project, copy)
     module = Path(__file__).resolve().parents[3] / "web/server/executionServices.ts"
     process = subprocess.Popen(["node", str(script), str(module), str(tmp_path / "support"),
-                                str(project), host, gateway], stdout=subprocess.PIPE, text=True)
+                                str(project), str(copy), host, gateway], stdout=subprocess.PIPE, text=True)
     try:
         ready, _, _ = select.select([process.stdout], [], [], 30)
         assert ready, "SSH broker did not start"
         line = process.stdout.readline()
         assert line, "SSH broker exited before starting"
-        for key, value in json.loads(line).items():
-            monkeypatch.setenv(key, value)
-        yield
+        ready = json.loads(line)
+        monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", ready["endpoint"])
+        monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER_TOKEN_FILE", ready["token"])
+        yield ready
     finally:
         process.terminate()
         try:
@@ -69,6 +80,37 @@ def remote_broker(project, tmp_path, monkeypatch):
             process.wait(timeout=5)
 
 
+def broker_request(endpoint, token_file, operation, body=b"", **fields):
+    request = json.dumps({"version": 1, "operation": operation, "service": "ssh-test",
+                          "broker_token": Path(token_file).read_text().strip(), **fields}).encode()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+        connection.settimeout(30)
+        connection.connect(endpoint.removeprefix("unix:"))
+        connection.sendall(struct.pack(">I", len(request)) + request + body)
+        connection.shutdown(socket.SHUT_WR)
+        with connection.makefile("rb") as response:
+            size, = struct.unpack(">I", response.read(4))
+            return json.loads(response.read(size)), response.read()
+
+
+def test_ssh_broker_isolates_copies_of_a_project(remote_broker):
+    endpoint, original, copy = (remote_broker[name] for name in ("endpoint", "token", "copyToken"))
+    first, _ = broker_request(endpoint, original, "probe")
+    second, _ = broker_request(endpoint, copy, "probe")
+    assert first["ok"] and second["ok"] and first["instance_id"] != second["instance_id"]
+
+    value = b"private to the original project\n"
+    digest = hashlib.sha256(value).hexdigest()
+    uploaded, _ = broker_request(endpoint, original, "put_blob", value, instance_id=first["instance_id"],
+                                 sha256=digest, size=len(value))
+    assert uploaded["ok"]
+    accepted, body = broker_request(endpoint, original, "get_blob", instance_id=first["instance_id"], sha256=digest)
+    assert accepted["ok"] and body == value
+    for instance in (first["instance_id"], second["instance_id"]):
+        refused, body = broker_request(endpoint, copy, "get_blob", instance_id=instance, sha256=digest)
+        assert not refused["ok"] and not body
+
+
 def fixture(project):
     script = """
       set -e
@@ -76,6 +118,7 @@ def fixture(project):
       test ! -e /etc/hostname
       test -z "$SSH_AUTH_SOCK"
       printf 'remote-card-stdout\\n'
+      printf '%s' '{"text":"remote Card display"}' > "$TSUGUMI_DISPLAY"
       cp "$FILE_IN" "$TSUGUMI_OUTPUT_DIR/copied.txt"
       jq -nc --arg f "$TSUGUMI_OUTPUT_DIR/copied.txt" '{doc:{value:$f}}' > "$TSUGUMI_OUTPUT"
     """
@@ -90,10 +133,13 @@ def fixture(project):
         "input": source,
         "work": {**settings, "_nix": "{ pkgs, inputs, params }: { run = ''" + script + "''; }"},
         "slow": {**settings, "_nix": "{ pkgs, inputs, params }: { run = ''sleep 25\n" + script + "''; }"},
+        "sink": SINK,
     }
     write(project, definitions,
-          [card("source", "input"), card("later", "input"), card("work", "work"), card("slow", "slow")],
-          [conn("source", "doc", "work", "in"), conn("later", "doc", "slow", "in")],
+          [card("source", "input"), card("later", "input"), card("work", "work"), card("slow", "slow"),
+           card("after", "sink")],
+          [conn("source", "doc", "work", "in"), conn("later", "doc", "slow", "in"),
+           conn("slow", "doc", "after", "in")],
           {"definitions/input/payload.txt": "remote-input-roundtrip\n"})
 
 
@@ -121,6 +167,9 @@ def check_success(client, run_id, name, system):
     assert len(text(summary.executionJobId)) == 64
     assert summary.executionResources.cpuMillis == 2500
     assert summary.executionResources.memoryBytes == 4 << 30
+    assert text(record.display.value.text) == "remote Card display"
+    output, = record.outputs
+    assert text(output.rootType) == "files.Doc"
     artifacts = client.call("ArtifactListRequest", runId=run_id, card=path(name)).artifacts
     assert len(artifacts) == 1
     content = client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), limitBytes=1024)
@@ -158,6 +207,8 @@ def test_ssh_card_roundtrip_reconnect_and_cancel(project, core_factory, remote_b
     recovered = check_success(client, run_id, "slow", system)
     assert text(recovered.executionJobId) == text(started.executionJobId)
     assert client.call("RunStatusRequest", runId=run_id).state == RunState.failed
+    after = client.call("RunInvocationsRequest", runId=run_id, card=path("after"))
+    assert not any(row.state == CardState.succeeded for row in after.records or [])
 
     run_id = start_run(client, "later")
     wait_invocation(client, run_id, "slow", running)

@@ -85,7 +85,7 @@ auto remote_recovery_contract(const std::string& encoded) -> RemoteRecoveryContr
 auto stage_remote_invocation(const RemoteJobClient& client, const std::string& service, const std::string& instance,
                              const std::string& project_id,
                              const std::filesystem::path& state, const std::filesystem::path& archive,
-                             const LocalExecutionRequest& request) -> std::string;
+                             const ExecutionRequest& request) -> std::string;
 auto import_remote_result(const RemoteJobClient& client, const std::string& service, const std::string& instance,
                           const std::string& result_digest,
                           const std::string& spec, const std::filesystem::path& directory,

@@ -224,6 +224,11 @@ export async function probeExecutionService(value: unknown): Promise<ExecutionSe
   const entry = validateConnection(value)
   const reply = await remote(entry, { version: 1, operation: 'probe', service: entry.id })
   if (reply.ok !== true) throw Error(typeof reply.error === 'string' ? reply.error : 'The execution service probe failed.')
+  const workerContract = 1
+  if (reply.worker_contract !== workerContract) {
+    const actual = typeof reply.worker_contract === 'number' ? reply.worker_contract : 'unreported'
+    throw Error(`SSH gateway worker contract is ${actual}. Expected ${workerContract}. Rebuild the gateway with this Tsugumi revision.`)
+  }
   if (typeof reply.native_system !== 'string' || !Array.isArray(reply.systems)) throw Error('The execution service did not report its Linux systems.')
   return validateConnection({ ...entry, nativeSystem: reply.native_system, systems: reply.systems })
 }

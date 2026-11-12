@@ -23,7 +23,9 @@ if (request.operation === 'status') process.exit(1) // transport closed before a
 const probe = request.operation === 'probe'
 if (!probe && !/^[a-f0-9]{64}$/.test(request.project_scope)) process.exit(5)
 const body = probe ? Buffer.alloc(0) : data.subarray(4 + length)
-const reply = probe ? { version: 1, ok: true, native_system: 'x86_64-linux', systems: ['x86_64-linux'] }
+const contract = process.env.TEST_WORKER_CONTRACT
+const reply = probe ? { version: 1, ok: true, worker_contract: contract === 'missing' ? undefined : Number(contract ?? 1),
+    native_system: 'x86_64-linux', systems: ['x86_64-linux'] }
   : { version: 1, ok: true, size: body.length, scope: request.project_scope }
 const json = Buffer.from(JSON.stringify(reply)), prefix = Buffer.alloc(4)
 prefix.writeUInt32BE(json.length)
@@ -34,6 +36,11 @@ fs.writeFileSync(1, Buffer.concat([prefix, json, body]))
   assert.throws(() => saveExecutionServices(root, [{ ...entry, gateway: '/tmp/gateway; touch bad' }]), /absolute path/)
   const verified = await probeExecutionService(entry)
   assert.deepEqual(verified.systems, ['x86_64-linux'])
+  process.env.TEST_WORKER_CONTRACT = '99'
+  await assert.rejects(probeExecutionService(entry), /worker contract is 99.*Rebuild the gateway/)
+  process.env.TEST_WORKER_CONTRACT = 'missing'
+  await assert.rejects(probeExecutionService(entry), /worker contract is unreported.*Rebuild the gateway/)
+  delete process.env.TEST_WORKER_CONTRACT
   saveExecutionServices(root, [verified])
   assert.equal(fs.statSync(path.join(root, 'execution-services.json')).mode & 0o777, 0o600)
   const a = path.join(root, 'project-a'), renamed = path.join(root, 'project-renamed'), b = path.join(root, 'project-b')
@@ -85,6 +92,7 @@ fs.writeFileSync(1, Buffer.concat([prefix, json, body]))
   assert.equal(JSON.parse(bad.subarray(4)).ok, false, 'a token cannot be retargeted to another project')
   assert.equal((await call('status')).length, 0, 'a lost SSH reply leaves the job outcome unconfirmed')
 } finally {
+  delete process.env.TEST_WORKER_CONTRACT
   if (oldPath === undefined) delete process.env.PATH
   else process.env.PATH = oldPath
   if (socketPath) fs.rmSync(path.dirname(socketPath), { recursive: true, force: true })

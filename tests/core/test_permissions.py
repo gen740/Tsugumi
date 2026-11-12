@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from projects import SINK, builtin_project, card, card_in_card, conn, write
 from harness.permissions import permissions, save
 from tsugumi_client import RpcFailure, change, text
@@ -85,3 +86,30 @@ def test_a_card_in_card_is_checked_too(tmp_path, core_factory):
         raise AssertionError("a Card in Card was widened without approval")
     except RpcFailure as e:
         assert permissions(e) == ["network inner/src"]
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_agent_needs_approval_to_select_an_external_execution_service(tmp_path, core_factory, nested):
+    """The same approval gate applies to top-level and nested Code Cards."""
+    root = tmp_path / "project"
+    definition = {"language": "bash", "_outputs": "table Outputs {} root_type Outputs;",
+                  "_nix": '{ pkgs, inputs, params }: { run = "true"; }'}
+    work = card("work", "code")
+    cards = [card_in_card("inner", [work], [], {"inputs": {}, "outputs": {}})] if nested else [work]
+    write(root, {"code": definition}, cards, [])
+    client = core_factory(project_root=root).connect()
+    body = {"language": "bash", "executionService": "ssh-test",
+            "executionResources": {"cpuMillis": 1000, "memoryBytes": 1 << 30}}
+    card_path = "inner/work" if nested else "work"
+    if nested:
+        source = "externals/inner/definitions/work/_card.json"
+        snapshot = client.call("ProjectInspectRequest")
+        base = next(text(s.hash) for s in snapshot.sources if text(s.path) == source)
+        edit = change("PutSource", path=source, bytes=list(json.dumps(body).encode()), baseHash=base)
+    else:
+        edit = put("work", body)
+    with pytest.raises(RpcFailure) as rejected:
+        save(client, [edit])
+    assert rejected.value.kind == "approval_required"
+    assert permissions(rejected.value) == [f"execution_service {card_path} ssh-test"]
+    save(client, [edit], approved=permissions(rejected.value))

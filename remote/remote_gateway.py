@@ -33,6 +33,8 @@ from remote_job import (
 )
 
 VERSION = 1
+# Version of the invocation manifest and worker result exchanged by core.
+WORKER_CONTRACT = 1
 MAX_HEADER_BYTES = 65536
 MAX_DIAGNOSTIC = 1024
 MAX_RESULT_DEPTH = 64
@@ -229,7 +231,7 @@ class Gateway:
             raise InstanceChanged("execution service points to a different journal")
         if op == "probe":
             system = self.system()
-            return {"instance_id": self.journal.instance_id, "native_system": system,
+            return {"instance_id": self.journal.instance_id, "worker_contract": WORKER_CONTRACT, "native_system": system,
                     "systems": [system]}, None
         if op == "put_blob":
             body = UploadBody(stream, header["size"])
@@ -362,7 +364,8 @@ def serve(stdin: BinaryIO, stdout: BinaryIO,
             if operation != "probe":
                 raise RequestRejected("a host-authorized project scope is required")
             system = native_system()
-            _write_frame(stdout, {"version": VERSION, "ok": True, "native_system": system, "systems": [system]})
+            _write_frame(stdout, {"version": VERSION, "ok": True, "worker_contract": WORKER_CONTRACT,
+                                  "native_system": system, "systems": [system]})
             return 0
         gateway = factory() if factory else Gateway.from_environment(scope)
         response, handle = gateway.dispatch(header, stdin)

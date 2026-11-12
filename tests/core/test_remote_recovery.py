@@ -13,7 +13,7 @@ from pathlib import Path
 import flatbuffers
 import pytest
 from harness.fixtures import worker_project
-from projects import FILE_FBS, start_run
+from projects import FILE_FBS, start_run, wait_run
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
@@ -32,6 +32,7 @@ class Gateway(socketserver.UnixStreamServer):
     def __init__(self, endpoint):
         super().__init__(endpoint, Handler)
         self.online = True
+        self.worker_contract = 1
         self.receipts = {}
         self.submit_count = 0
         self.blobs = set()
@@ -41,7 +42,7 @@ class Gateway(socketserver.UnixStreamServer):
         self.stalled = threading.Event()
         self.resume = threading.Event()
 
-    def finish(self, job):
+    def finish(self, job, *, result_fault=None):
         def blob(data):
             digest = hashlib.sha256(data).hexdigest()
             self.results[digest] = data
@@ -52,7 +53,8 @@ class Gateway(socketserver.UnixStreamServer):
         value.StartObject(1)
         value.PrependUOffsetTRelativeSlot(0, output_path, 0)
         value.Finish(value.EndObject())
-        result = WorkerResultT(outputs=[WorkerOutputT(name="doc", bytes=value.Output())])
+        value_bytes = b"\x00" if result_fault == "type" else value.Output()
+        result = WorkerResultT(outputs=[WorkerOutputT(name="doc", bytes=value_bytes)])
         message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerResult, value=result)
         buffer = flatbuffers.Builder(128)
         buffer.Finish(message.Pack(buffer), file_identifier=b"TSW1")
@@ -61,8 +63,13 @@ class Gateway(socketserver.UnixStreamServer):
             "environment.json": b'{"paths":["/nix/store/00000000000000000000000000000000-mock"],"directories":["out"],"built":true}',
             "logs.jsonl": b'{"stream":1,"text":"one recovered message\\n"}\n',
         }
+        entries = [{"size": len(data), "sha256": blob(data), "path": path} for path, data in files.items()]
+        if result_fault == "escape":
+            entries[0]["path"] = "files/out/../../escape"
+        if result_fault == "oversize":
+            next(entry for entry in entries if entry["path"] == "logs.jsonl")["size"] = (16 << 20) + 1
         manifest = json.dumps({
-            "outputs": [{"size": len(data), "sha256": blob(data), "path": path} for path, data in files.items()],
+            "outputs": entries,
             "invocation_result_sha256": blob(bytes(buffer.Output())),
         }).encode()
         self.receipts[job] = {**self.receipts[job], "state": "succeeded", "result_sha256": blob(manifest)}
@@ -73,7 +80,10 @@ class Gateway(socketserver.UnixStreamServer):
             return {"services": [{"id": "cluster", "native_system": self.system,
                                   "systems": [self.system], "available": True}]}
         if operation == "probe":
-            return {"instance_id": self.instance, "native_system": self.system, "systems": [self.system]}
+            response = {"instance_id": self.instance, "native_system": self.system, "systems": [self.system]}
+            if self.worker_contract is not None:
+                response["worker_contract"] = self.worker_contract
+            return response
         assert header["instance_id"] == self.instance
         if operation == "put_blob":
             assert hashlib.sha256(body).hexdigest() == header["sha256"]
@@ -146,7 +156,7 @@ def wait_for_state(client, run_id, expected, card_state=None):
 
 
 @pytest.fixture
-def running_job(project, core_factory, tmp_path, monkeypatch):
+def remote_gateway(monkeypatch):
     with tempfile.TemporaryDirectory(prefix="tsg-remote-", dir="/tmp") as directory:
         endpoint = str(Path(directory) / "broker")
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", "unix:" + endpoint)
@@ -154,24 +164,54 @@ def running_job(project, core_factory, tmp_path, monkeypatch):
         with Gateway(endpoint) as gateway:
             server = threading.Thread(target=gateway.serve_forever, kwargs={"poll_interval": 0.02})
             server.start()
-            daemon = None
             try:
-                daemon = core_factory(mocked_builds=True)
-                client = daemon.connect()
-                worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
-                               retainArtifact=True, artifactOutput="doc",
-                               executionResources={"cpuMillis": 500, "memoryBytes": 256 << 20})
-                run_id = start_run(client, "work", propagate=False)
-                live = wait_for_state(client, run_id, RemoteExecutionState.running)
-                job_id = text(live.executionJobId)
-                assert gateway.submit_count == 1
-                yield gateway, daemon, client, run_id, job_id
+                yield gateway
             finally:
                 gateway.resume.set()
-                if daemon:
-                    daemon.stop()
                 gateway.shutdown()
                 server.join()
+
+
+@pytest.fixture
+def running_job(project, remote_gateway, core_factory, tmp_path):
+    daemon = core_factory(mocked_builds=True)
+    client = daemon.connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
+                   retainArtifact=True, artifactOutput="doc",
+                   executionResources={"cpuMillis": 500, "memoryBytes": 256 << 20})
+    run_id = start_run(client, "work", propagate=False)
+    live = wait_for_state(client, run_id, RemoteExecutionState.running)
+    job_id = text(live.executionJobId)
+    assert remote_gateway.submit_count == 1
+    try:
+        yield remote_gateway, daemon, client, run_id, job_id
+    finally:
+        remote_gateway.resume.set()
+
+
+@pytest.mark.parametrize("worker_contract", [None, 99])
+def test_remote_worker_contract_mismatch_prevents_upload(project, remote_gateway, core_factory, tmp_path, worker_contract):
+    remote_gateway.worker_contract = worker_contract
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
+                   executionResources={"cpuMillis": 500, "memoryBytes": 256 << 20})
+    run_id = start_run(client, "work", propagate=False)
+    status = wait_run(client, run_id, timeout=10)
+    assert status.state == RunState.failed
+    assert "Rebuild the gateway with this Tsugumi revision" in text(status.failure.diagnostic)
+    assert not remote_gateway.blobs and remote_gateway.submit_count == 0
+
+
+@pytest.mark.parametrize("fault", ["type", "escape", "oversize"])
+def test_invalid_remote_results_do_not_publish_outputs(running_job, fault):
+    """The core validates output bytes and result members before publishing an artifact."""
+    gateway, _, client, run_id, job_id = running_job
+    gateway.finish(job_id, result_fault=fault)
+    assert wait_run(client, run_id, timeout=10).state == RunState.failed
+    record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+    assert record.summary.state == CardState.failed and record.summary.failure
+    assert not record.outputs
+    assert not client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
 
 
 def assert_cancelled(client, gateway, run_id, job_id):

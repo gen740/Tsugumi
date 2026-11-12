@@ -133,7 +133,7 @@ class GatewayTest(unittest.TestCase):
         code, resp, rest = self.request(operation="probe", service="tsugumi")
         self.assertEqual((code, rest), (0, b""))
         self.assertEqual(resp, {"version": 1, "ok": True, "instance_id": self.journal.instance_id,
-                                "native_system": NATIVE, "systems": [NATIVE]})
+                                "worker_contract": 1, "native_system": NATIVE, "systems": [NATIVE]})
 
     def test_submit_uses_opaque_unit_and_fixed_argv(self):
         job, spec = "b" * 64, self.spec(cpu=1500)
