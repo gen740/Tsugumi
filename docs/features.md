@@ -86,6 +86,8 @@ in
 - The static diagnostics tell you about references as written, before evaluation (they do not read comments or the bodies of strings; an indirect reference through an alias or the like is found at evaluation). The extent that can be referred to is itself guaranteed by the evaluator passing only the Cards that always run first in `inputs.upstream`.
 - Only the definitions actually referred to are evaluated, lazily, and branches not chosen at run time are not built.
 
+- On the macOS and Web canvas, **Nix references (as written)** toggles dashed directional links from the referencing Card to the referenced Card. They are the references written in the saved `default.nix` files, not the evaluated dependencies. Hover highlights the connected Cards and links. Nested targets meet their visible container; the reference list preserves the exact paths, opens either Card on the canvas, and opens the referencing Nix definition. Invalid references remain in the list with a diagnostic notice. Saving a source refreshes the shared core resolution; aliases and dynamically computed references are not inferred.
+
 ### External Nix sources (`inputs.sources`)
 
 - Flakes can be added under "External sources" in "Name and environment" of the project's settings. Enter an address (`github:owner/repo`, or the URL of a GitHub page) and press "Fetch" to see the commit, the hash and the list of packages for this environment. "Update" fetches a newer commit.

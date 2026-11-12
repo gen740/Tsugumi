@@ -1244,5 +1244,13 @@
  "グラフの更新": "Chart updates",
  "更新（実行中は薄く表示）": "Update (dimmed while running)",
  "ライブ（実行中も追う）": "Live (follow while running)",
- "更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。": "Update: shows the last chart, dimmed while this Card or a Card upstream of it is running, and replaces it when the new result arrives. Live: replaces the chart with each one that arrives during the run, keeping the previous one on screen until the next is ready."
+ "更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。": "Update: shows the last chart, dimmed while this Card or a Card upstream of it is running, and replaces it when the new result arrives. Live: replaces the chart with each one that arrives during the run, keeping the previous one on screen until the next is ready.",
+ "Nix 参照（記述どおり）": "Nix references (as written)",
+ "保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。": "Shows the Card references written in saved default.nix files. References through aliases or computed names are not included.",
+ "Nix 参照一覧": "Nix reference list",
+ "参照元 → 参照先。保存済みの default.nix にある静的な Card 参照を表示します。": "Referencing Card → referenced Card. Shows static Card references in saved default.nix files.",
+ "Card 間の Nix 参照はありません": "No Nix references between Cards.",
+ "参照を解決できません。Nix 定義と診断を確認してください。": "This reference is invalid. Check the Nix definition and diagnostics.",
+ "Nix 定義を開く": "Open Nix definition",
+ "一覧": "List"
 }
