@@ -965,6 +965,8 @@
 "対象" = "Which";
 "小さく" = "Smaller";
 "展開" = "Expand";
+"履歴の退避が中断されました" = "History Archive Interrupted";
+"履歴の退避を再開して起動" = "Resume Archiving and Start";
 "履歴を検索" = "Search history";
 "履歴を読み込めません: %@" = "Cannot read the history: %@";
 "履歴を読み込めませんでした" = "Could not read the history";

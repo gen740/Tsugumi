@@ -1,7 +1,12 @@
 #include "history.hh"
 
+#include <fcntl.h>
+#include <unistd.h>
+
+#include <cerrno>
 #include <cstdio>
 #include <functional>
+#include <system_error>
 
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -238,6 +243,101 @@ constexpr int kHistoryVersion = 3;
 constexpr const char* kCopyFormat = "tsugumi-runs";
 constexpr const char* kCopyVersion = "3";
 
+namespace stdfs = std::filesystem;
+
+constexpr const char* kHistorySuffixes[] = {"", "-wal", "-shm", "-journal"};
+
+struct HistoryArchive {
+  stdfs::path database;
+  stdfs::path directory;
+  std::string id;
+  bool pending;
+};
+
+auto history_file(const stdfs::path& path, const char* suffix) -> stdfs::path {
+  return path.string() + suffix;
+}
+
+auto regular_history_file(const stdfs::path& path) -> bool {
+  const auto status = stdfs::symlink_status(path);
+  if (!stdfs::exists(status)) return false;
+  if (!stdfs::is_regular_file(status)) throw std::runtime_error("history is not a regular file: " + path.string());
+  return true;
+}
+
+auto archive_intent(const stdfs::path& database) -> stdfs::path {
+  return history_file(database, ".archive-pending");
+}
+
+auto read_archive_id(const stdfs::path& intent) -> std::string {
+  // Read one UUID, with space for an extra byte to reject longer contents.
+  char buffer[37];
+  const int fd = ::open(intent.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+  if (fd < 0) throw std::system_error(errno, std::generic_category(), "open " + intent.string());
+  ssize_t count;
+  do { count = ::read(fd, buffer, sizeof buffer); } while (count < 0 && errno == EINTR);
+  const int error = errno;
+  ::close(fd);
+  if (count < 0) throw std::system_error(error, std::generic_category(), "read " + intent.string());
+  const std::string id(buffer, static_cast<size_t>(count));
+  if (!crypto::is_uuid(id)) throw std::runtime_error("invalid history archive intent: " + intent.string());
+  return id;
+}
+
+auto sync_history_directory(const stdfs::path& directory) -> void {
+  const int fd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (fd < 0) throw std::system_error(errno, std::generic_category(), "open " + directory.string());
+  int result;
+  do { result = ::fsync(fd); } while (result < 0 && errno == EINTR);
+  const int error = errno;
+  ::close(fd);
+  if (result < 0) throw std::system_error(error, std::generic_category(), "sync " + directory.string());
+}
+
+auto history_archive(const stdfs::path& database, std::string id, bool pending) -> HistoryArchive {
+  const auto directory = database.parent_path() / ("history-archive-" + id);
+  const auto status = stdfs::symlink_status(directory);
+  if (stdfs::exists(status) && (!pending || !stdfs::is_directory(status)))
+    throw std::runtime_error("invalid history archive directory: " + directory.string());
+  for (const auto* suffix : kHistorySuffixes) {
+    const auto source = history_file(database, suffix);
+    const auto destination = directory / source.filename();
+    const bool has_source = regular_history_file(source);
+    const bool has_destination = regular_history_file(destination);
+    if (has_source && has_destination)
+      throw std::runtime_error("history archive has both source and destination: " + source.string());
+    if (!*suffix && !has_source && !has_destination)
+      throw std::runtime_error("history archive is missing its database: " + database.string());
+  }
+  return {database, directory, std::move(id), pending};
+}
+
+auto finish_history_archive(const HistoryArchive& archive, std::string_view fault) -> void {
+  const auto intent = archive_intent(archive.database);
+  if (!archive.pending) {
+    fs::write_atomic(intent, archive.id, 0600);
+    sync_history_directory(intent.parent_path());
+  }
+  // The project lock excludes other Tsugumi processes. Leave the intent on
+  // any failure so no startup can create a fresh database over its old WAL.
+  stdfs::create_directory(archive.directory);
+  stdfs::permissions(archive.directory, stdfs::perms::owner_all);
+  for (const auto* suffix : kHistorySuffixes) {
+    const auto source = history_file(archive.database, suffix);
+    if (!regular_history_file(source)) continue;
+    const auto destination = archive.directory / source.filename();
+    if (regular_history_file(destination))
+      throw std::runtime_error("history archive destination already exists: " + destination.string());
+    stdfs::rename(source, destination);
+    if (!*suffix && fault == "history_archive_after_main") ::_exit(97);
+  }
+  sync_history_directory(archive.directory);
+  sync_history_directory(intent.parent_path());
+  fs::remove_file_durable(intent);
+  sync_history_directory(intent.parent_path());
+  log::info("incompatible history archived in " + archive.directory.string());
+}
+
 }  // namespace
 
 History::History(const std::filesystem::path& db_path, std::string cursor_secret, std::string fault)
@@ -267,77 +367,60 @@ auto History::check_version() const -> void {
                            std::to_string(stored), std::to_string(kHistoryVersion), "local");
 }
 
-auto History::prepare_storage(const std::filesystem::path& local, const std::filesystem::path& copy,
-                              bool archive_incompatible) -> void {
-  std::vector<std::filesystem::path> incompatible;
+auto History::prepare_storage(const stdfs::path& local, const stdfs::path& copy,
+                              bool archive_incompatible, std::string_view fault) -> void {
+  std::vector<HistoryArchive> archives;
   std::optional<IncompatibleHistory> first;
   // Validate both databases before moving anything. Corruption is not a version mismatch.
   for (const auto& path : {local, copy}) {
-    if (!std::filesystem::exists(path)) continue;
-    if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(path)))
-      throw std::runtime_error("history is not a regular file: " + path.string());
+    const bool is_local = path == local;
+    const std::string expected = is_local ? std::to_string(kHistoryVersion) : kCopyVersion;
+    const char* source = is_local ? "local" : "portable";
+    const auto intent = archive_intent(path);
+    if (regular_history_file(intent)) {
+      archives.push_back(history_archive(path, read_archive_id(intent), true));
+      if (!first) first.emplace("the run history " + path.string() +
+          " has an unfinished archive. Resume the archive to open the project.", "pending", expected, source);
+      continue;
+    }
+    const bool present = regular_history_file(path);
+    for (const auto* suffix : {"-wal", "-shm", "-journal"}) {
+      const auto sidecar = history_file(path, suffix);
+      if (regular_history_file(sidecar) && !present)
+        throw std::runtime_error("history sidecar has no database: " + sidecar.string());
+    }
+    if (!present) continue;
+
     sql::Db db(path.string(), true);
     if (archive_incompatible) {
       auto check = db.prepare("PRAGMA quick_check");
       if (!check.step() || check.text(0) != "ok")
         throw std::runtime_error("history integrity check failed: " + path.string());
     }
-    std::string found, expected, source;
-    if (path == local) {
+    std::string found;
+    if (is_local) {
       auto version = db.prepare("PRAGMA user_version");
       const auto stored = version.step() ? version.i64(0) : 0;
       auto tables = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1");
       if (stored == kHistoryVersion || (stored == 0 && !tables.step())) continue;
       found = std::to_string(stored);
-      expected = std::to_string(kHistoryVersion);
-      source = "local";
     } else {
       auto version = db.prepare("SELECT key, value FROM meta WHERE key IN ('format','version')");
       std::map<std::string, std::string> meta;
       while (version.step()) meta[version.text(0)] = version.text(1);
-      if (meta["format"] != kCopyFormat)
+      if (meta["format"] != kCopyFormat || meta["version"].empty())
         throw std::runtime_error("unrecognized history copy: " + path.string());
       if (meta["version"] == kCopyVersion) continue;
       found = meta["version"];
-      expected = kCopyVersion;
-      source = "portable";
     }
-    incompatible.push_back(path);
+    archives.push_back(history_archive(path, crypto::uuid4(), false));
     if (!first) first.emplace("the run history " + path.string() + " has schema version " + found +
         ", but this Tsugumi requires " + expected + ". The history file is kept as it is.",
         found, expected, source);
   }
-  if (incompatible.empty()) return;
+  if (!first) return;
   if (!archive_incompatible) throw *first;
-  // A unique sibling directory keeps a database and its WAL together, on the same filesystem.
-  // Keep artifacts and saved files untouched; no old data is interpreted or migrated.
-  std::vector<std::pair<std::filesystem::path, std::filesystem::path>> moved;
-  try {
-    for (const auto& path : incompatible) {
-      auto archive = path.parent_path() / ("history-archive-" + crypto::uuid4());
-      std::filesystem::create_directory(archive);
-      std::filesystem::permissions(archive, std::filesystem::perms::owner_all);
-      for (const auto* suffix : {"", "-wal", "-shm", "-journal"}) {
-        auto from = std::filesystem::path(path.string() + suffix);
-        if (!std::filesystem::exists(std::filesystem::symlink_status(from))) continue;
-        if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(from)))
-          throw std::runtime_error("history sidecar is not a regular file: " + from.string());
-        auto to = archive / from.filename();
-        std::filesystem::rename(from, to);
-        moved.emplace_back(from, to);
-      }
-      fs::fsync_dir(archive);
-      fs::fsync_dir(path.parent_path());
-      log::info("incompatible history archived in " + archive.string());
-    }
-  } catch (...) {
-    for (auto it = moved.rbegin(); it != moved.rend(); ++it) {
-      std::error_code ec;
-      std::filesystem::rename(it->second, it->first, ec);
-      if (ec) log::error("history remains preserved at " + it->second.string());
-    }
-    throw;
-  }
+  for (const auto& archive : archives) finish_history_archive(archive, fault);
 }
 
 History::~History() {

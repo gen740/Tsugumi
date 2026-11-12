@@ -216,7 +216,7 @@ void Service::open() {
   store_->open();
   auto history_db = (opts_.history_dir.empty() ? store_->state_dir() : opts_.history_dir) / "history.sqlite";
   if (!opts_.history_dir.empty()) stdfs::create_directories(opts_.history_dir);
-  History::prepare_storage(history_db, runs_copy(), opts_.archive_incompatible_history);
+  History::prepare_storage(history_db, runs_copy(), opts_.archive_incompatible_history, opts_.fault);
   history_ = std::make_unique<History>(history_db, cursor_secret_, opts_.fault);
   versions_ = std::make_unique<Versions>(opts_.root);
   // Runs kept in the project and missing here (a copied or moved project).

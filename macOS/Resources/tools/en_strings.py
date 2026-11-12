@@ -898,6 +898,8 @@ EN = {
 "実行履歴の形式は %@ です。このバージョンの Tsugumi には %@ が必要です。": "This run history uses format %@. This version of Tsugumi requires %@.",
 "互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 実行中の SSH ジョブは実行先で継続し、新しい履歴には引き継がれません。": "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app. Running SSH jobs continue on the remote host and will be unavailable in the new history.",
 "履歴を退避して起動": "Archive History and Start",
+"履歴の退避が中断されました": "History Archive Interrupted",
+"履歴の退避を再開して起動": "Resume Archiving and Start",
 "実行環境を起動できませんでした": "The environment could not start",
 "実行環境（Nixpkgs）": "Environment (Nixpkgs)",
 "展開": "Expand",

@@ -12,6 +12,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -81,7 +82,7 @@ class History {
   ~History();
   // Called under the project lock before opening either database for writing.
   static auto prepare_storage(const std::filesystem::path& local, const std::filesystem::path& copy,
-                              bool archive_incompatible) -> void;
+                              bool archive_incompatible, std::string_view fault) -> void;
 
   using Work = std::function<void(sql::Db&)>;
   // Ordered async write. Blocks while the queue is full (backpressure).
