@@ -1495,7 +1495,7 @@ struct BuiltinCardItems: View {
   let add: (DefinitionTemplate) -> Void
 
   var body: some View {
-    ForEach([DefinitionTemplate.python, .cpp, .draft, .marimo], id: \.self) { t in
+    ForEach([DefinitionTemplate.python, .cpp, .csharp, .draft, .marimo], id: \.self) { t in
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
     }
     Divider()

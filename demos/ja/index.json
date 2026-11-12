@@ -420,6 +420,20 @@
       ]
     },
     {
+      "id": "csharp-calibration",
+      "title": "言語をまたぐ校正（C#）",
+      "field": "基本を学ぶ",
+      "description": "C++ → C# → Python を型付きポートで接続。校正係数を変え、CSV と集計を確認します。",
+      "path": "csharp-calibration",
+      "tags": [
+        "C#",
+        "C++",
+        "Python",
+        "NuGet",
+        "Artifacts"
+      ]
+    },
+    {
       "id": "marimo",
       "path": "marimo",
       "title": "marimo ノートブック → 型付き結果",

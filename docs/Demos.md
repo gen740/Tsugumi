@@ -674,6 +674,10 @@ start → load → prepare → share ─┬→ knn ──────┐
 - **Why the counts are small:** a project can run only one run at a time, so the helpers' runs wait their turn (at most 900 seconds per wait). So it uses 5000 training and 1000 test images, smaller than the finished version (10000 and 2000).
 - **The answers:** neither this demo nor the finished `mnist-classifiers` appears in the Agent's `reference_read` list or can be read with it.
 
+## csharp-calibration
+
+The **Cross-language calibration (C#)** demo passes three C++ readings (1.25, 2.5, 3.75) through a C# Card with `factor = 1.6`, then summarizes the typed result in Python and retains a CSV. The expected calibrated values are 2, 4 and 6: sum 12 and mean 4. Change `calibrate.factor` to 2 and rerun; the sum becomes 15 and mean 5. The C# log uses a fixed-hash Newtonsoft.Json dependency. Each Card's source and the saved CSV remain available to inspect. See [C# Cards](CSharp.md) for the SDK and worker lifetime.
+
 ## marimo notebook → typed result (`marimo`)
 
-A typed input supplies 7 to a marimo notebook. Its `factor` param defaults to 2, so the selected `result` is 14; a logger consumes the typed output. The same invocation retains static HTML, a figure, source cells and the binding/result metadata. Set `factor` to 3 and rerun to save a distinct result of 21. See [marimo Cards](Marimo.md).
+The upstream Card scales a measurement of 7 by its `factor` of 2. A marimo notebook visualizes the original and scaled values, and a logger consumes the selected result of 14. The notebook invocation retains static HTML, a figure, source cells and binding and result metadata. Set the upstream `factor` to 3 and rerun it to save a result of 21. See [marimo Cards](Marimo.md).
