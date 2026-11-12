@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { ProjectSession, TEMPLATES, definitionKind } from '../src/model/session'
 import { visualizationTemplates, visualizationFiles } from '../src/model/visualizationTemplates'
-import { parse, get, str } from '../src/shared/json'
+import { arr, parse, get, str } from '../src/shared/json'
 import { builtinCardItems } from '../src/ui/canvas'
 
-assert.equal(visualizationTemplates.length, 9)
+assert.equal(visualizationTemplates.length, 3)
 const menus = builtinCardItems(() => {})
 assert.ok(menus.some(item => item && typeof item !== 'string' && item.submenu?.length === 3))
 for (const template of visualizationTemplates) {
@@ -19,6 +19,8 @@ for (const template of visualizationTemplates) {
   assert.equal(str(get(definition, 'language')), 'python')
   assert.equal(get(definition, 'retainArtifact'), true)
   assert.equal(get(definition, 'artifactOutput'), 'figure')
+  const kind = arr(get(definition, 'params'))?.find(p => get(p, 'name') === 'kind')
+  assert.equal(get(kind, 'data'), 'line')
   const files = visualizationFiles[template.id]
   for (const name of ['src/main.py', 'default.nix', '_outputs.fbs']) {
     const edit = session.sourceEdits.get(`definitions/${card}/${name}`)!
@@ -30,4 +32,4 @@ for (const template of visualizationTemplates) {
   session.redo()
   assert.equal(get(session.cardDefinition(card), 'artifactOutput'), 'figure')
 }
-console.log('Visualization templates: library/shape menus, source, params, retention and undo passed')
+console.log('Visualization templates: library menus, source, params, retention and undo passed')

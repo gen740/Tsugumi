@@ -1,33 +1,38 @@
-"""Source of the nine normal Python Card scaffolds shared by Mac and Web.
+"""The one source of the Visualization Card starting points (Mac and Web).
 
-Run this file to regenerate visualization.json and VisualizationTemplates.swift.
+Each library's src/main.py is ui/templates/visualization/<library>.py with the
+shared selection code (visualization/select.py) written in, so a Card carries
+all of its own code and there is one copy of it to maintain here. The demo's
+three figures (demos/*/visualization) are the Matplotlib source as it is.
+
+    python3 ui/templates/visualization.py          # write the outputs
+    python3 ui/templates/visualization.py --check  # fail when one is stale
 """
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-LIBRARIES = {'matplotlib': 'Matplotlib', 'plotly': 'Plotly', 'altair': 'Altair'}
-SHAPES = {'line': '折れ線', 'scatter': '散布図', 'histogram': 'ヒストグラム'}
-PACKAGES = {'matplotlib': 'ps.numpy ps.matplotlib', 'plotly': 'ps.numpy ps.plotly', 'altair': 'ps.numpy ps.altair ps.vl-convert-python'}
-
-
-def templates():
-    result = {}
-    for library in LIBRARIES:
-        for shape in SHAPES:
-            card = {'language': 'python', 'inputs': [{'name': 'data'}], 'filesystem': True, 'recordIO': True, 'retainArtifact': True, 'artifactOutput': 'figure',
-                    'params': [{'name': name, 'type': kind, 'data': value} for name, kind, value in [
-                        ('data_path', 'string', ''), ('file', 'string', 'data.csv'),
-                        ('x', 'string', 'x'), ('y', 'string', 'y'), ('series', 'string', ''),
-                        ('title', 'string', ''), ('x_label', 'string', ''), ('y_label', 'string', ''),
-                        ('width', 'double', 7), ('height', 'double', 4), ('dpi', 'uint64', 120),
-                        ('theme', 'string', 'light'), ('max_points', 'uint64', 5000)]]}
-            files = {
-                '_card.json': json.dumps(card, indent=2) + '\n',
-                '_meta.json': json.dumps({'description': f'{LIBRARIES[library]} {shape} plot with saved source data and figure artifacts'}, indent=2) + '\n',
-                '_outputs.fbs': 'attribute "tsugumi";\nnamespace visualization;\ntable Files { value:string; }\ntable Outputs { figure:Files (required, tsugumi: "directory"); }\nroot_type Outputs;\n',
-                'default.nix': '''{ pkgs, inputs, params }:
+HERE = Path(__file__).resolve().parent / "visualization"
+LIBRARIES = {
+    "matplotlib": ("Matplotlib", "ps.numpy ps.matplotlib"),
+    "plotly": ("Plotly", "ps.numpy ps.plotly"),
+    "altair": ("Altair", "ps.numpy ps.altair ps.vl-convert-python"),
+}
+PARAMS = [
+    ("kind", "string", "line"), ("data_path", "string", ""), ("file", "string", "data.csv"),
+    ("x", "string", "x"), ("y", "string", "y"), ("series", "string", ""),
+    ("title", "string", ""), ("x_label", "string", ""), ("y_label", "string", ""),
+    ("width", "double", 7), ("height", "double", 4), ("dpi", "uint64", 120),
+    ("theme", "string", "light"), ("max_points", "uint64", 5000), ("sample_every", "uint64", 1),
+]
+OUTPUTS = """attribute "tsugumi";
+namespace visualization;
+table Files { value:string; }
+table Outputs { figure:Files (required, tsugumi: "directory"); }
+root_type Outputs;
+"""
+NIX = """{ pkgs, inputs, params }:
 let
   sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
 in
@@ -39,47 +44,70 @@ in
     fonts = [ pkgs.ipaexfont ];
   };
 }
-'''.replace('@PACKAGES@', PACKAGES[library]),
-                'src/main.py': f'''"""Connect data, set column names in params, then run.
-
-Matplotlib saves PNG/SVG/PDF; Plotly/Altair save offline HTML and JSON.
-The figure Directory output also contains source.csv, plotted.csv and metadata.
-Edit this ordinary Python source when the chart needs more than its params.
 """
-from tsugumi.visualization import input_rows, render
 
 
-def main(ctx):
-    p = ctx.params()
-    rows = input_rows(ctx, field=p.DataPath().decode(), member=p.File().decode())
-    render(ctx, rows, library={library!r}, kind={shape!r})
-''',
-            }
-            result[f'visualization_{library}_{shape}'] = files
+def main_source(library):
+    shared = (HERE / "select.py").read_text().split("# @insert@\n", 1)[1].strip("\n")
+    source = (HERE / f"{library}.py").read_text()
+    if source.count("# @select@\n") != 1:
+        raise SystemExit(f"{library}.py needs one '# @select@' line")
+    return source.replace("# @select@\n", shared + "\n")
+
+
+def templates():
+    card = {
+        "language": "python", "inputs": [{"name": "data"}], "filesystem": True, "recordIO": True,
+        "retainArtifact": True, "artifactOutput": "figure",
+        "params": [{"name": n, "type": t, "data": v} for n, t, v in PARAMS],
+    }
+    result = {}
+    for library, (label, packages) in LIBRARIES.items():
+        result[f"visualization_{library}"] = {
+            "_card.json": json.dumps(card, indent=2) + "\n",
+            "_meta.json": json.dumps({"description": f"{label} figure (line, scatter or histogram) with its files and plotted values saved"}, indent=2) + "\n",
+            "_outputs.fbs": OUTPUTS,
+            "default.nix": NIX.replace("@PACKAGES@", packages),
+            "src/main.py": main_source(library),
+        }
     return result
 
 
 def outputs():
-    data = json.dumps(templates(), ensure_ascii=False, indent=2) + '\n'
-    swift = '''// Generated by ui/templates/visualization.py. Edit that source, not this file.
+    files = templates()
+    data = json.dumps(files, ensure_ascii=False, indent=2) + "\n"
+    swift = f'''// Generated by ui/templates/visualization.py. Edit that source, not this file.
 import Foundation
 
-/// Normal Python Card files, with the same contents on Mac and Web.
-enum VisualizationTemplates {
-  static let files: [String: [String: String]] = try! JSONDecoder().decode(
+/// The Visualization starting points: one ordinary Python Card per plotting
+/// library, with the same files on Mac and Web (ui/templates/visualization.json).
+enum VisualizationTemplates {{
+  /// The files of a starting point, by path inside the Card's definition folder.
+  static func files(_ template: DefinitionTemplate) -> [String: String]? {{ all[template.rawValue] }}
+
+  static let all: [String: [String: String]] = try! JSONDecoder().decode(
     [String: [String: String]].self, from: Data(json.utf8))
   private static let json = ####"""
-'''+data+'''"""####
-}
+{data}"""####
+}}
 '''
-    return {ROOT / 'ui/templates/visualization.json': data,
-            ROOT / 'macOS/Sources/App/Model/VisualizationTemplates.swift': swift}
+    result = {
+        ROOT / "ui/templates/visualization.json": data,
+        ROOT / "macOS/Sources/App/Model/VisualizationTemplates.swift": swift,
+    }
+    for language in ("en", "ja"):
+        for figure in ("line", "scatter", "histogram"):
+            result[ROOT / f"demos/{language}/visualization/definitions/{figure}/src/main.py"] = files["visualization_matplotlib"]["src/main.py"]
+    return result
 
 
-if __name__ == '__main__':
-    for path, text in outputs().items():
-        if '--check' in sys.argv:
-            if not path.exists() or path.read_text() != text:
-                raise SystemExit(f'{path} is stale')
+if __name__ == "__main__":
+    stale = []
+    for path, content in outputs().items():
+        if "--check" in sys.argv:
+            if not path.exists() or path.read_text() != content:
+                stale.append(str(path.relative_to(ROOT)))
         else:
-            path.write_text(text)
+            path.write_text(content)
+    if stale:
+        raise SystemExit("stale (run python3 ui/templates/visualization.py): " + ", ".join(stale))

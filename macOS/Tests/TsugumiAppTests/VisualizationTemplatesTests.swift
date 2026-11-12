@@ -10,11 +10,11 @@ import TsugumiRPC
   defer { try? FileManager.default.removeItem(at: dir) }
   let document = #"{"name":"test","canvas":{"cards":[],"connections":[]}}"#
   try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
-  let templates = DefinitionTemplate.allCases.filter { $0.visualizationLibrary != nil }
-  #expect(templates.count == 9)
+  let templates = DefinitionTemplate.allCases.filter(\.isVisualization)
+  #expect(templates.count == 3)
   let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..")
   let shared = try JSONDecoder().decode([String: [String: String]].self, from: Data(contentsOf: root.appendingPathComponent("ui/templates/visualization.json")))
-  #expect(VisualizationTemplates.files == shared)
+  #expect(VisualizationTemplates.all == shared)
   for template in templates {
     let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
     session.project = try JSONValue.parse(document)
@@ -23,6 +23,8 @@ import TsugumiRPC
     #expect(session.kind(card) == .code)
     #expect(session.cardDefinition(card)?["retainArtifact"]?.bool == true)
     #expect(session.cardDefinition(card)?["artifactOutput"]?.string == "figure")
+    let kind = session.cardDefinition(card)?["params"]?.array?.first { $0["name"]?.string == "kind" }
+    #expect(kind?["data"]?.string == "line")
     for file in ["src/main.py", "default.nix", "_outputs.fbs"] {
       let bytes = try #require(session.sourceEdits["definitions/\(card)/\(file)"])
       #expect(String(decoding: bytes, as: UTF8.self) == shared[template.rawValue]?[file])

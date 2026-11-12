@@ -180,25 +180,18 @@ What `main` or `on_run_start` sets in `os.environ` lasts for that call only.
 
 ### Visualization scaffolds
 
-The Mac/Web creation menu has Matplotlib, Plotly and Altair line/scatter/histogram
-starting points. They are normal Python Cards, not a new kind. The full runnable
-contract is `demos/en/visualization/definitions/line` (typed input, params, Directory
-output, Nix dependencies and Japanese font); `ui/templates/visualization.json`
-contains all nine source sets. `tsugumi.visualization.input_rows(ctx, data_path,
-file)` decodes the connected `data` port's generated type, or CSV/JSON in a File
-or Directory. It returns row dictionaries. `render(ctx, rows, library="matplotlib",
-kind="line")` reads the scaffold's ordinary params, displays the figure and emits
-`figure`. Matplotlib saves PNG/SVG/PDF; Plotly and Altair save JSON and offline
-HTML. Altair's HTML export also needs `ps.vl-convert-python`.
+The Mac/Web creation menu has one Python Card template each for Matplotlib,
+Plotly and Altair. The `kind` parameter chooses line, scatter or histogram.
+The runnable contract is `demos/en/visualization/definitions/line`. Each
+template writes column selection, filtering, sampling and plotting into
+`src/main.py`. The SDK's `input_rows` reads the connected `data` port and
+`emit_figure` saves plotted values and emits the `figure` Directory.
 
-The output includes source/plotted CSV and run/invocation metadata. The definition
-sets `filesystem: true`, `recordIO: true`, `retainArtifact: true` and
-`artifactOutput: "figure"`, so reports can consume the Directory and past results
-remain inspectable. Non-finite coordinates are skipped; `max_points` samples
-finite rows evenly and the figure records the count. The helper supports numeric
-axes, at most 1,000,000 source rows and 20,000 plotted rows. See
-`docs/Visualization.md` for parameters and boundaries. The bilingual visualization
-demo connects a typed aggregate to three figures and an HTML report.
+The Directory includes `plotted.csv` and run, Card and invocation metadata.
+Matplotlib saves PNG/SVG/PDF; Plotly and Altair save JSON and offline HTML.
+`max_points` fails on over-limit input. Setting `sample_every` above 1
+explicitly samples in input order, with the sample size shown in the figure
+and metadata. See `docs/Visualization.md` for parameters and boundaries.
 
 ### bash
 

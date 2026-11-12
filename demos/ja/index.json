@@ -423,7 +423,7 @@
       "id": "visualization",
       "path": "visualization",
       "title": "可視化 → レポート",
-      "description": "型付きの測定値を集計して3種類の図を作り、PNG・SVG・PDFと元データをオフラインのレポートへ渡します。",
+      "description": "型付きの測定値を集計して3種類の図を作り、PNG・SVG・PDFと描いた値をオフラインのレポートへ渡します。",
       "tags": [
         "Python",
         "Visualization",

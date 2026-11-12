@@ -1241,8 +1241,5 @@
  "可視化": "Visualization",
  "Matplotlib（PNG / SVG / PDF）": "Matplotlib (PNG / SVG / PDF)",
  "Plotly（対話型 HTML）": "Plotly (interactive HTML)",
- "Altair（対話型 HTML）": "Altair (interactive HTML)",
- "折れ線": "Line",
- "散布図": "Scatter",
- "ヒストグラム": "Histogram"
+ "Altair（対話型 HTML）": "Altair (interactive HTML)"
 }

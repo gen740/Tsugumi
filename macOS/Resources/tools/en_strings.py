@@ -34,9 +34,7 @@ EN = {
     'Matplotlib（PNG / SVG / PDF）': 'Matplotlib (PNG / SVG / PDF)',
     'Plotly（対話型 HTML）': 'Plotly (interactive HTML)',
     'Altair（対話型 HTML）': 'Altair (interactive HTML)',
-    '折れ線': 'Line',
-    '散布図': 'Scatter',
-    'ヒストグラム': 'Histogram',
+    '可視化（図を描く Card）': 'Visualization',
 
     '根拠の記録': 'Evidence record',
     'このプロジェクトに根拠の記録がありません': 'This evidence is not available in this project',

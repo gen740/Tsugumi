@@ -9,6 +9,11 @@
   "recordIO": true,
   "params": [
     {
+      "name": "kind",
+      "type": "string",
+      "data": "line"
+    },
+    {
       "name": "data_path",
       "type": "string",
       "data": ""
@@ -72,6 +77,11 @@
       "name": "max_points",
       "type": "uint64",
       "data": 5000
+    },
+    {
+      "name": "sample_every",
+      "type": "uint64",
+      "data": 1
     }
   ],
   "retainArtifact": true,

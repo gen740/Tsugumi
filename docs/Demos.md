@@ -676,4 +676,4 @@ start → load → prepare → share ─┬→ knn ──────┐
 
 ## Visualization → report (`visualization`)
 
-A typed aggregate fans out to line, scatter and histogram Cards, then a Python report collects their saved PNG/SVG/PDF figures and source data. Change `aggregate.offset` to produce different figures with the same data size. The [Visualization guide](Visualization.md) describes the nine library/shape starting points and their parameters.
+A typed aggregate fans out to line, scatter and histogram Cards, then a Python report collects their saved PNG/SVG/PDF figures and plotted values. Change `aggregate.offset` to produce different figures with the same data size. The [Visualization guide](Visualization.md) describes the three library templates and their parameters.

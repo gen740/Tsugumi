@@ -497,7 +497,6 @@
 "パスをコピー" = "Copy Path";
 "パス（例: src/util.py）" = "Path (e.g. src/util.py)";
 "パラメータ" = "Parameters";
-"ヒストグラム" = "Histogram";
 "ビルドの期限（秒）" = "Build timeout (s)";
 "ビルドキャッシュ" = "Build Cache";
 "ビルドキャッシュを削除しますか？" = "Delete the build cache?";
@@ -740,6 +739,7 @@
 "受け側の入力: 省略可" = "Receiving input: optional";
 "可視化" = "Display";
 "可視化 %@" = "Display %@";
+"可視化（図を描く Card）" = "Visualization";
 "右下に表示中（%@）" = "Shown at the bottom right (%@)";
 "右下のツグミが、使い方の質問に答えたりデモを案内したりします。" = "Tsugumi at the bottom right answers your questions and gives demo tours.";
 "合流" = "Merge";
@@ -911,7 +911,6 @@
 "折りたたみを切り替える" = "Toggle Collapse";
 "折りたたむ" = "Collapse";
 "折りたたむ（実行には影響しません）" = "Collapse (does not affect runs)";
-"折れ線" = "Line";
 "折れ線 %lld 系列 · %lld 点" = "Line chart, %lld series · %lld points";
 "拡大" = "Zoom In";
 "拡大して表示" = "Show Enlarged";
@@ -930,7 +929,6 @@
 "控えめ" = "Muted";
 "描く" = "Draw";
 "操作" = "Action";
-"散布図" = "Scatter";
 "数値計算・最適化" = "Numerics and optimization";
 "整列" = "Arrange";
 "整列（配置だけを変更）" = "Arrange (layout only)";
