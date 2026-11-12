@@ -1,0 +1,19 @@
+{
+  "language": "r",
+  "inputs": [
+    {
+      "name": "data"
+    }
+  ],
+  "filesystem": true,
+  "recordIO": true,
+  "retainArtifact": true,
+  "artifactOutput": "report",
+  "params": [
+    {
+      "name": "title",
+      "type": "string",
+      "data": "Analysis report"
+    }
+  ]
+}

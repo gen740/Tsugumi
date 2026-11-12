@@ -20,6 +20,11 @@ TEST_F(AgentFixture, UnixAndWebSocketExposeTheSameAgentProtocol) {
   EXPECT_NE(unix_catalog.find("project_inspect"), std::string::npos);
   EXPECT_NE(unix_catalog.find("delegate"), std::string::npos);
   EXPECT_NE(unix_catalog.find("guide_show"), std::string::npos);
+  // Comparing two runs is within the Agent's reach: the last invocations of a
+  // run, and the direct diff between the two runs' versions.
+  EXPECT_NE(unix_catalog.find("run_latest_invocations"), std::string::npos);
+  EXPECT_NE(unix_catalog.find("version_diff"), std::string::npos);
+  EXPECT_NE(unix_catalog.find("from_commit"), std::string::npos);
 }
 
 TEST_F(AgentFixture, ProjectProtocolCannotBeUsedOnTheAgentSocket) {

@@ -27,6 +27,7 @@ import { DisplayContent } from './display'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
 import { L } from '../i18n'
+import { visualizationTemplates } from '../model/visualizationTemplates'
 
 // Kept here for the views that import them from the canvas.
 export { DEFINITION_DRAG, DisplayContent, openWorkflowWindow }
@@ -474,6 +475,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       'divider',
       { label: L('全体表示'), action: () => cv.fitAll() },
       { label: L('整列'), action: () => session.arrange(scope) },
+      { label: L('配線の交差を減らす'), action: () => session.untangle(scope) },
       tab.selection.size > 0 && { label: L('選択をグループ化'), disabled: !session.connected, action: () => cv.groupSelection() },
     ])
   }
@@ -814,7 +816,11 @@ function bubblePosition(at: Pt, size: { width: number; height: number }, view: {
 /** The built-in Cards, for the canvas menu and the + button. */
 export function builtinCardItems(add: (t: DefinitionTemplate) => void): MenuItem[] {
   const item = (id: DefinitionTemplate): MenuItem => ({ label: TEMPLATES.find((t) => t.id === id)?.label ?? id, action: () => add(id) })
-  return [item('python'), item('cpp'), item('go'), item('csharp'), item('draft'), 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge'), item('logger')]
+  const visualization: MenuItem = {
+    label: L('可視化'),
+    submenu: visualizationTemplates.map(t => ({ label: t.label, action: () => add(t.id) })),
+  }
+  return [item('python'), item('cpp'), item('go'), item('csharp'), { label: L('レポート（HTML・PDF 未対応）'), submenu: [item('report_rmarkdown'), item('report_quarto')] }, item('draft'), item('marimo'), visualization, 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge'), item('logger')]
 }
 export { templateIcon }
 
@@ -851,6 +857,9 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
     { label: session.collapsed(k) ? L('展開') : L('折りたたむ'), action: () => session.setCollapsed(targets, !session.collapsed(k)) },
     get(session.displayFrame(k), 'hidden') === true && {
       label: L('出力表示を戻す'), action: () => session.updateDisplayFrame(k, (f) => f.set('hidden', undefined)),
+    },
+    [...targets].some((t) => session.hasPortOrder(t)) && {
+      label: L('ポートの並びを元に戻す'), disabled: !editable, action: () => session.resetPortOrder(targets),
     },
     {
       label: L('グループ化（見た目だけ）'), action: () => {

@@ -1,0 +1,89 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "data"
+    }
+  ],
+  "filesystem": true,
+  "recordIO": true,
+  "params": [
+    {
+      "name": "kind",
+      "type": "string",
+      "data": "histogram"
+    },
+    {
+      "name": "data_path",
+      "type": "string",
+      "data": ""
+    },
+    {
+      "name": "file",
+      "type": "string",
+      "data": "data.csv"
+    },
+    {
+      "name": "x",
+      "type": "string",
+      "data": "y"
+    },
+    {
+      "name": "y",
+      "type": "string",
+      "data": "y"
+    },
+    {
+      "name": "series",
+      "type": "string",
+      "data": ""
+    },
+    {
+      "name": "title",
+      "type": "string",
+      "data": "ヒストグラム"
+    },
+    {
+      "name": "x_label",
+      "type": "string",
+      "data": ""
+    },
+    {
+      "name": "y_label",
+      "type": "string",
+      "data": ""
+    },
+    {
+      "name": "width",
+      "type": "double",
+      "data": 7
+    },
+    {
+      "name": "height",
+      "type": "double",
+      "data": 4
+    },
+    {
+      "name": "dpi",
+      "type": "uint64",
+      "data": 120
+    },
+    {
+      "name": "theme",
+      "type": "string",
+      "data": "light"
+    },
+    {
+      "name": "max_points",
+      "type": "uint64",
+      "data": 5000
+    },
+    {
+      "name": "sample_every",
+      "type": "uint64",
+      "data": 1
+    }
+  ],
+  "retainArtifact": true,
+  "artifactOutput": "figure"
+}

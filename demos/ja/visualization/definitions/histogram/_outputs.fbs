@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace visualization;
+table Files { value:string; }
+table Outputs { figure:Files (required, tsugumi: "directory"); }
+root_type Outputs;

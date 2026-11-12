@@ -6,7 +6,7 @@ import TsugumiLauncher
 /// App-wide settings; the category on the left switches the content.
 struct ApplicationSettings: View {
   enum Category: String, CaseIterable, Identifiable {
-    case general, appearance, editor, shortcuts, skills, api, connections
+    case general, appearance, editor, shortcuts, skills, api, connections, binaryCaches
     var id: String { rawValue }
     var title: String {
       switch self {
@@ -17,6 +17,7 @@ struct ApplicationSettings: View {
       case .skills: return "Skills"
       case .api: return "API"
       case .connections: return String(localized: "外部接続")
+      case .binaryCaches: return String(localized: "バイナリキャッシュ")
       }
     }
     var symbol: String {
@@ -28,6 +29,7 @@ struct ApplicationSettings: View {
       case .skills: return "wand.and.stars"
       case .api: return "key"
       case .connections: return "network"
+      case .binaryCaches: return "shippingbox"
       }
     }
     /// Where each pane's values are kept, said on the pane.
@@ -35,6 +37,7 @@ struct ApplicationSettings: View {
       switch self {
       case .api: return String(localized: "このアプリ（この Mac。API キーは macOS のキーチェーン）")
       case .connections: return String(localized: "表示のみ（開いているプロジェクトの接続先）")
+      case .binaryCaches: return String(localized: "この Mac の共有実行環境（全プロジェクト）")
       default: return String(localized: "このアプリ（この Mac のユーザー設定）")
       }
     }
@@ -111,6 +114,7 @@ struct ApplicationSettings: View {
             case .skills: SkillSettings()
             case .api: APISettings()
             case .connections: ConnectionSettings()
+            case .binaryCaches: BinaryCacheSettings()
             }
           }
           .id(category)

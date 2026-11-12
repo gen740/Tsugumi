@@ -1,0 +1,5 @@
+attribute "tsugumi";
+namespace report;
+table Path { value:string; }
+table Outputs { report:Path (required, tsugumi: "directory"); html:Path (required, tsugumi: "file"); }
+root_type Outputs;

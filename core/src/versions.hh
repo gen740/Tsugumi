@@ -101,9 +101,9 @@ class Versions {
   // The Cards of `commit`: saved positions, or columns by depth when a Card
   // has none. No Cards when its documents cannot be read.
   VersionCanvasData canvas(const std::string& commit);
-  // What `commit` changed from its first parent: the files a summary may read
-  // (summary_reads), cut at a limit.
-  VersionDiffData diff(const std::string& commit);
+  // What `commit` changed from from_commit, or its first parent when omitted:
+  // the files a summary may read (summary_reads), cut at a limit.
+  auto diff(const std::string& commit, const std::string& from_commit = "") -> VersionDiffData;
   void set_summary(const std::string& commit, const std::string& summary);
 
   static std::string format_note(const VersionRunNote& r);

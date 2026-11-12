@@ -1,0 +1,30 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "data"
+    }
+  ],
+  "filesystem": true,
+  "recordIO": true,
+  "retainArtifact": true,
+  "artifactOutput": "report",
+  "reuseWorker": false,
+  "params": [
+    {
+      "name": "notebook",
+      "type": "string",
+      "data": "notebook.py"
+    },
+    {
+      "name": "bindings",
+      "type": "string",
+      "data": "{\"source\":\"input.data.source\",\"result\":\"input.data.result\"}"
+    },
+    {
+      "name": "selected",
+      "type": "string",
+      "data": "result"
+    }
+  ]
+}

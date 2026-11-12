@@ -691,6 +691,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     InvocationSummaryData s;
     s.run_id = run_id_;
     s.card = node.path;
+    s.params_json = NixRunner::params_json(node, false);
     s.invocation = w.invocation;
     s.started_at = now_ms();
     // Ready when the last consumed input arrived (a start Card: when it fired).
@@ -1408,6 +1409,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       InvocationRecordData rec;
       rec.summary.run_id = run_id_;
       rec.summary.card = n.node->path;
+      rec.summary.params_json = NixRunner::params_json(*n.node, false);
       rec.summary.invocation = n.invocations + 1;
       rec.summary.state = st;
       rec.summary.waiting = waiting[n.idx];
@@ -1728,6 +1730,7 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
   // The run id and the receipt are durable before any processing starts.
   svc_.history().write_sync([&](sql::Db& db) {
     History::insert_run(db, s, p.op_id);
+    History::put_substituters(db, *s.status.run_id, svc_.substituters());
     History::put_receipt(db, p.op_id, "run", p.digest, receipt);
   });
   svc_.server()->broadcast(status_note(s.status, true));

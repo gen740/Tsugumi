@@ -1,0 +1,18 @@
+{
+  "language": "python",
+  "inputs": [
+    {
+      "name": "line"
+    },
+    {
+      "name": "scatter"
+    },
+    {
+      "name": "histogram"
+    }
+  ],
+  "filesystem": true,
+  "recordIO": true,
+  "retainArtifact": true,
+  "artifactOutput": "report"
+}

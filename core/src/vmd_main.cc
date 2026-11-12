@@ -271,6 +271,9 @@ std::string history_dir(const std::string& id) { return kHistory + "/" + id; }
 // Per project: the folder of its tsugumid's socket (0700, the project's user).
 const std::string kRpc = "/run/tsugumi-rpc";
 std::string rpc_dir(const std::string& id) { return kRpc + "/" + id; }
+// The nix-daemon's binary caches, one URL per line (no keys, no credentials):
+// written by /init, readable by every project.
+const std::string kSubstituters = "/run/tsugumi-substituters";
 
 // Mount namespace of one project: its folder and control folder at /project
 // and /control, its run history at /history, the folders of the Mac it was
@@ -504,6 +507,10 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
                "--cpus", std::to_string(cpus), "--allow-missing-origin",
                "--gcroots-dir", kRoots + "/" + id, "--history-dir", "/history",
                "--host-folders", "/run/tsugumi/host", "--chat-folders", "/run/tsugumi/chat", "--project-shell"};
+  // The binary caches of this VM's nix-daemon, for the run records. A project
+  // cannot read the daemon's settings (they sit beside the caches' credentials
+  // under /run/tsugumi, which its view replaces); /init wrote this list.
+  if (::access(kSubstituters.c_str(), R_OK) == 0) args.argv.insert(args.argv.end(), {"--substituters-file", kSubstituters});
   // The pages that may connect (the Mac's tsugumi command): comma-separated.
   // Without any, as for the app, a browser's request is refused.
   for (size_t at = 0; at < origins.size();) {

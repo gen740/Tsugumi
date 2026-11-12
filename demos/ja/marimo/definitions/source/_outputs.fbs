@@ -1,0 +1,4 @@
+namespace notebook;
+table Measurement { source:double; result:double; }
+table Outputs { value:Measurement (required); }
+root_type Outputs;
