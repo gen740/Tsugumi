@@ -206,6 +206,16 @@ class Worker:
             elif operation == "log":
                 stream = sys.stderr if action.get("stream", "stdout") == "stderr" else sys.stdout
                 print(action["text"], file=stream, flush=True)
+            elif operation == "failure_after_cancel":
+                # A failure of its own that only happens to arrive after the
+                # host asked the call to stop.
+                marker = Path(action["entered"])
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text(json.dumps({"call": self.call_id, "pid": os.getpid()}))
+                with self.condition:
+                    self.condition.wait_for(lambda: self.call_id in self.cancelled, timeout=10)
+                self.failure(action.get("kind", "worker_failed"), action.get("message", "scripted worker failure"))
+                return False
             elif operation == "failure":
                 self.failure(action.get("kind", "worker_failed"), action.get("message", "scripted worker failure"))
                 return False

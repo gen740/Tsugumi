@@ -5,5 +5,6 @@
       "name": "arrival"
     }
   ],
-  "maxRuns": 100000
+  "maxRuns": 100000,
+  "reuseWorker": true
 }

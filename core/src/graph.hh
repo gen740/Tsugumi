@@ -53,7 +53,7 @@ struct Settings {
   std::optional<std::string> artifact_output;
   bool filesystem = false;
   bool sandbox = true;
-  bool reuse_worker = true;
+  bool reuse_worker = false;
   bool network = false;
   bool markdown = false;  // logger: shows the text it receives as Markdown
   std::string system;     // "" = native_system(); another one runs emulated (binfmt)
@@ -85,6 +85,13 @@ struct NixSourceRef {
   std::string overrides = "{}";
 };
 
+struct CardNixReference {
+  CardPath target;
+  std::string name;
+  bool local = false;
+  bool valid = false;
+};
+
 struct Node {
   CardPath path;
   Template kind = Template::Code;
@@ -94,6 +101,7 @@ struct Node {
   std::string project_dir;                    // "" or "externals/<p>/": the project the Card is written in
   std::string pkgs_path;                      // of the project the Card is written in
   std::vector<NixSourceRef> nix_sources;      // what that project opts in to (tsugumi.json nixSources)
+  std::vector<CardNixReference> nix_references;
   std::optional<schema::Boundary> boundary;  // Card in Card: its external's ports
   std::string external;                      // Card in Card: "externals/<p>/" (project relative)
   Settings settings;

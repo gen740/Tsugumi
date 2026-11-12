@@ -19,6 +19,7 @@ await import("./switchCard")
 await import("./reports")
 
 await import("./table")
+await import("./artifactHTML")
 
 await import("./draft")
 await import("./comments")
@@ -67,3 +68,6 @@ await import("./perchScale")
 await import("./guideScript")
 await import("./demoReplay")
 await import("./evidence")
+
+await import('./nixReferences')
+await import('./nixReferenceOverlay')

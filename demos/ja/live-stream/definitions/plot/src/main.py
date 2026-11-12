@@ -1,5 +1,5 @@
-"""Shows the most recent `window` samples. The worker stays across runs
-(reuseWorker); each run starts with an empty window."""
+"""Shows the most recent `window` samples. This Card sets reuseWorker: true, so
+the worker keeps the window between invocations; each run starts with an empty one."""
 from collections import deque
 
 from inputs.sample.live.Sample import Sample
