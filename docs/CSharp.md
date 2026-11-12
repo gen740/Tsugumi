@@ -54,26 +54,51 @@ File and Directory ports use their generated message's `Value` path, just as in 
 
 The SDK provides `Log`, `DisplayText`, `DisplayMarkdown`, `DisplayScalar`, `DisplayTable`, `DisplayImage`, `DisplayLineChart`, `DisplayPoints` and `DisplayModule`. Text is strict UTF-8 and rejects embedded NUL characters. Display arrays must have matching lengths; rejected native displays fail the invocation. Image bytes and FlatBuffer bytes are binary, not text. The same sandbox/network restrictions apply to .NET and NuGet code as to other Cards.
 
-## Reproducible NuGet dependencies
+## The native boundary
 
-The project's pinned `nixpkgs` supplies .NET 10, its runtime/host headers, and FlatBuffers runtime sources matching `flatc`. There is no NuGet download during a Card invocation. Package versions and all transitive package hashes belong in the Card source:
+`sdk/csharp/Context.cs` declares the Card ABI's structs (`tsugumi_call`, `tsugumi_value`, `tsugumi_series` in `sdk/include/tsugumi/sdk/abi.h`) by hand. Before the first call, the C++ host passes the compiler's `offsetof`/`sizeof` of every field to the managed SDK, which compares them with its own layout; any field missing, moved or resized on either side fails `tsugumi_load` with the field named in the Card's log. `tests/python/test_csharp_abi.py` checks field order and callback signatures from the sources without .NET. Extending the ABI (a new callback at the end of `tsugumi_call`) means adding the field to `abi.h`, `host.cc`'s layout table, `NativeCall` and `Layout.cs`.
+
+## NuGet packages
+
+The project's pinned `nixpkgs` supplies .NET 10, its runtime/host headers, and FlatBuffers runtime sources matching `flatc`. A Card without `lock` has no external packages. A Card that uses NuGet packages keeps two things in its own folder, and both are required:
 
 ```nix
 run = inputs.tsugumi.csharpCard {
   inherit sdk;
   src = ./src;
-  packages = [{ name = "Newtonsoft.Json"; version = "13.0.3"; }];
-  nugetDeps = ./nuget-deps.json;
+  lock = ./packages.lock.json;  # NuGet's own lock file
+  hash = "sha256-...";          # NAR hash of the .nupkg files the lock names
 };
 ```
 
-`nuget-deps.json` is the pinned nixpkgs `buildDotnetModule` dependency format:
+- **`lock`** is the `packages.lock.json` NuGet writes. It is the only list of packages: its `Direct` entries become the Card's package references (with the recorded `requested` ranges), and every package it resolves to is used, transitive ones included. The lock must have a section for the Card's framework (`net10.0`).
+- **`hash`** is the NAR hash (sha256, `nix hash path`) of one folder: the `.nupkg` files of every package the lock resolves to, as nuget.org publishes them, named `<id>.<version>.nupkg` in lower case. Nix fetches that folder as the fixed-output derivation `<name>-nuget-lock-<first 16 hex digits of the lock file's sha256>` and rejects anything else. Because the name follows the lock, editing the lock without updating `hash` fails instead of reusing packages fetched for the old lock.
 
-```json
-[{"pname":"Newtonsoft.Json","version":"13.0.3","hash":"sha256-hy/BieY4qxBWVVsDqqOPaLy1QobiIapkbrESm6v2PHc="}]
-```
+The build then runs `dotnet restore --locked-mode` without network, with that folder as its only package source (no user, machine or fallback NuGet settings). Locked mode also checks each package against the lock's `contentHash`. Nothing is fetched or restored while a Card runs. A lock without `hash`, a `hash` without lock, or a lock without the Card's framework is an evaluation error that says what to add.
 
-Include every transitive package. The resulting derivation exposes `passthru.fetch-deps`, from `buildDotnetModule`, for regenerating this file when deliberately updating dependencies. Review its versions and hashes before rebuilding. Supplying packages without a dependency file is an evaluation error. Restore/build uses only the declared packages and the pinned SDK.
+### Making or changing a lock
+
+Nothing makes the lock for you. To add or update packages, deliberately:
+
+1. In an empty folder, write a project with the Card's framework and the packages you want:
+
+   ```xml
+   <Project Sdk="Microsoft.NET.Sdk">
+     <PropertyGroup>
+       <TargetFramework>net10.0</TargetFramework>
+       <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+     </PropertyGroup>
+     <ItemGroup>
+       <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+     </ItemGroup>
+   </Project>
+   ```
+
+2. Run `nix shell nixpkgs#dotnet-sdk_10 -c dotnet restore` there (this one step uses the network) and copy the `packages.lock.json` it writes next to the Card's `default.nix`. Review the versions it resolved.
+3. Set `hash = pkgs.lib.fakeHash;` and run the Card. Its build fails with `hash mismatch in fixed-output derivation '…-nuget-lock-…'`; the line `got: sha256-…` in the Card's **build log** is the hash of the packages that lock names. The build log is part of the Card's own log in the app (Nix evaluation and build output appear there), and the `build` stream of `LogRange` for that Card; it is not in the worker's log.
+4. Write that hash into `hash` and run again. The build now restores offline. Commit `packages.lock.json` and `default.nix` together.
+
+`passthru.nugetPackages` of the Card's package is the fetched folder, for checking the hash by hand with `nix hash path`.
 
 ## Why runtime hosting
 

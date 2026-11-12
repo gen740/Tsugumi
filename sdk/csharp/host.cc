@@ -5,6 +5,8 @@
 #include <dlfcn.h>
 #include <hostfxr.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
@@ -14,11 +16,66 @@ Entry g_main = nullptr;
 Entry g_run_start = nullptr;
 void *g_host = nullptr;
 
+// The ABI structs as this compiler lays them out from abi.h. The managed
+// mirror (sdk/csharp/Context.cs) is checked against it before the first call
+// (Layout.cs), so a field added to abi.h (an ABI 4 callback, say) without
+// its C# counterpart stops the Card at load instead of misreading memory.
+// Every field of every struct the worker passes to the Card is listed.
+struct Field {
+  const char *name;
+  uint64_t offset;
+  uint64_t size;
+};
+#define TSUGUMI_STRUCT(type) Field{#type, 0, sizeof(type)}
+#define TSUGUMI_FIELD(type, member)                                            \
+  Field { #type "." #member, offsetof(type, member), sizeof(type::member) }
+constexpr Field k_layout[] = {
+    TSUGUMI_STRUCT(tsugumi_value),
+    TSUGUMI_FIELD(tsugumi_value, name),
+    TSUGUMI_FIELD(tsugumi_value, kind),
+    TSUGUMI_FIELD(tsugumi_value, data),
+    TSUGUMI_FIELD(tsugumi_value, size),
+    TSUGUMI_STRUCT(tsugumi_series),
+    TSUGUMI_FIELD(tsugumi_series, id),
+    TSUGUMI_FIELD(tsugumi_series, label),
+    TSUGUMI_FIELD(tsugumi_series, x),
+    TSUGUMI_FIELD(tsugumi_series, y),
+    TSUGUMI_FIELD(tsugumi_series, count),
+    TSUGUMI_STRUCT(tsugumi_call),
+    TSUGUMI_FIELD(tsugumi_call, abi_version),
+    TSUGUMI_FIELD(tsugumi_call, run_id),
+    TSUGUMI_FIELD(tsugumi_call, card),
+    TSUGUMI_FIELD(tsugumi_call, invocation),
+    TSUGUMI_FIELD(tsugumi_call, inputs),
+    TSUGUMI_FIELD(tsugumi_call, input_count),
+    TSUGUMI_FIELD(tsugumi_call, params),
+    TSUGUMI_FIELD(tsugumi_call, params_size),
+    TSUGUMI_FIELD(tsugumi_call, working_directory),
+    TSUGUMI_FIELD(tsugumi_call, temporary_directory),
+    TSUGUMI_FIELD(tsugumi_call, output_directory),
+    TSUGUMI_FIELD(tsugumi_call, host),
+    TSUGUMI_FIELD(tsugumi_call, emit_output),
+    TSUGUMI_FIELD(tsugumi_call, display_text),
+    TSUGUMI_FIELD(tsugumi_call, display_scalar),
+    TSUGUMI_FIELD(tsugumi_call, display_line_chart),
+    TSUGUMI_FIELD(tsugumi_call, log),
+    TSUGUMI_FIELD(tsugumi_call, cancelled),
+    TSUGUMI_FIELD(tsugumi_call, remaining_ms),
+    TSUGUMI_FIELD(tsugumi_call, fail),
+    TSUGUMI_FIELD(tsugumi_call, display_table),
+    TSUGUMI_FIELD(tsugumi_call, display_image),
+    TSUGUMI_FIELD(tsugumi_call, display_points),
+    TSUGUMI_FIELD(tsugumi_call, display_module),
+    TSUGUMI_FIELD(tsugumi_call, display_markdown),
+};
+#undef TSUGUMI_FIELD
+#undef TSUGUMI_STRUCT
+using CheckLayout = int (*)(const Field *, size_t);
+
 auto load_entry(load_assembly_and_get_function_pointer_fn load,
-                const char *name, Entry *entry) -> bool {
+                const char *name, void **entry) -> bool {
   const int status = load(TSUGUMI_ASSEMBLY, "Tsugumi.Entry, Card", name,
-                          UNMANAGEDCALLERSONLY_METHOD, nullptr,
-                          reinterpret_cast<void **>(entry));
+                          UNMANAGEDCALLERSONLY_METHOD, nullptr, entry);
   if (status != 0)
     std::fprintf(stderr, "Cannot load C# entry %s (hostfxr status 0x%x)\n",
                  name, status);
@@ -63,8 +120,17 @@ extern "C" auto tsugumi_load() -> int {
     return 1;
   const auto load =
       reinterpret_cast<load_assembly_and_get_function_pointer_fn>(pointer);
-  return load_entry(load, "Execute", &g_main) &&
-                 load_entry(load, "RunStart", &g_run_start)
+  void *check = nullptr;
+  if (!load_entry(load, "CheckLayout", &check) ||
+      reinterpret_cast<CheckLayout>(check)(
+          k_layout, sizeof k_layout / sizeof k_layout[0]) != 0) {
+    std::fprintf(stderr, "The C# SDK does not match this worker's Card ABI "
+                         "(tsugumi/sdk/abi.h); see above\n");
+    return 1;
+  }
+  return load_entry(load, "Execute", reinterpret_cast<void **>(&g_main)) &&
+                 load_entry(load, "RunStart",
+                            reinterpret_cast<void **>(&g_run_start))
              ? 0
              : 1;
 }

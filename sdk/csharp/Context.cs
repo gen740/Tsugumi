@@ -21,6 +21,9 @@ public interface ICard {
 
 public enum PortKind : uint { File = 1, Directory = 2, FlatBuffer = 3 }
 
+// NativeValue, NativeSeries and NativeCall mirror sdk/include/tsugumi/sdk/abi.h
+// field by field, in its order. Layout.cs checks them against the compiled
+// abi.h when the Card loads; a new abi.h field is added in all three places.
 [StructLayout(LayoutKind.Sequential)]
 internal unsafe struct NativeValue {
     internal byte* Name;
@@ -29,7 +32,6 @@ internal unsafe struct NativeValue {
     internal nuint Size;
 }
 
-// Kept in exact field order with sdk/include/tsugumi/sdk/abi.h (ABI).
 [StructLayout(LayoutKind.Sequential)]
 internal unsafe struct NativeSeries {
     internal byte* Id;

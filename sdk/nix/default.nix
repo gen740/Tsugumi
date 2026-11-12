@@ -150,7 +150,7 @@ rec {
       csharp = if want "csharp" then csharpFace dir else null;
     };
 
-  csharpCard = import ./csharp.nix { inherit pkgs sdkRoot; };
+  csharpCard = import ./csharp.nix { inherit pkgs sdkRoot foreign; };
 
   # A C++ Card: every *.cc below `src` (with `sdk`: plus the generated
   # adapter) compiled into lib/main.so, linked against the shared runtime.

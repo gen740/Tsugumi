@@ -252,4 +252,19 @@ in { run = inputs.tsugumi.csharpCard { inherit sdk; src = ./src; }; }
 
 Await all work belonging to `RunAsync`; pass `context.CancellationToken` to cancellable Tasks. Fire-and-forget Tasks are not joined. `OnRunStartAsync(Context)` resets per-run state; the Card instance and CLR persist in a resident worker. `reuseWorker: false` starts fresh. Exceptions produce structured failures and do not cross the native ABI.
 
-NuGet packages are declared as `packages = [{ name = "Newtonsoft.Json"; version = "13.0.3"; }]; nugetDeps = ./nuget-deps.json;` in `csharpCard`. The JSON lists every package's `pname`, `version` and content `hash` (the pinned nixpkgs `buildDotnetModule` format). Packages without a fixed dependency file are rejected; invocation does not restore packages. The bundled `demos/csharp-calibration/definitions/calibrate` is a complete typed, parameterized example with a pinned dependency, between C++ and Python Cards.
+NuGet packages need both `lock = ./packages.lock.json;` (NuGet's own lock file, in the Card's folder) and `hash = "sha256-...";` in `csharpCard`. The lock is the only package list (its `Direct` entries become the references); `hash` is the NAR hash of the `.nupkg` files the lock names, fetched as `<name>-nuget-lock-<lock id>`. The build restores offline in locked mode; nothing is fetched while a Card runs. Never invent a lock, a `contentHash` or a `hash`, and do not add packages on your own: the person chooses them. The bundled `demos/csharp-calibration/definitions/calibrate` is a complete typed, parameterized example with a locked dependency, between C++ and Python Cards.
+
+When asked to make or update a lock:
+
+1. In the project shell, create a temporary .NET project using the Card's
+   framework (net10.0 by default). Put the requested packages in
+   `PackageReference` items and set `RestorePackagesWithLockFile=true`. For
+   example, `<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />`.
+2. From that temporary directory, run
+   `nix shell nixpkgs#dotnet-sdk_10 -c env DOTNET_GENERATE_ASPNET_CERTIFICATE=false dotnet restore`.
+   Copy the resulting `packages.lock.json` beside the Card's `default.nix`,
+   reload the project and confirm the resolved versions.
+3. Give `csharpCard` the arguments `lock = ./packages.lock.json; hash = pkgs.lib.fakeHash;`
+   and run the Card. Copy the `got: sha256-…` value from that Card's build log
+   (`log_range`, stream 4) into `hash`. Run again to check the offline restore.
+   Keep the lock and hash together when updating dependencies.
