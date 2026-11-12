@@ -31,16 +31,15 @@ const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
 ]
 
 /** The settings of one project: kept in the project (or its environment). */
-export type ProjectSettingsPane = 'general' | 'canvas' | 'databases' | 'history' | 'cache'
+export type ProjectSettingsPane = 'general' | 'canvas' | 'history' | 'cache'
 const PANES: { id: ProjectSettingsPane; title: string; icon: string }[] = [
   { id: 'general', title: L('名前と実行環境'), icon: 'folder.badge.gearshape' }, { id: 'canvas', title: 'Canvas', icon: 'rectangle.3.group' },
-  { id: 'databases', title: L('データベース接続先'), icon: 'cylinder.split.1x2' },
   { id: 'history', title: L('実行履歴'), icon: 'clock.arrow.circlepath' }, { id: 'cache', title: L('ビルドキャッシュ'), icon: 'shippingbox' },
 ]
 function paneStorage(p: ProjectSettingsPane, s: ProjectSession): string {
   const name = s.dir.split('/').pop() ?? ''
   switch (p) {
-    case 'general': case 'databases': return L('このプロジェクト（{0}/tsugumi.json）', name)
+    case 'general': return L('このプロジェクト（{0}/tsugumi.json）', name)
     case 'canvas': return L('このプロジェクト（{0}/layout.json）', name)
     case 'history': return L('このプロジェクトの実行環境（書き出しは {0}/.tsugumi/runs.sqlite）', name)
     case 'cache': return L('このプロジェクトの実行環境（このホスト）')

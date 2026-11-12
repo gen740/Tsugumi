@@ -1,0 +1,16 @@
+{
+  "description": "Python で整数を作る",
+  "inputs": [
+    {
+      "name": "start",
+      "description": "Start signal"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "description": "Integer value"
+    }
+  ],
+  "content": "Python で整数 7 を out に出力する。型は namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;"
+}

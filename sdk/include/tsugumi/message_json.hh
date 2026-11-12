@@ -1,5 +1,5 @@
 // A FlatBuffer message as JSON, written from its parsed schema, for the Cards
-// that read their inputs as JSON (bash, R, Julia) and what a Logger Card shows.
+// that receive schema-formatted input (bash, R, Julia).
 // This is the output of flatbuffers::GenText with strict_json, natural_utf8 and
 // output_default_scalars_in_json, indented by the parser's indent_step (negative:
 // one line), except for floats: GenText keeps 12 decimals

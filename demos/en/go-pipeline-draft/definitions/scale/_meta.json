@@ -1,0 +1,16 @@
+{
+  "description": "Multiply the borrowed value in Go",
+  "inputs": [
+    {
+      "name": "number",
+      "description": "Integer value"
+    }
+  ],
+  "outputs": [
+    {
+      "name": "out",
+      "description": "Integer value"
+    }
+  ],
+  "content": "Implement in Go. Multiply number.value by the uint64 parameter factor (default 3), display the product, and emit out. Copy the pinned Go module scaffold from demos/go-pipeline/definitions/scale. Use namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;"
+}

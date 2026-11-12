@@ -28,7 +28,6 @@ WEB_DIST = Path(os.environ.get("TSUGUMI_WEB_DIST", ROOT / "web" / "dist"))
 EMPTY_PROJECT = {
     "name": "test",
     "pkgsPath": "tsugumi:default",
-    "databaseConnections": [],
     "canvas": {"cards": [], "connections": []},
 }
 

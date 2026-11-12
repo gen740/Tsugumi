@@ -33,7 +33,7 @@ const framed = (s: Session, k: string) => {
 // What the core says is in the document after a save.
 const resolved = (s: Session, cards: string[]) =>
   (s as unknown as { applyResolution(r: unknown[], d: unknown[]): void }).applyResolution(
-    cards.map((id) => ({ card: { segments: [id] }, inputs: [], outputs: [], diagnostics: [] })), [])
+    cards.map((id) => ({ card: { segments: [id] }, inputs: [], outputs: [], diagnostics: [], nixReferences: [] })), [])
 const clean = (s: Session, k: string) => {
   assert.equal(s.displays.has(k), false, 'no result of the Card that had the name')
   assert.equal(s.displayFrame(k), undefined, 'no frame of the Card that had the name')
@@ -93,7 +93,7 @@ const clean = (s: Session, k: string) => {
 {
   // Copies of Cards start clean too.
   const s = session([])
-  const a = s.addCard('logger', [], { x: 0, y: 0 }, 'a')
+  const a = s.addCard('python', [], { x: 0, y: 0 }, 'a')
   framed(s, 'a-2')
   const made = await s.duplicate(new Set([a]), [])
   assert.deepEqual([...made], ['a-2'])

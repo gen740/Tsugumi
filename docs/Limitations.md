@@ -12,7 +12,7 @@ What Tsugumi can do today, and what is planned. This page gathers what the other
 
 ## Following results
 
-- **A screen that puts two runs side by side is planned in [#156](https://github.com/gen740/Tsugumi/issues/156).** For now, open each run's history and compare.
+- **Run comparison shows each Card's last invocation.** It uses retained records, so unrecorded inputs, outputs or parameters cannot be recovered from the current document. Large values and version diffs can be shown only in part; the comparison says when this happens.
 - **Links from the Agent's report to the Cards and runs it rests on are planned in [#157](https://github.com/gen740/Tsugumi/issues/157).**
 - **Keeping each Card's build result (store path) in the run's record is planned in [#158](https://github.com/gen740/Tsugumi/issues/158).** For now, the environment can be traced from the run's commit (which includes `pkgsPath` and `default.nix`).
 - **Partial runs use saved inputs.** After changing something upstream, finish by running the whole Workflow ([Rerunning from the middle](Rationale.md#rerunning-from-the-middle)).
@@ -29,7 +29,7 @@ What Tsugumi can do today, and what is planned. This page gathers what the other
 
 - **The desktop app runs on Apple silicon with macOS 26 or later.** On Linux and Windows, use the Web UI in the browser (the `tsugumi` command) ([Installation](INSTALL.md)).
 - **The Mac version installs with the one-line command in the README.** Releases are signed ad hoc, without Apple's notarisation, so a download from a browser is stopped by Gatekeeper. Installing with `curl` is not stopped, and later automatic updates are installed after their checksum and code signature are checked ([Installation](INSTALL.md#installing-the-desktop-app-mac)).
-- **x86_64-linux Cards run emulated.** On a Mac with Rosetta, or with qemu when asked for (`TSUGUMI_VM_X86=qemu`); on Linux, with what the system registered. Everything of such a Card runs emulated, its build too: the first C++ or Python Card of a nixpkgs also builds an x86_64 worker for it (minutes, once) ([Another system](features.md#another-system-x86_64-linux)).
+- **x86_64-linux Cards run emulated.** On a Mac with Rosetta, or with qemu when asked for (`TSUGUMI_VM_X86=qemu`); on Linux, with what the system registered. Everything of such a Card runs emulated, its build too: the first package Card of a nixpkgs also builds an x86_64 worker for it (minutes, once) ([Another system](features.md#another-system-x86_64-linux)).
 - **Linux and Windows need Nix.** A remote Linux installation can be used [over SSH](WebUI.md#running-it-on-another-machine-over-ssh).
 - **Windows works through WSL2.** Besides `install.ps1`, it can be installed from a shell in the WSL Linux with the same steps as on Linux ([Installation](INSTALL.md#using-it-in-the-browser-the-tsugumi-command)).
 - **The stable release starts at v1.0.0.** The current 0.x versions are for moving development fast: compatibility of project documents and settings is not kept between versions, and nothing is migrated ([AGENTS.md](../AGENTS.md)).
@@ -37,10 +37,10 @@ What Tsugumi can do today, and what is planned. This page gathers what the other
 
 ## Features
 
-- **Cards can be written in C++, Python, bash, R and Julia.** Go, Rust, Ruby and C# are planned in [#10](https://github.com/gen740/Tsugumi/issues/10), [#11](https://github.com/gen740/Tsugumi/issues/11), [#13](https://github.com/gen740/Tsugumi/issues/13) and [#14](https://github.com/gen740/Tsugumi/issues/14). R and Julia Cards run in a separate process and exchange values as JSON (started per invocation; their display appears when the Card ends). Keeping state in a resident worker, and live display, are planned in [#161](https://github.com/gen740/Tsugumi/issues/161).
+- **Cards can be written in C++, Python, Go, Rust, C#, bash, R, Julia and Ruby.** R and Julia run in the same worker as C++ and Python, with live displays; like every Card they keep interpreter state only with `reuseWorker: true`. Julia Cards cannot use registry packages yet (`packages = [ ... ]` needs import-from-derivation, which the Card evaluator forbids). Their list/Dict interface converts values in memory through the worker’s typed FlatBuffers adapter.
+- **C# Cards run on the Card's own system only, and their NuGet packages come only from a lock.** A C# Card cannot be built for another `system` (x86_64-linux under emulation). External packages need the Card's `packages.lock.json` and the hash of the packages it names; nothing is locked or updated automatically. Native libraries inside NuGet packages are used as published, not patched for Nix. One .NET runtime lives for a resident worker's lifetime and is not unloaded ([C# Cards](CSharp.md#nuget-packages)).
 - **Figures can be drawn by ordinary Python Cards.** Write matplotlib, Plotly or Altair code as it is and it becomes the Card's display. A dedicated Visualization Card that makes figures from templates is planned in [#19](https://github.com/gen740/Tsugumi/issues/19).
 - **Dedicated Cards for marimo and R Markdown / Quarto are planned in [#15](https://github.com/gen740/Tsugumi/issues/15) and [#16](https://github.com/gen740/Tsugumi/issues/16).**
-- **The logger Card puts the values it receives in the Card's log and display.** Recording to an external database (SQLite, PostgreSQL and the like) is planned in [#160](https://github.com/gen740/Tsugumi/issues/160).
 - **The app can have 16 projects open at once.** The number of shared devices of the shared VM decides it (`SharedVM.slotCount`).
 - **A large demo (200 Cards) and WASM display are future extensions**.
 - **The `load` of the science demos fetches from the publisher on every run.** If the publisher's content changes, so does the result. Cas A is the one pinned by hash ([The bundled demos](Demos.md#science-demos-fetching-and-analysing-public-data)).

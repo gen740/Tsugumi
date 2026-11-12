@@ -366,7 +366,7 @@ struct CardGeometry {
     summary = d.summary != nil && !d.isRouting && d.kind != .trigger && !d.isDraft
     params = d.params.count
     // Rows are reserved by kind, so a run never makes a Card grow or shrink.
-    result = d.kind == .logger || d.hasDisplay
+    result = d.hasDisplay
     stages = d.kind == .code
     self.flow = flow
     shape = CardShape(d.kind)
@@ -1989,6 +1989,12 @@ struct WireRouter {
     return path
   }
 
+  /// The same samples as the Web router, for comparing wire crossings.
+  func curvePoints(_ a: CGPoint, _ b: CGPoint) -> [CGPoint] {
+    let (c1, c2) = controls(a, b)
+    return (0...32).map { Self.bezier(a, c1, c2, b, CGFloat($0) / 32) }
+  }
+
   /// A polyline with rounded corners.
   func orthogonal(_ pts: [CGPoint], radius: CGFloat) -> Path {
     Path { p in
@@ -2336,8 +2342,8 @@ enum PreviewSamples {
     ], workerReused: true)
     let gate = CardNodeData(title: String(localized: "偶数？"), kind: .branch, summary: nil,
                             inputs: [port("value"), port("condition")], outputs: [port("a"), port("b")])
-    let out = CardNodeData(title: String(localized: "結果"), kind: .logger, summary: nil,
-                           inputs: [port("in")], outputs: [], result: "[27, 82, 41, …]", state: .succeeded, invocation: 1)
+    let out = CardNodeData(title: String(localized: "結果"), kind: .code, summary: nil,
+                           inputs: [port("in")], outputs: [], result: "[27, 82, 41, …]", state: .succeeded, invocation: 1, hasDisplay: true)
     return [
       CanvasItem(id: "input", data: input, origin: CGPoint(x: 0, y: 0)),
       CanvasItem(id: "step", data: step, origin: CGPoint(x: 0, y: 150)),

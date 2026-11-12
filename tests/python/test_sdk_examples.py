@@ -27,8 +27,8 @@ def guide_files() -> dict[str, dict[str, str]]:
     return files
 
 
-@pytest.mark.parametrize("variant, shown", [("", "21 × 2 = 42"), ("bash", None), ("C++", "21 × 2 = 42"),
-                                            ("R", "21 × 2 = 42"), ("Julia", "21 × 2 = 42")])
+@pytest.mark.parametrize("variant, shown", [("", "21 × 2 = 42"), ("Python objects", "21 × 2 = 42"), ("bash", None),
+                                            ("C++", "21 × 2 = 42"), ("R", "21 × 2 = 42"), ("Julia", "21 × 2 = 42"), ("Ruby", "21 × 2 = 42")])
 def test_card_guide_runs_as_written(tmp_path, variant, shown):
     files = guide_files()
     root = tmp_path / "guide"

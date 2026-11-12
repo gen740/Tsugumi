@@ -33,6 +33,32 @@ The steps are in the README's [First steps](../README.md#first-steps). The first
 | Duplicate, select a range | `c`; `Shift` + drag |
 | Go back Home | The house button at the top right of the Canvas, or `⌘⇧H` (after any save that is needed; not while running) |
 
+## Canvas tools
+
+Right-click the Canvas to add a Code Card, a Switch, a Fork, a Branch or a Merge. A Switch can feed the `condition` input of a Branch so you can try both paths without editing code. Connect a value to the Branch's other input, then run once with the Switch on and once with it off. The timeline shows which branch ran. [Card types and execution](features.md#2-cards-and-workflows)
+
+Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires** when the Cards are already where you want them. Both are available from the Canvas context menu and can be undone. Untangling changes the visual order of ports while preserving the connections and the way the Workflow runs.
+
+Select several Cards and choose **Group Selection** to keep them together on the Canvas. To reuse another Workflow, use the import button by **Add Card** in the sidebar. It copies the selected project into `externals` as a Card in Card. Its boundary maps the outer ports to steps inside, which you can open by double-clicking the Card.
+
+Use **Nix references (as written)** in the Canvas controls to see references between saved `default.nix` files. Hover a Card to highlight its references or open **List** to jump to a Card or the reference's source. The overlay shows directly written references such as `inputs.upstream.clean`. Aliases and expressions are resolved during evaluation. [Nix reference rules](features.md#referring-to-upstream-definitions-inputsupstream)
+
+## Run from a Card
+
+Run the Workflow once to save its inputs. For example, open a copy of **Visualization → report**, run it, and change the aggregate Card's `offset`. Choose **Run from Here Downstream** on that Card to update the figures and report without running unrelated steps. Choose **Run Only This Card (Last Inputs)** to test just one figure using its saved input. A Card that needs an input without a saved value reports it as missing.
+
+Use the bottom **Timeline** to see which steps ran. Select a Card there to inspect its log, or open **Card settings → Run History** to choose an earlier invocation. [Run history](RunHistory.md)
+
+## Chart updates
+
+Open **Card settings → General → Chart updates**. The default **Update** shows the previous chart dimmed while the Card or an upstream Card is running. Choose **Live** to follow new chart revisions while the Card is running. Try both settings with the **Live Stream** demo. The Card must emit successive chart updates for the live setting to show changes. [Visualisation](features.md#7-visualisation)
+
+## Project terminal
+
+Open the **Terminal** panel below the Canvas. Use **New Terminal** to open another shell and run a command such as `nix --version`. A project can have up to eight terminal tabs. Switching tabs or hiding the panel keeps their commands running. Closing a terminal or closing the project ends its shell.
+
+On Mac, the app and the installed browser command use the project's environment inside the shared Linux VM. The Linux command runs on the host and the Windows command runs under WSL2. The Agent's shell tool has its own permission setting. [Browser and CLI environments](WebUI.md#the-tsugumi-command) · [Agent shell access](features.md#commands-in-the-project-environment)
+
 ## To learn more
 
 - Make your first Card yourself: [Your first Card](CardGuide.md)

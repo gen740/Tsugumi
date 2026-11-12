@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from projects import MSG_FBS, builtin_project, card, conn, put, run_and_wait
+from harness.values import recorded_input_json
+from projects import MSG_FBS, SINK, builtin_project, card, conn, put, run_and_wait
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -26,10 +27,10 @@ def diagnostics(c, card: list[str]) -> list[str]:
 
 
 def external(root: Path, name: str, text_value: str) -> None:
-    """externals/<name>: input -> logger, its boundary output is the message."""
+    """externals/<name>: input -> fork, with the forwarded message as the boundary output."""
     ext = root / "externals" / name
     put(ext / "tsugumi.json", json.dumps({
-        "name": name, "pkgsPath": "tsugumi:default", "databaseConnections": [],
+        "name": name, "pkgsPath": "tsugumi:default",
         "canvas": {"cards": [{"id": "say"}, {"id": "pass"}], "connections": [conn("say", "msg", "pass", "in")]},
         "boundary": {"inputs": {}, "outputs": {"said": {"card": "pass", "port": "out1"}}}}))
     put(ext / "layout.json", "{}")
@@ -100,7 +101,7 @@ LAID_OUT = {
 
 
 def laid_out_project(root: Path, layout: dict = LAID_OUT) -> None:
-    builtin_project(root, extra_cards=[card("src2", "log")])
+    builtin_project(root, extra_cards=[card("src2", "sink")])
     (root / "layout.json").write_text(spelled(layout), encoding="utf-8")
 
 
@@ -209,7 +210,7 @@ def test_a_card_that_leaves_the_canvas_takes_its_layout_with_it(tmp_path, core_f
     rev, doc = project_json(c)
     doc["canvas"]["cards"].append({"id": "src"})
     res = c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
-        change("PutDefinition", id="src", cardJson=json.dumps({"template": "logger"})),
+        change("PutDefinition", id="src", cardJson=json.dumps(SINK)),
         change("SetProject", json=json.dumps(doc))])
     assert res.delta.layoutJson is None
     assert text(c.call("ProjectInspectRequest").layoutJson) == spelled(kept)
@@ -230,7 +231,7 @@ def test_a_card_that_leaves_the_canvas_takes_its_layout_with_it(tmp_path, core_f
     doc["canvas"]["cards"].append({"id": "src"})
     back = pretty({"cards": {"src": {"x": 5, "y": 6}, "out": {"x": 1, "y": 2}}})
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="ui:x", changes=[
-        change("PutDefinition", id="src", cardJson=json.dumps({"template": "logger"})),
+        change("PutDefinition", id="src", cardJson=json.dumps(SINK)),
         change("SetProject", json=json.dumps(doc)),
         change("SetLayout", json=back)])
     assert text(c.call("ProjectInspectRequest").layoutJson) == back
@@ -264,7 +265,7 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     project = json.loads((root / "tsugumi.json").read_text())
     project["canvas"]["cards"].append({"id": "greet"})
     project["canvas"]["cards"].append({"id": "show"})
-    put(root / "definitions" / "show" / "_card.json", json.dumps({"template": "logger"}))
+    put(root / "definitions" / "show" / "_card.json", json.dumps(dict(SINK, recordIO=True)))
     project["canvas"]["connections"].append(conn("greet", "said", "show", "in"))
     put(root / "tsugumi.json", json.dumps(project))
     d = core_factory(project_root=root)
@@ -275,8 +276,7 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     assert any(text(x.id) == "greet" and x.linkJson for x in snap.definitions)
     run_id, st = run_and_wait(c, "greet")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    log = c.call("LogRangeRequest", runId=run_id, card=path("show"), invocation=1, stream=1, limitBytes=65536)
-    assert "from the external" in text(log.text)
+    assert recorded_input_json(c, tmp_path / "decode", run_id, "show")["text"] == "from the external"
     # The external is this project's copy: its files change here like any other.
     rev = snap.rev
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t",
@@ -324,6 +324,19 @@ def test_trigger_setting(tmp_path, core_factory):
     d = core_factory(project_root=root)
     c = d.connect()
     assert "invalid_setting" in diagnostics(c, ["out"])
+
+
+def test_display_mode_setting(tmp_path, core_factory):
+    """displayMode is update or live; anything else is reported on the Card."""
+    for value, reuse_worker, valid in (("update", False, True), ("live", True, True), ("smooth", True, False)):
+        root = tmp_path / value
+        builtin_project(root)
+        card = json.loads((root / "definitions" / "out" / "_card.json").read_text())
+        card["displayMode"] = value
+        card["reuseWorker"] = reuse_worker
+        put(root / "definitions" / "out" / "_card.json", json.dumps(card))
+        c = core_factory(project_root=root).connect()
+        assert ("invalid_setting" not in diagnostics(c, ["out"])) == valid, value
 
 
 def test_output_types_lists_and_rewrites_a_port(tmp_path, core_factory):
@@ -416,7 +429,7 @@ def test_rename_inside_a_card_in_card_keeps_the_history(tmp_path, core_factory):
 def test_an_output_feeds_one_wire(tmp_path, core_factory):
     """Connecting one output twice is diagnosed; adding a fork makes the graph runnable."""
     root = tmp_path / "p"
-    builtin_project(root, extra_cards=[card("out2", "log")], extra_conns=[conn("src", "msg", "out2", "in")])
+    builtin_project(root, extra_cards=[card("out2", "sink")], extra_conns=[conn("src", "msg", "out2", "in")])
     d = core_factory(project_root=root)
     c = d.connect()
     assert "fan_out" in diagnostics(c, ["src"])

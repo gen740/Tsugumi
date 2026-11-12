@@ -1,4 +1,6 @@
 // node web/tools/evidence.mjs <output-directory>
+// python3 -m http.server 8783 --bind 127.0.0.1 --directory <output-directory>
+// Open the bands and spectrum result links to inspect the saved table and image.
 import * as esbuild from 'esbuild'
 import fs from 'node:fs'
 import path from 'node:path'

@@ -1,3 +1,7 @@
+import { GO_SCAFFOLD } from './go-scaffold'
+import csharpFiles from '../../../ui/templates/csharp.json'
+import reportFiles from '../../../ui/templates/reports.json'
+import { RUST_SCAFFOLD } from './rust-scaffold'
 // One open project: shared by every view showing it. Owns the RPC
 // connection, the confirmed document (from tsugumid), the local draft with
 // undo/redo, run progress, displays and logs. Every edit is saved at once:
@@ -11,8 +15,12 @@ import {
   snapToGrid,
 } from './canvasKit'
 import { arrangeCards } from './arrange'
+import { orderedPorts, PortOrder, untanglePorts } from './untangle'
+import { FigureState, figureMode } from './moduleThumbnails'
 import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
 import { Observable } from './observable'
+import { VisualizationTemplate, visualizationFiles, visualizationTemplates } from './visualizationTemplates'
+import marimoFiles from '../../../ui/templates/marimo.json'
 import { FlowDirection, prefs } from './prefs'
 import { cardPermissions } from './permissions'
 import { L, language } from '../i18n'
@@ -48,6 +56,7 @@ export interface ResolvedCard {
   inputs: PortInfo[]
   outputs: PortInfo[]
   diagnostics: Diagnostic[]
+  nixReferences: { target: string[]; name: string; local: boolean; valid: boolean }[]
 }
 
 /** One stage of an invocation as the core recorded it (core clock, ms). */
@@ -206,7 +215,7 @@ export interface LineSeries {
 
 export type DisplayValue =
   | { kind: 'text'; text: string }
-  /** Markdown with TeX math (the SDK's markdown display, a logger in Markdown mode). */
+  /** Markdown with TeX math (the SDK's Markdown display). */
   | { kind: 'markdown'; text: string }
   | { kind: 'scalar'; value: number; label: string }
   | { kind: 'lineChart'; series: LineSeries[] }
@@ -222,8 +231,8 @@ export interface DisplaySnapshot {
   value: DisplayValue
 }
 
-/** Decode the display owned by this exact run record, without updating live canvas state. */
-export function displaySnapshot(d: D.DisplayT): DisplaySnapshot | undefined {
+/** Decode a retained display without changing the live canvas. */
+export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
   let value: DisplayValue
   switch (d.valueType) {
     case D.DisplayValue.DisplayText: {
@@ -860,7 +869,7 @@ export class ProjectSession extends Observable {
     for (const rc of res) {
       const p = segs(rc.card)
       const d = rc.diagnostics.map(diag)
-      r.set(key(p), { path: p, inputs: rc.inputs.map(port), outputs: rc.outputs.map(port), diagnostics: d })
+      r.set(key(p), { path: p, inputs: rc.inputs.map(port), outputs: rc.outputs.map(port), diagnostics: d, nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name), local: r.local, valid: r.valid })) })
       all.push(...d)
     }
     this.resolution = r
@@ -900,7 +909,7 @@ export class ProjectSession extends Observable {
     for (const p of d.sourcesRemoved) this.sources.delete(s(p))
     this.refreshExternals()
     this.applyResolution(d.resolution, d.diagnostics)
-    // A Draft implemented (or any Card that became code or a logger) sends its displays too.
+    // A Draft implemented (or any Card that became code) sends its displays too.
     if ([...this.displayedCards].sort().join('|') !== shown) void this.refreshVisibleDisplays()
     if (wasClean) {
       // Nothing local to keep: follow the confirmed document.
@@ -956,8 +965,8 @@ export class ProjectSession extends Observable {
     const rev = d.revision ?? 0n
     const old = this.displays.get(k)
     if (old && old.runId === s(d.runId) && old.revision >= rev) return // stale frame
-    const snapshot = displaySnapshot(d)
-    if (snapshot) this.displays.set(k, snapshot)
+    const display = recordedDisplay(d)
+    if (display) this.displays.set(k, display)
   }
 
   private recordTimeline(k: CardKey, inv: R.InvocationSummaryT) {
@@ -1545,7 +1554,7 @@ export class ProjectSession extends Observable {
 
   /** Cards whose displays the canvas shows: every Card that can run may send displays. */
   get displayedCards(): Set<CardKey> {
-    return new Set([...this.resolution.keys()].filter((k) => ['code', 'logger'].includes(this.kind(k))))
+    return new Set([...this.resolution.keys()].filter((k) => this.kind(k) === 'code'))
   }
 
   async refreshVisibleDisplays() {
@@ -2713,7 +2722,7 @@ export class ProjectSession extends Observable {
       const root = scopePrefix === '' ? x.project : x.external(scopePrefix)?.project ?? obj()
       const e: ExternalProject = {
         project: obj([
-          ['name', newId], ['pkgsPath', clone(get(root, 'pkgsPath')) ?? 'tsugumi:default'], ['databaseConnections', []],
+          ['name', newId], ['pkgsPath', clone(get(root, 'pkgsPath')) ?? 'tsugumi:default'],
           ['canvas', obj([['cards', inner], ['connections', innerConns]])],
           ['boundary', obj([['inputs', new JObj(inputs)], ['outputs', new JObj(outputs)]])],
         ]),
@@ -2933,8 +2942,21 @@ export class ProjectSession extends Observable {
   }
 
   /** Lays out a scope's Cards, output frames and notes (layout only, one undo):
-   *  see `arrangeCards`. Sizes and port positions are those of `CardGeometry`. */
+   *  see `arrangeCards`. Ports then take the order that crosses fewer wires, and
+   *  the Cards are placed once more for that order, so the wires the layout drew
+   *  straight are straight again. */
   arrange(scope: string[]) {
+    this.edit((x) => {
+      x.placeArranged(scope)
+      const orders = x.untangledOrders(scope)
+      if (!orders.length) return
+      x.applyPortOrders(scope, orders)
+      x.placeArranged(scope)
+    })
+  }
+
+  /** A step of an edit. Sizes and port positions are those of `CardGeometry`. */
+  private placeArranged(scope: string[]) {
     const ids = this.cards(scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x)
     const cards = ids.map((id) => {
       const g = this.geometry(key([...scope, id]))
@@ -2959,44 +2981,42 @@ export class ProjectSession extends Observable {
       return isObj(list) ? list.entries().map(([, v]) => ({ card: str(get(v, 'card')) ?? '', port: str(get(v, 'port')) ?? '' })) : []
     }
     const placed = arrangeCards({ flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, frames, notes, boundary: { inputs: bar('inputs'), outputs: bar('outputs') } })
-    this.edit((x) => {
-      for (const c of placed.cards) x.setPosition(key([...scope, c.id]), c)
-      x.updateLayout(scope, (l) => {
-        if (placed.frames.length) {
-          let displays = l.get('displays')
-          if (!isObj(displays)) {
-            displays = obj()
-            l.set('displays', displays)
-          }
-          for (const f of placed.frames) {
-            const lk = this.layoutKey(key([...scope, f.id]))
-            let d = (displays as JObj).get(lk)
-            if (!isObj(d)) {
-              d = obj()
-              ;(displays as JObj).set(lk, d)
-            }
-            ;(d as JObj).set('x', real(f.x))
-            ;(d as JObj).set('y', real(f.y))
-            // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
-            const size = frames.find((x) => x.id === f.id)!
-            ;(d as JObj).set('width', real(size.width))
-            ;(d as JObj).set('height', real(size.height))
-          }
+    for (const c of placed.cards) this.setPosition(key([...scope, c.id]), c)
+    this.updateLayout(scope, (l) => {
+      if (placed.frames.length) {
+        let displays = l.get('displays')
+        if (!isObj(displays)) {
+          displays = obj()
+          l.set('displays', displays)
         }
-        if (placed.notes.length) {
-          l.set('notes', (arr(l.get('notes')) ?? []).map((n) => {
-            const at = placed.notes.find((p) => p.id === str(get(n, 'id')))
-            const copy = clone(n)
-            if (at && isObj(copy) && (str(get(n, 'scope')) ?? '') === '') {
-              copy.set('x', real(at.x))
-              copy.set('y', real(at.y))
-            }
-            return copy
-          }))
+        for (const f of placed.frames) {
+          const lk = this.layoutKey(key([...scope, f.id]))
+          let d = (displays as JObj).get(lk)
+          if (!isObj(d)) {
+            d = obj()
+            ;(displays as JObj).set(lk, d)
+          }
+          ;(d as JObj).set('x', real(f.x))
+          ;(d as JObj).set('y', real(f.y))
+          // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
+          const size = frames.find((x) => x.id === f.id)!
+          ;(d as JObj).set('width', real(size.width))
+          ;(d as JObj).set('height', real(size.height))
         }
-        // The bars of a Card in Card go back to following the Cards.
-        l.set('boundary', undefined)
-      })
+      }
+      if (placed.notes.length) {
+        l.set('notes', (arr(l.get('notes')) ?? []).map((n) => {
+          const at = placed.notes.find((p) => p.id === str(get(n, 'id')))
+          const copy = clone(n)
+          if (at && isObj(copy) && (str(get(n, 'scope')) ?? '') === '') {
+            copy.set('x', real(at.x))
+            copy.set('y', real(at.y))
+          }
+          return copy
+        }))
+      }
+      // The bars of a Card in Card go back to following the Cards.
+      l.set('boundary', undefined)
     })
   }
 
@@ -3033,11 +3053,31 @@ export class ProjectSession extends Observable {
     if (!dir || !id) return
     const ns = id.replace(/[-.]/g, '_')
     const set = (card: J, meta?: J) => this.setCardDefinition(k, { card, meta })
+    if (t.startsWith('visualization_')) {
+      const files = visualizationFiles[t as VisualizationTemplate]
+      set(tryParse(files['_card.json'])!, tryParse(files['_meta.json']))
+      for (const [file, text] of Object.entries(files)) if (file !== '_card.json' && file !== '_meta.json') this.putSource(dir + file, text)
+      return
+    }
     switch (t) {
+      case 'csharp':
+        set(tryParse(csharpFiles['_card.json'])!)
+        for (const [file, text] of Object.entries(csharpFiles)) if (file !== '_card.json') this.putSource(dir + file, text)
+        break
+      case 'marimo':
+        set(tryParse(marimoFiles['_card.json'])!, tryParse(marimoFiles['_meta.json']))
+        for (const [file, text] of Object.entries(marimoFiles)) if (file !== '_card.json' && file !== '_meta.json') this.putSource(dir + file, text)
+        break
+      case 'report_rmarkdown': case 'report_quarto': {
+        const files = reportFiles[t]
+        set(tryParse(files['_card.json'])!, tryParse(files['_meta.json'])!)
+        for (const [file, text] of Object.entries(files)) if (file !== '_card.json' && file !== '_meta.json') this.putSource(dir + file, text)
+        break
+      }
       case 'draft':
         set(obj([['template', 'draft']]), obj([['description', ''], ['content', '']]))
         break
-      case 'trigger': case 'fork': case 'branch': case 'logger':
+      case 'trigger': case 'fork': case 'branch':
         set(obj([['template', t]]))
         break
       case 'merge':
@@ -3064,6 +3104,24 @@ def main(ctx):
     out.AddValue(b, text)
     ctx.output("out", b, out.End(b))
 `)
+        break
+      case 'go':
+        set(obj([['language', 'go'], ['inputs', [obj([['name', 'in']])]]]))
+        this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ "go" ]; };\nin { run = inputs.tsugumi.goCard { inherit sdk; src = ./src; }; }\n')
+        this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
+        for (const [name, source] of Object.entries(GO_SCAFFOLD)) this.putSource(dir + 'src/' + name, source)
+        break
+      case 'rust':
+        set(obj([['language', 'rust'], ['inputs', [obj([['name', 'in']])]]]))
+        this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ "rust" ]; };\nin { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }\n')
+        this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
+        for (const [name, source] of Object.entries(RUST_SCAFFOLD)) this.putSource(dir + 'src/' + name, source)
+        break
+      case 'ruby':
+        set(obj([['language', 'ruby'], ['inputs', [obj([['name', 'in']])]]]))
+        this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ "ruby" ]; };\nin\n{\n  run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; };\n}\n')
+        this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
+        this.putSource(dir + 'src/main.rb', 'def main(ctx)\n  ctx.output("out", { value: "hello" })\nend\n')
         break
       case 'cpp':
         set(obj([['language', 'cpp'], ['inputs', [obj([['name', 'in']])]]]))
@@ -3356,6 +3414,36 @@ auto run(Card::Input& input) -> Card::Output {
     return D.CardState.succeeded
   }
 
+  /** How the Card's figure on the canvas follows its results: its
+   *  `displayMode`, whether the Card runs, and whether one upstream of it
+   *  does (its figure is about to be replaced). */
+  figureState(k: CardKey): FigureState {
+    const mode = figureMode(str(this.cardSetting(k, 'displayMode')))
+    if (!this.runActive) return { mode, running: false, stale: false }
+    const busy = (c: CardKey) => {
+      const st = this.cardStates.get(c)?.state
+      return st === D.CardState.ready || st === D.CardState.preparing || st === D.CardState.running || this.compositeState(c) === D.CardState.running
+    }
+    // Upstream in the Card's own Workflow, then upstream of each Card in Card it is inside.
+    const upstream = (c: CardKey): boolean => {
+      const scope = path(c).slice(0, -1)
+      const conns = this.connections(scope)
+      const seen = new Set<string>(), todo = [path(c)[scope.length]]
+      while (todo.length) {
+        const id = todo.pop()!
+        for (const conn of conns) {
+          const from = str(get(conn, 'from', 'card'))
+          if (!from || str(get(conn, 'to', 'card')) !== id || seen.has(from)) continue
+          seen.add(from)
+          if (busy(key([...scope, from]))) return true
+          todo.push(from)
+        }
+      }
+      return scope.length > 0 && upstream(key(scope))
+    }
+    return { mode, running: busy(k), stale: upstream(k) }
+  }
+
   /** The inner Card and port an outer output of a Card in Card comes from. */
   boundarySource(k: CardKey, port: string): [CardKey, string] | undefined {
     const ep = get(this.boundary(k), 'outputs', port)
@@ -3380,7 +3468,7 @@ auto run(Card::Input& input) -> Card::Output {
     const editing = kind === 'draft' && this.inlineDraft?.card === k
     return {
       title: path(k).pop() ?? k, kind, symbol: sym || undefined, summary: summary || undefined,
-      inputs: ports.inputs, outputs: opts.outputs ?? ports.outputs, params: this.inlineParams(k, opts.definition),
+      inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
       result: d ? displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined,
       state: kind === 'subgraph' ? this.compositeState(k) : state?.state, stage: this.stageProgress(k),
       invocation: state?.invocation ?? 0n, runContinues: this.runActive,
@@ -3398,6 +3486,117 @@ auto run(Card::Input& input) -> Card::Output {
   placedPosition(k: CardKey): Pt {
     const p = this.position(k)
     return prefs.showGrid ? { x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize) } : p
+  }
+
+  private visualPorts(k: CardKey, ports: PortData[], output: boolean): PortData[] {
+    if (!['code', 'draft', 'input', 'subgraph'].includes(this.kind(k))) return ports
+    const saved = arr(get(this.layoutOf(path(k).slice(0, -1)), 'cards', this.layoutKey(k), output ? 'outputOrder' : 'inputOrder')) ?? []
+    return orderedPorts(ports, saved.flatMap(v => typeof v === 'string' ? [v] : []))
+  }
+
+  /** Keep the layout while reducing crossings; one undo restores every port. */
+  untangle(scope: string[]) {
+    const orders = this.untangledOrders(scope)
+    if (orders.length) this.edit(s => s.applyPortOrders(scope, orders))
+  }
+
+  /** A step of an edit that moved Cards: the ports of what moved and of the Cards
+   *  wired to it take a better order when that draws fewer crossings among their
+   *  wires. Other Cards retain their orders, and their wires still count. */
+  untangleAround(scope: string[], moved: Iterable<CardKey>) {
+    const ids = new Set<string>()
+    for (const k of moved) {
+      const p = path(k)
+      if (p.length === scope.length + 1 && scope.every((s, i) => s === p[i])) ids.add(p[p.length - 1])
+    }
+    if (ids.size) this.applyPortOrders(scope, this.untangledOrders(scope, ids))
+  }
+
+  /** Whether the canvas shows this Card's ports in an order of its own. */
+  hasPortOrder(k: CardKey): boolean {
+    const entry = get(this.layoutOf(path(k).slice(0, -1)), 'cards', this.layoutKey(k))
+    return !!(arr(get(entry, 'inputOrder'))?.length || arr(get(entry, 'outputOrder'))?.length)
+  }
+
+  /** Back to the declared order of the ports, in one undo step. */
+  resetPortOrder(keys: Iterable<CardKey>) {
+    const targets = [...keys].filter(k => this.hasPortOrder(k))
+    if (!targets.length) return
+    this.edit(x => {
+      for (const k of targets) x.updateLayout(path(k).slice(0, -1), l => {
+        const entry = get(l, 'cards', x.layoutKey(k))
+        if (!isObj(entry)) return
+        entry.set('inputOrder', undefined)
+        entry.set('outputOrder', undefined)
+      })
+    })
+  }
+
+  private untangledOrders(scope: string[], around?: Set<string>): PortOrder[] {
+    const ids = this.cards(scope).flatMap(c => { const id = str(get(c, 'id')); return id ? [id] : [] })
+    const cards = ids.map(id => {
+      const k = key([...scope, id]), g = this.geometry(k)
+      const ports = (names: string[], output: boolean) => names.map(name => ({ name, ...g.port(name, output) }))
+      return { id, ...this.placedPosition(k), ...g.size, inputs: ports(g.inputs, false), outputs: ports(g.outputs, true),
+        movable: ['code', 'draft', 'input', 'subgraph'].includes(this.kind(k)) }
+    })
+    const wires = this.connections(scope).flatMap(c => {
+      const from = str(get(c, 'from', 'card')), fromPort = str(get(c, 'from', 'port')), to = str(get(c, 'to', 'card')), toPort = str(get(c, 'to', 'port'))
+      return from && fromPort && to && toPort ? [{ from, fromPort, to, toPort }] : []
+    })
+    // Boundary bars are fixed nodes, so reordering an inner port also accounts
+    // for its outer wire. Use the same positions as the canvas boundary bars.
+    if (scope.length) {
+      const boundary = this.boundary(key(scope))
+      const entries = (side: string): [string, J][] => { const v = get(boundary, side); return isObj(v) ? v.entries() : [] }
+      const ins = entries('inputs'), outs = entries('outputs')
+      if (ins.length || outs.length) {
+        const left = cards.length ? Math.min(...cards.map(c => c.x)) : 0, top = cards.length ? Math.min(...cards.map(c => c.y)) : 0
+        const right = cards.length ? Math.max(...cards.map(c => c.x + c.width)) : 240, bottom = cards.length ? Math.max(...cards.map(c => c.y + c.height)) : 120
+        const width = Math.max(right - left, Math.max(ins.length, outs.length) * 110 + 40), x = (left + right - width) / 2
+        for (const output of [false, true]) {
+          const side = output ? 'outputs' : 'inputs', list = output ? outs : ins, id = '\u0000' + side
+          const at = this.boundaryPosition(scope, side) ?? { x, y: output ? bottom + 56 : top - 96 }
+          const ports = list.map(([name], i) => ({ name, x: width * (i + 1) / (list.length + 1), y: output ? 0 : 40 }))
+          cards.push({ id, ...at, width, height: 40, movable: false, inputs: output ? ports : [], outputs: output ? [] : ports })
+          for (const [name, endpoint] of list) {
+            const card = str(get(endpoint, 'card')), port = str(get(endpoint, 'port'))
+            if (card && port) wires.push(output ? { from: card, fromPort: port, to: id, toPort: name } : { from: id, fromPort: name, to: card, toPort: port })
+          }
+        }
+      }
+    }
+    const frames = ids.map(id => key([...scope, id])).filter(k => (this.displays.has(k) || this.displayFrame(k) !== undefined) && bool(get(this.displayFrame(k), 'hidden')) !== true).map(k => {
+      const at = this.placedPosition(k), g = this.geometry(k), frame = this.displayFrame(k)
+      const x = dbl(get(frame, 'x')), y = dbl(get(frame, 'y'))
+      return { x: x ?? (this.flow === 'topToBottom' ? at.x + g.size.width + 40 : at.x),
+        y: y ?? (this.flow === 'topToBottom' ? at.y : at.y + g.height + 30),
+        width: dbl(get(frame, 'width')) ?? 320, height: dbl(get(frame, 'height')) ?? 170 }
+    })
+    if (!around) return untanglePorts(this.flow, cards, wires, frames)
+    // A move changes nothing among Cards that moved together, nor for a Card with no wires.
+    if (!wires.some(w => around.has(w.from) !== around.has(w.to))) return []
+    const neighbors = new Set(around)
+    for (const w of wires) {
+      if (around.has(w.from)) neighbors.add(w.to)
+      if (around.has(w.to)) neighbors.add(w.from)
+    }
+    return untanglePorts(this.flow, cards.map(c => ({ ...c, movable: c.movable && neighbors.has(c.id) })), wires, frames)
+  }
+
+  private applyPortOrders(scope: string[], orders: PortOrder[]) {
+    for (const order of orders) {
+      const k = key([...scope, order.id])
+      const at = this.position(k)
+      this.updateLayout(scope, l => {
+        let cards = l.get('cards')
+        if (!isObj(cards)) { cards = obj(); l.set('cards', cards) }
+        let entry = (cards as JObj).get(this.layoutKey(k))
+        if (!isObj(entry)) { entry = obj([['x', real(at.x)], ['y', real(at.y)]]); (cards as JObj).set(this.layoutKey(k), entry) }
+        ;(entry as JObj).set('inputOrder', order.inputs)
+        ;(entry as JObj).set('outputOrder', order.outputs)
+      })
+    }
   }
 
   geometry(k: CardKey): CardGeometry {
@@ -3422,16 +3621,16 @@ export class ExternalCopy {
 // ---- Kinds, templates and labels ------------------------------------------------------
 
 /** What a Card is, for choosing what the canvas and the editor offer. */
-export type CardKind = 'trigger' | 'input' | 'switch' | 'fork' | 'branch' | 'merge' | 'logger' | 'draft' | 'subgraph' | 'code'
-const KINDS: CardKind[] = ['trigger', 'input', 'switch', 'fork', 'branch', 'merge', 'logger', 'draft', 'subgraph', 'code']
+export type CardKind = 'trigger' | 'input' | 'switch' | 'fork' | 'branch' | 'merge' | 'draft' | 'subgraph' | 'code'
+const KINDS: CardKind[] = ['trigger', 'input', 'switch', 'fork', 'branch', 'merge', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
-  trigger: L('開始'), input: L('入力'), switch: L('スイッチ'), fork: L('分配'), branch: L('分岐'), merge: L('合流'), logger: L('記録'), draft: 'Draft', subgraph: 'Card in Card', code: L('処理'),
+  trigger: L('開始'), input: L('入力'), switch: L('スイッチ'), fork: L('分配'), branch: L('分岐'), merge: L('合流'), draft: 'Draft', subgraph: 'Card in Card', code: L('処理'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
   trigger: 'play.circle', input: 'slider.horizontal.3', switch: 'switch.2', fork: 'arrow.triangle.branch', branch: 'arrow.triangle.swap',
-  merge: 'arrow.triangle.merge', logger: 'list.bullet.rectangle', draft: 'pencil.and.outline', subgraph: 'link',
+  merge: 'arrow.triangle.merge', draft: 'pencil.and.outline', subgraph: 'link',
   code: 'chevron.left.forwardslash.chevron.right',
 }
 
@@ -3446,16 +3645,23 @@ export function definitionKind(def: J | undefined): CardKind {
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = 'python' | 'cpp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
+export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
+  { id: 'ruby', label: L('Ruby の処理') },
+  { id: 'rust', label: L('Rust の処理') },
+  { id: 'go', label: L('Go の処理') },
+  { id: 'csharp', label: L('C# の処理') },
+  ...visualizationTemplates,
+  { id: 'marimo', label: L('marimo ノートブック') },
+  { id: 'report_rmarkdown', label: L('R Markdown レポート（HTML）') }, { id: 'report_quarto', label: L('Quarto レポート（HTML）') },
   { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
   { id: 'switch', label: L('スイッチ') },
   { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') }, { id: 'fork', label: L('分配') },
-  { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'logger', label: L('記録') },
+  { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') },
 ]
-export const templateIcon = (t: DefinitionTemplate) => KIND_ICON[t === 'python' || t === 'cpp' ? 'code' : (t as CardKind)]
+export const templateIcon = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'chart.xyaxis.line' : KIND_ICON[t.startsWith('report_') || t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' || t === 'marimo' ? 'code' : (t as CardKind)]
 /** A name for the new Card (its id; made unique). */
-export const templateBaseName = (t: DefinitionTemplate) => (t === 'python' || t === 'cpp' ? 'card' : t)
+export const templateBaseName = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'visualization' : (t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' ? 'card' : t)
 
 export const NOTE_COLORS: { id: string; label: string }[] = [
   { id: 'yellow', label: L('黄') }, { id: 'blue', label: L('青') }, { id: 'green', label: L('緑') }, { id: 'pink', label: L('桃') }, { id: 'gray', label: L('灰') },

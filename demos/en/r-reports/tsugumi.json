@@ -1,0 +1,88 @@
+{
+  "name": "R reports: R Markdown and Quarto",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "aggregate"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "rmarkdown"
+      },
+      {
+        "id": "quarto"
+      },
+      {
+        "id": "archive"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "aggregate",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "rmarkdown",
+          "port": "report"
+        },
+        "to": {
+          "card": "archive",
+          "port": "rmarkdown"
+        }
+      },
+      {
+        "from": {
+          "card": "quarto",
+          "port": "report"
+        },
+        "to": {
+          "card": "archive",
+          "port": "quarto"
+        }
+      },
+      {
+        "from": {
+          "card": "aggregate",
+          "port": "data"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "rmarkdown"
+        },
+        "to": {
+          "card": "rmarkdown",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "quarto"
+        },
+        "to": {
+          "card": "quarto",
+          "port": "data"
+        }
+      }
+    ]
+  }
+}

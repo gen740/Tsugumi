@@ -24,7 +24,7 @@ const session = () => {
 
 {
   const s = session()
-  const code = s.addCard('logger', [], { x: 0, y: 0 })
+  const code = s.addCard('python', [], { x: 0, y: 0 })
   s.updateCard(code, (c) => c.set('description', 'in the settings'))
   assert.equal(s.nodeData(code).summary, undefined, 'the settings hold no summary')
   assert.equal(s.cardDescription(code), undefined)

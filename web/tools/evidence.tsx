@@ -24,7 +24,7 @@ session.layout = session.confirmedLayout = parse(JSON.stringify(layout))
 for (const c of demo.cards) {
   session.confirmedDefinitions.set(c.id, parse(c.files.find(f => f.path === '_card.json')!.text))
   session.confirmedDefinitionMeta.set(c.id, parse(JSON.stringify({ description: c.summary })))
-  session.resolution.set(c.id, { path: [c.id], inputs: c.inputs.map(p => ({ ...p, kind: D.PortKind.FlatBuffer, optional: false })), outputs: c.outputs.map(p => ({ ...p, kind: D.PortKind.FlatBuffer, optional: false })), diagnostics: [] })
+  session.resolution.set(c.id, { path: [c.id], inputs: c.inputs.map(p => ({ ...p, kind: D.PortKind.FlatBuffer, optional: false })), outputs: c.outputs.map(p => ({ ...p, kind: D.PortKind.FlatBuffer, optional: false })), diagnostics: [], nixReferences: [] })
 }
 const status = Object.assign(new R.RunStatusT(), { runId: run, state: D.RunState.succeeded })
 session.runStatus = status

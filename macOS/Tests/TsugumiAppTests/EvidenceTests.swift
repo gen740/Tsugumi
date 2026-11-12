@@ -47,11 +47,11 @@ import TsugumiRPC
   recorded.invocation = 1
   recorded.revision = 7
   recorded.value = Tsugumi_Data_DisplayValueUnion(text, type: .displaytext)
-  let snapshot = try #require(DisplaySnapshot.decode(recorded))
+  let snapshot = try #require(recordedDisplay(recorded))
   #expect(snapshot.runId == recorded.runId)
   #expect(snapshot.invocation == 1)
   #expect(snapshot.revision == 7)
   guard case .text(let value) = snapshot.value else { Issue.record("Expected recorded text"); return }
   #expect(value == "recorded photons: 157471")
-  #expect(DisplaySnapshot.decode(Tsugumi_Data_DisplayT()) == nil)
+  #expect(recordedDisplay(Tsugumi_Data_DisplayT()) == nil)
 }

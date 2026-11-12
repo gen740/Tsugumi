@@ -528,9 +528,12 @@ private struct GeneralCategory: View {
           }
           numberField("maxRuns", label: "最大実行回数", fallback: "1")
           timeoutField("timeoutSeconds", label: "実行の期限（秒）")
-          if model.kind == .logger {
-            toggle("markdown", label: "Markdown として表示", fallback: false)
-              .help("オン: 受け取った文字列（文字列のフィールドが 1 つのメッセージ）を Markdown と数式（$…$、$$…$$）で表示します。ほかのメッセージは JSON をコードとして表示します。")
+          if model.kind == .code {
+            Picker("グラフの更新", selection: string("displayMode", fallback: "update")) {
+              Text("更新（実行中は薄く表示）").tag("update")
+              Text("ライブ（実行中も追う）").tag("live")
+            }
+            .help("更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。")
           }
           if model.kind == .code {
             timeoutField("buildTimeoutSeconds", label: "ビルドの期限（秒）")
@@ -540,7 +543,7 @@ private struct GeneralCategory: View {
               Text(verbatim: "aarch64-linux").tag("aarch64-linux")
             }
             .help("別のシステム（x86_64-linux）の Card は、エミュレーター（Mac では Rosetta）で動きます。最初のビルドもエミュレーターで動くので時間がかかります。")
-            toggle("reuseWorker", label: "worker の状態を残す", fallback: true)
+            toggle("reuseWorker", label: "worker の状態を残す", fallback: false)
               .help("オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。")
             toggle("filesystem", label: "作業・出力領域を使う", fallback: false)
             toggle("sandbox", label: "ファイルアクセスを制限", fallback: true)
@@ -1152,7 +1155,7 @@ private struct SourceCategory: View {
       if only != nil {
         if let f = files.first { model.openFile(f) }
       } else if model.shownFile == nil || (model.shownFile?.hasSuffix("/default.nix") ?? false) {
-        if let f = files.first(where: { $0.hasSuffix(".py") || $0.hasSuffix(".cc") }) ?? files.first { model.openFile(f) }
+        if let f = files.first(where: { $0.hasSuffix(".py") || $0.hasSuffix(".cc") || $0.hasSuffix(".rb") || $0.hasSuffix(".cs") || ["rmd", "qmd"].contains(($0 as NSString).pathExtension.lowercased()) }) ?? files.first { model.openFile(f) }
       }
     }
     .alert("ファイルを作成", isPresented: $showNew) {

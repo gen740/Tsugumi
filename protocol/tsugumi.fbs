@@ -47,11 +47,21 @@ table Definition {
   link_json:string (id: 3);
 }
 
+/// A static Card reference in default.nix. Target paths are absolute in the
+/// project, including references that fail validation. No Nix evaluation.
+table CardNixReference {
+  target:Tsugumi.Data.CardPath (id: 0, required);
+  name:string (id: 1, required);
+  local:bool (id: 2);
+  valid:bool (id: 3);
+}
+
 table ResolvedCard {
   card:Tsugumi.Data.CardPath (id: 0, required);
   inputs:[Tsugumi.Data.Port] (id: 1, required);
   outputs:[Tsugumi.Data.Port] (id: 2, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 3, required);
+  nix_references:[CardNixReference] (id: 4, required);
 }
 
 table Camera {
@@ -375,9 +385,14 @@ table VersionGraphRequest { limit:uint32 = null (id: 0); }
 /// -> VersionCanvas: the Cards of a version and how they connect (a minimap).
 table VersionCanvasRequest { commit:string (id: 0, required); }
 
-/// -> VersionDiff: what a version changed from its first parent, in the text a
+/// -> VersionDiff: what a version changed from another version (its first parent
+/// by default), in the text a
 /// summary is written from. Only code and settings: never data files.
-table VersionDiffRequest { commit:string (id: 0, required); }
+table VersionDiffRequest {
+  commit:string (id: 0, required);
+  /// Compare from this version; absent means the first parent of commit.
+  from_commit:string (id: 1);
+}
 
 /// -> VersionResult. Keeps a client's summary of a version in the commit's own
 /// note (refs/notes/tsugumi-summary), replacing the one there.
@@ -544,6 +559,8 @@ table RunEnvironmentPathsRequest {
   environment_id:string (id: 1, required);
   offset:uint64 = null (id: 2);
   limit:uint32 = null (id: 3);
+  /// Case-insensitive literal substring search. Offset and total refer to matching paths.
+  query:string (id: 4);
 }
 
 table BuildEnvironment {
@@ -557,6 +574,11 @@ table BuildEnvironment {
 table BuildEnvironmentPage {
   environments:[BuildEnvironment] (id: 0, required);
   next_offset:uint64 = null (id: 1);
+  /// The binary caches (URLs, without credentials) configured for the run's
+  /// builds, on every page. A store path may have been downloaded from any of
+  /// them or built locally: which, is not recorded. Empty for a run recorded
+  /// without this list.
+  substituters:[string] (id: 2);
 }
 
 table EnvironmentPathPage {
@@ -732,7 +754,7 @@ table VersionCanvasCard {
   x:double (id: 1);
   y:double (id: 2);
   /// What it is, which decides its shape: trigger, input, fork, branch, merge,
-  /// logger, draft, subgraph or code.
+  /// draft, subgraph or code.
   kind:string (id: 3, required);
   /// The ports a fork or merge fans over, which decide its width; 0 for others.
   fan:uint32 (id: 4);
@@ -917,6 +939,8 @@ table InvocationRecord {
   input_sources:[InputSource] (id: 3, required);
   display:Tsugumi.Data.Display (id: 4);
   record_io:bool = null (id: 5);
+  /// Parameters captured from the run's immutable document; absent if unavailable.
+  params_json:string (id: 6);
 }
 
 table HistoryState {

@@ -65,11 +65,6 @@ struct Graph {
   Opt<"connections", v::Array<Obj<Connection>>> connections;
 };
 
-struct DatabaseConnection {
-  Opt<"name", v::String> name;
-  Opt<"url", v::String> url;
-};
-
 // A Nix source outside nixpkgs that this project opts in to. Its Cards read it
 // as inputs.sources.<name>. `type` says how it is read: "flake" for now, whose
 // `ref` is locked (a commit and its narHash).
@@ -89,7 +84,6 @@ struct Project {
   Opt<"name", v::String> name;
   Opt<"pkgsPath", v::String> pkgs_path;
   Opt<"nixSources", v::Array<Obj<NixSource>>> nix_sources;
-  Opt<"databaseConnections", v::Array<Obj<DatabaseConnection>>> database_connections;
   // Finished runs are also kept in the project (.tsugumi/runs.sqlite); default true.
   Opt<"saveRunHistory", v::Bool> save_run_history;
   Opt<"canvas", Obj<Graph>> canvas;
@@ -137,12 +131,16 @@ struct CardDefinition {
   Opt<"artifactOutput", v::String> artifact_output;
   Opt<"filesystem", v::Bool> filesystem;
   Opt<"sandbox", v::Bool> sandbox;
-  Opt<"reuseWorker", v::Bool> reuse_worker;  // default true: the worker keeps its state across runs
+  Opt<"reuseWorker", v::Bool> reuse_worker;  // Keep worker state across invocations and runs. Default false.
   Opt<"network", v::Bool> network;           // Experimental, default false
   // The Nix system the Card is built for and runs as: "x86_64-linux" or
   // "aarch64-linux". Default: this machine's. Another one runs emulated.
   Opt<"system", v::String> system;
-  Opt<"markdown", v::Bool> markdown;         // logger: show the received text as Markdown
+  // How a figure on the canvas follows the Card's results: "update" (the
+  // default: the last figure, dimmed while the Card or one upstream runs) or
+  // "live" (each revision of a running Card replaces the last one in place).
+  // The clients read it; core only checks the value.
+  Opt<"displayMode", v::String> display_mode;
   Opt<"hostFolders", v::Array<Obj<HostFolder>>> host_folders;  // Experimental
 };
 
@@ -190,6 +188,8 @@ struct Position {
   Opt<"x", Number> x;
   Opt<"y", Number> y;
   Opt<"collapsed", v::Bool> collapsed;  // display only; the Card still runs
+  Opt<"inputOrder", v::Array<v::String>> input_order;
+  Opt<"outputOrder", v::Array<v::String>> output_order;  // visual order by name; connections stay unchanged
 };
 
 struct StickyNote {
@@ -316,6 +316,7 @@ struct InvocationDetailJson {
   t::Int64<"ready_at"> ready_at;
   t::String<"emulator"> emulator;  // "" = ran natively
   t::String<"environment_id"> environment_id;
+  t::String<"params"> params;
 };
 
 struct InputSourceJson {

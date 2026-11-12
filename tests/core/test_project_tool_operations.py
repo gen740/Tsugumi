@@ -8,7 +8,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from projects import put, run_and_wait
+from harness.values import recorded_input_json
+from projects import SINK, put, run_and_wait
 from tsugumi_client import change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -18,7 +19,7 @@ FILE_FBS = 'attribute "tsugumi";\nnamespace data;\ntable Events { value:string; 
 
 def make(root: Path) -> None:
     put(root / "tsugumi.json", json.dumps({
-        "name": "files", "pkgsPath": "tsugumi:default", "databaseConnections": [],
+        "name": "files", "pkgsPath": "tsugumi:default",
         "canvas": {"cards": [{"id": "start"}, {"id": "load"}, {"id": "show"}], "connections": [
             {"from": {"card": "start", "port": "out"}, "to": {"card": "load", "port": "start"}},
             {"from": {"card": "load", "port": "events"}, "to": {"card": "show", "port": "in"}}]}}))
@@ -28,7 +29,7 @@ def make(root: Path) -> None:
         "template": "input", "params": [{"name": "value", "type": "string", "data": "data/events.txt"}]}))
     put(root / "definitions" / "load" / "_outputs.fbs", FILE_FBS)
     put(root / "definitions" / "load" / "data" / "events.txt", "photon 1\nphoton 2\n")
-    put(root / "definitions" / "show" / "_card.json", json.dumps({"template": "logger"}))
+    put(root / "definitions" / "show" / "_card.json", json.dumps(dict(SINK, recordIO=True)))
 
 
 def test_reads_without_at_rev_and_the_root_as_empty_path(tmp_path, core_factory):
@@ -67,8 +68,7 @@ def test_input_card_hands_a_project_file_on(tmp_path, core_factory):
     assert st.state == RunState.failed and "trigger" in text(st.failure.diagnostic), text(st.failure.diagnostic)
     rid, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    log = text(c.call("LogRangeRequest", runId=rid, card=path("show"), invocation=1, stream=1, limitBytes=65536).text)
-    shown = json.loads(log)["value"]
+    shown = recorded_input_json(c, tmp_path / "decode", rid, "show")["value"]
     assert shown.endswith("/events.txt") and "definitions/load/data" not in shown, shown
 
 

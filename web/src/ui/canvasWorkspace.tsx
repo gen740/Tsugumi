@@ -1,3 +1,4 @@
+import { NixReferenceControls } from './nixReferences'
 // The canvas with its floating controls: the project's title (with where the
 // canvas is), the run control, Drafts and the project's actions at the top;
 // zoom and layout controls at the bottom.
@@ -46,6 +47,7 @@ export function CanvasWorkspace({ workspace, session, tab, onSwitchProject, bott
       </div>
       <div className="cv-bottom">
         <ViewControls session={session} tab={tab} />
+        <NixReferenceControls session={session} tab={tab} />
         <span className="cv-spacer" />
         {bottomTrailing}
       </div>
@@ -177,7 +179,7 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
         <IssueList workspace={workspace} session={session} tab={tab} onDone={() => setShowIssues(false)} />
       </Popover>
       <Divider vertical />
-      <MenuButton icon="plus" disabled={!session.isEditable} help={L('組み込みの Card を追加（入力値・スイッチ・Draft・開始・分配・分岐・合流・記録・処理）')}
+      <MenuButton icon="plus" disabled={!session.isEditable} help={L('組み込みの Card を追加（入力値・スイッチ・Draft・開始・分配・分岐・合流・処理）')}
         items={() => builtinCardItems((t) => {
           const k = canvasFor(session, tab).addBuiltin(t)
           if (k && t === 'draft') canvasFor(session, tab).writeDraft(k)
@@ -249,6 +251,7 @@ function ViewControls({ session, tab }: { session: ProjectSession; tab: Workflow
       <Button kind="borderless" small iconOnly icon="arrow.up.left.and.down.right.magnifyingglass" help={tip(L('全体表示'), 'fitAll')} onClick={() => cv.fitAll()} />
       {/* Notes, groups and folding are in the canvas's context menu and the menu, where they are named. */}
       <Button kind="borderless" small iconOnly icon="rectangle.grid.2x2" help={L('整列（配置だけを変更）')} onClick={() => session.arrange(tab.scope)} />
+      <Button kind="borderless" small iconOnly icon="arrow.triangle.swap" help={L('配線の交差を減らす（Card の位置は保持）')} onClick={() => session.untangle(tab.scope)} />
       <Divider vertical />
       <Button kind="borderless" small iconOnly icon="grid" pressed={prefs.showGrid} help={L('グリッド')} onClick={() => prefs.set('showGrid', !prefs.showGrid)} />
     </div>

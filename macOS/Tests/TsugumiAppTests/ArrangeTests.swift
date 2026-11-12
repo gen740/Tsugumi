@@ -25,7 +25,6 @@ struct ArrangeTests {
     case "fork": return .fork
     case "branch": return .branch
     case "merge": return .merge
-    case "logger": return .logger
     case "draft": return .draft
     case "subgraph": return .subgraph
     default: return .code

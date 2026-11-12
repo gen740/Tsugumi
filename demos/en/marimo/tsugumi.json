@@ -1,0 +1,52 @@
+{
+  "name": "marimo notebook → typed result",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "source"
+      },
+      {
+        "id": "notebook"
+      },
+      {
+        "id": "result"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "source",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "source",
+          "port": "value"
+        },
+        "to": {
+          "card": "notebook",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "notebook",
+          "port": "value"
+        },
+        "to": {
+          "card": "result",
+          "port": "in"
+        }
+      }
+    ]
+  }
+}

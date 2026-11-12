@@ -4,7 +4,7 @@
     "project_id": "1ac641fe-18e2-404c-89bc-e7a6bcf7679b",
     "rev": 0,
     "execution_rev": 0,
-    "project_json": "{\"name\": \"probe\", \"pkgsPath\": \"tsugumi:default\", \"databaseConnections\": [], \"canvas\": {\"cards\": [{\"id\": \"initial\"}], \"connections\": []}}",
+    "project_json": "{\"name\": \"probe\", \"pkgsPath\": \"tsugumi:default\", \"canvas\": {\"cards\": [{\"id\": \"initial\"}], \"connections\": []}}",
     "layout_json": "{}",
     "definitions": [{
       "id": "initial",

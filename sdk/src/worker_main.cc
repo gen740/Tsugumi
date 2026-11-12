@@ -51,7 +51,7 @@
 
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/sdk/abi.h"
-#include "message_json.hh"
+#include "tsugumi/message_json.hh"
 #include "schema.hh"
 
 extern char** environ;
@@ -198,6 +198,7 @@ struct Call {
   std::optional<Failure> failure;
   std::string card;
   std::string run_id;
+  std::map<std::string, std::string> json_values;
 };
 
 Call* g_call = nullptr;
@@ -427,7 +428,7 @@ void set_env(std::vector<std::string>& env, const std::string& key, const std::s
   env.push_back(prefix + value);
 }
 
-// Parsers by schema and root type; built only for bash bodies.
+// Parsers by schema and root type, shared by bash and in-memory language adapters.
 flatbuffers::Parser* parser_for(const flatbuffers::Vector<uint8_t>* bfbs, const std::string& root) {
   static std::map<std::string, std::unique_ptr<flatbuffers::Parser>> cache;
   std::string key = root + '\0' + std::string(reinterpret_cast<const char*>(bfbs->data()), bfbs->size());
@@ -441,6 +442,55 @@ flatbuffers::Parser* parser_for(const flatbuffers::Vector<uint8_t>* bfbs, const 
   if (!p->Deserialize(bfbs->data(), bfbs->size()) || !p->SetRootType(root.c_str())) return nullptr;
   return (cache[key] = std::move(p)).get();
 }
+
+auto input_json_impl(void*, const char* port) -> const char* {
+  if (!g_call) return nullptr;
+  if (auto it = g_call->json_values.find(port); it != g_call->json_values.end()) return it->second.c_str();
+  for (const auto* in : *g_call->msg->inputs()) {
+    if (in->name()->str() != port) continue;
+    auto* parser = parser_for(in->value()->schema_bfbs(), in->value()->root_type()->str());
+    std::string json;
+    if (!parser || tsugumi::message_json::gen_text(*parser, in->value()->bytes()->data(), &json)) {
+      record_failure(D::FailureKind::worker_failed, std::string("cannot decode input ") + port);
+      return nullptr;
+    }
+    return g_call->json_values.emplace(port, std::move(json)).first->second.c_str();
+  }
+  return nullptr;
+}
+
+auto params_json_impl(void*) -> const char* {
+  if (!g_call) return nullptr;
+  // Port names cannot contain a NUL, so this cache key cannot alias an input.
+  const std::string key(1, '\0');
+  if (auto it = g_call->json_values.find(key); it != g_call->json_values.end()) return it->second.c_str();
+  const auto* params = g_call->msg->params();
+  auto* parser = parser_for(params->schema_bfbs(), params->root_type()->str());
+  std::string json;
+  if (!parser || tsugumi::message_json::gen_text(*parser, params->bytes()->data(), &json)) {
+    record_failure(D::FailureKind::worker_failed, "cannot decode params");
+    return nullptr;
+  }
+  return g_call->json_values.emplace(key, std::move(json)).first->second.c_str();
+}
+
+auto emit_json_impl(void*, const char* name, const char* json) -> int {
+  if (!g_call) return 1;
+  for (const auto* port : *g_call->msg->outputs()) {
+    if (port->name()->str() != name) continue;
+    auto* parser = parser_for(port->schema_bfbs(), port->root_type()->str());
+    if (!parser || !parser->ParseJson(json)) {
+      record_failure(D::FailureKind::output_invalid, std::string("output ") + name +
+                     " does not match its type" + (parser ? ": " + parser->error_ : ""));
+      return 1;
+    }
+    return emit_output_impl(nullptr, name, parser->builder_.GetBufferPointer(), parser->builder_.GetSize());
+  }
+  record_failure(D::FailureKind::output_invalid, std::string("unknown output port ") + name);
+  return 1;
+}
+
+auto display_json_impl(void*, const char* json) -> int;
 
 // The package body, loaded when the worker starts (a standby worker is ready
 // before its first call). tsugumi_load / tsugumi_run_start are optional.
@@ -506,6 +556,10 @@ tsugumi_call make_call(const Call& call, std::vector<tsugumi_value>& values, con
   c.display_points = display_points_impl;
   c.display_module = display_module_impl;
   c.display_markdown = display_markdown_impl;
+  c.input_json = input_json_impl;
+  c.params_json = params_json_impl;
+  c.emit_json = emit_json_impl;
+  c.display_json = display_json_impl;
   return c;
 }
 
@@ -595,8 +649,8 @@ void bash_outputs(const W::WorkerCall* m, const std::string& out_json) {
   }
 }
 
-// $TSUGUMI_DISPLAY of a bash body, which is also how R and Julia Cards show
-// things: exactly one member. A relative image path is from the working directory.
+// A display object from bash or an in-memory language adapter. A relative image
+// path is resolved against the working directory.
 struct BashDisplayTable {
   tsugumi::schema::Opt<"columns", tsugumi::schema::v::Array<tsugumi::schema::v::String>> columns;
   tsugumi::schema::Opt<"rows", tsugumi::schema::v::Array<tsugumi::schema::v::Array<tsugumi::schema::v::String>>> rows;
@@ -617,14 +671,13 @@ struct BashDisplay {
   tsugumi::schema::Opt<"module", tsugumi::schema::Obj<BashDisplayModule>> module;
 };
 
-void bash_display(const std::string& path, const std::string& cwd) {
+auto json_display(const std::string& json, const std::string& cwd) -> void {
   namespace sc = tsugumi::schema;
-  if (::access(path.c_str(), R_OK) != 0) return;
   auto invalid = [](const std::string& why) {
     record_failure(D::FailureKind::output_invalid, "$TSUGUMI_DISPLAY: " + why);
   };
   BashDisplay d;
-  if (auto err = sc::decode(read_text(path), d)) return invalid(err->message);
+  if (auto err = sc::decode(json, d)) return invalid(err->message);
   if (const auto* t = sc::get(d.text)) {
     display_text_impl(nullptr, t->c_str());
   } else if (const auto* m = sc::get(d.markdown)) {
@@ -660,6 +713,18 @@ void bash_display(const std::string& path, const std::string& cwd) {
   } else {
     invalid("name one of text, markdown, table, image or module");
   }
+}
+
+auto bash_display(const std::string& path, const std::string& cwd) -> void {
+  if (::access(path.c_str(), R_OK) == 0) json_display(read_text(path), cwd);
+}
+
+auto display_json_impl(void*, const char* json) -> int {
+  if (!g_call) return 1;
+  char* cwd = ::getcwd(nullptr, 0);
+  json_display(json, cwd ? cwd : ".");
+  std::free(cwd);
+  return g_call->failure ? 1 : 0;
 }
 
 void execute(const Options& opt, Call& call) {

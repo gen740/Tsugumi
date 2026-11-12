@@ -1,3 +1,4 @@
+import { activeNixLinks, nixCurve, nixLinks as linksIn, nixReferences } from '../model/nixReferences'
 // The canvas of one scope: grid, groups, connections, Cards, sticky notes
 // and output frames, with pan/zoom, selection, wiring and drag & drop.
 // Inside a Card in Card, the outer Card's inputs and outputs are drawn as
@@ -9,6 +10,7 @@ import { WritingPanels } from './writingPanel'
 import { Boundary, canvasFor, linkEnds, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
 import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
+import { holdsDisplay } from '../model/moduleThumbnails'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
   CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parseParam, path, ProjectSession, TEMPLATES, templateIcon,
@@ -25,6 +27,7 @@ import { DisplayContent } from './display'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
 import { L } from '../i18n'
+import { visualizationTemplates } from '../model/visualizationTemplates'
 
 // Kept here for the views that import them from the canvas.
 export { DEFINITION_DRAG, DisplayContent, openWorkflowWindow }
@@ -72,6 +75,9 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const findField = useRef<HTMLInputElement & HTMLTextAreaElement>(null)
 
   const scene = cv.scene({ cards: cardDrag, boundary: boundaryDrag })
+  const nixLinks = tab.showNixReferences ? linksIn(nixReferences(session), tab.scope, new Set(scene.cardKeys)) : []
+  const activeNix = activeNixLinks(nixLinks, tab.hoveredNixCard, tab.selectedNixReference)
+  const highlightedNix = new Set(activeNix.flatMap(ref => [ref.source, ref.target]))
   const cam = cv.camera
   const z = cam.zoom
   const scope = tab.scope
@@ -141,6 +147,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     clearTimeout(hoverTimer.current)
     wanted.current = undefined
     setHover(undefined)
+    tab.hoverNixCard(undefined)
   }
 
   const track = (p: Pt) => {
@@ -149,6 +156,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     const w = cv.world(p)
     let target: HoverTarget | undefined
     const k = scene.cardAt(w)
+    tab.hoverNixCard(k)
     // A Draft being written has its details in front of it.
     if (k) target = k === session.inlineDraft?.card ? undefined : { kind: 'card', k }
     else {
@@ -467,6 +475,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       'divider',
       { label: L('全体表示'), action: () => cv.fitAll() },
       { label: L('整列'), action: () => session.arrange(scope) },
+      { label: L('配線の交差を減らす'), action: () => session.untangle(scope) },
       tab.selection.size > 0 && { label: L('選択をグループ化'), disabled: !session.connected, action: () => cv.groupSelection() },
     ])
   }
@@ -549,6 +558,29 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
 
       <WireLayer wires={wires.map((w) => ({ d: pathToScreen(w.d, cam), style: w.style, dotted: w.dotted }))}
         animate={prefs.animateLines && session.runActive} zoom={z} width={cv.size.width} height={cv.size.height} />
+
+      {tab.showNixReferences && <svg width={cv.size.width} height={cv.size.height} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'visible' }}>
+        <defs><marker id={`nix-arrow-${tab.id}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" /></marker></defs>
+        {nixLinks.map(ref => {
+          const d = pathToScreen(nixCurve(scene.cardRect(ref.source), scene.cardRect(ref.target)), cam)
+          const active = activeNix.includes(ref)
+          return <g key={ref.id}>
+            <path d={d} fill="none" stroke={ref.valid ? 'var(--purple)' : 'var(--orange)'} strokeWidth={active ? 3 : 1.5} strokeDasharray="7 4"
+              opacity={tab.hoveredNixCard && !active ? 0.2 : 0.9} markerEnd={`url(#nix-arrow-${tab.id})`} />
+            <path d={d} fill="none" stroke="transparent" strokeWidth={14} style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+              role="button" tabIndex={0} aria-label={`${ref.source} → ${ref.target}: ${ref.expression}`}
+              onPointerDown={e => e.stopPropagation()}
+              onClick={e => { e.stopPropagation(); tab.selectNixReference(ref.id) }}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); tab.selectNixReference(ref.id) } }}>
+              <title>{ref.expression}</title>
+            </path>
+          </g>
+        })}
+        {[...highlightedNix].map(k => {
+          const r = scene.cardRect(k), p = screen(r)
+          return <rect key={k} x={p.x - 3} y={p.y - 3} width={r.width * z + 6} height={r.height * z + 6} rx={10} fill="none" stroke="var(--purple)" strokeWidth={3} />
+        })}
+      </svg>}
 
       {b && <BoundaryBars b={b} zoom={z} screen={screen} drag={boundaryDrag} onDown={onBoundaryDown} />}
 
@@ -784,7 +816,11 @@ function bubblePosition(at: Pt, size: { width: number; height: number }, view: {
 /** The built-in Cards, for the canvas menu and the + button. */
 export function builtinCardItems(add: (t: DefinitionTemplate) => void): MenuItem[] {
   const item = (id: DefinitionTemplate): MenuItem => ({ label: TEMPLATES.find((t) => t.id === id)?.label ?? id, action: () => add(id) })
-  return [item('python'), item('cpp'), item('draft'), 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge'), item('logger')]
+  const visualization: MenuItem = {
+    label: L('可視化'),
+    submenu: visualizationTemplates.map(t => ({ label: t.label, action: () => add(t.id) })),
+  }
+  return [item('python'), item('cpp'), item('go'), item('rust'), item('ruby'), item('csharp'), { label: L('レポート（HTML・PDF 未対応）'), submenu: [item('report_rmarkdown'), item('report_quarto')] }, item('draft'), item('marimo'), visualization, 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge')]
 }
 export { templateIcon }
 
@@ -821,6 +857,9 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
     { label: session.collapsed(k) ? L('展開') : L('折りたたむ'), action: () => session.setCollapsed(targets, !session.collapsed(k)) },
     get(session.displayFrame(k), 'hidden') === true && {
       label: L('出力表示を戻す'), action: () => session.updateDisplayFrame(k, (f) => f.set('hidden', undefined)),
+    },
+    [...targets].some((t) => session.hasPortOrder(t)) && {
+      label: L('ポートの並びを元に戻す'), disabled: !editable, action: () => session.resetPortOrder(targets),
     },
     {
       label: L('グループ化（見た目だけ）'), action: () => {
@@ -938,7 +977,12 @@ function ResizeHandle({ onEnd }: { onEnd: (dx: number, dy: number) => void }) {
 function OutputFrameView({ session, cardKey, zoom: z, selected, onExpand, onClose, onResize, ...ev }: {
   session: ProjectSession; cardKey: CardKey; zoom: number; selected: boolean; onExpand: () => void; onClose: () => void; onResize: (dx: number, dy: number) => void
 } & ItemEvents) {
-  const d = session.displays.get(cardKey)
+  const figure = session.figureState(cardKey)
+  const latest = session.displays.get(cardKey)
+  const hold = holdsDisplay(figure)
+  const settled = useRef(hold ? undefined : latest)
+  useLayoutEffect(() => { if (!hold) settled.current = latest }, [hold, latest])
+  const d = hold ? settled.current : latest
   const stop = (e: React.PointerEvent | React.MouseEvent) => e.stopPropagation()
   return (
     <div className={`cv-frame${selected ? ' selected' : ''}`} {...ev} style={{ ...ev.style, padding: 8 * z, borderRadius: 8 * z, gap: 4 * z }}>
@@ -958,7 +1002,9 @@ function OutputFrameView({ session, cardKey, zoom: z, selected, onExpand, onClos
           <Icon name="xmark" size={11 * z} />
         </button>
       </div>
-      <div className="cv-frame-body"><DisplayContent display={d} zoom={z} emptyNote={session.noResultNote(cardKey)} /></div>
+      <div className="cv-frame-body" aria-busy={hold} style={{ opacity: hold ? 0.4 : 1 }}>
+        <DisplayContent display={d} zoom={z} emptyNote={session.noResultNote(cardKey)} figure={figure.mode === 'live' ? figure : undefined} />
+      </div>
       <ResizeHandle onEnd={onResize} />
     </div>
   )

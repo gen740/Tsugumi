@@ -40,6 +40,37 @@ struct ResolvedCard {
   let inputs: [PortInfo]
   let outputs: [PortInfo]
   let diagnostics: [Diagnostic]
+  var nixReferences: [CardNixReference] = []
+}
+
+/// Decode a retained display without changing the live canvas.
+func recordedDisplay(_ d: Tsugumi_Data_DisplayT) -> DisplaySnapshot? {
+  let value: DisplayValue
+  switch d.value?.type {
+  case .displaytext:
+    let t = d.value?.value as? Tsugumi_Data_DisplayTextT
+    value = t?.markdown == true ? .markdown(t?.text ?? "") : .text(t?.text ?? "")
+  case .displayscalar:
+    let s = d.value?.value as? Tsugumi_Data_DisplayScalarT
+    value = .scalar(s?.value ?? 0, s?.label ?? "")
+  case .displaylinechart:
+    let c = d.value?.value as? Tsugumi_Data_DisplayLineChartT
+    value = .lineChart((c?.series ?? []).compactMap { $0 }.map { ($0.id, $0.label, $0.x, $0.y) })
+  case .displaytable:
+    let t = d.value?.value as? Tsugumi_Data_DisplayTableT
+    value = .table(columns: (t?.columns ?? []).compactMap { $0 }, rows: (t?.rows ?? []).compactMap { $0?.cells.compactMap { $0 } })
+  case .displayimage:
+    let im = d.value?.value as? Tsugumi_Data_DisplayImageT
+    value = .image(mediaType: im?.mediaType ?? "", data: Data(im?.data ?? []), alt: im?.alt ?? "")
+  case .displaypointcloud:
+    let p = d.value?.value as? Tsugumi_Data_DisplayPointCloudT
+    value = .points(x: p?.x ?? [], y: p?.y ?? [], z: p?.z ?? [], colors: p?.colors ?? [])
+  case .displaymodule:
+    let m = d.value?.value as? Tsugumi_Data_DisplayModuleT
+    value = .module(name: m?.name ?? "", json: m?.dataJson ?? "")
+  default: return nil
+  }
+  return DisplaySnapshot(runId: d.runId, invocation: d.invocation ?? 0, revision: d.revision ?? 0, value: value)
 }
 
 /// One stage of an invocation as the core recorded it (core clock, ms).
@@ -144,7 +175,7 @@ enum SyncState: Equatable {
 
 enum DisplayValue {
   case text(String)
-  /// Markdown with TeX math (the SDK's markdown display, a logger in Markdown mode).
+  /// Markdown with TeX math (the SDK's Markdown display).
   case markdown(String)
   case scalar(Double, String)
   case lineChart([(id: String, label: String, x: [Double], y: [Double])])
@@ -169,36 +200,6 @@ struct DisplaySnapshot {
   /// asks at every move, and a figure's title is found by parsing its JSON.
   let summary: String
 
-  /// Decode the exact recorded display without changing the current canvas result.
-  static func decode(_ d: Tsugumi_Data_DisplayT) -> DisplaySnapshot? {
-    let value: DisplayValue
-    switch d.value?.type {
-    case .displaytext:
-      let t = d.value?.value as? Tsugumi_Data_DisplayTextT
-      value = t?.markdown == true ? .markdown(t?.text ?? "") : .text(t?.text ?? "")
-    case .displayscalar:
-      let s = d.value?.value as? Tsugumi_Data_DisplayScalarT
-      value = .scalar(s?.value ?? 0, s?.label ?? "")
-    case .displaylinechart:
-      let c = d.value?.value as? Tsugumi_Data_DisplayLineChartT
-      value = .lineChart((c?.series ?? []).compactMap { $0 }.map { ($0.id, $0.label, $0.x, $0.y) })
-    case .displaytable:
-      let t = d.value?.value as? Tsugumi_Data_DisplayTableT
-      value = .table(columns: (t?.columns ?? []).compactMap { $0 }, rows: (t?.rows ?? []).compactMap { $0?.cells.compactMap { $0 } })
-    case .displayimage:
-      let im = d.value?.value as? Tsugumi_Data_DisplayImageT
-      value = .image(mediaType: im?.mediaType ?? "", data: Data(im?.data ?? []), alt: im?.alt ?? "")
-    case .displaypointcloud:
-      let p = d.value?.value as? Tsugumi_Data_DisplayPointCloudT
-      value = .points(x: p?.x ?? [], y: p?.y ?? [], z: p?.z ?? [], colors: p?.colors ?? [])
-    case .displaymodule:
-      let m = d.value?.value as? Tsugumi_Data_DisplayModuleT
-      value = .module(name: m?.name ?? "", json: m?.dataJson ?? "")
-    default: return nil
-    }
-    return DisplaySnapshot(runId: d.runId, invocation: d.invocation ?? 0, revision: d.revision ?? 0, value: value)
-  }
-
   init(runId: String, invocation: UInt64, revision: UInt64, value: DisplayValue) {
     self.runId = runId
     self.invocation = invocation
@@ -221,6 +222,8 @@ final class ProjectSession {
   // Connection
   private(set) var environment: EnvironmentState = .stopped
   private(set) var connected = false
+  /// The project's terminal tabs and their shells (Workbench/ProjectTerminal.swift).
+  let terminals: ProjectTerminals
   /// Closed for good (close): it will not connect again.
   private(set) var closed = false
   private(set) var connectionMessage: String?
@@ -438,6 +441,9 @@ final class ProjectSession {
   init(identity: ProjectIdentity, environments: EnvironmentManager) {
     self.identity = identity
     self.environments = environments
+    terminals = ProjectTerminals(identity: identity) { [environments] identity, rows, cols in
+      try await environments.openTerminal(identity, rows: rows, cols: cols)
+    }
     // A stable view id per project and machine keeps camera/selection across launches.
     let keyName = "view.\(identity.id)"
     if let s = UserDefaults.standard.string(forKey: keyName), let id = UUID(uuidString: s) {
@@ -465,16 +471,23 @@ final class ProjectSession {
     }
   }
 
+  /// The one place `connected` changes: terminals open their shells on it.
+  private func setConnected(_ value: Bool) {
+    connected = value
+    terminals.environment(connected: value)
+  }
+
   /// The last window detaches its connection and observations. The resident
   /// host keeps project execution alive. The caller first settles unsaved edits.
   func close() async {
     closed = true
+    terminals.closeAll()
     listenTask?.cancel()
     reconnectTask?.cancel()
     reconnectTask = nil
     await client?.close()
     client = nil
-    connected = false
+    setConnected(false)
     if let t = observerToken {
       await environments.stopObserving(identity, t)
       observerToken = nil
@@ -502,7 +515,7 @@ final class ProjectSession {
       apply(snapshot: opened.snapshot, resetDraft: !dirty)
       subscription = opened.subscriptionId
       lastSeq = opened.seq ?? 1
-      connected = true
+      setConnected(true)
       listen(c)
       if makeRepositoryOnConnect {
         makeRepositoryOnConnect = false
@@ -512,7 +525,7 @@ final class ProjectSession {
       await refreshVisibleDisplays()
       await restoreCardStates(c)
     } catch {
-      connected = false
+      setConnected(false)
       connectionFailed = error is Unreached
       connectionMessage = "\(error)"
     }
@@ -563,7 +576,7 @@ final class ProjectSession {
       defer { reconnectTask = nil }
       await client?.close()
       client = nil
-      connected = false
+      setConnected(false)
       for attempt in 0..<20 {
         if Task.isCancelled { return }
         await connect()
@@ -585,7 +598,7 @@ final class ProjectSession {
     reconnectTask = nil
     await client?.close()
     client = nil
-    connected = false
+    setConnected(false)
     try? await environments.stop(identity)
     await connect()
   }
@@ -593,7 +606,7 @@ final class ProjectSession {
   func stopEnvironment() {
     Task {
       await client?.close()
-      connected = false
+      setConnected(false)
       try? await environments.stop(identity)
     }
   }
@@ -620,7 +633,7 @@ final class ProjectSession {
       }
       receiver.cancel()
       guard let self, !Task.isCancelled else { return }
-      self.connected = false
+      self.setConnected(false)
       self.reconnect()
     }
   }
@@ -707,7 +720,10 @@ final class ProjectSession {
       let port = { (x: Tsugumi_Data_PortT) -> PortInfo in PortInfo(name: x.name, kind: x.kind, optional: x.optional_ ?? false, rootType: x.rootType) }
       let d = rc.diagnostics.compactMap { $0 }.map(Diagnostic.init)
       r[key(p)] = ResolvedCard(path: p, inputs: rc.inputs.compactMap { $0 }.map(port),
-                               outputs: rc.outputs.compactMap { $0 }.map(port), diagnostics: d)
+                               outputs: rc.outputs.compactMap { $0 }.map(port), diagnostics: d,
+                               nixReferences: rc.nixReferences.compactMap { $0 }.map {
+                                 CardNixReference(source: key(p), target: key($0.target.path), name: $0.name, local: $0.local, valid: $0.valid)
+                               })
       all += d
     }
     resolution = r
@@ -783,7 +799,7 @@ final class ProjectSession {
     refreshExternals()
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
     if let presenceBefore { notePresence(d, before: presenceBefore) }
-    // A Draft implemented (or any Card that became code or a logger) sends its displays too.
+    // A Draft implemented (or any Card that became code) sends its displays too.
     if displayedCards != shown { Task { await refreshVisibleDisplays() } }
     if wasClean {
       // Nothing local to keep: follow the confirmed document.
@@ -831,7 +847,7 @@ final class ProjectSession {
     let k = key(d.card.path)
     let rev = d.revision ?? 0
     if let old = displays[k], old.runId == d.runId, old.revision >= rev { return }  // stale frame
-    if let snapshot = DisplaySnapshot.decode(d) { displays[k] = snapshot }
+    if let display = recordedDisplay(d) { displays[k] = display }
   }
 
   private func recordTimeline(_ k: CardKey, _ inv: Tsugumi_RPC_InvocationSummaryT) {
@@ -1321,7 +1337,7 @@ final class ProjectSession {
 
   /// Cards whose displays the canvas shows: what a Card shows is up to its
   /// code (the display SDK), so every Card that can run may send displays.
-  var displayedCards: Set<CardKey> { Set(resolution.keys.filter { [.code, .logger].contains(kind($0)) }) }
+  var displayedCards: Set<CardKey> { Set(resolution.keys.filter { kind($0) == .code }) }
 
   /// A Card that took a name another Card had starts without that Card's result and run state.
   func forgetResult(_ k: CardKey) {

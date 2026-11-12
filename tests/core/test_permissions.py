@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-from projects import builtin_project, card, card_in_card, conn, write
+from projects import SINK, builtin_project, card, card_in_card, conn, write
 from harness.permissions import permissions, save
 from tsugumi_client import RpcFailure, change, text
 
@@ -69,8 +69,8 @@ def test_a_card_in_card_is_checked_too(tmp_path, core_factory):
     root = tmp_path / "p"
     defs = {"src": {"template": "input", "params": [{"name": "text", "type": "string", "data": "x"}],
                     "_outputs": "namespace m; table Msg { text:string; } table Outputs { msg:Msg (required); } root_type Outputs;"},
-            "log": {"template": "logger"}}
-    inner = [card("src", "src"), card("out", "log")]
+            "sink": SINK}
+    inner = [card("src", "src"), card("out", "sink")]
     write(root, defs, [card_in_card("inner", inner, [conn("src", "msg", "out", "in")],
                                      {"inputs": {}, "outputs": {"msg": {"card": "src", "port": "msg"}}})], [])
     d = core_factory(project_root=root)

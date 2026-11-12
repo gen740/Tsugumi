@@ -141,7 +141,6 @@ struct ProjectSettingsContent: View {
     switch pane {
     case .general: GeneralProjectSettings(session: session)
     case .canvas: CanvasProjectSettings(session: session)
-    case .databases: DatabaseSettings(session: session)
     case .history: RunHistorySettings(session: session)
     case .cache: CacheSettings(session: session)
     }
@@ -317,61 +316,6 @@ private struct CanvasProjectSettings: View {
         .font(.caption).foregroundStyle(.orange)
     }
     .formStyle(.grouped)
-  }
-}
-
-private struct DatabaseSettings: View {
-  let session: ProjectSession
-  struct Row: Identifiable, Hashable {
-    let id = UUID()
-    var name: String
-    var url: String
-  }
-  @State private var rows: [Row] = []
-  @State private var base: [Row] = []
-  @State private var message: String?
-
-  var body: some View {
-    let changed = rows.map { [$0.name, $0.url] } != base.map { [$0.name, $0.url] }
-    VStack(alignment: .leading, spacing: 8) {
-      Text("記録 Card が外部 DB にログを保存するときの接続先です。core の履歴とは独立しています。")
-        .font(.callout).foregroundStyle(.secondary).padding(.horizontal, 12).padding(.top, 8)
-      Table($rows) {
-        TableColumn("名前") { $r in TextField("", text: $r.name) }
-        TableColumn("URL") { $r in TextField("", text: $r.url, prompt: Text("postgresql://…")) }
-        TableColumn("") { $r in
-          Button { rows.removeAll { $0.id == r.id } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
-        }
-        .width(30)
-      }
-      HStack {
-        Button("追加") { rows.append(Row(name: "db\(rows.count + 1)", url: "")) }
-        if let message { Text(message).font(.callout).foregroundStyle(.secondary) }
-        Spacer()
-        Button("再読込") { load() }
-        Button("保存") { save() }.disabled(!changed || !session.isEditable).keyboardShortcut(.defaultAction)
-      }
-      .padding(12)
-    }
-    .onAppear(perform: load)
-  }
-
-  private func load() {
-    rows = (session.project["databaseConnections"]?.array ?? []).map {
-      Row(name: $0["name"]?.string ?? "", url: $0["url"]?.string ?? "")
-    }
-    base = rows
-    message = nil
-  }
-
-  private func save() {
-    let list: [JSONValue] = rows.map { .object([("name", .string($0.name)), ("url", .string($0.url))]) }
-    session.edit { $0.project["databaseConnections"] = .array(list) }
-    Task {
-      await session.save()
-      message = session.saveError ?? String(localized: "保存しました。")
-      if session.saveError == nil { load() }
-    }
   }
 }
 

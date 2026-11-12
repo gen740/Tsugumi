@@ -1,0 +1,111 @@
+{
+  "name": "可視化 → レポート",
+  "pkgsPath": "https://github.com/NixOS/nixpkgs/archive/1c89083e451e891152365b799595cf7790a43325.tar.gz#sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "aggregate"
+      },
+      {
+        "id": "share"
+      },
+      {
+        "id": "line"
+      },
+      {
+        "id": "scatter"
+      },
+      {
+        "id": "histogram"
+      },
+      {
+        "id": "report"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "aggregate",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "aggregate",
+          "port": "data"
+        },
+        "to": {
+          "card": "share",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "line"
+        },
+        "to": {
+          "card": "line",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "line",
+          "port": "figure"
+        },
+        "to": {
+          "card": "report",
+          "port": "line"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "scatter"
+        },
+        "to": {
+          "card": "scatter",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "scatter",
+          "port": "figure"
+        },
+        "to": {
+          "card": "report",
+          "port": "scatter"
+        }
+      },
+      {
+        "from": {
+          "card": "share",
+          "port": "histogram"
+        },
+        "to": {
+          "card": "histogram",
+          "port": "data"
+        }
+      },
+      {
+        "from": {
+          "card": "histogram",
+          "port": "figure"
+        },
+        "to": {
+          "card": "report",
+          "port": "histogram"
+        }
+      }
+    ]
+  }
+}

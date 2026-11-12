@@ -107,7 +107,7 @@ struct EvidenceView: View {
             }.buttonStyle(.link).disabled((row.invocation ?? 0) == 0)
           }
           if let r = record?.record {
-            if let display = r.display.flatMap(DisplaySnapshot.decode) {
+            if let display = r.display.flatMap(recordedDisplay) {
               DisplayContent(display: display, large: true).frame(height: 360)
             }
             Text("入力").font(.headline)

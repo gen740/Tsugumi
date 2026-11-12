@@ -6,7 +6,7 @@ import TsugumiLauncher
 /// App-wide settings; the category on the left switches the content.
 struct ApplicationSettings: View {
   enum Category: String, CaseIterable, Identifiable {
-    case general, appearance, editor, shortcuts, skills, api, connections
+    case general, appearance, editor, shortcuts, skills, api, connections, binaryCaches
     var id: String { rawValue }
     var title: String {
       switch self {
@@ -17,6 +17,7 @@ struct ApplicationSettings: View {
       case .skills: return "Skills"
       case .api: return "API"
       case .connections: return String(localized: "外部接続")
+      case .binaryCaches: return String(localized: "バイナリキャッシュ")
       }
     }
     var symbol: String {
@@ -28,6 +29,7 @@ struct ApplicationSettings: View {
       case .skills: return "wand.and.stars"
       case .api: return "key"
       case .connections: return "network"
+      case .binaryCaches: return "shippingbox"
       }
     }
     /// Where each pane's values are kept, said on the pane.
@@ -35,6 +37,7 @@ struct ApplicationSettings: View {
       switch self {
       case .api: return String(localized: "このアプリ（この Mac。API キーは macOS のキーチェーン）")
       case .connections: return String(localized: "表示のみ（開いているプロジェクトの接続先）")
+      case .binaryCaches: return String(localized: "この Mac の共有実行環境（全プロジェクト）")
       default: return String(localized: "このアプリ（この Mac のユーザー設定）")
       }
     }
@@ -111,6 +114,7 @@ struct ApplicationSettings: View {
             case .skills: SkillSettings()
             case .api: APISettings()
             case .connections: ConnectionSettings()
+            case .binaryCaches: BinaryCacheSettings()
             }
           }
           .id(category)
@@ -139,7 +143,7 @@ private struct StorageNote: View {
 
 /// The settings of one project: kept in the project (or its environment).
 enum ProjectSettingsPane: String, CaseIterable, Identifiable {
-  case general, canvas, databases, history, cache
+  case general, canvas, history, cache
   var id: String { rawValue }
   /// The settings window's selection for this pane.
   var selection: String { "project." + rawValue }
@@ -147,7 +151,6 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     switch self {
     case .general: return String(localized: "名前と実行環境")
     case .canvas: return "Canvas"
-    case .databases: return String(localized: "データベース接続先")
     case .history: return String(localized: "実行履歴")
     case .cache: return String(localized: "ビルドキャッシュ")
     }
@@ -156,7 +159,6 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     switch self {
     case .general: return "folder.badge.gearshape"
     case .canvas: return "rectangle.3.group"
-    case .databases: return "cylinder.split.1x2"
     case .history: return "clock.arrow.circlepath"
     case .cache: return "shippingbox"
     }
@@ -164,7 +166,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
   func storage(_ s: ProjectSession) -> String {
     let name = s.identity.url.lastPathComponent
     switch self {
-    case .general, .databases: return String(localized: "このプロジェクト（\(name)/tsugumi.json）")
+    case .general: return String(localized: "このプロジェクト（\(name)/tsugumi.json）")
     case .canvas: return String(localized: "このプロジェクト（\(name)/layout.json）")
     case .history: return String(localized: "このプロジェクトの実行環境（書き出しは \(name)/.tsugumi/runs.sqlite）")
     case .cache: return String(localized: "このプロジェクトの実行環境（VM の中）")

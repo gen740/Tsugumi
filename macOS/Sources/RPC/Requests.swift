@@ -279,9 +279,10 @@ public extension RPCClient {
   }
 
   /// What a version changed: the code and settings a summary may read, never data.
-  func versionDiff(commit: String) async throws -> Tsugumi_RPC_VersionDiffT {
+  func versionDiff(commit: String, fromCommit: String? = nil) async throws -> Tsugumi_RPC_VersionDiffT {
     let r = Tsugumi_RPC_VersionDiffRequestT()
     r.commit = commit
+    r.fromCommit = fromCommit
     return try await call(.versiondiffrequest, r)
   }
 

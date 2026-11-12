@@ -145,13 +145,7 @@ schema::Project parse_project_json(const std::string& text) {
   auto p = decode_doc<schema::Project>("tsugumi.json", text);
   if (!p.name->has_value()) invalid("tsugumi.json: \"name\" is required");
   if (!p.pkgs_path->has_value()) invalid("tsugumi.json: \"pkgsPath\" is required");
-  if (!p.database_connections->has_value()) invalid("tsugumi.json: \"databaseConnections\" is required");
   if (!p.canvas->has_value()) invalid("tsugumi.json: \"canvas\" is required");
-  std::set<std::string> names;
-  for (const auto& db : p.database_connections->value()) {
-    if (!db.name->has_value() || !db.url->has_value()) invalid("databaseConnections entries need name and url");
-    if (!names.insert(db.name->value()).second) invalid("duplicate database connection " + db.name->value());
-  }
   check_nix_sources(p);
   check_graph_shape(p.canvas->value(), "tsugumi.json canvas");
   check_boundary(p, "tsugumi.json");

@@ -1,0 +1,52 @@
+{
+  "name": "Ruby pipeline",
+  "pkgsPath": "tsugumi:default",
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "python"
+      },
+      {
+        "id": "ruby"
+      },
+      {
+        "id": "cpp"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "python",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "python",
+          "port": "out"
+        },
+        "to": {
+          "card": "ruby",
+          "port": "number"
+        }
+      },
+      {
+        "from": {
+          "card": "ruby",
+          "port": "out"
+        },
+        "to": {
+          "card": "cpp",
+          "port": "number"
+        }
+      }
+    ]
+  }
+}

@@ -24,7 +24,7 @@ DIRECTORY_OUTPUT = ('attribute "tsugumi"; table Directory { value:string; } '
 def test_a_source_save_cannot_write_outside_the_project(core_factory, project, tmp_path, target, kind):
     """An invalid source path rejects the whole save and preserves the current project."""
     client = core_factory().connect()
-    Project(project).card("work", {"template": "logger"}, sources={"keep.txt": "original"}).save(client)
+    Project(project).card("work", {"template": "fork"}, sources={"keep.txt": "original"}).save(client)
     before = client.call("ProjectInspectRequest")
     if target == "absolute":
         target = str(tmp_path / "outside.txt")
@@ -54,7 +54,7 @@ def test_project_reads_refuse_paths_outside_the_project(core_factory, target):
 def test_a_source_symlink_cannot_overwrite_another_project(core_factory, project, tmp_path):
     """A source symlink aimed at another project is rejected without changing its source."""
     client = core_factory().connect()
-    Project(project).card("work", {"template": "logger"}).save(client)
+    Project(project).card("work", {"template": "fork"}).save(client)
     outside = tmp_path / "outside"
     builtin_project(outside)
     put(outside / "definitions/src/keep.txt", "protected")

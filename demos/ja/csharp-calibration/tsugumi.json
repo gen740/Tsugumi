@@ -1,0 +1,52 @@
+{
+  "name": "言語をまたぐ校正（C#）",
+  "pkgsPath": "tsugumi:default",
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "readings"
+      },
+      {
+        "id": "calibrate"
+      },
+      {
+        "id": "report"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "readings",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "readings",
+          "port": "numbers"
+        },
+        "to": {
+          "card": "calibrate",
+          "port": "numbers"
+        }
+      },
+      {
+        "from": {
+          "card": "calibrate",
+          "port": "numbers"
+        },
+        "to": {
+          "card": "report",
+          "port": "numbers"
+        }
+      }
+    ]
+  }
+}

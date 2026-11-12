@@ -1,0 +1,52 @@
+{
+  "name": "Go pipeline",
+  "pkgsPath": "tsugumi:default",
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "make"
+      },
+      {
+        "id": "scale"
+      },
+      {
+        "id": "check"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "make",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "make",
+          "port": "out"
+        },
+        "to": {
+          "card": "scale",
+          "port": "number"
+        }
+      },
+      {
+        "from": {
+          "card": "scale",
+          "port": "out"
+        },
+        "to": {
+          "card": "check",
+          "port": "number"
+        }
+      }
+    ]
+  }
+}

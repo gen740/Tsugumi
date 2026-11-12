@@ -1,0 +1,5 @@
+{
+  "description": "観測値を集計し、params を使う表・図入りレポートを作成して HTML 成果物を保存します。",
+  "content": "archive: Receive both report directories; verify index.html and show that both reports are saved.",
+  "outputs": []
+}

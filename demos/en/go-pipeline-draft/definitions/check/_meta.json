@@ -1,0 +1,10 @@
+{
+  "description": "Check the result in C++",
+  "inputs": [
+    {
+      "name": "number",
+      "description": "Integer value"
+    }
+  ],
+  "content": "Implement in C++. Display number.value as text. There are no output ports."
+}

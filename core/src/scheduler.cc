@@ -208,27 +208,6 @@ std::optional<std::string> path_value(const Value& v) {
   return s->str();
 }
 
-/// What a logger in Markdown mode shows: the text of a message with one
-/// string field (Text { value }, …) as it is, any other message as JSON in
-/// a code block.
-std::string markdown_text(const types::Type& t, const std::string& bytes, const std::string& json) {
-  if (const auto* root = t.root()) {
-    const reflection::Field* text = nullptr;
-    int fields = 0;
-    for (const auto* f : *root->fields()) {
-      if (f->deprecated()) continue;
-      ++fields;
-      if (f->type()->base_type() == reflection::String) text = f;
-    }
-    if (fields == 1 && text) {
-      const auto* table = flatbuffers::GetAnyRoot(reinterpret_cast<const uint8_t*>(bytes.data()));
-      const auto* str = flatbuffers::GetFieldS(*table, *text);
-      return str ? str->str() : "";
-    }
-  }
-  return "```json\n" + json + "\n```";
-}
-
 }  // namespace
 
 Note display_note(const DisplayData& d) {
@@ -691,6 +670,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     InvocationSummaryData s;
     s.run_id = run_id_;
     s.card = node.path;
+    s.params_json = NixRunner::params_json(node, false);
     s.invocation = w.invocation;
     s.started_at = now_ms();
     // Ready when the last consumed input arrived (a start Card: when it fired).
@@ -1087,22 +1067,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         p.outputs.push_back({"out", PortKind::FlatBuffer, out.type, std::move(*bytes), {}});
         break;
       }
-      case Template::Logger: {
-        const Value* v = input(in, "in");
-        if (!v) throw Failed(FailureKind::input_missing, "logger input missing");
-        std::string text;
-        std::string err;
-        if (!types::flatbuffer_to_json(*v->type, v->bytes, &text, &err)) throw Failed(FailureKind::output_invalid, err);
-        card_log(node.path, s.invocation, LogStream::stdout, text + "\n");
-        DisplayData d;
-        d.card = node.path;
-        d.run_id = run_id_;
-        d.invocation = s.invocation;
-        d.value = DisplayData::Text{text};
-        if (node.settings.markdown) d.value = DisplayData::Text{markdown_text(*v->type, v->bytes, text), true};
-        on_display(rt, d);
-        break;
-      }
       default:
         throw Failed(FailureKind::unsupported, std::string(template_name(node.kind)) + " cards cannot run");
     }
@@ -1408,6 +1372,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       InvocationRecordData rec;
       rec.summary.run_id = run_id_;
       rec.summary.card = n.node->path;
+      rec.summary.params_json = NixRunner::params_json(*n.node, false);
       rec.summary.invocation = n.invocations + 1;
       rec.summary.state = st;
       rec.summary.waiting = waiting[n.idx];
@@ -1728,6 +1693,7 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
   // The run id and the receipt are durable before any processing starts.
   svc_.history().write_sync([&](sql::Db& db) {
     History::insert_run(db, s, p.op_id);
+    History::put_substituters(db, *s.status.run_id, svc_.substituters());
     History::put_receipt(db, p.op_id, "run", p.digest, receipt);
   });
   svc_.server()->broadcast(status_note(s.status, true));

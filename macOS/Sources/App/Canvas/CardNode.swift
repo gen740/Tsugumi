@@ -187,6 +187,19 @@ extension ProjectSession {
     return .succeeded
   }
 
+  /// How the Card's figure on the canvas follows its results: its
+  /// `displayMode`, whether the Card runs, and whether one upstream of it does.
+  func figureState(_ k: CardKey) -> FigureState {
+    let mode = FigureMode(rawValue: cardSetting(k, "displayMode")?.string ?? "") ?? .update
+    guard runActive else { return FigureState(mode: mode) }
+    let busy: (CardKey) -> Bool = { c in
+      if let s = self.cardStates[c]?.state, [.ready, .preparing, .running].contains(s) { return true }
+      return self.compositeState(c) == .running
+    }
+    return FigureState(mode: mode, running: busy(k),
+                       stale: FigureState.upstreamBusy(k, connections: { self.connections(in: $0) }, busy: busy))
+  }
+
   /// The inner Card and port an outer output of a Card in Card comes from.
   func boundarySource(_ k: CardKey, output port: String) -> (CardKey, String)? {
     guard let ep = boundary(k)?["outputs"]?[port], let c = ep["card"]?.string, let p = ep["port"]?.string else { return nil }
@@ -212,7 +225,7 @@ extension ProjectSession {
     return CardNodeData(
       title: title, kind: kind,
       symbol: (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
-      summary: summary, inputs: ports.inputs, outputs: outputs ?? ports.outputs,
+      summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
       params: inlineParams(k, definition: definition),
       result: displays[k]?.summary ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
       resultFailed: false,
@@ -232,6 +245,12 @@ extension ProjectSession {
   func placedPosition(_ k: CardKey) -> CGPoint {
     let p = position(k), prefs = AppPreferences.shared
     return prefs.showGrid ? CGPoint(x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize)) : p
+  }
+
+  private func visualPorts(_ k: CardKey, _ ports: [PortData], output: Bool) -> [PortData] {
+    guard [.code, .draft, .input, .subgraph].contains(kind(k)) else { return ports }
+    let saved = layout(of: Array(path(k).dropLast()))["cards"]?[layoutKey(k)]?[output ? "outputOrder" : "inputOrder"]?.array?.compactMap(\.string) ?? []
+    return orderedPorts(ports, saved: saved)
   }
 
   func geometry(_ k: CardKey) -> CardGeometry { CardGeometry(nodeData(k), flow: flow) }

@@ -1,0 +1,4 @@
+namespace summary;
+table Values { values:[double]; }
+table Outputs { data:Values (required); }
+root_type Outputs;
