@@ -482,6 +482,29 @@
         "Artifacts",
         "Draft"
       ]
+    },
+    {
+      "id": "go-pipeline",
+      "title": "Go のパイプライン",
+      "description": "Python → Go → C++。型付きの値と goroutine の寿命を管理する。",
+      "path": "go-pipeline",
+      "tags": [
+        "Go",
+        "Python",
+        "C++"
+      ],
+      "field": "基本を学ぶ"
+    },
+    {
+      "id": "go-pipeline-draft",
+      "title": "Go のパイプライン (Draft)",
+      "description": "Python → Go → C++。型付きの値と goroutine の寿命を管理する。",
+      "path": "go-pipeline-draft",
+      "tags": [
+        "Go",
+        "Python",
+        "C++"
+      ]
     }
   ]
 }

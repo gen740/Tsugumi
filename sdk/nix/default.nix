@@ -73,6 +73,22 @@ let
     cp ${dir}/_contract.json $out/_contract.json
   '';
 
+  goFace =
+    dir:
+    pkgs.runCommand "tsugumi-card-sdk-go" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      mkdir -p $out/flatbuffers
+      cp ${sdkRoot}/go/go.mod $out/go.mod
+      cp ${sdkRoot}/go/runtime.go ${sdkRoot}/go/host.h $out/
+      cp ${sdkRoot}/include/tsugumi/sdk/abi.h $out/abi.h
+      cp ${sdkRoot}/src/go_host.c $out/host.c
+      cp ${pkgs.flatbuffers.src}/go/*.go $out/flatbuffers/
+      rm -f $out/flatbuffers/*_test.go
+      for f in ${lib.concatStringsSep " " schemas}; do
+        ${flatc} --go --gen-object-api --go-import tsugumi/flatbuffers --go-module-name tsugumi -o $out ${dir}/$f.fbs
+      done
+      python3 ${sdkRoot}/codegen/card_go.py ${dir}/_contract.json $out
+    '';
+
   csharpFace = dir: pkgs.runCommand "tsugumi-card-sdk-csharp" { nativeBuildInputs = [ pkgs.python3 ]; } ''
     mkdir -p $out
     for f in ${lib.concatStringsSep " " schemas}; do
@@ -81,7 +97,7 @@ let
     python3 ${sdkRoot}/codegen/card_csharp.py ${dir}/_contract.json $out/CardBindings.cs ${sdkRoot}/include/tsugumi/sdk/abi.h
   '';
 
-  languagesKnown = [ "cpp" "python" "csharp" ];
+  languagesKnown = [ "cpp" "python" "go" "csharp" ];
 
   # Whether this Card is built for another system than the one evaluating it
   # (x86_64-linux in the aarch64 VM): its binaries run under the emulator the
@@ -149,6 +165,7 @@ rec {
       contract = dir;
       cpp = if want "cpp" then cppFace dir else null;
       python = if want "python" then pythonFace dir else null;
+      go = if want "go" then goFace dir else null;
       csharp = if want "csharp" then csharpFace dir else null;
     };
 
@@ -176,6 +193,69 @@ rec {
       installPhase = ''
         mkdir -p $out/lib
         cp main.so $out/lib/main.so
+      '';
+    };
+
+  # Go's runtime stays in the worker process until the process exits. Remote
+  # modules use the Card's explicit go.sum and hash of its module cache.
+  goCard =
+    {
+      src,
+      sdk,
+      name ? "tsugumi-go-card",
+      lock ? null,
+      hash ? null,
+      buildInputs ? [ ],
+      nativeBuildInputs ? [ ],
+    }:
+    assert lib.assertMsg (sdk.go != null) "goCard: the SDK was made without \"go\" in languages";
+    assert lib.assertMsg ((lock == null) == (hash == null))
+      "goCard: give `lock = ./src/go.sum;` and `hash` together for external modules";
+    let
+      # Invalidate the module cache when either Go dependency file changes.
+      cacheKey = lib.optionalString (lock != null) ("-" + builtins.substring 0 16 (
+        builtins.hashString "sha256" (builtins.hashFile "sha256" lock + builtins.hashFile "sha256" (src + "/go.mod"))
+      ));
+      checkLock = lib.optionalString (lock != null) ''
+        if ! cmp -s go.sum ${lock}; then
+          echo "goCard: go.sum is stale. Regenerate the Card's lock and update hash." >&2
+          exit 1
+        fi
+      '';
+    in
+    pkgs.buildGoModule {
+      inherit src buildInputs nativeBuildInputs;
+      name = name + cacheKey;
+      vendorHash = hash;
+      proxyVendor = true;
+      env.CGO_ENABLED = 1;
+      modPostBuild = checkLock;
+      postPatch = ''
+        if [ -e tsugumi ] || [ -e tsugumi_adapter.go ]; then
+          echo "src/tsugumi and src/tsugumi_adapter.go are reserved for the generated SDK" >&2
+          exit 1
+        fi
+        ${lib.optionalString (lock != null) "install -m 0644 ${lock} go.sum"}
+        cp -r --no-preserve=mode ${sdk.go} tsugumi
+        cp tsugumi/adapter.go.in tsugumi_adapter.go
+      '';
+      buildPhase = ''
+        runHook preBuild
+        go build -mod=readonly -buildmode=c-shared -ldflags="-buildid=" -o main.so .
+        ${checkLock}
+        runHook postBuild
+      '';
+      checkPhase = ''
+        runHook preCheck
+        go test -mod=readonly ./...
+        ${checkLock}
+        runHook postCheck
+      '';
+      installPhase = ''
+        runHook preInstall
+        mkdir -p $out/lib
+        cp main.so $out/lib/main.so
+        runHook postInstall
       '';
     };
 

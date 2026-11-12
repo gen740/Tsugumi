@@ -43,6 +43,7 @@ const CPP_KEYWORDS = ['break', 'case', 'catch', 'class', 'const', 'constexpr', '
 const PY_KEYWORDS = ['and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally',
   'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while',
   'with', 'yield', 'self', 'cls']
+const GO_KEYWORDS = ['break', 'case', 'chan', 'const', 'continue', 'default', 'defer', 'else', 'fallthrough', 'for', 'func', 'go', 'goto', 'if', 'import', 'interface', 'map', 'package', 'range', 'return', 'select', 'struct', 'switch', 'type', 'var']
 const NIX_KEYWORDS = ['assert', 'else', 'if', 'import', 'in', 'inherit', 'let', 'rec', 'then', 'with']
 const FBS_KEYWORDS = ['attribute', 'enum', 'file_identifier', 'file_extension', 'include', 'namespace', 'root_type', 'rpc_service', 'struct', 'table', 'union']
 const FBS_TYPES = ['bool', 'byte', 'ubyte', 'short', 'ushort', 'int', 'uint', 'long', 'ulong', 'float', 'double', 'string',
@@ -71,6 +72,13 @@ function rules(language: string): Rules | undefined {
           [String.raw`\b([A-Za-z_]\w*)::`, 'type', 1], [words(['true', 'false', 'nullptr', 'NULL']), 'constant'], [words(CPP_KEYWORDS), 'keyword'],
           [String.raw`^[ \t]*#[ \t]*\w+`, 'keyword'], [CALL, 'function', 1], [String.raw`(?:\.|->)([A-Za-z_]\w*)\b(?!\s*\()`, 'property', 1]],
         keywords: CPP_KEYWORDS, flags: 'm',
+      }
+    case 'go':
+      return {
+        claim: [[String.raw`//[^\n]*`, 'comment'], [String.raw`/\*[\s\S]*?\*/`, 'comment'], [String.raw`\x60[^\x60]*\x60`, 'string'], [DQ, 'string'], [String.raw`'(?:\\.|[^'\\\n])'`, 'string']],
+        paint: [[NUMBER, 'number'], [words(['bool', 'byte', 'rune', 'string', 'int', 'uint', 'uint8', 'uint16', 'uint32', 'uint64', 'int8', 'int16', 'int32', 'int64', 'uintptr', 'float32', 'float64', 'complex64', 'complex128', 'error', 'any']), 'type'],
+          [words(['true', 'false', 'nil', 'iota']), 'constant'], [words(GO_KEYWORDS), 'keyword'], [CALL, 'function', 1]],
+        keywords: GO_KEYWORDS,
       }
     case 'py': case 'python':
       return {

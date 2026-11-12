@@ -1,0 +1,1 @@
+namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;

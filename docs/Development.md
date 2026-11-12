@@ -157,6 +157,45 @@ On an Apple silicon macOS development host, with sandboxing disabled, the second
 
 This comparison used the SDK at `03837b42` as the baseline and nixpkgs `1c89083e451e891152365b799595cf7790a43325`. The sum of execute stages includes concurrent Cards, so it can exceed wall time. These are two runs per configuration on one development machine, not a cross-platform benchmark. The resident first runs took 17.125 s (R) and 10.667 s (Julia), including new shim builds; their execute totals were 3.186 s and 5.273 s. The baseline first runs used already-built packages and took 97.803 s and 123.141 s. No Python/C++ demo Cards or UI rendering are included in this measurement.
 
+## Go Card implementation
+
+Go uses `-buildmode=c-shared` and the existing C ABI. A subprocess/JSON adapter
+would add serialization and a separate child lifetime/display protocol; the
+library path reuses the worker's typed validation, sandbox, cancellation,
+deadline and resident-state behavior. A worker loads one package and never
+calls `dlclose`, so the Go runtime lives until that worker process exits.
+
+The C shim uses the current `abi.h`. `Context` holds a shared guarded state,
+not a copyable raw pointer: every callback locks the guard, and closing the
+invocation clears it before C returns. The SDK copies C input buffers to Go
+memory and unpacks them; it does not expose C-backed slices. Output bytes and
+numeric arrays cross cgo only for a synchronous callback that copies them.
+String pointer arrays are allocated in C, with C-owned strings. These rules
+follow [cgo's pointer ownership contract](https://pkg.go.dev/cmd/cgo#hdr-Passing_pointers).
+
+`ctx.Go` tracks tasks, recovers their panics and waits before output packing.
+Normal call completion closes its context and joins its cancellation monitor.
+Error/cancellation paths close the context before returning; the failed worker
+is discarded. Cancellation/deadlines kill all its goroutines. Untracked user
+`go` statements are the Card author's responsibility and a panic in one can
+crash the worker, which the daemon reports as a failure. Shell hooks may run
+with the Go runtime already loaded. The child does only process setup and
+execs Bash, while the original worker owns the Go threads and state.
+
+The generated SDK contains FlatBuffers' Go runtime from nixpkgs' fixed
+FlatBuffers source. Other modules use the Card's explicit `lock` (go.sum)
+and `hash` for buildGoModule's fixed-output proxy cache. The actual Card build has network
+resolution disabled and uses `-mod=readonly`. There is one root package,
+not a selectable Go workspace/package list. The source of both UI scaffolds
+is `sdk/go/template`; run `python3 sdk/codegen/scaffold_go.py` to synchronize
+Swift and TypeScript after changing it.
+
+`tests/python/test_go_cards.py` runs real host sandboxes and covers typed
+Python/Go/C++ data, stale context copies, retained owned inputs, managed task
+outputs (also with `GOEXPERIMENT=cgocheck2`), lifecycle, panic/error recovery,
+cancellation/deadlines, files and every display kind. The bilingual
+`go-pipeline` example and its Draft are bundled demos.
+
 ## Module display performance checks
 
 `web/tools/module-perf.tsx` uses the production display component with three deterministic cases: eight Plotly traces of 5,000 points, a Vega-Lite scatter plot of 50,000 points, and twelve mixed Plotly/Vega-Lite figures of 2,000 points each. It records initial output readiness, 120 animation-frame intervals while changing the display size and position as in canvas pan/zoom, retained iframe count, and `performance.memory.usedJSHeapSize` when available.
