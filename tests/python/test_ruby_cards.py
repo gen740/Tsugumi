@@ -69,7 +69,7 @@ def main(ctx)
   ctx.log("run=#{@runs} call=#{@calls}")
   ctx.display_table(['runs', 'calls', 'param'], [[@runs, @calls, ctx.params['offset']]])
 end
-''', params=[{'name':'offset', 'type':'uint64', 'data':9007199254740993}])})
+''', params=[{'name':'offset', 'type':'uint64', 'data':9007199254740993}], reuseWorker=True)})
     for expected in [1, 2]:
         rid, status = run_and_wait(c, 'ruby', timeout=240)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
