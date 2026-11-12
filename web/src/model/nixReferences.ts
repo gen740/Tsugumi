@@ -25,6 +25,20 @@ export function visibleNixCard(card: CardKey, scope: string[], visible: Set<Card
   return visible.has(projected) ? projected : undefined
 }
 
+/** The links one scope draws: both ends projected to Cards visible there. */
+export function nixLinks(refs: NixReference[], scope: string[], visible: Set<CardKey>): NixReference[] {
+  return refs.flatMap(ref => {
+    const source = visibleNixCard(ref.source, scope, visible)
+    const target = visibleNixCard(ref.target, scope, visible)
+    return source && target && source !== target ? [{ ...ref, source, target }] : []
+  })
+}
+
+/** A hovered Card shows all of its links; otherwise the link picked on the canvas. */
+export function activeNixLinks(links: NixReference[], hovered: CardKey | undefined, selected: string | undefined): NixReference[] {
+  return links.filter(ref => hovered ? ref.source === hovered || ref.target === hovered : ref.id === selected)
+}
+
 /** Side connections distinguish Nix references from data ports. */
 export function nixCurve(a: Rect, b: Rect): string {
   const right = b.x + b.width / 2 >= a.x + a.width / 2

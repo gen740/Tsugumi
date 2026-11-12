@@ -68,3 +68,4 @@ await import("./demoReplay")
 await import("./evidence")
 
 await import('./nixReferences')
+await import('./nixReferenceOverlay')

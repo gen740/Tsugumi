@@ -343,7 +343,6 @@ struct CardSettingsEditor: View {
           case .general: GeneralCategory(model: m)
           case .comments: CommentsCategory(session: session, card: m.cardKey)
           case .nix: SourceCategory(model: m, only: "default.nix")
-          case .packages: CardPackagesView(session: session, cardKey: m.cardKey).id(m.cardKey)
           case .source: SourceCategory(model: m, only: nil)
           case .ports: m.kind == .subgraph ? AnyView(BoundaryCategory(model: m)) : AnyView(PortsCategory(model: m))
           case .executions: CardExecutionView(session: session, cardKey: ref.card)

@@ -169,6 +169,29 @@ def test_nested_cards_keep_their_types_references_and_run_boundaries(core_factor
         assert {"/".join(text(segment) for segment in target.segments) for target in plan.targets} == expected
 
 
+def test_references_inside_a_card_in_card_have_absolute_targets(core_factory, project):
+    """A Card written in an external project names its siblings; the inventory gives their place in this project."""
+    body = '{ run = "${inputs.local.first.run} ${inputs.upstream.first.run} ${inputs.upstream.source.run}"; }'
+    definitions = {"source": code(), "first": code(["in"]), "second": code(["in"], body=body), "sink": code(["in"])}
+    cards = [card("source", "source"),
+             card_in_card("child", [card("first", "first"), card("second", "second")],
+                          [conn("first", "out", "second", "in")],
+                          {"inputs": {"in": {"card": "first", "port": "in"}},
+                           "outputs": {"out": {"card": "second", "port": "out"}}}), card("sink", "sink")]
+    _, resolved = inspect_graph(core_factory, project, definitions,
+                                [conn("source", "out", "child", "in"), conn("child", "out", "sink", "in")], cards)
+    refs = {(text(r.name), r.local): ([text(s) for s in r.target.segments], r.valid)
+            for r in resolved["child/second"].nixReferences}
+    assert refs == {
+        ("first", True): (["child", "first"], True),
+        ("first", False): (["child", "first"], True),
+        # Names are relative to the project the Card is written in: the outer `source` is not `child/source`.
+        ("source", False): (["child", "source"], False),
+    }
+    errors = codes(resolved["child/second"]) & {"nix_reference_unknown", "nix_reference_self", "nix_reference_not_guaranteed"}
+    assert errors == {"nix_reference_unknown"}
+
+
 def test_nix_reference_inventory_refreshes_and_deduplicates(core_factory, project):
     client, resolved = inspect_graph(core_factory, project,
                                     {"source": code(), "result": code(["in"], body='{ run = inputs.local.source.run; }')},

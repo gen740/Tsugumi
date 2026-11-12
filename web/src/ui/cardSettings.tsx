@@ -1,4 +1,3 @@
-import { CardPackages } from './environments'
 // Card settings: a local working copy of one Card's settings (its
 // `_card.json`), metadata and sources. Nothing reaches the project until
 // "Apply". Every Card has its own definition folder, so what is edited here is
@@ -358,7 +357,7 @@ export function retargetWindows(session: ProjectSession, from: CardKey, to: Card
 
 function categories(m: CardEditorModel): CardEditorCategory[] {
   switch (m.kind) {
-    case 'code': return ['general', 'comments', 'nix', 'packages', 'source', 'ports', 'executions', 'artifacts', 'context']
+    case 'code': return ['general', 'comments', 'nix', 'source', 'ports', 'executions', 'artifacts', 'context']
     case 'input': return ['general', 'comments', 'source', 'ports', 'executions', 'artifacts', 'context']
     case 'draft': return ['general', 'comments', 'ports', 'context']
     case 'subgraph': return ['general', 'comments', 'ports', 'executions']
@@ -430,7 +429,6 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
           {category === 'general' && <GeneralCategory model={model} onRenamed={renamed} />}
           {category === 'comments' && <CommentsCategory session={session} card={model.cardKey} />}
           {category === 'nix' && <SourceCategory model={model} only="default.nix" />}
-          {category === 'packages' && <CardPackages key={model.cardKey} session={session} cardKey={model.cardKey} />}
           {category === 'source' && <SourceCategory model={model} />}
           {category === 'ports' && (model.kind === 'subgraph' ? <BoundaryCategory model={model} /> : <PortsCategory model={model} />)}
           {category === 'executions' && <CardExecutionView session={session} cardKey={model.cardKey} />}

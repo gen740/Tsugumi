@@ -135,8 +135,8 @@
 "Nix store の保存領域を作っています" = "Making the Nix store's space";
 "Nix store の保存領域を開いています（初回は初期化）" = "Opening the Nix store's space (formatted the first time)";
 "Nix を準備しています" = "Preparing Nix";
-"Nix 参照" = "Nix references";
 "Nix 参照一覧" = "Nix reference list";
+"Nix 参照（記述どおり）" = "Nix references (as written)";
 "Nix 定義" = "Nix Definition";
 "Nix 定義を開く" = "Open Nix definition";
 "Nix 評価" = "Nix evaluation";
@@ -251,7 +251,6 @@
 "この Card だけ実行（最後の入力）" = "Run Only This Card (Last Inputs)";
 "この Card の入力" = "This Card's input";
 "この Card の出力" = "This Card's output";
-"この Card の環境はまだ記録されていません" = "No environment has been recorded for this Card yet.";
 "この Card は何をしている？" = "What does this Card do?";
 "この Card は入出力を記録していません（設定 > 入出力 > 入出力を記録）。" = "This Card does not record inputs and outputs (Settings > Ports > Record I/O).";
 "この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。" = "This Card keeps no artifacts (Settings > Inputs & Outputs > Keep artifacts).";
@@ -502,7 +501,6 @@
 "ビルドの期限（秒）" = "Build timeout (s)";
 "ビルドキャッシュ" = "Build Cache";
 "ビルドキャッシュを削除しますか？" = "Delete the build cache?";
-"ビルド時だけに使う依存関係は含まれません。" = "Build-only dependencies are not included.";
 "ファイル" = "File";
 "ファイルを作成" = "Create File";
 "ファイルを検索" = "Search files";
@@ -571,7 +569,6 @@
 "ワークフローを実行" = "Run Workflow";
 "一致する Skill はありません" = "No matching Skill";
 "一致するアイコンはありません" = "No icon matches";
-"一致する依存パスはありません" = "No matching dependencies.";
 "一般" = "General";
 "一覧" = "List";
 "一覧から削除" = "Remove from the list";
@@ -618,8 +615,6 @@
 "使用中" = "In use";
 "使用中のアカウント" = "Account in use";
 "例: y 軸を対数にしてください" = "e.g. Make the y axis logarithmic";
-"依存 package" = "Packages";
-"依存パスを検索" = "Search dependencies";
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
 "保存しています" = "Saving";
@@ -641,6 +636,7 @@
 "保存先: " = "Saved in: ";
 "保存前" = "Not saved";
 "保存済み" = "Saved";
+"保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。" = "Shows the Card references written in saved default.nix files. References through aliases or computed names are not included.";
 "保持" = "Kept";
 "保持された成果物はありません" = "No artifacts are kept";
 "保持する出力" = "Output to retain";
@@ -861,7 +857,6 @@
 "実行履歴をプロジェクトに保存する" = "Save the run history in the project";
 "実行待ち" = "Ready";
 "実行後に保存" = "Save after the run";
-"実行時の依存パス" = "Runtime dependencies";
 "実行状況はありません" = "No run activity";
 "実行環境が起動の途中で止まりました: %@" = "The environment stopped while starting: %@";
 "実行環境との接続が切れました" = "Lost the connection to the environment";
@@ -1009,7 +1004,6 @@
 "根拠の記録" = "Evidence record";
 "桃" = "Pink";
 "検索" = "Search";
-"検索結果を 100 件ずつ表示します。" = "Showing 100 matching paths per page.";
 "検証" = "Validate";
 "検証しています" = "Validating";
 "概要" = "Description";
@@ -1057,7 +1051,6 @@
 "登録されていないビルド結果を共有 store から削除します。登録を外したプロジェクトの Card は、次の実行でビルドし直します。" = "Deletes build results nothing registers from the shared store. Cards of projects whose registration was removed build again on their next run.";
 "直近の入力トークン数（上限に近づくと自動で圧縮）" = "Recent input tokens (compacted automatically near the limit)";
 "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";
-"直近の実行で記録された package です。Nix 定義の変更は次の実行後に反映されます。" = "Packages recorded in the latest run. Changes to the Nix definition appear after the next run.";
 "省略可" = "Optional";
 "破棄した変更は取り消せません。" = "Discarded changes cannot be undone.";
 "破棄して再読込" = "Discard and Reload";

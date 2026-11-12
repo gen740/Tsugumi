@@ -4,12 +4,11 @@ import { D, uuid } from '../shared/rpc'
 import { CardKey, ProjectSession } from './session'
 import { L } from '../i18n'
 
-export type CardEditorCategory = 'general' | 'comments' | 'nix' | 'packages' | 'source' | 'ports' | 'executions' | 'artifacts' | 'context'
+export type CardEditorCategory = 'general' | 'comments' | 'nix' | 'source' | 'ports' | 'executions' | 'artifacts' | 'context'
 export const CATEGORY: Record<CardEditorCategory, { title: string; icon: string }> = {
   general: { title: L('一般'), icon: 'slider.horizontal.3' },
   comments: { title: L('コメント'), icon: 'bubble.left' },
   nix: { title: L('Nix 定義'), icon: 'snowflake' },
-  packages: { title: L('依存 package'), icon: 'shippingbox' },
   source: { title: L('ソース'), icon: 'doc.text' },
   ports: { title: L('入出力'), icon: 'arrow.left.arrow.right' },
   executions: { title: L('実行履歴'), icon: 'clock.arrow.circlepath' },
@@ -27,6 +26,23 @@ export class WorkflowTab extends Observable {
   showNixList = false
   selectedNixReference?: string
   hoveredNixCard?: CardKey
+  toggleNixReferences() {
+    this.showNixReferences = !this.showNixReferences
+    this.hoveredNixCard = undefined
+    this.changed()
+  }
+  /** A link picked on the canvas is the selected row of the reference list. */
+  selectNixReference(id: string) {
+    this.selectedNixReference = id
+    this.showNixList = true
+    this.changed()
+  }
+  hoverNixCard(card: CardKey | undefined) {
+    if (!this.showNixReferences) card = undefined
+    if (this.hoveredNixCard === card) return
+    this.hoveredNixCard = card
+    this.changed()
+  }
   /** Sticky notes (ids) and Cards' output frames caught by a marquee. */
   selectedNotes = new Set<string>()
   selectedFrames = new Set<CardKey>()

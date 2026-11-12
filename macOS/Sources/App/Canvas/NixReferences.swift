@@ -27,6 +27,29 @@ func visibleNixCard(_ card: CardKey, scope: [String], visible: Set<CardKey>) -> 
   return visible.contains(projected) ? projected : nil
 }
 
+/// A link one scope draws: both ends projected to Cards visible there.
+struct NixLink {
+  let reference: CardNixReference
+  let source: CardKey
+  let target: CardKey
+}
+
+func visibleNixLinks(_ references: [CardNixReference], scope: [String], visible: Set<CardKey>) -> [NixLink] {
+  references.compactMap { ref in
+    guard let source = visibleNixCard(ref.source, scope: scope, visible: visible),
+          let target = visibleNixCard(ref.target, scope: scope, visible: visible), source != target else { return nil }
+    return NixLink(reference: ref, source: source, target: target)
+  }
+}
+
+/// A hovered Card shows all of its links; otherwise the link picked on the canvas.
+func activeNixLinks(_ links: [NixLink], hovered: CardKey?, selected: String?) -> [NixLink] {
+  links.filter {
+    if let hovered { return $0.source == hovered || $0.target == hovered }
+    return $0.reference.id == selected
+  }
+}
+
 func nixCurve(_ a: CGRect, _ b: CGRect) -> Path {
   let right = b.midX >= a.midX
   let start = CGPoint(x: right ? a.maxX : a.minX, y: a.midY)
@@ -45,8 +68,9 @@ struct NixReferenceControls: View {
 
   var body: some View {
     HStack(spacing: 8) {
-      Toggle(isOn: $tab.showNixReferences) { Label("Nix 参照", systemImage: "snowflake") }
+      Toggle(isOn: $tab.showNixReferences) { Label("Nix 参照（記述どおり）", systemImage: "snowflake") }
         .toggleStyle(.button)
+        .help("保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。")
       Button { tab.showNixList.toggle() } label: { Label("一覧", systemImage: "list.bullet") }
         .help("Nix 参照一覧")
         .popover(isPresented: $tab.showNixList) { referenceList }

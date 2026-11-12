@@ -411,28 +411,14 @@ struct GraphCanvas: View {
   /// The selection's move in progress (screen translation), from whichever of its items is dragged.
   private var selectionMove: CGSize? { selectionDrag ?? drag?.offset }
 
-  private struct NixLink {
-    let reference: CardNixReference
-    let source: CardKey
-    let target: CardKey
-  }
-
   private var nixLinks: [NixLink] {
     guard tab.showNixReferences else { return [] }
-    let visible = Set(cardKeys)
-    return nixReferences(session).compactMap { ref in
-      guard let source = visibleNixCard(ref.source, scope: tab.scope, visible: visible),
-            let target = visibleNixCard(ref.target, scope: tab.scope, visible: visible), source != target else { return nil }
-      return NixLink(reference: ref, source: source, target: target)
-    }
+    return visibleNixLinks(nixReferences(session), scope: tab.scope, visible: Set(cardKeys))
   }
 
   private func nixLayer(transform: CGAffineTransform) -> some View {
     let links = nixLinks
-    let active = links.filter {
-      if let hover = tab.hoveredNixCard { return $0.source == hover || $0.target == hover }
-      return $0.reference.id == tab.selectedNixReference
-    }
+    let active = activeNixLinks(links, hovered: tab.hoveredNixCard, selected: tab.selectedNixReference)
     let highlighted = Set(active.flatMap { [$0.source, $0.target] })
     return Canvas { context, _ in
       for link in links {
