@@ -71,7 +71,23 @@ let
     done
   '';
 
-  languagesKnown = [ "cpp" "python" ];
+  goFace =
+    dir:
+    pkgs.runCommand "tsugumi-card-sdk-go" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      mkdir -p $out/flatbuffers
+      cp ${sdkRoot}/go/go.mod $out/go.mod
+      cp ${sdkRoot}/go/runtime.go ${sdkRoot}/go/host.h $out/
+      cp ${sdkRoot}/include/tsugumi/sdk/abi.h $out/abi.h
+      cp ${sdkRoot}/src/go_host.c $out/host.c
+      cp ${pkgs.flatbuffers.src}/go/*.go $out/flatbuffers/
+      rm -f $out/flatbuffers/*_test.go
+      for f in ${lib.concatStringsSep " " schemas}; do
+        ${flatc} --go --gen-object-api --go-import tsugumi/flatbuffers --go-module-name tsugumi -o $out ${dir}/$f.fbs
+      done
+      python3 ${sdkRoot}/codegen/card_go.py ${dir}/_contract.json $out
+    '';
+
+  languagesKnown = [ "cpp" "python" "go" ];
 
   # Whether this Card is built for another system than the one evaluating it
   # (x86_64-linux in the aarch64 VM): its binaries run under the emulator the
@@ -139,6 +155,7 @@ rec {
       contract = dir;
       cpp = if want "cpp" then cppFace dir else null;
       python = if want "python" then pythonFace dir else null;
+      go = if want "go" then goFace dir else null;
     };
 
   # A C++ Card: every *.cc below `src` (with `sdk`: plus the generated
@@ -163,6 +180,54 @@ rec {
       installPhase = ''
         mkdir -p $out/lib
         cp main.so $out/lib/main.so
+      '';
+    };
+
+  # Go's runtime stays in the worker process until the process exits. Remote
+  # modules use go.mod/go.sum and a fixed-output module cache (vendorHash).
+  goCard =
+    {
+      src,
+      sdk,
+      name ? "tsugumi-go-card",
+      vendorHash ? null,
+      buildInputs ? [ ],
+      nativeBuildInputs ? [ ],
+    }:
+    assert lib.assertMsg (sdk.go != null) "goCard: the SDK was made without \"go\" in languages";
+    pkgs.buildGoModule {
+      inherit
+        src
+        name
+        vendorHash
+        buildInputs
+        nativeBuildInputs
+        ;
+      proxyVendor = true;
+      env.CGO_ENABLED = 1;
+      postPatch = ''
+        if [ -e tsugumi ] || [ -e tsugumi_adapter.go ]; then
+          echo "src/tsugumi and src/tsugumi_adapter.go are reserved for the generated SDK" >&2
+          exit 1
+        fi
+        cp -r --no-preserve=mode ${sdk.go} tsugumi
+        cp tsugumi/adapter.go.in tsugumi_adapter.go
+      '';
+      buildPhase = ''
+        runHook preBuild
+        go build -mod=readonly -buildmode=c-shared -ldflags="-buildid=" -o main.so .
+        runHook postBuild
+      '';
+      checkPhase = ''
+        runHook preCheck
+        go test -mod=readonly ./...
+        runHook postCheck
+      '';
+      installPhase = ''
+        runHook preInstall
+        mkdir -p $out/lib
+        cp main.so $out/lib/main.so
+        runHook postInstall
       '';
     };
 

@@ -9,7 +9,8 @@ install(DIRECTORY nix/ DESTINATION share/tsugumi/sdk/nix)
 install(DIRECTORY python/ DESTINATION share/tsugumi/sdk/python)
 install(DIRECTORY r/ DESTINATION share/tsugumi/sdk/r)
 install(DIRECTORY julia/ DESTINATION share/tsugumi/sdk/julia)
-install(FILES src/python_main.c src/card_runtime.cc src/worker_main.cc DESTINATION share/tsugumi/sdk/src)
+install(DIRECTORY go/ DESTINATION share/tsugumi/sdk/go)
+install(FILES src/python_main.c src/go_host.c src/card_runtime.cc src/worker_main.cc DESTINATION share/tsugumi/sdk/src)
 # What else the worker is built from, for a Card of another system: its Nix
 # build (sdk/nix/default.nix, `worker`) compiles the worker from these with
 # the Card's own nixpkgs, so the worker and the Card's main.so share one libc.

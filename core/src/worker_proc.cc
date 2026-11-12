@@ -529,7 +529,15 @@ WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id, const
           return outcome;
         }
         case W::WorkerPayload::WorkerFailure:
-          if (!outcome.failure) outcome.failure = wire::failure(m->value_as_WorkerFailure()->failure());
+          // A cooperative SDK can report cancelled after a deadline request.
+          // The host knows why it stopped the call, just as for WorkerResult.
+          if (!outcome.failure) {
+            if (cancel_sent)
+              outcome.failure = timed_out ? FailureData::make(FailureKind::timeout, "the Card exceeded timeoutSeconds")
+                                          : FailureData::make(FailureKind::cancelled, "the invocation was cancelled");
+            else
+              outcome.failure = wire::failure(m->value_as_WorkerFailure()->failure());
+          }
           read_logs(false);
           return outcome;
         default:

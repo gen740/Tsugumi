@@ -142,3 +142,40 @@ The CI definitions are [ci.yml](../.github/workflows/ci.yml) and [ci-platform.ym
 | `tests/prompt/` | Offline prompt probe scoring |
 
 For documentation changes, run `npm --prefix docs/site run build` and `npm --prefix docs/site test`. Changes to the demo player also require `node docs/site/player/build.mjs --check`.
+
+## Go Card implementation
+
+Go uses `-buildmode=c-shared` and the existing C ABI. A subprocess/JSON adapter
+would add serialization and a separate child lifetime/display protocol; the
+library path reuses the worker's typed validation, sandbox, cancellation,
+deadline and resident-state behavior. A worker loads one package and never
+calls `dlclose`, so the Go runtime lives until that worker process exits.
+
+The C shim uses the current `abi.h`. `Context` holds a shared guarded state,
+not a copyable raw pointer: every callback locks the guard, and closing the
+invocation clears it before C returns. The SDK copies C input buffers to Go
+memory and unpacks them; it does not expose C-backed slices. Output bytes and
+numeric arrays cross cgo only for a synchronous callback that copies them.
+String pointer arrays are allocated in C, with C-owned strings. These rules
+follow [cgo's pointer ownership contract](https://pkg.go.dev/cmd/cgo#hdr-Passing_pointers).
+
+`ctx.Go` tracks tasks, recovers their panics and waits before output packing.
+Normal call completion closes its context and joins its cancellation monitor.
+Error/cancellation paths close the context before returning; the failed worker
+is discarded. Cancellation/deadlines kill all its goroutines. Untracked user
+`go` statements are the Card author's responsibility and a panic in one can
+crash the worker, which the daemon reports as a failure.
+
+The generated SDK contains FlatBuffers' Go runtime from nixpkgs' fixed
+FlatBuffers source. Other modules use go.mod/go.sum plus buildGoModule's
+fixed-output proxy cache (`vendorHash`). The actual Card build has network
+resolution disabled and uses `-mod=readonly`. There is one root package,
+not a selectable Go workspace/package list. The source of both UI scaffolds
+is `sdk/go/template`; run `python3 sdk/codegen/scaffold_go.py` to synchronize
+Swift and TypeScript after changing it.
+
+`tests/python/test_go_cards.py` runs real host sandboxes and covers typed
+Python/Go/C++ data, stale context copies, retained owned inputs, managed task
+outputs (also with `GOEXPERIMENT=cgocheck2`), lifecycle, panic/error recovery,
+cancellation/deadlines, files and every display kind. The bilingual
+`go-pipeline` example and its Draft are bundled demos.

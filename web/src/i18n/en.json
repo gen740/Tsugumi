@@ -30,6 +30,7 @@
  "Anthropic API（API キー）": "Anthropic API (API key)",
  "Anthropic の API キー": "Anthropic API key",
  "C++ の処理": "C++ step",
+  "Go の処理": "Go step",
  "Canvas にフォーカスがあるときだけ働きます（文字の入力中は働きません）": "Works only while the Canvas has the focus (not while typing)",
  "Canvas に追加": "Add to Canvas",
  "Canvas に配置": "Place on the canvas",

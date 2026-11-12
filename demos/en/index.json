@@ -418,6 +418,29 @@
         "Machine learning",
         "Branch, fork and merge"
       ]
+    },
+    {
+      "id": "go-pipeline",
+      "title": "Go pipeline",
+      "description": "Python → Go → C++: owned typed values and managed goroutines.",
+      "path": "go-pipeline",
+      "tags": [
+        "Go",
+        "Python",
+        "C++"
+      ],
+      "field": "Learn the basics"
+    },
+    {
+      "id": "go-pipeline-draft",
+      "title": "Go pipeline (Draft)",
+      "description": "Python → Go → C++: owned typed values and managed goroutines.",
+      "path": "go-pipeline-draft",
+      "tags": [
+        "Go",
+        "Python",
+        "C++"
+      ]
     }
   ]
 }

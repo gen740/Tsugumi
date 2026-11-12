@@ -235,3 +235,84 @@ log. No plotting library is included: use Vega-Lite (at most 1 MiB of JSON), or 
 3. Run from the trigger Card (`run` with the trigger's id); a single Card run only works on inputs
    saved by an earlier whole run.
 4. `run_status` until it ends, then `run_record` of each Card; `log_range` (stream 2) for errors.
+
+## Go Cards
+
+Use `"language": "go"` and start from the whole
+`demos/go-pipeline/definitions/scale` folder. The **Go step** menu creates the
+same scaffold. `default.nix` selects its typed SDK:
+
+```nix
+{ pkgs, inputs, params }:
+let sdk = inputs.tsugumi.sdk { languages = [ "go" ]; };
+in { run = inputs.tsugumi.goCard { inherit sdk; src = ./src; }; }
+```
+
+The source is one `package main` module. `go.mod` requires `tsugumi v0.0.0`
+and replaces it with `./tsugumi`; Nix supplies that reserved directory and
+`tsugumi_adapter.go`. Define both functions (the run hook may be a no-op):
+
+```go
+package main
+
+import "tsugumi"
+
+func run(ctx *tsugumi.Context, input tsugumi.Input) (tsugumi.Output, error) {
+    params, err := ctx.Params()
+    if err != nil { return tsugumi.Output{}, err }
+    product := input.Number.Value * *params.Factor
+    if err := ctx.DisplayScalar(float64(product), "product"); err != nil {
+        return tsugumi.Output{}, err
+    }
+    return tsugumi.Output{Out: &tsugumi.OutputOut{Value: product}}, nil
+}
+
+func onRunStart(ctx *tsugumi.Context) error { return nil }
+```
+
+The generated `Input` fields are pointers to FlatBuffers object API values:
+`input.Number.Value`, not a raw message buffer. Missing optional inputs are nil.
+Every input/param buffer is copied to Go memory before unpacking, so values may
+be retained safely. Outputs own objects; an alias `Output<Port>` (for example
+`OutputOut`) identifies each output's type. A non-nil field emits that port;
+required outputs are still checked by the host. Optional scalar params are
+pointers, such as `params.Factor`. Use native `int64`/`uint64` without a float
+conversion for full integer precision.
+
+State in the library lives for the resident worker's lifetime. `onRunStart`
+runs before the first invocation of each run; `reuseWorker: false` creates a
+fresh process per invocation. The Go runtime is never unloaded from a live
+worker. `Context` copies share an internal guard: after the invocation ends,
+callbacks return `tsugumi.ErrClosed`. It exposes `RunID`, `Card`, `Invocation`,
+`WorkingDirectory`, `TemporaryDirectory`, `OutputDirectory`, `Cancelled`,
+`Done` and `Remaining` (`-1` means no deadline).
+
+Use `ctx.Go(func() error { ... })` for concurrent work. Schedule tasks before
+`run` returns; the SDK joins them before packing outputs and serializes host
+callbacks. Task panics/errors fail the invocation. Select on `ctx.Done()` to
+stop cooperatively. Cancellation or deadline also kills the entire worker,
+including an uncooperative goroutine, and the next call starts clean. Ordinary
+`go` statements are outside this task group: join them yourself, and do not
+expect their panics to be recovered by the caller. Such a crash is still
+reported as a worker failure. Data shared between tasks needs ordinary Go
+synchronization.
+
+File/Directory inputs have a `Value` path staged for this call. Write outputs
+under `ctx.OutputDirectory()` and assign the path to the owned output's
+`Value`. `ctx.Log` and `DisplayText`, `DisplayMarkdown`, `DisplayScalar`,
+`DisplayLineChart` (one series), `DisplayTable`, `DisplayImage`, `DisplayPoints`
+and `DisplayModule` return errors; propagate them. Displays stream while the
+Card runs. Return `tsugumi.Fail("output_invalid", "explanation")` for a
+structured failure, or an ordinary error for `worker_failed`.
+
+The default scaffold uses only the standard library and FlatBuffers' Go
+runtime from the same pinned nixpkgs source as `flatc`. Its empty `go.sum` is
+intentional. For external modules, commit go.mod/go.sum and supply the fixed
+module-cache `vendorHash` to `goCard`. Use a fake hash once to obtain Nix's
+reported actual hash, then commit that exact hash. Builds use `-mod=readonly`
+and a local immutable module cache; Cards never fetch dependencies at runtime.
+Native libraries use `buildInputs`, and build tools use `nativeBuildInputs`.
+To update dependencies with Go on PATH, run
+`python3 <sdk>/go/update-lock.py <card>/src`; it resolves in a temporary copy
+and writes only go.mod/go.sum, leaving no generated SDK in the source. The
+helper accepts `--offline` for a populated module cache.
