@@ -151,6 +151,7 @@
 "Run %@ の中で、この Card の %llu 回目の実行の結果" = "The result of this Card's invocation %2$llu in Run %1$@";
 "Run の状態と経過時間" = "Run state and elapsed time";
 "Run 全体（受付から終了まで %@）を表示" = "Show the whole Run (from acceptance to end, %@)";
+"Rust の処理" = "Rust step";
 "SDK 準備" = "SDK preparation";
 "SDK 準備・Nix 評価・build" = "SDK preparation, Nix evaluation, build";
 "SDK 準備中" = "Preparing the SDK";
