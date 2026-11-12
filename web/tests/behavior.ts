@@ -67,6 +67,7 @@ await import("./sessionConnect")
 await import("./perchScale")
 await import("./guideScript")
 await import("./demoReplay")
+await import("./visualizationTemplates")
 await import("./evidence")
 await import('./environments')
 

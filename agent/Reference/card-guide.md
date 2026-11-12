@@ -214,6 +214,21 @@ import numpy as np
 
 What `main` or `on_run_start` sets in `os.environ` lasts for that call only.
 
+### Visualization scaffolds
+
+The Mac/Web creation menu has one Python Card template each for Matplotlib,
+Plotly and Altair. The `kind` parameter chooses line, scatter or histogram.
+The runnable contract is `demos/en/visualization/definitions/line`. Each
+template writes column selection, filtering, sampling and plotting into
+`src/main.py`. The SDK's `input_rows` reads the connected `data` port and
+`emit_figure` saves plotted values and emits the `figure` Directory.
+
+The Directory includes `plotted.csv` and run, Card and invocation metadata.
+Matplotlib saves PNG/SVG/PDF; Plotly and Altair save JSON and offline HTML.
+`max_points` fails on over-limit input. Setting `sample_every` above 1
+explicitly samples in input order, with the sample size shown in the figure
+and metadata. See `docs/Visualization.md` for parameters and boundaries.
+
 ### bash
 
 Inputs are `$JSON_<PORT>` (a JSON file of the message), `$FILE_<PORT>` / `$DIR_<PORT>` (paths);

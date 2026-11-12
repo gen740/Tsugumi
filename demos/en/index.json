@@ -432,6 +432,18 @@
         "NuGet",
         "Artifacts"
       ]
+    },
+    {
+      "id": "visualization",
+      "path": "visualization",
+      "title": "Visualization → report",
+      "description": "Aggregate typed measurements, draw three figures, and pass PNG/SVG/PDF and the plotted values to an offline report.",
+      "tags": [
+        "Python",
+        "Visualization",
+        "Artifacts"
+      ],
+      "field": "Programming and visualization"
     }
   ]
 }

@@ -65,6 +65,11 @@ EN = {
     '配線の交差を減らす': 'Untangle Wires',
     '配線の交差を減らす（Card の位置は保持）': 'Untangle wires (keep Card positions)',
     'ポートの並びを元に戻す': 'Reset Port Order',
+    'Matplotlib（PNG / SVG / PDF）': 'Matplotlib (PNG / SVG / PDF)',
+    'Plotly（対話型 HTML）': 'Plotly (interactive HTML)',
+    'Altair（対話型 HTML）': 'Altair (interactive HTML)',
+    '可視化（図を描く Card）': 'Visualization',
+
     '根拠の記録': 'Evidence record',
     'このプロジェクトに根拠の記録がありません': 'This evidence is not available in this project',
     '位置': 'Position',
