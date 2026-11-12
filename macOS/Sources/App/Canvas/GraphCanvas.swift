@@ -1495,13 +1495,17 @@ struct ScrollCatcher: NSViewRepresentable {
 struct BuiltinCardItems: View {
   let add: (DefinitionTemplate) -> Void
 
+  /// The Cards a person writes, then the ones with a fixed role.
+  static let written: [DefinitionTemplate] = [.python, .cpp, .go, .rust, .ruby, .csharp, .draft, .marimo]
+  static let fixed: [DefinitionTemplate] = [.trigger, .input, .switchCard, .fork, .branch, .merge, .logger]
+
   var body: some View {
     Menu("レポート（HTML・PDF 未対応）") {
       ForEach([DefinitionTemplate.report_rmarkdown, .report_quarto], id: \.self) { t in
         Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
       }
     }
-    ForEach([DefinitionTemplate.python, .cpp, .go, .rust, .csharp, .draft, .marimo], id: \.self) { t in
+    ForEach(Self.written, id: \.self) { t in
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
     }
     Menu("可視化（図を描く Card）") {
@@ -1510,7 +1514,7 @@ struct BuiltinCardItems: View {
       }
     }
     Divider()
-    ForEach([DefinitionTemplate.trigger, .input, .switchCard, .fork, .branch, .merge, .logger], id: \.self) { t in
+    ForEach(Self.fixed, id: \.self) { t in
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
     }
   }

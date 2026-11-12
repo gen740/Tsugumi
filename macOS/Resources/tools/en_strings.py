@@ -71,6 +71,7 @@ EN = {
     '可視化（図を描く Card）': 'Visualization',
 
     "marimo ノートブック": "marimo notebook",
+"Ruby の処理": "Ruby Card",
     '根拠の記録': 'Evidence record',
     'このプロジェクトに根拠の記録がありません': 'This evidence is not available in this project',
     '位置': 'Position',

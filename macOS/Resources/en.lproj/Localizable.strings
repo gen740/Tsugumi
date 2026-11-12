@@ -160,6 +160,7 @@
 "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。" = "The chat is unavailable because the RPC schema cannot be read. Everything else works from the UI.";
 "Return で送信" = "Return sends";
 "Return で送信（⇧Return で改行）" = "Return sends (⇧Return for a new line)";
+"Ruby の処理" = "Ruby Card";
 "Run %@ · 実行 #%llu" = "Run %@ · invocation #%llu";
 "Run %@ で値が通りました（送信元の最新は実行 #%llu）" = "A value passed in Run %@ (the sender's latest is invocation #%llu)";
 "Run %@ の中で、この Card の %llu 回目の実行の結果" = "The result of this Card's invocation %2$llu in Run %1$@";

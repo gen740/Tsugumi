@@ -1308,5 +1308,6 @@
  "marimo ノートブック": "marimo notebook",
  "R Markdown レポート（HTML）": "R Markdown Report (HTML)",
  "Quarto レポート（HTML）": "Quarto Report (HTML)",
- "レポート（HTML・PDF 未対応）": "Reports (HTML; PDF unsupported)"
+ "レポート（HTML・PDF 未対応）": "Reports (HTML; PDF unsupported)",
+ "Ruby の処理": "Ruby Card"
 }

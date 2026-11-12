@@ -9,6 +9,7 @@ Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of ex
 | --- | --- | --- |
 | [Data to report](#data-to-report-report) | Aggregating a sales table into a report | Reproduction by seed, failure and `blocked`, rerunning one Card with saved inputs, artifacts, child Workflows |
 | [Collatz (C++ / Python / Julia / R)](#collatz-c--python--julia--r-collatz) | The Collatz sequence | Cross-checking independent implementations in four languages, branches, merges and loops, `maxRuns`, detecting integer overflow |
+| [Python → Ruby → C++](#python--ruby--c-ruby-pipeline) | Passing a typed integer across languages | Ruby Hash outputs, parameters, resident run-start state, live displays |
 | [Live Stream](#live-stream-live-stream) | Plotting a random walk as it goes | A stream made by a feedback loop, stopping at once, Dawn line charts |
 | [Plots](#plots-plots) | Diffusion of random walks | Ordinary matplotlib (`plt.show()`, `FuncAnimation`) drawn straight into a Card; Plotly and Altair become interactive charts |
 | [Cas A · Chandra RGB](#cas-a--chandra-rgb-casa) | X-ray observation of a supernova remnant | Observation data pinned with Nix, rerunning per Card, version history |
@@ -32,11 +33,20 @@ Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of ex
 | [Dynamical systems gallery](#dynamical-systems-gallery-dynamics-draft) | Six dynamical systems | The Agent splits independent Drafts among helpers and implements them at the same time |
 | [MNIST · comparing classifiers (Draft)](#mnist--comparing-classifiers-draft-mnist-classifiers-draft) | Classifying handwritten digits (seven methods) | From a plan implemented up to the data, helpers implement seven classifiers at the same time and the Agent puts the comparison together |
 
-The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), fork (distribution), branch (conditional branching), merge, subgraph (Card in Card) and code Cards (C++ / Python / bash / R / Julia).
+The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), fork (distribution), branch (conditional branching), merge, subgraph (Card in Card) and code Cards (C++ / Python / bash / R / Julia / Ruby).
 A fork Card only hands values out as the arrows show, so it is left out of each demo's table.
 Every Card has a summary in `_meta.json`, readable on the Canvas (by hovering, for trigger, fork, merge and branch) and in the Card's settings.
 
 ## The basics
+
+### Python → Ruby → C++ (`ruby-pipeline`)
+
+Python emits the `value` parameter (21). Ruby multiplies it by `factor` (2), displays
+input / factor / result in a table, and sends the typed result to C++. Its display
+reads `C++ received 42`. Change Ruby's factor and rerun it to reuse the saved Python
+input. Ruby's `on_run_start` counts Runs in its resident Card instance and writes that
+count to the log; turn off worker reuse to start with fresh state.
+
 
 ### Data to report (`report`)
 

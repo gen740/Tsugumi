@@ -31,6 +31,18 @@
       ]
     },
     {
+      "id": "ruby-pipeline",
+      "title": "Python → Ruby → C++",
+      "field": "Learn the basics",
+      "description": "Pass an integer through three languages, change Ruby’s factor and inspect the result.",
+      "path": "ruby-pipeline",
+      "tags": [
+        "Python",
+        "Ruby",
+        "C++"
+      ]
+    },
+    {
       "id": "live-stream",
       "title": "Live Stream",
       "field": "Learn the basics",

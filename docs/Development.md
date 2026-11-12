@@ -35,7 +35,7 @@ Shared VM (one per app, Virtualization.framework)                 macOS
 CMakeLists.txt, flake.nix/flake.lock  C++ build (CMake/Ninja) and pinned dependencies (Nix)
 protocol/          tsugumi.fbs (external RPC) / worker.fbs / data.fbs / tsugumi_enums.fbs
 core/              tsugumid (include/tsugumi/core public API, src implementation)
-sdk/               Card ABI, common runtime (libtsugumi_card), C++ codegen (card.hh), Python, R and Julia SDKs and embedded shims, Nix SDK, tsugumi-worker
+sdk/               Card ABI, common runtime (libtsugumi_card), C++ codegen (card.hh), Python, R, Julia and Ruby SDKs and embedded shims, Nix SDK, tsugumi-worker
 macOS/             SwiftPM: Sources/App (SwiftUI), Sources/RPC, Sources/Launcher, Sources/Renderer*,
                    Container/ (image definitions, builds, versions), Tests/
 ui/renderer/       Dawn rendering layer (C API, dylib)

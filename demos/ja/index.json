@@ -31,6 +31,18 @@
       ]
     },
     {
+      "id": "ruby-pipeline",
+      "title": "Python → Ruby → C++",
+      "field": "基本を学ぶ",
+      "description": "整数を三つの言語で受け渡す。Ruby の factor を変更し、結果を確かめる。",
+      "path": "ruby-pipeline",
+      "tags": [
+        "Python",
+        "Ruby",
+        "C++"
+      ]
+    },
+    {
       "id": "live-stream",
       "title": "Live Stream",
       "field": "基本の機能を知る",

@@ -300,6 +300,54 @@ end
 `ctx.params["low"]`, `ctx.output_directory`, `ctx.temporary_directory`. A thrown error fails the Card and goes to its
 log. No plotting library is included: use Vega-Lite (at most 1 MiB of JSON), or add one by `packages`.
 
+### Ruby (`src/main.rb`)
+
+`_card.json`: `{"language": "ruby", ...}`. Use the typed SDK and MRI package:
+
+```nix
+{ pkgs, inputs, params }:
+let sdk = inputs.tsugumi.sdk { languages = [ "ruby" ]; };
+in { run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; }; }
+```
+
+```ruby
+def main(ctx)
+  value = ctx.input('number').fetch('value') * ctx.params.fetch('factor')
+  ctx.output('result', value: value)
+  ctx.display_text("result: #{value}")
+end
+```
+
+Inputs and params are owned Hashes / Arrays; output takes a Hash or a value object with `to_h`.
+Field names may be strings or symbols. Integers retain all 64 bits and out-of-range values fail;
+strings must be UTF-8 text. Use `Tsugumi.bytes(binary_string)` for a byte vector. A missing optional
+input is `nil`; a message field may be `nil`, but `ctx.output('port', nil)` is invalid. Omit the
+output call to leave an optional output unproduced. FlatBuffers checks the port schema.
+
+`ctx.path('file')` reads a File / Directory input path. Write artifacts under `ctx.output_directory`
+and emit `{value: path}`. `ctx.temporary_directory`, `ctx.run_id`, `ctx.card`, `ctx.invocation` and
+`ctx.working_directory` are also available. `ctx.log(text)`, `puts` and `warn` go to the run log.
+Displays: `display_text`, `display_markdown`, `display_scalar(value, label)`,
+`display_table(columns, rows)`, `display_image(binary_string, media_type: 'image/png', alt: '')`,
+`display_plotly(hash)`, `display_vegalite(hash)` and `display_module(name, hash)`.
+
+MRI and the Card instance stay in the worker: instance variables survive invocations when
+`reuseWorker` is enabled. Optional `on_run_start(ctx)` runs once per Run. Disable reuse for fresh
+state. Contexts expire when the callback returns and may only be used on its thread; copied input
+values may be retained. Join any Ruby threads before returning. Exceptions produce a structured
+failure; `ctx.fail('worker_failed', 'reason')` supplies a diagnostic. `ctx.cancelled?` and
+`ctx.remaining_ms` support cooperative work; the worker is killed at cancellation / deadline, so
+ensure blocks are not guaranteed then. Failed workers are discarded before later work.
+
+On request, create a Gemfile in the Card's directory, then use the project
+shell to run `bundle lock --add-platform ruby` from that directory. Reload the
+project to read the resulting Gemfile.lock. Name it explicitly in `rubyCard`:
+`lock = ./Gemfile.lock; hash = pkgs.lib.fakeHash;`. Run once and replace the
+placeholder with the `got: sha256-…` hash of the downloaded `.gem` files from
+the Card's build log. Keep both files with the Card and repeat the hash step
+when either changes. The locked gems are installed offline, including native
+extensions that use libraries supplied through `buildInputs`.
+
 ## Checking and running
 
 1. Save with `project_save`; its result lists each Card's diagnostics.

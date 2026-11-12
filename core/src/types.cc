@@ -1,6 +1,6 @@
 #include "types.hh"
 
-#include "message_json.hh"
+#include "tsugumi/message_json.hh"
 #include "util/crypto.hh"
 
 #include <flatbuffers/idl.h>

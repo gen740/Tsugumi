@@ -1,0 +1,35 @@
+{
+  "flow": "leftToRight",
+  "cards": {
+    "start": {
+      "x": 0,
+      "y": 0
+    },
+    "python": {
+      "x": 250,
+      "y": 0
+    },
+    "ruby": {
+      "x": 500,
+      "y": 0
+    },
+    "cpp": {
+      "x": 750,
+      "y": 0
+    }
+  },
+  "displays": {
+    "ruby": {
+      "x": 430,
+      "y": 140,
+      "width": 330,
+      "height": 160
+    },
+    "cpp": {
+      "x": 800,
+      "y": 140,
+      "width": 260,
+      "height": 100
+    }
+  }
+}

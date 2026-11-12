@@ -621,3 +621,26 @@ private final class CountingRuler: LineNumberRuler {
   #expect(ChatSplit.chatWidth(480, in: 500) == 140)
   #expect(ChatSplit.chatWidth(480, in: 200) == 0)
 }
+
+@MainActor @Test(arguments: ["go", "rust", "ruby"])
+func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
+  let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("sdk-card-\(UUID())")
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: dir) }
+  let document = #"{"name":"sdk","canvas":{"cards":[],"connections":[]}}"#
+  try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
+  let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+  session.project = try JSONValue.parse(document)
+  let template = try #require(DefinitionTemplate(rawValue: language))
+  let sources = ["go": ("src/card.go", "func run("),
+                 "rust": ("src/src/lib.rs", "fn run("),
+                 "ruby": ("src/main.rb", "def main(ctx)")]
+  let (source, entry) = try #require(sources[language])
+  #expect(BuiltinCardItems.written.contains(template))
+  let card = session.addCard(template: template, in: [], at: .zero, name: language)
+  #expect(session.definitionDrafts[card]?.card["language"]?.string == language)
+  #expect(try await session.sourceText("definitions/\(card)/default.nix").contains("\(language)Card"))
+  #expect(try await session.sourceText("definitions/\(card)/\(source)").contains(entry))
+  session.undo()
+  #expect(session.definitionDrafts[card] == nil)
+}

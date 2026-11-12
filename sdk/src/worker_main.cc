@@ -51,7 +51,7 @@
 
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/sdk/abi.h"
-#include "message_json.hh"
+#include "tsugumi/message_json.hh"
 #include "schema.hh"
 
 extern char** environ;

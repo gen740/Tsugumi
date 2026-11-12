@@ -73,6 +73,19 @@ let
     cp ${dir}/_contract.json $out/_contract.json
   '';
 
+  # The JSON face (sdk/src/json_face.cc): binary schemas of the Card's ports
+  # and params, and which root type each port carries. Ruby uses it today; it
+  # holds nothing of the language.
+  jsonFace =
+    dir:
+    pkgs.runCommand "tsugumi-card-sdk-json" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      mkdir -p $out
+      for f in ${lib.concatStringsSep " " schemas}; do
+        ${flatc} -b --schema --bfbs-builtins -o $out ${dir}/$f.fbs
+      done
+      python3 ${sdkRoot}/codegen/card_json.py ${dir}/_contract.json $out
+    '';
+
   rustFace =
     dir:
     pkgs.runCommandCC "tsugumi-card-sdk-rust" { nativeBuildInputs = [ pkgs.python3 ]; } ''
@@ -116,7 +129,7 @@ let
     python3 ${sdkRoot}/codegen/card_csharp.py ${dir}/_contract.json $out/CardBindings.cs ${sdkRoot}/include/tsugumi/sdk/abi.h
   '';
 
-  languagesKnown = [ "cpp" "python" "go" "rust" "csharp" ];
+  languagesKnown = [ "cpp" "python" "go" "rust" "ruby" "csharp" ];
 
   # Whether this Card is built for another system than the one evaluating it
   # (x86_64-linux in the aarch64 VM): its binaries run under the emulator the
@@ -187,6 +200,7 @@ rec {
       go = if want "go" then goFace dir else null;
       csharp = if want "csharp" then csharpFace dir else null;
       rust = if want "rust" then rustFace dir else null;
+      ruby = if want "ruby" then jsonFace dir else null;
     };
 
   csharpCard = import ./csharp.nix { inherit pkgs sdkRoot foreign; };
@@ -511,6 +525,128 @@ rec {
         for f in ${lib.concatStringsSep " " (map toString fallbackFonts)}; do
           find "$f/share/fonts" -type f \( -name '*.ttf' -o -name '*.otf' \) | sort
         done > $out/lib/python/tsugumi/_fonts.txt
+        cp $NIX_BUILD_TOP/main.so $out/lib/main.so
+      '';
+    };
+
+  # A Ruby Card: MRI embedded in `lib/main.so`, on the JSON face.
+  #
+  # Gems are used only when the Card names its own lock: `lock` is the Card's
+  # Gemfile.lock (its Gemfile beside it) and `hash` the hash of the .gem files
+  # that lock names. Both or neither: with neither the Card has Ruby's standard
+  # library and nothing is fetched. The gems are fetched once as a fixed-output
+  # derivation, then installed from that directory without network; native
+  # extensions are compiled here (`buildInputs` gives them their libraries).
+  # Nothing is installed when the Card runs.
+  rubyCard =
+    {
+      src,
+      sdk,
+      name ? "tsugumi-ruby-card",
+      ruby ? pkgs.ruby,
+      lock ? null,
+      hash ? null,
+      buildInputs ? [ ],
+    }:
+    assert lib.assertMsg (sdk.ruby != null) "rubyCard: the SDK needs ruby in languages";
+    assert lib.assertMsg (
+      (lock == null) == (hash == null)
+    ) "rubyCard: gems need both `lock = ./Gemfile.lock;` and `hash = \"sha256-...\";` (or neither, for no gems)";
+    assert lib.assertMsg (
+      lock == null || builtins.pathExists (dirOf lock + "/Gemfile")
+    ) "rubyCard: `lock` needs its Gemfile in the same directory";
+    let
+      bundle = ''
+        export HOME=$TMPDIR BUNDLE_APP_CONFIG=$TMPDIR/bundle-config
+        export BUNDLE_FROZEN=true BUNDLE_FORCE_RUBY_PLATFORM=true BUNDLE_DISABLE_VERSION_CHECK=true
+        export BUNDLE_VERSION=system
+      '';
+      # The .gem files Gemfile.lock names, as source gems whatever the
+      # platform, so the hash is the same on every system that builds the Card.
+      gemfile = dirOf lock + "/Gemfile";
+      lockKey = builtins.substring 0 16 (builtins.hashString "sha256" (
+        builtins.hashFile "sha256" lock + builtins.hashFile "sha256" gemfile
+      ));
+      gemSources = pkgs.stdenvNoCC.mkDerivation {
+        name = "${name}-gem-sources-${lockKey}";
+        impureEnvVars = lib.fetchers.proxyImpureEnvVars;
+        SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+        nativeBuildInputs = [
+          ruby
+          pkgs.cacert
+        ];
+        dontUnpack = true;
+        buildPhase = ''
+          ${bundle}
+          cp ${gemfile} Gemfile
+          cp ${lock} Gemfile.lock
+          bundle cache --no-install || {
+            echo "rubyCard: Gemfile.lock does not match its Gemfile, or lacks the ruby platform" >&2
+            echo "rubyCard: update it with: bundle lock --add-platform ruby" >&2
+            exit 1
+          }
+        '';
+        installPhase = ''
+          mkdir -p $out
+          find vendor/cache -maxdepth 1 -name '*.gem' -exec cp {} $out/ \;
+        '';
+        outputHashMode = "recursive";
+        outputHashAlgo = "sha256";
+        outputHash = hash;
+      };
+      gems = pkgs.stdenv.mkDerivation {
+        name = "${name}-gems";
+        nativeBuildInputs = [
+          ruby
+          pkgs.pkg-config
+        ];
+        inherit buildInputs;
+        dontUnpack = true;
+        buildPhase = ''
+          ${bundle}
+          mkdir -p $out/vendor
+          cp ${gemfile} $out/Gemfile
+          cp ${lock} $out/Gemfile.lock
+          ln -s ${gemSources} $out/vendor/cache
+          export BUNDLE_GEMFILE=$out/Gemfile BUNDLE_PATH=$out/installed
+          bundle install --local || {
+            echo "rubyCard: a gem in Gemfile.lock is not among the fetched gems; update the lock and hash together" >&2
+            exit 1
+          }
+        '';
+        dontInstall = true;
+      };
+    in
+    pkgs.stdenv.mkDerivation {
+      inherit name src;
+      nativeBuildInputs = [ pkgs.pkg-config ];
+      buildInputs = [
+        ruby
+        pkgs.flatbuffers
+      ]
+      ++ buildInputs;
+      dontConfigure = true;
+      buildPhase = ''
+        runHook preBuild
+        ruby_config=${ruby}/bin/ruby
+        libruby=$($ruby_config -rrbconfig -e 'print File.join(RbConfig::CONFIG.fetch("libdir"), RbConfig::CONFIG.fetch("LIBRUBY_SO"))')
+        $CC -O2 -fPIC -c ${sdkRoot}/src/ruby_main.c -o $NIX_BUILD_TOP/ruby_main.o \
+          -I${sdkRoot}/include $(pkg-config --cflags ruby-${ruby.version.majMin}) \
+          -DTSUGUMI_LIBRUBY='"'"$libruby"'"' \
+          -DTSUGUMI_RUBY_SDK='"${sdkRoot}/ruby"' \
+          -DTSUGUMI_RUBY_CARD='"'$out'/lib/card"' \
+          -DTSUGUMI_RUBY_GEMS='"${ruby}/${ruby.gemPath}"' \
+          -DTSUGUMI_RUBY_BUNDLE='"${if lock == null then "" else "${gems}"}"'
+        $CXX -std=c++20 -O2 -fPIC -c ${sdkRoot}/src/json_face.cc -o $NIX_BUILD_TOP/json_face.o \
+          -I${sdkRoot}/include -I${sdk.ruby} -DTSUGUMI_JSON_CONTRACT='"${sdk.ruby}"'
+        $CXX -shared $NIX_BUILD_TOP/ruby_main.o $NIX_BUILD_TOP/json_face.o -o $NIX_BUILD_TOP/main.so \
+          $(pkg-config --libs ruby-${ruby.version.majMin}) -L${ruby}/lib -lflatbuffers \
+          -Wl,-rpath,${ruby}/lib
+        runHook postBuild
+      '';
+      installPhase = ''
+        mkdir -p $out/lib/card
+        cp -r --no-preserve=mode ./. $out/lib/card/
         cp $NIX_BUILD_TOP/main.so $out/lib/main.so
       '';
     };

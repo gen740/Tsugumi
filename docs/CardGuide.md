@@ -387,6 +387,40 @@ Every invocation receives a fresh context. Do not retain the context or use its 
 
 Displays publish immediately, including before a long calculation finishes. Each new display replaces the previous one. File and Directory inputs still use the worker's read-only paths, and outputs belong in the invocation's `output_directory`; those paths change on the next call. Nix continues to pin the interpreter and packages.
 
+## The same Card in Ruby
+
+Ruby uses MRI in the package worker. Inputs and parameters are Hashes and output is validated
+against the FlatBuffers schema. The instance can retain state between invocations.
+
+`definitions/multiply/_card.json` (Ruby)
+
+```json
+{"language":"ruby","inputs":[{"name":"number"}],"params":[{"name":"factor","type":"int64","data":2}]}
+```
+
+`definitions/multiply/default.nix` (Ruby)
+
+```nix
+{ pkgs, inputs, params }:
+let sdk = inputs.tsugumi.sdk { languages = [ "ruby" ]; };
+in { run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; }; }
+```
+
+`definitions/multiply/src/main.rb` (Ruby)
+
+```ruby
+def main(ctx)
+  n = ctx.input('number').fetch('value')
+  factor = ctx.params.fetch('factor')
+  ctx.output('result', value: n * factor)
+  ctx.display_text("#{n} × #{factor} = #{n * factor}")
+end
+```
+
+For gems, keep a `Gemfile` and its `Gemfile.lock` together in the Card's directory. In the project terminal, run `bundle lock --add-platform ruby` from that directory. Add `lock = ./Gemfile.lock; hash = pkgs.lib.fakeHash;` to `rubyCard`. Run once and replace the placeholder with the fixed-output hash of the downloaded `.gem` files, reported as `got: sha256-…` in the Card's build log. The build then installs the locked gems offline. Native extensions can use libraries passed through `buildInputs`. When updating the Gemfile or lock, repeat the hash step.
+Native gems are built by Nix; the worker never installs them at runtime. See the
+[Ruby API](../agent/Reference/card-guide.md#ruby-srcmainrb) for files, displays and lifecycle details.
+
 ## What to read next
 
 | To know | Document |

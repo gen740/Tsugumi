@@ -3117,6 +3117,12 @@ def main(ctx):
         this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
         for (const [name, source] of Object.entries(RUST_SCAFFOLD)) this.putSource(dir + 'src/' + name, source)
         break
+      case 'ruby':
+        set(obj([['language', 'ruby'], ['inputs', [obj([['name', 'in']])]]]))
+        this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ "ruby" ]; };\nin\n{\n  run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; };\n}\n')
+        this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
+        this.putSource(dir + 'src/main.rb', 'def main(ctx)\n  ctx.output("out", { value: "hello" })\nend\n')
+        break
       case 'cpp':
         set(obj([['language', 'cpp'], ['inputs', [obj([['name', 'in']])]]]))
         this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };\nin\n{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n')
@@ -3639,8 +3645,9 @@ export function definitionKind(def: J | undefined): CardKind {
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'csharp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
+export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
+  { id: 'ruby', label: L('Ruby の処理') },
   { id: 'rust', label: L('Rust の処理') },
   { id: 'go', label: L('Go の処理') },
   { id: 'csharp', label: L('C# の処理') },
@@ -3652,9 +3659,9 @@ export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') }, { id: 'fork', label: L('分配') },
   { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'logger', label: L('記録') },
 ]
-export const templateIcon = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'chart.xyaxis.line' : KIND_ICON[t.startsWith('report_') || t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'csharp' || t === 'marimo' ? 'code' : (t as CardKind)]
+export const templateIcon = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'chart.xyaxis.line' : KIND_ICON[t.startsWith('report_') || t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' || t === 'marimo' ? 'code' : (t as CardKind)]
 /** A name for the new Card (its id; made unique). */
-export const templateBaseName = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'visualization' : (t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'csharp' ? 'card' : t)
+export const templateBaseName = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'visualization' : (t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' ? 'card' : t)
 
 export const NOTE_COLORS: { id: string; label: string }[] = [
   { id: 'yellow', label: L('黄') }, { id: 'blue', label: L('青') }, { id: 'green', label: L('緑') }, { id: 'pink', label: L('桃') }, { id: 'gray', label: L('灰') },
