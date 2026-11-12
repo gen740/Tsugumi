@@ -143,6 +143,8 @@
 "OpenAI の API キー" = "OpenAI API key";
 "Plotly のグラフ" = "Plotly chart";
 "Python の処理" = "Python step";
+"Quarto レポート（HTML）" = "Quarto Report (HTML)";
+"R Markdown レポート（HTML）" = "R Markdown Report (HTML)";
 "RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。" = "The chat is unavailable because the RPC schema cannot be read. Everything else works from the UI.";
 "Return で送信" = "Return sends";
 "Return で送信（⇧Return で改行）" = "Return sends (⇧Return for a new line)";
@@ -551,6 +553,7 @@
 "モデル（接続先: %@）" = "Model (provider: %@)";
 "ライト" = "Light";
 "リリースの一覧（GitHub）" = "Releases (GitHub)";
+"レポート（HTML・PDF 未対応）" = "Reports (HTML; PDF unsupported)";
 "ログ" = "Log";
 "ログのフォルダ" = "Log folder";
 "ログの表示切替" = "Toggle Log";

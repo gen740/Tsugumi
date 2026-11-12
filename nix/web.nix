@@ -33,6 +33,7 @@ buildNpmPackage {
       ../agent/Shared/demo-skill.md
       ../agent/Reference
       ../ui/modules
+      ../ui/templates
       ../protocol/agent.fbs
       ../protocol/tsugumi.fbs
       ../protocol/tsugumi_enums.fbs

@@ -16,6 +16,7 @@ console.log('merge behavior: passed')
 await import("./chatStopped")
 await import("./folderAttachments")
 await import("./switchCard")
+await import("./reports")
 
 await import("./table")
 

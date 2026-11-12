@@ -1232,6 +1232,10 @@ EN = {
 "保存前": "Not saved",
 "Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。": "Relative to this Card's definition folder. Use project: for a path relative to its owning project.",
 "参照先: %@": "Resolved path: %@",
+"R Markdown レポート（HTML）": "R Markdown Report (HTML)",
+"Quarto レポート（HTML）": "Quarto Report (HTML)",
+"レポート（HTML・PDF 未対応）": "Reports (HTML; PDF unsupported)",
+
 }
 
 

@@ -1446,6 +1446,11 @@ struct BuiltinCardItems: View {
   let add: (DefinitionTemplate) -> Void
 
   var body: some View {
+    Menu("レポート（HTML・PDF 未対応）") {
+      ForEach([DefinitionTemplate.report_rmarkdown, .report_quarto], id: \.self) { t in
+        Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
+      }
+    }
     ForEach([DefinitionTemplate.python, .cpp, .draft], id: \.self) { t in
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
     }

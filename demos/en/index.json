@@ -418,6 +418,32 @@
         "Machine learning",
         "Branch, fork and merge"
       ]
+    },
+    {
+      "id": "r-reports",
+      "path": "r-reports",
+      "title": "R reports: R Markdown and Quarto",
+      "field": "Learn the basics",
+      "description": "Aggregate observations, render parameterized reports with tables and figures, and keep their HTML artifacts.",
+      "tags": [
+        "R",
+        "Quarto",
+        "R Markdown",
+        "Artifacts"
+      ]
+    },
+    {
+      "id": "r-reports-draft",
+      "path": "r-reports-draft",
+      "title": "R reports: R Markdown and Quarto (Draft)",
+      "description": "Aggregate observations, render parameterized reports with tables and figures, and keep their HTML artifacts.",
+      "tags": [
+        "R",
+        "Quarto",
+        "R Markdown",
+        "Artifacts",
+        "Draft"
+      ]
     }
   ]
 }

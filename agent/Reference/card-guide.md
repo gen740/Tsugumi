@@ -235,3 +235,7 @@ log. No plotting library is included: use Vega-Lite (at most 1 MiB of JSON), or 
 3. Run from the trigger Card (`run` with the trigger's id); a single Card run only works on inputs
    saved by an earlier whole run.
 4. `run_status` until it ends, then `run_record` of each Card; `log_range` (stream 2) for errors.
+
+## R Markdown and Quarto reports
+
+`inputs.tsugumi.reportCard { src = ./src; entry = "report.Rmd"; packages = ps: [ ]; }` runs an R Markdown report; use `report.qmd` for Quarto/knitr. Both produce HTML only. Declare `params: { tsugumi: null }` in the document YAML. R chunks read `params$tsugumi$inputs$data`, `params$tsugumi$params` and File/Directory paths in `params$tsugumi$paths$data`. The adapter returns `report` (Directory) and `html` (File); define both ports, enable `filesystem`, and retain `report` as an artifact. The Mac/Web Add Card menus provide matching scaffolds, and `demos/en/r-reports` / `demos/ja/r-reports` show an aggregation feeding both formats. HTML embeds assets and the saved preview is static; PDF requires a separate pinned toolchain and is not supported. See docs/Reports.md.
