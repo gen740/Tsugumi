@@ -1237,5 +1237,13 @@
  "このプロジェクトに根拠の記録がありません": "This evidence is not available in this project",
  "位置": "Position",
  "先頭 64 KiB を表示": "Showing the first 64 KiB",
- "バイナリの成果物です": "This artifact contains binary data"
+ "バイナリの成果物です": "This artifact contains binary data",
+ "Nix 参照（記述どおり）": "Nix references (as written)",
+ "保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。": "Shows the Card references written in saved default.nix files. References through aliases or computed names are not included.",
+ "Nix 参照一覧": "Nix reference list",
+ "参照元 → 参照先。保存済みの default.nix にある静的な Card 参照を表示します。": "Referencing Card → referenced Card. Shows static Card references in saved default.nix files.",
+ "Card 間の Nix 参照はありません": "No Nix references between Cards.",
+ "参照を解決できません。Nix 定義と診断を確認してください。": "This reference is invalid. Check the Nix definition and diagnostics.",
+ "Nix 定義を開く": "Open Nix definition",
+ "一覧": "List"
 }
