@@ -434,9 +434,9 @@ class Builder {
       switch (n.kind) {
         case Template::Code:
           if (n.settings.language != "cpp" && n.settings.language != "python" &&
-              n.settings.language != "bash" && n.settings.language != "r" && n.settings.language != "julia")
+              n.settings.language != "csharp" && n.settings.language != "bash" && n.settings.language != "r" && n.settings.language != "julia")
             n.exec_diags.push_back(diag(n.path, "invalid_language",
-                                        "language must be cpp, python, bash, r or julia"));
+                                        "language must be cpp, python, csharp, bash, r or julia"));
           if (!doc_.sources.count(n.def_dir + "default.nix"))
             n.exec_diags.push_back(diag(n.path, "missing_nix", "default.nix is missing", true,
                                         n.def_dir + "default.nix"));

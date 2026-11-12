@@ -208,9 +208,14 @@ jobs:
         run: |
           "$CORE_TEST_ENV" "${{ steps.sdk-python.outputs.python }}" -m pytest -q tests/python \
             --ignore=tests/python/test_sdk_examples.py \
+            --ignore=tests/python/test_csharp_sdk.py \
             --ignore=tests/python/test_claude_code_plugin.py \
             --ignore=tests/python/test_web_server.py \
             --ignore=tests/python/test_cli.py
+      - name: C# Cards in the host sandbox
+        env:
+          TSUGUMI_TEST_HOST_SANDBOX: "1"
+        run: '"$CORE_TEST_ENV" "${{ steps.sdk-python.outputs.python }}" -m pytest -q tests/python/test_csharp_sdk.py'
       - name: Runnable SDK examples
         run: '"$CORE_TEST_ENV" "${{ steps.sdk-python.outputs.python }}" -m pytest -q tests/python/test_sdk_examples.py'
 

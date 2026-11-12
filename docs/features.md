@@ -178,6 +178,7 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 ## 6. Run history and artifacts
 
 - Runs, invocations, stages, input and output values, logs, visualisation data and receipts are all recorded in SQLite. The primary copy is on the VM's dedicated run-history disk (`vm/history.img`), so it is written fast without going through a folder shared with the host, and is not lost by "Reset all environments".
+- A Card's run history shows, for each invocation, the **packages** it ran with: the runtime dependencies recorded for that invocation, with search and pagination. They are read from the history, never derived from the current Nix definition, so an edited definition does not change what an earlier invocation shows; an invocation without a recorded environment says so. Build-only dependencies are not included.
 - `recordIO` and `retainArtifact` choose, per Card, what is recorded and kept. Kept artifacts are checked for tampering and path escapes.
 - With `saveRunHistory` (default `true`), the history of finished runs is also written automatically to `.tsugumi/runs.sqlite` in the project. Input and output values are kept as FlatBuffers bytes with their schema (bfbs) retrievable by hash, so past values are interpreted correctly even after a Card's types change.
 - When a project is copied or moved to another Mac, its history is imported automatically on opening, matched by `run_id`.
@@ -199,7 +200,7 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 - Canvas operations: adding and moving Cards (snapping to a grid), duplicating, wiring, range selection, zoom, arranging (a layered layout with straight wires, in which Cards, output frames and sticky notes do not overlap, undone in one step), groups, Markdown sticky notes and display frames.
 - The Card settings window: General, Comments, Nix Definition, Source (syntax highlighting, automatic formatting, showing where errors are), Ports, Run History, Artifacts and Additional Context. Edits are made on a working copy and put in with "Apply".
 - The settings window: the whole app (General, Appearance, Editor, Shortcuts, Skills, API, Connections) and the open project (Name and environment, Canvas, Database connections, Run history, Build cache). Each item shows where its value is kept.
-- A terminal inside the VM for each project (bash started in that project's namespaces with its own uid).
+- A terminal inside the VM for each project (bash started in that project's namespaces with its own uid). The Mac panel has independent tabs, up to eight per project as in the Web UI. The tabs and their shells belong to the open project, not to the panel: opening or selecting another tab, hiding the panel and showing it again all keep existing commands and scrollback, while closing a tab or closing the project hangs up its shells. Opening the panel before the environment connects waits and connects automatically; after a reconnection, tabs whose shell had ended get a new one. When two windows show the same project, they share the same tabs, and a terminal is drawn in the window that showed it last.
 - Japanese or English, chosen under "General" in the settings (Japanese by default, whatever the system's language; it takes effect when the app restarts, or by reloading the page in the Web UI). The Mac app and the Web UI on the same Mac share it, and what tsugumid writes into a project's git for a run follows it ([Versions](Versions.md#the-results-of-runs)).
 - While running, changes to Cards and closing the project are blocked; progress, history and artifacts can still be seen.
 
@@ -213,6 +214,14 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 ## 9. Agent
 
 A separate, independent package, `agent/`. The Agent is one client using the same RPC as the UI; without the Agent, making, editing and running Cards can all be done on screen.
+
+### Commands in the project environment
+
+The Agent's `project_shell` tool uses the public `ProjectShell` RPC, enabled only by the isolated project launcher. It runs as the project's user in `/project`, never as a fallback shell on the Mac or Web host. Agent use needs separate human-granted **Shell** access in addition to Read, Write and Run. Shell access includes the project's shared folders and the VM network; it is broader than an individual Card's permissions.
+
+Commands and tool results remain in the conversation, with exit status, signal, timeout and cancellation. Each stream is bounded to 256 KiB and reports truncation; the default deadline is 10 seconds and the maximum is 30 seconds. Disconnecting cancels the process group. An operation ID is durable and cannot run twice after a retry or restart; an interrupted operation with an unknown outcome must be inspected before issuing a new one. Commands that edit project documents need `ProjectReload` before subsequent inspection or execution. These commands are recorded as tool operations, not fabricated Card invocations.
+
+The ordinary Web host daemon does not enable this tool. Web clients connected to the Mac VM can use the same RPC and approval boundary. The Web UI's human terminal is distinct from the Agent tool: with the Mac VM it is the project's shell in the environment, as in the app, and on an ordinary Web host it is a shell of that host in the project's folder.
 
 ### Choosing Claude's features by purpose
 
