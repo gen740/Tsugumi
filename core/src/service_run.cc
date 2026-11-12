@@ -315,9 +315,13 @@ auto Service::run_environments(RequestIn& req) -> void {
   if (offset > INT64_MAX) throw Failed(FailureKind::invalid_request, "offset is too large");
   FBB b;
   std::vector<flatbuffers::Offset<R::BuildEnvironment>> rows;
+  std::vector<flatbuffers::Offset<flatbuffers::String>> caches;
   bool more = false;
   history_->read([&](sql::Db& db) {
     if (!History::run(db, run)) throw Failed(FailureKind::not_found, "unknown run");
+    auto s = db.prepare("SELECT url FROM run_substituters WHERE run_id=? ORDER BY position");
+    s.bind(1, run);
+    while (s.step()) caches.push_back(b.CreateString(s.text(0)));
     auto q = db.prepare(
         "SELECT id, derivation, manifest, system, path_count FROM build_environments "
         "WHERE run_id=? ORDER BY rowid LIMIT ? OFFSET ?");
@@ -336,8 +340,10 @@ auto Service::run_environments(RequestIn& req) -> void {
     }
   });
   auto values = b.CreateVector(rows);
+  auto substituters = b.CreateVector(caches);
   R::BuildEnvironmentPageBuilder page(b);
   page.add_environments(values);
+  page.add_substituters(substituters);
   if (more) page.add_next_offset(offset + rows.size());
   auto off = page.Finish();
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::BuildEnvironmentPage, off.Union()));

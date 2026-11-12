@@ -574,6 +574,11 @@ table BuildEnvironment {
 table BuildEnvironmentPage {
   environments:[BuildEnvironment] (id: 0, required);
   next_offset:uint64 = null (id: 1);
+  /// The binary caches (URLs, without credentials) configured for the run's
+  /// builds, on every page. A store path may have been downloaded from any of
+  /// them or built locally: which, is not recorded. Empty for a run recorded
+  /// without this list.
+  substituters:[string] (id: 2);
 }
 
 table EnvironmentPathPage {

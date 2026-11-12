@@ -70,6 +70,7 @@
 "Anthropic API（API キー）" = "Anthropic API (API key)";
 "Anthropic の API キー" = "Anthropic API key";
 "Apple silicon の Mac と macOS 26 以降が必要です。" = "An Apple silicon Mac and macOS 26 or later are needed.";
+"Attic・Cachix などのバイナリキャッシュから、署名を検証してビルド済みのパッケージを取得します。登録した鍵は、この Mac の全プロジェクトの実行環境で信頼されます。" = "Download prebuilt packages from binary caches such as Attic and Cachix after verifying their signatures. The registered signing keys are trusted by the execution environment for every project on this Mac.";
 "C# の処理" = "C# Card";
 "C++ の処理" = "C++ step";
 "Canvas に追加" = "Add to Canvas";
@@ -261,6 +262,7 @@
 "この Card をどう変えたいかを書きます。Canvas の「コメントから生成」で Agent が従います（_meta.json に保存され、版の履歴に残ります）。" = "Write how you want this Card to change. The Agent follows it with \"Generate from comments\" on the canvas (kept in _meta.json and in the version history).";
 "この Mac で仮想マシンを使える" = "This Mac can run virtual machines";
 "この Mac にはありません（実行すると失敗します）" = "Not on this Mac (running fails)";
+"この Mac の共有実行環境（全プロジェクト）" = "This Mac’s shared execution environment (all projects)";
 "この Run ではまだ値が通っていません" = "No value has passed in this Run yet";
 "この Run で準備済みのものを再利用" = "Reused what this Run had prepared";
 "この stream への出力はありません" = "Nothing on this stream";
@@ -377,8 +379,11 @@
 "ガイドのツグミを呼ぶ準備" = "Getting Tsugumi the Guide Ready";
 "ガイドは上の接続先とキーを使います。キーを登録すると現れ、削除すると消えます。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection and key above. It appears when a key is set and goes away when the key is deleted. Answering questions never changes your project.";
 "ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection in use. With a working connection (a key, the ChatGPT sign-in) it answers questions; without one it only gives a fixed demo tour (nothing is sent). Answering questions never changes your project.";
+"キャッシュ URL" = "Cache URL";
 "キャッシュを利用" = "Cache used";
 "キャッシュを利用（処理なし）" = "Cache used (no work)";
+"キャッシュ接続を削除" = "Remove Cache Connection";
+"キャッシュ接続を追加" = "Add Cache Connection";
 "キャンセル" = "Cancel";
 "キー" = "Key";
 "キーがなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録すると、質問にも答えます。" = "Without a key, everything in Tsugumi still works from the UI (meanwhile the guide only gives a fixed demo tour). Add a key later in Settings > API and it answers questions too.";
@@ -508,8 +513,10 @@
 "ネットワークを設定しています" = "Setting up the network";
 "バイナリ %lld bytes。書き出して確認してください。" = "Binary, %lld bytes. Export it to inspect.";
 "バイナリの成果物です" = "This artifact contains binary data";
+"バイナリキャッシュ" = "Binary Caches";
 "パス" = "Path";
 "パスをコピー" = "Copy Path";
+"パスワード・token" = "Password or Token";
 "パス（例: src/util.py）" = "Path (e.g. src/util.py)";
 "パネルを隠します（ターミナルは開いたままで、実行中のコマンドは続きます）" = "Hides the panel (terminals stay open and running commands continue)";
 "パラメータ" = "Parameters";
@@ -570,6 +577,7 @@
 "モデルが文を返しませんでした。" = "The model returned no text.";
 "モデル一覧を取得" = "List Models";
 "モデル（接続先: %@）" = "Model (provider: %@)";
+"ユーザー名" = "Username";
 "ライト" = "Light";
 "ライブ（実行中も追う）" = "Live (follow while running)";
 "リリースの一覧（GitHub）" = "Releases (GitHub)";
@@ -640,9 +648,11 @@
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
 "保存した入力" = "Saved input";
+"保存した接続は、次に実行環境を起動したときに反映されます。保存しても実行中の Workflow は停止しません。実行環境は Tsugumi を終了すると停止するので、反映するには、実行が終わってから Tsugumi を終了して開き直してください。" = "Saved connections apply when the execution environment next starts. Saving does not stop running workflows. The execution environment stops when you quit Tsugumi, so to apply them, quit Tsugumi after your runs finish and open it again.";
 "保存しています" = "Saving";
 "保存して終了" = "Save and Quit";
 "保存しました。" = "Saved.";
+"保存しました。Tsugumi を終了して開き直すと、次の実行環境の起動から使用します。" = "Saved. Quit Tsugumi and open it again: these connections are used from the next start of the execution environment.";
 "保存せずに終了" = "Quit Without Saving";
 "保存できていない変更は保持しています（起動すると保存します）" = "Changes not saved yet are kept (saved once it starts)";
 "保存できない変更があります" = "Some changes cannot be saved";
@@ -1006,6 +1016,7 @@
 "既にある Workflow を見る" = "See a working workflow";
 "既存のプロジェクトを開く…" = "Open Existing Project…";
 "既定" = "Default";
+"既定の cache.nixos.org と tsugumi.cachix.org は引き続き使用します。キャッシュへのアップロードは行いません。" = "The default cache.nixos.org and tsugumi.cachix.org remain enabled. Packages are not uploaded to caches.";
 "既定（%@）" = "Default (%@)";
 "日時" = "Date";
 "日本語" = "日本語";
@@ -1100,6 +1111,7 @@
 "画像を表示できません" = "Cannot show the image";
 "異なる 2 つの実行を選んでください" = "Choose two different runs";
 "登録されていないビルド結果を共有 store から削除します。登録を外したプロジェクトの Card は、次の実行でビルドし直します。" = "Deletes build results nothing registers from the shared store. Cards of projects whose registration was removed build again on their next run.";
+"登録したキャッシュには、全プロジェクトのビルドで必要になったパッケージのハッシュが問い合わされます。認証情報は、同じホストから固定ハッシュで取得するビルドにも使われます。" = "Registered caches are asked for the hashes of the packages that builds of every project need. Credentials are also used by builds that fetch from the same host by a fixed hash.";
 "直近の入力トークン数（上限に近づくと自動で圧縮）" = "Recent input tokens (compacted automatically near the limit)";
 "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";
 "相違あり" = "Changed";
@@ -1131,6 +1143,7 @@
 "編集中の _outputs.fbs（未適用・型は適用後に解決）" = "_outputs.fbs being edited (not applied; types resolve after applying)";
 "縮小" = "Zoom Out";
 "置換テキスト" = "Replacement text";
+"署名の公開鍵" = "Signing Public Key";
 "考えています" = "Thinking";
 "考えています…" = "Thinking…";
 "興味のあること（例: 画像処理）" = "What interests you (e.g. image processing)";
@@ -1177,6 +1190,8 @@
 "詳しいログ" = "Detailed log";
 "詳しくはチャットに書きました" = "More in the chat";
 "詳細を閉じる" = "Close details";
+"認証情報はこの Mac のアプリ用ファイル（0600）に保存し、VM の Nix daemon だけに渡します。プロジェクトや実行記録には含めません。" = "Credentials are stored in a private application file on this Mac (0600) and provided only to the VM’s Nix daemon. They are excluded from project files and run history.";
+"認証（非公開キャッシュ）" = "Authentication (Private Caches)";
 "読み取り専用" = "Read only";
 "読み取り専用で共有しています。Agent だけが読みます。" = "Shared read-only. Only the Agent reads it.";
 "読み直す" = "Reload";

@@ -6,6 +6,7 @@
 #include <flatbuffers/reflection.h>
 
 #include <algorithm>
+#include <fstream>
 
 #include "comments.hh"
 #include "nix.hh"
@@ -163,6 +164,42 @@ std::string request_digest(const R::Request* req) {
 
 // ---------------------------------------------------------------------------
 
+namespace {
+
+// What a run records about its binary caches: where packages may have come
+// from, never how to authenticate there. A URL's userinfo and query string
+// (tokens, S3 profiles) are dropped; so is anything that is not one printable
+// line of a sane length.
+std::vector<std::string> configured_substituters(const stdfs::path& file) {
+  std::vector<std::string> raw;
+  if (file.empty()) {
+    raw = NixEvaluator::substituters();
+  } else {
+    std::ifstream in(file);
+    if (!in) log::error("cannot read the binary cache list " + file.string() + ": runs will record none");
+    for (std::string line; std::getline(in, line);) raw.push_back(line);
+  }
+  std::vector<std::string> urls;
+  for (auto url : raw) {
+    if (auto query = url.find_first_of("?#"); query != std::string::npos) url.resize(query);
+    auto scheme = url.find("://");
+    // Native hosts can also use file and local stores. Their paths can expose
+    // private filesystem locations and do not identify a remote cache.
+    if (!url.starts_with("http://") && !url.starts_with("https://") && !url.starts_with("s3://")) continue;
+    auto host = scheme + 3;
+    auto slash = url.find('/', host);
+    auto at = url.rfind('@', slash == std::string::npos ? std::string::npos : slash);
+    if (at != std::string::npos && at >= host) url.erase(host, at + 1 - host);
+    if (url.size() == host || url[host] == '/') continue;
+    bool printable = !url.empty() && url.size() <= 2048 &&
+                     std::all_of(url.begin(), url.end(), [](unsigned char c) { return c > 32 && c != 127; });
+    if (printable && urls.size() < 64 && std::find(urls.begin(), urls.end(), url) == urls.end()) urls.push_back(url);
+  }
+  return urls;
+}
+
+}  // namespace
+
 Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
   cursor_secret_ = crypto::random_token(32);
   mutation_lane_ = std::make_unique<Lane>(1, opts_.limits.mutation_queue_limit,
@@ -191,6 +228,7 @@ void Service::open() {
   auto scratch = opts_.scratch_dir.empty() ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
                                            : opts_.scratch_dir;
   nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
+  substituters_ = configured_substituters(opts_.substituters_file);
   for (const char* d : {"runs", "inputs"}) stdfs::create_directories(store_->state_dir() / d);
   workers_ = std::make_unique<WorkerPool>(scratch / "workers");
   scheduler_ = std::make_unique<Scheduler>(*this);

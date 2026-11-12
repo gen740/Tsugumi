@@ -181,6 +181,8 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(build_environments(
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(environment_paths(
   run_id TEXT NOT NULL, environment_id TEXT NOT NULL, position INTEGER NOT NULL, path TEXT NOT NULL,
   PRIMARY KEY(run_id, environment_id, position));
+CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_substituters(
+  run_id TEXT NOT NULL, position INTEGER NOT NULL, url TEXT NOT NULL, PRIMARY KEY(run_id, position));
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_cards(run_id TEXT NOT NULL, card TEXT NOT NULL, PRIMARY KEY(run_id, card));
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(run_commits(run_id TEXT PRIMARY KEY, commit_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(invocations(
@@ -419,6 +421,14 @@ auto History::put_environment(sql::Db& db, const std::string& run_id, const Buil
   auto insert = db.prepare("INSERT INTO environment_paths VALUES(?,?,?,?)");
   for (size_t i = 0; i < e.paths.size(); ++i) {
     insert.bind(1, run_id).bind(2, e.id).bind(3, static_cast<uint64_t>(i)).bind(4, e.paths[i]).run();
+    insert.reset();
+  }
+}
+
+auto History::put_substituters(sql::Db& db, const std::string& run_id, const std::vector<std::string>& urls) -> void {
+  auto insert = db.prepare("INSERT OR IGNORE INTO run_substituters VALUES(?,?,?)");
+  for (size_t i = 0; i < urls.size(); ++i) {
+    insert.bind(1, run_id).bind(2, static_cast<uint64_t>(i)).bind(3, urls[i]).run();
     insert.reset();
   }
 }
@@ -1062,6 +1072,7 @@ constexpr Copied kCopied[] = {
      "seq", false},
     {"build_environments", "run_id, id, derivation, manifest, system, path_count", "rowid", false},
     {"environment_paths", "run_id, environment_id, position, path", "rowid", false},
+    {"run_substituters", "run_id, position, url", "rowid", false},
     {"run_cards", "run_id, card", "rowid"},
     {"invocations",
      "run_id, card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, "

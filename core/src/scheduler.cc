@@ -1730,6 +1730,7 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
   // The run id and the receipt are durable before any processing starts.
   svc_.history().write_sync([&](sql::Db& db) {
     History::insert_run(db, s, p.op_id);
+    History::put_substituters(db, *s.status.run_id, svc_.substituters());
     History::put_receipt(db, p.op_id, "run", p.digest, receipt);
   });
   svc_.server()->broadcast(status_note(s.status, true));

@@ -42,6 +42,7 @@ struct Options {
   stdfs::path host_folders;
   stdfs::path chat_folders;
   bool project_shell = false;
+  stdfs::path substituters_file;
   std::string fault;
 };
 
@@ -50,7 +51,7 @@ void usage() {
                "usage: tsugumid --project DIR [--unix PATH] [--listen HOST:PORT] [--control-dir DIR]\n"
                "                [--allow-origin ORIGIN]... [--allow-missing-origin] [--sdk-dir DIR]\n"
                "                [--worker PATH] [--cpus N] [--gcroots-dir DIR] [--history-dir DIR]\n"
-               "                [--host-folders DIR] [--chat-folders DIR]\n");
+               "                [--host-folders DIR] [--chat-folders DIR] [--substituters-file FILE]\n");
 }
 
 std::optional<Options> parse(int argc, char** argv) {
@@ -81,6 +82,7 @@ std::optional<Options> parse(int argc, char** argv) {
     else if (a == "--host-folders") o.host_folders = next();
     else if (a == "--chat-folders") o.chat_folders = next();
     else if (a == "--project-shell") o.project_shell = true;
+    else if (a == "--substituters-file") o.substituters_file = next();
     else if (a == "--help") return std::nullopt;
     else throw std::runtime_error("unknown option " + a);
   }
@@ -169,6 +171,7 @@ int run_daemon(int argc, char** argv) {
   so.host_folders = opt.host_folders;
   so.chat_folders = opt.chat_folders;
   so.project_shell = opt.project_shell;
+  so.substituters_file = opt.substituters_file;
   // Block termination signals before threads start; they are taken with sigwait.
   sigset_t set;
   sigemptyset(&set);
