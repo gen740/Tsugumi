@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import signal
 import socketserver
 import struct
 import tempfile
@@ -9,6 +10,7 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
 from harness.fixtures import worker_project
 from projects import start_run
 from Tsugumi.Data.CardState import CardState
@@ -27,6 +29,10 @@ class Gateway(socketserver.UnixStreamServer):
         self.receipts = {}
         self.submit_count = 0
         self.blobs = set()
+        self.stall = None
+        self.stall_operation = "status"
+        self.stalled = threading.Event()
+        self.resume = threading.Event()
 
     def operation(self, header, body):
         operation = header["operation"]
@@ -63,8 +69,23 @@ class Gateway(socketserver.UnixStreamServer):
 
 class Handler(socketserver.StreamRequestHandler):
     def handle(self):
-        size = struct.unpack(">I", self.rfile.read(4))[0]
+        prefix = self.rfile.read(4)
+        if len(prefix) != 4:
+            return
+        size = struct.unpack(">I", prefix)[0]
         header = json.loads(self.rfile.read(size))
+        mode = self.server.stall
+        if mode and header["operation"] == self.server.stall_operation:
+            try:
+                if mode == "trickle":
+                    self.wfile.write(struct.pack(">I", 8192) + b"{")
+                self.server.stalled.set()
+                while not self.server.resume.wait(0.05):
+                    if mode == "trickle":
+                        self.wfile.write(b" ")
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            return
         data = self.server.operation(header, self.rfile.read(header.get("size", 0)))
         if data is not None:
             response = json.dumps({"version": 1, "ok": True, **data}).encode()
@@ -85,8 +106,8 @@ def wait_for_state(client, run_id, expected):
     raise TimeoutError(f"invocation did not reach remote state {expected}")
 
 
-def test_core_restart_reattaches_to_the_same_external_job(project, core_factory, tmp_path, monkeypatch):
-    """An unknown transport outcome remains pending, and cancellation survives reconnection."""
+@pytest.fixture
+def running_job(project, core_factory, tmp_path, monkeypatch):
     with tempfile.TemporaryDirectory(prefix="tsg-remote-", dir="/tmp") as directory:
         endpoint = str(Path(directory) / "broker")
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", "unix:" + endpoint)
@@ -104,23 +125,64 @@ def test_core_restart_reattaches_to_the_same_external_job(project, core_factory,
                 live = wait_for_state(client, run_id, RemoteExecutionState.running)
                 job_id = text(live.executionJobId)
                 assert gateway.submit_count == 1
-
-                gateway.online = False
-                wait_for_state(client, run_id, RemoteExecutionState.disconnected)
-                daemon.restart(crash=True)
-                client = daemon.connect()
-                assert client.call("RunStatusRequest", runId=run_id).state == RunState.failed
-                pending = wait_for_state(client, run_id, RemoteExecutionState.disconnected)
-                assert text(pending.executionJobId) == job_id
-
-                client.call("RunCancelRequest", runId=run_id)
-                gateway.online = True
-                finished = wait_for_state(client, run_id, RemoteExecutionState.cancelled)
-                assert finished.state == CardState.cancelled
-                assert text(finished.executionJobId) == job_id
-                assert gateway.submit_count == 1
+                yield gateway, daemon, client, run_id, job_id
             finally:
+                gateway.resume.set()
                 if daemon:
                     daemon.stop()
                 gateway.shutdown()
                 server.join()
+
+
+def assert_cancelled(client, gateway, run_id, job_id):
+    finished = wait_for_state(client, run_id, RemoteExecutionState.cancelled)
+    assert finished.state == CardState.cancelled
+    assert text(finished.executionJobId) == job_id
+    assert gateway.submit_count == 1
+
+
+def test_core_restart_reattaches_to_the_same_external_job(running_job):
+    """An unknown transport outcome remains pending, and cancellation survives reconnection."""
+    gateway, daemon, client, run_id, job_id = running_job
+    gateway.online = False
+    wait_for_state(client, run_id, RemoteExecutionState.disconnected)
+    daemon.restart(crash=True)
+    client = daemon.connect()
+    assert client.call("RunStatusRequest", runId=run_id).state == RunState.failed
+    pending = wait_for_state(client, run_id, RemoteExecutionState.disconnected)
+    assert text(pending.executionJobId) == job_id
+
+    client.call("RunCancelRequest", runId=run_id)
+    gateway.online = True
+    assert_cancelled(client, gateway, run_id, job_id)
+
+
+@pytest.mark.parametrize("mode,operation,request_cancel", [
+    ("blackhole", "cancel", True),
+    ("trickle", "status", True),
+    ("blackhole", "status", False),
+])
+def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, operation, request_cancel):
+    """SIGTERM stops waiting for SSH; only explicit cancellation survives as intent."""
+    gateway, daemon, client, run_id, job_id = running_job
+    gateway.stall_operation = operation
+    gateway.stall = mode
+    if request_cancel and operation == "cancel":
+        client.call("RunCancelRequest", runId=run_id)
+    assert gateway.stalled.wait(5)
+    if request_cancel and operation == "status":
+        client.call("RunCancelRequest", runId=run_id)
+    daemon.proc.send_signal(signal.SIGTERM)
+    assert daemon.proc.wait(timeout=5) == 0
+    assert gateway.receipts[job_id]["state"] == "running"
+
+    gateway.stall = None
+    gateway.resume.set()
+    daemon.restart()
+    client = daemon.connect()
+    if not request_cancel:
+        pending = wait_for_state(client, run_id, RemoteExecutionState.running)
+        assert text(pending.executionJobId) == job_id
+        assert gateway.receipts[job_id]["state"] == "running"
+        client.call("RunCancelRequest", runId=run_id)
+    assert_cancelled(client, gateway, run_id, job_id)

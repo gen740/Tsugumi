@@ -311,6 +311,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // Once finalize() has taken the final status it is on its way to the history:
     // a "cancelling" written now would land after it and stay as the run's state.
     if (interrupted) detaching_.store(true);
+    if (!interrupted && !summary_.status.terminal() && !finishing_) explicit_cancel_.store(true);
     if (!summary_.status.terminal() && !cancel_ && !finishing_) {
       cancel_ = true;
       interrupted_ = interrupted;
@@ -1205,6 +1206,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     auto& history = svc_.history();
     history.write_sync([&](sql::Db& db) {
       History::put_status(db, s);
+      // RunCancel sets the flag before its synchronous database update. An
+      // insertion ordered after that update must carry the same intent.
+      job.cancel_requested = explicit_cancel_.load();
       History::put_remote_job(db, job);
     });
     card_status(s);
@@ -1214,7 +1218,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     while (!detaching_.load()) {
       const auto before = s.execution_state;
       const bool accepted = job.accepted;
-      if (cancel_.load() && !job.cancel_requested) {
+      if (explicit_cancel_.load() && !job.cancel_requested) {
         job.cancel_requested = true;
         history.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
       }
@@ -1234,6 +1238,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         reply.reset();
         s.execution_state = RemoteExecutionState::disconnected;
       }
+      if (detaching_.load()) throw RemoteDetached{};
       if (s.execution_state != before || job.accepted != accepted) {
         job.invocation = s;
         history.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
@@ -1534,6 +1539,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   uint64_t token_seq_ = 0;
   std::vector<std::string> seed_notes_;  // journaled once the run has started
   std::atomic<bool> cancel_{false};
+  std::atomic<bool> explicit_cancel_{false};
   std::atomic<bool> detaching_{false};
   bool finishing_ = false;  // under mu_: the final status is decided, a cancel comes too late
   bool interrupted_ = false;
@@ -1919,13 +1925,15 @@ std::optional<RunStatusData> Scheduler::active_status() {
 }
 
 RunStatusData Scheduler::cancel(const std::string& run_id) {
-  svc_.history().write_sync([&](sql::Db& db) { History::cancel_remote_jobs(db, run_id); });
   std::shared_ptr<RunExec> exec;
   {
     std::lock_guard<std::mutex> l(mu_);
     if (active_ && active_->status().run_id == run_id) exec = active_;
   }
-  if (exec) return exec->request_cancel(false);
+  std::optional<RunStatusData> active;
+  if (exec) active = exec->request_cancel(false);
+  svc_.history().write_sync([&](sql::Db& db) { History::cancel_remote_jobs(db, run_id); });
+  if (active) return *active;
   auto r = svc_.history().read([&](sql::Db& db) { return History::run(db, run_id); });
   if (!r) throw Failed(FailureKind::not_found, "unknown run " + run_id, {{"run_id", run_id}});
   return r->status;
@@ -2060,16 +2068,14 @@ void Scheduler::finished(RunExec* exec) {
 
 void Scheduler::shutdown() {
   stop_recovery_.store(true);
-  if (remote_recovery_.joinable()) remote_recovery_.join();
   std::shared_ptr<RunExec> exec;
   {
     std::lock_guard<std::mutex> l(mu_);
     exec = active_;
   }
-  if (exec) {
-    exec->request_cancel(true);
-    exec->join();
-  }
+  if (exec) exec->request_cancel(true);
+  if (remote_recovery_.joinable()) remote_recovery_.join();
+  if (exec) exec->join();
   std::vector<std::thread> reapers;
   {
     std::lock_guard<std::mutex> l(mu_);

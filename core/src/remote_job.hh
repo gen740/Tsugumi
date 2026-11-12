@@ -49,6 +49,7 @@ class RemoteJobClient {
   RemoteJobClient();
 
   auto enabled() const -> bool { return !endpoint_.empty(); }
+  auto stop() -> void { stopped_.store(true); }
   auto catalog() const -> std::vector<RemoteTarget>;
   auto probe(std::string_view service) const -> RemoteProbe;
   auto put_blob(std::string_view service, std::string_view instance, std::string_view digest, uint64_t size,
@@ -65,10 +66,9 @@ class RemoteJobClient {
                std::string_view digest = {}, uint64_t size = 0, std::istream* body = nullptr,
                std::ostream* destination = nullptr, uint64_t limit = 0,
                const std::atomic<bool>* cancel = nullptr) const -> Reply;
-  auto connect() const -> int;
-
   std::string endpoint_;
   std::filesystem::path token_file_;
+  std::atomic<bool> stopped_{false};
 };
 
 }  // namespace tsugumi

@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
@@ -27,64 +28,107 @@ namespace {
 
 constexpr uint32_t kProtocolVersion = 1;
 constexpr uint32_t kMaxHeaderBytes = 64 * 1024;
-constexpr int kConnectTimeoutMs = 5000;
-constexpr int kIoTimeoutSeconds = 30;
+using Clock = std::chrono::steady_clock;
+using namespace std::chrono_literals;
+constexpr auto kConnectTimeout = 5s;
+constexpr auto kControlTimeout = 30s;
+constexpr auto kIdleTimeout = 30s;
+constexpr auto kTransferTimeout = 24h;
+constexpr auto kStopCheckInterval = 100ms;
+
+struct BrokerIo {
+  const std::atomic<bool>& stopped;
+  const std::atomic<bool>* cancel;
+  bool upload;
+
+  auto check(Clock::time_point deadline) const -> void {
+    if (stopped.load()) throw BrokerDisconnected("execution broker stopped for shutdown");
+    if (cancel && cancel->load()) {
+      if (upload) throw Failed(FailureKind::cancelled, "remote upload cancelled");
+      throw BrokerDisconnected("remote download paused for shutdown");
+    }
+    if (Clock::now() >= deadline) throw BrokerDisconnected("execution broker deadline exceeded");
+  }
+
+  auto wait(int fd, short events, Clock::time_point deadline) const -> void {
+    for (;;) {
+      check(deadline);
+      const auto remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - Clock::now());
+      const auto wait_for = std::clamp(remaining, 0ms, kStopCheckInterval);
+      pollfd ready{fd, events, 0};
+      const int n = ::poll(&ready, 1, static_cast<int>(wait_for.count()));
+      if (n > 0) return;
+      if (n < 0 && errno != EINTR) throw BrokerDisconnected("execution broker socket poll failed");
+    }
+  }
+};
 
 struct Connection {
   int fd;
-  ~Connection() { ::close(fd); }
+  ~Connection() { if (fd >= 0) ::close(fd); }
 };
 
-auto socket_for(int family, const sockaddr* address, socklen_t length) -> int {
+auto socket_for(int family, const sockaddr* address, socklen_t length, const BrokerIo& io,
+                Clock::time_point deadline) -> int {
+  io.check(deadline);
   const int fd = ::socket(family, SOCK_STREAM, 0);
   if (fd < 0) throw BrokerDisconnected("cannot open execution broker socket");
-  ::fcntl(fd, F_SETFD, FD_CLOEXEC);
-  ::fcntl(fd, F_SETFL, O_NONBLOCK);
+  Connection socket{fd};
+  if (::fcntl(fd, F_SETFD, FD_CLOEXEC) < 0 || ::fcntl(fd, F_SETFL, O_NONBLOCK) < 0)
+    throw BrokerDisconnected("cannot configure execution broker socket");
 #ifdef SO_NOSIGPIPE
   const int no_sigpipe = 1;
   ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof no_sigpipe);
 #endif
   bool connected = ::connect(fd, address, length) == 0;
   if (!connected && errno == EINPROGRESS) {
-    pollfd ready{fd, POLLOUT, 0};
-    if (::poll(&ready, 1, kConnectTimeoutMs) > 0) {
-      int error = 0;
-      socklen_t size = sizeof error;
-      connected = ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size) == 0 && error == 0;
-    }
+    io.wait(fd, POLLOUT, deadline);
+    int error = 0;
+    socklen_t size = sizeof error;
+    connected = ::getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &size) == 0 && error == 0;
   }
-  if (!connected) {
-    ::close(fd);
-    throw BrokerDisconnected("cannot connect to execution broker");
-  }
-  ::fcntl(fd, F_SETFL, 0);
-  const timeval timeout{kIoTimeoutSeconds, 0};
-  ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
-  ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
+  if (!connected) throw BrokerDisconnected("cannot connect to execution broker");
+  socket.fd = -1;
   return fd;
 }
 
-auto send_exact(int fd, std::string_view bytes) -> void {
+auto send_exact(int fd, std::string_view bytes, const BrokerIo& io, Clock::time_point deadline) -> void {
 #ifdef MSG_NOSIGNAL
   constexpr int flags = MSG_NOSIGNAL;
 #else
   constexpr int flags = 0;
 #endif
+  auto idle = Clock::now() + kIdleTimeout;
   while (!bytes.empty()) {
+    const auto limit = std::min(deadline, idle);
+    io.check(limit);
     const ssize_t n = ::send(fd, bytes.data(), bytes.size(), flags);
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      io.wait(fd, POLLOUT, limit);
+      continue;
+    }
     if (n < 0 && errno == EINTR) continue;
     if (n <= 0) throw BrokerDisconnected("execution broker disconnected during request");
     bytes.remove_prefix(static_cast<size_t>(n));
+    idle = Clock::now() + kIdleTimeout;
   }
 }
 
-auto read_exact(int fd, char* out, size_t size) -> void {
+auto read_exact(int fd, char* out, size_t size, const BrokerIo& io, Clock::time_point deadline) -> void {
+  auto idle = Clock::now() + kIdleTimeout;
   while (size > 0) {
+    const auto limit = std::min(deadline, idle);
+    io.check(limit);
     const ssize_t n = ::read(fd, out, size);
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      io.wait(fd, POLLIN, limit);
+      continue;
+    }
     if (n < 0 && errno == EINTR) continue;
     if (n <= 0) throw BrokerDisconnected("execution broker disconnected during response");
     out += n;
     size -= static_cast<size_t>(n);
+    idle = Clock::now() + kIdleTimeout;
   }
 }
 
@@ -134,37 +178,48 @@ RemoteJobClient::RemoteJobClient()
     : endpoint_(environment("TSUGUMI_EXECUTION_BROKER")),
       token_file_(environment("TSUGUMI_EXECUTION_BROKER_TOKEN_FILE")) {}
 
-auto RemoteJobClient::connect() const -> int {
-  if (endpoint_.starts_with("unix:")) {
-    const std::string_view path = std::string_view(endpoint_).substr(5);
+namespace {
+
+auto connect_broker(std::string_view endpoint, [[maybe_unused]] bool has_token, const BrokerIo& io,
+                    Clock::time_point deadline) -> int {
+  if (endpoint.starts_with("unix:")) {
+    const std::string_view path = endpoint.substr(5);
     sockaddr_un address{};
     if (path.empty() || path.front() != '/' || path.size() >= sizeof address.sun_path)
       throw BrokerDisconnected("invalid execution broker Unix socket path");
     address.sun_family = AF_UNIX;
     std::memcpy(address.sun_path, path.data(), path.size());
-    return socket_for(AF_UNIX, reinterpret_cast<const sockaddr*>(&address), sizeof address);
+    return socket_for(AF_UNIX, reinterpret_cast<const sockaddr*>(&address), sizeof address, io, deadline);
   }
 #if defined(__linux__)
-  if (endpoint_.starts_with("vsock:")) {
-    const std::string_view text = std::string_view(endpoint_).substr(6);
+  if (endpoint.starts_with("vsock:")) {
+    const std::string_view text = endpoint.substr(6);
     uint32_t port = 0;
     auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), port);
-    if (ec != std::errc{} || end != text.data() + text.size() || port == 0 || token_file_.empty())
+    if (ec != std::errc{} || end != text.data() + text.size() || port == 0 || !has_token)
       throw BrokerDisconnected("invalid authenticated execution broker vsock endpoint");
     sockaddr_vm address{};
     address.svm_family = AF_VSOCK;
     address.svm_cid = VMADDR_CID_HOST;
     address.svm_port = port;
-    return socket_for(AF_VSOCK, reinterpret_cast<const sockaddr*>(&address), sizeof address);
+    return socket_for(AF_VSOCK, reinterpret_cast<const sockaddr*>(&address), sizeof address, io, deadline);
   }
 #endif
   throw BrokerDisconnected("no execution broker endpoint is configured");
 }
 
+}  // namespace
+
 auto RemoteJobClient::request(std::string_view operation, std::string_view service, std::string_view instance,
                               std::string_view job_id, std::string_view digest, uint64_t size, std::istream* body,
                               std::ostream* destination, uint64_t limit, const std::atomic<bool>* cancel) const -> Reply {
-  Connection socket{connect()};
+  const bool uploading = operation == "put_blob";
+  const BrokerIo io{stopped_, cancel, uploading};
+  const auto start = Clock::now();
+  // Control frames have a fixed deadline even if the peer trickles bytes.
+  // Blob bodies can take longer, provided the socket keeps making progress.
+  const auto deadline = start + ((uploading || destination) ? kTransferTimeout : kControlTimeout);
+  Connection socket{connect_broker(endpoint_, !token_file_.empty(), io, start + kConnectTimeout)};
   const auto version = schema::capture(std::to_string(kProtocolVersion));
   const auto name = schema::string_value(std::string(operation));
   const auto id = schema::string_value(std::string(service));
@@ -190,26 +245,28 @@ auto RemoteJobClient::request(std::string_view operation, std::string_view servi
   const std::string header = schema::object_text(fields);
   if (header.size() > kMaxHeaderBytes) throw std::runtime_error("execution broker request header exceeds its limit");
   const uint32_t wire_size = htonl(static_cast<uint32_t>(header.size()));
-  send_exact(socket.fd, {reinterpret_cast<const char*>(&wire_size), sizeof wire_size});
-  send_exact(socket.fd, header);
+  const auto request_deadline = std::min(deadline, Clock::now() + kControlTimeout);
+  send_exact(socket.fd, {reinterpret_cast<const char*>(&wire_size), sizeof wire_size}, io, request_deadline);
+  send_exact(socket.fd, header, io, request_deadline);
   std::array<char, 64 * 1024> buffer{};
   while (body && size > 0) {
-    if (cancel && cancel->load()) throw Failed(FailureKind::cancelled, "remote upload cancelled");
+    io.check(deadline);
     const auto n = static_cast<std::streamsize>(std::min<uint64_t>(size, buffer.size()));
     body->read(buffer.data(), n);
     if (body->gcount() != n) throw std::runtime_error("execution broker request body is truncated");
-    send_exact(socket.fd, {buffer.data(), static_cast<size_t>(n)});
+    send_exact(socket.fd, {buffer.data(), static_cast<size_t>(n)}, io, deadline);
     size -= static_cast<uint64_t>(n);
   }
   // Close the request stream while leaving the SSH response readable.
   ::shutdown(socket.fd, SHUT_WR);
   uint32_t response_size = 0;
-  read_exact(socket.fd, reinterpret_cast<char*>(&response_size), sizeof response_size);
+  const auto response_deadline = std::min(deadline, Clock::now() + kControlTimeout);
+  read_exact(socket.fd, reinterpret_cast<char*>(&response_size), sizeof response_size, io, response_deadline);
   response_size = ntohl(response_size);
   if (response_size == 0 || response_size > kMaxHeaderBytes)
     throw BrokerDisconnected("invalid execution broker response header length");
   std::string response(response_size, '\0');
-  read_exact(socket.fd, response.data(), response.size());
+  read_exact(socket.fd, response.data(), response.size(), io, response_deadline);
   Reply reply;
   const auto invalid = schema::decode(response, reply);
   const auto* protocol = schema::get(reply.version);
@@ -228,9 +285,8 @@ auto RemoteJobClient::request(std::string_view operation, std::string_view servi
     crypto::Sha256 hash_check;
     uint64_t remaining = *incoming;
     while (remaining > 0) {
-      if (cancel && cancel->load()) throw BrokerDisconnected("remote download paused for shutdown");
       const size_t n = std::min<uint64_t>(remaining, buffer.size());
-      read_exact(socket.fd, buffer.data(), n);
+      read_exact(socket.fd, buffer.data(), n, io, deadline);
       hash_check.update(buffer.data(), n);
       destination->write(buffer.data(), static_cast<std::streamsize>(n));
       if (!*destination) throw std::runtime_error("cannot store execution broker blob");

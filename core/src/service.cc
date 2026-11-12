@@ -269,6 +269,7 @@ auto Service::execution_diagnostic(const Node& node, const std::vector<RemoteTar
 }
 
 void Service::shutdown() {
+  remote_jobs_.stop();
   {
     std::lock_guard lock(shell_mu_);
     shell_stopping_ = true;
