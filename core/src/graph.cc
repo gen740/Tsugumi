@@ -855,6 +855,13 @@ class Builder {
         for (const auto& part : path_from_key(name)) target.push_back(part);
         std::string key = path_key(target);
         auto found = res_->index.find(key);
+        const bool valid = (!local || target.size() == n.path.size()) && target != n.path &&
+                           found != res_->index.end() &&
+                           std::find(allowed.begin(), allowed.end(), found->second) != allowed.end();
+        if (std::none_of(n.nix_references.begin(), n.nix_references.end(), [&](const auto& ref) {
+              return ref.local == local && ref.name == name;
+            }))
+          n.nix_references.push_back({target, name, local, valid});
         if (local && target.size() != n.path.size()) {
           n.diags.push_back(diag(n.path, "nix_reference_unknown",
                                  "default.nix references local." + name + ", but local names a Card of this level only (use upstream.\"" +

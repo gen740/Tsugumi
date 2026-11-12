@@ -124,6 +124,44 @@ A Card's summary goes in `_meta.json`. It appears on the Canvas and in the Card'
 
 The environment goes in `default.nix`. To use `numpy` and the like, add `packages = ps: [ ps.numpy ];` to `pythonCard`.
 
+A package that nixpkgs does not have, or a version it does not carry, comes from PyPI through a lock that belongs to the Card. Nothing is resolved when a Card is built: a Card uses PyPI packages only when its `default.nix` names both the lock and the hash of what the lock fetches.
+
+1. Put a `pyproject.toml` in the Card's folder, beside `default.nix`:
+
+   ```toml
+   [project]
+   name = "card"
+   version = "0"
+   requires-python = ">=3.11"
+   dependencies = ["tabulate==0.9.0"]
+   ```
+
+2. Make `uv.lock` beside it. In the project's terminal (the lock is made by uv, which needs the network once):
+
+   ```sh
+   cd definitions/multiply
+   nix shell nixpkgs#uv nixpkgs#python3 --command env UV_PYTHON_DOWNLOADS=never uv lock
+   ```
+
+3. Name the lock in `default.nix`, with a placeholder hash:
+
+   ```nix
+   run = inputs.tsugumi.pythonCard {
+     inherit sdk;
+     src = ./src;
+     lock = ./uv.lock;
+     hash = pkgs.lib.fakeHash;
+   };
+   ```
+
+4. Run the Card once. The Card’s build log reports `hash mismatch ... got: sha256-...`. Replace `pkgs.lib.fakeHash` with that hash (`hash = "sha256-...";`) and run again.
+
+From then on the Card is built from exactly those files, without the network. To change a dependency, edit `pyproject.toml`, repeat steps 2 to 4, and keep `pyproject.toml`, `uv.lock` and `default.nix` together in the Card's folder. A lock that no longer matches `pyproject.toml`, a lock without a hash and a hash that does not match are errors that say so; an old hash never lets the previous packages through.
+
+- Only wheels are installed. A package that has no wheel for the Card's Python and system fails with a message; take such a package from nixpkgs with `packages`. `packages` and `lock` can be used together, and a locked package wins over one of the same name from nixpkgs.
+- Compiled wheels differ per system, so their hash does too. Give one per system the Card is built for: `hash = { aarch64-linux = "sha256-..."; x86_64-linux = "sha256-..."; };`.
+- A compiled wheel that loads a shared library beyond the C and C++ runtimes and zlib gets it from `libraries = [ pkgs.libGL ];`.
+
 `definitions/multiply/default.nix`
 
 ```nix

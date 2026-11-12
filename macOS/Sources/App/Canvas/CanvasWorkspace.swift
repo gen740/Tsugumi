@@ -51,6 +51,7 @@ struct CanvasWorkspace: View {
     .overlay(alignment: .bottom) {
       HStack(alignment: .bottom, spacing: 8) {
         viewControls.fixedSize()
+        NixReferenceControls(session: session, tab: tab).fixedSize()
         Spacer(minLength: 0)
         StatusBar(workspace: workspace, session: session, tab: tab)
       }
