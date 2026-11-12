@@ -38,9 +38,7 @@ module Tsugumi
     when Array then value.map { |item| json_value(item, depth + 1) }
     when String then text(value)
     when Integer, TrueClass, FalseClass, NilClass then value
-    when Float
-      raise ArgumentError, 'non-finite numbers cannot be emitted as JSON' unless value.finite?
-      value
+    when Float then value # NaN and the infinities cross as the JSON face spells them
     else
       raise ArgumentError, "unsupported value #{value.class}; use a Hash, Array or #to_h value object" unless value.respond_to?(:to_h)
       object = value.to_h
@@ -54,10 +52,10 @@ module Tsugumi
       @owner = Thread.current
       @lifetime = { active: true }
       @info = TsugumiHost.info.freeze
-      @params = JSON.parse(TsugumiHost.params)
+      @params = JSON.parse(TsugumiHost.params, allow_nan: true)
       @inputs, @kinds = {}, {}
       TsugumiHost.inputs.each do |name, kind, json|
-        @inputs[name] = JSON.parse(json)
+        @inputs[name] = JSON.parse(json, allow_nan: true)
         @kinds[name] = kind
       end
     end
@@ -98,7 +96,7 @@ module Tsugumi
       check
       value = Tsugumi.json_value(value)
       raise ArgumentError, 'an output message must be a Hash or #to_h value object; omit the call to leave a port unproduced' unless value.is_a?(Hash)
-      TsugumiHost.output(name.to_s, JSON.generate(value))
+      TsugumiHost.output(name.to_s, JSON.generate(value, allow_nan: true))
     rescue ArgumentError, JSON::GeneratorError => e
       raise Failure.new('output_invalid', e.message)
     end
@@ -117,6 +115,32 @@ module Tsugumi
       check
       raise ArgumentError, 'display scalar must be a finite number' unless value.is_a?(Numeric) && value.finite?
       TsugumiHost.display_scalar(value, Tsugumi.text(label))
+    end
+
+    # series: [{ id:, label:, x: [...], y: [...] }, ...]; label defaults to id.
+    def display_line_chart(series)
+      check
+      rows = series.map do |one|
+        one = one.to_h.transform_keys(&:to_s)
+        id = Tsugumi.text(one.fetch('id').to_s)
+        x = one.fetch('x').map { |v| Float(v) }
+        y = one.fetch('y').map { |v| Float(v) }
+        raise ArgumentError, "series #{id}: x and y differ in length" unless x.length == y.length
+        [id, Tsugumi.text((one['label'] || id).to_s), x.pack('d*'), y.pack('d*')]
+      end
+      TsugumiHost.display_line_chart(rows)
+    end
+
+    # A 3D point cloud; colors are 0xRRGGBB integers, one per point, or nil.
+    def display_points(x, y, z, colors = nil)
+      check
+      x, y, z = [x, y, z].map { |axis| axis.map { |v| Float(v) } }
+      raise ArgumentError, 'x, y and z differ in length' unless x.length == y.length && y.length == z.length
+      unless colors.nil?
+        colors = colors.map { |c| Integer(c) }
+        raise ArgumentError, 'colors need one 0xRRGGBB value per point' unless colors.length == x.length && colors.all? { |c| c.between?(0, 0xFFFFFF) }
+      end
+      TsugumiHost.display_points(x.pack('f*'), y.pack('f*'), z.pack('f*'), colors&.pack('L*'))
     end
 
     def display_table(columns, rows)

@@ -135,7 +135,7 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
   The worker loads the built shared library `lib/main.so` into memory and calls it directly (no process is started per invocation).
 - **Python**: implement `main(ctx)` and, optionally, the initialisation hook `on_run_start(ctx)`.
 - **bash**: inputs arrive per port as `JSON_P` (the path of a JSON file) / `FILE_P` / `DIR_P`; the JSON written to `$TSUGUMI_OUTPUT` is the output, type-checked per port.
-- **Ruby** (`rubyCard`): MRI runs in the package worker with typed Hash/Array values, exact 64-bit integers, live displays and resident state. Gemfile.lock and gemset.nix pin gems and native extensions at build time. [The Card guide](../agent/Reference/card-guide.md#ruby-srcmainrb) describes the API.
+- **Ruby** (`rubyCard`): MRI runs in the package worker with typed Hash/Array values, exact 64-bit integers, live displays and resident state. The Card can name a Gemfile.lock and the hash of its gem files to pin its dependencies at build time. [The Card guide](../agent/Reference/card-guide.md#ruby-srcmainrb) describes the API.
 - **R and Julia** (`rCard`, `juliaCard`): inputs and outputs are passed converted to JSON. A process is started per invocation, so resident workers do not help them. How to write them is in [Your first Card](CardGuide.md).
 - What does not depend on the port contract (visualisation, logs, the run context) is gathered in the common runtime `libtsugumi_card.so`, so all that is built per Card is the type definitions and a thin adapter.
 

@@ -8,9 +8,9 @@
 
 #include "tsugumi/sdk/abi.h"
 
-const char* tsugumi_ruby_decode(const char*, const char*, const uint8_t*, size_t);
-const char* tsugumi_ruby_json_error(void);
-int tsugumi_ruby_emit(const tsugumi_call*, const char*, const char*);
+const char* tsugumi_json_decode(const char*, const char*, const uint8_t*, size_t);
+const char* tsugumi_json_error(void);
+int tsugumi_json_emit(const tsugumi_call*, const char*, const char*);
 
 static const tsugumi_call* current = NULL;
 static VALUE sdk = Qnil, owner = Qnil;
@@ -42,8 +42,8 @@ static VALUE host_inputs(VALUE self) {
   VALUE all = rb_ary_new();
   for (size_t i = 0; i < current->input_count; ++i) {
     const tsugumi_value* v = &current->inputs[i];
-    const char* json = tsugumi_ruby_decode("inputs", v->name, v->data, v->size);
-    if (!json) rb_raise(rb_eRuntimeError, "%s", tsugumi_ruby_json_error());
+    const char* json = tsugumi_json_decode("inputs", v->name, v->data, v->size);
+    if (!json) rb_raise(rb_eRuntimeError, "%s", tsugumi_json_error());
     VALUE entry = rb_ary_new_from_args(3, string(v->name), UINT2NUM(v->kind), string(json));
     rb_ary_push(all, entry);
   }
@@ -52,8 +52,8 @@ static VALUE host_inputs(VALUE self) {
 
 static VALUE host_params(VALUE self) {
   require_call();
-  const char* json = tsugumi_ruby_decode("params", "", current->params, current->params_size);
-  if (!json) rb_raise(rb_eRuntimeError, "%s", tsugumi_ruby_json_error());
+  const char* json = tsugumi_json_decode("params", "", current->params, current->params_size);
+  if (!json) rb_raise(rb_eRuntimeError, "%s", tsugumi_json_error());
   return string(json);
 }
 
@@ -61,7 +61,7 @@ static VALUE host_output(VALUE self, VALUE port, VALUE json) {
   require_call();
   const char* name = StringValueCStr(port);
   const char* value = StringValueCStr(json);
-  if (tsugumi_ruby_emit(current, name, value)) rb_raise(rb_eArgError, "%s", tsugumi_ruby_json_error());
+  if (tsugumi_json_emit(current, name, value)) rb_raise(rb_eArgError, "%s", tsugumi_json_error());
   return Qnil;
 }
 
@@ -130,6 +130,82 @@ static VALUE host_table(VALUE self, VALUE columns, VALUE rows) {
   free(cells);
   return Qnil;
 }
+/* rows: [[id, label, x, y], ...] with x and y packed as native doubles. The
+ * numbers are copied out, so alignment and the GC do not matter to the host. */
+static VALUE host_line_chart(VALUE self, VALUE rows) {
+  require_call();
+  Check_Type(rows, T_ARRAY);
+  long n = RARRAY_LEN(rows);
+  if (n > 10000) rb_raise(rb_eArgError, "display line chart has too many series");
+  size_t total = 0;
+  for (long i = 0; i < n; ++i) {
+    VALUE row = rb_ary_entry(rows, i);
+    Check_Type(row, T_ARRAY);
+    if (RARRAY_LEN(row) != 4) rb_raise(rb_eArgError, "a series is id, label, x and y");
+    for (long j = 0; j < 4; ++j) Check_Type(rb_ary_entry(row, j), T_STRING);
+    VALUE id = rb_ary_entry(row, 0), label = rb_ary_entry(row, 1);
+    StringValueCStr(id);
+    StringValueCStr(label);
+    long x = RSTRING_LEN(rb_ary_entry(row, 2)), y = RSTRING_LEN(rb_ary_entry(row, 3));
+    if (x != y || x % (long)sizeof(double)) rb_raise(rb_eArgError, "series x and y differ in length");
+    total += (size_t)x / sizeof(double);
+  }
+  tsugumi_series* series = calloc((size_t)n + 1, sizeof(tsugumi_series));
+  double* numbers = calloc(2 * total + 1, sizeof(double));
+  if (!series || !numbers) {
+    free(series);
+    free(numbers);
+    rb_memerror();
+  }
+  double* next = numbers;
+  for (long i = 0; i < n; ++i) {
+    VALUE row = rb_ary_entry(rows, i);
+    size_t count = (size_t)RSTRING_LEN(rb_ary_entry(row, 2)) / sizeof(double);
+    series[i].id = RSTRING_PTR(rb_ary_entry(row, 0));
+    series[i].label = RSTRING_PTR(rb_ary_entry(row, 1));
+    series[i].count = count;
+    series[i].x = next;
+    if (count) memcpy(next, RSTRING_PTR(rb_ary_entry(row, 2)), count * sizeof(double));
+    next += count;
+    series[i].y = next;
+    if (count) memcpy(next, RSTRING_PTR(rb_ary_entry(row, 3)), count * sizeof(double));
+    next += count;
+  }
+  current->display_line_chart(current->host, series, (size_t)n);
+  free(series);
+  free(numbers);
+  return Qnil;
+}
+/* x, y, z packed as native floats; colors packed as uint32, or nil. */
+static VALUE host_points(VALUE self, VALUE x, VALUE y, VALUE z, VALUE colors) {
+  require_call();
+  Check_Type(x, T_STRING);
+  Check_Type(y, T_STRING);
+  Check_Type(z, T_STRING);
+  if (!NIL_P(colors)) Check_Type(colors, T_STRING);
+  long bytes = RSTRING_LEN(x);
+  if (bytes % (long)sizeof(float) || RSTRING_LEN(y) != bytes || RSTRING_LEN(z) != bytes ||
+      (!NIL_P(colors) && RSTRING_LEN(colors) != bytes))
+    rb_raise(rb_eArgError, "points need x, y, z (and colors) of one length");
+  size_t count = (size_t)bytes / sizeof(float);
+  float* p = calloc(3 * count + 1, sizeof(float));
+  uint32_t* c = NIL_P(colors) ? NULL : calloc(count + 1, sizeof(uint32_t));
+  if (!p || (!NIL_P(colors) && !c)) {
+    free(p);
+    free(c);
+    rb_memerror();
+  }
+  if (count) {
+    memcpy(p, RSTRING_PTR(x), (size_t)bytes);
+    memcpy(p + count, RSTRING_PTR(y), (size_t)bytes);
+    memcpy(p + 2 * count, RSTRING_PTR(z), (size_t)bytes);
+    if (c) memcpy(c, RSTRING_PTR(colors), (size_t)bytes);
+  }
+  current->display_points(current->host, p, p + count, p + 2 * count, c, count);
+  free(p);
+  free(c);
+  return Qnil;
+}
 static VALUE host_log(VALUE self, VALUE message) {
   require_call();
   current->log(current->host, StringValueCStr(message));
@@ -162,6 +238,8 @@ static VALUE initialize(VALUE ignored) {
   METHOD("display_module", host_module, 2);
   METHOD("display_image", host_image, 3);
   METHOD("display_table", host_table, 2);
+  METHOD("display_line_chart", host_line_chart, 1);
+  METHOD("display_points", host_points, 4);
   METHOD("log", host_log, 1);
   METHOD("cancelled?", host_cancelled, 0);
   METHOD("remaining_ms", host_remaining, 0);
@@ -172,7 +250,7 @@ static VALUE initialize(VALUE ignored) {
   rb_gc_register_address(&sdk);
   rb_ary_unshift(rb_gv_get("$LOAD_PATH"), string(TSUGUMI_RUBY_SDK));
   rb_require("rubygems");
-  if (TSUGUMI_RUBY_GEMFILE[0]) rb_require("bundler/setup");
+  if (TSUGUMI_RUBY_BUNDLE[0]) rb_require("bundler/setup");
   rb_require("tsugumi");
   sdk = rb_const_get(rb_cObject, rb_intern("Tsugumi"));
   return rb_funcall(sdk, rb_intern("_load"), 1, string(TSUGUMI_RUBY_CARD));
@@ -189,14 +267,18 @@ static int ensure_ruby(void) {
   if (!dlopen(TSUGUMI_LIBRUBY, RTLD_NOW | RTLD_GLOBAL)) return 0;
   unsetenv("RUBYOPT");
   unsetenv("RUBYLIB");
-  if (TSUGUMI_RUBY_GEMS[0]) {
-    setenv("GEM_HOME", TSUGUMI_RUBY_GEMS, 1);
-    setenv("GEM_PATH", TSUGUMI_RUBY_GEMS, 1);
-  }
-  if (TSUGUMI_RUBY_GEMFILE[0]) {
-    setenv("BUNDLE_GEMFILE", TSUGUMI_RUBY_GEMFILE, 1);
+  /* A Card with a lock sees exactly its locked bundle; any other Card sees
+   * only the gems that come with this Ruby. */
+  setenv("GEM_HOME", TSUGUMI_RUBY_GEMS, 1);
+  setenv("GEM_PATH", TSUGUMI_RUBY_GEMS, 1);
+  if (TSUGUMI_RUBY_BUNDLE[0]) {
+    setenv("BUNDLE_GEMFILE", TSUGUMI_RUBY_BUNDLE "/Gemfile", 1);
+    setenv("BUNDLE_PATH", TSUGUMI_RUBY_BUNDLE "/installed", 1);
+    setenv("BUNDLE_APP_CONFIG", TSUGUMI_RUBY_BUNDLE "/no-config", 1);
     setenv("BUNDLE_FROZEN", "true", 1);
-    setenv("BUNDLE_IGNORE_CONFIG", "true", 1);
+    setenv("BUNDLE_FORCE_RUBY_PLATFORM", "true", 1);
+    setenv("BUNDLE_DISABLE_VERSION_CHECK", "true", 1);
+    setenv("BUNDLE_VERSION", "system", 1); /* never fetch the lock's Bundler */
   }
   int argc = 1;
   char name[] = "tsugumi-ruby";

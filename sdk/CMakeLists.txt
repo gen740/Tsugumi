@@ -10,7 +10,7 @@ install(DIRECTORY python/ DESTINATION share/tsugumi/sdk/python)
 install(DIRECTORY r/ DESTINATION share/tsugumi/sdk/r)
 install(DIRECTORY julia/ DESTINATION share/tsugumi/sdk/julia)
 install(DIRECTORY ruby/ DESTINATION share/tsugumi/sdk/ruby)
-install(FILES src/python_main.c src/card_runtime.cc src/worker_main.cc src/ruby_main.c src/ruby_json.cc DESTINATION share/tsugumi/sdk/src)
+install(FILES src/python_main.c src/card_runtime.cc src/worker_main.cc src/ruby_main.c src/json_face.cc DESTINATION share/tsugumi/sdk/src)
 # What else the worker is built from, for a Card of another system: its Nix
 # build (sdk/nix/default.nix, `worker`) compiles the worker from these with
 # the Card's own nixpkgs, so the worker and the Card's main.so share one libc.

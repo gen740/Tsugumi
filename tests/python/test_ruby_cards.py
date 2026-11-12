@@ -1,14 +1,17 @@
 """MRI package Cards use the existing ABI, with typed ports and resident state."""
 import json
 import os
+import shutil
 import time
 
 import pytest
 
-from conftest import Daemon, real_environment
+from conftest import ROOT, Daemon, real_environment
 from projects import run_and_wait, start_run, wait_run
-from test_language_cards import write_project
+from test_language_cards import project, write_project
 from tsugumi_client import path, text
+from Tsugumi.Data.FailureKind import FailureKind
+from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
 
 IN_VM = os.environ.get("TSUGUMI_TEST_CONTAINER") == "1"
@@ -217,38 +220,76 @@ def test_ruby_deadline_and_cancel_leave_next_run_working(ruby_project, cancel):
     assert status.state == (RunState.cancelled if cancel else RunState.failed)
     if not cancel:
         record = c.call('RunRecordRequest', runId=rid, card=path('ruby')).record
-        assert record.summary.failure.kind == 14
+        assert record.summary.failure.kind == FailureKind.timeout
     _, status = run_and_wait(c, 'good', timeout=300)
     assert status.state == RunState.succeeded
 
 
-@pytest.mark.parametrize('locked_version', ['3.3.1', '99.0.0'])
-def test_ruby_gems_are_locked_built_offline_and_native_extensions_load(ruby_project, locked_version):
-    _, connect = ruby_project
-    card = ruby("require 'bigdecimal'\ndef main(ctx); ctx.display_text(BigDecimal('0.1').add(BigDecimal('0.2'), 20).to_s('F')); end")
-    card['nix'] = RUBY_NIX.replace('inherit sdk; src = ./src;', 'inherit sdk; src = ./src; gemdir = ./src/gems;')
+COLORIZE_HASH = "sha256-pINRA2ThhG24fQ1Ewj7K4pmEE/ytgPxSlRQtTKOoLdY="
+
+
+def colorize_card(arguments, requirement="1.1.0"):
+    card = ruby("""require 'colorize'
+require 'socket'
+def main(ctx)
+  spec = Gem.loaded_specs.fetch('colorize')
+  raise "gem came from #{spec.full_gem_path}" unless spec.full_gem_path.include?('tsugumi-ruby-card-gems')
+  begin
+    Socket.tcp('1.1.1.1', 443, connect_timeout: 3).close
+  rescue SystemCallError, IOError
+    ctx.display_text("offline #{spec.version}")
+  else
+    raise 'network was available'
+  end
+end""")
+    card['nix'] = RUBY_NIX.replace('src = ./src;', f'src = ./src; {arguments}')
     card['src'].update({
-        'gems/Gemfile': f'source "https://rubygems.org"\ngem "bigdecimal", "{locked_version}"\n',
-        'gems/Gemfile.lock': f'GEM\n  remote: https://rubygems.org/\n  specs:\n    bigdecimal ({locked_version})\n\nPLATFORMS\n  ruby\n\nDEPENDENCIES\n  bigdecimal (= {locked_version})\n\nBUNDLED WITH\n   2.6.9\n',
-        'gems/gemset.nix': '''{ bigdecimal = {
-          groups = [ "default" ]; platforms = [];
-          source = { remotes = [ "https://rubygems.org" ]; type = "gem";
-            sha256 = "0612spks81fvpv2zrrv3371lbs6mwd7w6g5zafglyk75ici1x87a"; };
-          version = "3.3.1";
-        }; }''',
+        'gems/Gemfile': f'source "https://rubygems.org"\ngem "colorize", "{requirement}"\n',
+        'gems/Gemfile.lock': """GEM
+  remote: https://rubygems.org/
+  specs:
+    colorize (1.1.0)
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  colorize (= 1.1.0)
+
+BUNDLED WITH
+   2.6.9
+""",
     })
-    c = connect({'ruby': card})
+    return card
+
+
+def test_ruby_gems_are_locked_and_loaded_without_network(ruby_project):
+    _, connect = ruby_project
+    c = connect({'ruby': colorize_card(f'lock = ./src/gems/Gemfile.lock; hash = "{COLORIZE_HASH}";')})
     rid, status = run_and_wait(c, 'ruby', timeout=600)
-    if locked_version == '3.3.1':
-        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-        assert text(shown(c, rid).text) == '0.3'
-    else:
-        assert status.state == RunState.failed
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    assert text(shown(c, rid).text) == 'offline 1.1.0'
+
+
+@pytest.mark.parametrize(('arguments', 'requirement', 'message'), [
+    ('lock = ./src/gems/Gemfile.lock;', "1.1.0", "gems need both"),
+    ('lock = ./src/gems/Gemfile.lock; hash = pkgs.lib.fakeHash;', "1.1.0", "hash mismatch"),
+    (f'lock = ./src/gems/Gemfile.lock; hash = "{COLORIZE_HASH}";', "1.0.0", "does not match its Gemfile"),
+])
+def test_ruby_rejects_an_invalid_pin(ruby_project, arguments, requirement, message):
+    _, connect = ruby_project
+    c = connect({'ruby': colorize_card(arguments, requirement)})
+    rid, status = run_and_wait(c, 'ruby', timeout=600)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed
+    log = c.call('LogRangeRequest', runId=rid, card=path('ruby'), stream=LogStream.build, limitBytes=65536)
+    assert message in text(status.failure.diagnostic) + text(log.text)
 
 
 @pytest.mark.parametrize('expression,kind', [
     ("ctx.display_text('text')", 1),
     ("ctx.display_markdown('**bold**')", 1),
+    ("ctx.display_line_chart([{id: 'line', x: [1, 2], y: [2, 4]}])", 3),
+    ("ctx.display_points([1], [2], [3], [0xff00ff])", 6),
     ("ctx.display_image(['89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082'].pack('H*'), alt: 'pixel')", 5),
     ("ctx.display_plotly(data: [{x: [1], y: [2], type: 'scatter'}])", 7),
 ])
@@ -266,3 +307,35 @@ def test_ruby_display_bridge_owns_bytes(ruby_project, expression, kind):
         assert text(display.value.alt) == 'pixel'
     if kind == 7:
         assert json.loads(text(display.value.dataJson))['data'][0]['y'] == [2]
+
+@pytest.mark.parametrize(('source', 'message'), [
+    ('def main(ctx)\n', 'syntax error'),
+    ('def helper; end\n', 'main'),
+])
+def test_ruby_load_errors_are_structured(ruby_project, source, message):
+    _, connect = ruby_project
+    c = connect({'ruby': ruby(source)})
+    rid, status = run_and_wait(c, 'ruby', timeout=600)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.worker_failed
+    log = c.call('LogRangeRequest', runId=rid, card=path('ruby'), stream=LogStream.stderr, limitBytes=65536)
+    assert message in text(status.failure.diagnostic) + text(log.text)
+
+
+def test_ruby_rejects_an_unknown_output_field(ruby_project):
+    _, connect = ruby_project
+    card = ruby("def main(ctx); ctx.output('out', {vale: 42}); end", outputs=NUMBERS)
+    c = connect({'ruby': card})
+    rid, status = run_and_wait(c, 'ruby', timeout=600)
+    assert status.state == RunState.failed
+    log = c.call('LogRangeRequest', runId=rid, card=path('ruby'), stream=LogStream.stderr, limitBytes=65536)
+    assert 'vale' in text(status.failure.diagnostic) + text(log.text)
+
+
+@pytest.mark.parametrize('language', ['ja', 'en'])
+def test_bundled_ruby_pipeline_runs_in_the_sandbox(project, language):
+    root, connect = project
+    shutil.copytree(ROOT / 'demos' / language / 'ruby-pipeline', root)
+    c = connect()
+    rid, status = run_and_wait(c, 'start', timeout=1800)
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    assert text(shown(c, rid, 'cpp').text) == 'C++ received 42'

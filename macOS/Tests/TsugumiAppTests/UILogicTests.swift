@@ -630,6 +630,7 @@ private final class CountingRuler: LineNumberRuler {
   try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
   let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
   session.project = try JSONValue.parse(document)
+  #expect(BuiltinCardItems.written.contains(.ruby))  // offered in the canvas's "Add Card" menu
   let card = session.addCard(template: .ruby, in: [], at: .zero, name: "ruby")
   #expect(session.definitionDrafts[card]?.card["language"]?.string == "ruby")
   #expect(try await session.sourceText("definitions/\(card)/default.nix").contains("rubyCard"))

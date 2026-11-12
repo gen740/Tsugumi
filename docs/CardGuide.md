@@ -341,7 +341,7 @@ def main(ctx)
 end
 ```
 
-Use `gemdir` with a committed Gemfile, Gemfile.lock and bundix-generated gemset.nix for dependencies.
+For gems, keep a `Gemfile` and its `Gemfile.lock` together in the Card's directory. In the project terminal, run `bundle lock --add-platform ruby` from that directory. Add `lock = ./Gemfile.lock; hash = pkgs.lib.fakeHash;` to `rubyCard`. Run once and replace the placeholder with the fixed-output hash of the downloaded `.gem` files, reported as `got: sha256-…` in the Card's build log. The build then installs the locked gems offline. Native extensions can use libraries passed through `buildInputs`. When updating the Gemfile or lock, repeat the hash step.
 Native gems are built by Nix; the worker never installs them at runtime. See the
 [Ruby API](../agent/Reference/card-guide.md#ruby-srcmainrb) for files, displays and lifecycle details.
 

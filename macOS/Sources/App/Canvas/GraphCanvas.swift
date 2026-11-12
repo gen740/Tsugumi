@@ -1445,12 +1445,16 @@ struct ScrollCatcher: NSViewRepresentable {
 struct BuiltinCardItems: View {
   let add: (DefinitionTemplate) -> Void
 
+  /// The Cards a person writes, then the ones with a fixed role.
+  static let written: [DefinitionTemplate] = [.python, .ruby, .cpp, .draft]
+  static let fixed: [DefinitionTemplate] = [.trigger, .input, .switchCard, .fork, .branch, .merge, .logger]
+
   var body: some View {
-    ForEach([DefinitionTemplate.python, .cpp, .draft], id: \.self) { t in
+    ForEach(Self.written, id: \.self) { t in
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
     }
     Divider()
-    ForEach([DefinitionTemplate.trigger, .input, .switchCard, .fork, .branch, .merge, .logger], id: \.self) { t in
+    ForEach(Self.fixed, id: \.self) { t in
       Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
     }
   }
