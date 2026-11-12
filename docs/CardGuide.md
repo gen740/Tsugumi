@@ -311,6 +311,40 @@ end
 
 It runs with the standard library alone. Packages from the General registry are pinned at build time with `packages = [ "JuMP" ];`. For a figure, pass a Vega-Lite spec as a Dict to `display_vegalite(ctx, spec)` and it is shown as an interactive chart.
 
+## The same Card in Ruby
+
+Ruby uses MRI in the package worker. Inputs and parameters are Hashes and output is validated
+against the FlatBuffers schema. The instance can retain state between invocations.
+
+`definitions/multiply/_card.json` (Ruby)
+
+```json
+{"language":"ruby","inputs":[{"name":"number"}],"params":[{"name":"factor","type":"int64","data":2}]}
+```
+
+`definitions/multiply/default.nix` (Ruby)
+
+```nix
+{ pkgs, inputs, params }:
+let sdk = inputs.tsugumi.sdk { languages = [ "ruby" ]; };
+in { run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; }; }
+```
+
+`definitions/multiply/src/main.rb` (Ruby)
+
+```ruby
+def main(ctx)
+  n = ctx.input('number').fetch('value')
+  factor = ctx.params.fetch('factor')
+  ctx.output('result', value: n * factor)
+  ctx.display_text("#{n} × #{factor} = #{n * factor}")
+end
+```
+
+Use `gemdir` with a committed Gemfile, Gemfile.lock and bundix-generated gemset.nix for dependencies.
+Native gems are built by Nix; the worker never installs them at runtime. See the
+[Ruby API](../agent/Reference/card-guide.md#ruby-srcmainrb) for files, displays and lifecycle details.
+
 ## What to read next
 
 | To know | Document |

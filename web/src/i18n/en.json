@@ -1237,5 +1237,6 @@
  "このプロジェクトに根拠の記録がありません": "This evidence is not available in this project",
  "位置": "Position",
  "先頭 64 KiB を表示": "Showing the first 64 KiB",
- "バイナリの成果物です": "This artifact contains binary data"
+ "バイナリの成果物です": "This artifact contains binary data",
+ "Ruby の処理": "Ruby Card"
 }

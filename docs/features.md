@@ -32,7 +32,7 @@ macOS (host)                                       Shared Linux VM (one per app)
 
 | Kind | Role |
 | --- | --- |
-| Code Card | Defines its environment in `default.nix` and its processing in `src/` (C++ / Python / bash / R / Julia) |
+| Code Card | Defines its environment in `default.nix` and its processing in `src/` (C++ / Python / bash / R / Julia / Ruby) |
 | trigger | Where a Workflow's run starts (output port `out`) |
 | input | Sends a value following the type in `_outputs.fbs`, edited directly on the Canvas (for a File type, the chosen file is copied into the run) |
 | fork / branch / merge | Distribution, conditional branching (only one of `a` / `b` fires, depending on `condition`) and merging (a union type named by input port). There is no dedicated Card for bounded feedback loops: a loop is made by sending a value back through a merge, and the `maxRuns` of the Cards on the loop bounds its iterations |
@@ -135,6 +135,7 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
   The worker loads the built shared library `lib/main.so` into memory and calls it directly (no process is started per invocation).
 - **Python**: implement `main(ctx)` and, optionally, the initialisation hook `on_run_start(ctx)`.
 - **bash**: inputs arrive per port as `JSON_P` (the path of a JSON file) / `FILE_P` / `DIR_P`; the JSON written to `$TSUGUMI_OUTPUT` is the output, type-checked per port.
+- **Ruby** (`rubyCard`): MRI runs in the package worker with typed Hash/Array values, exact 64-bit integers, live displays and resident state. Gemfile.lock and gemset.nix pin gems and native extensions at build time. [The Card guide](../agent/Reference/card-guide.md#ruby-srcmainrb) describes the API.
 - **R and Julia** (`rCard`, `juliaCard`): inputs and outputs are passed converted to JSON. A process is started per invocation, so resident workers do not help them. How to write them is in [Your first Card](CardGuide.md).
 - What does not depend on the port contract (visualisation, logs, the run context) is gathered in the common runtime `libtsugumi_card.so`, so all that is built per Card is the type definitions and a thin adapter.
 

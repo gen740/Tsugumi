@@ -43,6 +43,7 @@ const CPP_KEYWORDS = ['break', 'case', 'catch', 'class', 'const', 'constexpr', '
 const PY_KEYWORDS = ['and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue', 'def', 'del', 'elif', 'else', 'except', 'finally',
   'for', 'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'try', 'while',
   'with', 'yield', 'self', 'cls']
+const RUBY_KEYWORDS = ["alias", "and", "begin", "break", "case", "class", "def", "defined?", "do", "else", "elsif", "end", "ensure", "false", "for", "if", "in", "module", "next", "nil", "not", "or", "redo", "rescue", "retry", "return", "self", "super", "then", "true", "undef", "unless", "until", "when", "while", "yield"]
 const NIX_KEYWORDS = ['assert', 'else', 'if', 'import', 'in', 'inherit', 'let', 'rec', 'then', 'with']
 const FBS_KEYWORDS = ['attribute', 'enum', 'file_identifier', 'file_extension', 'include', 'namespace', 'root_type', 'rpc_service', 'struct', 'table', 'union']
 const FBS_TYPES = ['bool', 'byte', 'ubyte', 'short', 'ushort', 'int', 'uint', 'long', 'ulong', 'float', 'double', 'string',
@@ -68,6 +69,13 @@ function rules(language: string): Rules | undefined {
           [String.raw`\bdef\s+([A-Za-z_]\w*)`, 'function', 1], [String.raw`\bclass\s+([A-Za-z_]\w*)`, 'type', 1], [String.raw`^[ \t]*@[\w.]+`, 'function'],
           [String.raw`\.([A-Za-z_]\w*)\b(?!\s*\()`, 'property', 1]],
         keywords: PY_KEYWORDS, flags: 'm',
+      }
+    case 'rb': case 'ruby':
+      return {
+        claim: [[String.raw`#[^\n]*`, 'comment'], [DQ, 'string'], [String.raw`'(?:\\.|[^'\\\n])*'`, 'string']],
+        paint: [[NUMBER, 'number'], [words(['nil', 'true', 'false']), 'constant'], [words(RUBY_KEYWORDS), 'keyword'],
+          [String.raw`\b(?:class|module)\s+([A-Z]\w*)`, 'type', 1], [CALL, 'function', 1]],
+        keywords: RUBY_KEYWORDS, flags: 'm',
       }
     case 'nix':
       return {

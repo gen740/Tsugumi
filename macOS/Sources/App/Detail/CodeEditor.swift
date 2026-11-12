@@ -29,6 +29,9 @@ enum SyntaxHighlighter {
       return Rules(comment: [#"#[^\n]*"#], string: [#"\"\"\"[\s\S]*?\"\"\""#, #""(?:\\.|[^"\\\n])*""#, #"'(?:\\.|[^'\\\n])*'"#],
                    keywords: ["and", "as", "class", "def", "elif", "else", "except", "False", "for", "from", "if", "import", "in",
                               "is", "lambda", "None", "not", "or", "pass", "raise", "return", "True", "try", "while", "with", "yield"])
+    case "rb", "ruby":
+      return Rules(comment: [#"#[^\n]*"#], string: [#""(?:\\.|[^"\\\n])*""#, #"'(?:\\.|[^'\\\n])*'"#],
+                   keywords: ["alias", "and", "begin", "break", "case", "class", "def", "defined?", "do", "else", "elsif", "end", "ensure", "false", "for", "if", "in", "module", "next", "nil", "not", "or", "redo", "rescue", "retry", "return", "self", "super", "then", "true", "undef", "unless", "until", "when", "while", "yield"])
     case "nix":
       return Rules(comment: [#"#[^\n]*"#, #"/\*[\s\S]*?\*/"#], string: [#"''[\s\S]*?''"#, #""(?:\\.|[^"\\])*""#],
                    keywords: ["assert", "else", "if", "import", "in", "inherit", "let", "rec", "then", "with", "true", "false", "null"])

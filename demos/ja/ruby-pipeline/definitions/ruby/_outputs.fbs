@@ -1,0 +1,4 @@
+namespace sample;
+table Number { value:long; }
+table Outputs { out:Number (required); }
+root_type Outputs;

@@ -3059,6 +3059,12 @@ def main(ctx):
     ctx.output("out", b, out.End(b))
 `)
         break
+      case 'ruby':
+        set(obj([['language', 'ruby'], ['inputs', [obj([['name', 'in']])]]]))
+        this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ "ruby" ]; };\nin\n{\n  run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; };\n}\n')
+        this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
+        this.putSource(dir + 'src/main.rb', 'def main(ctx)\n  ctx.output("out", { value: "hello" })\nend\n')
+        break
       case 'cpp':
         set(obj([['language', 'cpp'], ['inputs', [obj([['name', 'in']])]]]))
         this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };\nin\n{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n')
@@ -3440,16 +3446,16 @@ export function definitionKind(def: J | undefined): CardKind {
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = 'python' | 'cpp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
+export type DefinitionTemplate = 'python' | 'ruby' | 'cpp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'logger'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
-  { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
+  { id: 'python', label: L('Python の処理') }, { id: 'ruby', label: L('Ruby の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
   { id: 'switch', label: L('スイッチ') },
   { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') }, { id: 'fork', label: L('分配') },
   { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'logger', label: L('記録') },
 ]
-export const templateIcon = (t: DefinitionTemplate) => KIND_ICON[t === 'python' || t === 'cpp' ? 'code' : (t as CardKind)]
+export const templateIcon = (t: DefinitionTemplate) => KIND_ICON[t === 'python' || t === 'cpp' || t === 'ruby' ? 'code' : (t as CardKind)]
 /** A name for the new Card (its id; made unique). */
-export const templateBaseName = (t: DefinitionTemplate) => (t === 'python' || t === 'cpp' ? 'card' : t)
+export const templateBaseName = (t: DefinitionTemplate) => (t === 'python' || t === 'cpp' || t === 'ruby' ? 'card' : t)
 
 export const NOTE_COLORS: { id: string; label: string }[] = [
   { id: 'yellow', label: L('黄') }, { id: 'blue', label: L('青') }, { id: 'green', label: L('緑') }, { id: 'pink', label: L('桃') }, { id: 'gray', label: L('灰') },
