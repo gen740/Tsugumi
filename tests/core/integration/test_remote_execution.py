@@ -240,6 +240,8 @@ def check_success(client, run_id, name, system):
     assert len(artifacts) == 1
     content = client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), limitBytes=1024)
     assert bytes(content.bytes) == b"remote-input-roundtrip\n"
+    member, = artifacts[0].members
+    assert text(member.hash) == hashlib.sha256(bytes(content.bytes)).hexdigest()
     logs = client.call("LogRangeRequest", runId=run_id, card=path(name), invocation=1, stream=LogStream.stdout)
     assert text(logs.text) == "remote-card-stdout\n"
     environments = client.call("RunEnvironmentsRequest", runId=run_id).environments
@@ -247,7 +249,7 @@ def check_success(client, run_id, name, system):
     return summary
 
 
-def test_remote_card_roundtrip_reconnect_and_cancel(project, core_factory, remote_broker, remote_daemon):
+def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broker, remote_daemon):
     fixture(project)
     daemon = core_factory()
     client = daemon.connect()
@@ -263,10 +265,7 @@ def test_remote_card_roundtrip_reconnect_and_cancel(project, core_factory, remot
     check_success(client, run_id, "work", system)
 
     run_id = start_run(client, "later")
-    def running(row):
-        return row.executionState == RemoteExecutionState.running
-
-    started = wait_invocation(client, run_id, "slow", running)
+    started = wait_invocation(client, run_id, "slow", lambda row: row.executionState == RemoteExecutionState.running)
     if restart := remote_daemon[2]:
         restart()
     daemon.restart(crash=True)
@@ -275,13 +274,19 @@ def test_remote_card_roundtrip_reconnect_and_cancel(project, core_factory, remot
     recovered = check_success(client, run_id, "slow", system)
     assert text(recovered.executionJobId) == text(started.executionJobId)
     assert client.call("RunStatusRequest", runId=run_id).state == RunState.failed
-    after = client.call("RunRecordRequest", runId=run_id, card=path("after"))
-    assert not after.exists
+    with pytest.raises(RpcFailure) as downstream:
+        client.call("RunRecordRequest", runId=run_id, card=path("after"))
+    assert downstream.value.kind == "not_found"
 
+
+def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker):
+    fixture(project)
+    client = core_factory().connect()
     run_id = start_run(client, "later")
-    wait_invocation(client, run_id, "slow", running)
+    running = wait_invocation(client, run_id, "slow", lambda row: row.executionState == RemoteExecutionState.running)
     client.call("RunCancelRequest", runId=run_id)
     assert wait_run(client, run_id, timeout=60).state == RunState.cancelled
     cancelled = client.call("RunRecordRequest", runId=run_id, card=path("slow")).record.summary
-    assert cancelled.executionState == RemoteExecutionState.cancelled
+    assert cancelled.state == CardState.cancelled and cancelled.executionState == RemoteExecutionState.cancelled
+    assert text(cancelled.executionJobId) == text(running.executionJobId)
     assert not client.call("ArtifactListRequest", runId=run_id, card=path("slow")).artifacts
