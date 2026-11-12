@@ -7,16 +7,18 @@ Start from the document that fits what you want to read. To read with moving fig
 
 | Document | Contents |
 | --- | --- |
-| [BinaryCaches.md](BinaryCaches.md) | Attic, Cachix and other signed binary caches, private authentication and VM-wide trust |
+| [features.md](features.md) | Find a feature by task and open its workbench, language or environment reference |
 | [INSTALL.md](INSTALL.md) | Installing and updating the desktop app and the `tsugumi` command (Mac, Linux, Windows), and building from source |
-| [Usage.md](Usage.md) | Getting started by following a demo's guide, and the operations you use most |
-| [Reports.md](Reports.md) | R Markdown and Quarto report Cards, saved HTML and parameterized rendering |
-| [CardGuide.md](CardGuide.md) | Your first Card: a Card that takes an input and computes, written in Python, bash, C++, R and Julia |
+| [Usage.md](Usage.md) | Canvas tools, running from a Card, chart updates and the project terminal |
+| [Demos.md](Demos.md) | How the bundled demos work: how each demo's Cards connect, what each Card does, and what to try |
+| [CardGuide.md](CardGuide.md) | Build a Card that takes an input and computes, with examples in Python, Bash, C++, R, Julia, Ruby, Go, Rust and C# |
+| [RunHistory.md](RunHistory.md) | Inspect and compare runs, check runtime packages and open saved artifacts |
 | [CSharp.md](CSharp.md) | C# typed ports, Tasks, NuGet dependencies and the .NET worker lifetime |
 | [Visualization.md](Visualization.md) | Editable library/shape scaffolds, data parameters, saved figures and reports |
 | [Marimo.md](Marimo.md) | Committed notebook runs, typed inputs/outputs, saved cell results and the interactive-session boundary |
-| [Demos.md](Demos.md) | How the bundled demos work: how each demo's Cards connect, what each Card does, and what to try |
-| [WebUI.md](WebUI.md) | The same screens in the browser (the `tsugumi` command: the shared VM on a Mac, bubblewrap on Linux, WSL on Windows) |
+| [Reports.md](Reports.md) | R Markdown and Quarto report Cards, saved HTML and parameterized rendering |
+| [WebUI.md](WebUI.md) | The browser workbench and the `tsugumi` command on Mac, Linux and Windows through WSL2 |
+| [BinaryCaches.md](BinaryCaches.md) | Attic, Cachix and other signed binary caches, private authentication and VM-wide trust |
 | [claude-code.md](claude-code.md) | Having Claude Code make and run Cards through the Claude Code plugin, shown in the Web UI |
 
 ## The ideas
@@ -32,7 +34,6 @@ Start from the document that fits what you want to read. To read with moving fig
 
 | Document | Contents |
 | --- | --- |
-| [features.md](features.md) | A technical tour of the main features (architecture, Cards and Workflows, Nix, SDK and workers, saving, history, visualisation, UI, Agent, demos) |
 | [Versions.md](Versions.md) | Versions: the project's git, each run's version and result (git notes), the version tree and "Start from This Version" |
 | [security.md](security.md) | What is and is not protected, the four isolation boundaries (VM, project, Card, RPC), API keys, where data is kept, and known limitations |
 | [Protocol.md](Protocol.md) | The RPC contract: the 41 requests and the notifications (generated from `protocol/tsugumi.fbs`) |

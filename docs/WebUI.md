@@ -1,6 +1,6 @@
 # Web UI
 
-`web/` is a client that provides, in the browser, the same screens, operations and shortcuts as the macOS app.
+The browser workbench supports editing and running Workflows, inspecting results and working with the Agent. It uses the same project and RPC contract as the macOS app. The host environment, rendering support and some shortcuts depend on how you run it. [Workbench operations](Usage.md) · [Platform behaviour](#the-tsugumi-command)
 File paths and commands on this page are relative to the root of the repository.
 
 ## Architecture
