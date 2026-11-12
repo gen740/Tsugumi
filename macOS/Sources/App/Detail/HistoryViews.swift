@@ -297,6 +297,7 @@ struct CardArtifactsView: View {
   @State private var loaded = false
 
   enum Preview {
+    case html(String)
     case text(String)
     case image(NSImage)
     case binary(Int)
@@ -369,6 +370,8 @@ struct CardArtifactsView: View {
         .frame(minWidth: 220, idealWidth: 280)
         Group {
           switch preview {
+          case .html(let html)?:
+            ArtifactHTMLPreview(html: html)
           case .text(let t)?:
             ScrollView { Text(t).font(.system(size: 11, design: .monospaced)).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(8) }
           case .image(let i)?:
@@ -415,7 +418,10 @@ struct CardArtifactsView: View {
     guard let rpc = session.rpc, let a = selectedArtifact, let member else { return }
     do {
       let data = try await rpc.readArtifact(id: a.artifactId, member: a.kind == .directory ? member : nil)
-      if let img = NSImage(data: data), ["png", "jpg", "jpeg", "gif", "tiff", "pdf", "svg"].contains((member as NSString).pathExtension.lowercased()) {
+      guard !Task.isCancelled else { return }
+      if let html = ArtifactHTMLPreview.text(member: member, data: data) {
+        preview = .html(html)
+      } else if let img = NSImage(data: data), ["png", "jpg", "jpeg", "gif", "tiff", "pdf", "svg"].contains((member as NSString).pathExtension.lowercased()) {
         preview = .image(img)
       } else if let s = String(data: data.prefix(256 * 1024), encoding: .utf8) {
         preview = .text(s + (data.count > 256 * 1024 ? String(localized: "\n…（先頭 256 KiB を表示）") : ""))

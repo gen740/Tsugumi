@@ -18,6 +18,7 @@ await import("./folderAttachments")
 await import("./switchCard")
 
 await import("./table")
+await import("./artifactHTML")
 
 await import("./draft")
 await import("./comments")
