@@ -2,7 +2,7 @@
 
 Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole graph, change one step, and inspect the recorded conditions and results. Use the macOS app or open the workbench in a browser with the `tsugumi` command. [Installation](INSTALL.md) · [First steps in the workbench](Usage.md#the-first-five-minutes)
 
-This reference follows `main` and includes features for the upcoming 0.7 prerelease. If you are using the 0.6.2 stable release, see its versioned documentation for the available features. [0.6.2 documentation](https://github.com/gen740/Tsugumi/tree/v0.6.2/docs)
+This reference follows `main` and covers the 0.7 pre-release series. If you are using the 0.6.2 stable release, see its versioned documentation for the available features. [0.6.2 documentation](https://github.com/gen740/Tsugumi/tree/v0.6.2/docs)
 
 ## Find a feature
 
