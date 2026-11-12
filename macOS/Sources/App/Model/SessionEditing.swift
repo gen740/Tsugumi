@@ -44,6 +44,7 @@ enum CardKind: String {
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
   case python, cpp, csharp, input, draft, trigger, fork, branch, merge, logger
+  case report_rmarkdown, report_quarto
   case switchCard = "switch"
   /// Visualization starting points: ordinary Python Cards, one per plotting library.
   case matplotlib = "visualization_matplotlib"
@@ -61,6 +62,8 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .altair: return String(localized: "Altair（対話型 HTML）")
     case .draft: return String(localized: "Draft（未実装の計画）")
     case .marimo: return String(localized: "marimo ノートブック")
+    case .report_rmarkdown: return String(localized: "R Markdown レポート（HTML）")
+    case .report_quarto: return String(localized: "Quarto レポート（HTML）")
     case .python: return String(localized: "Python の処理")
     case .cpp: return String(localized: "C++ の処理")
     case .csharp: return String(localized: "C# の処理")
@@ -73,7 +76,7 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .logger: return String(localized: "記録")
     }
   }
-  var symbol: String { isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? ([.python, .cpp, .csharp, .marimo].contains(self) ? .code : .draft)).symbol }
+  var symbol: String { isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (rawValue.hasPrefix("report_") || [.python, .cpp, .csharp, .marimo].contains(self) ? .code : .draft)).symbol }
   /// A name for the new Card (its id; made unique).
   var baseName: String {
     switch self {
@@ -1433,6 +1436,10 @@ extension ProjectSession {
       for (file, text) in files where file != "_card.json" && file != "_meta.json" { putSource(dir + file, text) }
     case .marimo:
       let files = MarimoTemplate.files
+      set(try! JSONValue.parse(files["_card.json"]!), meta: try! JSONValue.parse(files["_meta.json"]!))
+      for (file, text) in files where file != "_card.json" && file != "_meta.json" { putSource(dir + file, text) }
+    case .report_rmarkdown, .report_quarto:
+      let files = ReportTemplates.files[t.rawValue]!
       set(try! JSONValue.parse(files["_card.json"]!), meta: try! JSONValue.parse(files["_meta.json"]!))
       for (file, text) in files where file != "_card.json" && file != "_meta.json" { putSource(dir + file, text) }
     case .draft:

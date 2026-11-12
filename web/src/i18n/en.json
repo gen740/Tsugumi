@@ -1303,5 +1303,8 @@
  "Matplotlib（PNG / SVG / PDF）": "Matplotlib (PNG / SVG / PDF)",
  "Plotly（対話型 HTML）": "Plotly (interactive HTML)",
  "Altair（対話型 HTML）": "Altair (interactive HTML)",
- "marimo ノートブック": "marimo notebook"
+ "marimo ノートブック": "marimo notebook",
+ "R Markdown レポート（HTML）": "R Markdown Report (HTML)",
+ "Quarto レポート（HTML）": "Quarto Report (HTML)",
+ "レポート（HTML・PDF 未対応）": "Reports (HTML; PDF unsupported)"
 }

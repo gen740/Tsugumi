@@ -17,6 +17,7 @@ await import("./chatStopped")
 await import("./folderAttachments")
 await import("./switchCard")
 await import("./csharp")
+await import("./reports")
 
 await import("./table")
 await import("./artifactHTML")

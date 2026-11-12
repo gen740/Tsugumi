@@ -1159,7 +1159,7 @@ private struct SourceCategory: View {
       if only != nil {
         if let f = files.first { model.openFile(f) }
       } else if model.shownFile == nil || (model.shownFile?.hasSuffix("/default.nix") ?? false) {
-        if let f = files.first(where: { $0.hasSuffix(".py") || $0.hasSuffix(".cc") || $0.hasSuffix(".cs") }) ?? files.first { model.openFile(f) }
+        if let f = files.first(where: { $0.hasSuffix(".py") || $0.hasSuffix(".cc") || $0.hasSuffix(".cs") || ["rmd", "qmd"].contains(($0 as NSString).pathExtension.lowercased()) }) ?? files.first { model.openFile(f) }
       }
     }
     .alert("ファイルを作成", isPresented: $showNew) {

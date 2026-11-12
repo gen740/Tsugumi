@@ -341,3 +341,7 @@ When asked to make or update a lock:
    and run the Card. Copy the `got: sha256-…` value from that Card's build log
    (`log_range`, stream 4) into `hash`. Run again to check the offline restore.
    Keep the lock and hash together when updating dependencies.
+
+## R Markdown and Quarto reports
+
+`inputs.tsugumi.reportCard { src = ./src; entry = "report.Rmd"; packages = ps: [ ]; }` runs an R Markdown report; use `report.qmd` for Quarto/knitr. Both produce HTML only. Declare `params: { tsugumi: null }` in the document YAML. R chunks read `params$tsugumi$inputs$data`, `params$tsugumi$params` and File/Directory paths in `params$tsugumi$paths$data`. The adapter returns `report` (Directory) and `html` (File); define both ports, enable `filesystem`, and retain `report` as an artifact. The Mac/Web Add Card menus provide matching scaffolds, and `demos/en/r-reports` / `demos/ja/r-reports` show an aggregation feeding both formats. HTML embeds assets and the saved preview is static; PDF requires a separate pinned toolchain and is not supported. See docs/Reports.md.

@@ -1,0 +1,12 @@
+{
+  "language": "bash",
+  "inputs": [
+    {
+      "name": "rmarkdown"
+    },
+    {
+      "name": "quarto"
+    }
+  ],
+  "filesystem": true
+}

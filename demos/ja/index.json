@@ -456,6 +456,32 @@
         "Artifacts"
       ],
       "field": "プログラミングと可視化"
+    },
+    {
+      "id": "r-reports",
+      "path": "r-reports",
+      "title": "R レポート: R Markdown と Quarto",
+      "field": "基本を学ぶ",
+      "description": "観測値を集計し、params を使う表・図入りレポートを作成して HTML 成果物を保存します。",
+      "tags": [
+        "R",
+        "Quarto",
+        "R Markdown",
+        "Artifacts"
+      ]
+    },
+    {
+      "id": "r-reports-draft",
+      "path": "r-reports-draft",
+      "title": "R レポート: R Markdown と Quarto (Draft)",
+      "description": "観測値を集計し、params を使う表・図入りレポートを作成して HTML 成果物を保存します。",
+      "tags": [
+        "R",
+        "Quarto",
+        "R Markdown",
+        "Artifacts",
+        "Draft"
+      ]
     }
   ]
 }
