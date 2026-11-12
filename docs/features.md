@@ -54,6 +54,12 @@ macOS (host)                                       Shared Linux VM (one per app)
 - A run that was in progress when the process ended abnormally or restarted is recorded as `interrupted`.
 - Partial runs with "Run from Here Downstream" or "Run Only This Card (Last Inputs)" reuse the inputs saved last time (including the contents of Files). When "Run from Here Downstream" reaches a merge, a Card that waits for all its inputs fills only the ports that receive nothing this time with saved inputs (an `any` Card runs with only the values that arrived).
 
+### Graph previews on the canvas
+
+- Plotly and Vega-Lite results appear as cached images on the canvas; Expand opens their full interactive viewer. The saved figure data is unchanged.
+- Web previews are generated only for visible frames, one at a time in one sandboxed viewer. Completed previews use a bounded memory cache keyed by the full figure content and preview dimensions; closing or hiding a frame cancels its pending work, and an idle renderer is released. A changed result shows a loading state until its own preview is ready.
+- The shared macOS/Web viewer serializes and coalesces rapid updates, and finalizes replaced Vega views so their event listeners and timers do not accumulate.
+
 ## 3. Reproducible environments with Nix
 
 ### An environment per Card
@@ -172,6 +178,7 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 ## 6. Run history and artifacts
 
 - Runs, invocations, stages, input and output values, logs, visualisation data and receipts are all recorded in SQLite. The primary copy is on the VM's dedicated run-history disk (`vm/history.img`), so it is written fast without going through a folder shared with the host, and is not lost by "Reset all environments".
+- A Card's run history shows, for each invocation, the **packages** it ran with: the runtime dependencies recorded for that invocation, with search and pagination. They are read from the history, never derived from the current Nix definition, so an edited definition does not change what an earlier invocation shows; an invocation without a recorded environment says so. Build-only dependencies are not included.
 - `recordIO` and `retainArtifact` choose, per Card, what is recorded and kept. Kept artifacts are checked for tampering and path escapes.
 - With `saveRunHistory` (default `true`), the history of finished runs is also written automatically to `.tsugumi/runs.sqlite` in the project. Input and output values are kept as FlatBuffers bytes with their schema (bfbs) retrievable by hash, so past values are interpreted correctly even after a Card's types change.
 - When a project is copied or moved to another Mac, its history is imported automatically on opening, matched by `run_id`.

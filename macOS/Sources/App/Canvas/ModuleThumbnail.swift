@@ -1,7 +1,166 @@
 import AppKit
 import CryptoKit
 import SwiftUI
+import TsugumiRPC
 import WebKit
+
+/// How a Card's figure follows its results (the Card setting `displayMode`).
+enum FigureMode: String {
+  /// The last figure, dimmed while the Card or one upstream of it runs.
+  case update
+  /// Each revision of a running Card replaces the last one in place.
+  case live
+}
+
+/// The setting, and what the run is doing around the Card.
+struct FigureState: Equatable {
+  var mode: FigureMode = .update
+  /// The Card runs (or is about to).
+  var running = false
+  /// A Card upstream of it runs: its figure is about to be replaced.
+  var stale = false
+
+  var holdsDisplay: Bool { mode == .update && (running || stale) }
+
+  /// Whether a Card that reaches `card` through connections is busy: in the
+  /// Card's own Workflow, then upstream of each Card in Card it is inside.
+  static func upstreamBusy(_ card: CardKey, connections: ([String]) -> [JSONValue], busy: (CardKey) -> Bool) -> Bool {
+    let p = path(card)
+    guard let id = p.last else { return false }
+    let scope = Array(p.dropLast())
+    let conns = connections(scope)
+    var seen: Set<String> = [], todo = [id]
+    while let at = todo.popLast() {
+      for c in conns {
+        guard let from = c["from"]?["card"]?.string, c["to"]?["card"]?.string == at, seen.insert(from).inserted else { continue }
+        if busy(key(scope + [from])) { return true }
+        todo.append(from)
+      }
+    }
+    return !scope.isEmpty && upstreamBusy(key(scope), connections: connections, busy: busy)
+  }
+}
+
+/// The result a frame is to show: its content and the size it is drawn at.
+/// Compared at every move of the canvas, so by the strings themselves (the
+/// digest is taken once, when this changes).
+struct FigureWanted: Equatable {
+  let name: String
+  let json: String
+  let width: Int
+  let height: Int
+}
+
+/// What a frame shows of the picture it holds. A picture is at full strength
+/// only as what it is: the wanted content, or (live) the previous revision of
+/// the invocation that is still running. Every other one kept on screen is dimmed.
+enum FigureLook: Equatable {
+  case picture(dimmed: Bool, waiting: Bool)
+  /// The wanted content could not be drawn.
+  case failed
+  /// Nothing to show yet.
+  case waiting
+
+  var isWaiting: Bool {
+    switch self {
+    case .picture(_, let waiting): waiting
+    case .failed: false
+    case .waiting: true
+    }
+  }
+
+  /// `picture`: what the held picture is of, and whether it is an image (not a failure).
+  static func of(wanted: FigureWanted, lineage: String,
+                 picture: (wanted: FigureWanted, lineage: String, isImage: Bool)?, state: FigureState) -> FigureLook {
+    guard let picture else { return .waiting }
+    let same = picture.wanted.name == wanted.name && picture.wanted.json == wanted.json
+    guard picture.isImage else { return same ? .failed : .waiting }
+    // The same content at another size (a resize, a zoom) is still this result's picture.
+    if same { return .picture(dimmed: state.holdsDisplay, waiting: false) }
+    let following = state.mode == .live && state.running && picture.lineage == lineage
+    return .picture(dimmed: !following, waiting: !following)
+  }
+}
+
+/// The picture one frame holds, and the work under way for the next one. The
+/// last picture stays until another replaces it (FigureLook says how it may be shown).
+@MainActor
+@Observable
+final class FigurePreview {
+  typealias Make = @MainActor (FigureWanted, CGRect?) async -> ModuleThumbnails.Result?
+  struct Picture {
+    let wanted: FigureWanted
+    let lineage: String
+    let result: ModuleThumbnails.Result
+    var isImage: Bool {
+      if case .image = result { return true }
+      return false
+    }
+  }
+
+  private(set) var picture: Picture?
+  @ObservationIgnored private var wanted: (FigureWanted, String, Bool)?
+  @ObservationIgnored private var drawing: (id: UUID, lineage: String, task: Task<Void, Never>)?
+  @ObservationIgnored private var next: (wanted: FigureWanted, lineage: String, place: CGRect?)?
+  @ObservationIgnored private let make: Make
+
+  init(make: @escaping Make = { w, place in
+    await ModuleThumbnails.shared.result(.init(name: w.name, json: w.json, width: w.width, height: w.height), json: w.json, at: place)
+  }) {
+    self.make = make
+  }
+
+  /// `follow`: the Card runs and is followed live. A revision that arrives
+  /// while the one before it (same run and invocation) is being drawn waits
+  /// for it, and only the newest waits: the picture keeps advancing however
+  /// fast revisions arrive, where restarting for each would never finish one.
+  func want(_ w: FigureWanted, lineage: String, follow: Bool, at place: CGRect? = nil) {
+    if let old = wanted, old.0 == w, old.1 == lineage, old.2 == follow { return }
+    wanted = (w, lineage, follow)
+    guard w.width >= 8, w.height >= 8 else { stop(); return }
+    if let picture, picture.isImage, picture.wanted == w, picture.lineage == lineage {
+      stop()
+      return
+    }
+    if follow, let d = drawing, d.lineage == lineage {
+      next = (w, lineage, place)
+      return
+    }
+    stop()
+    draw(w, lineage: lineage, at: place)
+  }
+
+  /// The frame left the screen: nothing more is drawn for it (the picture is asked for again when it returns).
+  func close() {
+    stop()
+    wanted = nil
+    picture = nil
+  }
+
+  private func stop() {
+    drawing?.task.cancel()
+    drawing = nil
+    next = nil
+  }
+
+  private func draw(_ w: FigureWanted, lineage: String, at place: CGRect?) {
+    let id = UUID()
+    let task = Task { [weak self, make] in
+      let result = await make(w, place)
+      // A result that arrives after this one stopped being wanted is not shown.
+      guard let self, self.drawing?.id == id else { return }
+      self.drawing = nil
+      let next = self.next
+      self.next = nil
+      // A revision that failed while a newer one waits is passed over: the last picture stays.
+      if let result {
+        if case .failed = result, next != nil {} else { self.picture = Picture(wanted: w, lineage: lineage, result: result) }
+      }
+      if let next { self.draw(next.wanted, lineage: next.lineage, at: next.place) }
+    }
+    drawing = (id, lineage, task)
+  }
+}
 
 /// A Plotly figure or a Vega-Lite chart on the canvas: a picture of it. A web
 /// view per figure costs a process each and lays the page out again at every
@@ -9,60 +168,55 @@ import WebKit
 /// the expanded view, where it is interactive).
 ///
 /// The picture is of this result and no other: while the picture of a new
-/// result is being made, the last one is shown dimmed, never as the new one.
+/// result is being made, the last one stays, dimmed (FigureLook), never as the new one.
 struct ModuleThumbnail: View {
   let name: String
   let json: String
-  /// The run and the invocation the result is of: a picture of another one's
-  /// result is not kept on screen under this one's name, not even dimmed.
+  /// The run and the invocation the result is of.
   let lineage: String
   /// The canvas's zoom: the picture is taken at the display's own size and scaled with it.
   var zoom: CGFloat = 1
+  /// How the figure follows the Card's results.
+  var figure = FigureState()
 
-  /// What is wanted of the generator: compared at every move of the canvas, so
-  /// by the strings themselves (the digest is taken once, when this changes).
-  private struct Wanted: Equatable {
-    let name: String
-    let json: String
-    let width: Int
-    let height: Int
+  private struct Request: Equatable {
+    let wanted: FigureWanted
+    let lineage: String
+    let follow: Bool
   }
-  @State private var shown: (wanted: Wanted, lineage: String, result: ModuleThumbnails.Result)?
+  @State private var preview = FigurePreview()
   /// Where its frame is on the canvas: the pictures of what is in view are made first.
   @Environment(\.canvasPlace) private var place
 
   var body: some View {
     GeometryReader { geo in
-      let wanted = settled(Wanted(name: name, json: json,
-                                  width: Int((geo.size.width / max(zoom, 0.01)).rounded()),
-                                  height: Int((geo.size.height / max(zoom, 0.01)).rounded())))
-      // The picture of what is wanted is this result's, whichever run made it: it is of the content.
-      // Any other is the last one's: kept, dimmed, only while the same run and invocation go on.
-      let current = shown?.wanted == wanted
+      let wanted = settled(FigureWanted(name: name, json: json,
+                                        width: Int((geo.size.width / max(zoom, 0.01)).rounded()),
+                                        height: Int((geo.size.height / max(zoom, 0.01)).rounded())))
+      let follow = figure.mode == .live && figure.running
+      let held = preview.picture
+      let look = FigureLook.of(wanted: wanted, lineage: lineage,
+                               picture: held.map { ($0.wanted, $0.lineage, $0.isImage) }, state: figure)
       ZStack(alignment: .bottomLeading) {
-        switch current || shown?.lineage == lineage ? shown?.result : nil {
-        case .image(let image)?:
+        switch (look, held?.result) {
+        case (.picture(let dimmed, _), .image(let image)?):
           Image(nsImage: image).resizable().interpolation(.high)
-            .opacity(current ? 1 : 0.4)
-        case .failed(let message)? where current:
+            .opacity(dimmed ? 0.4 : 1)
+        case (.failed, .failed(let message)?):
           Text(message).font(.caption).foregroundStyle(.red).padding(4).textSelection(.enabled)
         default: EmptyView()
         }
-        if !current {
+        if look.isWaiting {
           ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
         }
       }
       .frame(width: geo.size.width, height: geo.size.height)
       .background(Color.white)
       .clipShape(RoundedRectangle(cornerRadius: 4))
-      .task(id: wanted) {
-        guard wanted.width >= 8, wanted.height >= 8 else { return }
-        let key = ModuleThumbnails.Key(name: wanted.name, json: wanted.json, width: wanted.width, height: wanted.height)
-        // A result that arrives after this one stopped being wanted is not shown: the task is cancelled.
-        if let result = await ModuleThumbnails.shared.result(key, json: wanted.json, at: place), !Task.isCancelled {
-          shown = (wanted, lineage, result)
-        }
+      .task(id: Request(wanted: wanted, lineage: lineage, follow: follow)) {
+        preview.want(wanted, lineage: lineage, follow: follow, at: place)
       }
+      .onDisappear { preview.close() }
     }
     .accessibilityLabel(name == "plotly" ? String(localized: "Plotly のグラフ") : String(localized: "Vega-Lite のグラフ"))
   }
@@ -70,8 +224,8 @@ struct ModuleThumbnail: View {
   /// The frame's size in the canvas's own units wobbles by a point with the
   /// zoom (its text does not scale evenly): the picture shown is kept while
   /// the size is within a few points of its own.
-  private func settled(_ w: Wanted) -> Wanted {
-    guard let s = shown?.wanted, s.name == w.name, s.json == w.json,
+  private func settled(_ w: FigureWanted) -> FigureWanted {
+    guard let s = preview.picture?.wanted, s.name == w.name, s.json == w.json,
           abs(s.width - w.width) <= 6, abs(s.height - w.height) <= 6 else { return w }
     return s
   }
