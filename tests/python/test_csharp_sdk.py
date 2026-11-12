@@ -9,9 +9,19 @@ import pytest
 
 from conftest import Daemon, real_environment
 from projects import put, run_and_wait, start_run, wait_run
-from test_language_cards import write_project
+from test_language_cards import write_project as write_language_project
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
+
+
+def write_project(root, cards, connections):
+    write_language_project(root, cards, connections)
+    if os.environ.get("TSUGUMI_TEST_HOST_SANDBOX") == "1":
+        for definition in root.glob("definitions/*/_card.json"):
+            body = json.loads(definition.read_text())
+            if "language" in body:
+                body["sandbox"] = True
+                definition.write_text(json.dumps(body))
 
 NIX = '''{ pkgs, inputs, params }:
 let sdk = inputs.tsugumi.sdk { languages = [ "csharp" ]; };
@@ -72,6 +82,7 @@ public sealed class Card : ICard {
     context.DisplayText("intermediate");
     context.DisplayMarkdown("**ready**");
     context.DisplayScalar(values.Sum(), "sum");
+    context.DisplayImage(Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="), alt: "one pixel");
     context.DisplayPoints([0], [1], [2], [0xff0000]);
     context.DisplayLineChart(new Series("a", "values", [1, 2, 3], values.ToArray()));
     context.DisplayModule("plotly", "{\\"data\\":[],\\"layout\\":{}}");
