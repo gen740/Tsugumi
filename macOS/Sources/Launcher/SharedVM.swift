@@ -446,7 +446,9 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     let source = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi-source")
     source.share = VZSingleDirectoryShare(directory: VZSharedDirectory(url: files.source, readOnly: true))
     let cacheDirectory = directory.appendingPathComponent("binary-cache-config", isDirectory: true)
-    try BinaryCaches.prepare(support: directory.deletingLastPathComponent(), destination: cacheDirectory)
+    if let problem = try BinaryCaches.prepare(support: directory.deletingLastPathComponent(), destination: cacheDirectory) {
+      console.note(problem)
+    }
     let caches = VZVirtioFileSystemDeviceConfiguration(tag: "tsugumi-binary-caches")
     caches.share = VZSingleDirectoryShare(directory: VZSharedDirectory(url: cacheDirectory, readOnly: true))
     c.directorySharingDevices = (0..<Self.slotCount).map { i in

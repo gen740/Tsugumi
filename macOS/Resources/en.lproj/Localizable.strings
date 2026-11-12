@@ -620,11 +620,11 @@
 "例: y 軸を対数にしてください" = "e.g. Make the y axis logarithmic";
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
-"保存した接続は、次に実行環境を起動したときに反映されます。実行中の Workflow は停止しません。" = "Saved connections apply when the execution environment next starts. Running workflows keep running.";
+"保存した接続は、次に実行環境を起動したときに反映されます。保存しても実行中の Workflow は停止しません。実行環境は Tsugumi を終了すると停止するので、反映するには、実行が終わってから Tsugumi を終了して開き直してください。" = "Saved connections apply when the execution environment next starts. Saving does not stop running workflows. The execution environment stops when you quit Tsugumi, so to apply them, quit Tsugumi after your runs finish and open it again.";
 "保存しています" = "Saving";
 "保存して終了" = "Save and Quit";
 "保存しました。" = "Saved.";
-"保存しました。次の実行環境の起動から使用します。" = "Saved. These connections will be used the next time the execution environment starts.";
+"保存しました。Tsugumi を終了して開き直すと、次の実行環境の起動から使用します。" = "Saved. Quit Tsugumi and open it again: these connections are used from the next start of the execution environment.";
 "保存せずに終了" = "Quit Without Saving";
 "保存できていない変更は保持しています（起動すると保存します）" = "Changes not saved yet are kept (saved once it starts)";
 "保存できない変更があります" = "Some changes cannot be saved";
@@ -1052,6 +1052,7 @@
 "画像" = "Image";
 "画像を表示できません" = "Cannot show the image";
 "登録されていないビルド結果を共有 store から削除します。登録を外したプロジェクトの Card は、次の実行でビルドし直します。" = "Deletes build results nothing registers from the shared store. Cards of projects whose registration was removed build again on their next run.";
+"登録したキャッシュには、全プロジェクトのビルドで必要になったパッケージのハッシュが問い合わされます。認証情報は、同じホストから固定ハッシュで取得するビルドにも使われます。" = "Registered caches are asked for the hashes of the packages that builds of every project need. Credentials are also used by builds that fetch from the same host by a fixed hash.";
 "直近の入力トークン数（上限に近づくと自動で圧縮）" = "Recent input tokens (compacted automatically near the limit)";
 "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";
 "省略可" = "Optional";

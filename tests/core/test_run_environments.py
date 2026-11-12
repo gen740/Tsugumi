@@ -58,6 +58,58 @@ def test_environment_survives_cache_reuse_restart_and_project_copy(core_factory,
     assert inventory(daemon.connect(), runs[1]) == expected
 
 
+def test_runs_record_the_binary_caches_without_credentials(core_factory, project, tmp_path):
+    """A run keeps the binary caches its builds could download from, never how to authenticate there."""
+    listed = tmp_path / "substituters"
+    listed.write_text("https://cache.nixos.org\n"
+                      "https://reader:cache-secret@private.example.org/team?token=cache-token\n"
+                      "\n  \nhttps://cache.nixos.org\n"
+                      "s3://bucket/cache?profile=private-profile\n"
+                      "file:///private-cache-dir\n")
+    expected = ["https://cache.nixos.org", "https://private.example.org/team", "s3://bucket/cache"]
+    daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history",
+                          args=["--substituters-file", str(listed)])
+    client = daemon.connect()
+    worker_project(client, project, tmp_path, [])
+    run_id = run(client)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    for limit in (1, 100):
+        page = client.call("RunEnvironmentsRequest", runId=run_id, limit=limit)
+        assert [text(url) for url in page.substituters] == expected
+    daemon.stop()
+    # The list is the run's own: a later configuration does not rewrite it,
+    # and it travels with the project's copy of the run.
+    listed.write_text("https://later.example.org\n")
+    copied_project = tmp_path / "copy"
+    shutil.copytree(project, copied_project, symlinks=True)
+    restored = core_factory(project_root=copied_project, mocked_builds=True, mocked_worker=True,
+                            history_dir=tmp_path / "restored-history",
+                            args=["--substituters-file", str(listed)]).connect()
+    page = restored.call("RunEnvironmentsRequest", runId=run_id)
+    assert [text(url) for url in page.substituters] == expected
+    later = run(restored)
+    assert wait_run(restored, later).state == RunState.succeeded
+    page = restored.call("RunEnvironmentsRequest", runId=later)
+    assert [text(url) for url in page.substituters] == ["https://later.example.org"]
+    for folder in (project, copied_project, tmp_path / "history", tmp_path / "restored-history"):
+        for file in folder.rglob("*"):
+            if file.is_file():
+                data = file.read_bytes()
+                for secret in (b"cache-secret", b"cache-token", b"private-profile", b"reader:", b"private-cache-dir"):
+                    assert secret not in data, file
+
+
+def test_a_run_without_a_cache_list_records_none(core_factory, project, tmp_path):
+    """A daemon that knows no binary caches reports an empty list, not an error."""
+    daemon = core_factory(mocked_builds=True, mocked_worker=True,
+                          args=["--substituters-file", str(tmp_path / "missing")])
+    client = daemon.connect()
+    worker_project(client, project, tmp_path, [])
+    run_id = run(client)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    assert client.call("RunEnvironmentsRequest", runId=run_id).substituters == []
+
+
 def test_failed_execution_keeps_its_environment(core_factory, project, tmp_path):
     """A worker failure still records the environment that was used."""
     daemon = core_factory(mocked_builds=True, mocked_worker=True)

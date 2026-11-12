@@ -1235,7 +1235,8 @@ EN = {
 "バイナリキャッシュ": "Binary Caches",
 "この Mac の共有実行環境（全プロジェクト）": "This Mac’s shared execution environment (all projects)",
 "Attic・Cachix などのバイナリキャッシュから、署名を検証してビルド済みのパッケージを取得します。登録した鍵は、この Mac の全プロジェクトの実行環境で信頼されます。": "Download prebuilt packages from binary caches such as Attic and Cachix after verifying their signatures. The registered signing keys are trusted by the execution environment for every project on this Mac.",
-"保存した接続は、次に実行環境を起動したときに反映されます。実行中の Workflow は停止しません。": "Saved connections apply when the execution environment next starts. Running workflows keep running.",
+"登録したキャッシュには、全プロジェクトのビルドで必要になったパッケージのハッシュが問い合わされます。認証情報は、同じホストから固定ハッシュで取得するビルドにも使われます。": "Registered caches are asked for the hashes of the packages that builds of every project need. Credentials are also used by builds that fetch from the same host by a fixed hash.",
+"保存した接続は、次に実行環境を起動したときに反映されます。保存しても実行中の Workflow は停止しません。実行環境は Tsugumi を終了すると停止するので、反映するには、実行が終わってから Tsugumi を終了して開き直してください。": "Saved connections apply when the execution environment next starts. Saving does not stop running workflows. The execution environment stops when you quit Tsugumi, so to apply them, quit Tsugumi after your runs finish and open it again.",
 "既定の cache.nixos.org と tsugumi.cachix.org は引き続き使用します。キャッシュへのアップロードは行いません。": "The default cache.nixos.org and tsugumi.cachix.org remain enabled. Packages are not uploaded to caches.",
 "キャッシュ接続を削除": "Remove Cache Connection",
 "キャッシュ URL": "Cache URL",
@@ -1245,7 +1246,7 @@ EN = {
 "パスワード・token": "Password or Token",
 "認証情報はこの Mac のアプリ用ファイル（0600）に保存し、VM の Nix daemon だけに渡します。プロジェクトや実行記録には含めません。": "Credentials are stored in a private application file on this Mac (0600) and provided only to the VM’s Nix daemon. They are excluded from project files and run history.",
 "キャッシュ接続を追加": "Add Cache Connection",
-"保存しました。次の実行環境の起動から使用します。": "Saved. These connections will be used the next time the execution environment starts."
+"保存しました。Tsugumi を終了して開き直すと、次の実行環境の起動から使用します。": "Saved. Quit Tsugumi and open it again: these connections are used from the next start of the execution environment."
 }
 
 

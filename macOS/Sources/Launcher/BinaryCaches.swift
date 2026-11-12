@@ -74,8 +74,23 @@ public enum BinaryCaches {
 
   /// Freeze the next boot's settings separately from the editable configuration.
   /// The guest mounts this read-only under /run/tsugumi, hidden from project views.
-  public static func prepare(support: URL, destination: URL) throws {
-    let caches = try load(support: support)
+  ///
+  /// Settings that cannot be read or do not validate never stop the VM: the
+  /// snapshot is then written empty (none of the connections, not the valid
+  /// part of them) and the reason is returned for the person to read. That
+  /// leaves the pinned default caches, so it only loses downloads; no key is
+  /// trusted and no credential is sent that the settings did not validate. A
+  /// snapshot that cannot be written still throws: an older one, possibly with
+  /// credentials since removed, must not be shared in its place.
+  @discardableResult
+  public static func prepare(support: URL, destination: URL) throws -> String? {
+    var caches: [BinaryCache] = []
+    var problem: String?
+    do { caches = try load(support: support) }
+    catch {
+      let reason = (error as? Invalid)?.message ?? "binary-caches.json cannot be read (\(error.localizedDescription))"
+      problem = "The binary cache settings were not applied: \(reason) Only the default caches are used until they are saved again in Settings."
+    }
     try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     var conf = ""
     if !caches.isEmpty {
@@ -92,6 +107,7 @@ public enum BinaryCaches {
       let file = destination.appendingPathComponent(name)
       try writePrivate(Data(text.utf8), to: file)
     }
+    return problem
   }
 
   /// Restrict access before writing any secret, including the atomic temporary file.

@@ -13,7 +13,9 @@ struct BinaryCacheSettings: View {
       VStack(alignment: .leading, spacing: 16) {
         Text("Attic・Cachix などのバイナリキャッシュから、署名を検証してビルド済みのパッケージを取得します。登録した鍵は、この Mac の全プロジェクトの実行環境で信頼されます。")
           .font(.callout).foregroundStyle(.secondary)
-        Text("保存した接続は、次に実行環境を起動したときに反映されます。実行中の Workflow は停止しません。")
+        Text("登録したキャッシュには、全プロジェクトのビルドで必要になったパッケージのハッシュが問い合わされます。認証情報は、同じホストから固定ハッシュで取得するビルドにも使われます。")
+          .font(.callout).foregroundStyle(.secondary)
+        Text("保存した接続は、次に実行環境を起動したときに反映されます。保存しても実行中の Workflow は停止しません。実行環境は Tsugumi を終了すると停止するので、反映するには、実行が終わってから Tsugumi を終了して開き直してください。")
           .font(.callout).foregroundStyle(.secondary)
         Text("既定の cache.nixos.org と tsugumi.cachix.org は引き続き使用します。キャッシュへのアップロードは行いません。")
           .font(.caption).foregroundStyle(.secondary)
@@ -45,7 +47,7 @@ struct BinaryCacheSettings: View {
             do {
               try BinaryCaches.save(caches, support: model.environments.support)
               failed = false
-              message = String(localized: "保存しました。次の実行環境の起動から使用します。")
+              message = String(localized: "保存しました。Tsugumi を終了して開き直すと、次の実行環境の起動から使用します。")
             } catch { failed = true; message = error.localizedDescription }
           }.buttonStyle(.borderedProminent)
         }

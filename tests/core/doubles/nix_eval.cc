@@ -61,6 +61,8 @@ struct NixEvaluator::Impl {
 
 auto NixEvaluator::init_process() -> void {}
 
+auto NixEvaluator::substituters() -> std::vector<std::string> { return {}; }
+
 NixEvaluator::NixEvaluator(std::string, std::vector<std::string> allowed) : impl_(std::make_unique<Impl>()) {
   const char* control = std::getenv("TSUGUMI_MOCK_CONTROL");
   if (!control || !*control) throw std::runtime_error("tsugumid-mock requires TSUGUMI_MOCK_CONTROL");

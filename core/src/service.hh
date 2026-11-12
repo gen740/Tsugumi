@@ -61,6 +61,10 @@ struct ServiceOptions {
   // they are.
   std::filesystem::path chat_folders;
   bool project_shell = false;  // enabled by the isolated project launcher
+  // The binary caches of the Nix daemon that builds for this project, one URL
+  // per line, written by a launcher whose daemon reads settings this process
+  // cannot see (the shared VM). Empty: this process's own Nix configuration.
+  std::filesystem::path substituters_file;
   Limits limits;
 };
 
@@ -87,6 +91,9 @@ class Service : public RequestSink {
   History& history() { return *history_; }
   Store& store() { return *store_; }
   const ServiceOptions& options() const { return opts_; }
+  // The binary caches configured for this project's builds (URLs without
+  // credentials or query strings), fixed when the project opens.
+  const std::vector<std::string>& substituters() const { return substituters_; }
   NixRunner& nix() { return *nix_; }
   WorkerPool& workers() { return *workers_; }
   // A run finished: its record goes to the project's copy soon.
@@ -173,6 +180,7 @@ class Service : public RequestSink {
   std::optional<ViewRecord> load_view(const std::string& view_id);
 
   ServiceOptions opts_;
+  std::vector<std::string> substituters_;
   std::unique_ptr<Store> store_;
   std::unique_ptr<History> history_;
   std::unique_ptr<Versions> versions_;
