@@ -69,14 +69,15 @@ def run(ctx, source_directory, notebook, definitions, selected):
     source = (root / notebook).resolve()
     if not source.is_relative_to(root) or source.suffix != '.py' or not source.is_file():
         raise Failure('validation_failed', 'notebook must name a .py file inside the Card source directory')
-    folder = Path(ctx.output_directory) / 'notebook'
-    folder.mkdir()
-    shutil.copytree(root, folder / 'source', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+    # The sandbox exposes the invocation's output directory to the worker
+    # through a descriptor. A subprocess does not inherit that directory.
     work = Path(ctx.temporary_directory) / 'marimo'
-    work.mkdir()
+    snapshot = work / 'notebook'
+    snapshot.mkdir(parents=True)
+    shutil.copytree(root, snapshot / 'source', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     config = {
-        'notebook': str(folder / 'source' / source.relative_to(root)),
-        'directory': str(folder), 'definitions': definitions, 'selected': selected,
+        'notebook': str(snapshot / 'source' / source.relative_to(root)),
+        'directory': str(snapshot), 'definitions': definitions, 'selected': selected,
         'source': notebook, 'run_id': ctx.run_id, 'card': ctx.card, 'invocation': ctx.invocation,
         'fonts': str(Path(__file__).with_name('_fonts.txt')),
     }
@@ -87,7 +88,7 @@ def run(ctx, source_directory, notebook, definitions, selected):
                    'PYTHONDONTWRITEBYTECODE': '1'}
     python = str(Path(sys.prefix) / 'bin/python3')
     child = subprocess.Popen([python, str(Path(__file__).resolve()), str(request)],
-                             cwd=folder / 'source', env=environment)
+                             cwd=snapshot / 'source', env=environment)
     try:
         while child.poll() is None:
             if ctx.cancelled():
@@ -99,14 +100,16 @@ def run(ctx, source_directory, notebook, definitions, selected):
             except subprocess.TimeoutExpired:
                 pass
         if child.returncode:
-            diagnostic = folder / 'failure.json'
+            diagnostic = snapshot / 'failure.json'
             detail = json.loads(diagnostic.read_text())['message'] if diagnostic.exists() else f'Notebook process exited with status {child.returncode}'
             raise Failure('worker_failed', detail)
         if ctx.cancelled():
             raise Failure('cancelled', 'Notebook invocation cancelled')
         if ctx.remaining_ms() == 0:
             raise Failure('timeout', 'Notebook invocation deadline reached')
-        result = json.loads((folder / 'result.json').read_text())
+        result = json.loads((snapshot / 'result.json').read_text())
+        folder = Path(ctx.output_directory) / 'notebook'
+        shutil.copytree(snapshot, folder)
         ctx.display_markdown(f"**{notebook}** — committed notebook result\n\n" + '\n'.join(f'- `{k}`: {v}' for k, v in result.items()))
         return result, folder
     finally:

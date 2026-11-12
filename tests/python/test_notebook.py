@@ -111,5 +111,6 @@ time.sleep(60)
         with pytest.raises(Failure) as e:notebook.run(ctx,source,'slow.py',{},[])
         assert e.value.kind==kind
     finally:timer.cancel()
-    pid=int((ctx.output_directory/'notebook/source/pid').read_text())
+    pid=int((ctx.temporary_directory/'marimo/notebook/source/pid').read_text())
     with pytest.raises(ProcessLookupError):os.kill(pid,0)
+    assert not (ctx.output_directory / 'notebook').exists()
