@@ -241,7 +241,7 @@ void Service::open() {
 }
 
 auto Service::execution_service(const std::string& id) -> ExecutionService& {
-  // Any other id names an SSH execution service; its backend checks that the
+  // Any other id names a registered execution daemon; its backend checks that the
   // service is available when an invocation is prepared.
   if (id == kLocalExecutionService) return *execution_service_;
   return *remote_execution_;
@@ -268,6 +268,8 @@ auto Service::execution_diagnostic(const Node& node, const std::vector<RemoteTar
   };
   if (target == targets.end() || !target->available)
     return error("execution service " + settings.execution_service + " is not available");
+  if (settings.execution_resources && !target->resource_limits)
+    return error("execution service " + target->id + " cannot enforce resource limits");
   const auto& system = settings.system.empty() ? target->native_system : settings.system;
   if (std::ranges::find(target->systems, system) == target->systems.end())
     return error("execution service " + target->id + " does not support system " + system);
@@ -709,7 +711,8 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(FBB& b, const Document
   std::vector<flatbuffers::Offset<R::ExecutionService>> services{local};
   for (const auto& target : targets)
     services.push_back(R::CreateExecutionService(b, b.CreateString(target.id), b.CreateString(target.native_system),
-        b.CreateVectorOfStrings(target.systems), R::ExecutionServiceKind::ssh_direct, target.available));
+        b.CreateVectorOfStrings(target.systems), R::ExecutionServiceKind::remote_daemon, target.available,
+        target.resource_limits, target.max_jobs ? flatbuffers::Optional(target.max_jobs) : flatbuffers::nullopt));
   auto execution_services = b.CreateVector(services);
   flatbuffers::Offset<R::ViewState> view;
   flatbuffers::Offset<flatbuffers::String> vid;

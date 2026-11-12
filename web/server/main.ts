@@ -19,7 +19,7 @@ import { VMEnvironmentManager, VMTerminal } from './vm'
 import { desktopRecents, desktopSettings, Recent } from './desktop'
 import { L, language } from './i18n'
 import { uninstall } from './uninstall'
-import { authorizeExecutionProject, loadExecutionServices, probeExecutionService, saveExecutionServices, startExecutionBroker } from './executionServices'
+import { authorizeExecutionProject, loadExecutionServices, registerExecutionService, removeExecutionService, startExecutionBroker } from './executionServices'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..', '..')
@@ -425,8 +425,8 @@ function projectDir(p: unknown): string {
 type Handler = (b: any, url: URL) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
   'GET /api/execution-services': () => loadExecutionServices(executionServiceSettings),
-  'POST /api/execution-services': (body) => saveExecutionServices(executionServiceSettings, body),
-  'POST /api/execution-services/probe': (body) => probeExecutionService(body),
+  'POST /api/execution-services/register': (body) => registerExecutionService(executionServiceSettings, body),
+  'POST /api/execution-services/remove': (body) => removeExecutionService(executionServiceSettings, body),
   'GET /api/status': () => ({
     setup: setupStatus(), demos: demos(), recents: recents(), home: os.homedir(), launchProject: launchProject ?? null, nixpkgsPin,
     // /host/<name> needs bubblewrap: on a Mac, the app's shared VM (core/src/worker_proc.cc).

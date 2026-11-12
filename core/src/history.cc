@@ -445,7 +445,7 @@ CREATE TABLE IF NOT EXISTS statuses(
   PRIMARY KEY(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS remote_jobs(
   job_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
-  instance TEXT NOT NULL, spec TEXT NOT NULL, contract TEXT NOT NULL, directory TEXT NOT NULL,
+  instance TEXT NOT NULL, server_id TEXT NOT NULL, spec TEXT NOT NULL, contract TEXT NOT NULL, directory TEXT NOT NULL,
   accepted INTEGER NOT NULL, cancel_requested INTEGER NOT NULL, detail TEXT NOT NULL,
   UNIQUE(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS last_inputs(
@@ -610,12 +610,12 @@ void History::put_status(sql::Db& db, const InvocationSummaryData& s) {
 
 auto History::put_remote_job(sql::Db& db, const RemoteJobRecord& job) -> void {
   const auto& inv = job.invocation;
-  auto st = db.prepare("INSERT INTO remote_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET "
+  auto st = db.prepare("INSERT INTO remote_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET "
                        "accepted=max(accepted,excluded.accepted), cancel_requested=max(cancel_requested,excluded.cancel_requested), "
                        "detail=excluded.detail");
   st.bind(1, inv.execution_job_id).bind(2, inv.run_id).bind(3, key(inv.card)).bind(4, inv.invocation)
-      .bind(5, job.instance).bind(6, job.spec).bind(7, job.contract).bind(8, job.directory)
-      .bind(9, job.accepted).bind(10, job.cancel_requested).bind(11, detail_json(inv)).run();
+      .bind(5, job.instance).bind(6, job.server_id).bind(7, job.spec).bind(8, job.contract).bind(9, job.directory)
+      .bind(10, job.accepted).bind(11, job.cancel_requested).bind(12, detail_json(inv)).run();
 }
 
 auto History::cancel_remote_jobs(sql::Db& db, const std::string& run_id) -> void {
@@ -635,19 +635,21 @@ auto History::remote_job_card(sql::Db& db, const std::string& job_id) -> std::op
 }
 
 auto History::remote_jobs(sql::Db& db) -> std::vector<RemoteJobRecord> {
-  auto st = db.prepare("SELECT run_id,card,invocation,instance,spec,contract,directory,accepted,cancel_requested,detail,job_id "
+  auto st = db.prepare("SELECT run_id,card,invocation,instance,server_id,spec,contract,directory,accepted,cancel_requested,detail,job_id "
                        "FROM remote_jobs ORDER BY run_id,card,invocation");
   std::vector<RemoteJobRecord> jobs;
   while (st.step()) {
     const auto id = st.text(0);
-    if (!crypto::is_uuid(id) || !crypto::is_sha256_hex(st.text(3)) || !crypto::is_sha256_hex(st.text(10)))
+    if (!crypto::is_uuid(id) || !crypto::is_sha256_hex(st.text(3)) || !crypto::is_sha256_hex(st.text(4)) ||
+        !crypto::is_sha256_hex(st.text(11)))
       throw std::runtime_error("invalid saved remote job identity");
     const auto card = path_from_key(st.text(1));
     auto inv = status(db, id, card, st.u64(2));
     if (!inv) throw std::runtime_error("remote job has no invocation status");
-    detail_into(st.text(9), *inv);
-    if (inv->execution_job_id != st.text(10)) throw std::runtime_error("remote job identity differs from its invocation");
-    jobs.push_back({std::move(*inv), st.text(3), st.text(4), st.text(5), st.text(6), st.i64(7) != 0, st.i64(8) != 0});
+    detail_into(st.text(10), *inv);
+    if (inv->execution_job_id != st.text(11)) throw std::runtime_error("remote job identity differs from its invocation");
+    jobs.push_back({std::move(*inv), st.text(3), st.text(4), st.text(5), st.text(6), st.text(7),
+                    st.i64(8) != 0, st.i64(9) != 0});
   }
   return jobs;
 }

@@ -1,4 +1,4 @@
-// Runs Card invocations on SSH execution services as durable jobs: the
+// Runs Card invocations on remote execution daemons as durable jobs: the
 // derivation, inputs and call are uploaded, the job is registered in the
 // history before it is submitted, and its result is imported when it ends.
 // A job outlives the process that started it; recovery completes it later.

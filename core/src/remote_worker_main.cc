@@ -208,16 +208,22 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
 
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs) -> void {
   remote::JobJson job;
-  if (schema::decode(read(directory / "spec.json", 256 * 1024), job) || *job.system != native_system() ||
-      !remote::store_path(*job.derivation) || !job.derivation->ends_with(".drv") || !remote::store_path(*job.output))
+  if (schema::decode(read(directory / "spec.json", 256 * 1024), job) || !job.has_required_fields())
     throw std::runtime_error("invalid remote Nix job for this system");
-  const std::set<std::string> accepted(job.input_blobs->begin(), job.input_blobs->end());
+  const auto& derivation = *schema::get(job.derivation);
+  const auto& output = *schema::get(job.output);
+  if (*schema::get(job.system) != native_system() || !remote::store_path(derivation) ||
+      !derivation.ends_with(".drv") || !remote::store_path(output))
+    throw std::runtime_error("invalid remote Nix job for this system");
+  const auto& input_blobs = *schema::get(job.input_blobs);
+  const std::set<std::string> accepted(input_blobs.begin(), input_blobs.end());
   const auto blob = [&](const std::string& digest) -> stdfs::path {
     if (!crypto::is_sha256_hex(digest) || !accepted.contains(digest)) throw std::runtime_error("remote input blob was not submitted");
     return blobs / digest;
   };
   remote::InvocationJson invocation;
-  if (schema::decode(read(blob(*job.invocation_sha256), kWorkerLimit), invocation) || !crypto::is_uuid(*invocation.project_id))
+  if (schema::decode(read(blob(*schema::get(job.invocation_sha256)), kWorkerLimit), invocation) ||
+      !crypto::is_uuid(*invocation.project_id))
     throw std::runtime_error("invalid remote invocation manifest");
   const auto input = directory / "staged";
   stdfs::create_directories(input);
@@ -257,7 +263,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs) -> void {
   // source paths or outputs realised for another invocation or project.
   const auto store = directory / "nix-root";
   try {
-    environment = NixEvaluator::realise_remote(blob(*invocation.archive_sha256), store, *job.derivation, *job.output,
+    environment = NixEvaluator::realise_remote(blob(*invocation.archive_sha256), store, derivation, output,
         [&](const std::string& line) { log(LogStream::build, line + "\n"); });
     outcome = run_worker(*call, invocation, input, directory, store, environment, log,
         [&](const DisplayData& data) { display = wire::standalone_display(data); });

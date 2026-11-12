@@ -1,33 +1,33 @@
 import { useEffect, useState } from 'react'
-import type { ExecutionServiceConnection } from '../../server/executionServices'
+import type { ExecutionServiceConnection, ExecutionServiceRegistration } from '../../server/executionServices'
 import { L } from '../i18n'
 import { api } from '../api'
 import { errorText } from '../model/session'
 import { Button, Form, Row, Section, Spinner, TextField, Value } from './controls'
 
-const endpoint = '/api/execution-services'
-const blank = (): ExecutionServiceConnection => ({ id: '', name: '', sshHost: '' })
+const route = '/api/execution-services'
 
 export function ExecutionServicesSettings({ changed }: { changed: () => void }) {
   const [entries, setEntries] = useState<ExecutionServiceConnection[]>([])
-  const [edit, setEdit] = useState<ExecutionServiceConnection>()
+  const [edit, setEdit] = useState<ExecutionServiceRegistration>()
   const [original, setOriginal] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string>()
   const [message, setMessage] = useState<string>()
-  useEffect(() => { void api<ExecutionServiceConnection[]>(endpoint).then(setEntries, (e) => setProblem(errorText(e))) }, [])
+  useEffect(() => { void api<ExecutionServiceConnection[]>(route).then(setEntries, (e) => setProblem(errorText(e))) }, [])
 
-  function choose(entry: ExecutionServiceConnection, id?: string) {
-    setEdit(entry)
+  function choose(entry: ExecutionServiceRegistration, id?: string) {
+    const { name, endpoint, id: serviceId } = entry
+    setEdit({ id: serviceId, name, endpoint })
     setOriginal(id)
     setProblem(undefined)
     setMessage(undefined)
   }
-  function update(field: 'id' | 'name' | 'sshHost' | 'gateway', value: string) {
-    setEdit((previous) => {
-      if (!previous) return previous
-      const verified = field === 'name' || field === 'id'
-      return { ...previous, [field]: field === 'gateway' && !value ? undefined : value, nativeSystem: verified ? previous.nativeSystem : undefined, systems: verified ? previous.systems : undefined }
+  function update(field: keyof ExecutionServiceRegistration, value: string) {
+    setEdit((previous) => previous && {
+      ...previous,
+      [field]: value,
+      ...(field === 'endpoint' ? { token: undefined } : {}),
     })
     setMessage(undefined)
   }
@@ -39,41 +39,48 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
     catch (e) { setProblem(errorText(e)) }
     finally { setBusy(false) }
   }
-  const valid = !!edit && [edit.id, edit.name, edit.sshHost].every((value) => value.trim())
+  const saved = entries.find((entry) => entry.id === original)
+  const sameEndpoint = !!saved && saved.endpoint === edit?.endpoint.trim()
+  const caps = sameEndpoint ? saved.capabilities : undefined
+  const valid = !!edit && [edit.id, edit.name, edit.endpoint].every((value) => value.trim()) &&
+    (sameEndpoint && !edit.token || /^[a-f0-9]{64}$/.test(edit.token ?? ''))
 
   return <Form>
     <Section title={L('実行サービス')}>
       {entries.map((entry) => <Row key={entry.id}>
         <Button kind="borderless" disabled={busy} onClick={() => choose(entry, entry.id)}>{entry.name} ({entry.id})</Button>
-        <span className="secondary">{entry.nativeSystem ?? L('接続未確認')}</span>
+        <span className="secondary">{entry.capabilities.nativeSystem}</span>
       </Row>)}
-      <Row><Button icon="plus" disabled={busy} onClick={() => choose(blank())}>{L('実行サービスを追加')}</Button></Row>
+      <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '' })}>{L('実行サービスを追加')}</Button></Row>
     </Section>
     {edit && <Section>
       <Row label={L('名前')}><TextField value={edit.name} disabled={busy} onChange={(value) => update('name', value)} /></Row>
       <Row label={L('サービス ID')}><TextField value={edit.id} mono disabled={busy || !!original} onChange={(value) => update('id', value)} /></Row>
-      <Value label={L('接続方法')} value="SSH" />
-      <Value label={L('実行方式')} value={L('SSH ホストで直接実行')} />
-      <Row label={L('SSH ホスト')} help={L('SSH 設定ファイルにあるホストの別名を使います。')}>
-        <TextField value={edit.sshHost} mono disabled={busy} onChange={(value) => update('sshHost', value)} />
+      <Row label={L('実行デーモンの接続先')} help={L('HTTPS の接続先、またはループバックアドレスの HTTP 接続先を入力してください。')}>
+        <TextField value={edit.endpoint} placeholder="https://compute.example.org:8781" mono disabled={busy} onChange={(value) => update('endpoint', value)} />
       </Row>
-      <Row label={L('ゲートウェイ実行ファイル')} help={L('既定名で起動できない場合は、SSH 先の絶対パスを指定します。')}>
-        <TextField value={edit.gateway ?? ''} placeholder="tsugumi-remote-gateway" mono disabled={busy} onChange={(value) => update('gateway', value)} />
+      <Row label={L('認証トークン')} help={L('認証トークンは小文字の16進数64文字です。')}>
+        <input type="password" className="field mono" autoComplete="off" spellCheck={false} aria-label={L('認証トークン')}
+          value={edit.token ?? ''} placeholder={sameEndpoint ? L('保存済みトークンを使用') : undefined} disabled={busy} onChange={(event) => update('token', event.target.value)} />
       </Row>
-      {edit.systems?.length ? <Value label={L('CPU アーキテクチャ')} value={edit.systems.join(', ')} /> : null}
+      {caps && <>
+        <Value label={L('CPU アーキテクチャ')} value={caps.systems.join(', ')} />
+        <Value label={L('隔離方式')} value={L('PID 名前空間')} />
+        <Value label={L('CPU とメモリの上限')} value={caps.resourceLimits ? L('対応') : L('非対応')} />
+        <Value label={L('最大同時ジョブ数')} value={String(caps.maxConcurrentJobs)} />
+      </>}
       <Row>
-        <Button disabled={!valid || busy} onClick={() => void perform(async () => {
-          setEdit(await api<ExecutionServiceConnection>(endpoint + '/probe', edit))
-          setMessage(L('接続を確認しました。'))
-        })}>{L('接続をテスト')}</Button>
         <Button kind="prominent" disabled={!valid || busy} onClick={() => void perform(async () => {
-          setEntries(await api<ExecutionServiceConnection[]>(endpoint, [...entries.filter((entry) => entry.id !== original), edit]))
-          setOriginal(edit.id)
-          setMessage(L('保存しました。'))
+          const next = await api<ExecutionServiceConnection[]>(route + '/register', { ...edit, token: edit.token || undefined })
+          const registered = next.find((entry) => entry.id === edit.id)
+          if (!registered) throw Error(L('実行サービスを登録できませんでした。'))
+          setEntries(next)
+          choose(registered, registered.id)
+          setMessage(L('接続を確認しました。'))
           changed()
-        })}>{L('保存')}</Button>
+        })}>{original ? L('接続を確認して更新') : L('接続を確認して登録')}</Button>
         {original && <Button kind="destructive" disabled={busy} onClick={() => void perform(async () => {
-          setEntries(await api<ExecutionServiceConnection[]>(endpoint, entries.filter((entry) => entry.id !== original)))
+          setEntries(await api<ExecutionServiceConnection[]>(route + '/remove', { id: original }))
           setEdit(undefined)
           setOriginal(undefined)
           changed()

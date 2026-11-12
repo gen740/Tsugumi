@@ -89,7 +89,7 @@ export function comparedConditions(left?: ComparedCard, right?: ComparedCard): C
   const method = (v?: R.InvocationSummaryT) => {
     if (s(v?.emulator)) return L('エミュレーション: {0}', s(v?.emulator))
     const id = s(v?.executionService)
-    return id === 'local' ? L('直接実行') : id ? 'SSH' : undefined
+    return id === 'local' ? L('直接実行') : id ? L('外部の実行デーモン') : undefined
   }
   const fields = [
     // Recorded on one side only (a Card that stopped before its build, say): not comparable.

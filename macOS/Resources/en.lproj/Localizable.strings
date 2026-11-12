@@ -35,6 +35,7 @@
 "%@ 全体（Card in Card）" = "All of %@ (Card in Card)";
 "%@（%@）" = "%@ (%@)";
 "%@（実行 #%llu）" = "%@ (invocation #%llu)";
+"%@（接続未確認）" = "%@ (connection unverified)";
 "%lld 件" = "%lld items";
 "%lld 件のモデルを取得しました。" = "Fetched %lld models.";
 "%lld 件を削除し、%@ を解放しました。" = "Deleted %lld and freed %@.";
@@ -74,6 +75,8 @@
 "Attic・Cachix などのバイナリキャッシュから、署名を検証してビルド済みのパッケージを取得します。登録した鍵は、この Mac の全プロジェクトの実行環境で信頼されます。" = "Download prebuilt packages from binary caches such as Attic and Cachix after verifying their signatures. The registered signing keys are trusted by the execution environment for every project on this Mac.";
 "C# の処理" = "C# Card";
 "C++ の処理" = "C++ step";
+"CPU とメモリの上限" = "CPU and memory limits";
+"CPU とメモリの上限を指定します。実行先のリソースは他のジョブと共有します。" = "Set CPU and memory limits. Jobs share the host’s resources.";
 "CPU アーキテクチャ" = "CPU architecture";
 "CPU 上限（ミリコア）" = "CPU limit (millicores)";
 "Canvas に追加" = "Add to Canvas";
@@ -128,6 +131,7 @@
 "GitHub から HTTP %lld が返りました" = "GitHub answered HTTP %lld";
 "Go の処理" = "Go step";
 "Got it" = "Got it";
+"HTTPS の接続先、またはループバックアドレスの HTTP 接続先を入力してください。" = "Enter an HTTPS endpoint or a loopback HTTP endpoint.";
 "Home と読み込み中の Tsugumi を動かすかどうか。デフォルトは macOS の「視差効果を減らす」に合わせます。" = "Whether the Tsugumi on Home and while loading moves. By default it follows macOS “Reduce motion”.";
 "Home へ戻る" = "Back to Home";
 "Home へ戻るには、保存できない変更を破棄します。破棄した変更は取り消せません。\n\n保存できない理由: %@" = "To go back to Home, the changes that cannot be saved are discarded. Discarded changes cannot be recovered.\n\nWhy they cannot be saved: %@";
@@ -153,6 +157,7 @@
 "OpenAI API キー" = "OpenAI API Key";
 "OpenAI API（API キー）" = "OpenAI API (API key)";
 "OpenAI の API キー" = "OpenAI API key";
+"PID 名前空間" = "PID namespace";
 "Plotly のグラフ" = "Plotly chart";
 "Plotly（対話型 HTML）" = "Plotly (interactive HTML)";
 "Python の処理" = "Python step";
@@ -171,10 +176,6 @@
 "SDK 準備" = "SDK preparation";
 "SDK 準備・Nix 評価・build" = "SDK preparation, Nix evaluation, build";
 "SDK 準備中" = "Preparing the SDK";
-"SSH ホスト" = "SSH host";
-"SSH ホストで直接実行" = "Direct execution on the SSH host";
-"SSH 設定ファイルにあるホストの別名を使います。" = "Use a host alias from your SSH configuration.";
-"SSH（%@、接続未確認）" = "SSH (%@, connection unverified)";
 "Skill がありません（設定 > Skills でフォルダを追加、またはプロジェクトの skills/）" = "No Skills (add a folder in Settings > Skills, or use the project's skills/)";
 "Skill はまだありません" = "No Skills yet";
 "Skill を再読込" = "Reload Skills";
@@ -326,6 +327,7 @@
 "この実行環境の既定（%@）" = "Execution environment default (%@)";
 "この形式の整形には対応していません" = "Formatting is not available for this file type";
 "この接続では版の要約を作りません。" = "This connection does not make version summaries.";
+"この接続先の認証トークンを入力してください。" = "Enter the authentication token for this endpoint.";
 "この操作はできません" = "This cannot be done";
 "この日時より前に終わった実行を削除しますか？" = "Delete the runs that ended before this date?";
 "この版から始めますか？" = "Start from this version?";
@@ -429,7 +431,6 @@
 "グループ化" = "Group";
 "グループ化（見た目だけ）" = "Group (visual only)";
 "グループ操作" = "Group";
-"ゲートウェイ実行ファイル" = "Gateway executable";
 "コピー" = "Copy";
 "コピーしました" = "Copied";
 "コピーを開く" = "Open a Copy";
@@ -636,7 +637,7 @@
 "並列実行数: %lld" = "Parallel runs: %lld";
 "中断" = "Interrupted";
 "中止" = "Cancel";
-"互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 実行中の SSH ジョブは実行先で継続し、新しい履歴には引き継がれません。" = "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app. Running SSH jobs continue on the remote host and will be unavailable in the new history.";
+"互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 外部で実行中のジョブは実行先で継続し、新しい履歴には引き継がれません。" = "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app. Running remote jobs continue on the execution host and will be unavailable in the new history.";
 "今すぐ確認" = "Check Now";
 "今の内容に名前を付けて残します（git の tag）。" = "Names what you have now as a version (a git tag).";
 "今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。" = "What you have now is kept as a version first, then the project becomes this version. Changing and running from here starts a new branch.";
@@ -696,6 +697,7 @@
 "保存前" = "Not saved";
 "保存済み" = "Saved";
 "保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。" = "Shows the Card references written in saved default.nix files. References through aliases or computed names are not included.";
+"保存済みトークンを使用" = "Use saved token";
 "保持" = "Kept";
 "保持された成果物はありません" = "No artifacts are kept";
 "保持する出力" = "Output to retain";
@@ -865,10 +867,10 @@
 "外観" = "Appearance";
 "外部の Nix ソースを読む" = "Read a Nix source from outside";
 "外部の変更を再読込" = "Reload External Changes";
-"外部の実行サービスでは CPU とメモリの上限を指定します。SSH ホストのリソースは他のジョブと共有します。" = "Set CPU and memory limits. Jobs share the SSH host’s resources.";
 "外部の実行サービスでは worker の状態を残せません。" = "External execution services do not reuse workers.";
 "外部の実行サービスにはファイルアクセスの制限が必要です。" = "Remote execution requires restricted file access.";
 "外部の実行サービスにはホストのフォルダを共有できません。" = "Host folders cannot be shared with a remote execution service.";
+"外部の実行デーモン" = "Remote execution daemon";
 "外部ソース" = "External sources";
 "外部接続" = "External Connections";
 "大きく" = "Larger";
@@ -915,6 +917,9 @@
 "実行サービスで待機中" = "Queued at the execution service";
 "実行サービスの状態" = "Execution service status";
 "実行サービスを追加" = "Add execution service";
+"実行デーモンが有効な実行環境情報を返しませんでした。" = "The execution daemon did not report valid capabilities.";
+"実行デーモンの接続先" = "Execution daemon endpoint";
+"実行デーモンへの接続に失敗しました（HTTP %@）。" = "Could not connect to the execution daemon (HTTP %@).";
 "実行ログを開く" = "Open Run Log";
 "実行中" = "Running";
 "実行中の接続線を動かす" = "Animate connections while running";
@@ -962,6 +967,7 @@
 "実行環境内（このプロジェクトだけが見えます）" = "Inside the environment (only this project is visible)";
 "実行環境（Nixpkgs）" = "Environment (Nixpkgs)";
 "実行環境（全プロジェクト共通の VM、その Nix store と実行履歴のディスクイメージ、各プロジェクトの control フォルダ）は次のフォルダにあります。プロジェクトの文書・成果物と、プロジェクトに保存した実行履歴（.tsugumi/runs.sqlite）はプロジェクトのフォルダにあり、ここには含まれません。" = "The environment (the VM all projects share, its Nix store and run history disk images, each project's control folder) is in the folder below. Projects' documents and artifacts, and the run history saved in a project (.tsugumi/runs.sqlite), are in the project folders, not here.";
+"対応" = "Supported";
 "対象" = "Which";
 "小さく" = "Smaller";
 "展開" = "Expand";
@@ -1022,9 +1028,12 @@
 "接続するとターミナルが自動で開きます。" = "Terminals open automatically when the environment connects.";
 "接続をテスト" = "Test connection";
 "接続を確かめられませんでした（%@）。キーを入れ直すか、ネットワークを確かめて再試行してください。" = "Could not confirm the connection (%@). Enter the key again, or check the network and try again.";
+"接続を確認して更新" = "Verify and Update";
+"接続を確認して登録" = "Verify and Register";
 "接続を確認しました。" = "Connection verified.";
 "接続中" = "Connected";
 "接続先" = "Provider";
+"接続先で Tsugumi の実行デーモンを起動してください。" = "Start the Tsugumi execution daemon at this endpoint.";
 "接続断（結果未確認）" = "Disconnected (outcome unconfirmed)";
 "接続方法" = "Transport";
 "接続未確認" = "Connection unverified";
@@ -1063,7 +1072,6 @@
 "既存のプロジェクトを開く…" = "Open Existing Project…";
 "既定" = "Default";
 "既定の cache.nixos.org と tsugumi.cachix.org は引き続き使用します。キャッシュへのアップロードは行いません。" = "The default cache.nixos.org and tsugumi.cachix.org remain enabled. Packages are not uploaded to caches.";
-"既定名で起動できない場合は、SSH 先の絶対パスを指定します。" = "Enter an absolute path on the SSH host if the default command is unavailable.";
 "既定（%@）" = "Default (%@)";
 "日時" = "Date";
 "日本語" = "日本語";
@@ -1073,6 +1081,7 @@
 "書き出す…" = "Export…";
 "書き方を調べています" = "Looking up how to write it";
 "書き込み" = "Write";
+"最大同時ジョブ数" = "Maximum concurrent jobs";
 "最大実行回数" = "Max runs";
 "最後の版から変更あり（次の実行で版になります）" = "Changed since the last version (the next run makes a version)";
 "最新の版です（%@ に確認）" = "Up to date (checked at %@)";
@@ -1159,6 +1168,7 @@
 "異なる 2 つの実行を選んでください" = "Choose two different runs";
 "登録されていないビルド結果を共有 store から削除します。登録を外したプロジェクトの Card は、次の実行でビルドし直します。" = "Deletes build results nothing registers from the shared store. Cards of projects whose registration was removed build again on their next run.";
 "登録したキャッシュには、全プロジェクトのビルドで必要になったパッケージのハッシュが問い合わされます。認証情報は、同じホストから固定ハッシュで取得するビルドにも使われます。" = "Registered caches are asked for the hashes of the packages that builds of every project need. Credentials are also used by builds that fetch from the same host by a fixed hash.";
+"登録内容が更新されました。もう一度設定を開いてください。" = "The registration changed. Reopen the settings and try again.";
 "直接実行" = "Direct execution";
 "直近の入力トークン数（上限に近づくと自動で圧縮）" = "Recent input tokens (compacted automatically near the limit)";
 "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";
@@ -1236,6 +1246,8 @@
 "詳しいログ" = "Detailed log";
 "詳しくはチャットに書きました" = "More in the chat";
 "詳細を閉じる" = "Close details";
+"認証トークン" = "Authentication token";
+"認証トークンは小文字の16進数64文字です。" = "Enter a 64-character lowercase hexadecimal token.";
 "認証情報はこの Mac のアプリ用ファイル（0600）に保存し、VM の Nix daemon だけに渡します。プロジェクトや実行記録には含めません。" = "Credentials are stored in a private application file on this Mac (0600) and provided only to the VM’s Nix daemon. They are excluded from project files and run history.";
 "認証（非公開キャッシュ）" = "Authentication (Private Caches)";
 "読み取り専用" = "Read only";
@@ -1296,9 +1308,11 @@
 "開けませんでした" = "Could not open";
 "開始" = "Start";
 "開始した Card" = "Started at";
+"隔離方式" = "Isolation";
 "隔離（sandbox）なしで実行" = "Run without isolation (sandbox)";
 "集計" = "Totals";
 "青" = "Blue";
+"非対応" = "Unavailable";
 "高さ %lld" = "Height %lld";
 "高コントラスト" = "High contrast";
 "鶫" = "Tsugumi";

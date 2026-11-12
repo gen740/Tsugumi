@@ -50,7 +50,7 @@ public enum LauncherError: Error, CustomStringConvertible, Sendable {
     case .startFailed:
       return String(localized: "下の原因とログを確かめてください。直したら再試行します。文書と実行履歴は消えません。", bundle: .main)
     case .incompatibleHistory:
-      return String(localized: "互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 実行中の SSH ジョブは実行先で継続し、新しい履歴には引き継がれません。", bundle: .main)
+      return String(localized: "互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 外部で実行中のジョブは実行先で継続し、新しい履歴には引き継がれません。", bundle: .main)
     case .notReady:
       return String(localized: "実行環境を停止してから再試行してください。続くときは実行環境のデータを削除します（文書は消えません）。", bundle: .main)
     case .locked:

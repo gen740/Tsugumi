@@ -2,10 +2,12 @@ import CoreFoundation
 import CryptoKit
 import Darwin
 import Foundation
+import Network
+import Security
 import Virtualization
 
 /// Bridges one framed request per connection from a project daemon to its
-/// registered SSH gateway. SSH and the registry stay on the Mac.
+/// registered execution daemon. Credentials and the registry stay on the Mac.
 final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @unchecked Sendable {
   private let support: URL
   private let listener = VZVirtioSocketListener()
@@ -91,9 +93,7 @@ final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @u
       var timeout = timeval(tv_sec: 60, tv_usec: 0)
       setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
       setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-      forward(fd) { entry, request, guest in
-        _ = try Self.remote(entry, request: request, guest: guest)
-      }
+      forward(fd)
       Darwin.shutdown(fd, SHUT_RDWR)
     }
     return true
@@ -104,7 +104,13 @@ final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @u
     init(_ connection: VZVirtioSocketConnection) { self.connection = connection }
   }
 
-  func forward(_ fd: Int32, send: (ExecutionServiceConnection, [String: Any], Int32) throws -> Void) {
+  func forward(_ fd: Int32) {
+    forward(fd) { entry, request, guest in
+      _ = try Self.remote(entry, request: request, guest: guest)
+    }
+  }
+
+  func forward(_ fd: Int32, send: (StoredExecutionService, [String: Any], Int32) throws -> Void) {
     var forwarding = false
     do {
       var request = try Frame.read(from: fd)
@@ -112,11 +118,14 @@ final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @u
             let scope = lock.withLock({ tokens.values.first(where: { $0.token == token })?.scope }) else {
         throw BrokerError("The project is not authorized to use this execution broker.")
       }
-      let entries = try ExecutionServiceRegistry.load(support: support)
+      let entries = try ExecutionServiceRegistry.loadStored(support: support)
       if request["operation"] as? String == "catalog" {
         let services: [[String: Any]] = entries.map { entry in
-          ["id": entry.id, "native_system": entry.nativeSystem ?? "", "systems": entry.systems ?? [],
-           "available": entry.nativeSystem != nil]
+          let caps = entry.capabilities
+          return ["id": entry.id, "native_system": caps.nativeSystem, "systems": caps.systems,
+                  "available": caps.workerContract == ExecutionServiceRegistry.workerContract,
+                  "server_id": caps.serverId, "executor": "daemon", "isolation": caps.isolation,
+                  "resource_limits": caps.resourceLimits, "max_jobs": caps.maxConcurrentJobs, "worker_contract": caps.workerContract]
         }
         try Frame.write(["version": 1, "ok": true, "services": services], to: fd)
         return
@@ -124,134 +133,288 @@ final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @u
       guard let operation = request["operation"] as? String, Self.operations.contains(operation) else {
         throw BrokerError("Unknown execution service operation.")
       }
-      guard let entry = entries.first(where: { $0.id == request["service"] as? String }) else {
-        throw BrokerError("The execution service is not registered.")
+      guard let entry = entries.first(where: { $0.id == request["service"] as? String }),
+            request["server_id"] as? String == entry.capabilities.serverId,
+            entry.capabilities.workerContract == ExecutionServiceRegistry.workerContract else {
+        throw BrokerError("The execution service registration changed. Verify its connection in settings.", code: "registration_changed")
       }
       request["project_scope"] = scope
+      request["server_id"] = entry.capabilities.serverId
       forwarding = true
       try send(entry, request, fd)
     } catch {
-      // EOF preserves an unconfirmed outcome after an SSH interruption.
-      if !forwarding {
-        let message = (error as? BrokerError)?.message ?? "The execution broker could not complete the request."
-        try? Frame.write(["version": 1, "ok": false, "error": message], to: fd)
+      // EOF preserves an unconfirmed outcome after a transport interruption.
+      let failure = error as? BrokerError
+      if !forwarding || failure?.code == "registration_changed" {
+        var reply: [String: Any] = ["version": 1, "ok": false, "error": failure?.message ?? "The execution broker could not complete the request."]
+        if let code = failure?.code { reply["code"] = code }
+        try? Frame.write(reply, to: fd)
       }
     }
   }
 
-  static func probe(_ entry: ExecutionServiceConnection) throws -> ExecutionServiceConnection {
-    try ExecutionServiceRegistry.validate([entry])
-    let reply = try remote(entry, request: ["version": 1, "operation": "probe", "service": entry.id])
-    return try checkedProbe(entry, reply: reply)
+  static func probe(_ entry: ExecutionServiceRegistration, token: String) throws -> ExecutionServiceCapabilities {
+    let reply = try remote(endpoint: entry.endpoint, token: token, request: ["version": 1, "operation": "probe", "service": entry.id])
+    return try checkedProbe(reply)
   }
 
-  static func checkedProbe(_ entry: ExecutionServiceConnection, reply: [String: Any]) throws -> ExecutionServiceConnection {
-    guard reply["ok"] as? Bool == true, let native = reply["native_system"] as? String,
-          let systems = reply["systems"] as? [String] else {
+  static func checkedProbe(_ reply: [String: Any]) throws -> ExecutionServiceCapabilities {
+    guard reply["ok"] as? Bool == true else {
       throw BrokerError(reply["error"] as? String ?? "The execution service probe failed.")
     }
-    let workerContract = 1
-    let reported = reply["worker_contract"] as? NSNumber
-    let actual = reported.flatMap { CFGetTypeID($0) == CFBooleanGetTypeID() ? nil : ($0 as? Int) }
-    guard actual == workerContract else {
-      throw BrokerError("SSH gateway worker contract is \(actual.map(String.init) ?? "unreported"). Expected \(workerContract). Rebuild the gateway with this Tsugumi revision.")
+    guard reply["executor"] as? String == "daemon" else {
+      throw BrokerError(String(localized: "接続先で Tsugumi の実行デーモンを起動してください。", bundle: .main))
     }
-    var checked = entry
-    checked.nativeSystem = native
-    checked.systems = systems
-    try ExecutionServiceRegistry.validate([checked])
-    return checked
+    let expected = ExecutionServiceRegistry.workerContract
+    let actual = jsonInteger(reply["worker_contract"])
+    guard actual == expected else {
+      throw BrokerError("Execution daemon worker contract is \(actual.map(String.init) ?? "unreported"). Expected \(expected). Rebuild the execution daemon with this Tsugumi revision.")
+    }
+    guard let id = reply["server_id"] as? String, let native = reply["native_system"] as? String,
+          let systems = reply["systems"] as? [String], let isolation = reply["isolation"] as? String,
+          let limit = reply["resource_limits"] as? NSNumber, CFGetTypeID(limit) == CFBooleanGetTypeID(),
+          let maxJobs = jsonInteger(reply["max_jobs"]) else {
+      throw BrokerError(String(localized: "実行デーモンが有効な実行環境情報を返しませんでした。", bundle: .main))
+    }
+    let caps = ExecutionServiceCapabilities(serverId: id, nativeSystem: native, systems: systems, isolation: isolation,
+                                            resourceLimits: limit.boolValue, maxConcurrentJobs: maxJobs, workerContract: expected)
+    try ExecutionServiceRegistry.validate(caps)
+    return caps
   }
 
-  static func sshArguments(_ entry: ExecutionServiceConnection) -> [String] {
-    // The executable is a fixed name or a validated absolute path from
-    // app settings. OpenSSH invokes the remote shell. Requests use stdin.
-    let command = entry.gateway.map { "'\($0)'" } ?? "tsugumi-remote-gateway"
-    return ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
-            "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
-            "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "--", entry.sshHost, command]
+  private static func jsonInteger(_ value: Any?) -> Int? {
+    guard let value = value as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID() else { return nil }
+    return value as? Int
   }
 
-  private static func remote(_ entry: ExecutionServiceConnection, request: [String: Any],
-                             guest: Int32? = nil) throws -> [String: Any] {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-    process.arguments = sshArguments(entry)
-    let stdin = Pipe(), stdout = Pipe()
-    process.standardInput = stdin
-    process.standardOutput = stdout
-    process.standardError = FileHandle.nullDevice
-    try process.run()
-    let timer = DispatchSource.makeTimerSource()
-    // Bound idle operations while allowing an archive transfer to continue
-    // as long as bytes are moving.
-    func progress() { timer.schedule(deadline: .now() + 60) }
-    progress()
-    timer.setEventHandler { if process.isRunning { process.terminate() } }
-    timer.resume()
-    defer {
-      timer.cancel()
-      try? stdin.fileHandleForWriting.close()
-      try? stdout.fileHandleForReading.close()
-      if process.isRunning { process.terminate() }
-      process.waitUntilExit()
-    }
-    let to = stdin.fileHandleForWriting.fileDescriptor
-    _ = fcntl(to, F_SETNOSIGPIPE, 1)
-    let from = stdout.fileHandleForReading.fileDescriptor
-    try Frame.write(request, to: to)
-    if let guest { try Frame.copy(try Frame.bodySize(request), from: guest, to: to, progress: progress) }
-    try stdin.fileHandleForWriting.close()
-    let reply: [String: Any]
-    do { reply = try Frame.read(from: from) }
-    catch { throw BrokerError("The SSH execution gateway did not reply.") }
+  private static func remote(_ entry: StoredExecutionService, request: [String: Any], guest: Int32) throws -> [String: Any] {
+    try remote(endpoint: entry.endpoint, token: entry.token, request: request, guest: guest)
+  }
+
+  private static func remote(endpoint: String, token: String, request: [String: Any], guest: Int32? = nil) throws -> [String: Any] {
+    let url = try ExecutionServiceRegistry.endpointURL(endpoint)
+    let transport = try HTTPTransport(endpoint: url)
+    let prefix = try Frame.encode(request)
+    let size = try Frame.bodySize(request)
+    var fields = "POST /rpc HTTP/1.1\r\nHost: \(transport.authority)\r\nAuthorization: Bearer \(token)\r\nContent-Type: application/octet-stream\r\nContent-Length: \(prefix.count + size)\r\nConnection: close\r\n"
+    let pin = request["server_id"] as? String
+    if let pin { fields += "X-Tsugumi-Server: \(pin)\r\n" }
+    if size > 0 { fields += "Expect: 100-continue\r\n" }
+    try transport.send(Data((fields + "\r\n").utf8))
+    if size > 0 { try transport.waitForContinue(pinned: pin != nil) }
+    try transport.send(prefix)
     if let guest {
-      progress()
+      var remaining = size
+      while remaining > 0 {
+        let chunk = try Frame.exact(min(65536, remaining), from: guest)
+        try transport.send(chunk)
+        remaining -= chunk.count
+      }
+    } else if size != 0 {
+      throw BrokerError("The execution service request body is missing.")
+    }
+
+    let length = try transport.readResponseLength(rejectedBeforeBody: pin != nil && size == 0)
+    var consumed = 0
+    let reply = try Frame.read { size in
+      consumed += size
+      return try transport.exact(size)
+    }
+    var remaining = try Frame.bodySize(reply)
+    guard consumed + remaining == length, guest != nil || remaining == 0 else {
+      throw BrokerError("Invalid execution daemon response size.")
+    }
+    if let guest {
       try Frame.write(reply, to: guest)
-      try Frame.copy(try Frame.bodySize(reply), from: from, to: guest, progress: progress)
+      while remaining > 0 {
+        let chunk = try transport.exact(min(65536, remaining))
+        try writeAll(guest, chunk)
+        remaining -= chunk.count
+      }
     }
     return reply
   }
 
+  /// One fixed-length HTTP request over the system TCP/TLS transport.
+  private final class HTTPTransport {
+    let authority: String
+    private let connection: NWConnection
+    private var pending = Data()
+
+    init(endpoint: URL) throws {
+      guard let parts = URLComponents(url: endpoint, resolvingAgainstBaseURL: false),
+            let host = parts.host, let port = NWEndpoint.Port(rawValue: UInt16(parts.port ?? (parts.scheme == "https" ? 443 : 80))) else {
+        throw BrokerError("Invalid execution daemon endpoint.")
+      }
+      authority = host + (parts.port.map { ":\($0)" } ?? "")
+      let hostname = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+      let parameters: NWParameters
+      if parts.scheme == "https" {
+        let tls = NWProtocolTLS.Options()
+        sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, hostname)
+        parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
+      } else {
+        parameters = .tcp
+      }
+      connection = NWConnection(host: NWEndpoint.Host(hostname), port: port, using: parameters)
+      do {
+        try wait(seconds: 10) { (finish: @escaping (Result<Void, Error>) -> Void) in
+          connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready: finish(.success(()))
+            case .failed(let error), .waiting(let error): finish(.failure(error))
+            default: break
+            }
+          }
+          connection.start(queue: .global(qos: .utility))
+        }
+        connection.stateUpdateHandler = nil
+      } catch {
+        connection.cancel()
+        throw error
+      }
+    }
+
+    deinit { connection.cancel() }
+
+    private func wait<T>(seconds: Int = 60, begin: (@escaping (Result<T, Error>) -> Void) -> Void) throws -> T {
+      let semaphore = DispatchSemaphore(value: 0)
+      let lock = NSLock()
+      var result: Result<T, Error>?
+      begin { next in
+        lock.withLock {
+          guard result == nil else { return }
+          result = next
+          semaphore.signal()
+        }
+      }
+      guard semaphore.wait(timeout: .now() + .seconds(seconds)) == .success else {
+        connection.cancel()
+        throw BrokerError("The execution daemon connection timed out.")
+      }
+      return try lock.withLock { try result!.get() }
+    }
+
+    func send(_ bytes: Data) throws {
+      try wait { (finish: @escaping (Result<Void, Error>) -> Void) in
+        connection.send(content: bytes, completion: .contentProcessed { error in
+          if let error { finish(.failure(error)) } else { finish(.success(())) }
+        })
+      }
+    }
+
+    private func receive(maximum: Int) throws -> Data {
+      try wait { finish in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: maximum) { bytes, _, _, error in
+          if let bytes, !bytes.isEmpty { finish(.success(bytes)) }
+          else { finish(.failure(error ?? BrokerError("The execution daemon closed the connection early."))) }
+        }
+      }
+    }
+
+    func exact(_ length: Int) throws -> Data {
+      var result = Data()
+      if !pending.isEmpty {
+        let count = min(pending.count, length)
+        result.append(pending.prefix(count))
+        pending = Data(pending.dropFirst(count))
+      }
+      while result.count < length { result.append(try receive(maximum: length - result.count)) }
+      return result
+    }
+
+    func waitForContinue(pinned: Bool) throws {
+      let (code, _) = try readResponse()
+      guard code == 100 else { throw Self.unexpectedStatus(code, rejectedBeforeBody: pinned) }
+    }
+
+    func readResponseLength(rejectedBeforeBody: Bool) throws -> Int {
+      let (code, length) = try readResponse()
+      guard code == 200 else { throw Self.unexpectedStatus(code, rejectedBeforeBody: rejectedBeforeBody) }
+      guard let length else { throw BrokerError("The execution daemon did not report its response length.") }
+      return length
+    }
+
+    private static func unexpectedStatus(_ code: Int, rejectedBeforeBody: Bool) -> BrokerError {
+      if code == 409, rejectedBeforeBody {
+        return BrokerError("The execution daemon at this endpoint has changed. Verify its connection in settings.", code: "registration_changed")
+      }
+      return BrokerError(String(localized: "実行デーモンへの接続に失敗しました（HTTP \(code)）。", bundle: .main))
+    }
+
+    private func readResponse() throws -> (Int, Int?) {
+      let end = Data([13, 10, 13, 10])
+      while pending.range(of: end) == nil {
+        guard pending.count < 16 * 1024 else { throw BrokerError("The execution daemon HTTP headers are too large.") }
+        pending.append(try receive(maximum: 4096))
+      }
+      guard let boundary = pending.range(of: end), boundary.lowerBound < 16 * 1024,
+            let header = String(data: pending[..<boundary.lowerBound], encoding: .utf8) else {
+        throw BrokerError("Invalid execution daemon HTTP response.")
+      }
+      pending = Data(pending[boundary.upperBound...])
+      let lines = header.components(separatedBy: "\r\n")
+      let status = lines[0].split(separator: " ", maxSplits: 2)
+      guard status.count >= 2, status[0] == "HTTP/1.1" || status[0] == "HTTP/1.0", let code = Int(status[1]) else {
+        throw BrokerError("Invalid execution daemon HTTP status.")
+      }
+      if code != 200 { return (code, nil) }
+      var length: Int?
+      for line in lines.dropFirst() {
+        guard let colon = line.firstIndex(of: ":") else { throw BrokerError("Invalid execution daemon HTTP header.") }
+        switch line[..<colon].lowercased() {
+        case "content-length":
+          let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+          guard length == nil, let parsed = Int(value), parsed >= 5, value.utf8.allSatisfy({ (48...57).contains($0) }) else {
+            throw BrokerError("Invalid execution daemon response length.")
+          }
+          length = parsed
+        case "transfer-encoding", "content-encoding":
+          throw BrokerError("The execution daemon must send an unencoded, fixed-length frame.")
+        default: break
+        }
+      }
+      return (code, length)
+    }
+  }
+
   private struct BrokerError: LocalizedError {
     let message: String
-    init(_ message: String) { self.message = message }
+    let code: String?
+    init(_ message: String, code: String? = nil) { self.message = message; self.code = code }
     var errorDescription: String? { message }
   }
 
   private enum Frame {
     static func bodySize(_ header: [String: Any]) throws -> Int {
-      guard let size = (header["size"] ?? 0) as? Int, size >= 0 else {
+      guard let size = jsonInteger(header["size"] ?? 0), (0...(64 << 30)).contains(size) else {
         throw BrokerError("Invalid execution service body size.")
       }
       return size
     }
 
     static func read(from fd: Int32) throws -> [String: Any] {
-      let length = try exact(4, from: fd).reduce(0) { ($0 << 8) | Int($1) }
+      try read { try exact($0, from: fd) }
+    }
+
+    static func read(exact: (Int) throws -> Data) throws -> [String: Any] {
+      let length = try exact(4).reduce(0) { ($0 << 8) | Int($1) }
       guard (1...65536).contains(length),
-            let header = try JSONSerialization.jsonObject(with: exact(length, from: fd)) as? [String: Any],
-            header["version"] as? Int == 1 else { throw BrokerError("Invalid execution service header.") }
+            let header = try JSONSerialization.jsonObject(with: exact(length)) as? [String: Any],
+            jsonInteger(header["version"]) == 1 else { throw BrokerError("Invalid execution service header.") }
       _ = try bodySize(header)
       return header
     }
 
-    static func write(_ header: [String: Any], to fd: Int32) throws {
+    static func encode(_ header: [String: Any]) throws -> Data {
       let json = try JSONSerialization.data(withJSONObject: header)
       guard (1...65536).contains(json.count) else { throw BrokerError("Invalid execution service header size.") }
       var length = UInt32(json.count).bigEndian
-      try writeAll(fd, withUnsafeBytes(of: &length) { Data($0) })
-      try writeAll(fd, json)
+      return withUnsafeBytes(of: &length) { Data($0) } + json
     }
 
-    static func copy(_ count: Int, from: Int32, to: Int32, progress: () -> Void) throws {
-      var remaining = count
-      while remaining > 0 {
-        let size = min(65536, remaining)
-        try writeAll(to, exact(size, from: from))
-        remaining -= size
-        progress()
-      }
+    static func write(_ header: [String: Any], to fd: Int32) throws {
+      try writeAll(fd, encode(header))
     }
 
     static func exact(_ count: Int, from fd: Int32) throws -> Data {
@@ -267,11 +430,5 @@ final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @u
       }
       return data
     }
-  }
-}
-
-public extension ExecutionServiceRegistry {
-  static func probe(_ entry: ExecutionServiceConnection) async throws -> ExecutionServiceConnection {
-    try await Task.detached { try ExecutionServiceBroker.probe(entry) }.value
   }
 }

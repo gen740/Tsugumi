@@ -1,96 +1,28 @@
-import hashlib
+"""Transport, authentication, capability and listen policy of the execution daemon."""
+
+import contextlib
+import http.client
 import io
-import json
 import os
-import re
+import socket
 import struct
-import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import remote_gateway as rg
-from remote_job import Journal, parse_result_manifest
-
-NATIVE = "x86_64-linux"
-STORE = "0123456789abcdfghijklmnpqrsvwxyz"
-WORKER = "/opt/tsugumi/bin/tsugumi-remote-worker"
-FLATBUFFER = struct.pack("<IiHH", 4, -4, 4, 4)
+from remote_fixtures import (
+    NATIVE, SCOPE_A, TOKEN, DaemonCase, FakeCgroups, FakeDriver, decode, frame, make_daemon, sha,
+)
 
 
-def sha(data):
-    return hashlib.sha256(data).hexdigest()
-
-
-def frame(header, body=b""):
-    raw = json.dumps(header).encode()
-    return struct.pack(">I", len(raw)) + raw + body
-
-
-class FakeSystemd:
-    def __init__(self):
-        self.units, self.calls, self.run_rc, self.show_rc = {}, [], 0, 0
-
-    def __call__(self, argv):
-        assert all(isinstance(arg, str) for arg in argv)
-        self.calls.append(list(argv))
-        if argv[0] == "systemd-run":
-            unit = argv[2].split("=", 1)[1]
-            if self.run_rc or unit in self.units:
-                return self.run_rc or 1, "", "Failed to start\nunit exists"
-            self.units[unit] = "active"
-            return 0, "", ""
-        unit = argv[-1]
-        if argv[2] == "show":
-            if self.show_rc:
-                return self.show_rc, "", "Failed to connect to bus"
-            state = self.units.get(unit)
-            load = "not-found" if state is None else "loaded"
-            return 0, f"LoadState={load}\nActiveState={state or 'inactive'}\nResult=exit-code\n", ""
-        if argv[2] == "stop":
-            return 0, "", ""
-        raise AssertionError(argv)
-
-    def ran(self, verb):
-        return [c for c in self.calls if c[0] == verb or c[2:3] == [verb]]
-
-
-class GatewayTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = os.path.join(self.tmp.name, "state")
-        self.fake = FakeSystemd()
-        self.gw = rg.Gateway(self.root, runner=self.fake, worker=WORKER, system=NATIVE)
-        self.journal = self.gw.journal
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
-    def call(self, data):
-        out = io.BytesIO()
-        code = rg.serve(io.BytesIO(data), out, lambda: self.gw)
-        raw = out.getvalue()
-        (size,) = struct.unpack(">I", raw[:4])
-        return code, json.loads(raw[4:4 + size]), raw[4 + size:]
-
-    def request(self, body=b"", **header):
-        return self.call(frame({"version": 1, **header}, body))
-
-    def spec(self, cpu=1500):
-        blob = b"invocation-bytes"
-        self.assertTrue(self.request(blob, operation="put_blob", sha256=sha(blob),
-                                     size=len(blob))[1]["ok"])
-        return json.dumps({
-            "system": NATIVE, "derivation": f"/nix/store/{STORE}-card.drv",
-            "output": f"/nix/store/{STORE}-card", "invocation_sha256": sha(blob),
-            "input_blobs": [sha(blob)], "cpu_millis": cpu, "memory_bytes": 1 << 30,
-            "timeout_seconds": 60}).encode()
-
-    def submit(self, job_id, spec, **extra):
-        return self.request(spec, operation="submit", job_id=job_id, size=len(spec), **extra)[1]
-
+class FramingTests(DaemonCase):
     def test_malformed_frames_are_bounded(self):
         job = "a" * 64
+        scope = {"project_scope": SCOPE_A, "server_id": self.daemon.server_id}
         cases = [
             b"", b"\x00\x00", struct.pack(">I", 0), struct.pack(">I", 65537) + b"{}",
             struct.pack(">I", 10) + b"{}", struct.pack(">I", 3) + b"{x}",
@@ -100,197 +32,223 @@ class GatewayTest(unittest.TestCase):
             frame({"version": 1, "operation": "exec"}),
             frame({"version": 1, "operation": "probe", "command": "rm -rf /"}),
             frame({"version": 1, "operation": "probe", "service": "a; reboot"}),
-            frame({"version": 1, "operation": "status", "job_id": "../x"}),
-            frame({"version": 1, "operation": "status", "job_id": job, "size": 1}),
-            frame({"version": 1, "operation": "put_blob", "sha256": job}),
-            frame({"version": 1, "operation": "submit", "job_id": job, "size": 1 << 20}),
-            frame({"version": 1, "operation": "submit", "job_id": job, "size": 10}, b"{}"),
+            frame({"version": 1, "operation": "status", "job_id": "../x", **scope}),
+            frame({"version": 1, "operation": "status", "job_id": job, "size": 1, **scope}),
+            frame({"version": 1, "operation": "put_blob", "sha256": job, **scope}),
+            frame({"version": 1, "operation": "submit", "job_id": job, "size": 1 << 20, **scope}),
+            frame({"version": 1, "operation": "submit", "job_id": job, "size": 10, **scope}, b"{}"),
+            frame({"version": 1, "operation": "status", "job_id": job, **scope}, b"trailing"),
             struct.pack(">I", 25) + b'{"version":1,"version":1}',
         ]
         for data in cases:
             with self.subTest(data=data[:40]):
-                code, resp, rest = self.call(data)
-                self.assertEqual(code, 1)
-                self.assertEqual((resp["version"], resp["ok"], rest), (1, False, b""))
-                self.assertEqual(set(resp), {"version", "ok", "error"})
+                raw, handle, size = rg.respond(self.daemon, rg.UploadBody(io.BytesIO(data), len(data)),
+                                               self.daemon.server_id)
+                resp, rest = decode(raw)
+                self.assertEqual((handle, size, rest), (None, 0, b""))
+                self.assertEqual((resp["version"], resp["ok"]), (1, False))
+                self.assertLessEqual(set(resp), {"version", "ok", "error", "code"})
                 self.assertTrue(0 < len(resp["error"]) <= rg.MAX_DIAGNOSTIC)
                 self.assertNotIn("Traceback", resp["error"])
-        self.assertEqual(self.fake.calls, [])
+        self.assertEqual(self.driver.spawned, [])
 
     def test_binary_round_trip(self):
         data = bytes(range(256)) * 5000  # spans several chunks
-        code, resp, _ = self.request(data, operation="put_blob", sha256=sha(data), size=len(data))
-        self.assertEqual((code, resp["ok"], resp["sha256"]), (0, True, sha(data)))
-        code, resp, rest = self.request(operation="get_blob", sha256=sha(data))
-        self.assertEqual((code, resp["ok"], resp["size"]), (0, True, len(data)))
-        self.assertEqual(rest, data)
-        bad = self.request(b"abc", operation="put_blob", sha256="0" * 64, size=3)[1]
-        self.assertFalse(bad["ok"])
-        missing = self.request(operation="get_blob", sha256="1" * 64)
-        self.assertEqual((missing[0], missing[1]["ok"], missing[2]), (1, False, b""))
+        self.assertEqual(self.put(data), sha(data))
+        reply, blob = self.call({"version": 1, "operation": "get_blob", "sha256": sha(data),
+                                 "instance_id": self.journal().instance_id,
+                                 "project_scope": SCOPE_A, "server_id": self.daemon.server_id})
+        self.assertEqual((reply["ok"], reply["size"], blob), (True, len(data), data))
+        self.assertFalse(self.scoped("put_blob", body=b"abc", sha256="0" * 64, size=3)["ok"])
+        self.assertFalse(self.scoped("get_blob", sha256="1" * 64)["ok"])
 
-    def test_probe(self):
-        code, resp, rest = self.request(operation="probe", service="tsugumi")
-        self.assertEqual((code, rest), (0, b""))
-        self.assertEqual(resp, {"version": 1, "ok": True, "instance_id": self.journal.instance_id,
-                                "worker_contract": 1, "native_system": NATIVE, "systems": [NATIVE]})
 
-    def test_submit_uses_opaque_unit_and_fixed_argv(self):
-        job, spec = "b" * 64, self.spec(cpu=1500)
-        resp = self.submit(job, spec, service="tsugumi-svc")
-        self.assertEqual(resp, {"version": 1, "ok": True, "state": "queued",
-                                "fingerprint": sha(spec)})
-        (argv,) = self.fake.ran("systemd-run")
-        unit = argv[2].split("=", 1)[1]
-        self.assertRegex(unit, r"^tsugumi-card-[0-9a-f]{64}\.service$")
-        self.assertNotIn(job, unit)
-        self.assertEqual(unit, self.gw.unit(job))
-        for prop in ("Type=exec", "CPUQuota=150%", f"MemoryMax={1 << 30}", "RuntimeMaxSec=60",
-                     "KillMode=control-group", "MemoryAccounting=yes", "CPUAccounting=yes"):
-            self.assertIn(f"--property={prop}", argv)
-        self.assertEqual(argv[:2] + [argv[3]], ["systemd-run", "--user", "--no-block"])
-        self.assertIn(f"--setenv=PATH={os.environ.get('PATH', os.defpath)}", argv)
-        tail = argv[argv.index("--") + 1:]
-        self.assertEqual(tail, [os.path.abspath(sys.executable), os.path.abspath(rg.__file__),
-                                "--supervise", os.path.abspath(self.root), job, WORKER])
-        self.assertTrue(all(os.path.isabs(p) for p in tail[:2] + [tail[3], tail[5]]))
-        flat = " ".join(" ".join(c) for c in self.fake.calls)
-        self.assertNotIn("tsugumi-svc", flat)
-        self.assertFalse(re.search(r"[;&|`$]", flat))
+class CapabilityTests(DaemonCase):
+    def test_unscoped_probe_reports_capabilities_only(self):
+        reply, _ = self.call({"version": 1, "operation": "probe"})
+        self.assertEqual(reply, {
+            "version": 1, "ok": True, "server_id": self.daemon.server_id, "native_system": NATIVE,
+            "systems": [NATIVE], "worker_contract": 1, "executor": "daemon",
+            "isolation": "pid_namespace", "resource_limits": False, "max_jobs": 8})
+        self.assertRegex(self.daemon.server_id, r"^[0-9a-f]{64}$")
+        self.assertFalse((self.root / "projects").exists())
 
-    def test_duplicate_submit_and_conflict(self):
-        job, spec = "c" * 64, self.spec()
-        self.assertEqual(self.submit(job, spec)["state"], "queued")
-        self.assertEqual(self.submit(job, spec)["state"], "queued")
-        self.assertEqual(len(self.fake.ran("systemd-run")), 1)  # unit already active
-        other = self.spec(cpu=2000)
-        self.assertFalse(self.submit(job, other)["ok"])
-        self.assertEqual(self.journal.status(job)["fingerprint"], sha(spec))
+    def test_server_id_is_persisted_per_state_root(self):
+        again = make_daemon(self.root, FakeDriver())
+        self.assertEqual(again.server_id, self.daemon.server_id)
+        other = make_daemon(self.root.parent / "other", FakeDriver())
+        self.assertNotEqual(other.server_id, self.daemon.server_id)
+        # A host pinned to the old server sees the replacement as a different instance.
+        reply = self.scoped("probe", daemon=other, server_id=self.daemon.server_id)
+        self.assertEqual((reply["ok"], reply["code"]), (False, "instance_changed"))
+        reply, _ = self.call({"version": 1, "operation": "probe", "server_id": self.daemon.server_id}, daemon=other)
+        self.assertEqual(reply["code"], "instance_changed")
 
-    def test_status_restarts_queued_job_with_missing_unit(self):
-        job, spec = "d" * 64, self.spec()
-        self.submit(job, spec)
-        self.fake.units.clear()
-        self.assertEqual(self.request(operation="status", job_id=job)[1]["state"], "queued")
-        self.assertEqual(len(self.fake.ran("systemd-run")), 2)
-        self.assertEqual(self.request(operation="status", job_id="e" * 64)[1],
-                         {"version": 1, "ok": True, "state": "missing"})
+    def test_scope_requires_server_pin(self):
+        reply, _ = self.call({"version": 1, "operation": "probe", "project_scope": SCOPE_A})
+        self.assertEqual((reply["ok"], reply["code"]), (False, "request_rejected"))
+        reply = self.scoped("probe")
+        self.assertEqual(reply["instance_id"], self.journal().instance_id)
+        self.assertEqual(reply["server_id"], self.daemon.server_id)
+        reply = self.scoped("probe", server_id="f" * 64)
+        self.assertEqual(reply["code"], "instance_changed")
+        for operation, fields in (("status", {"job_id": "c" * 64}), ("get_blob", {"sha256": "c" * 64})):
+            reply, _ = self.call({"version": 1, "operation": operation, **fields})
+            self.assertEqual(reply["code"], "request_rejected")
 
-    def test_launcher_failure_before_claim_is_diagnosed(self):
-        job, spec = "d" * 64, self.spec()
-        self.fake.run_rc = 1
-        resp = self.submit(job, spec)
-        self.assertEqual(resp["state"], "failed")
-        self.assertIn("systemd-run failed", resp["diagnostic"])
-        self.fake.run_rc = 0
-        job2 = "f" * 64
-        self.submit(job2, spec)
-        self.fake.units[self.gw.unit(job2)] = "failed"
-        resp = self.request(operation="status", job_id=job2)[1]
-        self.assertEqual(resp["state"], "failed")
-        self.assertIn("before claiming", resp["diagnostic"])
+    def test_limits_need_delegated_cgroups(self):
+        job = "1" * 64
+        reply = self.submit(job, self.spec(limits=(1000, 1 << 30)))
+        self.assertEqual(reply["code"], "request_rejected")
+        self.assertIn("--cgroup-root", reply["error"])
+        self.assertIsNone(self.journal().status(job))
+        half = self.spec().replace(b'"timeout_seconds"', b'"cpu_millis": 1000, "timeout_seconds"')
+        self.assertEqual(self.submit("2" * 64, half)["code"], "request_rejected")
+        self.assertEqual(self.submit("3" * 64, self.spec())["state"], "queued")
 
-    def test_cancel_tombstone_precedes_submit(self):
-        job, spec = "1" * 64, self.spec()
-        resp = self.request(operation="cancel", job_id=job, fingerprint=sha(spec))[1]
-        self.assertEqual(resp["state"], "cancelled")
-        self.assertEqual(self.submit(job, spec)["state"], "cancelled")
-        self.assertFalse(self.submit(job, self.spec(cpu=10))["ok"])
-        self.assertEqual(self.fake.ran("systemd-run"), [])
+    def test_limits_accepted_with_cgroups(self):
+        daemon = make_daemon(self.root, FakeDriver(), cgroups=FakeCgroups(), max_jobs=3)
+        reply, _ = self.call({"version": 1, "operation": "probe"}, daemon=daemon)
+        self.assertEqual((reply["resource_limits"], reply["max_jobs"]), (True, 3))
+        digest = self.put(b"limited", scope=SCOPE_A)
+        self.assertEqual(self.submit("4" * 64, self.spec(digest, limits=(1000, 1 << 30)), daemon=daemon)["state"],
+                         "queued")
+        low = self.submit("5" * 64, self.spec(digest, limits=(1000, 1)), daemon=daemon)
+        self.assertEqual(low["code"], "request_rejected")
 
-    def test_cancel_queued_and_running(self):
-        job, spec = "2" * 64, self.spec()
-        self.submit(job, spec)
-        self.assertEqual(self.request(operation="cancel", job_id=job,
-                                      fingerprint=sha(spec))[1]["state"], "cancelled")
-        self.assertEqual(self.fake.ran("stop"), [])
-        self.assertEqual(rg.supervise(self.root, job, WORKER, adapter=self.fail, limit_checker=lambda _: None), 0)
-        self.assertEqual(self.journal.status(job)["state"], "cancelled")
 
-        job = "3" * 64
-        self.submit(job, spec)
-        self.assertTrue(self.journal.claim(job, "supervisor-test"))
-        self.assertFalse(self.request(operation="cancel", job_id=job,
-                                      fingerprint="0" * 64)[1]["ok"])
-        resp = self.request(operation="cancel", job_id=job, fingerprint=sha(spec))[1]
-        self.assertEqual(resp["state"], "cancelling")  # until termination is confirmed
-        self.assertEqual(self.fake.ran("stop")[-1][-1], self.gw.unit(job))
-        self.assertIn("--no-block", self.fake.ran("stop")[-1])
-        del self.fake.units[self.gw.unit(job)]
-        resp = self.request(operation="status", job_id=job)[1]
-        self.assertEqual(resp["state"], "cancelled")
-        self.assertNotIn("result_sha256", resp)
+class HttpTests(DaemonCase):
+    def setUp(self):
+        super().setUp()
+        self.enterContext(patch.object(rg.RpcHandler, "log_message", lambda *_: None))
+        self.server = rg.RpcServer(("127.0.0.1", 0), self.daemon)  # loopback, ephemeral port
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.addCleanup(self.server.server_close)
+        self.addCleanup(self.server.shutdown)
+        self.port = self.server.server_address[1]
 
-    def test_lost_claimed_job(self):
-        job, spec = "4" * 64, self.spec()
-        self.submit(job, spec)
-        self.assertTrue(self.journal.claim(job, "supervisor-test"))
-        self.assertEqual(self.request(operation="status", job_id=job)[1]["state"], "running")
-        self.fake.units[self.gw.unit(job)] = "failed"
-        resp = self.request(operation="status", job_id=job)[1]
-        self.assertEqual(resp["state"], "interrupted")
-        self.assertIn("without recording a result", resp["diagnostic"])
+    def post(self, data, token=TOKEN, path="/rpc", conn=None, method="POST"):
+        conn = conn or http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        headers = {} if token is None else {"Authorization": "Bearer " + token.decode()}
+        if data and (server_id := decode(data)[0].get("server_id")):
+            headers["X-Tsugumi-Server"] = server_id
+        conn.request(method, path, body=data, headers=headers)
+        resp = conn.getresponse()
+        return resp.status, resp.read()
 
-        job = "5" * 64
-        self.submit(job, spec)
-        self.journal.claim(job, "supervisor-test")
-        self.fake.show_rc = 1  # query errors propagate, no invented outcome
-        code, resp, _ = self.request(operation="status", job_id=job)
-        self.assertEqual((code, resp["ok"]), (1, False))
-        self.assertEqual(self.journal.status(job)["state"], "running")
+    def raw(self, request):
+        with socket.create_connection(("127.0.0.1", self.port), timeout=10) as sock:
+            sock.sendall(request)
+            chunks = []
+            while chunk := sock.recv(65536):
+                chunks.append(chunk)
+        return b"".join(chunks)
 
-    # ------------------------------------------------------- supervisor
+    def probe(self):
+        return frame({"version": 1, "operation": "probe"})
 
-    @staticmethod
-    def fail(*_):
-        raise AssertionError("adapter must not run")
+    def test_authentication(self):
+        for token in (None, b"0" * 64, TOKEN[:-1], TOKEN.upper()):
+            with self.subTest(token=token):
+                status, body = self.post(self.probe(), token=token)
+                self.assertEqual((status, body), (401, b""))
+        status, body = self.post(self.probe())
+        self.assertEqual(status, 200)
+        self.assertEqual(decode(body)[0]["server_id"], self.daemon.server_id)
+        twice = b"Authorization: Bearer " + TOKEN + b"\r\n"
+        reply = self.raw(b"POST /rpc HTTP/1.1\r\nHost: x\r\n" + twice * 2 + b"Content-Length: 0\r\n\r\n")
+        self.assertTrue(reply.startswith(b"HTTP/1.1 401"))
 
-    def test_supervisor_imports_results(self):
-        job, spec = "6" * 64, self.spec()
-        self.journal.submit(job, spec)
-        seen = []
+    def test_transport_rejections(self):
+        self.assertEqual(self.post(self.probe(), path="/")[0], 404)
+        self.assertEqual(self.post(None, method="GET")[0], 405)
+        auth = b"Authorization: Bearer " + TOKEN + b"\r\n"
+        head = b"POST /rpc HTTP/1.1\r\nHost: x\r\n" + auth
+        self.assertTrue(self.raw(head + b"\r\n").startswith(b"HTTP/1.1 411"))
+        self.assertTrue(self.raw(head + b"Transfer-Encoding: chunked\r\n\r\n0\r\n\r\n").startswith(b"HTTP/1.1 411"))
+        self.assertTrue(self.raw(head + b"Content-Length: -1\r\n\r\n").startswith(b"HTTP/1.1 400"))
+        # Unauthenticated requests are rejected before the body is read.
+        big = b"POST /rpc HTTP/1.1\r\nHost: x\r\nContent-Length: 1000000000\r\n\r\n"
+        self.assertTrue(self.raw(big).startswith(b"HTTP/1.1 401"))
 
-        def adapter(worker, job_dir, blob_dir):
-            seen.append(((job_dir / "spec.json").read_bytes(), worker, blob_dir))
-            self.assertEqual(os.stat(job_dir).st_mode & 0o077, 0)
-            result = job_dir / "result"
-            (result / "lib").mkdir(parents=True)
-            (result / "worker.fb").write_bytes(FLATBUFFER)
-            (result / "environment.json").write_bytes(b"{}")
-            (result / "lib" / "a.bin").write_bytes(b"\x00\xff")
+    def test_streams_blobs_across_requests(self):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        data = os.urandom(3 << 20)
+        pin = {"project_scope": SCOPE_A, "server_id": self.daemon.server_id,
+               "instance_id": self.journal().instance_id}
+        status, body = self.post(frame({"version": 1, "operation": "put_blob", "sha256": sha(data),
+                                        "size": len(data), **pin}, data), conn=conn)
+        self.assertEqual((status, decode(body)[0]["ok"]), (200, True))
+        status, body = self.post(frame({"version": 1, "operation": "get_blob", "sha256": sha(data), **pin}), conn=conn)
+        reply, rest = decode(body)
+        self.assertEqual((status, reply["size"], rest), (200, len(data), data))
 
-        self.assertEqual(rg.supervise(self.root, job, WORKER, adapter=adapter, limit_checker=lambda _: None), 0)
-        self.assertEqual(seen, [(spec, WORKER, Path(self.root) / "blobs")])
-        state = self.journal.status(job)
-        self.assertEqual(state["state"], "succeeded")
-        with self.journal.open_blob(state["result_sha256"]) as handle:
-            manifest = parse_result_manifest(handle.read())
-        self.assertEqual(manifest["invocation_result_sha256"], sha(FLATBUFFER))
-        self.assertEqual(manifest["outputs"], [
-            {"path": "environment.json", "sha256": sha(b"{}"), "size": 2},
-            {"path": "lib/a.bin", "sha256": sha(b"\x00\xff"), "size": 2}])
-        self.assertEqual(rg.supervise(self.root, job, WORKER, adapter=self.fail, limit_checker=lambda _: None), 0)
+    def test_disconnected_client_keeps_durable_submission(self):
+        job, spec = "9" * 64, self.spec()
+        body = frame({"version": 1, "operation": "submit", "job_id": job, "size": len(spec),
+                      "project_scope": SCOPE_A, "server_id": self.daemon.server_id,
+                      "instance_id": self.journal().instance_id}, spec)
+        request = (b"POST /rpc HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer " + TOKEN
+                   + b"\r\nX-Tsugumi-Server: " + self.daemon.server_id.encode()
+                   + b"\r\nContent-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body)
+        with socket.create_connection(("127.0.0.1", self.port), timeout=10) as sock:
+            sock.sendall(request)  # and leave without reading the receipt
+        for _ in range(100):
+            if self.journal().status(job) is not None:
+                break
+            time.sleep(0.05)
+        self.assertEqual(self.journal().status(job)["fingerprint"], sha(spec))
+        self.assertEqual(self.scoped("cancel", job_id=job, fingerprint=sha(spec))["state"], "cancelled")
+        self.daemon.scheduler.tick()
+        self.assertEqual(self.driver.spawned, [])
 
-    def test_supervisor_rejects_symlinks_and_failures(self):
-        spec = self.spec()
 
-        def symlinking(worker, job_dir, blob_dir):
-            result = job_dir / "result"
-            result.mkdir()
-            (result / "worker.fb").write_bytes(FLATBUFFER)
-            os.symlink("/etc/passwd", result / "escape")
+class PolicyTests(unittest.TestCase):
+    def test_listen_policy(self):
+        self.assertEqual(rg.check_listen_policy("127.0.0.1", False), "127.0.0.1")
+        self.assertEqual(rg.check_listen_policy("localhost", False), "127.0.0.1")
+        self.assertEqual(rg.check_listen_policy("::1", False), "::1")
+        self.assertEqual(rg.check_listen_policy("192.0.2.10", True), "192.0.2.10")
+        for host, tls in (("0.0.0.0", False), ("::", False), ("192.0.2.10", False), ("example.org", True)):
+            with self.subTest(host=host), self.assertRaises(rg.GatewayError):
+                rg.check_listen_policy(host, tls)
 
-        def crashing(*_):
-            raise OSError(5, "Input/output error")
+    def token_file(self, data, mode=0o600):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = Path(tmp.name) / "token"
+        path.write_bytes(data)
+        os.chmod(path, mode)
+        return str(path)
 
-        for job, adapter, needle in (("7" * 64, symlinking, "escape"),
-                                     ("8" * 64, crashing, "Input/output error")):
-            self.journal.submit(job, spec)
-            self.assertEqual(rg.supervise(self.root, job, WORKER, adapter=adapter, limit_checker=lambda _: None), 0)
-            state = self.journal.status(job)
-            self.assertEqual(state["state"], "failed")
-            self.assertIn(needle, state["error"])
-            self.assertIsNone(state["result_sha256"])
+    def test_token_file(self):
+        self.assertEqual(rg.load_token(self.token_file(TOKEN + b"\n")), TOKEN)
+        self.assertEqual(rg.load_token(self.token_file(TOKEN)), TOKEN)
+        for data, mode in ((TOKEN.upper(), 0o600), (TOKEN[:-2], 0o600), (TOKEN + b"\n\n", 0o600),
+                           (TOKEN + b"00", 0o600), (TOKEN, 0o640), (TOKEN, 0o604)):
+            with self.subTest(data=data, mode=oct(mode)), self.assertRaises(rg.GatewayError) as caught:
+                rg.load_token(self.token_file(data, mode))
+            self.assertNotIn(TOKEN.decode(), str(caught.exception).lower())
+
+    def test_refuses_insecure_configuration_before_listening(self):
+        token = self.token_file(TOKEN)
+        cases = (["--host", "0.0.0.0", "--token-file", token],
+                 ["--host", "192.0.2.10", "--token-file", token],
+                 ["--tls-cert", token, "--token-file", token])
+        for argv in cases:
+            err = io.StringIO()
+            with self.subTest(argv=argv[:2]), contextlib.redirect_stderr(err), \
+                    patch.object(rg, "RpcServer", side_effect=AssertionError("must not listen")):
+                self.assertEqual(rg.serve_main(argv), 1)
+            self.assertNotIn(TOKEN.decode(), err.getvalue())
+
+    def test_single_daemon_per_state_root(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        fd = rg.acquire_singleton(Path(tmp.name))
+        self.addCleanup(os.close, fd)
+        with self.assertRaises(rg.GatewayError):
+            rg.acquire_singleton(Path(tmp.name))
 
 
 if __name__ == "__main__":

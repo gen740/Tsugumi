@@ -1,7 +1,7 @@
 """Durable job journal and content-addressed blob store for Tsugumi remote jobs.
 
-The journal lives on a private POSIX storage root that only the trusted gateway
-and the trusted job wrapper mount. Layout:
+The journal lives on a private POSIX storage root that only the execution
+daemon and its job supervisors use. Layout:
 
     root/instance_id          stable random 64-hex identity of this journal
     root/blobs/<sha256>       immutable, verified content
@@ -50,8 +50,10 @@ MAX_ERROR_CHARS = 4096
 SYSTEMS = frozenset({"aarch64-linux", "x86_64-linux"})
 SPEC_KEYS = frozenset({
     "system", "derivation", "output", "invocation_sha256", "input_blobs",
-    "cpu_millis", "memory_bytes", "timeout_seconds",
+    "timeout_seconds",
 })
+# Hard resource limits are optional, but only as a pair.
+LIMIT_KEYS = frozenset({"cpu_millis", "memory_bytes"})
 MANIFEST_KEYS = frozenset({"outputs", "invocation_result_sha256"})
 OUTPUT_KEYS = frozenset({"path", "sha256", "size"})
 FINISH_STATES = frozenset({"succeeded", "failed", "interrupted"})
@@ -159,9 +161,10 @@ def _load_json(data: bytes, limit: int, what: str) -> object:
 def validate_spec(data: bytes) -> dict:
     """Parse and validate job spec bytes; returns the parsed object."""
     spec = _load_json(data, MAX_SPEC_BYTES, "spec")
-    if not isinstance(spec, dict) or set(spec) != SPEC_KEYS:
+    if not isinstance(spec, dict) or set(spec) not in (SPEC_KEYS, SPEC_KEYS | LIMIT_KEYS):
         raise ValidationError("spec must be an object with exactly the keys "
-                              + ", ".join(sorted(SPEC_KEYS)))
+                              + ", ".join(sorted(SPEC_KEYS))
+                              + ", plus both or neither of cpu_millis and memory_bytes")
     if not isinstance(spec["system"], str) or spec["system"] not in SYSTEMS:
         raise ValidationError("unsupported system")
     for key in ("derivation", "output"):
@@ -179,8 +182,9 @@ def validate_spec(data: bytes) -> dict:
         raise ValidationError("input_blobs contains duplicates")
     if invocation not in blobs:
         raise ValidationError("input_blobs must include invocation_sha256")
-    _check_int(spec["cpu_millis"], 1, MAX_CPU_MILLIS, "cpu_millis")
-    _check_int(spec["memory_bytes"], 1, MAX_MEMORY_BYTES, "memory_bytes")
+    if "cpu_millis" in spec:
+        _check_int(spec["cpu_millis"], 1, MAX_CPU_MILLIS, "cpu_millis")
+        _check_int(spec["memory_bytes"], 1, MAX_MEMORY_BYTES, "memory_bytes")
     _check_int(spec["timeout_seconds"], 1, MAX_TIMEOUT_SECONDS, "timeout_seconds")
     return spec
 
@@ -252,6 +256,27 @@ def check_flatbuffer_frame(buf: bytes) -> None:
         raise ValidationError("result envelope table out of bounds")
 
 
+def stable_identity(directory: Path, name: str) -> str:
+    """Return directory/name, a random 64-hex identity created once and never replaced."""
+    path = Path(directory) / name
+    if not path.exists():
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tmp-id-")
+        try:
+            with os.fdopen(fd, "wb") as out:
+                out.write(secrets.token_hex(32).encode("ascii") + b"\n")
+                out.flush()
+                os.fsync(out.fileno())
+            with contextlib.suppress(FileExistsError):
+                os.link(tmp, path)  # first creator wins, never overwritten
+        finally:
+            os.unlink(tmp)
+        _fsync_dir(Path(directory))
+    value = path.read_bytes().strip().decode("ascii", "replace")
+    if not HEX64.fullmatch(value):
+        raise JournalError(f"corrupt {name}")
+    return value
+
+
 def _new_state(fingerprint: str, state: str) -> dict:
     return {
         "state": state,
@@ -280,26 +305,10 @@ class Journal:
         for directory in (self._blobs, self._jobs, self._locks, self._tmp):
             directory.mkdir(mode=0o700, exist_ok=True)
         _fsync_dir(self.root)
-        self.instance_id = self._load_instance_id()
+        self.instance_id = stable_identity(self.root, "instance_id")
 
-    def _load_instance_id(self) -> str:
-        path = self.root / "instance_id"
-        if not path.exists():
-            fd, tmp = tempfile.mkstemp(dir=self._tmp)
-            try:
-                with os.fdopen(fd, "wb") as out:
-                    out.write(secrets.token_hex(32).encode("ascii") + b"\n")
-                    out.flush()
-                    os.fsync(out.fileno())
-                with contextlib.suppress(FileExistsError):
-                    os.link(tmp, path)  # first creator wins, never overwritten
-            finally:
-                os.unlink(tmp)
-            _fsync_dir(self.root)
-        value = path.read_bytes().strip().decode("ascii", "replace")
-        if not HEX64.fullmatch(value):
-            raise JournalError("corrupt instance_id")
-        return value
+    def job_ids(self) -> list:
+        return sorted(name for name in os.listdir(self._jobs) if HEX64.fullmatch(name))
 
     # ------------------------------------------------------------ blobs
 

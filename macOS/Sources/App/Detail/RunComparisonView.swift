@@ -138,7 +138,7 @@ struct ComparedRunField: Identifiable {
     }
     func method(_ v: Tsugumi_RPC_InvocationSummaryT?) -> String? {
       if let e = nonEmpty(v?.emulator) { return String(localized: "エミュレーション: \(e)") }
-      return nonEmpty(v?.executionService).map { $0 == "local" ? String(localized: "直接実行") : "SSH" }
+      return nonEmpty(v?.executionService).map { $0 == "local" ? String(localized: "直接実行") : String(localized: "外部の実行デーモン") }
     }
     let recordedEnvironment = { (v: Tsugumi_RPC_InvocationSummaryT?) in !(v?.environmentId ?? "").isEmpty }
     var fields = [

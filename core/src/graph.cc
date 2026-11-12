@@ -294,8 +294,6 @@ class Builder {
         n.diags.push_back(diag(n.path, "invalid_setting", "executionResources requires 1–256000 cpuMillis and up to 1 TiB of memoryBytes"));
       else
         s.execution_resources = ExecutionResources{static_cast<uint32_t>(*cpu), *memory};
-    } else if (remote) {
-      n.diags.push_back(diag(n.path, "invalid_setting", "an external execution service requires executionResources"));
     }
     if (const auto* v = schema::get(d.display_mode); v && *v != "update" && *v != "live")
       n.diags.push_back(diag(n.path, "invalid_setting", "displayMode must be update or live"));
