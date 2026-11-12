@@ -1162,7 +1162,7 @@ void Service::version_canvas(RequestIn& req) {
 
 void Service::version_diff(RequestIn& req) {
   const auto* r = req.request()->value_as_VersionDiffRequest();
-  auto d = versions_->diff(r->commit()->str());
+  auto d = versions_->diff(r->commit()->str(), r->from_commit() ? r->from_commit()->str() : "");
   FBB b;
   auto vd = R::CreateVersionDiff(b, b.CreateString(d.text), d.truncated);
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionDiff, vd.Union()));

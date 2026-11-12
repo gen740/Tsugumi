@@ -323,6 +323,7 @@ struct InvocationDetailJson {
   t::Int64<"ready_at"> ready_at;
   t::String<"emulator"> emulator;  // "" = ran natively
   t::String<"environment_id"> environment_id;
+  t::String<"params"> params;
 };
 
 struct InputSourceJson {

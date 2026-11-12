@@ -36,6 +36,7 @@ struct StoredValueMeta {
   std::string root_type;
   uint64_t size_bytes = 0;
   std::optional<std::string> artifact_id;
+  std::string hash;  // SHA-256 of the bytes, stored with the value
 };
 
 struct LogEnd {
