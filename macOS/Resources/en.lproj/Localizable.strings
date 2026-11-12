@@ -94,6 +94,7 @@
 "Card 定義" = "Card Definitions";
 "Card 設定" = "Card Settings";
 "Card 設定を開く" = "Open Card Settings";
+"Card 間の Nix 参照はありません" = "No Nix references between Cards.";
 "Card「%@」の定義（definitions/%@/）です。" = "The definition of Card “%@” (definitions/%@/).";
 "ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。" = "The Agent uses your ChatGPT Plus or Pro plan. Requests go to OpenAI's Responses API and count against your plan's usage (apart from API key billing; Tsugumi charges nothing). Plus has one five-hour usage limit shared with other apps, open-source tools included. Pro has no such limit.";
 "ChatGPT プランを使っています" = "You're using your ChatGPT plan";
@@ -134,7 +135,10 @@
 "Nix store の保存領域を作っています" = "Making the Nix store's space";
 "Nix store の保存領域を開いています（初回は初期化）" = "Opening the Nix store's space (formatted the first time)";
 "Nix を準備しています" = "Preparing Nix";
+"Nix 参照一覧" = "Nix reference list";
+"Nix 参照（記述どおり）" = "Nix references (as written)";
 "Nix 定義" = "Nix Definition";
+"Nix 定義を開く" = "Open Nix definition";
 "Nix 評価" = "Nix evaluation";
 "Nix 評価中" = "Evaluating Nix";
 "Nixpkgs が固定されていません。アプリを更新すると、このプロジェクトの Card のパッケージも変わります。" = "Nixpkgs is not pinned: updating the app also changes the packages of this project's Cards.";
@@ -566,6 +570,7 @@
 "一致する Skill はありません" = "No matching Skill";
 "一致するアイコンはありません" = "No icon matches";
 "一般" = "General";
+"一覧" = "List";
 "一覧から削除" = "Remove from the list";
 "一覧から外す" = "Remove from list";
 "一覧から外すだけで、フォルダは削除しません" = "Only removes it from the list; the folder is not deleted";
@@ -631,6 +636,7 @@
 "保存先: " = "Saved in: ";
 "保存前" = "Not saved";
 "保存済み" = "Saved";
+"保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。" = "Shows the Card references written in saved default.nix files. References through aliases or computed names are not included.";
 "保持" = "Kept";
 "保持された成果物はありません" = "No artifacts are kept";
 "保持する出力" = "Output to retain";
@@ -724,7 +730,9 @@
 "化学・生態" = "Chemistry and ecology";
 "原因（ログより）" = "Cause (from the log)";
 "参照を外す" = "Remove the reference";
+"参照を解決できません。Nix 定義と診断を確認してください。" = "This reference is invalid. Check the Nix definition and diagnostics.";
 "参照・フォルダを添付" = "Attach references or folders";
+"参照元 → 参照先。保存済みの default.nix にある静的な Card 参照を表示します。" = "Referencing Card → referenced Card. Shows static Card references in saved default.nix files.";
 "参照先: %@" = "Resolved path: %@";
 "取り消す" = "Undo";
 "取り込む" = "Import";
