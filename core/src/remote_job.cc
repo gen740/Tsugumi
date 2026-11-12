@@ -28,7 +28,7 @@ namespace tsugumi {
 namespace {
 
 constexpr uint32_t kProtocolVersion = 1;
-constexpr uint32_t kWorkerContract = 1;
+constexpr uint32_t kWorkerContract = 2;
 constexpr uint32_t kMaxHeaderBytes = 64 * 1024;
 using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;

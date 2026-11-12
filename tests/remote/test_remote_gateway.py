@@ -68,7 +68,7 @@ class CapabilityTests(DaemonCase):
         reply, _ = self.call({"version": 1, "operation": "probe"})
         self.assertEqual(reply, {
             "version": 1, "ok": True, "server_id": self.daemon.server_id, "native_system": NATIVE,
-            "systems": [NATIVE], "worker_contract": 1, "executor": "daemon",
+            "systems": [NATIVE], "worker_contract": 2, "executor": "daemon",
             "isolation": "pid_namespace", "resource_limits": False, "max_jobs": 8})
         self.assertRegex(self.daemon.server_id, r"^[0-9a-f]{64}$")
         self.assertFalse((self.root / "projects").exists())

@@ -1,0 +1,3 @@
+table Comparison { signal:uint; threshold:uint; detected:bool; }
+table Outputs { out:Comparison (required); }
+root_type Outputs;

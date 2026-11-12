@@ -530,7 +530,8 @@ private struct GeneralCategory: View {
             }
             .help("allInputs: 必須の入力がすべて届いたら 1 回動きます。eachInput: 値が 1 つ届くたびに動きます。")
           }
-          numberField("maxRuns", label: "最大実行回数", fallback: "1")
+          numberField("maxRuns", label: "最大発火回数", fallback: "1")
+            .help("実行リスト内の呼び出しはまとめて 1 回の発火として数えます。")
           timeoutField("timeoutSeconds", label: "実行の期限（秒）")
           if model.kind == .code {
             Picker("グラフの更新", selection: string("displayMode", fallback: "update")) {

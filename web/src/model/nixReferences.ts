@@ -10,11 +10,11 @@ export interface NixReference {
 }
 
 export function nixReferences(session: Pick<ProjectSession, 'resolution'>): NixReference[] {
-  return [...session.resolution].flatMap(([source, card]) => card.nixReferences.map(ref => ({
-    id: JSON.stringify([source, ref.local, ref.name]), source, target: key(ref.target),
-    expression: `inputs.${ref.local ? 'local' : 'upstream'}.${JSON.stringify(ref.name)}`,
-    valid: ref.valid,
-  }))).sort((a, b) => a.source.localeCompare(b.source) || a.expression.localeCompare(b.expression))
+  return [...session.resolution].flatMap(([source, card]) => card.nixReferences.map(ref => {
+    const attr = /^[A-Za-z_][A-Za-z0-9_'-]*$/.test(ref.name) ? ref.name : JSON.stringify(ref.name)
+    return { id: JSON.stringify([source, ref.target, ref.name]), source, target: key(ref.target),
+      expression: `inputs.${attr}.export`, valid: ref.valid }
+  })).sort((a, b) => a.source.localeCompare(b.source) || a.expression.localeCompare(b.expression))
 }
 
 /** A nested reference meets its visible container; the list keeps the exact path. */

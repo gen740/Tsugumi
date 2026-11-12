@@ -16,7 +16,7 @@ let requestCount = 0
 let rejectedBeforeUpload = 0
 let bytesSentBeforeContinue = 0
 let executor: string | undefined = 'daemon'
-let workerContract: number | undefined = 1
+let workerContract: number | undefined = 2
 const server = http.createServer((req, res) => { void handle(req, res) })
 server.on('checkContinue', (req, res) => {
   if (req.headers.authorization !== `Bearer ${token}` || req.headers['x-tsugumi-server'] !== serverId) {
@@ -78,7 +78,7 @@ try {
   assert.equal(requestCount, 0)
   const [verified] = await registerExecutionService(root, { ...entry, capabilities: { nativeSystem: 'unsupported' } })
   assert.deepEqual(verified.capabilities, { serverId, nativeSystem: 'x86_64-linux', systems: ['x86_64-linux'],
-    isolation: 'pid_namespace', resourceLimits: true, maxConcurrentJobs: 4, workerContract: 1 })
+    isolation: 'pid_namespace', resourceLimits: true, maxConcurrentJobs: 4, workerContract: 2 })
   assert.equal(JSON.stringify(verified).includes(token), false)
   assert.deepEqual(loadExecutionServices(root), [verified])
   const registryPath = path.join(root, 'execution-services.json')
@@ -93,7 +93,7 @@ try {
   await assert.rejects(registerExecutionService(root, entry), /worker contract is 99.*Rebuild/)
   workerContract = undefined
   await assert.rejects(registerExecutionService(root, entry), /worker contract is unreported.*Rebuild/)
-  workerContract = 1
+  workerContract = 2
   assert.deepEqual(loadExecutionServices(root), [verified], 'failed probes preserve the verified registry entry')
 
   const a = path.join(root, 'project-a'), renamed = path.join(root, 'project-renamed'), b = path.join(root, 'project-b')
@@ -136,7 +136,7 @@ try {
   const header = (reply: Buffer) => JSON.parse(reply.subarray(4, 4 + reply.readUInt32BE()).toString('utf8'))
   assert.deepEqual(header(await call('catalog')).services, [
     { id: 'worker', native_system: 'x86_64-linux', systems: ['x86_64-linux'], available: true,
-      server_id: originalServerId, executor: 'daemon', isolation: 'pid_namespace', resource_limits: true, max_jobs: 4, worker_contract: 1 },
+      server_id: originalServerId, executor: 'daemon', isolation: 'pid_namespace', resource_limits: true, max_jobs: 4, worker_contract: 2 },
   ])
   const input = Buffer.alloc(192 * 1024, 0xd3)
   const response = await call('put_blob', input)

@@ -3,7 +3,7 @@ import { activeNixLinks, nixCurve, nixLinks as linksIn, nixReferences } from '..
 // and output frames, with pan/zoom, selection, wiring and drag & drop.
 // Inside a Card in Card, the outer Card's inputs and outputs are drawn as
 // bars above and below the inner graph.
-import { CSSProperties, ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { CSSProperties, Fragment, ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { app } from '../model/app'
 import { HelperBirds } from './helperBirds'
 import { WritingPanels } from './writingPanel'
@@ -21,6 +21,7 @@ import {
   DEFINITION_DRAG, EXTERNAL_DEFINITION_DRAG, EXTERNAL_DRAG, openCard, openWorkflowWindow, runCard, showLog, TEMPLATE_DRAG,
 } from './actions'
 import { BoundaryBarView, CardNodeView, drive, gridStyle, idleText, runText, WireLayer } from './cardNode'
+import { BatchInvocations } from './batchInvocations'
 import { retargetWindows } from './cardSettings'
 import { Button, MenuItem, Segmented, Sheet, showMenu, Stepper, TextField, Toggle } from './controls'
 import { DisplayContent } from './display'
@@ -556,7 +557,12 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         )
       })}
 
-      <WireLayer wires={wires.map((w) => ({ d: pathToScreen(w.d, cam), style: w.style, dotted: w.dotted }))}
+      <WireLayer wires={wires.map((w) => {
+        const countLabel = w.count !== undefined ? `×${w.count}` : w.executionList && session.runActive ? '×?' : undefined
+        const middle = countLabel ? midPoint(w.pts) : undefined
+        return { d: pathToScreen(w.d, cam), style: w.style, dotted: w.dotted, executionList: w.executionList,
+          countLabel, countAt: middle && screen(middle) }
+      })}
         animate={prefs.animateLines && session.runActive} zoom={z} width={cv.size.width} height={cv.size.height} />
 
       {tab.showNixReferences && <svg width={cv.size.width} height={cv.size.height} style={{ position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'visible' }}>
@@ -587,9 +593,12 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       {scene.cardKeys.map((k) => {
         const data = scene.data(k)
         const g = scene.geometry(k)
+        const batch = session.executionBatch(k)
+        const origin = screen(scene.origin(k))
         return (
-          <CardNodeView key={k} data={data} flow={flow} zoom={z} selected={sel.has(k)} guide={'card:' + k}
-            style={placed(screen(scene.origin(k)), g.size.width * z, g.size.height * z, data.draftEditing ? { zIndex: 1 } : undefined)}
+          <Fragment key={k}>
+          <CardNodeView data={data} flow={flow} zoom={z} selected={sel.has(k)} guide={'card:' + k}
+            style={placed(origin, g.size.width * z, g.size.height * z, data.draftEditing ? { zIndex: 1 } : undefined)}
             onParamCommit={data.kind === 'input' || data.kind === 'switch' ? (name, text) => commitParam(k, name, text) : undefined}
             paramsEditable={session.isEditable}
             onPortDown={session.isEditable ? (port, output, e) => onPortDown(k, port, output, e) : undefined}
@@ -602,7 +611,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
                 if (byKey) focus()
               },
             } : undefined}
-            onStageTap={(st) => showLog(workspace, k, st, session.cardStates.get(k)?.invocation)}
+            onStageTap={(st) => showLog(workspace, k, st, session.cardStates.get(k)?.invocation, session.currentRunId)}
             onRun={data.kind === 'trigger' && session.connected && !session.runActive ? () => runCard(session, k, true) : undefined}
             onToggleCollapse={() => session.setCollapsed([k], !session.collapsed(k))}
             onComments={() => app.openWindow(session, { kind: 'card', card: k, category: 'comments' })}
@@ -612,6 +621,11 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
               openCard(session, k, tab)
             }}
             onContextMenu={(e) => showMenu(e, cardMenu(workspace, session, tab, k, () => cv.groupSelection()))} />
+          {batch?.executionList && <div style={{ position: 'absolute', left: origin.x + g.outlineRect.x * z + g.outlineRect.width * z - 4, top: origin.y + g.outlineRect.y * z - 9 }}>
+            <BatchInvocations key={session.currentRunId} session={session} card={k} batch={batch} onLog={(invocation) => showLog(workspace, k, undefined, invocation, session.currentRunId)}
+              onHistory={() => app.openWindow(session, { kind: 'card', card: k, category: 'executions' })} />
+          </div>}
+          </Fragment>
         )
       })}
 
@@ -820,7 +834,7 @@ export function builtinCardItems(add: (t: DefinitionTemplate) => void): MenuItem
     label: L('可視化'),
     submenu: visualizationTemplates.map(t => ({ label: t.label, action: () => add(t.id) })),
   }
-  return [item('python'), item('cpp'), item('go'), item('rust'), item('ruby'), item('csharp'), { label: L('レポート（HTML・PDF 未対応）'), submenu: [item('report_rmarkdown'), item('report_quarto')] }, item('draft'), item('marimo'), visualization, 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge')]
+  return [item('python'), item('cpp'), item('go'), item('rust'), item('ruby'), item('csharp'), { label: L('レポート（HTML・PDF 未対応）'), submenu: [item('report_rmarkdown'), item('report_quarto')] }, item('draft'), item('marimo'), visualization, 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge'), item('collect')]
 }
 export { templateIcon }
 
@@ -1047,7 +1061,9 @@ function hoverContent(session: ProjectSession, scope: string[], t: HoverTarget):
   let status = L('この Run ではまだ値が通っていません')
   const st = session.cardStates.get(fk)
   const id = session.currentRunId
-  if (st && st.sentInRun.has(fp) && id) status = L('Run {0} で値が通りました（送信元の最新は実行 #{1}）', id.slice(0, 8), st.invocation)
+  const batch = session.executionWire(fk, fp)
+  if (batch.executionList) status = batch.count === undefined ? L('実行リスト（件数未確定）') : L('実行リスト') + ` ×${batch.count}`
+  else if (st && st.sentInRun.has(fp) && id) status = L('Run {0} で値が通りました（送信元の最新は実行 #{1}）', id.slice(0, 8), st.invocation)
   return { title: L('接続'), subtitle: '', symbol, lines, status }
 }
 

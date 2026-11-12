@@ -42,8 +42,9 @@ struct ExecutionRequest {
   std::filesystem::path directory;
   // Set when the run is cancelled or interrupted.
   const std::atomic<bool>& cancel;
-  // Set by an explicit cancellation of the run (not by a shutdown).
-  const std::atomic<bool>& cancel_requested;
+  // An explicit run cancellation or a failed sibling asks the backend to
+  // cancel submitted work. Shutdown alone leaves submitted work recoverable.
+  std::function<bool()> cancel_requested;
   // Set when the process leaves the run while its invocations may still run
   // elsewhere (shutdown).
   const std::atomic<bool>& detach;
@@ -73,11 +74,15 @@ struct ExecutionResult {
 // running in its backend. Recovery completes its record later.
 struct ExecutionDetached {};
 
-// An invocation whose backend-specific preparation is done. Kept until the
-// invocation ends (it may hold files its build wrote).
+// A backend's preparation for one activation. Kept until all its invocations
+// finish (it may hold files its build wrote).
 class PreparedExecution {
  public:
   virtual ~PreparedExecution() = default;
+  // Make shared build outputs available before starting any invocation.
+  virtual auto stage(const std::atomic<bool>&) -> void {}
+  // Record the cancellation of work already submitted for this activation.
+  virtual auto cancel_batch(sql::Db&, const std::string&, const CardPath&, uint64_t) -> void {}
   // Runs the invocation. Throws Failed when it cannot be started.
   virtual auto execute(const ExecutionRequest& request) -> ExecutionResult = 0;
 };
@@ -90,7 +95,7 @@ class ExecutionService {
   virtual auto reuses_builds() const -> bool = 0;
   // Checks that the invocation can run here and configures the backend's
   // part of `build` (target system, derivation export). Called before the
-  // Card is built, for every invocation.
+  // Card is built, for every activation.
   virtual auto prepare(const Node& node, const std::filesystem::path& directory, BuildRequest& build)
       -> std::unique_ptr<PreparedExecution> = 0;
 };

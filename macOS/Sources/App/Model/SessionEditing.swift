@@ -4,7 +4,7 @@ import TsugumiRPC
 
 /// What a Card is, for choosing what the canvas and the editor offer.
 enum CardKind: String {
-  case trigger, input, fork, branch, merge, draft, subgraph, code
+  case trigger, input, fork, branch, merge, collect, draft, subgraph, code
   case switchCard = "switch"
 
   var editsValueOnCanvas: Bool { self == .input || self == .switchCard }
@@ -17,6 +17,7 @@ enum CardKind: String {
     case .fork: return String(localized: "分配")
     case .branch: return String(localized: "分岐")
     case .merge: return String(localized: "合流")
+    case .collect: return String(localized: "収集")
     case .draft: return "Draft"
     case .subgraph: return "Card in Card"
     case .code: return String(localized: "処理")
@@ -31,6 +32,7 @@ enum CardKind: String {
     case .fork: return "arrow.triangle.branch"
     case .branch: return "arrow.triangle.swap"
     case .merge: return "arrow.triangle.merge"
+    case .collect: return "line.3.horizontal.decrease"
     case .draft: return "pencil.and.outline"
     case .subgraph: return "link"
     case .code: return "chevron.left.forwardslash.chevron.right"
@@ -41,7 +43,7 @@ enum CardKind: String {
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
-  case python, cpp, go, rust, ruby, csharp, input, draft, trigger, fork, branch, merge
+  case python, cpp, go, rust, ruby, csharp, input, draft, trigger, fork, branch, merge, collect
   case report_rmarkdown, report_quarto
   case switchCard = "switch"
   /// Visualization starting points: ordinary Python Cards, one per plotting library.
@@ -74,6 +76,7 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .fork: return String(localized: "分配")
     case .branch: return String(localized: "分岐")
     case .merge: return String(localized: "合流")
+    case .collect: return String(localized: "収集")
     }
   }
   var symbol: String { isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (rawValue.hasPrefix("report_") || [.python, .cpp, .go, .rust, .ruby, .csharp, .marimo].contains(self) ? .code : .draft)).symbol }
@@ -1443,7 +1446,7 @@ extension ProjectSession {
       for (file, text) in files where file != "_card.json" && file != "_meta.json" { putSource(dir + file, text) }
     case .draft:
       set(.object([("template", .string("draft"))]), meta: .object([("description", .string("")), ("content", .string(""))]))
-    case .trigger, .fork, .branch:
+    case .trigger, .fork, .branch, .collect:
       set(.object([("template", .string(t.rawValue))]))
     case .merge:
       set(.object([

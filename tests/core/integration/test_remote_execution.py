@@ -18,7 +18,9 @@ import time
 from pathlib import Path
 
 import pytest
-from projects import FILE_FBS, SINK, card, conn, start_run, wait_run, write
+from harness.observations import read_output
+from harness.values import reference_json
+from projects import FILE_FBS, SINK, card, conn, run_and_wait, start_run, wait_run, write
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
@@ -26,6 +28,14 @@ from Tsugumi.Data.RunState import RunState
 from tsugumi_client import RpcFailure, path, text
 
 pytestmark = pytest.mark.environment
+
+RUN_LIST_OUTPUT = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
+# Each remote job realizes its dependencies in a private store, even during a batch.
+RUN_LIST_TIMEOUT_SECONDS = 1200
+RUN_LIST_REMOTE = {
+    "language": "bash", "recordIO": True, "executionService": "remote-test",
+    "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS, "_outputs": RUN_LIST_OUTPUT,
+}
 
 BROKER = """
 import fs from "node:fs";
@@ -290,3 +300,93 @@ def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker)
     assert cancelled.state == CardState.cancelled and cancelled.executionState == RemoteExecutionState.cancelled
     assert text(cancelled.executionJobId) == text(running.executionJobId)
     assert not client.call("ArtifactListRequest", runId=run_id, card=path("slow")).artifacts
+
+
+def test_remote_run_list_preserves_implementation_order(project, core_factory, remote_broker, tmp_path):
+    definitions = {
+        "source": {
+            "language": "bash", "_outputs": RUN_LIST_OUTPUT,
+            "_nix": """
+                { pkgs, inputs, params }: {
+                  run = [
+                    ''printf '%s' '{"out":{"value":10}}' > "$TSUGUMI_OUTPUT"''
+                    ''printf '%s' '{"out":{"value":20}}' > "$TSUGUMI_OUTPUT"''
+                  ];
+                }
+            """,
+        },
+        "work": {
+            **RUN_LIST_REMOTE, "inputs": [{"name": "in"}],
+            "_nix": """
+                { pkgs, inputs, params }: {
+                  run = [
+                    ''printf '{"out":{"value":%s}}' "$(( $(jq -r .value "$JSON_IN") + 100 ))" > "$TSUGUMI_OUTPUT"''
+                    ''printf '{"out":{"value":%s}}' "$(( $(jq -r .value "$JSON_IN") + 200 ))" > "$TSUGUMI_OUTPUT"''
+                  ];
+                }
+            """,
+        },
+        "collect": {"template": "collect", "recordIO": True},
+    }
+    write(project, definitions, [card(name, name) for name in definitions],
+          [conn("source", "out", "work", "in"), conn("work", "out", "collect", "in")])
+    client = core_factory().connect()
+    run_id, run = run_and_wait(client, "source", timeout=RUN_LIST_TIMEOUT_SECONDS + 60)
+    assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
+
+    page = client.call("RunInvocationsRequest", runId=run_id, card=path("work"))
+    batch, = page.batches
+    assert batch.complete and not batch.failed and batch.executionList
+    assert batch.activation == 1 and batch.invocationCount == 4
+    assert [(row.batchActivation, row.batchIndex, row.batchSize, row.implementationIndex)
+            for row in page.records] == [(1, 1, 4, 1), (1, 2, 4, 2), (1, 3, 4, 1), (1, 4, 4, 2)]
+    for row in page.records:
+        assert row.executionState == RemoteExecutionState.succeeded
+        assert text(row.executionService) == "remote-test"
+        assert row.executionResources is None
+        assert len(text(row.executionJobId)) == 64
+    assert len({text(row.executionJobId) for row in page.records}) == 4
+
+    record = client.call("RunRecordRequest", runId=run_id, card=path("collect")).record
+    output, = record.outputs
+    payload = read_output(client, run_id, card="collect")
+    collected = reference_json(tmp_path / "decode", bytes(output.schemaBfbs), payload,
+                               root_type=text(output.rootType))
+    assert collected["items"] == [{"value": value} for value in (110, 210, 120, 220)]
+
+
+def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, remote_broker):
+    definitions = {
+        "fails": {
+            **RUN_LIST_REMOTE,
+            "_nix": """
+                { pkgs, inputs, params }: {
+                  run = [
+                    "sleep 15; echo expected-batch-member-failure >&2; exit 17"
+                    "sleep 180; exit 99"
+                  ];
+                }
+            """,
+        },
+        "collect": {"template": "collect", "recordIO": True},
+    }
+    write(project, definitions, [card(name, name) for name in definitions],
+          [conn("fails", "out", "collect", "in")])
+    client = core_factory().connect()
+    run_id = start_run(client, "fails", concurrency=2)
+    running = wait_invocation(client, run_id, "fails", lambda row: row.batchIndex == 2 and
+                              row.executionState == RemoteExecutionState.running)
+    assert wait_run(client, run_id, timeout=RUN_LIST_TIMEOUT_SECONDS + 60).state == RunState.failed
+    page = client.call("RunInvocationsRequest", runId=run_id, card=path("fails"))
+    batch, = page.batches
+    assert batch.complete and batch.failed and not batch.outputs
+    failed, cancelled = page.records
+    assert failed.executionState == RemoteExecutionState.failed
+    assert cancelled.executionState == RemoteExecutionState.cancelled
+    assert text(cancelled.executionJobId) == text(running.executionJobId)
+    log = client.call("LogRangeRequest", runId=run_id, card=path("fails"),
+                      invocation=failed.invocation, stream=LogStream.stderr)
+    assert "expected-batch-member-failure" in text(log.text)
+    downstream = client.call("RunInvocationsRequest", runId=run_id, card=path("collect"))
+    blocked, = downstream.records
+    assert blocked.state == CardState.blocked and not downstream.batches

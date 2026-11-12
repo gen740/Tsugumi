@@ -797,6 +797,7 @@
 "参照・フォルダを添付" = "Attach references or folders";
 "参照元 → 参照先。保存済みの default.nix にある静的な Card 参照を表示します。" = "Referencing Card → referenced Card. Shows static Card references in saved default.nix files.";
 "参照先: %@" = "Resolved path: %@";
+"収集" = "Collect";
 "取り消し確認中" = "Waiting for cancellation";
 "取り消す" = "Undo";
 "取り込む" = "Import";
@@ -830,7 +831,9 @@
 "呼び出し #%llu" = "Invocation #%llu";
 "呼び出し %llu · 成功 %llu · 失敗 %llu" = "Invocations %llu · succeeded %llu · failed %llu";
 "呼び出しなし" = "No invocations";
+"呼び出しの記録を待っています" = "Waiting for invocation records";
 "呼び出しの記録を読み込めませんでした" = "The invocation record could not be read";
+"呼び出し一覧" = "Invocations";
 "問題 %lld 件" = "%lld issues";
 "問題 %lld 件（一覧から対象の Card やログへ移動できます）" = "%lld problems (go to their Card or log from the list)";
 "問題はありません" = "No issues";
@@ -920,6 +923,9 @@
 "実行デーモンが有効な実行環境情報を返しませんでした。" = "The execution daemon did not report valid capabilities.";
 "実行デーモンの接続先" = "Execution daemon endpoint";
 "実行デーモンへの接続に失敗しました（HTTP %@）。" = "Could not connect to the execution daemon (HTTP %@).";
+"実行リスト" = "Execution list";
+"実行リスト内の呼び出しはまとめて 1 回の発火として数えます。" = "The invocations in an execution list count as one activation.";
+"実行リスト（件数未確定）" = "Execution list (count unknown)";
 "実行ログを開く" = "Open Run Log";
 "実行中" = "Running";
 "実行中の接続線を動かす" = "Animate connections while running";
@@ -1082,7 +1088,7 @@
 "書き方を調べています" = "Looking up how to write it";
 "書き込み" = "Write";
 "最大同時ジョブ数" = "Maximum concurrent jobs";
-"最大実行回数" = "Max runs";
+"最大発火回数" = "Maximum activations";
 "最後の版から変更あり（次の実行で版になります）" = "Changed since the last version (the next run makes a version)";
 "最新の版です（%@ に確認）" = "Up to date (checked at %@)";
 "最新を読み込む" = "Load Latest";
@@ -1181,12 +1187,12 @@
 "確認しています" = "Checking";
 "種類" = "Kind";
 "稼働中" = "Running";
+"空の実行リスト" = "Empty execution list";
 "答えをまとめきれませんでした。聞き方を変えてもう一度どうぞ。" = "Could not put an answer together. Please try asking another way.";
 "終える" = "End";
 "終わりました" = "Finished";
 "終了" = "Ended";
 "終了しました" = "Ended";
-"組み込みの Card を追加（入力値・スイッチ・Draft・開始・分配・分岐・合流・処理）" = "Add a built-in Card (input, Switch, Draft, start, fork, branch, merge, code)";
 "結果" = "Result";
 "結果はまだありません" = "No result yet";
 "結果を確認" = "Check the result";

@@ -22,6 +22,7 @@ struct InvocationJson {
   schema::t::Array<"directories", schema::v::String> directories;
   schema::t::Bool<"network"> network;
   schema::t::Bool<"filesystem"> filesystem;
+  schema::t::Uint64<"implementation_index"> implementation_index;
 };
 
 struct JobJson {
@@ -88,9 +89,13 @@ auto remote_recovery_contract(const Node& node, const std::vector<Value>& inputs
                               const std::vector<InputSourceData>& sources) -> std::string;
 auto remote_recovery_contract(const std::string& encoded) -> RemoteRecoveryContract;
 
+auto stage_remote_archive(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
+                          const std::string& instance, const std::filesystem::path& archive,
+                          const std::atomic<bool>& cancel) -> std::string;
+
 auto stage_remote_invocation(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
                              const std::string& instance, const std::string& project_id,
-                             const std::filesystem::path& state, const std::filesystem::path& archive,
+                             const std::filesystem::path& state, const std::string& archive_digest,
                              const ExecutionRequest& request) -> std::string;
 auto import_remote_result(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
                           const std::string& instance, const std::string& result_digest,

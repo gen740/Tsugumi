@@ -12,8 +12,8 @@ bool space(char c) { return std::isspace(static_cast<unsigned char>(c)); }
 
 }  // namespace
 
-std::vector<std::pair<bool, std::string>> nix_references(const std::string& t) {
-  std::vector<std::pair<bool, std::string>> out;
+auto nix_references(const std::string& t) -> std::vector<std::string> {
+  std::vector<std::string> out;
   enum class Mode { Code, Str, Ind };
   // What each nesting level is; in code, how many `{` are open in it.
   struct Level {
@@ -82,17 +82,11 @@ std::vector<std::pair<bool, std::string>> nix_references(const std::string& t) {
       std::string word = t.substr(i, e - i);
       size_t at = i;
       i = e;
-      if (word != "upstream" && word != "local") continue;
-      // Not an attribute of something else, except of `inputs`.
+      if (word != "inputs") continue;
+      // An unrelated attribute such as pkgs.inputs is not the argument.
       size_t b = at;
       while (b > 0 && space(t[b - 1])) --b;
-      if (b > 0 && t[b - 1] == '.') {
-        size_t we = b - 1;
-        while (we > 0 && space(t[we - 1])) --we;
-        size_t ws = we;
-        while (ws > 0 && ident_char(t[ws - 1])) --ws;
-        if (t.substr(ws, we - ws) != "inputs") continue;
-      }
+      if (b > 0 && t[b - 1] == '.') continue;
       size_t p = e;
       while (p < t.size() && space(t[p])) ++p;
       if (p >= t.size() || t[p] != '.') continue;
@@ -112,7 +106,7 @@ std::vector<std::pair<bool, std::string>> nix_references(const std::string& t) {
       } else {
         continue;
       }
-      out.emplace_back(word == "local", name);
+      if (name != "tsugumi" && name != "sources") out.push_back(std::move(name));
     } else {
       ++i;
     }

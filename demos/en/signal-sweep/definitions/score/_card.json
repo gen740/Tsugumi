@@ -1,0 +1,9 @@
+{
+  "language": "bash",
+  "inputs": [
+    {
+      "name": "signal"
+    }
+  ],
+  "recordIO": true
+}

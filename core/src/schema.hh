@@ -338,6 +338,10 @@ struct InvocationDetailJson {
   Opt<"execution_cpu_millis", v::Uint64> execution_cpu_millis;
   Opt<"execution_memory_bytes", v::Uint64> execution_memory_bytes;
   Opt<"execution_state", v::Int64> execution_state;
+  Opt<"batch_activation", v::Uint64> batch_activation;
+  Opt<"batch_index", v::Uint64> batch_index;
+  Opt<"batch_size", v::Uint64> batch_size;
+  Opt<"implementation_index", v::Uint64> implementation_index;
 };
 
 struct InputSourceJson {
@@ -361,15 +365,30 @@ struct MemberList {
 };
 
 struct SavedInputJson {
-  t::String<"name"> name;
   t::Int64<"kind"> kind;
   t::String<"schema"> schema;
   t::String<"root_type"> root_type;
   t::String<"data"> data_b64;
 };
 
+struct SavedInputGroupJson {
+  t::String<"port"> port;
+  t::Bool<"execution_list"> execution_list;
+  t::Array<"values", Obj<SavedInputJson>> values;
+};
+
 struct SavedInputList {
-  t::Array<"inputs", Obj<SavedInputJson>> items;
+  t::Array<"groups", Obj<SavedInputGroupJson>> groups;
+};
+
+struct BatchOutputJson {
+  t::String<"port"> port;
+  t::Uint64<"count"> count;
+  t::Bool<"execution_list"> execution_list;
+};
+
+struct BatchOutputList {
+  t::Array<"outputs", Obj<BatchOutputJson>> outputs;
 };
 
 struct CursorJson {
@@ -415,6 +434,7 @@ struct ManifestRun {
 
 struct CardManifest {
   Opt<"run", Obj<ManifestRun>> run;
+  Opt<"runs", v::Array<Obj<ManifestRun>>> runs;
   Opt<"shell", v::String> shell;
   Opt<"path", v::String> path;
   Opt<"preRun", v::String> pre_run;

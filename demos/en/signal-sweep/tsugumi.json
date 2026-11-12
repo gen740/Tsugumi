@@ -1,0 +1,65 @@
+{
+  "name": "Signal detection sweep",
+  "pkgsPath": "tsugumi:default",
+  "canvas": {
+    "cards": [
+      {
+        "id": "start"
+      },
+      {
+        "id": "samples"
+      },
+      {
+        "id": "score"
+      },
+      {
+        "id": "collect"
+      },
+      {
+        "id": "summary"
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "card": "start",
+          "port": "out"
+        },
+        "to": {
+          "card": "samples",
+          "port": "start"
+        }
+      },
+      {
+        "from": {
+          "card": "samples",
+          "port": "out"
+        },
+        "to": {
+          "card": "score",
+          "port": "signal"
+        }
+      },
+      {
+        "from": {
+          "card": "score",
+          "port": "out"
+        },
+        "to": {
+          "card": "collect",
+          "port": "in"
+        }
+      },
+      {
+        "from": {
+          "card": "collect",
+          "port": "out"
+        },
+        "to": {
+          "card": "summary",
+          "port": "results"
+        }
+      }
+    ]
+  }
+}

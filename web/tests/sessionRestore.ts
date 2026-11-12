@@ -38,7 +38,7 @@ const invocation = (id: string, state: D.CardState, n = 1n) =>
   await inner.restoreCardStates({
     latestInvocations: async (id: string) => {
       asked.push(id)
-      return { records: [invocation('a', D.CardState.failed, 2n), invocation('b', D.CardState.blocked)] }
+      return { records: [invocation('a', D.CardState.failed, 2n), invocation('b', D.CardState.blocked)], batches: [] }
     },
   })
   assert.deepEqual(asked, ['r1'])
@@ -56,7 +56,7 @@ const invocation = (id: string, state: D.CardState, n = 1n) =>
   await inner.restoreCardStates({
     latestInvocations: async () => {
       s.runStatus = Object.assign(new R.RunStatusT(), { runId: 'r2' })
-      return { records: [invocation('a', D.CardState.succeeded)] }
+      return { records: [invocation('a', D.CardState.succeeded)], batches: [] }
     },
   })
   assert.equal(s.cardStates.size, 0)

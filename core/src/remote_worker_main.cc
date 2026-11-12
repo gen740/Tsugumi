@@ -92,7 +92,12 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
                 const WorkerProc::LogSink& log, const WorkerProc::DisplaySink& display) -> WorkerOutcome {
   schema::CardManifest manifest;
   if (schema::decode(env.manifest, manifest)) throw Failed(FailureKind::nix_failed, "invalid remote Card manifest");
-  const auto* run = schema::get(manifest.run);
+  const auto* single = schema::get(manifest.run);
+  const auto* runs = schema::get(manifest.runs);
+  const auto index = *invocation.implementation_index;
+  const schema::ManifestRun* run = nullptr;
+  if (single && !runs && index == 1) run = single;
+  if (!single && runs && index > 0 && index <= runs->size()) run = &runs->at(index - 1);
   const auto* shell = schema::get(manifest.shell);
   const auto* path = schema::get(manifest.path);
   const auto* worker_binary = run ? schema::get(run->worker) : nullptr;

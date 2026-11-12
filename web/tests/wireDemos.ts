@@ -43,6 +43,7 @@ function node(dir: string, id: string): CardNodeData {
     }
     case 'branch': return { ...blank, kind: 'branch', inputs: [{ name: 'value' }, { name: 'condition' }], outputs: [{ name: 'a' }, { name: 'b' }] }
     case 'merge': return { ...blank, kind: 'merge', inputs: declared, outputs: [{ name: 'out' }] }
+    case 'collect': return { ...blank, kind: 'collect', inputs: [{ name: 'in' }], outputs: [{ name: 'out' }] }
     case 'draft': case undefined: break
     default: throw new Error(`template ${def.template}`)
   }

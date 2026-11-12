@@ -39,6 +39,7 @@ add_library(tsugumi_core STATIC
   src/nix.cc
   src/worker_proc.cc
   src/worker_pool.cc
+  src/collect_value.cc
   src/execution_service.cc
   src/remote_job.cc
   src/remote_invocation.cc

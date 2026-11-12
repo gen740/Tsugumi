@@ -161,7 +161,12 @@ struct GraphCanvas: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(m)
-            WireLayer(wires: routed.map { WireDraw(path: $0.path.applying(toLayer), style: $0.style, dotted: $0.dotted, thread: $0.thread) },
+            WireLayer(wires: routed.map {
+              let path = $0.path.applying(toLayer)
+              let count = $0.count.map { "×\($0)" } ?? ($0.executionList && session.runActive ? "×?" : nil)
+              return WireDraw(path: path, style: $0.style, dotted: $0.dotted, executionList: $0.executionList,
+                              countLabel: count, countAt: count == nil ? nil : path.midPoint, thread: $0.thread)
+            },
                       animate: prefs.animateLines && session.runActive, zoom: camera.zoom, presences: session.presences)
             if tab.showNixReferences { nixLayer(transform: toLayer) }
             ZStack(alignment: .topLeading) { panned(routed) }
@@ -452,6 +457,8 @@ struct GraphCanvas: View {
     var path: Path         // world units
     var style: WireDraw.Style
     var dotted = false     // an end of it is a Draft
+    var executionList = false
+    var count: UInt32?
     var thread: AgentPresence.Wire? = nil  // a connection, as the Agent's thread knows it
   }
 
@@ -480,23 +487,29 @@ struct GraphCanvas: View {
       guard let fc = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
             let tc = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { continue }
       let fk = key(tab.scope + [fc]), tk = key(tab.scope + [tc])
+      let batch = session.executionWire(fk, fp)
       ends.append((portWorld(fk, fp, output: true), portWorld(tk, tp, output: false)))
       out.append(RoutedWire(connection: i, path: Path(),
                             style: i == tab.selectedConnection ? .selected : style(from: fk, port: fp, to: tk),
                             dotted: session.isDraftWire(from: fk, to: tk),
+                            executionList: batch.executionList, count: batch.count,
                             thread: AgentPresence.Wire(from: fk, fromPort: fp, to: tk, toPort: tp)))
     }
     if let b {
       for p in b.inputs {
         guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
         ends.append((p.point, portWorld(inner.0, inner.1, output: false)))
-        out.append(RoutedWire(connection: nil, path: Path(), style: .normal, dotted: session.isDraftWire(from: inner.0, to: nil)))
+        let upstream = session.boundaryInputSource(tab.scope, port: p.name)
+        let batch = upstream.map { session.executionWire($0.0, $0.1) } ?? session.executionWire(inner.0, inner.1, output: false)
+        out.append(RoutedWire(connection: nil, path: Path(), style: .normal, dotted: session.isDraftWire(from: inner.0, to: nil),
+                              executionList: batch.executionList, count: batch.count))
       }
       for p in b.outputs {
         guard let inner = p.inner, session.instance(inner.0) != nil else { continue }
         ends.append((portWorld(inner.0, inner.1, output: true), p.point))
+        let batch = session.executionWire(inner.0, inner.1)
         out.append(RoutedWire(connection: nil, path: Path(), style: style(from: inner.0, port: inner.1, to: nil),
-                              dotted: session.isDraftWire(from: inner.0, to: nil)))
+                              dotted: session.isDraftWire(from: inner.0, to: nil), executionList: batch.executionList, count: batch.count))
       }
     }
     for (i, path) in routes.paths(flow: flow, obstacles: obstacles, ends: ends, onRouted: { redrawn += 1 }).enumerated() { out[i].path = path }
@@ -514,6 +527,11 @@ struct GraphCanvas: View {
     // A Card in Card sends what the inner Card behind that output sent.
     if session.kind(from) == .subgraph, let (inner, p) = session.boundarySource(from, output: port) {
       return style(from: inner, port: p, to: to)
+    }
+    if let batch = session.executionBatch(from), batch.executionList {
+      guard batch.complete, !batch.failed, session.executionWire(from, port).count != nil else { return .normal }
+      let dest = to.flatMap(session.canvasCardState)
+      return session.runActive && to != nil && (dest == nil || [.waiting, .ready, .preparing, .running].contains(dest)) ? .active : .carried
     }
     guard let st = session.cardStates[from] else { return .normal }
     if session.runActive, st.sent.contains(port) {
@@ -678,7 +696,7 @@ struct GraphCanvas: View {
                    onPortDrop: { port, pt in finishConnect(from: (k, port), at: live(pt)) },
                    onInputDrag: { port, pt in if session.isEditable { clearHover(); pending = ((k, port), live(pt), false) } },
                    onInputDrop: { port, pt in finishConnect(toInput: (k, port), at: live(pt)) },
-                   onStageTap: { st in workspace.showLog(for: k, stage: st, invocation: session.cardStates[k]?.invocation) },
+                   onStageTap: { st in workspace.showLog(for: k, stage: st, invocation: session.cardStates[k]?.invocation, runId: session.currentRunId) },
                    onToggleCollapse: { session.setCollapsed([k], !session.collapsed(k)) },
                    onComments: { openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: k, category: .comments)) },
                    onRun: canRun
@@ -688,6 +706,15 @@ struct GraphCanvas: View {
         .guideTarget("card:\(k)", radius: 12, zoom: zoom)
     }
       .equatable()
+      .overlay(alignment: .topTrailing) {
+        if let batch = session.executionBatch(k), batch.executionList {
+          BatchInvocationsBadge(session: session, card: k, batch: batch,
+                                onLog: { workspace.showLog(for: k, invocation: $0, runId: session.currentRunId) },
+                                onHistory: { openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: k, category: .executions)) })
+            .id(session.currentRunId)
+            .offset(x: -4, y: -8)
+        }
+      }
       .placeScaled(at: screen(origin(k)), size: g.size, zoom: camera.zoom, pixel: displayScale)
       .zIndex(data.draftEditing ? 1 : 0)
       .gesture(cardDrag(k))
@@ -1052,7 +1079,10 @@ struct GraphCanvas: View {
       lines.append(String(localized: "型: ") + (out?.rootType ?? inp?.rootType ?? String(localized: "未解決")))
       lines.append((inp?.optional ?? false) ? String(localized: "受け側の入力: 省略可") : String(localized: "受け側の入力: 必須"))
       var status = String(localized: "この Run ではまだ値が通っていません")
-      if let st = session.cardStates[fk], st.sentInRun.contains(fp), let id = session.currentRunId {
+      let batch = session.executionWire(fk, fp)
+      if batch.executionList {
+        status = batch.count.map { String(localized: "実行リスト") + " ×\($0)" } ?? String(localized: "実行リスト（件数未確定）")
+      } else if let st = session.cardStates[fk], st.sentInRun.contains(fp), let id = session.currentRunId {
         status = String(localized: "Run \(String(id.prefix(8))) で値が通りました（送信元の最新は実行 #\(st.invocation)）")
       }
       return .init(title: String(localized: "接続"), subtitle: "", symbol: symbol, lines: lines, status: status)
@@ -1497,7 +1527,7 @@ struct BuiltinCardItems: View {
 
   /// The Cards a person writes, then the ones with a fixed role.
   static let written: [DefinitionTemplate] = [.python, .cpp, .go, .rust, .ruby, .csharp, .draft, .marimo]
-  static let fixed: [DefinitionTemplate] = [.trigger, .input, .switchCard, .fork, .branch, .merge]
+  static let fixed: [DefinitionTemplate] = [.trigger, .input, .switchCard, .fork, .branch, .merge, .collect]
 
   var body: some View {
     Menu("レポート（HTML・PDF 未対応）") {

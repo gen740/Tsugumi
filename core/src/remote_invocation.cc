@@ -172,14 +172,30 @@ auto remote_recovery_contract(const std::string& encoded) -> RemoteRecoveryContr
   return result;
 }
 
+auto stage_remote_archive(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
+                          const std::string& instance, const stdfs::path& archive,
+                          const std::atomic<bool>& cancel) -> std::string {
+  crypto::Sha256 archive_hash;
+  const auto archive_size = fs::stream_beneath(archive.parent_path(), archive.filename(), kMaxBlobBytes,
+      [&](std::string_view chunk) {
+        if (cancel.load()) throw Failed(FailureKind::cancelled, "remote Nix archive transfer cancelled");
+        archive_hash.update(chunk);
+      });
+  const auto archive_digest = archive_hash.finish_hex();
+  std::ifstream nar(archive, std::ios::binary);
+  client.put_blob(service, server_id, instance, archive_digest, archive_size, nar, &cancel);
+  return archive_digest;
+}
+
 auto stage_remote_invocation(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
                              const std::string& instance, const std::string& project_id,
-                             const stdfs::path& state, const stdfs::path& archive,
+                             const stdfs::path& state, const std::string& archive_digest,
                              const ExecutionRequest& request) -> std::string {
   remote::InvocationJson invocation;
   *invocation.project_id = project_id;
   *invocation.network = request.node.settings.network;
   *invocation.filesystem = request.node.settings.filesystem;
+  *invocation.implementation_index = request.build.implementation_index;
   auto& files = *invocation.files;
   auto& dirs = *invocation.directories;
   std::set<std::string> blobs;
@@ -187,7 +203,7 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
   auto stage_file = [&](const stdfs::path& root, const stdfs::path& source, const stdfs::path& destination) {
     if (files.size() >= kMaxInputBlobs - 3) throw std::runtime_error("remote input has too many files");
     const auto path = remote::relative_path(destination.generic_string());
-    const auto temporary = archive.parent_path() / ("input-" + crypto::uuid4());
+    const auto temporary = request.directory / (".input-" + crypto::uuid4());
     struct RemoveInput {
       stdfs::path path;
       ~RemoveInput() { std::error_code ec; stdfs::remove(path, ec); }
@@ -246,15 +262,6 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
       ptype->bfbs, ptype->root_type, params, request.node.outputs, "", "", "", env, {}, {});
   *invocation.call_sha256 = upload(client, service, server_id, instance, call, request.cancel);
   blobs.insert(*invocation.call_sha256);
-  crypto::Sha256 archive_hash;
-  const auto archive_size = fs::stream_beneath(archive.parent_path(), archive.filename(), kMaxBlobBytes,
-      [&](std::string_view chunk) {
-        if (request.cancel.load()) throw Failed(FailureKind::cancelled, "remote Nix archive transfer cancelled");
-        archive_hash.update(chunk);
-      });
-  const auto archive_digest = archive_hash.finish_hex();
-  std::ifstream nar(archive, std::ios::binary);
-  client.put_blob(service, server_id, instance, archive_digest, archive_size, nar, &request.cancel);
   *invocation.archive_sha256 = archive_digest;
   blobs.insert(archive_digest);
   const auto invocation_digest = upload(client, service, server_id, instance, schema::encode(invocation), request.cancel);

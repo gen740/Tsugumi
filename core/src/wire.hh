@@ -36,6 +36,7 @@ Off<R::Definition> definition(FBB& b, const std::string& id, const DefinitionDoc
 Off<R::RunStatus> run_status(FBB& b, const RunStatusData& s);
 Off<R::RunSummary> run_summary(FBB& b, const RunSummaryData& s);
 Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s);
+auto run_batch(FBB& b, const RunBatchData& batch) -> Off<R::RunBatch>;
 Off<D::Display> display(FBB& b, const DisplayData& d);
 // Throws Failed(output_invalid) when the display is malformed.
 DisplayData display(const D::Display* d);

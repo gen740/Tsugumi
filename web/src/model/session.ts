@@ -49,6 +49,7 @@ export interface PortInfo {
   kind: D.PortKind
   optional: boolean
   rootType?: string
+  executionShape?: D.ExecutionShape
 }
 
 export interface ResolvedCard {
@@ -56,7 +57,7 @@ export interface ResolvedCard {
   inputs: PortInfo[]
   outputs: PortInfo[]
   diagnostics: Diagnostic[]
-  nixReferences: { target: string[]; name: string; local: boolean; valid: boolean }[]
+  nixReferences: { target: string[]; name: string; valid: boolean }[]
 }
 
 /** One stage of an invocation as the core recorded it (core clock, ms). */
@@ -116,6 +117,7 @@ export interface CardRunState {
   state: D.CardState
   /** Number of the latest invocation in this run (1, 2, …); 0 = not run. */
   invocation: bigint
+  batchActivation?: bigint
   phase: D.Phase
   failure?: string
   executionState?: D.RemoteExecutionState | null
@@ -152,6 +154,7 @@ export const runStateStage = (st: CardRunState): Stage | undefined =>
 export interface TimelineEntry {
   card: CardKey
   invocation: bigint
+  batchActivation?: bigint
   state: D.CardState
   startedAt?: number
   endedAt?: number
@@ -478,6 +481,8 @@ export class ProjectSession extends Observable {
   displays = new Map<CardKey, DisplaySnapshot>()
   lastFinished = 0
   remoteHistoryRevision = 0
+  batchHistoryRevision = 0
+  private runBatches = new Map<CardKey, R.RunBatchT>()
   timeline: TimelineEntry[] = []
   /** Browser clock minus core clock (ms): the smallest difference seen. */
   coreClockOffset?: number
@@ -603,6 +608,31 @@ export class ProjectSession extends Observable {
 
   get currentRunId(): string | undefined {
     return sOpt(this.runStatus?.runId)
+  }
+
+  executionBatch(card: CardKey): R.RunBatchT | undefined {
+    const batch = this.runBatches.get(card)
+    if (!batch || !this.currentRunId || this.runStatus?.executionRev !== this.executionRev || this.computationDirty) return
+    return batch
+  }
+
+  canvasCardState(card: CardKey): D.CardState | undefined {
+    const batch = this.executionBatch(card)
+    if (batch?.executionList) {
+      if (this.runStatus?.state === D.RunState.cancelled && (!batch.complete || batch.failed)) return D.CardState.cancelled
+      return batch.complete ? (batch.failed ? D.CardState.failed : D.CardState.succeeded) : D.CardState.running
+    }
+    return this.cardStates.get(card)?.state
+  }
+
+  executionWire(card: CardKey, port: string, output = true): { executionList: boolean; count?: number } {
+    const inner = output && this.kind(card) === 'subgraph' ? this.boundarySource(card, port) : undefined
+    if (inner) return this.executionWire(...inner)
+    const batch = output ? this.executionBatch(card) : undefined
+    const emitted = batch?.outputs.find((item) => s(item.port) === port)
+    if (emitted) return { executionList: emitted.executionList, count: emitted.executionList ? emitted.count : undefined }
+    const shape = this.resolution.get(card)?.[output ? 'outputs' : 'inputs'].find((item) => item.name === port)?.executionShape
+    return { executionList: shape === D.ExecutionShape.list || (batch?.executionList === true && this.kind(card) !== 'collect') }
   }
 
   get rpc(): RPCClient | undefined {
@@ -791,7 +821,7 @@ export class ProjectSession extends Observable {
     if (!prev || prev.invocation <= n) {
       const sent = new Set(inv.outputsSent.map((x) => s(x)))
       this.cardStates.set(k, {
-        state: inv.state, invocation: n, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
+        state: inv.state, invocation: n, batchActivation: inv.batchActivation ?? undefined, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
         executionState: inv.executionState,
         // Each notification carries the invocation's stages so far.
         stages: stageRecords(inv.stages), cached: !!inv.buildCached, workerReused: !!inv.workerReused,
@@ -799,6 +829,19 @@ export class ProjectSession extends Observable {
         startedAt: inv.startedAt !== null ? Number(inv.startedAt) : undefined, endedAt: inv.endedAt !== null ? Number(inv.endedAt) : undefined,
         readyAt: inv.readyAt !== null ? Number(inv.readyAt) : undefined,
       })
+    }
+  }
+
+  private noteBatch(batch: R.RunBatchT) {
+    const card = key(segs(batch.card))
+    const current = this.runBatches.get(card)
+    if (current && (batch.activation < current.activation ||
+      (batch.activation === current.activation && current.complete && !batch.complete))) return
+    this.runBatches.set(card, batch)
+    if (batch.executionList && batch.complete && !batch.failed && batch.invocationCount === 0) {
+      // Nix preparation can use a provisional invocation before it finds an empty list.
+      if (this.cardStates.get(card)?.batchActivation === batch.activation) this.cardStates.delete(card)
+      this.timeline = this.timeline.filter((item) => item.card !== card || item.batchActivation !== batch.activation)
     }
   }
 
@@ -810,6 +853,7 @@ export class ProjectSession extends Observable {
     // A run started meanwhile has its own states.
     if (!page || sOpt(this.runStatus?.runId) !== run) return
     for (const inv of page.records) this.noteInvocation(inv)
+    for (const batch of page.batches) this.noteBatch(batch)
     this.changed()
   }
 
@@ -876,6 +920,7 @@ export class ProjectSession extends Observable {
     for (const src of snap.sources) this.sources.set(s(src.path), { hash: s(src.hash), size: src.sizeBytes ?? 0n })
     this.refreshExternals()
     this.applyResolution(snap.resolution, snap.diagnostics)
+    if (this.currentRunId !== sOpt(snap.run?.runId)) this.runBatches = new Map()
     this.runStatus = snap.run ?? undefined
     this.viewRev = snap.viewRev ?? 0n
     if (snap.view) {
@@ -901,11 +946,14 @@ export class ProjectSession extends Observable {
   private applyResolution(res: R.ResolvedCardT[], diags: D.DiagnosticT[]) {
     const r = new Map<CardKey, ResolvedCard>()
     const all = diags.map(diag)
-    const port = (x: D.PortT): PortInfo => ({ name: s(x.name), kind: x.kind, optional: !!x.optional, rootType: sOpt(x.rootType) })
+    const port = (x: D.PortT): PortInfo => ({
+      name: s(x.name), kind: x.kind, optional: !!x.optional, rootType: sOpt(x.rootType), executionShape: x.executionShape,
+    })
     for (const rc of res) {
       const p = segs(rc.card)
       const d = rc.diagnostics.map(diag)
-      r.set(key(p), { path: p, inputs: rc.inputs.map(port), outputs: rc.outputs.map(port), diagnostics: d, nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name), local: r.local, valid: r.valid })) })
+      r.set(key(p), { path: p, inputs: rc.inputs.map(port), outputs: rc.outputs.map(port), diagnostics: d,
+        nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name), valid: r.valid })) })
       all.push(...d)
     }
     this.resolution = r
@@ -963,7 +1011,8 @@ export class ProjectSession extends Observable {
     switch (e.valueType) {
       case R.RunEventValue.RunAcceptedEvent: {
         const st = (e.value as R.RunAcceptedEventT).status
-        if (st) {
+        if (st && this.currentRunId !== s(st.runId)) {
+          this.runBatches = new Map()
           this.runStatus = st
           this.cardStates = new Map()
           this.timeline = []
@@ -980,6 +1029,12 @@ export class ProjectSession extends Observable {
       case R.RunEventValue.RunCardChanged: {
         const inv = (e.value as R.RunCardChangedT).invocation
         if (!inv) break
+        if (inv.batchActivation != null) {
+          this.batchHistoryRevision++
+          if (s(e.runId) !== this.currentRunId) break
+          const batch = this.runBatches.get(key(segs(inv.card)))
+          if (batch?.activation === inv.batchActivation && batch.executionList && batch.complete && !batch.failed && batch.invocationCount === 0) break
+        }
         if (inv.executionState !== D.RemoteExecutionState.unspecified) {
           this.remoteHistoryRevision++
           this.logRevision++
@@ -990,6 +1045,14 @@ export class ProjectSession extends Observable {
         const lastStart = inv.stages.length ? inv.stages[inv.stages.length - 1].start : null
         this.sampleClock(inv.endedAt ?? (inv.state === D.CardState.running ? lastStart : null))
         this.recordTimeline(key(segs(inv.card)), inv)
+        break
+      }
+      case R.RunEventValue.RunBatchChanged: {
+        const batch = (e.value as R.RunBatchChangedT).batch
+        if (batch) {
+          this.batchHistoryRevision++
+          if (s(e.runId) === this.currentRunId) this.noteBatch(batch)
+        }
         break
       }
       case R.RunEventValue.RunFinished: {
@@ -1022,7 +1085,7 @@ export class ProjectSession extends Observable {
       this.timeline[i] = { ...e, state: inv.state, startedAt: st ?? e.startedAt, endedAt: en ?? e.endedAt, stages: stages.length ? stages : e.stages }
       this.timeline = [...this.timeline]
     } else {
-      this.timeline = [...this.timeline, { card: k, invocation: n, state: inv.state, startedAt: st, endedAt: en, stages }]
+      this.timeline = [...this.timeline, { card: k, invocation: n, batchActivation: inv.batchActivation ?? undefined, state: inv.state, startedAt: st, endedAt: en, stages }]
     }
   }
 
@@ -1614,9 +1677,13 @@ export class ProjectSession extends Observable {
     const parallel = Math.max(1, Math.min(64, prefs.maxConcurrency))
     try {
       const accepted = await client.run(this.rev, uuid(), card, propagate, parallel)
-      this.runStatus = accepted.run ?? undefined
-      this.cardStates = new Map()
-      this.timeline = []
+      // A fast or empty run may already have reported newer state.
+      if (this.currentRunId !== sOpt(accepted.run?.runId)) {
+        this.runBatches = new Map()
+        this.runStatus = accepted.run ?? undefined
+        this.cardStates = new Map()
+        this.timeline = []
+      }
       this.changed()
     } catch (e) {
       if (e instanceof RPCError && e.code === 'disconnected') this.reconnect() // never re-send blindly
@@ -3119,7 +3186,7 @@ export class ProjectSession extends Observable {
       case 'draft':
         set(obj([['template', 'draft']]), obj([['description', ''], ['content', '']]))
         break
-      case 'trigger': case 'fork': case 'branch':
+      case 'trigger': case 'fork': case 'branch': case 'collect':
         set(obj([['template', t]]))
         break
       case 'merge':
@@ -3324,6 +3391,10 @@ auto run(Card::Input& input) -> Card::Output {
     const note = (list: string, name: string) => str(get((arr(get(m, list)) ?? []).find((x) => str(get(x, 'name')) === name), 'description'))
     if (definitionKind(def) === 'switch') return { inputs: [], outputs: [{ name: 'value', typeName: 'tsugumi.builtin.Condition', note: note('outputs', 'value') }] }
     const r = this.resolution.get(k)
+    if (definitionKind(def) === 'collect') return {
+      inputs: [{ name: 'in', typeName: r?.inputs.find((p) => p.name === 'in')?.rootType, note: note('inputs', 'in') }],
+      outputs: [{ name: 'out', typeName: r?.outputs.find((p) => p.name === 'out')?.rootType, note: note('outputs', 'out') }],
+    }
     // A Draft's ports change with its wires, before they are resolved again.
     const draft = this.kind(k) === 'draft'
     if (definition === undefined && r && !draft) {
@@ -3446,7 +3517,11 @@ auto run(Card::Input& input) -> Card::Output {
 
   /** State of a Card in Card from the Cards inside it. */
   compositeState(k: CardKey): D.CardState | undefined {
-    const inner = [...this.cardStates].filter(([kk]) => kk.startsWith(k + '/')).map(([, v]) => v.state)
+    const inner = [...new Set([...this.cardStates.keys(), ...this.runBatches.keys()])]
+      .filter((kk) => kk.startsWith(k + '/')).flatMap((kk) => {
+        const state = this.canvasCardState(kk)
+        return state === undefined ? [] : [state]
+      })
     if (!inner.length) return undefined
     if (inner.includes(D.CardState.failed)) return D.CardState.failed
     if (inner.includes(D.CardState.cancelled)) return D.CardState.cancelled
@@ -3463,7 +3538,7 @@ auto run(Card::Input& input) -> Card::Output {
     const mode = figureMode(str(this.cardSetting(k, 'displayMode')))
     if (!this.runActive) return { mode, running: false, stale: false }
     const busy = (c: CardKey) => {
-      const st = this.cardStates.get(c)?.state
+      const st = this.canvasCardState(c)
       return st === D.CardState.ready || st === D.CardState.preparing || st === D.CardState.running || this.compositeState(c) === D.CardState.running
     }
     // Upstream in the Card's own Workflow, then upstream of each Card in Card it is inside.
@@ -3493,9 +3568,22 @@ auto run(Card::Input& input) -> Card::Output {
     return c && p ? [key([...path(k), c]), p] : undefined
   }
 
+  boundaryInputSource(scope: string[], port: string): [CardKey, string] | undefined {
+    const container = scope.at(-1)
+    if (!container) return
+    const parent = scope.slice(0, -1)
+    const links = this.connections(parent).filter((c) => str(get(c, 'to', 'card')) === container && str(get(c, 'to', 'port')) === port)
+    if (links.length !== 1) return
+    const from = str(get(links[0], 'from', 'card')), output = str(get(links[0], 'from', 'port'))
+    return from && output ? [key([...parent, from]), output] : undefined
+  }
+
   nodeData(k: CardKey, opts: { definition?: J; meta?: J; collapsed?: boolean; outputs?: PortData[] } = {}): CardNodeData {
     const kind = this.kind(k)
     const state = this.cardStates.get(k)
+    const batch = this.executionBatch(k)
+    const executionList = batch?.executionList === true
+    const empty = executionList && batch.complete && !batch.failed && batch.invocationCount === 0
     const diags = this.resolution.get(k)?.diagnostics ?? []
     const ports = this.portData(k, opts.definition, opts.meta)
     const def = opts.definition ?? this.cardDefinition(k)
@@ -3513,9 +3601,9 @@ auto run(Card::Input& input) -> Card::Output {
     return {
       title: path(k).pop() ?? k, kind, symbol: sym || undefined, summary: summary || undefined,
       inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
-      result: pending ?? (d ? displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
-      state: kind === 'subgraph' ? this.compositeState(k) : state?.state, stage: this.stageProgress(k),
-      invocation: state?.invocation ?? 0n, runContinues: this.runActive,
+      result: pending ?? (d ? (executionList ? `#${d.invocation} · ` : '') + displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
+      state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
+      invocation: empty ? 0n : state?.invocation ?? 0n, runContinues: this.runActive,
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,
       errors: diags.filter((x) => x.error).map((x) => x.message), warnings: diags.filter((x) => !x.error).map((x) => x.message),
       collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), hasDisplay: display, permissions: cardPermissions(def),
@@ -3665,16 +3753,17 @@ export class ExternalCopy {
 // ---- Kinds, templates and labels ------------------------------------------------------
 
 /** What a Card is, for choosing what the canvas and the editor offer. */
-export type CardKind = 'trigger' | 'input' | 'switch' | 'fork' | 'branch' | 'merge' | 'draft' | 'subgraph' | 'code'
-const KINDS: CardKind[] = ['trigger', 'input', 'switch', 'fork', 'branch', 'merge', 'draft', 'subgraph', 'code']
+export type CardKind = 'trigger' | 'input' | 'switch' | 'fork' | 'branch' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code'
+const KINDS: CardKind[] = ['trigger', 'input', 'switch', 'fork', 'branch', 'merge', 'collect', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
-  trigger: L('開始'), input: L('入力'), switch: L('スイッチ'), fork: L('分配'), branch: L('分岐'), merge: L('合流'), draft: 'Draft', subgraph: 'Card in Card', code: L('処理'),
+  trigger: L('開始'), input: L('入力'), switch: L('スイッチ'), fork: L('分配'), branch: L('分岐'), merge: L('合流'), collect: L('収集'),
+  draft: 'Draft', subgraph: 'Card in Card', code: L('処理'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
   trigger: 'play.circle', input: 'slider.horizontal.3', switch: 'switch.2', fork: 'arrow.triangle.branch', branch: 'arrow.triangle.swap',
-  merge: 'arrow.triangle.merge', draft: 'pencil.and.outline', subgraph: 'link',
+  merge: 'arrow.triangle.merge', collect: 'line.3.horizontal.decrease', draft: 'pencil.and.outline', subgraph: 'link',
   code: 'chevron.left.forwardslash.chevron.right',
 }
 
@@ -3689,7 +3778,7 @@ export function definitionKind(def: J | undefined): CardKind {
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
+export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'switch' | 'draft' | 'trigger' | 'fork' | 'branch' | 'merge' | 'collect' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'ruby', label: L('Ruby の処理') },
   { id: 'rust', label: L('Rust の処理') },
@@ -3701,7 +3790,7 @@ export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') },
   { id: 'switch', label: L('スイッチ') },
   { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') }, { id: 'fork', label: L('分配') },
-  { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') },
+  { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'collect', label: L('収集') },
 ]
 export const templateIcon = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'chart.xyaxis.line' : KIND_ICON[t.startsWith('report_') || t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' || t === 'marimo' ? 'code' : (t as CardKind)]
 /** A name for the new Card (its id; made unique). */

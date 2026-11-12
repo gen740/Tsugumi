@@ -1,4 +1,5 @@
 #include "graph.hh"
+#include "collect_value.hh"
 #include "nix_refs.hh"
 
 #include <map>
@@ -25,6 +26,7 @@ const char* template_name(Template t) {
     case Template::Fork: return "fork";
     case Template::Branch: return "branch";
     case Template::Merge: return "merge";
+    case Template::Collect: return "collect";
     case Template::Subgraph: return "subgraph";
     case Template::Draft: return "draft";
   }
@@ -143,7 +145,7 @@ Template template_of(const DefinitionDoc* def) {
   if (!t || *t == "none" || t->empty()) return Template::Code;
   static const std::map<std::string, Template> m = {
       {"trigger", Template::Trigger}, {"input", Template::Input},   {"fork", Template::Fork},
-      {"branch", Template::Branch},   {"merge", Template::Merge},
+      {"branch", Template::Branch},   {"merge", Template::Merge}, {"collect", Template::Collect},
       {"draft", Template::Draft}, {"switch", Template::Switch},
   };
   auto it = m.find(*t);
@@ -204,6 +206,7 @@ class Builder {
     scope(doc_.project, "", {}, 0);
     connect_all();
     resolve_types();
+    resolve_execution_shapes();
     finish_checks();
     compute_guarantees();
     check_nix_references();
@@ -507,6 +510,11 @@ class Builder {
             n.diags.push_back(diag(n.path, "invalid_setting", "merge needs declared inputs"));
           for (auto& in : n.input_defs) in.optional = true;
           break;
+        case Template::Collect:
+          n.input_defs = {{"in", false}};
+          n.settings.any_mode = true;
+          n.outputs = {{"out", PortKind::FlatBuffer, false, nullptr}};
+          break;
         case Template::Draft:
           // A Draft can be wired before it is implemented: its outputs are the
           // typed ones of _outputs.fbs and the names in _meta.json (a wire drawn
@@ -698,6 +706,45 @@ class Builder {
     return false;
   }
 
+  auto resolve_execution_shapes() -> void {
+    using Shape = types::ExecutionShape;
+    for (size_t pass = 0; pass <= res_->nodes.size(); ++pass) {
+      bool changed = false;
+      for (size_t i = 0; i < res_->nodes.size(); ++i) {
+        auto& node = res_->nodes[i];
+        size_t connected = 0, lists = 0, singles = 0;
+        for (auto& port : node.inputs) {
+          std::optional<Shape> shape;
+          for (const auto& edge : res_->edges) {
+            if (edge.to != i || edge.to_port != port.name) continue;
+            const auto* output = res_->nodes[edge.from].output(edge.from_port);
+            const auto from = output ? output->execution_shape : Shape::unspecified;
+            shape = !shape || *shape == from ? from : Shape::unspecified;
+          }
+          if (!shape) continue;
+          ++connected;
+          if (*shape == Shape::list) ++lists;
+          if (*shape == Shape::single) ++singles;
+          if (port.execution_shape != *shape) {
+            port.execution_shape = *shape;
+            changed = true;
+          }
+        }
+        Shape shape = Shape::unspecified;
+        if (node.kind == Template::Collect) shape = Shape::single;
+        else if (lists > 0 && (!node.settings.any_mode || lists == connected)) shape = Shape::list;
+        else if (node.kind != Template::Code && node.kind != Template::Subgraph && singles == connected)
+          shape = Shape::single;
+        for (auto& port : node.outputs) {
+          if (port.execution_shape == shape) continue;
+          port.execution_shape = shape;
+          changed = true;
+        }
+      }
+      if (!changed) break;
+    }
+  }
+
   bool derive(Node& n) {
     bool changed = false;
     switch (n.kind) {
@@ -715,8 +762,21 @@ class Builder {
             if (!o.type) { o.type = v->type; o.kind = v->kind; changed = true; }
         break;
       }
+      case Template::Collect: {
+        const auto* in = n.input("in");
+        if (!in || !in->type || n.outputs[0].type) break;
+        std::string error;
+        if (auto type = collect_output_type(*in, error)) {
+          n.outputs[0].type = std::move(type);
+          n.outputs[0].kind = in->kind == PortKind::FlatBuffer ? PortKind::FlatBuffer : PortKind::Directory;
+          changed = true;
+        } else if (derive_failed_.insert(path_key(n.path)).second) {
+          n.diags.push_back(diag(n.path, "invalid_type", "collect type: " + error));
+        }
+        break;
+      }
       case Template::Merge: {
-        if (n.outputs[0].type || merge_failed_.count(path_key(n.path))) break;
+        if (n.outputs[0].type || derive_failed_.count(path_key(n.path))) break;
         std::vector<std::pair<std::string, TypeRef>> ins;
         bool ready = true;
         size_t idx = res_->index.at(path_key(n.path));
@@ -734,7 +794,7 @@ class Builder {
           n.outputs[0].type = *t;
           changed = true;
         } else {
-          merge_failed_.insert(path_key(n.path));
+          derive_failed_.insert(path_key(n.path));
           n.diags.push_back(diag(n.path, "invalid_type", "merge type: " + err));
         }
         break;
@@ -856,53 +916,75 @@ class Builder {
         if (g[i][k] && !res_->nodes[k].is_virtual) res_->guaranteed[i].push_back(k);
   }
 
-  // Static check of `inputs.upstream."<path>"` / `inputs.local.<id>` in each
-  // Code Card's default.nix, so a reference to a Card that is not always
-  // upstream is reported before any evaluation. Paths are relative to the
-  // project the Card is written in (the same as when that project is opened
-  // on its own); `local` names a Card of the same level only. This is early
-  // feedback for the written form (nix_references: not in comments or the
-  // text of strings); the guarantee is what entry.nix offers, so a reference
-  // it cannot see (through an alias, say) fails at evaluation instead.
-  void check_nix_references() {
+  // Direct inputs.<port> names are resolved from the same edges and
+  // guarantees used by the evaluator, including when Nix accesses an alias.
+  auto trace_nix_producers(size_t source, std::set<size_t>& visiting, std::set<size_t>& result) const -> void {
+    const auto kind = res_->nodes[source].kind;
+    if (kind != Template::Fork && kind != Template::Collect && kind != Template::Branch && kind != Template::Merge) {
+      result.insert(source);
+      return;
+    }
+    if (!visiting.insert(source).second) {
+      result.insert(source);
+      return;
+    }
+    bool found = false;
+    for (const auto& edge : res_->edges) {
+      if (edge.to != source) continue;
+      if (kind == Template::Branch && edge.to_port != "value") continue;
+      found = true;
+      trace_nix_producers(edge.from, visiting, result);
+    }
+    if (!found) result.insert(source);
+    visiting.erase(source);
+  }
+
+  auto check_nix_references() -> void {
     for (size_t i = 0; i < res_->nodes.size(); ++i) {
-      Node& n = res_->nodes[i];
-      if (n.kind != Template::Code) continue;
-      std::string rel = n.def_dir + "default.nix";
-      if (!doc_.sources.count(rel)) continue;
-      auto text = read_(rel);
+      auto& node = res_->nodes[i];
+      if (node.kind != Template::Code) continue;
+      const auto file = node.def_dir + "default.nix";
+      const auto allowed = res_->nix_upstream(i);
+      std::map<std::string, std::set<size_t>> producers;
+      for (const auto& edge : res_->edges) {
+        if (edge.to != i) continue;
+        std::set<size_t> visiting;
+        trace_nix_producers(edge.from, visiting, producers[edge.to_port]);
+      }
+      for (const auto& [name, from] : producers) {
+        if (name == "tsugumi" || name == "sources") {
+          node.diags.push_back(diag(node.path, "nix_input_reserved", "input " + name + " is reserved by the Nix SDK"));
+          continue;
+        }
+        if (from.size() != 1) continue;
+        const size_t producer = *from.begin();
+        if (std::ranges::find(allowed, producer) != allowed.end())
+          node.nix_inputs.emplace(name, producer);
+      }
+      if (!doc_.sources.count(file)) continue;
+      auto text = read_(file);
       if (!text) continue;
-      auto allowed = res_->nix_upstream(i);
-      CardPath scope_path(n.path.begin(), n.path.end() - 1);
-      for (const auto& [local, name] : nix_references(*text)) {
-        CardPath target = scope_path;
-        for (const auto& part : path_from_key(name)) target.push_back(part);
-        std::string key = path_key(target);
-        auto found = res_->index.find(key);
-        const bool valid = (!local || target.size() == n.path.size()) && target != n.path &&
-                           found != res_->index.end() &&
-                           std::find(allowed.begin(), allowed.end(), found->second) != allowed.end();
-        if (std::none_of(n.nix_references.begin(), n.nix_references.end(), [&](const auto& ref) {
-              return ref.local == local && ref.name == name;
-            }))
-          n.nix_references.push_back({target, name, local, valid});
-        if (local && target.size() != n.path.size()) {
-          n.diags.push_back(diag(n.path, "nix_reference_unknown",
-                                 "default.nix references local." + name + ", but local names a Card of this level only (use upstream.\"" +
-                                     name + "\")",
-                                 true, rel));
-        } else if (target == n.path) {
-          n.diags.push_back(diag(n.path, "nix_reference_self", "default.nix references this Card itself (" + key + ")", true, rel));
-        } else if (found == res_->index.end()) {
-          n.diags.push_back(diag(n.path, "nix_reference_unknown", "default.nix references unknown Card " + key, true, rel));
-        } else if (std::find(allowed.begin(), allowed.end(), found->second) == allowed.end()) {
-          const Node& t = res_->nodes[found->second];
-          std::string why = t.kind != Template::Code ? "is not a code Card"
-                            : std::find(res_->guaranteed[i].begin(), res_->guaranteed[i].end(), found->second) ==
-                                      res_->guaranteed[i].end()
-                                ? "is not upstream on every path to this Card"
-                                : "depends on this Card (cycle)";
-          n.diags.push_back(diag(n.path, "nix_reference_not_guaranteed", "default.nix references " + key + ", which " + why, true, rel));
+      std::set<std::string> seen;
+      for (const auto& name : nix_references(*text)) {
+        if (!seen.insert(name).second) continue;
+        const auto from = producers.find(name);
+        const auto alias = node.nix_inputs.find(name);
+        if (alias != node.nix_inputs.end()) {
+          node.nix_references.push_back({res_->nodes[alias->second].path, name, true});
+        } else if (from == producers.end()) {
+          node.nix_references.push_back({{}, name, false});
+          node.diags.push_back(diag(node.path, "nix_reference_unknown",
+                                   "default.nix references inputs." + name + " without a connected input", true, file));
+        } else if (from->second.size() != 1) {
+          node.nix_references.push_back({{}, name, false});
+          node.diags.push_back(diag(node.path, "nix_reference_ambiguous",
+                                   "inputs." + name + " has more than one producer", true, file));
+        } else {
+          const auto& target = res_->nodes[*from->second.begin()].path;
+          node.nix_references.push_back({target, name, false});
+          node.diags.push_back(diag(node.path, "nix_reference_not_guaranteed",
+                                   "inputs." + name + " requires a Code Card that always runs before this Card",
+                                   true, file));
         }
       }
     }
@@ -914,7 +996,7 @@ class Builder {
   std::deque<schema::Project> projects_;
   std::shared_ptr<Resolution> res_;
   std::vector<RawEdge> raw_;
-  std::set<std::string> merge_failed_;
+  std::set<std::string> derive_failed_;
 };
 
 }  // namespace

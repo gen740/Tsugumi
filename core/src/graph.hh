@@ -15,7 +15,7 @@
 
 namespace tsugumi {
 
-enum class Template { Code, Trigger, Input, Switch, Fork, Branch, Merge, Subgraph, Draft };
+enum class Template { Code, Trigger, Input, Switch, Fork, Branch, Merge, Collect, Subgraph, Draft };
 const char* template_name(Template t);
 // What a definition is; no definition at all is a Draft.
 Template template_of(const DefinitionDoc* def);
@@ -92,7 +92,6 @@ struct NixSourceRef {
 struct CardNixReference {
   CardPath target;
   std::string name;
-  bool local = false;
   bool valid = false;
 };
 
@@ -106,6 +105,7 @@ struct Node {
   std::string pkgs_path;                      // of the project the Card is written in
   std::vector<NixSourceRef> nix_sources;      // what that project opts in to (tsugumi.json nixSources)
   std::vector<CardNixReference> nix_references;
+  std::map<std::string, size_t> nix_inputs;  // destination port -> guaranteed Code producer
   std::optional<schema::Boundary> boundary;  // Card in Card: its external's ports
   std::string external;                      // Card in Card: "externals/<p>/" (project relative)
   Settings settings;

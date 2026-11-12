@@ -59,7 +59,7 @@ from remote_job import (
 
 VERSION = 1
 # Version of the invocation manifest and worker result exchanged by core.
-WORKER_CONTRACT = 1
+WORKER_CONTRACT = 2
 MAX_HEADER_BYTES = 65536
 MAX_REQUEST_BYTES = 4 + MAX_HEADER_BYTES + MAX_BLOB_BYTES
 MAX_DIAGNOSTIC = 1024

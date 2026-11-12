@@ -58,8 +58,8 @@ export function openCard(s: ProjectSession, k: CardKey, tab: WorkflowTab) {
 
 /** The log of a Card in the bottom panel, at a stage and invocation when the
  *  workspace takes them (Workspace.showLog(card, stage?, invocation?)). */
-export function showLog(workspace: Workspace, card: CardKey | undefined, stage?: Stage, invocation?: bigint) {
-  ;(workspace.showLog as (card: CardKey | undefined, stage?: Stage, invocation?: bigint) => void).call(workspace, card, stage, invocation)
+export function showLog(workspace: Workspace, card: CardKey | undefined, stage?: Stage, invocation?: bigint, runId?: string) {
+  workspace.showLog(card, stage, invocation, runId)
 }
 
 /** Dragging a definition (or a template) onto the canvas carries this prefix. */

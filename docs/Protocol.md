@@ -465,3 +465,14 @@ Sent from `tsugumid` to connected clients.
 - `RunEvent`
 - `DisplayUpdated`
 - `LogAvailable`
+
+### Run events
+
+The `value` inside a `RunEvent` has one of these types.
+
+- `RunAcceptedEvent`
+- `RunStatusChanged`
+- `RunCardChanged`
+- `RunTimeline`
+- `RunFinished`
+- `RunBatchChanged`

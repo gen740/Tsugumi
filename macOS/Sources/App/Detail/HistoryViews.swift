@@ -13,7 +13,7 @@ struct ExecutionHistoryRefresh: Equatable {
   @MainActor init(session: ProjectSession, card: CardKey) {
     runId = session.currentRunId
     state = session.runStatus?.state
-    self.card = session.cardStates[card]
+    self.card = session.executionBatch(card)?.executionList == true ? nil : session.cardStates[card]
     connected = session.connected
     remoteHistoryRevision = session.remoteHistoryRevision
   }
@@ -42,6 +42,10 @@ struct CardExecutionView: View {
   @State private var filter = Filter.all
   @State private var runId: String?
   @State private var invocations: [Tsugumi_RPC_InvocationSummaryT] = []
+  @State private var batches: [Tsugumi_RPC_RunBatchT] = []
+  @State private var cursors: [String] = []
+  @State private var nextCursor: String?
+  @State private var batchRevision = 0
   @State private var invocation: UInt64?
   @State private var logStream: Tsugumi_Data_LogStream = .stdout
   @State private var record: Tsugumi_RPC_RecordResultT?
@@ -90,6 +94,7 @@ struct CardExecutionView: View {
     .task(id: ExecutionHistoryRefresh(session: session, card: cardKey)) {
       await loadRuns()
     }
+    .task { await observeBatchHistory(session) { batchRevision = $0 } }
     .sheet(isPresented: $comparing) { RunComparisonView(session: session, runs: runs, initial: runId) { comparing = false } }
   }
 
@@ -97,6 +102,8 @@ struct CardExecutionView: View {
     let runId: String?
     let invocation: UInt64?
     let execution: ExecutionHistoryRefresh
+    var cursor: String? = nil
+    var batchRevision = 0
   }
 
   private var content: some View {
@@ -144,11 +151,21 @@ struct CardExecutionView: View {
               Picker("呼び出し", selection: $invocation) {
                 if invocations.isEmpty { Text("呼び出しなし").tag(UInt64?.none) }
                 ForEach(invocations, id: \.invocation) { i in
-                  Text("#\(i.invocation ?? 0) · \(i.state.label)" + (i.durationMs.map { " · \(formatDuration(Double($0) / 1000))" } ?? ""))
+                  Text("#\(i.invocation ?? 0) · \(i.state.label)" + batchMember(i)
+                       + (i.durationMs.map { " · \(formatDuration(Double($0) / 1000))" } ?? ""))
                     .tag(i.invocation)
                 }
               }
               .frame(maxWidth: 320)
+              if let batch = selectedBatch, batch.executionList {
+                Text(verbatim: "×\(batch.invocationCount)").font(.caption.monospaced())
+              }
+              if !cursors.isEmpty || nextCursor != nil {
+                Button("前へ") { nextCursor = nil; cursors.removeLast() }.disabled(cursors.isEmpty)
+                Button("次へ") {
+                  if let next = nextCursor { nextCursor = nil; cursors.append(next) }
+                }.disabled(nextCursor == nil)
+              }
               Spacer()
               Picker("", selection: $detail) { ForEach(Detail.allCases) { Text($0.title).tag($0) } }
                 .pickerStyle(.segmented).labelsHidden().frame(width: 300)
@@ -174,12 +191,24 @@ struct CardExecutionView: View {
         .frame(minWidth: 380)
       }
     }
-    .task(id: DetailRefresh(runId: runId, invocation: nil, execution: ExecutionHistoryRefresh(session: session, card: cardKey))) {
+    .task(id: DetailRefresh(runId: runId, invocation: nil, execution: ExecutionHistoryRefresh(session: session, card: cardKey), cursor: cursors.last, batchRevision: batchRevision)) {
       await loadInvocations()
     }
-    .task(id: DetailRefresh(runId: runId, invocation: invocation, execution: ExecutionHistoryRefresh(session: session, card: cardKey))) {
+    .task(id: DetailRefresh(runId: runId, invocation: invocation, execution: ExecutionHistoryRefresh(session: session, card: cardKey), batchRevision: batchRevision)) {
       await loadRecord()
     }
+  }
+
+  private var selectedBatch: Tsugumi_RPC_RunBatchT? {
+    if let id = invocations.first(where: { $0.invocation == invocation })?.batchActivation {
+      return batches.first { $0.activation == id }
+    }
+    return batches.last
+  }
+
+  private func batchMember(_ summary: Tsugumi_RPC_InvocationSummaryT) -> String {
+    if let index = summary.batchIndex, let size = summary.batchSize { return " · \(index)/\(size)" }
+    return ""
   }
 
   private var filtered: [Tsugumi_RPC_RunSummaryT] {
@@ -307,11 +336,18 @@ struct CardExecutionView: View {
     if invocationsRunId != selectedRun {
       invocationsRunId = selectedRun
       invocations = []
+      batches = []
+      cursors = []
+      nextCursor = nil
       invocation = nil
       record = nil
     }
-    let page = (try? await rpc.invocations(runId: selectedRun, card: path(cardKey)).records.compactMap { $0 }) ?? []
-    guard !Task.isCancelled, runId == selectedRun else { return }
+    let cursor = cursors.last
+    let result = try? await rpc.invocations(runId: selectedRun, card: path(cardKey), cursor: cursor)
+    guard !Task.isCancelled, runId == selectedRun, cursor == cursors.last else { return }
+    let page = result?.records.compactMap { $0 } ?? []
+    batches = result?.batches.compactMap { $0 } ?? []
+    nextCursor = result?.nextCursor
     invocation = ExecutionHistorySelection.invocation(invocation, previous: invocations.compactMap { $0.invocation },
                                                        available: page.compactMap { $0.invocation })
     invocations = page

@@ -50,6 +50,8 @@ table Port {
   schema_bfbs:[ubyte] (id: 3);
   root_type:string (id: 4);
   path:string (id: 5);
+  /// Static execution shape when known without evaluating Nix.
+  execution_shape:ExecutionShape (id: 6);
 }
 
 table FlatBufferData {

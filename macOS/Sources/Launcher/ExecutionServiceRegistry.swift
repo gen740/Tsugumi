@@ -41,7 +41,7 @@ struct StoredExecutionService: Codable, Equatable {
 }
 
 public enum ExecutionServiceRegistry {
-  static let workerContract = 1
+  static let workerContract = 2
 
   public struct Invalid: LocalizedError {
     let message: String

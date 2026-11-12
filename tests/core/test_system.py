@@ -72,7 +72,7 @@ def registered_remote(monkeypatch, resource_limits):
                 "id": "cluster", "server_id": "2" * 64, "native_system": FOREIGN,
                 "systems": [FOREIGN], "available": True, "executor": "daemon",
                 "isolation": "pid_namespace", "resource_limits": resource_limits,
-                "max_jobs": 8, "worker_contract": 1,
+                "max_jobs": 8, "worker_contract": 2,
             }]}).encode()
             self.wfile.write(struct.pack(">I", len(reply)) + reply)
 

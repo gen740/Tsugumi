@@ -120,6 +120,9 @@ def render() -> str:
     out += ["## Notifications", "", "Sent from `tsugumid` to connected clients.", ""]
     for n in union_members(text, "NotificationPayload"):
         out.append(f"- `{n}`")
+    out += ["", "### Run events", "", "The `value` inside a `RunEvent` has one of these types.", ""]
+    for n in union_members(text, "RunEventValue"):
+        out.append(f"- `{n}`")
     return "\n".join(out) + "\n"
 
 

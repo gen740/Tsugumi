@@ -241,6 +241,7 @@ struct CardNodeData: Equatable {
   var result: String?
   var resultFailed = false
   var state: Tsugumi_Data_CardState?
+  var executionList = false
   var stage: StageProgress?
   /// Invocation number in the current run (0: not run in this run).
   var invocation: UInt64 = 0
@@ -264,10 +265,11 @@ struct CardNodeData: Equatable {
   var openComments = 0
 
   var isDraft: Bool { kind == .draft }
-  var isRouting: Bool { kind == .fork || kind == .branch || kind == .merge }
+  var isRouting: Bool { kind == .fork || kind == .branch || kind == .merge || kind == .collect }
 
   /// "Invocation #3 · Succeeded" and the like; nil before the first invocation.
   var runText: String? {
+    if executionList { return state?.label }
     guard let state, invocation > 0 else { return nil }
     var s = String(localized: "実行 #\(invocation)")
     if let cur = stage?.current, state == .running || state == .preparing {
@@ -289,7 +291,7 @@ struct CardNodeData: Equatable {
 
 /// Outline of a Card on the canvas.
 enum CardShape {
-  case card, branch, fork, merge, start, toggle
+  case card, branch, fork, merge, collect, start, toggle
 
   init(_ kind: CardKind) {
     switch kind {
@@ -298,6 +300,7 @@ enum CardShape {
     case .branch: self = .branch
     case .fork: self = .fork
     case .merge: self = .merge
+    case .collect: self = .collect
     default: self = .card
     }
   }
@@ -385,6 +388,7 @@ struct CardGeometry {
       return CGSize(width: 60, height: 48)
     case .fork: return CGSize(width: fanWidth(outputs.count), height: fanLength(outputs.count))
     case .merge: return CGSize(width: fanWidth(inputs.count), height: fanLength(inputs.count))
+    case .collect: return CGSize(width: grid.map { Self.gridLength(atLeast: 64, $0) } ?? 64, height: 44)
     // The start Card: its name and a run button, nothing more.
     case .start:
       guard let grid else { return CGSize(width: 116, height: 34) }
@@ -543,6 +547,13 @@ struct CardGeometry {
     case .branch:
       return roundedPolygon([CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
                              CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)], radius: 6 * cornerScale)
+    case .collect:
+      func point(_ across: CGFloat, _ along: CGFloat) -> CGPoint {
+        flow == .topToBottom ? CGPoint(x: r.minX + r.width * across, y: r.minY + r.height * along)
+                            : CGPoint(x: r.minX + r.width * along, y: r.minY + r.height * across)
+      }
+      return roundedPolygon([point(0, 0), point(1, 0), point(0.65, 0.57), point(0.65, 1),
+                             point(0.35, 1), point(0.35, 0.57)], radius: 3 * cornerScale)
     case .fork, .merge:
       // Triangle: apex upstream (fork) or downstream (merge). The apex is listed
       // twice so it stays sharp: the ports of that side are on its very tip.
@@ -567,7 +578,7 @@ struct CardGeometry {
   /// Where the icon of a routing Card sits in the outline `r`: on the axis of the
   /// flow, and in a triangle toward the wide edge, where it has room.
   func iconCenter(in r: CGRect) -> CGPoint {
-    let along: CGFloat = shape == .fork ? 0.62 : shape == .merge ? 0.38 : 0.5
+    let along: CGFloat = shape == .fork ? 0.62 : shape == .merge || shape == .collect ? 0.38 : 0.5
     return flow == .topToBottom ? CGPoint(x: r.midX, y: r.minY + r.height * along)
                                 : CGPoint(x: r.minX + r.width * along, y: r.midY)
   }
@@ -581,7 +592,7 @@ struct CardGeometry {
     case .card, .branch, .start, .toggle:
       let s = shape == .card ? CGSize(width: cardWidth, height: collapsed ? Self.header : 0) : routingSize
       return (0, s.width, 0)
-    case .fork, .merge:
+    case .fork, .merge, .collect:
       let w = routingSize.width
       let narrowSide = (shape == .fork) == input
       let span = narrowSide ? w * Self.narrow : w
@@ -612,7 +623,7 @@ struct CardGeometry {
     if shape == .card && collapsed { return false }
     if shape == .start || shape == .toggle { return false }
     // Routing marks name their ports on hover; a branch marks only T / F.
-    if shape == .fork || shape == .merge { return false }
+    if shape == .fork || shape == .merge || shape == .collect { return false }
     if shape == .branch { return true }
     return spacing(input: input) >= Self.minLabel
   }
@@ -1210,7 +1221,8 @@ struct CardNodeView: View {
   /// Stage strip (or the plain status) of a code Card.
   @ViewBuilder private var statusRow: some View {
     if let p = data.stage, data.invocation > 0 {
-      StageStrip(progress: p, zoom: zoom, onTap: onStageTap, caption: data.runText ?? "")
+      StageStrip(progress: p, zoom: zoom, onTap: onStageTap,
+                 caption: data.executionList ? String(localized: "実行 #\(data.invocation)") : data.runText ?? "")
     } else {
       Text(data.idleText).font(font(10)).foregroundStyle(.secondary).lineLimit(1)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1605,6 +1617,9 @@ struct WireDraw {
   var style: Style
   /// A wire to or from a Draft is dotted, whatever its style.
   var dotted = false
+  var executionList = false
+  var countLabel: String?
+  var countAt: CGPoint?
   /// The connection, when the Agent may be threading it (drawn by the
   /// presence layer meanwhile).
   var thread: AgentPresence.Wire? = nil
@@ -2084,7 +2099,10 @@ struct WireLayer: View {
           // A wire the Agent is threading is drawn by the presence layer.
           if let th = wire.thread, presences.contains(where: { $0.thread(th, at: t.date) != .plain }) { continue }
           let dots = wire.dotted ? Self.dot : []
-          let width = { (w: CGFloat) in wire.dotted ? max(w, Self.dotMin) : w }
+          let width = { (w: CGFloat) in
+            let thick = w + (wire.executionList ? 2.8 : 0)
+            return wire.dotted ? max(thick, Self.dotMin) : thick
+          }
           switch wire.style {
           case .normal:
             ctx.stroke(wire.path, with: .color(.secondary.opacity(0.75)), style: StrokeStyle(lineWidth: width(w), lineCap: .round, lineJoin: .round, dash: dots))
@@ -2097,6 +2115,15 @@ struct WireLayer: View {
             ctx.stroke(wire.path, with: .color(.accentColor), style: StrokeStyle(lineWidth: width(w + 1.4), lineCap: .round, lineJoin: .round, dash: wire.dotted ? Self.dotSelected : []))
           case .display:
             ctx.stroke(wire.path, with: .color(.purple.opacity(0.75)), style: StrokeStyle(lineWidth: max(1, w - 0.2), lineCap: .round, dash: [5, 4]))
+          }
+          if let count = wire.countLabel, let at = wire.countAt {
+            let label = ctx.resolve(Text(verbatim: count).font(.system(size: 11, weight: .medium, design: .monospaced)))
+            let size = label.measure(in: CGSize(width: 100, height: 24))
+            let point = CGPoint(x: at.x, y: at.y - 11)
+            let rect = CGRect(x: point.x - size.width / 2 - 2, y: point.y - size.height / 2,
+                              width: size.width + 4, height: size.height)
+            ctx.fill(Path(roundedRect: rect, cornerRadius: 3), with: .color(Color(nsColor: .windowBackgroundColor)))
+            ctx.draw(label, at: point)
           }
         }
       }

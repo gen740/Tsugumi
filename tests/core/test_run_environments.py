@@ -12,7 +12,7 @@ from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
 
-@pytest.mark.parametrize("version", [2, 4], ids=["older", "newer"])
+@pytest.mark.parametrize("version", [3, 5], ids=["older", "newer"])
 def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
     """The daemon refuses an incompatible local history database and leaves its contents intact."""
     history_dir = tmp_path / "history"
@@ -28,7 +28,7 @@ def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
         connection.close()
     original = database.read_bytes()
 
-    with pytest.raises(RuntimeError, match=rf"has schema version {version}, but this Tsugumi requires 3"):
+    with pytest.raises(RuntimeError, match=rf"has schema version {version}, but this Tsugumi requires 4"):
         core_factory(history_dir=history_dir)
 
     assert database.read_bytes() == original

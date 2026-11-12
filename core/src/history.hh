@@ -103,16 +103,20 @@ class History {
   static void insert_run(sql::Db& db, const RunSummaryData& s, const std::string& op_id);
   static void update_run(sql::Db& db, const RunStatusData& s);
   static void put_status(sql::Db& db, const InvocationSummaryData& s);
+  static auto put_batch(sql::Db& db, const RunBatchData& batch) -> void;
+  static auto interrupt_batches(sql::Db& db, const std::string& run_id) -> void;
   static auto put_remote_job(sql::Db& db, const RemoteJobRecord& job) -> void;
   static auto cancel_remote_jobs(sql::Db& db, const std::string& run_id) -> void;
+  static auto cancel_remote_batch(sql::Db& db, const std::string& run_id, const CardPath& card,
+                                  uint64_t activation) -> void;
   static auto remote_jobs(sql::Db& db) -> std::vector<RemoteJobRecord>;
   static auto has_remote_jobs(sql::Db& db) -> bool;
   static auto remote_job_card(sql::Db& db, const std::string& job_id) -> std::optional<CardPath>;
   void complete_invocation(sql::Db& db, const InvocationRecordData& r) const;
   // Waits until every write submitted before this call has been committed or failed.
   void flush();
-  static void put_last_input(sql::Db& db, const CardPath& card, const std::string& run_id,
-                             uint64_t invocation, const std::vector<Value>& inputs);
+  static auto put_last_input(sql::Db& db, const CardPath& card, const std::string& run_id,
+                             uint64_t activation, const std::vector<SavedInputGroup>& groups) -> void;
   static void put_artifact(sql::Db& db, const ArtifactData& a);
   static void put_display(sql::Db& db, const DisplayData& d);
   static void put_receipt(sql::Db& db, const std::string& op_id, const std::string& kind,
@@ -135,6 +139,9 @@ class History {
   static std::optional<ReceiptRow> receipt(sql::Db& db, const std::string& op_id);
   // Each Card's latest invocation of a run, completed or in progress.
   static std::vector<InvocationSummaryData> latest_invocations(sql::Db& db, const std::string& run_id);
+  // The latest activation for each Card, including a batch with no invocations.
+  static auto latest_batches(sql::Db& db, const std::string& run_id,
+                             const std::optional<CardPath>& card = std::nullopt) -> std::vector<RunBatchData>;
   static std::vector<InvocationSummaryData> invocations(sql::Db& db, const std::string& run_id,
                                                         const CardPath& card, uint64_t after,
                                                         uint64_t limit);
@@ -173,17 +180,17 @@ class History {
                                              bool input, const std::string& port, uint64_t offset, uint64_t limit);
   struct LastInput {
     std::string run_id;
-    uint64_t invocation;
-    std::vector<Value> inputs;
+    uint64_t invocation;  // Activation that saved the groups.
+    std::vector<SavedInputGroup> groups;
   };
   static std::optional<LastInput> last_input(sql::Db& db, const CardPath& card);
   // Rewrites the stage times etc. of a completed invocation (the save stage
   // ends after its own write).
   static void update_detail(sql::Db& db, const InvocationSummaryData& s);
-  // Latest saved value of one port, whichever invocation consumed it (an
-  // `any` Card consumes one port per invocation).
-  static void put_last_port_input(sql::Db& db, const CardPath& card, const std::string& run_id, uint64_t invocation,
-                                  const Value& value);
+  // Latest saved group of one port, whichever activation consumed it (an
+  // `any` Card consumes one port per activation).
+  static auto put_last_port_input(sql::Db& db, const CardPath& card, const std::string& run_id, uint64_t activation,
+                                  const SavedInputGroup& group) -> void;
   static std::optional<LastInput> last_port_input(sql::Db& db, const CardPath& card, const std::string& port);
   static std::optional<ArtifactData> artifact(sql::Db& db, const std::string& artifact_id);
   static std::vector<ArtifactData> artifacts(sql::Db& db, const std::string& run_id,

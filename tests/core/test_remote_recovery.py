@@ -82,7 +82,7 @@ class Gateway(socketserver.UnixStreamServer):
         capabilities = {
             "server_id": self.registered_server, "native_system": self.system, "systems": [self.system],
             "executor": "daemon", "isolation": "pid_namespace", "resource_limits": self.resource_limits,
-            "max_jobs": 8, "worker_contract": 1,
+            "max_jobs": 8, "worker_contract": 2,
         }
         if operation == "catalog":
             return {"services": [{"id": "cluster", "available": True, **capabilities}]}
@@ -204,6 +204,7 @@ def running_job(project, remote_gateway, core_factory, tmp_path):
 
 @pytest.mark.parametrize("field,value,diagnostic", [
     ("worker_contract", None, "Rebuild the daemon with this Tsugumi revision"),
+    ("worker_contract", 1, "Rebuild the daemon with this Tsugumi revision"),
     ("worker_contract", 99, "Rebuild the daemon with this Tsugumi revision"),
     ("executor", None, "Start the Tsugumi remote execution daemon"),
     ("executor", "direct", "Start the Tsugumi remote execution daemon"),

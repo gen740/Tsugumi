@@ -194,23 +194,23 @@ def test_isolation(env):
     assert st.state == RunState.succeeded, detail
 
 
-def test_nix_upstream_references(env):
+def test_nix_connected_exports(env):
     a = bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
              extra='  exports = { greet = name: "hello ${name}"; };\n')
-    b_nix = ("{ pkgs, inputs, params }:\n{\n  run = ''\n    test \"${inputs.upstream.\"a\".exports.greet \"b\"}\" = \"hello b\"\n"
-             "    test -n \"${inputs.local.a.run}\"\n    echo '{\"out\":{\"value\":2}}' > \"$TSUGUMI_OUTPUT\"\n  '';\n}\n")
+    b_nix = ("{ pkgs, inputs, params }:\n{\n  run = ''\n    test \"${inputs.x.greet \"b\"}\" = \"hello b\"\n"
+             "    echo '{\"out\":{\"value\":2}}' > \"$TSUGUMI_OUTPUT\"\n  '';\n}\n")
     defs = {"trigger": {"template": "trigger"}, "a": a,
             "b": {"language": "bash", "inputs": [{"name": "x"}], "_outputs": NUM, "_nix": b_nix}}
     c = load(env, defs, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
     run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "b", 2)
-    # A downstream reference is reported before any build.
+    # An unknown destination port is reported before any build.
     bad = a.copy()
-    bad["_nix"] = "{ pkgs, inputs, params }:\n{ run = \"${inputs.upstream.\"b\".run}\"; }\n"
+    bad["_nix"] = "{ pkgs, inputs, params }:\n{ run = \"${inputs.b.greet \"a\"}\"; }\n"
     c = load(env, {**defs, "a": bad}, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
     snap = c.call("ProjectInspectRequest")
     codes = [text(d.code) for r in snap.resolution for d in r.diagnostics]
-    assert "nix_reference_not_guaranteed" in codes
+    assert "nix_reference_unknown" in codes
 
 
 def test_stages_and_cache(env):

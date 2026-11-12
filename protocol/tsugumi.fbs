@@ -52,8 +52,7 @@ table Definition {
 table CardNixReference {
   target:Tsugumi.Data.CardPath (id: 0, required);
   name:string (id: 1, required);
-  local:bool (id: 2);
-  valid:bool (id: 3);
+  valid:bool (id: 2);
 }
 
 table ResolvedCard {
@@ -941,6 +940,10 @@ table InvocationSummary {
   execution_system:string (id: 19);
   execution_resources:ExecutionResources (id: 20);
   execution_state:Tsugumi.Data.RemoteExecutionState (id: 21);
+  batch_activation:uint64 = null (id: 22);
+  batch_index:uint32 = null (id: 23);
+  batch_size:uint32 = null (id: 24);
+  implementation_index:uint32 = null (id: 25);
 }
 
 table StageTime {
@@ -950,9 +953,26 @@ table StageTime {
   end:int64 = null (id: 3);
 }
 
+table RunBatchOutput {
+  port:string (id: 0, required);
+  count:uint32 (id: 1);
+  execution_list:bool (id: 2);
+}
+
+table RunBatch {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  activation:uint64 (id: 1);
+  invocation_count:uint32 (id: 2);
+  execution_list:bool (id: 3);
+  complete:bool (id: 4);
+  failed:bool (id: 5);
+  outputs:[RunBatchOutput] (id: 6, required);
+}
+
 table InvocationPage {
   records:[InvocationSummary] (id: 0, required);
   next_cursor:string (id: 1);
+  batches:[RunBatch] (id: 2);
 }
 
 table InputSource {
@@ -1087,6 +1107,7 @@ table RunTimeline {
 table RunAcceptedEvent { status:RunStatus (id: 0, required); }
 table RunStatusChanged { status:RunStatus (id: 0, required); }
 table RunCardChanged { invocation:InvocationSummary (id: 0, required); }
+table RunBatchChanged { batch:RunBatch (id: 0, required); }
 table RunFinished { summary:RunSummary (id: 0, required); }
 
 union RunEventValue {
@@ -1095,6 +1116,7 @@ union RunEventValue {
   RunCardChanged = 3,
   RunTimeline = 4,
   RunFinished = 5,
+  RunBatchChanged = 6,
 }
 
 table RunEvent {

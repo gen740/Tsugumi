@@ -34,7 +34,6 @@ def test_reload_changes_an_external_card_target(project, core_factory):
     assert json.loads(text(definition.linkJson))["external"] == "other"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="Worker identity concatenates scripts ambiguously")
 def test_changed_shell_steps_are_used_on_the_next_run(project, core_factory):
     """Changing a Card's shell steps changes what its next run executes."""
     client = core_factory(mocked_builds=True).connect()

@@ -55,6 +55,9 @@ Listing list_tree(const stdfs::path& root);
 std::string read_beneath(const stdfs::path& root, const stdfs::path& rel);
 auto stream_beneath(const stdfs::path& root, const stdfs::path& rel, uint64_t limit,
                     const std::function<void(std::string_view)>& consume) -> uint64_t;
+// Copy a regular file below root into a destination owned by the caller.
+auto copy_beneath(const stdfs::path& root, const stdfs::path& rel, const stdfs::path& destination,
+                  const std::function<void(std::string_view)>& on_chunk) -> uint64_t;
 Listing list_beneath(const stdfs::path& root, const stdfs::path& rel, size_t max_entries = SIZE_MAX);
 
 // Exclusive non blocking advisory lock held for the lifetime of the object.

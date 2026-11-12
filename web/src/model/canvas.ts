@@ -24,6 +24,8 @@ export interface RoutedWire {
   style: WireStyle
   /** An end of it is a Draft: drawn dotted, whatever its style. */
   dotted?: boolean
+  executionList?: boolean
+  count?: number
 }
 
 export interface BoundaryPort {
@@ -247,16 +249,24 @@ export class Scene {
       const fc = str(get(c, 'from', 'card')), fp = str(get(c, 'from', 'port')), tc = str(get(c, 'to', 'card')), tp = str(get(c, 'to', 'port'))
       if (!fc || !fp || !tc || !tp) return
       const fk = key([...this.scope, fc]), tk = key([...this.scope, tc])
-      ends.push({ a: this.portWorld(fk, fp, true), b: this.portWorld(tk, tp, false), wire: { connection: i, style: i === this.selectedConnection ? 'selected' : this.style(fk, fp, tk), dotted: isDraftWire(kind, fk, tk) } })
+      ends.push({ a: this.portWorld(fk, fp, true), b: this.portWorld(tk, tp, false), wire: {
+        connection: i, style: i === this.selectedConnection ? 'selected' : this.style(fk, fp, tk),
+        dotted: isDraftWire(kind, fk, tk), ...s.executionWire(fk, fp),
+      } })
     })
     if (b) {
       for (const p of b.inputs) {
         if (!p.inner || !s.instance(p.inner[0])) continue
-        ends.push({ a: p.point, b: this.portWorld(p.inner[0], p.inner[1], false), wire: { style: 'normal', dotted: isDraftWire(kind, p.inner[0]) } })
+        const upstream = s.boundaryInputSource(this.scope, p.name)
+        ends.push({ a: p.point, b: this.portWorld(p.inner[0], p.inner[1], false), wire: {
+          style: 'normal', dotted: isDraftWire(kind, p.inner[0]), ...(upstream ? s.executionWire(...upstream) : s.executionWire(...p.inner, false)),
+        } })
       }
       for (const p of b.outputs) {
         if (!p.inner || !s.instance(p.inner[0])) continue
-        ends.push({ a: this.portWorld(p.inner[0], p.inner[1], true), b: p.point, wire: { style: this.style(p.inner[0], p.inner[1], undefined), dotted: isDraftWire(kind, p.inner[0]) } })
+        ends.push({ a: this.portWorld(p.inner[0], p.inner[1], true), b: p.point, wire: {
+          style: this.style(p.inner[0], p.inner[1], undefined), dotted: isDraftWire(kind, p.inner[0]), ...s.executionWire(...p.inner),
+        } })
       }
     }
     const routes = new WireRouter(this.flow, obstacles).routeAll(ends)
@@ -279,6 +289,12 @@ export class Scene {
     if (s.kind(from) === 'subgraph') {
       const src = s.boundarySource(from, port)
       if (src) return this.style(src[0], src[1], to)
+    }
+    const batch = s.executionBatch(from)
+    if (batch?.executionList) {
+      if (!batch.complete || batch.failed || s.executionWire(from, port).count === undefined) return 'normal'
+      const dest = to === undefined ? undefined : s.canvasCardState(to)
+      return s.runActive && to !== undefined && (dest === undefined || LIVE.includes(dest)) ? 'active' : 'carried'
     }
     const st = s.cardStates.get(from)
     if (!st) return 'normal'

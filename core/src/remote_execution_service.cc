@@ -65,7 +65,7 @@ auto run_dir_of(Service& service, const std::string& run_id) -> stdfs::path {
   return service.store().state_dir() / "runs" / run_id;
 }
 
-// An invocation whose derivation is exported to `archive` for the target
+// An activation whose derivation is exported to `archive` for the target
 // `target` (instance `instance`) to build for `system`.
 class PreparedRemoteExecution final : public PreparedExecution {
  public:
@@ -87,6 +87,12 @@ class PreparedRemoteExecution final : public PreparedExecution {
 
   auto archive() const -> const stdfs::path& { return archive_; }
   auto system() const -> const std::string& { return system_; }
+  auto stage(const std::atomic<bool>& cancel) -> void override {
+    archive_digest_ = stage_remote_archive(client_, target_, server_id_, instance_, archive_, cancel);
+  }
+  auto cancel_batch(sql::Db& db, const std::string& run, const CardPath& card, uint64_t activation) -> void override {
+    History::cancel_remote_batch(db, run, card, activation);
+  }
   auto execute(const ExecutionRequest& request) -> ExecutionResult override;
 
  private:
@@ -97,14 +103,16 @@ class PreparedRemoteExecution final : public PreparedExecution {
   std::string server_id_;
   std::string instance_;
   stdfs::path archive_;
+  std::string archive_digest_;
 };
 
 auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> ExecutionResult {
   const auto& node = request.node;
   const auto& settings = node.settings;
   auto& s = request.summary;
+  stdfs::create_directories(request.directory);
   auto spec = stage_remote_invocation(client_, target_, server_id_, instance_, service_.project_id(), service_.store().state_dir(),
-                                      archive_, request);
+                                      archive_digest_, request);
   if (request.cancel.load()) throw Failed(FailureKind::cancelled, "run cancelled before external submission");
 
   s.execution_service = target_;
@@ -121,7 +129,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
     job.invocation = s;
     // RunCancel sets the flag before its synchronous database update. An
     // insertion ordered after that update must carry the same intent.
-    job.cancel_requested = request.cancel_requested.load();
+    job.cancel_requested = request.cancel_requested();
     History::put_remote_job(db, job);
   });
 
@@ -130,7 +138,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
   while (!request.detach.load()) {
     const auto before = s.execution_state;
     const bool accepted = job.accepted;
-    if (request.cancel_requested.load() && !job.cancel_requested) {
+    if (request.cancel_requested() && !job.cancel_requested) {
       job.cancel_requested = true;
       history.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
     }

@@ -135,6 +135,25 @@ struct InvocationSummaryData {
   std::string execution_system;
   std::optional<ExecutionResources> execution_resources;
   std::optional<RemoteExecutionState> execution_state;
+  std::optional<uint64_t> batch_activation;
+  std::optional<uint32_t> batch_index, batch_size, implementation_index;
+};
+
+struct RunBatchOutputData {
+  std::string port;
+  uint32_t count = 0;
+  bool execution_list = false;
+};
+
+struct RunBatchData {
+  std::string run_id;
+  CardPath card;
+  uint64_t activation = 0;
+  uint32_t invocation_count = 0;
+  bool execution_list = false;
+  bool complete = false;
+  bool failed = false;
+  std::vector<RunBatchOutputData> outputs;
 };
 
 // A value travelling on a port. `type` is the port message type.
@@ -144,6 +163,12 @@ struct Value {
   types::TypeRef type;
   std::string bytes;
   std::optional<std::string> artifact_id;
+};
+
+struct SavedInputGroup {
+  std::string port;
+  bool execution_list = false;
+  std::vector<Value> values;
 };
 
 auto with_path(const Value& value, const std::string& path) -> Value;

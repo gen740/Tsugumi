@@ -6,9 +6,10 @@ import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, formatBytes, formatDuration, formatMillis, path, ProjectSession, remoteExecutionLabel, runState } from '../model/session'
 import { bool } from '../shared/json'
 import { describeValue } from '../shared/flatjson'
-import { D, R, s, segs } from '../shared/rpc'
+import { D, R, s, segs, sOpt } from '../shared/rpc'
 import { Button, download, Empty, Form, HSplit, Row, Section, Segmented, Select, Sheet, Spinner, TextField, Value } from './controls'
 import { RunComparisonView } from './runComparison'
+import { useBatchHistoryRevision } from './batchInvocations'
 import { ArtifactHTMLPreview } from './artifactHTMLPreview'
 import { DisplayContent } from './display'
 import { InvocationPackages } from './environments'
@@ -28,6 +29,9 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
   const [filter, setFilter] = useState<Filter>('all')
   const [runId, setRunId] = useState<string>()
   const [invocations, setInvocations] = useState<R.InvocationSummaryT[]>([])
+  const [batches, setBatches] = useState<R.RunBatchT[]>([])
+  const [cursors, setCursors] = useState<string[]>([])
+  const [nextCursor, setNextCursor] = useState<string>()
   const [invocation, setInvocation] = useState<bigint>()
   const [record, setRecord] = useState<R.RecordResultT>()
   const [detail, setDetail] = useState<Detail>('io')
@@ -36,6 +40,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
   const [attempt, setAttempt] = useState(0)
   const [comparing, setComparing] = useState(false)
   const [cancelling, setCancelling] = useState(false)
+  const batchRevision = useBatchHistoryRevision(session)
 
   useEffect(() => {
     const rpc = session.rpc
@@ -54,26 +59,32 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
     return () => {
       alive = false
     }
-  }, [session.lastFinished, session.remoteHistoryRevision, session.rpc, cardKey, attempt])
+  }, [session.lastFinished, session.currentRunId, session.remoteHistoryRevision, session.rpc, cardKey, attempt])
   // Another run: its own latest call is shown, never the previous run's number.
   useEffect(() => {
     setInvocation(undefined)
     setRecord(undefined)
     setInvocations([])
+    setBatches([])
+    setCursors([])
+    setNextCursor(undefined)
   }, [runId, cardKey])
+  const cursor = cursors.at(-1)
   useEffect(() => {
     const rpc = session.rpc
     if (!rpc || !runId) return setInvocations([])
     let alive = true
-    void rpc.invocations(runId, path(cardKey)).then((p) => {
+    void rpc.invocations(runId, path(cardKey), cursor ?? null).then((p) => {
       if (!alive) return
       setInvocations(p.records)
+      setBatches(p.batches)
+      setNextCursor(sOpt(p.nextCursor))
       setInvocation((current) => p.records.some((item) => item.invocation === current) ? current : p.records.at(-1)?.invocation ?? undefined)
     }).catch(() => alive && setInvocations([]))
     return () => {
       alive = false
     }
-  }, [runId, cardKey, session.rpc, session.remoteHistoryRevision])
+  }, [runId, cardKey, cursor, session.rpc, session.remoteHistoryRevision, batchRevision])
   useEffect(() => {
     const rpc = session.rpc
     if (!rpc || !runId) return setRecord(undefined)
@@ -83,7 +94,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
     return () => {
       alive = false
     }
-  }, [runId, invocation, cardKey, session.rpc, session.remoteHistoryRevision])
+  }, [runId, invocation, cardKey, session.rpc, session.remoteHistoryRevision, batchRevision])
 
   if (!loaded) return <div className="center-fill col gap8"><Spinner /><span className="secondary">{L('履歴を読み込んでいます…')}</span></div>
   if (!runs.length && error) {
@@ -101,6 +112,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
   })
   const rec = record?.record
   const summary = rec?.summary ?? invocations.find((item) => item.invocation === invocation)
+  const batch = summary?.batchActivation != null ? batches.find((item) => item.activation === summary.batchActivation) : batches.at(-1)
   const executionState = remoteExecutionLabel(summary?.executionState)
   const recoveredRunId = s(record?.run?.status?.runId)
   const recoveredRun = !!runId && recoveredRunId === runId && !!summary?.executionJobId &&
@@ -145,8 +157,15 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                   onChange={(v) => setInvocation(v ? BigInt(v) : undefined)}
                   options={invocations.length ? invocations.map((i) => ({
                     value: String(i.invocation ?? 0n),
-                    label: `#${i.invocation ?? 0n} · ${cardState(i.state).label}` + (i.durationMs !== null ? ` · ${formatDuration(Number(i.durationMs) / 1000)}` : ''),
+                    label: `#${i.invocation ?? 0n} · ${cardState(i.state).label}` +
+                      (i.batchIndex != null && i.batchSize != null ? ` · ${i.batchIndex}/${i.batchSize}` : '') +
+                      (i.durationMs !== null ? ` · ${formatDuration(Number(i.durationMs) / 1000)}` : ''),
                   })) : [{ value: '', label: L('呼び出しなし') }]} />
+                {batch?.executionList && <span className="caption mono">×{batch.invocationCount}</span>}
+                {(cursors.length > 0 || nextCursor) && <>
+                  <Button small disabled={!cursors.length} onClick={() => { setNextCursor(undefined); setCursors(cursors.slice(0, -1)) }}>{L('前へ')}</Button>
+                  <Button small disabled={!nextCursor} onClick={() => { if (nextCursor) { setCursors([...cursors, nextCursor]); setNextCursor(undefined) } }}>{L('次へ')}</Button>
+                </>}
                 <span className="spacer" />
                 <Segmented<Detail> small width={300} value={detail} onChange={setDetail} options={[{ value: 'io', label: L('入出力') }, { value: 'log', label: L('ログ') }, { value: 'packages', label: L('依存 package') }, { value: 'info', label: L('情報') }]} />
               </div>

@@ -9,13 +9,13 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **Workflow** | A graph of Cards connected by wires. The same thing a person draws, the Agent edits and the runtime executes ([Rationale](Rationale.md)) |
 | **Card** | A unit of processing, with input and output ports and settings ([Cards and Workflows](features.md#2-cards-and-workflows)) |
 | **Code Card** | A Card whose environment is defined in `default.nix` and whose processing is in `src/` (C++ / Python / bash / R / Julia; [Your first Card](CardGuide.md)) |
-| **Built-in Card** | A Card without code: start (trigger), input value (input), fork, branch and merge |
+| **Built-in Card** | A Card without code, such as a Trigger, Input, Fork, Branch, Merge or Collect |
 | **Draft** | An unimplemented Card with only a name and content. Wire Drafts up to draw a plan (their ports follow the wires) and have the Agent implement them |
 | **Card in Card (child Workflow)** | A Card with a Workflow inside. From outside it looks like one Card; open it to go inside |
 | **Definition** | The folder `definitions/<id>/` that is a Card's substance. One per Card |
 | **Port** | A Card's input or output. Output types are written in `_outputs.fbs`; input types are derived from the connected outputs |
 | **`all` / `any`** | How inputs are awaited. `all` takes one value from each once all required inputs have arrived; `any` consumes them in order of arrival ([Execution semantics](features.md#execution-semantics-scheduler)) |
-| **`maxRuns`** | The most times a Card can be called in one Run. Keeps loops finite |
+| **`maxRuns`** | The most times a Card can be triggered in one Run. A trigger can start multiple invocations when it uses a run list or receives a batch |
 
 ## Running and recording
 
@@ -23,12 +23,13 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | --- | --- |
 | **Run** | One execution of a Workflow. Records the version (commit) at its start |
 | **Invocation** | One execution of a Card within a Run. In a loop, the same Card is invoked many times |
+| **Batch** | An ordered set of values sent together on one wire. A run list or batch input can produce several invocations for one trigger |
 | **Stage** | A step within an invocation: SDK preparation, Nix evaluation, build, run, output validation, saving ([Stages](features.md#stages)) |
 | **`skipped`** | Downstream of a branch that was not taken. Not a failure |
 | **`blocked`** | A Card that cannot run because it depends on a Draft or a failed upstream Card. Comes with a reason |
 | **`interrupted`** | A run that was in progress when the process ended abnormally or restarted |
 | **Partial run (single run)** | Running only the chosen Cards, or "from here". Uses saved inputs ([Rerunning from the middle](Rationale.md#rerunning-from-the-middle)) |
-| **Saved inputs** | The full set of inputs of the latest invocation, used by partial runs. Saved separately from `recordIO` |
+| **Saved inputs** | The full set of inputs of the latest trigger, including any batches. Partial runs use these inputs independently of `recordIO` |
 | **`recordIO`** | A setting that keeps the input and output values of every invocation of a Card in the history (off by default) |
 | **`retainArtifact`** | A setting that keeps a Card's artifacts |
 | **Artifact** | A file or folder a Card output |

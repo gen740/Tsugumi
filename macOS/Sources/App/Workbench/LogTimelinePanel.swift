@@ -9,8 +9,8 @@ struct LogTimelinePanel: View {
   let session: ProjectSession
   let tab: WorkflowTab
   @State private var runs: [Tsugumi_RPC_RunSummaryT] = []
-  @State private var runId: String?
   @State private var comparing = false
+  private var runId: String? { workspace.logRunId }
 
   var body: some View {
     if workspace.bottomPanel == .terminal {
@@ -25,7 +25,7 @@ struct LogTimelinePanel: View {
       HStack(spacing: 10) {
         Label(workspace.bottomPanel.title, systemImage: workspace.bottomPanel.symbol)
           .font(.callout.weight(.medium))
-        Picker("実行", selection: $runId) {
+        Picker("実行", selection: Binding(get: { runId }, set: selectRun)) {
           if runs.isEmpty { Text("実行履歴なし").tag(String?.none) }
           ForEach(runs, id: \.status.runId) { r in
             Text("\(formatMillis(r.status.acceptedAt)) · \(r.status.state.label)").tag(Optional(r.status.runId))
@@ -33,7 +33,10 @@ struct LogTimelinePanel: View {
         }
         .frame(maxWidth: 320)
         if workspace.bottomPanel == .log {
-          Picker("Card", selection: $workspace.logCard) {
+          Picker("Card", selection: Binding(get: { workspace.logCard }, set: {
+            workspace.logInvocation = nil
+            workspace.logCard = $0
+          })) {
             Text("全体").tag(CardKey?.none)
             ForEach(session.resolution.keys.sorted(), id: \.self) { k in Text(k).tag(Optional(k)) }
           }
@@ -71,7 +74,7 @@ struct LogTimelinePanel: View {
     .sheet(isPresented: $comparing) { RunComparisonView(session: session, runs: runs, initial: runId) { comparing = false } }
     .onChange(of: session.runStatus?.runId) { _, id in
       if let id {
-        runId = id
+        selectRun(id)
         Task { await loadRuns() }
       }
     }
@@ -80,7 +83,13 @@ struct LogTimelinePanel: View {
   private func loadRuns() async {
     guard let rpc = session.rpc else { return }
     runs = (try? await rpc.history(limit: 50).runs.compactMap { $0 }) ?? []
-    if runId == nil || !runs.contains(where: { $0.status.runId == runId }) { runId = session.currentRunId ?? runs.first?.status.runId }
+    if runId == nil || !runs.contains(where: { $0.status.runId == runId }) { selectRun(session.currentRunId ?? runs.first?.status.runId) }
+  }
+
+  private func selectRun(_ id: String?) {
+    guard workspace.logRunId != id else { return }
+    workspace.logInvocation = nil
+    workspace.logRunId = id
   }
 }
 

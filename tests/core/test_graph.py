@@ -74,81 +74,97 @@ def test_port_types_flow_through_fork_and_branch(core_factory, project):
     assert not codes(resolved["sink"])
 
 
-@pytest.mark.parametrize("shape,reference,expected_error", [
-    ("chain", "a", None), ("chain", "b", None),
-    ("branch", "a", None), ("branch", "b", "nix_reference_not_guaranteed"),
-    ("branch", "c", "nix_reference_not_guaranteed"),
-    ("join", "b", None), ("join", "c", None), ("join", "optional", "nix_reference_not_guaranteed"),
-    ("same-input", "a", None), ("same-input", "b", "nix_reference_not_guaranteed"),
-    ("loop", "a", None), ("loop", "result", "nix_reference_self"),
-    ("unreachable-cycle", "other", "nix_reference_not_guaranteed"),
-], ids=["chain-first", "chain-last", "branch-common", "branch-left", "branch-right",
-        "join-left", "join-right", "optional-input", "same-input-common", "same-input-left",
-        "loop-initial", "loop-self", "unreachable-cycle"])
-def test_nix_can_reference_only_guaranteed_upstream_cards(core_factory, project, shape, reference, expected_error):
-    """A build can use an upstream Card only when every path provides it."""
-    definitions = {"a": code(), "b": code(["in"]), "c": code(["in"])}
-    connections = [conn("a", "out", "b", "in")]
-    result = code(["in"])
-    if shape == "chain":
-        connections += [conn("b", "out", "result", "in")]
-    elif shape in ("join", "same-input"):
-        connections += [conn("a", "out", "c", "in")]
-        if shape == "join":
-            definitions["optional"] = code()
-            result = code(["left", "right", "extra?"])
-            connections += [conn("b", "out", "result", "left"), conn("c", "out", "result", "right"),
-                            conn("optional", "out", "result", "extra")]
-        else:
-            connections += [conn("b", "out", "result", "in"), conn("c", "out", "result", "in")]
-    elif shape == "branch":
-        definitions.update(branch={"template": "branch"}, condition={"template": "input", "_outputs": FLAG,
-                           "params": [{"name": "value", "type": "bool", "data": True}]})
-        result = code(["left?", "right?"], each_input=True)
-        connections = [conn("a", "out", "branch", "value"), conn("condition", "flag", "branch", "condition"),
-                       conn("branch", "a", "b", "in"), conn("branch", "b", "c", "in"),
-                       conn("b", "out", "result", "left"), conn("c", "out", "result", "right")]
-    elif shape == "loop":
-        definitions = {"a": code(), "loop": code(["initial?", "again?"], each_input=True)}
-        connections = [conn("a", "out", "loop", "initial"), conn("loop", "out", "result", "in"),
-                       conn("result", "out", "loop", "again")]
+def assert_reference(node, name, target, valid=True):
+    ref, = node.nixReferences
+    assert text(ref.name) == name
+    assert [text(segment) for segment in ref.target.segments] == target
+    assert ref.valid == valid
+
+
+@pytest.mark.parametrize("builtin", ["fork", "branch", "merge", "collect"])
+def test_nix_exports_follow_the_connected_code_origin(core_factory, project, builtin):
+    """A transparent built-in keeps the Code producer's exports on the destination port."""
+    definitions = {"source": code(), "sink": code(["data"], body='{ run = inputs.data.command; }'),
+                   "bridge": {"template": builtin}}
+    if builtin == "branch":
+        definitions["condition"] = {"template": "switch"}
+        connections = [conn("source", "out", "bridge", "value"), conn("condition", "value", "bridge", "condition"),
+                       conn("bridge", "a", "sink", "data")]
+    elif builtin == "merge":
+        definitions["fork"] = {"template": "fork"}
+        definitions["bridge"]["inputs"] = [{"name": "a"}, {"name": "b"}]
+        connections = [conn("source", "out", "fork", "in"), conn("fork", "out1", "bridge", "a"),
+                       conn("fork", "out2", "bridge", "b"), conn("bridge", "out", "sink", "data")]
     else:
-        definitions = {"other": code(["in"])}
-        connections = [conn("other", "out", "result", "in"), conn("result", "out", "other", "in")]
-    result["_nix"] = '{ pkgs, inputs, params }: { run = "${inputs.upstream.\"' + reference + '\".run}"; }'
-    definitions["result"] = result
+        output = "out1" if builtin == "fork" else "out"
+        connections = [conn("source", "out", "bridge", "in"), conn("bridge", output, "sink", "data")]
     _, resolved = inspect_graph(core_factory, project, definitions, connections)
-
-    errors = codes(resolved["result"]) & {"nix_reference_unknown", "nix_reference_self", "nix_reference_not_guaranteed"}
-    assert errors == ({expected_error} if expected_error else set())
-    ref, = resolved["result"].nixReferences
-    assert [text(s) for s in ref.target.segments] == [reference]
-    assert text(ref.name) == reference and not ref.local
-    assert ref.valid == (expected_error is None)
+    assert not codes(resolved["sink"])
+    assert_reference(resolved["sink"], "data", ["source"])
 
 
-@pytest.mark.parametrize("expression,expected", [
-    ('{ run = "${inputs.local.source.run}"; }', set()),
-    ('{ run = "${inputs.local.\"source/deeper\".run}"; }', {"nix_reference_unknown"}),
-    ('''{ # upstream.ghost
-       /* local.ghost */
-       run = ''cp local.conf "$out"; echo ''${upstream.escaped}'';
-       note = "upstream.ghost";
-     }''', set()),
-    ('{ run = "${inputs.upstream.ghost.run}"; }', {"nix_reference_unknown"}),
-], ids=["local-sibling", "local-cannot-enter-child", "comments-and-literal-text", "interpolation-is-code"])
-def test_only_executable_nix_references_are_validated(core_factory, project, expression, expected):
-    """Reference checks distinguish Nix code from comments and shell text."""
+@pytest.mark.parametrize("reference", [False, True], ids=["ordinary-data", "nix-export-reference"])
+def test_ambiguous_producer_is_rejected_only_for_nix_exports(core_factory, project, reference):
+    """Multiple compatible data producers remain valid until a Card asks for their exports."""
+    body = '{ run = inputs.data.command; }' if reference else '{ run = "true"; }'
     _, resolved = inspect_graph(core_factory, project,
-                                {"source": code(), "result": code(["in"], body=expression)},
-                                [conn("source", "out", "result", "in")])
-    assert codes(resolved["result"]) == expected
+                                {"first": code(), "second": code(), "sink": code(["data"], body=body)},
+                                [conn("first", "out", "sink", "data"), conn("second", "out", "sink", "data")])
+    diagnostics = codes(resolved["sink"])
+    if reference:
+        assert diagnostics == {"nix_reference_ambiguous"}
+        assert resolved["sink"].nixReferences and not any(ref.valid for ref in resolved["sink"].nixReferences)
+    else:
+        assert not diagnostics
+        assert not resolved["sink"].nixReferences
+
+
+def test_nix_export_producer_must_run_before_every_trigger(core_factory, project):
+    """An each-input Card can start from either input, so neither producer is guaranteed."""
+    _, resolved = inspect_graph(core_factory, project, {
+        "first": code(), "second": code(),
+        "sink": code(["left?", "right?"], each_input=True, body='{ run = inputs.left.command; }'),
+    }, [conn("first", "out", "sink", "left"), conn("second", "out", "sink", "right")])
+    assert codes(resolved["sink"]) == {"nix_reference_not_guaranteed"}
+    assert_reference(resolved["sink"], "left", ["first"], valid=False)
+
+
+@pytest.mark.parametrize("expression,valid", [
+    ('{ run = "${inputs.data.command}"; }', True),
+    ('{ run = "${inputs.ghost.command}"; }', False),
+    ('{ run = inputs.local.source.command; }', False),
+    ('{ run = inputs.upstream.source.command; }', False),
+    ('{ /* inputs.ghost.command */ run = "true"; exports.text = "inputs.ghost"; }', None),
+], ids=["interpolation", "unknown-port", "removed-local", "removed-upstream", "comments-and-text"])
+def test_only_executable_connected_nix_references_are_validated(core_factory, project, expression, valid):
+    """Reference checks distinguish executable Nix code from comments and literal text."""
+    _, resolved = inspect_graph(core_factory, project,
+                                {"source": code(), "result": code(["data"], body=expression)},
+                                [conn("source", "out", "result", "data")])
+    node = resolved["result"]
+    if valid is True:
+        assert not codes(node)
+        assert_reference(node, "data", ["source"])
+    elif valid is False:
+        assert codes(node) == {"nix_reference_unknown"}
+    else:
+        assert not codes(node)
+        assert not node.nixReferences
+
+
+@pytest.mark.parametrize("name", ["tsugumi", "sources"])
+def test_builtin_nix_input_names_are_reserved(core_factory, project, name):
+    """A data wire cannot replace the SDK or pinned-source bindings in Nix."""
+    _, resolved = inspect_graph(core_factory, project, {"source": code(), "sink": code([name])},
+                                [conn("source", "out", "sink", name)])
+    assert codes(resolved["sink"]) == {"nix_input_reserved"}
 
 
 def test_nested_cards_keep_their_types_references_and_run_boundaries(core_factory, project):
-    """A nested Workflow exposes its values and the run plan respects its boundary."""
-    definitions = {"start": {"template": "trigger"}, "source": code(), "inner": code(["in"]),
-                   "sink": code(["in"], body='{ run = "${inputs.upstream.\"child/inner\".run}"; }')}
+    """Nix exports and typed values follow the flattened Workflow boundary."""
+    definitions = {"start": {"template": "trigger"}, "source": code(),
+                   "inner": code(["in"], body='{ run = inputs.in.command; }'),
+                   "sink": code(["in"], body='{ run = inputs.in.command; }')}
     cards = [card("start", "start"), card("source", "source"),
              card_in_card("child", [card("inner", "inner")], [],
                           {"inputs": {"in": {"card": "inner", "port": "in"}},
@@ -156,9 +172,9 @@ def test_nested_cards_keep_their_types_references_and_run_boundaries(core_factor
     client, resolved = inspect_graph(core_factory, project, definitions,
                                      [conn("source", "out", "child", "in"), conn("child", "out", "sink", "in")], cards)
     assert not codes(resolved["sink"])
-    ref, = resolved["sink"].nixReferences
-    assert [text(s) for s in ref.target.segments] == ["child", "inner"]
-    assert ref.valid
+    assert not codes(resolved["child/inner"])
+    assert_reference(resolved["sink"], "in", ["child", "inner"])
+    assert_reference(resolved["child/inner"], "in", ["source"])
     assert text(resolved["sink"].inputs[0].rootType) == "t.Number"
     for target, propagate, expected in [
         ("start", True, {"start", "source", "child/inner", "sink"}),
@@ -169,44 +185,21 @@ def test_nested_cards_keep_their_types_references_and_run_boundaries(core_factor
         assert {"/".join(text(segment) for segment in target.segments) for target in plan.targets} == expected
 
 
-def test_references_inside_a_card_in_card_have_absolute_targets(core_factory, project):
-    """A Card written in an external project names its siblings; the inventory gives their place in this project."""
-    body = '{ run = "${inputs.local.first.run} ${inputs.upstream.first.run} ${inputs.upstream.source.run}"; }'
-    definitions = {"source": code(), "first": code(["in"]), "second": code(["in"], body=body), "sink": code(["in"])}
-    cards = [card("source", "source"),
-             card_in_card("child", [card("first", "first"), card("second", "second")],
-                          [conn("first", "out", "second", "in")],
-                          {"inputs": {"in": {"card": "first", "port": "in"}},
-                           "outputs": {"out": {"card": "second", "port": "out"}}}), card("sink", "sink")]
-    _, resolved = inspect_graph(core_factory, project, definitions,
-                                [conn("source", "out", "child", "in"), conn("child", "out", "sink", "in")], cards)
-    refs = {(text(r.name), r.local): ([text(s) for s in r.target.segments], r.valid)
-            for r in resolved["child/second"].nixReferences}
-    assert refs == {
-        ("first", True): (["child", "first"], True),
-        ("first", False): (["child", "first"], True),
-        # Names are relative to the project the Card is written in: the outer `source` is not `child/source`.
-        ("source", False): (["child", "source"], False),
-    }
-    errors = codes(resolved["child/second"]) & {"nix_reference_unknown", "nix_reference_self", "nix_reference_not_guaranteed"}
-    assert errors == {"nix_reference_unknown"}
-
-
 def test_nix_reference_inventory_refreshes_and_deduplicates(core_factory, project):
     client, resolved = inspect_graph(core_factory, project,
-                                    {"source": code(), "result": code(["in"], body='{ run = inputs.local.source.run; }')},
-                                    [conn("source", "out", "result", "in")])
-    ref, = resolved["result"].nixReferences
-    assert ref.local and ref.valid
+                                    {"source": code(), "result": code(["data"], body='{ run = inputs.data.command; }')},
+                                    [conn("source", "out", "result", "data")])
+    assert_reference(resolved["result"], "data", ["source"])
     for body, expected in [
-        ('{ run = inputs.upstream.source.run; exports.again = inputs.upstream.source.exports; }', [("source", False, True)]),
-        ('{ run = inputs.local.missing.run; }', [("missing", True, False)]),
-        ('{ run = "true"; /* inputs.local.source */ note = "inputs.upstream.source"; }', []),
+        ('{ run = inputs.data.command; exports.again = inputs.data; }', [("data", True)]),
+        ('{ run = inputs.ghost.command; }', [("ghost", False)]),
+        ('{ /* inputs.data */ run = "true"; exports.note = "inputs.ghost"; }', []),
     ]:
         snap = client.call("ProjectInspectRequest")
         client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test", changes=[
             change("PutSource", path="definitions/result/default.nix",
-                   baseHash=next(text(s.hash) for s in snap.sources if text(s.path) == "definitions/result/default.nix"), bytes=list(('{ pkgs, inputs, params }: ' + body).encode()))])
+                   baseHash=next(text(s.hash) for s in snap.sources if text(s.path) == "definitions/result/default.nix"),
+                   bytes=list(('{ pkgs, inputs, params }: ' + body).encode()))])
         snap = client.call("ProjectInspectRequest")
         result = next(r for r in snap.resolution if [text(s) for s in r.card.segments] == ["result"])
-        assert [(text(r.name), r.local, r.valid) for r in result.nixReferences] == expected
+        assert [(text(r.name), r.valid) for r in result.nixReferences] == expected

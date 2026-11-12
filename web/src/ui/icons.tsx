@@ -26,6 +26,7 @@ const BASE: Record<string, string> = {
   'arrow.triangle.branch': 'M4 14V9.5c0-2 1.5-3 4-3.5l4-.8M4 2v7.5M10.4 3.2 12.2 5 10.4 6.8',
   'arrow.triangle.swap': 'M3 5h9.5M10.5 3l2 2-2 2M13 11H3.5M5.5 9l-2 2 2 2',
   'arrow.triangle.merge': 'M8 14V8.5L3.5 3M8 8.5 12.5 3M3.5 5.8V3h2.8M12.5 5.8V3H9.7',
+  'line.3.horizontal.decrease': 'M2.5 4h11M4.5 8h7M6.5 12h3',
   'arrow.triangle.2.circlepath': 'M13 6.5A5.2 5.2 0 0 0 3.6 4.8M3 9.5a5.2 5.2 0 0 0 9.4 1.7M3.4 2.5v2.6H6M12.6 13.5v-2.6H10',
   'list.bullet.rectangle': 'M2 2.8h12v10.4H2zM5 6h.01M7 6h4.5M5 10h.01M7 10h4.5',
   'list.bullet': 'M3 4h.01M3 8h.01M3 12h.01M5.5 4H13M5.5 8H13M5.5 12H13',

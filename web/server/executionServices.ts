@@ -42,7 +42,7 @@ const registryPath = (support: string) => path.join(support, 'execution-services
 const tokenPattern = /^[a-f0-9]{64}$/
 class RegistrationChanged extends Error {}
 const serviceIdPattern = /^[a-z][a-z0-9-]{0,31}$/
-const workerContract = 1
+const workerContract = 2
 
 function validServiceId(id: unknown): id is string {
   return typeof id === 'string' && id !== 'local' && serviceIdPattern.test(id)
