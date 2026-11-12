@@ -29,8 +29,22 @@ pytestmark = pytest.mark.environment
 
 BROKER = """
 import fs from "node:fs";
+import { registerHooks } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+// Match the production bundler's TypeScript and JSON imports in this test.
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    const name = specifier.startsWith(".") && !path.extname(specifier) ? specifier + ".ts" : specifier;
+    return nextResolve(name, context);
+  },
+  load(url, context, nextLoad) {
+    const options = url.startsWith("file:") && url.endsWith(".json")
+      ? { ...context, importAttributes: { type: "json" } }
+      : context;
+    return nextLoad(url, options);
+  },
+});
 const [modulePath, support, project, copy, endpoint, tokenFile] = process.argv.slice(2);
 const { authorizeExecutionProject, registerExecutionService, startExecutionBroker } =
   await import(pathToFileURL(modulePath));
