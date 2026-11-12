@@ -1,15 +1,43 @@
 # Tsugumi's features
 
-Tsugumi is a macOS app that runs graphs of Cards connected by ports (Workflows) in environments pinned with Nix, and records which Card did what and when (there is also a [Web UI](WebUI.md) with the same screens in a browser).
-This document is a reference list of what each feature can do and how it is achieved.
+Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole graph, change one step, and inspect the recorded conditions and results. Use the macOS app or open the workbench in a browser with the `tsugumi` command. [Installation](INSTALL.md) · [First steps in the workbench](Usage.md#the-first-five-minutes)
 
-| To know | Read |
-| --- | --- |
-| Why it takes this shape | [Rationale](Rationale.md) |
-| Installing and building | [INSTALL.md](INSTALL.md) |
-| The list of tests and measurements | [Development.md](Development.md) |
-| Isolation and secrets | [security.md](security.md) |
-| Plans and the scope of the guarantees | [Limitations.md](Limitations.md) |
+This reference follows `main` and covers the 0.7 pre-release series. If you are using the 0.6.2 stable release, see its versioned documentation for the available features. [0.6.2 documentation](https://github.com/gen740/Tsugumi/tree/v0.6.2/docs)
+
+## Find a feature
+
+### Build and navigate a Workflow
+
+- **Sketch before writing code.** Add a Draft with `E`, describe a step, and draw its wires. Add an Input, Switch, Fork, Branch or Merge when you already know how data should flow. [Canvas tools](Usage.md#canvas-tools) · [Kinds of Card](#kinds-of-card)
+- **Organise a larger graph.** Right-click the Canvas and choose **Arrange** to place Cards or **Untangle Wires** to reduce crossings while keeping their positions. Group related Cards visually, or open a Card in Card to see its child Workflow and boundary ports. [Canvas tools](Usage.md#canvas-tools) · [Cards and Workflows](#2-cards-and-workflows)
+- **See references between Card definitions.** Turn on **Nix references (as written)**, then hover a Card or open the list. For example, follow a saved `inputs.upstream.clean` reference back to the definition of `clean`. [Nix references](Usage.md#canvas-tools)
+
+### Run, inspect and compare
+
+- **Try one change.** Run the Workflow once, change a Card parameter, then choose **Run from Here Downstream**. Use **Run Only This Card (Last Inputs)** to try the step by itself with inputs saved from a previous run. [Run from a Card](Usage.md#run-from-a-card)
+- **See what happened.** Use the bottom timeline or open **Card settings → Run History**. Pick an invocation to see its inputs, outputs, stages and logs, including the stage at which it failed or stopped. [Inspect an invocation](RunHistory.md#inspect-an-invocation)
+- **Compare results and check the code that produced them.** Select two runs in **Compare Runs** to compare their recorded parameters, values and displays. Inspect the code and settings diff before choosing whether to revisit a saved version. [Compare two runs](RunHistory.md#compare-two-runs) · [Version history](Versions.md#the-version-tree)
+- **Check what an invocation ran with.** Open **Packages** in its run record and search the recorded runtime store paths. Open an evidence link from the Agent's chat to inspect a cited run, log or artifact. [Runtime packages](RunHistory.md#find-the-runtime-packages) · [Evidence links](RunHistory.md#follow-evidence-from-chat)
+
+### Display results and keep files
+
+- **Plot data with editable code.** Choose **Add Card → Visualization** and select Matplotlib, Plotly or Altair. For example, plot a numeric column as a histogram and inspect the actual bins kept with the figure. [Visualisation templates](Visualization.md)
+- **Watch a running figure or show a value.** Try the Live Stream demo and select **Live** under **Chart updates** to follow incoming revisions. Use an ordinary Bash Card to log a typed input and show it as text or an explicitly selected Markdown string. [Chart updates](Usage.md#chart-updates) · [Bash displays](CardGuide.md#bash)
+- **Run a notebook or render a report.** Add a marimo notebook to run committed cells once and return typed results. Use an R Markdown or Quarto Card to render a parameterised HTML report from an upstream value. [marimo notebooks](Marimo.md) · [R Markdown and Quarto](Reports.md)
+- **Keep a result for later.** In **Ports**, keep a File or Directory output as an artifact. Open its saved files under **Artifacts**, including a static preview for HTML. [Keep and open artifacts](RunHistory.md#keep-and-open-artifacts)
+
+### Write Cards and pin environments
+
+- **Choose a language.** Add a processing Card and edit its source, or use the same typed input/output example in Python, C++, Bash, R, Julia, Ruby, Go, Rust or C#. [First Card](CardGuide.md) · [Ruby](CardGuide.md#the-same-card-in-ruby) · [Go](CardGuide.md#go-cards) · [Rust](CardGuide.md#rust-cards) · [C#](CSharp.md)
+- **Pin dependencies and control state.** Use **Project settings → Name and environment** to pin Nixpkgs or add a trusted flake. Declare a Card-local lock where the SDK supports one. For a Card that needs interpreter or library state, enable `reuseWorker` in its settings. [Nix environments](#3-reproducible-environments-with-nix) · [Language SDKs](#language-sdks) · [Resident workers](#resident-workers)
+- **Use a shell or a signed build cache.** Open the project Terminal to run a tool such as `nix --version`. On Mac, configure a shared signed cache in **Settings → Binary Caches** and apply it on the next VM start. [Project terminal](Usage.md#project-terminal) · [Binary caches](BinaryCaches.md) · [Browser and CLI platforms](WebUI.md#the-tsugumi-command)
+
+- **Control a Card's access.** Use **Card settings → General** to review its file and network permissions before running code from another project. [Security and isolation](security.md#summary)
+
+### Work with the Agent and explore examples
+
+- **Turn a Draft into a Card.** Connect a model under **Settings → API**, describe an operation in a Draft and choose **Generate Cards**. Review the generated source, ports and run record. Use Card comments to request a specific change. [Generate from Drafts](#generating-cards-from-drafts) · [Generate from comments](#generating-cards-from-comments) · [Data and permissions](security.md#8-the-models-api-keys-agent)
+- **Start from an example.** Browse Demos and open a copy to change a parameter, run it again, or follow the thrush's guide. Use the documentation site's recordings to inspect example Workflows before installing. [Bundled demos](Demos.md) · [Claude Code plugin](claude-code.md)
 
 ## 1. Architecture
 
@@ -24,7 +52,7 @@ macOS (host)                                       Shared Linux VM (one per app)
 - **tsugumid (the core)**: one process per project. It manages and saves the document and handles the RPC, the scheduler, Nix evaluation, workers and the run history. Saving, running and reading history are all possible through the RPC alone, with no UI.
 - **The UI and the Agent are equal clients**: both talk to the core with the same RPC contract, defined in `protocol/tsugumi.fbs`. The Agent does not imitate operations on screen; it sends RPC requests to the core directly. With the Agent disabled, every ordinary operation still works.
 - **The shared VM**: one Linux VM started with macOS's `Virtualization.framework`, inside which each project's `tsugumid` runs with its own namespaces, uid and cgroup (details in [security.md](security.md)).
-- **Web UI**: the same screens from a browser. With the Mac's `tsugumi` command it runs inside the same shared VM as the app; on Linux and when started from the repository, `tsugumid` runs directly on the host (Cards are isolated with Seatbelt on a Mac and bubblewrap on Linux; [Web UI](WebUI.md)).
+- **Web UI**: a browser workbench that uses the same project and RPC contract. With the Mac's `tsugumi` command it runs inside the same shared VM as the app; on Linux and when started from the repository, `tsugumid` runs directly on the host (Cards are isolated with Seatbelt on a Mac and bubblewrap on Linux; [Web UI](WebUI.md)).
 
 ## 2. Cards and Workflows
 
@@ -32,9 +60,10 @@ macOS (host)                                       Shared Linux VM (one per app)
 
 | Kind | Role |
 | --- | --- |
-| Code Card | Defines its environment in `default.nix` and its processing in `src/` (C++ / Python / bash / R / Julia / Ruby) |
+| Code Card | Defines its environment in `default.nix` and runs C++, Python, Bash, R, Julia, Ruby, Go, Rust or C# code |
 | trigger | Where a Workflow's run starts (output port `out`) |
 | input | Sends a value following the type in `_outputs.fbs`, edited directly on the Canvas (for a File type, the chosen file is copied into the run) |
+| switch | Sends an editable Boolean on `value`, for example to the `condition` of a Branch |
 | fork / branch / merge | Distribution, conditional branching (only one of `a` / `b` fires, depending on `condition`) and merging (a union type named by input port). There is no dedicated Card for bounded feedback loops: a loop is made by sending a value back through a merge, and the `maxRuns` of the Cards on the loop bounds its iterations |
 | subgraph (Card in Card) | Handles a child Workflow as one Card. `boundary` maps the outer ports to Cards inside |
 | Draft | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (its ports follow the wires and have no types). The Agent can later generate its implementation |
@@ -47,7 +76,7 @@ macOS (host)                                       Shared Linux VM (one per app)
 
 ### Execution semantics (scheduler)
 
-- Inputs are awaited in one of two ways: `all` (consume one value from each once all required inputs have arrived) and `any` (consume them in order of arrival).
+- A Code Card can wait for all required inputs (`allInputs`) or run for each value as it arrives (`eachInput`). The scheduler calls these `all` and `any`. A Merge consumes one arrival at a time.
 - Bounded queues with backpressure, parallelism from 1 to 64, cancellation, a deadline (one for the whole invocation) and an iteration limit (`maxRuns`).
 - Downstream of a path a branch did not take is `skipped`; a Card that depends on a Draft or a failed upstream Card is `blocked`, with a reason; paths independent of them keep running.
 - A run that was in progress when the process ended abnormally or restarted is recorded as `interrupted`.
@@ -74,9 +103,9 @@ in
 }
 ```
 
-- `pkgs` is by default the bundled, pinned nixpkgs (`tsugumi:default`). Any nixpkgs can also be pinned with its revision and hash, in the form `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…`.
+- `tsugumi:default` uses the Nixpkgs revision bundled with the installed version of Tsugumi. To keep using that revision after an app update, open **Project settings → Name and environment** and choose **Pin to This App's Nixpkgs**. You can also enter a revision and hash in the form `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…`.
 - Nix evaluation uses restricted eval and forbids IFD (Import From Derivation), and the URLs it may fetch are limited to nixpkgs archives.
-- Tsugumi has no build cache of its own. It relies solely on Nix's own rule, "if the output path of the evaluated derivation exists in `/nix/store`, do not build", and applies it consistently.
+- Builds reuse outputs already in the Nix store. A signed [binary cache](BinaryCaches.md) can supply a missing store path before Nix builds it locally.
 
 ### Referring to upstream definitions (`inputs.upstream`)
 
@@ -85,7 +114,7 @@ in
 - The static diagnostics tell you about references as written, before evaluation (they do not read comments or the bodies of strings; an indirect reference through an alias or the like is found at evaluation). The extent that can be referred to is itself guaranteed by the evaluator passing only the Cards that always run first in `inputs.upstream`.
 - Only the definitions actually referred to are evaluated, lazily, and branches not chosen at run time are not built.
 
-- On the macOS and Web canvas, **Nix references (as written)** toggles dashed directional links from the referencing Card to the referenced Card. They are the references written in the saved `default.nix` files, not the evaluated dependencies. Hover highlights the connected Cards and links. Nested targets meet their visible container; the reference list preserves the exact paths, opens either Card on the canvas, and opens the referencing Nix definition. Invalid references remain in the list with a diagnostic notice. Saving a source refreshes the shared core resolution; aliases and dynamically computed references are not inferred.
+- The [Canvas overlay](Usage.md#canvas-tools) draws the static references from this resolution. Nested targets meet their visible container and the list preserves the full paths. An invalid reference remains visible with its diagnostic. Saving a source refreshes the resolution.
 
 ### External Nix sources (`inputs.sources`)
 
@@ -140,8 +169,11 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
   }
   ```
   The worker loads the built shared library `lib/main.so` into memory and calls it directly (no process is started per invocation).
-- **Python**: implement `main(ctx)` and, optionally, the initialisation hook `on_run_start(ctx)`.
+- **Python.** Implement `main(ctx)` with the generated object API or use the dictionary interface. Use a Card-local `uv.lock` and a pinned dependency output hash to build locked dependencies. [Python Card and dependency guide](CardGuide.md)
 - **bash**: inputs arrive per port as `JSON_P` (the path of a JSON file) / `FILE_P` / `DIR_P`; the JSON written to `$TSUGUMI_OUTPUT` is the output, type-checked per port.
+- **Go.** Use `goCard` with generated typed inputs and outputs, with managed goroutines and pinned vendored modules. [Go Cards](CardGuide.md#go-cards)
+- **Rust.** Use `rustCard` with generated typed inputs and outputs and lock crate dependencies with `Cargo.lock` and a vendor hash. [Rust Cards](CardGuide.md#rust-cards)
+- **C#.** Use `csharpCard` with generated types, Tasks and pinned NuGet dependencies in the .NET worker. [C# Cards](CSharp.md)
 - **Ruby** (`rubyCard`): MRI runs in the package worker with typed Hash/Array values, exact 64-bit integers, live displays and optional resident state. The Card can name a Gemfile.lock and the hash of its gem files to pin its dependencies at build time. [The Card guide](../agent/Reference/card-guide.md#ruby-srcmainrb) describes the API.
 - **R and Julia** (`rCard`, `juliaCard`): their interpreters live in the same ABI worker as C++/Python. An invocation starts a new interpreter unless `reuseWorker` is on, which keeps the interpreter and its module state; displays publish during execution. The list/Dict interface uses in-memory JSON conversion against each port’s FlatBuffers schema, without per-call processes or JSON files. How to write them is in [Your first Card](CardGuide.md).
 - What does not depend on the port contract (visualisation, logs, the run context) is gathered in the common runtime `libtsugumi_card.so`, so all that is built per Card is the type definitions and a thin adapter.
@@ -159,7 +191,7 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
   - **Mac (the shared VM):** Rosetta when it is installed on the Mac. qemu (`qemu-user` from cache.nixos.org) only when asked for with `TSUGUMI_VM_X86=qemu`, for a Mac without Rosetta or to try the qemu path. The app never installs Rosetta itself.
   - **Linux:** whatever the system registered, such as `boot.binfmt.emulatedSystems` on NixOS (with Nix's `extra-platforms`).
 - Each invocation records the emulator that ran it (its path; qemu's includes its version), shown in the Info tab of the Card's run history. Rosetta and qemu need not give the same numbers, so the record tells them apart.
-- Every language works. bash Cards are programs the kernel hands to the emulator. C++, Python, R and Julia Cards are a `main.so` the worker loads, so their build also makes a worker for that system (`worker` of the Nix SDK) from the Card's own nixpkgs, and the kernel runs it under the emulator: the worker and the Card share one glibc, libstdc++ and libpython. It is built once per nixpkgs and system, under emulation the first time (on an M3 Max: the first C++ Card's build stage took 2 min 16 s with Rosetta, the x86_64 compiler's download included, and the worker alone 4 min with qemu), and reused from the store after that by every such Card, whichever emulator built it.
+- The kernel runs Bash Cards' programs under the emulator. Package Cards load a `main.so`, so their build also makes a worker for the selected system (`worker` of the Nix SDK) from the Card's own nixpkgs, and the kernel runs it under the emulator. The worker and Card use the same target runtime libraries. It is built once per nixpkgs and system, under emulation the first time (on an M3 Max: the first C++ Card's build stage took 2 min 16 s with Rosetta, the x86_64 compiler's download included, and the worker alone 4 min with qemu), and reused from the store after that by every such Card, whichever emulator built it.
 - Without an emulator, the run stops before building, saying what is missing.
 
 ### Outside access (Experimental)
@@ -177,15 +209,15 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 
 ## 6. Run history and artifacts
 
-- Runs, invocations, stages, input and output values, logs, visualisation data and receipts are all recorded in SQLite. The primary copy is on the VM's dedicated run-history disk (`vm/history.img`), so it is written fast without going through a folder shared with the host, and is not lost by "Reset all environments".
-- A Card's run history shows, for each invocation, the **packages** it ran with: the runtime dependencies recorded for that invocation, with search and pagination. They are read from the history, never derived from the current Nix definition, so an edited definition does not change what an earlier invocation shows; an invocation without a recorded environment says so. Build-only dependencies are not included.
-- `recordIO` and `retainArtifact` choose, per Card, what is recorded and kept. Kept artifacts are checked for tampering and path escapes.
-- "Compare Runs" in a Card's run history or the bottom run panel opens two runs side by side on Mac and Web. Each Card's last invocation shows its state, duration, recorded parameters, inputs and outputs, and retained table, chart or image. Changed fields and displays are marked; missing, failed and stopped Cards remain visible. The same screen shows a direct code/settings diff between the runs' versions without checking either version out. Comparison only reads the records and never replaces the current Canvas's results.
-- With `saveRunHistory` (default `true`), the history of finished runs is also written automatically to `.tsugumi/runs.sqlite` in the project. Input and output values are kept as FlatBuffers bytes with their schema (bfbs) retrievable by hash, so past values are interpreted correctly even after a Card's types change.
-- When a project is copied or moved to another Mac, its history is imported automatically on opening, matched by `run_id`.
-- "Delete Run History" deletes from all three places: inside the VM, `.tsugumi/runs.sqlite` and the per-run file area.
+See the [run history reference](RunHistory.md) for the workbench controls, examples and retention settings.
+
+- Runs, invocations, stages, values, logs, displays and receipts are recorded in SQLite. The shared Mac VM keeps its primary copy on a dedicated history disk (`vm/history.img`). That disk survives an environment reset.
+- `recordIO` controls input and output value recording. FlatBuffers values retain their schema by hash, so past values can be interpreted after a Card's types change. `retainArtifact` copies a selected File or Directory into history and checks retained files for tampering and path escapes.
+- `saveRunHistory` writes finished records into the project’s `.tsugumi/runs.sqlite`. When a copied or moved project opens, records missing from its local history are imported by run ID.
 
 ## 7. Visualisation
+
+The [visualisation templates](Visualization.md) provide editable Matplotlib, Plotly and Altair examples. [marimo notebooks](Marimo.md) and [R reports](Reports.md) retain HTML results that can be inspected in the [static artifact preview](RunHistory.md#keep-and-open-artifacts).
 
 - Calling APIs such as `tsugumi::visualization::text(...)` from a Card's code displays text, scalars, line charts, tables, images, 3D point clouds and Canvas modules.
 - Line charts are drawn fast with Dawn (a WebGPU implementation, Metal backend) and update in real time during a run, as in the Live Stream demo.
@@ -203,7 +235,7 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 - The Card settings window: General, Comments, Nix Definition, Source (syntax highlighting, automatic formatting, showing where errors are), Ports, Run History, Artifacts and Additional Context. Edits are made on a working copy and put in with "Apply".
 - The settings window: the whole app (General, Appearance, Editor, Shortcuts, Skills, API, Connections) and the open project (Name and environment, Canvas, Run history, Build cache). Each item shows where its value is kept.
 - Custom signed [binary caches](BinaryCaches.md) (Attic, Cachix and compatible servers), configured for the Mac shared execution environment, including private-cache authentication. Changes apply at the next VM start.
-- A terminal inside the VM for each project (bash started in that project's namespaces with its own uid). The Mac panel has independent tabs, up to eight per project as in the Web UI. The tabs and their shells belong to the open project, not to the panel: opening or selecting another tab, hiding the panel and showing it again all keep existing commands and scrollback, while closing a tab or closing the project hangs up its shells. Opening the panel before the environment connects waits and connects automatically; after a reconnection, tabs whose shell had ended get a new one. When two windows show the same project, they share the same tabs, and a terminal is drawn in the window that showed it last.
+- The [project terminal](Usage.md#project-terminal) opens in the project's execution environment. On Mac, it waits for the environment to connect and shares its tabs between windows of the same project. A tab whose shell ended can reconnect to a new shell.
 - Japanese or English, chosen under "General" in the settings (Japanese by default, whatever the system's language; it takes effect when the app restarts, or by reloading the page in the Web UI). The Mac app and the Web UI on the same Mac share it, and what tsugumid writes into a project's git for a run follows it ([Versions](Versions.md#the-results-of-runs)).
 - While running, changes to Cards and closing the project are blocked; progress, history and artifacts can still be seen.
 
@@ -345,5 +377,7 @@ On Home, a single guide conversation for the whole app (`Agent.Role.guide`; its 
 
 ## 10. Demos
 
-There are 31 bundled demos (Draft versions included), in a Japanese set and an English set (`demos/ja`, `demos/en`): the same demos and files, their descriptions, notes and the text of their figures in one language. The app and the Web UI list the set of their language. What you can try, and how each demo's Cards connect and behave, is in [The bundled demos](Demos.md).
+The bundled demos, including Draft versions, come in a Japanese set and an English set (`demos/ja`, `demos/en`): the same demos and files, their descriptions, notes and the text of their figures in one language. The app and the Web UI list the set of their language. What you can try, and how each demo's Cards connect and behave, is in [The bundled demos](Demos.md).
 Choose "Open a Copy" on a demo from "Browse Demos" on the home screen to get an editable copy in `~/Documents/Tsugumi/<demo>`.
+
+For the design and implementation, see [Rationale](Rationale.md), [Development](Development.md), [Security and isolation](security.md) and [Limitations](Limitations.md).
