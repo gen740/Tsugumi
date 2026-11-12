@@ -1232,6 +1232,14 @@ EN = {
 "保存前": "Not saved",
 "Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。": "Relative to this Card's definition folder. Use project: for a path relative to its owning project.",
 "参照先: %@": "Resolved path: %@",
+"依存 package": "Packages",
+"この呼び出しの環境は記録されていません": "No environment was recorded for this invocation.",
+"依存 package は実行時に記録されたものだけを表示します。現在の Nix 定義からは求めません。": "Packages are shown only as recorded when the Card ran. They are not derived from the current Nix definition.",
+"実行時の依存パス": "Runtime dependencies",
+"この呼び出しで記録されたものです。ビルド時だけに使う依存関係は含まれません。": "Recorded for this invocation. Build-only dependencies are not included.",
+"依存パスを検索": "Search dependencies",
+"検索結果を 100 件ずつ表示します。": "Showing 100 matching paths per page.",
+"一致する依存パスはありません": "No matching dependencies.",
 }
 
 

@@ -55,9 +55,16 @@ struct CardExecutionView: View {
   }
 
   enum Detail: String, CaseIterable, Identifiable {
-    case io, log, info
+    case io, log, packages, info
     var id: String { rawValue }
-    var title: String { self == .io ? String(localized: "入出力") : (self == .log ? String(localized: "ログ") : String(localized: "情報")) }
+    var title: String {
+      switch self {
+      case .io: return String(localized: "入出力")
+      case .log: return String(localized: "ログ")
+      case .packages: return String(localized: "依存 package")
+      case .info: return String(localized: "情報")
+      }
+    }
   }
 
   /// Loading, failed and empty are said plainly, never as an empty split view.
@@ -138,7 +145,7 @@ struct CardExecutionView: View {
               .frame(maxWidth: 320)
               Spacer()
               Picker("", selection: $detail) { ForEach(Detail.allCases) { Text($0.title).tag($0) } }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                .pickerStyle(.segmented).labelsHidden().frame(width: 300)
             }
             .padding(6)
             Divider()
@@ -146,6 +153,13 @@ struct CardExecutionView: View {
             case .io: ioView
             case .log:
               if let runId { StageLogView(session: session, runId: runId, card: path(cardKey), invocation: invocation) }
+            case .packages:
+              // What this invocation ran with, from its record; never the current definition.
+              if record?.exists == false {
+                ContentUnavailableView("この実行では呼び出されていません", systemImage: "circle.dotted")
+              } else if let runId {
+                InvocationPackagesView(session: session, runId: runId, environmentId: record?.record?.summary.environmentId ?? "")
+              }
             case .info: infoView
             }
           }

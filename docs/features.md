@@ -169,6 +169,7 @@ waiting for inputs → SDK preparation → Nix evaluation → build → preRun �
 ## 6. Run history and artifacts
 
 - Runs, invocations, stages, input and output values, logs, visualisation data and receipts are all recorded in SQLite. The primary copy is on the VM's dedicated run-history disk (`vm/history.img`), so it is written fast without going through a folder shared with the host, and is not lost by "Reset all environments".
+- A Card's run history shows, for each invocation, the **packages** it ran with: the runtime dependencies recorded for that invocation, with search and pagination. They are read from the history, never derived from the current Nix definition, so an edited definition does not change what an earlier invocation shows; an invocation without a recorded environment says so. Build-only dependencies are not included.
 - `recordIO` and `retainArtifact` choose, per Card, what is recorded and kept. Kept artifacts are checked for tampering and path escapes.
 - With `saveRunHistory` (default `true`), the history of finished runs is also written automatically to `.tsugumi/runs.sqlite` in the project. Input and output values are kept as FlatBuffers bytes with their schema (bfbs) retrievable by hash, so past values are interpreted correctly even after a Card's types change.
 - When a project is copied or moved to another Mac, its history is imported automatically on opening, matched by `run_id`.
