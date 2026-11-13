@@ -104,8 +104,10 @@ def serve(peer):
                     else:
                         mounts = {text(m.name): Path(text(m.path)) for m in request.mounts or []}
                         controls[key] = mounts["control"]
+                        # Match vmd: native clients (including agentd's readiness
+                        # check) have no Origin; browsers still need an allowed one.
                         arguments = [os.environ["TSUGUMID"], "--project", str(mounts["project"]), "--control-dir", str(mounts["control"]),
-                                     "--unix", str(sockets / key), "--listen", "127.0.0.1:0", "--worker", os.environ["TSUGUMI_WORKER"], "--sdk-dir", os.environ["TSUGUMI_SDK_DIR"]]
+                                     "--unix", str(sockets / key), "--listen", "127.0.0.1:0", "--allow-missing-origin", "--worker", os.environ["TSUGUMI_WORKER"], "--sdk-dir", os.environ["TSUGUMI_SDK_DIR"]]
                         for origin in request.origins or []:
                             arguments.extend(["--allow-origin", text(origin)])
                         if request.archiveIncompatibleHistory:
