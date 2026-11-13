@@ -37,7 +37,7 @@ struct ApplicationSettings: View {
     /// Where each pane's values are kept, said on the pane.
     var storage: String {
       switch self {
-      case .api: return String(localized: "このホスト（設定と API キーは agentd が保管）")
+      case .api: return String(localized: "このホスト（設定は agentd、API キーは macOS Keychain）")
       case .connections: return String(localized: "表示のみ（開いているプロジェクトの接続先）")
       case .binaryCaches: return String(localized: "この Mac の共有実行環境（全プロジェクト）")
       default: return String(localized: "このアプリ（この Mac のユーザー設定）")
@@ -618,7 +618,7 @@ private struct APISettings: View {
   }
 }
 
-/// One API key connection: its key (in agentd only: never in project
+/// One API key connection: its key (in the login Keychain: never in project
 /// files, settings or logs), its model and the models it offers.
 private struct APIKeySection: View {
   let id: String
@@ -633,7 +633,7 @@ private struct APIKeySection: View {
   var body: some View {
     Section {
       if let error = CorePreferences.shared.error { Text(error).foregroundStyle(.red) }
-      LabeledContent("保存先", value: stored ? String(localized: "agentd（このホストの所有者だけが読み書きできます）") : String(localized: "未設定"))
+      LabeledContent("保存先", value: stored ? String(localized: "macOS Keychain（このデバイスのみ・ロック解除中に使用）") : String(localized: "未設定"))
       SecureField("新しい API キー", text: $key)
       HStack {
         Button("キーを保存") {
@@ -642,7 +642,7 @@ private struct APIKeySection: View {
             try await ProviderCredentials.save(key.trimmingCharacters(in: .whitespacesAndNewlines), account: config.name)
             key = ""
             refresh(saved: true)
-            message = String(localized: "agentd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。")
+            message = String(localized: "Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。")
           } catch { message = "\(error)" }
           }
         }
@@ -652,7 +652,7 @@ private struct APIKeySection: View {
           do {
             try await ProviderCredentials.delete(account: config.name)
             refresh()
-            message = String(localized: "\(config.name) のキーを agentd から削除しました。")
+            message = String(localized: "\(config.name) のキーを Keychain から削除しました。")
           } catch { message = String(describing: error) }
           }
         }
@@ -682,7 +682,7 @@ private struct APIKeySection: View {
     }
     .onAppear {
       refresh()
-      Task { await ProviderCredentials.refresh(); refresh(); models = (try? await CoreAgentClient.shared.storedModels(id).map(\.id)) ?? [] }
+      Task { refresh(); models = (try? await CoreAgentClient.shared.storedModels(id).map(\.id)) ?? [] }
     }
   }
 

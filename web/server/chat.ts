@@ -116,16 +116,16 @@ function keyedProvider(id: unknown): KeyedProvider {
   throw ctx.httpError(400, 'Unknown provider')
 }
 async function keySource(p: KeyedProvider) {
-  let value = await core.user.call<{ configured: boolean; source?: string }>('ProviderStatusRequest', { profile: core.keyProfile, id: p })
-  if (!value.configured) value = await core.user.call('ProviderStatusRequest', { profile: settingsProfile(), id: p })
-  return value.configured ? value.source ?? 'agentd' : undefined
+  return core.keys.source(p, settingsProfile())
 }
 async function saveKey(p: KeyedProvider, key: string) {
-  await core.user.call('ProviderSetRequest', { profile: settingsProfile(), id: p, provider: { api_key: key.trim() } })
-  return L('agentd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。')
+  const source = await core.keys.save(p, key, settingsProfile())
+  return source === 'keychain'
+    ? L('Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。')
+    : L('agentd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。')
 }
 async function deleteKey(p: KeyedProvider) {
-  await core.user.call('ProviderSetRequest', { profile: settingsProfile(), id: p, remove: true })
+  await core.keys.delete(p, settingsProfile())
   return L('{0} のキーを削除しました。', PROVIDERS[p].name)
 }
 
@@ -151,7 +151,7 @@ async function chatProvider(): Promise<ProviderConfig> {
 
 /** Presentation labels and opaque service references for the chosen model. */
 async function providerFor(id: ProviderId): Promise<ProviderConfig> {
-  return { ...await providerDisplay(id), profile: settingsProfile(), accountProfile: localProfile(), keyProfile: core.keyProfile }
+  return { ...await providerDisplay(id), profile: settingsProfile(), accountProfile: localProfile() }
 }
 
 async function providerDisplay(id: ProviderId): Promise<ProviderConfig> {

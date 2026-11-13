@@ -134,7 +134,7 @@ try {
 }
 
 // The adapter sends the existing FlatBuffers request, including refreshed
-// credentials. No provider calls or sockets are opened in these tests.
+// provider references. No provider calls or sockets are opened in these tests.
 const host = new CoreAgentHost('/nonexistent', '/nonexistent', {} as never, 'ja')
 let forwarded: any
 host.user.call = async (method, fields) => {
@@ -160,6 +160,11 @@ try {
   RemoteAgent.prototype.open = async function () {
     this.host.user.call = async (method, fields) => {
       if (method === 'AccessListRequest') return { requests: [] } as any
+      if (method === 'ProviderSetRequest') {
+        assert.equal(fields.ephemeral, true)
+        assert.equal(fields.provider.api_key, 'test-key')
+        return { configured: true } as any
+      }
       assert.equal(method, 'ConversationSummarizeRequest')
       forwarded = fields
       return reply('reading') as any

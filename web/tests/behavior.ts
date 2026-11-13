@@ -36,6 +36,7 @@ await import("./wireDemos")
 
 await import("./modelMenu")
 await import("./settings")
+await import("./providerKeys")
 await import('./thoughts')
 
 await import("./chatFollow")

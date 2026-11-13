@@ -319,7 +319,7 @@
 "このプロジェクト（%@/layout.json）" = "This project (%@/layout.json)";
 "このプロジェクト（%@/tsugumi.json）" = "This project (%@/tsugumi.json)";
 "このホストの公開鍵" = "This host's public key";
-"このホスト（設定と API キーは agentd が保管）" = "This host (settings and API keys managed by agentd)";
+"このホスト（設定は agentd、API キーは macOS Keychain）" = "This host (settings in agentd; API keys in the macOS Keychain)";
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）" = "Not available for this model (only models checked against the official documents)";
 "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。" = "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).";

@@ -1383,5 +1383,8 @@
  "登録": "Register",
  "agentd（このホストの所有者だけが読み書きできます）": "agentd (readable and writable only by this host’s owner)",
  "agentd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。": "Saved in agentd. The key is not stored in Cards, projects, settings or logs.",
- "このホスト（API キーは agentd が保管）": "This host (API keys managed by agentd)"
+ "このホスト（API キーは macOS Keychain または agentd が保管）": "This host (API keys in the macOS Keychain or agentd)",
+ "macOS Keychain（このデバイスのみ・ロック解除中に使用）": "macOS Keychain (this device only, used while unlocked)",
+ "Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。": "Saved in Keychain. The key is used by the Agent service and is not stored in Cards, projects, settings or logs.",
+ "API キーに使えない文字が含まれています。": "The API key contains characters that cannot be used."
 }

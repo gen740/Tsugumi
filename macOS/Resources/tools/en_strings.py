@@ -34,7 +34,7 @@ EN = {
 'agentd（このホストの所有者だけが読み書きできます）': 'agentd (readable and writable only by this host’s owner)',
 'agentd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。': 'Saved in agentd. The key is not stored in Cards, projects, settings or logs.',
 '%@ のキーを agentd から削除しました。': 'Deleted the key for %@ from agentd.',
-'このホスト（設定と API キーは agentd が保管）': 'This host (settings and API keys managed by agentd)',
+'このホスト（設定は agentd、API キーは macOS Keychain）': 'This host (settings in agentd; API keys in the macOS Keychain)',
 'サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は agentd が行います。トークンは Card やプロジェクト・設定・ログには残りません。': 'Sign in in your browser. agentd receives the result on 127.0.0.1, validates it and stores the tokens. Tokens are not stored in Cards, projects, settings or logs.',
 
     '保持したファイルの内容がありません（scratch は保持履歴ではありません）。': 'The kept file content is missing (scratch is separate from retained history).',

@@ -1095,7 +1095,8 @@ struct GuideInviteView: View {
 
 /// The first start: choose Anthropic or OpenAI and enter that provider's API
 /// key (one is enough), checked by connecting, or start without a guide.
-/// The key goes to agentd the same way as in Settings > API.
+/// The key is saved in the login Keychain and provisioned to agentd in memory,
+/// as in Settings > API.
 struct GuideSetupView: View {
   let onDone: () -> Void
   @State private var provider = CorePreferences.shared.string(forKey: "agent.provider") == "openai" ? "openai" : "anthropic"

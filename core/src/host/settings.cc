@@ -355,7 +355,7 @@ struct Settings::State {
     const auto key = profile + ":" + id;
     if (ephemeral.contains(key)) {
       out.configured = true;
-      out.source = "env";
+      out.source = "memory";
     } else {
       out.configured = id == "fixture" || !secrets->Get(key).empty();
       if (out.configured) out.source = "agentd";
@@ -935,10 +935,12 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
   }
   if (c.auth == agent::ProviderAuth::ApiKey) {
     auto key_profile = j::Text(selection, "key_profile");
-    if (key_profile.empty()) key_profile = profile;
-    const auto key = key_profile + ":" + id;
-    if (s.ephemeral.contains(key)) c.credential = s.ephemeral.at(key);
-    if (c.credential.empty()) c.credential = s.secrets->Get(profile + ":" + id);
+    if (key_profile.empty()) {
+      c.credential = s.secrets->Get(profile + ":" + id);
+    } else {
+      const auto key = key_profile + ":" + id;
+      if (s.ephemeral.contains(key)) c.credential = s.ephemeral.at(key);
+    }
     if (c.credential.empty()) throw std::runtime_error("No API key configured");
   }
   if (c.auth == agent::ProviderAuth::ChatGPT) {

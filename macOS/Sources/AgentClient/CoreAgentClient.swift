@@ -46,6 +46,7 @@ public final class ModelCatalogSnapshot: @unchecked Sendable {
 public actor CoreAgentClient {
   public static let shared = CoreAgentClient()
   private let supportOverride: URL?
+  private let keyProfile = "macos:keychain:" + UUID().uuidString
 
   public init(support: URL? = nil) { supportOverride = support }
   private var transports: [Bool: NativeByteTransport] = [:]
@@ -180,22 +181,36 @@ public actor CoreAgentClient {
     _ = try await call("ConfigureRequest", ["provider": try await provider(config), "conversation_id": conversationID])
   }
 
-  public func provider(_ config: ProviderConfig) async throws -> Tsugumi_Service_ProviderSelectionT {
+  public func provider(_ config: ProviderConfig, asking: Bool = true) async throws -> Tsugumi_Service_ProviderSelectionT {
     let value = Tsugumi_Service_ProviderSelectionT()
     value.model = config.model
     value.useChoices = config.usesChoices
     value.profile = "desktop"
     value.providerId = config.connection
     value.accountProfile = "desktop"
+    if config.auth == .apiKey {
+      guard let key = asking ? Keychain.load(account: config.name) : Keychain.loadWithoutAsking(account: config.name) else {
+        throw CoreAgentFailure(code: "credentials", message: "No API key for \(config.name)", requestID: nil)
+      }
+      try await provisionKey(key, id: config.connection)
+      value.keyProfile = keyProfile
+    }
     return value
+  }
+
+  public func provisionKey(_ key: String?, id: String) async throws {
+    var fields: [String: Any] = ["profile": keyProfile, "id": id, "ephemeral": true, "remove": key == nil]
+    if let key { let input = Tsugumi_Service_ProviderInputT(); input.apiKey = key; fields["provider"] = input }
+    _ = try await call("ProviderSetRequest", fields)
   }
 
   public func storedModels(_ id: String) async throws -> [(id: String, name: String)] {
     try await modelList(id: id)
   }
 
-  private func modelList(id: String, refresh: Bool = false) async throws -> [(id: String, name: String)] {
-    let fields: [String: Any] = ["provider_id": id, "refresh": refresh, "profile": "desktop"]
+  private func modelList(id: String, refresh: Bool = false, keyProfile: String? = nil) async throws -> [(id: String, name: String)] {
+    var fields: [String: Any] = ["provider_id": id, "refresh": refresh, "profile": "desktop"]
+    if let keyProfile { fields["key_profile"] = keyProfile }
     let result = try await call("ModelsListRequest", fields)
     let list: [(id: String, name: String)] = (result["value"] as? [[String: Any]] ?? []).compactMap { item in
       guard let id = item["id"] as? String else { return nil }
@@ -205,8 +220,8 @@ public actor CoreAgentClient {
     return list
   }
 
-  public func models(_ config: ProviderConfig) async throws -> [(id: String, name: String)] {
-    let id = config.connection
-    return try await modelList(id: id, refresh: true)
+  public func models(_ config: ProviderConfig, asking: Bool = false) async throws -> [(id: String, name: String)] {
+    let selection = try await provider(config, asking: asking)
+    return try await modelList(id: config.connection, refresh: true, keyProfile: selection.keyProfile)
   }
 }

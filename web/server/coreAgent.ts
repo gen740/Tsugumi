@@ -1,6 +1,7 @@
 // Platform adapter for the core-owned services. The browser keeps the HTTP/SSE
 // API; service credentials and binary socket connections stay in this host.
 import { spawn } from 'node:child_process'
+import { ProviderKeys } from './providerKeys'
 import net from 'node:net'
 import { CoreAgentError, encodeRequest, decodeReply, hostMethod } from './serviceWire'
 export { CoreAgentError } from './serviceWire'
@@ -113,7 +114,8 @@ class Connection {
 }
 
 export class CoreAgentHost {
-  readonly keyProfile = `web:env:${randomUUID()}`
+  readonly keyProfile = `web:keys:${randomUUID()}`
+  readonly keys = new ProviderKeys((method, fields) => this.user.call(method, fields), this.keyProfile)
   private environment?: Promise<void>
   readonly schema: string
   readonly state: string
@@ -178,12 +180,7 @@ export class CoreAgentHost {
   }
 
   provisionEnvironment(): Promise<void> {
-    return this.environment ??= (async () => {
-      for (const [id, name] of [['anthropic', 'ANTHROPIC_API_KEY'], ['openai', 'OPENAI_API_KEY']]) {
-        const key = process.env[name]
-        if (key) await this.user.call('ProviderSetRequest', { profile: this.keyProfile, id, ephemeral: true, provider: { api_key: key } })
-      }
-    })()
+    return this.environment ??= this.keys.provisionEnvironment()
   }
 
   async getSettings(profile: string): Promise<{ revision: number; values: { key: string; value_json: string }[] }> {
@@ -205,7 +202,9 @@ export class CoreAgentHost {
   }
 
   async provider(config: ProviderConfig) {
-    return { profile: config.profile ?? 'desktop', account_profile: config.accountProfile, key_profile: config.keyProfile,
+    const keyProfile = config.auth === 'apiKey'
+      ? await this.keys.provision(config.api === 'openAIResponses' ? 'openai' : 'anthropic') : undefined
+    return { profile: config.profile ?? 'desktop', account_profile: config.accountProfile, key_profile: keyProfile,
       provider_id: config.auth === 'chatgpt' ? 'chatgpt' : config.auth === 'none' ? 'fixture' : config.api === 'openAIResponses' ? 'openai' : 'anthropic', model: config.model, use_choices: !!config.usesChoices }
   }
 
@@ -220,7 +219,8 @@ export class CoreAgentHost {
 
   async models(config: ProviderConfig): Promise<{ id: string; name: string }[]> {
     const id = config.auth === 'chatgpt' ? 'chatgpt' : config.auth === 'none' ? 'fixture' : config.api === 'openAIResponses' ? 'openai' : 'anthropic'
-    return this.user.call('ModelsListRequest', { provider_id: id, refresh: true, profile: config.profile ?? "desktop", account_profile: config.accountProfile, key_profile: config.keyProfile })
+    const selection = await this.provider(config)
+    return this.user.call('ModelsListRequest', { provider_id: id, refresh: true, profile: selection.profile, account_profile: selection.account_profile, key_profile: selection.key_profile })
   }
 
   async summarize(conversationId: string, config: ProviderConfig): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {

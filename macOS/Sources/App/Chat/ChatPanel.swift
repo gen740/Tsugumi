@@ -37,7 +37,7 @@ struct ChatPanel: View {
   @State private var modelLists = ModelListRefresher(fetch: { id in
     // Never the keychain's dialog: nobody asked for this read. A connection
     // that would have to ask keeps its saved list until a turn or Settings > API reads it.
-    try await MessagesProvider(config: AgentSettings.config(for: id)).modelChoices()
+    try await MessagesProvider(config: AgentSettings.config(for: id)).modelChoices(asking: false)
   })
   /// "Draw thoughts": the Agent's thinking summarized for the canvas (extra tokens).
   @HostStorage(ThoughtSummarizer.defaultsKey) private var drawThoughts = false
@@ -523,10 +523,9 @@ struct ChatPanel: View {
   }
 
   /// The connections set up, each with the models saved for it. Opening the
-  /// panel may ask the keychain for the ChatGPT record, once.
+  /// panel reads account status from agentd and Keychain attributes only.
   private func loadModels() async {
     await CorePreferences.shared.reload()
-    await ProviderCredentials.refresh()
     let accounts = await ChatGPTAuth.shared().accounts()
     for id in ["anthropic", "openai", "chatgpt"] {
       _ = try? await CoreAgentClient.shared.storedModels(id)
@@ -583,7 +582,6 @@ struct ChatPanel: View {
       for id in ["anthropic", "openai", "chatgpt"] {
         _ = try? await CoreAgentClient.shared.storedModels(id)
       }
-      await ProviderCredentials.refresh()
       let accounts = await ChatGPTAuth.shared().accountsWithoutAsking()
       // A record that cannot be read without asking says nothing: the connection stays as it was.
       let chatGPT = accounts.map { $0.contains { $0.active && $0.signedIn && $0.planEnabled } } ?? wasOn

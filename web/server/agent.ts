@@ -185,10 +185,9 @@ export interface ProviderConfig {
   /** How requests are authorized: none (the local fixture), an API key, or
    *  the user's ChatGPT plan (Sign in with ChatGPT). */
   auth: 'none' | 'apiKey' | 'chatgpt'
-  /** Opaque references to settings, accounts and ephemeral keys in agentd. */
+  /** Opaque references to settings, accounts in agentd. */
   profile?: string
   accountProfile?: string
-  keyProfile?: string
   /** The chat's choices in the model menu, already checked against the model
    *  (modelChoices). None for the requests that are not the Agent's work. */
   usesChoices?: boolean

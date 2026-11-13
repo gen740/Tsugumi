@@ -142,7 +142,7 @@ PLIST
 # default (no Developer ID, no notarization). A dev build can take a certificate
 # of the machine's keychain in TSUGUMI_CODESIGN_IDENTITY (a name or a SHA-1,
 # as codesign takes it), giving the app a stable designated requirement across
-# rebuilds. The release build ignores it: the workflow's artifact is
+# rebuilds, including login Keychain access. The release build ignores it: the workflow's artifact is
 # ad-hoc whatever the environment holds.
 # Nested code first, each by itself (not --deep, which signs whatever it finds
 # the same way).

@@ -82,12 +82,57 @@ TEST(HostSettingsStore,
                 .credential,
             "SECOND_ENV_SENTINEL");
   EXPECT_EQ(service.Resolve({}).credential, "STORE_SECRET_SENTINEL");
+  EXPECT_THROW(
+      service.Resolve({{"profile", Quote("desktop")},
+                       {"key_profile", Quote("macos:keychain:missing")}}),
+      std::runtime_error);
   observed->fail = true;
   const auto failed = put("SECOND_SECRET_SENTINEL");
   EXPECT_NE(
       H::GetMessage(failed.data())->payload_as_Reply()->value_as_Failure(),
       nullptr);
   EXPECT_EQ(failed.find("SECOND_SECRET_SENTINEL"), failed.npos);
+}
+TEST(HostSettingsStore,
+     KeychainProvisioningNeverWritesTheKeyToDiskOrFallsBack) {
+  TemporaryDirectory directory;
+  const std::string key = "KEYCHAIN_ONLY_SENTINEL";
+  const auto make = [&] {
+    return std::make_unique<host::Settings>(
+        directory.path, [](const auto&, const auto&) {},
+        [](const auto&, auto) { return ""; }, [](const auto&) { return true; });
+  };
+  auto service = make();
+  flatbuffers::FlatBufferBuilder b;
+  Tsugumi::Service::ProviderInputT input;
+  input.api_key = key;
+  const auto value = H::CreateProviderSetRequest(
+      b, b.CreateString("macos:keychain:fixture"), b.CreateString("anthropic"),
+      Tsugumi::Service::ProviderInput::Pack(b, &input), false, true);
+  const auto request =
+      H::CreateRequest(b, H::RequestPayload::ProviderSetRequest, value.Union());
+  H::FinishMessageBuffer(
+      b, H::CreateMessage(b, 1, H::Payload::Request, request.Union()));
+  const auto reply = service->Handle(
+      *H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 1);
+  EXPECT_EQ(reply.find(key), reply.npos);
+  ASSERT_TRUE(H::GetMessage(reply.data())
+                  ->payload_as_Reply()
+                  ->value_as_ProviderStatus()
+                  ->configured());
+  const agent::json::Members selection{
+      {"profile", Quote("desktop")},
+      {"key_profile", Quote("macos:keychain:fixture")}};
+  EXPECT_EQ(service->Resolve(selection).credential, key);
+  for (const auto& file : std::filesystem::directory_iterator(directory.path))
+    if (file.is_regular_file())
+      EXPECT_EQ(Read(file.path()).find(key), std::string::npos);
+  service.reset();
+  service = make();
+  EXPECT_THROW(service->Resolve(selection), std::runtime_error);
+  for (const auto& file : std::filesystem::directory_iterator(directory.path))
+    if (file.is_regular_file())
+      EXPECT_EQ(Read(file.path()).find(key), std::string::npos);
 }
 }  // namespace
 }  // namespace tsugumi::test
