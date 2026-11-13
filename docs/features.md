@@ -158,7 +158,8 @@ in { run = "${ciao}/bin/dmlist ..."; }
 
 ### Keeping build results
 
-- All projects share one `/nix/store`, and each project keeps its build results with its own GC roots (the last two generations per Card; ones unused for 30 days are collected automatically).
+- All projects share one `/nix/store`, and each project keeps its build results with its own GC roots. Roots have no age or generation limit: removing them requires an explicit build-cache deletion, store/environment reset or project deletion.
+- **Settings → project → Build Cache** in Mac and Web shows the shared total, each project's build usage, last root use and a separate latest-run scratch line. Open projects have Delete beside their usage; open a closed project to use its existing delete action. Core measures NAR bytes of rooted closures, including build dependencies covered by the store's GC settings. Shared paths count in every referencing project and once in the total, so the project amounts do not add up. Disk capacity and available bytes, measurement time and measurement errors are also shown; unavailable sizes are never shown as zero. A background snapshot refreshes at most once per minute (and after local changes); requests do not walk store contents. The core suggests reviewing Build Cache when the total is at least 20% of store disk capacity and at least 1 GiB. It never deletes in response to this notice.
 - A project's "Build Cache" pane (Delete) only removes that project's GC roots and build work files. Garbage collection of the shared store itself runs only from "Clean shared store" under "External Connections" in the app's settings. In the Mac shared VM, `keep-outputs = true` means compilers and the nixpkgs source stay after cleaning, so editing a Card does not download them again.
 
 ## 4. Card SDK and workers
@@ -238,7 +239,8 @@ SDK preparation → Nix evaluation → build → run (preRun → run → postRun
 See the [run history reference](RunHistory.md) for the workbench controls, examples and retention settings.
 
 - Runs, invocations, stages, values, logs, displays and receipts are recorded in SQLite. The shared Mac VM keeps its primary copy on a dedicated history disk (`vm/history.img`). That disk survives an environment reset.
-- `recordIO` controls input and output value recording. FlatBuffers values retain their schema by hash, so past values can be interpreted after a Card's types change. `retainArtifact` copies a selected File or Directory into history and checks retained files for tampering and path escapes.
+- Invocation work folders are disk-backed scratch outside the kept history: `/persist/run-scratch/<project>/runs/<run>` in the shared VM (seen as `/scratch/runs/<run>`), `/var/tmp/tsugumi-scratch-<uid>/<project>/runs/<run>` on Linux hosts, and `/private/var/tmp/tsugumi-scratch-<uid>/<project>/runs/<run>` on Mac hosts. Only the latest run stays; starting the next run removes earlier scratch, and startup removes scratch with no history record. Kept data are never removed by this cleanup.
+- `recordIO` controls input and output value recording. File / Directory contents are copied into `.tsugumi/runs/<run>/values` before completion, independently of artifact retention. FlatBuffers values retain their schema by hash, so past values can be interpreted after a Card's types change. `retainArtifact` copies a selected File or Directory into history and checks retained files for tampering and path escapes.
 - `saveRunHistory` writes finished records into the project’s `.tsugumi/runs.sqlite`. When a copied or moved project opens, records missing from its local history are imported by run ID (runs with remote jobs are not exported). `saveRunHistory` is on by default.
 
 ## 7. Visualisation

@@ -37,7 +37,7 @@ struct ExecutionRequest {
   // The invocation's live summary (run, Card, invocation number). A backend
   // fills its execution fields before start() and as they change.
   InvocationSummaryData& summary;
-  // The invocation's folder in the run (out/, and work/ and tmp/ copies for
+  // The invocation's scratch folder (out/, and work/ and tmp/ copies for
   // filesystem: true).
   std::filesystem::path directory;
   // Set when the run is cancelled or interrupted.

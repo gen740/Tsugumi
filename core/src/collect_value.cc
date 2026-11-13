@@ -152,14 +152,14 @@ struct Budget {
   size_t entries = kMaxEntries;
 };
 
-auto member_source(const Value& member, const stdfs::path& state_root, size_t index) -> MemberSource {
+auto member_source(const Value& member, std::span<const stdfs::path> file_roots, size_t index) -> MemberSource {
   const auto value = path_value(member);
   if (!value) throw invalid_member(index, "has no path");
   const stdfs::path path(*value);
   if (!path.is_absolute() || path.lexically_normal() != path)
     throw invalid_member(index, "path must be absolute and normal");
-  for (const char* folder : {"runs", "inputs"}) {
-    const auto root = (state_root / folder).lexically_normal();
+  for (const auto& folder : file_roots) {
+    const auto root = folder.lexically_normal();
     const auto rel = path.lexically_relative(root);
     // Rejects "..", ".", empty segments, backslashes and invalid UTF-8.
     if (rel.empty() || !fs::valid_relative_path(rel.generic_string())) continue;
@@ -273,7 +273,7 @@ auto directory_message(const types::Type& type, const std::string& value, const 
 }
 
 auto collect_files(const types::PortType& source, const types::PortType& output, std::span<const Value> members,
-                   const stdfs::path& state_root, const stdfs::path& output_dir, const std::atomic<bool>& cancel)
+                   std::span<const stdfs::path> file_roots, const stdfs::path& output_dir, const std::atomic<bool>& cancel)
     -> std::string {
   if (members.size() > kMaxEntries) throw Failed(FailureKind::output_invalid, "too many collected elements");
   std::error_code ec;
@@ -286,7 +286,7 @@ auto collect_files(const types::PortType& source, const types::PortType& output,
   for (size_t i = 0; i < members.size(); ++i) {
     check_cancel(cancel);
     check_member(source, members[i], i);
-    sources.push_back(member_source(members[i], state_root, i));
+    sources.push_back(member_source(members[i], file_roots, i));
   }
 
   try {
@@ -348,7 +348,7 @@ auto collect_output_type(const types::PortType& source, std::string& error) -> t
 }
 
 auto collect_values(const types::PortType& source, const types::PortType& output, std::span<const Value> members,
-                    const std::filesystem::path& state_root, const std::filesystem::path& output_dir,
+                    std::span<const std::filesystem::path> file_roots, const std::filesystem::path& output_dir,
                     const std::atomic<bool>& cancel) -> Value {
   if (!source.type) throw Failed(FailureKind::internal_error, "collect input " + source.name + " has no type");
   check_cancel(cancel);
@@ -361,7 +361,7 @@ auto collect_values(const types::PortType& source, const types::PortType& output
     result.bytes = collect_messages(source, output, members, cancel);
   } else {
     check_output_port(source, output, PortKind::Directory);
-    result.bytes = collect_files(source, output, members, state_root, output_dir, cancel);
+    result.bytes = collect_files(source, output, members, file_roots, output_dir, cancel);
   }
   return result;
 }

@@ -73,3 +73,9 @@ On Mac, the app and the installed browser command use the project's environment 
 - What each demo does and what you can try: [The bundled demos](Demos.md)
 - How the screen is organised, and the settings: [the UI in Features](features.md#8-ui-the-workbench)
 - Installation, and how API keys are handled: [Installation and development builds](INSTALL.md), [What is sent to the model](security.md#what-is-sent-to-the-model)
+
+## Manage build and scratch space
+
+Open **Settings → project → Build Cache** in Mac or Web. Review the shared total, per-project build cache, last root use and each project's latest-run scratch. **Delete** beside an open project removes its build registrations; open a closed project first to use that action. **Clean shared store** in the Mac app's External Connections settings then removes unrooted store paths. Shared dependencies can stay because another project still keeps them.
+
+The core suggests reviewing this pane when build caches occupy at least 20% of the store disk and at least 1 GiB. The notice never deletes anything. Sizes are cached NAR estimates and can take up to a minute to refresh; errors and unknown measurements are shown explicitly. Scratch is separate: it stays for the latest run, and the next run of that project removes earlier scratch. Recorded file values, retained artifacts and saved last inputs have independent copies. [Retention details](RunHistory.md) · [Build results](features.md#keeping-build-results)

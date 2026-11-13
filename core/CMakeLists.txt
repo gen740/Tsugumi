@@ -38,6 +38,8 @@ add_library(tsugumi_core STATIC
   src/lanes.cc
   src/server.cc
   src/nix.cc
+  src/run_scratch.cc
+  src/cache_usage.cc
   src/worker_proc.cc
   src/worker_pool.cc
   src/collect_value.cc
@@ -161,6 +163,7 @@ endif()
 # Supervisor of the shared VM (Linux guest only): one tsugumid per project.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(tsugumi-vmd src/vmd_main.cc)
-  target_link_libraries(tsugumi-vmd PRIVATE Threads::Threads)
+  target_include_directories(tsugumi-vmd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(tsugumi-vmd PRIVATE tsugumi_core)
   install(TARGETS tsugumi-vmd RUNTIME DESTINATION bin)
 endif()

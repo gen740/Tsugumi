@@ -1,5 +1,6 @@
 // Run, SDK, history, value, artifact and log handlers.
 #include <sys/stat.h>
+#include <flatbuffers/reflection.h>
 
 #include <algorithm>
 
@@ -517,6 +518,34 @@ void Service::run_record(RequestIn& req) {
         }
         auto art = m.artifact_id ? b.CreateString(*m.artifact_id) : flatbuffers::Offset<flatbuffers::String>();
         auto hash = m.hash.empty() ? flatbuffers::Offset<flatbuffers::String>() : b.CreateString(m.hash);
+        flatbuffers::Offset<flatbuffers::String> file_path;
+        bool file_missing = false;
+        if (m.kind != PortKind::FlatBuffer) {
+          file_missing = true;
+          auto type = std::make_shared<types::Type>();
+          type->bfbs = m.bfbs;
+          type->root_type = m.root_type;
+          flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(m.bfbs.data()), m.bfbs.size());
+          if (reflection::VerifySchemaBuffer(verifier) && type->root() && types::verify(*type, data[i])) {
+            Value value{m.name, m.kind, type, data[i], {}};
+            if (const auto recorded = path_value(value)) {
+              const auto anchor = "/runs/" + run_id + "/values/";
+              const auto position = recorded->rfind(anchor);
+              if (position != std::string::npos) {
+                const auto relative = recorded->substr(position + anchor.size());
+                const auto root = store_->state_dir() / "runs" / run_id / "values";
+                const auto content = root / relative;
+                std::error_code error;
+                if (fs::valid_relative_path(relative) && fs::resolves_inside(root, content)) {
+                  const auto status = stdfs::symlink_status(content, error);
+                  file_missing = error || (m.kind == PortKind::File ? !stdfs::is_regular_file(status)
+                                                                  : !stdfs::is_directory(status));
+                  if (!file_missing) file_path = b.CreateString(content.string());
+                }
+              }
+            }
+          }
+        }
         D::NamedValueBuilder nb(b);
         nb.add_name(name);
         nb.add_kind(m.kind);
@@ -526,6 +555,8 @@ void Service::run_record(RequestIn& req) {
         if (include) nb.add_inline_bytes(inl);
         if (m.artifact_id) nb.add_artifact_id(art);
         if (!hash.IsNull()) nb.add_content_hash(hash);
+        if (!file_path.IsNull()) nb.add_file_path(file_path);
+        nb.add_file_missing(file_missing);
         v.push_back(nb.Finish());
       }
       return b.CreateVector(v);

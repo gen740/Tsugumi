@@ -396,6 +396,8 @@ private struct RunHistorySettings: View {
 
 private struct CacheSettings: View {
   let session: ProjectSession
+  @Environment(AppModel.self) private var model
+  @State private var clearTarget: ProjectSession?
   @State private var result: Tsugumi_RPC_ProjectCacheClearResultT?
   @State private var working = false
   @State private var message: String?
@@ -406,6 +408,43 @@ private struct CacheSettings: View {
       Text("このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。")
         .fixedSize(horizontal: false, vertical: true)
       Text("実行中・SDK 準備中は削除できません。").font(.callout).foregroundStyle(.secondary)
+      GroupBox("キャッシュ使用量") {
+        ScrollView {
+          VStack(alignment: .leading, spacing: 8) {
+            LabeledContent("合計（共有パスは一度だけ計上）", value: bytes(session.cacheUsage?.buildBytes))
+            if let available = session.cacheUsage?.storeAvailableBytes {
+              LabeledContent("store ディスクの空き", value: bytes(available))
+            }
+            if session.cacheUsage?.large == true {
+              Text("キャッシュの使用量が大きくなっています。必要なビルド結果を確認して、削除するものを選んでください。")
+            }
+            Text("NAR サイズによる概算です。共有する依存関係は各プロジェクトにも含まれるため、内訳の和と合計は異なります。最大 1 分ごとに再計測します。")
+              .font(.caption).foregroundStyle(.secondary)
+            if let measured = session.cacheUsage?.measuredAt {
+              LabeledContent("計測日時", value: Date(timeIntervalSince1970: Double(measured) / 1000).formatted())
+            }
+            if let error = session.cacheUsage?.error { Text(error).font(.caption).textSelection(.enabled) }
+            ForEach((session.cacheUsage?.projects ?? []).compactMap { $0 }, id: \.project) { project in
+              let target = project.project == session.cacheUsage?.currentProject ? session : model.sessions.values.first { $0.identity.id == project.project }
+              Divider()
+              HStack {
+                Text(project.name).font(.headline)
+                Spacer()
+                Button("削除", role: .destructive) { clearTarget = target; confirm = true }
+                  .disabled(target == nil || target?.connected != true || target?.runActive == true || working)
+              }
+              LabeledContent("ビルドキャッシュ", value: bytes(project.buildBytes))
+              LabeledContent("直近の実行の scratch", value: bytes(project.scratchBytes))
+              LabeledContent("root の最終使用", value: project.lastUsed.map { Date(timeIntervalSince1970: Double($0) / 1000).formatted() } ?? String(localized: "不明"))
+              if target == nil { Text("削除するにはこのプロジェクトを開いてください。").font(.caption).foregroundStyle(.secondary) }
+              if let error = project.error { Text(error).font(.caption).textSelection(.enabled) }
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+      }
+      Text("scratch は次の実行を始めると削除します。保持した記録・成果物・最後の入力は残ります。ビルドキャッシュは自動では削除しません。")
+        .font(.caption).foregroundStyle(.secondary)
       if let r = result {
         GroupBox("結果") {
           VStack(alignment: .leading, spacing: 4) {
@@ -421,22 +460,30 @@ private struct CacheSettings: View {
       HStack {
         Spacer()
         if working { ProgressView().controlSize(.small) }
-        Button("削除", role: .destructive) { confirm = true }
+        Button("削除", role: .destructive) { clearTarget = session; confirm = true }
           .disabled(working || session.runActive || !session.connected)
       }
     }
     .padding(16)
-    .confirmationDialog("ビルドキャッシュを削除しますか？", isPresented: $confirm) {
+    .confirmationDialog("「\((clearTarget ?? session).scopeName([]))」のビルドキャッシュを削除しますか？", isPresented: $confirm) {
       Button("削除", role: .destructive) { clear() }
       Button("キャンセル", role: .cancel) {}
     }
+  }
+
+  private func bytes(_ value: UInt64?) -> String {
+    value.map { ByteCountFormatter.string(fromByteCount: Int64(clamping: $0), countStyle: .file) }
+      ?? String(localized: "計測中または取得できません")
   }
 
   private func clear() {
     working = true
     message = nil
     Task {
-      do { result = try await session.clearBuildCache() } catch { message = String(localized: "削除できませんでした: \(String(describing: error))") }
+      do {
+        result = try await (clearTarget ?? session).clearBuildCache()
+        await session.refreshCacheUsage()
+      } catch { message = String(localized: "削除できませんでした: \(String(describing: error))") }
       working = false
     }
   }

@@ -11,6 +11,8 @@
 #include "execution_service.hh"
 #include "remote_execution_service.hh"
 #include "nix.hh"
+#include "cache_usage.hh"
+#include "run_scratch.hh"
 #include "scheduler.hh"
 #include "permissions.hh"
 #include "util/crypto.hh"
@@ -209,6 +211,26 @@ Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
   shell_lane_ = std::make_unique<Lane>(2, 8, std::chrono::milliseconds(opts_.limits.queue_wait_ms));
 }
 
+// Scratch may hold what a Card left read-only (a copy out of the Nix store, a
+// snapshot it protected): directories are made writable on the way down, or
+// their contents could not be removed. Best effort: a leftover is reported and
+// never fails the run that is starting.
+namespace {
+void remove_scratch_tree(const stdfs::path& path) {
+  std::error_code ec;
+  const auto status = stdfs::symlink_status(path, ec);
+  if (ec || !stdfs::exists(status)) return;
+  if (stdfs::is_directory(status)) {
+    stdfs::permissions(path, stdfs::perms::owner_all, stdfs::perm_options::add, ec);
+    std::vector<stdfs::path> children;
+    for (const auto& entry : stdfs::directory_iterator(path, ec)) children.push_back(entry.path());
+    for (const auto& child : children) remove_scratch_tree(child);
+  }
+  stdfs::remove(path, ec);
+  if (ec) log::warn("run scratch: cannot remove " + path.string() + ": " + ec.message());
+}
+}  // namespace
+
 Service::~Service() { shutdown(); }
 
 void Service::open() {
@@ -232,12 +254,71 @@ void Service::open() {
   nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
   substituters_ = configured_substituters(opts_.substituters_file);
   for (const char* d : {"runs", "inputs"}) stdfs::create_directories(store_->state_dir() / d);
+  run_scratch_ = private_disk_scratch(opts_.run_scratch_dir.empty() ? default_run_scratch(opts_.root)
+                                                                 : opts_.run_scratch_dir);
+  stdfs::create_directories(run_scratch_ / "runs");
+  clean_run_scratch();
+  remove_scratch_tree(run_scratch_ / "recovery");
+  stdfs::create_directories(run_scratch_ / "recovery");
   execution_service_ = std::make_unique<NativeExecutionService>(*this, scratch / "workers");
   remote_execution_ = std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();
+  const auto roots = opts_.gcroots_dir.empty() ? store_->state_dir() / "cache" / "gcroots" : opts_.gcroots_dir;
+  stdfs::create_directories(roots);
+  fs::write_atomic(roots / ".name", schema::get(store_->current()->project.name)
+                                        ? *schema::get(store_->current()->project.name) : opts_.root.filename().string(), 0644);
+  if (opts_.usage_file.empty()) {
+    if (opts_.usage_roots_dir.empty())
+      cache_usage_ = std::make_unique<CacheUsage>(stdfs::path{}, stdfs::path{}, roots, run_scratch_, project_id());
+    else
+      cache_usage_ = std::make_unique<CacheUsage>(opts_.usage_roots_dir, opts_.usage_scratch_dir);
+  }
   exporter_ = std::thread([this] { export_loop(); });
   schedule_export();  // runs that ended before (and interrupted ones)
+}
+
+auto Service::file_roots() const -> std::vector<stdfs::path> {
+  return {store_->state_dir() / "runs", store_->state_dir() / "inputs", run_scratch_ / "runs", run_scratch_ / "recovery"};
+}
+
+auto Service::keep_file_value(const Value& value, const stdfs::path& directory,
+                              const std::atomic<bool>& stop) -> Value {
+  if (value.kind == PortKind::FlatBuffer) return value;
+  const auto source = path_value(value);
+  if (!source) throw Failed(FailureKind::output_invalid, "file value has no path");
+  for (const auto& root : file_roots()) {
+    const auto rel = stdfs::path(*source).lexically_normal().lexically_relative(root);
+    if (!fs::valid_relative_path(rel.generic_string())) continue;
+    const auto check = [&] {
+      if (stop.load()) throw Failed(FailureKind::cancelled, "keeping file value was cancelled");
+    };
+    const auto destination = directory / rel.filename();
+    const auto copy = [&](const stdfs::path& from, const stdfs::path& to) {
+      check();
+      fs::copy_beneath(root, from, to, [&](std::string_view) { check(); });
+    };
+    if (value.kind == PortKind::File) copy(rel, destination);
+    else {
+      const auto listing = fs::list_beneath(root, rel);
+      if (!listing.links.empty() || !listing.special.empty())
+        throw Failed(FailureKind::output_invalid, "kept directory contains a link or special file");
+      stdfs::create_directories(destination);
+      for (const auto& child : listing.directories) { check(); stdfs::create_directories(destination / child); }
+      for (const auto& child : listing.files) copy(rel / child, destination / child);
+    }
+    check();
+    return with_path(value, destination.string());
+  }
+  throw Failed(FailureKind::output_invalid, "file value is outside the run's folders: " + *source);
+}
+
+auto Service::clean_run_scratch(const std::optional<std::string>& keep) -> void {
+  for (const auto& entry : stdfs::directory_iterator(run_scratch_ / "runs")) {
+    const auto id = entry.path().filename().string();
+    const bool exists = crypto::is_uuid(id) && history_->read([&](sql::Db& db) { return History::run(db, id).has_value(); });
+    if (keep ? id != *keep : !exists) remove_scratch_tree(entry.path());
+  }
 }
 
 auto Service::execution_service(const std::string& id) -> ExecutionService& {
@@ -299,6 +380,11 @@ void Service::shutdown() {
   }
   if (mutation_lane_) mutation_lane_->stop();
   if (read_pool_) read_pool_->stop();
+  cache_usage_.reset();
+}
+
+auto Service::refresh_cache_usage() -> void {
+  if (cache_usage_) cache_usage_->refresh();
 }
 
 void Service::schedule_export() {
@@ -344,7 +430,7 @@ void Service::export_now() {
 std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {
       "SessionHello", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
-      "ProjectReload", "ProjectValidate", "ProjectImport", "ProjectCacheClear", "RunHistoryDelete", "OperationGet",
+      "ProjectReload", "ProjectValidate", "ProjectImport", "ProjectCacheClear", "ProjectCacheUsage", "RunHistoryDelete", "OperationGet",
       "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "LayoutArrange", "LayoutUntangle", "AttachedFolderRead",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
@@ -444,6 +530,7 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectReloadRequest: return on_lane(m, std::move(req), &Service::reload);
     case P::ProjectImportRequest: return on_lane(m, std::move(req), &Service::import_definitions);
     case P::ProjectCacheClearRequest: return on_lane(m, std::move(req), &Service::cache_clear);
+    case P::ProjectCacheUsageRequest: return on_lane(r, std::move(req), &Service::cache_usage);
     case P::RunHistoryDeleteRequest: return on_lane(m, std::move(req), &Service::history_delete);
     case P::RunRequest: return on_lane(m, std::move(req), &Service::run);
     case P::CardSDKPrepareRequest: return on_lane(m, std::move(req), &Service::sdk_prepare);
@@ -1397,6 +1484,10 @@ void Service::cache_clear(RequestIn& req) {
       throw Failed(FailureKind::busy, "cache cannot be cleared while external job results are pending");
     execution_service_->clear();  // resident workers hold the builds being removed
     auto result = nix_->clear_cache();
+    const auto roots = opts_.gcroots_dir.empty() ? store_->state_dir() / "cache" / "gcroots" : opts_.gcroots_dir;
+    fs::write_atomic(roots / ".name", schema::get(store_->current()->project.name)
+                                          ? *schema::get(store_->current()->project.name) : opts_.root.filename().string(), 0644);
+    if (cache_usage_) cache_usage_->refresh();
     FBB b;
     std::vector<flatbuffers::Offset<flatbuffers::String>> del;
     std::vector<flatbuffers::Offset<flatbuffers::String>> ret;
@@ -1418,6 +1509,22 @@ void Service::cache_clear(RequestIn& req) {
   }
 }
 
+void Service::cache_usage(RequestIn& req) {
+  R::ProjectCacheUsageResultT result;
+  if (cache_usage_) result = cache_usage_->snapshot();
+  else if (auto bytes = fs::read_file(opts_.usage_file)) {
+    flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes->data()), bytes->size());
+    if (!verifier.VerifyBuffer<R::ProjectCacheUsageResult>(nullptr))
+      throw Failed(FailureKind::integrity_error, "invalid cache usage snapshot");
+    flatbuffers::GetRoot<R::ProjectCacheUsageResult>(bytes->data())->UnPackTo(&result);
+  } else result.error = "Measuring cache usage";
+  result.current_project = opts_.gcroots_dir.empty() || (opts_.usage_roots_dir.empty() && opts_.usage_file.empty())
+                               ? project_id() : opts_.gcroots_dir.filename().string();
+  FBB builder;
+  auto value = R::ProjectCacheUsageResult::Pack(builder, &result);
+  reply(req, wire::reply(builder, req.request_id, R::ReplyPayload::ProjectCacheUsageResult, value.Union()));
+}
+
 void Service::history_delete(RequestIn& req) {
   const auto* r = req.request()->value_as_RunHistoryDeleteRequest();
   std::string op_id = r->op_id()->str();
@@ -1435,9 +1542,14 @@ void Service::history_delete(RequestIn& req) {
       return n;
     };
     uint64_t before = sizes();
+    const auto scratch_before = fs::directory_size(run_scratch_ / "runs");
     uint64_t files = 0;
     auto ids = history_->delete_runs(runs_copy(), r->ended_before());
-    // The runs' own files: outputs, copied work folders.
+    clean_run_scratch();
+    const auto scratch_after = fs::directory_size(run_scratch_ / "runs");
+    files += scratch_before > scratch_after ? scratch_before - scratch_after : 0;
+    refresh_cache_usage();
+    // The runs' kept files: recorded values and declared artifacts.
     for (const auto& id : ids) {
       if (!crypto::is_uuid(id)) continue;  // a run id from a copy names no folder of ours
       auto dir = store_->state_dir() / "runs" / id;

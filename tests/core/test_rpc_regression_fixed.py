@@ -68,7 +68,7 @@ def test_saved_file_inputs_survive_cache_clear_and_restart(tmp_path, core_factor
     c = d.connect()
     _, st = run_and_wait(c, "src", timeout=10)
     assert st.state == RunState.succeeded
-    # The produced file lives in the run's work area, which CacheClear removes.
+    # The next partial run removes earlier scratch; saved inputs have their own copy.
     c.call("ProjectCacheClearRequest", opId=new_id())
     _, st2 = run_and_wait(c, "split", propagate=False, timeout=10)
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)

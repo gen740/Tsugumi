@@ -143,6 +143,7 @@
 "Manage usage（chatgpt.com/settings/usage）" = "Manage usage (chatgpt.com/settings/usage)";
 "Markdown（見出し・太字・リスト・表・コード）と数式（$…$、$$…$$）を使えます。付箋は実行には参加しません。" = "Markdown (headings, bold, lists, tables, code) and math ($…$, $$…$$) can be used. Notes take no part in runs.";
 "Matplotlib（PNG / SVG / PDF）" = "Matplotlib (PNG / SVG / PDF)";
+"NAR サイズによる概算です。共有する依存関係は各プロジェクトにも含まれるため、内訳の和と合計は異なります。最大 1 分ごとに再計測します。" = "Estimated from NAR sizes. Shared dependencies count in each project, so project sizes do not add up to the total. Measurements refresh once per minute.";
 "Nix store の保存領域を作っています" = "Making the Nix store's space";
 "Nix store の保存領域を開いています（初回は初期化）" = "Opening the Nix store's space (formatted the first time)";
 "Nix を準備しています" = "Preparing Nix";
@@ -223,12 +224,15 @@
 "macOS が隔離した場所から起動しているため更新できません。Tsugumi.app を「アプリケーション」フォルダへ移してから開き直してください。" = "Tsugumi was opened from a location macOS isolates (App Translocation) and cannot update itself. Move Tsugumi.app to the Applications folder and open it again.";
 "macOS/Container/build-image.sh で作り直すか、アプリを入れ直してください。" = "Rebuild it with macOS/Container/build-image.sh, or reinstall the app.";
 "marimo ノートブック" = "marimo notebook";
+"root の最終使用" = "Roots last used";
 "root_type がありません" = "There is no root_type";
 "root_type の table %@ が見つかりません" = "The root_type table %@ is not found";
+"scratch は次の実行を始めると削除します。保持した記録・成果物・最後の入力は残ります。ビルドキャッシュは自動では削除しません。" = "Scratch is removed when the next run starts. Kept records, artifacts and last inputs remain. Build caches are never deleted automatically.";
 "stderr への出力はありません" = "Nothing on stderr";
 "stderr への出力はありません（Nix 評価・build のログもここに出ます）。" = "Nothing on stderr (Nix evaluation and build logs appear here too).";
 "stdout への出力はありません" = "Nothing on stdout";
 "stdout への出力はありません。" = "Nothing on stdout.";
+"store ディスクの空き" = "Store disk available";
 "stream 別（元の出力）" = "By stream (as written)";
 "table %@ が閉じていません" = "Table %@ is not closed";
 "tsugumi.json などの書式が正しいかを確かめて、もう一度試してください。" = "Check that tsugumi.json and the other documents are well formed, then try again.";
@@ -245,6 +249,7 @@
 "「%@」と重複しています" = "Conflicts with “%@”";
 "「%@」のおすすめは？" = "Which demo of “%@” do you recommend?";
 "「%@」のデモです。どれを見ますか？" = "Demos in “%@”. Which one would you like to see?";
+"「%@」のビルドキャッシュを削除しますか？" = "Delete the build cache for “%@”?";
 "「%@」はすでに使われています。" = "“%@” is already used.";
 "「%@」を読み取り専用で実行環境に共有し、Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（%@）に送られます。共有のため実行環境を再起動します（実行中の Run は止まります）。" = "“%@” is shared read-only with the environment so that the Agent can read it. What the Agent reads is sent to the model provider (%@). Sharing restarts the environment (a running Run stops).";
 "「tsugumi:default」はアプリが固定した Nixpkgs です。変更すると Card の再ビルドが必要になります。" = "“tsugumi:default” is the Nixpkgs pinned by the app. Changing it requires rebuilding Cards.";
@@ -402,8 +407,10 @@
 "ガイドは上の接続先とキーを使います。キーを登録すると現れ、削除すると消えます。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection and key above. It appears when a key is set and goes away when the key is deleted. Answering questions never changes your project.";
 "ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection in use. With a working connection (a key, the ChatGPT sign-in) it answers questions; without one it only gives a fixed demo tour (nothing is sent). Answering questions never changes your project.";
 "キャッシュ URL" = "Cache URL";
+"キャッシュの使用量が大きくなっています。必要なビルド結果を確認して、削除するものを選んでください。" = "The cache is using substantial space. Review the build results and choose which ones to delete.";
 "キャッシュを利用" = "Cache used";
 "キャッシュを利用（処理なし）" = "Cache used (no work)";
+"キャッシュ使用量" = "Cache usage";
 "キャッシュ接続を削除" = "Remove Cache Connection";
 "キャッシュ接続を追加" = "Add Cache Connection";
 "キャンセル" = "Cancel";
@@ -547,6 +554,7 @@
 "パラメータの記録がありません" = "Parameters were not recorded";
 "ビルドの期限（秒）" = "Build timeout (s)";
 "ビルドキャッシュ" = "Build Cache";
+"ビルドキャッシュが %@ を使用しています。設定の「ビルドキャッシュ」でプロジェクト別の容量を確認できます。" = "Build caches use %@. Review per-project usage in Settings → Build Cache.";
 "ビルドキャッシュを削除しますか？" = "Delete the build cache?";
 "ファイル" = "File";
 "ファイルを作成" = "Create File";
@@ -707,6 +715,8 @@
 "保存済みトークンを使用" = "Use saved token";
 "保持" = "Kept";
 "保持された成果物はありません" = "No artifacts are kept";
+"保持したファイル: %@" = "Kept file: %@";
+"保持したファイルの内容がありません（scratch は保持履歴ではありません）。" = "The kept file content is missing (scratch is separate from retained history).";
 "保持する出力" = "Output to retain";
 "値" = "Value";
 "停止" = "Stop";
@@ -791,6 +801,7 @@
 "別ウインドウで開く" = "Open in New Window";
 "削除" = "Delete";
 "削除…" = "Delete…";
+"削除するにはこのプロジェクトを開いてください。" = "Open this project to delete its build cache.";
 "削除できませんでした: " = "Could not delete: ";
 "削除できませんでした: %@" = "Could not delete: %@";
 "前へ" = "Previous";
@@ -822,6 +833,7 @@
 "右下のツグミが、使い方の質問に答えたりデモを案内したりします。" = "Tsugumi at the bottom right answers your questions and gives demo tours.";
 "各 Card の最後の呼び出しを比較します。記録や現在の Workflow は変更しません。" = "Compare the last invocation of each Card. Records and the current Workflow stay unchanged.";
 "合流" = "Merge";
+"合計（共有パスは一度だけ計上）" = "Total (shared paths counted once)";
 "同じ名前があります" = "That name is taken";
 "同じ版です" = "Same version";
 "同期できません" = "Cannot sync";
@@ -1186,6 +1198,7 @@
 "直接実行" = "Direct execution";
 "直近の入力トークン数（上限に近づくと自動で圧縮）" = "Recent input tokens (compacted automatically near the limit)";
 "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";
+"直近の実行の scratch" = "Latest run scratch";
 "相違あり" = "Changed";
 "省略可" = "Optional";
 "破棄した変更は取り消せません。" = "Discarded changes cannot be undone.";
@@ -1243,6 +1256,8 @@
 "解決済み（%lld）" = "Resolved (%lld)";
 "言語" = "Language";
 "言語の変更はアプリの再起動後に反映されます。プロジェクトの git に書く実行の記録もこの言語になります。" = "The language changes after restarting the app. What it writes into a project's git (the run's record) is in this language too.";
+"計測中または取得できません" = "Measuring or unavailable";
+"計測日時" = "Measured at";
 "記録がありません" = "No record";
 "記録された出来事はありません" = "No events were recorded";
 "記録された段階の出来事はありません。" = "No stage events were recorded.";

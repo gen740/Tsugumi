@@ -39,6 +39,10 @@ struct Options {
   uint32_t cpus = 2;
   stdfs::path gcroots_dir;
   stdfs::path history_dir;
+  stdfs::path run_scratch_dir;
+  stdfs::path usage_roots_dir;
+  stdfs::path usage_scratch_dir;
+  stdfs::path usage_file;
   bool archive_incompatible_history = false;
   stdfs::path host_folders;
   stdfs::path chat_folders;
@@ -53,6 +57,8 @@ void usage() {
                "                [--allow-origin ORIGIN]... [--allow-missing-origin] [--sdk-dir DIR]\n"
                "                [--worker PATH] [--cpus N] [--gcroots-dir DIR] [--history-dir DIR]\n"
                "                [--archive-incompatible-history]\n"
+               "                [--run-scratch-dir DIR] [--usage-roots-dir DIR] [--usage-scratch-dir DIR]\n"
+               "                [--usage-file FILE]\n"
                "                [--host-folders DIR] [--chat-folders DIR] [--substituters-file FILE]\n");
 }
 
@@ -81,6 +87,10 @@ std::optional<Options> parse(int argc, char** argv) {
     else if (a == "--cpus") o.cpus = static_cast<uint32_t>(std::stoul(next()));
     else if (a == "--gcroots-dir") o.gcroots_dir = next();
     else if (a == "--history-dir") o.history_dir = next();
+    else if (a == "--run-scratch-dir") o.run_scratch_dir = next();
+    else if (a == "--usage-roots-dir") o.usage_roots_dir = next();
+    else if (a == "--usage-scratch-dir") o.usage_scratch_dir = next();
+    else if (a == "--usage-file") o.usage_file = next();
     else if (a == "--archive-incompatible-history") o.archive_incompatible_history = true;
     else if (a == "--host-folders") o.host_folders = next();
     else if (a == "--chat-folders") o.chat_folders = next();
@@ -171,6 +181,10 @@ int run_daemon(int argc, char** argv) {
   so.env_cpus = opt.cpus;
   so.gcroots_dir = opt.gcroots_dir;
   so.history_dir = opt.history_dir;
+  so.run_scratch_dir = opt.run_scratch_dir;
+  so.usage_roots_dir = opt.usage_roots_dir;
+  so.usage_scratch_dir = opt.usage_scratch_dir;
+  so.usage_file = opt.usage_file;
   so.archive_incompatible_history = opt.archive_incompatible_history;
   so.host_folders = opt.host_folders;
   so.chat_folders = opt.chat_folders;
