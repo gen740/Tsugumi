@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Observation
 import TsugumiLauncher
+import TsugumiAgentClient
 
 struct DemoEntry: Identifiable, Hashable {
   let id: String
@@ -13,7 +14,7 @@ struct DemoEntry: Identifiable, Hashable {
   var field: String?
 }
 
-struct RecentProject: Codable, Identifiable, Hashable {
+struct RecentProject: Decodable, Identifiable, Hashable {
   var id: String { path }
   let path: String
   let name: String
@@ -36,7 +37,7 @@ final class AppModel {
   var mainWindows: [Workspace] = []
   /// What the next new main windows do first.
   @ObservationIgnored var pendingWindowIntents: [MainWindowIntent] = []
-  let demosRoot: URL?
+  private(set) var nixpkgsPin: String?
   private(set) var setup: EnvironmentManager.SetupStatus?
   private(set) var checkingSetup = false
   @ObservationIgnored private var chats: [String: ChatController] = [:]
@@ -94,58 +95,57 @@ final class AppModel {
     // that must not touch the user's own environment.
     let support = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"].map { URL(fileURLWithPath: $0) }
     environments = EnvironmentManager(support: support, image: VMImage.find(bundle: bundle))
-    // The demos in the app's language (demos/ja, demos/en: each a set of its own).
-    demosRoot = (bundle.url(forResource: "demos", withExtension: nil) ?? AppModel.sourceTreeDemos())?
-      .appendingPathComponent(AppPreferences.Language.running.rawValue, isDirectory: true)
-    loadDemos()
-    loadRecents()
+    Task { await refreshHome() }
   }
 
-  /// When run from the source tree (swift run), demos come from the repository.
-  private static func sourceTreeDemos() -> URL? {
-    #if DEBUG
-    var dir = URL(fileURLWithPath: #filePath)
-    for _ in 0..<5 { dir.deleteLastPathComponent() }
-    let candidate = dir.appendingPathComponent("demos")
-    return FileManager.default.fileExists(atPath: candidate.appendingPathComponent("ja/index.json").path) ? candidate : nil
-    #else
-    return nil  // a release build has its demos in the bundle only
-    #endif
+  private func hostRequest(_ method: String, _ fields: [String: Any] = [:]) async throws -> [String: Any] {
+    do { return try await CoreAgentClient.shared.call(method, fields) }
+    catch let failure as CoreAgentFailure { throw HostProjectError(code: failure.code) }
   }
 
-  private func loadDemos() {
-    guard let root = demosRoot, let data = try? Data(contentsOf: root.appendingPathComponent("index.json")),
-          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let list = obj["demos"] as? [[String: Any]] else { return }
-    demos = list.compactMap { d in
-      guard let id = d["id"] as? String, let title = d["title"] as? String, let p = d["path"] as? String else { return nil }
-      return DemoEntry(id: id, title: title, description: d["description"] as? String ?? "", url: root.appendingPathComponent(p),
-                       tags: d["tags"] as? [String] ?? [], field: (d["field"] as? String).flatMap { $0.isEmpty ? nil : $0 })
-    }
+  /// Refreshes presentation values from the host-side core; no local registry.
+  func refreshHome() async {
+    do {
+      let defaults = try await hostRequest("HostProjectDefaultsRequest")
+      nixpkgsPin = defaults["nixpkgsPin"] as? String
+      let catalog = try await hostRequest("HostDemoListRequest", ["language": AppPreferences.Language.running.rawValue])
+      demos = (catalog["value"] as? [[String: Any]] ?? []).compactMap { d in
+        guard let id = d["id"] as? String, let title = d["title"] as? String, let path = d["path"] as? String else { return nil }
+        return DemoEntry(id: id, title: title, description: d["description"] as? String ?? "", url: URL(fileURLWithPath: path),
+                         tags: d["tags"] as? [String] ?? [], field: d["field"] as? String)
+      }
+      try await loadRecents()
+    } catch { self.error = "\(error)" }
   }
 
-  private var recentsURL: URL {
-    environments.support.appendingPathComponent("recent-projects.json")
+  static func decodeRecents(_ value: Any) throws -> [RecentProject] {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .millisecondsSince1970
+    return try decoder.decode([RecentProject].self, from: JSONSerialization.data(withJSONObject: value))
   }
 
-  private func loadRecents() {
-    guard let data = try? Data(contentsOf: recentsURL),
-          let list = try? JSONDecoder().decode([RecentProject].self, from: data) else { return }
-    recents = list.filter { FileManager.default.fileExists(atPath: $0.path) }
+  private func loadRecents() async throws {
+    let result = try await hostRequest("HostRecentListRequest")
+    recents = try Self.decodeRecents(result["value"] ?? [])
   }
 
   /// Takes projects off the recent list (their folders stay).
   func forgetRecents(_ paths: Set<String>) {
-    recents.removeAll { paths.contains($0.path) }
-    try? JSONEncoder().encode(recents).write(to: recentsURL, options: .atomic)
+    Task {
+      do {
+        _ = try await hostRequest("HostRecentForgetRequest", ["paths": Array(paths)])
+        try await loadRecents()
+      } catch { self.error = "\(error)" }
+    }
   }
 
-  private func remember(_ url: URL, name: String) {
-    recents.removeAll { $0.path == url.path }
-    recents.insert(RecentProject(path: url.path, name: name, openedAt: Date()), at: 0)
-    recents = Array(recents.prefix(30))
-    try? FileManager.default.createDirectory(at: recentsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try? JSONEncoder().encode(recents).write(to: recentsURL, options: .atomic)
+  private func remember(_ url: URL) {
+    Task {
+      do {
+        _ = try await hostRequest("HostRecentRememberRequest", ["path": url.path])
+        try await loadRecents()
+      } catch { self.error = "\(error)" }
+    }
   }
 
   /// Main windows showing each project: when the last one leaves it, the
@@ -174,8 +174,7 @@ final class AppModel {
     let s = ProjectSession(identity: identity, environments: environments)
     s.makeRepositoryOnConnect = fresh.remove(identity.url.resolvingSymlinksInPath().path) != nil
     sessions[identity.id] = s
-    let name = (try? JSONSerialization.jsonObject(with: Data(contentsOf: identity.url.appendingPathComponent("tsugumi.json"))) as? [String: Any])?["name"] as? String
-    remember(identity.url, name: name ?? identity.url.lastPathComponent)
+    remember(identity.url)
     s.start()
     return s
   }
@@ -184,59 +183,48 @@ final class AppModel {
   /// first connect (a demo's history file becomes its versions).
   private var fresh: Set<String> = []
 
-  /// Copies a bundled demo into a new, editable project (the original stays untouched).
-  func copyDemo(_ demo: DemoEntry) throws -> URL {
-    // TSUGUMI_PROJECTS_DIR: where copies go instead of ~/Documents/Tsugumi (checks).
+  /// The destination preference is UI state; the core chooses and copies the folder.
+  func copyDemo(_ demo: DemoEntry) async throws -> URL {
     let docs = ProcessInfo.processInfo.environment["TSUGUMI_PROJECTS_DIR"].map { URL(fileURLWithPath: $0) }
       ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Tsugumi")
-    try FileManager.default.createDirectory(at: docs, withIntermediateDirectories: true)
-    var dest = docs.appendingPathComponent(demo.id)
-    var n = 2
-    while FileManager.default.fileExists(atPath: dest.path) {
-      dest = docs.appendingPathComponent("\(demo.id)-\(n)")
-      n += 1
-    }
-    try FileManager.default.copyItem(at: demo.url, to: dest)
-    fresh.insert(dest.resolvingSymlinksInPath().path)
-    return dest
+    let result = try await hostRequest("HostDemoCopyRequest", ["id": demo.id, "parent": docs.path,
+                                                               "language": AppPreferences.Language.running.rawValue])
+    return try createdProject(result)
   }
 
-  /// Creates an empty project; the initial documents are placed before the environment starts.
-  func createProject(at url: URL, name: String) throws {
-    try Self.writeNewProject(at: url, name: name, flow: AppPreferences.shared.flowDirection.rawValue)
-    fresh.insert(url.resolvingSymlinksInPath().path)
+  func createProject(at url: URL) async throws {
+    let result = try await hostRequest("HostProjectCreateRequest", ["parent": url.deletingLastPathComponent().path,
+      "name": url.lastPathComponent, "flow": AppPreferences.shared.flowDirection.rawValue])
+    _ = try createdProject(result)
   }
 
-  /// A new project's documents in `url`: never over an existing project or
-  /// other files (the save panel allows choosing a folder that exists).
-  static func writeNewProject(at url: URL, name: String, flow: String) throws {
-    let existing = (try? FileManager.default.contentsOfDirectory(atPath: url.path))?.filter { $0 != ".DS_Store" } ?? []
-    if !existing.isEmpty { throw FolderNotEmpty(path: url.path) }
-    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    let project: JSONValueLiteral = """
-    {
-      "name": \(JSONValueLiteral.quote(name)),
-      "pkgsPath": \(JSONValueLiteral.quote(NixpkgsPin.current ?? "tsugumi:default")),
-      "canvas": { "cards": [], "connections": [] }
-    }
+  func duplicateProject(from source: URL, to destination: URL) async throws -> URL {
+    let result = try await hostRequest("HostProjectDuplicateRequest", ["path": source.path,
+      "parent": destination.deletingLastPathComponent().path, "name": destination.lastPathComponent])
+    return try createdProject(result)
+  }
 
-    """
-    try Data(project.utf8).write(to: url.appendingPathComponent("tsugumi.json"))
-    // The direction the new project's Cards are laid out in (the app's default).
-    try Data("{\"flow\": \"\(flow)\"}\n".utf8).write(to: url.appendingPathComponent("layout.json"))
+  private func createdProject(_ result: [String: Any]) throws -> URL {
+    guard let path = result["path"] as? String else { throw HostProjectError(code: "protocol") }
+    fresh.insert(path)
+    return URL(fileURLWithPath: path)
   }
 }
 
-typealias JSONValueLiteral = String
-extension String {
-  static func quote(_ s: String) -> String {
-    let data = try! JSONSerialization.data(withJSONObject: [s], options: [.fragmentsAllowed])
-    return String(String(decoding: data, as: UTF8.self).dropFirst().dropLast())
+/// Presentation only: the core chooses the failure code.
+struct HostProjectError: Error, CustomStringConvertible {
+  let code: String
+  var description: String {
+    switch code {
+    case "invalid_project_name": return String(localized: "フォルダ名に使えない文字が含まれているか、名前が空です。")
+    case "project_defaults_unavailable": return String(localized: "このビルドには既定の Nixpkgs が設定されていません。")
+    case "invalid_flow": return String(localized: "フローの方向が正しくありません。")
+    case "folder_not_empty": return String(localized: "作成先は空ではありません。空のフォルダか新しい名前を選んでください。")
+    case "invalid_project": return String(localized: "有効なプロジェクトのフォルダを指定してください。複製先は元のフォルダの外にしてください。")
+    case "demo_not_found": return String(localized: "デモが見つかりません。")
+    case "invalid_language": return String(localized: "デモの言語が正しくありません。")
+    case "permission_denied": return String(localized: "この操作にはユーザーの権限が必要です。")
+    default: return String(localized: "プロジェクトの操作に失敗しました。")
+    }
   }
-}
-
-/// A new project goes into an empty folder only.
-struct FolderNotEmpty: Error, CustomStringConvertible {
-  let path: String
-  var description: String { String(localized: "\(path) は空ではありません。空のフォルダか新しい名前を選んでください。") }
 }

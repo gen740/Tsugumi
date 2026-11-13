@@ -483,12 +483,12 @@ function NewProjectSheet({ onClose, onCreated }: { onClose: () => void; onCreate
   const [choosing, setChoosing] = useState(false)
   return (
     <Sheet onClose={onClose} width={380}>
-      <form className="sheet-body" onSubmit={(e) => { e.preventDefault(); if (name) setChoosing(true) }}>
+      <form className="sheet-body" onSubmit={(e) => { e.preventDefault(); setChoosing(true) }}>
         <div className="title2">{L('新規プロジェクト')}</div>
         <TextField value={name} onChange={setName} placeholder={L('名前')} autoFocus />
         <div className="row end gap8">
           <Button onClick={onClose}>{L('キャンセル')}</Button>
-          <Button kind="prominent" type="submit" disabled={!name}>{L('作成場所を選ぶ…')}</Button>
+          <Button kind="prominent" type="submit">{L('作成場所を選ぶ…')}</Button>
         </div>
       </form>
       {choosing && <FolderPicker message={L('プロジェクトのフォルダを作成する場所を選んでください')} allowCreate initial={app.status?.home} onClose={() => setChoosing(false)}

@@ -20,6 +20,7 @@
 #include "agent/json.hh"
 #include "agent/runtime.hh"
 #include "agent/tool_images.hh"
+#include "host/projects.hh"
 #include "lanes.hh"
 #include "tsugumi/client/client.hh"
 #include "tsugumi/protocol/agent_generated.h"
@@ -187,6 +188,7 @@ struct Host::State {
   explicit State(HostOptions o)
       : options(std::move(o)),
         db((options.state_dir / "agent.sqlite").string()),
+        host_projects(options.state_dir, options.demos_dir),
         requests(4, 128, std::chrono::seconds(30)),
         tool_requests(4, 128, std::chrono::seconds(30)) {
     ::chmod((options.state_dir / "agent.sqlite").c_str(), 0600);
@@ -241,6 +243,7 @@ struct Host::State {
 
   HostOptions options;
   sql::Db db;
+  host::Projects host_projects;
   Catalog catalog;
   Server *server = nullptr;
   std::recursive_mutex mutex;
@@ -1393,6 +1396,10 @@ struct Host::State {
     std::unique_lock lock(mutex);
     if (stopping)
       throw Failure("unavailable", "Agent service is stopping");
+    if (host::Projects::Handles(r->value_type())) {
+      Human(human);
+      return host_projects.Handle(*r);
+    }
     switch (r->value_type()) {
     case A::RequestPayload::ConfigureRequest: {
       Human(human);
@@ -2008,6 +2015,8 @@ auto Host::dispatch(RequestIn request) -> void {
       bytes = Result(request.request_id, state_->Handle(request, human));
     } catch (const Cancelled &) {
       bytes = Failed(request.request_id, "cancelled", "The operation was cancelled");
+    } catch (const host::ProjectFailure &e) {
+      bytes = Failed(request.request_id, e.code, e.what());
     } catch (const Failure &e) {
       bytes = Failed(request.request_id, e.code, e.what(), e.request_id);
     } catch (const std::exception &e) {

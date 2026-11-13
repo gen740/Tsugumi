@@ -6,6 +6,175 @@
 namespace tsugumi::test {
 namespace {
 
+// Host lifecycle scenarios need no project daemon and no conversation.
+class HostProjectsFixture : public AgentProjectFixture {
+ protected:
+  auto Create(const std::string& name, const std::string& flow = "topToBottom",
+              bool user = true) -> Reply {
+    return Call(user ? *human : *external,
+                A::RequestPayload::HostProjectCreateRequest, [&](Builder& b) {
+                  return A::CreateHostProjectCreateRequest(
+                             b, b.CreateString(directory.path.string()),
+                             b.CreateString(name), b.CreateString(flow))
+                      .Union();
+                });
+  }
+  auto Remember(const std::filesystem::path& path) -> Reply {
+    return Call(*human, A::RequestPayload::HostRecentRememberRequest,
+                [&](Builder& b) {
+                  return A::CreateHostRecentRememberRequest(
+                             b, b.CreateString(path.string()))
+                      .Union();
+                });
+  }
+  auto Recents() -> Reply {
+    return Call(
+        *human, A::RequestPayload::HostRecentListRequest,
+        [](Builder& b) { return A::CreateHostRecentListRequest(b).Union(); });
+  }
+};
+
+TEST_F(HostProjectsFixture, CreatesPinnedDocumentsInNewAndExactlyEmptyFolders) {
+  const auto defaults = Call(
+      *human, A::RequestPayload::HostProjectDefaultsRequest, [](Builder& b) {
+        return A::CreateHostProjectDefaultsRequest(b).Union();
+      });
+  ASSERT_TRUE(Create("new", "leftToRight").Code().empty());
+  const auto folder = directory.path / "new";
+  EXPECT_EQ(JsonString(Read(folder / "tsugumi.json"), "/pkgsPath"),
+            JsonString(defaults.Json(), "/nixpkgsPin"));
+  EXPECT_EQ(JsonString(Read(folder / "layout.json"), "/flow"), "leftToRight");
+  std::filesystem::create_directory(directory.path / "empty");
+  EXPECT_TRUE(Create("empty").Code().empty());
+  EXPECT_EQ(Create("new").Code(), "folder_not_empty");
+  Write(directory.path / "occupied/sentinel", "keep");
+  EXPECT_EQ(Create("occupied").Code(), "folder_not_empty");
+  EXPECT_EQ(Read(directory.path / "occupied/sentinel"), "keep");
+  Write(directory.path / "finder/.DS_Store", "not empty");
+  EXPECT_EQ(Create("finder").Code(), "folder_not_empty");
+  EXPECT_EQ(Create("bad-flow", "sideways").Code(), "invalid_flow");
+  EXPECT_FALSE(std::filesystem::exists(directory.path / "bad-flow"));
+  for (const auto* name :
+       {"", ".", "..", "a/b", "a\\b", "trailing ", "bad:name"})
+    EXPECT_EQ(Create(name).Code(), "invalid_project_name") << name;
+  EXPECT_EQ(Create("external", "topToBottom", false).Code(),
+            "permission_denied");
+  const auto info =
+      Call(*human, A::RequestPayload::HostProjectInfoRequest, [&](Builder& b) {
+        return A::CreateHostProjectInfoRequest(b,
+                                               b.CreateString(folder.string()))
+            .Union();
+      });
+  EXPECT_EQ(JsonString(info.Json(), "/name"), "new");
+}
+
+TEST_F(HostProjectsFixture,
+       CopiesDemosAndProjectsWithoutStateAndWithWritableFiles) {
+  const auto source = directory.path / "demos/ja/sample";
+  Write(source / "tsugumi.json", R"({"name":"Sample"})");
+  Write(source / "definitions/card/src/main.py", "print('sample')");
+  Write(source / ".tsugumi/history", "private run");
+  Write(source / "nested/.tsugumi/state", "private nested state");
+  Write(source / ".git/config", "old repository");
+  Write(
+      directory.path / "demos/ja/index.json",
+      R"({"demos":[{"id":"sample","title":"Sample","path":"sample","field":""}]})");
+  const auto list =
+      Call(*human, A::RequestPayload::HostDemoListRequest, [](Builder& b) {
+        return A::CreateHostDemoListRequest(b, b.CreateString("ja")).Union();
+      });
+  EXPECT_EQ(JsonString(list.Json(), "/0/id"), "sample");
+  EXPECT_EQ(JsonString(list.Json(), "/0/description"), "");
+  EXPECT_NE(list.Json().find("\"tags\":[]"), std::string::npos);
+  for (const auto& entry :
+       std::filesystem::recursive_directory_iterator(source))
+    std::filesystem::permissions(entry.path(),
+                                 entry.is_directory()
+                                     ? std::filesystem::perms::owner_read |
+                                           std::filesystem::perms::owner_exec
+                                     : std::filesystem::perms::owner_read);
+  std::filesystem::permissions(source, std::filesystem::perms::owner_read |
+                                           std::filesystem::perms::owner_exec);
+  const auto copy = [&](const std::string& id) {
+    return Call(*human, A::RequestPayload::HostDemoCopyRequest,
+                [&](Builder& b) {
+                  return A::CreateHostDemoCopyRequest(
+                             b, b.CreateString(id),
+                             b.CreateString(directory.path.string()),
+                             b.CreateString("ja"))
+                      .Union();
+                });
+  };
+  const auto first = copy("sample");
+  const auto second = copy("sample");
+  EXPECT_EQ(JsonString(first.Json(), "/path"),
+            (std::filesystem::canonical(directory.path) / "sample").string());
+  EXPECT_EQ(JsonString(second.Json(), "/path"),
+            (std::filesystem::canonical(directory.path) / "sample-2").string());
+  EXPECT_EQ(copy("missing").Code(), "demo_not_found");
+  const auto duplicate = Call(
+      *human, A::RequestPayload::HostProjectDuplicateRequest, [&](Builder& b) {
+        return A::CreateHostProjectDuplicateRequest(
+                   b, b.CreateString(source.string()),
+                   b.CreateString(directory.path.string()),
+                   b.CreateString("duplicate"))
+            .Union();
+      });
+  ASSERT_TRUE(duplicate.Code().empty());
+  for (const auto* name : {"sample", "duplicate"}) {
+    const auto dest = directory.path / name;
+    EXPECT_FALSE(std::filesystem::exists(dest / ".tsugumi"));
+    EXPECT_FALSE(std::filesystem::exists(dest / "nested/.tsugumi"));
+    EXPECT_FALSE(std::filesystem::exists(dest / ".git"));
+    EXPECT_EQ(::access((dest / "definitions/card/src/main.py").c_str(), W_OK),
+              0);
+    Write(dest / "definitions/card/src/added.py", "editable");
+  }
+  // Restore the fixture so its cleanup can remove read-only source folders.
+  std::filesystem::permissions(source, std::filesystem::perms::owner_all);
+  for (const auto& entry :
+       std::filesystem::recursive_directory_iterator(source))
+    std::filesystem::permissions(entry.path(),
+                                 std::filesystem::perms::owner_all);
+}
+
+TEST_F(HostProjectsFixture,
+       RegistryHasThirtyNewestUniqueProjectsAndSurvivesRestart) {
+  for (int i = 0; i < 32; ++i) {
+    const auto name = "recent-" + std::to_string(i);
+    ASSERT_TRUE(Create(name).Code().empty());
+    ASSERT_TRUE(Remember(directory.path / name).Code().empty());
+  }
+  auto list = Recents().Json();
+  EXPECT_EQ(JsonString(list, "/0/name"), "recent-31");
+  EXPECT_EQ(JsonString(list, "/29/name"), "recent-2");
+  EXPECT_EQ(list.find("recent-1\""), std::string::npos);
+  EXPECT_THROW((void)JsonString(list, "/30/name"), std::runtime_error);
+  ASSERT_TRUE(Remember(directory.path / "recent-4").Code().empty());
+  list = Recents().Json();
+  EXPECT_EQ(JsonString(list, "/0/name"), "recent-4");
+  EXPECT_GT(JsonUInt(list, "/0/openedAt"), JsonUInt(list, "/1/openedAt"));
+  const auto forgotten =
+      Call(*human, A::RequestPayload::HostRecentForgetRequest, [&](Builder& b) {
+        const std::vector<flatbuffers::Offset<flatbuffers::String>> paths{
+            b.CreateString((directory.path / "recent-4").string())};
+        return A::CreateHostRecentForgetRequest(b, b.CreateVector(paths))
+            .Union();
+      });
+  EXPECT_TRUE(forgotten.Code().empty());
+  EXPECT_EQ(JsonString(Recents().Json(), "/0/name"), "recent-31");
+  EXPECT_TRUE(
+      std::filesystem::exists(directory.path / "recent-4/tsugumi.json"));
+  const auto before = Recents().Json();
+  external.reset();
+  human.reset();
+  agent.Stop();
+  StartAgent();
+  EXPECT_EQ(Recents().Json(), before);
+  std::filesystem::remove_all(directory.path / "recent-31");
+  EXPECT_EQ(JsonString(Recents().Json(), "/0/name"), "recent-30");
+}
+
 TEST_F(AgentProjectFixture, ReadingAProjectRequiresAnExplicitUserGrant) {
   StartProject();
   const auto conversation = Conversation("permission-scenario");

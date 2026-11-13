@@ -93,6 +93,7 @@ struct ProjectChooser: View {
     }
     .tint(TsugumiPalette.rufous)
     .onReceive(NotificationCenter.default.publisher(for: .appShowDemos)) { _ in showDemos = true }
+    .task { await model.refreshHome() }
     .onChange(of: GuideController.shared.demosRequested, initial: true) { _, asked in
       if asked {
         showDemos = true
@@ -228,7 +229,7 @@ struct ProjectChooser: View {
         }
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 14)], spacing: 14) {
           ForEach(shownDemos) { demo in
-            DemoCard(demo: demo) { do { onOpen(try model.copyDemo(demo)) } catch { model.error = "\(error)" } }
+            DemoCard(demo: demo) { Task { do { onOpen(try await model.copyDemo(demo)) } catch { model.error = "\(error)" } } }
               .guideTarget("demo:\(demo.id)", radius: 12)
               .id(demo.id)
           }
@@ -255,7 +256,7 @@ struct ProjectChooser: View {
       HStack {
         Spacer()
         Button("キャンセル") { showNew = false }
-        Button("作成場所を選ぶ…") { createProject() }.disabled(newName.isEmpty).keyboardShortcut(.defaultAction)
+        Button("作成場所を選ぶ…") { createProject() }.keyboardShortcut(.defaultAction)
       }
     }
     .padding(20)
@@ -275,12 +276,12 @@ struct ProjectChooser: View {
     p.nameFieldStringValue = newName
     p.message = String(localized: "プロジェクトのフォルダを作成する場所を選んでください")
     guard p.runModal() == .OK, let url = p.url else { return }
-    do {
-      try model.createProject(at: url, name: newName)
-      showNew = false
-      onOpen(url)
-    } catch {
-      model.error = "\(error)"
+    Task {
+      do {
+        try await model.createProject(at: url)
+        showNew = false
+        onOpen(url)
+      } catch { model.error = "\(error)" }
     }
   }
 }
