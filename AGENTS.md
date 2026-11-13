@@ -28,7 +28,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 | [tests/](tests/) | Tests of the contract, scheduler, history, isolation, demos, fuzzing and more |
 | [docs/](docs/) | The list of documents is [docs/README.md](docs/README.md). Astro generates the web version and `llms.txt` in `build/docs/` with `nix run .#build-doc`; only source documents belong in `docs/` |
 
-The overall architecture and the directories in detail are in "The runtime" and "Directories" of [docs/Development.md](docs/Development.md).
+The overall architecture is in [Features](docs/features.md#1-architecture), and the detailed code map is in [Directories](docs/Development.md#directories).
 
 ## For agents working in this repository
 

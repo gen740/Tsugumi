@@ -7,7 +7,7 @@ Start from the document that fits what you want to read. To read with moving fig
 
 | Document | Contents |
 | --- | --- |
-| [features.md](features.md) | Find a feature by task on the development branch, including the 0.7 pre-release series |
+| [features.md](features.md) | Find a feature by task; architecture, execution, environments, saving, history, visualisation and the Agent |
 | [INSTALL.md](INSTALL.md) | Installing and updating the desktop app and the `tsugumi` command (Mac, Linux, Windows), and building from source |
 | [Usage.md](Usage.md) | Canvas tools, running from a Card, chart updates and the project terminal |
 | [Demos.md](Demos.md) | How the bundled demos work: how each demo's Cards connect, what each Card does, and what to try |
@@ -44,6 +44,6 @@ Start from the document that fits what you want to read. To read with moving fig
 
 | Document | Contents |
 | --- | --- |
-| [Development.md](Development.md) | Runtime architecture, design decisions, builds and test commands |
+| [Development.md](Development.md) | Repository code map, release procedures, documentation workflow and test commands |
 | [Lock.md](Lock.md) | Pinned versions of the runtime and its dependencies |
 | [LicenseAudit.md](LicenseAudit.md) | License bundling, VM source distribution and dependency updates |

@@ -96,6 +96,7 @@ The managing process inside the VM, `tsugumi-vmd`, starts each project's `tsugum
   - `/project` … its own project folder
   - `/control` … its own control folder
   - `/history` … its own run-history folder (on the run-history disk, `nosuid,nodev`)
+  - `/scratch` … its own disk-backed invocation scratch (`/persist/run-scratch/<id>`, owned by the project uid, mode 0700). The core validates scratch ownership and private parents, rejects symbolic links and, on Linux, rejects tmpfs/ramfs (`core/src/run_scratch.cc`).
   - its own `/tmp` and `/run/tsugumi` (`tmpfs`)
   - `/run/tsugumi/rpc` … the sockets `tsugumid` listens on (WebSocket, Unix socket). They actually live in `/run/tsugumi-rpc/<id>` (a 0700 folder only that project's uid can enter), and `tsugumi-vmd` relays to them. There are no ports of any project on the VM's loopback (a Card allowed the network shares the VM's network, so a port there would let it reach another project's `tsugumid`).
   - `/run/tsugumi/host/<tag>`, `/run/tsugumi/chat/<tag>` … Mac folders shared with that project (§2, only when specified)
@@ -143,12 +144,15 @@ A setting that relaxes only the restrictions on seeing the file system. Where bu
 
 ### Worker lifetimes
 
+- The pool starts workers on a long-lived thread: bubblewrap's `--die-with-parent` must not tie a resident worker to a run's shorter-lived thread.
 - On cancellation or a deadline, the processes a worker started are all ended, descendants included (tested automatically with the sandbox both on and off).
 - Resident workers are discarded at once when the project stops, the build conditions change or a run fails, and their memory (at most 2 GiB) and number (at most 32) are limited.
 
 ### Showing Card views (line charts, Plotly, Vega-Lite and Card-owned modules)
 
 Card views run in the shared isolated host (`ui/modules`). Built-in views, including the WebGPU line chart and the SDK-pinned Plotly/Vega libraries, are fetched from the core through RPC just like Card-owned modules. Run data are supplied separately as configuration and binary blobs.
+
+The core accepts only Nix store module identities. A shared entry must resolve to a canonical store `index.js`, and the Card's Wasm must remain inside its own output directory (`core/src/module_source.cc`).
 
 - Web UI: `/modules/viewer.html` is put in an iframe. Its response's CSP is `sandbox allow-scripts` (without `allow-same-origin`), so the component runs in an opaque origin and can use neither cookies nor `/api/`. With `default-src 'none'` and `connect-src 'none'` it loads nothing and connects nowhere. With `frame-src 'none'` the Card's inner frame (a `srcdoc` document) cannot navigate itself to any URL either. Its script is embedded in the page, and the library code is handed over by the parent page with postMessage. This is the only route that may be embedded (`frame-ancestors 'self'`); every other response forbids embedding.
 - macOS app: the trusted host is loaded as HTML in a nonpersistent WKWebView without a file read grant. Card code runs in its opaque inner frame. Content rules block network/file resources, a navigation delegate denies external navigation, and native message handlers reject messages from subframes.
