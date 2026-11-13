@@ -18,7 +18,7 @@ let
   headers = pkgs.runCommand "tsugumi-view-headers" { } ''
     mkdir -p $out/include/webgpu $out/include/tsugumi $out/share/licenses
     cp ${pkgs.wgpu-native.src}/ffi/webgpu-headers/webgpu.h $out/include/webgpu/
-    cp ${../include/tsugumi/view.h} $out/include/tsugumi/
+    cp ${../include/tsugumi/view.h} $out/include/tsugumi/view.h
     cp ${pkgs.wgpu-native.src}/ffi/webgpu-headers/LICENSE $out/share/licenses/webgpu-headers
   '';
   template =
