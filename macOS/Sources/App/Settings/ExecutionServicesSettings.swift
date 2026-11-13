@@ -1,5 +1,5 @@
 import SwiftUI
-import TsugumiLauncher
+import TsugumiAgentClient
 
 struct ExecutionServicesSettings: View {
   @Environment(AppModel.self) private var model
@@ -46,7 +46,7 @@ struct ExecutionServicesSettings: View {
               Task {
                 defer { busy = false }
                 do {
-                  entries = try await ExecutionServiceRegistry.register(entry, support: model.environments.support)
+                  entries = try await ExecutionServices.put(entry)
                   choose(entries.first { $0.id == entry.id })
                   refreshServices()
                   report(String(localized: "接続を確認しました。"))
@@ -55,12 +55,16 @@ struct ExecutionServicesSettings: View {
             }.buttonStyle(.borderedProminent).disabled(!valid(entry))
             if let original {
               Button("削除", role: .destructive) {
-                do {
-                  entries = try ExecutionServiceRegistry.remove(id: original, support: model.environments.support)
-                  draft = nil
-                  self.original = nil
-                  refreshServices()
-                } catch { report(error.localizedDescription, failed: true) }
+                Task {
+                  busy = true
+                  defer { busy = false }
+                  do {
+                    entries = try await ExecutionServices.remove(original)
+                    draft = nil
+                    self.original = nil
+                    refreshServices()
+                  } catch { report(error.localizedDescription, failed: true) }
+                }
               }
             }
             if busy { ProgressView().controlSize(.small) }
@@ -74,7 +78,7 @@ struct ExecutionServicesSettings: View {
     .formStyle(.grouped)
     .disabled(busy)
     .task {
-      do { entries = try ExecutionServiceRegistry.load(support: model.environments.support) }
+      do { entries = try await ExecutionServices.list() }
       catch { report(error.localizedDescription, failed: true) }
     }
   }

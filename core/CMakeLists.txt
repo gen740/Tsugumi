@@ -115,7 +115,8 @@ add_library(tsugumi_agent_core STATIC
   src/agent/tool_images.cc
   src/agent/wire.cc
   src/agent/host.cc
-  src/host/projects.cc)
+  src/host/projects.cc
+  src/host/execution_broker.cc)
 target_compile_definitions(tsugumi_agent_core PRIVATE
   TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV}"
   TSUGUMI_CARD_NIXPKGS_NARHASH="${TSUGUMI_CARD_NIXPKGS_NARHASH}")
@@ -123,7 +124,7 @@ target_include_directories(tsugumi_agent_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_options(tsugumi_agent_core PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 set(TSUGUMI_AGENT_SQLITE_LIBRARY "" CACHE FILEPATH "SQLite library used by the native Agent service")
 target_link_libraries(tsugumi_agent_core PUBLIC tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
-  Threads::Threads tsugumi_client CURL::libcurl)
+  Threads::Threads tsugumi_client CURL::libcurl tsugumi_worker_protocol)
 if(TSUGUMI_AGENT_SQLITE_LIBRARY)
   target_link_libraries(tsugumi_agent_core PRIVATE ${TSUGUMI_AGENT_SQLITE_LIBRARY})
 else()

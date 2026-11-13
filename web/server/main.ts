@@ -21,7 +21,6 @@ import { L, language } from './i18n'
 import { CoreAgentError } from './coreAgent'
 import { hostProjectErrorText } from './hostProjects'
 import { uninstall } from './uninstall'
-import { authorizeExecutionProject, loadExecutionServices, registerExecutionService, removeExecutionService, startExecutionBroker } from './executionServices'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..', '..')
@@ -90,10 +89,10 @@ const vm = process.env.TSUGUMI_VMHOST
     }, () => origins)
   : undefined
 const desktop = vm && desktopSettings(vm)
-const executionServiceSettings = vm?.options.support ?? support
-const managesExecutionBroker = !vm && !process.env.TSUGUMI_EXECUTION_BROKER
 const envs: Environments = vm ?? new EnvironmentManager(bins, support, () => origins,
-  managesExecutionBroker ? (identity, control) => authorizeExecutionProject(executionServiceSettings, identity, control) : undefined)
+  !vm ? async (project, folder, control) => hostRequest('ExecutionProjectAuthorizeRequest', {
+    project_id: project, path: folder, control_dir: control,
+  }) : undefined, !vm ? async (project) => { await hostRequest('ExecutionProjectRevokeRequest', { project_id: project }) } : undefined)
 
 // ---- Small JSON stores -----------------------------------------------------------
 
@@ -327,9 +326,9 @@ function projectDir(p: unknown): string {
 
 type Handler = (b: any, url: URL) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
-  'GET /api/execution-services': () => loadExecutionServices(executionServiceSettings),
-  'POST /api/execution-services/register': (body) => registerExecutionService(executionServiceSettings, body),
-  'POST /api/execution-services/remove': (body) => removeExecutionService(executionServiceSettings, body),
+  'GET /api/execution-services': () => hostRequest('ExecutionServicesRequest'),
+  'POST /api/execution-services/register': (body) => hostRequest('ExecutionServicePutRequest', body),
+  'POST /api/execution-services/remove': (body) => hostRequest('ExecutionServiceRemoveRequest', body),
   'GET /api/status': async () => ({
     setup: setupStatus(), demos: await hostRequest('HostDemoListRequest', { language: language() }),
     recents: await hostRequest('HostRecentListRequest'), home: os.homedir(), launchProject: launchProject ?? null,
@@ -564,9 +563,6 @@ async function openOnRunningServer(): Promise<boolean> {
 
 if (reuseServer && await openOnRunningServer()) process.exit(0)
 await desktop?.refresh()
-if (managesExecutionBroker) {
-  process.env.TSUGUMI_EXECUTION_BROKER = await startExecutionBroker(executionServiceSettings)
-}
 
 // The usual port keeps the page's own settings (localStorage) across runs; when
 // something else has it, any free port (unless one was asked for).

@@ -24,6 +24,23 @@ final class ServiceWireTests: XCTestCase {
     XCTAssertFalse(ServiceWire.hostMethod("ConfigureRequest", ["conversation_id": "c"]))
   }
 
+  func testExecutionSettingsUseTheHostContract() throws {
+    for (method, fields) in [
+      ("ExecutionServicesRequest", [:]),
+      ("ExecutionServicePutRequest", ["id": "compute", "name": "Compute", "endpoint": "unix:/tmp/worker", "token": String(repeating: "a", count: 64)]),
+      ("ExecutionServiceRemoveRequest", ["id": "compute"]),
+      ("ExecutionProjectAuthorizeRequest", ["project_id": "project", "path": "/project", "control_dir": "/control"]),
+      ("ExecutionProjectRevokeRequest", ["project_id": "project"]),
+    ] as [(String, [String: Any])] {
+      XCTAssertTrue(ServiceWire.hostMethod(method, fields))
+      let bytes = try ServiceWire.encode(method, fields: fields, id: 2, host: true)
+      var buffer = ByteBuffer(data: bytes)
+      let request: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
+      XCTAssertEqual(request.requestId, 2)
+      XCTAssertThrowsError(try ServiceWire.encode(method, fields: fields, id: 2, host: false))
+    }
+  }
+
   func testTypedSnapshotBecomesPresentationValues() throws {
     let content = Tsugumi_Agent_ModelMessageT()
     content.role = "assistant"

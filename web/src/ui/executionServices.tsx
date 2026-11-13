@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { ExecutionServiceConnection, ExecutionServiceRegistration } from '../../server/executionServices'
+import type { ExecutionServiceConnection, ExecutionServiceRegistration } from '../shared/executionServices'
 import { L } from '../i18n'
 import { api } from '../api'
 import { errorText } from '../model/session'

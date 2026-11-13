@@ -332,7 +332,6 @@
 "この実行環境の既定（%@）" = "Execution environment default (%@)";
 "この形式の整形には対応していません" = "Formatting is not available for this file type";
 "この接続では版の要約を作りません。" = "This connection does not make version summaries.";
-"この接続先の認証トークンを入力してください。" = "Enter the authentication token for this endpoint.";
 "この操作にはユーザーの権限が必要です。" = "This operation requires user authorization.";
 "この操作はできません" = "This cannot be done";
 "この日時より前に終わった実行を削除しますか？" = "Delete the runs that ended before this date?";
@@ -939,7 +938,6 @@
 "実行サービスで待機中" = "Queued at the execution service";
 "実行サービスの状態" = "Execution service status";
 "実行サービスを追加" = "Add execution service";
-"実行デーモンが有効な実行環境情報を返しませんでした。" = "The execution daemon did not report valid capabilities.";
 "実行デーモンの接続先" = "Execution daemon endpoint";
 "実行デーモンへの接続に失敗しました（HTTP %@）。" = "Could not connect to the execution daemon (HTTP %@).";
 "実行リスト" = "Execution list";
@@ -1194,7 +1192,6 @@
 "異なる 2 つの実行を選んでください" = "Choose two different runs";
 "登録されていないビルド結果を共有 store から削除します。登録を外したプロジェクトの Card は、次の実行でビルドし直します。" = "Deletes build results nothing registers from the shared store. Cards of projects whose registration was removed build again on their next run.";
 "登録したキャッシュには、全プロジェクトのビルドで必要になったパッケージのハッシュが問い合わされます。認証情報は、同じホストから固定ハッシュで取得するビルドにも使われます。" = "Registered caches are asked for the hashes of the packages that builds of every project need. Credentials are also used by builds that fetch from the same host by a fixed hash.";
-"登録内容が更新されました。もう一度設定を開いてください。" = "The registration changed. Reopen the settings and try again.";
 "直接実行" = "Direct execution";
 "直近の入力トークン数（上限に近づくと自動で圧縮）" = "Recent input tokens (compacted automatically near the limit)";
 "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";

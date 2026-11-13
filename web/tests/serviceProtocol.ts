@@ -47,3 +47,19 @@ const failure = decodeReply(reply(ReplyPayload.Failure, new FailureT('grant_requ
 assert.ok(failure.error instanceof CoreAgentError)
 assert.equal(failure.error.requestId, 'permission-1')
 console.log('Agent/Host binary protocol: exact uint64, separation, typed events and failures passed')
+
+// Execution settings send management requests only to the Host contract.
+for (const [method, fields] of [
+  ['ExecutionServicesRequest', {}],
+  ['ExecutionServicePutRequest', { id: 'compute', name: 'Compute', endpoint: 'unix:/tmp/worker', token: 'a'.repeat(64) }],
+  ['ExecutionServiceRemoveRequest', { id: 'compute' }],
+  ['ExecutionProjectAuthorizeRequest', { project_id: 'project', path: '/project', control_dir: '/control', guest: true }],
+  ['ExecutionProjectRevokeRequest', { project_id: 'project' }],
+] as const) {
+  assert.equal(hostMethod(method), true)
+  const bytes = encodeRequest(method, fields, 2n, true)
+  const request = HostMessage.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
+  assert.equal(request.requestId, 2n)
+  assert.throws(() => encodeRequest(method, fields, 2n, false), /Unknown Agent/)
+}
+console.log('Execution service settings: Host RPC adapters passed')

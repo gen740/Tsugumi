@@ -9,7 +9,6 @@ import hashlib
 import json
 import os
 import secrets
-import select
 import shutil
 import socket
 import subprocess
@@ -18,6 +17,7 @@ from pathlib import Path
 
 import pytest
 from harness import remote_worker as R
+from harness.host import Host
 from harness.observations import read_output
 from harness.values import reference_json
 from projects import (
@@ -45,43 +45,6 @@ RUN_LIST_REMOTE = {
     "language": "bash", "recordIO": True, "executionService": "remote-test",
     "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS, "_outputs": RUN_LIST_OUTPUT,
 }
-
-BROKER = """
-import fs from "node:fs";
-import { registerHooks } from "node:module";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-// Match the production bundler's TypeScript and JSON imports in this test.
-registerHooks({
-  resolve(specifier, context, nextResolve) {
-    const name = specifier.startsWith(".") && !path.extname(specifier) ? specifier + ".ts" : specifier;
-    return nextResolve(name, context);
-  },
-  load(url, context, nextLoad) {
-    const options = url.startsWith("file:") && url.endsWith(".json")
-      ? { ...context, importAttributes: { type: "json" } }
-      : context;
-    return nextLoad(url, options);
-  },
-});
-const [modulePath, support, project, copy, endpoint, tokenFile] = process.argv.slice(2);
-const { authorizeExecutionProject, registerExecutionService, startExecutionBroker } =
-  await import(pathToFileURL(modulePath));
-const authorize = (project, name) => {
-  const control = path.join(support, name);
-  fs.mkdirSync(control, {recursive: true, mode: 0o700});
-  const st = fs.statSync(project, {bigint: true});
-  return authorizeExecutionProject(support, [st.dev, st.ino, st.birthtimeNs || st.ctimeNs].join(":"), control);
-};
-const token = authorize(project, "control");
-const copyToken = authorize(copy, "copy-control");
-const entries = await registerExecutionService(support, {id: "remote-test", name: "Remote test", endpoint,
-                                                         token: fs.readFileSync(tokenFile, "utf8").trim()});
-const broker = await startExecutionBroker(support);
-console.log(JSON.stringify({endpoint: broker, token, copyToken, serverId: entries[0].capabilities.serverId}));
-setInterval(() => {}, 30000);
-"""
-
 
 @pytest.fixture
 def remote_daemon(tmp_path):
@@ -141,29 +104,30 @@ def remote_daemon(tmp_path):
 @pytest.fixture
 def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
     endpoint, token_file, _ = remote_daemon
-    script = tmp_path / "broker.mjs"
-    script.write_text(BROKER)
     copy = tmp_path / "copied-project"
     shutil.copytree(project, copy)
-    module = Path(os.environ.get("TSUGUMI_EXECUTION_BROKER_MODULE", str(Path(__file__).resolve().parents[3] / "web/server/executionServices.ts")))
-    process = subprocess.Popen(["node", str(script), str(module), str(tmp_path / "support"),
-                                str(project), str(copy), endpoint, token_file], stdout=subprocess.PIPE, text=True)
+    host = Host(tmp_path / "agent")
     try:
-        ready, _, _ = select.select([process.stdout], [], [], 30)
-        assert ready, "execution broker did not start"
-        line = process.stdout.readline()
-        assert line, "execution broker exited before starting"
-        ready = json.loads(line)
+        entries = host.call("ExecutionServicePutRequest", id="remote-test", name="Remote test",
+                            endpoint=endpoint, token=Path(token_file).read_text().strip())
+
+        def authorize(folder, name):
+            control = tmp_path / name
+            control.mkdir(mode=0o700)
+            result = host.call("ExecutionProjectAuthorizeRequest", projectId=name,
+                               path=str(folder), controlDir=str(control))
+            assert result.available, "test filesystem must provide directory birth time"
+            return R.string(result.tokenFile)
+
+        ready = {"endpoint": host.ready["execution_broker"],
+                 "token": authorize(project, "control"),
+                 "copyToken": authorize(copy, "copy-control"),
+                 "serverId": R.string(entries.services[0].capabilities.serverId)}
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", ready["endpoint"])
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER_TOKEN_FILE", ready["token"])
         yield ready
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
+        host.close()
 
 
 def broker_request(endpoint, token_file, server_id, body_type, body, **routing):

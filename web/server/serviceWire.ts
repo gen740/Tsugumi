@@ -1,3 +1,8 @@
+import { ExecutionServicesRequestT } from '../src/gen/tsugumi/host/execution-services-request'
+import { ExecutionServicePutRequestT } from '../src/gen/tsugumi/host/execution-service-put-request'
+import { ExecutionServiceRemoveRequestT } from '../src/gen/tsugumi/host/execution-service-remove-request'
+import { ExecutionProjectAuthorizeRequestT } from '../src/gen/tsugumi/host/execution-project-authorize-request'
+import { ExecutionProjectRevokeRequestT } from '../src/gen/tsugumi/host/execution-project-revoke-request'
 import { DemoListRequestT as ADemoListRequest } from '../src/gen/tsugumi/agent/demo-list-request'
 import { ToolCatalogRequestT as AToolCatalogRequest } from '../src/gen/tsugumi/agent/tool-catalog-request'
 import { HostRecentListRequestT as HHostRecentListRequest } from '../src/gen/tsugumi/host/host-recent-list-request'
@@ -79,6 +84,12 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
+    case 'ExecutionServicesRequest': return new ExecutionServicesRequestT()
+    case 'ExecutionServicePutRequest': return new ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.token)
+    case 'ExecutionServiceRemoveRequest': return new ExecutionServiceRemoveRequestT(v.id)
+    case 'ExecutionProjectAuthorizeRequest': return new ExecutionProjectAuthorizeRequestT(v.project_id, v.path, v.control_dir, v.guest)
+    case 'ExecutionProjectRevokeRequest': return new ExecutionProjectRevokeRequestT(v.project_id)
+
     case 'HostRecentListRequest': return new HHostRecentListRequest()
     case 'HostProjectDefaultsRequest': return new HHostProjectDefaultsRequest()
     case 'HelloRequest': return new HHelloRequest(v.token, v.client_id, v.protocol)
@@ -152,7 +163,7 @@ function view(value: any): any {
   const names: Record<string, string> = { projectId: 'project_id', conversationId: 'conversation_id',
     eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
     inputJson: 'input', argumentsJson: 'arguments', resultJson: 'result', inputSchemaJson: 'inputSchema',
-    contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', accessToken: 'access_token' }
+    contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', accessToken: 'access_token', tokenFile: 'token_file' }
   for (const [key, v] of Object.entries(value)) {
     const name = names[key] ?? key
     if (v === null || v === undefined) {
@@ -181,7 +192,7 @@ export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; val
     error: new CoreAgentError(value.code, value.message, reply.value.requestId ?? undefined) }
   let result = value
   // Vector result tables keep the public API's array shape.
-  for (const key of ['conversations', 'matches', 'paths', 'demos', 'models', 'projects', 'tools']) {
+  for (const key of ['conversations', 'matches', 'paths', 'demos', 'models', 'projects', 'tools', 'services']) {
     if (Object.keys(value).length === 1 && Array.isArray(value[key])) { result = value[key]; break }
   }
   return { id: message.requestId, value: result }

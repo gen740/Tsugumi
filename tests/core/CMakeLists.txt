@@ -43,8 +43,8 @@ add_test(NAME core_thought_schedule COMMAND tsugumi_thought_schedule_tests)
 # Product client -> real Agent/core sockets -> controlled external model.
 # These scenarios neither include nor link private core implementation APIs.
 find_package(GTest CONFIG REQUIRED)
-add_executable(tsugumi_agent_rpc_tests agent/rpc_test.cc agent/host_rpc_test.cc agent/project_rpc_test.cc agent_fixture_server.cc)
-target_link_libraries(tsugumi_agent_rpc_tests PRIVATE tsugumi_client GTest::gtest_main hosq Threads::Threads)
+add_executable(tsugumi_agent_rpc_tests agent/rpc_test.cc agent/host_rpc_test.cc agent/execution_broker_test.cc agent/project_rpc_test.cc agent_fixture_server.cc)
+target_link_libraries(tsugumi_agent_rpc_tests PRIVATE tsugumi_client tsugumi_worker_protocol GTest::gtest_main hosq Threads::Threads)
 target_compile_options(tsugumi_agent_rpc_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 target_compile_definitions(tsugumi_agent_rpc_tests PRIVATE
   TSUGUMI_AGENT_BINARY="$<TARGET_FILE:tsugumi-agentd>"
