@@ -401,8 +401,15 @@ struct Environments::Impl {
       if (!std::filesystem::exists(control / "grants.json"))
         fs::write_atomic(control / "grants.json", R"({"grants":{}})", 0600);
       const auto roots = options.directory.parent_path() / "build-roots";
-      const auto scratch = std::filesystem::path("/var/tmp") /
-                           ("tsugumi-scratch-" + std::to_string(::getuid()));
+      // Disk-backed, and without a symbolic link on the way: the project
+      // service refuses a scratch path that passes through one.
+#ifdef __APPLE__
+      const std::filesystem::path temporary = "/private/var/tmp";
+#else
+      const std::filesystem::path temporary = "/var/tmp";
+#endif
+      const auto scratch =
+          temporary / ("tsugumi-scratch-" + std::to_string(::getuid()));
       auto launch = Plan(entry);
       launch.archive = request.archive_incompatible_history;
       launch.arguments = {
