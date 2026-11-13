@@ -64,12 +64,6 @@ import Testing
   #expect(q.line(at: t0.addingTimeInterval(2.5))?.text == "できました")
 }
 
-@Test func thoughtSummariesSpeakInTheVoiceOfThePlainLines() {
-  #expect(ThoughtSummarizer.system(english: false).contains("〜しています"))
-  #expect(ThoughtSummarizer.system(english: true).contains("one line of English"))
-  #expect(ThoughtSummarizer.system(english: false).contains("never the tools"))
-}
-
 @Test func aSaveWritesOutDraftsUpstreamFirstAndThreadsTheirWires() {
   typealias C = PresenceEvents.Connection
   let wiring = [C(from: "start", fromPort: "out", to: "load", toPort: "start"),

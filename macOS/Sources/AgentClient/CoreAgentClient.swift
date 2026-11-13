@@ -79,8 +79,7 @@ public actor CoreAgentClient {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let daemon = Process()
     daemon.executableURL = try executable("tsugumi-agentd", environment: "TSUGUMI_AGENTD", component: "core")
-    let demos = (Bundle.main.resourceURL?.appendingPathComponent("demos") ?? Self.repository.appendingPathComponent("demos"))
-      .appendingPathComponent(Bundle.main.preferredLocalizations.first?.hasPrefix("en") == true ? "en" : "ja")
+    let demos = Bundle.main.url(forResource: "demos", withExtension: nil) ?? Self.repository.appendingPathComponent("demos")
     daemon.arguments = ["--state-dir", state.path, "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--demos-dir", demos.path]
     let log = state.appendingPathComponent("agent.log")

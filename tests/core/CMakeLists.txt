@@ -34,6 +34,12 @@ if(NOT TSUGUMI_INSTALLED_CORE)
     ENVIRONMENT "TSUGUMI_BUILD_DIR=${PROJECT_BINARY_DIR};TSUGUMI_PY_BINDINGS=${TSUGUMI_GEN_DIR}/python;TSUGUMI_MOCK_DAEMON=$<TARGET_FILE:tsugumid-mock>;TSUGUMID=$<TARGET_FILE:tsugumid>;TSUGUMI_WORKER=$<TARGET_FILE:tsugumi-worker>")
 endif()
 
+# The thought scheduler's timing can also be checked without any sockets.
+add_executable(tsugumi_thought_schedule_tests agent/thought_schedule_test.cc)
+target_include_directories(tsugumi_thought_schedule_tests PRIVATE ${_core_headers})
+target_compile_options(tsugumi_thought_schedule_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
+add_test(NAME core_thought_schedule COMMAND tsugumi_thought_schedule_tests)
+
 # Product client -> real Agent/core sockets -> controlled external model.
 # These scenarios neither include nor link private core implementation APIs.
 find_package(GTest CONFIG REQUIRED)
@@ -73,6 +79,6 @@ gtest_discover_tests(tsugumi_remote_result_tests TEST_PREFIX "core_remote." DISC
   PROPERTIES TIMEOUT 30)
 
 if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumid-mock tsugumi_agent_rpc_tests tsugumi_rpc_cli_tests tsugumi_remote_result_tests
+  install(TARGETS tsugumid-mock tsugumi_agent_rpc_tests tsugumi_rpc_cli_tests tsugumi_remote_result_tests tsugumi_thought_schedule_tests
     RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()

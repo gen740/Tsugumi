@@ -330,11 +330,9 @@ def vm_server(tmp_path):
     support.mkdir()
     prefs = tmp_path / "prefs.json"
     prefs.write_text(json.dumps({"agent.provider": "openai", "agent.model.openai": "from-the-app", "agent.permissions.allowed": ["network", "nix_source"]}))
-    # 2001-01-01 + 800000000 s, as the app's JSONEncoder writes it.
     project = tmp_path / "project"
     project.mkdir()
     (project / "tsugumi.json").write_text('{"name": "P"}')
-    (support / "recent-projects.json").write_text(json.dumps([{"path": str(project), "name": "P", "openedAt": 800000000.5}]))
     executable(tmp_path / "host", f"#!{sys.executable}\n{HOST}")
     env = isolated_environment(tmp_path, TSUGUMI_VMHOST=str(tmp_path / "host"), TSUGUMI_VM_IMAGE="/image", TSUGUMI_VM_SOURCE="/source", TSUGUMI_SUPPORT_DIR=str(support),
                TSUGUMI_WEB_DATA=str(support / "web"), HOST_PREFS=str(prefs), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"), HOST_PID=str(tmp_path / "host.pid"))
@@ -376,16 +374,19 @@ def test_the_page_needs_no_setup_and_may_share_folders(vm_server):
 
 
 @needs_server
-def test_recent_projects_are_the_apps_in_its_format(vm_server):
+def test_recent_projects_are_owned_by_the_host_core(vm_server):
     tmp, project, _, port, cookie = vm_server
-    s = api(port, cookie, "GET", "/api/status")
-    assert [r["path"] for r in s["recents"]] == [str(project)]
-    assert s["recents"][0]["openedAt"] == (800000000.5 + 978307200) * 1000
+    assert api(port, cookie, "GET", "/api/status")["recents"] == []
     before = time.time()
     api(port, cookie, "POST", "/api/project/open", {"path": str(project)})
-    saved = json.loads((tmp / "support" / "recent-projects.json").read_text())
+    saved = json.loads((tmp / "agent-core" / "recent-projects.json").read_text())
     assert saved[0]["path"] == str(project.resolve())
-    assert abs(saved[0]["openedAt"] + 978307200 - before) < 30
+    assert abs(saved[0]["openedAt"] / 1000 - before) < 30
+    assert api(port, cookie, "GET", "/api/status")["recents"] == saved
+    api(port, cookie, "POST", "/api/recents/forget", {"paths": [str(project.resolve())]})
+    assert api(port, cookie, "GET", "/api/status")["recents"] == []
+    assert (project / "tsugumi.json").exists()
+    assert not (tmp / "support" / "recent-projects.json").exists()
     assert not (tmp / "support" / "web" / "recent-projects.json").exists()
 
 
@@ -433,6 +434,8 @@ def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
     demo = root / "demos" / "ja" / "d" / "definitions" / "c"
     demo.mkdir(parents=True)
     (demo / "_card.json").write_text("{}")
+    (root / "demos" / "ja" / "d" / ".tsugumi").mkdir()
+    (root / "demos" / "ja" / "d" / ".tsugumi" / "history").write_text("private")
     (root / "demos" / "ja" / "d" / "tsugumi.json").write_text('{"name": "D"}')
     (root / "demos" / "ja" / "index.json").write_text('{"demos": [{"id": "d", "title": "D", "path": "d"}]}')
     for f in sorted(root.joinpath("demos").rglob("*"), reverse=True):
@@ -442,6 +445,7 @@ def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
     try:
         m = re.search(r":(\d+)/\?key=([0-9a-f]+)", p.stdout.readline())
         copy = Path(api(int(m.group(1)), f"tsugumi_{m.group(1)}={m.group(2)}", "POST", "/api/demo/copy", {"id": "d"})["path"])
+        assert not (copy / ".tsugumi").exists()
         (copy / "new").mkdir()
         (copy / "definitions" / "c" / "new").mkdir()
         (copy / "tsugumi.json").write_text("{}")

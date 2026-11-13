@@ -177,6 +177,19 @@ export class GuideController extends Observable {
   away = false
   /** The chat's Agent at work (outside demo mode): the Card the bird flies to and what it says there. */
   work?: { card?: string; line?: string; from?: string }
+  private thought?: { chat: ChatController; text: string; at: number }
+
+  chatThought(chat: ChatController, text?: string) {
+    if (!text) {
+      if (this.thought?.chat === chat) this.thought = undefined
+    } else this.thought = { chat, text, at: Date.now() }
+    this.changed()
+  }
+
+  thoughtLine(now = Date.now()): string | undefined {
+    const t = this.thought
+    return t && t.chat.session === this.contextSession && t.chat.busy && t.chat.thoughts.enabled && now - t.at < 8000 ? t.text : undefined
+  }
   /** An agent outside the page (Claude Code through the plugin) worked on the
    *  open project: the bird is there for it even without a model key here. */
   external = false
@@ -195,6 +208,7 @@ export class GuideController extends Observable {
   /** The chat's Agent (or Claude Code) called a tool: the bird goes to the Card it looks at. */
   chatWork(tool: string, args: string, from?: string) {
     if (!this.present) return
+    this.thought = undefined
     const scene = workScene(tool, args)
     // Without a Card of its own the bird stays by the last one, saying what it does now.
     this.work = { card: scene.card ?? this.work?.card, line: scene.line ?? this.work?.line, from }
@@ -203,6 +217,7 @@ export class GuideController extends Observable {
 
   /** The chat's project was left: the bird no longer speaks or works for it. */
   chatClosed(chat: { }) {
+    if (this.thought?.chat === chat) this.thought = undefined
     this.work = undefined
     if (this.speakingChat === chat) {
       this.speakingChat = undefined
@@ -213,7 +228,7 @@ export class GuideController extends Observable {
 
   /** The chat's Agent ended its turn: the bird goes home. */
   chatWorkEnded() {
-    if (!this.work) return
+    this.thought = undefined
     this.work = undefined
     this.changed()
   }

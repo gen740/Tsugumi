@@ -311,12 +311,12 @@ function DuplicateProjectSheet({ dir, onClose, onError, onCreated }: { dir: stri
   const parent = dir.split('/').slice(0, -1).join('/') || '/'
   return (
     <Sheet onClose={onClose} width={420}>
-      <form className="sheet-body" onSubmit={(e) => { e.preventDefault(); if (name.trim()) setChoosing(true) }}>
+      <form className="sheet-body" onSubmit={(e) => { e.preventDefault(); setChoosing(true) }}>
         <div className="headline">{L('複製を作る場所を選んでください（保存済みの内容を複製します）')}</div>
         <TextField value={name} onChange={setName} placeholder={L('名前')} autoFocus />
         <div className="row end gap8">
           <Button onClick={onClose}>{L('キャンセル')}</Button>
-          <Button kind="prominent" type="submit" disabled={!name.trim()}>{L('場所を選ぶ…')}</Button>
+          <Button kind="prominent" type="submit">{L('場所を選ぶ…')}</Button>
         </div>
       </form>
       {choosing && (
@@ -325,7 +325,7 @@ function DuplicateProjectSheet({ dir, onClose, onError, onCreated }: { dir: stri
           onPick={async (p) => {
             setChoosing(false)
             try {
-              const made = await app.duplicateProject(dir, p, name.trim())
+              const made = await app.duplicateProject(dir, p, name)
               onClose()
               onCreated(made)
             } catch (e) {
