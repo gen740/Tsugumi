@@ -14,6 +14,7 @@ let
 in
 python.withPackages (ps: [
   ps.pytest
+  ps.pytest-xdist
   ps.flatbuffers
   ps.websockets
   ps.matplotlib
