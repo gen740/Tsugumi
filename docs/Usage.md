@@ -59,7 +59,7 @@ A thick wire carries a batch of values. Its count shows how many items are in th
 
 ## Chart updates
 
-Open **Card settings → General → Chart updates**. The default **Update** shows the previous chart dimmed while the Card or an upstream Card is running. Choose **Live** to follow new chart revisions while the Card is running. Try both settings with the **Live Stream** demo. The Card must emit successive chart updates for the live setting to show changes. [Visualisation](features.md#7-visualisation)
+Open **Card settings → General → Chart updates**. The default **Update** shows the previous chart dimmed while the Card or an upstream Card is running. Choose **Live** to follow new chart revisions while the Card is running. Try both settings with the **Live Stream** demo. The Card must emit successive chart updates for the live setting to show changes.
 
 ## Project terminal
 
@@ -71,11 +71,41 @@ On Mac, the app and the installed browser command use the project's environment 
 
 - Make your first Card yourself: [Your first Card](CardGuide.md)
 - What each demo does and what you can try: [The bundled demos](Demos.md)
-- How the screen is organised, and the settings: [the UI in Features](features.md#8-ui-the-workbench)
+- How the screen is organised, and the settings: [The screen](#the-screen)
 - Installation, and how API keys are handled: [Installation and development builds](INSTALL.md), [What is sent to the model](security.md#what-is-sent-to-the-model)
 
 ## Manage build and scratch space
 
 Open **Settings → project → Build Cache** in Mac or Web. Review the shared total, per-project build cache, last root use and each project's latest-run scratch. **Delete** beside an open project removes its build registrations; open a closed project first to use that action. **Clean shared store** in the Mac app's External Connections settings then removes unrooted store paths. Shared dependencies can stay because another project still keeps them.
 
-The core suggests reviewing this pane when build caches occupy at least 20% of the store disk and at least 1 GiB. The notice never deletes anything. Sizes are cached NAR estimates and can take up to a minute to refresh; errors and unknown measurements are shown explicitly. Scratch is separate: it stays for the latest run, and the next run of that project removes earlier scratch. Recorded file values, retained artifacts and saved last inputs have independent copies. [Retention details](RunHistory.md) · [Build results](features.md#keeping-build-results)
+The core suggests reviewing this pane when build caches occupy at least 20% of the store disk and at least 1 GiB. The notice never deletes anything. Sizes are cached NAR estimates and can take up to a minute to refresh; errors and unknown measurements are shown explicitly. Scratch is separate: it stays for the latest run, and the next run of that project removes earlier scratch. Recorded file values, retained artifacts and saved last inputs have independent copies. [Retention details](RunHistory.md)
+
+## Card settings and app settings
+
+Open a Card's settings to edit its working copy, then choose **Apply**. Tabs include Source, Ports, Comments, Nix Definition, Run History and Artifacts; the available tabs depend on the Card's kind. Run history and artifacts remain readable while running, but changes to Cards and closing a running project are blocked.
+
+Use the app settings for language, appearance, model connections, Skills and shortcuts; use project settings for its environment, Canvas, history and Build Cache. Choose Japanese or English under **General** (Japanese by default); restart the Mac app to apply it, while the Web UI reloads itself. Signed [binary caches](BinaryCaches.md) apply at the next Mac VM start.
+
+## Several projects
+
+The Mac app shows one project or Home per window. **⌘⇧N** adds a Home window; **⌘N**, **⌘O**, demos and duplicates open in a new window. Opening an already open project brings its window forward. **⌘W** saves and closes that project; **⌘Q** checks unsaved changes across windows. The shared VM supports up to 16 open projects.
+
+Closing one project leaves others running. Workflows, history, chats and selections are separate; API keys, app settings and the shared VM/store are shared. The Web UI uses [one project per browser tab](WebUI.md#several-projects).
+
+## Working with the Agent
+
+To implement a plan, describe Drafts, connect their wires and choose **Generate Cards**. Review the saved source and each Card's run record. On failure or cancellation, completed saves remain; the save in progress is not applied. Saves widening permissions require [approval](security.md#the-agents-permission-boundary).
+
+To request a change, open **Comments…** on a Card (or its badge), write the request and choose **Generate from comments**. Selected Cards with open comments take precedence; otherwise the button uses all open comments at the current level. Resolved comments are folded and can be reopened. The save row and [version history](Versions.md#comments) show who changed them.
+
+Send **$demo** in a project's chat for a tour. The thrush points at controls and offers replies and action buttons; an action runs only when you press its button. **⌥⌘G** opens or closes the chat. Outside a tour, ask a question in the ordinary chat.
+
+### Agent activity
+
+The Canvas bird and its speech bubble show current work. File and patch previews remain marked **Not saved** until the save succeeds. On Mac, choose a thrush, a dot or nothing under **Appearance → The Agent at work**.
+
+Turn on **Draw thoughts** below the chat input for model-written activity summaries. It asks for consent and shows separate token usage; turning it off restores the activity line. Review actual saved files and results before judging progress.
+
+### Skills and conversations
+
+Add Skill folders in settings or keep Skills under the project's `skills/`; call one with **$name**. Use the conversation list to search past chats or compact a conversation. Turn on **Web search** under **API** only when you want the provider to receive search terms. [Search and privacy](security.md#web-search)

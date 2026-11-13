@@ -87,7 +87,6 @@ extension Shared {
     let agentFields: Set<String>
     /// Fields of a request that the apps use and the model is not offered.
     let notForModels: [String: [String]]
-    let referenceTool: Tool
     let delegateTool: Tool
     let guide: Guide
     let draft: Draft
@@ -99,15 +98,13 @@ extension Shared {
 
   static let data: Data = {
     let o = try! JSONSerialization.jsonObject(with: Foundation.Data(agentJSON.utf8)) as! [String: Any]
-    let t = o["referenceTool"] as! [String: Any], d = o["draftRequest"] as! [String: String]
+    let d = o["draftRequest"] as! [String: String]
     let cm = o["commentRequest"] as! [String: String]
     let dt = o["delegateTool"] as! [String: Any]
     let g = o["guide"] as! [String: Any], gt = g["showTool"] as! [String: Any]
     let w = o["webSearch"] as! [String: Any]
     return Data(requests: o["requests"] as! [String], agentFields: Set(o["agentFields"] as! [String]),
                 notForModels: o["notForModels"] as! [String: [String]],
-                referenceTool: .init(name: t["name"] as! String, description: t["description"] as! String,
-                                     inputSchema: t["inputSchema"] as! [String: Any]),
                 delegateTool: .init(name: dt["name"] as! String, description: dt["description"] as! String,
                                     inputSchema: dt["inputSchema"] as! [String: Any]),
                 guide: .init(tools: g["tools"] as! [String],

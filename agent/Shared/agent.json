@@ -7,16 +7,6 @@
   ],
   "agentFields": ["op_id", "origin", "approved_permissions"],
   "notForModels": { "ProjectValidateRequest": ["changes"] },
-  "referenceTool": {
-    "name": "reference_read",
-    "description": "Reads Tsugumi's bundled references (read only): demos/ (working example projects), sdk/python/tsugumi/__init__.py (the Python Card SDK) and card-guide.md. A Card's folder gives all its files at once; any other folder lists every file under it.",
-    "inputSchema": {
-      "type": "object", "additionalProperties": false, "required": ["path"],
-      "properties": {
-        "path": { "type": "string", "description": "e.g. \"\" for the list, \"demos/report\" for its files, \"demos/report/definitions/generate\" for that Card's files" }
-      }
-    }
-  },
   "draftRequest": {
     "root": "the root workflow",
     "child": "the child workflow {scope}",
@@ -89,7 +79,7 @@
               "properties": {
                 "kind": { "type": "string", "enum": ["open_demo", "show_demos", "run", "stop", "open_card", "open_settings", "new_project", "home"] },
                 "label": { "type": "string", "description": "the button's text: a few words in the user's language" },
-                "demo": { "type": "string", "description": "open_demo: the demo's id (from [Screen] demos)" },
+                "demo": { "type": "string", "description": "open_demo: the demo's id (from demo_list and demo_read)" },
                 "card": { "type": "string", "description": "open_card: the Card's id (its settings window opens)" }
               }
             }

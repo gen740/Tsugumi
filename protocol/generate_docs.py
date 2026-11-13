@@ -1,4 +1,4 @@
-"""Writes docs/Protocol.md from the project, Agent and Host schemas: every request of
+"""Writes docs/Protocol.md from protocol/tsugumi.fbs: every request of
 RequestPayload with its doc comment and fields, then the notifications. The
 schema stays the single source; run this after changing it.
 --check only compares."""
@@ -14,13 +14,13 @@ OUT = ROOT / "docs" / "Protocol.md"
 GROUPS = [
     ("Connection", ["SessionHello"]),
     ("Projects and saving", ["ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave", "ProjectReload",
-                       "ProjectValidate", "ProjectImport", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "LayoutArrange", "LayoutUntangle", "OperationGet"]),
-    ("Files", ["ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "AttachedFolderRead", "ModuleRead"]),
+                       "ProjectValidate", "ProjectImport", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "OperationGet"]),
+    ("Files", ["ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "AttachedFolderRead"]),
     ("Card SDKs and types", ["CardSDKPrepare", "CardSDKStatus", "OutputTypes", "NixSourceResolve"]),
     ("Running", ["RunPlan", "Run", "RunCancel", "RunStatus"]),
     ("History and artifacts", ["RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "RunHistoryDelete",
                  "ArtifactList", "ArtifactRead", "LogRange", "RunEnvironments", "RunEnvironmentPaths"]),
-    ("Views", ["ViewSetVisible", "ViewSave"]),
+    ("Views", ["ViewSetVisible", "ViewSave", "ModuleRead", "LayoutArrange", "LayoutUntangle"]),
     ("Versions", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionSummary"]),
 ]
 
@@ -76,33 +76,6 @@ def cell(s: str) -> str:
     return s.replace("|", "\\|").replace("\n", " ")
 
 
-def service_docs() -> list[str]:
-    out = ["", "## Host-side services", "",
-           "`tsugumi-agentd` serves two separate FlatBuffers contracts. The Mac app uses the shared C ABI byte client; the Web host uses a Unix socket and generated TypeScript bindings. The browser retains its HTTP/SSE API; the host token never reaches it. `tsugumi-rpc` accepts project RPC only.", "",
-           "| Contract | Root / identifier | WebSocket subprotocol | Principal |",
-           "| --- | --- | --- | --- |",
-           "| Agent (`agent.fbs`) | `Tsugumi.Agent.Message` / `TSA1` | `tsugumi.agent.v1` | User or external Agent |",
-           "| Host (`host.fbs`) | `Tsugumi.Host.Message` / `TSH1` | `tsugumi.host.v1` | User only |", "",
-           "Both use a little-endian uint32 length followed by a buffer on Unix, or one binary buffer per WebSocket message. The Host socket is the Agent socket path plus `.host`; its WebSocket listener uses a separate ephemeral port on the same address. `agent.ready` publishes `unix_socket`, `endpoint`, `host_socket` and `host_endpoint`. It is a private JSON discovery file, not an RPC envelope.", "",
-           "`service_common.fbs` shares Hello, Failure, Acknowledgement and typed Provider configuration. Configure on Host provisions the global provider; Configure on Agent requires a conversation ID. The two roots reject each other's frames. All replies are typed; there is no `Result{json}`.", "",
-           "JSON text is confined to model content (`ModelMessage.content_json`, `provider_content_json`), tool arguments/results (`ToolCallRequest.arguments_json`, `ToolRecord.arguments_json`, `result_json`, `Helper.result_json`, `Event.input_json`) and the open-ended JSON Schema of tool arguments (`Tool.input_schema_json`). Model provider blocks and tool payloads vary by provider/tool; service metadata, usage, permissions, credentials and provider configuration are typed.", ""]
-    common = tables((ROOT / "protocol/service_common.fbs").read_text())
-    for schema, title in [("agent", "Agent"), ("host", "Host")]:
-        text = (ROOT / f"protocol/{schema}.fbs").read_text()
-        definitions = tables(text)
-        definitions.update(common)
-        # These small service unions use implicit enum values and qualified aliases.
-        out += [f"### {title} requests", "", "| Request | Fields |", "| --- | --- |"]
-        body = re.search(r"union RequestPayload \{(.*?)\}", text, re.S).group(1)
-        for item in body.split(","):
-            name = item.strip().split(":")[0]
-            fields = definitions[name]["fields"]
-            out.append(f"| `{name}` | " + ", ".join(f"`{f['name']}:{f['type']}`" + (" (required)" if f["required"] else "") for f in fields) + " |")
-        body = re.search(r"union ReplyPayload \{(.*?)\}", text, re.S).group(1)
-        out += ["", "Replies: " + ", ".join("`" + item.strip().split(":")[0] + "`" for item in body.split(",")) + ".", ""]
-    return out
-
-
 def render() -> str:
     text = FBS.read_text()
     all_tables = tables(text)
@@ -113,7 +86,7 @@ def render() -> str:
     out = [
         "# The RPC contract",
         "",
-        "<!-- Generated by protocol/generate_docs.py from protocol/*.fbs: do not edit. -->",
+        "<!-- Generated by protocol/generate_docs.py from protocol/tsugumi.fbs: do not edit. -->",
         "",
         "The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated from the doc comments of [protocol/tsugumi.fbs](../protocol/tsugumi.fbs).",
         "",
@@ -150,8 +123,7 @@ def render() -> str:
     out += ["", "### Run events", "", "The `value` inside a `RunEvent` has one of these types.", ""]
     for n in union_members(text, "RunEventValue"):
         out.append(f"- `{n}`")
-    out += service_docs()
-    return "\n".join(out).rstrip() + "\n"
+    return "\n".join(out) + "\n"
 
 
 if __name__ == "__main__":

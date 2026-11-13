@@ -8,7 +8,7 @@ const REPO = 'https://github.com/gen740/Tsugumi'
 const SITE = 'https://gen740.github.io/Tsugumi/'
 const RAW = 'https://raw.githubusercontent.com/gen740/Tsugumi/main'
 /** Documents an agent can skip when it needs less context ("Optional" in llms.txt). */
-const SECONDARY = ['docs/Lock.md', 'docs/LicenseAudit.md']
+const SECONDARY = ['docs/LicenseAudit.md']
 
 /** Pages read with the thread and the moving figures, in the order the slide show goes through them. */
 const STORY = [
@@ -160,7 +160,8 @@ function linker(sourceRel, outRel, pages) {
       const to = pages.get(rel)
       return (to === outRel ? '' : up(to)) + tail || tail
     }
-    if (rel.startsWith('docs/assets/') || rel.startsWith('docs/site/')) return up(rel.slice('docs/'.length))
+    // Tooling READMEs under docs/site belong on GitHub, outside published assets.
+    if (rel.startsWith('docs/assets/') || (rel.startsWith('docs/site/') && !rel.endsWith('.md'))) return up(rel.slice('docs/'.length))
     const abs = path.join(ROOT, rel)
     const kind = fs.existsSync(abs) && fs.statSync(abs).isDirectory() ? 'tree' : 'blob'
     return `${REPO}/${kind}/main/${rel}${tail}`

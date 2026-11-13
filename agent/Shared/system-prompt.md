@@ -17,12 +17,9 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   latest revision (types, ports, settings, _outputs.fbs). Do that once when the writing is done and before the run,
   not after each save, whose result already lists each Card's diagnostics. Fix what it reports with another save.
   If a save returns revision_conflict, inspect again and re-apply.
-- These rules hold what Python, C++ and bash Cards need, so write them without reading further. Read a bundled
-  reference with reference_read only for what the rules do not cover (Go, Rust, R, Julia or Ruby Cards, merge outputs, a Card in Card
-  you have not met), and read all you need in one reply: card-guide.md, sdk/python/tsugumi/__init__.py (the SDK's
-  source), demos/ (working projects: report has file outputs, an input Card, Python and bash Cards; collatz has C++
-  and Python Cards in Card). A Card's folder (demos/report/definitions/render) gives all its files at once, any other
-  folder lists every file under it, and "" lists what there is.
+- These rules hold what Python, C++ and bash Cards need, so write them without reading further. Use demo_list
+  to find bundled example files and demo_read with a file path to read what the rules do not cover. The report
+  demo has file outputs, an input Card, Python and bash Cards; collatz has C++ and Python Cards in Card.
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<name>"} only and
   definitions/<id>/_card.json holds all of its settings (params with their values in "data", trigger
   "allInputs"/"eachInput", maxRuns (the number of times the Card may trigger per Run), timeoutSeconds, recordIO, reuseWorker, ...). Change a

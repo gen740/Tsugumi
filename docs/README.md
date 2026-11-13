@@ -7,13 +7,13 @@ Start from the document that fits what you want to read. To read with moving fig
 
 | Document | Contents |
 | --- | --- |
-| [features.md](features.md) | Find a feature by task on the development branch, including the 0.7 pre-release series |
+| [features.md](features.md) | Find a feature by task; Card kinds, execution rules and Nix environments |
 | [INSTALL.md](INSTALL.md) | Installing and updating the desktop app and the `tsugumi` command (Mac, Linux, Windows), and building from source |
-| [Usage.md](Usage.md) | Canvas tools, running from a Card, chart updates and the project terminal |
-| [Demos.md](Demos.md) | How the bundled demos work: how each demo's Cards connect, what each Card does, and what to try |
+| [Usage.md](Usage.md) | Canvas tools, running from a Card, chart updates, settings and Agent controls |
+| [Demos.md](Demos.md) | Choose a demo, try changes and interpret its results |
 | [CardGuide.md](CardGuide.md) | Build a Card that takes an input and computes, with examples in Python, Bash, C++, R, Julia, Ruby, Go, Rust and C# |
 | [RunHistory.md](RunHistory.md) | Inspect and compare runs, check runtime packages and open saved artifacts |
-| [RemoteExecution.md](RemoteExecution.md) | Register an execution daemon and run a Code Card on its Linux host |
+| [RemoteExecution.md](RemoteExecution.md) | Register a C++ remote worker and run a Code Card on its Linux host |
 | [CSharp.md](CSharp.md) | C# typed ports, Tasks, NuGet dependencies and the .NET worker lifetime |
 | [Visualization.md](Visualization.md) | Editable library/shape scaffolds, data parameters, saved figures and reports |
 | [Marimo.md](Marimo.md) | Committed notebook runs, typed inputs/outputs, saved cell results and the interactive-session boundary |
@@ -37,13 +37,11 @@ Start from the document that fits what you want to read. To read with moving fig
 | --- | --- |
 | [Versions.md](Versions.md) | Versions: the project's git, each run's version and result (git notes), the version tree and "Start from This Version" |
 | [security.md](security.md) | What is and is not protected, the four isolation boundaries (VM, project, Card, RPC), API keys, where data is kept, and known limitations |
-| [Protocol.md](Protocol.md) | The RPC contract: the 45 requests and the notifications (generated from `protocol/tsugumi.fbs`) |
+| [Protocol.md](Protocol.md) | The RPC contract: the 48 requests and the notifications (generated from `protocol/tsugumi.fbs`) |
 | [Glossary.md](Glossary.md) | Card, Draft, Run, invocation, version and other terms |
 
-## Development
+## Dependencies and distribution
 
 | Document | Contents |
 | --- | --- |
-| [Development.md](Development.md) | Runtime architecture, design decisions, builds and test commands |
-| [Lock.md](Lock.md) | Pinned versions of the runtime and its dependencies |
 | [LicenseAudit.md](LicenseAudit.md) | License bundling, VM source distribution and dependency updates |

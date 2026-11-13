@@ -28,27 +28,6 @@ The table below lists the limits of these guarantees. Details are in each sectio
 
 ## 1. The trust boundaries
 
-```text
-┌─ macOS (user's permissions) ───────────────────────────────────────────┐
-│  Tsugumi.app (starts or reconnects to tsugumi-agentd)                    │
-│   ├ SwiftUI UI                                                         │
-│   ├ Agent client ── Unix socket ──▶ tsugumi-agentd (host-side core)    │
-│   │                                  └ HTTPS ──▶ model provider       │
-│   └ LoopbackBridge 127.0.0.1:<free port>  ◀── other clients            │
-│        │ vsock                                                         │
-│  ┌─ Shared Linux VM (Virtualization.framework) ─────────────────────┐  │
-│  │  tsugumi-vmd (root, manages the VM)  nix-daemon (shared store)   │  │
-│  │  ┌─ project A ────────────────────────┐ ┌─ project B ────────┐   │  │
-│  │  │ own uid / mount, PID, IPC, UTS ns  │ │ same (other uid)   │   │  │
-│  │  │ cgroup tsugumi/<A>                 │ │                    │   │  │
-│  │  │ tsugumid                           │ │ tsugumid           │   │  │
-│  │  │  └ worker (bubblewrap: all ns,     │ │  └ worker          │   │  │
-│  │  │     no network or caps by default) │ │                    │   │  │
-│  │  └────────────────────────────────────┘ └────────────────────┘   │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
 There are four boundaries, from the innermost outwards.
 
 | Boundary | Protects | Mechanism |
@@ -96,6 +75,7 @@ The managing process inside the VM, `tsugumi-vmd`, starts each project's `tsugum
   - `/project` … its own project folder
   - `/control` … its own control folder
   - `/history` … its own run-history folder (on the run-history disk, `nosuid,nodev`)
+  - `/scratch` … its own disk-backed invocation scratch (`/persist/run-scratch/<id>`, owned by the project uid, mode 0700). The core validates scratch ownership and private parents, rejects symbolic links and, on Linux, rejects tmpfs/ramfs (`core/src/run_scratch.cc`).
   - its own `/tmp` and `/run/tsugumi` (`tmpfs`)
   - `/run/tsugumi/rpc` … the sockets `tsugumid` listens on (WebSocket, Unix socket). They actually live in `/run/tsugumi-rpc/<id>` (a 0700 folder only that project's uid can enter), and `tsugumi-vmd` relays to them. There are no ports of any project on the VM's loopback (a Card allowed the network shares the VM's network, so a port there would let it reach another project's `tsugumid`).
   - `/run/tsugumi/host/<tag>`, `/run/tsugumi/chat/<tag>` … Mac folders shared with that project (§2, only when specified)
@@ -115,23 +95,14 @@ Each Card's code is further run inside a `bubblewrap` sandbox (`core/src/worker_
 
 ### `sandbox: true` (the default)
 
-```text
-bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
-      --ro-bind /nix/store /nix/store --proc /proc --dev /dev --tmpfs /tmp
-      --symlink <bash from the store> /bin/sh
-      --uid <like nobody> --gid <…>
-      --ro-bind <saved inputs, runs>  --bind <the worker's temporary area>
-      -- tsugumi-worker
-```
-
 - **All namespaces are separated** (user, mount, PID, network, IPC, UTS, cgroup). The only network interface is loopback (`lo`). Only for a Card with `network: true` is the network namespace left shared (`--share-net`), with the name-resolution settings and the CA certificate file mounted read-only.
 - **All Linux capabilities are dropped** (`--cap-drop ALL`).
 - **Visible files** are limited to `/nix/store` (read-only), for a Card built for another system the folder of its emulator when that is outside `/nix/store` (Rosetta's `/run/rosetta`, read-only), the worker's executable (for a package Card of another system, the worker its build made for that system, in `/nix/store`; when it is outside `/nix/store` in a development build, that file alone, read-only), the project's `runs` and saved inputs (read-only), a temporary work area for that worker alone (writable), and the Mac folders that Card specified in `hostFolders` (`/host/<name>`, writable only with `write: true`). The project's definition documents and source code, the control folder, the authentication token, other Cards' work areas, host folders other Cards specified and folders attached to the chat are not visible.
 - **The environment variables are rebuilt from empty** (`PATH=/var/empty`, `LANG=C.UTF-8` and only the variables Tsugumi passes); nothing is inherited from `tsugumid` or the host.
 - **Passing outputs**: each invocation's output directory is passed as a file descriptor (FD) with `SCM_RIGHTS` and accessed inside the worker as `/proc/self/fd/900`. After the run, the core maps it back to its real path and validates it.
-- **Why inputs are not passed as FDs**: measurement showed that on Linux, even an FD opened read-only can in some cases be reopened for writing through `/proc/self/fd/N`. Inputs are therefore protected with read-only bind mounts.
+- **Read-only inputs**: inputs are protected with read-only bind mounts rather than file descriptors.
 - **Where `bubblewrap` is not available, a `sandbox: true` Card is refused at once without running** (`permission_denied`). Nothing ever runs without isolation implicitly.
-- The exception is starting the [Web UI](WebUI.md) from the repository and running `tsugumid` directly on a Mac host (the `tsugumi` command uses the shared VM, so this does not apply to it). There, `sandbox-exec` (Seatbelt) isolates instead of bubblewrap (no network; reading only `/nix/store`, the run's and inputs' areas and system libraries; writing only the worker's own area and the run's output folder), and without `sandbox-exec` it is refused in the same way. Even a `network: true` Card is kept away from this machine's own addresses, Unix sockets and most Mach services. The details, and the paths that cannot be closed, are in [Isolation in the Web UI](WebUI.md#isolation-macos-host).
+- The exception is starting the [Web UI](WebUI.md) from the repository and running `tsugumid` directly on a Mac host (the `tsugumi` command uses the shared VM, so this does not apply to it). There, `sandbox-exec` (Seatbelt) isolates instead of bubblewrap (no network; reading only `/nix/store`, the run's and inputs' areas and system libraries; writing only the worker's own area and the run's output folder), and without `sandbox-exec` it is refused in the same way. Even a `network: true` Card is kept away from this machine's own addresses, Unix sockets and most Mach services. The details, and the paths that cannot be closed, are in [Direct macOS host](#direct-macos-host).
 
 ### `sandbox: false`
 
@@ -141,14 +112,19 @@ A setting that relaxes only the restrictions on seeing the file system. Where bu
 - The control folder and the `.tsugumi` directory are hidden behind empty `tmpfs` mounts. virtiofs presents every file as owned by the process looking at it, so ordinary file permissions (mode) alone cannot protect the authentication token.
 - Files in the VM are accessible with the project's uid, so the Mac folders shared with that project (`/run/tsugumi/host/`, `/run/tsugumi/chat/`; §3) become readable too, including those other Cards specified and those attached to the chat.
 
-### Worker lifetimes
+### Direct macOS host
 
-- On cancellation or a deadline, the processes a worker started are all ended, descendants included (tested automatically with the sandbox both on and off).
-- Resident workers are discarded at once when the project stops, the build conditions change or a run fails, and their memory (at most 2 GiB) and number (at most 32) are limited.
+The repository's development server can run `tsugumid` directly on a Mac with Seatbelt (`core/src/worker_proc.cc`). This does not separate uids, and `stat` can reveal metadata outside the readable paths. Shared host-folder grants require the VM; a `sandbox: false` Card runs with the host user's permissions.
+
+Even with network access, Seatbelt denies this machine's loopback, LAN/VPN addresses and Unix sockets, except the mDNSResponder socket needed for DNS. That exception also permits DNS-SD browsing/advertising. Certificate validation uses `com.apple.trustd.agent`; other Mach services, system proxy settings and user lookup are unavailable.
+
+Do not grant untrusted Cards network access when these unavoidable limits matter: LAN/VPN peers remain reachable, UDP broadcasts/multicasts can reach this host, and a Card may open a listening socket. The shared VM is the installed Mac command's execution route.
 
 ### Showing Card views (line charts, Plotly, Vega-Lite and Card-owned modules)
 
 Card views run in the shared isolated host (`ui/modules`). Built-in views, including the WebGPU line chart and the SDK-pinned Plotly/Vega libraries, are fetched from the core through RPC just like Card-owned modules. Run data are supplied separately as configuration and binary blobs.
+
+The core accepts only Nix store module identities. A shared entry must resolve to a canonical store `index.js`, and the Card's Wasm must remain inside its own output directory (`core/src/module_source.cc`).
 
 - Web UI: `/modules/viewer.html` is put in an iframe. Its response's CSP is `sandbox allow-scripts` (without `allow-same-origin`), so the component runs in an opaque origin and can use neither cookies nor `/api/`. With `default-src 'none'` and `connect-src 'none'` it loads nothing and connects nowhere. With `frame-src 'none'` the Card's inner frame (a `srcdoc` document) cannot navigate itself to any URL either. Its script is embedded in the page, and the library code is handed over by the parent page with postMessage. This is the only route that may be embedded (`frame-ancestors 'self'`); every other response forbids embedding.
 - macOS app: the trusted host is loaded as HTML in a nonpersistent WKWebView without a file read grant. Card code runs in its opaque inner frame. Content rules block network/file resources, a navigation delegate denies external navigation, and native message handlers reject messages from subframes.
@@ -207,7 +183,7 @@ A mechanism that stops an RPC client (the Agent included) from having `tsugumid`
 - LLM providers' API keys are registered in the user's **login keychain** (the macOS Keychain) (`macOS/Sources/AgentClient/Provider.swift`).
   - The service name is `app.tsugumi.agent` and the account name is the provider's name (`Anthropic` / `OpenAI`). The app and the Web UI's server use the same item, so a key registered in either works in both.
   - Login keychain items are not synced to iCloud Keychain. They can be read while the login keychain is unlocked (normally, while logged in).
-  - An item's access list trusts only the program that saved it. When another program (the `security` command included) tries to read a key the app saved, macOS asks the user. An app built with an ad hoc signature asks once on the first read after each rebuild (it does not if signed with `TSUGUMI_CODESIGN_IDENTITY`; "Signing development builds" in [Development](Development.md)).
+  - An item's access list trusts only the program that saved it. When another program (the `security` command included) tries to read a key the app saved, macOS asks the user. An app built with an ad hoc signature asks once on the first read after each rebuild (it does not if signed with `TSUGUMI_CODESIGN_IDENTITY`; "Signing development builds" in [Releasing](../RELEASING.md)).
   - The Web UI's server reads and writes through `/usr/bin/security`. A key saved in the Web UI trusts `security`, so any program running as this user can read it without confirmation with `security find-generic-password`. If you use both, registering the key from the app's settings is recommended. Outside macOS (or when it could not be saved in the Keychain), it is kept in a file (0600) in the Web UI's data folder.
   - The data protection keychain (`kSecUseDataProtectionKeychain`) is not used. It needs an entitlement that only a provisioning profile can grant, which an ad hoc signed build cannot have (`errSecMissingEntitlement`).
 - Platform adapters read API keys and pass them to the host-side `tsugumi-agentd` through authenticated Agent RPC. The service persists provider configuration, including the key, in its `agent.sqlite` (0600) and sends model requests with libcurl, putting the key in the HTTPS request header (`x-api-key` / `Authorization: Bearer`). The Web UI's server keeps a key it read in that process's memory (rereading it when the item's attributes change) and also remembers refused reads, so `security`'s confirmation does not appear again and again for the same key.
@@ -243,7 +219,7 @@ When the Agent is used, the following is sent to the connected model provider (A
 
 **Note that using the Agent sends part of the code, logs, input and output data and the contents of attached folders in the project to an outside model provider.** Before using the Agent on a project containing unpublished data or confidential information, check that it may be sent to the provider.
 
-Conversely, **without the Agent, with "Version summaries" off and with no Card that has `network: true`, the project's content and data do not leave the Mac and the local VM** (apart from Nix fetching packages). A Card allowed `network: true` can send the data it can access (its inputs, the contents of host folders specified for it and so on) to the outside network.
+Conversely, **without the Agent, with "Version summaries" off and with no Card that has `network: true`, the project's content and data stay in the local execution environment, provided all Cards use the local execution service** (apart from Nix fetching packages). A Card allowed `network: true` can send the data it can access (its inputs, the contents of host folders specified for it and so on) to the outside network.
 
 ### Web search
 
@@ -304,37 +280,11 @@ Most of these spell out, as practical cautions, what lies outside the boundary i
 
 - **Check the permissions written in a project you received before running it.** `network`, `sandbox: false` and `hostFolders` (especially `write: true`) in `_card.json`, and `nixSources` in `tsugumi.json`, take effect without confirmation both on opening and at run time (only saves the Agent makes wait for approval; §8). Look at the Cards' icons and the Experimental items of the Cards' settings. A `sandbox: false` Card can read every Mac folder shared with that project (§4).
 - **Projects share one Linux kernel.** An exploited kernel vulnerability could reach other projects, so do not open at the same time projects you want strongly separated (§3).
-- **A Web UI run directly on a Mac host from the repository has weaker isolation.** A `sandbox: false` Card runs without isolation with the user's permissions (`network: false` does not apply either), and a `network: true` Card can reach devices on the same LAN or VPN ([Isolation in the Web UI](WebUI.md#isolation-macos-host)). The `tsugumi` command uses the shared VM, so this does not apply to it.
-- **Releases are signed ad hoc, without Apple's notarisation.** GitHub Actions builds them from this repository's tags (`.github/workflows/release.yml`), and automatic updates are installed after their checksum, code signature and more are checked ("Automatic updates" in [Development](Development.md)). The correctness of updates rests on trusting the people who can write to this repository and its GitHub Releases.
-
-
-Built-in line charts run as SDK-pinned WebGPU modules in the same isolated
-frame as Card-owned views. The application has no separate native chart renderer
-or drawing bridge. Binary float64 input is run data; the module receives it
-through the existing module input transport, with unchanged retention rules.
+- **A Web UI run directly on a Mac host from the repository has weaker isolation.** A `sandbox: false` Card runs without isolation with the user's permissions (`network: false` does not apply either), and a `network: true` Card can reach devices on the same LAN or VPN ([Direct macOS host](#direct-macos-host)). The `tsugumi` command uses the shared VM, so this does not apply to it.
+- **Releases are signed ad hoc, without Apple's notarisation.** GitHub Actions builds them from this repository's tags (`.github/workflows/release.yml`), and automatic updates are installed after their checksum, code signature and more are checked ("Automatic updates" in [Releasing](../RELEASING.md)). The correctness of updates rests on trusting the people who can write to this repository and its GitHub Releases.
 
 ## Remote worker boundary
 
-The C++ `tsugumi-remote-worker` in `workerd/` uses the generated contract in
-`protocol/remote_worker.fbs`: bounded little-endian length-prefixed FlatBuffers
-on Unix or loopback TCP streams, with chunked SHA-256 verified byte transfers.
-It has no HTTP listener. The current private token authenticates both carriers;
-there is no non-loopback TCP listener, TLS or key authentication yet. A separate
-SSH tunnel may carry the loopback stream. Key authentication over TLS or SSH
-will wrap this same stream in the next change.
+A registered execution host receives the Card's inputs. Use a host trusted with those data. The current remote worker accepts token-authenticated Unix sockets or loopback TCP; use a separately established SSH tunnel between machines. There is no direct non-loopback listener or TLS option.
 
-Swift and TypeScript brokers keep remote credentials on the host. They authorize
-projects from host identities, overwrite client-supplied scopes and pin server
-identities. The remote worker also pins each project's journal identity. Native
-workers stay light and do not link Nix; only the remote executable links Nix.
-
-Remote job supervisors hold exclusive lifetime locks and survive listener
-restarts. Unprivileged user/PID namespaces, parent-death signalling and optional
-verified cgroup v2 limits cover the entire build/run. A lost supervisor is marked
-interrupted rather than rerun. Run data remain in private job scratch outside
-the persistent Nix store. After the host durably saves an outcome, a retryable
-release removes inputs, outputs and logs; only replay tombstones remain. A host
-that has not fetched its accepted job's result can reconnect without an expiry
-race. Never-submitted uploads expire after an hour of inactivity. These are
-remote transfer scratch rules; host run retention is unchanged. See
-[Remote execution](RemoteExecution.md) for the layout and validation limits.
+Host brokers keep credentials out of project files and `tsugumid`, authorize project scopes and pin server/journal identities. [Remote execution](RemoteExecution.md) owns setup, recovery and the journal/scratch lifetime.

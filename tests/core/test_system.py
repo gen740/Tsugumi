@@ -3,7 +3,7 @@ the kernel has registered (binfmt_misc). Which systems a Card may name (Cards
 of every language may), and what a run says when no emulator is there.
 
 Emulated runs themselves are checked in the shared VM on a Mac, with Rosetta
-and with qemu (TSUGUMI_VM_X86=qemu): docs/Development.md#tests.
+and with qemu (TSUGUMI_VM_X86=qemu): tests/README.md.
 """
 from __future__ import annotations
 

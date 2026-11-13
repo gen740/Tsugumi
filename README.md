@@ -144,7 +144,6 @@ Rewrite the band edges or the bin width of the spectrum and rerun only that Card
 ### Looking back at what actually ran
 
 The timeline at the bottom of the screen shows when each Card ran and for how long.
-The observation and the analysis tools are fetched and built once, on the first run; after that they come from the Nix store, so the whole Run recorded here finishes in about 12 seconds.
 You can also open each Card's run history, logs and artifacts, and check every step on the way to the conclusion.
 
 <a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-timeline.svg" alt="The timeline drawing, as the run goes, when each Card ran and for how long" width="100%"></a>
@@ -167,29 +166,7 @@ In a project, the chat is the thrush. Write `$demo` and it flies around the scre
 
 ### Install
 
-**We recommend the macOS desktop app.** Tsugumi is developed on macOS, so this is the most thoroughly checked way to use it. The runtime for computation is inside the app, and there is nothing else to prepare.
-
-**Mac (Apple silicon, macOS 26 or later)**: the desktop app. It contains the runtime and the demos, and updates itself from then on.
-
-```bash
-curl -fL -o /tmp/Tsugumi.zip https://github.com/gen740/Tsugumi/releases/latest/download/Tsugumi.zip && ditto -x -k /tmp/Tsugumi.zip /Applications && open /Applications/Tsugumi.app
-```
-
-**Mac and Linux**: the `tsugumi` command, used in the browser (on Linux, install [Nix](https://nixos.org/download) first). Open it with `tsugumi` and update it with `tsugumi update`.
-
-```bash
-curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh | sh
-```
-
-**Windows** (WSL2): run this in PowerShell (no administrator rights needed). First install WSL2 (`wsl --install` in PowerShell) and [Nix](https://nixos.org/download) in its Linux.
-
-```powershell
-irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
-```
-
-You can also open a shell in the WSL Linux and install with the same `curl … | sh` as on Mac and Linux. Either way, running `tsugumi` opens the page in the Windows browser.
-
-The first start takes a few minutes to prepare. The signature (ad hoc), system requirements and building from source are in [INSTALL.md](docs/INSTALL.md).
+Use the [installation guide](docs/INSTALL.md) for the macOS app or the `tsugumi` command on Mac, Linux and Windows.
 
 ### First steps
 
@@ -204,45 +181,7 @@ If you use Claude Code, the `tsugumi` plugin lets Claude Code work on a project 
 
 ### Bundled demos
 
-Each one replays the record of a real run. Click one to open it in the [web version](https://gen740.github.io/Tsugumi/#demos), where you can read what is inside its Cards and their sources. There are 31 demos, Draft versions included; how each works is in [The bundled demos](docs/Demos.md).
-
-#### The basics
-
-<table>
-<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-report"><img src="docs/assets/demos/report.svg" alt="The Data to report demo running" width="100%"></a><br><b>Data to report</b><br><sub>Generate data, aggregate it and write a report. Change a step in the middle and rerun from there.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-collatz"><img src="docs/assets/demos/collatz.svg" alt="The Collatz (C++ / Python / Julia / R) demo running" width="100%"></a><br><b>Collatz (C++ / Python / Julia / R)</b><br><sub>The same computation in four languages, compared while following its branch and loop.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-plots"><img src="docs/assets/demos/plots.svg" alt="The Plots demo running" width="100%"></a><br><b>Plots</b><br><sub>matplotlib code written for a window becomes the Card's display as it is.</sub></td></tr>
-<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-live-stream"><img src="docs/assets/demos/live-stream.svg" alt="The Live Stream demo running" width="100%"></a><br><b>Live Stream</b><br><sub>A time series plotted while the run is still going.</sub></td></tr>
-</table>
-
-#### Public data
-
-<table>
-<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/demos/casa.svg" alt="The Cas A · Chandra RGB demo running" width="100%"></a><br><b>Cas A · Chandra RGB</b><br><sub>An X-ray observation split into three energy bands for an RGB image, with the spectrum of the same photons to match lines to colours.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-gw150914"><img src="docs/assets/demos/gw150914.svg" alt="The GW150914 demo running" width="100%"></a><br><b>GW150914</b><br><sub>The chirp of a gravitational wave, extracted from public data and plotted.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-protein-6lu7"><img src="docs/assets/demos/protein-6lu7.svg" alt="The 6LU7 demo running" width="100%"></a><br><b>6LU7</b><br><sub>A protein's 3D structure, fetched to look at its binding pocket.</sub></td></tr>
-<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-exoplanet-transit"><img src="docs/assets/demos/exoplanet-transit.svg" alt="The Kepler-6 b demo running" width="100%"></a><br><b>Kepler-6 b</b><br><sub>A light curve folded to show an exoplanet's transit.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-seismic-trench"><img src="docs/assets/demos/seismic-trench.svg" alt="The Japan Trench demo running" width="100%"></a><br><b>Japan Trench</b><br><sub>A cross-section of hypocentres and the b-value, from an earthquake catalogue.</sub></td></tr>
-</table>
-
-#### Machine learning and computation
-
-<table>
-<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-mnist-classifiers"><img src="docs/assets/demos/mnist-classifiers.svg" alt="The MNIST classifier comparison demo running" width="100%"></a><br><b>MNIST · comparing classifiers</b><br><sub>The real MNIST fed to seven classifiers at once, comparing accuracy and time.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-newton"><img src="docs/assets/demos/newton.svg" alt="The Newton's method demo running" width="100%"></a><br><b>Newton's method</b><br><sub>A map of the complex plane showing how the starting point decides where it goes and how fast.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-max-flow"><img src="docs/assets/demos/max-flow.svg" alt="The maximum flow and minimum cut demo running" width="100%"></a><br><b>Maximum flow and minimum cut</b><br><sub>On a made-up network, which edge to widen to increase the flow.</sub></td></tr>
-<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-pharmacokinetics"><img src="docs/assets/demos/pharmacokinetics.svg" alt="The pharmacokinetics demo running" width="100%"></a><br><b>Pharmacokinetics (a made-up drug)</b><br><sub>Teaching material comparing how concentration moves with the dosing interval. Not medical advice.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-dose-response"><img src="docs/assets/demos/dose-response.svg" alt="The dose–response demo running" width="100%"></a><br><b>Dose–response curve (synthetic data)</b><br><sub>A fit and its confidence interval, checked on data whose true values are known.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-molecules"><img src="docs/assets/demos/molecules.svg" alt="The molecular properties demo running" width="100%"></a><br><b>Molecular properties</b><br><sub>Properties and structural formulas from SMILES, with RDKit.</sub></td></tr>
-<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-cell-count"><img src="docs/assets/demos/cell-count.svg" alt="The cell counting demo running" width="100%"></a><br><b>Counting cells in images</b><br><sub>A counting method scored on synthetic images with known answers, then applied to real images of nuclei.</sub></td></tr>
-</table>
-
-#### Statistics in R
-
-<table>
-<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-survival"><img src="docs/assets/demos/survival.svg" alt="The survival analysis demo running" width="100%"></a><br><b>Survival analysis</b><br><sub>How much the same hazard ratio moves with the subjects and the adjustment.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-meta-analysis"><img src="docs/assets/demos/meta-analysis.svg" alt="The BCG vaccine meta-analysis demo running" width="100%"></a><br><b>Meta-analysis: the BCG vaccine</b><br><sub>How the conclusion moves with the pooling method and the trials left out.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-rna-seq"><img src="docs/assets/demos/rna-seq.svg" alt="The RNA-seq airway demo running" width="100%"></a><br><b>RNA-seq: airway</b><br><sub>With DESeq2 and edgeR, how the number of differentially expressed genes changes with the threshold.</sub></td></tr>
-<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-simpson"><img src="docs/assets/demos/simpson.svg" alt="The Simpson's paradox demo running" width="100%"></a><br><b>A correlation that reverses when stratified</b><br><sub>Two real datasets in which the whole and its strata point in opposite directions.</sub></td></tr>
-</table>
-
-#### Simulation in Julia
-
-<table>
-<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-battery"><img src="docs/assets/demos/battery.svg" alt="The battery scheduling demo running" width="100%"></a><br><b>Scheduling a battery</b><br><sub>Charging and discharging optimised by dynamic programming, under made-up prices.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-gillespie"><img src="docs/assets/demos/gillespie.svg" alt="The stochastic chemical reactions demo running" width="100%"></a><br><b>Fluctuations in chemical reactions</b><br><sub>A Gillespie simulation checked against theory.</sub></td><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-heat-inverse"><img src="docs/assets/demos/heat-inverse.svg" alt="The inverse heat conduction demo running" width="100%"></a><br><b>An inverse problem in heat conduction</b><br><sub>The naive inverse breaks down; regularisation recovers the answer.</sub></td></tr>
-<tr><td width="33%" valign="top"><a href="https://gen740.github.io/Tsugumi/#demo-ecology-models"><img src="docs/assets/demos/ecology-models.svg" alt="The ecological model comparison demo running" width="100%"></a><br><b>Comparing ecological models</b><br><sub>Predator–prey models fitted to fur-trade records and compared.</sub></td></tr>
-</table>
-
-A Draft version of a demo is a project with only the shape of its Cards (names, descriptions and wires); you have the Agent implement it with "Generate Cards" ([The bundled demos](docs/Demos.md)).
+Open an editable copy in the app, or inspect recorded runs in the [web gallery](https://gen740.github.io/Tsugumi/#demos). The [demo guide](docs/Demos.md) explains what to try and how to interpret each result, including Drafts for the Agent to implement.
 
 ## The flow of processing as a common language for people and AI
 
@@ -255,14 +194,7 @@ This idea starts from research and extends to turning research decisions into te
 
 ## Documentation
 
-| Purpose | Documents |
-| --- | --- |
-| **Getting started** | [Installation](docs/INSTALL.md) · [Usage](docs/Usage.md) · [Your first Card](docs/CardGuide.md) · [The bundled demos](docs/Demos.md) · [Web UI](docs/WebUI.md) · [Using it from Claude Code](docs/claude-code.md) |
-| **The ideas** | [What to build so that we are not used by AI](docs/Philosophy.md) · [Why one Workflow for design, implementation and checking](docs/Rationale.md) · [Vision and applications](docs/Vision.md) · [Plans and guarantees](docs/Limitations.md) |
-| **How it works** | [Features](docs/features.md) · [Versions](docs/Versions.md) · [Security and isolation](docs/security.md) · [The RPC contract](docs/Protocol.md) · [Glossary](docs/Glossary.md) |
-| **Development** | [Development](docs/Development.md) · [Pinned versions](docs/Lock.md) · [Licenses and distribution](docs/LicenseAudit.md) |
-
-The list of all documents is in [docs/README.md](docs/README.md).
+[User guides](docs/README.md) · [Repository map](AGENTS.md#map) · [Tests](tests/README.md) · [Releasing](RELEASING.md) · [Documentation site](docs/site/README.md)
 
 ## License
 
