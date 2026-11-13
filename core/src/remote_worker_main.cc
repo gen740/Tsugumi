@@ -116,6 +116,7 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
     throw Failed(FailureKind::nix_failed, "remote Card manifest must contain one package or Bash body");
   spawn.build.pre_run = manifest.pre_run->value_or("");
   spawn.build.post_run = manifest.post_run->value_or("");
+  spawn.build.views = manifest.views->value_or("");
   spawn.network = *invocation.network;
   spawn.uid = 65534;
   spawn.gid = 65534;

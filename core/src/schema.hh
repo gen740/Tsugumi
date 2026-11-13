@@ -439,6 +439,7 @@ struct CardManifest {
   Opt<"path", v::String> path;
   Opt<"preRun", v::String> pre_run;
   Opt<"postRun", v::String> post_run;
+  Opt<"views", v::String> views;  // JSON: view module name -> Nix store directory
 };
 
 struct SdkFileJson {

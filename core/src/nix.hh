@@ -28,6 +28,7 @@ struct CardBuild {
   std::optional<std::string> bash;
   std::string pre_run;
   std::string post_run;
+  std::string views;  // JSON mapping of the view module names the worker may show
   // The program the kernel runs the Card's binaries with (binfmt_misc), for a
   // Card built for another system; "" when it runs natively.
   std::string emulator;

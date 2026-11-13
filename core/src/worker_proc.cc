@@ -192,6 +192,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   script("--pre", sp.build.pre_run, "pre.sh");
   if (sp.build.bash) script("--run", *sp.build.bash, "run.sh");
   script("--post", sp.build.post_run, "post.sh");
+  if (!sp.build.views.empty()) args.insert(args.end(), {"--views", sp.build.views});
   if (sp.build.package) {
     args.push_back("--package");
     args.push_back(*sp.build.package);
