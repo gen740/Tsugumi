@@ -97,9 +97,51 @@ final class ServiceWireTests: XCTestCase {
       let message = Tsugumi_Host_Message.createMessage(&b, requestId: 1, payloadType: .reply, payloadOffset: reply)
       Tsugumi_Host_Message.finish(&b, end: message)
       let decoded = try ServiceWire.decode(b.data, host: true)
-      let result = try XCTUnwrap(decoded["value"] as? [String: Any])
-      XCTAssertTrue(try XCTUnwrap(result[type == .settings ? "values" : "accounts"] as? [Any]).isEmpty)
+      XCTAssertTrue(try XCTUnwrap(decoded[type == .settings ? "values" : "accounts"] as? [Any]).isEmpty)
     }
+  }
+
+  func testSettingsAndAuthenticationRepliesExposeTheirTypedFields() throws {
+    let setting = Tsugumi_Host_SettingT()
+    setting.key = "agent.model.openai"
+    setting.valueJson = #""from-the-app""#
+    let settings = Tsugumi_Host_SettingsT()
+    settings.revision = UInt64.max - 1
+    settings.values = [setting]
+    let saved = try ServiceWire.decode(hostReply(settings, type: .settings), host: true)
+    XCTAssertEqual(saved["revision"] as? UInt64, UInt64.max - 1)
+    let values = try XCTUnwrap(saved["values"] as? [[String: String]])
+    XCTAssertEqual(values, [["key": "agent.model.openai", "value_json": #""from-the-app""#]])
+
+    let begin = Tsugumi_Host_SignInBeginT()
+    begin.attemptId = "attempt-1"
+    begin.url = "https://issuer.example/authorize"
+    let opened = try ServiceWire.decode(hostReply(begin, type: .signinbegin), host: true)
+    XCTAssertEqual(opened["attempt_id"] as? String, begin.attemptId)
+    XCTAssertEqual(opened["url"] as? String, begin.url)
+
+    let account = Tsugumi_Host_AccountT()
+    account.clientId = "client-1"
+    account.signedIn = true
+    account.active = true
+    let status = Tsugumi_Host_SignInStatusT()
+    status.state = "complete"
+    status.accounts = [account]
+    status.revoked = true
+    let polled = try ServiceWire.decode(hostReply(status, type: .signinstatus), host: true)
+    XCTAssertEqual(polled["state"] as? String, "complete")
+    XCTAssertEqual(polled["revoked"] as? Bool, true)
+    let accounts = try XCTUnwrap(polled["accounts"] as? [[String: Any]])
+    XCTAssertEqual(accounts.count, 1)
+    XCTAssertEqual(accounts.first?["clientId"] as? String, "client-1")
+    XCTAssertEqual(accounts.first?["signedIn"] as? Bool, true)
+
+    let provider = Tsugumi_Host_ProviderStatusT()
+    provider.id = "anthropic"
+    provider.configured = true
+    let provisioned = try ServiceWire.decode(hostReply(provider, type: .providerstatus), host: true)
+    XCTAssertEqual(provisioned["id"] as? String, "anthropic")
+    XCTAssertEqual(provisioned["configured"] as? Bool, true)
   }
 
   func testTypedSnapshotBecomesPresentationValues() throws {
@@ -131,6 +173,19 @@ final class ServiceWireTests: XCTestCase {
       XCTAssertEqual((error as? CoreAgentFailure)?.code, "grant_required")
       XCTAssertEqual((error as? CoreAgentFailure)?.requestID, "permission-1")
     }
+  }
+
+  private func hostReply(_ value: NativeObject, type: Tsugumi_Host_ReplyPayload) -> Data {
+    let reply = Tsugumi_Host_ReplyT()
+    reply.value = Tsugumi_Host_ReplyPayloadUnion(value, type: type)
+    let message = Tsugumi_Host_MessageT()
+    message.requestId = 1
+    message.payload = Tsugumi_Host_PayloadUnion(reply, type: .reply)
+    var object: Tsugumi_Host_MessageT? = message
+    var b = FlatBufferBuilder(initialSize: 1024)
+    let offset = Tsugumi_Host_Message.pack(&b, obj: &object)
+    Tsugumi_Host_Message.finish(&b, end: offset)
+    return b.data
   }
 
   private func reply(_ value: NativeObject, type: Tsugumi_Agent_ReplyPayload) -> Data {

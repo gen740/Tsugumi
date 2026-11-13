@@ -49,7 +49,7 @@ public actor ChatGPTAuth {
     if let client { fields["client_id"] = client }
     if let attempt { fields["attempt_id"] = attempt }
     let reply = try await CoreAgentClient.shared.call(action == nil ? "SignInStatusRequest" : "SignInActionRequest", fields)
-    return reply["value"] as? [String: Any] ?? [:]
+    return reply
   }
   private func infos(_ value: [String: Any]) -> [ChatGPTAccountInfo] {
     (value["accounts"] as? [[String: Any]] ?? []).map { a in
@@ -67,8 +67,8 @@ public actor ChatGPTAuth {
     var fields: [String: Any] = ["profile": profile, "issuer": endpoints.issuer, "resource": endpoints.resource, "consent": consent]
     if let clientId { fields["client_id"] = clientId }
     let reply = try await CoreAgentClient.shared.call("SignInBeginRequest", fields)
-    guard let value = reply["value"] as? [String: Any], let attempt = value["attempt_id"] as? String,
-          let text = value["url"] as? String, let url = URL(string: text) else { throw ChatGPTError.failed("Invalid sign-in reply") }
+    guard let attempt = reply["attempt_id"] as? String,
+          let text = reply["url"] as? String, let url = URL(string: text) else { throw ChatGPTError.failed("Invalid sign-in reply") }
     do {
       try await open(url)
       while true {

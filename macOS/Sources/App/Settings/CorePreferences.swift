@@ -20,8 +20,7 @@ final class CorePreferences {
   }
   private func loadSnapshot() async {
     do {
-      let reply = try await CoreAgentClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
-      guard let value = reply["value"] as? [String: Any] else { return }
+      let value = try await CoreAgentClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
       revision = (value["revision"] as? NSNumber)?.uint64Value ?? 0
       values = Dictionary(uniqueKeysWithValues: (value["values"] as? [[String: String]] ?? []).compactMap { item in
         guard let key = item["key"], let raw = item["value_json"], let data = raw.data(using: .utf8),

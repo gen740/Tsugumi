@@ -1,8 +1,8 @@
 """The `tsugumi` command: what cli/install.sh does on each platform (uname and
 Nix are stand-ins here, so all of it runs anywhere), and the web server with the
-Mac's VM backend against a stand-in for tsugumi-vmhost: the desktop app's
-settings and recent projects, with no second copy. A real VM is checked by hand
-(tests/README.md)."""
+Mac's VM backend against a stand-in for tsugumi-vmhost. Shared settings and
+recent projects are checked against the host core, with no second copy. A real
+VM is checked by hand (tests/README.md)."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import shutil
 import signal
 import socket
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -24,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import WEB_DIST
+from conftest import BUILD, WEB_DIST
 from test_claude_code_plugin import isolated_environment, stop_resident_services
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -390,21 +391,89 @@ def test_recent_projects_are_owned_by_the_host_core(vm_server):
     assert not (tmp / "support" / "web" / "recent-projects.json").exists()
 
 
+def core_settings(root: Path, changes: dict | None = None):
+    """The app's public Host contract, separate from the VM helper protocol."""
+    bindings = str(Path(os.environ.get("TSUGUMI_PY_BINDINGS", BUILD / "generated/python")))
+    if bindings not in sys.path:
+        sys.path.insert(0, bindings)
+    import flatbuffers
+    from Tsugumi.Service.HelloRequest import HelloRequestT
+    from Tsugumi.Host.Message import Message, MessageT
+    from Tsugumi.Host.Request import RequestT
+    from Tsugumi.Host.RequestPayload import RequestPayload
+    from Tsugumi.Host.ReplyPayload import ReplyPayload
+    from Tsugumi.Host.Payload import Payload
+    from Tsugumi.Host.Setting import SettingT
+    from Tsugumi.Host.SettingsGetRequest import SettingsGetRequestT
+    from Tsugumi.Host.SettingsUpdateRequest import SettingsUpdateRequestT
+
+    ready = json.loads((root / "agent-core/agent.ready").read_text())
+    with socket.socket(socket.AF_UNIX) as peer:
+        peer.settimeout(10)
+        peer.connect(ready["host_socket"])
+
+        def read_exact(count):
+            data = b""
+            while len(data) < count:
+                part = peer.recv(count - len(data))
+                assert part, "Host connection closed"
+                data += part
+            return data
+
+        def call(i, kind, value, expected):
+            builder = flatbuffers.Builder()
+            envelope = MessageT(requestId=i, payloadType=Payload.Request,
+                                payload=RequestT(valueType=kind, value=value))
+            builder.Finish(envelope.Pack(builder), file_identifier=b"TSH1")
+            data = builder.Output()
+            peer.sendall(struct.pack("<I", len(data)) + data)
+            size, = struct.unpack("<I", read_exact(4))
+            assert 0 < size <= 16 << 20
+            data = read_exact(size)
+            assert Message.MessageBufferHasIdentifier(data, 0)
+            reply = MessageT.InitFromPackedBuf(data)
+            assert reply.requestId == i and reply.payloadType == Payload.Reply
+            assert reply.payload.valueType == expected, vars(reply.payload.value)
+            return reply.payload.value
+
+        call(1, RequestPayload.HelloRequest,
+             HelloRequestT(token=ready["user_token"], clientId="cli-app-settings-test", protocol=1), ReplyPayload.HelloResult)
+        settings = call(2, RequestPayload.SettingsGetRequest,
+                        SettingsGetRequestT(profile="desktop"), ReplyPayload.Settings)
+        if changes is not None:
+            settings = call(3, RequestPayload.SettingsUpdateRequest,
+                            SettingsUpdateRequestT(profile="desktop", revision=settings.revision,
+                                changes=[SettingT(key=k, valueJson=json.dumps(v)) for k, v in changes.items()]),
+                            ReplyPayload.Settings)
+        return settings.revision, {s.key.decode(): json.loads(s.valueJson) for s in settings.values or []}
+
+
 @needs_server
 def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
-    _, _, prefs, port, cookie = vm_server
+    root, _, prefs, port, cookie = vm_server
+    # Start agentd, then act as the app through Host RPC. The VM helper's
+    # preferences file is not the settings authority.
+    api(port, cookie, "GET", "/api/settings")
+    legacy_prefs = prefs.read_text()
+    revision, before = core_settings(root, {
+        "agent.provider": "openai", "agent.model.openai": "from-the-app",
+        "agent.permissions.allowed": ["network", "nix_source"],
+    })
     s = api(port, cookie, "GET", "/api/settings")
     assert (s["provider"], s["openAIModel"]) == ("openai", "from-the-app")
-    api(port, cookie, "POST", "/api/settings", {"model": "chosen-here", "webSearch": True})
-    api(port, cookie, "GET", "/api/settings")
-    p = json.loads(prefs.read_text())
-    assert p["agent.model"] == "chosen-here" and p["agent.webSearch"] is True
-    # Left alone: at the app's own default, not this server's.
-    assert "agent.model.chatgpt" not in p and "agent.effort" not in p
-    # A kind of permission only the app knows stays when the page changes the list.
-    api(port, cookie, "POST", "/api/settings", {"allowedPermissions": ["network", "sandbox_off"]})
-    api(port, cookie, "GET", "/api/settings")
-    assert sorted(json.loads(prefs.read_text())["agent.permissions.allowed"]) == ["network", "nix_source", "sandbox_off"]
+    api(port, cookie, "POST", "/api/settings", {"revision": s["revision"], "model": "chosen-here", "webSearch": True})
+    after_revision, after = core_settings(root)
+    assert after_revision == revision + 1
+    assert after == {**before, "agent.model": "chosen-here", "agent.webSearch": True}
+    # A kind of permission only the app knows stays when the page edits its list.
+    s = api(port, cookie, "GET", "/api/settings")
+    api(port, cookie, "POST", "/api/settings", {"revision": s["revision"], "allowedPermissions": ["network", "sandbox_off"]})
+    final_revision, final = core_settings(root)
+    assert final_revision == after_revision + 1
+    assert sorted(final["agent.permissions.allowed"]) == ["network", "nix_source", "sandbox_off"]
+    assert {k: v for k, v in final.items() if k != "agent.permissions.allowed"} == {
+        k: v for k, v in after.items() if k != "agent.permissions.allowed"}
+    assert prefs.read_text() == legacy_prefs
 
 
 @needs_server
