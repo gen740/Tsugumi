@@ -99,9 +99,9 @@ def host(tmp_path):
                     reply = exchange(peer, 2, method, fields or {})
                     if reply.valueType == ReplyPayload.Failure: return {"code": reply.value.code.decode()}
                     value = view(reply.value)
-                    for key in ("projects", "demos", "models"):
-                        if key in value: return value[key]
-                    return value
+                    # An empty vector is absent from the unpacked reply.
+                    lists = {"HostRecentListRequest": "projects", "HostDemoListRequest": "demos", "ModelsListRequest": "models"}
+                    return value.get(lists[method], []) if method in lists else value
 
             yield call, source, state
         finally:
@@ -136,7 +136,7 @@ def test_demo_and_duplicate_are_writable_and_drop_run_state(host, tmp_path):
         p.chmod(0o555 if p.is_dir() else 0o444)
     source.chmod(0o555)
     demo = call("HostDemoListRequest", {"language": "ja"})[0]
-    assert demo["id"] == "sample" and demo["description"] == "" and demo["tags"] == []
+    assert demo["id"] == "sample" and demo["description"] == "" and demo.get("tags", []) == []
     assert "field" not in demo
     assert call("HostDemoListRequest", {"language": "fr"})["code"] == "invalid_language"
     assert call("HostDemoCopyRequest", {"parent": str(tmp_path), "id": "missing"})["code"] == "demo_not_found"
