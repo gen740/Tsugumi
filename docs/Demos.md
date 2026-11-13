@@ -10,7 +10,7 @@ Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of ex
 | [Data to report](#data-to-report-report) | Aggregating a sales table into a report | Reproduction by seed, failure and `blocked`, rerunning one Card with saved inputs, artifacts, child Workflows |
 | [Collatz (C++ / Python / Julia / R)](#collatz-c--python--julia--r-collatz) | The Collatz sequence | Cross-checking independent implementations in four languages, branches, merges and loops, `maxRuns`, detecting integer overflow |
 | [Python → Ruby → C++](#python--ruby--c-ruby-pipeline) | Passing a typed integer across languages | Ruby Hash outputs, parameters, resident run-start state, live displays |
-| [Live Stream](#live-stream-live-stream) | Plotting a random walk as it goes | A stream made by a feedback loop, stopping at once, Dawn line charts |
+| [Live Stream](#live-stream-live-stream) | Plotting a random walk as it goes | A stream made by a feedback loop, stopping at once, WebGPU line charts |
 | [Plots](#plots-plots) | Diffusion of random walks | Ordinary matplotlib (`plt.show()`, `FuncAnimation`) drawn straight into a Card; Plotly and Altair become interactive charts |
 | [Cas A · Chandra RGB](#cas-a--chandra-rgb-casa) | X-ray observation of a supernova remnant | Observation data pinned with Nix, rerunning per Card, version history |
 | [Science demos](#science-demos-fetching-and-analysing-public-data) | Gravitational waves, a protein, an exoplanet, earthquakes | Fetching public data (sizes and SHA-256), analysing and plotting it |
@@ -148,7 +148,7 @@ start → settings ─state→ loop → generate ─sample→ plot
 | `settings` | input | Sends `seed` (7), `samples` (200), `interval_ms` (100) and the initial state |
 | `loop` | merge | Merges the initial state with the next state `generate` returns |
 | `generate` | C++ | Waits `interval_ms`, then takes one step with a random number decided by `seed` and the index, and outputs the value and the next state. After `samples` it stops outputting the next state and the stream ends. It checks for stopping while waiting too |
-| `plot` | Python | Draws the latest `window` (60) values and their mean with a Dawn (WebGPU / Metal) line chart |
+| `plot` | Python | Draws the latest `window` (60) values and their mean with a WebGPU line chart |
 
 **Try**
 - Run it and stop (Cancel) in the middle. It stops at once, and the chart up to that point stays.

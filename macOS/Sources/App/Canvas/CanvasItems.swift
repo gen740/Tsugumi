@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 import TsugumiRPC
-import TsugumiRenderer
 
 /// Right-click menu of a Card.
 struct CardMenu: View {
@@ -261,16 +260,6 @@ struct DisplayContent: View {
           .textSelection(.enabled)
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-    case .lineChart(let series)?:
-      VStack(spacing: 4 * zoom) {
-        DawnLineChart(series: series.map { ChartSeries(id: $0.id, label: $0.label, x: $0.x, y: $0.y) })
-          .clipShape(RoundedRectangle(cornerRadius: 4 * zoom))
-        HStack {
-          ForEach(Array(series.enumerated()), id: \.offset) { _, s in
-            Label("\(s.label) (\(s.x.count))", systemImage: "line.diagonal").font(.system(size: size(9, 11)))
-          }
-        }
-      }
     case .table(let columns, let rows)?:
       let page = TablePage(count: rows.count, requested: large ? tablePage : 0)
       VStack(alignment: .leading, spacing: 4 * zoom) {
@@ -315,15 +304,13 @@ struct DisplayContent: View {
       }
     case .points(let x, let y, let z, let colors)?:
       PointCloudView(identity: display?.identity, x: x, y: y, z: z, colors: colors)
-    case .module(let name, let json)? where ModuleViewer.modules.contains(name):
+    case .module(let name, let json, let blobs)?:
       // Interactive in the expanded view; on the canvas a picture of the figure.
       if large {
-        ModuleViewer(name: name, json: json, interactive: true, zoom: zoom)
+        ModuleViewer(name: name, json: json, blobs: blobs, interactive: true, zoom: zoom)
       } else {
-        ModuleThumbnail(name: name, json: json, lineage: "\(display?.runId ?? "")#\(display?.invocation ?? 0)", zoom: zoom, figure: figure)
+        ModuleThumbnail(name: name, json: json, blobs: blobs, lineage: "\(display?.runId ?? "")#\(display?.invocation ?? 0)", zoom: zoom, figure: figure)
       }
-    case .module(let name, let json)?:
-      ModuleDisplayView(name: name, json: json, large: large, zoom: zoom)
     case nil where large:
       ContentUnavailableView("まだ結果がありません", systemImage: "chart.xyaxis.line", description: Text("実行すると表示されます。"))
     case nil:
@@ -433,38 +420,7 @@ final class PreparedCloud {
   }
 }
 
-/// Data for a UI Canvas module. Known modules are drawn natively; any other
-/// module shows its data as formatted JSON.
-struct ModuleDisplayView: View {
-  let name: String
-  let json: String
-  var large = false
-  var zoom: CGFloat = 1
 
-  var body: some View {
-    let value = try? JSONValue.parse(json)
-    VStack(alignment: .leading, spacing: 4) {
-      if name == "histogram", let bins = value?["bins"]?.array?.compactMap(\.double), !bins.isEmpty {
-        let top = bins.max() ?? 1
-        GeometryReader { g in
-          HStack(alignment: .bottom, spacing: 2) {
-            ForEach(Array(bins.enumerated()), id: \.offset) { _, b in
-              RoundedRectangle(cornerRadius: 2).fill(Color.accentColor.opacity(0.7))
-                .frame(height: max(1, g.size.height * b / max(top, 1e-9)))
-                .help("\(b)")
-            }
-          }
-          .frame(maxHeight: .infinity, alignment: .bottom)
-        }
-      } else {
-        Text("モジュール \(name)").font(.system(size: 10 * zoom, weight: .bold)).foregroundStyle(.secondary)
-        let text = Text(value?.serialized() ?? json).font(.system(size: (large ? 12 : 10) * zoom, design: .monospaced))
-          .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-        if large { ScrollView { text } } else { text.frame(maxHeight: .infinity, alignment: .top).clipped() }
-      }
-    }
-  }
-}
 
 /// Edits a sticky note: Markdown text, color, size.
 struct NoteEditor: View {

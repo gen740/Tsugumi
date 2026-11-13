@@ -348,7 +348,7 @@ std::vector<std::string> Service::capabilities() {
       "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "AttachedFolderRead",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
-      "ArtifactRead", "LogRange", "ViewSetVisible", "ViewSave",
+      "ArtifactRead", "ModuleRead", "LogRange", "ViewSetVisible", "ViewSave",
       "NixSourceResolve", "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionSummary"};
   // Every Display kind of the protocol, and the languages ProjectFileFormat formats.
   for (auto v : D::EnumValuesDisplayValue())
@@ -478,6 +478,7 @@ void Service::dispatch(RequestIn req) {
     case P::RunRecordRequest: return on_lane(r, std::move(req), &Service::run_record);
     case P::RunValueReadRequest: return on_lane(r, std::move(req), &Service::run_value_read);
     case P::ArtifactListRequest: return on_lane(r, std::move(req), &Service::artifact_list);
+    case P::ModuleReadRequest: return on_lane(r, std::move(req), &Service::module_read);
     case P::ArtifactReadRequest: return on_lane(r, std::move(req), &Service::artifact_read);
     case P::LogRangeRequest: return on_lane(r, std::move(req), &Service::log_range);
     case P::ViewSetVisibleRequest: return on_lane(r, std::move(req), &Service::view_set_visible);

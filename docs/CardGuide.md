@@ -253,7 +253,7 @@ Delete `src/`, set `language` to `bash`, and write a string in `run` of `default
 
 Here `"nix": true` is set and `factor` is read from the Nix expression. This param is passed to Nix, so changing it rebuilds the Card. To read params at run time instead, all of them are in `$TSUGUMI_PARAMS_JSON` (the JSON text).
 
-For a display, write JSON to `$TSUGUMI_DISPLAY`: one of `{"markdown": "**bold**"}`, `text`, `table` (`columns` and `rows`), `image` (`path` and `alt`) or `module` (`name` and `data`). It is shown when the script ends normally.
+For a display, write JSON to `$TSUGUMI_DISPLAY`: one of `{"markdown": "**bold**"}`, `text`, `table` (`columns` and `rows`), `image` (`path` and `alt`) or `module` (`module`, `config`, and optional `blobs`, a map of names to local file paths). It is shown when the script ends normally.
 
 To log and show a value of any connected type, see the ordinary Bash Card in
 [`demos/en/marimo/definitions/result`](../demos/en/marimo/definitions/result).
@@ -613,3 +613,117 @@ FFI boundary and fail the invocation; the failed worker is discarded. Explicit
 abort, double panic during unwinding and native crashes still terminate the
 worker, and the daemon records that failure. Cancellation/deadlines stop even
 uncooperative native code; check the context for cooperative early exit.
+
+
+## Card-owned web views
+
+A view is a JavaScript ES module fixed by the Card's Nix definition. It draws
+with standard browser APIs: DOM, canvas, WebGPU, or bundled libraries. No
+Tsugumi drawing API is involved. Pointer handling stays in the frame and works
+after the worker exits. The built-in line chart uses this same module mechanism
+on both platforms; Card authors keep their existing line-chart SDK calls.
+
+Declare the view alongside the implementation in `default.nix`:
+
+```nix
+{ pkgs, inputs, params }:
+let
+  sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
+in {
+  views.points = inputs.tsugumi.viewModule {
+    src = ./view;
+    entry = "index.js";  # default
+    name = "point-cloud-view";
+  };
+  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };
+}
+```
+
+`viewModule` uses esbuild to bundle local imports into `$out/index.js`, a
+self-contained ES module. It makes no runtime downloads. Bundle dependencies
+in the source directory or pass an already prepared source derivation. Import
+`.wasm` as bytes (`import wasm from './solver.wasm'`, then
+`WebAssembly.instantiate(wasm, imports)`); PNG, JPEG and SVG imports become data
+URLs. Do not use runtime relative fetches or `import.meta.url` to locate files:
+the UI imports the built entry from a blob URL, with network access disabled.
+All assets must be incorporated at build time. This output directory is shared
+and cached by Nix, referenced by the Card manifest's closure and fixed with the
+Card's SDK. It is not a per-run artifact.
+
+The entry must export these functions (each may return a Promise):
+
+```javascript
+export function initialise(root, { config, blobs }, size) {
+  // root is a plain HTMLElement; blobs is { name: Uint8Array }.
+  // size is { width, height, pixelRatio, visible, colorScheme }, in CSS pixels.
+}
+export function update({ config, blobs }) {}
+export function resize({ width, height, pixelRatio, visible, colorScheme }) {}
+export function dispose() {}
+```
+
+`initialise` runs once per loaded identity, `update` replaces all input data,
+`resize` supplies geometry and visibility, and `dispose` releases timers,
+listeners, GPU resources and library instances. Treat a display as a full
+replacement snapshot. Export `snapshot()` returning a PNG data URL for DOM
+views or libraries with their own image exporter. Otherwise previews capture
+the first canvas. A WebGPU view should redraw before its snapshot and await
+`device.queue.onSubmittedWorkDone()`. The canvas remains a cached still image;
+Expand creates an interactive frame. Closing it releases the frame.
+
+In Python, send computed bytes separately from the small JSON configuration:
+
+```python
+ctx.display_module("points", {"count": count}, {"points": packed_xyz})
+```
+
+Values support the contiguous Python buffer protocol; the native bridge holds
+the buffer only during the call. C++ accepts `std::vector<tsugumi_blob>` as the
+third argument of `tsugumi::visualization::module`. The ABI is version 5;
+`tsugumi_blob` contains `name`, `data` and `size`. A display on the RPC carries
+`DisplayModule { module, config_json, blobs }`, where `module` is the immutable
+Nix store directory, not the declaration's short name. Configuration is limited
+to 1 MiB; up to 64 blobs together to 8 MiB (within the existing 16 MiB frame limit). Plotly and Vega-Lite are ordinary view
+outputs of this same SDK and use the same loader and RPC. There is no old
+named-renderer JSON-only wire form.
+
+Both UIs read code through `ModuleReadRequest` in pages of at most 1 MiB,
+cache it by identity, and never read the Nix store themselves. Code is separate
+from retained display data; display and run retention rules are unchanged.
+Browser frames have opaque origins (`sandbox="allow-scripts"`, without
+`allow-same-origin`), no host DOM, storage or application bridge. CSP denies
+connections and external resources, forms, objects and base URLs. The outer
+document allows no nested frame to load a URL (`frame-src 'none'`, in the
+server's header and in `viewer.html` itself), which also stops the Card's frame
+from navigating itself to another address and carrying data out in the URL. Mac uses the same inner frame in a nonpersistent
+WKWebView, with no file read grant, a navigation delegate refusing non-`about:`
+navigation, and content rules blocking network and file resources. Failure to
+compile these rules prevents loading. Only the trusted outer document has the
+ready/state bridge to native code; messages from subframes are rejected there.
+
+The runnable example is
+[`tests/fixtures/view-point-cloud`](../tests/fixtures/view-point-cloud): Python
+computes 12,000 little-endian float32 XYZ triples, and the JavaScript view
+rotates them on drag through WebGPU alone. It gives a clear error if WebGPU or
+an adapter is unavailable.
+
+Planned follow-ups: provide a shared JavaScript template and a Wasm header based on standard
+`webgpu.h`, with input, resize and pointer bindings; optionally relay messages
+between a view and its live worker through RPC. No worker channel or direct
+socket exists in this change. The Wasm template/header is not implemented, so
+there is no supported minimal Wasm/template size to report yet.
+
+
+### Built-in line chart
+
+Existing `display_line_chart` / `line_chart` calls (and their other-language
+equivalents) produce the built-in `line-chart` view. No API change is needed in
+a Card. The JSON configuration is `{series: [{id, label, offset, count}, ...]}`.
+Offsets and counts index two named blobs, `x` and `y`, each a concatenation of
+little-endian float64 arrays. The existing limit remains 10,000 points and
+1 MiB of coordinate/label data. The view subtracts the visible origin in double
+precision before converting to float32 GPU vertices, preserving small differences
+in large values such as timestamps. Multiple series, the four-colour palette,
+legends, live updates and canvas previews use the shared module lifecycle.
+`size.colorScheme` is `light` or `dark`, supplied by the UI; appearance is part
+of preview identity. Coordinates and display retention are independent of theme.

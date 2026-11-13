@@ -114,7 +114,7 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
 
   // The resident worker of this Card, if it runs the same build under the same conditions.
   std::string key = build.package.value_or("") + "|" + build.bash.value_or("") + "|" + build.pre_run + "|" +
-                    build.post_run + "|" + (sp.sandbox ? "s" : "u") + "|" + (uid ? std::to_string(*uid) : "-") +
+                    build.post_run + "|" + build.views + "|" + (sp.sandbox ? "s" : "u") + "|" + (uid ? std::to_string(*uid) : "-") +
                     "|" + (sp.network ? "n" : "-") + "|" + sp.worker_binary + "|" + build.key +
                     "|" + std::to_string(build.implementation_index);
   for (const auto& b : sp.binds) key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");

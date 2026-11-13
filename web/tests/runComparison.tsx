@@ -132,8 +132,8 @@ assert.equal(sameDisplay(shown(a.record!.display), shown(b.record!.display)), fa
 assert.equal(sameDisplay(shown(a.record!.display), undefined), false)
 assert.equal(sameDisplay(undefined, undefined), true)
 {
-  // The same rule as the Mac app: compare what is shown, kind by kind; a gap (NaN) equals a gap.
-  const chart = (y: number[]) => ({ runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'lineChart' as const, series: [{ id: 's', label: 'S', x: [0, 1], y }] } })
+  // The same rule as the Mac app: compare what is shown, kind by kind; module equality includes binary data.
+  const chart = (y: number[]) => ({ runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'module' as const, name: 'line-chart', json: '{}', blobs: { y: new Uint8Array(new Float64Array(y).buffer) } } })
   assert.ok(sameDisplay(chart([1, NaN]), chart([1, NaN])))
   assert.ok(!sameDisplay(chart([1, NaN]), chart([1, 2])))
   const text = (kind: 'text' | 'markdown', value: string) => ({ runId: 'r', invocation: 1n, revision: 1n, value: { kind, text: value } })

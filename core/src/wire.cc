@@ -262,13 +262,6 @@ Off<D::Display> display(FBB& b, const DisplayData& d) {
     sb.add_label(label);
     value = sb.Finish().Union();
     type = D::DisplayValue::DisplayScalar;
-  } else if (const auto* c = std::get_if<DisplayData::LineChart>(&d.value)) {
-    std::vector<Off<D::LineSeries>> series;
-    for (const auto& s : c->series)
-      series.push_back(D::CreateLineSeries(b, b.CreateString(s.id), b.CreateString(s.label),
-                                           b.CreateVector(s.x), b.CreateVector(s.y)));
-    value = D::CreateDisplayLineChart(b, b.CreateVector(series)).Union();
-    type = D::DisplayValue::DisplayLineChart;
   } else if (const auto* t = std::get_if<DisplayData::Table>(&d.value)) {
     std::vector<Off<D::TableRow>> rows;
     for (const auto& r : t->rows) rows.push_back(D::CreateTableRow(b, b.CreateVectorOfStrings(r)));
@@ -290,8 +283,12 @@ Off<D::Display> display(FBB& b, const DisplayData& d) {
     type = D::DisplayValue::DisplayPointCloud;
   } else if (const auto* m = std::get_if<DisplayData::Module>(&d.value)) {
     auto name = b.CreateString(m->module);
-    auto data = b.CreateString(m->data_json);
-    value = D::CreateDisplayModule(b, name, data).Union();
+    auto data = b.CreateString(m->config_json);
+    std::vector<flatbuffers::Offset<D::DisplayBlob>> blobs;
+    for (const auto& [key, bytes] : m->blobs)
+      blobs.push_back(D::CreateDisplayBlob(b, b.CreateString(key),
+          b.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size())));
+    value = D::CreateDisplayModule(b, name, data, b.CreateVector(blobs)).Union();
     type = D::DisplayValue::DisplayModule;
   }
   D::DisplayBuilder db(b);
@@ -324,23 +321,6 @@ DisplayData display(const D::Display* d) {
       if (!s || !s->value() || !s->label())
         throw Failed(FailureKind::output_invalid, "display scalar needs value and label");
       out.value = DisplayData::Scalar{*s->value(), s->label()->str()};
-      break;
-    }
-    case D::DisplayValue::DisplayLineChart: {
-      const auto* c = d->value_as_DisplayLineChart();
-      if (!c || !c->series()) throw Failed(FailureKind::output_invalid, "line chart needs series");
-      DisplayData::LineChart lc;
-      for (const auto* s : *c->series()) {
-        if (!s->id() || !s->label() || !s->x() || !s->y())
-          throw Failed(FailureKind::output_invalid, "line series needs id, label, x and y");
-        LineSeriesData ls;
-        ls.id = s->id()->str();
-        ls.label = s->label()->str();
-        ls.x.assign(s->x()->begin(), s->x()->end());
-        ls.y.assign(s->y()->begin(), s->y()->end());
-        lc.series.push_back(std::move(ls));
-      }
-      out.value = std::move(lc);
       break;
     }
     case D::DisplayValue::DisplayTable: {
@@ -378,8 +358,15 @@ DisplayData display(const D::Display* d) {
     }
     case D::DisplayValue::DisplayModule: {
       const auto* m = d->value_as_DisplayModule();
-      if (!m || !m->name() || !m->data_json()) throw Failed(FailureKind::output_invalid, "a Canvas module needs name and data_json");
-      out.value = DisplayData::Module{m->name()->str(), m->data_json()->str()};
+      if (!m || !m->module_() || !m->config_json() || !m->blobs())
+        throw Failed(FailureKind::output_invalid, "a module needs an identity, config and blobs");
+      DisplayData::Module module{m->module_()->str(), m->config_json()->str(), {}};
+      for (const auto* blob : *m->blobs()) {
+        if (!blob || !blob->name() || !blob->data() || !module.blobs.emplace(blob->name()->str(),
+            std::string(reinterpret_cast<const char*>(blob->data()->data()), blob->data()->size())).second)
+          throw Failed(FailureKind::output_invalid, "invalid or duplicate module blob");
+      }
+      out.value = std::move(module);
       break;
     }
     default:

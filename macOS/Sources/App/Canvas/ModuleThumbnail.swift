@@ -47,8 +47,10 @@ struct FigureState: Equatable {
 struct FigureWanted: Equatable {
   let name: String
   let json: String
+  var blobs: [String: Data] = [:]
   let width: Int
   let height: Int
+  var colorScheme: String = "light"
 }
 
 /// What a frame shows of the picture it holds. A picture is at full strength
@@ -73,7 +75,7 @@ enum FigureLook: Equatable {
   static func of(wanted: FigureWanted, lineage: String,
                  picture: (wanted: FigureWanted, lineage: String, isImage: Bool)?, state: FigureState) -> FigureLook {
     guard let picture else { return .waiting }
-    let same = picture.wanted.name == wanted.name && picture.wanted.json == wanted.json
+    let same = picture.wanted.name == wanted.name && picture.wanted.json == wanted.json && picture.wanted.blobs == wanted.blobs && picture.wanted.colorScheme == wanted.colorScheme
     guard picture.isImage else { return same ? .failed : .waiting }
     // The same content at another size (a resize, a zoom) is still this result's picture.
     if same { return .picture(dimmed: state.holdsDisplay, waiting: false) }
@@ -105,7 +107,7 @@ final class FigurePreview {
   @ObservationIgnored private let make: Make
 
   init(make: @escaping Make = { w, place in
-    await ModuleThumbnails.shared.result(.init(name: w.name, json: w.json, width: w.width, height: w.height), json: w.json, at: place)
+    await ModuleThumbnails.shared.result(.init(name: w.name, json: w.json, blobs: w.blobs, width: w.width, height: w.height, colorScheme: w.colorScheme), json: w.json, blobs: w.blobs, at: place)
   }) {
     self.make = make
   }
@@ -172,6 +174,7 @@ final class FigurePreview {
 struct ModuleThumbnail: View {
   let name: String
   let json: String
+  var blobs: [String: Data] = [:]
   /// The run and the invocation the result is of.
   let lineage: String
   /// The canvas's zoom: the picture is taken at the display's own size and scaled with it.
@@ -184,15 +187,16 @@ struct ModuleThumbnail: View {
     let lineage: String
     let follow: Bool
   }
+  @Environment(\.colorScheme) private var colorScheme
   @State private var preview = FigurePreview()
   /// Where its frame is on the canvas: the pictures of what is in view are made first.
   @Environment(\.canvasPlace) private var place
 
   var body: some View {
     GeometryReader { geo in
-      let wanted = settled(FigureWanted(name: name, json: json,
+      let wanted = settled(FigureWanted(name: name, json: json, blobs: blobs,
                                         width: Int((geo.size.width / max(zoom, 0.01)).rounded()),
-                                        height: Int((geo.size.height / max(zoom, 0.01)).rounded())))
+                                        height: Int((geo.size.height / max(zoom, 0.01)).rounded()), colorScheme: colorScheme == .dark ? "dark" : "light"))
       let follow = figure.mode == .live && figure.running
       let held = preview.picture
       let look = FigureLook.of(wanted: wanted, lineage: lineage,
@@ -225,7 +229,7 @@ struct ModuleThumbnail: View {
   /// zoom (its text does not scale evenly): the picture shown is kept while
   /// the size is within a few points of its own.
   private func settled(_ w: FigureWanted) -> FigureWanted {
-    guard let s = preview.picture?.wanted, s.name == w.name, s.json == w.json,
+    guard let s = preview.picture?.wanted, s.name == w.name, s.json == w.json, s.blobs == w.blobs, s.colorScheme == w.colorScheme,
           abs(s.width - w.width) <= 6, abs(s.height - w.height) <= 6 else { return w }
     return s
   }
@@ -250,12 +254,19 @@ final class ModuleThumbnails {
     let digest: String
     let width: Int
     let height: Int
+    let colorScheme: String
 
-    init(name: String, json: String, width: Int, height: Int) {
+    init(name: String, json: String, blobs: [String: Data] = [:], width: Int, height: Int, colorScheme: String = "light") {
       self.name = name
-      digest = SHA256.hash(data: Data(json.utf8)).map { String(format: "%02x", $0) }.joined()
+      var content = Data(json.utf8)
+      for name in blobs.keys.sorted() {
+        content.append(Data("\(name.utf8.count):\(name):\(blobs[name]!.count):".utf8))
+        content.append(blobs[name]!)
+      }
+      digest = SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined()
       self.width = width
       self.height = height
+      self.colorScheme = colorScheme
     }
   }
 
@@ -285,6 +296,7 @@ final class ModuleThumbnails {
 
   private struct Job {
     let json: String
+    var blobs: [String: Data] = [:]
     var waiting: [UUID: (answer: CheckedContinuation<Result?, Never>, place: CGRect?)] = [:]
   }
   /// What the canvases show now (the canvas's own units), by canvas: CanvasPanHost keeps it.
@@ -300,7 +312,7 @@ final class ModuleThumbnails {
 
   /// The picture of a result, made if there is none yet. Nil when the task
   /// asking was cancelled: a picture nobody waits for any more is not made.
-  func result(_ key: Key, json: String, at place: CGRect? = nil) async -> Result? {
+  func result(_ key: Key, json: String, blobs: [String: Data] = [:], at place: CGRect? = nil) async -> Result? {
     if let hit = cache.object(forKey: Boxed(key)) { return hit.result }
     if let image = await Self.stored(key) {
       let result = Result.image(image)
@@ -312,7 +324,7 @@ final class ModuleThumbnails {
     return await withTaskCancellationHandler {
       await withCheckedContinuation { (c: CheckedContinuation<Result?, Never>) in
         if Task.isCancelled { return c.resume(returning: nil) }
-        jobs[key, default: Job(json: json)].waiting[id] = (c, place)
+        jobs[key, default: Job(json: json, blobs: blobs)].waiting[id] = (c, place)
         order.removeAll { $0 == key }
         order.append(key)
         Task { await work() }
@@ -334,7 +346,7 @@ final class ModuleThumbnails {
     while let key = next() {
       // Not wanted any more (a live display moved on, the frame was closed): skipped.
       guard let job = jobs[key], !job.waiting.isEmpty else { jobs[key] = nil; continue }
-      let result = await make(key, json: job.json)
+      let result = await make(key, json: job.json, blobs: job.blobs)
       keep(result, for: key)
       if case .image(let image) = result { Self.store(image, for: key) }
       for c in (jobs.removeValue(forKey: key)?.waiting ?? [:]).values { c.answer.resume(returning: result) }
@@ -343,7 +355,10 @@ final class ModuleThumbnails {
     // The web view's process goes once nothing has been asked for a while.
     release = Task {
       try? await Task.sleep(for: .seconds(20))
-      if !Task.isCancelled, !working { web = nil }
+      if !Task.isCancelled, !working {
+        web?.evaluateJavaScript("document.querySelector('iframe')?.remove()", completionHandler: nil)
+        web = nil
+      }
     }
   }
 
@@ -401,7 +416,7 @@ final class ModuleThumbnails {
   private nonisolated static let diskLimit = 256 << 20
 
   private nonisolated static func file(_ key: Key) -> URL? {
-    folder?.appendingPathComponent("\(key.name)-\(key.digest)-\(key.width)x\(key.height).png")
+    folder?.appendingPathComponent("\(SHA256.hash(data: Data(key.name.utf8)).map { String(format: "%02x", $0) }.joined())-\(key.digest)-\(key.colorScheme)-\(key.width)x\(key.height).png")
   }
 
   /// The picture kept from an earlier time, if there is one (read off the main thread).
@@ -427,7 +442,7 @@ final class ModuleThumbnails {
     }
   }
 
-  private func make(_ key: Key, json: String) async -> Result {
+  private func make(_ key: Key, json: String, blobs: [String: Data]) async -> Result {
     guard let directory = ModuleViewerHost.directory else { return .failed("modules") }
     let size = CGSize(width: CGFloat(key.width), height: CGFloat(key.height))
     do {
@@ -435,14 +450,15 @@ final class ModuleThumbnails {
       // The page is laid out at the display's own size and drawn at `scale` pixels a point.
       web.frame = CGRect(x: 0, y: 0, width: size.width * Self.scale, height: size.height * Self.scale)
       web.pageZoom = Self.scale
-      let message: [String: Any] = ["name": key.name, "json": json, "interactive": false]
+      let code = try await ModuleSources.source(key.name)
+      let message: [String: Any] = ["name": key.name, "json": json, "blobs": blobs.mapValues { $0.base64EncodedString() }, "code": code, "colorScheme": key.colorScheme, "interactive": false]
       // Drawn, and a moment later (what the libraries leave to a timer), before the picture is taken.
       let state = try await withTimeout(seconds: 30) {
         try await web.callAsyncJavaScript(
           """
           await tsugumiRender(message)
           await new Promise((r) => setTimeout(r, 30))
-          return document.body.dataset.state === 'error' ? document.getElementById('error').textContent : ''
+          return document.body.dataset.state === 'error' ? document.body.dataset.error : ''
           """, arguments: ["message": message], contentWorld: .page) as? String
       }
       if let state, !state.isEmpty { return .failed(state) }
@@ -468,10 +484,12 @@ final class ModuleThumbnails {
     let rules: WKContentRuleList? = await withCheckedContinuation { c in
       ModuleViewerHost.Coordinator.withBlockedNetwork { c.resume(returning: $0) }
     }
-    if let rules { config.userContentController.add(rules) }
+    guard let rules else { throw TimedOut() }
+    config.userContentController.add(rules)
     let made = WKWebView(frame: CGRect(x: 0, y: 0, width: 640, height: 400), configuration: config)
     made.underPageBackgroundColor = .white
-    made.loadFileURL(directory.appendingPathComponent("viewer.html"), allowingReadAccessTo: directory)
+    ModuleNavigation.shared.prepare(made)
+    made.loadHTMLString(try ModuleViewerHost.page(directory), baseURL: URL(string: "https://localhost/"))
     // Until the page's script has run (tsugumiRender is there).
     for _ in 0..<400 {
       if let ready = try? await made.callAsyncJavaScript("return typeof window.tsugumiRender === 'function'", contentWorld: .page) as? Bool,

@@ -21,7 +21,7 @@ The SwiftUI app and the Agent on macOS are equal clients that both talk to `tsug
 Shared VM (one per app, Virtualization.framework)                 macOS
  tsugumi-vmd (vsock: control 1024 / RPC 1025)
  nix-daemon ── shared /nix/store (store disk)
- project A: tsugumid (own uid, mount/PID namespaces, cgroup) ── vsock ─ 127.0.0.1 relay ── SwiftUI UI (+ Dawn rendering)
+ project A: tsugumid (own uid, mount/PID namespaces, cgroup) ── vsock ─ 127.0.0.1 relay ── SwiftUI UI (+ isolated WebGPU view modules)
    ├ document, journal, receipts (/project = virtiofs)                                  └ Agent (models, conversations, tools)
    ├ SQLite history, logs, artifacts                                   ── same RPC ──┘
    ├ scheduler, Nix evaluator (libnixexpr embedded in the process)
@@ -36,10 +36,9 @@ CMakeLists.txt, flake.nix/flake.lock  C++ build (CMake/Ninja) and pinned depende
 protocol/          tsugumi.fbs (external RPC) / worker.fbs / data.fbs / tsugumi_enums.fbs
 core/              tsugumid (include/tsugumi/core public API, src implementation)
 sdk/               Card ABI, common runtime (libtsugumi_card), C++ codegen (card.hh), Python, R, Julia and Ruby SDKs and embedded shims, Nix SDK, tsugumi-worker
-macOS/             SwiftPM: Sources/App (SwiftUI), Sources/RPC, Sources/Launcher, Sources/Renderer*,
+macOS/             SwiftPM: Sources/App (SwiftUI), Sources/RPC, Sources/Launcher,
                    Container/ (image definitions, builds, versions), Tests/
-ui/renderer/       Dawn rendering layer (C API, dylib)
-ui/modules/        Display components for Card charts (Plotly, Vega-Lite)
+ui/modules/        Shared isolated web-module host (browser iframe and WKWebView)
 agent/             Shared Agent prompts, contracts and reference material
 macOS/Sources/AgentClient/  Native Agent providers, conversations and tools
 web/               Browser UI and host server (the Agent's contract shared through agent/Shared)
@@ -273,3 +272,55 @@ The UI scaffold's source is `sdk/rust/template/`; after changing it, run
 macOS, bubblewrap on Linux), typed Python/Rust/C++ data, borrow-check failures,
 worker state, panic recovery, cancellation/deadlines, file artifacts and every
 Display kind. The bilingual `rust-pipeline` demo is the small end-to-end example.
+
+
+### Card-owned display modules
+
+`protocol/data.fbs` defines `DisplayModule` as a Nix store directory, a JSON
+configuration and named binary blobs. `sdk/nix/view-module.nix` bundles a view's
+local dependency graph to the directory's `index.js`; `builtin-views.nix` builds
+Plotly/Vega-Lite through the same mechanism. Their pinned upstream package URLs
+and hashes live in `sdk/views/packages.json`, with libraries evaluated only
+inside the isolated frame. A Card's `views` declarations are recorded as store
+references in its manifest's pre-run environment. The worker resolves these
+names before publishing a display. Retention is unchanged.
+
+`ModuleReadRequest` serves the entry in bounded `FileContent` pages. It rejects
+non-store directories and entries escaping their directory. UI code caches by
+immutable identity. `ui/modules/viewer.js` drives initialise/update/resize/dispose
+inside an opaque iframe. Mac loads only the trusted host HTML into a
+nonpersistent WKWebView without granting file access, and denies network/file
+requests and non-about navigation. See the [SDK interface and isolation
+limits](CardGuide.md#card-owned-web-views). Binary inputs use transferable buffers
+between browser frames after making the copy required to preserve retained
+displays. WKWebView's argument bridge currently uses base64, so that path copies
+and expands bytes; it does not claim zero-copy native transport.
+
+The module viewer performance scripts above describe the previous built-in-only
+viewer and are not verification of the new RPC loading path. Current lifecycle,
+loading and thumbnail behavior tests are in `web/tests/moduleViewer.ts` and
+`figurePreview.ts`; the runnable GPU fixture is `tests/fixtures/view-point-cloud`.
+Check host WebGPU support without a window or activation with:
+
+```sh
+nix develop -c /usr/bin/swift tests/tools/wkwebgpu.swift
+```
+
+The probe uses accessory activation policy, a nonpersistent offscreen WKWebView,
+a secure localhost base URL, `navigator.gpu` and `requestAdapter()`, and exits
+within 20 seconds. A timeout or denied WebKit/GPU service is not evidence that
+WebGPU is unsupported. The built-in line chart now uses the same isolated view
+module on both platforms. Planned work is a standard-webgpu.h Wasm
+view template with input/events bindings, and an optional RPC-relayed live
+worker channel (never a socket from the frame).
+
+
+The built-in `line-chart` view lives in `sdk/views/line-chart.js`. Its metadata
+contains series IDs, labels, offsets and counts. Its `x` and `y` blobs contain
+concatenated little-endian float64 coordinates; the worker keeps all language
+SDK line-chart calls unchanged and encodes this module display. There is no
+line-chart-specific protocol value or UI renderer. `line-geometry.js` subtracts
+the visible origin and normalizes in JavaScript double precision before creating
+float32 GPU vertices. Tests cover timestamp-sized values with small differences.
+The shared host passes `size.colorScheme` (`light` or `dark`), and preview cache
+keys include appearance. The module owns its legend, colours and WebGPU resources.

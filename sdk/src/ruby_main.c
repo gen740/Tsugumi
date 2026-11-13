@@ -82,7 +82,7 @@ static VALUE host_scalar(VALUE self, VALUE value, VALUE label) {
 }
 static VALUE host_module(VALUE self, VALUE name, VALUE json) {
   require_call();
-  current->display_module(current->host, StringValueCStr(name), StringValueCStr(json));
+  current->display_module(current->host, StringValueCStr(name), StringValueCStr(json), NULL, 0);
   return Qnil;
 }
 static VALUE host_image(VALUE self, VALUE media, VALUE bytes, VALUE alt) {

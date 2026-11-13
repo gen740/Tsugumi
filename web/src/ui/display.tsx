@@ -1,17 +1,16 @@
-// Display values (text, Markdown, scalar, line chart, table, image, point
+import { prefs } from '../model/prefs'
+import { useObserve } from '../model/observable'
+// Display values (text, Markdown, scalar, table, image, point
 // cloud, module) on the canvas at its zoom, or larger in the expanded viewer.
-import { CSSProperties, ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import type { DisplaySnapshot } from '../model/session'
-import { arr, dbl, get, serialize, tryParse } from '../shared/json'
-import { DawnLineChart } from './chart'
 import { Button, Empty } from './controls'
 import { tablePage } from '../model/tablePage'
-import { Icon } from './icons'
 import { Markdown } from './markdown'
 import { L } from '../i18n'
 import type { FigureState } from '../model/moduleThumbnails'
 import { ModuleThumbnail } from './moduleThumbnail'
-import { viewerLib, VIEWER_LIBS } from './moduleRenderer'
+import { moduleSource, ModuleBlobs } from '../model/moduleSources'
 
 /** Renders a Display value at `zoom` (on the canvas) or larger (`large`, the expanded viewer). */
 /** `figure`: how a chart preview on the canvas follows the Card's results (its `displayMode`, and whether it or a Card upstream runs). */
@@ -39,15 +38,6 @@ export function DisplayContent({ display, large = false, zoom = 1, emptyNote, fi
           <div className={`mono-digits${large ? ' selectable' : ''}`} style={{ fontSize: size(26, 64) }}>{Number(v.value.toPrecision(8)).toString()}</div>
         </div>
       )
-    case 'lineChart':
-      return (
-        <div className="display-chart" style={{ gap: 4 * zoom }}>
-          <div className="display-chart-plot" style={{ borderRadius: 4 * zoom }}><DawnLineChart series={v.series} /></div>
-          <div className="chart-legend" style={{ fontSize: size(9, 11) }}>
-            {v.series.map((s, i) => <span key={i}><Icon name="line.diagonal" size={size(9, 11)} />{`${s.label} (${s.x.length})`}</span>)}
-          </div>
-        </div>
-      )
     case 'table':
       return <TableDisplay key={`${display?.runId}:${display?.invocation}:${display?.revision}`} columns={v.columns} rows={v.rows} large={large} zoom={zoom} />
     case 'image':
@@ -55,7 +45,7 @@ export function DisplayContent({ display, large = false, zoom = 1, emptyNote, fi
     case 'points':
       return <PointCloudView x={v.x} y={v.y} z={v.z} colors={v.colors} />
     case 'module':
-      return <ModuleDisplayView name={v.name} json={v.json} lineage={`${display?.runId}#${display?.invocation}`} large={large} zoom={zoom} figure={figure} />
+      return <ModuleDisplayView name={v.name} json={v.json} blobs={v.blobs} lineage={`${display?.runId}#${display?.invocation}`} large={large} zoom={zoom} figure={figure} />
   }
 }
 
@@ -180,14 +170,10 @@ function PointCloudView({ x, y, z, colors }: { x: number[]; y: number[]; z: numb
   )
 }
 
-/** Data for a UI Canvas module. Known modules are drawn natively; any other
- *  module shows its data as formatted JSON. */
-/** The modules the viewer (/modules/viewer.html, ui/modules) draws. */
-const VIEWER_MODULES = new Set(['plotly', 'vega-lite'])
-/** A Plotly figure or a Vega-Lite chart, drawn by the module viewer in a
- *  sandboxed frame: interactive in the expanded view, still on the canvas
- *  (where the mouse moves the canvas). */
-function ViewerFrame({ name, json, large, zoom }: { name: string; json: string; large: boolean; zoom: number }) {
+/** Every view, built-in or Card-owned, runs in the same isolated frame. */
+function ViewerFrame({ name, json, blobs, large, zoom }: { name: string; json: string; blobs: ModuleBlobs; large: boolean; zoom: number }) {
+  useObserve(prefs)
+  const colorScheme = prefs.dark ? 'dark' : 'light'
   const ref = useRef<HTMLIFrameElement>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
@@ -195,10 +181,6 @@ function ViewerFrame({ name, json, large, zoom }: { name: string; json: string; 
     const onMessage = (e: MessageEvent) => {
       if (e.source !== ref.current?.contentWindow) return
       if (e.data?.tsugumi === 'ready') setReady(true)
-      if (e.data?.tsugumi === 'need' && VIEWER_LIBS.has(e.data.lib)) {
-        const lib = String(e.data.lib)
-        void viewerLib(lib).then((code) => ref.current?.contentWindow?.postMessage({ tsugumi: 'lib', lib, code }, '*'))
-      }
       if (e.data?.tsugumi === 'state') setError(e.data.state === 'error' ? String(e.data.message) : '')
       if (e.data?.tsugumi === 'key' && e.data.key === 'Escape') document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     }
@@ -207,8 +189,12 @@ function ViewerFrame({ name, json, large, zoom }: { name: string; json: string; 
   }, [])
   useEffect(() => {
     // The frame has an opaque origin (sandbox): '*' is the only target that reaches it.
-    if (ready) ref.current?.contentWindow?.postMessage({ name, json, interactive: large }, '*')
-  }, [ready, name, json, large])
+    let cancelled = false
+    if (ready) void moduleSource(name).then(code => {
+      if (!cancelled) ref.current?.contentWindow?.postMessage({ name, json, blobs, code, colorScheme, visible: true, interactive: large }, '*')
+    }).catch(error => setError(String(error)))
+    return () => { cancelled = true }
+  }, [ready, name, json, blobs, colorScheme, large])
   return (
     <div className="display-viewer" style={{ pointerEvents: large ? 'auto' : 'none' }}>
       {/* Laid out at the display's own size and scaled with the canvas, like the other displays.
@@ -222,28 +208,6 @@ function ViewerFrame({ name, json, large, zoom }: { name: string; json: string; 
   )
 }
 
-function ModuleDisplayView({ name, json, lineage, large, zoom, figure }: { name: string; json: string; lineage: string; large: boolean; zoom: number; figure?: FigureState }) {
-  if (VIEWER_MODULES.has(name)) return large ? <ViewerFrame name={name} json={json} large={large} zoom={zoom} /> : <ModuleThumbnail name={name} json={json} lineage={lineage} zoom={zoom} figure={figure} />
-  return <JSONModuleView name={name} json={json} large={large} zoom={zoom} />
-}
-
-function JSONModuleView({ name, json, large, zoom }: { name: string; json: string; large: boolean; zoom: number }) {
-  const value = useMemo(() => tryParse(json), [json])
-  const bins = name === 'histogram' ? (arr(get(value, 'bins')) ?? []).map(dbl).filter((b): b is number => b !== undefined) : []
-  if (bins.length) {
-    const top = Math.max(...bins, 1e-9)
-    return (
-      <div className="display-histogram">
-        {bins.map((b, i) => <div key={i} title={String(b)} style={{ height: `${Math.max(0.5, (100 * b) / top)}%` } as CSSProperties} />)}
-      </div>
-    )
-  }
-  return (
-    <div className="display-module">
-      <div className="secondary" style={{ fontSize: 10 * zoom, fontWeight: 700 }}>{L('モジュール {0}', name)}</div>
-      <pre className={`display-text${large ? ' selectable display-scroll' : ''}`} style={{ fontSize: (large ? 12 : 10) * zoom }}>
-        {value !== undefined ? serialize(value) : json}
-      </pre>
-    </div>
-  )
+function ModuleDisplayView({ name, json, blobs, lineage, large, zoom, figure }: { name: string; json: string; blobs: ModuleBlobs; lineage: string; large: boolean; zoom: number; figure?: FigureState }) {
+  return large ? <ViewerFrame name={name} json={json} blobs={blobs} large={large} zoom={zoom} /> : <ModuleThumbnail name={name} json={json} blobs={blobs} lineage={lineage} zoom={zoom} figure={figure} />
 }

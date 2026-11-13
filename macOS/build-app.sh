@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds dist/Tsugumi.app: the SwiftUI app, the Dawn renderer, the bundled
+# Builds dist/Tsugumi.app: the SwiftUI app, the bundled
 # demos, the shared VM's boot disk (macOS/Container/vm-boot.nix) and the source
 # the VM builds Tsugumi from on its first boot (macOS/Container/vm-source.txt).
 # Tools (flatc, cmake, ninja) are taken from the flake's nixpkgs; compilers
@@ -37,9 +37,6 @@ dist="$repo/dist"
 version="$(cat "$repo/VERSION")"
 build="$(git -C "$repo" rev-list --count HEAD 2>/dev/null || echo 1)"
 app="$dist/Tsugumi.app"
-renderer="$repo/build-renderer/ui/renderer/libtsugumi_renderer.dylib"
-
-[ -f "$renderer" ] || "$repo/ui/renderer/build.sh"
 vm="$dist/tsugumi-vm"
 [ -f "$vm/vmlinux" ] && [ -f "$vm/rootfs.erofs" ] || "$repo/macOS/Container/build-image.sh" --vm
 
@@ -50,7 +47,7 @@ vm="$dist/tsugumi-vm"
 flatc_bin="$("$repo/macOS/tools/flatc-bin.sh")"
 swiftenv=(env -i HOME="$HOME" TSUGUMI_CLIENT_LIB_DIR="$repo/build-host/client" PATH="$flatc_bin:/usr/bin:/bin:/usr/sbin:/sbin")
 # Swift Build, also where it is not the default yet (Xcode 26.6 of the release
-# runner), for Apple silicon only (the renderer is arm64): its Bundle.module finds the packages' resource bundles in
+# runner), for Apple silicon only (the shared VM is arm64): its Bundle.module finds the packages' resource bundles in
 # Contents/Resources. The native build system's looks only next to the app
 # and in the build folder, so its app crashes on any other Mac.
 build_opts=(-c release --build-system swiftbuild --arch arm64)
@@ -59,7 +56,7 @@ build_opts=(-c release --build-system swiftbuild --arch arm64)
 bin="$(cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
 
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin/Tsugumi" "$app/Contents/MacOS/Tsugumi"
 cp "$bin/tsugumi-vmhost" "$repo/build-host/core/tsugumi-agentd" "$repo/build-host/client/tsugumi-rpc" "$app/Contents/MacOS/"
 cp "$repo/build-host/generated/bfbs/agent.bfbs" "$app/Contents/Resources/"
@@ -69,7 +66,6 @@ if strings "$app/Contents/MacOS/Tsugumi" | grep -F "$repo/" | grep -v '\.swift$'
   echo "the app refers to paths of this build (above)" >&2
   exit 1
 fi
-cp "$renderer" "$app/Contents/Frameworks/"
 for b in "$bin"/*.bundle; do cp -R "$b" "$app/Contents/Resources/"; done
 # SwiftMath's bundle has 12 math fonts, each with its own terms; the app draws
 # with one, the default of MTMathUILabel, loaded on demand. The others stay out.
@@ -77,19 +73,10 @@ math_fonts="$app/Contents/Resources/SwiftMath_SwiftMath.bundle/Contents/Resource
 [ -f "$math_fonts/latinmodern-math.otf" ]
 find "$math_fonts" -type f ! -name 'latinmodern-math.*' ! -name LICENSE ! -name GUST-FONT-LICENSE.txt -delete
 cp -R "$repo/demos" "$app/Contents/Resources/demos"
-# The module viewer (ui/modules) and the plot libraries it loads: the web UI's
-# pinned npm packages (web/package-lock.json), the same files the web UI serves.
-[ -d "$repo/web/node_modules/plotly.js-dist-min" ] || nix develop "$repo" -c npm ci --prefix "$repo/web" --ignore-scripts
+# The common isolated frame host. Modules and libraries come from tsugumid over RPC.
 mods="$app/Contents/Resources/modules"
 mkdir -p "$mods"
-cp "$repo/ui/modules/viewer.html" "$repo/ui/modules/viewer.js" \
-  "$repo/web/node_modules/plotly.js-dist-min/plotly.min.js" \
-  "$repo/web/node_modules/vega/build/vega.min.js" \
-  "$repo/web/node_modules/vega-lite/build/vega-lite.min.js" \
-  "$repo/web/node_modules/vega-embed/build/vega-embed.min.js" "$mods/"
-for p in plotly.js-dist-min:plotly.js vega:vega vega-lite:vega-lite vega-embed:vega-embed; do
-  cp "$repo/web/node_modules/${p%%:*}/LICENSE" "$mods/LICENSE.${p#*:}.txt"
-done
+cp "$repo/ui/modules/viewer.html" "$repo/ui/modules/viewer.js" "$mods/"
 # What the in-app Agent may read as references (reference_read).
 mkdir -p "$app/Contents/Resources/reference"
 cp "$repo/agent/Reference/card-guide.md" "$app/Contents/Resources/reference/card-guide.md"
@@ -163,12 +150,6 @@ identity=-
 if [ "$channel" = dev ] && [ -n "${TSUGUMI_CODESIGN_IDENTITY:-}" ]; then
   identity="$TSUGUMI_CODESIGN_IDENTITY"
 fi
-# Rpaths of the machine it was built on (where the renderer was built) are not
-# the app's: it finds its libraries in its own Frameworks.
-otool -l "$app/Contents/MacOS/Tsugumi" | awk '/LC_RPATH/ {getline; getline; print $2}' | grep '^/' | while read -r p; do
-  install_name_tool -delete_rpath "$p" "$app/Contents/MacOS/Tsugumi"
-done
-for lib in "$app/Contents/Frameworks/"*.dylib; do codesign --force --sign "$identity" "$lib" >/dev/null; done
 codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-agentd" >/dev/null
 codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-rpc" >/dev/null
 codesign --force --sign "$identity" --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app/Contents/MacOS/tsugumi-vmhost" >/dev/null

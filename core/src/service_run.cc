@@ -646,6 +646,23 @@ void Service::artifact_list(RequestIn& req) {
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::ArtifactPage, off.Union()));
 }
 
+auto Service::module_read(RequestIn& req) -> void {
+  const auto* r = req.request()->value_as_ModuleReadRequest();
+  const auto identity = r->module_()->str();
+  const stdfs::path root(identity);
+  if (!valid_module_identity(identity) || stdfs::is_symlink(root) || !stdfs::is_directory(root))
+    throw Failed(FailureKind::invalid_path, "invalid module identity");
+  const auto entry = root / "index.js";
+  if (!fs::resolves_inside(root, entry) || !stdfs::is_regular_file(entry))
+    throw Failed(FailureKind::not_found, "module entry is missing");
+  const auto size = stdfs::file_size(entry);
+  if (size > (32u << 20)) throw Failed(FailureKind::output_invalid, "module entry exceeds 32 MiB");
+  const auto offset = r->offset().value_or(0);
+  const auto bytes = fs::read_range(entry, offset, content_limit(r->limit_bytes()));
+  if (!bytes) throw Failed(FailureKind::not_found, "module entry is missing");
+  reply(req, wire::file_page(req.request_id, "index.js", *bytes, offset, size, fs::sha256_file(entry)));
+}
+
 void Service::artifact_read(RequestIn& req) {
   const auto* r = req.request()->value_as_ArtifactReadRequest();
   require_uuid(r->artifact_id(), "artifact_id");

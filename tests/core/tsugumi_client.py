@@ -322,3 +322,17 @@ def change(kind: str, **fields: Any):
 
 def text(v: Any) -> Any:
     return v.decode() if isinstance(v, bytes) else v
+
+
+def line_chart_series(value):
+    """Decode a built-in line view's binary input for integration assertions."""
+    import json
+    import struct
+    from types import SimpleNamespace
+    assert text(value.module).endswith("-tsugumi-view-line-chart")
+    config = json.loads(text(value.configJson))
+    blobs = {text(b.name): bytes(b.data) for b in value.blobs}
+    x = struct.unpack("<" + "d" * (len(blobs["x"]) // 8), blobs["x"])
+    y = struct.unpack("<" + "d" * (len(blobs["y"]) // 8), blobs["y"])
+    return [SimpleNamespace(id=s["id"], label=s["label"], x=x[s["offset"]:s["offset"] + s["count"]],
+                            y=y[s["offset"]:s["offset"] + s["count"]]) for s in config["series"]]

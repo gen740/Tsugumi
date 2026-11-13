@@ -54,9 +54,6 @@ func recordedDisplay(_ d: Tsugumi_Data_DisplayT) -> DisplaySnapshot? {
   case .displayscalar:
     let s = d.value?.value as? Tsugumi_Data_DisplayScalarT
     value = .scalar(s?.value ?? 0, s?.label ?? "")
-  case .displaylinechart:
-    let c = d.value?.value as? Tsugumi_Data_DisplayLineChartT
-    value = .lineChart((c?.series ?? []).compactMap { $0 }.map { ($0.id, $0.label, $0.x, $0.y) })
   case .displaytable:
     let t = d.value?.value as? Tsugumi_Data_DisplayTableT
     value = .table(columns: (t?.columns ?? []).compactMap { $0 }, rows: (t?.rows ?? []).compactMap { $0?.cells.compactMap { $0 } })
@@ -68,7 +65,7 @@ func recordedDisplay(_ d: Tsugumi_Data_DisplayT) -> DisplaySnapshot? {
     value = .points(x: p?.x ?? [], y: p?.y ?? [], z: p?.z ?? [], colors: p?.colors ?? [])
   case .displaymodule:
     let m = d.value?.value as? Tsugumi_Data_DisplayModuleT
-    value = .module(name: m?.name ?? "", json: m?.dataJson ?? "")
+    value = .module(name: m?.module ?? "", json: m?.configJson ?? "", blobs: Dictionary(uniqueKeysWithValues: (m?.blobs ?? []).compactMap { $0 }.map { ($0.name, Data($0.data)) }))
   default: return nil
   }
   return DisplaySnapshot(runId: d.runId, invocation: d.invocation ?? 0, revision: d.revision ?? 0, value: value)
@@ -205,11 +202,10 @@ enum DisplayValue {
   /// Markdown with TeX math (the SDK's Markdown display).
   case markdown(String)
   case scalar(Double, String)
-  case lineChart([(id: String, label: String, x: [Double], y: [Double])])
   case table(columns: [String], rows: [[String]])
   case image(mediaType: String, data: Data, alt: String)
   case points(x: [Float], y: [Float], z: [Float], colors: [UInt32])
-  case module(name: String, json: String)
+  case module(name: String, json: String, blobs: [String: Data] = [:])
 }
 
 struct DisplaySnapshot {
@@ -555,6 +551,7 @@ final class ProjectSession {
       let c = try await reach(ep)
       let opened = try await c.open(viewId: viewId)
       client = c
+      ModuleSources.register(c)
       projectId = ep.projectId
       apply(snapshot: opened.snapshot, resetDraft: !dirty)
       subscription = opened.subscriptionId

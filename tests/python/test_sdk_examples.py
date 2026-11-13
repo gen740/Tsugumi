@@ -57,3 +57,82 @@ def test_card_guide_runs_as_written(tmp_path, variant, shown):
             assert text(record.record.display.value.text) == shown
     finally:
         d.cleanup()
+
+
+def test_card_owned_webgpu_module(tmp_path):
+    """The view is in the built closure, fetched separately and fixed across data updates."""
+    root = tmp_path / "point-cloud"
+    shutil.copytree(ROOT / "tests/fixtures/view-point-cloud", root)
+    card_file = root / "definitions/cloud/_card.json"
+    card_file.write_text(json.dumps({**json.loads(card_file.read_text()), "sandbox": False}))
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        run_id, status = run_and_wait(c, "start", timeout=1800)
+        assert status.state == RunState.succeeded
+        display = c.call("RunRecordRequest", runId=run_id, card=path("cloud")).record.display.value
+        identity = text(display.module)
+        assert identity.startswith("/nix/store/") and identity.endswith("-point-cloud-view")
+        assert json.loads(text(display.configJson)) == {"count": 12000}
+        assert text(display.blobs[0].name) == "points"
+        assert len(display.blobs[0].data) == 12000 * 12
+        # The module was already built and retained by the Card manifest's closure.
+        code = bytearray()
+        offset = 0
+        while True:
+            page = c.call("ModuleReadRequest", module=identity, offset=offset, limitBytes=113)
+            assert page.offset == offset and text(page.name) == "index.js"
+            code.extend(page.bytes)
+            if page.eof:
+                break
+            assert page.nextOffset > offset
+            offset = page.nextOffset
+        assert b"requestAdapter" in code and b"createRenderPipeline" in code
+        assert len(code) < 10000
+        again_id, again = run_and_wait(c, "start", timeout=1800)
+        assert again.state == RunState.succeeded
+        again_display = c.call("RunRecordRequest", runId=again_id, card=path("cloud")).record.display.value
+        assert text(again_display.module) == identity
+    finally:
+        d.cleanup()
+
+
+def test_line_chart_uses_binary_view_input(tmp_path):
+    """The unchanged SDK call publishes double precision blobs through the module RPC."""
+    import struct
+    from tsugumi_client import line_chart_series
+    root = tmp_path / "line-chart"
+    shutil.copytree(ROOT / "tests/fixtures/view-point-cloud", root)
+    definition = root / "definitions/cloud"
+    (definition / "_card.json").write_text('{"language":"python","inputs":[{"name":"start"}],"sandbox":false}')
+    (definition / "default.nix").write_text(
+        '{ pkgs, inputs, params }: let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; '
+        'in { run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }')
+    (definition / "src/main.py").write_text('''def main(ctx):
+    ctx.display_line_chart([
+        {"id": "raw", "label": "Timestamp", "x": [1e12, 1e12 + 0.125], "y": [1e12, 1e12 + 0.25]},
+        {"id": "mean", "label": "Mean", "x": [1e12, 1e12 + 0.125], "y": [1e12 + 0.125, 1e12 + 0.125]},
+    ])
+''')
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        rid, status = run_and_wait(c, "start", timeout=1800)
+        assert status.state == RunState.succeeded
+        display = c.call("RunRecordRequest", runId=rid, card=path("cloud")).record.display
+        assert display.valueType == 7
+        series = line_chart_series(display.value)
+        assert series[0].x == (1e12, 1e12 + 0.125)
+        assert series[0].y == (1e12, 1e12 + 0.25)
+        assert series[1].label == "Mean"
+        config = json.loads(text(display.value.configJson))
+        assert config["series"][1]["offset"] == 2
+        assert "x" not in config["series"][0] and "y" not in config["series"][0]
+        blobs = {text(b.name): bytes(b.data) for b in display.value.blobs}
+        assert blobs["x"] == struct.pack("<dddd", 1e12, 1e12 + 0.125, 1e12, 1e12 + 0.125)
+        page = c.call("ModuleReadRequest", module=text(display.value.module), limitBytes=1048576)
+        assert page.eof and b"createRenderPipeline" in bytes(page.bytes)
+    finally:
+        d.cleanup()

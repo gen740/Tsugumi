@@ -3,8 +3,6 @@
 import Foundation
 import PackageDescription
 
-let rendererLib = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-  .appendingPathComponent("../build-renderer/ui/renderer").standardizedFileURL.path
 let clientLib = ProcessInfo.processInfo.environment["TSUGUMI_CLIENT_LIB_DIR"] ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent()
   .appendingPathComponent("../build/client").standardizedFileURL.path
 
@@ -74,17 +72,6 @@ let package = Package(
       dependencies: ["TsugumiLauncher"],
       path: "Sources/VMHost",
       swiftSettings: [.swiftLanguageMode(.v5)]),
-    // Dawn renderer: ui/renderer/build.sh produces build-renderer/ui/renderer/libtsugumi_renderer.dylib.
-    .systemLibrary(name: "TsugumiRendererC", path: "Sources/RendererC"),
-    .target(
-      name: "TsugumiRenderer",
-      dependencies: ["TsugumiRendererC"],
-      path: "Sources/Renderer",
-      swiftSettings: [.swiftLanguageMode(.v5)],
-      linkerSettings: [
-        .unsafeFlags(["-L", rendererLib, "-Xlinker", "-rpath", "-Xlinker", rendererLib,
-                      "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
-      ]),
     // Grammars with no Swift package of their own (Sources/Grammars/README.md).
     .target(
       name: "TreeSitterNix", path: "Sources/Grammars/TreeSitterNix",
@@ -110,7 +97,7 @@ let package = Package(
     .executableTarget(
       name: "TsugumiApp",
       dependencies: [
-        "TsugumiRPC", "TsugumiLauncher", "TsugumiRenderer",
+        "TsugumiRPC", "TsugumiLauncher",
         "TsugumiAgentClient",
         .product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),
         .product(name: "TreeSitterC", package: "tree-sitter-c"),

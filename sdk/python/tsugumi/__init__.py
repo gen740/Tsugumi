@@ -174,10 +174,10 @@ class Context:
 
         mpl.display(list(figures))
 
-    def display_module(self, name: str, data) -> None:
+    def display_module(self, module: str, config, blobs=None) -> None:
         _shown_by_card()
         import json
-        _host.display_module(name, data if isinstance(data, str) else json.dumps(data))
+        _host.display_module(module, config if isinstance(config, str) else json.dumps(config), blobs or {})
 
     # -- control --
     def log(self, message: str) -> None:

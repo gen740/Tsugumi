@@ -55,16 +55,6 @@ in the `macOS/Package.swift` / `Package.resolved` graph.
 | Swift Markdown | [0.7.3 LICENSE](https://github.com/swiftlang/swift-markdown/blob/7d9a5ce307528578dfa777d505496bd5f544ad94/LICENSE.txt), [NOTICE](https://github.com/swiftlang/swift-markdown/blob/7d9a5ce307528578dfa777d505496bd5f544ad94/NOTICE.txt) | Apache-2.0 with Swift runtime exception; retain NOTICE too |
 | swift-cmark | [0.9.0 COPYING](https://github.com/swiftlang/swift-cmark/blob/08ddb528923cc1a6527e02b7a1aee9e516ca749a/COPYING) | BSD-2-Clause and embedded MIT notices for derived code; test/spec material has separate terms in COPYING |
 | SwiftMath | [1.7.3](https://github.com/mgriebling/SwiftMath/blob/fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7/LICENSE) | MIT for code. Of its 12 OTF fonts, which have **separate** terms, the app ships only Latin Modern Math 1.959 (GUST Font License, an instance of the LPPL), the one it draws with, and with it the font's complete upstream package; see [LicenseAudit.md](docs/LicenseAudit.md) |
-| Dawn / Tint | [v20261023.194543](https://github.com/google/dawn/blob/1716e88cc9e58398fab5d4473f7f2e858667b677/LICENSE) | BSD-3-Clause; statically incorporated into `libtsugumi_renderer.dylib` |
-
-Dawn's Metal build also incorporates third-party code. Following the compile
-inputs of the static library's 652 objects (`ninja -t deps`), what comes from
-outside Dawn and Tint is Abseil (Apache-2.0; `af5aede` of Chromium's copy), the
-notice of webgpu-headers in the generated `webgpu.h` (BSD-3-Clause) and
-`src/dawn/common/LinkedList.h`, a modified copy of Chromium's
-[linked_list.h](third-party/chromium/README.md) (BSD-style). Nothing else under
-Dawn's `third_party/` is compiled, including SPIRV-Tools. See
-[LicenseAudit.md](docs/LicenseAudit.md) and `ui/renderer/CMakeLists.txt`.
 
 Swift Argument Parser 1.8.2 (Apache-2.0 with Swift runtime exception) is
 resolved for dependency command-line / example targets; it is not a direct

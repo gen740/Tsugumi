@@ -1,0 +1,18 @@
+{
+  "plotly.js-dist-min": {
+    "url": "https://registry.npmjs.org/plotly.js-dist-min/-/plotly.js-dist-min-3.6.0.tgz",
+    "hash": "sha512-VR9jO2YdcEwbzVwtRyPE0eAieXFv1x5q6M9nnIgUS8FggahPrjiID6kzpnTYABwLX0gZkgEc0zxS6gQgVmgHzw=="
+  },
+  "vega": {
+    "url": "https://registry.npmjs.org/vega/-/vega-6.4.0.tgz",
+    "hash": "sha512-rHXCq2LpEWCLMjXBEj7hocY9G0/i5TGYRayGGSj06VTF4+l2IG2Z7oeZKCjWbUh/7hTE/mVhbaOPB72wCElh6g=="
+  },
+  "vega-lite": {
+    "url": "https://registry.npmjs.org/vega-lite/-/vega-lite-6.4.3.tgz",
+    "hash": "sha512-d/7hPjfz560UERaQuTmGgIVfXAe3g2hJWeC+igDeaGohUdEoNrHLXgR/yTOBT8vV/lIuuKnw+0/xWWblkDwkMQ=="
+  },
+  "vega-embed": {
+    "url": "https://registry.npmjs.org/vega-embed/-/vega-embed-7.3.0.tgz",
+    "hash": "sha512-wQ8s5GaSzqoKgmRfbRolgBrjE2CP7ZKHXqH7NijxMqPjpdWxSs4Dn8tvp9g0giQvh2cK+3p56sxjWWM0wNngGw=="
+  }
+}

@@ -298,7 +298,7 @@ outputs are written as `{"<port>": {...}}` JSON to `$TSUGUMI_OUTPUT`; `jq` is av
 
 Params are in `$TSUGUMI_PARAMS_JSON` (the JSON text itself). To show something, write one JSON member to
 `$TSUGUMI_DISPLAY`: `{"markdown": "..."}`, `{"text": "..."}`, `{"table": {"columns": [...], "rows": [[...]]}}`
-(cells are strings), `{"image": {"path": "plot.png", "alt": "..."}}` or `{"module": {"name": "vega-lite", "data":
+(cells are strings), `{"image": {"path": "plot.png", "alt": "..."}}` or `{"module": {"module": "vega-lite", "config":
 {...}}}`. It is shown when the script ends successfully.
 
 ### R (`src/main.R`)
@@ -597,3 +597,23 @@ FFI boundary and fail the invocation; the failed worker is discarded. Explicit
 abort, double panic during unwinding and native crashes still terminate the
 worker, and the daemon records that failure. Cancellation/deadlines stop even
 uncooperative native code; check the context for cooperative early exit.
+
+
+Card-owned views: declare `views.name = inputs.tsugumi.viewModule { src = ./view; };`
+next to `run` in default.nix. The local ES module exports initialise(root, data, size),
+update(data), resize(size) and dispose(). `data` is `{config, blobs}`; blobs are
+Uint8Array values; size has width, height, pixelRatio and visible. Local JS imports
+and Wasm imports are bundled at build time; runtime fetch is disabled. Python
+`ctx.display_module("name", config, {"points": packed_bytes})` publishes binary data
+without sending the code. Built-in plotly and vega-lite use the same mechanism.
+See docs/CardGuide.md, "Card-owned web views", for isolation and snapshot details.
+
+
+Line-chart SDK calls keep their public names and now publish the built-in
+`line-chart` view. Its JSON contains `series: [{id, label, offset, count}]`;
+`x` and `y` blobs hold concatenated little-endian float64 coordinates. Offsets
+are element indexes. The view subtracts the visible origin in double precision
+before creating float32 GPU vertices. It shares the isolated frame, live update,
+thumbnail and light/dark appearance behavior of all view modules. The remaining
+planned view features are the standard-webgpu.h Wasm template/header and an
+optional module-to-worker channel relayed through RPC.

@@ -85,3 +85,5 @@ await import('./nixReferences')
 await import('./nixReferenceOverlay')
 
 await import('./ruby')
+
+await import("./lineChart")

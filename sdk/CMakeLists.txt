@@ -5,6 +5,7 @@ target_link_libraries(tsugumi-worker PRIVATE tsugumi_protocol tsugumi_json flatb
   Threads::Threads ${CMAKE_DL_LIBS})
 install(TARGETS tsugumi-worker RUNTIME DESTINATION bin)
 install(DIRECTORY include/ DESTINATION share/tsugumi/sdk/include)
+install(DIRECTORY views/ DESTINATION share/tsugumi/sdk/views)
 install(DIRECTORY nix/ DESTINATION share/tsugumi/sdk/nix)
 install(DIRECTORY python/ DESTINATION share/tsugumi/sdk/python)
 install(DIRECTORY r/ DESTINATION share/tsugumi/sdk/r)

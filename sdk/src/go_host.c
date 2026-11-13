@@ -66,7 +66,7 @@ int tsugumi_go_scalar(const tsugumi_call *call, double value,
 }
 int tsugumi_go_module(const tsugumi_call *call, const char *name,
                       const char *json) {
-  return call->display_module(call->host, name, json);
+  return call->display_module(call->host, name, json, NULL, 0);
 }
 int tsugumi_go_image(const tsugumi_call *call, const char *media,
                      const unsigned char *bytes, size_t size, const char *alt) {

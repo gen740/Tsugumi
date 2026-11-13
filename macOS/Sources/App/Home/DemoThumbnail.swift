@@ -398,7 +398,7 @@ private extension Stage {
 }
 
 /// A figure's own points in unit coordinates, without the plot library (the
-/// app draws a result with Plotly, Vega-Lite or Dawn when a project is open).
+/// app draws a result with Plotly, Vega-Lite or the WebGPU line view when a project is open).
 struct DemoPlotPicture {
   struct Line {
     var path: Path

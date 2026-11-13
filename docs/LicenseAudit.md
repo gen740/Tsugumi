@@ -8,7 +8,6 @@
 
 - Keep Swift Markdown's `NOTICE.txt` and swift-cmark's complete `COPYING`, including the notices of embedded code.
 - Keep Tree-sitter runtime, grammar and query notices. Sources are listed in [Grammars/README.md](../macOS/Sources/Grammars/README.md) and [TreeSitter/SOURCES.md](../macOS/Sources/App/Resources/TreeSitter/SOURCES.md).
-- Dawn's Metal renderer includes Dawn/Tint, webgpu-headers, Chromium's linked-list code and Abseil. Bundle their license texts. After changing Dawn's pin, inspect the build inputs with `ninja -C build-renderer -t deps` and update the bundled notices for any dependency changes.
 - SwiftMath's MIT license covers its code, not its fonts. The app ships Latin Modern Math with the GUST Font License and its complete upstream package.
 - The documentation site uses Yusei Magic, with its [SIL OFL text](site/assets/YuseiMagic-OFL.txt). The app's bundled documentation must include that text too.
 

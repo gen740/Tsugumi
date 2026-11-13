@@ -180,13 +180,6 @@ struct InputSourceData {
   uint64_t invocation = 0;
 };
 
-struct LineSeriesData {
-  std::string id;
-  std::string label;
-  std::vector<double> x;
-  std::vector<double> y;
-};
-
 // The kinds of display, outside DisplayData: clang with libstdc++ does not
 // count a nested struct with member initializers as default-constructible
 // inside its enclosing class, so the variant would have no default.
@@ -196,7 +189,6 @@ struct Text {
   bool markdown = false;
 };
 struct Scalar { double value = 0; std::string label; };
-struct LineChart { std::vector<LineSeriesData> series; };
 struct Table { std::vector<std::string> columns; std::vector<std::vector<std::string>> rows; };
 struct Image { std::string media_type; std::string data; std::string alt; };
 struct PointCloud {
@@ -205,8 +197,10 @@ struct PointCloud {
   std::vector<float> z;
   std::vector<uint32_t> colors;
 };
-struct Module { std::string module; std::string data_json; };
+struct Module { std::string module; std::string config_json; std::map<std::string, std::string> blobs; };
 }  // namespace display
+
+auto valid_module_identity(std::string_view identity) -> bool;
 
 struct DisplayData {
   CardPath card;
@@ -215,12 +209,11 @@ struct DisplayData {
   uint64_t revision = 0;
   using Text = display::Text;
   using Scalar = display::Scalar;
-  using LineChart = display::LineChart;
   using Table = display::Table;
   using Image = display::Image;
   using PointCloud = display::PointCloud;
   using Module = display::Module;
-  std::variant<Text, Scalar, LineChart, Table, Image, PointCloud, Module> value;
+  std::variant<Text, Scalar, Table, Image, PointCloud, Module> value;
 
   // Validates structure and size limits of every variant (see data.fbs).
   std::optional<std::string> validate() const;

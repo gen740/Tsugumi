@@ -109,8 +109,8 @@ export function ComparedCardView({ row }: { row: ComparedRow }) {
     <ComparedFields title={L('入力')} fields={comparedValues('inputs', a, b)} />
     <ComparedFields title={L('出力')} fields={comparedValues('outputs', a, b)} />
     {(leftDisplay || rightDisplay) && <section><h4>{L('表示')} {displayChanged && <span className="caption">· {L('相違あり')}</span>}</h4><div className={`comparison-pair${displayChanged ? ' changed' : ''}`}>
-      <div className="comparison-display" style={{ height: leftDisplay && ['image', 'lineChart', 'points', 'module'].includes(leftDisplay.value.kind) ? 400 : undefined }}>{leftDisplay ? <DisplayContent display={leftDisplay} large /> : <Empty small title={L('表示の記録がありません')} icon="chart.xyaxis.line" />}</div>
-      <div className="comparison-display" style={{ height: rightDisplay && ['image', 'lineChart', 'points', 'module'].includes(rightDisplay.value.kind) ? 400 : undefined }}>{rightDisplay ? <DisplayContent display={rightDisplay} large /> : <Empty small title={L('表示の記録がありません')} icon="chart.xyaxis.line" />}</div>
+      <div className="comparison-display" style={{ height: leftDisplay && ['image', 'points', 'module'].includes(leftDisplay.value.kind) ? 400 : undefined }}>{leftDisplay ? <DisplayContent display={leftDisplay} large /> : <Empty small title={L('表示の記録がありません')} icon="chart.xyaxis.line" />}</div>
+      <div className="comparison-display" style={{ height: rightDisplay && ['image', 'points', 'module'].includes(rightDisplay.value.kind) ? 400 : undefined }}>{rightDisplay ? <DisplayContent display={rightDisplay} large /> : <Empty small title={L('表示の記録がありません')} icon="chart.xyaxis.line" />}</div>
     </div></section>}
   </details>
 }

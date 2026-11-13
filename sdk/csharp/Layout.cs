@@ -50,6 +50,13 @@ internal static unsafe class Layout {
         Add("tsugumi_value.data", v, &v->Data, pointer);
         Add("tsugumi_value.size", v, &v->Size, (ulong)sizeof(nuint));
 
+        NativeBlob blob = default;
+        var b = &blob;
+        list.Add(("tsugumi_blob", 0, (ulong)sizeof(NativeBlob)));
+        Add("tsugumi_blob.name", b, &b->Name, pointer);
+        Add("tsugumi_blob.data", b, &b->Data, pointer);
+        Add("tsugumi_blob.size", b, &b->Size, (ulong)sizeof(nuint));
+
         NativeSeries series = default;
         var s = &series;
         list.Add(("tsugumi_series", 0, (ulong)sizeof(NativeSeries)));

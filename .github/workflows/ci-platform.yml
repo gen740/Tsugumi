@@ -302,15 +302,6 @@ jobs:
             swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('macOS/Package.resolved', 'macOS/CoreTests/Package.resolved', 'macOS/Package.swift', 'macOS/CoreTests/Package.swift', 'flake.lock') }}-
       - name: Swift platform adapters
         run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path macOS/CoreTests'
-      - name: Restore the Dawn renderer build
-        uses: actions/cache@v4
-        with:
-          path: build-renderer
-          key: renderer-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('flake.lock') }}-${{ hashFiles('ui/renderer/**', 'CMakeLists.txt', 'client/CMakeLists.txt', 'protocol/**') }}
-          restore-keys: |
-            renderer-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('flake.lock') }}-
-      - name: Build the Dawn renderer
-        run: ui/renderer/build.sh
       - name: Build the application help
         run: nix run .#build-doc
       - name: Application behavior

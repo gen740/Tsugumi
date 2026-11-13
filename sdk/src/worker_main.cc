@@ -24,6 +24,7 @@
 // shows as JSON to $TSUGUMI_DISPLAY (read when it ends; see BashDisplay).
 // postRun gets TSUGUMI_FAILED (0/1) and TSUGUMI_OUTPUTS (the ports sent).
 
+#include <cmath>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <flatbuffers/idl.h>
@@ -290,16 +291,58 @@ int display_scalar_impl(void*, double value, const char* label) {
   return 0;
 }
 
-int display_line_chart_impl(void*, const tsugumi_series* series, size_t count) {
-  send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    std::vector<flatbuffers::Offset<D::LineSeries>> v;
-    for (size_t i = 0; i < count; ++i)
-      v.push_back(D::CreateLineSeries(b, b.CreateString(series[i].id), b.CreateString(series[i].label),
-                                      b.CreateVector(series[i].x, series[i].count),
-                                      b.CreateVector(series[i].y, series[i].count)));
-    return std::make_pair(D::DisplayValue::DisplayLineChart, D::CreateDisplayLineChart(b, b.CreateVector(v)).Union());
-  });
-  return 0;
+struct ChartSeriesConfig {
+  tsugumi::schema::t::String<"id"> id;
+  tsugumi::schema::t::String<"label"> label;
+  tsugumi::schema::t::Uint64<"offset"> offset;
+  tsugumi::schema::t::Uint64<"count"> count;
+};
+struct ChartConfig {
+  tsugumi::schema::t::Array<"series", tsugumi::schema::Obj<ChartSeriesConfig>> series;
+};
+
+// The view module mapping of the Card (--views), set once when the worker starts.
+std::string g_views;
+
+auto display_module_impl(void*, const char*, const char*, const tsugumi_blob*, size_t) -> int;
+
+// All language SDKs keep their line-chart API. Only the common worker encodes
+// its immutable view identity and run data; coordinates never pass through JSON.
+auto display_line_chart_impl(void*, const tsugumi_series* series, size_t count) -> int {
+  const auto invalid = [](const char* message) {
+    record_failure(D::FailureKind::output_invalid, message);
+    return -1;
+  };
+  if (count && !series) return invalid("missing line series");
+  ChartConfig config;
+  std::string x, y;
+  size_t points = 0, bytes = 0;
+  for (size_t i = 0; i < count; ++i) {
+    const auto& row = series[i];
+    if (!row.id || !row.label || (row.count && (!row.x || !row.y)) || row.count > 10000 - points)
+      return invalid("invalid line series or more than 10,000 points");
+    bytes += row.count * 16 + std::strlen(row.id) + std::strlen(row.label);
+    if (bytes > (1u << 20)) return invalid("line chart exceeds 1 MiB");
+    ChartSeriesConfig meta;
+    *meta.id = row.id;
+    *meta.label = row.label;
+    *meta.offset = points;
+    *meta.count = row.count;
+    config.series->push_back(std::move(meta));
+    for (size_t j = 0; j < row.count; ++j) {
+      if (!std::isfinite(row.x[j]) || !std::isfinite(row.y[j])) return invalid("line coordinates must be finite");
+      const double xv = flatbuffers::EndianScalar(row.x[j]);
+      const double yv = flatbuffers::EndianScalar(row.y[j]);
+      x.append(reinterpret_cast<const char*>(&xv), sizeof xv);
+      y.append(reinterpret_cast<const char*>(&yv), sizeof yv);
+    }
+    points += row.count;
+  }
+  const auto json = tsugumi::schema::encode(config);
+  const tsugumi_blob blobs[] = {{"x", reinterpret_cast<const uint8_t*>(x.data()), x.size()},
+                                {"y", reinterpret_cast<const uint8_t*>(y.data()), y.size()}};
+  const auto status = display_module_impl(nullptr, "line-chart", json.c_str(), blobs, 2);
+  return status == 0 ? 0 : invalid("the built-in line-chart module is unavailable");
 }
 
 int display_table_impl(void*, const char* const* columns, size_t column_count, const char* const* cells,
@@ -338,11 +381,34 @@ int display_points_impl(void*, const float* x, const float* y, const float* z, c
   return 0;
 }
 
-int display_module_impl(void*, const char* name, const char* data_json) {
+auto display_module_impl(void*, const char* name, const char* config_json,
+                         const tsugumi_blob* blobs, size_t count) -> int {
+  if (!name || !config_json || std::strlen(config_json) > (1u << 20) || count > 64 || (count && !blobs)) return -1;
+  size_t bytes = 0;
+  for (size_t i = 0; i < count; ++i) {
+    if (!blobs[i].name || std::strlen(blobs[i].name) > 128 || (!blobs[i].data && blobs[i].size) ||
+        blobs[i].size > (8u << 20) - bytes) return -1;
+    bytes += blobs[i].size;
+  }
+  std::string identity = name;
+  if (!identity.starts_with("/nix/store/")) {
+    if (g_views.empty()) return -1;
+    tsugumi::schema::v::Mapping<tsugumi::schema::v::String, tsugumi::schema::v::String> views;
+    if (tsugumi::schema::decode(g_views, views)) return -1;
+    bool found = false;
+    for (const auto& [key, value] : views.value())
+      if (key == identity) { identity = value; found = true; break; }
+    if (!found) return -1;
+  }
   send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto n = b.CreateString(name);
-    auto d = b.CreateString(data_json);
-    return std::make_pair(D::DisplayValue::DisplayModule, D::CreateDisplayModule(b, n, d).Union());
+    auto n = b.CreateString(identity);
+    auto d = b.CreateString(config_json);
+    std::vector<flatbuffers::Offset<D::DisplayBlob>> values;
+    for (size_t i = 0; i < count; ++i)
+      values.push_back(D::CreateDisplayBlob(b, b.CreateString(blobs[i].name),
+          b.CreateVector(blobs[i].data, blobs[i].size)));
+    return std::make_pair(D::DisplayValue::DisplayModule,
+        D::CreateDisplayModule(b, n, d, b.CreateVector(values)).Union());
   });
   return 0;
 }
@@ -660,8 +726,9 @@ struct BashDisplayImage {
   tsugumi::schema::Opt<"alt", tsugumi::schema::v::String> alt;
 };
 struct BashDisplayModule {
-  tsugumi::schema::Opt<"name", tsugumi::schema::v::String> name;
-  tsugumi::schema::Opt<"data", tsugumi::schema::Json> data;
+  tsugumi::schema::Opt<"module", tsugumi::schema::v::String> module;
+  tsugumi::schema::Opt<"config", tsugumi::schema::Json> config;
+  tsugumi::schema::Opt<"blobs", tsugumi::schema::v::Mapping<tsugumi::schema::v::String, tsugumi::schema::v::String>> blobs;
 };
 struct BashDisplay {
   tsugumi::schema::Opt<"text", tsugumi::schema::v::String> text;
@@ -706,10 +773,21 @@ auto json_display(const std::string& json, const std::string& cwd) -> void {
     const auto* alt = sc::get(image->alt);
     display_image_impl(nullptr, media, reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), alt ? alt->c_str() : "");
   } else if (const auto* module = sc::get(d.module)) {
-    const auto* name = sc::get(module->name);
-    const auto* data = sc::get(module->data);
-    if (!name || !data) return invalid("a module needs a name and data");
-    display_module_impl(nullptr, name->c_str(), sc::text(*data).c_str());
+    const auto* name = sc::get(module->module);
+    const auto* data = sc::get(module->config);
+    if (!name || !data) return invalid("a module needs module and config");
+    std::vector<std::pair<std::string, std::string>> owned;
+    if (const auto* blobs = sc::get(module->blobs))
+      for (const auto& [key, file] : *blobs) {
+        const auto full = file.starts_with("/") ? file : cwd + "/" + file;
+        if (::access(full.c_str(), R_OK) != 0) return invalid("cannot read blob " + file);
+        owned.emplace_back(key, read_text(full));
+      }
+    std::vector<tsugumi_blob> blobs;
+    for (const auto& [key, bytes] : owned)
+      blobs.push_back({key.c_str(), reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size()});
+    if (display_module_impl(nullptr, name->c_str(), sc::text(*data).c_str(), blobs.data(), blobs.size()))
+      return invalid("unknown view module; declare it in views");
   } else {
     invalid("name one of text, markdown, table, image or module");
   }
@@ -907,6 +985,7 @@ int main(int argc, char** argv) {
     else if (k == "--pre") opt.pre = argv[i + 1];
     else if (k == "--run") opt.run = argv[i + 1];
     else if (k == "--post") opt.post = argv[i + 1];
+    else if (k == "--views") g_views = argv[i + 1];
   }
   if (!opt.package.empty()) {
     auto before = process_env();

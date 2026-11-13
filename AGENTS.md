@@ -17,7 +17,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 | [core/](core/) | `tsugumid`: the document model, type checking, the scheduler, the embedded Nix evaluator, history and artifacts, versions (git) |
 | [sdk/](sdk/) | The Card ABI and runtime, the C++ / Python SDKs, the Nix SDK ([sdk/nix/default.nix](sdk/nix/default.nix)), the worker |
 | [macOS/](macOS/) | The SwiftUI app, the shared Linux VM (Virtualization.framework), image definitions |
-| [ui/](ui/) | Dawn's rendering layer, the viewer for charts (Plotly, Vega-Lite) |
+| [ui/](ui/) | Shared isolated web-module host and UI resources |
 | [agent/](agent/) | The Agent (model connections, conversations, tools derived from the RPC). The contract shared with the Web is in [agent/Shared/](agent/Shared/) |
 | [web/](web/) | The browser UI and its host server |
 | [remote/](remote/) | The Python execution daemon and durable job journal on the remote Linux host |

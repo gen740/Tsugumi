@@ -175,14 +175,15 @@ Note display_note(const DisplayData& d) {
   n.card_key = path_key(d.card);
   n.coalesce_key = "display|" + n.card_key;
   n.approx_bytes = 1024;
-  if (const auto* c = std::get_if<DisplayData::LineChart>(&d.value))
-    for (const auto& s : c->series) n.approx_bytes += s.x.size() * 16;
   if (const auto* t = std::get_if<DisplayData::Table>(&d.value))
     for (const auto& r : t->rows)
       for (const auto& c : r) n.approx_bytes += c.size() + 8;
   if (const auto* im = std::get_if<DisplayData::Image>(&d.value)) n.approx_bytes += im->data.size();
   if (const auto* p = std::get_if<DisplayData::PointCloud>(&d.value)) n.approx_bytes += p->x.size() * 16;
-  if (const auto* m = std::get_if<DisplayData::Module>(&d.value)) n.approx_bytes += m->data_json.size();
+  if (const auto* m = std::get_if<DisplayData::Module>(&d.value)) {
+    n.approx_bytes += m->module.size() + m->config_json.size();
+    for (const auto& [name, bytes] : m->blobs) n.approx_bytes += name.size() + bytes.size();
+  }
   n.build = std::make_shared<const Note::Build>([shared](FBB& b) {
     auto dv = wire::display(b, *shared);
     return std::make_pair(R::NotificationPayload::DisplayUpdated, R::CreateDisplayUpdated(b, dv).Union());

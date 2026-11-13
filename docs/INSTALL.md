@@ -85,10 +85,6 @@ The pinned versions of the dependencies are in [docs/Lock.md](Lock.md).
 ### Minimal steps
 
 ```bash
-ui/renderer/build.sh
-```
-
-```bash
 macOS/build-app.sh
 ```
 
@@ -116,9 +112,7 @@ macOS/Container/build-image.sh --vm
 
 The builder's resources can be set with the environment variables `TSUGUMI_BUILDER_CPUS` (default `8`), `TSUGUMI_BUILDER_MEMORY` (default `16G`) and `TSUGUMI_BUILDER_VOLUME` (the volume for the Nix cache, default `tsugumi-builder-nix`).
 
-`ui/renderer/build.sh` in the [minimal steps](#minimal-steps) builds the Dawn rendering layer (the first time takes a few minutes to fetch and build Dawn and its dependencies).
-
-`macOS/build-app.sh` packages the app into `dist/Tsugumi.app`. It bundles the rendering dylib, the demos, the VM's boot disk and the source the VM assembles Tsugumi from (`macOS/Container/vm-source.txt`), and signs it ad hoc for this machine. If there is no boot disk, run `build-image.sh --vm` first. With `--release` it builds a release (used by the release workflow; [Development](Development.md#releases)).
+`macOS/build-app.sh` packages the app into `dist/Tsugumi.app`. It bundles the shared module host, the demos, the VM's boot disk and the source the VM assembles Tsugumi from (`macOS/Container/vm-source.txt`), and signs it ad hoc for this machine. If there is no boot disk, run `build-image.sh --vm` first. With `--release` it builds a release (used by the release workflow; [Development](Development.md#releases)).
 
 Starting the VM needs a code signature with the virtualization entitlement, so during development too, use the `dist/Tsugumi.app` that `macOS/build-app.sh` makes (a binary started directly with `swift run` has no signature and cannot start the VM). `tsugumi-vmctl`, which test scripts use to operate the VM, is built with `macOS/tools/build-vmctl.sh`.
 

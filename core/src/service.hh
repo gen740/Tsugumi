@@ -160,6 +160,7 @@ class Service : public RequestSink {
   void run_value_read(RequestIn& req);
   void artifact_list(RequestIn& req);
   void artifact_read(RequestIn& req);
+  void module_read(RequestIn& req);
   void log_range(RequestIn& req);
   void view_set_visible(RequestIn& req);
   void view_save(RequestIn& req);

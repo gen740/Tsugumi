@@ -362,7 +362,7 @@ def main(ctx):
     ctx.display_table(["n", "square"], [[str(i), str(i * i)] for i in range(5)])
     ctx.display_image(png(4, 4), "image/png", "red square")
     ctx.display_points([0, 1, 2], [0, 1, 4], [0, 1, 8], [0xff0000, 0x00ff00, 0x0000ff])
-    ctx.display_module("histogram", {"bins": [1, 2, 3]})
+    ctx.display_module("/nix/store/00000000000000000000000000000000-test-view", {"bins": [1, 2, 3]})
 '''
     defs = {"trigger": {"template": "trigger"},
             "show": {"language": "python",
@@ -376,7 +376,7 @@ def main(ctx):
     assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
     rec = c.call("RunRecordRequest", runId=run_id, card=path("show"))
     assert rec.record.display is not None and rec.record.display.valueType == 7, log(c, run_id, "show", 2)
-    assert text(rec.record.display.value.name) == "histogram"
+    assert text(rec.record.display.value.module) == "/nix/store/00000000000000000000000000000000-test-view"
 
 
 RICH = """

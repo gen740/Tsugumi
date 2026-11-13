@@ -2,44 +2,65 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
+import { moduleSource, registerModuleClient } from '../src/model/moduleSources'
+import { moduleThumbnailKey } from '../src/model/moduleThumbnails'
+
+// Exercise the real lifecycle runtime with a DOM stand-in and a real ES module.
 const script = fs.readFileSync(path.join(process.argv[2], 'ui/modules/viewer.js'), 'utf8')
-let handler: ((event: any) => void) | undefined
-let pagehide: (() => void) | undefined
-const messages: any[] = [], draws: string[] = []
-let finish: (() => void) | undefined, finalized = 0, purged = 0
-const view = { replaceChildren() {} }
-const context = {
-  console,
-  document: { body: { dataset: {}, classList: { toggle() {}, remove() {} } }, getElementById: (id: string) => id === 'view' ? view : { textContent: '' } },
-  window: {
-    innerWidth: 0, innerHeight: 0,
-    parent: { postMessage: (m: any) => messages.push(m) },
-    addEventListener: (kind: string, f: any) => { if (kind === 'message') handler = f; if (kind === 'pagehide') pagehide = f },
-    Plotly: {
-      react: async (_: any, data: any) => { draws.push(data[0]); await new Promise<void>(resolve => { finish = resolve }) },
-      purge: () => purged++, toImage: async (_: any, options: any) => { assert.equal(options.width, 400); assert.equal(options.height, 300); return 'data:image/png;base64,plot' },
-    },
-    vega: { loader: () => ({}) },
-    vegaEmbed: async (_: any, spec: any) => { draws.push(spec.description); return { finalize: () => finalized++, view: { toImageURL: async () => 'data:image/png;base64,vega' } } },
-  } as any,
-}
-vm.createContext(context); vm.runInContext(script, context)
-const tick = () => new Promise(resolve => setTimeout(resolve, 0))
-const lib = (name: string) => handler!({ source: context.window.parent, data: { tsugumi: 'lib', lib: name, code: '' } })
-const first = context.window.tsugumiRender({ name: 'plotly', json: '{"data":["old"]}', requestId: 1 })
-lib('plotly.min.js'); await tick()
-const obsolete = context.window.tsugumiRender({ name: 'plotly', json: '{"data":["obsolete"]}', requestId: 2 })
-const latest = context.window.tsugumiRender({ name: 'plotly', json: '{"data":["latest"]}', requestId: 3, snapshot: true, width: 400, height: 300 })
-assert.equal(await obsolete, false)
-finish!(); await first; await tick(); assert.deepEqual(draws, ['old', 'latest'])
-finish!(); await latest
-assert.equal(messages.filter(m => m.tsugumi === 'state').length, 1, 'obsolete completion is not reported')
-assert.equal(messages.at(-1).requestId, 3); assert.equal(messages.at(-1).image, 'data:image/png;base64,plot')
-const vega = context.window.tsugumiRender({ name: 'vega-lite', json: '{"description":"vega-1"}' })
-for (const name of ['vega.min.js', 'vega-lite.min.js', 'vega-embed.min.js']) { await tick(); lib(name) }
-await vega
-assert.equal(purged, 1)
-await context.window.tsugumiRender({ name: 'vega-lite', json: '{"description":"vega-2"}' })
-assert.equal(finalized, 1, 'replaced Vega view releases listeners and timers')
-pagehide!(); assert.equal(finalized, 2, 'closing the viewer releases its last Vega view')
-console.log('module viewer: serialized latest updates, snapshot identity and resource cleanup passed')
+// The page itself forbids nested frames from loading a URL, wherever it is hosted (the Mac app too).
+assert.match(fs.readFileSync(path.join(process.argv[2], 'ui/modules/viewer.html'), 'utf8'), /Content-Security-Policy" content="frame-src 'none'"/)
+const runtime = script.slice(script.indexOf('function runtime()'), script.indexOf('frame.srcdoc ='))
+const messages: any[] = [], calls: any[] = []
+const listeners = new Map<string, (event: any) => any>()
+const root = { style: {}, replaceChildren() {}, calls, textContent: '' }
+const parent = { postMessage: (message: any) => messages.push(message) }
+const context = vm.createContext({
+  document: { createElement: () => root, body: { append() {} } }, parent,
+  innerWidth: 400, innerHeight: 300, devicePixelRatio: 2,
+  addEventListener: (name: string, fn: any) => listeners.set(name, fn),
+  ResizeObserver: class { observe() {} }, setTimeout, requestAnimationFrame: (fn: any) => setTimeout(fn, 0),
+  Blob: class { constructor(public parts: string[]) {} },
+  URL: { createObjectURL: (blob: { parts: string[] }) => 'data:text/javascript;base64,' + Buffer.from(blob.parts.join('')).toString('base64'), revokeObjectURL() {} },
+})
+const start = vm.compileFunction(runtime + '; runtime()', [], {
+  parsingContext: context, importModuleDynamically: vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER,
+})
+start()
+assert.equal(messages[0].tsugumi, 'inner-ready')
+const code = `let root;
+export function initialise(element, data, size) { root = element; root.calls.push(['init', data.blobs.points[1], size.width]); }
+export function update(data) { root.calls.push(['update', data.config.count]); }
+export function resize(size) { root.calls.push(['resize', size.visible]); }
+export function dispose() { root.calls.push(['dispose']); }
+export function snapshot() { return 'data:image/png;base64,test'; }`
+const send = (requestId: number, extra = {}) => listeners.get('message')!({ source: parent, data: {
+  tsugumi: 'render', name: 'immutable-view', code, json: '{"count":2}', blobs: { points: new Uint8Array([0, 255]) }, requestId, ...extra,
+} })
+await send(1)
+assert.deepEqual(calls[0], ['init', 255, 400])
+await send(2, { snapshot: true })
+assert.deepEqual(calls[1], ['update', 2])
+assert.equal(messages.at(-1).image, 'data:image/png;base64,test')
+await listeners.get('message')!({ source: parent, data: { tsugumi: 'visibility', visible: false } })
+assert.deepEqual(calls.at(-1), ['resize', false])
+await send(3, { name: 'another-view', code: code + '\n// another identity' })
+assert.ok(calls.some(call => call[0] === 'dispose'))
+listeners.get('pagehide')!({})
+assert.equal(calls.at(-1)[0], 'dispose')
+
+// The actual RPC loading path pages bytes, coalesces consumers and retries failures.
+let reads = 0
+const client = { async call(_: unknown, request: { offset: bigint }) {
+  ++reads
+  const first = request.offset === 0n
+  return { bytes: first ? [65, 0] : [66], offset: request.offset, nextOffset: first ? 2n : 3n, eof: !first }
+} }
+registerModuleClient(client as never)
+const [a, b] = await Promise.all([moduleSource('test-identity'), moduleSource('test-identity')])
+assert.equal(a, 'A\0B'); assert.equal(a, b); assert.equal(reads, 2)
+const keyA = await moduleThumbnailKey('view', '{}', 100, 100, { points: new Uint8Array([0, 255]) })
+const keyB = await moduleThumbnailKey('view', '{}', 100, 100, { points: new Uint8Array([0, 254]) })
+assert.notEqual(keyA, keyB)
+assert.match(script, /frame.sandbox = 'allow-scripts'/)
+assert.match(script, /connect-src 'none'/)
+console.log('module views: ES lifecycle, blobs, visibility, snapshots, RPC paging and cache passed')

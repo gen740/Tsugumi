@@ -133,11 +133,7 @@ export function sameDisplay(a?: DisplaySnapshot, b?: DisplaySnapshot): boolean {
     case 'scalar': return y.kind === 'scalar' && sameNumbers([x.value], [y.value]) && x.label === y.label
     case 'table': return y.kind === 'table' && sameStrings(x.columns, y.columns) && x.rows.length === y.rows.length && x.rows.every((r, i) => sameStrings(r, y.rows[i]))
     case 'image': return y.kind === 'image' && x.mediaType === y.mediaType && x.alt === y.alt && sameNumbers(x.data, y.data)
-    case 'module': return y.kind === 'module' && x.name === y.name && x.json === y.json
+    case 'module': return y.kind === 'module' && x.name === y.name && x.json === y.json && Object.keys(x.blobs).length === Object.keys(y.blobs).length && Object.keys(x.blobs).every(k => !!y.blobs[k] && sameNumbers(x.blobs[k], y.blobs[k]))
     case 'points': return y.kind === 'points' && sameNumbers(x.x, y.x) && sameNumbers(x.y, y.y) && sameNumbers(x.z, y.z) && sameNumbers(x.colors, y.colors)
-    case 'lineChart': return y.kind === 'lineChart' && x.series.length === y.series.length && x.series.every((p, i) => {
-      const q = y.series[i]
-      return p.id === q.id && p.label === q.label && sameNumbers(p.x, q.x) && sameNumbers(p.y, q.y)
-    })
   }
 }

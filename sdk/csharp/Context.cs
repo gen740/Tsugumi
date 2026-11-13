@@ -41,6 +41,13 @@ internal unsafe struct NativeSeries {
     internal nuint Count;
 }
 
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct NativeBlob {
+    internal byte* Name;
+    internal byte* Data;
+    internal nuint Size;
+}
+
 public sealed record Series(string Id, string Label, double[] X, double[] Y);
 
 [StructLayout(LayoutKind.Sequential)]
@@ -68,7 +75,7 @@ internal unsafe struct NativeCall {
     internal delegate* unmanaged[Cdecl]<void*, byte**, nuint, byte**, nuint, int> Table;
     internal delegate* unmanaged[Cdecl]<void*, byte*, byte*, nuint, byte*, int> Image;
     internal delegate* unmanaged[Cdecl]<void*, float*, float*, float*, uint*, nuint, int> Points;
-    internal delegate* unmanaged[Cdecl]<void*, byte*, byte*, int> Module;
+    internal delegate* unmanaged[Cdecl]<void*, byte*, byte*, NativeBlob*, nuint, int> Module;
     internal delegate* unmanaged[Cdecl]<void*, byte*, int> Markdown;
     internal delegate* unmanaged[Cdecl]<void*, byte*, byte*> InputJson;
     internal delegate* unmanaged[Cdecl]<void*, byte*> ParamsJson;
@@ -151,7 +158,7 @@ public sealed partial class Context {
     public unsafe void DisplayImage(byte[] data, string mediaType = "image/png", string alt = "") {
         lock (gate) { CheckActive(); fixed (byte* bytes = data, type = Utf8(mediaType), text = Utf8(alt)) CheckDisplay(call.Image(call.Host, type, bytes, (nuint)data.Length, text)); }
     }
-    public unsafe void DisplayModule(string name, string json) { lock (gate) { CheckActive(); fixed (byte* n = Utf8(name), data = Utf8(json)) CheckDisplay(call.Module(call.Host, n, data)); } }
+    public unsafe void DisplayModule(string name, string json) { lock (gate) { CheckActive(); fixed (byte* n = Utf8(name), data = Utf8(json)) CheckDisplay(call.Module(call.Host, n, data, null, 0)); } }
     public unsafe void DisplayPoints(float[] x, float[] y, float[] z, uint[]? colors = null) {
         if (x.Length != y.Length || x.Length != z.Length || (colors != null && colors.Length != x.Length))
             throw new ArgumentException("Point arrays must have equal lengths");

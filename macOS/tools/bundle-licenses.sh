@@ -7,7 +7,6 @@
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 dest="${1:?usage: bundle-licenses.sh <folder>}"
-dawn="$repo/build-renderer/_deps/dawn-src"
 rm -rf "$dest"
 mkdir -p "$dest"
 
@@ -28,13 +27,6 @@ cp "$repo/macOS/Sources/Grammars/LICENSE.tree-sitter" "$repo/macOS/Sources/Gramm
 cp "$repo/macOS/Sources/Grammars/TreeSitterNix/LICENSE" "$dest/tree-sitter/tree-sitter-nix.LICENSE"
 cp "$repo/macOS/Sources/Grammars/TreeSitterPython/LICENSE" "$dest/tree-sitter/tree-sitter-python.LICENSE"
 cp "$repo/macOS/Sources/Grammars/TreeSitterJuliaScanner/LICENSE" "$dest/tree-sitter/tree-sitter-julia-scanner.LICENSE"
-
-# What the renderer's static Dawn library compiles (docs/LicenseAudit.md).
-mkdir -p "$dest/dawn"
-cp "$dawn/LICENSE" "$dest/dawn/dawn.LICENSE"
-cp "$dawn/third_party/abseil-cpp/LICENSE" "$dest/dawn/abseil-cpp.LICENSE"
-cp "$dawn/third_party/webgpu-headers/src/LICENSE" "$dest/dawn/webgpu-headers.LICENSE"
-cp "$repo/third-party/chromium/LICENSE" "$dest/dawn/chromium.LICENSE"
 
 # Fonts. Latin Modern Math: its complete upstream package, as nixpkgs fetches
 # it (the font in SwiftMath's bundle is byte for byte the one in it).

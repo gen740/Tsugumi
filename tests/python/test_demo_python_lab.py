@@ -216,7 +216,7 @@ def test_molecules(tmp_path):
         assert number(checked["cholesterol"][2]) > 5 and checked["cholesterol"][6] == "通過"
 
         # The plot says what it should in its hover text.
-        figure = json.loads(text(c.call("RunRecordRequest", runId=rid, card=path("chemspace")).record.display.value.dataJson))
+        figure = json.loads(text(c.call("RunRecordRequest", runId=rid, card=path("chemspace")).record.display.value.configJson))
         failed = next(t for t in figure["data"] if t.get("name") == "不通過")
         assert sorted(row[0] for row in failed["customdata"]) == ["atorvastatin", "cyclosporin A"]
         assert sorted(failed["text"]) == ["atorvastatin", "cyclosporin A"] and any("違反" in row[1] for row in failed["customdata"])

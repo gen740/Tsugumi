@@ -145,12 +145,12 @@ A setting that relaxes only the restrictions on seeing the file system. Where bu
 - On cancellation or a deadline, the processes a worker started are all ended, descendants included (tested automatically with the sandbox both on and off).
 - Resident workers are discarded at once when the project stops, the build conditions change or a run fails, and their memory (at most 2 GiB) and number (at most 32) are limited.
 
-### Showing Card charts (Plotly, Vega-Lite)
+### Showing Card views (line charts, Plotly, Vega-Lite and Card-owned modules)
 
-Plotly figures and Vega-Lite specs a Card sends are treated as untrusted data and run only inside a display component (`ui/modules`) that draws them with the bundled plotly.js / Vega.
+Card views run in the shared isolated host (`ui/modules`). Built-in views, including the WebGPU line chart and the SDK-pinned Plotly/Vega libraries, are fetched from the core through RPC just like Card-owned modules. Run data are supplied separately as configuration and binary blobs.
 
-- Web UI: `/modules/viewer.html` is put in an iframe. Its response's CSP is `sandbox allow-scripts` (without `allow-same-origin`), so the component runs in an opaque origin and can use neither cookies nor `/api/`. With `default-src 'none'` and `connect-src 'none'` it loads nothing and connects nowhere. Its script is embedded in the page, and the library code is handed over by the parent page with postMessage. This is the only route that may be embedded (`frame-ancestors 'self'`); every other response forbids embedding.
-- macOS app: the component is opened in a WKWebView (with a non-persistent data store), and a content rule blocks every load other than `file:`.
+- Web UI: `/modules/viewer.html` is put in an iframe. Its response's CSP is `sandbox allow-scripts` (without `allow-same-origin`), so the component runs in an opaque origin and can use neither cookies nor `/api/`. With `default-src 'none'` and `connect-src 'none'` it loads nothing and connects nowhere. With `frame-src 'none'` the Card's inner frame (a `srcdoc` document) cannot navigate itself to any URL either. Its script is embedded in the page, and the library code is handed over by the parent page with postMessage. This is the only route that may be embedded (`frame-ancestors 'self'`); every other response forbids embedding.
+- macOS app: the trusted host is loaded as HTML in a nonpersistent WKWebView without a file read grant. Card code runs in its opaque inner frame. Content rules block network/file resources, a navigation delegate denies external navigation, and native message handlers reject messages from subframes.
 - In both, Vega's data loading (`data.url`) is refused by the loader. The SDK sends charts with their data inside the spec.
 
 ## 5. Limits on Nix evaluation
@@ -304,3 +304,9 @@ Most of these spell out, as practical cautions, what lies outside the boundary i
 - **Projects share one Linux kernel.** An exploited kernel vulnerability could reach other projects, so do not open at the same time projects you want strongly separated (§3).
 - **A Web UI run directly on a Mac host from the repository has weaker isolation.** A `sandbox: false` Card runs without isolation with the user's permissions (`network: false` does not apply either), and a `network: true` Card can reach devices on the same LAN or VPN ([Isolation in the Web UI](WebUI.md#isolation-macos-host)). The `tsugumi` command uses the shared VM, so this does not apply to it.
 - **Releases are signed ad hoc, without Apple's notarisation.** GitHub Actions builds them from this repository's tags (`.github/workflows/release.yml`), and automatic updates are installed after their checksum, code signature and more are checked ("Automatic updates" in [Development](Development.md)). The correctness of updates rests on trusting the people who can write to this repository and its GitHub Releases.
+
+
+Built-in line charts run as SDK-pinned WebGPU modules in the same isolated
+frame as Card-owned views. The application has no separate native chart renderer
+or drawing bridge. Binary float64 input is run data; the module receives it
+through the existing module input transport, with unchanged retention rules.

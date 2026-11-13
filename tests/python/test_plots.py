@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 HOST = '''
 modules = []
 failures = []
-def display_module(name, data): modules.append((name, data))
+def display_module(name, data, blobs): modules.append((name, data))
 def display_image(media_type, data, alt): modules.append(("image", alt))
 def fail(kind, message): failures.append((kind, message))
 def inputs(): return []

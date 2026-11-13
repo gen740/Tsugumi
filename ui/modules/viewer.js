@@ -1,161 +1,128 @@
-// The module viewer: draws {name, json, interactive} sent by the web UI
-// (postMessage from the parent page) or by the app (tsugumiRender(...)).
-//   plotly     a Plotly figure's JSON ({data, layout}) with plotly.js
-//   vega-lite  a Vega-Lite spec with Vega / Vega-Lite / vega-embed
-// A Card's plot is untrusted: nothing here loads from the network (Vega's
-// loader refuses every URL; the page's policy allows no connections either).
-// In the web UI this page is sandboxed (an opaque origin, which loads
-// nothing): the parent page sends the libraries' code. In the app the
-// libraries are files next to this page.
+// Trusted transport only. Card code runs in a second, opaque-origin frame.
+// Both WKWebView and the browser use this exact host and module lifecycle.
 'use strict'
-
-const framed = window.parent !== window
-const loaded = new Map()
-const asked = new Map()
-function load(src) {
-  if (!loaded.has(src)) {
-    loaded.set(src, framed
-      ? new Promise((resolve, reject) => {
-        asked.set(src, { resolve, reject })
-        window.parent.postMessage({ tsugumi: 'need', lib: src }, '*')
-      })
-      : new Promise((resolve, reject) => {
-        const s = document.createElement('script')
-        s.src = src
-        s.onload = resolve
-        s.onerror = () => reject(new Error(`cannot load ${src}`))
-        document.head.appendChild(s)
-      }))
-  }
-  return loaded.get(src)
-}
-
-const view = document.getElementById('view')
-const error = document.getElementById('error')
-let drawn = ''   // the module drawn now
-let current = 0
-let pending
-let working = false
-let vegaResult
-
-function releaseVega() {
-  if (vegaResult) { vegaResult.finalize(); view.replaceChildren() }
-  vegaResult = undefined
-}
-
-function done(state, message, requestId, image) {
-  document.body.dataset.state = state
-  error.textContent = message ?? ''
-  const msg = { tsugumi: 'state', state, message: message ?? '', requestId, image }
-  if (window.parent !== window) window.parent.postMessage(msg, '*')
-  window.webkit?.messageHandlers?.tsugumi?.postMessage(msg)
-}
-
-async function plotly(spec, interactive, size) {
-  // The display frame decides the size.
-  const layout = { ...(spec.layout ?? {}), autosize: true }
-  delete layout.width
-  delete layout.height
-  if (size) Object.assign(layout, { width: size.width, height: size.height, autosize: false })
-  await window.Plotly.react(view, spec.data ?? [], layout, {
-    responsive: true, staticPlot: !interactive, displaylogo: false, displayModeBar: interactive ? 'hover' : false,
-  })
-}
-
-// Not named vegaLite: the library sets that global, and a second chart on the page would call it.
-async function drawVegaLite(spec, interactive) {
-  const composite = ['hconcat', 'vconcat', 'concat', 'facet', 'repeat'].some((k) => k in spec)
-  if (!composite) {
-    // A single view fills the frame; a composite keeps its size (and scrolls when interactive).
-    spec.width = 'container'
-    spec.height = 'container'
-    spec.autosize = { type: 'fit', contains: 'padding' }
-  }
-  document.body.classList.toggle('scroll', composite && interactive)
-  const loader = window.vega.loader()
-  loader.load = loader.sanitize = async (uri) => { throw new Error(`a Card's chart cannot load ${uri}: put its data in the spec`) }
-  view.replaceChildren()
-  vegaResult = await window.vegaEmbed(view, spec, {
-    actions: interactive ? { export: true, source: false, compiled: false, editor: false } : false,
-    loader, renderer: 'canvas', tooltip: interactive,
-  })
-}
-
-// Only one library may mutate the view at a time. While it is busy, keep the
-// newest request, so live updates cannot create an unbounded rendering queue.
-function render(message) {
-  const n = ++current
-  return new Promise(resolve => {
-    pending?.resolve(false)
-    pending = { message, n, resolve }
-    void drawPending()
-  })
-}
-
-async function drawPending() {
-  if (working) return
-  working = true
-  while (pending) {
-    const { message, n, resolve } = pending
-    pending = undefined
-    const { name, json, interactive, requestId, snapshot } = message
-    const size = snapshot ? { width: Number(message.width), height: Number(message.height) } : undefined
+const frame = document.createElement('iframe')
+frame.sandbox = 'allow-scripts'
+frame.allow = 'webgpu'
+frame.title = 'Card view'
+const policy = "default-src 'none'; script-src blob: 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src blob: data:; font-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+function runtime() {
+  const root = document.createElement('div')
+  Object.assign(root.style, { position: 'absolute', inset: '0', overflow: 'auto' })
+  document.body.append(root)
+  let module, identity, currentData, initialised = false, visible = true, colorScheme = 'light', pending, working = false, resizePending = false
+  const size = () => ({ width: innerWidth, height: innerHeight, pixelRatio: devicePixelRatio, visible, colorScheme })
+  const send = data => parent.postMessage({ tsugumi: 'state', ...data }, '*')
+  async function render(message) {
     try {
-      if (name === 'plotly') await load('plotly.min.js')
-      else if (name === 'vega-lite') {
-        for (const lib of ['vega.min.js', 'vega-lite.min.js', 'vega-embed.min.js']) await load(lib)
-      } else throw new Error(`no viewer for the module ${name}`)
-      if (n !== current) { resolve(false); continue }
-      if (size && (!Number.isFinite(size.width) || !Number.isFinite(size.height) || size.width < 16 || size.height < 16 || size.width > 1600 || size.height > 1200)) throw new Error('Invalid chart preview dimensions')
-      const spec = JSON.parse(json)
-      document.body.classList.toggle('still', !interactive)
-      document.body.classList.remove('scroll')
-      releaseVega()
-      if (drawn === 'plotly' && name !== 'plotly') window.Plotly?.purge(view)
-      // Record the owner before drawing, so a failed partial draw is cleaned too.
-      drawn = name
-      if (name === 'plotly') await plotly(spec, interactive, size)
-      else await drawVegaLite(spec, interactive)
-      let image
-      if (snapshot && n === current) {
-        image = name === 'plotly'
-          ? await window.Plotly.toImage(view, { format: 'png', width: size.width, height: size.height, scale: 2 })
-          : await vegaResult.view.toImageURL('png', 2)
+      visible = message.visible !== false
+      colorScheme = message.colorScheme === 'dark' ? 'dark' : 'light'
+      if (identity !== message.name) {
+        await module?.dispose()
+        root.replaceChildren()
+        module = undefined; initialised = false
+        const url = URL.createObjectURL(new Blob([message.code], { type: 'text/javascript' }))
+        try { module = await import(url) } finally { URL.revokeObjectURL(url) }
+        for (const name of ['initialise', 'update', 'resize', 'dispose'])
+          if (typeof module[name] !== 'function') throw new Error(`View must export ${name}`)
+        identity = message.name
+        currentData = { config: JSON.parse(message.json), blobs: message.blobs ?? {} }
+        await module.initialise(root, currentData, size())
+        initialised = true
+      } else {
+        currentData = { config: JSON.parse(message.json), blobs: message.blobs ?? {} }
+        await module.update(currentData)
+        await module.resize(size())
       }
-      if (n === current) done('ok', '', requestId, image)
-      resolve(n === current)
+      await new Promise(resolve => setTimeout(resolve, 30))
+      let image
+      if (message.snapshot) {
+        if (module.snapshot) image = await module.snapshot()
+        else {
+          const canvas = root.querySelector('canvas')
+          if (canvas) image = canvas.toDataURL('image/png')
+          else {
+            // DOM/SVG views can export a PNG through snapshot().
+            throw new Error('A DOM view must export snapshot() for canvas previews')
+          }
+        }
+      }
+      send({ state: 'ok', requestId: message.requestId, image })
     } catch (e) {
-      if (n === current) done('error', String(e?.message ?? e), requestId)
-      resolve(false)
+      identity = undefined; initialised = false
+      root.textContent = String(e?.message ?? e)
+      send({ state: 'error', requestId: message.requestId, message: root.textContent })
     }
   }
-  working = false
-}
-
-window.addEventListener('pagehide', () => {
-  releaseVega()
-  if (drawn === 'plotly') window.Plotly?.purge(view)
-})
-
-// The app calls this; the web UI posts {name, json, interactive}.
-window.tsugumiRender = render
-window.addEventListener('message', (e) => {
-  if (e.source !== window.parent || !e.data) return
-  if (e.data.tsugumi === 'lib' && asked.has(e.data.lib)) {
-    const { resolve, reject } = asked.get(e.data.lib)
-    asked.delete(e.data.lib)
-    if (typeof e.data.code !== 'string') return reject(new Error(`cannot load ${e.data.lib}`))
+  async function drain() {
+    if (working) return
+    working = true
     try {
-      (0, eval)(e.data.code) // global scope: the library defines its global (Plotly, vega, ...)
-      resolve()
-    } catch (err) {
-      reject(err)
+      while (pending || resizePending) {
+        if (pending) { const next = pending; pending = undefined; await render(next) }
+        else {
+          resizePending = false
+          if (initialised) await module.resize(size())
+        }
+      }
+    } catch (e) { send({ state: 'error', message: String(e?.message ?? e) }) }
+    finally { working = false }
+  }
+  addEventListener('message', async event => {
+    if (event.source !== parent) return
+    if (event.data?.tsugumi === 'visibility') {
+      visible = event.data.visible; resizePending = true; await drain(); return
     }
-  } else if (typeof e.data.json === 'string') render(e.data)
+    if (event.data?.tsugumi !== 'render') return
+    if (pending) send({ state: 'superseded', requestId: pending.requestId })
+    pending = event.data
+    await drain()
+  })
+  new ResizeObserver(() => { resizePending = true; void drain() }).observe(root)
+  addEventListener('pagehide', () => { void module?.dispose() })
+  addEventListener('keydown', e => { if (e.key === 'Escape') parent.postMessage({ tsugumi: 'key', key: 'Escape' }, '*') })
+  parent.postMessage({ tsugumi: 'inner-ready' }, '*')
+}
+frame.srcdoc = `<meta http-equiv="Content-Security-Policy" content="${policy}"><style>html,body{margin:0;height:100%;overflow:hidden}</style><script>(${runtime.toString()})()<` + '/script>'
+let readyResolve
+const ready = new Promise(resolve => { readyResolve = resolve })
+let sequence = 0
+let intersecting = true, preview = false
+const visibility = () => intersecting && document.visibilityState !== 'hidden'
+function updateVisibility() {
+  frame.contentWindow?.postMessage({ tsugumi: 'visibility', visible: preview || visibility() }, '*')
+}
+new IntersectionObserver(entries => { intersecting = entries.some(entry => entry.isIntersecting); updateVisibility() }).observe(frame)
+addEventListener('visibilitychange', updateVisibility)
+const waiting = new Map()
+function notify(message) {
+  if (parent !== window) parent.postMessage(message, '*')
+  window.webkit?.messageHandlers?.tsugumi?.postMessage(message)
+}
+window.tsugumiRender = async message => {
+  await ready
+  preview = message.interactive === false
+  const requestId = message.requestId ?? ++sequence
+  const blobs = Object.fromEntries(Object.entries(message.blobs ?? {}).map(([name, value]) => [name,
+    typeof value === 'string' ? Uint8Array.from(atob(value), c => c.charCodeAt(0)) : value.slice()]))
+  const promise = new Promise(resolve => waiting.set(requestId, resolve))
+  frame.contentWindow.postMessage({ ...message, blobs, visible: message.interactive === false || (message.visible !== false && visibility()), tsugumi: 'render', requestId }, '*', Object.values(blobs).map(b => b.buffer))
+  return await promise
+}
+addEventListener('message', event => {
+  if (event.source === frame.contentWindow) {
+    const message = event.data
+    if (message?.tsugumi === 'inner-ready') { readyResolve(); notify({ tsugumi: 'ready' }); return }
+    if (message?.tsugumi === 'state') {
+      document.body.dataset.state = message.state
+      document.body.dataset.error = String(message.message ?? '')
+      waiting.get(message.requestId)?.(message.state === 'ok'); waiting.delete(message.requestId)
+      if (message.state !== 'superseded') notify({ tsugumi: 'state', state: message.state, requestId: message.requestId, image: message.image, message: String(message.message ?? '').slice(0, 4096) })
+    }
+    if (message?.tsugumi === 'key') notify({ tsugumi: 'key', key: 'Escape' })
+  } else if (event.source === parent && event.data?.name) {
+    void window.tsugumiRender(event.data)
+  }
 })
-// Esc belongs to the page (it closes the expanded view), also while the plot has the focus.
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && framed) window.parent.postMessage({ tsugumi: 'key', key: 'Escape' }, '*')
-})
-if (framed) window.parent.postMessage({ tsugumi: 'ready' }, '*')
-window.webkit?.messageHandlers?.tsugumi?.postMessage({ tsugumi: 'ready' })
+addEventListener('pagehide', () => frame.remove())
+document.body.append(frame)
