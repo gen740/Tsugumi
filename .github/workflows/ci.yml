@@ -40,6 +40,18 @@ jobs:
           echo "app=$app" >> "$GITHUB_OUTPUT"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
+  static:
+    name: Static checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      # Tests that read only files of the repository (tests/static, marked
+      # "static"): the same pytest as the Python environments, nothing else.
+      - name: Static tests
+        run: nix shell --inputs-from . nixpkgs#python3Packages.pytest -c pytest -q -m static tests/static
+
   platform:
     name: Platform (${{ matrix.system }})
     needs: changes
@@ -63,7 +75,7 @@ jobs:
 
   result:
     name: CI
-    needs: [changes, platform, prompt]
+    needs: [changes, static, platform, prompt]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

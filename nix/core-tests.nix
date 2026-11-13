@@ -85,6 +85,7 @@ clangStdenv.mkDerivation {
         lib.makeBinPath [
           (python3.withPackages (ps: [
             ps.pytest
+            ps.pytest-xdist
             ps.flatbuffers
             ps.websockets
           ]))

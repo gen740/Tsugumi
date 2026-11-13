@@ -99,7 +99,7 @@ jobs:
       - name: Remote result manifests
         run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_remote_result_tests"'
       - name: Project RPC with external doubles
-        run: '"$CORE_TEST_ENV" python3 -m pytest -q --core-report -m "not environment" tests/core'
+        run: '"$CORE_TEST_ENV" python3 -m pytest -q --core-report -m "not environment" -n auto --dist load --durations=40 tests/core'
       - name: Remote execution gateway and journal
         run: 'PYTHONPATH=remote "$CORE_TEST_ENV" python3 -m unittest discover -s tests/remote'
 
@@ -233,7 +233,7 @@ jobs:
           "$CORE_TEST_ENV" "$path/bin/python3" -c 'import matplotlib, plotly, altair'
       - name: SDK and system checks
         run: |
-          "$CORE_TEST_ENV" "${{ steps.sdk-python.outputs.python }}" -m pytest -q tests/python \
+          "$CORE_TEST_ENV" "${{ steps.sdk-python.outputs.python }}" -m pytest -q -m "not static" -n auto --dist loadfile --durations=40 tests/python \
             --ignore=tests/python/test_sdk_examples.py \
             --ignore=tests/python/test_csharp_sdk.py \
             --ignore=tests/python/test_claude_code_plugin.py \
