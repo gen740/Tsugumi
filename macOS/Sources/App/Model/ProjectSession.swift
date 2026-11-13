@@ -1538,45 +1538,6 @@ final class ProjectSession {
     executionServices = snapshot.executionServices.compactMap { $0 }
   }
 
-  /// Duplicates the confirmed document of one revision into a new project:
-  /// documents and sources read over RPC, revision re-checked after the last
-  /// read. History, caches and unsaved edits are not copied; the copy gets a
-  /// new project_id when its environment starts.
-  func duplicate(to dest: URL) async throws {
-    guard let client else { throw RPCError.disconnected }
-    let snap = try await client.inspect()
-    let fm = FileManager.default
-    guard !fm.fileExists(atPath: dest.path) else { throw CocoaError(.fileWriteFileExists) }
-    do {
-      try fm.createDirectory(at: dest, withIntermediateDirectories: true)
-      try Data(snap.projectJson.utf8).write(to: dest.appendingPathComponent("tsugumi.json"))
-      try Data(snap.layoutJson.utf8).write(to: dest.appendingPathComponent("layout.json"))
-      for d in snap.definitions.compactMap({ $0 }) {
-        let dir = dest.appendingPathComponent("definitions/\(d.id)", isDirectory: true)
-        try fm.createDirectory(at: dir, withIntermediateDirectories: true)
-        if let l = d.linkJson {
-          try Data(l.utf8).write(to: dir.appendingPathComponent("_link.json"))
-        } else {
-          try Data(d.cardJson.utf8).write(to: dir.appendingPathComponent("_card.json"))
-        }
-        if let m = d.metaJson { try Data(m.utf8).write(to: dir.appendingPathComponent("_meta.json")) }
-      }
-      for src in snap.sources.compactMap({ $0 }) {
-        let data = try await client.readFile(path: src.path, atRev: snap.rev ?? 0)
-        let file = dest.appendingPathComponent(src.path)
-        try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: file)
-      }
-      let again = try await client.inspect()
-      guard again.rev == snap.rev else {
-        throw RPCFailure(kind: .revisionConflict, diagnostic: "The project changed while it was copied; try again.")
-      }
-    } catch {
-      try? fm.removeItem(at: dest)
-      throw error
-    }
-  }
-
   // MARK: - Document helpers
 
   /// The project a scope's Cards are written in: "" for this project,

@@ -15,7 +15,9 @@ On the other hand, the Agent, which uses an outside LLM, is sent the conversatio
 The graph execution engine supports conditional branches (branch), merges (merge), bounded feedback loops and nested child Workflows (Card in Card).
 In the macOS app, one shared Linux VM for the whole app (using `Virtualization.framework` directly) runs a separate `tsugumid` process for each open project.
 A main window shows one project, and several windows can be open at once ([Several projects](features.md#several-projects)). The Web UI has one per browser tab.
-The SwiftUI app and the Agent on macOS are equal clients that both talk to `tsugumid` through the same FlatBuffers RPC contract.
+The SwiftUI app, the Web UI and the Agent are clients of the project core through the same FlatBuffers RPC contract.
+
+`tsugumi-agentd` is the host-side core, one service per host, shared by the Mac app and Web host before any project is open. Alongside Agent conversations, it owns project creation and duplication, bundled demo catalogs and editable copies, and the recent-projects registry (the newest 30 entries). The host-level section of `protocol/agent.fbs` keeps these requests separate from conversation logic; their implementation is in `core/src/host/`. New project documents, the build-time Card Nixpkgs pin, folder names and flow validation are defined there. Both clients only forward requests and translate stable error codes. The registry has one writer and stores Unix epoch milliseconds in `agent-core/recent-projects.json`; no legacy client format is read.
 
 ```text
 Shared VM (one per app, Virtualization.framework)                 macOS
@@ -33,14 +35,15 @@ Shared VM (one per app, Virtualization.framework)                 macOS
 
 ```text
 CMakeLists.txt, flake.nix/flake.lock  C++ build (CMake/Ninja) and pinned dependencies (Nix)
-protocol/          tsugumi.fbs (external RPC) / worker.fbs / data.fbs / tsugumi_enums.fbs
-core/              tsugumid (include/tsugumi/core public API, src implementation)
+protocol/          tsugumi.fbs (project RPC) / agent.fbs (host-side core and Agent) / worker.fbs / data.fbs / tsugumi_enums.fbs
+core/              tsugumid (project core) and tsugumi-agentd (host-side core);
+                   src/host/ (project lifecycle), src/agent/ (conversations and tools)
 sdk/               Card ABI, common runtime (libtsugumi_card), C++ codegen (card.hh), Python, R, Julia and Ruby SDKs and embedded shims, Nix SDK, tsugumi-worker
 macOS/             SwiftPM: Sources/App (SwiftUI), Sources/RPC, Sources/Launcher,
                    Container/ (image definitions, builds, versions), Tests/
 ui/modules/        Shared isolated web-module host (browser iframe and WKWebView)
 agent/             Shared Agent prompts, contracts and reference material
-macOS/Sources/AgentClient/  Native Agent providers, conversations and tools
+macOS/Sources/AgentClient/  Native adapter to the host-side core RPC
 web/               Browser UI and host server (the Agent's contract shared through agent/Shared)
 cli/               The tsugumi command: installers (install.sh, install.ps1), the Mac launch script, scripts that make the distributions
 plugins/tsugumi/   The Claude Code plugin (installed from .claude-plugin/marketplace.json)

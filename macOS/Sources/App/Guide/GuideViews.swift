@@ -788,13 +788,13 @@ struct GuidePerformer {
 
   private func openDemo(_ id: String) {
     guard let demo = model.demos.first(where: { $0.id == id }) ?? model.demos.first(where: { $0.id == "report" }) else { return }
-    do {
-      let url = try model.copyDemo(demo)
-      // The bird stays by the demo's card until the loading card comes, then flies into it.
-      guide.startTour(demo, copy: url)
-      window?.openProject(url)
-    } catch {
-      model.error = "\(error)"
+    Task {
+      do {
+        let url = try await model.copyDemo(demo)
+        // The bird stays by the demo's card until the loading card comes, then flies into it.
+        guide.startTour(demo, copy: url)
+        window?.openProject(url)
+      } catch { model.error = "\(error)" }
     }
   }
 }

@@ -424,6 +424,10 @@ On Home, a single guide conversation for the whole app (`Agent.Role.guide`; its 
 ## 10. Demos
 
 The bundled demos, including Draft versions, come in a Japanese set and an English set (`demos/ja`, `demos/en`): the same demos and files, their descriptions, notes and the text of their figures in one language. The app and the Web UI list the set of their language. What you can try, and how each demo's Cards connect and behave, is in [The bundled demos](Demos.md).
+New projects accept a destination that does not yet exist or a completely empty folder (including hidden files). Non-empty destinations are refused without overwriting their contents. The host-side core defines the initial documents, pins them to its build-time Card Nixpkgs revision, validates the folder name and flow direction, and maintains the 30 most recently opened projects for both clients. Forgetting a recent entry leaves its folder intact.
+
+Demo and project copies contain saved files, are writable even from a read-only source, and omit `.tsugumi` run history and state, `.git` repository identity and symbolic links.
+
 Choose "Open a Copy" on a demo from "Browse Demos" on the home screen to get an editable copy in `~/Documents/Tsugumi/<demo>` (`<demo>` is the demo's id; `-2`, `-3`, … is appended if the folder exists).
 
 For the design and implementation, see [Rationale](Rationale.md), [Development](Development.md), [Security and isolation](security.md) and [Limitations](Limitations.md).

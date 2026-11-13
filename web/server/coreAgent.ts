@@ -118,7 +118,7 @@ export class CoreAgentHost {
   private projects = new Map<string, string>()
   private api?: ToolCatalog
 
-  constructor(readonly support: string, here: string, readonly envs: Environments, language: string) {
+  constructor(readonly support: string, here: string, readonly envs: Environments) {
     const repo = path.resolve(here, '..', '..')
     const build = process.env.TSUGUMI_BUILD_DIR ?? path.join(repo, 'build')
     const choose = (override: string | undefined, candidates: string[]) => override ?? candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
@@ -128,7 +128,7 @@ export class CoreAgentHost {
     this.state = process.env.TSUGUMI_AGENT_STATE ?? (process.platform === 'darwin'
       ? path.join(process.env.TSUGUMI_SUPPORT_DIR ?? path.join(os.homedir(), 'Library', 'Application Support', 'Tsugumi'), 'agent-core')
       : path.join(support, 'agent-core'))
-    this.demoRoot = path.join(repo, 'demos', language)
+    this.demoRoot = path.join(repo, 'demos')
   }
 
   async ready(): Promise<Ready> {

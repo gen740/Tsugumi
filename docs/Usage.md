@@ -7,6 +7,12 @@ If something is unclear, ask in the chat on the right. The Agent knows the open 
 
 The steps are in the README's [First steps](../README.md#first-steps). The first time you open the app, after entering an API key (which you can skip), the thrush in the bottom right asks "What would you like to do?" and takes you to a demo chosen by field or from the Drafts.
 
+## Creating and copying projects
+
+Choose **New Project** on Home and select a destination. A new folder is created if it does not exist; an existing folder must be completely empty, including hidden files. A non-empty folder is refused without overwriting its contents. Folder names cannot be empty, `.` or `..`, contain separators, control characters or `< > : " | ? *`, start or end with a space, or end with a dot.
+
+**Open a Copy** on a bundled demo and **Duplicate Project** make writable copies of saved files. Copies omit `.tsugumi` run history and state, `.git` repository identity and symbolic links; they start as independent projects.
+
 ## The screen
 
 | Where | What is there |
