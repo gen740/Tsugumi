@@ -682,6 +682,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     request.timeout_seconds = node.settings.build_timeout_seconds;
     request.max_implementations = max_implementations;
     request.cancel = &work.cancellation->stop;
+    // Resolve worker kind and system before any Card or source evaluation.
     prepared = execution.prepare(node, invocation_dir(node, work.invocation), request);
     if (rt.build && execution.reuses_builds()) {
       stage_begin(s, Phase::evaluate, StageOutcome::reused);

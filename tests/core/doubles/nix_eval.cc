@@ -85,7 +85,8 @@ NixEvaluator::NixEvaluator(std::string, std::vector<std::string> allowed) : impl
 
 NixEvaluator::~NixEvaluator() = default;
 
-auto NixEvaluator::build(const NixCall& call) -> NixResult {
+auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
+  if (call.system.empty()) throw std::runtime_error("execution target system is unknown");
   check_interrupted(call);
   if (call.definition_dir.empty() || !call.definition_dir.is_absolute() ||
       std::none_of(impl_->allowed.begin(), impl_->allowed.end(), [&](const auto& root) {
@@ -118,27 +119,38 @@ auto NixEvaluator::build(const NixCall& call) -> NixResult {
   check_interrupted(call);
   if (const auto* error = schema::get(plan.error)) throw std::runtime_error(*error);
 
-  if (!call.derivation_archive.empty()) {
-    // The broker scenario verifies the archive is staged and the invocation
-    // is attached by its persisted receipt. Its fake runner does not build.
-    fs::write_atomic(call.derivation_archive, "test Nix derivation archive", 0600);
-    result.derivation = "/nix/store/00000000000000000000000000000000-mock.drv";
-    result.out = "/nix/store/00000000000000000000000000000000-mock";
-    result.system = call.system;
-    return result;
-  }
-
-  const auto digest = crypto::sha256_hex(manifest);
+  const auto digest = crypto::sha256_hex(manifest + call.system);
   const auto product = impl_->products / (digest + "-manifest.json");
   const bool cached = schema::get(plan.cached) ? *schema::get(plan.cached) : std::filesystem::exists(product);
-  if (!cached && call.on_phase) call.on_phase(true);
-  fs::write_atomic(product, manifest, 0444);
-  result.out = product.string();
-  result.derivation = result.out + ".drv";
-  result.system = call.system.empty() ? "mock-system" : call.system;
-  result.closure = {result.out, result.out + "-dependency"};
+  result.derivation = {"/nix/store/00000000000000000000000000000000-mock.drv",
+                       "/nix/store/00000000000000000000000000000000-mock", call.system};
   result.manifest = std::move(manifest);
   result.built = !cached;
+  return result;
+}
+
+auto NixEvaluator::make_available(const NixCall& call, const DerivationClosureTransport& transport,
+                                  const WorkerDerivation& derivation) -> void {
+  check_interrupted(call);
+  transport.send(derivation);
+}
+
+auto ArchiveDerivationTransport::send(const WorkerDerivation&) const -> void {
+  fs::write_atomic(archive_, "test Nix derivation archive", 0600);
+}
+
+auto ArchiveDerivationTransport::receive(nix::Store&, const WorkerDerivation&) const -> void {
+  throw std::runtime_error("mock evaluator cannot import a derivation");
+}
+
+auto NixEvaluator::realise_native(const NixCall& call, NixResult result) -> NixResult {
+  const auto digest = crypto::sha256_hex(result.manifest + call.system);
+  const auto product = impl_->products / (digest + "-manifest.json");
+  if (result.built && call.on_phase) call.on_phase(true);
+  fs::write_atomic(product, result.manifest, 0444);
+  result.derivation.output = product.string();
+  result.derivation.path = product.string() + ".drv";
+  result.closure = {product.string(), product.string() + "-dependency"};
   if (!call.root_dir.empty()) {
     std::filesystem::create_directories(call.root_dir);
     result.root = call.root_dir / (call.root_prefix + product.filename().string());

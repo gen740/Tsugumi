@@ -77,7 +77,8 @@ class PreparedRemoteExecution final : public PreparedExecution {
         system_(std::move(system)),
         server_id_(std::move(server_id)),
         instance_(std::move(instance)),
-        archive_(std::move(archive)) {}
+        archive_(std::move(archive)),
+        transport_(archive_) {}
   PreparedRemoteExecution(const PreparedRemoteExecution&) = delete;
   auto operator=(const PreparedRemoteExecution&) -> PreparedRemoteExecution& = delete;
   ~PreparedRemoteExecution() override {
@@ -85,7 +86,7 @@ class PreparedRemoteExecution final : public PreparedExecution {
     stdfs::remove(archive_, ec);
   }
 
-  auto archive() const -> const stdfs::path& { return archive_; }
+  auto transport() const -> const DerivationClosureTransport& { return transport_; }
   auto system() const -> const std::string& { return system_; }
   auto stage(const std::atomic<bool>& cancel) -> void override {
     archive_digest_ = stage_remote_archive(client_, target_, server_id_, instance_, archive_, cancel);
@@ -103,6 +104,7 @@ class PreparedRemoteExecution final : public PreparedExecution {
   std::string server_id_;
   std::string instance_;
   stdfs::path archive_;
+  ArchiveDerivationTransport transport_;
   std::string archive_digest_;
 };
 
@@ -203,8 +205,9 @@ auto RemoteExecutionService::prepare(const Node& node, const stdfs::path& direct
   if (auto diagnostic = Service::execution_diagnostic(node, targets))
     throw Failed(FailureKind::unsupported, diagnostic->message);
   const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
-  auto system = settings.system.empty() ? target->native_system : settings.system;
   auto probe = client_.probe(target->id, target->server_id);
+  auto system = settings.system.empty() ? probe.native_system : settings.system;
+  if (system.empty()) throw Failed(FailureKind::unsupported, "remote worker system is unknown");
   if (settings.execution_resources && !probe.resource_limits)
     throw Failed(FailureKind::unsupported, "the remote execution daemon cannot enforce resource limits");
   if (std::ranges::find(probe.systems, system) == probe.systems.end())
@@ -214,8 +217,8 @@ auto RemoteExecutionService::prepare(const Node& node, const stdfs::path& direct
                                                             std::move(probe.server_id),
                                                             std::move(probe.instance),
                                                             directory / (".derivation-" + crypto::uuid4()));
-  build.remote_system = prepared->system();
-  build.derivation_archive = prepared->archive();
+  build.target = {WorkerKind::remote, prepared->system()};
+  build.transport = &prepared->transport();
   return prepared;
 }
 

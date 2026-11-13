@@ -373,7 +373,8 @@ auto RemoteJobClient::probe(std::string_view service, std::string_view registere
     throw Failed(FailureKind::unsupported, "The execution daemon's server ID changed. Verify the registered endpoint.");
   auto instance = string_or_empty(reply.instance_id);
   if (!crypto::is_sha256_hex(instance)) throw BrokerDisconnected("execution daemon did not identify its project journal");
-  return {std::move(instance), std::move(server_id), *schema::get(reply.systems), *schema::get(reply.resource_limits)};
+  return {*schema::get(reply.native_system), std::move(instance), std::move(server_id),
+          *schema::get(reply.systems), *schema::get(reply.resource_limits)};
 }
 
 auto RemoteJobClient::put_blob(std::string_view service, std::string_view server_id, std::string_view instance,

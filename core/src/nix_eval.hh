@@ -14,6 +14,8 @@
 #include <string>
 #include <vector>
 
+#include "worker_derivation.hh"
+
 namespace tsugumi {
 
 inline constexpr uint32_t kMaxExecutionBatchSize = 256;
@@ -26,14 +28,11 @@ struct NixCall {
   // without parsing the Nix expression above.
   std::filesystem::path definition_dir;
   std::string source_overrides = "{}";  // approved JSON package customizations
-  std::string system;    // the Nix system to evaluate for; "" = this machine's
+  std::string system;    // explicit Card target system; flake lookup may use the host default
   // GC root created for the result: <root_dir>/<root_prefix><result name>, a
   // symlink (registered as an indirect root outside /nix/var/nix/gcroots).
   std::filesystem::path root_dir;
   std::string root_prefix;
-  // For an external execution service, export the derivation and its inputs
-  // to this file instead of realising it on the central core's store.
-  std::filesystem::path derivation_archive;
   uint32_t max_implementations = kMaxExecutionBatchSize;
   const std::atomic<bool>* cancel = nullptr;
   std::optional<std::chrono::steady_clock::time_point> deadline;
@@ -42,9 +41,8 @@ struct NixCall {
 };
 
 struct NixResult {
-  std::string out;       // store path of the Card manifest
+  WorkerDerivation derivation;
   std::string manifest;  // its contents
-  std::string derivation, system;
   std::vector<std::string> closure;  // runtime references, including the manifest
   bool built = false;    // false: the result was already in the store
   bool execution_list = false;
@@ -76,15 +74,14 @@ class NixEvaluator {
   NixEvaluator(std::string entry, std::vector<std::string> allowed);
   ~NixEvaluator();
 
-  // Evaluates the Card, builds it unless the store has it, roots it.
-  // Throws std::runtime_error with Nix's message; Interrupted as `cancelled`
-  // or `timed_out` set in `what`.
-  NixResult build(const NixCall& call);
-
-  // Realise a centrally evaluated derivation in the runner's own chroot store.
-  static auto realise_remote(const std::filesystem::path& archive, const std::filesystem::path& store_root,
-                             const std::string& derivation, const std::string& output,
-                             const std::function<void(const std::string&)>& log) -> NixResult;
+  // Evaluate only: writes the .drv and input paths, never builds an output.
+  // Throws NixInterrupted for cancellation/deadline, otherwise runtime_error.
+  auto evaluate(const NixCall& call) -> NixResult;
+  // Transfer on the Nix lane so cancellation, deadlines and logs cover export too.
+  auto make_available(const NixCall& call, const DerivationClosureTransport& transport,
+                      const WorkerDerivation& derivation) -> void;
+  // Host-side native-worker preparation, through nix-daemon in the shared store.
+  auto realise_native(const NixCall& call, NixResult result) -> NixResult;
 
   // A flake a project opted in to, evaluated apart from every Card: its own
   // state has getFlake and runs as `nix build` does (pure, no IFD). A Card only

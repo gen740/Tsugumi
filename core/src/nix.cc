@@ -457,6 +457,8 @@ auto CardBuildPlan::implementation(size_t index) const -> CardBuild {
 
 auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   const Node& node = *req.node;
+  if (req.target.system.empty())
+    throw Failed(FailureKind::unsupported, "execution target system is unknown");
   // Definition sources from the confirmed snapshot. _card.json and
   // _meta.json are not part of it: Nix gets what it needs from them through
   // the generated files, and settings or descriptions never re-evaluate.
@@ -495,7 +497,7 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
     for (const auto& s : n.nix_sources) {
       if (nix.find("sources") == std::string::npos || nix.find(s.name) == std::string::npos) continue;
       NixCall lookup;
-      lookup.system = req.remote_system.empty() ? n.settings.system : req.remote_system;
+      lookup.system = req.target.system;
       lookup.source_overrides = s.overrides;
       lookup.cancel = req.cancel;
       if (req.timeout_seconds) lookup.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(*req.timeout_seconds);
@@ -507,7 +509,7 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
       } catch (const NixInterrupted& e) {
         throw Failed(e.timed_out ? FailureKind::timeout : FailureKind::cancelled, e.what());
       } catch (const std::runtime_error& e) {
-        throw Failed(FailureKind::nix_failed, "nixSources " + s.name + ": " + e.what());
+        throw Failed(FailureKind::nix_failed, "nixSources " + s.name + " for system " + req.target.system + ": " + e.what());
       }
     }
     generated["sources.json"] = sources + "]";
@@ -516,7 +518,7 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   // Another system's binaries run through the kernel's binfmt_misc: without
   // an entry for it, Nix would refuse the build with a less helpful message.
   std::string emulator;
-  if (req.remote_system.empty() && !node.settings.system.empty()) {
+  if (req.target.kind == WorkerKind::native && !node.settings.system.empty()) {
     emulator = binfmt_interpreter(node.settings.system);
     if (emulator.empty())
       throw Failed(FailureKind::unsupported,
@@ -576,13 +578,12 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   NixCall call;
   call.pin_url = *pin.url;
   call.pin_hash = *pin.nar_hash;
-  call.system = req.remote_system.empty() ? node.settings.system : req.remote_system;
-  call.derivation_archive = req.derivation_archive;
+  call.system = req.target.system;
   call.max_implementations = req.max_implementations;
   call.definition_dir = def;
   call.args = "{ sdk = /. + " + nix_quote(sdk_dir_.string()) + "; gen = /. + " + nix_quote(gen.string()) +
               "; upstream = /. + " + nix_quote((upstream / "upstream.json").string()) +
-              "; card = /. + " + nix_quote(def.string()) + (req.remote_system.empty() ? "; }" : "; remote = true; }");
+              "; card = /. + " + nix_quote(def.string()) + (req.target.kind == WorkerKind::native ? "; }" : "; remote = true; }");
   call.cancel = req.cancel;
   if (req.timeout_seconds) call.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(*req.timeout_seconds);
   call.log = req.log;
@@ -599,7 +600,10 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   try {
     call.root_dir = gcroots_dir();
     call.root_prefix = prefix;
-    res = evaluator().build(call);
+    res = evaluator().evaluate(call);
+    if (!req.transport) throw std::runtime_error("execution target has no derivation transport");
+    evaluator().make_available(call, *req.transport, res.derivation);
+    if (req.target.kind == WorkerKind::native) res = evaluator().realise_native(call, std::move(res));
   } catch (const NixInterrupted& e) {
     if (e.timed_out)
       throw Failed(FailureKind::timeout, e.what(), {{"timeout_seconds", std::to_string(req.timeout_seconds.value_or(0))}});
@@ -607,15 +611,17 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   } catch (const NixImplementationLimit& e) {
     throw Failed(FailureKind::execution_limit, e.what(), {{"card", path_key(node.path)}});
   } catch (const std::exception& e) {
-    throw Failed(FailureKind::nix_failed, e.what(), {{"card", path_key(node.path)}});
+    throw Failed(FailureKind::nix_failed, "Card preparation for system " + call.system + ": " + e.what(),
+                 {{"card", path_key(node.path)}, {"system", call.system}});
   }
   CardBuildPlan plan;
   plan.execution_list = res.execution_list;
   auto& build = plan.common;
-  build.environment.derivation = std::move(res.derivation);
-  build.environment.manifest = std::move(res.out);
-  build.environment.system = std::move(res.system);
-  if (!req.derivation_archive.empty()) {
+  build.derivation = std::move(res.derivation);
+  build.environment.derivation = build.derivation.path;
+  build.environment.manifest = build.derivation.output;
+  build.environment.system = build.derivation.system;
+  if (req.target.kind == WorkerKind::remote) {
     plan.implementations.resize(res.implementation_count);
     return plan;
   }
