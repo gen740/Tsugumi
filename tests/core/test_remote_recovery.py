@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import secrets
 import signal
 import socketserver
 import struct
@@ -30,18 +31,26 @@ from tsugumi_client import RpcFailure, path, text
 
 
 class Gateway(socketserver.UnixStreamServer):
+    """Double of agentd's local broker, not its TLS worker connection.
+
+    Keep partial/lost replies at the core-facing boundary so these tests still
+    exercise core deadlines, shutdown and durable recovery. Real agentd/TLS
+    authentication is covered by the broker RPC and remote integration suites.
+    """
     instance = "1" * 64
     server_id = "2" * 64
     system = "x86_64-linux"
 
-    def __init__(self, endpoint):
+    def __init__(self, endpoint, capability):
         super().__init__(endpoint, Handler)
+        self.capability = capability
         self.online = True
         self.registered_server = self.server_id
         self.resource_limits = True
         self.probe_overrides = {}
         self.receipts = {}
         self.submit_count = 0
+        self.probe_count = 0
         self.blobs = set()
         self.blob_contents = {}
         self.specs = {}
@@ -94,6 +103,7 @@ class Gateway(socketserver.UnixStreamServer):
         if R.string(q.serverId) != self.registered_server:
             return R.failure(R.ErrorCode.RegistrationChanged, "execution service was replaced")
         if kind == R.RequestBody.ProbeRequest:
+            self.probe_count += 1
             caps.instanceId = self.instance
             for key, value in self.probe_overrides.items():
                 setattr(caps, key, value)
@@ -150,10 +160,9 @@ class Gateway(socketserver.UnixStreamServer):
 class Handler(socketserver.StreamRequestHandler):
     def handle(self):
         try:
-            message = R.read(self.rfile)
+            q = R.read_broker_request(self.rfile, self.server.capability)
         except EOFError:
             return
-        q = message.payload
         mode = self.server.stall
         if mode and q.bodyType == self.server.stall_operation:
             try:
@@ -190,8 +199,12 @@ def remote_gateway(monkeypatch):
     with tempfile.TemporaryDirectory(prefix="tsg-remote-", dir="/tmp") as directory:
         endpoint = str(Path(directory) / "broker")
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", "unix:" + endpoint)
-        monkeypatch.delenv("TSUGUMI_EXECUTION_BROKER_TOKEN_FILE", raising=False)
-        with Gateway(endpoint) as gateway:
+        capability = secrets.token_hex(32)
+        capability_file = Path(directory) / "capability"
+        capability_file.write_text(capability)
+        capability_file.chmod(0o600)
+        monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE", str(capability_file))
+        with Gateway(endpoint, capability) as gateway:
             server = threading.Thread(target=gateway.serve_forever, kwargs={"poll_interval": 0.02})
             server.start()
             try:
@@ -237,6 +250,7 @@ def test_incompatible_remote_gateway_prevents_upload(project, remote_gateway, co
     status = wait_run(client, run_id, timeout=10)
     assert status.state == RunState.failed
     assert diagnostic in text(status.failure.diagnostic)
+    assert remote_gateway.probe_count > 0
     assert not remote_gateway.blobs and remote_gateway.submit_count == 0
 
 
@@ -251,6 +265,7 @@ def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tm
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     spec = remote_gateway.specs[text(live.executionJobId)]
     assert R.string(spec.system) == text(live.executionSystem) == "aarch64-linux"
+    assert remote_gateway.probe_count > 0
     assert R.string(spec.derivation).endswith(".drv")
     invocation = json.loads(remote_gateway.blob_contents[R.string(spec.invocationSha256)])
     assert invocation["archive_sha256"] in [R.string(d) for d in spec.inputBlobs]

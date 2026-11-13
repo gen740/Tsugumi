@@ -244,9 +244,11 @@ def test_bounded_frames_and_single_listener(worker):
     import struct
     for raw in (struct.pack("<I", (2 << 20) + 1), struct.pack("<I", 24) + bytes(24)):
         with socket.create_connection(("127.0.0.1", worker.port), timeout=5) as connection:
-            connection.sendall(raw)
-            with connection.makefile("rb") as stream:
-                error = R.read(stream).payload
+            context = TLS.client_context(worker.identity, worker.state / "identity.pem")
+            with context.wrap_socket(connection, server_hostname=None) as secure:
+                secure.sendall(raw)
+                with secure.makefile("rb") as stream:
+                    error = R.read(stream).payload
             assert error.bodyType == R.ReplyBody.Failure and error.body.code == R.ErrorCode.Invalid
     duplicate = subprocess.run(worker.command, capture_output=True, timeout=10, check=False)
     assert duplicate.returncode != 0 and b"another remote worker" in duplicate.stderr

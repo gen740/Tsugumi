@@ -2,7 +2,9 @@
 
 Set TSUGUMI_REMOTE_TEST_DAEMON to start a packaged daemon on loopback.
 For a daemon already running, set TSUGUMI_REMOTE_TEST_ENDPOINT and
-TSUGUMI_REMOTE_TEST_PUBLIC_KEY_FILE. Use tsugumi-test-env and pytest -m environment.
+TSUGUMI_REMOTE_TEST_PUBLIC_KEY_FILE, plus TSUGUMI_REMOTE_TEST_AUTHORIZED_KEYS
+pointing to that worker's dedicated writable authorized-keys file.
+Use tsugumi-test-env and pytest -m environment.
 """
 
 import hashlib
@@ -147,9 +149,8 @@ def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
 
 
 def broker_request(endpoint, capability_file, server_id, body_type, body, **routing):
-    request = R.request(body_type, body, service="remote-test", serverId=server_id, **routing)
-    envelope = R.MessageT(payloadType=R.Payload.BrokerRequest, payload=R.BrokerRequestT(
-        capability=Path(capability_file).read_text().strip(), request=request.payload))
+    envelope = R.broker_request(Path(capability_file).read_text().strip(), body_type, body,
+                                service="remote-test", serverId=server_id, **routing)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(30)
         connection.connect(endpoint.removeprefix("unix:"))
