@@ -753,7 +753,7 @@ union RequestPayload {
   RunEnvironmentPathsRequest = 43,
   ProjectShellRequest = 44,
   ModuleReadRequest = 45,
-  ProjectCacheUsageRequest = 46,
+  ProjectCacheUsageRequest = 48,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1127,7 +1127,7 @@ union ReplyPayload {
   BuildEnvironmentPage = 32,
   EnvironmentPathPage = 33,
   ProjectShellResult = 34,
-  ProjectCacheUsageResult = 35,
+  ProjectCacheUsageResult = 36,
 }
 
 // ---- Notifications -----------------------------------------------------------
