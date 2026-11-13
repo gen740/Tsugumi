@@ -21,6 +21,8 @@ stdenvNoCC.mkDerivation {
       ../client/src/client_c.cc
       ../client/src/transport_wasm.cc
       ../client/src/wasm_bindings.cc
+      ../protocol/service_common.fbs
+      ../protocol/host.fbs
       ../protocol/agent.fbs
       ../protocol/tsugumi.fbs
       ../protocol/tsugumi_enums.fbs

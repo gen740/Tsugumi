@@ -1,18 +1,17 @@
-// Host-side core and Agent service. Separate from per-project RPC.
+// Conversations, observations and tools of the host-side Agent service.
 // Unix: little-endian uint32 length then one buffer. WebSocket: one binary
-// buffer, subprotocol tsugumi.agent.v1. Tokens authenticate a server-owned
+// buffer, subprotocol tsugumi.agent.v1. Hello authenticates a server-owned
 // principal; clients cannot choose their role or grant themselves access.
+include "service_common.fbs";
 namespace Tsugumi.Agent;
 
 enum Action:ubyte { Resume, Retry, Continue, Compact, Reset }
 enum Access:ubyte { Read, Write, Run, CardPermissions, Shell }
 enum GrantScope:ubyte { Conversation, Server }
 
-table HelloRequest { token:string (required); client_id:string (required); protocol:uint = 1; }
-// Provider-specific configuration is JSON; credentials are never returned.
-table ConfigureRequest { provider_json:string (required); conversation_id:string; }
-// Only a trusted user/launcher may register endpoints or credentials.
-table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string; title:string; }
+// Conversation-specific selection; global provisioning uses the Host contract.
+table ConfigureRequest { provider:Tsugumi.Service.Provider (required); conversation_id:string (required); }
+
 table ConversationCreateRequest { conversation_id:string; project_id:string; role:string; }
 table ConversationListRequest { project_id:string; }
 table ConversationGetRequest { conversation_id:string (required); }
@@ -40,64 +39,59 @@ table AccessRevokeRequest { grant_id:string (required); }
 table AccessListRequest { conversation_id:string; }
 table DemoListRequest {}
 table DemoReadRequest { path:string (required); }
-table ModelsListRequest { provider_json:string; }
-table VersionSummarizeRequest { project_id:string (required); commit:string (required); }
-table ConversationSummarizeRequest { conversation_id:string (required); provider_json:string; }
-table RegisterFolderRequest { project_id:string (required); resource_id:string (required); folder:string (required); title:string; }
-// Human-only credential provisioning. Tokens never appear in Agent tools or
-// conversation events. The core owns refresh rotation after registration.
-table CredentialImportRequest { registration_json:string (required); replace:bool; }
-table CredentialTokenRequest { client_id:string (required); stale_token:string; }
-table CredentialForgetRequest { client_id:string (required); }
 
-// Host-level project lifecycle. These requests do not require an open project
-// or a conversation. Only the authenticated human principal may call them.
-// Paths are host paths. Recent openedAt values are Unix epoch milliseconds.
-// Omitted flow defaults to topToBottom; omitted language defaults to ja.
-// Stable failures: invalid_project_name, invalid_flow, folder_not_empty,
-// invalid_project, demo_not_found, invalid_language, project_io_error,
-// project_defaults_unavailable (the build has no Card Nixpkgs pin).
-// Result JSON: {nixpkgsPin:string}.
-table HostProjectDefaultsRequest {}
-// Result JSON: {path:string,name:string}; path is canonical.
-table HostProjectInfoRequest { path:string (required); }
-// Create, duplicate and demo copy return {path:string} (canonical).
-table HostProjectCreateRequest { parent:string (required); name:string (required); flow:string; }
-table HostProjectDuplicateRequest { path:string (required); parent:string (required); name:string (required); }
-// Result JSON: catalog entries with absolute path, title, description, tags, field.
-table HostDemoListRequest { language:string; }
-// Copies use the catalog id, adding -2, -3, ... for occupied destinations.
-table HostDemoCopyRequest { id:string (required); parent:string (required); language:string; }
-// List returns [{path,name,openedAt}], newest first; remember returns its entry.
-// Forget returns {}; it never removes project folders.
-table HostRecentListRequest {}
-table HostRecentRememberRequest { path:string (required); }
-table HostRecentForgetRequest { paths:[string]; }
+table VersionSummarizeRequest { project_id:string (required); commit:string (required); }
+table ConversationSummarizeRequest { conversation_id:string (required); provider:Tsugumi.Service.Provider; }
 
 union RequestPayload {
-  HelloRequest, ConfigureRequest, RegisterProjectRequest,
-  ConversationCreateRequest, ConversationListRequest, ConversationGetRequest,
-  ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest,
-  ConversationActionRequest, ConversationCancelRequest, EventsRequest,
-  ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest,
-  AccessRevokeRequest, AccessListRequest, DemoListRequest, DemoReadRequest,
-  ModelsListRequest, VersionSummarizeRequest, ConversationSummarizeRequest, RegisterFolderRequest,
-  CredentialImportRequest, CredentialTokenRequest, CredentialForgetRequest,
-  // Host-level project lifecycle (separate from Agent conversations).
-  HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest,
-  HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest,
-  HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
+  HelloRequest:Tsugumi.Service.HelloRequest,
+  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, DemoListRequest, DemoReadRequest, VersionSummarizeRequest, ConversationSummarizeRequest
 }
 table Request { value:RequestPayload; }
-table HelloResult { protocol:uint = 1; server_id:string (required); principal:string (required); }
-// Model message blocks, tool arguments and results retain their JSON shape.
-// The operation and its security-sensitive scope are typed above.
-table Result { json:string (required); }
-table Failure { code:string (required); message:string (required); request_id:string; }
-union ReplyPayload { HelloResult, Result, Failure }
+
+// Content blocks are the provider/model's open-ended JSON data, not envelopes.
+table ModelMessage { role:string; content_json:string; display:string; context_summary:bool; provider_content_json:string; provider_api:string; }
+table Usage { input_tokens:ulong; output_tokens:ulong; cache_read_tokens:ulong; cache_write_tokens:ulong; }
+table ToolRecord { id:string; name:string; arguments_json:string; op_id:string; state:string; result_json:string; is_error:bool; }
+table Helper { call_id:string; task:uint; messages:[ModelMessage]; result_json:string; state:string; }
+table Conversation {
+  id:string (required); title:string; updated_at:long;
+  messages:[ModelMessage]; archive:[ModelMessage]; summary:string;
+  tools:[ToolRecord]; helpers:[Helper]; usage:Usage;
+}
+table ConversationResult { conversation:Conversation (required); busy:bool; resumable:bool; continuable:bool; project_id:string; event_seq:ulong; }
+table ConversationEntry { id:string; project_id:string; title:string; updated_at:long; busy:bool; }
+table ConversationList { conversations:[ConversationEntry]; }
+table SearchMatch { session:string; title:string; snippet:string; updated_at:long; }
+table SearchResult { matches:[SearchMatch]; }
+// Event kinds and metadata are closed protocol data. Only tool input/result
+// text may itself contain JSON. Helpers carry the same typed event recursively.
+table Event {
+  kind:string (required); text:string; message:string; input_json:string;
+  id:string; name:string; ok:bool = true; index:uint;
+  asked:[string]; event:Event;
+}
+table SequencedEvent { seq:ulong; event:Event (required); }
+table EventsPage { events:[SequencedEvent]; next_seq:ulong; busy:bool; }
+// A tool's input schema is an open-ended JSON Schema document.
+table Tool { name:string; description:string; input_schema_json:string; }
+table ToolCatalog { tools:[Tool]; }
+table Image { media_type:string; data:string; }
+table ToolResult { text:string; is_error:bool; images:[Image]; }
+table AccessResult { id:string (required); }
+table AccessEntry { id:string; project_id:string; conversation_id:string; access:Access; scope:GrantScope; reason:string; state:string; }
+table Grant { id:string; project_id:string; conversation_id:string; access:Access; active:bool; }
+table AccessList { requests:[AccessEntry]; grants:[Grant]; }
+table DemoList { paths:[string]; }
+table TextResult { text:string; usage:Usage; }
+union ReplyPayload {
+  HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
+  ConversationResult, ConversationList, SearchResult, EventsPage, ToolCatalog,
+  ToolResult, AccessResult, AccessList, DemoList, TextResult,
+  Failure:Tsugumi.Service.Failure
+}
 table Reply { value:ReplyPayload; }
-table Event { conversation_id:string (required); seq:ulong; json:string (required); }
-union Payload { Request, Reply, Event }
+union Payload { Request, Reply }
 table Message { request_id:ulong; payload:Payload; }
 root_type Message;
 file_identifier "TSA1";

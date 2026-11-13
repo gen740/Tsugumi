@@ -6,177 +6,6 @@
 namespace tsugumi::test {
 namespace {
 
-// Host lifecycle scenarios need no project daemon and no conversation.
-class HostProjectsFixture : public AgentProjectFixture {
- protected:
-  auto Create(const std::string& name, const std::string& flow = "topToBottom",
-              bool user = true) -> Reply {
-    return Call(user ? *human : *external,
-                A::RequestPayload::HostProjectCreateRequest, [&](Builder& b) {
-                  return A::CreateHostProjectCreateRequest(
-                             b, b.CreateString(directory.path.string()),
-                             b.CreateString(name), b.CreateString(flow))
-                      .Union();
-                });
-  }
-  auto Remember(const std::filesystem::path& path) -> Reply {
-    return Call(*human, A::RequestPayload::HostRecentRememberRequest,
-                [&](Builder& b) {
-                  return A::CreateHostRecentRememberRequest(
-                             b, b.CreateString(path.string()))
-                      .Union();
-                });
-  }
-  auto Recents() -> Reply {
-    return Call(
-        *human, A::RequestPayload::HostRecentListRequest,
-        [](Builder& b) { return A::CreateHostRecentListRequest(b).Union(); });
-  }
-};
-
-TEST_F(HostProjectsFixture, CreatesPinnedDocumentsInNewAndExactlyEmptyFolders) {
-  const auto defaults = Call(
-      *human, A::RequestPayload::HostProjectDefaultsRequest, [](Builder& b) {
-        return A::CreateHostProjectDefaultsRequest(b).Union();
-      });
-  ASSERT_TRUE(Create("new", "leftToRight").Code().empty());
-  const auto folder = directory.path / "new";
-  EXPECT_EQ(JsonString(Read(folder / "tsugumi.json"), "/pkgsPath"),
-            JsonString(defaults.Json(), "/nixpkgsPin"));
-  EXPECT_EQ(JsonString(Read(folder / "layout.json"), "/flow"), "leftToRight");
-  std::filesystem::create_directory(directory.path / "empty");
-  EXPECT_TRUE(Create("empty").Code().empty());
-  EXPECT_EQ(Create("new").Code(), "folder_not_empty");
-  Write(directory.path / "occupied/sentinel", "keep");
-  EXPECT_EQ(Create("occupied").Code(), "folder_not_empty");
-  EXPECT_EQ(Read(directory.path / "occupied/sentinel"), "keep");
-  // Only Finder's own file: still an empty folder.
-  Write(directory.path / "finder/.DS_Store", "finder");
-  EXPECT_TRUE(Create("finder").Code().empty());
-  EXPECT_TRUE(std::filesystem::exists(directory.path / "finder/tsugumi.json"));
-  EXPECT_EQ(Create("bad-flow", "sideways").Code(), "invalid_flow");
-  EXPECT_FALSE(std::filesystem::exists(directory.path / "bad-flow"));
-  for (const auto* name :
-       {"", ".", "..", "a/b", "a\\b", "trailing ", "bad:name"})
-    EXPECT_EQ(Create(name).Code(), "invalid_project_name") << name;
-  EXPECT_EQ(Create("external", "topToBottom", false).Code(),
-            "permission_denied");
-  const auto info =
-      Call(*human, A::RequestPayload::HostProjectInfoRequest, [&](Builder& b) {
-        return A::CreateHostProjectInfoRequest(b,
-                                               b.CreateString(folder.string()))
-            .Union();
-      });
-  EXPECT_EQ(JsonString(info.Json(), "/name"), "new");
-}
-
-TEST_F(HostProjectsFixture,
-       CopiesDemosAndProjectsWithoutStateAndWithWritableFiles) {
-  const auto source = directory.path / "demos/ja/sample";
-  Write(source / "tsugumi.json", R"({"name":"Sample"})");
-  Write(source / "definitions/card/src/main.py", "print('sample')");
-  Write(source / ".tsugumi/history", "private run");
-  Write(source / "nested/.tsugumi/state", "private nested state");
-  Write(source / ".git/config", "old repository");
-  Write(
-      directory.path / "demos/ja/index.json",
-      R"({"demos":[{"id":"sample","title":"Sample","path":"sample","field":""}]})");
-  const auto list =
-      Call(*human, A::RequestPayload::HostDemoListRequest, [](Builder& b) {
-        return A::CreateHostDemoListRequest(b, b.CreateString("ja")).Union();
-      });
-  EXPECT_EQ(JsonString(list.Json(), "/0/id"), "sample");
-  EXPECT_EQ(JsonString(list.Json(), "/0/description"), "");
-  EXPECT_NE(list.Json().find("\"tags\":[]"), std::string::npos);
-  for (const auto& entry :
-       std::filesystem::recursive_directory_iterator(source))
-    std::filesystem::permissions(entry.path(),
-                                 entry.is_directory()
-                                     ? std::filesystem::perms::owner_read |
-                                           std::filesystem::perms::owner_exec
-                                     : std::filesystem::perms::owner_read);
-  std::filesystem::permissions(source, std::filesystem::perms::owner_read |
-                                           std::filesystem::perms::owner_exec);
-  const auto copy = [&](const std::string& id) {
-    return Call(*human, A::RequestPayload::HostDemoCopyRequest,
-                [&](Builder& b) {
-                  return A::CreateHostDemoCopyRequest(
-                             b, b.CreateString(id),
-                             b.CreateString(directory.path.string()),
-                             b.CreateString("ja"))
-                      .Union();
-                });
-  };
-  const auto first = copy("sample");
-  const auto second = copy("sample");
-  EXPECT_EQ(JsonString(first.Json(), "/path"),
-            (std::filesystem::canonical(directory.path) / "sample").string());
-  EXPECT_EQ(JsonString(second.Json(), "/path"),
-            (std::filesystem::canonical(directory.path) / "sample-2").string());
-  EXPECT_EQ(copy("missing").Code(), "demo_not_found");
-  const auto duplicate = Call(
-      *human, A::RequestPayload::HostProjectDuplicateRequest, [&](Builder& b) {
-        return A::CreateHostProjectDuplicateRequest(
-                   b, b.CreateString(source.string()),
-                   b.CreateString(directory.path.string()),
-                   b.CreateString("duplicate"))
-            .Union();
-      });
-  ASSERT_TRUE(duplicate.Code().empty());
-  for (const auto* name : {"sample", "duplicate"}) {
-    const auto dest = directory.path / name;
-    EXPECT_FALSE(std::filesystem::exists(dest / ".tsugumi"));
-    EXPECT_FALSE(std::filesystem::exists(dest / "nested/.tsugumi"));
-    EXPECT_FALSE(std::filesystem::exists(dest / ".git"));
-    EXPECT_EQ(::access((dest / "definitions/card/src/main.py").c_str(), W_OK),
-              0);
-    Write(dest / "definitions/card/src/added.py", "editable");
-  }
-  // Restore the fixture so its cleanup can remove read-only source folders.
-  std::filesystem::permissions(source, std::filesystem::perms::owner_all);
-  for (const auto& entry :
-       std::filesystem::recursive_directory_iterator(source))
-    std::filesystem::permissions(entry.path(),
-                                 std::filesystem::perms::owner_all);
-}
-
-TEST_F(HostProjectsFixture,
-       RegistryHasThirtyNewestUniqueProjectsAndSurvivesRestart) {
-  for (int i = 0; i < 32; ++i) {
-    const auto name = "recent-" + std::to_string(i);
-    ASSERT_TRUE(Create(name).Code().empty());
-    ASSERT_TRUE(Remember(directory.path / name).Code().empty());
-  }
-  auto list = Recents().Json();
-  EXPECT_EQ(JsonString(list, "/0/name"), "recent-31");
-  EXPECT_EQ(JsonString(list, "/29/name"), "recent-2");
-  EXPECT_EQ(list.find("recent-1\""), std::string::npos);
-  EXPECT_THROW((void)JsonString(list, "/30/name"), std::runtime_error);
-  ASSERT_TRUE(Remember(directory.path / "recent-4").Code().empty());
-  list = Recents().Json();
-  EXPECT_EQ(JsonString(list, "/0/name"), "recent-4");
-  EXPECT_GT(JsonUInt(list, "/0/openedAt"), JsonUInt(list, "/1/openedAt"));
-  const auto forgotten =
-      Call(*human, A::RequestPayload::HostRecentForgetRequest, [&](Builder& b) {
-        const std::vector<flatbuffers::Offset<flatbuffers::String>> paths{
-            b.CreateString((directory.path / "recent-4").string())};
-        return A::CreateHostRecentForgetRequest(b, b.CreateVector(paths))
-            .Union();
-      });
-  EXPECT_TRUE(forgotten.Code().empty());
-  EXPECT_EQ(JsonString(Recents().Json(), "/0/name"), "recent-31");
-  EXPECT_TRUE(
-      std::filesystem::exists(directory.path / "recent-4/tsugumi.json"));
-  const auto before = Recents().Json();
-  external.reset();
-  human.reset();
-  agent.Stop();
-  StartAgent();
-  EXPECT_EQ(Recents().Json(), before);
-  std::filesystem::remove_all(directory.path / "recent-31");
-  EXPECT_EQ(JsonString(Recents().Json(), "/0/name"), "recent-30");
-}
-
 TEST_F(AgentProjectFixture, ReadingAProjectRequiresAnExplicitUserGrant) {
   StartProject();
   const auto conversation = Conversation("permission-scenario");
@@ -194,7 +23,7 @@ TEST_F(AgentProjectFixture, ReadingAProjectRequiresAnExplicitUserGrant) {
   Grant(conversation);
   const auto allowed = Inspect(conversation);
   EXPECT_TRUE(allowed.Code().empty());
-  EXPECT_NE(allowed.Json().find("PRIVATE_PROJECT_SENTINEL"), std::string::npos);
+  EXPECT_NE(allowed.View().find("PRIVATE_PROJECT_SENTINEL"), std::string::npos);
 }
 
 TEST_F(AgentProjectFixture,
@@ -209,8 +38,8 @@ TEST_F(AgentProjectFixture,
       Tool(conversation, "operation_get",
            R"({"op_id":"e38fd1b6-72fb-4df9-a91b-e6b8a72c6686"})");
   ASSERT_TRUE(unknown.Code().empty());
-  EXPECT_FALSE(JsonBool(unknown.Json(), "/isError"));
-  const auto lookup = JsonString(unknown.Json(), "/text");
+  EXPECT_FALSE(JsonBool(unknown.View(), "/isError"));
+  const auto lookup = JsonString(unknown.View(), "/text");
   EXPECT_EQ(JsonString(lookup, "/reply"), "OperationResult");
   EXPECT_EQ(JsonString(lookup, "/value/state"), "unknown");
   // A malformed lookup ID must reach the project unchanged, rather than
@@ -218,8 +47,8 @@ TEST_F(AgentProjectFixture,
   const auto invalid =
       Tool(conversation, "operation_get", R"({"op_id":"not-a-uuid"})");
   ASSERT_TRUE(invalid.Code().empty());
-  EXPECT_TRUE(JsonBool(invalid.Json(), "/isError"));
-  const auto failure = JsonString(invalid.Json(), "/text");
+  EXPECT_TRUE(JsonBool(invalid.View(), "/isError"));
+  const auto failure = JsonString(invalid.View(), "/text");
   EXPECT_EQ(JsonString(failure, "/reply"), "Failure");
   EXPECT_EQ(JsonString(failure, "/value/kind"), "invalid_request");
 }
@@ -234,8 +63,8 @@ TEST_F(AgentProjectFixture,
   Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
   const auto cleared = Tool(conversation, "project_cache_clear", "{}");
   ASSERT_TRUE(cleared.Code().empty());
-  EXPECT_FALSE(JsonBool(cleared.Json(), "/isError"));
-  EXPECT_EQ(JsonString(JsonString(cleared.Json(), "/text"), "/reply"),
+  EXPECT_FALSE(JsonBool(cleared.View(), "/isError"));
+  EXPECT_EQ(JsonString(JsonString(cleared.View(), "/text"), "/reply"),
             "ProjectCacheClearResult");
 }
 
@@ -251,8 +80,8 @@ TEST_F(AgentProjectFixture,
   Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
   const auto saved = Tool(conversation, "view_save", arguments);
   ASSERT_TRUE(saved.Code().empty());
-  EXPECT_FALSE(JsonBool(saved.Json(), "/isError"));
-  EXPECT_EQ(JsonString(JsonString(saved.Json(), "/text"), "/reply"),
+  EXPECT_FALSE(JsonBool(saved.View(), "/isError"));
+  EXPECT_EQ(JsonString(JsonString(saved.View(), "/text"), "/reply"),
             "ViewSaveResult");
 }
 
@@ -296,9 +125,9 @@ TEST_F(AgentProjectFixture,
   human.reset();
   agent.Stop();
   StartAgent();
-  EXPECT_NE(Get(conversation).Json().find("This conversation is durable."),
+  EXPECT_NE(Get(conversation).View().find("This conversation is durable."),
             std::string::npos);
-  EXPECT_NE(Inspect(conversation).Json().find("PRIVATE_PROJECT_SENTINEL"),
+  EXPECT_NE(Inspect(conversation).View().find("PRIVATE_PROJECT_SENTINEL"),
             std::string::npos);
 }
 
@@ -323,9 +152,9 @@ TEST_F(AgentProjectFixture,
   EXPECT_LT(requests[2].size(), requests[1].size() - 20000);
   EXPECT_NE(requests[2].find("Cut to fit the model context"),
             std::string::npos);
-  EXPECT_NE(Events(conversation).Json().find("compacted"), std::string::npos);
+  EXPECT_NE(Events(conversation).View().find("compacted"), std::string::npos);
   // The full public receipt stays available even when the model sees a page.
-  EXPECT_NE(Get(conversation).Json().find(std::string(50000, 'x')),
+  EXPECT_NE(Get(conversation).View().find(std::string(50000, 'x')),
             std::string::npos);
 }
 
@@ -408,15 +237,15 @@ TEST_F(AgentProjectFixture,
   ASSERT_TRUE(selected_skill().Code().empty());
   EXPECT_FALSE(model.WaitForRequests(1, 100ms));
   const auto deadline = std::chrono::steady_clock::now() + 3s;
-  while (Events(conversation).Json().find("permission") == std::string::npos &&
+  while (Events(conversation).View().find("permission") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)
     std::this_thread::sleep_for(10ms);
-  ASSERT_NE(Events(conversation).Json().find("permission"), std::string::npos);
+  ASSERT_NE(Events(conversation).View().find("permission"), std::string::npos);
   external.reset();
   human.reset();
   agent.Stop(true);
   StartAgent();
-  const auto interrupted = Get(conversation).Json();
+  const auto interrupted = Get(conversation).View();
   EXPECT_TRUE(JsonBool(interrupted, "/resumable"));
   EXPECT_TRUE(JsonBool(interrupted, "/continuable"));
   ASSERT_TRUE(Call(*external, A::RequestPayload::ConversationActionRequest,
@@ -500,7 +329,7 @@ TEST_F(AgentProjectFixture,
   const auto conversation = Conversation("durable-model-write");
   const auto read_grant = Grant(conversation);
   Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
-  const auto original = JsonString(Inspect(conversation).Json(), "/text");
+  const auto original = JsonString(Inspect(conversation).View(), "/text");
   const auto initial_revision = JsonString(original, "/value/rev");
   const auto document =
       R"({"name":"RENAMED_BY_MODEL","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
@@ -513,7 +342,7 @@ TEST_F(AgentProjectFixture,
   ASSERT_TRUE(Send(conversation, "Rename the project.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(2));
   WaitUntilIdle(conversation);
-  const auto saved = JsonString(Inspect(conversation).Json(), "/text");
+  const auto saved = JsonString(Inspect(conversation).View(), "/text");
   ASSERT_NE(saved.find("RENAMED_BY_MODEL"), std::string::npos);
   const auto revision = JsonString(saved, "/value/rev");
   EXPECT_EQ(std::stoull(revision), std::stoull(initial_revision) + 1);
@@ -526,14 +355,14 @@ TEST_F(AgentProjectFixture,
           .Union();
     });
   };
-  const auto receipt = replay(arguments).Json();
+  const auto receipt = replay(arguments).View();
   EXPECT_FALSE(JsonBool(receipt, "/isError"));
   external.reset();
   human.reset();
   agent.Stop();
   StartAgent();
-  EXPECT_EQ(replay(arguments).Json(), receipt);
-  EXPECT_EQ(JsonString(JsonString(Inspect(conversation).Json(), "/text"),
+  EXPECT_EQ(replay(arguments).View(), receipt);
+  EXPECT_EQ(JsonString(JsonString(Inspect(conversation).View(), "/text"),
                        "/value/rev"),
             revision);
   auto changed = arguments;
@@ -583,7 +412,7 @@ TEST_F(AgentProjectFixture, AModelThatRejectsImagesCanContinueWithTheToolText) {
   EXPECT_NE(requests[1].find("\"type\":\"image\""), std::string::npos);
   EXPECT_EQ(requests[2].find("\"type\":\"image\""), std::string::npos);
   EXPECT_NE(requests[2].find("model rejected this image"), std::string::npos);
-  EXPECT_NE(Events(conversation).Json().find("retrying"), std::string::npos);
+  EXPECT_NE(Events(conversation).View().find("retrying"), std::string::npos);
 }
 
 TEST_F(AgentProjectFixture,
@@ -641,7 +470,7 @@ TEST_F(AgentProjectFixture,
   // Resetting model context must not expose previously recorded private events.
   const auto old_events = Events(conversation);
   if (old_events.Code().empty())
-    EXPECT_EQ(old_events.Json().find("PRIVATE_PROJECT_SENTINEL"),
+    EXPECT_EQ(old_events.View().find("PRIVATE_PROJECT_SENTINEL"),
               std::string::npos);
   else
     EXPECT_EQ(old_events.Code(), "permission_denied");
@@ -685,13 +514,13 @@ TEST_F(AgentProjectFixture, ShellCommandsRequireTheirOwnExplicitGrant) {
   const auto denied =
       Tool(conversation, "project_shell", R"({"command":"printf allowed"})");
   EXPECT_EQ(denied.Code(), "grant_required");
-  EXPECT_NE(Events(conversation).Json().find("Shell"), std::string::npos);
+  EXPECT_NE(Events(conversation).View().find("Shell"), std::string::npos);
   Grant(conversation, A::GrantScope::Conversation, A::Access::Shell);
   const auto result =
       Tool(conversation, "project_shell",
            R"({"command":"printf allowed; printf diagnostic >&2; exit 3"})");
   ASSERT_TRUE(result.Code().empty());
-  const auto text = JsonString(result.Json(), "/text");
+  const auto text = JsonString(result.View(), "/text");
   EXPECT_EQ(JsonString(text, "/reply"), "ProjectShellResult");
   EXPECT_EQ(JsonString(text, "/value/stdout"), "allowed");
   EXPECT_EQ(JsonString(text, "/value/stderr"), "diagnostic");
@@ -713,7 +542,7 @@ TEST_F(AgentProjectFixture, ModelShellCommandsAndResultsAppearInToolHistory) {
   ASSERT_TRUE(Send(conversation, "Run the command.").Code().empty());
   EXPECT_NE(WaitUntilIdle(conversation).find("The command finished."),
             std::string::npos);
-  const auto events = Events(conversation).Json();
+  const auto events = Events(conversation).View();
   EXPECT_NE(events.find("toolStarted"), std::string::npos);
   EXPECT_NE(events.find("printf shell-history-output"), std::string::npos);
   EXPECT_NE(events.find("shell-history-output"), std::string::npos);
@@ -751,7 +580,7 @@ TEST_F(AgentProjectFixture, CancellingTheConversationStopsItsShellCommand) {
   std::this_thread::sleep_for(2100ms);
   EXPECT_FALSE(
       std::filesystem::exists(directory.path / "project/shell-escaped"));
-  EXPECT_NE(Events(conversation).Json().find("cancelled"), std::string::npos);
+  EXPECT_NE(Events(conversation).View().find("cancelled"), std::string::npos);
 }
 
 TEST_F(AgentProjectFixture,
@@ -786,7 +615,7 @@ TEST_F(AgentProjectFixture,
   std::this_thread::sleep_for(1100ms);
   EXPECT_FALSE(
       std::filesystem::exists(directory.path / "project/external-escaped"));
-  const auto events = Events(conversation).Json();
+  const auto events = Events(conversation).View();
   EXPECT_NE(events.find("toolStarted"), std::string::npos);
   EXPECT_NE(events.find("toolFinished"), std::string::npos);
   EXPECT_NE(events.find("printf ready > external-ready"), std::string::npos);

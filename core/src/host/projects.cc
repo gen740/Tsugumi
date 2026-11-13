@@ -4,11 +4,12 @@
 #include <chrono>
 
 #include "agent/json.hh"
+#include "agent/wire.hh"
 #include "util/fs.hh"
 
 namespace tsugumi::host {
 namespace {
-namespace A = Tsugumi::Agent;
+namespace A = Tsugumi::Host;
 namespace f = std::filesystem;
 namespace json = agent::json;
 
@@ -179,7 +180,71 @@ auto Projects::Recents() const -> std::vector<std::string> {
   return entries;
 }
 
-auto Projects::Handle(const A::Request& request) -> std::string {
+auto Projects::Handle(const A::Request &request, uint64_t id) -> std::string {
+  const auto raw = Apply(request);
+  auto reply = [id](auto value) {
+    return agent::wire::HostReply(id, std::move(value));
+  };
+  auto recent = [](const std::string &raw) {
+    const auto o = json::Object(raw);
+    auto entry = std::make_unique<A::RecentProjectT>();
+    entry->path = json::Text(o, "path");
+    entry->name = json::Text(o, "name");
+    entry->opened_at = json::UInt(json::Get(o, "openedAt"));
+    return entry;
+  };
+  switch (request.value_type()) {
+  case A::RequestPayload::HostProjectDefaultsRequest: {
+    A::ProjectDefaultsT value;
+    value.nixpkgs_pin = json::Text(json::Object(raw), "nixpkgsPin");
+    return reply(std::move(value));
+  }
+  case A::RequestPayload::HostProjectInfoRequest: {
+    const auto o = json::Object(raw);
+    A::ProjectInfoT value;
+    value.path = json::Text(o, "path");
+    value.name = json::Text(o, "name");
+    return reply(std::move(value));
+  }
+  case A::RequestPayload::HostProjectCreateRequest:
+  case A::RequestPayload::HostProjectDuplicateRequest:
+  case A::RequestPayload::HostDemoCopyRequest: {
+    A::ProjectLocationT value;
+    value.path = json::Text(json::Object(raw), "path");
+    return reply(std::move(value));
+  }
+  case A::RequestPayload::HostRecentRememberRequest:
+    return reply(std::move(*recent(raw)));
+  case A::RequestPayload::HostRecentListRequest: {
+    A::RecentListT value;
+    for (const auto &entry : json::Array(raw))
+      value.projects.push_back(recent(entry));
+    return reply(std::move(value));
+  }
+  case A::RequestPayload::HostDemoListRequest: {
+    A::DemoListT value;
+    for (const auto &entry : json::Array(raw)) {
+      const auto o = json::Object(entry);
+      auto demo = std::make_unique<A::DemoT>();
+      demo->id = json::Text(o, "id");
+      demo->path = json::Text(o, "path");
+      demo->title = json::Text(o, "title");
+      demo->description = json::Text(o, "description");
+      demo->field = json::Text(o, "field");
+      for (const auto &tag : json::Array(json::Get(o, "tags", "[]")))
+        demo->tags.push_back(json::String(tag));
+      value.demos.push_back(std::move(demo));
+    }
+    return reply(std::move(value));
+  }
+  case A::RequestPayload::HostRecentForgetRequest:
+    return reply(Tsugumi::Service::AcknowledgementT{});
+  default:
+    throw ProjectFailure("invalid_request", "Unsupported host project reply");
+  }
+}
+
+auto Projects::Apply(const A::Request &request) -> std::string {
   try {
     switch (request.value_type()) {
       case A::RequestPayload::HostProjectDefaultsRequest:

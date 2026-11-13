@@ -1,4 +1,5 @@
 #include <emscripten/bind.h>
+#include <stdexcept>
 
 #include "tsugumi/client/client.hh"
 
@@ -21,11 +22,12 @@ auto CopyBytes(const Bytes& bytes) -> val {
 
 class BrowserClient {
  public:
-  BrowserClient(std::string endpoint, bool agent)
-      : connection_(MakeOptions(std::move(endpoint), agent)) {}
-  auto Start(val callback) -> void {
-    connection_.Start([callback](Error error) { callback(ErrorValue(error)); });
-  }
+   BrowserClient(std::string endpoint, int protocol)
+       : connection_(MakeOptions(std::move(endpoint), protocol)) {}
+   auto Start(val callback) -> void {
+     connection_.Start(
+         [callback](Error error) { callback(ErrorValue(error)); });
+   }
   auto Call(val bytes, unsigned timeout_ms, val callback) -> void {
     connection_.CallFrame(
         emscripten::convertJSArrayToNumberVector<uint8_t>(bytes),
@@ -45,19 +47,21 @@ class BrowserClient {
   auto Close() -> void { connection_.Close(); }
 
  private:
-  static auto MakeOptions(std::string endpoint, bool agent) -> Options {
-    Options options;
-    options.endpoint = std::move(endpoint);
-    options.protocol = agent ? Protocol::Agent : Protocol::Project;
-    return options;
-  }
+   static auto MakeOptions(std::string endpoint, int protocol) -> Options {
+     Options options;
+     options.endpoint = std::move(endpoint);
+     if (protocol < 0 || protocol > 2)
+       throw std::runtime_error("invalid service protocol");
+     options.protocol = static_cast<Protocol>(protocol);
+     return options;
+   }
   Connection connection_;
 };
 }  // namespace
 
 EMSCRIPTEN_BINDINGS(tsugumi_client) {
   emscripten::class_<BrowserClient>("RpcClient")
-      .constructor<std::string, bool>()
+      .constructor<std::string, int>()
       .function("start", &BrowserClient::Start)
       .function("call", &BrowserClient::Call)
       .function("onEvent", &BrowserClient::OnEvent)

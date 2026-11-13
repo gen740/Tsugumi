@@ -87,7 +87,7 @@ target_link_libraries(tsugumid PRIVATE tsugumi_core)
 install(TARGETS tsugumid RUNTIME DESTINATION bin)
 
 # Agent state and model execution live in the core, independently of project
-# lifetimes. Frontends only connect to this service through agent.fbs.
+# lifetimes. Frontends use the separate agent.fbs and host.fbs contracts.
 set(_agent_prompts "")
 foreach(prompt system-prompt guide-prompt demo-skill)
   string(REPLACE "-" "_" symbol ${prompt})
@@ -113,6 +113,7 @@ add_library(tsugumi_agent_core STATIC
   src/agent/provider.cc
   src/agent/runtime.cc
   src/agent/tool_images.cc
+  src/agent/wire.cc
   src/agent/host.cc
   src/host/projects.cc)
 target_compile_definitions(tsugumi_agent_core PRIVATE
@@ -134,7 +135,7 @@ endif()
 add_executable(tsugumi-agentd src/agent/main.cc)
 target_link_libraries(tsugumi-agentd PRIVATE tsugumi_agent_core)
 install(TARGETS tsugumi-agentd RUNTIME DESTINATION bin)
-install(FILES ${TSUGUMI_GEN_DIR}/bfbs/agent.bfbs ${TSUGUMI_GEN_DIR}/bfbs/tsugumi.bfbs
+install(FILES ${TSUGUMI_GEN_DIR}/bfbs/agent.bfbs ${TSUGUMI_GEN_DIR}/bfbs/host.bfbs ${TSUGUMI_GEN_DIR}/bfbs/tsugumi.bfbs
   DESTINATION share/tsugumi/protocol)
 
 # CI builds only its external dependency double and public RPC scenarios

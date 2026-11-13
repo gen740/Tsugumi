@@ -13,7 +13,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 
 | Where | What |
 | --- | --- |
-| [protocol/](protocol/) | The FlatBuffers contracts for project RPC (`tsugumi.fbs`), the Agent service (`agent.fbs`), the native worker (`worker.fbs`) and the remote worker (`remote_worker.fbs`) |
+| [protocol/](protocol/) | The FlatBuffers contracts for project RPC (`tsugumi.fbs`), the Agent service (`agent.fbs`), host operations (`host.fbs`) and shared service types (`service_common.fbs`), the native worker (`worker.fbs`) and the remote worker (`remote_worker.fbs`) |
 | [core/](core/) | `tsugumid`: the document model, type checking, the scheduler, the embedded Nix evaluator, history and artifacts, versions (git); `core/src/agent/` holds the host-side `tsugumi-agentd` service |
 | [sdk/](sdk/) | The Card ABI and runtime, the C++ / Python SDKs, the Nix SDK ([sdk/nix/default.nix](sdk/nix/default.nix)) |
 | [macOS/](macOS/) | The SwiftUI app, the shared Linux VM (Virtualization.framework), image definitions |

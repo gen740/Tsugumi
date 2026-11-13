@@ -27,11 +27,11 @@ extern "C" {
 auto tsugumi_client_create(const char* endpoint, int protocol)
     -> tsugumi_client* {
   try {
-    if (!endpoint || (protocol != 0 && protocol != 1)) return nullptr;
+    if (!endpoint || (protocol < 0 || protocol > 2))
+      return nullptr;
     C::Options options;
     options.endpoint = endpoint;
-    options.protocol =
-        protocol == 1 ? C::Protocol::Agent : C::Protocol::Project;
+    options.protocol = static_cast<C::Protocol>(protocol);
     return new tsugumi_client{
         std::make_unique<C::Connection>(std::move(options))};
   } catch (...) {

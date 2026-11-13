@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "tsugumi/protocol/agent_generated.h"
+#include "tsugumi/protocol/host_generated.h"
 
 namespace tsugumi::host {
 
@@ -23,10 +23,12 @@ class Projects {
   Projects(std::filesystem::path state, std::filesystem::path demos)
       : registry_(std::move(state) / "recent-projects.json"),
         demos_(std::move(demos)) {}
-  static auto Handles(Tsugumi::Agent::RequestPayload type) -> bool;
-  auto Handle(const Tsugumi::Agent::Request& request) -> std::string;
+  static auto Handles(Tsugumi::Host::RequestPayload type) -> bool;
+  auto Handle(const Tsugumi::Host::Request &request, uint64_t id)
+      -> std::string;
 
- private:
+private:
+  auto Apply(const Tsugumi::Host::Request &request) -> std::string;
   auto Catalog(const std::string& language) const -> std::vector<std::string>;
   auto Recents() const -> std::vector<std::string>;
   std::filesystem::path registry_;

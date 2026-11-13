@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import TsugumiRPC
 
 public struct AgentProject: Sendable {
   public let id: String
@@ -21,19 +22,14 @@ public struct CoreAgentFailure: Error, CustomStringConvertible, Sendable {
   public var description: String { message }
 }
 
-/// The native C++ client is a persistent child process. It owns protocol
-/// validation, request framing and socket I/O; Swift only adapts UI values.
+/// Binary Agent and Host connections share the project's C ABI byte transport.
+/// Framing, verification, deadlines and pending requests belong to client/.
 public actor CoreAgentClient {
   public static let shared = CoreAgentClient()
-  private var process: Process?
+  private var transports: [Bool: NativeByteTransport] = [:]
   private var connectionID = UUID()
-  private var input: FileHandle?
-  private var reader: Task<Void, Never>?
   private var opening: Task<Void, Error>?
-  private var buffer = Data()
   private var nextID: UInt64 = 0
-  private var pending: [UInt64: CheckedContinuation<[String: Any], Error>] = [:]
-  private var timeouts: [UInt64: Task<Void, Never>] = [:]
 
   private var stateDirectory: URL {
     if let path = ProcessInfo.processInfo.environment["TSUGUMI_AGENT_STATE"] { return URL(fileURLWithPath: path) }
@@ -70,7 +66,7 @@ public actor CoreAgentClient {
       guard let bytes = try? Data(contentsOf: file),
             let object = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
             let pid = object["pid"] as? Int32, kill(pid, 0) == 0,
-            object["protocol"] as? Int == 1, object["unix_socket"] is String, object["user_token"] is String else { return nil }
+            object["protocol"] as? Int == 1, object["unix_socket"] is String, object["host_socket"] is String, object["user_token"] is String else { return nil }
       return object
     }
     if let existing = read() { return existing }
@@ -102,112 +98,63 @@ public actor CoreAgentClient {
 
   private func connect() async throws {
     if let opening { return try await opening.value }
-    if process != nil { return }
+    if !transports.isEmpty { return }
     let task = Task { try await self.start() }
     opening = task
-    do { try await task.value; opening = nil } catch { opening = nil; throw error }
+    do { try await task.value; opening = nil }
+    catch { opening = nil; close(); throw error }
   }
 
   private func start() async throws {
     let ready = try await ready()
-    guard let socket = ready["unix_socket"] as? String, let token = ready["user_token"] as? String else {
-      throw CoreAgentFailure(code: "protocol", message: "Invalid Agent endpoint", requestID: nil)
+    guard let agentSocket = ready["unix_socket"] as? String, let hostSocket = ready["host_socket"] as? String,
+          let token = ready["user_token"] as? String else {
+      throw CoreAgentFailure(code: "protocol", message: "Invalid service endpoints", requestID: nil)
     }
-    let schema = ProcessInfo.processInfo.environment["TSUGUMI_AGENT_SCHEMA"].map { URL(fileURLWithPath: $0) }
-      ?? Bundle.main.url(forResource: "agent", withExtension: "bfbs")
-      ?? Self.repository.appendingPathComponent("build/generated/bfbs/agent.bfbs")
     let identity = UUID()
     connectionID = identity
-    let child = Process()
-    child.executableURL = try executable("tsugumi-rpc", environment: "TSUGUMI_RPC_CLIENT", component: "client")
-    child.arguments = ["--endpoint", "unix:" + socket, "--schema", schema.path, "--subprotocol", "tsugumi.agent.v1"]
-    let incoming = Pipe(), outgoing = Pipe()
-    child.standardInput = incoming
-    child.standardOutput = outgoing
-    child.standardError = FileHandle.standardError
-    child.terminationHandler = { [weak self] _ in Task { await self?.closed(identity) } }
-    try child.run()
-    process = child
-    input = incoming.fileHandleForWriting
-    let output = outgoing.fileHandleForReading
-    reader = Task.detached { [weak self] in
-      while !Task.isCancelled {
-        let data = output.availableData
-        if data.isEmpty { break }
-        await self?.received(data, identity)
-      }
-      await self?.closed(identity)
+    for host in [false, true] {
+      let transport = NativeByteTransport(endpoint: "unix:" + (host ? hostSocket : agentSocket), contract: host ? .host : .agent)
+      transports[host] = transport
+      transport.observe(receive: { _ in }, closed: { [weak self] in
+        Task { await self?.closed(identity) }
+      })
+      try await transport.start()
+      _ = try await exchange("HelloRequest", ["token": token, "client_id": "macos-\(UUID().uuidString)", "protocol": 1], host: host)
     }
-    _ = try await write("HelloRequest", ["token": token, "client_id": "macos-\(UUID().uuidString)", "protocol": 1])
+  }
+
+  private func close() {
+    connectionID = UUID()
+    let previous = transports
+    transports.removeAll()
+    for transport in previous.values { transport.close() }
   }
 
   private func closed(_ identity: UUID) {
     guard identity == connectionID else { return }
-    process = nil
-    input = nil
-    buffer.removeAll()
-    for continuation in pending.values { continuation.resume(throwing: CoreAgentFailure(code: "disconnected", message: "The core Agent connection closed", requestID: nil)) }
-    pending.removeAll()
-    for timeout in timeouts.values { timeout.cancel() }
-    timeouts.removeAll()
+    close()
   }
 
-  private func received(_ data: Data, _ identity: UUID) {
-    guard identity == connectionID else { return }
-    buffer.append(data)
-    while let newline = buffer.firstIndex(of: 10) {
-      let line = buffer[..<newline]
-      buffer.removeSubrange(...newline)
-      guard let message = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
-      if message["transport_error"] != nil { process?.terminate(); closed(identity); return }
-      guard let id = message["request_id"] as? UInt64,
-            let continuation = pending.removeValue(forKey: id) else { continue }
-      timeouts.removeValue(forKey: id)?.cancel()
-      guard message["payload_type"] as? String == "Reply", let payload = message["payload"] as? [String: Any],
-            let value = payload["value"] as? [String: Any] else {
-        continuation.resume(throwing: CoreAgentFailure(code: "protocol", message: "Invalid Agent reply", requestID: nil)); continue
-      }
-      if payload["value_type"] as? String == "Failure" {
-        continuation.resume(throwing: CoreAgentFailure(code: value["code"] as? String ?? "error",
-          message: value["message"] as? String ?? "Agent request failed", requestID: value["request_id"] as? String))
-      } else if payload["value_type"] as? String == "Result", let json = value["json"] as? String,
-                let result = try? JSONSerialization.jsonObject(with: Data(json.utf8), options: [.fragmentsAllowed]) {
-        continuation.resume(returning: result as? [String: Any] ?? ["value": result])
-      } else { continuation.resume(returning: value) }
+  private func exchange(_ method: String, _ fields: [String: Any], host: Bool) async throws -> [String: Any] {
+    guard let transport = transports[host], nextID < UInt64.max else {
+      throw CoreAgentFailure(code: "disconnected", message: "The service connection is closed", requestID: nil)
     }
-    if buffer.count > 32 << 20 { process?.terminate(); closed(identity) }
-  }
-
-  private func expired(_ id: UInt64) {
-    timeouts.removeValue(forKey: id)
-    pending.removeValue(forKey: id)?.resume(throwing: CoreAgentFailure(code: "timeout", message: "The core Agent did not answer", requestID: nil))
-  }
-
-  private func write(_ method: String, _ fields: [String: Any]) async throws -> [String: Any] {
-    guard let input else { throw CoreAgentFailure(code: "disconnected", message: "The Agent connection is closed", requestID: nil) }
     nextID += 1
-    let id = nextID
-    // FlatBuffers' JSON reader requires a union discriminator before its value.
-    // Dictionary serialization does not preserve that ordering across processes.
-    let methodJSON = String(decoding: try JSONEncoder().encode(method), as: UTF8.self)
-    var data = Data("{\"request_id\":\(id),\"payload_type\":\"Request\",\"payload\":{\"value_type\":\(methodJSON),\"value\":".utf8)
-    data.append(try JSONSerialization.data(withJSONObject: fields))
-    data.append(Data("}}\n".utf8))
-    return try await withCheckedThrowingContinuation { continuation in
-      pending[id] = continuation
-      timeouts[id] = Task { try? await Task.sleep(for: .seconds(120)); if !Task.isCancelled { self.expired(id) } }
-      do { try input.write(contentsOf: data) }
-      catch { pending.removeValue(forKey: id)?.resume(throwing: error); timeouts.removeValue(forKey: id)?.cancel() }
+    let frame = try ServiceWire.encode(method, fields: fields, id: nextID, host: host)
+    let data: Data = try await withCheckedThrowingContinuation { continuation in
+      transport.call(frame, timeout: .seconds(120), continuation: continuation)
     }
+    return try ServiceWire.decode(data, host: host)
   }
 
   public func call(_ method: String, _ fields: [String: Any] = [:]) async throws -> [String: Any] {
     try await connect()
-    return try await write(method, fields)
+    return try await exchange(method, fields, host: ServiceWire.hostMethod(method, fields))
   }
 
   public func configure(_ config: ProviderConfig, conversationID: String? = nil, asking: Bool = false) async throws {
-    var fields: [String: Any] = ["provider_json": try await providerJSON(config, asking: asking)]
+    var fields: [String: Any] = ["provider": try await provider(config, asking: asking)]
     _ = try await call("ConfigureRequest", fields)
     if let conversationID {
       fields["conversation_id"] = conversationID
@@ -215,27 +162,35 @@ public actor CoreAgentClient {
     }
   }
 
-  public func providerJSON(_ config: ProviderConfig, asking: Bool = false) async throws -> String {
-    var object = try JSONSerialization.jsonObject(with: JSONEncoder().encode(config)) as! [String: Any]
-    object["auth"] = config.auth == .chatGPT ? "chatgpt" : config.auth.rawValue
+  public func provider(_ config: ProviderConfig, asking: Bool = false) async throws -> Tsugumi_Service_ProviderT {
+    let value = Tsugumi_Service_ProviderT()
+    value.provider = config.auth == .chatGPT ? "chatgpt" : ""
+    value.api = config.api.rawValue
+    value.auth = config.auth == .chatGPT ? "chatgpt" : config.auth.rawValue
+    value.baseUrl = config.baseURL.absoluteString
+    value.model = config.model
+    value.effort = config.effort
+    value.fast = config.fast
+    value.webSearch = config.webSearch
+    value.maxTokens = UInt32(clamping: config.maxTokens)
+    value.contextLimit = UInt32(clamping: config.contextLimit)
     switch config.auth {
     case .none: break
     case .apiKey:
       guard let key = asking ? Keychain.load(account: config.name) : Keychain.loadWithoutAsking(account: config.name) else {
         throw CoreAgentFailure(code: "credentials", message: "No API key for \(config.name)", requestID: nil)
       }
-      object["apiKey"] = key
+      value.credential = key
     case .chatGPT:
       let token = try await config.chatGPTAuth.accessToken(asking: asking)
-      object["token"] = token.value
-      object["accountId"] = token.clientId
-      object["credential_id"] = token.clientId
+      value.credential = token.value
+      value.credentialId = token.clientId
     }
-    return String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
+    return value
   }
 
   public func models(_ config: ProviderConfig, asking: Bool = false) async throws -> [(id: String, label: String)] {
-    let result = try await call("ModelsListRequest", ["provider_json": try await providerJSON(config, asking: asking)])
+    let result = try await call("ModelsListRequest", ["provider": try await provider(config, asking: asking)])
     return (result["value"] as? [[String: Any]] ?? []).compactMap { item in
       guard let id = item["id"] as? String else { return nil }
       return (id, item["label"] as? String ?? id)

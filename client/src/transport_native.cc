@@ -293,11 +293,12 @@ class NativeTransport final : public Transport {
       if (target.empty()) target = "/";
       const auto query = part(CURLUPART_QUERY);
       if (!query.empty()) target += '?' + query;
-      const auto protocol = options.subprotocol.empty()
-                                ? options.protocol == Protocol::Agent
-                                      ? "tsugumi.agent.v1"
-                                      : "tsugumi.rpc.v1"
-                                : options.subprotocol;
+      const auto protocol =
+          options.subprotocol.empty()
+              ? options.protocol == Protocol::Agent  ? "tsugumi.agent.v1"
+                : options.protocol == Protocol::Host ? "tsugumi.host.v1"
+                                                     : "tsugumi.rpc.v1"
+              : options.subprotocol;
       if (protocol.find_first_of("\r\n ,") != std::string::npos)
         throw std::runtime_error("invalid WebSocket subprotocol");
       curl = curl_easy_init();

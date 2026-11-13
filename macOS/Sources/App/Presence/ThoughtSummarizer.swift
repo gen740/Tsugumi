@@ -68,7 +68,7 @@ final class ThoughtSummarizer {
   static func summarize(conversationID: String, config: ProviderConfig, usage: @escaping (Usage) -> Void) async throws -> String {
     let client = CoreAgentClient.shared
     let value = try await client.call("ConversationSummarizeRequest", ["conversation_id": conversationID,
-      "provider_json": try await client.providerJSON(config)])
+      "provider": try await client.provider(config)])
     if let counts = value["usage"], let data = try? JSONSerialization.data(withJSONObject: counts),
        let measured = try? JSONDecoder().decode(Usage.self, from: data) { usage(measured) }
     return value["text"] as? String ?? ""

@@ -110,6 +110,7 @@ clangStdenv.mkDerivation {
       --set TSUGUMI_RPC_CLIENT ${core}/bin/tsugumi-rpc \
       --set TSUGUMI_MOCK_DAEMON "$out/libexec/tsugumi-tests/tsugumid-mock" \
       --set TSUGUMI_SDK_DIR ${core}/share/tsugumi/sdk \
+      --set TSUGUMI_HOST_SCHEMA ${core}/share/tsugumi/protocol/host.bfbs \
       --set TSUGUMI_AGENT_SCHEMA ${core}/share/tsugumi/protocol/agent.bfbs \
       --set TSUGUMI_PROJECT_SCHEMA ${core}/share/tsugumi/protocol/tsugumi.bfbs \
       --set TSUGUMI_PY_BINDINGS ${core.testSupport}/python \

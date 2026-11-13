@@ -53,11 +53,12 @@ class BrowserTransport final : public Transport {
     if (!emscripten_websocket_is_supported())
       throw std::runtime_error("WebSocket is unavailable");
     state->events = std::move(events);
-    const auto protocol = state->options.subprotocol.empty()
-                              ? state->options.protocol == Protocol::Agent
-                                    ? "tsugumi.agent.v1"
-                                    : "tsugumi.rpc.v1"
-                              : state->options.subprotocol;
+    const auto protocol =
+        state->options.subprotocol.empty()
+            ? state->options.protocol == Protocol::Agent  ? "tsugumi.agent.v1"
+              : state->options.protocol == Protocol::Host ? "tsugumi.host.v1"
+                                                          : "tsugumi.rpc.v1"
+            : state->options.subprotocol;
     EmscriptenWebSocketCreateAttributes attributes{};
     attributes.url = state->options.endpoint.c_str();
     attributes.protocols = protocol.c_str();

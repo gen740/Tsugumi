@@ -59,7 +59,7 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin/Tsugumi" "$app/Contents/MacOS/Tsugumi"
 cp "$bin/tsugumi-vmhost" "$repo/build-host/core/tsugumi-agentd" "$repo/build-host/client/tsugumi-rpc" "$app/Contents/MacOS/"
-cp "$repo/build-host/generated/bfbs/agent.bfbs" "$app/Contents/Resources/"
+cp "$repo/build-host/generated/bfbs/"{agent,host}.bfbs "$app/Contents/Resources/"
 
 # Nothing may look for files where this machine built them (that only works here).
 if strings "$app/Contents/MacOS/Tsugumi" | grep -F "$repo/" | grep -v '\.swift$' | head -3 | grep .; then

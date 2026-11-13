@@ -34,7 +34,7 @@ const copy = () => {
     filter: (from) => !['index.json', 'ports.json'].includes(path.basename(from)) && !from.endsWith('.run.json'),
   })
   fs.copyFileSync(gen, path.join(out, 'tsugumi.bfbs'))
-  fs.copyFileSync(path.join(root, 'src', 'gen', 'agent.bfbs'), path.join(out, 'agent.bfbs'))
+  for (const schema of ['agent', 'host']) fs.copyFileSync(path.join(root, 'src', 'gen', `${schema}.bfbs`), path.join(out, `${schema}.bfbs`))
   const client = process.env.TSUGUMI_WASM_CLIENT_DIR ?? path.join(root, '..', 'build-wasm', 'client')
   fs.mkdirSync(path.join(out, 'public', 'client'), { recursive: true })
   for (const file of ['tsugumi-client.js', 'tsugumi-client.wasm']) {

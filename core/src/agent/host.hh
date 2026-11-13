@@ -20,7 +20,7 @@ class Host final : public RequestSink {
 public:
   explicit Host(HostOptions options);
   ~Host() override;
-  auto Attach(Server *server) -> void;
+  auto Attach(Server *server, Server *host_server) -> void;
   auto Shutdown() -> void;
   auto hello(const RequestIn &request) -> std::pair<std::string, bool> override;
   auto dispatch(RequestIn request) -> void override;

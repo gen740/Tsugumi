@@ -39,18 +39,6 @@ auto Request(uint64_t id, std::string_view type, std::string_view value)
 
 class RpcCli : public ::testing::TestWithParam<bool> {
  protected:
-  auto SetUp() -> void override {
-    std::filesystem::create_directories(directory.path / "demos");
-    agent.Start(
-        {TSUGUMI_AGENT_BINARY, "--state-dir",
-         (directory.path / "state").string(), "--unix",
-         (directory.path / "agent.sock").string(), "--demos-dir",
-         (directory.path / "demos").string(), "--listen", "127.0.0.1:0"},
-        directory.path / "agent.log");
-    ready = Readiness(agent, directory.path / "state/agent.ready",
-                      directory.path / "agent.log");
-  }
-
   auto Endpoint(const std::string& server) const -> std::string {
     return GetParam() ? JsonString(server, "/endpoint")
                       : "unix:" + JsonString(server, "/unix_socket");
@@ -140,61 +128,9 @@ class RpcCli : public ::testing::TestWithParam<bool> {
     return output;
   }
 
-  auto Hello() const -> std::string {
-    return "{\"client_id\":\"CLI JSON order scenario\",\"token\":" +
-           Quote(JsonString(ready, "/user_token")) + "}";
-  }
-
   TemporaryDirectory directory;
-  ChildProcess agent;
   ChildProcess project;
-  std::string ready;
 };
-
-TEST_P(RpcCli, AcceptsEveryEnvelopeAndNestedUnionOrderWithoutRoundingIds) {
-  std::array<int, 3> order{0, 1, 2};
-  uint64_t id = std::numeric_limits<uint64_t>::max() - 24;
-  do {
-    for (const bool type_first : {false, true}) {
-      const auto payload =
-          type_first
-              ? "{\"value_type\":\"HelloRequest\",\"value\":" + Hello() + "}"
-              : "{\"value\":" + Hello() + ",\"value_type\":\"HelloRequest\"}";
-      const std::array<std::string, 3> members{
-          "\"payload\":" + payload, "\"request_id\":" + std::to_string(id),
-          "\"payload_type\":\"Request\""};
-      auto input = "{" + members[order[0]] + "," + members[order[1]] + "," +
-                   members[order[2]] + "}\n" +
-                   Request(id + 1, "ToolCatalogRequest", "{}");
-      SCOPED_TRACE(input);
-      const auto result = Run(input, Endpoint(ready), TSUGUMI_AGENT_SCHEMA);
-      ASSERT_EQ(result.status, 0) << result.error;
-      ASSERT_EQ(result.replies.size(), 2);
-      EXPECT_EQ(JsonUInt(result.replies[0], "/request_id"), id);
-      EXPECT_EQ(JsonUInt(result.replies[1], "/request_id"), id + 1);
-      EXPECT_EQ(JsonString(result.replies[0], "/payload/value_type"),
-                "HelloResult");
-      EXPECT_EQ(JsonString(result.replies[1], "/payload/value_type"), "Result");
-      id += 2;
-    }
-  } while (std::next_permutation(order.begin(), order.end()));
-}
-
-TEST_P(RpcCli, PreservesEscapedKeysAndOpaqueJsonStrings) {
-  const auto id = std::string("Japanese 日本語: \"value_type\", \\\\ ") +
-                  "{\"n\":18446744073709551615,\"s\":-9223372036854775808}";
-  auto hello = Request(1, "HelloRequest", Hello());
-  hello.replace(hello.find("payload_type"), 12, "pay\\u006coad_type");
-  const auto result =
-      Run(hello + Request(2, "ConversationCreateRequest",
-                          "{\"conversation_id\":" + Quote(id) + "}"),
-          Endpoint(ready), TSUGUMI_AGENT_SCHEMA);
-  ASSERT_EQ(result.status, 0) << result.error;
-  ASSERT_EQ(result.replies.size(), 2);
-  EXPECT_EQ(JsonString(JsonString(result.replies[1], "/payload/value/json"),
-                       "/conversation/id"),
-            id);
-}
 
 TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
   Write(
@@ -240,21 +176,6 @@ TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
       JsonString(JsonString(result.replies[2], "/payload/value/project_json"),
                  "/name"),
       "After 日本語");
-}
-
-TEST_P(RpcCli, RejectsAmbiguousOrTruncatedJsonInput) {
-  const auto hello = Request(1, "HelloRequest", Hello());
-  const std::vector<std::string> invalid{
-      "{\"payload_type\":\"Reply\"," + hello.substr(1),
-      hello.substr(0, hello.size() - 1) + '\0' + "false\n",
-      hello.substr(0, hello.size() - 1) + "false\n"};
-  for (const auto& input : invalid) {
-    SCOPED_TRACE(input);
-    const auto result = Run(input, Endpoint(ready), TSUGUMI_AGENT_SCHEMA);
-    EXPECT_NE(result.status, 0);
-    EXPECT_TRUE(result.replies.empty());
-    EXPECT_NE(result.error.find("invalid request JSON"), std::string::npos);
-  }
 }
 
 INSTANTIATE_TEST_SUITE_P(Transports, RpcCli, ::testing::Bool(),

@@ -391,12 +391,12 @@ export class ChatGPTAuth {
 
   private async importCredential(account: Account, replace: boolean) {
     if (!account.access_token || !account.refresh_token) return
-    await this.core('CredentialImportRequest', { replace, registration_json: JSON.stringify({
+    await this.core('CredentialImportRequest', { replace, registration: {
       client_id: account.client_id, access_token: account.access_token, refresh_token: account.refresh_token,
       token_endpoint: this.endpoints.token, revocation_endpoint: this.endpoints.revoke, resource: this.endpoints.resource,
       expires_at_ms: Date.parse(account.saved_at ?? '') + (account.expires_in ?? 0) * 1000 || 0,
       scope: account.scopes.join(' '),
-    }) })
+    } })
   }
 
   // ---- ID token ------------------------------------------------------------------

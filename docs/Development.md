@@ -17,7 +17,7 @@ In the macOS app, one shared Linux VM for the whole app (using `Virtualization.f
 A main window shows one project, and several windows can be open at once ([Several projects](features.md#several-projects)). The Web UI has one per browser tab.
 The SwiftUI app, the Web UI and the Agent are clients of the project core through the same FlatBuffers RPC contract.
 
-`tsugumi-agentd` is the host-side core, one service per host, shared by the Mac app and Web host before any project is open. Alongside Agent conversations, it owns project creation and duplication, bundled demo catalogs and editable copies, and the recent-projects registry (the newest 30 entries). The host-level section of `protocol/agent.fbs` keeps these requests separate from conversation logic; their implementation is in `core/src/host/`. New project documents, the build-time Card Nixpkgs pin, folder names and flow validation are defined there. Both clients only forward requests and translate stable error codes. The registry has one writer and stores Unix epoch milliseconds in `agent-core/recent-projects.json`; no legacy client format is read.
+`tsugumi-agentd` is the host-side core, one service per host, shared by the Mac app and Web host before any project is open. Alongside Agent conversations, it owns project creation and duplication, bundled demo catalogs and editable copies, and the recent-projects registry (the newest 30 entries). The separate `protocol/host.fbs` contract keeps these requests separate from conversation logic; their implementation is in `core/src/host/`. New project documents, the build-time Card Nixpkgs pin, folder names and flow validation are defined there. Both clients only forward requests and translate stable error codes. The registry has one writer and stores Unix epoch milliseconds in `agent-core/recent-projects.json`; no legacy client format is read.
 
 ```text
 Shared VM (one per app, Virtualization.framework)                 macOS
@@ -26,7 +26,7 @@ Shared VM (one per app, Virtualization.framework)                 macOS
  project A: tsugumid (own uid, mount/PID namespaces, cgroup) ── vsock ─ 127.0.0.1 relay ── SwiftUI UI (+ isolated WebGPU view modules)
    ├ document, journal, receipts (/project = virtiofs)                         tsugumi-agentd (models, conversations, tools)
    ├ SQLite history, logs, artifacts                                   ── same RPC ──┘
-   │                                                                         └ agent.fbs over Unix socket ── SwiftUI / Web host
+   │                                                                         └ agent.fbs / host.fbs over Unix sockets ── SwiftUI / Web host
    ├ scheduler, Nix evaluator (libnixexpr embedded in the process)
    └ worker pool (resident across runs and standby workers, isolated with bubblewrap)
  project B: tsugumid (likewise; stopping A does not affect B)
@@ -36,7 +36,7 @@ Shared VM (one per app, Virtualization.framework)                 macOS
 
 ```text
 CMakeLists.txt, flake.nix/flake.lock  C++ build (CMake/Ninja) and pinned dependencies (Nix)
-protocol/          tsugumi.fbs (project RPC), agent.fbs (host-side core and Agent), worker.fbs (native worker), remote_worker.fbs (remote worker), data.fbs / tsugumi_enums.fbs
+protocol/          tsugumi.fbs (project RPC), agent.fbs (Agent), host.fbs (host operations), service_common.fbs (shared service types), worker.fbs (native worker), remote_worker.fbs (remote worker), data.fbs / tsugumi_enums.fbs
 core/              tsugumid (project core) and tsugumi-agentd (host-side core); host worker pool/process management;
                    src/host/ (project lifecycle), src/agent/ (conversations and tools)
 workerd/           native_main.cc: light tsugumi-worker (no Nix); remote_main.cc + invocation.cc: tsugumi-remote-worker

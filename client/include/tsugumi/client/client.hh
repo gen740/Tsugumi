@@ -34,7 +34,7 @@ struct Result {
   Error error;
 };
 
-enum class Protocol { Project, Agent };
+enum class Protocol { Project, Agent, Host };
 
 struct Options {
   // unix:/absolute/path, ws://host:port/rpc, or wss://host:port/rpc.

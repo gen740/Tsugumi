@@ -424,7 +424,7 @@ interface WasmClient {
   close(): void
   delete(): void
 }
-interface WasmModule { RpcClient: new (endpoint: string, agent: boolean) => WasmClient }
+interface WasmModule { RpcClient: new (endpoint: string, protocol: number) => WasmClient }
 let wasmModule: Promise<WasmModule> | undefined
 
 const nativeError = (error: NativeClientError) => new RPCError(
@@ -432,7 +432,7 @@ const nativeError = (error: NativeClientError) => new RPCError(
   error.message,
 )
 
-/** Both project and Agent connections use the same C++ library as the CLI. */
+/** Browser project connections use the shared C++ byte transport. */
 export async function webSocketTransport(url: string): Promise<Transport> {
   if (!wasmModule) {
     const moduleUrl = '/client/tsugumi-client.js'
@@ -440,7 +440,7 @@ export async function webSocketTransport(url: string): Promise<Transport> {
     wasmModule.catch(() => { wasmModule = undefined })
   }
   const module = await wasmModule
-  const client = new module.RpcClient(url, false)
+  const client = new module.RpcClient(url, 0)
   let released = false
   const release = () => {
     if (released) return
