@@ -598,16 +598,16 @@ export class CanvasController extends Observable implements CanvasOverlay {
 
   /** Moves a selection (world units) as one edit: one save, one undo. Layout
    *  only: no computation is re-resolved for a move. Ports around the moved Cards
-   *  are reordered in the same edit when that removes wire crossings. With a grid (`snap`) the
+   *  are then reordered, in the same step of undo, when that removes wire crossings. With a grid (`snap`) the
    *  Cards go by whole grids from where they are drawn, and what moves with them
    *  goes by the same step, so the arrangement stays. Notes and frames alone land
    *  on whole numbers, as when dragged alone. */
-  moveSelection(cards: Set<CardKey>, notes: Set<string>, frames: Set<CardKey>, movedX: number, movedY: number, snap?: number) {
+  moveSelection(cards: Set<CardKey>, notes: Set<string>, frames: Set<CardKey>, movedX: number, movedY: number, snap?: number): Promise<void> {
     const onGrid = snap && cards.size ? snap : undefined
     const dx = onGrid ? snapToGrid(movedX, onGrid) : movedX, dy = onGrid ? snapToGrid(movedY, onGrid) : movedY
     const scene = this.scene()
     const shown = new Set(scene.outputKeys)
-    this.session.edit((x) => {
+    const step = this.session.edit((x) => {
       for (const k of frames) {
         if (!shown.has(k) || x.frameFollowsCard(k, cards)) continue
         // Worked out from its Card, so before the Cards move.
@@ -624,8 +624,6 @@ export class CanvasController extends Observable implements CanvasOverlay {
         const from = snap ? { x: snapToGrid(p.x, snap), y: snapToGrid(p.y, snap) } : p
         x.setPosition(k, { x: from.x + dx, y: from.y + dy })
       }
-      // Wires that the move made cross: the same edit, so one undo takes both back.
-      x.untangleAround(this.tab.scope, cards)
       for (const id of notes) {
         x.changeNote(id, (n) => {
           const r = noteRect(n)
@@ -634,6 +632,8 @@ export class CanvasController extends Observable implements CanvasOverlay {
         })
       }
     })
+    // Wires that the move made cross: tsugumid's answer joins the move's step, so one undo takes both back.
+    return step && cards.size ? this.session.untangleAround(this.tab.scope, cards, step) : Promise.resolve()
   }
 
   /** Closes a frame, a step of an edit; its Card stays. The layout keeps a frame

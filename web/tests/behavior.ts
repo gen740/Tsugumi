@@ -53,7 +53,7 @@ await import("./portGrid")
 
 await import("./marquee")
 
-await import("./arrange")
+await import("./layoutScenarios")
 
 await import("./freeSpot")
 
@@ -77,7 +77,7 @@ await import("./evidence")
 await import('./environments')
 
 await import('./runComparison')
-await import('./untangle')
+
 await import('./moduleThumbnails')
 await import('./moduleViewer')
 await import('./figurePreview')

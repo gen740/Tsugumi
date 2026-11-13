@@ -127,7 +127,7 @@ final class UIScript {
         }
       case "select": workspace?.active?.selection = [w[1]]
       case "makerepo": if let s = session { try? await s.makeRepository() }
-      case "arrange": if let s = session, let t = workspace?.active { s.arrange(t.scope) }
+      case "arrange": if let s = session, let t = workspace?.active { await s.arrange(t.scope) }
       case "open":
         guard let ref else { break }
         switch w[1] {
