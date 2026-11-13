@@ -96,7 +96,7 @@ cp "$repo/agent/Reference/card-guide.md" "$app/Contents/Resources/reference/card
 cp "$repo/sdk/python/tsugumi/__init__.py" "$app/Contents/Resources/reference/tsugumi-sdk.py"
 # Help > Learn about Tsugumi: the documentation site's story pages, as they are, with
 # what they use (Sources/App/Explainer/ExplainerWindow.swift).
-nix run "$repo#build-doc"
+(cd "$repo" && nix run .#build-doc)
 bash "$repo/macOS/tools/bundle-docs.sh" "$app/Contents/Resources/explainer"
 # Home's demo thumbnails (Sources/App/Home/DemoThumbnail.swift): the site's data of
 # each demo and the images it names, without what only builds that data.
