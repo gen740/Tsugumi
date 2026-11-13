@@ -647,13 +647,10 @@ final class ChatController {
     case .text:
       bird.doing(String(localized: "考えています"))
     case .toolStarted(_, let tool, let args):
-      // The thought line follows the helpers too (and tidies as they work).
-      thoughts.note(tool: "\(name)/\(tool)", arguments: args)
       bird.doing(PresenceEvents.activity(tool: tool))
       showOnCanvas(tool: tool, arguments: args, bird: bird)
       if let row { items[row].tool = (tool, nil); items[row].text = args }
-    case .toolFinished(_, let tool, let ok, let summary):
-      thoughts.note(tool: "\(name)/\(tool)", ok: ok, summary: summary)
+    case .toolFinished(_, let tool, let ok, _):
       if PresenceEvents.writesSources(tool: tool) { bird.toolInputEnded(ok: ok) }
       tidySoon()
       if let row, items[row].tool?.name == tool { items[row].tool?.ok = ok }
@@ -685,7 +682,6 @@ final class ChatController {
     }
     switch e {
     case .text(let t):
-      thoughts.note(text: t)
       session.presence.doing(String(localized: "考えています"))
       if let last = items.last, last.role == "assistant", last.tool == nil {
         items[items.count - 1].text += t
@@ -712,9 +708,7 @@ final class ChatController {
       if name == "delegate" { startHelpers(args) }
       session.presence.doing(PresenceEvents.activity(tool: name))
       showOnCanvas(tool: name, arguments: args)
-      thoughts.note(tool: name, arguments: args)
     case .toolFinished(_, let name, let ok, let summary):
-      thoughts.note(tool: name, ok: ok, summary: summary)
       if PresenceEvents.writesSources(tool: name) { session.presence.toolInputEnded(ok: ok) }
       tidySoon()
       if let i = items.lastIndex(where: { $0.role == "tool" && $0.tool?.name == name && $0.tool?.ok == nil }) {
