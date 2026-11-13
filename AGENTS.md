@@ -13,12 +13,12 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 
 | Where | What |
 | --- | --- |
-| [protocol/](protocol/) | The FlatBuffers contract. The UI, the Web and the Agent all talk to `tsugumid` through this same RPC |
-| [core/](core/) | `tsugumid`: the document model, type checking, the scheduler, the embedded Nix evaluator, history and artifacts, versions (git) |
+| [protocol/](protocol/) | The FlatBuffers contracts for project RPC (`tsugumi.fbs`), the Agent service (`agent.fbs`) and Card workers (`worker.fbs`) |
+| [core/](core/) | `tsugumid`: the document model, type checking, the scheduler, the embedded Nix evaluator, history and artifacts, versions (git); `core/src/agent/` holds the host-side `tsugumi-agentd` service |
 | [sdk/](sdk/) | The Card ABI and runtime, the C++ / Python SDKs, the Nix SDK ([sdk/nix/default.nix](sdk/nix/default.nix)), the worker |
 | [macOS/](macOS/) | The SwiftUI app, the shared Linux VM (Virtualization.framework), image definitions |
 | [ui/](ui/) | Shared isolated web-module host and UI resources |
-| [agent/](agent/) | The Agent (model connections, conversations, tools derived from the RPC). The contract shared with the Web is in [agent/Shared/](agent/Shared/) |
+| [agent/](agent/) | Shared Agent prompts, contracts ([agent/Shared/](agent/Shared/)) and reference documents; the service implementation is in `core/src/agent/` |
 | [web/](web/) | The browser UI and its host server |
 | [remote/](remote/) | The Python execution daemon and durable job journal on the remote Linux host |
 | [cli/](cli/) | The `tsugumi` command (`install.sh` for Mac and Linux, `install.ps1` for Windows, building the distributions) |
