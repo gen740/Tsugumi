@@ -692,10 +692,10 @@ cache it by identity, and never read the Nix store themselves. Code is separate
 from retained display data; display and run retention rules are unchanged.
 Browser frames have opaque origins (`sandbox="allow-scripts"`, without
 `allow-same-origin`), no host DOM, storage or application bridge. CSP denies
-connections and external resources, forms, objects and base URLs. Browser
-sandbox/CSP does not prohibit a frame from navigating itself; deployments that
-need to prevent *all* outbound navigation must additionally enforce egress at
-the browser/network boundary. Mac uses the same inner frame in a nonpersistent
+connections and external resources, forms, objects and base URLs. The outer
+document allows no nested frame to load a URL (`frame-src 'none'`, in the
+server's header and in `viewer.html` itself), which also stops the Card's frame
+from navigating itself to another address and carrying data out in the URL. Mac uses the same inner frame in a nonpersistent
 WKWebView, with no file read grant, a navigation delegate refusing non-`about:`
 navigation, and content rules blocking network and file resources. Failure to
 compile these rules prevents loading. Only the trusted outer document has the

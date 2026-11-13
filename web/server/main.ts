@@ -557,7 +557,7 @@ function openPage(project?: string) {
 // which it evaluates: 'unsafe-eval', also for Vega's expressions) and
 // connects nowhere.
 const MODULE_HEADERS = {
-  'content-security-policy': "sandbox allow-scripts; default-src 'none'; script-src blob: 'unsafe-inline' 'unsafe-eval'; frame-src about: blob: 'self'; style-src 'unsafe-inline'; " +
+  'content-security-policy': "sandbox allow-scripts; default-src 'none'; script-src blob: 'unsafe-inline' 'unsafe-eval'; frame-src 'none'; style-src 'unsafe-inline'; " +
     "img-src data: blob:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
   'x-frame-options': 'SAMEORIGIN',
 }

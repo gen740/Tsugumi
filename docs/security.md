@@ -149,7 +149,7 @@ A setting that relaxes only the restrictions on seeing the file system. Where bu
 
 Plotly figures and Vega-Lite specs a Card sends are treated as untrusted data and run only inside a display component (`ui/modules`) that draws them with the bundled plotly.js / Vega.
 
-- Web UI: `/modules/viewer.html` is put in an iframe. Its response's CSP is `sandbox allow-scripts` (without `allow-same-origin`), so the component runs in an opaque origin and can use neither cookies nor `/api/`. With `default-src 'none'` and `connect-src 'none'` it loads nothing and connects nowhere. Its script is embedded in the page, and the library code is handed over by the parent page with postMessage. This is the only route that may be embedded (`frame-ancestors 'self'`); every other response forbids embedding.
+- Web UI: `/modules/viewer.html` is put in an iframe. Its response's CSP is `sandbox allow-scripts` (without `allow-same-origin`), so the component runs in an opaque origin and can use neither cookies nor `/api/`. With `default-src 'none'` and `connect-src 'none'` it loads nothing and connects nowhere. With `frame-src 'none'` the Card's inner frame (a `srcdoc` document) cannot navigate itself to any URL either. Its script is embedded in the page, and the library code is handed over by the parent page with postMessage. This is the only route that may be embedded (`frame-ancestors 'self'`); every other response forbids embedding.
 - macOS app: the component is opened in a WKWebView (with a non-persistent data store), and a content rule blocks every load other than `file:`.
 - In both, Vega's data loading (`data.url`) is refused by the loader. The SDK sends charts with their data inside the spec.
 

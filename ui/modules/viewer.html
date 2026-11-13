@@ -1,4 +1,7 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<html><head><meta charset="utf-8">
+<!-- The Card's frame is a srcdoc document; no nested frame may load a URL. This is what stops that
+     frame from navigating itself to an outside address (and carrying data out in the URL). -->
+<meta http-equiv="Content-Security-Policy" content="frame-src 'none'"><meta name="viewport" content="width=device-width, initial-scale=1">
 <style>html,body{margin:0;height:100%;overflow:hidden}iframe{border:0;width:100%;height:100%}</style></head>
 <body><script src="viewer.js"></script></body></html>

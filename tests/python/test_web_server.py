@@ -116,6 +116,8 @@ def test_the_plot_viewer_is_framed_sandboxed_and_reaches_nothing(web):
     assert directives["sandbox"] == "sandbox allow-scripts"  # no allow-same-origin
     assert directives["default-src"] == "default-src 'none'" and directives["connect-src"] == "connect-src 'none'"
     assert "'self'" not in directives["script-src"] and directives["frame-ancestors"] == "frame-ancestors 'self'"
+    # No nested frame may load a URL: the Card's srcdoc frame cannot navigate itself anywhere.
+    assert directives["frame-src"] == "frame-src 'none'" and b"frame-src 'none'" in data
     assert r.getheader("x-frame-options") == "SAMEORIGIN"
     r, _ = request(port, "GET", "/")
     assert r.getheader("x-frame-options") == "DENY" and "frame-ancestors 'none'" in r.getheader("content-security-policy")

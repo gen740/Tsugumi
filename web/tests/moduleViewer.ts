@@ -7,6 +7,8 @@ import { moduleThumbnailKey } from '../src/model/moduleThumbnails'
 
 // Exercise the real lifecycle runtime with a DOM stand-in and a real ES module.
 const script = fs.readFileSync(path.join(process.argv[2], 'ui/modules/viewer.js'), 'utf8')
+// The page itself forbids nested frames from loading a URL, wherever it is hosted (the Mac app too).
+assert.match(fs.readFileSync(path.join(process.argv[2], 'ui/modules/viewer.html'), 'utf8'), /Content-Security-Policy" content="frame-src 'none'"/)
 const runtime = script.slice(script.indexOf('function runtime()'), script.indexOf('frame.srcdoc ='))
 const messages: any[] = [], calls: any[] = []
 const listeners = new Map<string, (event: any) => any>()
