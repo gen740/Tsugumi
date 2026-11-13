@@ -68,14 +68,14 @@ protected:
   }
   auto Recents() -> Reply {
     return Call(
-        *human, H::RequestPayload::HostRecentListRequest,
+        *host, H::RequestPayload::HostRecentListRequest,
         [](Builder &b) { return H::CreateHostRecentListRequest(b).Union(); });
   }
 };
 
 TEST_F(HostProjectsFixture, CreatesPinnedDocumentsInNewAndExactlyEmptyFolders) {
   const auto defaults = Call(
-      *human, H::RequestPayload::HostProjectDefaultsRequest, [](Builder &b) {
+      *host, H::RequestPayload::HostProjectDefaultsRequest, [](Builder &b) {
         return H::CreateHostProjectDefaultsRequest(b).Union();
       });
   ASSERT_TRUE(Create("new", "leftToRight").Code().empty());
@@ -150,7 +150,7 @@ TEST_F(HostProjectsFixture,
             (std::filesystem::canonical(directory.path) / "sample-2").string());
   EXPECT_EQ(copy("missing").Code(), "demo_not_found");
   const auto duplicate = Call(
-      *human, H::RequestPayload::HostProjectDuplicateRequest, [&](Builder &b) {
+      *host, H::RequestPayload::HostProjectDuplicateRequest, [&](Builder &b) {
         return H::CreateHostProjectDuplicateRequest(
                    b, b.CreateString(source.string()),
                    b.CreateString(directory.path.string()),

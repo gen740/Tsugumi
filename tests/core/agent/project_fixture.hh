@@ -38,7 +38,7 @@ class AgentProjectFixture : public AgentFixture {
                   directory.path / "project.log");
     project_id = JsonString(project_ready, "/project_id");
     auto reply = Call(
-        *human, H::RequestPayload::RegisterProjectRequest, [&](Builder &b) {
+        *host, H::RequestPayload::RegisterProjectRequest, [&](Builder &b) {
           return H::CreateRegisterProjectRequest(
                      b, b.CreateString(project_id),
                      b.CreateString("unix:" +
