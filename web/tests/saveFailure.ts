@@ -32,7 +32,8 @@ const refused = new RPCFailure({ kind: D.FailureKind.invalid_document, diagnosti
   const s = session()
   s.displays.set('b', { runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'text', text: 'shown' } })
   assert.equal(s.displayFrame('b'), undefined, 'shown beside its Card, with no frame in the layout')
-  s.arrange([])
+  s.client = { layoutArrange: async () => ({ cards: [{ id: 'a', x: 0, y: 0 }, { id: 'b', x: 300, y: 0 }], frames: [{ id: 'b', x: 600, y: 0 }], notes: [], portOrders: [] }) } as never
+  await s.arrange([])
   const f = s.displayFrame('b')
   assert.notEqual(dbl(get(f, 'x')), undefined)
   assert.notEqual(dbl(get(f, 'y')), undefined)
