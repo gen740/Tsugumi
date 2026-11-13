@@ -177,7 +177,7 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
       ctx.display_image(data: bytes, media_type: str='image/png', alt: str='')
       ctx.display_points(x, y, z, colors=None)
       ctx.display_figure(*figures)  # matplotlib figures as the Card's image (several are stacked), whatever the
-      ctx.display_module(module: str, config, blobs=None)  # module is a Nix store identity or a declared views name
+      ctx.display_module(module: str, config, blobs=None)
       ctx.log(message: str)
       ctx.cancelled()
       ctx.remaining_ms()

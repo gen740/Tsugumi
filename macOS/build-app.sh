@@ -47,10 +47,10 @@ vm="$dist/tsugumi-vm"
 flatc_bin="$("$repo/macOS/tools/flatc-bin.sh")"
 swiftenv=(env -i HOME="$HOME" TSUGUMI_CLIENT_LIB_DIR="$repo/build-host/client" PATH="$flatc_bin:/usr/bin:/bin:/usr/sbin:/sbin")
 # Swift Build, also where it is not the default yet (Xcode 26.6 of the release
-# runner): its Bundle.module finds the packages' resource bundles in
+# runner), for Apple silicon only (the shared VM is arm64): its Bundle.module finds the packages' resource bundles in
 # Contents/Resources. The native build system's looks only next to the app
 # and in the build folder, so its app crashes on any other Mac.
-build_opts=(-c release --build-system swiftbuild)
+build_opts=(-c release --build-system swiftbuild --arch arm64)
 (cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --product Tsugumi)
 (cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --product tsugumi-vmhost)
 bin="$(cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"

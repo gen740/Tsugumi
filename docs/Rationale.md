@@ -84,6 +84,8 @@ Invocation work folders are scratch, separate from retained run history. The mos
 
 Even with `recordIO` off, the last inputs used for partial runs are kept ([Rerunning from the middle](#rerunning-from-the-middle)). Computation results you will keep using belong in Nix outputs; data you want to look at during trials belongs in the history or the artifacts.
 
+Storage is the practical reason for this division; the reason it sits where it does is in the [philosophy](Philosophy.md#a-laboratory-notebook-and-who-decides-what-is-kept). What a definition fixes (code and its environment) is the same wherever it is built, so Tsugumi builds it once and shares and reuses it without asking. What a run produced is not: a Card need not be deterministic, and whether a result is worth keeping is a person's judgement. So nothing reuses one run's values in place of another run, and a value or file outlives the next run only where a person asked for it. Putting data into a Nix definition is how a person moves it to the first side.
+
 | Where | What it keeps | What it is for |
 | --- | --- | --- |
 | Git (the project's folder) | The Workflow's definition, the code, params and the environment's definition | Following changes and starting another trial from an earlier version |
