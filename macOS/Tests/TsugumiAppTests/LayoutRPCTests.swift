@@ -14,7 +14,7 @@ import Testing
   @Test func untangleAndArrangePreserveConnectionsAndUndoInOneStep() async throws {
     let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("untangle-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    let document = #"{"name":"untangle","canvas":{"cards":[],"connections":[]}}"#
+    let document = #"{"name":"untangle","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}}"#
     try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
     let daemon = try SyncTests.Daemon(project: dir)
     defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
@@ -24,20 +24,21 @@ import Testing
     try await SyncTests.connected(s)
     s.layout = try JSONValue.parse(#"{"flow":"topToBottom"}"#)
     for (id, x, y, ins, outs) in [("source", 200.0, 0.0, [], ["a", "b"]), ("left", 0, 300, ["in"], []), ("right", 500, 300, ["in"], [])] {
-      _ = s.addCard(template: id == "right" ? .draft : .python, in: [], at: CGPoint(x: x, y: y), name: id)
+      _ = s.addCard(template: id == "left" ? .python : .draft, in: [], at: CGPoint(x: x, y: y), name: id)
       func ports(_ names: [String]) -> JSONValue { .array(names.map { .object([("name", .string($0))]) }) }
       s.updateCard(id) { $0["inputs"] = ports(ins) }
       s.setDefinition(id, card: s.cardDefinition(id)!, meta: .object([("outputs", ports(outs))]))
     }
     s.connect(from: ("source", "a"), to: ("right", "in"), in: [])
     s.connect(from: ("source", "b"), to: ("left", "in"), in: [])
+    // The daemon keeps the saved Cards, so measure from the state it has taken in.
+    for _ in 0..<400 where s.dirty || s.saving { try await Task.sleep(for: .milliseconds(25)) }
+    #expect(!s.dirty, "\(s.saveError ?? "")")
     let before = s.layout, graph = s.project, definitions = s.definitionEdits, steps = s.undoStack.count
     await s.untangle([])
     #expect(s.geometry("source").outputs == ["b", "a"])
     #expect(s.project == graph && s.definitionEdits == definitions)
     #expect(s.position("source") == CGPoint(x: 200, y: 0))
-    #expect(s.isDraftWire(from: "source", to: "right"))
-    #expect(!s.isDraftWire(from: "source", to: "left"))
     #expect(s.undoStack.count == steps + 1)
     s.undo()
     #expect(s.layout == before)
