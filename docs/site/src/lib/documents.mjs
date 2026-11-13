@@ -160,7 +160,8 @@ function linker(sourceRel, outRel, pages) {
       const to = pages.get(rel)
       return (to === outRel ? '' : up(to)) + tail || tail
     }
-    if (rel.startsWith('docs/assets/') || rel.startsWith('docs/site/')) return up(rel.slice('docs/'.length))
+    // Tooling READMEs under docs/site belong on GitHub, outside published assets.
+    if (rel.startsWith('docs/assets/') || (rel.startsWith('docs/site/') && !rel.endsWith('.md'))) return up(rel.slice('docs/'.length))
     const abs = path.join(ROOT, rel)
     const kind = fs.existsSync(abs) && fs.statSync(abs).isDirectory() ? 'tree' : 'blob'
     return `${REPO}/${kind}/main/${rel}${tail}`

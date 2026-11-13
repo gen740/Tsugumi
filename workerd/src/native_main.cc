@@ -54,6 +54,7 @@
 #include "tsugumi/sdk/abi.h"
 #include "tsugumi/message_json.hh"
 #include "schema.hh"
+#include "tsugumi/workerd/frame.hh"
 
 extern char** environ;
 
@@ -131,9 +132,10 @@ bool recv_full(int fd, void* p, size_t n) {
 }
 
 std::optional<std::string> read_frame(int fd) {
-  uint32_t len;
+  std::array<char, 4> prefix{};
   auto rd = fd == kData ? recv_full : read_full;
-  if (!rd(fd, &len, 4)) return std::nullopt;
+  if (!rd(fd, prefix.data(), prefix.size())) return std::nullopt;
+  const auto len = tsugumi::workerd::decode_length(prefix.data());
   if (len == 0 || len > kMaxFrame) return std::nullopt;
   std::string buf(len, '\0');
   if (!rd(fd, buf.data(), len)) return std::nullopt;
@@ -142,9 +144,9 @@ std::optional<std::string> read_frame(int fd) {
 
 void send_frame(flatbuffers::FlatBufferBuilder& b) {
   std::lock_guard<std::mutex> l(g_write_mu);
-  uint32_t len = b.GetSize();
-  write_full(kData, &len, 4);
-  write_full(kData, b.GetBufferPointer(), len);
+  const auto prefix = tsugumi::workerd::encode_length(b.GetSize());
+  write_full(kData, prefix.data(), prefix.size());
+  write_full(kData, b.GetBufferPointer(), b.GetSize());
 }
 
 std::string get_env(const std::vector<std::string>& env, const std::string& key) {

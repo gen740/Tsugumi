@@ -56,7 +56,7 @@ let package = Package(
       plugins: ["FlatcPlugin"]),
     .target(
       name: "TsugumiLauncher",
-      dependencies: ["TsugumiRPC"],
+      dependencies: ["TsugumiRPC", .product(name: "FlatBuffers", package: "flatbuffers")],
       path: "Sources/Launcher",
       swiftSettings: [.swiftLanguageMode(.v5)]),
     // Drives the shared VM without the app (tests); needs the virtualization entitlement.
@@ -123,12 +123,6 @@ let package = Package(
       name: "TsugumiAppTests",
       dependencies: ["TsugumiRPC", "TsugumiLauncher", "TsugumiApp", "TsugumiAgentClient"],
       path: "Tests/TsugumiAppTests",
-      swiftSettings: [.swiftLanguageMode(.v5)]),
-    // Drawing benchmarks: TSUGUMI_BENCH=1 swift test --filter TsugumiBenchmarks.
-    .testTarget(
-      name: "TsugumiBenchmarks",
-      dependencies: ["TsugumiApp"],
-      path: "Tests/TsugumiBenchmarks",
       swiftSettings: [.swiftLanguageMode(.v5)]),
   ]
 )

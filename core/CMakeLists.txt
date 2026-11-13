@@ -18,8 +18,6 @@ target_compile_features(tsugumi_nix_eval PRIVATE cxx_std_23)
 target_link_libraries(tsugumi_nix_eval PRIVATE PkgConfig::NIX Threads::Threads)
 
 add_library(tsugumi_core STATIC
-  src/util/crypto.cc
-  src/util/fs.cc
   src/util/log.cc
   src/util/process.cc
   src/util/sqlite.cc
@@ -65,7 +63,7 @@ target_include_directories(tsugumi_core
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/sdk/include)
 target_link_libraries(tsugumi_core PUBLIC tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
-  PkgConfig::SQLITE3 PkgConfig::LIBGIT2 Threads::Threads tsugumi_nix_eval)
+  PkgConfig::SQLITE3 PkgConfig::LIBGIT2 Threads::Threads tsugumi_nix_eval tsugumi_workerd_support)
 if(NOT APPLE)
   target_link_libraries(tsugumi_core PRIVATE PkgConfig::CRYPTO)
 endif()
@@ -87,13 +85,6 @@ add_executable(tsugumid src/main.cc)
 target_include_directories(tsugumid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(tsugumid PRIVATE tsugumi_core)
 install(TARGETS tsugumid RUNTIME DESTINATION bin)
-
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  add_executable(tsugumi-remote-worker src/remote_worker_main.cc)
-  target_include_directories(tsugumi-remote-worker PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_link_libraries(tsugumi-remote-worker PRIVATE tsugumi_core)
-  install(TARGETS tsugumi-remote-worker RUNTIME DESTINATION bin)
-endif()
 
 # Agent state and model execution live in the core, independently of project
 # lifetimes. Frontends only connect to this service through agent.fbs.
@@ -150,9 +141,11 @@ install(FILES ${TSUGUMI_GEN_DIR}/bfbs/agent.bfbs ${TSUGUMI_GEN_DIR}/bfbs/tsugumi
 # against these existing archives. The normal runtime contains no test code.
 set(TSUGUMI_TEST_SUPPORT_DIR "" CACHE PATH "Install reusable core test build inputs")
 if(TSUGUMI_TEST_SUPPORT_DIR)
-  install(TARGETS tsugumi_core tsugumi_json
+  install(TARGETS tsugumi_core tsugumi_json tsugumi_workerd_support tsugumi_worker_protocol
     ARCHIVE DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/lib)
   install(DIRECTORY include/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
+  install(DIRECTORY ${PROJECT_SOURCE_DIR}/workerd/include/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
+  install(FILES ${PROJECT_SOURCE_DIR}/workerd/src/journal.hh DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include/tsugumi-workerd)
   install(DIRECTORY src/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include/tsugumi-core
     FILES_MATCHING PATTERN "*.hh")
   install(FILES src/main.cc DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/src)

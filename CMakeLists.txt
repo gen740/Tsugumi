@@ -33,7 +33,7 @@ endif()
 
 set(TSUGUMI_PROTOCOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/protocol)
 set(TSUGUMI_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
-set(TSUGUMI_SCHEMAS tsugumi_enums data worker tsugumi agent)
+set(TSUGUMI_SCHEMAS tsugumi_enums data worker remote_worker tsugumi agent)
 
 # Bindings are generated with the standard flatc into the build tree only.
 set(_gen_cpp "")
@@ -54,7 +54,7 @@ foreach(schema ${TSUGUMI_SCHEMAS})
     COMMENT "flatc ${schema}.fbs"
     VERBATIM)
 endforeach()
-foreach(schema worker tsugumi agent)
+foreach(schema worker remote_worker tsugumi agent)
   list(APPEND _gen_bfbs ${TSUGUMI_GEN_DIR}/bfbs/${schema}.bfbs)
   add_custom_command(
     OUTPUT ${TSUGUMI_GEN_DIR}/bfbs/${schema}.bfbs
@@ -90,6 +90,7 @@ if(TSUGUMI_BUILD_CORE)
   find_package(Threads REQUIRED)
   find_package(CURL REQUIRED)
   add_subdirectory(sdk)
+  add_subdirectory(workerd)
   add_subdirectory(core)
 endif()
 

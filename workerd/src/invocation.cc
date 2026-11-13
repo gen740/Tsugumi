@@ -1,5 +1,4 @@
-// Executes one authenticated, staged remote invocation. The launcher owns
-// the journal and cgroup; Card code only gets the usual worker sandbox.
+// Realises and runs one accepted invocation inside its supervised namespace.
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -10,7 +9,10 @@
 
 #include <flatbuffers/reflection.h>
 
-#include "remote_invocation.hh"
+#include "execution_service.hh"
+#include "nix_store.hh"
+#include "tsugumi/workerd/invocation.hh"
+#include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -213,23 +215,21 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
   return outcome;
 }
 
-auto invoke(const stdfs::path& directory, const stdfs::path& blobs) -> void {
-  remote::JobJson job;
-  if (schema::decode(read(directory / "spec.json", 256 * 1024), job) || !job.has_required_fields())
-    throw std::runtime_error("invalid remote Nix job for this system");
-  const auto& derivation = *schema::get(job.derivation);
-  const auto& output = *schema::get(job.output);
-  if (*schema::get(job.system) != native_system() || !remote::store_path(derivation) ||
-      !derivation.ends_with(".drv") || !remote::store_path(output))
-    throw std::runtime_error("invalid remote Nix job for this system");
-  const auto& input_blobs = *schema::get(job.input_blobs);
-  const std::set<std::string> accepted(input_blobs.begin(), input_blobs.end());
+}  // namespace
+
+namespace workerd {
+auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs::path& store) -> void {
+  const auto job = parse_spec(read(directory / "spec.fb", kMaxSpec));
+  const auto& derivation = job->derivation;
+  const auto& output = job->output;
+  if (job->system != native_system()) throw std::runtime_error("remote job system mismatch");
+  const std::set<std::string> accepted(job->input_blobs.begin(), job->input_blobs.end());
   const auto blob = [&](const std::string& digest) -> stdfs::path {
     if (!crypto::is_sha256_hex(digest) || !accepted.contains(digest)) throw std::runtime_error("remote input blob was not submitted");
     return blobs / digest;
   };
   remote::InvocationJson invocation;
-  if (schema::decode(read(blob(*schema::get(job.invocation_sha256)), kWorkerLimit), invocation) ||
+  if (schema::decode(read(blob(job->invocation_sha256), kWorkerLimit), invocation) ||
       !crypto::is_uuid(*invocation.project_id))
     throw std::runtime_error("invalid remote invocation manifest");
   const auto input = directory / "staged";
@@ -266,12 +266,11 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs) -> void {
   std::string display;
   NixResult environment;
   WorkerOutcome outcome;
-  // Only this invocation's store is mounted into the worker. It cannot read
-  // source paths or outputs realised for another invocation or project.
-  const auto store = directory / "nix-root";
+  // Only definition data enter this persistent private Nix store. Invocation
+  // inputs and results remain in job scratch, outside the store.
   try {
     environment = RemoteWorkerStore::realise(ArchiveDerivationTransport(blob(*invocation.archive_sha256)), store,
-        WorkerDerivation{derivation, output, *schema::get(job.system)},
+        WorkerDerivation{derivation, output, job->system},
         [&](const std::string& line) { log(LogStream::build, line + "\n"); });
     outcome = run_worker(*call, invocation, input, directory, store, environment, log,
         [&](const DisplayData& data) { display = wire::standalone_display(data); });
@@ -295,19 +294,5 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs) -> void {
   fs::write_atomic(result_dir / "worker.fb", make_result(outcome), 0600);
 }
 
-}  // namespace
+}  // namespace workerd
 }  // namespace tsugumi
-
-auto main(int argc, char** argv) -> int {
-  if (argc != 3) {
-    std::cerr << "usage: tsugumi-remote-worker JOB_DIRECTORY BLOB_DIRECTORY\n";
-    return 2;
-  }
-  try {
-    tsugumi::NixEvaluator::init_process();
-    tsugumi::invoke(argv[1], argv[2]);
-  } catch (const std::exception& error) {
-    std::cerr << error.what() << '\n';
-    return 1;
-  }
-}

@@ -11,6 +11,7 @@ core
 client
 agent/Shared
 sdk
+workerd
 protocol
 nix
 tests/core

@@ -260,7 +260,7 @@ This idea starts from research and extends to turning research decisions into te
 | **Getting started** | [Installation](docs/INSTALL.md) · [Usage](docs/Usage.md) · [Your first Card](docs/CardGuide.md) · [The bundled demos](docs/Demos.md) · [Web UI](docs/WebUI.md) · [Using it from Claude Code](docs/claude-code.md) |
 | **The ideas** | [What to build so that we are not used by AI](docs/Philosophy.md) · [Why one Workflow for design, implementation and checking](docs/Rationale.md) · [Vision and applications](docs/Vision.md) · [Plans and guarantees](docs/Limitations.md) |
 | **How it works** | [Features](docs/features.md) · [Versions](docs/Versions.md) · [Security and isolation](docs/security.md) · [The RPC contract](docs/Protocol.md) · [Glossary](docs/Glossary.md) |
-| **Development** | [Development](docs/Development.md) · [Pinned versions](docs/Lock.md) · [Licenses and distribution](docs/LicenseAudit.md) |
+| **Development** | [Repository map](AGENTS.md#map) · [Tests](tests/README.md) · [Releasing](RELEASING.md) · [Documentation site](docs/site/README.md) · [Pinned versions](docs/Lock.md) · [Licenses and distribution](docs/LicenseAudit.md) |
 
 The list of all documents is in [docs/README.md](docs/README.md).
 

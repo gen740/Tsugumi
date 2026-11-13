@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { catalog, ROOT, STORY } from '../src/lib/documents.mjs'
+import { catalog, linker, REPO, ROOT, SITE, STORY } from '../src/lib/documents.mjs'
 
 const site = path.join(ROOT, 'build/docs')
 const origin = 'https://example.test/Tsugumi/'
@@ -55,6 +55,17 @@ test('HTML links, anchors and assets resolve under the GitHub Pages subpath', ()
     }
   }
   assert.deepEqual(failures, [])
+})
+
+test('repository guides stay on GitHub and outside the published catalog', () => {
+  const { pages } = catalog()
+  const link = linker('README.md', 'pages/readme.html', pages)
+  for (const source of ['AGENTS.md', 'RELEASING.md', 'tests/README.md', 'docs/site/README.md']) {
+    assert.ok(!pages.has(source), source)
+    assert.equal(link(source), `${REPO}/blob/main/${source}`)
+    assert.ok(!read('llms.txt').includes(`${SITE}${source}`), source)
+  }
+  assert.ok(!fs.existsSync(path.join(site, 'site/README.md')))
 })
 
 test('published JavaScript modules parse without a browser', () => {

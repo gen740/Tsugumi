@@ -26,8 +26,8 @@ struct ExecutionServicesSettings: View {
         Section {
           TextField("名前", text: field(\.name))
           TextField("サービス ID", text: field(\.id)).disabled(original != nil).monospaced()
-          TextField("実行デーモンの接続先", text: field(\.endpoint), prompt: Text(verbatim: "https://compute.example.org:8781"))
-            .monospaced().help("HTTPS の接続先、またはループバックアドレスの HTTP 接続先を入力してください。")
+          TextField("実行デーモンの接続先", text: field(\.endpoint), prompt: Text(verbatim: "tcp://127.0.0.1:8765"))
+            .monospaced().help("Unix ソケット、またはループバックアドレスの TCP 接続先を入力してください。")
           SecureField("認証トークン", text: Binding(get: { draft?.token ?? "" }, set: { value in
             draft?.token = value.isEmpty ? nil : value
             message = nil

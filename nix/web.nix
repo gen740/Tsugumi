@@ -34,6 +34,7 @@ buildNpmPackage {
       ../agent/Reference
       ../ui/modules
       ../ui/templates
+      ../protocol/remote_worker.fbs
       ../protocol/agent.fbs
       ../protocol/tsugumi.fbs
       ../protocol/tsugumi_enums.fbs

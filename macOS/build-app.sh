@@ -33,7 +33,7 @@ else
   name="Tsugumi Dev"
 fi
 dist="$repo/dist"
-# The version (VERSION, see docs/Development.md) and a build number that only grows.
+# The version (VERSION, see RELEASING.md) and a build number that only grows.
 version="$(cat "$repo/VERSION")"
 build="$(git -C "$repo" rev-list --count HEAD 2>/dev/null || echo 1)"
 app="$dist/Tsugumi.app"

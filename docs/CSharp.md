@@ -104,14 +104,4 @@ Nothing makes the lock for you. To add or update packages, deliberately:
 
 The Card exports the existing `tsugumi_load`, `tsugumi_main` and `tsugumi_run_start` ABI. A small C++ library loads `hostfxr`, initializes the pinned runtime and calls managed `[UnmanagedCallersOnly]` entry points. It adds no separate RPC or subprocess protocol. CLR diagnostics sockets are disabled; ordinary logs and structured failures remain available.
 
-A local comparison on macOS arm64 used .NET SDK 10.0.403/runtime 10.0.14, seven alternating warm-cache trials of the same `Add(int)` entry point, and a separately compiled assembly loaded through `Assembly.LoadFrom` and reflection:
-
-| Implementation | Median startup to loaded entry | Median repeated call (100,000 calls) | Dynamic assembly invocation |
-| --- | ---: | ---: | --- |
-| Process-owned `hostfxr` | 37.8 ms | 3.357 ns | succeeded in 7/7 trials |
-| NativeAOT shared library | 3.331 ms | 2.803 ns | `PlatformNotSupportedException` in 7/7 trials |
-| Separate `dotnet` process | 40.249 ms to process exit | not measured | not measured |
-
-These are a tiny warm-cache probe, not end-to-end Card throughput or cold-start claims. NativeAOT reduced warm startup, but restricting dynamic assembly loading and trimming/reflection would exclude existing managed libraries. Runtime hosting preserves those capabilities and amortizes initialization across resident invocations. A separate process would pay startup on each invocation or require a second resident protocol; the existing Card ABI already supplies the ownership, cancellation and lifetime boundary needed here.
-
-The documented platform constraints are in Microsoft's [runtime hosting tutorial](https://learn.microsoft.com/en-us/dotnet/core/tutorials/netcore-hosting), [NativeAOT deployment guide](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/) and [NativeAOT native-library guide](https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/libraries). FlatBuffers' [language support matrix](https://flatbuffers.dev/support/) describes the generated C# object API.
+The documented platform constraints are in Microsoft's [runtime hosting tutorial](https://learn.microsoft.com/en-us/dotnet/core/tutorials/netcore-hosting). FlatBuffers' [language support matrix](https://flatbuffers.dev/support/) describes the generated C# object API.

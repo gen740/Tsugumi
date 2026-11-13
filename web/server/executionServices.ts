@@ -1,14 +1,11 @@
 import { once } from 'node:events'
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import fs from 'node:fs'
-import http from 'node:http'
-import https from 'node:https'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import { Readable, Writable } from 'node:stream'
-import { pipeline } from 'node:stream/promises'
 import { L } from './i18n'
+import * as R from './remoteWorker'
 
 export interface ExecutionServiceCapabilities {
   serverId: string
@@ -37,26 +34,25 @@ export interface ExecutionServiceRegistration {
 type StoredExecutionService = ExecutionServiceConnection & { token: string }
 
 const linuxSystems = new Set(['aarch64-linux', 'x86_64-linux'])
-const operations = new Set(['probe', 'put_blob', 'get_blob', 'submit', 'status', 'cancel'])
 const registryPath = (support: string) => path.join(support, 'execution-services.json')
 const tokenPattern = /^[a-f0-9]{64}$/
 class RegistrationChanged extends Error {}
 const serviceIdPattern = /^[a-z][a-z0-9-]{0,31}$/
-const workerContract = 2
+const workerContract = R.contract
 
 function validServiceId(id: unknown): id is string {
   return typeof id === 'string' && id !== 'local' && serviceIdPattern.test(id)
 }
 
 function endpointUrl(value: unknown): string {
-  const message = L('HTTPS の接続先、またはループバックアドレスの HTTP 接続先を入力してください。')
-  if (typeof value !== 'string') throw Error(message)
+  if (typeof value !== 'string') throw Error('Enter a Unix socket or loopback TCP endpoint.')
   const endpoint = value.trim()
-  if (endpoint.length > 2048 || !/^https?:\/\/[^/@?#\\\s]+\/?$/.test(endpoint)) throw Error(message)
+  if (endpoint.length > 2048) throw Error('Remote worker endpoint is too long.')
+  if (/^unix:\/[^/\\\s%?#][^\\\s%?#]*$/.test(endpoint) && !/\p{Cc}/u.test(endpoint)) return endpoint
+  if (!/^tcp:\/\/(?:127\.0\.0\.1|\[::1\]):[0-9]+$/.test(endpoint)) throw Error('Enter unix:/absolute/socket or tcp://127.0.0.1:8765.')
   const url = new URL(endpoint)
-  if (url.port && Number(url.port) === 0) throw Error(message)
-  if (url.protocol === 'http:' && !/^http:\/\/(?:127\.0\.0\.1|\[::1\])(?::\d+)?\/?$/.test(endpoint)) throw Error(message)
-  return url.origin
+  if (!url.port || Number(url.port) > 65535 || Number(url.port) < 1) throw Error('Invalid TCP port.')
+  return endpoint
 }
 
 function registration(value: unknown): ExecutionServiceRegistration {
@@ -186,155 +182,41 @@ function projectScope(key: Buffer, token: unknown): string {
   return match[1]
 }
 
-type Header = Record<string, unknown>
-const headerLimit = 64 * 1024
-
-function frame(header: Header): Buffer {
-  const json = Buffer.from(JSON.stringify(header))
-  if (!json.length || json.length > headerLimit) throw Error('Invalid execution service header size.')
-  const length = Buffer.alloc(4)
-  length.writeUInt32BE(json.length)
-  return Buffer.concat([length, json])
-}
-
-function bodySize(header: Header): number {
-  const size = header.size ?? 0
-  if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 0 || size > 64 * 2 ** 30) throw Error('Invalid execution service body size.')
-  return size
-}
-
-class FramedReader {
-  private pending = Buffer.alloc(0)
-  private readBytes = 0
-  get consumed(): number { return this.readBytes }
-  private readonly source: AsyncIterator<Buffer>
-
-  constructor(stream: Readable) { this.source = stream[Symbol.asyncIterator]() }
-
-  private async exact(size: number): Promise<Buffer> {
-    const result = Buffer.allocUnsafe(size)
-    let offset = 0
-    while (offset < size) {
-      if (!this.pending.length) {
-        const next = await this.source.next()
-        if (next.done) throw Error('The execution service closed the connection before replying.')
-        this.pending = Buffer.from(next.value)
-      }
-      const take = Math.min(size - offset, this.pending.length)
-      this.pending.copy(result, offset, 0, take)
-      offset += take
-      this.pending = this.pending.subarray(take)
-    }
-    this.readBytes += size
-    return result
-  }
-
-  async header(): Promise<Header> {
-    const length = (await this.exact(4)).readUInt32BE()
-    if (!length || length > headerLimit) throw Error('Invalid execution service header size.')
-    const header = JSON.parse((await this.exact(length)).toString('utf8')) as Header
-    if (header?.version !== 1) throw Error('Unsupported execution service protocol version.')
-    bodySize(header)
-    return header
-  }
-
-  async *body(size: number): AsyncGenerator<Buffer> {
-    while (size > 0) {
-      const n = Math.min(64 * 1024, size)
-      yield await this.exact(n)
-      size -= n
-    }
-  }
-}
-
-async function* sendFrame(header: Header, body?: FramedReader): AsyncGenerator<Buffer> {
-  yield frame(header)
-  if (body) yield* body.body(bodySize(header))
-}
-
-function write(stream: Writable, data: Buffer): Promise<void> {
-  return new Promise((resolve, reject) => stream.write(data, (error) => error ? reject(error) : resolve()))
-}
-
-async function remote(entry: Pick<StoredExecutionService, 'endpoint' | 'token'>, header: Header, input?: FramedReader, socket?: net.Socket): Promise<Header> {
-  const url = new URL('/rpc', entry.endpoint)
-  const total = frame(header).length + bodySize(header)
-  const transport = url.protocol === 'https:' ? https : http
-  const pinned = typeof header.server_id === 'string' ? header.server_id : undefined
-  const waitForContinue = bodySize(header) > 0
-  let continued = !waitForContinue
-  let request: http.ClientRequest | undefined
-  let connectTimer: ReturnType<typeof setTimeout> | undefined
-  const disconnect = () => request?.destroy()
-  socket?.once('close', disconnect)
+async function remote(entry: Pick<StoredExecutionService, 'endpoint' | 'token'>, request: R.RequestT, guest?: net.Socket): Promise<R.MessageT> {
+  const endpoint = endpointUrl(entry.endpoint)
+  const socket = endpoint.startsWith('unix:') ? net.createConnection(endpoint.slice(5))
+    : net.createConnection({ host: new URL(endpoint).hostname.replace(/^\[|\]$/g, ''), port: Number(new URL(endpoint).port) })
+  const timer = setTimeout(() => socket.destroy(Error('Remote worker did not connect in time.')), 10_000)
+  socket.setTimeout(60_000, () => socket.destroy(Error('Remote worker connection timed out.')))
+  socket.on('error', () => {})
+  const disconnect = () => socket.destroy()
+  guest?.once('close', disconnect)
   try {
-    const response = await new Promise<http.IncomingMessage>((resolve, reject) => {
-      request = transport.request(url, { method: 'POST', agent: false, headers: {
-        'Authorization': 'Bearer ' + entry.token,
-        'Content-Type': 'application/octet-stream',
-        'Content-Length': total,
-        'Accept-Encoding': 'identity',
-        ...(pinned ? { 'X-Tsugumi-Server': pinned } : {}),
-        ...(waitForContinue ? { Expect: '100-continue' } : {}),
-      } }, resolve)
-      request.once('error', reject)
-      connectTimer = setTimeout(() => request?.destroy(Error('The execution daemon did not connect in time.')), 10_000)
-      request.once('socket', (stream) => {
-        if (stream.connecting) {
-          stream.once(url.protocol === 'https:' ? 'secureConnect' : 'connect', () => clearTimeout(connectTimer))
-        } else {
-          clearTimeout(connectTimer)
-        }
-      })
-      request.setTimeout(60_000, () => request?.destroy(Error('The execution daemon connection timed out.')))
-      const send = () => {
-        continued = true
-        void pipeline(Readable.from(sendFrame(header, input)), request!).catch(reject)
-      }
-      if (waitForContinue) {
-        request.once('continue', send)
-        request.flushHeaders()
-      } else {
-        send()
-      }
-    })
-    if (pinned && response.statusCode === 409 && (!waitForContinue || !continued)) {
-      throw new RegistrationChanged('The execution daemon at this endpoint has changed. Verify its connection in settings.')
-    }
-    if (response.statusCode !== 200) {
-      throw Error(L('実行デーモンへの接続に失敗しました（HTTP {0}）。', response.statusCode ?? ''))
-    }
-    if (!continued) throw Error('The execution daemon did not accept the request body.')
-    const length = Number(response.headers['content-length'])
-    if (!Number.isSafeInteger(length) || length < 5 || response.headers['content-encoding']) {
-      throw Error('Invalid execution daemon response length.')
-    }
-    const reader = new FramedReader(response)
-    const reply = await reader.header()
-    const size = bodySize(reply)
-    if (reader.consumed + size !== length || (!socket && size !== 0)) throw Error('Invalid execution daemon response size.')
-    if (socket) {
-      await write(socket, frame(reply))
-      for await (const chunk of reader.body(size)) await write(socket, chunk)
-    }
-    return reply
+    await once(socket, 'connect')
+    clearTimeout(timer)
+    request.token = entry.token
+    await R.write(socket, new R.MessageT(R.Payload.Request, request))
+    return await new R.Reader(socket).message()
   } finally {
-    clearTimeout(connectTimer)
-    socket?.removeListener('close', disconnect)
-    disconnect()
+    clearTimeout(timer)
+    guest?.removeListener('close', disconnect)
+    socket.destroy()
   }
 }
 
+function wireCapabilities(c: ExecutionServiceCapabilities): R.CapabilitiesT {
+  return new R.CapabilitiesT(c.serverId, null, c.nativeSystem, c.systems, c.resourceLimits, c.maxConcurrentJobs, c.workerContract)
+}
 async function probeExecutionService(entry: ExecutionServiceRegistration & { token: string }): Promise<ExecutionServiceConnection> {
-  const reply = await remote(entry, { version: 1, operation: 'probe', service: entry.id })
-  if (reply.ok !== true) throw Error(typeof reply.error === 'string' ? reply.error : 'The execution service probe failed.')
-  if (reply.executor !== 'daemon') throw Error(L('接続先で Tsugumi の実行デーモンを起動してください。'))
-  if (reply.worker_contract !== workerContract) {
-    const actual = typeof reply.worker_contract === 'number' ? reply.worker_contract : 'unreported'
-    throw Error(`Execution daemon worker contract is ${actual}. Expected ${workerContract}. Rebuild the execution daemon with this Tsugumi revision.`)
-  }
-  const checked = capabilities({ serverId: reply.server_id, nativeSystem: reply.native_system, systems: reply.systems,
-    isolation: reply.isolation, resourceLimits: reply.resource_limits, maxConcurrentJobs: reply.max_jobs, workerContract: reply.worker_contract })
+  const q = new R.RequestT()
+  q.bodyType = R.RequestBody.ProbeRequest
+  q.body = new R.ProbeRequestT()
+  const reply = R.checkedReply(await remote(entry, q))
+  if (reply.bodyType !== R.ReplyBody.Capabilities || !(reply.body instanceof R.CapabilitiesT)) throw Error('Remote worker did not report its capabilities.')
+  const c = reply.body
+  if (c.workerContract !== workerContract) throw Error(`Rebuild the remote worker with this Tsugumi revision (expected contract ${workerContract}).`)
+  const checked = capabilities({ serverId: c.serverId, nativeSystem: c.nativeSystem, systems: c.systems,
+    isolation: 'pid_namespace', resourceLimits: c.resourceLimits, maxConcurrentJobs: c.maxJobs, workerContract: c.workerContract })
   return { id: entry.id, name: entry.name, endpoint: entry.endpoint, capabilities: checked }
 }
 
@@ -356,36 +238,29 @@ export async function startExecutionBroker(support: string): Promise<string> {
     void (async () => {
       let forwarding = false
       try {
-        const reader = new FramedReader(socket)
-        const header = await reader.header()
-        const scope = projectScope(signingKey, header.broker_token)
+        const message = await new R.Reader(socket).message()
+        if (message.payloadType !== R.Payload.Request || !(message.payload instanceof R.RequestT)) throw Error('Expected remote worker request.')
+        const request = message.payload
+        const scope = projectScope(signingKey, request.token)
         const entries = loadStoredServices(support)
-        if (header.operation === 'catalog') {
-          const services = entries.map(({ id, capabilities: c }) => ({
-            id, native_system: c.nativeSystem, systems: c.systems, available: c.workerContract === workerContract, server_id: c.serverId,
-            executor: 'daemon', isolation: c.isolation, worker_contract: c.workerContract,
-            resource_limits: c.resourceLimits, max_jobs: c.maxConcurrentJobs,
-          }))
-          await write(socket, frame({ version: 1, ok: true, services }))
+        if (request.bodyType === R.RequestBody.CatalogRequest) {
+          const services = entries.map(({ id, capabilities: c }) => new R.TargetT(id, c.workerContract === workerContract, wireCapabilities(c)))
+          await R.write(socket, R.reply(R.ReplyBody.Catalog, new R.CatalogT(services)))
         } else {
-          if (typeof header.operation !== 'string' || !operations.has(header.operation)) throw Error('Unknown execution service operation.')
-          const entry = entries.find((e) => e.id === header.service)
-          if (!entry || header.server_id !== entry.capabilities.serverId || entry.capabilities.workerContract !== workerContract) {
+          if (request.bodyType === R.RequestBody.NONE || !request.body) throw Error('Missing remote worker request.')
+          const entry = entries.find((e) => e.id === request.service)
+          if (!entry || request.serverId !== entry.capabilities.serverId || entry.capabilities.workerContract !== workerContract) {
             throw new RegistrationChanged('The execution service registration changed. Verify its connection in settings.')
           }
-          delete header.broker_token
-          header.project_scope = scope
-          header.server_id = entry.capabilities.serverId
+          request.projectScope = scope
+          request.serverId = entry.capabilities.serverId
           forwarding = true
-          await remote(entry, header, reader, socket)
+          await R.write(socket, await remote(entry, request, socket))
         }
       } catch (e) {
-        // A transport interruption can happen after a request reached the gateway.
-        // EOF leaves its outcome unconfirmed. Only the gateway can reject it.
-        if (!forwarding || e instanceof RegistrationChanged) await write(socket, frame({
-          version: 1, ok: false, error: (e as Error).message,
-          ...(e instanceof RegistrationChanged ? { code: 'registration_changed' } : {}),
-        })).catch(() => {})
+        // A transport interruption leaves the submission's outcome unconfirmed.
+        if (!forwarding || e instanceof RegistrationChanged) await R.write(socket, R.failure(
+          e instanceof RegistrationChanged ? R.ErrorCode.RegistrationChanged : R.ErrorCode.Invalid, (e as Error).message)).catch(() => {})
       } finally { socket.end() }
     })()
   })

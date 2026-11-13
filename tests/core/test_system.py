@@ -3,14 +3,12 @@ the kernel has registered (binfmt_misc). Which systems a Card may name (Cards
 of every language may), and what a run says when no emulator is there.
 
 Emulated runs themselves are checked in the shared VM on a Mac, with Rosetta
-and with qemu (TSUGUMI_VM_X86=qemu): docs/Development.md#tests.
+and with qemu (TSUGUMI_VM_X86=qemu): tests/README.md.
 """
 from __future__ import annotations
 
-import json
 import platform
 import socketserver
-import struct
 import sys
 import tempfile
 import threading
@@ -18,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from harness import remote_worker as R
 from harness.daemon import Daemon
 from harness.scenario import run
 from projects import MSG_FBS, card, conn, run_and_wait, write
@@ -66,15 +65,11 @@ def diagnostics(c, card_id: str) -> list[str]:
 def registered_remote(monkeypatch, resource_limits):
     class Catalog(socketserver.StreamRequestHandler):
         def handle(self):
-            size = struct.unpack(">I", self.rfile.read(4))[0]
-            assert json.loads(self.rfile.read(size)) == {"version": 1, "operation": "catalog"}
-            reply = json.dumps({"version": 1, "ok": True, "services": [{
-                "id": "cluster", "server_id": "2" * 64, "native_system": FOREIGN,
-                "systems": [FOREIGN], "available": True, "executor": "daemon",
-                "isolation": "pid_namespace", "resource_limits": resource_limits,
-                "max_jobs": 8, "worker_contract": 2,
-            }]}).encode()
-            self.wfile.write(struct.pack(">I", len(reply)) + reply)
+            assert R.read(self.rfile).payload.bodyType == R.RequestBody.CatalogRequest
+            caps = R.CapabilitiesT(serverId="2" * 64, nativeSystem=FOREIGN, systems=[FOREIGN],
+                                   resourceLimits=resource_limits, maxJobs=8, workerContract=3)
+            self.wfile.write(R.frame(R.reply(R.ReplyBody.Catalog, R.CatalogT(
+                services=[R.TargetT(id="cluster", available=True, capabilities=caps)]))))
 
     with tempfile.TemporaryDirectory(prefix="tsg-broker-", dir="/tmp") as directory:
         endpoint = str(Path(directory) / "socket")

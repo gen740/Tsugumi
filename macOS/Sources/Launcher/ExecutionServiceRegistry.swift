@@ -41,7 +41,7 @@ struct StoredExecutionService: Codable, Equatable {
 }
 
 public enum ExecutionServiceRegistry {
-  static let workerContract = 2
+  static let workerContract = 3
 
   public struct Invalid: LocalizedError {
     let message: String
@@ -49,17 +49,12 @@ public enum ExecutionServiceRegistry {
   }
 
   static func endpointURL(_ value: String) throws -> URL {
-    let invalid = Invalid(message: String(localized: "HTTPS の接続先、またはループバックアドレスの HTTP 接続先を入力してください。", bundle: .main))
+    let invalid = Invalid(message: "Enter unix:/absolute/socket or tcp://127.0.0.1:8765.")
     let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard value.count <= 2048, matches(value, #"https?://[^/@?#\\\s]+/?"#),
-          var parts = URLComponents(string: value), let host = parts.host,
-          matches(host, #"(?:[A-Za-z0-9.-]+|\[[A-Fa-f0-9:]+\])"#),
-          parts.port.map({ (1...65535).contains($0) }) ?? true else { throw invalid }
-    if parts.scheme == "http", !matches(value, #"http://(?:127\.0\.0\.1|\[::1\])(?::[0-9]+)?/?"#) { throw invalid }
-    parts.host = host.lowercased()
-    if parts.port == (parts.scheme == "https" ? 443 : 80) { parts.port = nil }
-    parts.path = ""
-    guard let url = parts.url else { throw invalid }
+    guard value.count <= 2048 else { throw invalid }
+    if matches(value, #"unix:/[^/\\\s%?#][^\\\s%?#]*"#), value.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }), let url = URL(string: value) { return url }
+    guard matches(value, #"tcp://(?:127\.0\.0\.1|\[::1\]):[0-9]+"#),
+          let parts = URLComponents(string: value), let port = parts.port, (1...65535).contains(port), let url = parts.url else { throw invalid }
     return url
   }
 

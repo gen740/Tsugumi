@@ -5,14 +5,13 @@ import shutil
 import sqlite3
 
 import pytest
-
 from harness.fixtures import worker_project
-from harness.scenario import Project, STRING_OUTPUT, run, wait_run
-from tsugumi_client import RpcFailure, change, new_id, path, text
+from harness.scenario import STRING_OUTPUT, Project, run, wait_run
 from Tsugumi.Data.RunState import RunState
+from tsugumi_client import RpcFailure, change, new_id, path, text
 
 
-@pytest.mark.parametrize("version", [3, 5], ids=["older", "newer"])
+@pytest.mark.parametrize("version", [4, 6], ids=["older", "newer"])
 def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
     """The daemon refuses an incompatible local history database and leaves its contents intact."""
     history_dir = tmp_path / "history"
@@ -28,7 +27,7 @@ def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
         connection.close()
     original = database.read_bytes()
 
-    with pytest.raises(RuntimeError, match=rf"has schema version {version}, but this Tsugumi requires 4"):
+    with pytest.raises(RuntimeError, match=rf"has schema version {version}, but this Tsugumi requires 5"):
         core_factory(history_dir=history_dir)
 
     assert database.read_bytes() == original

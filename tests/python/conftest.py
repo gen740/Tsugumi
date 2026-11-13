@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "core"))
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build"))
 TSUGUMID = Path(os.environ.get("TSUGUMID", BUILD / "core" / "tsugumid"))
-WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "sdk" / "tsugumi-worker"))
+WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "workerd" / "tsugumi-worker"))
 SDK = Path(os.environ.get("TSUGUMI_SDK_DIR", ROOT / "sdk"))
 WEB_DIST = Path(os.environ.get("TSUGUMI_WEB_DIST", ROOT / "web" / "dist"))
 
