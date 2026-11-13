@@ -1,4 +1,5 @@
 import AppKit
+import FlatBuffers
 import Foundation
 import TsugumiRPC
 
@@ -1151,13 +1152,14 @@ extension ProjectSession {
 
   /// Moves a selection (world units) as one edit: one save, one undo. Layout
   /// only: no computation is re-resolved for a move. Ports around the moved Cards
-  /// are reordered in the same edit when that removes wire crossings. With a grid (`snap`) the
+  /// are then reordered in the same undo step when that removes wire crossings. With a grid (`snap`) the
   /// Cards go by whole grids from where they are drawn, and what moves with them
   /// goes by the same step, so the arrangement stays. Notes and frames alone
   /// land on whole numbers, as when dragged alone.
-  func moveSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, by moved: CGSize, snap: Double?) {
+  @discardableResult
+  func moveSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, by moved: CGSize, snap: Double?) -> Task<Void, Never> {
     let d = snap.flatMap { g in cards.isEmpty ? nil : CGSize(width: snapToGrid(moved.width, g), height: snapToGrid(moved.height, g)) } ?? moved
-    edit { s in
+    let step = edit { s in
       // Frames first: where one stands is worked out from its Card.
       for k in frames where s.instance(k) != nil && !s.frameFollowsCard(k, moving: cards) {
         let r = s.displayRect(k, origin: s.placedPosition(k))
@@ -1173,13 +1175,16 @@ extension ProjectSession {
         let from = snap.map { CGPoint(x: snapToGrid(p.x, $0), y: snapToGrid(p.y, $0)) } ?? p
         s.setPosition(k, CGPoint(x: from.x + d.width, y: from.y + d.height))
       }
-      // Wires that the move made cross: the same edit, so one undo takes both back.
-      if let scope = cards.first.map({ Array(path($0).dropLast()) }) { s.untangleAround(scope, moved: cards) }
       for id in notes {
         s.changeNote(id) { n in
           n["x"] = .real(((n["x"]?.double ?? 0) + d.width).rounded())
           n["y"] = .real(((n["y"]?.double ?? 0) + d.height).rounded())
         }
+      }
+    }
+    return Task { @MainActor in
+      if let step, let scope = cards.first.map({ Array(path($0).dropLast()) }) {
+        await untangleAround(scope, moved: cards, step: step)
       }
     }
   }
@@ -1210,60 +1215,108 @@ extension ProjectSession {
     }
   }
 
-  /// Lays out a scope's Cards, output frames and notes (layout only, one undo):
-  /// see `arrangeCards`. Ports then take the order that crosses fewer wires, and
-  /// the Cards are placed once more for that order, so the wires the layout drew
-  /// straight are straight again.
-  func arrange(_ scope: [String]) {
-    edit { s in
-      s.placeArranged(scope)
-      let orders = s.untangledOrders(scope)
-      if orders.isEmpty { return }
-      s.applyPortOrders(scope, orders)
-      s.placeArranged(scope)
+  /// The core proposes the layout; it is saved as one ordinary edit with undo.
+  func arrange(_ scope: [String]) async {
+    let scene = layoutScene(scope)
+    guard let placed = await proposed(scope, scene: scene, arrange: true) else { return }
+    edit { $0.applyArranged(scope, scene: scene, placed: placed) }
+  }
+
+  /// Measurements only. Geometry and saved port order belong to presentation;
+  /// all decisions that rewrite the layout are made by the project core.
+  func layoutScene(_ scope: [String]) -> Tsugumi_RPC_LayoutSceneT {
+    let scene = Tsugumi_RPC_LayoutSceneT()
+    scene.flow = flow.rawValue
+    scene.grid = AppPreferences.shared.gridSize
+    scene.snap = AppPreferences.shared.showGrid
+    let ids = cards(in: scope).compactMap { $0["id"]?.string }
+    scene.cards = ids.map { id in
+      let k = key(scope + [id]), g = geometry(k), at = placedPosition(k)
+      func ports(_ names: [String], output: Bool) -> [Tsugumi_RPC_LayoutPortT?] {
+        names.map { name in
+          let p = g.port(name, output: output), v = Tsugumi_RPC_LayoutPortT()
+          v.name = name; v.x = p.x; v.y = p.y
+          return v
+        }
+      }
+      let c = Tsugumi_RPC_LayoutCardT()
+      c.id = id; c.x = at.x; c.y = at.y; c.width = g.size.width; c.height = g.size.height
+      c.inputs = ports(g.inputs, output: false); c.outputs = ports(g.outputs, output: true)
+      c.reorderable = [.code, .draft, .input, .subgraph].contains(kind(k))
+      return c
+    }
+    scene.wires = connections(in: scope).compactMap { c in
+      guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
+            let t = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
+      let w = Tsugumi_RPC_LayoutWireT()
+      w.from = f; w.fromPort = fp; w.to = t; w.toPort = tp
+      return w
+    }
+    scene.frames = framedCards(in: scope).map { k in
+      let r = displayRect(k, origin: placedPosition(k)), b = Tsugumi_RPC_LayoutBoxT()
+      b.id = path(k).last!; b.x = r.minX; b.y = r.minY; b.width = r.width; b.height = r.height
+      return b
+    }
+    scene.notes = notes(in: scope).compactMap { n in
+      guard let id = n["id"]?.string else { return nil }
+      let b = Tsugumi_RPC_LayoutBoxT()
+      b.id = id; b.x = n["x"]?.double ?? 0; b.y = n["y"]?.double ?? 0
+      b.width = n["width"]?.double ?? 240; b.height = n["height"]?.double ?? 120
+      return b
+    }
+    func bar(_ side: String) -> Tsugumi_RPC_LayoutBarT? {
+      guard !scope.isEmpty else { return nil }
+      let b = Tsugumi_RPC_LayoutBarT()
+      b.ends = (boundary(key(scope))?[side]?.object ?? []).map { name, endpoint in
+        let e = Tsugumi_RPC_LayoutBarEndT()
+        e.name = name; e.card = endpoint["card"]?.string ?? ""; e.port = endpoint["port"]?.string ?? ""
+        return e
+      }
+      let at = boundaryPosition(scope, side)
+      b.x = at.map { Double($0.x) }; b.y = at.map { Double($0.y) }
+      return b
+    }
+    scene.inputs = bar("inputs"); scene.outputs = bar("outputs")
+    return scene
+  }
+
+  private func sceneBytes(_ scene: Tsugumi_RPC_LayoutSceneT) -> Data {
+    var builder = FlatBufferBuilder(initialSize: 1024)
+    var scene = scene
+    let offset = Tsugumi_RPC_LayoutScene.pack(&builder, obj: &scene)
+    builder.finish(offset: offset)
+    return builder.data
+  }
+
+  private func proposed(_ scope: [String], scene: Tsugumi_RPC_LayoutSceneT, arrange: Bool,
+                        around: [String] = []) async -> Tsugumi_RPC_LayoutProposalT? {
+    guard let client = rpc else { return nil }
+    let before = docState(), bytes = sceneBytes(scene), step = undoStack.last
+    do {
+      let result = try await (arrange ? client.layoutArrange(scene) : client.layoutUntangle(scene, around: around))
+      // Undo, another edit, reconnect or changed measurements invalidate the proposal.
+      guard rpc === client, docState() == before, undoStack.last === step,
+            sceneBytes(layoutScene(scope)) == bytes else { return nil }
+      return result
+    } catch {
+      notice = String(describing: error)
+      return nil
     }
   }
 
-  /// A step of an edit. Sizes and port positions are those of `CardGeometry`.
-  private func placeArranged(_ scope: [String]) {
-    let ids = cards(in: scope).compactMap { $0["id"]?.string }
-    let nodes: [ArrangeCard] = ids.map { id in
-      let g = geometry(key(scope + [id]))
-      func ports(_ names: [String], output: Bool) -> [ArrangePort] {
-        names.map { let p = g.port($0, output: output); return ArrangePort(name: $0, x: Double(p.x), y: Double(p.y)) }
-      }
-      return ArrangeCard(id: id, width: Double(g.size.width), height: Double(g.size.height), inputs: ports(g.inputs, output: false), outputs: ports(g.outputs, output: true))
-    }
-    let wires: [ArrangeWire] = connections(in: scope).compactMap { c in
-      guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
-            let t = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
-      return ArrangeWire(from: f, fromPort: fp, to: t, toPort: tp)
-    }
-    let frames: [ArrangeBox] = ids.compactMap { id in
-      let k = key(scope + [id]), f = displayFrame(k)
-      guard displays[k] != nil || f != nil, f?["hidden"]?.bool != true else { return nil }
-      return ArrangeBox(id: id, width: f?["width"]?.double ?? 320, height: f?["height"]?.double ?? 170)
-    }
-    let boxes: [ArrangeBox] = notes(in: scope).compactMap { n in
-      n["id"]?.string.map { ArrangeBox(id: $0, width: n["width"]?.double ?? 240, height: n["height"]?.double ?? 120) }
-    }
-    func bar(_ side: String) -> [ArrangeBarEnd] {
-      guard !scope.isEmpty else { return [] }
-      return (boundary(key(scope))?[side]?.object ?? []).map { ArrangeBarEnd(card: $0.1["card"]?.string ?? "", port: $0.1["port"]?.string ?? "") }
-    }
-    let placed = arrangeCards(ArrangeInput(flow: flow, grid: AppPreferences.shared.gridSize, snap: AppPreferences.shared.showGrid, cards: nodes, wires: wires, frames: frames, notes: boxes,
-                                           boundaryInputs: bar("inputs"), boundaryOutputs: bar("outputs")))
-    for c in placed.cards { setPosition(key(scope + [c.id]), CGPoint(x: c.x, y: c.y)) }
+  private func applyArranged(_ scope: [String], scene: Tsugumi_RPC_LayoutSceneT, placed: Tsugumi_RPC_LayoutProposalT) {
+    for c in placed.cards.compactMap({ $0 }) { setPosition(key(scope + [c.id]), CGPoint(x: c.x, y: c.y)) }
+    applyPortOrders(scope, placed.portOrders.compactMap { $0 })
     updateLayout(of: scope) { l in
       if !placed.frames.isEmpty {
         var displays = l["displays"] ?? .object([])
-        for f in placed.frames {
+        for f in placed.frames.compactMap({ $0 }) {
           let lk = layoutKey(key(scope + [f.id]))
           var d = displays[lk] ?? .object([])
           d["x"] = .real(f.x)
           d["y"] = .real(f.y)
           // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
-          if let size = frames.first(where: { $0.id == f.id }) {
+          if let size = scene.frames.compactMap({ $0 }).first(where: { $0.id == f.id }) {
             d["width"] = .real(size.width)
             d["height"] = .real(size.height)
           }
@@ -1273,7 +1326,7 @@ extension ProjectSession {
       }
       if !placed.notes.isEmpty, let list = l["notes"]?.array {
         l["notes"] = .array(list.map { n in
-          guard let at = placed.notes.first(where: { $0.id == n["id"]?.string }), (n["scope"]?.string ?? "") == "" else { return n }
+          guard let at = placed.notes.compactMap({ $0 }).first(where: { $0.id == n["id"]?.string }), (n["scope"]?.string ?? "") == "" else { return n }
           var copy = n
           copy["x"] = .real(at.x)
           copy["y"] = .real(at.y)
@@ -1285,21 +1338,22 @@ extension ProjectSession {
     }
   }
 
-  /// Reduce crossings while keeping every Card in place, in one undo step.
-  func untangle(_ scope: [String]) {
-    let orders = untangledOrders(scope)
-    if !orders.isEmpty { edit { $0.applyPortOrders(scope, orders) } }
+  /// Reduces crossings while keeping all positions, as one undo step.
+  func untangle(_ scope: [String]) async {
+    let scene = layoutScene(scope)
+    guard let proposal = await proposed(scope, scene: scene, arrange: false), !proposal.portOrders.isEmpty else { return }
+    edit { $0.applyPortOrders(scope, proposal.portOrders.compactMap { $0 }) }
   }
 
-  /// A step of an edit that moved Cards: the ports of what moved and of the Cards
-  /// wired to it take a better order when that draws fewer crossings among their
-  /// wires. Other Cards retain their orders, and their wires still count.
-  func untangleAround(_ scope: [String], moved: Set<CardKey>) {
-    let ids = Set(moved.compactMap { k -> String? in
+  private func untangleAround(_ scope: [String], moved: Set<CardKey>, step: UndoEntry) async {
+    let ids = moved.compactMap { k -> String? in
       let p = path(k)
       return p.count == scope.count + 1 && Array(p.dropLast()) == scope ? p.last : nil
-    })
-    if !ids.isEmpty { applyPortOrders(scope, untangledOrders(scope, around: ids)) }
+    }.sorted()
+    guard !ids.isEmpty else { return }
+    let scene = layoutScene(scope)
+    guard let proposal = await proposed(scope, scene: scene, arrange: false, around: ids) else { return }
+    editInto(step) { $0.applyPortOrders(scope, proposal.portOrders.compactMap { $0 }) }
   }
 
   /// Whether the canvas shows this Card's ports in an order of its own.
@@ -1325,65 +1379,15 @@ extension ProjectSession {
     }
   }
 
-  private func untangledOrders(_ scope: [String], around: Set<String>? = nil) -> [PortOrder] {
-    let ids = cards(in: scope).compactMap { $0["id"]?.string }
-    var nodes = ids.map { id in
-      let k = key(scope + [id]), g = geometry(k), at = placedPosition(k)
-      func ports(_ names: [String], output: Bool) -> [ArrangePort] {
-        names.map { let p = g.port($0, output: output); return ArrangePort(name: $0, x: p.x, y: p.y) }
-      }
-      return UntangleCard(card: ArrangeCard(id: id, width: g.size.width, height: g.size.height,
-        inputs: ports(g.inputs, output: false), outputs: ports(g.outputs, output: true)), x: at.x, y: at.y,
-        movable: [.code, .draft, .input, .subgraph].contains(kind(k)))
-    }
-    var wires: [ArrangeWire] = connections(in: scope).compactMap { c in
-      guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
-            let t = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
-      return ArrangeWire(from: f, fromPort: fp, to: t, toPort: tp)
-    }
-    // Fixed boundary nodes account for outer wires when inner ports move.
-    if !scope.isEmpty, let boundary = boundary(key(scope)) {
-      let ins = boundary["inputs"]?.object ?? [], outs = boundary["outputs"]?.object ?? []
-      if !ins.isEmpty || !outs.isEmpty {
-        var box = nodes.reduce(CGRect.null) { $0.union(CGRect(x: $1.x, y: $1.y, width: $1.card.width, height: $1.card.height)) }
-        if box.isNull { box = CGRect(x: 0, y: 0, width: 240, height: 120) }
-        let width = max(box.width, Double(max(ins.count, outs.count)) * 110 + 40), x = box.midX - width / 2
-        for output in [false, true] {
-          let side = output ? "outputs" : "inputs", list = output ? outs : ins, id = "\u{0}" + side
-          let at = boundaryPosition(scope, side) ?? CGPoint(x: x, y: output ? box.maxY + 56 : box.minY - 96)
-          let ports = list.enumerated().map { i, e in ArrangePort(name: e.0, x: width * Double(i + 1) / Double(list.count + 1), y: output ? 0 : 40) }
-          nodes.append(UntangleCard(card: ArrangeCard(id: id, width: width, height: 40, inputs: output ? ports : [], outputs: output ? [] : ports), x: at.x, y: at.y, movable: false))
-          for (name, endpoint) in list {
-            guard let card = endpoint["card"]?.string, let port = endpoint["port"]?.string else { continue }
-            wires.append(output ? ArrangeWire(from: card, fromPort: port, to: id, toPort: name) : ArrangeWire(from: id, fromPort: name, to: card, toPort: port))
-          }
-        }
-      }
-    }
-    let frames = framedCards(in: scope).map { displayRect($0, origin: placedPosition($0)) }
-    guard let around else { return untanglePorts(flow: flow, cards: nodes, wires: wires, extra: frames) }
-    // A move changes nothing among Cards that moved together, nor for a Card with no wires.
-    if !wires.contains(where: { around.contains($0.from) != around.contains($0.to) }) { return [] }
-    var neighbors = around
-    for w in wires {
-      if around.contains(w.from) { neighbors.insert(w.to) }
-      if around.contains(w.to) { neighbors.insert(w.from) }
-    }
-    for i in nodes.indices {
-      nodes[i].movable = nodes[i].movable && neighbors.contains(nodes[i].card.id)
-    }
-    return untanglePorts(flow: flow, cards: nodes, wires: wires, extra: frames)
-  }
-
-  private func applyPortOrders(_ scope: [String], _ orders: [PortOrder]) {
+  private func applyPortOrders(_ scope: [String], _ orders: [Tsugumi_RPC_LayoutPortOrderT]) {
     for order in orders {
       let k = key(scope + [order.id])
       let at = position(k)
       updateLayout(of: scope) { l in
         var cards = l["cards"] ?? .object([])
         var entry = cards[layoutKey(k)] ?? .object([("x", .real(at.x)), ("y", .real(at.y))])
-        entry["inputOrder"] = .array(order.inputs.map(JSONValue.string))
-        entry["outputOrder"] = .array(order.outputs.map(JSONValue.string))
+        entry["inputOrder"] = .array(order.inputs.compactMap { $0 }.map(JSONValue.string))
+        entry["outputOrder"] = .array(order.outputs.compactMap { $0 }.map(JSONValue.string))
         cards[layoutKey(k)] = entry
         l["cards"] = cards
       }

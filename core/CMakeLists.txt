@@ -47,12 +47,19 @@ add_library(tsugumi_core STATIC
   src/remote_invocation.cc
   src/remote_execution_service.cc
   src/scheduler.cc
+  src/layout.cc
+  src/layout_place.cc
+  src/layout_wires.cc
+  src/service_layout.cc
   src/service.cc
   src/service_run.cc
   src/service_shell.cc
   src/daemon.cc
   ${CMAKE_CURRENT_BINARY_DIR}/tsugumi_rpc_bfbs.cc
 )
+set_source_files_properties(src/layout.cc src/layout_place.cc src/layout_wires.cc
+  PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+
 target_include_directories(tsugumi_core
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/sdk/include)

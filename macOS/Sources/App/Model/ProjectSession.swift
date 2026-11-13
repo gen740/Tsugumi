@@ -348,7 +348,7 @@ final class ProjectSession {
   /// changes made since by the Agent or another window stay.
   final class UndoEntry {
     let before: DocState
-    let after: DocState
+    var after: DocState
     var sourcesBefore: [String: SourceValue]
     let sourcesAfter: [String: SourceValue]
     init(before: DocState, after: DocState, sourcesBefore: [String: SourceValue], sourcesAfter: [String: SourceValue]) {
@@ -1106,7 +1106,8 @@ final class ProjectSession {
   }
 
   /// Applies an edit and saves it at once. One call is one step of undo.
-  func edit(_ change: (ProjectSession) -> Void) {
+  @discardableResult
+  func edit(_ change: (ProjectSession) -> Void) -> UndoEntry? {
     let before = docState(), beforeSnap = snapshot()
     if !dirty { draftBase = makeBase() }
     change(self)
@@ -1114,13 +1115,29 @@ final class ProjectSession {
     let afterSnap = snapshot()
     guard beforeSnap != afterSnap else {
       settleDraftBase()
-      return
+      return nil
     }
-    undoStack.append(record(before: before, beforeSnap: beforeSnap, after: docState(), afterSnap: afterSnap))
+    let step = record(before: before, beforeSnap: beforeSnap, after: docState(), afterSnap: afterSnap)
+    undoStack.append(step)
     if undoStack.count > 500 { undoStack.removeFirst() }
     redoStack.removeAll()
     settleDraftBase()
     scheduleSave()
+    return step
+  }
+
+  /// Joins an asynchronous layout proposal to the drag that requested it.
+  func editInto(_ step: UndoEntry, _ change: (ProjectSession) -> Void) {
+    guard undoStack.last === step else { return }
+    let before = snapshot()
+    if !dirty { draftBase = makeBase() }
+    change(self)
+    normalizeExternalEdits()
+    if before != snapshot() {
+      step.after = docState()
+      scheduleSave()
+    }
+    settleDraftBase()
   }
 
   func undo() {

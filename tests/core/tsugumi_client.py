@@ -70,7 +70,7 @@ def _request_class(name: str):
     return getattr(module, f"{name}T")
 
 
-def make(name: str, **fields: Any):
+def make(name: str, /, **fields: Any):
     """Builds a request object, e.g. make("ProjectSaveRequest", baseRev=1, ...)."""
     obj = _request_class(name)()
     for k, v in fields.items():

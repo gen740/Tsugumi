@@ -157,6 +157,7 @@ class Service : public RequestSink {
   void file_read(RequestIn& req);
   void file_format(RequestIn& req);
   void output_types(RequestIn& req);
+  auto layout_proposal(RequestIn& req) -> void;
   void nix_source_resolve(RequestIn& req);
   void attached_folder_read(RequestIn& req);
   void sdk_status(RequestIn& req);

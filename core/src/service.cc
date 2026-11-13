@@ -431,7 +431,7 @@ std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {
       "SessionHello", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
       "ProjectReload", "ProjectValidate", "ProjectImport", "ProjectCacheClear", "ProjectCacheUsage", "RunHistoryDelete", "OperationGet",
-      "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "AttachedFolderRead",
+      "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "LayoutArrange", "LayoutUntangle", "AttachedFolderRead",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
       "ArtifactRead", "ModuleRead", "LogRange", "ViewSetVisible", "ViewSave",
@@ -549,6 +549,8 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectFileStatRequest: return on_lane(r, std::move(req), &Service::file_stat);
     case P::ProjectFileReadRequest: return on_lane(r, std::move(req), &Service::file_read);
     case P::ProjectFileFormatRequest: return on_lane(r, std::move(req), &Service::file_format);
+    case P::LayoutArrangeRequest:
+    case P::LayoutUntangleRequest: return on_lane(r, std::move(req), &Service::layout_proposal);
     case P::OutputTypesRequest: return on_lane(r, std::move(req), &Service::output_types);
     case P::NixSourceResolveRequest: return on_lane(r, std::move(req), &Service::nix_source_resolve);
     case P::AttachedFolderReadRequest: return on_lane(r, std::move(req), &Service::attached_folder_read);

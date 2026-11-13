@@ -229,7 +229,7 @@ import Testing
     for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
     #expect(s.displays[b] != nil && s.displayFrame(b) == nil, "shown beside its Card, with no frame in the layout")
 
-    s.arrange([])
+    await s.arrange([])
     await s.save()
     #expect(s.saveError == nil, "\(s.saveError ?? "")")
     #expect(!s.dirty)
@@ -345,7 +345,7 @@ import Testing
     }
     let before = s.layout
     let project = s.project
-    s.arrange([])
+    await s.arrange([])
     #expect(s.layout != before)
     #expect(s.project == project, "the layout only")
     #expect(s.position(a) != CGPoint(x: 500, y: 500))
@@ -355,9 +355,9 @@ import Testing
     let arranged = s.layout
     s.undo()
     #expect(s.layout == before)
-    s.arrange([])
+    await s.arrange([])
     #expect(s.layout == arranged, "from the same graph, the same layout")
-    s.arrange([])
+    await s.arrange([])
     #expect(s.layout == arranged, "arranging again changes nothing")
     // Moving one Card afterwards: it goes by whole grids and nothing else moves.
     let was = s.position(b), other = s.position(a), frame = s.displayFrame(b)
