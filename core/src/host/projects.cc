@@ -63,13 +63,21 @@ auto Pin() -> std::string {
 // Destination ownership is established before writing any files. Never remove
 // somebody else's pre-existing folder on failure, including an accepted empty
 // one.
+// A folder a person merely looked at in Finder holds a .DS_Store; that is
+// still an empty folder to them.
+auto HoldsNothing(const f::path& folder) -> bool {
+  for (const auto& entry : f::directory_iterator(folder))
+    if (entry.path().filename() != ".DS_Store") return false;
+  return true;
+}
+
 auto Prepare(const f::path& destination) -> bool {
   if (f::is_symlink(f::symlink_status(destination)))
     throw ProjectFailure(
         "folder_not_empty",
         "The destination must be a new or empty folder, not a symbolic link");
   if (f::exists(destination)) {
-    if (!f::is_directory(destination) || !f::is_empty(destination))
+    if (!f::is_directory(destination) || !HoldsNothing(destination))
       throw ProjectFailure(
           "folder_not_empty",
           "The destination is not empty; choose an empty folder or a new name");

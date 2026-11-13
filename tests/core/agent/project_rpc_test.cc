@@ -50,8 +50,10 @@ TEST_F(HostProjectsFixture, CreatesPinnedDocumentsInNewAndExactlyEmptyFolders) {
   Write(directory.path / "occupied/sentinel", "keep");
   EXPECT_EQ(Create("occupied").Code(), "folder_not_empty");
   EXPECT_EQ(Read(directory.path / "occupied/sentinel"), "keep");
-  Write(directory.path / "finder/.DS_Store", "not empty");
-  EXPECT_EQ(Create("finder").Code(), "folder_not_empty");
+  // Only Finder's own file: still an empty folder.
+  Write(directory.path / "finder/.DS_Store", "finder");
+  EXPECT_TRUE(Create("finder").Code().empty());
+  EXPECT_TRUE(std::filesystem::exists(directory.path / "finder/tsugumi.json"));
   EXPECT_EQ(Create("bad-flow", "sideways").Code(), "invalid_flow");
   EXPECT_FALSE(std::filesystem::exists(directory.path / "bad-flow"));
   for (const auto* name :
