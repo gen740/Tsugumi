@@ -285,14 +285,14 @@ extension DisplaySnapshot {
     case .table(let cols, let rows): return String(localized: "表 \(cols.count) 列 × \(rows.count) 行")
     case .image(_, _, let alt): return alt.isEmpty ? String(localized: "画像") : alt
     case .points(let x, _, _, _): return String(localized: "点群 \(x.count) 点")
-    case .module(let name, let json): return Self.plotTitle(name, json) ?? String(localized: "モジュール \(name)")
+    case .module(let name, let json, _): return Self.plotTitle(name, json) ?? String(localized: "モジュール \(name)")
     }
   }
 
   /// A Plotly figure's or Vega-Lite chart's title (as an image shows its alt
   /// text), or what it is when it has none.
   static func plotTitle(_ name: String, _ json: String) -> String? {
-    guard ModuleViewer.modules.contains(name) else { return nil }
+    guard name.hasSuffix("-tsugumi-view-plotly") || name.hasSuffix("-tsugumi-view-vega-lite") else { return nil }
     let v = try? JSONValue.parse(json)
     let title = name == "plotly" ? v?["layout"]?["title"] : v?["title"]
     if let t = title?.string ?? title?["text"]?.string, !t.isEmpty { return t }

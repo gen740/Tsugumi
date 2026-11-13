@@ -45,7 +45,7 @@ def _send(name: str, text: str, what: str) -> None:
         raise tsugumi.Failure("output_invalid",
                               f"the {what} is {size / LIMIT:.1f} MiB of JSON; an interactive plot takes at most 1 MiB: "
                               "plot fewer points, or draw it with matplotlib (an image)")
-    _host.display_module(name, text)
+    _host.display_module(name, text, {})
 
 
 def show_plotly(fig) -> None:

@@ -64,7 +64,8 @@ void table(const std::vector<std::string>& columns, const std::vector<std::vecto
 void image(const std::string& media_type, const std::string& bytes, const std::string& alt = "");
 void points(const std::vector<float>& x, const std::vector<float>& y, const std::vector<float>& z,
             const std::vector<uint32_t>& colors = {});
-void module(const std::string& name, const std::string& data_json);
+auto module(const std::string& module, const std::string& config_json,
+            const std::vector<tsugumi_blob>& blobs = {}) -> void;
 }  // namespace visualization
 
 namespace card {

@@ -39,7 +39,7 @@ sdk/               Card ABI, common runtime (libtsugumi_card), C++ codegen (card
 macOS/             SwiftPM: Sources/App (SwiftUI), Sources/RPC, Sources/Launcher, Sources/Renderer*,
                    Container/ (image definitions, builds, versions), Tests/
 ui/renderer/       Dawn rendering layer (C API, dylib)
-ui/modules/        Display components for Card charts (Plotly, Vega-Lite)
+ui/modules/        Shared isolated web-module host (browser iframe and WKWebView)
 agent/             Shared Agent prompts, contracts and reference material
 macOS/Sources/AgentClient/  Native Agent providers, conversations and tools
 web/               Browser UI and host server (the Agent's contract shared through agent/Shared)
@@ -273,3 +273,44 @@ The UI scaffold's source is `sdk/rust/template/`; after changing it, run
 macOS, bubblewrap on Linux), typed Python/Rust/C++ data, borrow-check failures,
 worker state, panic recovery, cancellation/deadlines, file artifacts and every
 Display kind. The bilingual `rust-pipeline` demo is the small end-to-end example.
+
+
+### Card-owned display modules
+
+`protocol/data.fbs` defines `DisplayModule` as a Nix store directory, a JSON
+configuration and named binary blobs. `sdk/nix/view-module.nix` bundles a view's
+local dependency graph to the directory's `index.js`; `builtin-views.nix` builds
+Plotly/Vega-Lite through the same mechanism. Their pinned upstream package URLs
+and hashes live in `sdk/views/packages.json`, with libraries evaluated only
+inside the isolated frame. A Card's `views` declarations are recorded as store
+references in its manifest's pre-run environment. The worker resolves these
+names before publishing a display. Retention is unchanged.
+
+`ModuleReadRequest` serves the entry in bounded `FileContent` pages. It rejects
+non-store directories and entries escaping their directory. UI code caches by
+immutable identity. `ui/modules/viewer.js` drives initialise/update/resize/dispose
+inside an opaque iframe. Mac loads only the trusted host HTML into a
+nonpersistent WKWebView without granting file access, and denies network/file
+requests and non-about navigation. See the [SDK interface and isolation
+limits](CardGuide.md#card-owned-web-views). Binary inputs use transferable buffers
+between browser frames after making the copy required to preserve retained
+displays. WKWebView's argument bridge currently uses base64, so that path copies
+and expands bytes; it does not claim zero-copy native transport.
+
+The module viewer performance scripts above describe the previous built-in-only
+viewer and are not verification of the new RPC loading path. Current lifecycle,
+loading and thumbnail behavior tests are in `web/tests/moduleViewer.ts` and
+`figurePreview.ts`; the runnable GPU fixture is `tests/fixtures/view-point-cloud`.
+Check host WebGPU support without a window or activation with:
+
+```sh
+nix develop -c /usr/bin/swift tests/tools/wkwebgpu.swift
+```
+
+The probe uses accessory activation policy, a nonpersistent offscreen WKWebView,
+a secure localhost base URL, `navigator.gpu` and `requestAdapter()`, and exits
+within 20 seconds. A timeout or denied WebKit/GPU service is not evidence that
+WebGPU is unsupported. Dawn stays in place for the existing line chart. Planned
+work is its module migration and removal of Dawn, a standard-webgpu.h Wasm
+view template with input/events bindings, and an optional RPC-relayed live
+worker channel (never a socket from the frame).

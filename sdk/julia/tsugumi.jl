@@ -209,7 +209,7 @@ end
 display_text(ctx::Context, text::AbstractString) = show_member(Dict("text" => text))
 display_markdown(ctx::Context, text::AbstractString) = show_member(Dict("markdown" => text))
 display_image(ctx::Context, file::AbstractString; alt::AbstractString="") = show_member(Dict("image" => Dict("path" => file, "alt" => alt)))
-display_module(ctx::Context, name::AbstractString, data) = show_member(Dict("module" => Dict("name" => name, "data" => data)))
+display_module(ctx::Context, name::AbstractString, data) = show_member(Dict("module" => Dict("module" => name, "config" => data)))
 display_vegalite(ctx::Context, spec) = display_module(ctx, "vega-lite", spec)
 
 # columns: names; rows: vectors of cells, shown with `string`.

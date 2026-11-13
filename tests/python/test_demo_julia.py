@@ -47,8 +47,8 @@ def run(c, card="start", propagate=True, timeout=900):
 
 def spec(c, rid, card):
     d = c.call("RunRecordRequest", runId=rid, card=path(card)).record.display
-    assert d.valueType == 7 and text(d.value.name) == "vega-lite", stderr(c, rid, card)
-    raw = text(d.value.dataJson)
+    assert d.valueType == 7 and text(d.value.module).endswith("-tsugumi-view-vega-lite"), stderr(c, rid, card)
+    raw = text(d.value.configJson)
     assert len(raw) < 1 << 20
     return json.loads(raw)
 

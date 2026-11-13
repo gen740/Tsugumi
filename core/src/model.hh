@@ -205,8 +205,10 @@ struct PointCloud {
   std::vector<float> z;
   std::vector<uint32_t> colors;
 };
-struct Module { std::string module; std::string data_json; };
+struct Module { std::string module; std::string config_json; std::map<std::string, std::string> blobs; };
 }  // namespace display
+
+auto valid_module_identity(std::string_view identity) -> bool;
 
 struct DisplayData {
   CardPath card;

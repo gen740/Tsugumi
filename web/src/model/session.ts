@@ -1,3 +1,4 @@
+import { registerModuleClient, ModuleBlobs } from './moduleSources'
 import { GO_SCAFFOLD } from './go-scaffold'
 import csharpFiles from '../../../ui/templates/csharp.json'
 import reportFiles from '../../../ui/templates/reports.json'
@@ -240,7 +241,7 @@ export type DisplayValue =
   | { kind: 'table'; columns: string[]; rows: string[][] }
   | { kind: 'image'; mediaType: string; data: Uint8Array; alt: string }
   | { kind: 'points'; x: number[]; y: number[]; z: number[]; colors: number[] }
-  | { kind: 'module'; name: string; json: string }
+  | { kind: 'module'; name: string; json: string; blobs: ModuleBlobs }
 
 export interface DisplaySnapshot {
   runId: string
@@ -283,7 +284,7 @@ export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
     }
     case D.DisplayValue.DisplayModule: {
       const m = d.value as D.DisplayModuleT
-      value = { kind: 'module', name: s(m.name), json: s(m.dataJson) }
+      value = { kind: 'module', name: s(m.module), json: s(m.configJson), blobs: Object.fromEntries(m.blobs.map(b => [s(b.name), Uint8Array.from(b.data)])) }
       break
     }
     default:
@@ -721,6 +722,7 @@ export class ProjectSession extends Observable {
     for (let attempt = 0; ; attempt++) {
       try {
         const c = new RPCClient(await this.openTransport(endpoint))
+        registerModuleClient(c)
         await c.connect(token, language())
         return c
       } catch (e) {

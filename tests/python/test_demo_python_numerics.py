@@ -73,7 +73,7 @@ def save_figures(c, rid, demo, cards, suffix=""):
         if d.valueType == 5:
             (root / f"{card}{suffix}.png").write_bytes(bytes(value.data))
         elif d.valueType == 7:
-            (root / f"{card}{suffix}.json").write_text(text(value.dataJson))
+            (root / f"{card}{suffix}.json").write_text(text(value.configJson))
         elif hasattr(value, "text"):
             (root / f"{card}{suffix}.md").write_text(text(value.text))
     (root / f"times{suffix}.json").write_text(json.dumps(times))
@@ -272,8 +272,8 @@ def test_pharmacokinetics(tmp_path):
 
         # The interactive plot: one panel per regimen, each with the window band, on one scale.
         shown = c.call("RunRecordRequest", runId=rid, card=path("simulate")).record.display
-        assert shown.valueType == 7 and text(shown.value.name) == "plotly"
-        fig = json.loads(text(shown.value.dataJson))
+        assert shown.valueType == 7 and text(shown.value.module).endswith("-tsugumi-view-plotly")
+        fig = json.loads(text(shown.value.configJson))
         assert len(fig["data"]) == len(settings["doses_mg"]) == len(fig["layout"]["shapes"])
         assert "架空" in fig["layout"]["title"]["text"]
         ranges = [v["range"] for k, v in fig["layout"].items() if k.startswith("yaxis")]

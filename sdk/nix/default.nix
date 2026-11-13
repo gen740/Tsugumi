@@ -17,6 +17,7 @@
 let
   inherit (pkgs) lib;
   sdkRoot = ./..;
+  builtinViews = import ./builtin-views.nix { inherit pkgs; };
   flatc = "${pkgs.flatbuffers}/bin/flatc";
   schemas = [ "_inputs" "_outputs" "_params" ];
 
@@ -793,6 +794,8 @@ rec {
   #            Cards read through inputs.<destination-port>
   # Whether the worker stays across invocations and runs (reuseWorker) is a
   # setting of the Card (_card.json), not of its build.
+  viewModule = import ./view-module.nix { inherit pkgs; };
+
   manifest = manifestFor false;
   manifestFor =
     remote: card:
@@ -803,6 +806,7 @@ rec {
         "preRun"
         "postRun"
         "exports"
+        "views"
       ];
       unknown = lib.subtractLists known (builtins.attrNames card);
       body =
@@ -841,7 +845,11 @@ rec {
             ]
           );
         }
-        // lib.optionalAttrs (card ? preRun) { inherit (card) preRun; }
+        // {
+          preRun = "export TSUGUMI_VIEW_MODULES=${lib.escapeShellArg (builtins.toJSON (
+            lib.mapAttrs (_: view: toString view) (builtinViews // (card.views or { }))
+          ))}\n" + (card.preRun or "");
+        }
         // lib.optionalAttrs (card ? postRun) { inherit (card) postRun; }
       )
     );

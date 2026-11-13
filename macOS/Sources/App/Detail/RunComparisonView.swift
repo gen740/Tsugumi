@@ -202,7 +202,7 @@ struct ComparedRunField: Identifiable {
     case let (.scalar(x, xl)?, .scalar(y, yl)?): return x == y && xl == yl
     case let (.table(xc, xr)?, .table(yc, yr)?): return xc == yc && xr == yr
     case let (.image(xm, xd, xa)?, .image(ym, yd, ya)?): return xm == ym && xd == yd && xa == ya
-    case let (.module(xn, xj)?, .module(yn, yj)?): return xn == yn && xj == yj
+    case let (.module(xn, xj, xb)?, .module(yn, yj, yb)?): return xn == yn && xj == yj && xb == yb
     case let (.points(xx, xy, xz, xc)?, .points(yx, yy, yz, yc)?): return xx == yx && xy == yy && xz == yz && xc == yc
     case let (.lineChart(x)?, .lineChart(y)?):
       return x.count == y.count && zip(x, y).allSatisfy { $0.0 == $1.0 && $0.1 == $1.1 && $0.2 == $1.2 && $0.3 == $1.3 }

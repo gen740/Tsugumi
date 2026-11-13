@@ -211,8 +211,26 @@ static PyObject* host_display_points(PyObject* self, PyObject* args) {
 static PyObject* host_display_module(PyObject* self, PyObject* args) {
   const char* name;
   const char* data;
-  if (!PyArg_ParseTuple(args, "ss", &name, &data)) return NULL;
-  g_call->display_module(g_call->host, name, data);
+  PyObject* dict;
+  if (!PyArg_ParseTuple(args, "ssO!", &name, &data, &PyDict_Type, &dict)) return NULL;
+  Py_ssize_t count = PyDict_Size(dict), pos = 0, n = 0;
+  tsugumi_blob* blobs = calloc((size_t)count, sizeof(tsugumi_blob));
+  Py_buffer* buffers = calloc((size_t)count, sizeof(Py_buffer));
+  if (count && (!blobs || !buffers)) { free(blobs); free(buffers); return PyErr_NoMemory(); }
+  PyObject *key, *value;
+  while (PyDict_Next(dict, &pos, &key, &value)) {
+    blobs[n].name = PyUnicode_AsUTF8(key);
+    if (!blobs[n].name || PyObject_GetBuffer(value, &buffers[n], PyBUF_CONTIG_RO) != 0) break;
+    blobs[n].data = buffers[n].buf;
+    blobs[n].size = (size_t)buffers[n].len;
+    ++n;
+  }
+  int status = -1;
+  if (!PyErr_Occurred()) status = g_call->display_module(g_call->host, name, data, blobs, (size_t)n);
+  for (Py_ssize_t i = 0; i < n; ++i) PyBuffer_Release(&buffers[i]);
+  free(blobs); free(buffers);
+  if (PyErr_Occurred()) return NULL;
+  if (status) { PyErr_SetString(PyExc_ValueError, "invalid module input or unknown module; declare its name in views"); return NULL; }
   Py_RETURN_NONE;
 }
 

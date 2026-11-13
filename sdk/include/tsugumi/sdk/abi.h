@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-#define TSUGUMI_ABI_VERSION 4u
+#define TSUGUMI_ABI_VERSION 5u
 
 enum tsugumi_port_kind { TSUGUMI_FILE = 1, TSUGUMI_DIRECTORY = 2, TSUGUMI_FLATBUFFER = 3 };
 
@@ -30,6 +30,12 @@ typedef struct tsugumi_series {
   const double* y;
   size_t count;
 } tsugumi_series;
+
+typedef struct tsugumi_blob {
+  const char* name;
+  const uint8_t* data;
+  size_t size;
+} tsugumi_blob;
 
 typedef struct tsugumi_call {
   uint32_t abi_version;
@@ -66,8 +72,9 @@ typedef struct tsugumi_call {
   /* colors (0xRRGGBB) may be NULL. */
   int (*display_points)(void* host, const float* x, const float* y, const float* z, const uint32_t* colors,
                         size_t count);
-  /* Input for a named UI Canvas module, as JSON text. */
-  int (*display_module)(void* host, const char* name, const char* data_json);
+  /* Immutable view identity (or a name declared in views), config and named bytes. */
+  int (*display_module)(void* host, const char* module, const char* config_json,
+                        const tsugumi_blob* blobs, size_t blob_count);
   /* ABI 3. Markdown text (with TeX math) shown as formatted text. */
   int (*display_markdown)(void* host, const char* text);
   /* ABI 4. In-memory adapters for languages without a FlatBuffers generator.

@@ -23,7 +23,7 @@ HOST = ROOT / "sdk/csharp/host.cc"
 LAYOUT = ROOT / "sdk/csharp/Layout.cs"
 
 # Every struct the worker hands to a C# Card, with its managed mirror.
-MIRRORS = {"tsugumi_value": "NativeValue", "tsugumi_series": "NativeSeries", "tsugumi_call": "NativeCall"}
+MIRRORS = {"tsugumi_value": "NativeValue", "tsugumi_blob": "NativeBlob", "tsugumi_series": "NativeSeries", "tsugumi_call": "NativeCall"}
 # C scalar types and their blittable C# types (LP64 and LLP64 alike).
 SCALARS = {"void": "void", "char": "byte", "uint8_t": "byte", "uint32_t": "uint", "uint64_t": "ulong",
            "int64_t": "long", "int": "int", "size_t": "nuint", "double": "double", "float": "float", **MIRRORS}

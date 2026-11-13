@@ -170,8 +170,8 @@ def test_values_cross_r_and_julia_and_each_display_arrives(project):
     assert [text(name) for name in table.value.columns] == ["i", "value"]
     assert [text(cell) for cell in table.value.rows[2].cells] == ["3", "4.5"]
     plot = c.call("RunRecordRequest", runId=run_id, card=path("double")).record.display
-    assert plot.valueType == 7 and text(plot.value.name) == "vega-lite"  # DisplayModule
-    assert json.loads(text(plot.value.dataJson))["data"]["values"][2] == {"x": 3, "y": 9.0}
+    assert plot.valueType == 7 and text(plot.value.module).endswith("-tsugumi-view-vega-lite")  # DisplayModule
+    assert json.loads(text(plot.value.configJson))["data"]["values"][2] == {"x": 3, "y": 9.0}
     image = c.call("RunRecordRequest", runId=run_id, card=path("report")).record.display
     assert image.valueType == 5 and bytes(image.value.data)[:4] == b"\x89PNG" and text(image.value.alt) == "the values"
     art = next(a for a in c.call("ArtifactListRequest", runId=run_id).artifacts if text(a.output) == "report")

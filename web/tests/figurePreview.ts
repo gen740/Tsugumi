@@ -179,7 +179,7 @@ assert.equal(figureMode('smooth'), 'update')
   const inner = s as unknown as { applyDisplay(d: D.DisplayT): void }
   const show = (card: string, runId: string, invocation: bigint, revision: bigint, json: string) => inner.applyDisplay(Object.assign(new D.DisplayT(), {
     card: Object.assign(new D.CardPathT(), { segments: [card] }), runId, invocation, revision,
-    valueType: D.DisplayValue.DisplayModule, value: Object.assign(new D.DisplayModuleT(), { name: 'plotly', dataJson: json }),
+    valueType: D.DisplayValue.DisplayModule, value: Object.assign(new D.DisplayModuleT(), { module: '/nix/store/00000000000000000000000000000000-tsugumi-view-plotly', configJson: json, blobs: [] }),
   }))
   const wanted = (card: string): FigureWanted => {
     const d = s.displays.get(card)!
@@ -254,7 +254,7 @@ assert.equal(figureMode('smooth'), 'update')
   const png = (tag: string) => `data:image/png;base64,${btoa(String.fromCharCode(...header))}${tag}`
   const req = (json: string): ThumbnailRequest => ({ key: json, name: 'plotly', json, width: 16, height: 16 })
   try {
-    const renderer = new FrameRenderer(20)
+    const renderer = new FrameRenderer(20, async () => 'export function initialise() {}')
     const first = renderer.draw(req('first'))
     send(frames[0], { tsugumi: 'ready' })
     await assert.rejects(first, /timed out/)

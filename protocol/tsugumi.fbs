@@ -671,6 +671,14 @@ table ViewSaveRequest {
   view:ViewState (id: 2, required);
 }
 
+/// -> FileContent. Reads an immutable module entry in bounded pages.
+/// Only canonical /nix/store/<hash>-<name> directories with index.js qualify.
+table ModuleReadRequest {
+  module:string (id: 0, required);
+  offset:uint64 = null (id: 1);
+  limit_bytes:uint32 = null (id: 2);
+}
+
 union RequestPayload {
   SessionHelloRequest = 1,
   ProjectOpenRequest = 2,
@@ -716,6 +724,7 @@ union RequestPayload {
   RunEnvironmentsRequest = 42,
   RunEnvironmentPathsRequest = 43,
   ProjectShellRequest = 44,
+  ModuleReadRequest = 45,
 }
 
 // ---- Replies -----------------------------------------------------------------

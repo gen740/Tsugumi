@@ -290,8 +290,12 @@ Off<D::Display> display(FBB& b, const DisplayData& d) {
     type = D::DisplayValue::DisplayPointCloud;
   } else if (const auto* m = std::get_if<DisplayData::Module>(&d.value)) {
     auto name = b.CreateString(m->module);
-    auto data = b.CreateString(m->data_json);
-    value = D::CreateDisplayModule(b, name, data).Union();
+    auto data = b.CreateString(m->config_json);
+    std::vector<flatbuffers::Offset<D::DisplayBlob>> blobs;
+    for (const auto& [key, bytes] : m->blobs)
+      blobs.push_back(D::CreateDisplayBlob(b, b.CreateString(key),
+          b.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size())));
+    value = D::CreateDisplayModule(b, name, data, b.CreateVector(blobs)).Union();
     type = D::DisplayValue::DisplayModule;
   }
   D::DisplayBuilder db(b);
@@ -378,8 +382,15 @@ DisplayData display(const D::Display* d) {
     }
     case D::DisplayValue::DisplayModule: {
       const auto* m = d->value_as_DisplayModule();
-      if (!m || !m->name() || !m->data_json()) throw Failed(FailureKind::output_invalid, "a Canvas module needs name and data_json");
-      out.value = DisplayData::Module{m->name()->str(), m->data_json()->str()};
+      if (!m || !m->module_() || !m->config_json() || !m->blobs())
+        throw Failed(FailureKind::output_invalid, "a module needs an identity, config and blobs");
+      DisplayData::Module module{m->module_()->str(), m->config_json()->str(), {}};
+      for (const auto* blob : *m->blobs()) {
+        if (!blob || !blob->name() || !blob->data() || !module.blobs.emplace(blob->name()->str(),
+            std::string(reinterpret_cast<const char*>(blob->data()->data()), blob->data()->size())).second)
+          throw Failed(FailureKind::output_invalid, "invalid or duplicate module blob");
+      }
+      out.value = std::move(module);
       break;
     }
     default:

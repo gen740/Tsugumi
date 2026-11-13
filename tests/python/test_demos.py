@@ -490,12 +490,12 @@ def test_plots_draw_into_the_displays(plots_demo):
         width = int.from_bytes(data[16:20], "big")
         assert width >= 1200, width  # 2x of a 9-inch figure at 100 dpi (cropped to its content for summary)
     d = c.call("RunRecordRequest", runId=rid, card=path("explore")).record.display
-    assert d.valueType == 7 and text(d.value.name) == "plotly"  # DisplayModule
-    fig = json.loads(text(d.value.dataJson))
+    assert d.valueType == 7 and text(d.value.module).endswith("-tsugumi-view-plotly")  # DisplayModule
+    fig = json.loads(text(d.value.configJson))
     assert fig["data"][0]["type"] == "scatter" and "200 walkers" in fig["layout"]["title"]["text"]
     d = c.call("RunRecordRequest", runId=rid, card=path("spread")).record.display
-    assert d.valueType == 7 and text(d.value.name) == "vega-lite"
-    spec = json.loads(text(d.value.dataJson))
+    assert d.valueType == 7 and text(d.value.module).endswith("-tsugumi-view-vega-lite")
+    spec = json.loads(text(d.value.configJson))
     assert spec["$schema"].startswith("https://vega.github.io/schema/vega-lite/v6")
     assert len(spec["layer"]) == 2
     assert spec.get("datasets") or spec.get("data", {}).get("values")  # the data is in the spec

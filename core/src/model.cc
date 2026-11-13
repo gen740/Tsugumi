@@ -68,6 +68,15 @@ FailureData FailureData::make(FailureKind k, std::string diag,
   return f;
 }
 
+auto valid_module_identity(std::string_view identity) -> bool {
+  if (!identity.starts_with("/nix/store/") || identity.size() < 45 || identity[43] != '-') return false;
+  constexpr std::string_view hash = "0123456789abcdfghijklmnpqrsvwxyz";
+  for (size_t i = 11; i < 43; ++i)
+    if (hash.find(identity[i]) == std::string_view::npos) return false;
+  constexpr std::string_view name = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-._?=";
+  return identity.substr(44).find_first_not_of(name) == std::string_view::npos;
+}
+
 std::optional<std::string> DisplayData::validate() const {
   constexpr size_t kMaxPoints = 10000;
   constexpr size_t kMaxBytes = 1 << 20;
@@ -115,12 +124,19 @@ std::optional<std::string> DisplayData::validate() const {
     for (size_t i = 0; i < p->x.size(); ++i)
       if (!std::isfinite(p->x[i]) || !std::isfinite(p->y[i]) || !std::isfinite(p->z[i])) return "point coordinates must be finite";
   } else if (const auto* m = std::get_if<Module>(&value)) {
-    if (!valid_id(m->module)) return "a Canvas module name must be an id";
-    if (m->data_json.size() > kMaxBytes) return "Canvas module data exceeds 1 MiB";
+    if (!valid_module_identity(m->module)) return "a module must name a Nix store directory";
+    if (m->blobs.size() > 64) return "a module exceeds 64 blobs";
+    size_t bytes = 0;
+    for (const auto& [name, data] : m->blobs) {
+      if (!valid_id(name)) return "a module blob name must be an id";
+      bytes += data.size();
+      if (bytes > (8u << 20)) return "module blobs exceed 8 MiB";
+    }
+    if (m->config_json.size() > kMaxBytes) return "module config exceeds 1 MiB";
     try {
-      (void)schema::capture(m->data_json);
+      (void)schema::capture(m->config_json);
     } catch (const std::exception&) {
-      return "Canvas module data is not valid JSON";
+      return "module config is not valid JSON";
     }
   }
   return std::nullopt;

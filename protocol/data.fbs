@@ -118,11 +118,16 @@ table DisplayPointCloud {
   colors:[uint32] (id: 3);
 }
 
-/// Data for a UI-side Canvas module: `name` names the renderer, `data_json`
-/// is its JSON input (at most 1 MiB). The core validates and stores it only.
-table DisplayModule {
+/// A module's immutable Nix store directory and per-run input. index.js is
+/// a self-contained ES module; SDK viewModule bundles its local dependencies.
+table DisplayBlob {
   name:string (id: 0, required);
-  data_json:string (id: 1, required);
+  data:[ubyte] (id: 1, required);
+}
+table DisplayModule {
+  module:string (id: 0, required);
+  config_json:string (id: 1, required);
+  blobs:[DisplayBlob] (id: 2, required);
 }
 
 union DisplayValue {

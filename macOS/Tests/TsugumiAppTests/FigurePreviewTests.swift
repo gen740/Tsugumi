@@ -15,6 +15,17 @@ struct FigurePreviewTests {
     FigureLook.of(wanted: want(wanted), lineage: lineage, picture: held.map { (want($0), heldLineage, image) }, state: state)
   }
 
+  @Test func binaryInputsArePartOfPreviewIdentity() {
+    let old = FigureWanted(name: "view", json: "{}", blobs: ["points": Data([0, 255])], width: 160, height: 160)
+    let new = FigureWanted(name: "view", json: "{}", blobs: ["points": Data([0, 254])], width: 160, height: 160)
+    #expect(old != new)
+    #expect(FigureLook.of(wanted: new, lineage: "r1#1", picture: (old, "r1#1", true), state: FigureState())
+      == .picture(dimmed: true, waiting: true))
+    let a = ModuleThumbnails.Key(name: "view", json: "{}", blobs: old.blobs, width: 160, height: 160)
+    let b = ModuleThumbnails.Key(name: "view", json: "{}", blobs: new.blobs, width: 160, height: 160)
+    #expect(a != b)
+  }
+
   @Test func aPictureOfOtherContentIsNeverShownAtFullStrengthInUpdate() {
     for running in [false, true] {
       #expect(Self.look("new", held: "old", FigureState(mode: .update, running: running)) == .picture(dimmed: true, waiting: true))

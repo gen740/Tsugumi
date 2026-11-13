@@ -72,8 +72,8 @@ void points(const std::vector<float>& x, const std::vector<float>& y, const std:
         "point cloud");
 }
 
-void module(const std::string& name, const std::string& data_json) {
-  check(current().display_module(current().host, name.c_str(), data_json.c_str()), "module display");
+auto module(const std::string& name, const std::string& config_json, const std::vector<tsugumi_blob>& blobs) -> void {
+  check(current().display_module(current().host, name.c_str(), config_json.c_str(), blobs.data(), blobs.size()), "module display");
 }
 
 }  // namespace visualization

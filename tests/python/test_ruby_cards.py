@@ -306,7 +306,7 @@ def test_ruby_display_bridge_owns_bytes(ruby_project, expression, kind):
         assert bytes(display.value.data).startswith(b'\x89PNG')
         assert text(display.value.alt) == 'pixel'
     if kind == 7:
-        assert json.loads(text(display.value.dataJson))['data'][0]['y'] == [2]
+        assert json.loads(text(display.value.configJson))['data'][0]['y'] == [2]
 
 @pytest.mark.parametrize(('source', 'message'), [
     ('def main(ctx)\n', 'syntax error'),

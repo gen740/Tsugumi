@@ -186,7 +186,7 @@ def test_interactive_template_keeps_offline_html_and_japanese_font(tmp_path, lib
         ran(c, rid)
         record = c.call('RunRecordRequest', runId=rid, card=path('line')).record
         assert record.display
-        chart = json.loads(text(record.display.value.dataJson))
+        chart = json.loads(text(record.display.value.configJson))
         assert '測定値の集計' in json.dumps(chart, ensure_ascii=False)
         art, meta, _ = figure(c, rid)
         assert_belongs(art, meta, rid)

@@ -1,16 +1,11 @@
 import { ModuleThumbnailQueue, ThumbnailRenderer, ThumbnailRequest } from '../model/moduleThumbnails'
 
-export const VIEWER_LIBS = new Set(['plotly.min.js', 'vega.min.js', 'vega-lite.min.js', 'vega-embed.min.js'])
-const libCode = new Map<string, Promise<string | undefined>>()
-export function viewerLib(lib: string): Promise<string | undefined> {
-  if (!libCode.has(lib)) libCode.set(lib, fetch(`/modules/${lib}`).then(r => r.ok ? r.text() : undefined, () => undefined))
-  return libCode.get(lib)!
-}
+import { moduleSource } from '../model/moduleSources'
 
 /** Only this hidden, sandboxed frame renders canvas thumbnails. Expanded views
  *  keep their own interactive frame. An idle or failed renderer is destroyed. */
 export class FrameRenderer implements ThumbnailRenderer {
-  constructor(private timeoutMs = 30000) {}
+  constructor(private timeoutMs = 30000, private source = moduleSource) {}
   private frame?: HTMLIFrameElement
   private ready?: Promise<void>
   private readyResolve?: () => void
@@ -20,12 +15,7 @@ export class FrameRenderer implements ThumbnailRenderer {
     if (event.source !== this.frame?.contentWindow) return
     const data = event.data
     if (data?.tsugumi === 'ready') this.readyResolve?.()
-    else if (data?.tsugumi === 'need' && VIEWER_LIBS.has(data.lib)) {
-      const frame = this.frame
-      void viewerLib(data.lib).then(code => {
-        if (frame === this.frame) frame?.contentWindow?.postMessage({ tsugumi: 'lib', lib: data.lib, code }, '*')
-      })
-    } else if (data?.tsugumi === 'state' && this.result && data.requestId === this.result.id) {
+    else if (data?.tsugumi === 'state' && this.result && data.requestId === this.result.id) {
       if (data.state === 'error') this.result.reject(new Error(String(data.message)))
       else if (typeof data.image === 'string' && data.image.startsWith('data:image/png;') && data.image.length <= 16 * 1024 * 1024) this.result.resolve(data.image)
       else this.result.reject(new Error('The chart did not return a PNG preview'))
@@ -52,11 +42,12 @@ export class FrameRenderer implements ThumbnailRenderer {
     try {
       const image = await Promise.race([
         (async () => {
+          const code = await this.source(request.name)
           await this.ready
           return await new Promise<string>((resolve, reject) => {
             const id = ++this.sequence
             this.result = { id, resolve, reject }
-            frame.contentWindow?.postMessage({ name: request.name, json: request.json, interactive: false, snapshot: true, width: request.width, height: request.height, requestId: id }, '*')
+            frame.contentWindow?.postMessage({ name: request.name, json: request.json, blobs: request.blobs, code, interactive: false, snapshot: true, width: request.width, height: request.height, requestId: id }, '*')
           })
         })(),
         new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Chart preview timed out')), this.timeoutMs) }),

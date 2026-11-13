@@ -117,9 +117,6 @@ def test_the_plot_viewer_is_framed_sandboxed_and_reaches_nothing(web):
     assert directives["default-src"] == "default-src 'none'" and directives["connect-src"] == "connect-src 'none'"
     assert "'self'" not in directives["script-src"] and directives["frame-ancestors"] == "frame-ancestors 'self'"
     assert r.getheader("x-frame-options") == "SAMEORIGIN"
-    for lib in ("plotly.min.js", "vega.min.js", "vega-lite.min.js", "vega-embed.min.js", "LICENSE.plotly.js.txt"):
-        r, data = request(port, "GET", f"/modules/{lib}")
-        assert r.status == 200 and len(data) > 1000, lib
     r, _ = request(port, "GET", "/")
     assert r.getheader("x-frame-options") == "DENY" and "frame-ancestors 'none'" in r.getheader("content-security-policy")
 

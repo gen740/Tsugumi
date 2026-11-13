@@ -338,11 +338,35 @@ int display_points_impl(void*, const float* x, const float* y, const float* z, c
   return 0;
 }
 
-int display_module_impl(void*, const char* name, const char* data_json) {
+auto display_module_impl(void*, const char* name, const char* config_json,
+                         const tsugumi_blob* blobs, size_t count) -> int {
+  if (!name || !config_json || std::strlen(config_json) > (1u << 20) || count > 64 || (count && !blobs)) return -1;
+  size_t bytes = 0;
+  for (size_t i = 0; i < count; ++i) {
+    if (!blobs[i].name || std::strlen(blobs[i].name) > 128 || (!blobs[i].data && blobs[i].size) ||
+        blobs[i].size > (8u << 20) - bytes) return -1;
+    bytes += blobs[i].size;
+  }
+  std::string identity = name;
+  if (!identity.starts_with("/nix/store/")) {
+    const char* mappings = std::getenv("TSUGUMI_VIEW_MODULES");
+    if (!mappings) return -1;
+    tsugumi::schema::v::Mapping<tsugumi::schema::v::String, tsugumi::schema::v::String> views;
+    if (tsugumi::schema::decode(mappings, views)) return -1;
+    bool found = false;
+    for (const auto& [key, value] : views.value())
+      if (key == identity) { identity = value; found = true; break; }
+    if (!found) return -1;
+  }
   send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto n = b.CreateString(name);
-    auto d = b.CreateString(data_json);
-    return std::make_pair(D::DisplayValue::DisplayModule, D::CreateDisplayModule(b, n, d).Union());
+    auto n = b.CreateString(identity);
+    auto d = b.CreateString(config_json);
+    std::vector<flatbuffers::Offset<D::DisplayBlob>> values;
+    for (size_t i = 0; i < count; ++i)
+      values.push_back(D::CreateDisplayBlob(b, b.CreateString(blobs[i].name),
+          b.CreateVector(blobs[i].data, blobs[i].size)));
+    return std::make_pair(D::DisplayValue::DisplayModule,
+        D::CreateDisplayModule(b, n, d, b.CreateVector(values)).Union());
   });
   return 0;
 }
@@ -660,8 +684,9 @@ struct BashDisplayImage {
   tsugumi::schema::Opt<"alt", tsugumi::schema::v::String> alt;
 };
 struct BashDisplayModule {
-  tsugumi::schema::Opt<"name", tsugumi::schema::v::String> name;
-  tsugumi::schema::Opt<"data", tsugumi::schema::Json> data;
+  tsugumi::schema::Opt<"module", tsugumi::schema::v::String> module;
+  tsugumi::schema::Opt<"config", tsugumi::schema::Json> config;
+  tsugumi::schema::Opt<"blobs", tsugumi::schema::v::Mapping<tsugumi::schema::v::String, tsugumi::schema::v::String>> blobs;
 };
 struct BashDisplay {
   tsugumi::schema::Opt<"text", tsugumi::schema::v::String> text;
@@ -706,10 +731,21 @@ auto json_display(const std::string& json, const std::string& cwd) -> void {
     const auto* alt = sc::get(image->alt);
     display_image_impl(nullptr, media, reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), alt ? alt->c_str() : "");
   } else if (const auto* module = sc::get(d.module)) {
-    const auto* name = sc::get(module->name);
-    const auto* data = sc::get(module->data);
-    if (!name || !data) return invalid("a module needs a name and data");
-    display_module_impl(nullptr, name->c_str(), sc::text(*data).c_str());
+    const auto* name = sc::get(module->module);
+    const auto* data = sc::get(module->config);
+    if (!name || !data) return invalid("a module needs module and config");
+    std::vector<std::pair<std::string, std::string>> owned;
+    if (const auto* blobs = sc::get(module->blobs))
+      for (const auto& [key, file] : *blobs) {
+        const auto full = file.starts_with("/") ? file : cwd + "/" + file;
+        if (::access(full.c_str(), R_OK) != 0) return invalid("cannot read blob " + file);
+        owned.emplace_back(key, read_text(full));
+      }
+    std::vector<tsugumi_blob> blobs;
+    for (const auto& [key, bytes] : owned)
+      blobs.push_back({key.c_str(), reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size()});
+    if (display_module_impl(nullptr, name->c_str(), sc::text(*data).c_str(), blobs.data(), blobs.size()))
+      return invalid("unknown view module; declare it in views");
   } else {
     invalid("name one of text, markdown, table, image or module");
   }

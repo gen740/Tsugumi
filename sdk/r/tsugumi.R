@@ -73,7 +73,7 @@
     # A PNG or JPEG file.
     display_image = function(path, alt = "") show(list(image = list(path = path, alt = alt))),
     # An interactive plot: name is "vega-lite" or "plotly", data its spec as a list.
-    display_module = function(name, data) show(list(module = list(name = name, data = data))),
+    display_module = function(name, data) show(list(module = list(module = name, config = data))),
     # Draws `expr` (base graphics or a ggplot) as the Card's image.
     plot = function(expr, alt = "", width = 8, height = 5, res = 160) {
       file <- tempfile(fileext = ".png", tmpdir = self$temporary_directory)

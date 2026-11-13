@@ -57,3 +57,42 @@ def test_card_guide_runs_as_written(tmp_path, variant, shown):
             assert text(record.record.display.value.text) == shown
     finally:
         d.cleanup()
+
+
+def test_card_owned_webgpu_module(tmp_path):
+    """The view is in the built closure, fetched separately and fixed across data updates."""
+    root = tmp_path / "point-cloud"
+    shutil.copytree(ROOT / "tests/fixtures/view-point-cloud", root)
+    card_file = root / "definitions/cloud/_card.json"
+    card_file.write_text(json.dumps({**json.loads(card_file.read_text()), "sandbox": False}))
+    d = Daemon(root).start()
+    try:
+        c = d.client()
+        c.hello()
+        run_id, status = run_and_wait(c, "start", timeout=1800)
+        assert status.state == RunState.succeeded
+        display = c.call("RunRecordRequest", runId=run_id, card=path("cloud")).record.display.value
+        identity = text(display.module)
+        assert identity.startswith("/nix/store/") and identity.endswith("-point-cloud-view")
+        assert json.loads(text(display.configJson)) == {"count": 12000}
+        assert text(display.blobs[0].name) == "points"
+        assert len(display.blobs[0].data) == 12000 * 12
+        # The module was already built and retained by the Card manifest's closure.
+        code = bytearray()
+        offset = 0
+        while True:
+            page = c.call("ModuleReadRequest", module=identity, offset=offset, limitBytes=113)
+            assert page.offset == offset and text(page.name) == "index.js"
+            code.extend(page.bytes)
+            if page.eof:
+                break
+            assert page.nextOffset > offset
+            offset = page.nextOffset
+        assert b"requestAdapter" in code and b"createRenderPipeline" in code
+        assert len(code) < 10000
+        again_id, again = run_and_wait(c, "start", timeout=1800)
+        assert again.state == RunState.succeeded
+        again_display = c.call("RunRecordRequest", runId=again_id, card=path("cloud")).record.display.value
+        assert text(again_display.module) == identity
+    finally:
+        d.cleanup()

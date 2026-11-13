@@ -201,7 +201,7 @@ def display_value(d, demo: str, card: list[str]) -> dict | None:
     if t == 6:
         return {"type": "points", "count": len(v.x)}
     if t == 7:
-        return module_value(text(v.name), json.loads(text(v.dataJson)), OUT / f"{demo}-{'-'.join(card)}")
+        return module_value("plotly" if text(v.module).endswith("-tsugumi-view-plotly") else "vega-lite" if text(v.module).endswith("-tsugumi-view-vega-lite") else text(v.module), json.loads(text(v.configJson)), OUT / f"{demo}-{'-'.join(card)}")
     return None
 
 

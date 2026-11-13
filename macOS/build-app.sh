@@ -77,19 +77,10 @@ math_fonts="$app/Contents/Resources/SwiftMath_SwiftMath.bundle/Contents/Resource
 [ -f "$math_fonts/latinmodern-math.otf" ]
 find "$math_fonts" -type f ! -name 'latinmodern-math.*' ! -name LICENSE ! -name GUST-FONT-LICENSE.txt -delete
 cp -R "$repo/demos" "$app/Contents/Resources/demos"
-# The module viewer (ui/modules) and the plot libraries it loads: the web UI's
-# pinned npm packages (web/package-lock.json), the same files the web UI serves.
-[ -d "$repo/web/node_modules/plotly.js-dist-min" ] || nix develop "$repo" -c npm ci --prefix "$repo/web" --ignore-scripts
+# The common isolated frame host. Modules and libraries come from tsugumid over RPC.
 mods="$app/Contents/Resources/modules"
 mkdir -p "$mods"
-cp "$repo/ui/modules/viewer.html" "$repo/ui/modules/viewer.js" \
-  "$repo/web/node_modules/plotly.js-dist-min/plotly.min.js" \
-  "$repo/web/node_modules/vega/build/vega.min.js" \
-  "$repo/web/node_modules/vega-lite/build/vega-lite.min.js" \
-  "$repo/web/node_modules/vega-embed/build/vega-embed.min.js" "$mods/"
-for p in plotly.js-dist-min:plotly.js vega:vega vega-lite:vega-lite vega-embed:vega-embed; do
-  cp "$repo/web/node_modules/${p%%:*}/LICENSE" "$mods/LICENSE.${p#*:}.txt"
-done
+cp "$repo/ui/modules/viewer.html" "$repo/ui/modules/viewer.js" "$mods/"
 # What the in-app Agent may read as references (reference_read).
 mkdir -p "$app/Contents/Resources/reference"
 cp "$repo/agent/Reference/card-guide.md" "$app/Contents/Resources/reference/card-guide.md"

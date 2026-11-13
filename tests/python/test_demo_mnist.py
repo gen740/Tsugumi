@@ -118,7 +118,7 @@ def test_mnist_classifiers(mnist):
         image = c.call("RunRecordRequest", runId=first, card=path(card)).record.display.value
         assert bytes(image.data[:4]) == b"\x89PNG" and len(image.data) > 10000
     module = c.call("RunRecordRequest", runId=first, card=path("tradeoff")).record.display.value
-    figure = json.loads(text(module.dataJson))
+    figure = json.loads(text(module.configJson))
     assert text(module.name) == "plotly"
     assert [sorted(t["text"]) for t in figure["data"] if t.get("mode") == "markers+text"] == [sorted(MODELS)] * 2
 
