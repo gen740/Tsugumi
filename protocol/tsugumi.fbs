@@ -671,7 +671,8 @@ table ViewSaveRequest {
   view:ViewState (id: 2, required);
 }
 
-/// -> FileContent. Reads an immutable module entry in bounded pages.
+/// -> FileContent. Reads immutable module source in bounded pages. For a Wasm
+/// view, the core assembles the shared index.js template and local view.wasm.
 /// Only canonical /nix/store/<hash>-<name> directories with index.js qualify.
 table ModuleReadRequest {
   module:string (id: 0, required);

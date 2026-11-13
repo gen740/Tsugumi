@@ -285,8 +285,16 @@ inside the isolated frame. A Card's `views` declarations are recorded as store
 references in its manifest's pre-run environment. The worker resolves these
 names before publishing a display. Retention is unchanged.
 
-`ModuleReadRequest` serves the entry in bounded `FileContent` pages. It rejects
-non-store directories and entries escaping their directory. UI code caches by
+`ModuleReadRequest` serves self-contained source in bounded `FileContent` pages.
+For `wasmViewModule`, `sdk/nix/wasm-view.nix` builds a small Card side module and
+links `index.js` to one shared Emscripten/Emdawnwebgpu template output.
+`core/src/module_source.cc` assembles that entry with `view.wasm` at read time.
+The standard C WebGPU header comes from nixpkgs `wgpu-native.src`; the portable
+input/event header is `sdk/include/tsugumi/view.h`. The shared host owns canvas,
+surface configuration, event translation, animation and snapshots; GPU calls use
+Dawn's pinned port rather than a second binding implementation.
+The core rejects non-store directories, shared targets other than canonical
+store `index.js` entries, and Wasm files escaping the Card's directory. UI code caches by
 immutable identity. `ui/modules/viewer.js` drives initialise/update/resize/dispose
 inside an opaque iframe. Mac loads only the trusted host HTML into a
 nonpersistent WKWebView without granting file access, and denies network/file
@@ -310,9 +318,9 @@ The probe uses accessory activation policy, a nonpersistent offscreen WKWebView,
 a secure localhost base URL, `navigator.gpu` and `requestAdapter()`, and exits
 within 20 seconds. A timeout or denied WebKit/GPU service is not evidence that
 WebGPU is unsupported. The built-in line chart now uses the same isolated view
-module on both platforms. Planned work is a standard-webgpu.h Wasm
-view template with input/events bindings, and an optional RPC-relayed live
-worker channel (never a socket from the frame).
+module on both platforms. The C/Wasm alternative uses the same loader; see
+[the SDK view guide](CardGuide.md#cc-views-with-standard-webgpu). An optional
+RPC-relayed live worker channel remains future work (never a socket from the frame).
 
 
 The built-in `line-chart` view lives in `sdk/views/line-chart.js`. Its metadata

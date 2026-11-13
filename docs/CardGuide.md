@@ -617,9 +617,13 @@ uncooperative native code; check the context for cooperative early exit.
 
 ## Card-owned web views
 
-A view is a JavaScript ES module fixed by the Card's Nix definition. It draws
-with standard browser APIs: DOM, canvas, WebGPU, or bundled libraries. No
-Tsugumi drawing API is involved. Pointer handling stays in the frame and works
+A view is fixed by the Card's Nix definition. Write it either as a JavaScript
+ES module using DOM, canvas, WebGPU or bundled libraries, or as C/C++ compiled
+to a small Wasm module using standard `webgpu.h` and the SDK's shared host.
+Choose JavaScript for DOM/SVG, plotting libraries and direct browser APIs;
+choose C/C++ for existing native rendering code or a view whose source should
+also be usable by a future native WebGPU host. No Tsugumi drawing API is
+involved. Pointer handling stays in the frame and works
 after the worker exits. The built-in line chart uses this same module mechanism
 on both platforms; Card authors keep their existing line-chart SDK calls.
 
@@ -707,11 +711,97 @@ computes 12,000 little-endian float32 XYZ triples, and the JavaScript view
 rotates them on drag through WebGPU alone. It gives a clear error if WebGPU or
 an adapter is unavailable.
 
-Planned follow-ups: provide a shared JavaScript template and a Wasm header based on standard
-`webgpu.h`, with input, resize and pointer bindings; optionally relay messages
-between a view and its live worker through RPC. No worker channel or direct
-socket exists in this change. The Wasm template/header is not implemented, so
-there is no supported minimal Wasm/template size to report yet.
+### C/C++ views with standard WebGPU
+
+Declare a Wasm view in the same `views` attribute set:
+
+```nix
+views.points = inputs.tsugumi.wasmViewModule {
+  src = ./view;
+  sources = [ "main.c" ];  # default; .cc/.cpp sources use C++20
+  name = "point-cloud-wasm-view";
+  # cflags = [ "-DMY_OPTION=1" ];
+};
+```
+
+The processing Card and `display_module("points", config, blobs)` are unchanged.
+The builder compiles C11 or C++20 with Emscripten as a Wasm side module. Its
+output contains `view.wasm`, a byte-count file and an `index.js` symlink to
+`inputs.tsugumi.wasmViewTemplate`, one shared Nix output independent of every
+Card's source. `inputs.tsugumi.wasmViewHeaders` supplies the headers separately.
+The standard `<webgpu/webgpu.h>` is the webgpu-headers snapshot from the pinned
+nixpkgs `wgpu-native.src` (no Rust library build). The small portable header is
+[`<tsugumi/view.h>`](../sdk/include/tsugumi/view.h):
+
+| Host function | Meaning |
+| --- | --- |
+| `tsugumi_view_config(size_t*)` | Borrowed JSON bytes; length excludes the trailing NUL |
+| `tsugumi_view_blob(const char*, size_t*)` | Borrowed named binary input; missing is NULL/0 |
+| `tsugumi_view_size(TsugumiViewSize*)` | Width/height in CSS pixels and pixel ratio |
+| `tsugumi_view_on_pointer(callback)` | Down/move/up/cancel, local CSS coordinates and button mask |
+| `tsugumi_view_on_wheel(callback)` | Wheel deltas normalized to CSS pixels |
+| `tsugumi_view_on_frame(callback)` | Animation callback in monotonic milliseconds, paused while hidden |
+| `tsugumi_view_error(const char*)` | Stop and report a UTF-8 diagnostic |
+
+Callbacks are replaced by registration; NULL unregisters. Input pointers remain
+valid until the next update or disposal. Updating replaces all blobs, including
+removing absent names. Inputs are copied into Wasm memory, never stored as build
+outputs. Pointer capture and browser event normalization belong to the shared
+host; neither DOM objects nor JavaScript types appear in the C header.
+
+Implement these four C-linkage entry points (no `main`):
+
+```c
+#include <tsugumi/view.h>
+void tsugumi_view_initialise(WGPUDevice device, WGPUSurface surface, WGPUTextureFormat format);
+void tsugumi_view_update(void);
+void tsugumi_view_resize(void);
+void tsugumi_view_dispose(void);
+```
+
+The host passes borrowed standard GPU handles, configures the surface at the
+current pixel size and owns its presentation, device and surface lifetime.
+Create pipelines/buffers with ordinary `wgpu*` calls, get the current surface
+texture to render, and release each acquired handle. Do not reconfigure or
+release the borrowed device/surface, or call `wgpuSurfacePresent` (Emdawnwebgpu
+does not implement that blocking call). Register a frame callback to redraw;
+snapshots invoke it and wait for the GPU queue before exporting PNG. Dispose
+unregisters callbacks and releases the view's buffers, pipelines and other GPU
+resources. The host cancels animation, removes listeners and frees input memory.
+Initialization failures, callback failures and device loss reach the ordinary
+module error bridge. No worker needs to remain alive.
+
+The shared template builds on [Emdawnwebgpu](https://dawn.googlesource.com/dawn/+/01940842b667a7812d0e4ca0ef4367fbec294241/src/emdawnwebgpu/pkg/README.md),
+Dawn's implementation of `webgpu.h` over the browser's WebGPU. Emscripten 6.0.9
+in the pinned nixpkgs selects release `v20260423.175430`; the SDK fetches that
+text-only port with its upstream SHA-512 through Nix, so compilation makes no
+network downloads. It retains the full WebGPU/C/C++ runtime in a shared main
+module rather than generating a different JS binding for each Card. The main
+module's supporting Wasm is embedded in the shared ES module. No GPU-call
+marshaling has been reimplemented in Tsugumi.
+
+The core assembles the shared template and the Card's Wasm into self-contained
+source when serving `ModuleReadRequest`. Both UIs keep the same loader, page
+limit and opaque-frame isolation. Only a canonical store `index.js` may be a
+shared target, `view.wasm` must resolve inside the Card's output, and the
+assembled source is limited to 32 MiB (the Wasm binary to 8 MiB). There are no
+runtime imports, relative fetches, new host-server endpoints or UI store reads.
+
+[`tests/fixtures/view-point-cloud-wasm`](../tests/fixtures/view-point-cloud-wasm)
+uses the same Python data generator as the JavaScript example: 12,000 float32
+XYZ triples, rotated in C on WebGPU. It also demonstrates frame animation and
+wheel zoom. `tests/python/test_sdk_examples.py` checks both fixtures through
+core RPC, including shared-template identity and Wasm packaging.
+`node tests/sdk/wasm-view.mjs` exercises the boundary with a GPU/DOM stand-in;
+set `TSUGUMI_WASM_TEMPLATE` and `TSUGUMI_WASM_VIEW` to built file paths to test
+the actual binding and C Wasm with that same stand-in. This does not render in
+a browser or verify WebKit/WebGPU availability. Each Nix output records its
+uncompressed byte count in `size-bytes`; these are definition outputs, never
+run data. Nix builds and browser rendering must be checked in an unrestricted
+environment.
+
+A possible follow-up is an RPC-relayed channel to a live worker; a view has no
+direct worker socket.
 
 
 ### Built-in line chart

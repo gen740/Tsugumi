@@ -12,7 +12,8 @@ assert.match(fs.readFileSync(path.join(process.argv[2], 'ui/modules/viewer.html'
 const runtime = script.slice(script.indexOf('function runtime()'), script.indexOf('frame.srcdoc ='))
 const messages: any[] = [], calls: any[] = []
 const listeners = new Map<string, (event: any) => any>()
-const root = { style: {}, replaceChildren() {}, calls, textContent: '' }
+const rootListeners = new Map<string, (event: any) => any>()
+const root = { style: {}, replaceChildren() {}, addEventListener: (name: string, fn: any) => rootListeners.set(name, fn), calls, textContent: '' }
 const parent = { postMessage: (message: any) => messages.push(message) }
 const context = vm.createContext({
   document: { createElement: () => root, body: { append() {} } }, parent,
@@ -45,6 +46,10 @@ await listeners.get('message')!({ source: parent, data: { tsugumi: 'visibility',
 assert.deepEqual(calls.at(-1), ['resize', false])
 await send(3, { name: 'another-view', code: code + '\n// another identity' })
 assert.ok(calls.some(call => call[0] === 'dispose'))
+rootListeners.get('tsugumi-view-error')!({ detail: 'GPU device lost' })
+assert.equal(messages.at(-1).state, 'error')
+assert.equal(root.textContent, 'GPU device lost')
+assert.equal(calls.at(-1)[0], 'dispose')
 listeners.get('pagehide')!({})
 assert.equal(calls.at(-1)[0], 'dispose')
 

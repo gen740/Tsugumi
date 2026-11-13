@@ -110,7 +110,8 @@ table DisplayPointCloud {
 }
 
 /// A module's immutable Nix store directory and per-run input. index.js is
-/// a self-contained ES module; SDK viewModule bundles its local dependencies.
+/// a self-contained ES module, or a shared template link with local view.wasm.
+/// ModuleRead always delivers self-contained source, assembled by the core.
 table DisplayBlob {
   name:string (id: 0, required);
   data:[ubyte] (id: 1, required);
