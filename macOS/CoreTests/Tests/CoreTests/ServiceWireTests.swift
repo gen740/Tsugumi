@@ -20,7 +20,7 @@ final class ServiceWireTests: XCTestCase {
     let host = try ServiceWire.encode("HostRecentListRequest", fields: [:], id: 1, host: true)
     XCTAssertThrowsError(try ServiceWire.decode(host, host: false))
     XCTAssertTrue(ServiceWire.hostMethod("RegisterProjectRequest", [:]))
-    XCTAssertTrue(ServiceWire.hostMethod("ConfigureRequest", [:]))
+    XCTAssertFalse(ServiceWire.hostMethod("ConfigureRequest", [:]))
     XCTAssertFalse(ServiceWire.hostMethod("ConfigureRequest", ["conversation_id": "c"]))
   }
 
@@ -38,6 +38,28 @@ final class ServiceWireTests: XCTestCase {
       let request: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
       XCTAssertEqual(request.requestId, 2)
       XCTAssertThrowsError(try ServiceWire.encode(method, fields: fields, id: 2, host: false))
+    }
+  }
+
+  func testSettingsAndSignInUseTheHostContract() throws {
+    for (method, fields) in [
+      ("SettingsGetRequest", ["profile": "desktop"]),
+      ("SettingsUpdateRequest", ["profile": "desktop", "revision": UInt64.max - 1, "changes": [["key": "agent.webSearch", "value_json": "true"]]]),
+      ("ProviderSetRequest", ["profile": "desktop", "id": "openai", "remove": true]),
+      ("ProviderStatusRequest", ["profile": "desktop", "id": "openai"]),
+      ("SignInBeginRequest", ["profile": "desktop"]),
+      ("SignInActionRequest", ["profile": "desktop", "attempt_id": "attempt", "action": "cancel"]),
+      ("SignInStatusRequest", ["profile": "desktop", "attempt_id": "attempt"]),
+    ] as [(String, [String: Any])] {
+      XCTAssertTrue(ServiceWire.hostMethod(method, fields))
+      let bytes = try ServiceWire.encode(method, fields: fields, id: 2, host: true)
+      var buffer = ByteBuffer(data: bytes)
+      let request: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
+      XCTAssertEqual(request.requestId, 2)
+      XCTAssertThrowsError(try ServiceWire.encode(method, fields: fields, id: 2, host: false))
+    }
+    for method in ["CredentialTokenRequest", "CredentialImportRequest", "CredentialForgetRequest", "ConfigureRequest"] {
+      XCTAssertThrowsError(try ServiceWire.encode(method, fields: [:], id: 2, host: true))
     }
   }
 
@@ -59,6 +81,24 @@ final class ServiceWireTests: XCTestCase {
       let decoded = try ServiceWire.decode(b.data, host: true)
       let list = try XCTUnwrap(decoded[type == .executionservices ? "services" : "value"] as? [Any])
       XCTAssertTrue(list.isEmpty)
+    }
+  }
+
+  func testOmittedSettingsAndAccountVectorsAreEmpty() throws {
+    for type in [Tsugumi_Host_ReplyPayload.settings, .signinstatus] {
+      var b = FlatBufferBuilder(initialSize: 128)
+      let value: Offset
+      if type == .settings { value = Tsugumi_Host_Settings.createSettings(&b) }
+      else {
+        let state = b.create(string: "idle")
+        value = Tsugumi_Host_SignInStatus.createSignInStatus(&b, stateOffset: state)
+      }
+      let reply = Tsugumi_Host_Reply.createReply(&b, valueType: type, valueOffset: value)
+      let message = Tsugumi_Host_Message.createMessage(&b, requestId: 1, payloadType: .reply, payloadOffset: reply)
+      Tsugumi_Host_Message.finish(&b, end: message)
+      let decoded = try ServiceWire.decode(b.data, host: true)
+      let result = try XCTUnwrap(decoded["value"] as? [String: Any])
+      XCTAssertTrue(try XCTUnwrap(result[type == .settings ? "values" : "accounts"] as? [Any]).isEmpty)
     }
   }
 

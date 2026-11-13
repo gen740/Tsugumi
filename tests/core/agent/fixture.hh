@@ -61,8 +61,6 @@ struct Reply {
         return test::View(r->value_as_HelloResult());
       case H::ReplyPayload::Acknowledgement:
         return test::View(r->value_as_Acknowledgement());
-      case H::ReplyPayload::CredentialToken:
-        return test::View(r->value_as_CredentialToken());
       case H::ReplyPayload::ProjectDefaults:
         return test::View(r->value_as_ProjectDefaults());
       case H::ReplyPayload::ProjectInfo:
@@ -312,45 +310,38 @@ class AgentFixture : public ::testing::Test {
   auto Configure(const ModelServer& model, std::string provider = "fixture",
                  uint32_t context_limit = 600000) -> void {
     auto reply =
-        Call(*host, H::RequestPayload::ConfigureRequest, [&](Builder &b) {
-          Tsugumi::Service::ProviderT config;
-          config.provider = provider;
-          config.auth = "none";
-          config.base_url = model.URL();
+        Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
+          Tsugumi::Service::ProviderInputT config;
+          config.api_key = "FIXTURE_API_KEY";
+          config.endpoint = model.URL();
           config.model = "fixture-model";
           config.max_tokens = 1024;
           config.context_limit = context_limit;
-          const auto p = Tsugumi::Service::Provider::Pack(b, &config);
-          return H::CreateConfigureRequest(b, p).Union();
+          const auto p = Tsugumi::Service::ProviderInput::Pack(b, &config);
+          return H::CreateProviderSetRequest(b, b.CreateString("desktop"),
+                                             b.CreateString(provider), p)
+              .Union();
         });
     if (!reply.Code().empty())
       throw std::runtime_error("cannot configure external model fixture");
-  }
-
-  auto ImportCredential(const ModelServer& server, bool replace = false)
-      -> Reply {
-    return Call(
-        *host, H::RequestPayload::CredentialImportRequest, [&](Builder &b) {
-          H::CredentialRegistrationT value;
-          value.client_id = "fixture-client";
-          value.refresh_token = "refresh-old";
-          value.access_token = "access-old";
-          value.resource = "https://fixture.invalid/api";
-          value.token_endpoint = server.URL() + "/token";
-          value.revocation_endpoint = server.URL() + "/revoke";
-          const auto registration = H::CredentialRegistration::Pack(b, &value);
-          return H::CreateCredentialImportRequest(b, registration, replace)
+    const auto current =
+        Call(*host, H::RequestPayload::SettingsGetRequest, [](Builder& b) {
+          return H::CreateSettingsGetRequest(b, b.CreateString("desktop"))
               .Union();
         });
-  }
-
-  auto Token(std::string_view stale = {}) -> Reply {
-    return Call(
-        *host, H::RequestPayload::CredentialTokenRequest, [&](Builder &b) {
-          return H::CreateCredentialTokenRequest(
-                     b, b.CreateString("fixture-client"), b.CreateString(stale))
+    const auto revision = current.HostValue()->value_as_Settings()->revision();
+    const auto selected =
+        Call(*host, H::RequestPayload::SettingsUpdateRequest, [&](Builder& b) {
+          const auto item =
+              H::CreateSetting(b, b.CreateString("agent.provider"),
+                               b.CreateString(Quote(provider)));
+          return H::CreateSettingsUpdateRequest(
+                     b, b.CreateString("desktop"), revision,
+                     b.CreateVector(std::vector{item}))
               .Union();
         });
+    if (!selected.Code().empty())
+      throw std::runtime_error("cannot select fixture provider");
   }
 
   auto Send(const std::string& conversation, const std::string& text,

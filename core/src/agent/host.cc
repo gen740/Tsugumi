@@ -24,6 +24,7 @@
 #include "agent/wire.hh"
 #include "host/execution_broker.hh"
 #include "host/projects.hh"
+#include "host/settings.hh"
 #include "host/skills.hh"
 #include "lanes.hh"
 #include "tsugumi/client/client.hh"
@@ -80,38 +81,6 @@ auto HostFailed(uint64_t id, std::string_view code, std::string_view message,
   return wire::HostReply(id, std::move(failure));
 }
 
-auto Config(std::string_view raw) -> ProviderConfig {
-  auto o = json::Object(raw);
-  ProviderConfig c;
-  const auto provider = json::Text(o, "provider", json::Text(o, "id"));
-  const auto api = json::Text(o, "api");
-  c.api = (provider == "openai" || provider == "chatgpt" ||
-           api == "responses" || api == "openai" || api == "openAIResponses")
-              ? ProviderAPI::OpenAIResponses
-              : ProviderAPI::AnthropicMessages;
-  c.base_url = json::Text(o, "baseURL",
-                          json::Text(o, "base_url",
-                                     c.api == ProviderAPI::OpenAIResponses
-                                         ? "https://api.openai.com/v1"
-                                         : "https://api.anthropic.com"));
-  c.auth = provider == "chatgpt" || json::Text(o, "auth") == "chatgpt" ||
-                   json::Text(o, "auth") == "chatGPT"
-               ? ProviderAuth::ChatGPT
-               : ProviderAuth::ApiKey;
-  if (provider == "fixture" || json::Text(o, "auth") == "none")
-    c.auth = ProviderAuth::None;
-  c.model = json::Text(o, "model");
-  c.credential = json::Text(
-      o, "apiKey", json::Text(o, "token", json::Text(o, "credential")));
-  c.effort = json::Text(o, "effort");
-  c.fast = json::Bool(json::Get(o, "fast"));
-  c.web_search = json::Bool(json::Get(o, "webSearch"));
-  c.max_tokens =
-      static_cast<uint32_t>(json::UInt(json::Get(o, "maxTokens"), 16384));
-  c.context_limit =
-      static_cast<uint32_t>(json::UInt(json::Get(o, "contextLimit"), 600000));
-  return c;
-}
 auto ToolOutput(std::string_view raw, bool error,
                 std::vector<std::string> resources) -> ToolResult {
   auto split = SplitToolImages(raw);
@@ -245,6 +214,16 @@ struct Host::State {
         "KEY, path TEXT NOT NULL, folders TEXT NOT NULL);"
         "CREATE TABLE IF NOT EXISTS model_lists(id TEXT PRIMARY KEY, models "
         "TEXT NOT NULL);");
+    host_settings = std::make_unique<host::Settings>(
+        options.state_dir,
+        [this](const std::string& id, const json::Members& values) {
+          std::lock_guard guard(credential_mutex);
+          SaveCredential(id, values);
+        },
+        [this](const std::string& id, std::string_view stale) {
+          return AccessToken(id, stale);
+        },
+        [this](const std::string& id) { return ForgetCredential(id); });
     db.exec("UPDATE turns SET state='interrupted' WHERE state='running'");
     if (!options.broker_socket.empty())
       execution_broker = std::make_unique<host::ExecutionBroker>(options.state_dir, options.broker_socket);
@@ -253,6 +232,7 @@ struct Host::State {
   HostOptions options;
   sql::Db db;
   host::Projects host_projects;
+  std::unique_ptr<host::Settings> host_settings;
   std::unique_ptr<host::ExecutionBroker> execution_broker;
   Catalog catalog;
   Server *server = nullptr;
@@ -344,7 +324,55 @@ struct Host::State {
       schedule = std::make_shared<ThoughtSchedule>();
     return schedule;
   }
-  auto Event(const std::string &id, const std::string &raw) -> void {
+  auto Scrub(std::string raw) -> std::string {
+    std::lock_guard guard(mutex);
+    std::vector<std::string> secrets;
+    auto q = db.prepare("SELECT json FROM credentials");
+    while (q.step()) {
+      const auto record = json::Object(q.text(0));
+      for (const auto* field : {"access_token", "refresh_token", "id_token"}) {
+        const auto value = json::Text(record, field);
+        if (!value.empty()) secrets.push_back(value);
+      }
+    }
+    auto plain = [&](std::string text) {
+      if (host_settings) text = host_settings->Redact(std::move(text));
+      for (const auto& secret : secrets)
+        for (size_t i = 0; (i = text.find(secret, i)) != text.npos;) {
+          text.replace(i, secret.size(), "[redacted]");
+          i += 10;
+        }
+      return text;
+    };
+    // Preserve protocol keys and enum values; only data strings can contain a
+    // copied credential. Replacing bytes in a serialized envelope corrupts it
+    // when a deliberately short test key coincides with a field name.
+    std::function<std::string(std::string_view)> scrub =
+        [&](std::string_view value) -> std::string {
+      if (value.starts_with('{')) {
+        auto fields = json::Object(value);
+        for (auto& [key, data] : fields)
+          if (key != "kind" && key != "role" && key != "type")
+            data = scrub(data);
+        return json::Encode(fields);
+      }
+      if (value.starts_with('[')) {
+        auto rows = json::Array(value);
+        for (auto& row : rows) row = scrub(row);
+        return json::Encode(rows);
+      }
+      if (value.starts_with('"'))
+        return json::Quote(plain(json::String(value)));
+      return std::string(value);
+    };
+    try {
+      if (raw.starts_with('{') || raw.starts_with('[')) return scrub(raw);
+    } catch (...) {
+    }
+    return plain(std::move(raw));
+  }
+  auto Event(const std::string& id, const std::string& input) -> void {
+    const auto raw = Scrub(input);
     std::lock_guard lock(mutex);
     if (running.contains(id)) {
       const auto event = json::Object(raw);
@@ -448,7 +476,10 @@ struct Host::State {
           RememberResource(id, resource);
     auto q =
         db.prepare("UPDATE conversations SET messages=?,updated=? WHERE id=?");
-    q.bind(1, SerializeMessages(messages)).bind(2, Now()).bind(3, id).run();
+    q.bind(1, Scrub(SerializeMessages(messages)))
+        .bind(2, Now())
+        .bind(3, id)
+        .run();
   }
   auto ConversationJson(const Conversation &c) -> std::string {
     std::vector<Message> messages;
@@ -502,7 +533,7 @@ struct Host::State {
         {"id", json::Quote(c.id)},
         {"title", json::Quote(c.title)},
         {"updatedAt", std::to_string(c.updated)},
-        {"messages", SerializeMessages(messages)},
+        {"messages", Scrub(SerializeMessages(messages))},
         {"archive", SerializeMessages(archive)},
         {"summary", summary.empty() ? "null" : json::Quote(summary)},
         {"tools", json::Encode(tools)},
@@ -575,25 +606,29 @@ struct Host::State {
     SaveCredential(id, value);
     return refreshed.access_token;
   }
-  auto ModelConfig(std::string_view raw) -> ProviderConfig {
-    auto config = Config(raw);
-    const auto values = json::Object(raw);
-    const auto credential =
-        json::Text(values, "credential_id", json::Text(values, "accountId"));
-    if (config.auth == ProviderAuth::ChatGPT && !credential.empty()) {
-      config.access_token = [this, credential](std::string_view stale) {
-        return AccessToken(credential, stale);
-      };
-      config.credential.clear();
+  auto ForgetCredential(const std::string& id) -> bool {
+    std::lock_guard credential_lock(credential_mutex);
+    bool revoked = false;
+    try {
+      const auto value = Credential(id);
+      RevokeCredential(json::Text(value, "revocation_endpoint"), id,
+                       json::Text(value, "refresh_token"),
+                       shutdown.get_token());
+      revoked = true;
+    } catch (...) {
     }
-    return config;
+    std::lock_guard state_lock(mutex);
+    auto q = db.prepare("DELETE FROM credentials WHERE id=?");
+    q.bind(1, id).run();
+    return revoked;
+  }
+  auto ModelConfig(std::string_view raw) -> ProviderConfig {
+    return host_settings->Resolve(json::Object(raw));
   }
   auto Provider(const std::string &id) -> ProviderConfig {
-    auto q = db.prepare("SELECT json FROM providers WHERE conversation IN "
-                        "('',?) ORDER BY length(conversation) DESC LIMIT 1");
+    auto q = db.prepare("SELECT json FROM providers WHERE conversation=?");
     q.bind(1, id);
-    if (!q.step())
-      throw Failure("not_configured", "Configure a model provider first");
+    if (!q.step()) return host_settings->Resolve({});
     return ModelConfig(q.text(0));
   }
   auto DemoList() -> std::string {
@@ -725,7 +760,7 @@ struct Host::State {
             .bind(2, parent_call)
             .bind(3, static_cast<int>(index))
             .bind(4, digest)
-            .bind(5, SerializeMessages(messages))
+            .bind(5, Scrub(SerializeMessages(messages)))
             .run();
       }
       config = Provider(conversation);
@@ -780,10 +815,10 @@ struct Host::State {
     const auto result =
         Runtime({.max_steps = 15})
             .Run(config, System(), messages, tools, stop, hooks);
-    const auto output =
-        json::Encode(json::Members{{"name", json::Quote(name)},
-                                   {"messages", SerializeMessages(messages)},
-                                   {"error", json::Quote(result.error)}});
+    const auto output = json::Encode(
+        json::Members{{"name", json::Quote(name)},
+                      {"messages", Scrub(SerializeMessages(messages))},
+                      {"error", json::Quote(result.error)}});
     {
       std::lock_guard lock(mutex);
       auto update = db.prepare("UPDATE helpers SET result=?,state=? WHERE "
@@ -1189,9 +1224,7 @@ struct Host::State {
             std::filesystem::path(skill->path).lexically_relative(project_path);
         const bool in_project = fs::valid_relative_path(relative.string());
         std::string resource = c.project;
-        std::string method = "project_file_read";
-        json::Members args{{"path", json::Quote(relative.string())},
-                           {"limit_bytes", std::to_string(host::kSkillLimit)}};
+        std::filesystem::path read_root = project_path;
         if (!in_project) {
           auto folder =
               db.prepare("SELECT id FROM folders WHERE project=? AND path=?");
@@ -1200,30 +1233,16 @@ struct Host::State {
             throw Failure("permission_denied",
                           "The user has not attached this skill folder");
           resource = folder.text(0);
-          method = "attached_folder_read";
-          args["folder"] = json::Quote(skill->source_folder);
-          args["path"] =
-              json::Quote(std::filesystem::path(skill->path)
-                              .lexically_relative(skill->source_folder)
-                              .string());
+          read_root = skill->source_folder;
         }
         require(resource, c.id, A::Access::Read, true, stop,
                 "Read the selected skill " + skill->name);
         lock.unlock();
-        const auto envelope = json::Object(
-            ProjectCall(c.project, method, json::Encode(args), stop));
+        const auto bytes = host::ReadSkill(read_root, skill->path);
         lock.lock();
         if (!HasGrant(resource, c.id, A::Access::Read))
           throw Failure("permission_denied",
                         "Skill access was revoked while reading");
-        if (json::Text(envelope, "reply") != "FileContent")
-          throw Failure("unavailable", "The selected skill could not be read");
-        const auto content = json::Object(json::Get(envelope, "value", "{}"));
-        const auto bytes = json::Text(content, "bytes");
-        if (!json::Bool(json::Get(content, "eof")) ||
-            bytes.size() >= host::kSkillLimit)
-          throw Failure("limit_exceeded",
-                        "The selected skill must be smaller than 512 KiB");
         text += "\n[User-selected skill " + skill->name + "]\n" + bytes;
         resources.push_back(resource);
       }
@@ -1443,7 +1462,7 @@ struct Host::State {
   auto SummaryReply(uint64_t id, std::string_view raw) -> std::string {
     const auto o = json::Object(raw);
     A::TextResultT result;
-    result.text = json::Text(o, "text");
+    result.text = Scrub(json::Text(o, "text"));
     result.usage =
         std::make_unique<A::UsageT>(wire::Usage(json::Get(o, "usage", "{}")));
     return wire::AgentReply(id, std::move(result));
@@ -1459,8 +1478,7 @@ struct Host::State {
       Human(human);
       const auto *p = r->value_as_ConfigureRequest();
       GetConversation(p->conversation_id()->str());
-      const auto raw = wire::ProviderJson(*p->provider());
-      Config(raw);
+      const auto raw = wire::SelectionJson(*p->provider());
       auto q = db.prepare("INSERT OR REPLACE INTO providers VALUES(?,?)");
       q.bind(1, p->conversation_id()->str()).bind(2, raw).run();
       return wire::AgentReply(request.request_id, S::AcknowledgementT{});
@@ -1887,7 +1905,10 @@ struct Host::State {
       auto create = db.prepare("INSERT OR IGNORE INTO conversations "
                                "VALUES(?,?,'summary','','[]',?,'user')");
       create.bind(1, id).bind(2, project).bind(3, Now()).run();
-      const auto config = Provider("");
+      auto config = p->provider()
+                        ? ModelConfig(wire::SelectionJson(*p->provider()))
+                        : Provider("");
+      config.max_tokens = 1500;
       lock.unlock();
       Require(project, id, A::Access::Read, false, {},
               "Read version changes for a model-written summary");
@@ -1910,7 +1931,7 @@ struct Host::State {
       const auto id = p->conversation_id()->str();
       auto c = GetConversation(id);
       auto config = p->provider()
-                        ? ModelConfig(wire::ProviderJson(*p->provider()))
+                        ? ModelConfig(wire::SelectionJson(*p->provider()))
                         : Provider(id);
       auto messages = ParseMessages(c.messages);
       const auto thought = ThoughtsFor(id);
@@ -1950,67 +1971,14 @@ struct Host::State {
       if (!broker) throw Failure("unavailable", "Execution broker is not running");
       return broker->Handle(*r, request.request_id);
     }
+    if (host::Settings::Handles(r->value_type())) {
+      Human(human);
+      lock.unlock();
+      return host_settings->Handle(*r, request.request_id);
+    }
     if (host::Projects::Handles(r->value_type()))
       return host_projects.Handle(*r, request.request_id);
     switch (r->value_type()) {
-    case H::RequestPayload::ConfigureRequest: {
-      Human(human);
-      auto p = r->value_as_ConfigureRequest();
-      const auto raw = wire::ProviderJson(*p->provider());
-      Config(raw);
-      auto q = db.prepare("INSERT OR REPLACE INTO providers VALUES(?,?)");
-      q.bind(1, "").bind(2, raw).run();
-      return wire::HostReply(request.request_id, S::AcknowledgementT{});
-    }
-    case H::RequestPayload::CredentialImportRequest: {
-      Human(human);
-      auto p = r->value_as_CredentialImportRequest();
-      auto value = json::Object(wire::RegistrationJson(*p->registration()));
-      const auto id = json::Text(value, "client_id");
-      if (id.empty() || json::Text(value, "refresh_token").empty() ||
-          json::Text(value, "token_endpoint").empty())
-        throw Failure("invalid_request",
-                      "An account registration needs its client ID, refresh "
-                      "token and endpoint");
-      const bool replace = p->replace();
-      lock.unlock();
-      std::lock_guard credential_lock(credential_mutex);
-      {
-        std::lock_guard state_lock(mutex);
-        auto existing = db.prepare("SELECT 1 FROM credentials WHERE id=?");
-        existing.bind(1, id);
-        if (!replace && existing.step())
-          return wire::HostReply(request.request_id, S::AcknowledgementT{});
-      }
-      SaveCredential(id, value);
-      return wire::HostReply(request.request_id, S::AcknowledgementT{});
-    }
-    case H::RequestPayload::CredentialTokenRequest: {
-      Human(human);
-      auto p = r->value_as_CredentialTokenRequest();
-      const auto id = p->client_id()->str(), stale = Text(p->stale_token());
-      lock.unlock();
-      H::CredentialTokenT result;
-      result.access_token = AccessToken(id, stale);
-      result.client_id = id;
-      return wire::HostReply(request.request_id, std::move(result));
-    }
-    case H::RequestPayload::CredentialForgetRequest: {
-      Human(human);
-      const auto id = r->value_as_CredentialForgetRequest()->client_id()->str();
-      lock.unlock();
-      std::lock_guard credential_lock(credential_mutex);
-      auto value = Credential(id);
-      RevokeCredential(json::Text(value, "revocation_endpoint"), id,
-                       json::Text(value, "refresh_token"),
-                       shutdown.get_token());
-      std::lock_guard state_lock(mutex);
-      auto q = db.prepare("DELETE FROM credentials WHERE id=?");
-      q.bind(1, id).run();
-      S::AcknowledgementT result;
-      result.revoked = true;
-      return wire::HostReply(request.request_id, std::move(result));
-    }
     case H::RequestPayload::RegisterProjectRequest: {
       Human(human);
       auto p = r->value_as_RegisterProjectRequest();
@@ -2093,10 +2061,11 @@ struct Host::State {
       if (key.empty())
         throw Failure("invalid_request", "A model catalog needs a provider ID");
       if (p->refresh()) {
-        if (!p->provider())
-          throw Failure("invalid_request",
-                        "Refresh needs a provider configuration");
-        auto config = ModelConfig(wire::ProviderJson(*p->provider()));
+        auto config = host_settings->Resolve(
+            {{"profile", json::Quote(Text(p->profile()))},
+             {"provider_id", json::Quote(key)},
+             {"account_profile", json::Quote(Text(p->account_profile()))},
+             {"key_profile", json::Quote(Text(p->key_profile()))}});
         lock.unlock();
         const auto fresh = ListModels(config, shutdown.get_token());
         lock.lock();
@@ -2106,7 +2075,7 @@ struct Host::State {
             rows.push_back(json::Encode(json::Members{
                 {"id", json::Quote(id)}, {"name", json::Quote(name)}}));
           auto q = db.prepare("INSERT OR REPLACE INTO model_lists VALUES(?,?)");
-          q.bind(1, key).bind(2, json::Encode(rows)).run();
+          q.bind(1, key).bind(2, Scrub(json::Encode(rows))).run();
         }
       }
       H::ModelListT result;
@@ -2157,6 +2126,7 @@ auto Host::Shutdown() -> void {
   for (const auto &job : jobs)
     if (job->joinable())
       job->join();
+  state_->host_settings.reset();
 }
 auto Host::hello(const RequestIn &request) -> std::pair<std::string, bool> {
   const bool host = H::MessageBufferHasIdentifier(request.frame->data());
@@ -2212,11 +2182,13 @@ auto Host::dispatch(RequestIn request) -> void {
       bytes = fail(request.request_id, "cancelled",
                    "The operation was cancelled", {});
     } catch (const host::ProjectFailure &e) {
-      bytes = fail(request.request_id, e.code, e.what(), {});
+      bytes = fail(request.request_id, e.code, state_->Scrub(e.what()), {});
     } catch (const Failure &e) {
-      bytes = fail(request.request_id, e.code, e.what(), e.request_id);
+      bytes = fail(request.request_id, e.code, state_->Scrub(e.what()),
+                   e.request_id);
     } catch (const std::exception &e) {
-      bytes = fail(request.request_id, "invalid_request", e.what(), {});
+      bytes = fail(request.request_id, "invalid_request",
+                   state_->Scrub(e.what()), {});
     }
     server->reply(request.conn, std::move(bytes));
   };

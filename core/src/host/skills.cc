@@ -5,6 +5,8 @@
 #include <memory>
 #include <sstream>
 
+#include "util/fs.hh"
+
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
 #else
@@ -291,6 +293,22 @@ auto Scan(const fs::path& folder, H::SkillsListT& out) -> void {
 }
 }  // namespace
 
+auto ReadSkill(const fs::path& root, const fs::path& file) -> std::string {
+  // Resolve permitted symlinks, then open every component beneath the resolved
+  // root without following links. A replacement after resolution cannot escape.
+  const auto base = fs::canonical(root);
+  const auto target = fs::canonical(file);
+  const auto relative = target.lexically_relative(base);
+  if (!tsugumi::fs::valid_relative_path(relative.string()))
+    throw std::runtime_error("The selected skill leaves its registered folder");
+  std::string bytes;
+  tsugumi::fs::stream_beneath(base, relative, kSkillLimit,
+                              [&](std::string_view chunk) { bytes += chunk; });
+  if (bytes.size() >= kSkillLimit)
+    throw std::runtime_error("The selected skill must be smaller than 512 KiB");
+  return bytes;
+}
+
 auto SkillNameKey(std::string_view name) -> std::string {
   return Normalize(RepairUTF8(name));
 }
@@ -308,6 +326,13 @@ auto ListSkills(const fs::path& project,
   }
   for (const auto& folder : folders)
     Scan(fs::path(folder).lexically_normal(), out);
+  for (auto& skill : out.skills) {
+    if (skill->path == "builtin:demo") continue;
+    if (project.empty() ||
+        !tsugumi::fs::valid_relative_path(
+            fs::path(skill->path).lexically_relative(project).string()))
+      skill->attachment_folder = skill->source_folder;
+  }
   return out;
 }
 }  // namespace tsugumi::host

@@ -74,7 +74,9 @@ jobs:
       - name: Pinned public-key TLS handshakes
         run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_peer_tls_tests"'
       - name: Public Agent RPC scenarios
-        run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_agent_rpc_tests"'
+        run: |
+          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_host_settings_tests"
+          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_agent_rpc_tests"
 
   rpc:
     name: Core and CLI RPC

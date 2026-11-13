@@ -113,6 +113,8 @@ class Connection {
 }
 
 export class CoreAgentHost {
+  readonly keyProfile = `web:env:${randomUUID()}`
+  private environment?: Promise<void>
   readonly schema: string
   readonly state: string
   private readonly binary: string
@@ -122,7 +124,7 @@ export class CoreAgentHost {
   private readonly host = new Connection(this, false, true)
   readonly user = {
     call: <T = any>(method: string, value: any = {}): Promise<T> =>
-      (hostMethod(method) || method === 'ConfigureRequest' && !value.conversation_id ? this.host : this.agent).call<T>(method, value),
+      (hostMethod(method) ? this.host : this.agent).call<T>(method, value),
   }
   readonly external = new Connection(this, true)
   private projects = new Map<string, string>()
@@ -175,6 +177,19 @@ export class CoreAgentHost {
     })().finally(() => { this.starting = undefined })
   }
 
+  provisionEnvironment(): Promise<void> {
+    return this.environment ??= (async () => {
+      for (const [id, name] of [['anthropic', 'ANTHROPIC_API_KEY'], ['openai', 'OPENAI_API_KEY']]) {
+        const key = process.env[name]
+        if (key) await this.user.call('ProviderSetRequest', { profile: this.keyProfile, id, ephemeral: true, provider: { api_key: key } })
+      }
+    })()
+  }
+
+  async getSettings(profile: string): Promise<{ revision: number; values: { key: string; value_json: string }[] }> {
+    return this.user.call('SettingsGetRequest', { profile })
+  }
+
   async project(folder: string): Promise<string> {
     const state = await this.envs.start(folder)
     if (state.state !== 'ready') throw new Error(state.state === 'failed' ? state.message : 'Project core is not ready')
@@ -189,17 +204,14 @@ export class CoreAgentHost {
     return undefined
   }
 
-  private async provider(config: ProviderConfig) {
-    const token = config.token ? await config.token() : undefined
-    return { provider: config.auth === 'chatgpt' ? 'chatgpt' : '', api: config.api, auth: config.auth, base_url: config.baseURL, model: config.model,
-      credential: token?.value ?? config.apiKey, credential_id: token?.clientId, effort: config.effort,
-      fast: config.fast, web_search: config.webSearch, max_tokens: config.maxTokens, context_limit: config.contextLimit }
+  async provider(config: ProviderConfig) {
+    return { profile: config.profile ?? 'desktop', account_profile: config.accountProfile, key_profile: config.keyProfile,
+      provider_id: config.auth === 'chatgpt' ? 'chatgpt' : config.auth === 'none' ? 'fixture' : config.api === 'openAIResponses' ? 'openai' : 'anthropic', model: config.model, use_choices: !!config.usesChoices }
   }
 
-  async configure(config: ProviderConfig, conversationId?: string) {
+  async configure(config: ProviderConfig, conversationId: string) {
     const provider = await this.provider(config)
-    await this.user.call('ConfigureRequest', { provider })
-    if (conversationId) await this.user.call('ConfigureRequest', { conversation_id: conversationId, provider })
+    await this.user.call('ConfigureRequest', { conversation_id: conversationId, provider })
   }
 
   async storedModels(id: string): Promise<{ id: string; name: string }[]> {
@@ -207,8 +219,8 @@ export class CoreAgentHost {
   }
 
   async models(config: ProviderConfig): Promise<{ id: string; name: string }[]> {
-    const id = config.auth === 'chatgpt' ? 'chatgpt' : config.api === 'openAIResponses' ? 'openai' : 'anthropic'
-    return this.user.call('ModelsListRequest', { provider_id: id, refresh: true, provider: await this.provider(config) })
+    const id = config.auth === 'chatgpt' ? 'chatgpt' : config.auth === 'none' ? 'fixture' : config.api === 'openAIResponses' ? 'openai' : 'anthropic'
+    return this.user.call('ModelsListRequest', { provider_id: id, refresh: true, profile: config.profile ?? "desktop", account_profile: config.accountProfile, key_profile: config.keyProfile })
   }
 
   async summarize(conversationId: string, config: ProviderConfig): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {

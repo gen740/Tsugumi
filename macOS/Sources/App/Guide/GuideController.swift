@@ -234,10 +234,10 @@ final class GuideController {
     let config = AgentSettings.current()
     switch config.auth {
     case .none: apply(true)
-    case .apiKey: apply(Keychain.load(account: config.name) != nil)
+    case .apiKey: Task { await ProviderCredentials.refresh(); apply(ProviderCredentials.exists(account: config.name)) }
     case .chatGPT:
       Task {
-        let accounts = await ChatGPTAuth.shared(endpoints: config.chatGPTEndpoints, store: config.chatGPTStore).accounts()
+        let accounts = await ChatGPTAuth.shared().accounts()
         apply(accounts.contains { $0.active && $0.signedIn && $0.planEnabled })
       }
     }

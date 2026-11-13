@@ -1,3 +1,4 @@
+import { mockHostSettings } from './hostSettingsFixture'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -24,8 +25,9 @@ CoreAgentHost.prototype.project = async function () {
   }
   return 'project-id'
 }
+const restoreSettings = mockHostSettings()
 try {
-  const routes = chatRoutes({
+    const routes = chatRoutes({
     support: root, here: root, envs: { attachFolders: async (_p: string, _k: string, values: string[]) => { shares.push(values) } },
     readJSON: (_p: string, fallback: unknown) => fallback, projectDir: (p: unknown) => String(p),
     httpError: (_status: number, message: string) => new Error(message),
@@ -66,6 +68,7 @@ try {
     assert.deepEqual(c.folders, folders)
   } finally { globalThis.fetch = originalFetch }
 } finally {
+  restoreSettings()
   CoreAgentHost.prototype.project = originalProject
   fs.rmSync(root, { recursive: true, force: true })
 }

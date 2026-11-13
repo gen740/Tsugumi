@@ -1,3 +1,11 @@
+import { SettingT } from '../src/gen/tsugumi/host/setting'
+import { SettingsGetRequestT as HSettingsGetRequest } from '../src/gen/tsugumi/host/settings-get-request'
+import { SettingsUpdateRequestT as HSettingsUpdateRequest } from '../src/gen/tsugumi/host/settings-update-request'
+import { ProviderSetRequestT as HProviderSetRequest } from '../src/gen/tsugumi/host/provider-set-request'
+import { ProviderStatusRequestT as HProviderStatusRequest } from '../src/gen/tsugumi/host/provider-status-request'
+import { SignInBeginRequestT as HSignInBeginRequest } from '../src/gen/tsugumi/host/sign-in-begin-request'
+import { SignInActionRequestT as HSignInActionRequest } from '../src/gen/tsugumi/host/sign-in-action-request'
+import { SignInStatusRequestT as HSignInStatusRequest } from '../src/gen/tsugumi/host/sign-in-status-request'
 import { ExecutionServicesRequestT } from '../src/gen/tsugumi/host/execution-services-request'
 import { ExecutionServicePutRequestT } from '../src/gen/tsugumi/host/execution-service-put-request'
 import { ExecutionServiceRemoveRequestT } from '../src/gen/tsugumi/host/execution-service-remove-request'
@@ -17,8 +25,8 @@ import { Message as HostMessage, MessageT as HostMessageT } from '../src/gen/tsu
 import { RequestT as HostRequestT } from '../src/gen/tsugumi/host/request'
 import { RequestPayload as HostRequestPayload } from '../src/gen/tsugumi/host/request-payload'
 import { Payload as HostPayload } from '../src/gen/tsugumi/host/payload'
-import { ProviderT } from '../src/gen/tsugumi/service/provider'
-import { CredentialRegistrationT } from '../src/gen/tsugumi/host/credential-registration'
+import { ProviderSelectionT } from '../src/gen/tsugumi/service/provider-selection'
+import { ProviderInputT } from '../src/gen/tsugumi/service/provider-input'
 import { SkillsListRequestT as HSkillsListRequest } from '../src/gen/tsugumi/host/skills-list-request'
 import { Action } from '../src/gen/tsugumi/agent/action'
 import { Access } from '../src/gen/tsugumi/agent/access'
@@ -43,13 +51,9 @@ import { DemoReadRequestT as ADemoReadRequest } from '../src/gen/tsugumi/agent/d
 import { VersionSummarizeRequestT as AVersionSummarizeRequest } from '../src/gen/tsugumi/agent/version-summarize-request'
 import { ConversationSummarizeRequestT as AConversationSummarizeRequest } from '../src/gen/tsugumi/agent/conversation-summarize-request'
 import { HelloRequestT as HHelloRequest } from '../src/gen/tsugumi/service/hello-request'
-import { ConfigureRequestT as HConfigureRequest } from '../src/gen/tsugumi/host/configure-request'
 import { RegisterProjectRequestT as HRegisterProjectRequest } from '../src/gen/tsugumi/host/register-project-request'
 import { RegisterFolderRequestT as HRegisterFolderRequest } from '../src/gen/tsugumi/host/register-folder-request'
 import { ModelsListRequestT as HModelsListRequest } from '../src/gen/tsugumi/host/models-list-request'
-import { CredentialImportRequestT as HCredentialImportRequest } from '../src/gen/tsugumi/host/credential-import-request'
-import { CredentialTokenRequestT as HCredentialTokenRequest } from '../src/gen/tsugumi/host/credential-token-request'
-import { CredentialForgetRequestT as HCredentialForgetRequest } from '../src/gen/tsugumi/host/credential-forget-request'
 import { HostProjectInfoRequestT as HHostProjectInfoRequest } from '../src/gen/tsugumi/host/host-project-info-request'
 import { HostProjectCreateRequestT as HHostProjectCreateRequest } from '../src/gen/tsugumi/host/host-project-create-request'
 import { HostProjectDuplicateRequestT as HHostProjectDuplicateRequest } from '../src/gen/tsugumi/host/host-project-duplicate-request'
@@ -68,15 +72,12 @@ function enumValue(e: any, value: unknown): number {
   if (typeof n !== 'number' || typeof e[n] !== 'string') throw new Error('Invalid service enum value')
   return n
 }
-function provider(v: any): ProviderT | null {
+function provider(v: any): ProviderSelectionT | null {
   if (!v) return null
-  return new ProviderT(v.provider, v.api, v.auth, v.base_url, v.model, v.credential, v.credential_id,
-    v.effort, v.fast, v.web_search, v.max_tokens, v.context_limit)
+  return new ProviderSelectionT(v.profile, v.provider_id, v.account_profile, v.key_profile, v.model, v.use_choices)
 }
-function registration(v: any): CredentialRegistrationT | null {
-  if (!v) return null
-  return new CredentialRegistrationT(v.client_id, v.access_token, v.refresh_token, v.token_endpoint,
-    v.revocation_endpoint, v.resource, BigInt(Math.trunc(v.expires_at_ms ?? 0)), v.id_token, v.scope)
+function providerInput(v: any): ProviderInputT | null {
+  return v ? new ProviderInputT(v.endpoint, v.api_key, v.model, v.max_tokens, v.context_limit) : null
 }
 export function hostMethod(method: string): boolean {
   return method !== 'HelloRequest' && method !== 'ConfigureRequest' &&
@@ -84,6 +85,13 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
+    case 'SettingsGetRequest': return new HSettingsGetRequest(v.profile)
+    case 'SettingsUpdateRequest': return new HSettingsUpdateRequest(v.profile, BigInt(v.revision ?? 0), (v.changes ?? []).map((s: any) => new SettingT(s.key, s.value_json)), v.client)
+    case 'ProviderSetRequest': return new HProviderSetRequest(v.profile, v.id, providerInput(v.provider), v.remove, v.ephemeral)
+    case 'ProviderStatusRequest': return new HProviderStatusRequest(v.profile, v.id)
+    case 'SignInBeginRequest': return new HSignInBeginRequest(v.profile, v.client_id, v.consent, v.issuer, v.resource)
+    case 'SignInActionRequest': return new HSignInActionRequest(v.profile, v.attempt_id, v.action, v.client_id)
+    case 'SignInStatusRequest': return new HSignInStatusRequest(v.profile, v.attempt_id)
     case 'ExecutionServicesRequest': return new ExecutionServicesRequestT()
     case 'ExecutionServicePutRequest': return new ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify)
     case 'ExecutionServiceRemoveRequest': return new ExecutionServiceRemoveRequestT(v.id)
@@ -93,14 +101,10 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'HostRecentListRequest': return new HHostRecentListRequest()
     case 'HostProjectDefaultsRequest': return new HHostProjectDefaultsRequest()
     case 'HelloRequest': return new HHelloRequest(v.token, v.client_id, v.protocol)
-    case 'ConfigureRequest': return new HConfigureRequest(provider(v.provider))
     case 'RegisterProjectRequest': return new HRegisterProjectRequest(v.project_id, v.endpoint, v.token, v.title, v.path)
     case 'RegisterFolderRequest': return new HRegisterFolderRequest(v.project_id, v.resource_id, v.folder, v.title)
     case 'SkillsListRequest': return new HSkillsListRequest(v.project_path, v.folders, v.conversation_id)
-    case 'ModelsListRequest': return new HModelsListRequest(v.provider_id, v.refresh, v.provider ? provider(v.provider) : null)
-    case 'CredentialImportRequest': return new HCredentialImportRequest(registration(v.registration), v.replace)
-    case 'CredentialTokenRequest': return new HCredentialTokenRequest(v.client_id, v.stale_token)
-    case 'CredentialForgetRequest': return new HCredentialForgetRequest(v.client_id)
+    case 'ModelsListRequest': return new HModelsListRequest(v.provider_id, v.refresh, v.profile, v.account_profile, v.key_profile)
     case 'HostProjectInfoRequest': return new HHostProjectInfoRequest(v.path)
     case 'HostProjectCreateRequest': return new HHostProjectCreateRequest(v.parent, v.name, v.flow)
     case 'HostProjectDuplicateRequest': return new HHostProjectDuplicateRequest(v.path, v.parent, v.name)
@@ -129,7 +133,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'AccessRevokeRequest': return new AAccessRevokeRequest(v.grant_id)
     case 'AccessListRequest': return new AAccessListRequest(v.conversation_id)
     case 'DemoReadRequest': return new ADemoReadRequest(v.path)
-    case 'VersionSummarizeRequest': return new AVersionSummarizeRequest(v.project_id, v.commit)
+    case 'VersionSummarizeRequest': return new AVersionSummarizeRequest(v.project_id, v.commit, provider(v.provider))
     case 'ConversationSummarizeRequest': return new AConversationSummarizeRequest(v.conversation_id, provider(v.provider))
   }
   throw new Error(`Unknown ${host ? 'Host' : 'Agent'} request: ${method}`)
@@ -164,9 +168,9 @@ function view(value: any): any {
   const names: Record<string, string> = { projectId: 'project_id', conversationId: 'conversation_id',
     eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
     inputJson: 'input', argumentsJson: 'arguments', resultJson: 'result', inputSchemaJson: 'inputSchema',
-    contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', accessToken: 'access_token', capabilityFile: 'capability_file' }
+    contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', attemptId: 'attempt_id', valueJson: 'value_json', capabilityFile: 'capability_file' }
   for (const [key, v] of Object.entries(value)) {
-    const name = names[key] ?? key
+    const name = key === 'clientId' && 'signedIn' in value ? 'clientId' : names[key] ?? key
     if (v === null || v === undefined) {
       if (['title', 'text', 'projectId', 'conversationId', 'reason', 'state'].includes(key)) out[name] = ''
       if (key === 'summary' || key === 'resultJson' && 'callId' in value) out[name] = null

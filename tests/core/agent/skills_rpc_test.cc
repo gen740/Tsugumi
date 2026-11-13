@@ -139,6 +139,13 @@ TEST_F(SkillsFixture,
   const auto two = Conversation("second-catalog");
   ASSERT_TRUE(List({first.string()}, true, false, one).Code().empty());
   ASSERT_TRUE(List({second.string()}, true, false, two).Code().empty());
+  const auto inside = List({first.string()}, true, false, one);
+  ASSERT_EQ(inside.HostValue()
+                ->value_as_SkillsList()
+                ->skills()
+                ->Get(1)
+                ->attachment_folder(),
+            nullptr);
   Grant(one);
   Grant(two);
   const auto send = [&](const std::string& conversation) {
@@ -153,7 +160,7 @@ TEST_F(SkillsFixture,
         });
   };
   ASSERT_TRUE(send(one).Code().empty());
-  ASSERT_TRUE(model.WaitForRequests(1));
+  ASSERT_TRUE(model.WaitForRequests(1)) << Events(one).View();
   WaitUntilIdle(one);
   ASSERT_TRUE(send(two).Code().empty());
   ASSERT_TRUE(model.WaitForRequests(2));

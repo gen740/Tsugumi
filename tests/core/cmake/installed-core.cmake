@@ -1,5 +1,5 @@
 # Build test executables against the exact production archives. Private core
-# headers are used by the evaluator double and socket-free schedule test,
+# headers are used by the evaluator double and socket-free unit tests,
 # never by RPC tests.
 set(TSUGUMI_INSTALLED_CORE ON)
 set(CMAKE_CXX_STANDARD 20)
@@ -13,6 +13,7 @@ foreach(required
     "${TSUGUMI_CORE_ROOT}/bin/tsugumid"
     "${TSUGUMI_CORE_ROOT}/lib/libtsugumi_client.a"
     "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_core.a"
+    "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_agent_core.a"
     "${TSUGUMI_CORE_TEST_SUPPORT}/src/main.cc"
     "${HOSQ_INCLUDE_DIR}/hosq/hosq.hh")
   if(NOT EXISTS "${required}")
@@ -68,6 +69,19 @@ set_target_properties(tsugumi_client PROPERTIES
   IMPORTED_LOCATION "${TSUGUMI_CORE_ROOT}/lib/libtsugumi_client.a"
   INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_ROOT}/include;${TSUGUMI_CORE_TEST_SUPPORT}/include")
 target_link_libraries(tsugumi_client INTERFACE flatbuffers::flatbuffers CURL::libcurl Threads::Threads)
+add_library(tsugumi_agent_core STATIC IMPORTED)
+set_target_properties(tsugumi_agent_core PROPERTIES
+  IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_agent_core.a"
+  INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include/tsugumi-core;${TSUGUMI_CORE_TEST_SUPPORT}/include")
+target_link_libraries(tsugumi_agent_core INTERFACE tsugumi_json flatbuffers::flatbuffers
+  Threads::Threads tsugumi_client CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls PkgConfig::SQLITE3)
+if(APPLE)
+  target_link_libraries(tsugumi_agent_core INTERFACE "-framework CoreFoundation")
+else()
+  find_package(ICU REQUIRED COMPONENTS uc i18n)
+  target_link_libraries(tsugumi_agent_core INTERFACE ICU::uc ICU::i18n PkgConfig::CRYPTO)
+endif()
+
 foreach(program tsugumid tsugumi-agentd tsugumi-worker tsugumi-rpc)
   add_executable(${program} IMPORTED)
   set_target_properties(${program} PROPERTIES

@@ -37,7 +37,7 @@ struct ApplicationSettings: View {
     /// Where each pane's values are kept, said on the pane.
     var storage: String {
       switch self {
-      case .api: return String(localized: "このアプリ（この Mac。API キーは macOS のキーチェーン）")
+      case .api: return String(localized: "このホスト（設定と API キーは agentd が保管）")
       case .connections: return String(localized: "表示のみ（開いているプロジェクトの接続先）")
       case .binaryCaches: return String(localized: "この Mac の共有実行環境（全プロジェクト）")
       default: return String(localized: "このアプリ（この Mac のユーザー設定）")
@@ -538,15 +538,15 @@ private struct SkillSettings: View {
   }
 }
 
-/// Model connections. API keys go to the Keychain only (one item per
+/// Model connections. API keys go to the host-side Agent service (one per
 /// provider); they are never written to project files, settings or logs.
 private struct APISettings: View {
   @Environment(AppPreferences.self) private var prefs
-  @AppStorage("agent.provider") private var provider = "anthropic"
-  @AppStorage("agent.model") private var anthropicModel = ProviderConfig.anthropic.model
-  @AppStorage("agent.model.openai") private var openAIModel = ProviderConfig.openAI.model
-  @AppStorage("agent.fixturePort") private var port = 8765
-  @AppStorage(AgentSettings.webSearchKey) private var webSearch = false
+  @HostStorage("agent.provider") private var provider = "anthropic"
+  @HostStorage("agent.model") private var anthropicModel = ProviderConfig.anthropic.model
+  @HostStorage("agent.model.openai") private var openAIModel = ProviderConfig.openAI.model
+  @HostStorage("agent.fixturePort") private var port = 8765
+  @HostStorage(AgentSettings.webSearchKey) private var webSearch = false
 
   var body: some View {
     Form {
@@ -618,13 +618,13 @@ private struct APISettings: View {
   }
 }
 
-/// One API key connection: its key (in the Keychain only: never in project
+/// One API key connection: its key (in agentd only: never in project
 /// files, settings or logs), its model and the models it offers.
 private struct APIKeySection: View {
   let id: String
   let config: ProviderConfig
   @Binding var model: String
-  @AppStorage("agent.provider") private var provider = "anthropic"
+  @HostStorage("agent.provider") private var provider = "anthropic"
   @State private var key = ""
   @State private var stored = false
   @State private var models: [String] = []
@@ -632,22 +632,29 @@ private struct APIKeySection: View {
 
   var body: some View {
     Section {
-      LabeledContent("保存先", value: stored ? String(localized: "macOS Keychain（このデバイスのみ・ロック解除中に使用）") : String(localized: "未設定"))
+      if let error = CorePreferences.shared.error { Text(error).foregroundStyle(.red) }
+      LabeledContent("保存先", value: stored ? String(localized: "agentd（このホストの所有者だけが読み書きできます）") : String(localized: "未設定"))
       SecureField("新しい API キー", text: $key)
       HStack {
         Button("キーを保存") {
+          Task {
           do {
-            try Keychain.save(key.trimmingCharacters(in: .whitespacesAndNewlines), account: config.name)
+            try await ProviderCredentials.save(key.trimmingCharacters(in: .whitespacesAndNewlines), account: config.name)
             key = ""
             refresh(saved: true)
-            message = String(localized: "Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。")
+            message = String(localized: "agentd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。")
           } catch { message = "\(error)" }
+          }
         }
         .disabled(key.isEmpty)
         Button("キーを削除", role: .destructive) {
-          Keychain.delete(account: config.name)
-          refresh()
-          message = String(localized: "\(config.name) のキーを Keychain から削除しました。")
+          Task {
+          do {
+            try await ProviderCredentials.delete(account: config.name)
+            refresh()
+            message = String(localized: "\(config.name) のキーを agentd から削除しました。")
+          } catch { message = String(describing: error) }
+          }
         }
         .disabled(!stored)
         Button("モデル一覧を取得") {
@@ -675,12 +682,12 @@ private struct APIKeySection: View {
     }
     .onAppear {
       refresh()
-      Task { models = (try? await CoreAgentClient.shared.storedModels(id).map(\.id)) ?? [] }
+      Task { await ProviderCredentials.refresh(); refresh(); models = (try? await CoreAgentClient.shared.storedModels(id).map(\.id)) ?? [] }
     }
   }
 
   private func refresh(saved: Bool = false) {
-    stored = Keychain.exists(account: config.name)
+    stored = ProviderCredentials.exists(account: config.name)
     // The guide is there while the connection in use works.
     if saved { GuideController.shared.connectionSaved() } else { GuideController.shared.refreshAvailability() }
   }

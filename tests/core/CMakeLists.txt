@@ -43,7 +43,7 @@ add_test(NAME core_thought_schedule COMMAND tsugumi_thought_schedule_tests)
 # Product client -> real Agent/core sockets -> controlled external model.
 # These scenarios neither include nor link private core implementation APIs.
 find_package(GTest CONFIG REQUIRED)
-add_executable(tsugumi_agent_rpc_tests agent/rpc_test.cc agent/host_rpc_test.cc agent/skills_rpc_test.cc agent/models_rpc_test.cc agent/execution_broker_test.cc agent/project_rpc_test.cc agent_fixture_server.cc)
+add_executable(tsugumi_agent_rpc_tests agent/rpc_test.cc agent/host_rpc_test.cc agent/skills_rpc_test.cc agent/models_rpc_test.cc agent/settings_rpc_test.cc agent/execution_broker_test.cc agent/project_rpc_test.cc agent_fixture_server.cc)
 target_link_libraries(tsugumi_agent_rpc_tests PRIVATE tsugumi_client tsugumi_worker_protocol tsugumi_peer_tls GTest::gtest_main hosq Threads::Threads)
 target_compile_options(tsugumi_agent_rpc_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 target_compile_definitions(tsugumi_agent_rpc_tests PRIVATE
@@ -99,4 +99,13 @@ target_compile_options(tsugumi_peer_tls_tests PRIVATE -Wall -Wextra -Werror -Wfo
 gtest_discover_tests(tsugumi_peer_tls_tests TEST_PREFIX "peer_tls." DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 15)
 if(TSUGUMI_INSTALLED_CORE)
   install(TARGETS tsugumi_peer_tls_tests RUNTIME DESTINATION libexec/tsugumi-tests)
+endif()
+
+# Owner-only storage and bounded Skill reads are injectable without sockets.
+add_executable(tsugumi_host_settings_tests agent/settings_store_test.cc agent/skills_read_test.cc agent_fixture_server.cc)
+target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_agent_core GTest::gtest_main)
+target_compile_options(tsugumi_host_settings_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
+gtest_discover_tests(tsugumi_host_settings_tests TEST_PREFIX "core_host_settings." DISCOVERY_MODE PRE_TEST)
+if(TSUGUMI_INSTALLED_CORE)
+  install(TARGETS tsugumi_host_settings_tests RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()

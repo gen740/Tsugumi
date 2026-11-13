@@ -2,16 +2,16 @@ import Darwin
 import Foundation
 import Testing
 import TsugumiAgentClient
+import TsugumiRPC
 
-/// The native sign-in flow owns the browser callback and Keychain. Model
-/// execution and credential refresh remain behind the public core socket.
+/// Native browser opening and polling use the Host contract. OAuth validation,
+/// credential storage and rotation are exercised in tests/core.
 @Suite(.serialized) struct AuthenticationTests {
   @Test func registrationValidatesTheCallbackAndKeepsTheSelectedAccount() async throws {
     let fixture = try AuthenticationFixture()
     defer { fixture.stop() }
     let issuer = "http://127.0.0.1:\(fixture.port)"
     let store = "Tsugumi test registration \(UUID().uuidString)"
-    defer { Keychain.delete(account: store) }
     let auth = ChatGPTAuth.shared(
       endpoints: ChatGPTEndpoints(issuer: issuer, resource: "https://api.openai.com/v1"), store: store)
     let browser = URLSession(configuration: .ephemeral)
@@ -39,31 +39,24 @@ import TsugumiAgentClient
     #expect(latest["client_id"] as? String == signedIn.account.clientId)
     #expect(latest["agent_name_hint"] == nil)
     #expect(latest["ext_agent_host_id"] as? String == first["ext_agent_host_id"] as? String)
-    #expect(latest["id_token_hint"] as? Bool == true)
+    #expect(latest["id_token_hint"] as? Bool == false)
+    #expect(latest["login_hint"] as? String == signedIn.account.email)
     #expect(try await auth.signOut(clientId: signedIn.account.clientId))
     #expect(await auth.accounts().map(\.signedIn) == [false])
-    let record = try #require(Keychain.loadWithoutAsking(account: store))
-    #expect(!record.contains("chatgpt-access-") && !record.contains("chatgpt-refresh-"))
-    await #expect(throws: ChatGPTError.self) { _ = try await auth.accessToken() }
   }
 
-  @Test func backgroundKeychainReadsNeverOpenADialog() throws {
-    let own = "Tsugumi test own \(UUID().uuidString)"
-    let other = "Tsugumi test other \(UUID().uuidString)"
-    defer { Keychain.delete(account: own); Keychain.delete(account: other) }
-    try Keychain.save("fixture-key", account: own)
-    #expect(Keychain.loadWithoutAsking(account: own) == "fixture-key")
-    let add = Process()
-    add.executableURL = URL(fileURLWithPath: "/usr/bin/security")
-    add.arguments = ["add-generic-password", "-s", "app.tsugumi.agent", "-a", other, "-w", "not-for-this-program"]
-    try add.run()
-    while add.isRunning { usleep(20_000) }
-    #expect(add.terminationStatus == 0)
-    #expect(Keychain.exists(account: other))
-    let started = Date()
-    #expect(Keychain.loadWithoutAsking(account: other) == nil)
-    #expect(Date().timeIntervalSince(started) < 5)
-    #expect(Keychain.loadWithoutAsking(account: own) == "fixture-key")
+  @Test func providerInputReturnsOnlyStatus() async throws {
+    let fixture = try AuthenticationFixture()
+    defer { fixture.stop() }
+    let client = CoreAgentClient()
+    let p = Tsugumi_Service_ProviderInputT()
+    p.apiKey = "NATIVE_SECRET_SENTINEL"
+    let reply = try await client.call("ProviderSetRequest", ["profile": "native-test", "id": "anthropic", "provider": p])
+    let status = try #require(reply["value"] as? [String: Any])
+    #expect(status["configured"] as? Bool == true)
+    #expect(!String(describing: reply).contains(p.apiKey!))
+    let removed = try await client.call("ProviderSetRequest", ["profile": "native-test", "id": "anthropic", "remove": true])
+    #expect((removed["value"] as? [String: Any])?["configured"] as? Bool == false)
   }
 }
 

@@ -21,6 +21,7 @@
 "%@ と同じ文書です" = "Same document as %@";
 "%@ に書き込めないため、このアプリを更新できません。" = "This app cannot be updated because %@ is not writable.";
 "%@ のキーを Keychain から削除しました。" = "Removed the %@ key from the Keychain.";
+"%@ のキーを agentd から削除しました。" = "Deleted the key for %@ from agentd.";
 "%@ の準備ができました。次に終了したときに更新します。" = "%@ is ready. It is installed the next time you quit.";
 "%@ は別の場所でも変更されたため保存していません。変更は保持しています。" = "%@ was also changed elsewhere, so it was not saved. The changes are kept.";
 "%@ は削除されたか、まだ保存されていません。" = "%@ was deleted or has not been saved yet.";
@@ -212,6 +213,8 @@
 "_meta.json（説明・計画・追加コンテキスト、任意）" = "_meta.json (description, plan, extra context; optional)";
 "_outputs.fbs で定義した型から選びます（_outputs.fbs に書き戻します）" = "Chosen from the types defined in _outputs.fbs (written back to _outputs.fbs)";
 "_outputs.fbs を読めません: %@（出力ポートは表示していません）" = "Cannot read _outputs.fbs: %@ (output ports are not shown)";
+"agentd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。" = "Saved in agentd. The key is not stored in Cards, projects, settings or logs.";
+"agentd（このホストの所有者だけが読み書きできます）" = "agentd (readable and writable only by this host’s owner)";
 "allInputs: 必須の入力がすべて届いたら 1 回動きます。eachInput: 値が 1 つ届くたびに動きます。" = "allInputs: runs once when every required input has arrived. eachInput: runs each time a value arrives.";
 "build 中" = "Building";
 "console.log（ゲスト）、console.prev.log（前回の起動）、launcher.log（アプリの記録）" = "console.log (the guest), console.prev.log (the previous boot), launcher.log (the app's notes)";
@@ -316,6 +319,7 @@
 "このプロジェクト（%@/layout.json）" = "This project (%@/layout.json)";
 "このプロジェクト（%@/tsugumi.json）" = "This project (%@/tsugumi.json)";
 "このホストの公開鍵" = "This host's public key";
+"このホスト（設定と API キーは agentd が保管）" = "This host (settings and API keys managed by agentd)";
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）" = "Not available for this model (only models checked against the official documents)";
 "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。" = "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).";
@@ -459,6 +463,7 @@
 "サインアウト済み" = "Signed out";
 "サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。" = "You are signed in, but using your ChatGPT plan was not allowed. Allow it with “Allow Plan Use”, or use an API key connection.";
 "サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。トークンは macOS Keychain（このデバイスのみ）に置かれ、core や Card には渡されず、プロジェクト・設定・ログにも残りません。" = "You sign in in your browser, and Tsugumi receives the result on 127.0.0.1. Tokens stay in the macOS Keychain (this device only); they are never passed to core or Cards and never written to projects, settings or logs.";
+"サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は agentd が行います。トークンは Card やプロジェクト・設定・ログには残りません。" = "Sign in in your browser. agentd receives the result on 127.0.0.1, validates it and stores the tokens. Tokens are not stored in Cards, projects, settings or logs.";
 "サインインを中止しました。" = "The sign-in was cancelled.";
 "サインイン中" = "Signed in";
 "サインイン中（プランの利用は未許可）" = "Signed in (plan use not allowed)";

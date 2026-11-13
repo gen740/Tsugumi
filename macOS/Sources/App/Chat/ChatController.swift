@@ -27,6 +27,7 @@ struct Skill: Identifiable, Hashable {
   let path: String
   let source: String
   let sourceFolder: String
+  let attachmentFolder: String
 }
 
 /// Adapts core-owned metadata for the folder list and completion menu.
@@ -42,7 +43,7 @@ func availableSkills(project: URL? = nil, folders: [String], conversationID: Str
     if path == "builtin:demo" { return ChatController.demoSkill }
     let folder = s["source_folder"] ?? ""
     let source = folder == project?.appendingPathComponent("skills").path ? String(localized: "プロジェクト") : URL(fileURLWithPath: folder).lastPathComponent
-    return Skill(name: s["name"] ?? "", description: s["description"] ?? "", path: path, source: source, sourceFolder: folder)
+    return Skill(name: s["name"] ?? "", description: s["description"] ?? "", path: path, source: source, sourceFolder: folder, attachmentFolder: s["attachment_folder"] ?? "")
   }
   let missing = (value["folders"] as? [[String: String]] ?? []).filter { $0["status"] != "ready" }.compactMap { $0["path"] }
   return (skills, missing)
@@ -328,7 +329,7 @@ final class ChatController {
 
   /// The built-in $demo: Tsugumi of this chat shows the screen around (it flies only then).
   static let demoSkill = Skill(name: "demo", description: String(localized: "ツグミが画面を飛び回って、デモや画面の使い方を案内します"),
-                               path: "builtin:demo", source: "Tsugumi", sourceFolder: "")
+                               path: "builtin:demo", source: "Tsugumi", sourceFolder: "", attachmentFolder: "")
 
   func reloadSkills() {
     Task {
@@ -343,8 +344,7 @@ final class ChatController {
   }
 
   private func attachSkillFolders(_ selected: [Skill]) async {
-    let projectFolder = session.identity.url.appendingPathComponent("skills").path
-    for folder in Set(selected.map(\.sourceFolder)) where !folder.isEmpty && folder != projectFolder {
+    for folder in Set(selected.map(\.attachmentFolder)) where !folder.isEmpty {
       if folderResources[folder] == nil { await attach(folders: [URL(fileURLWithPath: folder)]) }
     }
   }
@@ -382,6 +382,7 @@ final class ChatController {
       do {
         skills = try await loadSkillMetadata(conversationID: agent.id)
         await attachSkillFolders(skills.filter { Set(used.map(\.name)).contains($0.name) })
+        await CorePreferences.shared.reload()
         await agent.setProvider(provider)
         // Only resource identifiers leave the UI; core reads after authorization.
         await agent.send(prompt: text, title: text, display: shown,
@@ -774,12 +775,13 @@ final class ChatController {
   }
 }
 
+@MainActor
 enum AgentSettings {
   /// The small model Tsugumi speaks with on the ChatGPT plan (the Home guide,
   /// the canvas bird's thoughts): gpt-6.1-luna when the account offers it,
   /// else its newest luna ("agent.speechModel.chatgpt" overrides it).
   static var chatGPTSpeechModel: String {
-    let d = UserDefaults.standard
+    let d = CorePreferences.shared
     if let m = d.string(forKey: "agent.speechModel.chatgpt"), !m.isEmpty { return m }
     return speechModel(offered: ModelCatalogSnapshot.shared.models("chatgpt").map(\.id), fallback: config(for: "chatgpt").model)
   }
@@ -798,6 +800,7 @@ enum AgentSettings {
   /// on the ChatGPT plan (OpenAI keeps the Agent's). Demo tours are led by the
   /// chat, with the chat's model.
   static func guide() async -> ProviderConfig {
+    await CorePreferences.shared.reload()
     _ = try? await CoreAgentClient.shared.storedModels("chatgpt")
     var c = current()
     if c.auth == .chatGPT { c.model = chatGPTSpeechModel }
@@ -806,7 +809,7 @@ enum AgentSettings {
   }
 
   /// The connection chosen in Settings > API ("anthropic", "openai", "chatgpt" or "fixture").
-  static var provider: String { UserDefaults.standard.string(forKey: "agent.provider") ?? "anthropic" }
+  static var provider: String { CorePreferences.shared.string(forKey: "agent.provider") ?? "anthropic" }
 
   static func current() -> ProviderConfig { config(for: provider) }
 
@@ -814,7 +817,7 @@ enum AgentSettings {
   /// the Fast mode chosen in the model menu. The guide, the summaries and the
   /// checks use `current()`, without them.
   static func chat() -> ProviderConfig {
-    let d = UserDefaults.standard
+    let d = CorePreferences.shared
     return current().choosing(effort: d.string(forKey: effortKey) ?? "", fastModel: d.string(forKey: fastModelKey) ?? "")
   }
 
@@ -825,24 +828,21 @@ enum AgentSettings {
 
   /// A connection with its chosen model (each keeps its own).
   static func config(for provider: String) -> ProviderConfig {
-    let d = UserDefaults.standard
+    let d = CorePreferences.shared
     switch provider {
     case "fixture":
-      return .localFixture(port: d.integer(forKey: "agent.fixturePort") == 0 ? 8765 : d.integer(forKey: "agent.fixturePort"))
+      return .fixture
     case "chatgpt":
       var c = ProviderConfig.chatGPT
       if let m = d.string(forKey: "agent.model.chatgpt"), !m.isEmpty { c.model = m }
-      c.webSearch = d.bool(forKey: webSearchKey)
       return c
     case "openai":
       var c = ProviderConfig.openAI
       if let m = d.string(forKey: "agent.model.openai"), !m.isEmpty { c.model = m }
-      c.webSearch = d.bool(forKey: webSearchKey)
       return c
     default:
       var c = ProviderConfig.anthropic
       if let m = d.string(forKey: "agent.model"), !m.isEmpty { c.model = m }
-      c.webSearch = d.bool(forKey: webSearchKey)
       return c
     }
   }

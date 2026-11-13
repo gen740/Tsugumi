@@ -10,7 +10,7 @@ enum Access:ubyte { Read, Write, Run, CardPermissions, Shell }
 enum GrantScope:ubyte { Conversation, Server }
 
 // Conversation-specific selection; global provisioning uses the Host contract.
-table ConfigureRequest { provider:Tsugumi.Service.Provider (required); conversation_id:string (required); }
+table ConfigureRequest { provider:Tsugumi.Service.ProviderSelection (required); conversation_id:string (required); }
 
 table ConversationCreateRequest { conversation_id:string; project_id:string; role:string; }
 table ConversationListRequest { project_id:string; }
@@ -38,8 +38,8 @@ table AccessListRequest { conversation_id:string; }
 table DemoListRequest {}
 table DemoReadRequest { path:string (required); }
 
-table VersionSummarizeRequest { project_id:string (required); commit:string (required); }
-table ConversationSummarizeRequest { conversation_id:string (required); provider:Tsugumi.Service.Provider; }
+table VersionSummarizeRequest { project_id:string (required); commit:string (required); provider:Tsugumi.Service.ProviderSelection; }
+table ConversationSummarizeRequest { conversation_id:string (required); provider:Tsugumi.Service.ProviderSelection; }
 
 union RequestPayload {
   HelloRequest:Tsugumi.Service.HelloRequest,

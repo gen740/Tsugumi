@@ -27,34 +27,22 @@ auto Messages(std::string_view stored)
 }
 } // namespace
 
-auto ProviderJson(const Tsugumi::Service::Provider &p) -> std::string {
-  json::Members values{{"provider", json::Quote(Text(p.provider()))},
-                       {"api", json::Quote(Text(p.api()))},
-                       {"auth", json::Quote(Text(p.auth()))},
-                       {"model", json::Quote(Text(p.model()))},
-                       {"credential", json::Quote(Text(p.credential()))},
-                       {"credential_id", json::Quote(Text(p.credential_id()))},
-                       {"effort", json::Quote(Text(p.effort()))},
-                       {"fast", p.fast() ? "true" : "false"},
-                       {"webSearch", p.web_search() ? "true" : "false"},
+auto ProviderJson(const Tsugumi::Service::ProviderInput& p) -> std::string {
+  json::Members values{{"model", json::Quote(Text(p.model()))},
                        {"maxTokens", std::to_string(p.max_tokens())},
                        {"contextLimit", std::to_string(p.context_limit())}};
-  if (p.base_url() && p.base_url()->size())
-    values["baseURL"] = json::Quote(p.base_url()->str());
+  if (p.endpoint()) values["baseURL"] = json::Quote(p.endpoint()->str());
   return json::Encode(values);
 }
-auto RegistrationJson(const Tsugumi::Host::CredentialRegistration &p)
+auto SelectionJson(const Tsugumi::Service::ProviderSelection& p)
     -> std::string {
-  return json::Encode(json::Members{
-      {"client_id", json::Quote(Text(p.client_id()))},
-      {"access_token", json::Quote(Text(p.access_token()))},
-      {"refresh_token", json::Quote(Text(p.refresh_token()))},
-      {"token_endpoint", json::Quote(Text(p.token_endpoint()))},
-      {"revocation_endpoint", json::Quote(Text(p.revocation_endpoint()))},
-      {"resource", json::Quote(Text(p.resource()))},
-      {"expires_at_ms", std::to_string(p.expires_at_ms())},
-      {"id_token", json::Quote(Text(p.id_token()))},
-      {"scope", json::Quote(Text(p.scope()))}});
+  return json::Encode(
+      json::Members{{"profile", json::Quote(Text(p.profile()))},
+                    {"provider_id", json::Quote(Text(p.provider_id()))},
+                    {"account_profile", json::Quote(Text(p.account_profile()))},
+                    {"key_profile", json::Quote(Text(p.key_profile()))},
+                    {"model", json::Quote(Text(p.model()))},
+                    {"use_choices", p.use_choices() ? "true" : "false"}});
 }
 auto Usage(std::string_view stored) -> A::UsageT {
   const auto o = json::Object(stored);

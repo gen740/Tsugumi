@@ -3,12 +3,12 @@ import SwiftUI
 import TsugumiAgentClient
 
 /// Sign in with ChatGPT: the Agent uses the user's ChatGPT plan. Accounts
-/// (registrations) and their tokens stay in the login keychain (the web UI's
-/// server keeps its own); nothing of them reaches tsugumid, Cards, project
-/// files, settings or logs.
+/// (registrations) and their tokens stay in agentd, with a separate Web host
+/// account profile. Tokens never reach tsugumid, Cards, project files, settings
+/// or logs.
 struct ChatGPTSettings: View {
-  @AppStorage("agent.model.chatgpt") private var model = ProviderConfig.chatGPT.model
-  @AppStorage("agent.provider") private var provider = "anthropic"
+  @HostStorage("agent.model.chatgpt") private var model = ProviderConfig.chatGPT.model
+  @HostStorage("agent.provider") private var provider = "anthropic"
   @State private var accounts: [ChatGPTAccountInfo] = []
   @State private var signingIn: Task<Void, Never>?
   @State private var message: String?
@@ -50,7 +50,7 @@ struct ChatGPTSettings: View {
         if provider == "chatgpt" { Text("使用中").font(.caption).foregroundStyle(.green) }
       }
     } footer: {
-      Text("サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。トークンは macOS Keychain（このデバイスのみ）に置かれ、core や Card には渡されず、プロジェクト・設定・ログにも残りません。")
+      Text("サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は agentd が行います。トークンは Card やプロジェクト・設定・ログには残りません。")
         .font(.caption).foregroundStyle(.secondary)
     }
     .onAppear { Task { await refresh(); models = (try? await CoreAgentClient.shared.storedModels("chatgpt")) ?? [] } }
@@ -146,6 +146,7 @@ struct ChatGPTSettings: View {
   }
 
   private func refresh(signedIn: Bool = false) async {
+    await CorePreferences.shared.reload()
     accounts = await auth.accounts()
     // The guide is there while the active account may use the plan.
     if signedIn { GuideController.shared.connectionSaved() } else { GuideController.shared.refreshAvailability() }

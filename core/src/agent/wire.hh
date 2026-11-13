@@ -10,8 +10,9 @@ namespace tsugumi::agent::wire {
 
 // Storage/model JSON is decoded here into typed service replies. JSON never
 // serves as the service envelope or as an untyped operation result.
-auto ProviderJson(const Tsugumi::Service::Provider &provider) -> std::string;
-auto RegistrationJson(const Tsugumi::Host::CredentialRegistration &registration)
+auto ProviderJson(const Tsugumi::Service::ProviderInput& provider)
+    -> std::string;
+auto SelectionJson(const Tsugumi::Service::ProviderSelection& provider)
     -> std::string;
 auto Conversation(std::string_view stored) -> Tsugumi::Agent::ConversationT;
 auto Event(std::string_view stored) -> Tsugumi::Agent::EventT;

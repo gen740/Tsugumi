@@ -66,7 +66,6 @@ inline auto View(const A::Grant *value) -> std::string;
 inline auto View(const A::AccessList *value) -> std::string;
 inline auto View(const A::DemoList *value) -> std::string;
 inline auto View(const A::TextResult *value) -> std::string;
-inline auto View(const H::CredentialToken *value) -> std::string;
 inline auto View(const H::ProjectDefaults *value) -> std::string;
 inline auto View(const H::ProjectInfo *value) -> std::string;
 inline auto View(const H::ProjectLocation *value) -> std::string;
@@ -295,12 +294,6 @@ inline auto View(const A::TextResult *value) -> std::string {
     return "null";
   return Object(
       {{"text", View(value->text())}, {"usage", View(value->usage())}});
-}
-inline auto View(const H::CredentialToken *value) -> std::string {
-  if (!value)
-    return "null";
-  return Object({{"access_token", View(value->access_token())},
-                 {"client_id", View(value->client_id())}});
 }
 inline auto View(const H::ProjectDefaults *value) -> std::string {
   if (!value)

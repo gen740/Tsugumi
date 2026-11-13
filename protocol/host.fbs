@@ -5,22 +5,31 @@ include "service_common.fbs";
 namespace Tsugumi.Host;
 // Every optional list in this contract is empty when its vector is omitted.
 
-// Global provisioning; the Agent's ConfigureRequest always names a conversation.
-table ConfigureRequest { provider:Tsugumi.Service.Provider (required); }
+// Host settings are patched against a revision, never overwritten blindly.
+table Setting { key:string (required); value_json:string (required); }
+table SettingsGetRequest { profile:string (required); }
+table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; client:string; }
+table Settings { revision:ulong; values:[Setting]; }
+table ProviderSetRequest { profile:string (required); id:string (required); provider:Tsugumi.Service.ProviderInput; remove:bool; ephemeral:bool; }
+table ProviderStatusRequest { profile:string (required); id:string (required); }
+table ProviderStatus { id:string (required); configured:bool; endpoint:string; source:string; }
+table SignInBeginRequest { profile:string (required); client_id:string; consent:bool; issuer:string; resource:string; }
+table SignInBegin { attempt_id:string (required); url:string (required); }
+table SignInActionRequest { profile:string (required); attempt_id:string; action:string (required); client_id:string; }
+table SignInStatusRequest { profile:string (required); attempt_id:string; }
+table Account { client_id:string (required); email:string; signed_in:bool; plan_enabled:bool; active:bool; }
+table SignInStatus { attempt_id:string; state:string (required); message:string; accounts:[Account]; welcome:string; revoked:bool; }
 table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string; title:string; path:string; }
 table RegisterFolderRequest { project_id:string (required); resource_id:string (required); folder:string (required); title:string; }
 // Listing metadata never grants permission to put a skill in a prompt.
 // conversation_id records ordered sources for that send; omission only previews.
 table SkillsListRequest { project_path:string; folders:[string]; conversation_id:string; }
-table Skill { name:string (required); description:string; path:string (required); source_folder:string; status:string (required); }
+table Skill { name:string (required); description:string; path:string (required); source_folder:string; attachment_folder:string; status:string (required); }
 table SkillFolder { path:string (required); status:string (required); }
 table SkillsList { skills:[Skill]; folders:[SkillFolder]; }
 // provider_id keeps the existing per-connection catalogs. Only refresh needs
 // a provider configuration; ordinary reads never need credentials.
-table ModelsListRequest { provider_id:string (required); refresh:bool; provider:Tsugumi.Service.Provider; }
-table CredentialImportRequest { registration:CredentialRegistration (required); replace:bool; }
-table CredentialTokenRequest { client_id:string (required); stale_token:string; }
-table CredentialForgetRequest { client_id:string (required); }
+table ModelsListRequest { provider_id:string (required); refresh:bool; profile:string; account_profile:string; key_profile:string; }
 table HostProjectDefaultsRequest {}
 table HostProjectInfoRequest { path:string (required); }
 table HostProjectCreateRequest { parent:string (required); name:string (required); flow:string; }
@@ -44,12 +53,6 @@ table ExecutionService { id:string (required); name:string (required); endpoint:
 table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 
-table CredentialRegistration {
-  client_id:string (required); access_token:string; refresh_token:string (required);
-  token_endpoint:string (required); revocation_endpoint:string; resource:string;
-  expires_at_ms:ulong; id_token:string; scope:string;
-}
-table CredentialToken { access_token:string (required); client_id:string (required); }
 table ProjectDefaults { nixpkgs_pin:string (required); }
 table ProjectInfo { path:string (required); name:string (required); }
 table ProjectLocation { path:string (required); }
@@ -61,14 +64,14 @@ table DemoList { demos:[Demo]; }
 table Model { id:string; name:string; }
 table ModelList { models:[Model]; }
 union RequestPayload {
-  HelloRequest:Tsugumi.Service.HelloRequest, ConfigureRequest,
+  HelloRequest:Tsugumi.Service.HelloRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
-  RegisterProjectRequest, RegisterFolderRequest, SkillsListRequest, ModelsListRequest, CredentialImportRequest, CredentialTokenRequest, CredentialForgetRequest, HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
+  RegisterProjectRequest, RegisterFolderRequest, SkillsListRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
-  ExecutionServices, ExecutionAuthorization, CredentialToken, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
+  ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
   RecentList, DemoList, SkillsList, ModelList, Failure:Tsugumi.Service.Failure
 }
 table Reply { value:ReplyPayload; }

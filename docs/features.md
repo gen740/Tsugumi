@@ -212,6 +212,8 @@ Besides Anthropic's Messages API, OpenAI's API and the ChatGPT plan are supporte
 
 ### Connecting to models
 
+The host-side `tsugumi-agentd` owns provider endpoints, credentials and revisioned settings. The clients keep settings screens, presentation snapshots and browser opening. Host RPC supplies settings get/update, secret-input provider set/status and sign-in begin/action/status; ordinary model selections contain no endpoint or credential. Shared desktop settings and separate app/Web ChatGPT account profiles retain their existing scope. OAuth validation, callback handling, refresh rotation and revocation run in core. See [API keys and sign-in](security.md#8-the-models-api-keys-agent).
+
 - Supports the Anthropic Messages API and the OpenAI Responses API, responding by streaming. OpenAI can be used with an API key or with the user's ChatGPT plan (Sign in with ChatGPT, the procedure for open-source tools) ([Security](security.md#the-chatgpt-plan-sign-in-with-chatgpt)).
 - The chat's model menu chooses effort and Fast mode. The model list comes from the provider; the effort levels and Fast mode offered for a model are only those confirmed in the provider's documentation (`modelOptions` in `agent/Shared/agent.json`). If nothing is chosen, these fields are not sent and the model's defaults apply.
 
@@ -245,7 +247,7 @@ Independent Drafts can be implemented by helper Agents. Try the [Dynamical syste
 
 ### Skills and conversations
 
-The host-side `tsugumi-agentd` discovers Skills, parses their metadata and reports unreadable or oversized files through `SkillsListRequest` in `protocol/host.fbs`. The app and Web host keep folder selection, completion and menus; they send selected Skill names. The service resolves every matching name in source order and reads the contents through the project only after Read access is granted. A Skill must be smaller than 512 KiB. Discovery does not grant access to use its contents in a model prompt.
+The host-side `tsugumi-agentd` discovers Skills, parses their metadata and reports unreadable or oversized files through `SkillsListRequest` in `protocol/host.fbs`. The app and Web host keep folder selection, completion and menus; they send selected Skill names. The service resolves every matching name in source order and reads the contents beneath registered host roots only after Read access is granted. A Skill must be smaller than 512 KiB. Discovery does not grant access to use its contents in a model prompt.
 
 `ModelsListRequest` reads or refreshes the service's persisted catalog for each connection. Both clients use its `name` display field. An empty refresh leaves the stored catalog intact; a failed refresh does not change it. Clients retain only a presentation snapshot for rendering an open menu.
 

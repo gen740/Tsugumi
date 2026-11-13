@@ -8,6 +8,7 @@
   flatbuffers,
   sqlite,
   libgit2,
+  icu,
   curl,
   gtest,
   openssl,
@@ -50,7 +51,8 @@ clangStdenv.mkDerivation {
     curl
     gtest
     openssl
-  ];
+  ]
+  ++ lib.optionals clangStdenv.hostPlatform.isLinux [ icu ];
   cmakeFlags = [
     "-DTSUGUMI_CORE_ROOT=${core}"
     "-DTSUGUMI_CORE_TEST_SUPPORT=${core.testSupport}"

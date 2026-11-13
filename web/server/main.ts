@@ -16,7 +16,6 @@ import { AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir } from './paths'
 import { cancelChats, chatRoutes, chatStatus, hostRequest } from './chat'
 import { EnvironmentManager, Environments, EnvState, projectKey } from './env'
 import { VMEnvironmentManager, VMTerminal } from './vm'
-import { desktopSettings } from './desktop'
 import { L, language } from './i18n'
 import { CoreAgentError } from './coreAgent'
 import { hostProjectErrorText } from './hostProjects'
@@ -88,7 +87,7 @@ const vm = process.env.TSUGUMI_VMHOST
       support: process.env.TSUGUMI_SUPPORT_DIR!,
     }, () => origins)
   : undefined
-const desktop = vm && desktopSettings(vm)
+const desktop = !!vm
 const envs: Environments = vm ?? new EnvironmentManager(bins, support, () => origins,
   !vm ? async (project, folder, control) => hostRequest('ExecutionProjectAuthorizeRequest', {
     project_id: project, path: folder, control_dir: control,
@@ -570,7 +569,6 @@ async function openOnRunningServer(): Promise<boolean> {
 }
 
 if (reuseServer && await openOnRunningServer()) process.exit(0)
-await desktop?.refresh()
 
 // The usual port keeps the page's own settings (localStorage) across runs; when
 // something else has it, any free port (unless one was asked for).

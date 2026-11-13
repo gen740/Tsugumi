@@ -1,7 +1,6 @@
 // Presentation DTOs and schema reflection. Agent execution lives in core.
 import { BaseType, BFBS, Field } from '../src/shared/bfbs'
 import { AGENT, fill } from '../src/shared/agentShared'
-import type { PlanAccessToken } from './chatgpt'
 
 export interface ToolSpec {
   name: string
@@ -180,25 +179,19 @@ export type AgentEvent =
 
 export interface ProviderConfig {
   name: string
-  baseURL: string
   model: string
   /** Wire protocol of the endpoint. */
   api: 'anthropicMessages' | 'openAIResponses'
   /** How requests are authorized: none (the local fixture), an API key, or
    *  the user's ChatGPT plan (Sign in with ChatGPT). */
   auth: 'none' | 'apiKey' | 'chatgpt'
-  /** Read on this host only (Keychain, 0600 file or environment); never sent
-   *  to the page, project daemon or Card workers. */
-  apiKey?: string
-  /** The ChatGPT access token (refreshed near its expiry; `stale` is one the API refused). */
-  token?: (stale?: PlanAccessToken) => Promise<PlanAccessToken>
-  /** Output limit of one model reply: a Card's sources fit in one save. */
-  maxTokens: number
-  contextLimit: number
-  /** The user's setting (Settings > API): the model may search the web. */
-  webSearch?: boolean
+  /** Opaque references to settings, accounts and ephemeral keys in agentd. */
+  profile?: string
+  accountProfile?: string
+  keyProfile?: string
   /** The chat's choices in the model menu, already checked against the model
    *  (modelChoices). None for the requests that are not the Agent's work. */
+  usesChoices?: boolean
   effort?: string
   fast?: boolean
 }

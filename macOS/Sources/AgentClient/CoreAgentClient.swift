@@ -176,39 +176,17 @@ public actor CoreAgentClient {
     return try await exchange(method, fields, host: ServiceWire.hostMethod(method, fields))
   }
 
-  public func configure(_ config: ProviderConfig, conversationID: String? = nil, asking: Bool = false) async throws {
-    var fields: [String: Any] = ["provider": try await provider(config, asking: asking)]
-    _ = try await call("ConfigureRequest", fields)
-    if let conversationID {
-      fields["conversation_id"] = conversationID
-      _ = try await call("ConfigureRequest", fields)
-    }
+  public func configure(_ config: ProviderConfig, conversationID: String) async throws {
+    _ = try await call("ConfigureRequest", ["provider": try await provider(config), "conversation_id": conversationID])
   }
 
-  public func provider(_ config: ProviderConfig, asking: Bool = false) async throws -> Tsugumi_Service_ProviderT {
-    let value = Tsugumi_Service_ProviderT()
-    value.provider = config.auth == .chatGPT ? "chatgpt" : ""
-    value.api = config.api.rawValue
-    value.auth = config.auth == .chatGPT ? "chatgpt" : config.auth.rawValue
-    value.baseUrl = config.baseURL.absoluteString
+  public func provider(_ config: ProviderConfig) async throws -> Tsugumi_Service_ProviderSelectionT {
+    let value = Tsugumi_Service_ProviderSelectionT()
     value.model = config.model
-    value.effort = config.effort
-    value.fast = config.fast
-    value.webSearch = config.webSearch
-    value.maxTokens = UInt32(clamping: config.maxTokens)
-    value.contextLimit = UInt32(clamping: config.contextLimit)
-    switch config.auth {
-    case .none: break
-    case .apiKey:
-      guard let key = asking ? Keychain.load(account: config.name) : Keychain.loadWithoutAsking(account: config.name) else {
-        throw CoreAgentFailure(code: "credentials", message: "No API key for \(config.name)", requestID: nil)
-      }
-      value.credential = key
-    case .chatGPT:
-      let token = try await config.chatGPTAuth.accessToken(asking: asking)
-      value.credential = token.value
-      value.credentialId = token.clientId
-    }
+    value.useChoices = config.usesChoices
+    value.profile = "desktop"
+    value.providerId = config.connection
+    value.accountProfile = "desktop"
     return value
   }
 
@@ -216,9 +194,8 @@ public actor CoreAgentClient {
     try await modelList(id: id)
   }
 
-  private func modelList(id: String, provider: Tsugumi_Service_ProviderT? = nil) async throws -> [(id: String, name: String)] {
-    var fields: [String: Any] = ["provider_id": id, "refresh": provider != nil]
-    if let provider { fields["provider"] = provider }
+  private func modelList(id: String, refresh: Bool = false) async throws -> [(id: String, name: String)] {
+    let fields: [String: Any] = ["provider_id": id, "refresh": refresh, "profile": "desktop"]
     let result = try await call("ModelsListRequest", fields)
     let list: [(id: String, name: String)] = (result["value"] as? [[String: Any]] ?? []).compactMap { item in
       guard let id = item["id"] as? String else { return nil }
@@ -228,9 +205,8 @@ public actor CoreAgentClient {
     return list
   }
 
-  public func models(_ config: ProviderConfig, asking: Bool = false) async throws -> [(id: String, name: String)] {
-    let id = config.auth == .chatGPT ? "chatgpt" : config.api == .openAIResponses ? "openai" : "anthropic"
-    let value = try await provider(config, asking: asking)
-    return try await modelList(id: id, provider: value)
+  public func models(_ config: ProviderConfig) async throws -> [(id: String, name: String)] {
+    let id = config.connection
+    return try await modelList(id: id, refresh: true)
   }
 }

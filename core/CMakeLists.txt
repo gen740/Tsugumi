@@ -100,7 +100,13 @@ foreach(prompt system-prompt guide-prompt demo-skill)
     VERBATIM)
   list(APPEND _agent_prompts ${output})
 endforeach()
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/agent_settings.cc
+  COMMAND ${CMAKE_COMMAND} -DINPUT=${PROJECT_SOURCE_DIR}/agent/Shared/agent.json
+    -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/agent_settings.cc -DSYMBOL=tsugumi_agent_settings
+    -P ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
+  DEPENDS ${PROJECT_SOURCE_DIR}/agent/Shared/agent.json ${PROJECT_SOURCE_DIR}/cmake/embed.cmake VERBATIM)
 add_library(tsugumi_agent_core STATIC
+  ${CMAKE_CURRENT_BINARY_DIR}/agent_settings.cc
   ${_agent_prompts}
   src/server.cc
   src/lanes.cc
@@ -115,6 +121,7 @@ add_library(tsugumi_agent_core STATIC
   src/agent/tool_images.cc
   src/agent/wire.cc
   src/agent/host.cc
+  src/host/settings.cc
   src/host/skills.cc
   src/host/projects.cc
   src/host/execution_broker.cc)
@@ -150,7 +157,7 @@ install(FILES ${TSUGUMI_GEN_DIR}/bfbs/agent.bfbs ${TSUGUMI_GEN_DIR}/bfbs/host.bf
 # against these existing archives. The normal runtime contains no test code.
 set(TSUGUMI_TEST_SUPPORT_DIR "" CACHE PATH "Install reusable core test build inputs")
 if(TSUGUMI_TEST_SUPPORT_DIR)
-  install(TARGETS tsugumi_core tsugumi_json tsugumi_workerd_support tsugumi_worker_protocol tsugumi_peer_tls
+  install(TARGETS tsugumi_core tsugumi_agent_core tsugumi_json tsugumi_workerd_support tsugumi_worker_protocol tsugumi_peer_tls
     ARCHIVE DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/lib)
   install(DIRECTORY include/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
   install(DIRECTORY ${PROJECT_SOURCE_DIR}/workerd/include/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)

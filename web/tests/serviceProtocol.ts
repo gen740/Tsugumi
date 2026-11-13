@@ -1,3 +1,5 @@
+import { Settings } from '../src/gen/tsugumi/host/settings'
+import { SignInStatus } from '../src/gen/tsugumi/host/sign-in-status'
 import { Reply as HostReply } from '../src/gen/tsugumi/host/reply'
 import { ReplyPayload as HostReplyPayload } from '../src/gen/tsugumi/host/reply-payload'
 import { Payload as HostPayload } from '../src/gen/tsugumi/host/payload'
@@ -88,3 +90,14 @@ for (const type of [HostReplyPayload.RecentList, HostReplyPayload.DemoList, Host
   assert.deepEqual(type === HostReplyPayload.ExecutionServices ? decoded.services : decoded, [])
 }
 console.log('Host list readers: omitted vectors are empty')
+
+for (const type of [HostReplyPayload.Settings, HostReplyPayload.SignInStatus]) {
+  const b = new fb.Builder()
+  const value = type === HostReplyPayload.Settings ? Settings.createSettings(b, 0n, 0)
+    : SignInStatus.createSignInStatus(b, 0, b.createString('idle'), 0, 0, 0, false)
+  const reply = HostReply.createReply(b, type, value)
+  HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
+  const decoded = decodeReply(b.asUint8Array(), true).value
+  assert.deepEqual(type === HostReplyPayload.Settings ? decoded.values : decoded.accounts, [])
+}
+console.log('Settings and sign-in readers: omitted vectors are empty')

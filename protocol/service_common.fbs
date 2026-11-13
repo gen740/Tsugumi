@@ -4,10 +4,7 @@ table HelloRequest { token:string (required); client_id:string (required); proto
 table HelloResult { protocol:uint = 1; server_id:string (required); principal:string (required); }
 table Failure { code:string (required); message:string (required); request_id:string; }
 table Acknowledgement { accepted:bool; revoked:bool; }
-// Explicit provider configuration shared by global and conversation selection.
-// Credentials are human-only input and are never included in model tools/events.
-table Provider {
-  provider:string; api:string; auth:string; base_url:string; model:string;
-  credential:string; credential_id:string; effort:string;
-  fast:bool; web_search:bool; max_tokens:uint = 16384; context_limit:uint = 600000;
-}
+// Secret input is accepted only by the human-only Host ProviderSet request.
+table ProviderInput { endpoint:string; api_key:string; model:string; max_tokens:uint = 16384; context_limit:uint = 600000; }
+// Ordinary calls identify a stored provider and a conversation's model choice.
+table ProviderSelection { profile:string (required); provider_id:string; account_profile:string; key_profile:string; model:string; use_choices:bool; }

@@ -20,7 +20,7 @@ final class ThoughtSummarizer {
   init(presence: AgentPresence) { self.presence = presence }
 
   /// Switched in the chat; asks once before it is first turned on (ChatPanel).
-  static var enabled: Bool { UserDefaults.standard.bool(forKey: defaultsKey) }
+  static var enabled: Bool { CorePreferences.shared.bool(forKey: defaultsKey) }
 
   /// Polling refreshes this window; eligibility and throttling belong to agentd.
   func turnStarted() {
@@ -53,7 +53,7 @@ final class ThoughtSummarizer {
   static func config() -> ProviderConfig? {
     var c = AgentSettings.current()
     guard c.auth != .none else { return nil }
-    let d = UserDefaults.standard
+    let d = CorePreferences.shared
     if c.auth == .chatGPT {
       c.model = AgentSettings.chatGPTSpeechModel
       return c

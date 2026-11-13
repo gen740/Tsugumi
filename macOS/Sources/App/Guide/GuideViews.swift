@@ -1095,10 +1095,10 @@ struct GuideInviteView: View {
 
 /// The first start: choose Anthropic or OpenAI and enter that provider's API
 /// key (one is enough), checked by connecting, or start without a guide.
-/// The key goes to the Keychain the same way as in Settings > API.
+/// The key goes to agentd the same way as in Settings > API.
 struct GuideSetupView: View {
   let onDone: () -> Void
-  @State private var provider = UserDefaults.standard.string(forKey: "agent.provider") == "openai" ? "openai" : "anthropic"
+  @State private var provider = CorePreferences.shared.string(forKey: "agent.provider") == "openai" ? "openai" : "anthropic"
   @State private var key = ""
   @State private var working = false
   @State private var message: String?
@@ -1155,16 +1155,18 @@ struct GuideSetupView: View {
   private func connect() {
     let k = key.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !k.isEmpty, !working else { return }
+    Task {
     do {
-      try Keychain.save(k, account: config.name)
+      try await ProviderCredentials.save(k, account: config.name)
     } catch {
       message = String(localized: "キーを保存できませんでした: \(String(describing: error))")
       return
     }
     key = ""
     saved = true
-    UserDefaults.standard.set(provider, forKey: "agent.provider")
+    CorePreferences.shared.set(provider, forKey: "agent.provider")
     check()
+    }
   }
 
   /// A connection check: the provider lists its models with the key.

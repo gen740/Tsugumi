@@ -1,5 +1,5 @@
 import Foundation
-import Security
+import TsugumiRPC
 
 /// A page a web search found or a reply cites.
 public struct WebSource: Codable, Equatable, Sendable {
@@ -144,32 +144,21 @@ public struct Usage: Codable, Equatable, Sendable {
 public struct ProviderConfig: Codable, Equatable, Sendable {
   /// Wire protocol of the endpoint.
   public enum API: String, Codable, Sendable { case anthropicMessages, openAIResponses }
-  /// How requests are authorized: none (the local fixture), an API key in
-  /// the Keychain, or the user's ChatGPT plan (Sign in with ChatGPT).
+  /// How requests are authorized: none (the local fixture), an API key held by agentd, or the user's ChatGPT plan (Sign in with ChatGPT).
   public enum Auth: String, Codable, Sendable { case none, apiKey, chatGPT }
 
   public var name: String
-  public var baseURL: URL
   public var model: String
   public var auth: Auth
   public var api: API = .anthropicMessages
-  /// Output limit of one model reply: a Card's sources fit in one save
-  /// (not sent with the ChatGPT plan, which does not accept it).
-  public var maxTokens = 32768
-  public var contextLimit = 180_000
-  /// ChatGPT sign-in: where it signs in and the keychain item of its accounts.
-  public var chatGPTEndpoints = ChatGPTEndpoints.openAI
-  public var chatGPTStore = "ChatGPT"
-  /// The user's setting (Settings > API): the model may search the web.
-  public var webSearch = false
   /// The chat's choices in the model menu, already checked against the model
   /// (`choosing`). None for the requests that are not the Agent's work.
   public var effort: String?
   public var fast = false
+  public var usesChoices = false
 
-  public init(name: String, baseURL: URL, model: String, auth: Auth, api: API = .anthropicMessages) {
+  public init(name: String, model: String, auth: Auth, api: API = .anthropicMessages) {
     self.name = name
-    self.baseURL = baseURL
     self.model = model
     self.auth = auth
     self.api = api
@@ -177,128 +166,49 @@ public struct ProviderConfig: Codable, Equatable, Sendable {
 
   /// A real provider (not the local fixture).
   public var isRemote: Bool { auth != .none }
-  /// The provider runs the searches itself: the local fixture has none.
-  public var searchesWeb: Bool { webSearch && isRemote }
 
-  public static let anthropic = ProviderConfig(name: "Anthropic", baseURL: URL(string: "https://api.anthropic.com")!,
+  public static let anthropic = ProviderConfig(name: "Anthropic",
                                                model: "claude-sonnet-5-5", auth: .apiKey)
   /// OpenAI with an API key (Responses API).
-  public static let openAI = ProviderConfig(name: "OpenAI", baseURL: URL(string: "https://api.openai.com")!,
+  public static let openAI = ProviderConfig(name: "OpenAI",
                                             model: "gpt-6.1-sol", auth: .apiKey, api: .openAIResponses)
   /// OpenAI with the user's ChatGPT plan (Sign in with ChatGPT, open-source flow).
-  public static let chatGPT = ProviderConfig(name: "ChatGPT", baseURL: URL(string: "https://api.openai.com")!,
+  public static let chatGPT = ProviderConfig(name: "ChatGPT",
                                              model: "gpt-6.1-sol", auth: .chatGPT, api: .openAIResponses)
-  public static func localFixture(port: Int) -> ProviderConfig {
-    var c = ProviderConfig(name: "Local fixture", baseURL: URL(string: "http://127.0.0.1:\(port)")!, model: "fixture", auth: .none)
-    c.contextLimit = 6000
-    return c
-  }
+  public static let fixture = ProviderConfig(name: "Local fixture", model: "fixture", auth: .none)
 
-  var chatGPTAuth: ChatGPTAuth { ChatGPTAuth.shared(endpoints: chatGPTEndpoints, store: chatGPTStore) }
 }
 
-/// Model credentials stay in the user's login keychain on the host (one item
-/// per provider, service app.tsugumi.agent and the provider's name as the
-/// account, the same item the web UI's server reads with `security`). The
-/// item's access list trusts the program that saved it; others are asked
-/// about first. They are never written to project files, settings or logs,
-/// and never sent to tsugumid or to Card workers.
-///
-/// Not the data protection keychain (kSecUseDataProtectionKeychain): it needs
-/// a keychain-access-groups entitlement, which only a provisioning profile
-/// grants, and an ad-hoc signed build from source has none (errSecMissingEntitlement).
-/// Login keychain items are never synced to iCloud Keychain.
-public enum Keychain {
-  static let service = "app.tsugumi.agent"
-
-  /// Operations under way that may show the access dialog, and the lock that
-  /// keeps a read without asking from turning their dialog off.
-  private static let gate = NSLock()
-  nonisolated(unsafe) private static var mayAsk = 0
-
-  private static func askingAllowed<T>(_ body: () -> T) -> T {
-    gate.lock()
-    mayAsk += 1
-    gate.unlock()
-    defer {
-      gate.lock()
-      mayAsk -= 1
-      gate.unlock()
+/// Secret input and status adapters for agentd's owner-only credential store.
+public enum ProviderCredentials {
+  private static let lock = NSLock()
+  nonisolated(unsafe) private static var configured: [String: Bool] = [:]
+  private static func id(_ name: String) -> String { name == "OpenAI" ? "openai" : "anthropic" }
+  public static func exists(account: String) -> Bool { lock.lock(); defer { lock.unlock() }; return configured[id(account)] ?? false }
+  private static func remember(_ id: String, _ value: Bool) { lock.lock(); defer { lock.unlock() }; configured[id] = value }
+  public static func refresh() async {
+    for id in ["anthropic", "openai"] {
+      let result = try? await CoreAgentClient.shared.call("ProviderStatusRequest", ["profile": "desktop", "id": id])
+      if let v = result?["value"] as? [String: Any] { remember(id, v["configured"] as? Bool ?? false) }
     }
-    return body()
   }
-
-  /// Removes the stored secret of a provider (no error when there is none).
-  public static func delete(account: String) {
-    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                            kSecAttrAccount as String: account]
-    askingAllowed { _ = SecItemDelete(q as CFDictionary) }
+  public static func save(_ secret: String, account: String) async throws {
+    let p = Tsugumi_Service_ProviderInputT(); p.apiKey = secret
+    _ = try await CoreAgentClient.shared.call("ProviderSetRequest", ["profile": "desktop", "id": id(account), "provider": p])
+    remember(id(account), true)
   }
-
-  /// Saves in place when the item exists (a reader never sees it missing).
-  public static func save(_ secret: String, account: String) throws {
-    let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                               kSecAttrAccount as String: account]
-    let u = askingAllowed { SecItemUpdate(base as CFDictionary, [kSecValueData as String: Data(secret.utf8)] as CFDictionary) }
-    if u == errSecSuccess { return }
-    guard u == errSecItemNotFound else { throw AgentError.provider("Keychain error \(u)") }
-    var add = base
-    add[kSecValueData as String] = Data(secret.utf8)
-    add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    let s = askingAllowed { SecItemAdd(add as CFDictionary, nil) }
-    guard s == errSecSuccess else { throw AgentError.provider("Keychain error \(s)") }
-  }
-
-  /// Whether a provider's secret is stored, without reading it (no access prompt).
-  public static func exists(account: String) -> Bool {
-    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                            kSecAttrAccount as String: account, kSecReturnAttributes as String: true]
-    var out: CFTypeRef?
-    return SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess
-  }
-
-  public static func load(account: String) -> String? {
-    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                            kSecAttrAccount as String: account, kSecReturnData as String: true]
-    var out: CFTypeRef?
-    guard askingAllowed({ SecItemCopyMatching(q as CFDictionary, &out) }) == errSecSuccess, let d = out as? Data else { return nil }
-    return String(data: d, encoding: .utf8)
-  }
-
-  /// The secret if this program may read it now; never shows the access
-  /// dialog (nil: no such item, or it would have to ask). For reads nobody
-  /// asked for, such as listing models when a menu opens.
-  ///
-  /// The switch is process-wide, so it is off only for this read and never
-  /// while another operation may be asking. It is deprecated, but nothing
-  /// replaces it: a login keychain item still shows its dialog with
-  /// kSecUseAuthenticationUIFail.
-  public static func loadWithoutAsking(account: String) -> String? {
-    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                            kSecAttrAccount as String: account, kSecReturnData as String: true]
-    gate.lock()
-    defer { gate.unlock() }
-    guard mayAsk == 0 else { return nil }
-    SecKeychainSetUserInteractionAllowed(false)
-    defer { SecKeychainSetUserInteractionAllowed(true) }
-    var out: CFTypeRef?
-    guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
-    return String(data: d, encoding: .utf8)
+  public static func delete(account: String) async throws {
+    _ = try await CoreAgentClient.shared.call("ProviderSetRequest", ["profile": "desktop", "id": id(account), "remove": true])
+    remember(id(account), false)
   }
 }
 
-/// Model discovery is a core Agent operation. Credential lookup remains a
-/// platform adapter so the app's Keychain permissions continue to apply.
+/// Model discovery and credential lookup are owned by agentd.
 public struct MessagesProvider: Sendable {
   public let config: ProviderConfig
   public init(config: ProviderConfig) { self.config = config }
   public func models() async throws -> [String] { try await modelChoices().map(\.id) }
-  public func modelChoices(asking: Bool = true) async throws -> [(id: String, name: String)] {
-    try await CoreAgentClient.shared.models(config, asking: asking)
-  }
-  public struct HTTPStatusError: Error {
-    public let status: Int
-    public let body: String
-    public init(status: Int, body: String) { self.status = status; self.body = body }
+  public func modelChoices() async throws -> [(id: String, name: String)] {
+    try await CoreAgentClient.shared.models(config)
   }
 }

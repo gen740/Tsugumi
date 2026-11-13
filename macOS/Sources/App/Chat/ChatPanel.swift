@@ -19,10 +19,10 @@ struct ChatPanel: View {
   @State private var input = ""
   @State private var model = AgentSettings.current().model
   /// The connection chosen in Settings > API: the model menu follows it when it changes.
-  @AppStorage("agent.provider") private var providerSetting = "anthropic"
+  @HostStorage("agent.provider") private var providerSetting = "anthropic"
   /// The model menu's effort and Fast mode (AgentSettings.chat() reads them).
-  @AppStorage(AgentSettings.effortKey) private var effortSetting = ""
-  @AppStorage(AgentSettings.fastModelKey) private var fastModelSetting = ""
+  @HostStorage(AgentSettings.effortKey) private var effortSetting = ""
+  @HostStorage(AgentSettings.fastModelKey) private var fastModelSetting = ""
   /// The connections set up (keys stored, ChatGPT signed in) with their models.
   @State private var connections: [Connection] = []
   struct Connection: Identifiable {
@@ -37,11 +37,11 @@ struct ChatPanel: View {
   @State private var modelLists = ModelListRefresher(fetch: { id in
     // Never the keychain's dialog: nobody asked for this read. A connection
     // that would have to ask keeps its saved list until a turn or Settings > API reads it.
-    try await MessagesProvider(config: AgentSettings.config(for: id)).modelChoices(asking: false)
+    try await MessagesProvider(config: AgentSettings.config(for: id)).modelChoices()
   })
   /// "Draw thoughts": the Agent's thinking summarized for the canvas (extra tokens).
-  @AppStorage(ThoughtSummarizer.defaultsKey) private var drawThoughts = false
-  @AppStorage("agent.drawThoughtsAsked") private var drawThoughtsAsked = false
+  @HostStorage(ThoughtSummarizer.defaultsKey) private var drawThoughts = false
+  @HostStorage("agent.drawThoughtsAsked") private var drawThoughtsAsked = false
   @State private var askThoughts = false
   @State private var skillQuery: String?
   /// The highlighted Skill candidate (↑ / ↓, Return or Tab takes it).
@@ -413,11 +413,11 @@ struct ChatPanel: View {
       modelMenu.onChoose = { provider, m in choose(provider, m) }
       UIScript.shared.modelMenu = modelMenu
       modelMenu.onEffort = { level in
-        UserDefaults.standard.set(level, forKey: AgentSettings.effortKey)
+        CorePreferences.shared.set(level, forKey: AgentSettings.effortKey)
         showChoices()
       }
       modelMenu.onFast = { on in
-        UserDefaults.standard.set(on ? AgentSettings.current().model : "", forKey: AgentSettings.fastModelKey)
+        CorePreferences.shared.set(on ? AgentSettings.current().model : "", forKey: AgentSettings.fastModelKey)
         showChoices()
       }
       await loadModels()
@@ -525,6 +525,8 @@ struct ChatPanel: View {
   /// The connections set up, each with the models saved for it. Opening the
   /// panel may ask the keychain for the ChatGPT record, once.
   private func loadModels() async {
+    await CorePreferences.shared.reload()
+    await ProviderCredentials.refresh()
     let accounts = await ChatGPTAuth.shared().accounts()
     for id in ["anthropic", "openai", "chatgpt"] {
       _ = try? await CoreAgentClient.shared.storedModels(id)
@@ -543,8 +545,8 @@ struct ChatPanel: View {
       let listed = ModelCatalogSnapshot.shared.models(id).map(\.id)
       out.append(Connection(id: id, name: name, models: Array(Set(listed + [chosen])).sorted()))
     }
-    if Keychain.exists(account: ProviderConfig.anthropic.name) { add("anthropic", "Anthropic API") }
-    if Keychain.exists(account: ProviderConfig.openAI.name) { add("openai", "OpenAI API") }
+    if ProviderCredentials.exists(account: ProviderConfig.anthropic.name) { add("anthropic", "Anthropic API") }
+    if ProviderCredentials.exists(account: ProviderConfig.openAI.name) { add("openai", "OpenAI API") }
     if chatGPT { add("chatgpt", "ChatGPT プラン") }
     if providerSetting == "fixture" { add("fixture", "Local fixture") }
     model = current
@@ -581,12 +583,13 @@ struct ChatPanel: View {
       for id in ["anthropic", "openai", "chatgpt"] {
         _ = try? await CoreAgentClient.shared.storedModels(id)
       }
+      await ProviderCredentials.refresh()
       let accounts = await ChatGPTAuth.shared().accountsWithoutAsking()
       // A record that cannot be read without asking says nothing: the connection stays as it was.
       let chatGPT = accounts.map { $0.contains { $0.active && $0.signedIn && $0.planEnabled } } ?? wasOn
       onMainWhileMenuTracks {
         show(chatGPT)
-        var ids = ["anthropic", "openai"].filter { Keychain.exists(account: AgentSettings.config(for: $0).name) }
+        var ids = ["anthropic", "openai"].filter { ProviderCredentials.exists(account: AgentSettings.config(for: $0).name) }
         if chatGPT { ids.append("chatgpt") }
         lists.refresh(ids) { id, outcome in
           UIScript.shared.note("model list \(id): \(outcome)")
@@ -598,7 +601,7 @@ struct ChatPanel: View {
 
   /// A model of a connection chosen in the menu: that connection is used from now on.
   private func choose(_ provider: String, _ m: String) {
-    UserDefaults.standard.set(m, forKey: AgentSettings.modelKey(provider))
+    CorePreferences.shared.set(m, forKey: AgentSettings.modelKey(provider))
     providerSetting = provider
     model = m
     modelMenu.setCurrent(provider: provider, model: m)
