@@ -56,7 +56,7 @@ The SDK provides `Log`, `DisplayText`, `DisplayMarkdown`, `DisplayScalar`, `Disp
 
 ## The native boundary
 
-`sdk/csharp/Context.cs` declares the Card ABI's structs (`tsugumi_call`, `tsugumi_value`, `tsugumi_series` in `sdk/include/tsugumi/sdk/abi.h`) by hand. Before the first call, the C++ host passes the compiler's `offsetof`/`sizeof` of every field to the managed SDK, which compares them with its own layout; any field missing, moved or resized on either side fails `tsugumi_load` with the field named in the Card's log. `tests/python/test_csharp_abi.py` checks field order and callback signatures from the sources without .NET. Extending the ABI (a new callback at the end of `tsugumi_call`) means adding the field to `abi.h`, `host.cc`'s layout table, `NativeCall` and `Layout.cs`.
+`sdk/csharp/Context.cs` declares the Card ABI's structs (`tsugumi_call`, `tsugumi_value`, `tsugumi_series` in `sdk/include/tsugumi/sdk/abi.h`) by hand. Before the first call, the C++ host passes the compiler's `offsetof`/`sizeof` of every field to the managed SDK, which compares them with its own layout; any field missing, moved or resized on either side fails `tsugumi_load` with the field named in the Card's log. `tests/static/test_csharp_abi.py` checks field order and callback signatures from the sources without .NET. Extending the ABI (a new callback at the end of `tsugumi_call`) means adding the field to `abi.h`, `host.cc`'s layout table, `NativeCall` and `Layout.cs`.
 
 ## NuGet packages
 

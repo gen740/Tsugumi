@@ -4,7 +4,7 @@ requests offered as tools, the Agent's own texts and the guide's script without 
 model connection. It also writes the list of
 the Python SDK's methods into the system prompt, so that the model need not read
 the SDK. Run it after changing them or the SDK
-(tests/python/test_agent_contract.py checks that it was)."""
+(tests/static/test_agent_contract.py checks that it was)."""
 
 import ast
 import pathlib
