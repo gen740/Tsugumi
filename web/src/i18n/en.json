@@ -524,7 +524,6 @@
  "ビルドに失敗しました（{0}）。": "The build failed ({0}).",
  "ビルドの期限（秒）": "Build timeout (s)",
  "ビルドキャッシュ": "Build Cache",
- "ビルドキャッシュを削除しますか？": "Delete the build cache?",
  "ファイル": "File",
  "ファイルを作成": "Create File",
  "ファイルを検索": "Search files",
