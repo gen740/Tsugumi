@@ -10,7 +10,7 @@ namespace Tsugumi;
 // offsetof/sizeof of every field; this compares them with the managed layout
 // by C field name, so a field missing, moved or resized on either side fails
 // tsugumi_load. When abi.h gains a field, add it to host.cc's k_layout, to
-// the managed struct and here. tests/python/test_csharp_abi.py also checks
+// the managed struct and here. tests/static/test_csharp_abi.py also checks
 // field order and callback signatures without building a Card.
 internal static unsafe class Layout {
     [StructLayout(LayoutKind.Sequential)]

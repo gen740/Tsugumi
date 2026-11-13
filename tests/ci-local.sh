@@ -15,7 +15,8 @@
 # named volume (tsugumi-ci-nix), kept between runs. An Apple silicon Mac runs
 # arm64 Linux, while CI covers both Linux architectures. The macOS checks
 # use this Mac's OS, Xcode and existing build folders.
-# Keep the checks in step with ci-platform.yml.
+# Keep the checks in step with ci-platform.yml. The Static checks job of ci.yml
+# is tests/check-fast.sh; run that first.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
@@ -31,7 +32,7 @@ agent_checks() {
 core_checks() {
   core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_rpc_cli_tests"
   core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_remote_result_tests"
-  core_run python3 -m pytest -q --core-report -m 'not environment' tests/core
+  core_run python3 -m pytest -q --core-report -m 'not environment' -n auto --dist load --durations=40 tests/core
   PYTHONPATH=remote core_run python3 -m unittest discover -s tests/remote
 }
 
@@ -56,7 +57,11 @@ linux_job() {
   step "Python tests"
   sdk_python=$(nix --extra-experimental-features 'nix-command flakes' build .#ci-python --no-link --print-out-paths)
   core_run "$sdk_python/bin/python3" -c 'import matplotlib, plotly, altair'
-  core_run "$sdk_python/bin/python3" -m pytest -q tests/python
+  # The adapter tests start resident services and a Web server (see ci-platform.yml): serial.
+  adapters=(tests/python/test_claude_code_plugin.py tests/python/test_web_server.py tests/python/test_cli.py)
+  core_run "$sdk_python/bin/python3" -m pytest -q -m 'not static' -n auto --dist loadfile --durations=40 tests/python \
+    "${adapters[@]/#/--ignore=}"
+  core_run "$sdk_python/bin/python3" -m pytest -q "${adapters[@]}"
   if [ "$system" = aarch64-linux ]; then
     step "Cache the VM runtime"
     nix --extra-experimental-features 'nix-command flakes' build --no-link .#vm-system
