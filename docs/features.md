@@ -299,7 +299,7 @@ Tsugumi uses Claude's models and features by choosing the one that fits each job
 | Make, fix, run and check Cards | Tool use in the Messages API. The tools are generated from the RPC contract (`protocol/tsugumi.fbs`), so the Agent has exactly the operations of the screen | [Tools and the RPC](#tools-and-the-rpc), `core/src/agent/catalog.cc`, `tests/core/agent/` |
 | A model sized to the job | Implementing Cards uses the model the user chooses (default `claude-sonnet-5-5`, with effort and, on models that offer it, Fast mode selectable). With an Anthropic API key, the guide's conversation, the summaries of the thinking of the bird on the Canvas and the version summaries use the small `claude-haiku-5-5` (other providers use a small model of their own or the Agent's model) | [Connecting to models](#connecting-to-models), `modelOptions` in `agent/Shared/agent.json`, [Version summaries](Versions.md) |
 | Judging from the figures a run makes (multimodal) | `run_record` passes the images a Card displayed (charts, RGB images and so on) to the model as images. The same in the app, the Web UI and the Claude Code plugin | `core/src/agent/tool_images.cc`, `web/server/mcp.ts`, `tests/core/agent/project_rpc_test.cc` |
-| Implementing independent Drafts at the same time (subagents) | `delegate` takes 2 to 8 tasks, runs up to 4 helpers at a time, and returns their reports | [Splitting the work](#splitting-the-work-delegate), `tests/core/agent/project_rpc_test.cc` |
+| Implementing independent Drafts at the same time (subagents) | `delegate` takes 1 to 8 tasks, runs up to 4 helpers at a time, and returns their messages and errors | [Splitting the work](#splitting-the-work-delegate), `tests/core/agent/project_rpc_test.cc` |
 | Guiding through a fixed procedure (Skills) | The built-in Skill `$demo` (`agent/Shared/demo-skill.md`) guides through a demo, and Skills the user adds are loaded too | [Skills and conversations](#skills-and-conversations), [the guide](#the-thrush-chat-and-guide) |
 | Showing work in progress | Tool arguments are received by streaming (`eager_input_streaming`), and the Card's code is shown on the Canvas as it is written | [The Agent on the Canvas](#the-agent-on-the-canvas), `core/src/agent/provider.cc` |
 | Making long work faster and cheaper | Prompt caching on the system prompt and the tool definitions | `core/src/agent/provider.cc` |
@@ -375,11 +375,11 @@ How they differ from sticky notes: a sticky note is a memo for people, placed an
 ### Splitting the work (delegate)
 
 - Independent work (Drafts not connected by wires, for instance) can be split by the Agent among helper Agents and done at the same time.
-- A split is 2 to 8 tasks (`delegate` in `agent/Shared/agent.json`), each with a name, the root-level Cards it owns and an instruction. The core runs up to four helpers at a time and gives each at most 15 steps.
-- Each helper has its own conversation and the same tools except `delegate`. The tool's contract is that a helper changes only the definitions of the Cards it was given (not `tsugumi.json`, the layout or other Cards).
-- A helper starts from the parent's instruction alone, so the instruction must say what the Drafts and rules do not.
-- The `runs` argument of `delegate` (`each` by default, or `together`) is in the tool's schema and the rules, which tell the Agent to choose `together` unless a helper needs the results of its own run; the core itself does not act on it.
-- When all helpers have reported, the Agent checks each one's Cards and reports. The helpers' conversations are kept with the original conversation in the Agent core's database, so a half-finished split can be resumed.
+- A split is 1 to 8 tasks (`delegate` in `agent/Shared/agent.json`), each with a unique nonempty name and a nonempty instruction. The core runs them in groups of up to four concurrent helpers and gives each at most 15 model steps.
+- Each helper has its own conversation, the shared system rules and the same tools except `delegate`, using the parent's access. Assigning separate Cards in the instructions is advice to avoid overwriting work, not an enforced write boundary; helpers may read the whole project.
+- A helper's first user message is only its instruction. The parent conversation and a project snapshot are not automatically included, and there is no automatic warm-up. Include the Card ids, user requirements and shared decisions, and ask the helper to read the definitions, metadata, wires and upstream Cards it needs.
+- Coordinate when to run through the instructions. The suggested order is to have helpers save and check, then have the parent run once after they report, unless a helper needs run results to write its Cards. The core does not retry `busy` or `revision_conflict` for helpers: wait for an active run to finish before retrying, or inspect and re-apply after a revision conflict.
+- The call returns each helper's messages and error field for the parent to review before checking the Cards and reporting. Reaching the step limit can leave a helper without a final report and does not set its error field. Helper conversations are kept with the original conversation in the Agent core's database. When an interrupted call is reconciled, it returns completed results and an interruption notice for incomplete work; inspect the saved work before assigning more.
 
 ### The Agent on the Canvas
 
@@ -423,6 +423,10 @@ On Home, a single guide conversation for the whole app (`Agent.Role.guide`; its 
 ## 10. Demos
 
 The bundled demos, including Draft versions, come in a Japanese set and an English set (`demos/ja`, `demos/en`): the same demos and files, their descriptions, notes and the text of their figures in one language. The app and the Web UI list the set of their language. What you can try, and how each demo's Cards connect and behave, is in [The bundled demos](Demos.md).
+New projects accept a destination that does not yet exist or a completely empty folder (including hidden files). Non-empty destinations are refused without overwriting their contents. The host-side core defines the initial documents, pins them to its build-time Card Nixpkgs revision, validates the folder name and flow direction, and maintains the 30 most recently opened projects for both clients. Forgetting a recent entry leaves its folder intact.
+
+Demo and project copies contain saved files, are writable even from a read-only source, and omit `.tsugumi` run history and state, `.git` repository identity and symbolic links.
+
 Choose "Open a Copy" on a demo from "Browse Demos" on the home screen to get an editable copy in `~/Documents/Tsugumi/<demo>` (`<demo>` is the demo's id; `-2`, `-3`, … is appended if the folder exists).
 
 For the design and implementation, see [Rationale](Rationale.md), [Development](Development.md), [Security and isolation](security.md) and [Limitations](Limitations.md).

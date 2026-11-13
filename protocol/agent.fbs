@@ -1,4 +1,4 @@
-// Core-owned Agent service. This is a separate listener from project RPC.
+// Host-side core and Agent service. Separate from per-project RPC.
 // Unix: little-endian uint32 length then one buffer. WebSocket: one binary
 // buffer, subprotocol tsugumi.agent.v1. Tokens authenticate a server-owned
 // principal; clients cannot choose their role or grant themselves access.
@@ -50,6 +50,30 @@ table CredentialImportRequest { registration_json:string (required); replace:boo
 table CredentialTokenRequest { client_id:string (required); stale_token:string; }
 table CredentialForgetRequest { client_id:string (required); }
 
+// Host-level project lifecycle. These requests do not require an open project
+// or a conversation. Only the authenticated human principal may call them.
+// Paths are host paths. Recent openedAt values are Unix epoch milliseconds.
+// Omitted flow defaults to topToBottom; omitted language defaults to ja.
+// Stable failures: invalid_project_name, invalid_flow, folder_not_empty,
+// invalid_project, demo_not_found, invalid_language, project_io_error,
+// project_defaults_unavailable (the build has no Card Nixpkgs pin).
+// Result JSON: {nixpkgsPin:string}.
+table HostProjectDefaultsRequest {}
+// Result JSON: {path:string,name:string}; path is canonical.
+table HostProjectInfoRequest { path:string (required); }
+// Create, duplicate and demo copy return {path:string} (canonical).
+table HostProjectCreateRequest { parent:string (required); name:string (required); flow:string; }
+table HostProjectDuplicateRequest { path:string (required); parent:string (required); name:string (required); }
+// Result JSON: catalog entries with absolute path, title, description, tags, field.
+table HostDemoListRequest { language:string; }
+// Copies use the catalog id, adding -2, -3, ... for occupied destinations.
+table HostDemoCopyRequest { id:string (required); parent:string (required); language:string; }
+// List returns [{path,name,openedAt}], newest first; remember returns its entry.
+// Forget returns {}; it never removes project folders.
+table HostRecentListRequest {}
+table HostRecentRememberRequest { path:string (required); }
+table HostRecentForgetRequest { paths:[string]; }
+
 union RequestPayload {
   HelloRequest, ConfigureRequest, RegisterProjectRequest,
   ConversationCreateRequest, ConversationListRequest, ConversationGetRequest,
@@ -58,7 +82,11 @@ union RequestPayload {
   ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest,
   AccessRevokeRequest, AccessListRequest, DemoListRequest, DemoReadRequest,
   ModelsListRequest, VersionSummarizeRequest, ConversationSummarizeRequest, RegisterFolderRequest,
-  CredentialImportRequest, CredentialTokenRequest, CredentialForgetRequest
+  CredentialImportRequest, CredentialTokenRequest, CredentialForgetRequest,
+  // Host-level project lifecycle (separate from Agent conversations).
+  HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest,
+  HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest,
+  HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
 }
 table Request { value:RequestPayload; }
 table HelloResult { protocol:uint = 1; server_id:string (required); principal:string (required); }
