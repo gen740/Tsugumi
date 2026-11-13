@@ -100,8 +100,8 @@ jobs:
         run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_remote_result_tests"'
       - name: Project RPC with external doubles
         run: '"$CORE_TEST_ENV" python3 -m pytest -q --core-report -m "not environment" -n auto --dist load --durations=40 tests/core'
-      - name: Remote execution gateway and journal
-        run: 'PYTHONPATH=remote "$CORE_TEST_ENV" python3 -m unittest discover -s tests/remote'
+      - name: Remote worker protocol and journal
+        run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_workerd_tests"'
 
   host:
     name: Worker and host isolation
@@ -131,7 +131,7 @@ jobs:
         run: '"$CORE_TEST_ENV" python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py'
 
   remote-execution:
-    name: Real remote daemon execution
+    name: Real remote worker execution
     if: inputs.system == 'x86_64-linux'
     needs: native
     runs-on: ${{ inputs.runner }}
@@ -150,8 +150,8 @@ jobs:
           out-link: build-ci
       - name: Allow user namespaces for sandboxed jobs
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Build and run Cards through the loopback execution daemon
-        run: bash tests/ci-remote-daemon.sh
+      - name: Build and run Cards through the loopback remote worker
+        run: bash tests/ci-remote-worker.sh
 
   web-contracts:
     name: Web types and behavior

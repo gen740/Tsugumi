@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[3]
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build")).resolve()
 DAEMON = Path(os.environ.get("TSUGUMID", BUILD / "core/tsugumid"))
 MOCK_DAEMON = Path(os.environ.get("TSUGUMI_MOCK_DAEMON", BUILD / "tests/core/tsugumid-mock"))
-WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "sdk/tsugumi-worker"))
+WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "workerd/tsugumi-worker"))
 SDK = Path(os.environ.get("TSUGUMI_SDK_DIR", ROOT / "sdk"))
 
 # Adapter to existing crash points, not a contract asserted by test cases.

@@ -312,3 +312,29 @@ Built-in line charts run as SDK-pinned WebGPU modules in the same isolated
 frame as Card-owned views. The application has no separate native chart renderer
 or drawing bridge. Binary float64 input is run data; the module receives it
 through the existing module input transport, with unchanged retention rules.
+
+## Remote worker boundary
+
+The C++ `tsugumi-remote-worker` in `workerd/` uses the generated contract in
+`protocol/remote_worker.fbs`: bounded little-endian length-prefixed FlatBuffers
+on Unix or loopback TCP streams, with chunked SHA-256 verified byte transfers.
+It has no HTTP listener. The current private token authenticates both carriers;
+there is no non-loopback TCP listener, TLS or key authentication yet. A separate
+SSH tunnel may carry the loopback stream. Key authentication over TLS or SSH
+will wrap this same stream in the next change.
+
+Swift and TypeScript brokers keep remote credentials on the host. They authorize
+projects from host identities, overwrite client-supplied scopes and pin server
+identities. The remote worker also pins each project's journal identity. Native
+workers stay light and do not link Nix; only the remote executable links Nix.
+
+Remote job supervisors hold exclusive lifetime locks and survive listener
+restarts. Unprivileged user/PID namespaces, parent-death signalling and optional
+verified cgroup v2 limits cover the entire build/run. A lost supervisor is marked
+interrupted rather than rerun. Run data remain in private job scratch outside
+the persistent Nix store. After the host durably saves an outcome, a retryable
+release removes inputs, outputs and logs; only replay tombstones remain. A host
+that has not fetched its accepted job's result can reconnect without an expiry
+race. Never-submitted uploads expire after an hour of inactivity. These are
+remote transfer scratch rules; host run retention is unchanged. See
+[Remote execution](RemoteExecution.md) for the layout and validation limits.

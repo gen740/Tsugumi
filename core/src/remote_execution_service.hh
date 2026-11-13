@@ -44,6 +44,8 @@ class RemoteExecutionService final : public ExecutionService {
   // The completion of a recovered job that ended with `reply`. Sets the
   // invocation's environment, failure and execution state. Throws
   // BrokerDisconnected when the result must be fetched again.
+  // Retry durable result acknowledgements after the host completion commits.
+  auto release_completed() -> void;
   auto recover(RemoteJobRecord& job, const RemoteJobState& reply, const std::atomic<bool>& stop)
       -> RecoveredRemoteJob;
 

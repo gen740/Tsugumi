@@ -1,0 +1,55 @@
+// Host <-> remote worker. The broker forwards these generated messages and
+// fills routing/authentication fields; it never interprets job specifications.
+// Any byte stream: uint32 little-endian length, then one FlatBuffer (<= 2 MiB).
+// One request and reply per connection. Transfers use independent <= 1 MiB
+// chunks, with explicit offset/total; no unframed body follows a message.
+// A future TLS/SSH carrier wraps this exact stream. TCP is loopback-only today.
+namespace Tsugumi.RemoteWorker;
+
+enum JobState:ubyte { Missing, Uploading, Queued, Running, Cancelling, Succeeded, Failed, Cancelled, Interrupted, Released }
+enum ErrorCode:ubyte { Invalid, Unauthorized, InstanceChanged, RegistrationChanged, Rejected, NotFound, Busy, Internal }
+table ProbeRequest {}
+table PutBlobRequest { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
+table GetBlobRequest { digest:string (required); offset:ulong; limit:uint = 1048576; }
+table JobSpec {
+  system:string (required); derivation:string (required); output:string (required);
+  invocation_sha256:string (required); input_blobs:[string] (required);
+  cpu_millis:ulong; memory_bytes:ulong; timeout_seconds:uint;
+}
+// Spec bytes are a FlatBuffer rooted at JobSpec. Keeping the exact buffer
+// makes the fingerprint independent of packing and supports uncertain submits.
+table SubmitRequest { spec:[ubyte] (required); }
+table StatusRequest {}
+table CancelRequest { fingerprint:string (required); }
+// Sent only after the host durably imports the result (or failure). Idempotent.
+// Erases all job scratch. A compact identity/fingerprint tombstone prevents
+// late submissions from executing again, and is not a retained run result.
+table ReleaseRequest { fingerprint:string (required); }
+// Broker-local; never forwarded to the remote listener.
+table CatalogRequest {}
+union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest }
+table Request {
+  token:string; service:string; server_id:string; instance_id:string;
+  project_scope:string; job_id:string;
+  body:RequestBody (required);
+}
+table Capabilities {
+  server_id:string (required); instance_id:string; native_system:string (required);
+  systems:[string] (required); resource_limits:bool; max_jobs:uint;
+  worker_contract:uint = 3;
+}
+table Target { id:string (required); available:bool; capabilities:Capabilities (required); }
+table Catalog { services:[Target] (required); }
+table BlobChunk { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
+table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; }
+table Ack {}
+table Failure { code:ErrorCode; message:string (required); }
+union ReplyBody { Capabilities, Catalog, BlobChunk, JobStatus, Ack, Failure }
+table Reply { body:ReplyBody (required); }
+union Payload { Request, Reply }
+table Message { payload:Payload (required); }
+// Result manifest is a separate FlatBuffer root stored as a job blob.
+table ResultFile { path:string (required); sha256:string (required); size:ulong; }
+table ResultManifest { invocation_result_sha256:string (required); outputs:[ResultFile] (required); }
+root_type Message;
+file_identifier "TSR1";

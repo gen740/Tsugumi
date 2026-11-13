@@ -14,6 +14,7 @@ from pathlib import Path
 
 import flatbuffers
 import pytest
+from harness import remote_worker as R
 from harness.fixtures import worker_project
 from harness.scenario import Project
 from projects import FILE_FBS, start_run, wait_run
@@ -47,7 +48,7 @@ class Gateway(socketserver.UnixStreamServer):
         self.catalog_system = self.system
         self.results = {}
         self.stall = None
-        self.stall_operation = "status"
+        self.stall_operation = R.RequestBody.StatusRequest
         self.stalled = threading.Event()
         self.resume = threading.Event()
 
@@ -77,90 +78,97 @@ class Gateway(socketserver.UnixStreamServer):
             entries[0]["path"] = "files/out/../../escape"
         if result_fault == "oversize":
             next(entry for entry in entries if entry["path"] == "logs.jsonl")["size"] = (16 << 20) + 1
-        manifest = json.dumps({
-            "outputs": entries,
-            "invocation_result_sha256": blob(bytes(buffer.Output())),
-        }).encode()
+        manifest = R.pack(R.ResultManifestT(outputs=[R.ResultFileT(**entry) for entry in entries],
+            invocationResultSha256=blob(bytes(buffer.Output()))))
         self.receipts[job] = {**self.receipts[job], "state": "succeeded", "result_sha256": blob(manifest)}
 
-    def operation(self, header, body):
-        operation = header["operation"]
-        capabilities = {
-            "server_id": self.registered_server, "native_system": self.system, "systems": [self.system],
-            "executor": "daemon", "isolation": "pid_namespace", "resource_limits": self.resource_limits,
-            "max_jobs": 8, "worker_contract": 2,
-        }
-        if operation == "catalog":
-            return {"services": [{"id": "cluster", "available": True, **capabilities,
-                                   "native_system": self.catalog_system, "systems": [self.catalog_system]}]}
-        assert header["server_id"] == self.server_id
-        if header["server_id"] != self.registered_server:
-            return {"ok": False, "code": "registration_changed", "error": "execution service was replaced"}
-        if operation == "probe":
-            return {key: value for key, value in {
-                "instance_id": self.instance, **capabilities, **self.probe_overrides,
-            }.items() if value is not None}
-        assert header["instance_id"] == self.instance
-        if operation == "put_blob":
-            assert hashlib.sha256(body).hexdigest() == header["sha256"]
-            self.blobs.add(header["sha256"])
-            self.blob_contents[header["sha256"]] = body
-            return {}
-        if not self.online:
-            return None  # EOF leaves the job outcome unknown
-        if operation == "get_blob":
-            return self.results[header["sha256"]]
-        job = header["job_id"]
-        if operation == "submit":
-            self.submit_count += 1
-            spec = json.loads(body)
-            self.specs[job] = spec
-            assert set(spec["input_blobs"]) <= self.blobs
-            assert spec["system"] == self.system
-            if self.resource_limits:
-                assert spec["cpu_millis"] == 500
-                assert spec["memory_bytes"] == 256 << 20
+    def operation(self, q):
+        kind, body = q.bodyType, q.body
+        caps = R.CapabilitiesT(serverId=self.registered_server, nativeSystem=self.system, systems=[self.system],
+                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=3)
+        if kind == R.RequestBody.CatalogRequest:
+            caps.nativeSystem = self.catalog_system
+            caps.systems = [self.catalog_system]
+            return R.reply(R.ReplyBody.Catalog, R.CatalogT(services=[R.TargetT(id="cluster", available=True, capabilities=caps)]))
+        assert R.string(q.serverId) == self.server_id
+        if R.string(q.serverId) != self.registered_server:
+            return R.failure(R.ErrorCode.RegistrationChanged, "execution service was replaced")
+        if kind == R.RequestBody.ProbeRequest:
+            caps.instanceId = self.instance
+            for key, value in self.probe_overrides.items():
+                setattr(caps, key, value)
+            return R.reply(R.ReplyBody.Capabilities, caps)
+        assert R.string(q.instanceId) == self.instance
+        if kind == R.RequestBody.PutBlobRequest:
+            digest = R.string(body.digest)
+            offset = body.offset
+            part = bytes(body.bytes)
+            previous = self.blob_contents.get(digest, b"")
+            if offset == len(previous):
+                previous += part
+                self.blob_contents[digest] = previous
             else:
-                assert "cpu_millis" not in spec
-                assert "memory_bytes" not in spec
-            self.receipts[job] = {"state": "running", "fingerprint": hashlib.sha256(body).hexdigest()}
-            return None  # the durable receipt exists, but its response was lost
-        if operation == "cancel":
+                assert previous[offset:offset + len(part)] == part
+            if len(previous) == body.total:
+                assert hashlib.sha256(previous).hexdigest() == digest
+                self.blobs.add(digest)
+            return R.reply(R.ReplyBody.Ack, R.AckT())
+        if not self.online:
+            return None
+        if kind == R.RequestBody.GetBlobRequest:
+            data = self.results[R.string(body.digest)]
+            return R.reply(R.ReplyBody.BlobChunk, R.BlobChunkT(digest=body.digest, total=len(data), offset=body.offset,
+                                                             bytes=data[body.offset:body.offset + body.limit]))
+        job = R.string(q.jobId)
+        if kind == R.RequestBody.ReleaseRequest:
+            return R.reply(R.ReplyBody.Ack, R.AckT())
+        if kind == R.RequestBody.SubmitRequest:
+            self.submit_count += 1
+            spec = R.JobSpecT.InitFromPackedBuf(bytes(body.spec))
+            self.specs[job] = spec
+            assert {R.string(d) for d in spec.inputBlobs} <= self.blobs
+            assert R.string(spec.system) == self.system
+            if self.resource_limits:
+                assert spec.cpuMillis == 500 and spec.memoryBytes == 256 << 20
+            else:
+                assert spec.cpuMillis == 0 and spec.memoryBytes == 0
+            self.receipts[job] = {"state": "running", "fingerprint": hashlib.sha256(bytes(body.spec)).hexdigest()}
+            return None  # the receipt exists, but its reply was lost
+        if kind == R.RequestBody.CancelRequest:
             receipt = self.receipts[job]
-            assert receipt["fingerprint"] == header["fingerprint"]
+            assert receipt["fingerprint"] == R.string(body.fingerprint)
             receipt["state"] = "cancelled"
-            return receipt
-        assert operation == "status"
-        return self.receipts.get(job, {"state": "missing"})
+        else:
+            assert kind == R.RequestBody.StatusRequest
+        state = self.receipts.get(job, {"state": "missing"})
+        return R.reply(R.ReplyBody.JobStatus, R.JobStatusT(
+            state=getattr(R.JobState, state["state"].capitalize()), fingerprint=state.get("fingerprint"),
+            resultSha256=state.get("result_sha256"), diagnostic=state.get("diagnostic")))
+
 
 
 class Handler(socketserver.StreamRequestHandler):
     def handle(self):
-        prefix = self.rfile.read(4)
-        if len(prefix) != 4:
+        try:
+            message = R.read(self.rfile)
+        except EOFError:
             return
-        size = struct.unpack(">I", prefix)[0]
-        header = json.loads(self.rfile.read(size))
+        q = message.payload
         mode = self.server.stall
-        if mode and header["operation"] == self.server.stall_operation:
+        if mode and q.bodyType == self.server.stall_operation:
             try:
                 if mode == "trickle":
-                    self.wfile.write(struct.pack(">I", 8192) + b"{")
+                    self.wfile.write(struct.pack("<I", 8192) + b"\x00")
                 self.server.stalled.set()
                 while not self.server.resume.wait(0.05):
                     if mode == "trickle":
-                        self.wfile.write(b" ")
+                        self.wfile.write(b"\x00")
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
-        data = self.server.operation(header, self.rfile.read(header.get("size", 0)))
-        if isinstance(data, bytes):
-            response = json.dumps({"version": 1, "ok": True, "size": len(data), "sha256": header["sha256"]}).encode()
-            self.wfile.write(struct.pack(">I", len(response)) + response + data)
-            return
+        data = self.server.operation(q)
         if data is not None:
-            response = json.dumps({"version": 1, "ok": True, **data}).encode()
-            self.wfile.write(struct.pack(">I", len(response)) + response)
+            self.wfile.write(R.frame(data))
 
 
 def wait_for_state(client, run_id, expected, card_state=None, timeout=15):
@@ -212,18 +220,13 @@ def running_job(project, remote_gateway, core_factory, tmp_path):
 
 
 @pytest.mark.parametrize("field,value,diagnostic", [
-    ("worker_contract", None, "Rebuild the daemon with this Tsugumi revision"),
-    ("worker_contract", 1, "Rebuild the daemon with this Tsugumi revision"),
-    ("worker_contract", 99, "Rebuild the daemon with this Tsugumi revision"),
-    ("executor", None, "Start the Tsugumi remote execution daemon"),
-    ("executor", "direct", "Start the Tsugumi remote execution daemon"),
-    ("server_id", "3" * 64, "server ID changed"),
-    ("isolation", None, "does not provide PID namespace isolation"),
-    ("resource_limits", False, "cannot enforce resource limits"),
-    ("native_system", None, "did not report a supported native system"),
-    ("native_system", "", "did not report a supported native system"),
-    ("systems", [], "did not report a supported native system"),
-    ("max_jobs", 0, "did not report a valid concurrent job limit"),
+    ("workerContract", 1, "Rebuild the remote worker"),
+    ("workerContract", 99, "Rebuild the remote worker"),
+    ("serverId", "3" * 64, "server ID changed"),
+    ("resourceLimits", False, "cannot enforce resource limits"),
+    ("nativeSystem", "", "valid system or concurrent job limit"),
+    ("systems", [], "valid system or concurrent job limit"),
+    ("maxJobs", 0, "valid system or concurrent job limit"),
 ])
 def test_incompatible_remote_gateway_prevents_upload(project, remote_gateway, core_factory, tmp_path, field, value, diagnostic):
     remote_gateway.probe_overrides[field] = value
@@ -247,11 +250,11 @@ def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tm
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     spec = remote_gateway.specs[text(live.executionJobId)]
-    assert spec["system"] == text(live.executionSystem) == "aarch64-linux"
-    assert spec["derivation"].endswith(".drv")
-    invocation = json.loads(remote_gateway.blob_contents[spec["invocation_sha256"]])
-    assert invocation["archive_sha256"] in spec["input_blobs"]
-    assert invocation["call_sha256"] in spec["input_blobs"]
+    assert R.string(spec.system) == text(live.executionSystem) == "aarch64-linux"
+    assert R.string(spec.derivation).endswith(".drv")
+    invocation = json.loads(remote_gateway.blob_contents[R.string(spec.invocationSha256)])
+    assert invocation["archive_sha256"] in [R.string(d) for d in spec.inputBlobs]
+    assert invocation["call_sha256"] in [R.string(d) for d in spec.inputBlobs]
     assert remote_gateway.blob_contents[invocation["archive_sha256"]] == b"test Nix derivation archive"
     remote_gateway.finish(text(live.executionJobId))
     assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
@@ -288,14 +291,14 @@ def test_each_system_evaluates_without_host_builds(project, remote_gateway, core
         live = wait_for_state(client, run_id, RemoteExecutionState.running, timeout=120)
         job_id = text(live.executionJobId)
         spec = remote_gateway.specs[job_id]
-        assert spec["system"] == system
-        assert not Path(spec["output"]).exists()
-        drv = json.loads(subprocess.check_output(["nix", "derivation", "show", spec["derivation"]], text=True))
+        assert R.string(spec.system) == system
+        assert not Path(R.string(spec.output)).exists()
+        drv = json.loads(subprocess.check_output(["nix", "derivation", "show", R.string(spec.derivation)], text=True))
         # Read the actual .drv rather than trusting only the job's system label.
-        assert drv[spec["derivation"]]["system"] == system
+        assert drv[R.string(spec.derivation)]["system"] == system
         if system in derivations:
-            assert derivations[system] == spec["derivation"]
-        derivations[system] = spec["derivation"]
+            assert derivations[system] == R.string(spec.derivation)
+        derivations[system] = R.string(spec.derivation)
         remote_gateway.finish(job_id)
         assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
     assert len(set(derivations.values())) == 2
@@ -368,19 +371,19 @@ def test_core_restart_reattaches_to_the_same_external_job(running_job, outage):
 
 
 @pytest.mark.parametrize("mode,operation,request_cancel", [
-    ("blackhole", "cancel", True),
-    ("trickle", "status", True),
-    ("blackhole", "status", False),
+    ("blackhole", R.RequestBody.CancelRequest, True),
+    ("trickle", R.RequestBody.StatusRequest, True),
+    ("blackhole", R.RequestBody.StatusRequest, False),
 ])
 def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, operation, request_cancel):
     """SIGTERM stops waiting for the executor and keeps any explicit cancellation intent."""
     gateway, daemon, client, run_id, job_id = running_job
     gateway.stall_operation = operation
     gateway.stall = mode
-    if request_cancel and operation == "cancel":
+    if request_cancel and operation == R.RequestBody.CancelRequest:
         client.call("RunCancelRequest", runId=run_id)
     assert gateway.stalled.wait(5)
-    if request_cancel and operation == "status":
+    if request_cancel and operation == R.RequestBody.StatusRequest:
         client.call("RunCancelRequest", runId=run_id)
     daemon.proc.send_signal(signal.SIGTERM)
     assert daemon.proc.wait(timeout=5) == 0

@@ -27,7 +27,7 @@ import Testing
       if mockedBuilds { process.environment = env.merging(["TSUGUMI_MOCK_CONTROL": dir.path]) { _, value in value } }
       process.arguments = ["--project", project.path, "--unix", dir.appendingPathComponent("s").path,
                            "--control-dir", dir.appendingPathComponent("control").path,
-                           "--worker", env["TSUGUMI_WORKER"] ?? build.appendingPathComponent("sdk/tsugumi-worker").path,
+                           "--worker", env["TSUGUMI_WORKER"] ?? build.appendingPathComponent("workerd/tsugumi-worker").path,
                            "--sdk-dir", env["TSUGUMI_SDK_DIR"] ?? SyncTests.root.appendingPathComponent("sdk").path,
                            "--allow-missing-origin", "--listen", "127.0.0.1:0"]
       process.standardOutput = FileHandle.nullDevice

@@ -256,7 +256,7 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-constexpr int kHistoryVersion = 4;
+constexpr int kHistoryVersion = 5;
 constexpr const char* kCopyFormat = "tsugumi-runs";
 constexpr const char* kCopyVersion = "4";
 
@@ -465,6 +465,9 @@ CREATE TABLE IF NOT EXISTS remote_jobs(
   instance TEXT NOT NULL, server_id TEXT NOT NULL, spec TEXT NOT NULL, contract TEXT NOT NULL, directory TEXT NOT NULL,
   accepted INTEGER NOT NULL, cancel_requested INTEGER NOT NULL, detail TEXT NOT NULL, batch_activation INTEGER NOT NULL,
   UNIQUE(run_id, card, invocation));
+CREATE TABLE IF NOT EXISTS remote_releases(
+  job_id TEXT PRIMARY KEY, service TEXT NOT NULL, server_id TEXT NOT NULL,
+  instance TEXT NOT NULL, fingerprint TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS last_inputs(
   card TEXT PRIMARY KEY, run_id TEXT NOT NULL, invocation INTEGER NOT NULL, inputs TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS receipts(
@@ -724,8 +727,15 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
       .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).run();
   db.prepare("DELETE FROM statuses WHERE run_id=? AND card=? AND invocation=?")
       .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).run();
-  if (!s.execution_job_id.empty())
+  if (!s.execution_job_id.empty()) {
+    auto pending = db.prepare("SELECT server_id,instance,spec FROM remote_jobs WHERE job_id=?");
+    pending.bind(1, s.execution_job_id);
+    if (pending.step())
+      db.prepare("INSERT OR REPLACE INTO remote_releases VALUES(?,?,?,?,?)")
+        .bind(1, s.execution_job_id).bind(2, s.execution_service).bind(3, pending.text(0))
+        .bind(4, pending.text(1)).bind(5, crypto::sha256_hex(pending.text(2))).run();
     db.prepare("DELETE FROM remote_jobs WHERE job_id=?").bind(1, s.execution_job_id).run();
+  }
   db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)")
       .bind(1, s.run_id).bind(2, key(s.card)).run();
   if (r.record_io) {

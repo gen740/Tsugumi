@@ -11,3 +11,5 @@ flatc --ts --gen-all --gen-object-api --ts-no-import-ext -I "$root/protocol" -o 
 flatc -b --schema --bfbs-comments --bfbs-builtins -I "$root/protocol" -o "$out" "$root/protocol/tsugumi.fbs"
 flatc --ts --gen-all --gen-object-api --ts-no-import-ext -I "$root/protocol" -o "$out" "$root/protocol/agent.fbs"
 flatc -b --schema --bfbs-comments --bfbs-builtins -I "$root/protocol" -o "$out" "$root/protocol/agent.fbs"
+
+flatc --ts --gen-all --gen-object-api --ts-no-import-ext -I "$root/protocol" -o "$out" "$root/protocol/remote_worker.fbs"

@@ -33,7 +33,7 @@ core_checks() {
   core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_rpc_cli_tests"
   core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_remote_result_tests"
   core_run python3 -m pytest -q --core-report -m 'not environment' -n auto --dist load --durations=40 tests/core
-  PYTHONPATH=remote core_run python3 -m unittest discover -s tests/remote
+  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_workerd_tests"
 }
 
 linux_job() {

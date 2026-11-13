@@ -36,10 +36,12 @@ Shared VM (one per app, Virtualization.framework)                 macOS
 
 ```text
 CMakeLists.txt, flake.nix/flake.lock  C++ build (CMake/Ninja) and pinned dependencies (Nix)
-protocol/          tsugumi.fbs (project RPC) / agent.fbs (host-side core and Agent) / worker.fbs / data.fbs / tsugumi_enums.fbs
-core/              tsugumid (project core) and tsugumi-agentd (host-side core);
+protocol/          tsugumi.fbs (project RPC), agent.fbs (host-side core and Agent), worker.fbs (native worker), remote_worker.fbs (remote worker), data.fbs / tsugumi_enums.fbs
+core/              tsugumid (project core) and tsugumi-agentd (host-side core); host worker pool/process management;
                    src/host/ (project lifecycle), src/agent/ (conversations and tools)
-sdk/               Card ABI, common runtime (libtsugumi_card), C++ codegen (card.hh), Python, R, Julia, Ruby, Go, Rust and C# SDKs and embedded shims, Nix SDK, tsugumi-worker
+workerd/           native_main.cc: light tsugumi-worker (no Nix); remote_main.cc + invocation.cc: tsugumi-remote-worker
+                   nix_store.cc: remote realisation; journal.cc, protocol.cc, paths.cc and include/: shared framing, validation and remote job support
+sdk/               Card ABI, common runtime (libtsugumi_card), C++ codegen (card.hh), Python, R, Julia, Ruby, Go, Rust and C# SDKs and embedded shims, Nix SDK
 macOS/             SwiftPM: Sources/App (SwiftUI), Sources/RPC, Sources/Launcher,
                    Container/ (image definitions, builds, versions), Tests/
 ui/modules/        Shared isolated web-module host (browser iframe and WKWebView)
@@ -48,16 +50,16 @@ macOS/Sources/AgentClient/  Native adapter to the host-side core RPC
 web/               Browser UI and host server (Agent RPC and platform adapters; shared material in agent/Shared)
 cli/               The tsugumi command: installers (install.sh, install.ps1), the Mac launch script, scripts that make the distributions
 plugins/tsugumi/   The Claude Code plugin (installed from .claude-plugin/marketplace.json)
-nix/               core.nix: package definitions of tsugumid, tsugumi-agentd, tsugumi-worker and the Card SDK
+nix/               core.nix: tsugumid, tsugumi-agentd, workers and Card SDK; remote-worker.nix: Linux remote worker wrapper
                    flake/: the flake's outputs as flake-parts modules (packages, checks, dev shell, docs apps)
-tests/core, tests/python, tests/fixtures   Contracts, integration and packaging tests, model fixtures
+tests/core, tests/remote, tests/python, tests/fixtures   Contracts, integration and packaging tests, model fixtures
 demos/ja, demos/en The demos, a set per UI language (the same demos and files, their text in one language): the UI's demo list (index.json);
                    basic, science and Plots (matplotlib, Plotly, Altair) demos, and Draft versions of the science demos
 docs/              Documents (listed in docs/README.md). docs/assets/ has the icon, key visuals and screenshots;
                    docs/site/ has the Astro site and the moving figures (output: build/docs/, not tracked)
 ```
 
-Generated bindings (C++/Python/Swift) and BFBS are made by `flatc` into each build's output and are not in Git.
+Generated bindings (C++/Python/Swift/TypeScript) and BFBS are made by `flatc` into each build's output and are not in Git.
 
 ## Main design decisions
 
@@ -80,7 +82,7 @@ Generated bindings (C++/Python/Swift) and BFBS are made by `flatc` into each bui
   - **Primary copy**: the history's SQLite (runs, invocations, states, values, logs, displays, receipts) is `<id>/history.sqlite` on the VM's run-history disk (`vm/history.img`, sparse, up to 32 GiB, mounted at `/history-disk`), visible only to that project's tsugumid as `/history` (`--history-dir`; without it, `.tsugumi/history.sqlite`). Waiting for each commit between Cards no longer goes through a shared folder.
   - **The disk's settings**: kept apart from the store disk (`synchronizationMode: .full`, F_FULLFSYNC on the Mac at every commit) and attached with `.fsync` (records already committed survive the app or the VM crashing; on a power loss of the Mac, the last writes may be lost). It can be reset separately from the store, and survives "Reset all environments".
   - **The copy in the project**: with "Save run history in the project" in the Workflow's settings on (`saveRunHistory` in `tsugumi.json`, default true), finished runs are also appended to `.tsugumi/runs.sqlite` (when writing has paused for 2 seconds, at the latest after 30, and on exit; not counted in the run's time).
-  - **Incompatible formats**: the daemon's local history schema is version 4 and records batches and saved input groups. If the local database or the portable copy is incompatible, startup reports the difference and keeps the files in place. In Mac and Web, **Archive History and Start** moves each incompatible database and its SQLite sidecars to a unique `history-archive-<UUID>` directory beside the database. The local archive lives on the VM's history disk on macOS or in the project state directory when running the daemon directly. The portable archive lives in the project's `.tsugumi` directory. A direct daemon launch can opt in once with `--archive-incompatible-history`.
+  - **Incompatible formats**: the daemon's local history schema is version 5 and records batches and saved input groups. If the local database or the portable copy is incompatible, startup reports the difference and keeps the files in place. In Mac and Web, **Archive History and Start** moves each incompatible database and its SQLite sidecars to a unique `history-archive-<UUID>` directory beside the database. The local archive lives on the VM's history disk on macOS or in the project state directory when running the daemon directly. The portable archive lives in the project's `.tsugumi` directory. A direct daemon launch can opt in once with `--archive-incompatible-history`.
   - **The copy's format**: a fixed shape (`format = tsugumi-runs`, `version = 4` in `meta`). Values are kept as FlatBuffers bytes with their SHA-256, pointing at `schemas` (hash → bfbs and root type), so a reader can interpret them on the spot even if types changed between runs. Logs keep the fragments as written and their positions (preserving the order of the whole Run's log), and artifacts point at files in the project, `.tsugumi/runs/<run>/`. Running state, receipts and last inputs are not included.
   - **Carrying it along**: on opening, runs missing from the VM are imported, matched by `run_id`, so the history follows a project that was copied or moved to another Mac.
   - **Deleting**: "Delete Run History" (`RunHistoryDelete`; everything, or what finished before a given time; not while running) deletes from three places: the VM, `.tsugumi/runs.sqlite` and the per-run files. The history in the VM is not deleted automatically; under "Run history in the VM" in the app's settings you can see its size and also delete that of projects whose folders are gone (vmd's `histories` and `forget`).

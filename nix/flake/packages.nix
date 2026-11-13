@@ -30,7 +30,7 @@ in
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         inherit kernel vm-boot;
-        remote-daemon = pkgs.callPackage ../remote-daemon.nix { inherit core; };
+        remote-worker = pkgs.callPackage ../remote-worker.nix { inherit core; };
         # Tsugumi in the shared VM: built inside the VM at boot from this source.
         vm-system = pkgs.callPackage ../../macOS/Container/vm-system.nix { tsugumid = core; };
         # The `tsugumi` command (cli/install.sh): the Web UI with tsugumid on this host.
