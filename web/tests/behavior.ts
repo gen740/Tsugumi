@@ -81,6 +81,7 @@ await import('./runComparison')
 
 await import('./moduleThumbnails')
 await import('./moduleViewer')
+await import('./wasmView.mjs')
 await import('./figurePreview')
 await import('./nixReferences')
 await import('./nixReferenceOverlay')

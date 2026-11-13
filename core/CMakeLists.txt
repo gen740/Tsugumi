@@ -31,6 +31,7 @@ add_library(tsugumi_core STATIC
   src/permissions.cc
   src/versions.cc
   src/model.cc
+  src/module_source.cc
   src/wire.cc
   src/store.cc
   src/history.cc

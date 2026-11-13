@@ -4,6 +4,7 @@
 
 #include <algorithm>
 
+#include "module_source.hh"
 #include "nix.hh"
 #include "scheduler.hh"
 #include "service.hh"
@@ -683,15 +684,17 @@ auto Service::module_read(RequestIn& req) -> void {
   const stdfs::path root(identity);
   if (!valid_module_identity(identity) || stdfs::is_symlink(root) || !stdfs::is_directory(root))
     throw Failed(FailureKind::invalid_path, "invalid module identity");
-  const auto entry = root / "index.js";
-  if (!fs::resolves_inside(root, entry) || !stdfs::is_regular_file(entry))
-    throw Failed(FailureKind::not_found, "module entry is missing");
-  const auto size = stdfs::file_size(entry);
-  if (size > (32u << 20)) throw Failed(FailureKind::output_invalid, "module entry exceeds 32 MiB");
+  std::string source;
+  try {
+    source = module_source(root);
+  } catch (const std::exception& e) {
+    throw Failed(FailureKind::output_invalid, e.what());
+  }
+  const auto size = source.size();
   const auto offset = r->offset().value_or(0);
-  const auto bytes = fs::read_range(entry, offset, content_limit(r->limit_bytes()));
-  if (!bytes) throw Failed(FailureKind::not_found, "module entry is missing");
-  reply(req, wire::file_page(req.request_id, "index.js", *bytes, offset, size, fs::sha256_file(entry)));
+  if (offset > size) throw Failed(FailureKind::invalid_request, "module offset exceeds source size");
+  const auto bytes = std::string_view(source).substr(offset, content_limit(r->limit_bytes()));
+  reply(req, wire::file_page(req.request_id, "index.js", bytes, offset, size, crypto::sha256_hex(source)));
 }
 
 void Service::artifact_read(RequestIn& req) {
