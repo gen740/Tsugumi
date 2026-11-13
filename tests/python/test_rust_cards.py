@@ -208,7 +208,7 @@ tsugumi::export!(run);''', inputs=[{'name':'file'},{'name':'directory'}], retain
     ('ctx.display_text("hello")',1),
     ('ctx.display_markdown("**hello**")',1),
     ('ctx.display_scalar(1.5,"value")',2),
-    ('ctx.display_line_chart("one","line",&[1.0,2.0],&[3.0,4.0])',3),
+    ('ctx.display_line_chart("one","line",&[1.0,2.0],&[3.0,4.0])',7),
     ('ctx.display_table(&["value"],&[vec!["1".into()]])',4),
     ('ctx.display_image("image/png", &[137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, 0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 252, 255, 31, 0, 3, 3, 2, 0, 239, 154, 218, 42, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130], "image")',5),
     ('ctx.display_points(&[1.0],&[2.0],&[3.0],Some(&[0xff00ff]))',6),

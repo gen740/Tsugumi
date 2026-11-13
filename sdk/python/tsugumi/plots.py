@@ -65,13 +65,13 @@ def show_altair(chart) -> None:
 def _setup_plotly(pio) -> None:
     from plotly.io._base_renderers import ExternalRenderer
 
-    class TsugumiRenderer(ExternalRenderer):
+    class PlotlyRenderer(ExternalRenderer):
         """fig.show() draws in the Card's display."""
 
         def render(self, fig_dict):
             show_plotly(fig_dict)
 
-    pio.renderers["tsugumi"] = TsugumiRenderer()
+    pio.renderers["tsugumi"] = PlotlyRenderer()
     pio.renderers.default = "tsugumi"
 
 

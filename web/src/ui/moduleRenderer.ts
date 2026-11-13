@@ -47,7 +47,7 @@ export class FrameRenderer implements ThumbnailRenderer {
           return await new Promise<string>((resolve, reject) => {
             const id = ++this.sequence
             this.result = { id, resolve, reject }
-            frame.contentWindow?.postMessage({ name: request.name, json: request.json, blobs: request.blobs, code, interactive: false, snapshot: true, width: request.width, height: request.height, requestId: id }, '*')
+            frame.contentWindow?.postMessage({ name: request.name, json: request.json, blobs: request.blobs, code, colorScheme: request.colorScheme, interactive: false, snapshot: true, width: request.width, height: request.height, requestId: id }, '*')
           })
         })(),
         new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error('Chart preview timed out')), this.timeoutMs) }),

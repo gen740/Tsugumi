@@ -85,7 +85,7 @@ Only these things are changed:
 
 - Images are shrunk to 640 px on their long side, and PNGs over 220 KB become JPEGs.
 - Tables are cut to their first 24 rows, text to 4000 characters, and line and scatter charts thinned to 400 points per series (only those with many points).
-- Plotly, Altair and Dawn charts are drawn as simple SVGs of the same values, without loading the libraries (no zooming or hovering as in the app). Vega-Lite charts with separate panels (concat or facet) are drawn with Vega into images when recorded (`vega-svg.mjs`). 3D point clouds show only the number of points.
+- Plotly, Altair and WebGPU line charts are drawn as simple SVGs of the same values, without loading the libraries (no zooming or hovering as in the app). Vega-Lite charts with separate panels (concat or facet) are drawn with Vega into images when recorded (`vega-svg.mjs`). 3D point clouds show only the number of points.
 - `ports.json` is the ports the core resolved (nothing is run).
 
 Demos without a record are replayed in an order made from their wires, with no results. Drafts cannot run.

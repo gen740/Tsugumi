@@ -4,6 +4,7 @@ export interface ThumbnailRequest {
   key: string
   name: string
   json: string
+  colorScheme?: string
   blobs?: ModuleBlobs
   width: number
   height: number
@@ -95,7 +96,7 @@ export const figureMode = (setting: unknown): FigureMode => (setting === 'live' 
 
 /** The result a frame is to show: its content, the size it is drawn at, and
  *  the run and invocation it is of (`lineage`). */
-export interface FigureWanted { name: string; json: string; blobs?: ModuleBlobs; width: number; height: number; lineage: string }
+export interface FigureWanted { name: string; json: string; blobs?: ModuleBlobs; colorScheme?: string; width: number; height: number; lineage: string }
 /** A picture that was made, and what it is a picture of. */
 export interface FigurePicture extends FigureWanted { image?: string; error?: string }
 export interface FigureState { mode: FigureMode; running: boolean; stale: boolean }
@@ -107,7 +108,7 @@ export interface FigureLook { image?: string; dimmed: boolean; waiting: boolean;
  *  is still running. Every other picture kept on screen is dimmed. */
 export function figureLook(wanted: FigureWanted | undefined, picture: FigurePicture | undefined, state: FigureState): FigureLook {
   if (!wanted) return { dimmed: false, waiting: false }
-  const same = picture !== undefined && picture.name === wanted.name && picture.json === wanted.json && sameBlobs(picture.blobs, wanted.blobs)
+  const same = picture !== undefined && picture.name === wanted.name && picture.json === wanted.json && sameBlobs(picture.blobs, wanted.blobs) && picture.colorScheme === wanted.colorScheme
   if (!picture?.image) return same && picture?.error ? { dimmed: false, waiting: false, error: picture.error } : { dimmed: false, waiting: true }
   // The same content at another size (a resize, a zoom) is still this result's picture.
   if (same) return { image: picture.image, dimmed: holdsDisplay(state), waiting: false }
@@ -116,7 +117,7 @@ export function figureLook(wanted: FigureWanted | undefined, picture: FigurePict
 }
 
 const sameWanted = (a?: FigureWanted, b?: FigureWanted) =>
-  a === b || (!!a && !!b && a.name === b.name && a.json === b.json && sameBlobs(a.blobs, b.blobs) && a.width === b.width && a.height === b.height && a.lineage === b.lineage)
+  a === b || (!!a && !!b && a.name === b.name && a.json === b.json && sameBlobs(a.blobs, b.blobs) && a.colorScheme === b.colorScheme && a.width === b.width && a.height === b.height && a.lineage === b.lineage)
 
 /** The picture one frame holds, and the work under way for the next one.
  *  The last picture stays until another replaces it (`figureLook` says how it
@@ -130,7 +131,7 @@ export class FigurePreview {
   constructor(
     private queue: { request(request: ThumbnailRequest, signal: AbortSignal, lingerMs?: number): Promise<string | undefined> },
     private changed: () => void,
-    private keyOf: (name: string, json: string, width: number, height: number, blobs?: ModuleBlobs) => Promise<string> = moduleThumbnailKey,
+    private keyOf: (name: string, json: string, width: number, height: number, blobs?: ModuleBlobs, colorScheme?: string) => Promise<string> = moduleThumbnailKey,
     private lingerMs = 10000,
   ) {}
 
@@ -176,17 +177,17 @@ export class FigurePreview {
       if (next) this.draw(next, true)
     }
     void (async () => {
-      const key = await this.keyOf(wanted.name, wanted.json, wanted.width, wanted.height, wanted.blobs)
+      const key = await this.keyOf(wanted.name, wanted.json, wanted.width, wanted.height, wanted.blobs, wanted.colorScheme)
       if (abort.signal.aborted) return
-      const { name, json, blobs, width, height } = wanted
-      const image = await this.queue.request({ key, name, json, blobs, width, height }, abort.signal, follow ? this.lingerMs : 0)
+      const { name, json, blobs, colorScheme, width, height } = wanted
+      const image = await this.queue.request({ key, name, json, blobs, colorScheme, width, height }, abort.signal, follow ? this.lingerMs : 0)
       done(image ? { ...wanted, image } : undefined)
     })().catch(error => done({ ...wanted, error: String((error as Error)?.message ?? error) }))
   }
 }
 
 /** Content identity includes every byte, not point counts or a run's revision number. */
-export async function moduleThumbnailKey(name: string, json: string, width: number, height: number, blobs: ModuleBlobs = {}): Promise<string> {
+export async function moduleThumbnailKey(name: string, json: string, width: number, height: number, blobs: ModuleBlobs = {}, colorScheme = 'light'): Promise<string> {
   const pieces: Uint8Array[] = [new TextEncoder().encode(json)]
   for (const name of Object.keys(blobs).sort()) {
     pieces.push(new TextEncoder().encode(JSON.stringify([name, blobs[name].length])), blobs[name])
@@ -195,7 +196,7 @@ export async function moduleThumbnailKey(name: string, json: string, width: numb
   let offset = 0
   for (const piece of pieces) { content.set(piece, offset); offset += piece.length }
   const digest = await crypto.subtle.digest('SHA-256', content)
-  return `${name}:${width}:${height}:` + [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, '0')).join('')
+  return `${name}:${colorScheme}:${width}:${height}:` + [...new Uint8Array(digest)].map(n => n.toString(16).padStart(2, '0')).join('')
 }
 
 /** Preserve a preview through layout's sub-pixel rounding at any canvas zoom. */

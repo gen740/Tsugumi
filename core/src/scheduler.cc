@@ -175,8 +175,6 @@ Note display_note(const DisplayData& d) {
   n.card_key = path_key(d.card);
   n.coalesce_key = "display|" + n.card_key;
   n.approx_bytes = 1024;
-  if (const auto* c = std::get_if<DisplayData::LineChart>(&d.value))
-    for (const auto& s : c->series) n.approx_bytes += s.x.size() * 16;
   if (const auto* t = std::get_if<DisplayData::Table>(&d.value))
     for (const auto& r : t->rows)
       for (const auto& c : r) n.approx_bytes += c.size() + 8;

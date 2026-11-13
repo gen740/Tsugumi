@@ -22,6 +22,11 @@ let
   '';
 in
 {
+  line-chart = bundle {
+    src = ../views;
+    entry = "line-chart.js";
+    name = "tsugumi-view-line-chart";
+  };
   plotly = bundle {
     src = source;
     entry = "plotly.js";

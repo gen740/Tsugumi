@@ -61,7 +61,6 @@ enum SmokeTest {
           switch d.value {
           case .text(let t): return String(t.prefix(200))
           case .scalar(let v, let l): return "\(l)=\(v)"
-          case .lineChart(let series): return "chart \(series.map { "\($0.id):\($0.x.count)" })"
           default: return d.summary
           }
         }

@@ -16,7 +16,7 @@ Browser (React UI + WebGPU rendering) ── WebSocket /rpc (FlatBuffers) ──
 - `tsugumid` allows only the UI's origins (`http://127.0.0.1:<port>` and `http://localhost:<port>`) with `--allow-origin`, and the token is sent only in SessionHello (never in a URL or a log).
 - The Node server (`web/server/`) takes on only what a browser cannot do: operations on project folders (creating, copying demos, choosing folders, reading a project to import as a Card in a Card), starting and stopping `tsugumid`, import grants, loading Skills, the Agent and the model's API key, and signing in to ChatGPT (`chatgpt.json` in the data folder, 0600). It listens only on `127.0.0.1`, checks the `Host` header, and requires, on APIs that change something, a header only a same-origin page can send.
 - The Agent runs on the server side, and the tool definitions and the JSON ⇄ FlatBuffers conversion are made from `tsugumi.bfbs` as in the macOS version. It connects to `tsugumid` over a Unix socket.
-- Line charts port the WGSL and vertex generation of the macOS version's Dawn rendering layer (`ui/renderer`) to WebGPU (Chromium's WebGPU implementation is Dawn). In a browser without WebGPU, the reason is shown.
+- Line charts use the SDK-pinned WebGPU view module shared with the Mac app. It receives binary double-precision series data in the same isolated frame as other views. In a browser without WebGPU, the reason is shown.
 
 ## The tsugumi command
 

@@ -236,7 +236,7 @@ const fmt = (v: number) => {
 }
 
 /** A figure's own points without the plot library (the app draws these with Plotly,
- *  Vega-Lite or Dawn, interactive): the page needs neither those nor WebGPU. */
+ *  Vega-Lite or the WebGPU line view, interactive): the page needs neither those nor WebGPU. */
 function PlotView({ plot }: { plot: Extract<Output, { type: 'plot' }> }) {
   const W = 560, H = 250
   const m = { left: 54, right: 12, top: plot.title ? 24 : 10, bottom: plot.xLabel ? 36 : 22 }

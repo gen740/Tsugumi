@@ -231,6 +231,7 @@ export class AppPreferences extends Observable {
 
   applyTheme() {
     document.documentElement.dataset.theme = this.dark ? 'dark' : 'light'
+    this.changed()
   }
 }
 

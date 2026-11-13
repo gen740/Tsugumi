@@ -189,9 +189,6 @@ def display_value(d, demo: str, card: list[str]) -> dict | None:
         return {"type": "text", "text": s[:MAX_TEXT], "markdown": bool(v.markdown), **({"cut": len(s)} if len(s) > MAX_TEXT else {})}
     if t == 2:
         return {"type": "scalar", "value": v.value, "label": text(v.label)}
-    if t == 3:
-        return {"type": "plot", "library": "line", "title": "", "xLabel": "", "yLabel": "",
-                "series": [{"label": text(s.label), "x": thin(s.x, MAX_POINTS), "y": thin(s.y, MAX_POINTS), "points": False} for s in v.series]}
     if t == 4:
         rows = [[text(c) for c in r.cells] for r in v.rows]
         return {"type": "table", "columns": [text(c) for c in v.columns], "rows": rows[:MAX_ROWS], "totalRows": len(rows)}
@@ -201,6 +198,11 @@ def display_value(d, demo: str, card: list[str]) -> dict | None:
     if t == 6:
         return {"type": "points", "count": len(v.x)}
     if t == 7:
+        if text(v.module).endswith("-tsugumi-view-line-chart"):
+            from tsugumi_client import line_chart_series
+            return {"type": "plot", "library": "line", "title": "", "xLabel": "", "yLabel": "",
+                    "series": [{"label": s.label, "x": thin(s.x, MAX_POINTS), "y": thin(s.y, MAX_POINTS), "points": False}
+                               for s in line_chart_series(v)]}
         return module_value("plotly" if text(v.module).endswith("-tsugumi-view-plotly") else "vega-lite" if text(v.module).endswith("-tsugumi-view-vega-lite") else text(v.module), json.loads(text(v.configJson)), OUT / f"{demo}-{'-'.join(card)}")
     return None
 

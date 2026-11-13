@@ -50,6 +50,7 @@ struct FigureWanted: Equatable {
   var blobs: [String: Data] = [:]
   let width: Int
   let height: Int
+  var colorScheme: String = "light"
 }
 
 /// What a frame shows of the picture it holds. A picture is at full strength
@@ -74,7 +75,7 @@ enum FigureLook: Equatable {
   static func of(wanted: FigureWanted, lineage: String,
                  picture: (wanted: FigureWanted, lineage: String, isImage: Bool)?, state: FigureState) -> FigureLook {
     guard let picture else { return .waiting }
-    let same = picture.wanted.name == wanted.name && picture.wanted.json == wanted.json && picture.wanted.blobs == wanted.blobs
+    let same = picture.wanted.name == wanted.name && picture.wanted.json == wanted.json && picture.wanted.blobs == wanted.blobs && picture.wanted.colorScheme == wanted.colorScheme
     guard picture.isImage else { return same ? .failed : .waiting }
     // The same content at another size (a resize, a zoom) is still this result's picture.
     if same { return .picture(dimmed: state.holdsDisplay, waiting: false) }
@@ -106,7 +107,7 @@ final class FigurePreview {
   @ObservationIgnored private let make: Make
 
   init(make: @escaping Make = { w, place in
-    await ModuleThumbnails.shared.result(.init(name: w.name, json: w.json, blobs: w.blobs, width: w.width, height: w.height), json: w.json, blobs: w.blobs, at: place)
+    await ModuleThumbnails.shared.result(.init(name: w.name, json: w.json, blobs: w.blobs, width: w.width, height: w.height, colorScheme: w.colorScheme), json: w.json, blobs: w.blobs, at: place)
   }) {
     self.make = make
   }
@@ -186,6 +187,7 @@ struct ModuleThumbnail: View {
     let lineage: String
     let follow: Bool
   }
+  @Environment(\.colorScheme) private var colorScheme
   @State private var preview = FigurePreview()
   /// Where its frame is on the canvas: the pictures of what is in view are made first.
   @Environment(\.canvasPlace) private var place
@@ -194,7 +196,7 @@ struct ModuleThumbnail: View {
     GeometryReader { geo in
       let wanted = settled(FigureWanted(name: name, json: json, blobs: blobs,
                                         width: Int((geo.size.width / max(zoom, 0.01)).rounded()),
-                                        height: Int((geo.size.height / max(zoom, 0.01)).rounded())))
+                                        height: Int((geo.size.height / max(zoom, 0.01)).rounded()), colorScheme: colorScheme == .dark ? "dark" : "light"))
       let follow = figure.mode == .live && figure.running
       let held = preview.picture
       let look = FigureLook.of(wanted: wanted, lineage: lineage,
@@ -227,7 +229,7 @@ struct ModuleThumbnail: View {
   /// zoom (its text does not scale evenly): the picture shown is kept while
   /// the size is within a few points of its own.
   private func settled(_ w: FigureWanted) -> FigureWanted {
-    guard let s = preview.picture?.wanted, s.name == w.name, s.json == w.json, s.blobs == w.blobs,
+    guard let s = preview.picture?.wanted, s.name == w.name, s.json == w.json, s.blobs == w.blobs, s.colorScheme == w.colorScheme,
           abs(s.width - w.width) <= 6, abs(s.height - w.height) <= 6 else { return w }
     return s
   }
@@ -252,8 +254,9 @@ final class ModuleThumbnails {
     let digest: String
     let width: Int
     let height: Int
+    let colorScheme: String
 
-    init(name: String, json: String, blobs: [String: Data] = [:], width: Int, height: Int) {
+    init(name: String, json: String, blobs: [String: Data] = [:], width: Int, height: Int, colorScheme: String = "light") {
       self.name = name
       var content = Data(json.utf8)
       for name in blobs.keys.sorted() {
@@ -263,6 +266,7 @@ final class ModuleThumbnails {
       digest = SHA256.hash(data: content).map { String(format: "%02x", $0) }.joined()
       self.width = width
       self.height = height
+      self.colorScheme = colorScheme
     }
   }
 
@@ -412,7 +416,7 @@ final class ModuleThumbnails {
   private nonisolated static let diskLimit = 256 << 20
 
   private nonisolated static func file(_ key: Key) -> URL? {
-    folder?.appendingPathComponent("\(SHA256.hash(data: Data(key.name.utf8)).map { String(format: "%02x", $0) }.joined())-\(key.digest)-\(key.width)x\(key.height).png")
+    folder?.appendingPathComponent("\(SHA256.hash(data: Data(key.name.utf8)).map { String(format: "%02x", $0) }.joined())-\(key.digest)-\(key.colorScheme)-\(key.width)x\(key.height).png")
   }
 
   /// The picture kept from an earlier time, if there is one (read off the main thread).
@@ -447,7 +451,7 @@ final class ModuleThumbnails {
       web.frame = CGRect(x: 0, y: 0, width: size.width * Self.scale, height: size.height * Self.scale)
       web.pageZoom = Self.scale
       let code = try await ModuleSources.source(key.name)
-      let message: [String: Any] = ["name": key.name, "json": json, "blobs": blobs.mapValues { $0.base64EncodedString() }, "code": code, "interactive": false]
+      let message: [String: Any] = ["name": key.name, "json": json, "blobs": blobs.mapValues { $0.base64EncodedString() }, "code": code, "colorScheme": key.colorScheme, "interactive": false]
       // Drawn, and a moment later (what the libraries leave to a timer), before the picture is taken.
       let state = try await withTimeout(seconds: 30) {
         try await web.callAsyncJavaScript(

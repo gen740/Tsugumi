@@ -225,19 +225,11 @@ export type SyncState =
   /** Card changes wait until the run ends. */
   | { kind: 'waitingForRun' }
 
-export interface LineSeries {
-  id: string
-  label: string
-  x: number[]
-  y: number[]
-}
-
 export type DisplayValue =
   | { kind: 'text'; text: string }
   /** Markdown with TeX math (the SDK's Markdown display). */
   | { kind: 'markdown'; text: string }
   | { kind: 'scalar'; value: number; label: string }
-  | { kind: 'lineChart'; series: LineSeries[] }
   | { kind: 'table'; columns: string[]; rows: string[][] }
   | { kind: 'image'; mediaType: string; data: Uint8Array; alt: string }
   | { kind: 'points'; x: number[]; y: number[]; z: number[]; colors: number[] }
@@ -264,9 +256,6 @@ export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
       value = { kind: 'scalar', value: v.value ?? 0, label: s(v.label) }
       break
     }
-    case D.DisplayValue.DisplayLineChart:
-      value = { kind: 'lineChart', series: (d.value as D.DisplayLineChartT).series.map((x) => ({ id: s(x.id), label: s(x.label), x: x.x, y: x.y })) }
-      break
     case D.DisplayValue.DisplayTable: {
       const t = d.value as D.DisplayTableT
       value = { kind: 'table', columns: t.columns.map((c) => s(c)), rows: t.rows.map((r) => r.cells.map((c) => s(c))) }
@@ -303,7 +292,6 @@ export function displaySummary(d: DisplaySnapshot): string {
       return line.replace(/^[#>*\-` ]+|[#>*\-` ]+$/g, '').replace(/\*\*/g, '')
     }
     case 'scalar': return `${v.label} = ${Number(v.value.toPrecision(6))}`
-    case 'lineChart': return L('折れ線 {0} 系列 · {1} 点', v.series.length, Math.max(0, ...v.series.map((x) => x.x.length)))
     case 'table': return L('表 {0} 列 × {1} 行', v.columns.length, v.rows.length)
     case 'image': return v.alt || L('画像')
     case 'points': return L('点群 {0} 点', v.x.length)
@@ -311,15 +299,20 @@ export function displaySummary(d: DisplaySnapshot): string {
   }
 }
 
-/** A Plotly figure's or Vega-Lite chart's title (as an image shows its alt
+/** A built-in view's title or line-series summary (as an image shows its alt
  *  text), or what it is when it has none. */
 function plotTitle(name: string, json: string): string | undefined {
-  if (name !== 'plotly' && name !== 'vega-lite') return undefined
   let v: any
-  try { v = JSON.parse(json) } catch { v = undefined }
-  const t = name === 'plotly' ? v?.layout?.title : v?.title
+  try { v = JSON.parse(json) } catch { return undefined }
+  if (name.endsWith('-tsugumi-view-line-chart')) {
+    const series = Array.isArray(v?.series) ? v.series : []
+    return L('折れ線 {0} 系列 · {1} 点', series.length, Math.max(0, ...series.map((s: any) => Number(s.count) || 0)))
+  }
+  const plotly = name.endsWith('-tsugumi-view-plotly')
+  if (!plotly && !name.endsWith('-tsugumi-view-vega-lite')) return undefined
+  const t = plotly ? v?.layout?.title : v?.title
   const text = typeof t === 'string' ? t : typeof t?.text === 'string' ? t.text : ''
-  return text || (name === 'plotly' ? L('Plotly のグラフ') : L('Vega-Lite のグラフ'))
+  return text || (plotly ? L('Plotly のグラフ') : L('Vega-Lite のグラフ'))
 }
 
 export type EnvironmentState = EnvPublicState | { state: 'reconnecting' }

@@ -24,6 +24,7 @@
 // shows as JSON to $TSUGUMI_DISPLAY (read when it ends; see BashDisplay).
 // postRun gets TSUGUMI_FAILED (0/1) and TSUGUMI_OUTPUTS (the ports sent).
 
+#include <cmath>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <flatbuffers/idl.h>
@@ -290,16 +291,55 @@ int display_scalar_impl(void*, double value, const char* label) {
   return 0;
 }
 
-int display_line_chart_impl(void*, const tsugumi_series* series, size_t count) {
-  send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    std::vector<flatbuffers::Offset<D::LineSeries>> v;
-    for (size_t i = 0; i < count; ++i)
-      v.push_back(D::CreateLineSeries(b, b.CreateString(series[i].id), b.CreateString(series[i].label),
-                                      b.CreateVector(series[i].x, series[i].count),
-                                      b.CreateVector(series[i].y, series[i].count)));
-    return std::make_pair(D::DisplayValue::DisplayLineChart, D::CreateDisplayLineChart(b, b.CreateVector(v)).Union());
-  });
-  return 0;
+struct ChartSeriesConfig {
+  tsugumi::schema::t::String<"id"> id;
+  tsugumi::schema::t::String<"label"> label;
+  tsugumi::schema::t::Uint64<"offset"> offset;
+  tsugumi::schema::t::Uint64<"count"> count;
+};
+struct ChartConfig {
+  tsugumi::schema::t::Array<"series", tsugumi::schema::Obj<ChartSeriesConfig>> series;
+};
+
+auto display_module_impl(void*, const char*, const char*, const tsugumi_blob*, size_t) -> int;
+
+// All language SDKs keep their line-chart API. Only the common worker encodes
+// its immutable view identity and run data; coordinates never pass through JSON.
+auto display_line_chart_impl(void*, const tsugumi_series* series, size_t count) -> int {
+  const auto invalid = [](const char* message) {
+    record_failure(D::FailureKind::output_invalid, message);
+    return -1;
+  };
+  if (count && !series) return invalid("missing line series");
+  ChartConfig config;
+  std::string x, y;
+  size_t points = 0, bytes = 0;
+  for (size_t i = 0; i < count; ++i) {
+    const auto& row = series[i];
+    if (!row.id || !row.label || (row.count && (!row.x || !row.y)) || row.count > 10000 - points)
+      return invalid("invalid line series or more than 10,000 points");
+    bytes += row.count * 16 + std::strlen(row.id) + std::strlen(row.label);
+    if (bytes > (1u << 20)) return invalid("line chart exceeds 1 MiB");
+    ChartSeriesConfig meta;
+    *meta.id = row.id;
+    *meta.label = row.label;
+    *meta.offset = points;
+    *meta.count = row.count;
+    config.series->push_back(std::move(meta));
+    for (size_t j = 0; j < row.count; ++j) {
+      if (!std::isfinite(row.x[j]) || !std::isfinite(row.y[j])) return invalid("line coordinates must be finite");
+      const double xv = flatbuffers::EndianScalar(row.x[j]);
+      const double yv = flatbuffers::EndianScalar(row.y[j]);
+      x.append(reinterpret_cast<const char*>(&xv), sizeof xv);
+      y.append(reinterpret_cast<const char*>(&yv), sizeof yv);
+    }
+    points += row.count;
+  }
+  const auto json = tsugumi::schema::encode(config);
+  const tsugumi_blob blobs[] = {{"x", reinterpret_cast<const uint8_t*>(x.data()), x.size()},
+                                {"y", reinterpret_cast<const uint8_t*>(y.data()), y.size()}};
+  const auto status = display_module_impl(nullptr, "line-chart", json.c_str(), blobs, 2);
+  return status == 0 ? 0 : invalid("the built-in line-chart module is unavailable");
 }
 
 int display_table_impl(void*, const char* const* columns, size_t column_count, const char* const* cells,

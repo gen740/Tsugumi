@@ -64,11 +64,12 @@ struct ModuleViewer: View {
   var blobs: [String: Data] = [:]
   let interactive: Bool
   var zoom: CGFloat = 1
+  @Environment(\.colorScheme) private var colorScheme
   @State private var error = ""
   var body: some View {
     if let dir = ModuleViewerHost.directory {
       ZStack(alignment: .bottomLeading) {
-        ModuleViewerHost(directory: dir, name: name, json: json, blobs: blobs, interactive: interactive, zoom: zoom, error: $error)
+        ModuleViewerHost(directory: dir, name: name, json: json, blobs: blobs, interactive: interactive, colorScheme: colorScheme == .dark ? "dark" : "light", zoom: zoom, error: $error)
           .allowsHitTesting(interactive).clipShape(RoundedRectangle(cornerRadius: 4))
         if !error.isEmpty { Text(error).font(.caption).foregroundStyle(.red).padding(4).textSelection(.enabled) }
       }
@@ -102,6 +103,7 @@ struct ModuleViewerHost: NSViewRepresentable {
   let json: String
   let blobs: [String: Data]
   let interactive: Bool
+  let colorScheme: String
   let zoom: CGFloat
   @Binding var error: String
 
@@ -127,7 +129,7 @@ struct ModuleViewerHost: NSViewRepresentable {
   func updateNSView(_ web: WKWebView, context: Context) {
     if abs(web.pageZoom - zoom) > 0.001 { web.pageZoom = max(zoom, 0.05) }
     context.coordinator.error = $error
-    context.coordinator.show(name: name, json: json, blobs: blobs, interactive: interactive)
+    context.coordinator.show(name: name, json: json, blobs: blobs, interactive: interactive, colorScheme: colorScheme)
   }
   static func dismantleNSView(_ web: WKWebView, coordinator: Coordinator) {
     coordinator.loading?.cancel()
@@ -141,7 +143,7 @@ struct ModuleViewerHost: NSViewRepresentable {
     var loading: Task<Void, Never>?
     private var ready = false
     private var pending: [String: Any]?
-    private var shown: (String, String, [String: Data], Bool)?
+    private var shown: (String, String, [String: Data], Bool, String)?
     init(error: Binding<String>) { self.error = error }
 
     private static var rules: WKContentRuleList??
@@ -160,16 +162,16 @@ struct ModuleViewerHost: NSViewRepresentable {
         }
       }
     }
-    func show(name: String, json: String, blobs: [String: Data], interactive: Bool) {
-      if let shown, shown.0 == name, shown.1 == json, shown.2 == blobs, shown.3 == interactive { return }
-      shown = (name, json, blobs, interactive)
+    func show(name: String, json: String, blobs: [String: Data], interactive: Bool, colorScheme: String) {
+      if let shown, shown.0 == name, shown.1 == json, shown.2 == blobs, shown.3 == interactive, shown.4 == colorScheme { return }
+      shown = (name, json, blobs, interactive, colorScheme)
       loading?.cancel()
       loading = Task {
         do {
           let code = try await ModuleSources.source(name)
           guard !Task.isCancelled else { return }
           pending = ["name": name, "json": json, "blobs": blobs.mapValues { $0.base64EncodedString() },
-                     "code": code, "interactive": interactive, "visible": true]
+                     "code": code, "interactive": interactive, "colorScheme": colorScheme, "visible": true]
           flush()
         } catch { if !Task.isCancelled { self.error.wrappedValue = error.localizedDescription } }
       }

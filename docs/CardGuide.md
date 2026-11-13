@@ -620,8 +620,8 @@ uncooperative native code; check the context for cooperative early exit.
 A view is a JavaScript ES module fixed by the Card's Nix definition. It draws
 with standard browser APIs: DOM, canvas, WebGPU, or bundled libraries. No
 Tsugumi drawing API is involved. Pointer handling stays in the frame and works
-after the worker exits. The existing built-in line chart still uses Dawn on
-Mac and the browser's WebGPU on the Web; it is a separate display variant.
+after the worker exits. The built-in line chart uses this same module mechanism
+on both platforms; Card authors keep their existing line-chart SDK calls.
 
 Declare the view alongside the implementation in `default.nix`:
 
@@ -655,10 +655,10 @@ The entry must export these functions (each may return a Promise):
 ```javascript
 export function initialise(root, { config, blobs }, size) {
   // root is a plain HTMLElement; blobs is { name: Uint8Array }.
-  // size is { width, height, pixelRatio, visible }, in CSS pixels.
+  // size is { width, height, pixelRatio, visible, colorScheme }, in CSS pixels.
 }
 export function update({ config, blobs }) {}
-export function resize({ width, height, pixelRatio, visible }) {}
+export function resize({ width, height, pixelRatio, visible, colorScheme }) {}
 export function dispose() {}
 ```
 
@@ -705,11 +705,25 @@ The runnable example is
 [`tests/fixtures/view-point-cloud`](../tests/fixtures/view-point-cloud): Python
 computes 12,000 little-endian float32 XYZ triples, and the JavaScript view
 rotates them on drag through WebGPU alone. It gives a clear error if WebGPU or
-an adapter is unavailable; it has no Dawn fallback.
+an adapter is unavailable.
 
-Planned follow-ups: migrate the built-in line chart to a view and remove Dawn;
-provide a shared JavaScript template and a Wasm header based on standard
+Planned follow-ups: provide a shared JavaScript template and a Wasm header based on standard
 `webgpu.h`, with input, resize and pointer bindings; optionally relay messages
 between a view and its live worker through RPC. No worker channel or direct
 socket exists in this change. The Wasm template/header is not implemented, so
 there is no supported minimal Wasm/template size to report yet.
+
+
+### Built-in line chart
+
+Existing `display_line_chart` / `line_chart` calls (and their other-language
+equivalents) produce the built-in `line-chart` view. No API change is needed in
+a Card. The JSON configuration is `{series: [{id, label, offset, count}, ...]}`.
+Offsets and counts index two named blobs, `x` and `y`, each a concatenation of
+little-endian float64 arrays. The existing limit remains 10,000 points and
+1 MiB of coordinate/label data. The view subtracts the visible origin in double
+precision before converting to float32 GPU vertices, preserving small differences
+in large values such as timestamps. Multiple series, the four-colour palette,
+legends, live updates and canvas previews use the shared module lifecycle.
+`size.colorScheme` is `light` or `dark`, supplied by the UI; appearance is part
+of preview identity. Coordinates and display retention are independent of theme.

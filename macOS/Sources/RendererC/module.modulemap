@@ -1,6 +1,0 @@
-// Thin bridge to the C++ Dawn renderer (ui/renderer), linked as a dylib.
-module TsugumiRendererC [system] {
-  header "../../../ui/renderer/include/tsugumi/renderer/renderer.h"
-  link "tsugumi_renderer"
-  export *
-}

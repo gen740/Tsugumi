@@ -15,6 +15,17 @@ struct FigurePreviewTests {
     FigureLook.of(wanted: want(wanted), lineage: lineage, picture: held.map { (want($0), heldLineage, image) }, state: state)
   }
 
+  @Test func appearanceIsPartOfPreviewIdentity() {
+    var light = Self.want("{}")
+    light.colorScheme = "light"
+    var dark = light
+    dark.colorScheme = "dark"
+    #expect(FigureLook.of(wanted: dark, lineage: "r#1", picture: (light, "r#1", true), state: FigureState())
+      == .picture(dimmed: true, waiting: true))
+    #expect(ModuleThumbnails.Key(name: "view", json: "{}", width: 160, height: 160, colorScheme: "light")
+      != ModuleThumbnails.Key(name: "view", json: "{}", width: 160, height: 160, colorScheme: "dark"))
+  }
+
   @Test func binaryInputsArePartOfPreviewIdentity() {
     let old = FigureWanted(name: "view", json: "{}", blobs: ["points": Data([0, 255])], width: 160, height: 160)
     let new = FigureWanted(name: "view", json: "{}", blobs: ["points": Data([0, 254])], width: 160, height: 160)

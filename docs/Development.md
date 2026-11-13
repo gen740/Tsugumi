@@ -21,7 +21,7 @@ The SwiftUI app and the Agent on macOS are equal clients that both talk to `tsug
 Shared VM (one per app, Virtualization.framework)                 macOS
  tsugumi-vmd (vsock: control 1024 / RPC 1025)
  nix-daemon ── shared /nix/store (store disk)
- project A: tsugumid (own uid, mount/PID namespaces, cgroup) ── vsock ─ 127.0.0.1 relay ── SwiftUI UI (+ Dawn rendering)
+ project A: tsugumid (own uid, mount/PID namespaces, cgroup) ── vsock ─ 127.0.0.1 relay ── SwiftUI UI (+ isolated WebGPU view modules)
    ├ document, journal, receipts (/project = virtiofs)                                  └ Agent (models, conversations, tools)
    ├ SQLite history, logs, artifacts                                   ── same RPC ──┘
    ├ scheduler, Nix evaluator (libnixexpr embedded in the process)
@@ -36,9 +36,8 @@ CMakeLists.txt, flake.nix/flake.lock  C++ build (CMake/Ninja) and pinned depende
 protocol/          tsugumi.fbs (external RPC) / worker.fbs / data.fbs / tsugumi_enums.fbs
 core/              tsugumid (include/tsugumi/core public API, src implementation)
 sdk/               Card ABI, common runtime (libtsugumi_card), C++ codegen (card.hh), Python, R, Julia and Ruby SDKs and embedded shims, Nix SDK, tsugumi-worker
-macOS/             SwiftPM: Sources/App (SwiftUI), Sources/RPC, Sources/Launcher, Sources/Renderer*,
+macOS/             SwiftPM: Sources/App (SwiftUI), Sources/RPC, Sources/Launcher,
                    Container/ (image definitions, builds, versions), Tests/
-ui/renderer/       Dawn rendering layer (C API, dylib)
 ui/modules/        Shared isolated web-module host (browser iframe and WKWebView)
 agent/             Shared Agent prompts, contracts and reference material
 macOS/Sources/AgentClient/  Native Agent providers, conversations and tools
@@ -310,7 +309,18 @@ nix develop -c /usr/bin/swift tests/tools/wkwebgpu.swift
 The probe uses accessory activation policy, a nonpersistent offscreen WKWebView,
 a secure localhost base URL, `navigator.gpu` and `requestAdapter()`, and exits
 within 20 seconds. A timeout or denied WebKit/GPU service is not evidence that
-WebGPU is unsupported. Dawn stays in place for the existing line chart. Planned
-work is its module migration and removal of Dawn, a standard-webgpu.h Wasm
+WebGPU is unsupported. The built-in line chart now uses the same isolated view
+module on both platforms. Planned work is a standard-webgpu.h Wasm
 view template with input/events bindings, and an optional RPC-relayed live
 worker channel (never a socket from the frame).
+
+
+The built-in `line-chart` view lives in `sdk/views/line-chart.js`. Its metadata
+contains series IDs, labels, offsets and counts. Its `x` and `y` blobs contain
+concatenated little-endian float64 coordinates; the worker keeps all language
+SDK line-chart calls unchanged and encodes this module display. There is no
+line-chart-specific protocol value or UI renderer. `line-geometry.js` subtracts
+the visible origin and normalizes in JavaScript double precision before creating
+float32 GPU vertices. Tests cover timestamp-sized values with small differences.
+The shared host passes `size.colorScheme` (`light` or `dark`), and preview cache
+keys include appearance. The module owns its legend, colours and WebGPU resources.

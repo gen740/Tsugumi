@@ -281,7 +281,6 @@ extension DisplaySnapshot {
       let line = t.split(separator: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? ""
       return line.trimmingCharacters(in: CharacterSet(charactersIn: "#>*-` ")).replacingOccurrences(of: "**", with: "")
     case .scalar(let v, let l): return "\(l) = \(v.formatted(.number.precision(.significantDigits(6))))"
-    case .lineChart(let s): return String(localized: "折れ線 \(s.count) 系列 · \(s.map(\.x.count).max() ?? 0) 点")
     case .table(let cols, let rows): return String(localized: "表 \(cols.count) 列 × \(rows.count) 行")
     case .image(_, _, let alt): return alt.isEmpty ? String(localized: "画像") : alt
     case .points(let x, _, _, _): return String(localized: "点群 \(x.count) 点")
@@ -289,14 +288,20 @@ extension DisplaySnapshot {
     }
   }
 
-  /// A Plotly figure's or Vega-Lite chart's title (as an image shows its alt
+  /// A built-in view's title or line-series summary (as an image shows its alt
   /// text), or what it is when it has none.
   static func plotTitle(_ name: String, _ json: String) -> String? {
-    guard name.hasSuffix("-tsugumi-view-plotly") || name.hasSuffix("-tsugumi-view-vega-lite") else { return nil }
     let v = try? JSONValue.parse(json)
-    let title = name == "plotly" ? v?["layout"]?["title"] : v?["title"]
+    if name.hasSuffix("-tsugumi-view-line-chart") {
+      let series = v?["series"]?.array ?? []
+      let points = series.compactMap { $0["count"]?.numberText.flatMap(Int.init) }.max() ?? 0
+      return String(localized: "折れ線 \(series.count) 系列 · \(points) 点")
+    }
+    guard name.hasSuffix("-tsugumi-view-plotly") || name.hasSuffix("-tsugumi-view-vega-lite") else { return nil }
+    let plotly = name.hasSuffix("-tsugumi-view-plotly")
+    let title = plotly ? v?["layout"]?["title"] : v?["title"]
     if let t = title?.string ?? title?["text"]?.string, !t.isEmpty { return t }
-    return name == "plotly" ? String(localized: "Plotly のグラフ") : String(localized: "Vega-Lite のグラフ")
+    return plotly ? String(localized: "Plotly のグラフ") : String(localized: "Vega-Lite のグラフ")
   }
 }
 

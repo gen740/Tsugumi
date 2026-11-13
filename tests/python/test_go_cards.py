@@ -217,7 +217,7 @@ PNG=','.join(str(b) for b in base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABC
     ('ctx.DisplayText("hello")',1),
     ('ctx.DisplayMarkdown("**hello**")',1),
     ('ctx.DisplayScalar(1.5,"value")',2),
-    ('ctx.DisplayLineChart("line","value",[]float64{1,2},[]float64{3,4})',3),
+    ('ctx.DisplayLineChart("line","value",[]float64{1,2},[]float64{3,4})',7),
     ('ctx.DisplayTable([]string{"value"},[][]string{{"1"}})',4),
     ('ctx.DisplayImage("image/png",[]byte{'+PNG+'},"image")',5),
     ('ctx.DisplayPoints([]float32{1},[]float32{2},[]float32{3},[]uint32{0xff00ff})',6),

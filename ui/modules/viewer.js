@@ -10,12 +10,13 @@ function runtime() {
   const root = document.createElement('div')
   Object.assign(root.style, { position: 'absolute', inset: '0', overflow: 'auto' })
   document.body.append(root)
-  let module, identity, currentData, initialised = false, visible = true, pending, working = false, resizePending = false
-  const size = () => ({ width: innerWidth, height: innerHeight, pixelRatio: devicePixelRatio, visible })
+  let module, identity, currentData, initialised = false, visible = true, colorScheme = 'light', pending, working = false, resizePending = false
+  const size = () => ({ width: innerWidth, height: innerHeight, pixelRatio: devicePixelRatio, visible, colorScheme })
   const send = data => parent.postMessage({ tsugumi: 'state', ...data }, '*')
   async function render(message) {
     try {
       visible = message.visible !== false
+      colorScheme = message.colorScheme === 'dark' ? 'dark' : 'light'
       if (identity !== message.name) {
         await module?.dispose()
         root.replaceChildren()

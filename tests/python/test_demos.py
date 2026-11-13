@@ -6,6 +6,7 @@ configuration); without it a host tsugumid is used.
 
 from __future__ import annotations
 
+
 import json
 import shutil
 import time
@@ -14,7 +15,7 @@ import pytest
 
 from conftest import ROOT, demo_environment
 from projects import ENDED, start_run, wait_run
-from tsugumi_client import RpcFailure, change, new_id, path, text
+from tsugumi_client import line_chart_series, RpcFailure, change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
@@ -335,7 +336,7 @@ def test_report_artifacts_survive_restart(report):
 
 def live_points(c, rid):
     rec = c.call("RunRecordRequest", runId=rid, card=path("plot"))
-    series = rec.record.display.value.series
+    series = line_chart_series(rec.record.display.value)
     return [float(x) for x in series[0].x], rec.aggregate.calls
 
 
@@ -398,7 +399,7 @@ def test_live_stream_cancel_and_rerun(live):
                         text(n.value.display.runId) == rid2, timeout=60)
     first = c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated and
                                 text(n.value.display.runId) == rid2, timeout=60)
-    assert first.value.display.value.series[0].x[0] == 0.0
+    assert line_chart_series(first.value.display.value)[0].x[0] == 0.0
     c.call("RunCancelRequest", runId=rid2)
     wait_run(c, rid2, timeout=10)
 

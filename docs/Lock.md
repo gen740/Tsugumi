@@ -11,7 +11,6 @@ The versions of the runtime and its dependencies that are pinned to keep things 
 | nixpkgs | `1c89083e451e891152365b799595cf7790a43325` (`flake.lock`; the Cards' default `tsugumi:default` is the same revision) |
 | FlatBuffers | 25.12.19 (C++ / Python from nixpkgs; Swift pinned to the same version with SwiftPM) |
 | hosq (C++ JSON) | `CLI20-dev/hosq@1eb8942` (a flake input) |
-| Dawn (WebGPU) | `v20261023.194543` (`ui/renderer/CMakeLists.txt`, Metal backend) |
 | SwiftTerm (terminal display, MIT) | 1.11.2 (pinned because later versions need Xcode's Metal Toolchain to be fetched separately to compile shaders) |
 | Swift Markdown / SwiftMath (Markdown and maths in the chat, sticky notes and Cards) | 0.7.3 / 1.7.3 (`macOS/Package.swift`) |
 | SwiftTreeSitter and the language grammars (syntax highlighting in the editor) | SwiftTreeSitter 0.25.0; each grammar at its own version (`macOS/Package.swift`) |

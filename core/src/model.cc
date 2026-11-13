@@ -78,27 +78,12 @@ auto valid_module_identity(std::string_view identity) -> bool {
 }
 
 std::optional<std::string> DisplayData::validate() const {
-  constexpr size_t kMaxPoints = 10000;
   constexpr size_t kMaxBytes = 1 << 20;
   if (const auto* t = std::get_if<Text>(&value)) {
     if (t->text.size() > kMaxBytes) return "display text exceeds 1 MiB";
     if (!text::valid_utf8(t->text)) return "display text is not UTF-8";
   } else if (const auto* s = std::get_if<Scalar>(&value)) {
     if (!std::isfinite(s->value)) return "display scalar must be finite";
-  } else if (const auto* c = std::get_if<LineChart>(&value)) {
-    size_t points = 0;
-    size_t bytes = 0;
-    for (const auto& series : c->series) {
-      if (series.x.size() != series.y.size()) return "series " + series.id + ": x and y differ in length";
-      for (double v : series.x)
-        if (!std::isfinite(v)) return "series " + series.id + ": non-finite x";
-      for (double v : series.y)
-        if (!std::isfinite(v)) return "series " + series.id + ": non-finite y";
-      points += series.x.size();
-      bytes += series.x.size() * 16 + series.id.size() + series.label.size();
-    }
-    if (points > kMaxPoints) return "line chart exceeds 10,000 points";
-    if (bytes > kMaxBytes) return "line chart exceeds 1 MiB";
   } else if (const auto* t = std::get_if<Table>(&value)) {
     if (t->columns.empty() || t->columns.size() > 64) return "a table needs 1 to 64 columns";
     if (t->rows.size() > 10000) return "a table exceeds 10,000 rows";

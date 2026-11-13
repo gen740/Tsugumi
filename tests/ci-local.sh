@@ -93,8 +93,6 @@ mac_job() {
   core_run python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py
   step "Model, RPC, Agent and launcher (macOS/CoreTests)"
   core_run /usr/bin/swift test --package-path macOS/CoreTests
-  step "Build the Dawn renderer (the app package links it)"
-  ui/renderer/build.sh
   step "Build the application help"
   nix --extra-experimental-features 'nix-command flakes' run .#build-doc
   step "App logic (macOS/Tests)"

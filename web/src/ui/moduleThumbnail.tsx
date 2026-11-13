@@ -1,3 +1,5 @@
+import { prefs } from '../model/prefs'
+import { useObserve } from '../model/observable'
 import type { ModuleBlobs } from '../model/moduleSources'
 import { useEffect, useReducer, useRef, useState } from 'react'
 import { L } from '../i18n'
@@ -11,6 +13,8 @@ const SETTLED: FigureState = { mode: 'update', running: false, stale: false }
  *  it is a picture of (or, followed live, the revision just before it), dimmed
  *  otherwise. Full detail stays in Expand. */
 export function ModuleThumbnail({ name, json, blobs, lineage, zoom, figure = SETTLED }: { name: string; json: string; blobs: ModuleBlobs; lineage: string; zoom: number; figure?: FigureState }) {
+  useObserve(prefs)
+  const colorScheme = prefs.dark ? 'dark' : 'light'
   const ref = useRef<HTMLDivElement>(null)
   const [visible, setVisible] = useState(false)
   const [size, setSize] = useState({ width: 0, height: 0 })
@@ -35,11 +39,11 @@ export function ModuleThumbnail({ name, json, blobs, lineage, zoom, figure = SET
     observer.observe(node)
     return () => observer.disconnect()
   }, [zoom])
-  const wanted: FigureWanted = { name, json, blobs, width: size.width, height: size.height, lineage }
+  const wanted: FigureWanted = { name, json, blobs, colorScheme, width: size.width, height: size.height, lineage }
   const follow = figure.mode === 'live' && figure.running
   useEffect(() => {
     preview.current!.want(visible ? wanted : undefined, follow)
-  }, [name, json, blobs, lineage, size.width, size.height, visible, follow])
+  }, [name, json, blobs, colorScheme, lineage, size.width, size.height, visible, follow])
   useEffect(() => () => preview.current!.close(), [])
   const look = figureLook(wanted, preview.current.picture, figure)
   return <div ref={ref} className="display-center" style={{ background: 'white', borderRadius: 4 * zoom, overflow: 'hidden' }}

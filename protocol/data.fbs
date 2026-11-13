@@ -86,15 +86,6 @@ table DisplayScalar {
   label:string (id: 1, required);
 }
 
-table LineSeries {
-  id:string (id: 0, required);
-  label:string (id: 1, required);
-  x:[double] (id: 2, required);
-  y:[double] (id: 3, required);
-}
-
-table DisplayLineChart { series:[LineSeries] (id: 0, required); }
-
 table TableRow { cells:[string] (id: 0, required); }
 
 /// Up to 64 columns and 10,000 rows; each cell at most 4 KiB.
@@ -131,7 +122,7 @@ table DisplayModule {
 }
 
 union DisplayValue {
-  DisplayText = 1, DisplayScalar = 2, DisplayLineChart = 3, DisplayTable = 4,
+  DisplayText = 1, DisplayScalar = 2, DisplayTable = 4,
   DisplayImage = 5, DisplayPointCloud = 6, DisplayModule = 7,
 }
 

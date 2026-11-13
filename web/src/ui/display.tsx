@@ -1,12 +1,11 @@
-// Display values (text, Markdown, scalar, line chart, table, image, point
+import { prefs } from '../model/prefs'
+import { useObserve } from '../model/observable'
+// Display values (text, Markdown, scalar, table, image, point
 // cloud, module) on the canvas at its zoom, or larger in the expanded viewer.
-import { CSSProperties, ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import type { DisplaySnapshot } from '../model/session'
-import { arr, dbl, get, serialize, tryParse } from '../shared/json'
-import { DawnLineChart } from './chart'
 import { Button, Empty } from './controls'
 import { tablePage } from '../model/tablePage'
-import { Icon } from './icons'
 import { Markdown } from './markdown'
 import { L } from '../i18n'
 import type { FigureState } from '../model/moduleThumbnails'
@@ -37,15 +36,6 @@ export function DisplayContent({ display, large = false, zoom = 1, emptyNote, fi
         <div className="display-center col">
           <div style={{ fontSize: size(10, 17) }}>{v.label}</div>
           <div className={`mono-digits${large ? ' selectable' : ''}`} style={{ fontSize: size(26, 64) }}>{Number(v.value.toPrecision(8)).toString()}</div>
-        </div>
-      )
-    case 'lineChart':
-      return (
-        <div className="display-chart" style={{ gap: 4 * zoom }}>
-          <div className="display-chart-plot" style={{ borderRadius: 4 * zoom }}><DawnLineChart series={v.series} /></div>
-          <div className="chart-legend" style={{ fontSize: size(9, 11) }}>
-            {v.series.map((s, i) => <span key={i}><Icon name="line.diagonal" size={size(9, 11)} />{`${s.label} (${s.x.length})`}</span>)}
-          </div>
         </div>
       )
     case 'table':
@@ -182,6 +172,8 @@ function PointCloudView({ x, y, z, colors }: { x: number[]; y: number[]; z: numb
 
 /** Every view, built-in or Card-owned, runs in the same isolated frame. */
 function ViewerFrame({ name, json, blobs, large, zoom }: { name: string; json: string; blobs: ModuleBlobs; large: boolean; zoom: number }) {
+  useObserve(prefs)
+  const colorScheme = prefs.dark ? 'dark' : 'light'
   const ref = useRef<HTMLIFrameElement>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
@@ -199,10 +191,10 @@ function ViewerFrame({ name, json, blobs, large, zoom }: { name: string; json: s
     // The frame has an opaque origin (sandbox): '*' is the only target that reaches it.
     let cancelled = false
     if (ready) void moduleSource(name).then(code => {
-      if (!cancelled) ref.current?.contentWindow?.postMessage({ name, json, blobs, code, visible: true, interactive: large }, '*')
+      if (!cancelled) ref.current?.contentWindow?.postMessage({ name, json, blobs, code, colorScheme, visible: true, interactive: large }, '*')
     }).catch(error => setError(String(error)))
     return () => { cancelled = true }
-  }, [ready, name, json, blobs, large])
+  }, [ready, name, json, blobs, colorScheme, large])
   return (
     <div className="display-viewer" style={{ pointerEvents: large ? 'auto' : 'none' }}>
       {/* Laid out at the display's own size and scaled with the canvas, like the other displays.

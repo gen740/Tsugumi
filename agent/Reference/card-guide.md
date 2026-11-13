@@ -607,3 +607,13 @@ and Wasm imports are bundled at build time; runtime fetch is disabled. Python
 `ctx.display_module("name", config, {"points": packed_bytes})` publishes binary data
 without sending the code. Built-in plotly and vega-lite use the same mechanism.
 See docs/CardGuide.md, "Card-owned web views", for isolation and snapshot details.
+
+
+Line-chart SDK calls keep their public names and now publish the built-in
+`line-chart` view. Its JSON contains `series: [{id, label, offset, count}]`;
+`x` and `y` blobs hold concatenated little-endian float64 coordinates. Offsets
+are element indexes. The view subtracts the visible origin in double precision
+before creating float32 GPU vertices. It shares the isolated frame, live update,
+thumbnail and light/dark appearance behavior of all view modules. The remaining
+planned view features are the standard-webgpu.h Wasm template/header and an
+optional module-to-worker channel relayed through RPC.

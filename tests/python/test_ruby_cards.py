@@ -288,7 +288,7 @@ def test_ruby_rejects_an_invalid_pin(ruby_project, arguments, requirement, messa
 @pytest.mark.parametrize('expression,kind', [
     ("ctx.display_text('text')", 1),
     ("ctx.display_markdown('**bold**')", 1),
-    ("ctx.display_line_chart([{id: 'line', x: [1, 2], y: [2, 4]}])", 3),
+    ("ctx.display_line_chart([{id: 'line', x: [1, 2], y: [2, 4]}])",7),
     ("ctx.display_points([1], [2], [3], [0xff00ff])", 6),
     ("ctx.display_image(['89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082'].pack('H*'), alt: 'pixel')", 5),
     ("ctx.display_plotly(data: [{x: [1], y: [2], type: 'scatter'}])", 7),
@@ -305,7 +305,10 @@ def test_ruby_display_bridge_owns_bytes(ruby_project, expression, kind):
     if kind == 5:
         assert bytes(display.value.data).startswith(b'\x89PNG')
         assert text(display.value.alt) == 'pixel'
-    if kind == 7:
+    if "display_line_chart" in expression:
+        from tsugumi_client import line_chart_series
+        assert list(line_chart_series(display.value)[0].y) == [2, 4]
+    if "display_plotly" in expression:
         assert json.loads(text(display.value.configJson))['data'][0]['y'] == [2]
 
 @pytest.mark.parametrize(('source', 'message'), [

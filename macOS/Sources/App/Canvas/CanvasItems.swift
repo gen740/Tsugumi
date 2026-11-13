@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 import TsugumiRPC
-import TsugumiRenderer
 
 /// Right-click menu of a Card.
 struct CardMenu: View {
@@ -261,16 +260,6 @@ struct DisplayContent: View {
           .textSelection(.enabled)
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-    case .lineChart(let series)?:
-      VStack(spacing: 4 * zoom) {
-        DawnLineChart(series: series.map { ChartSeries(id: $0.id, label: $0.label, x: $0.x, y: $0.y) })
-          .clipShape(RoundedRectangle(cornerRadius: 4 * zoom))
-        HStack {
-          ForEach(Array(series.enumerated()), id: \.offset) { _, s in
-            Label("\(s.label) (\(s.x.count))", systemImage: "line.diagonal").font(.system(size: size(9, 11)))
-          }
-        }
-      }
     case .table(let columns, let rows)?:
       let page = TablePage(count: rows.count, requested: large ? tablePage : 0)
       VStack(alignment: .leading, spacing: 4 * zoom) {

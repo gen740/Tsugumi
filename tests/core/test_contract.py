@@ -107,7 +107,7 @@ def test_session_requires_hello_and_negotiates_protocol_and_project(daemon):
         assert negotiated.protocol == 1
         capabilities = {text(capability) for capability in negotiated.capabilities}
         assert {f"display:Display{kind}" for kind in
-                ("Text", "Scalar", "LineChart", "Table", "Image", "PointCloud", "Module")} <= capabilities
+                ("Text", "Scalar", "Table", "Image", "PointCloud", "Module")} <= capabilities
         assert {f"format:{kind}" for kind in ("json", "cpp", "python", "nix", "bash")} <= capabilities
         with pytest.raises(RpcFailure) as error:
             connect().hello(project=new_id())

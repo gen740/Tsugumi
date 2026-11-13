@@ -324,12 +324,6 @@ body.resizing-h, body.resizing-h * { cursor: col-resize !important; }
 .display-scalar { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .scalar { font-size: 26px; }
 .scalar-large { font-size: 64px; }
-.display-chart { flex: 1; display: flex; flex-direction: column; gap: 4px; min-height: 0; }
-.chart-box { position: relative; flex: 1; min-height: 0; }
-.chart { width: 100%; height: 100%; display: block; border-radius: 4px; background: #0f1217; }
-.chart-error { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 10px; color: #ddd; font-size: 11px; }
-.chart-legend { display: flex; gap: 10px; justify-content: center; }
-.chart-legend span { display: inline-flex; align-items: center; gap: 3px; }
 .canvas-top { position: absolute; top: 10px; left: 10px; right: 10px; display: flex; align-items: flex-start; gap: 8px; pointer-events: none; }
 .canvas-top > * { pointer-events: auto; }
 .canvas-top > .spacer { pointer-events: none; }
