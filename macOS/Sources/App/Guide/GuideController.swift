@@ -421,7 +421,7 @@ final class GuideController {
 
   private func makeAgent() -> Agent? {
     if let agent { return agent }
-    let a = Agent(id: "guide", transport: GuideTransport(), provider: AgentSettings.guide(), role: .guide)
+    let a = Agent(id: "guide", transport: GuideTransport(), provider: AgentSettings.current(), role: .guide)
     Task {
       await a.setApprover { asked in
         guard let session = await GuideController.shared.readSession else { return [] }
@@ -460,7 +460,7 @@ final class GuideController {
     let prompt = text
     begin()
     Task {
-      await agent.setProvider(AgentSettings.guide())
+      await agent.setProvider(await AgentSettings.guide())
       await agent.send(prompt: prompt, title: text, display: text) { e in Task { @MainActor in self.handle(e) } }
     }
   }
@@ -488,7 +488,7 @@ final class GuideController {
     let full = display
     begin()
     Task {
-      await agent.setProvider(AgentSettings.guide())
+      await agent.setProvider(await AgentSettings.guide())
       await agent.send(prompt: full, title: display, display: display) { e in Task { @MainActor in self.handle(e) } }
     }
   }
@@ -505,7 +505,7 @@ final class GuideController {
     guard connected, !busy, let agent = makeAgent() else { return }
     begin()
     Task {
-      await agent.setProvider(AgentSettings.guide())
+      await agent.setProvider(await AgentSettings.guide())
       await agent.retry { e in Task { @MainActor in self.handle(e) } }
     }
   }

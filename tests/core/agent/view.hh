@@ -43,7 +43,6 @@ Object(std::initializer_list<std::pair<std::string, std::string>> fields)
 inline auto View(const Tsugumi::Service::HelloResult *value) -> std::string;
 inline auto View(const Tsugumi::Service::Failure *value) -> std::string;
 inline auto View(const Tsugumi::Service::Acknowledgement *value) -> std::string;
-inline auto View(const A::SkillReference *value) -> std::string;
 inline auto View(const A::ModelMessage *value) -> std::string;
 inline auto View(const A::Usage *value) -> std::string;
 inline auto View(const A::ToolRecord *value) -> std::string;
@@ -108,13 +107,6 @@ inline auto View(const Tsugumi::Service::Acknowledgement *value)
     return "null";
   return Object({{"accepted", View(value->accepted())},
                  {"revoked", View(value->revoked())}});
-}
-inline auto View(const A::SkillReference *value) -> std::string {
-  if (!value)
-    return "null";
-  return Object({{"name", View(value->name())},
-                 {"resource_id", View(value->resource_id())},
-                 {"path", View(value->path())}});
 }
 inline auto View(const A::ModelMessage *value) -> std::string {
   if (!value)

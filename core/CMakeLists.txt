@@ -115,8 +115,15 @@ add_library(tsugumi_agent_core STATIC
   src/agent/tool_images.cc
   src/agent/wire.cc
   src/agent/host.cc
+  src/host/skills.cc
   src/host/projects.cc
   src/host/execution_broker.cc)
+if(APPLE)
+  target_link_libraries(tsugumi_agent_core PRIVATE "-framework CoreFoundation")
+else()
+  find_package(ICU REQUIRED COMPONENTS uc i18n)
+  target_link_libraries(tsugumi_agent_core PRIVATE ICU::uc ICU::i18n)
+endif()
 target_compile_definitions(tsugumi_agent_core PRIVATE
   TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV}"
   TSUGUMI_CARD_NIXPKGS_NARHASH="${TSUGUMI_CARD_NIXPKGS_NARHASH}")

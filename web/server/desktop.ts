@@ -16,22 +16,18 @@ const KEYS: Record<string, string> = {
   effort: 'agent.effort',
   fastModel: 'agent.fastModel',
   fixturePort: 'agent.fixturePort',
-  modelNames: 'agent.modelNames',
   allowedPermissions: 'agent.permissions.allowed',
   webSearch: 'agent.webSearch',
   versionSummaries: 'versions.summaries',
   language: 'app.language',
 }
-const MODELS = ['anthropic', 'openai', 'chatgpt'] as const
-const modelsKey = (id: string) => `agent.models.${id}`
-const ALL_KEYS = [...Object.values(KEYS), ...MODELS.map(modelsKey)]
+const ALL_KEYS = Object.values(KEYS)
 
 /** The server's settings as the app's defaults. */
 function asDefaults(settings: object): Record<string, unknown> {
   const s = settings as Record<string, any>
   const out: Record<string, unknown> = {}
   for (const [name, key] of Object.entries(KEYS)) if (s[name] !== undefined) out[key] = s[name]
-  for (const id of MODELS) if (s.models?.[id] !== undefined) out[modelsKey(id)] = s.models[id]
   return out
 }
 
@@ -48,9 +44,6 @@ export function desktopSettings(vm: VMEnvironmentManager): DesktopSettings {
   const apply = () => {
     const values: Record<string, unknown> = {}
     for (const [name, key] of Object.entries(KEYS)) if (raw[key] !== undefined) values[name] = raw[key]
-    const models: Record<string, unknown> = {}
-    for (const id of MODELS) if (raw[modelsKey(id)] !== undefined) models[id] = raw[modelsKey(id)]
-    if (Object.keys(models).length) values.models = models
     d.values = values
   }
   const d: DesktopSettings = {

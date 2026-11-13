@@ -245,6 +245,10 @@ Independent Drafts can be implemented by helper Agents. Try the [Dynamical syste
 
 ### Skills and conversations
 
+The host-side `tsugumi-agentd` discovers Skills, parses their metadata and reports unreadable or oversized files through `SkillsListRequest` in `protocol/host.fbs`. The app and Web host keep folder selection, completion and menus; they send selected Skill names. The service resolves every matching name in source order and reads the contents through the project only after Read access is granted. A Skill must be smaller than 512 KiB. Discovery does not grant access to use its contents in a model prompt.
+
+`ModelsListRequest` reads or refreshes the service's persisted catalog for each connection. Both clients use its `name` display field. An empty refresh leaves the stored catalog intact; a failed refresh does not change it. Clients retain only a presentation snapshot for rendering an open menu.
+
 [Skills and conversations](Usage.md#skills-and-conversations).
 
 ### The thrush (chat and guide)

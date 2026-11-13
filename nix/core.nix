@@ -8,6 +8,7 @@
   flatbuffers,
   sqlite,
   libgit2,
+  icu,
   curl,
   nix,
   openssl,
@@ -87,7 +88,8 @@ clangStdenv.mkDerivation {
     nix.libs.nix-fetchers
     nix.libs.nix-flake
     nix.libs.nix-util
-  ];
+  ]
+  ++ lib.optionals clangStdenv.hostPlatform.isLinux [ icu ];
   cmakeFlags = [
     "-DHOSQ_INCLUDE_DIR=${hosq}/include"
     "-DTSUGUMI_BUILD_TESTS=OFF"

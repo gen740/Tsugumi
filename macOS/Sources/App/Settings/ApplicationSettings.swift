@@ -528,19 +528,12 @@ private struct SkillSettings: View {
     let folders = prefs.skillFolders.filter(\.enabled)
     state = .loading
     Task {
-      let result = await Task.detached(priority: .userInitiated) { () -> (skills: [Skill], missing: [String]) in
-        var out: [Skill] = []
-        var missing: [String] = []
-        for f in folders {
-          let url = URL(fileURLWithPath: f.path)
-          if !FileManager.default.fileExists(atPath: url.path) { missing.append(f.path); continue }
-          out += loadSkills(in: url, source: url.lastPathComponent)
-        }
-        return (out, missing)
-      }.value
-      found = result.skills
-      state = result.missing.isEmpty ? .loaded : .failed(String(localized: "見つからないフォルダ: ") + result.missing.joined(separator: ", "))
-      for chat in AppModel.shared.openChats { chat.reloadSkills() }
+      do {
+        let result = try await availableSkills(folders: folders.map(\.path))
+        found = result.skills
+        state = result.missing.isEmpty ? .loaded : .failed(String(localized: "見つからないフォルダ: ") + result.missing.joined(separator: ", "))
+        for chat in AppModel.shared.openChats { chat.reloadSkills() }
+      } catch { state = .failed(String(describing: error)) }
     }
   }
 }
@@ -661,7 +654,6 @@ private struct APIKeySection: View {
           Task {
             do {
               models = try await MessagesProvider(config: AgentSettings.config(for: id)).models()
-              UserDefaults.standard.set(models, forKey: AgentSettings.modelsKey(id))
               message = String(localized: "\(models.count) 件のモデルを取得しました。")
             } catch { message = "\(error)" }
           }
@@ -683,7 +675,7 @@ private struct APIKeySection: View {
     }
     .onAppear {
       refresh()
-      models = UserDefaults.standard.stringArray(forKey: AgentSettings.modelsKey(id)) ?? []
+      Task { models = (try? await CoreAgentClient.shared.storedModels(id).map(\.id)) ?? [] }
     }
   }
 

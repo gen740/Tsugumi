@@ -10,7 +10,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "ModelsListRequest", "CredentialImportRequest", "CredentialTokenRequest", "CredentialForgetRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "CredentialImportRequest", "CredentialTokenRequest", "CredentialForgetRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   private static func registration(_ fields: [String: Any]) -> Tsugumi_Host_CredentialRegistrationT {
     let value = Tsugumi_Host_CredentialRegistrationT()
     value.clientId = fields["client_id"] as? String ?? ""
@@ -72,6 +72,7 @@ enum ServiceWire {
         v.endpoint = fields["endpoint"] as? String ?? ""
         v.token = fields["token"] as? String
         v.title = fields["title"] as? String
+        v.path = fields["path"] as? String
         return (Tsugumi_Host_RequestPayload.registerprojectrequest.rawValue, v)
       case "RegisterFolderRequest":
         let v = Tsugumi_Host_RegisterFolderRequestT()
@@ -80,12 +81,17 @@ enum ServiceWire {
         v.folder = fields["folder"] as? String ?? ""
         v.title = fields["title"] as? String
         return (Tsugumi_Host_RequestPayload.registerfolderrequest.rawValue, v)
+      case "SkillsListRequest":
+        let v = Tsugumi_Host_SkillsListRequestT()
+        v.conversationId = fields["conversation_id"] as? String
+        v.projectPath = fields["project_path"] as? String
+        v.folders = fields["folders"] as? [String] ?? []
+        return (Tsugumi_Host_RequestPayload.skillslistrequest.rawValue, v)
       case "ModelsListRequest":
         let v = Tsugumi_Host_ModelsListRequestT()
-        guard let provider = fields["provider"] as? Tsugumi_Service_ProviderT else {
-          throw CoreAgentFailure(code: "invalid_request", message: "A provider configuration is required", requestID: nil)
-        }
-        v.provider = provider
+        v.providerId = fields["provider_id"] as? String ?? ""
+        v.refresh = fields["refresh"] as? Bool ?? false
+        v.provider = fields["provider"] as? Tsugumi_Service_ProviderT
         return (Tsugumi_Host_RequestPayload.modelslistrequest.rawValue, v)
       case "CredentialImportRequest":
         let v = Tsugumi_Host_CredentialImportRequestT()
@@ -188,11 +194,6 @@ enum ServiceWire {
         v.skillNames = fields["skill_names"] as? [String] ?? []
         v.intent = fields["intent"] as? String
         v.attachedResources = fields["attached_resources"] as? [String] ?? []
-        v.skillReferences = (fields["skill_references"] as? [[String: String]] ?? []).map { fields in
-          let r = Tsugumi_Agent_SkillReferenceT()
-          r.name = fields["name"] ?? ""; r.resourceId = fields["resource_id"] ?? ""; r.path = fields["path"] ?? ""
-          return r
-        }
         return (Tsugumi_Agent_RequestPayload.conversationsendrequest.rawValue, v)
       case "ConversationActionRequest":
         let v = Tsugumi_Agent_ConversationActionRequestT()
@@ -362,12 +363,6 @@ enum ServiceWire {
       out["accepted"] = v.accepted
       out["revoked"] = v.revoked
       return out
-    case let v as Tsugumi_Agent_SkillReferenceT:
-      var out: [String: Any] = [:]
-      out["name"] = v.name
-      out["resource_id"] = v.resourceId
-      out["path"] = v.path
-      return out
     case let v as Tsugumi_Agent_UsageT:
       var out: [String: Any] = [:]
       out["inputTokens"] = v.inputTokens
@@ -519,6 +514,14 @@ enum ServiceWire {
       return out
     case let v as Tsugumi_Host_DemoListT:
       return try v.demos.compactMap { item in try item.map { try view($0) } }
+    case let v as Tsugumi_Host_SkillT:
+      return ["name": v.name, "description": v.description ?? "", "path": v.path,
+              "source_folder": v.sourceFolder ?? "", "status": v.status]
+    case let v as Tsugumi_Host_SkillFolderT:
+      return ["path": v.path, "status": v.status]
+    case let v as Tsugumi_Host_SkillsListT:
+      return ["skills": try v.skills.compactMap { try $0.map { try view($0) } },
+              "folders": try v.folders.compactMap { try $0.map { try view($0) } }]
     case let v as Tsugumi_Host_ModelT:
       var out: [String: Any] = [:]
       out["id"] = v.id

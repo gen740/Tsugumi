@@ -25,12 +25,11 @@ nonisolated func onMainWhileMenuTracks(_ body: @escaping @MainActor @Sendable ()
   DispatchQueue.main.async { once.run() }
 }
 
-/// Lists the models of connections again and keeps what comes back where
-/// Settings > API keeps it. One connection's failure or slowness touches
-/// nothing else, and a failed or empty answer leaves its saved list as it is.
+/// Refreshes the open menu from agentd. Catalog persistence and empty-refresh
+/// handling are owned by the service; only UI scheduling lives here.
 @MainActor
 final class ModelListRefresher {
-  typealias Fetch = @Sendable (String) async throws -> [(id: String, label: String)]
+  typealias Fetch = @Sendable (String) async throws -> [(id: String, name: String)]
   enum Outcome: Equatable, CustomStringConvertible {
     case updated(Int), empty, failed
     var description: String {
@@ -43,12 +42,10 @@ final class ModelListRefresher {
   }
 
   private let fetch: Fetch
-  private let defaults: UserDefaults
   /// Connections being listed: opening the menu again does not ask them twice.
   private(set) var running: Set<String> = []
 
-  init(defaults: UserDefaults = .standard, fetch: @escaping Fetch) {
-    self.defaults = defaults
+  init(fetch: @escaping Fetch) {
     self.fetch = fetch
   }
 
@@ -64,19 +61,11 @@ final class ModelListRefresher {
           var outcome = Outcome.failed
           if let list {
             outcome = list.isEmpty ? .empty : .updated(list.count)
-            if !list.isEmpty { self.store(id, list) }
           }
           self.running.remove(id)
           finished(id, outcome)
         }
       }
-    }
-  }
-
-  private func store(_ id: String, _ list: [(id: String, label: String)]) {
-    defaults.set(list.map(\.id), forKey: AgentSettings.modelsKey(id))
-    if id == "chatgpt" {
-      defaults.set(Dictionary(list.map { ($0.id, $0.label) }, uniquingKeysWith: { a, _ in a }), forKey: "agent.modelNames")
     }
   }
 }

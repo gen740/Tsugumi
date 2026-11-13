@@ -7,11 +7,13 @@ public struct AgentProject: Sendable {
   public let endpoint: String
   public let token: String
   public let title: String
-  public init(id: String, endpoint: String, token: String, title: String) {
+  public let path: String
+  public init(id: String, endpoint: String, token: String, title: String, path: String = "") {
     self.id = id
     self.endpoint = endpoint
     self.token = token
     self.title = title
+    self.path = path
   }
 }
 
@@ -21,6 +23,22 @@ public struct CoreAgentFailure: LocalizedError, CustomStringConvertible, Sendabl
   public let requestID: String?
   public var description: String { message }
   public var errorDescription: String? { message }
+}
+
+/// A presentation snapshot of agentd's catalogs. Persistence and refresh policy
+/// belong to agentd; this lets an open native menu draw without an actor hop.
+public final class ModelCatalogSnapshot: @unchecked Sendable {
+  public static let shared = ModelCatalogSnapshot()
+  private let lock = NSLock()
+  private var catalogs: [String: [(id: String, name: String)]] = [:]
+  public func models(_ id: String) -> [(id: String, name: String)] {
+    lock.lock(); defer { lock.unlock() }
+    return catalogs[id] ?? []
+  }
+  fileprivate func show(_ id: String, _ models: [(id: String, name: String)]) {
+    lock.lock(); defer { lock.unlock() }
+    catalogs[id] = models
+  }
 }
 
 /// Binary Agent and Host connections share the project's C ABI byte transport.
@@ -194,11 +212,25 @@ public actor CoreAgentClient {
     return value
   }
 
-  public func models(_ config: ProviderConfig, asking: Bool = false) async throws -> [(id: String, label: String)] {
-    let result = try await call("ModelsListRequest", ["provider": try await provider(config, asking: asking)])
-    return (result["value"] as? [[String: Any]] ?? []).compactMap { item in
+  public func storedModels(_ id: String) async throws -> [(id: String, name: String)] {
+    try await modelList(id: id)
+  }
+
+  private func modelList(id: String, provider: Tsugumi_Service_ProviderT? = nil) async throws -> [(id: String, name: String)] {
+    var fields: [String: Any] = ["provider_id": id, "refresh": provider != nil]
+    if let provider { fields["provider"] = provider }
+    let result = try await call("ModelsListRequest", fields)
+    let list: [(id: String, name: String)] = (result["value"] as? [[String: Any]] ?? []).compactMap { item in
       guard let id = item["id"] as? String else { return nil }
-      return (id, item["label"] as? String ?? id)
+      return (id, item["name"] as? String ?? id)
     }
+    ModelCatalogSnapshot.shared.show(id, list)
+    return list
+  }
+
+  public func models(_ config: ProviderConfig, asking: Bool = false) async throws -> [(id: String, name: String)] {
+    let id = config.auth == .chatGPT ? "chatgpt" : config.api == .openAIResponses ? "openai" : "anthropic"
+    let value = try await provider(config, asking: asking)
+    return try await modelList(id: id, provider: value)
   }
 }

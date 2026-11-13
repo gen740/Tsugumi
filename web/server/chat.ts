@@ -5,10 +5,9 @@ import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { AGENT, modelChoices } from '../src/shared/agentShared'
-import { type AgentEvent, DEMO_SKILL, guideText, type ProviderConfig } from './agent'
+import { type AgentEvent, guideText, type ProviderConfig } from './agent'
 import { CoreAgentHost, CoreAgentError, RemoteAgent } from './coreAgent'
 import { keychainReader } from './keychain'
-import { withModelList } from './modelList'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
 import { Environments, projectKey } from './env'
 import { DesktopSettings } from './desktop'
@@ -56,11 +55,6 @@ interface Settings {
   effort: string
   fastModel: string
   fixturePort: number
-  /** Models listed earlier with "List Models" (no request from the chat). */
-  /** Models listed with "List Models", per connection (no request from the chat). */
-  models: Partial<Record<'anthropic' | 'openai' | 'chatgpt', string[]>>
-  /** Their display names (the ChatGPT account's catalog has them). */
-  modelNames: Record<string, string>
   /** What the Agent may give Cards without asking (network, sandbox_off,
    *  host_folder_read, host_folder_write); the rest waits for the user. */
   allowedPermissions: string[]
@@ -85,13 +79,15 @@ export const PERMISSION_KINDS = ['network', 'sandbox_off', 'host_folder_read', '
 const settingsFile = () => path.join(ctx.support, 'settings.json')
 const defaultSettings: Settings = {
   skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', chatGPTModel: 'gpt-6.1-sol', effort: '', fastModel: '', fixturePort: 8765,
-  models: {}, modelNames: {}, allowedPermissions: [], webSearch: false,
+  allowedPermissions: [], webSearch: false,
   guide: { setupDone: false, demoAnswered: false, tour: null },
   versionSummaries: false,
   language: 'ja',
 }
 const settings = (): Settings => {
-  const s: Settings = { ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}), ...ctx.desktop?.values }
+  const saved = ctx.readJSON<Partial<Settings>>(settingsFile(), {})
+  const s = Object.fromEntries(Object.keys(defaultSettings).map((key) =>
+    [key, (ctx.desktop?.values as any)?.[key] ?? (saved as any)[key] ?? (defaultSettings as any)[key]])) as unknown as Settings
   if (s.language !== 'en') s.language = 'ja'
   setLanguage(s.language)
   return s
@@ -116,11 +112,6 @@ function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
   if (b.effort === '' || AGENT.modelOptions.efforts.includes(b.effort as string)) out.effort = b.effort as string
   if (typeof b.fastModel === 'string') out.fastModel = b.fastModel
   if (typeof b.fixturePort === 'number' && Number.isInteger(b.fixturePort) && b.fixturePort > 0 && b.fixturePort < 65536) out.fixturePort = b.fixturePort
-  if (b.models && typeof b.models === 'object' && !Array.isArray(b.models)) {
-    const m = b.models as Record<string, unknown>
-    out.models = Object.fromEntries((['anthropic', 'openai', 'chatgpt'] as const).filter((k) => Array.isArray(m[k]))
-      .map((k) => [k, (m[k] as unknown[]).filter((x): x is string => typeof x === 'string')]))
-  }
   const allowed = b.allowedPermissions
   if (Array.isArray(allowed)) out.allowedPermissions = PERMISSION_KINDS.filter((k) => allowed.includes(k))
   if (typeof b.webSearch === 'boolean') out.webSearch = b.webSearch
@@ -244,7 +235,7 @@ async function providerInfo() {
   const thought = await guideProvider()
   return { name: p.name, model: p.model, api: p.api, remote: p.auth !== 'none', plan: p.auth === 'chatgpt', effort: p.effort, fast: !!p.fast,
            thoughtModel: thought.auth === 'none' ? undefined : thought.model,
-           modelNames: p.auth === 'chatgpt' ? settings().modelNames : {} }
+           modelNames: p.auth === 'chatgpt' ? (await modelCatalogs()).modelNames : {} }
 }
 
 /** The ChatGPT accounts and the sign-in for the settings page (never a token). */
@@ -298,7 +289,7 @@ async function guide(): Promise<RemoteAgent> {
  *  led by the chat, with the chat's model. */
 async function guideProvider(): Promise<ProviderConfig> {
   const p = await provider(), id = settings().provider
-  if (id === 'chatgpt') return { ...p, model: speechModel(settings().models.chatgpt ?? [], p.model) }
+  if (id === 'chatgpt') return { ...p, model: speechModel((await core.storedModels('chatgpt')).map((m) => m.id), p.model) }
   return id === 'anthropic' ? { ...p, model: 'claude-haiku-5-5' } : p
 }
 
@@ -338,56 +329,25 @@ function cleanTour(v: unknown): GuideTour | null {
 
 // ---- Skills ----------------------------------------------------------------------
 
-interface Skill { name: string; description: string; path: string; content: string; source: string }
+interface Skill { name: string; description: string; path: string; source: string; source_folder: string; status: string }
+interface SkillListing { skills: Skill[]; folders: { path: string; status: string }[] }
 
-/** Reads skills from a folder: `<name>/SKILL.md` or `<name>.md`. */
-function loadSkills(folder: string, source: string): Skill[] {
-  let items: fs.Dirent[]
-  try {
-    items = fs.readdirSync(folder, { withFileTypes: true })
-  } catch {
-    return []
-  }
-  const out: Skill[] = []
-  for (const item of items.sort((a, b) => a.name.localeCompare(b.name))) {
-    let file = path.join(folder, item.name)
-    let name = item.name.replace(/\.[^.]+$/, '')
-    if (item.isDirectory()) {
-      file = path.join(file, 'SKILL.md')
-      name = item.name
-    } else if (!item.name.toLowerCase().endsWith('.md')) continue
-    let text: string
-    try {
-      if (fs.statSync(file).size >= 512 * 1024) continue
-      text = fs.readFileSync(file, 'utf8')
-    } catch {
-      continue
-    }
-    let description = ''
-    let lines = text.split('\n')
-    if (lines[0] === '---') {
-      const end = lines.indexOf('---', 1)
-      if (end > 0) {
-        for (const l of lines.slice(1, end)) {
-          if (l.startsWith('name:')) name = l.slice(5).trim()
-          if (l.startsWith('description:')) description = l.slice(12).trim()
-        }
-        lines = lines.slice(end + 1)
-      }
-    }
-    if (!description) description = (lines.find((l) => l.trim()) ?? '').replace(/^[#\s]+|[#\s]+$/g, '')
-    out.push({ name: name.replace(/[^\p{L}\p{N}_-]/gu, '-'), description, path: file, content: text, source })
-  }
-  return out
+async function skillMetadata(project?: string, folders = settings().skillFolders.filter((f) => f.enabled).map((f) => f.path), conversationId?: string): Promise<SkillListing> {
+  const result = await core.user.call<SkillListing>('SkillsListRequest', { project_path: project, folders, conversation_id: conversationId })
+  return { ...result, skills: result.skills.map((s) => ({ ...s,
+    description: s.path === 'builtin:demo' ? L('ツグミが画面を飛び回って、デモや画面の使い方を案内します') : s.description,
+    source: s.path === 'builtin:demo' ? 'Tsugumi' : s.source_folder === (project && path.join(project, 'skills')) ? L('プロジェクト') : path.basename(s.source_folder),
+  })) }
 }
 
-/** The built-in $demo: Tsugumi of the chat shows the screen around (it flies only then). */
-const demoSkill = (): Skill => ({ name: 'demo', description: L('ツグミが画面を飛び回って、デモや画面の使い方を案内します'), path: 'builtin:demo', content: DEMO_SKILL, source: 'Tsugumi' })
+async function skillsFor(project?: string, conversationId?: string): Promise<Skill[]> {
+  return (await skillMetadata(project, undefined, conversationId)).skills.filter((s) => s.status === 'ready')
+}
 
-function skillsFor(project: string | undefined): Skill[] {
-  const out = [demoSkill(), ...(project ? loadSkills(path.join(project, 'skills'), L('プロジェクト')) : [])]
-  for (const folder of settings().skillFolders) if (folder.enabled) out.push(...loadSkills(folder.path, path.basename(folder.path)))
-  return out
+async function modelCatalogs() {
+  const catalogs = await Promise.all(['anthropic', 'openai', 'chatgpt'].map(async (id) => [id, await core.storedModels(id)] as const))
+  return { models: Object.fromEntries(catalogs.map(([id, list]) => [id, list.map((m) => m.id)])),
+    modelNames: Object.fromEntries((catalogs.find(([id]) => id === 'chatgpt')?.[1] ?? []).map((m) => [m.id, m.name])) }
 }
 
 // ---- Agent hosting -------------------------------------------------------------
@@ -472,21 +432,10 @@ class ChatHost {
     await ctx.envs.attachFolders(this.project, this.key, [...this.folders])
   }
 
-  async skillReferences(names: string[]) {
-    const project = await core.project(this.project)
-    const references: { name: string; resource_id: string; path: string }[] = []
-    for (const skill of skillsFor(this.project).filter((s) => s.path !== 'builtin:demo' && names.includes(s.name))) {
-      const relative = path.relative(this.project, skill.path)
-      if (!relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)) {
-        references.push({ name: skill.name, resource_id: project, path: relative })
-      } else {
-        const folder = settings().skillFolders.find((f) => f.enabled && skill.path.startsWith(path.resolve(f.path) + path.sep))
-        if (!folder) continue
-        const resource = await this.attach(path.resolve(folder.path))
-        references.push({ name: skill.name, resource_id: resource, path: path.relative(folder.path, skill.path) })
-      }
-    }
-    return references
+  async attachSkillFolders(names: string[], conversationId: string) {
+    const skills = (await skillsFor(this.project, conversationId)).filter((s) => names.includes(s.name))
+    const folders = new Set(skills.filter((s) => s.path !== 'builtin:demo' && s.source_folder !== path.join(this.project, 'skills')).map((s) => s.source_folder))
+    for (const folder of folders) await this.attach(folder)
   }
 
   events(id: string) {
@@ -589,16 +538,17 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   core = new CoreAgentHost(c.support, c.here, c.envs)
   const projectDir = c.projectDir
   return {
-  'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined).map(({ content: _content, ...metadata }) => metadata),
+  'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined),
   'GET /api/settings': async () => ({
     ...(await ctx.desktop?.refresh(), settings()),
+    ...await modelCatalogs(),
     keys: { Anthropic: await keySource('anthropic'), OpenAI: await keySource('openai') },
     keyEnv: { Anthropic: PROVIDERS.anthropic.env, OpenAI: PROVIDERS.openai.env },
   }),
-  'POST /api/settings': (b) => {
+  'POST /api/settings': async (b) => {
     const next = { ...settings(), ...cleanSettings(b ?? {}) }
     saveSettings(next)
-    return next
+    return { ...next, ...await modelCatalogs() }
   },
   // Only while switched on, and not on the ChatGPT plan (its allowance is for the Agent).
   'POST /api/versions/summarize': async (b) => {
@@ -616,11 +566,8 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const id: ProviderId = b.provider === 'anthropic' || b.provider === 'openai' || b.provider === 'chatgpt' ? b.provider : settings().provider
     if (id === 'fixture') throw ctx.httpError(400, L('fixture にはモデル一覧がありません。'))
     const list = await core.models(await providerFor(id))
-    // Read after the wait: the other connections' lists come at the same time.
-    const next = withModelList(settings(), id, list)
-    if (!next) throw ctx.httpError(502, L('モデル一覧が空でした。保存済みの一覧はそのままです。'))
-    saveSettings(next)
-    return { models: next.models[id], modelNames: next.modelNames }
+    if (!list.length) throw ctx.httpError(502, L('モデル一覧が空でした。保存済みの一覧はそのままです。'))
+    return { models: list.map((m) => m.id), modelNames: (await modelCatalogs()).modelNames }
   },
   /** The connections set up (a key, a signed-in ChatGPT plan), for the chat's model menu. */
   'GET /api/settings/connections': async () => ({
@@ -662,10 +609,10 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { ...chatGPTState(), message: revoked ? L('{0} からサインアウトしました。', email)
       : L('このホストのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。') }
   },
-  'POST /api/settings/skillCount': (b) => ({ count: loadSkills(String(b.path), '').length }),
-  'POST /api/settings/skillFolderStatus': (b) => {
-    const list = Array.isArray(b.paths) ? b.paths.map(String) : []
-    return Object.fromEntries(list.map((p: string) => [p, fs.existsSync(p)]))
+  'POST /api/settings/skillCount': async (b) => ({ count: (await skillMetadata(undefined, [String(b.path)])).skills.filter((s) => s.status === 'ready' && s.path !== 'builtin:demo').length }),
+  'POST /api/settings/skillFolderStatus': async (b) => {
+    const paths = Array.isArray(b.paths) ? b.paths.map(String) : []
+    return Object.fromEntries((await skillMetadata(undefined, paths)).folders.map((f) => [f.path, f.status === 'ready']))
   },
   'POST /api/chat/sessions': (b) => chatFor(projectDir(b.path)).sessions(),
   'POST /api/chat/conversation': async (b) => {
@@ -681,12 +628,11 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const { host, a } = await turnAgent(b)
     const turn = randomUUID()
     const skillNames = Array.isArray(b.skillNames) ? b.skillNames.map(String) : []
-    const skillReferences = await host.skillReferences(skillNames)
+    await host.attachSkillFolders(skillNames, a.id)
     await withAccess(host.project, a.id, () => a.send(String(b.text ?? ''), host.events(a.id), turn, {
       selected_cards: Array.isArray(b.selectedCards) ? b.selectedCards.map(String) : [],
       selected_displays: Array.isArray(b.selectedDisplays) ? b.selectedDisplays.map(String) : [],
-      skill_names: skillNames.filter((name: string) => name === 'demo'),
-      skill_references: skillReferences,
+      skill_names: [...new Set(skillNames)],
       attached_resources: Array.isArray(b.attachedResources) ? b.attachedResources.map(String) : [],
     }))
       .catch((e) => host.events(a.id)({ kind: 'error', message: e.message }))

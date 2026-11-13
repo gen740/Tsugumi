@@ -22,8 +22,9 @@
 #include "agent/thought_schedule.hh"
 #include "agent/tool_images.hh"
 #include "agent/wire.hh"
-#include "host/projects.hh"
 #include "host/execution_broker.hh"
+#include "host/projects.hh"
+#include "host/skills.hh"
 #include "lanes.hh"
 #include "tsugumi/client/client.hh"
 #include "tsugumi/protocol/agent_generated.h"
@@ -237,6 +238,13 @@ struct Host::State {
     db.exec("CREATE TABLE IF NOT EXISTS pending_sends(conversation TEXT "
             "PRIMARY KEY, turn TEXT NOT NULL, frame BLOB NOT NULL, "
             "message_index INTEGER NOT NULL)");
+    db.exec(
+        "CREATE TABLE IF NOT EXISTS project_paths(id TEXT PRIMARY KEY, path "
+        "TEXT NOT NULL);"
+        "CREATE TABLE IF NOT EXISTS skill_catalogs(conversation TEXT PRIMARY "
+        "KEY, path TEXT NOT NULL, folders TEXT NOT NULL);"
+        "CREATE TABLE IF NOT EXISTS model_lists(id TEXT PRIMARY KEY, models "
+        "TEXT NOT NULL);");
     db.exec("UPDATE turns SET state='interrupted' WHERE state='running'");
     if (!options.broker_socket.empty())
       execution_broker = std::make_unique<host::ExecutionBroker>(options.state_dir, options.broker_socket);
@@ -1144,40 +1152,63 @@ struct Host::State {
       for (const auto *display : *p->selected_displays())
         text += "\n" + display->str();
     }
-    if (p->skill_names()) {
-      for (const auto *skill : *p->skill_names()) {
-        if (skill->str() != "demo")
-          throw Failure("invalid_request",
-                        "Custom skills require a registered resource and "
-                        "relative path");
+    if (p->skill_names() && p->skill_names()->size()) {
+      auto root = db.prepare("SELECT path FROM project_paths WHERE id=?");
+      root.bind(1, c.project);
+      const auto project_path = root.step() ? root.text(0) : "";
+      auto sources = db.prepare(
+          "SELECT folders FROM skill_catalogs WHERE conversation=? AND path=?");
+      sources.bind(1, c.id).bind(2, project_path);
+      std::vector<std::string> folders;
+      if (sources.step())
+        for (const auto& item : json::Array(sources.text(0)))
+          folders.push_back(json::String(item));
+      const auto catalog = host::ListSkills(project_path, folders);
+      std::set<std::string> names;
+      for (const auto* name : *p->skill_names())
+        names.insert(host::SkillNameKey(name->string_view()));
+      const auto requested_names = names;
+      // Preserve all same-name matches in catalog order, including a custom
+      // demo. The bundled demo also works for project-free guide conversations.
+      if (names.contains("demo")) {
         text += "\n[User-selected bundled demo skill]\n";
-        text.append(reinterpret_cast<const char *>(tsugumi_agent_demo_skill),
+        text.append(reinterpret_cast<const char*>(tsugumi_agent_demo_skill),
                     tsugumi_agent_demo_skill_size);
+        names.erase("demo");
       }
-    }
-    if (p->skill_references()) {
-      for (const auto *skill : *p->skill_references()) {
-        const auto resource = skill->resource_id()->str();
-        const auto path = skill->path()->str();
-        if (!fs::valid_relative_path(path))
+      for (const auto& skill : catalog.skills) {
+        if (skill->path == "builtin:demo" ||
+            !requested_names.contains(skill->name))
+          continue;
+        names.erase(skill->name);
+        if (skill->status != "ready")
           throw Failure(
-              "invalid_request",
-              "A skill path must stay inside its registered resource");
+              skill->status == "too_large" ? "limit_exceeded" : "unavailable",
+              "The selected skill is " + skill->status);
+        const auto relative =
+            std::filesystem::path(skill->path).lexically_relative(project_path);
+        const bool in_project = fs::valid_relative_path(relative.string());
+        std::string resource = c.project;
         std::string method = "project_file_read";
-        json::Members args{{"path", json::Quote(path)},
-                           {"limit_bytes", "524288"}};
-        if (resource != c.project) {
+        json::Members args{{"path", json::Quote(relative.string())},
+                           {"limit_bytes", std::to_string(host::kSkillLimit)}};
+        if (!in_project) {
           auto folder =
-              db.prepare("SELECT path FROM folders WHERE id=? AND project=?");
-          folder.bind(1, resource).bind(2, c.project);
+              db.prepare("SELECT id FROM folders WHERE project=? AND path=?");
+          folder.bind(1, c.project).bind(2, skill->source_folder);
           if (!folder.step())
             throw Failure("permission_denied",
-                          "The user has not registered this skill folder");
+                          "The user has not attached this skill folder");
+          resource = folder.text(0);
           method = "attached_folder_read";
-          args["folder"] = json::Quote(folder.text(0));
+          args["folder"] = json::Quote(skill->source_folder);
+          args["path"] =
+              json::Quote(std::filesystem::path(skill->path)
+                              .lexically_relative(skill->source_folder)
+                              .string());
         }
         require(resource, c.id, A::Access::Read, true, stop,
-                "Read the selected skill " + skill->name()->str());
+                "Read the selected skill " + skill->name);
         lock.unlock();
         const auto envelope = json::Object(
             ProjectCall(c.project, method, json::Encode(args), stop));
@@ -1188,12 +1219,16 @@ struct Host::State {
         if (json::Text(envelope, "reply") != "FileContent")
           throw Failure("unavailable", "The selected skill could not be read");
         const auto content = json::Object(json::Get(envelope, "value", "{}"));
-        if (!json::Bool(json::Get(content, "eof")))
-          throw Failure("limit_exceeded", "The selected skill exceeds 512 KiB");
-        text += "\n[User-selected skill " + skill->name()->str() + "]\n" +
-                json::Text(content, "bytes");
+        const auto bytes = json::Text(content, "bytes");
+        if (!json::Bool(json::Get(content, "eof")) ||
+            bytes.size() >= host::kSkillLimit)
+          throw Failure("limit_exceeded",
+                        "The selected skill must be smaller than 512 KiB");
+        text += "\n[User-selected skill " + skill->name + "]\n" + bytes;
         resources.push_back(resource);
       }
+      if (!names.empty())
+        throw Failure("invalid_request", "Unknown selected skill");
     }
     if (p->intent())
       text += "\n[User action] " + p->intent()->str();
@@ -1516,9 +1551,9 @@ struct Host::State {
       if (running.contains(id))
         throw Failure("busy", "Cancel the conversation before deleting it");
       sql::Transaction tx(db);
-      for (const auto *table :
-           {"events", "receipts", "turns", "providers", "archives", "usage",
-            "conversation_resources", "helpers", "pending_sends"}) {
+      for (const auto* table : {"events", "receipts", "turns", "providers",
+                                "archives", "usage", "conversation_resources",
+                                "helpers", "pending_sends", "skill_catalogs"}) {
         auto q = db.prepare(std::string("DELETE FROM ") + table +
                             " WHERE conversation=?");
         q.bind(1, id).run();
@@ -1989,6 +2024,15 @@ struct Host::State {
           .bind(3, Text(p->token()))
           .bind(4, Text(p->title()))
           .run();
+      if (p->path() && !p->path()->str().empty()) {
+        auto path =
+            db.prepare("INSERT OR REPLACE INTO project_paths VALUES(?,?)");
+        path.bind(1, p->project_id()->str())
+            .bind(2, std::filesystem::path(p->path()->str())
+                         .lexically_normal()
+                         .string())
+            .run();
+      }
       return wire::HostReply(request.request_id, S::AcknowledgementT{});
     }
     case H::RequestPayload::RegisterFolderRequest: {
@@ -2014,20 +2058,68 @@ struct Host::State {
           .run();
       return wire::HostReply(request.request_id, S::AcknowledgementT{});
     }
+    case H::RequestPayload::SkillsListRequest: {
+      Human(human);
+      const auto* p = r->value_as_SkillsListRequest();
+      std::vector<std::string> folders;
+      if (p->folders())
+        for (const auto* folder : *p->folders())
+          folders.push_back(
+              std::filesystem::path(folder->str()).lexically_normal().string());
+      const auto path = Text(p->project_path()).empty()
+                            ? ""
+                            : std::filesystem::path(p->project_path()->str())
+                                  .lexically_normal()
+                                  .string();
+      if (!Text(p->conversation_id()).empty() && !path.empty()) {
+        std::vector<std::string> encoded;
+        for (const auto& folder : folders)
+          encoded.push_back(json::Quote(folder));
+        auto q =
+            db.prepare("INSERT OR REPLACE INTO skill_catalogs VALUES(?,?,?)");
+        q.bind(1, p->conversation_id()->str())
+            .bind(2, path)
+            .bind(3, json::Encode(encoded))
+            .run();
+      }
+      lock.unlock();
+      return wire::HostReply(request.request_id,
+                             host::ListSkills(path, folders));
+    }
     case H::RequestPayload::ModelsListRequest: {
       Human(human);
-      auto p = r->value_as_ModelsListRequest();
-      auto config = p->provider()
-                        ? ModelConfig(wire::ProviderJson(*p->provider()))
-                        : Provider("");
-      lock.unlock();
-      H::ModelListT result;
-      for (const auto &[id, name] : ListModels(config, shutdown.get_token())) {
-        auto model = std::make_unique<H::ModelT>();
-        model->id = id;
-        model->name = name;
-        result.models.push_back(std::move(model));
+      const auto* p = r->value_as_ModelsListRequest();
+      const auto key = p->provider_id()->str();
+      if (key.empty())
+        throw Failure("invalid_request", "A model catalog needs a provider ID");
+      if (p->refresh()) {
+        if (!p->provider())
+          throw Failure("invalid_request",
+                        "Refresh needs a provider configuration");
+        auto config = ModelConfig(wire::ProviderJson(*p->provider()));
+        lock.unlock();
+        const auto fresh = ListModels(config, shutdown.get_token());
+        lock.lock();
+        if (!fresh.empty()) {
+          std::vector<std::string> rows;
+          for (const auto& [id, name] : fresh)
+            rows.push_back(json::Encode(json::Members{
+                {"id", json::Quote(id)}, {"name", json::Quote(name)}}));
+          auto q = db.prepare("INSERT OR REPLACE INTO model_lists VALUES(?,?)");
+          q.bind(1, key).bind(2, json::Encode(rows)).run();
+        }
       }
+      H::ModelListT result;
+      auto stored = db.prepare("SELECT models FROM model_lists WHERE id=?");
+      stored.bind(1, key);
+      if (stored.step())
+        for (const auto& row : json::Array(stored.text(0))) {
+          const auto value = json::Object(row);
+          auto model = std::make_unique<H::ModelT>();
+          model->id = json::Text(value, "id");
+          model->name = json::Text(value, "name");
+          result.models.push_back(std::move(model));
+        }
       return wire::HostReply(request.request_id, std::move(result));
     }
     default:

@@ -67,6 +67,11 @@ final class ThoughtSummarizer {
 
   static func summarize(conversationID: String, config: ProviderConfig, usage: @escaping (Usage) -> Void) async throws -> String {
     let client = CoreAgentClient.shared
+    var config = config
+    if config.auth == .chatGPT {
+      _ = try? await client.storedModels("chatgpt")
+      config.model = AgentSettings.chatGPTSpeechModel
+    }
     let value = try await client.call("ConversationSummarizeRequest", ["conversation_id": conversationID,
       "provider": try await client.provider(config)])
     if let counts = value["usage"], let data = try? JSONSerialization.data(withJSONObject: counts),

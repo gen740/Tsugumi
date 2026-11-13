@@ -19,7 +19,7 @@ import { RequestPayload as HostRequestPayload } from '../src/gen/tsugumi/host/re
 import { Payload as HostPayload } from '../src/gen/tsugumi/host/payload'
 import { ProviderT } from '../src/gen/tsugumi/service/provider'
 import { CredentialRegistrationT } from '../src/gen/tsugumi/host/credential-registration'
-import { SkillReferenceT } from '../src/gen/tsugumi/agent/skill-reference'
+import { SkillsListRequestT as HSkillsListRequest } from '../src/gen/tsugumi/host/skills-list-request'
 import { Action } from '../src/gen/tsugumi/agent/action'
 import { Access } from '../src/gen/tsugumi/agent/access'
 import { GrantScope } from '../src/gen/tsugumi/agent/grant-scope'
@@ -94,9 +94,10 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'HostProjectDefaultsRequest': return new HHostProjectDefaultsRequest()
     case 'HelloRequest': return new HHelloRequest(v.token, v.client_id, v.protocol)
     case 'ConfigureRequest': return new HConfigureRequest(provider(v.provider))
-    case 'RegisterProjectRequest': return new HRegisterProjectRequest(v.project_id, v.endpoint, v.token, v.title)
+    case 'RegisterProjectRequest': return new HRegisterProjectRequest(v.project_id, v.endpoint, v.token, v.title, v.path)
     case 'RegisterFolderRequest': return new HRegisterFolderRequest(v.project_id, v.resource_id, v.folder, v.title)
-    case 'ModelsListRequest': return new HModelsListRequest(provider(v.provider))
+    case 'SkillsListRequest': return new HSkillsListRequest(v.project_path, v.folders, v.conversation_id)
+    case 'ModelsListRequest': return new HModelsListRequest(v.provider_id, v.refresh, v.provider ? provider(v.provider) : null)
     case 'CredentialImportRequest': return new HCredentialImportRequest(registration(v.registration), v.replace)
     case 'CredentialTokenRequest': return new HCredentialTokenRequest(v.client_id, v.stale_token)
     case 'CredentialForgetRequest': return new HCredentialForgetRequest(v.client_id)
@@ -118,7 +119,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'ConversationGetRequest': return new AConversationGetRequest(v.conversation_id)
     case 'ConversationDeleteRequest': return new AConversationDeleteRequest(v.conversation_id)
     case 'ConversationSearchRequest': return new AConversationSearchRequest(v.project_id, v.text)
-    case 'ConversationSendRequest': return new AConversationSendRequest(v.conversation_id, v.turn_id, v.text, v.selected_cards, v.selected_displays, v.skill_names, v.intent, v.attached_resources, (v.skill_references ?? []).map((s: any) => new SkillReferenceT(s.name, s.resource_id, s.path)))
+    case 'ConversationSendRequest': return new AConversationSendRequest(v.conversation_id, v.turn_id, v.text, v.selected_cards, v.selected_displays, v.skill_names, v.intent, v.attached_resources)
     case 'ConversationActionRequest': return new AConversationActionRequest(v.conversation_id, enumValue(Action, v.action))
     case 'ConversationCancelRequest': return new AConversationCancelRequest(v.conversation_id)
     case 'EventsRequest': return new AEventsRequest(v.conversation_id, BigInt(v.after_seq ?? 0), v.limit)

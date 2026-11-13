@@ -1,7 +1,6 @@
 // Presentation DTOs and schema reflection. Agent execution lives in core.
 import { BaseType, BFBS, Field } from '../src/shared/bfbs'
 import { AGENT, fill } from '../src/shared/agentShared'
-import demoSkill from '../../agent/Shared/demo-skill.md'
 import type { PlanAccessToken } from './chatgpt'
 
 export interface ToolSpec {
@@ -204,7 +203,5 @@ export interface ProviderConfig {
   fast?: boolean
 }
 
-
-export const DEMO_SKILL = demoSkill
 type GuideText = Exclude<keyof typeof AGENT.guide, 'tools' | 'showTool' | 'controls'>
 export const guideText = (key: GuideText, values: Record<string, string> = {}) => fill(AGENT.guide[key], values)

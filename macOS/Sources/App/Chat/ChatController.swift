@@ -15,7 +15,7 @@ struct RPCToolTransport: ToolTransport {
     if let override = session.endpointOverride { endpoint = override }
     else { endpoint = try await session.environments.start(session.identity) }
     return AgentProject(id: endpoint.projectId, endpoint: endpoint.url.absoluteString, token: endpoint.token,
-                        title: session.identity.url.lastPathComponent)
+                        title: session.identity.url.lastPathComponent, path: session.identity.url.standardizedFileURL.path)
   }
 }
 
@@ -25,43 +25,27 @@ struct Skill: Identifiable, Hashable {
   let name: String
   let description: String
   let path: String
-  let content: String
   let source: String
+  let sourceFolder: String
 }
 
-/// Reads skills from a folder: `<name>/SKILL.md` or `<name>.md`.
-func loadSkills(in folder: URL, source: String) -> [Skill] {
-  let fm = FileManager.default
-  guard let items = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey]) else { return [] }
-  var out: [Skill] = []
-  for item in items.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
-    var file = item
-    var name = item.deletingPathExtension().lastPathComponent
-    if (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
-      file = item.appendingPathComponent("SKILL.md")
-      name = item.lastPathComponent
-    } else if item.pathExtension.lowercased() != "md" {
-      continue
-    }
-    guard let data = try? Data(contentsOf: file), data.count < 512 * 1024 else { continue }
-    let text = String(decoding: data, as: UTF8.self)
-    var description = ""
-    var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-    if lines.first == "---", let end = lines.dropFirst().firstIndex(of: "---") {
-      for l in lines[1..<end] {
-        if l.hasPrefix("name:") { name = l.dropFirst(5).trimmingCharacters(in: .whitespaces) }
-        if l.hasPrefix("description:") { description = l.dropFirst(12).trimmingCharacters(in: .whitespaces) }
-      }
-      lines = Array(lines[(end + 1)...])
-    }
-    if description.isEmpty {
-      description = lines.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }?
-        .trimmingCharacters(in: CharacterSet(charactersIn: "# ")) ?? ""
-    }
-    let clean = String(name.map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "-" })
-    out.append(Skill(name: clean, description: description, path: file.path, content: text, source: source))
+/// Adapts core-owned metadata for the folder list and completion menu.
+@MainActor
+func availableSkills(project: URL? = nil, folders: [String], conversationID: String? = nil) async throws -> (skills: [Skill], missing: [String]) {
+  var fields: [String: Any] = ["folders": folders]
+  if let conversationID { fields["conversation_id"] = conversationID }
+  if let project { fields["project_path"] = project.standardizedFileURL.path }
+  let result = try await CoreAgentClient.shared.call("SkillsListRequest", fields)
+  let value = result["value"] as? [String: Any] ?? [:]
+  let skills = (value["skills"] as? [[String: String]] ?? []).filter { $0["status"] == "ready" && (project != nil || $0["path"] != "builtin:demo") }.map { s in
+    let path = s["path"] ?? ""
+    if path == "builtin:demo" { return ChatController.demoSkill }
+    let folder = s["source_folder"] ?? ""
+    let source = folder == project?.appendingPathComponent("skills").path ? String(localized: "プロジェクト") : URL(fileURLWithPath: folder).lastPathComponent
+    return Skill(name: s["name"] ?? "", description: s["description"] ?? "", path: path, source: source, sourceFolder: folder)
   }
-  return out
+  let missing = (value["folders"] as? [[String: String]] ?? []).filter { $0["status"] != "ready" }.compactMap { $0["path"] }
+  return (skills, missing)
 }
 
 /// The chat of one project: several conversations (sessions), each an Agent
@@ -344,30 +328,25 @@ final class ChatController {
 
   /// The built-in $demo: Tsugumi of this chat shows the screen around (it flies only then).
   static let demoSkill = Skill(name: "demo", description: String(localized: "ツグミが画面を飛び回って、デモや画面の使い方を案内します"),
-                               path: "builtin:demo", content: Agent.demoSkill, source: "Tsugumi")
+                               path: "builtin:demo", source: "Tsugumi", sourceFolder: "")
 
   func reloadSkills() {
-    skills = [Self.demoSkill] + loadSkills(in: session.identity.url.appendingPathComponent("skills"), source: String(localized: "プロジェクト"))
-    for folder in AppPreferences.shared.skillFolders where folder.enabled {
-      skills += loadSkills(in: URL(fileURLWithPath: folder.path), source: URL(fileURLWithPath: folder.path).lastPathComponent)
+    Task {
+      do { skills = try await loadSkillMetadata() }
+      catch { status = String(describing: error) }
     }
   }
 
-  private func skillReferences(_ selected: [Skill]) async throws -> [AgentSkillReference] {
-    guard let project = try await RPCToolTransport(session: session).project() else { return [] }
-    let root = session.identity.url.standardizedFileURL.path + "/"
-    var references: [AgentSkillReference] = []
-    for skill in selected where skill.path != "builtin:demo" {
-      if skill.path.hasPrefix(root) {
-        references.append(AgentSkillReference(name: skill.name, resourceID: project.id, path: String(skill.path.dropFirst(root.count))))
-      } else if let folder = AppPreferences.shared.skillFolders.first(where: { $0.enabled && skill.path.hasPrefix(URL(fileURLWithPath: $0.path).standardizedFileURL.path + "/") }) {
-        let url = URL(fileURLWithPath: folder.path).standardizedFileURL
-        if folderResources[url.path] == nil { await attach(folders: [url]) }
-        guard let resource = folderResources[url.path] else { throw NSError(domain: "Tsugumi", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not register the skill folder"]) }
-        references.append(AgentSkillReference(name: skill.name, resourceID: resource, path: String(skill.path.dropFirst(url.path.count + 1))))
-      }
+  private func loadSkillMetadata(conversationID: String? = nil) async throws -> [Skill] {
+    try await availableSkills(project: session.identity.url,
+      folders: AppPreferences.shared.skillFolders.filter(\.enabled).map(\.path), conversationID: conversationID).skills
+  }
+
+  private func attachSkillFolders(_ selected: [Skill]) async {
+    let projectFolder = session.identity.url.appendingPathComponent("skills").path
+    for folder in Set(selected.map(\.sourceFolder)) where !folder.isEmpty && folder != projectFolder {
+      if folderResources[folder] == nil { await attach(folders: [URL(fileURLWithPath: folder)]) }
     }
-    return references
   }
 
   func addReference(_ r: Reference) {
@@ -401,13 +380,14 @@ final class ChatController {
     Task {
       await stopping?.value
       do {
-        let skillReferences = try await skillReferences(used)
+        skills = try await loadSkillMetadata(conversationID: agent.id)
+        await attachSkillFolders(skills.filter { Set(used.map(\.name)).contains($0.name) })
         await agent.setProvider(provider)
         // Only resource identifiers leave the UI; core reads after authorization.
         await agent.send(prompt: text, title: text, display: shown,
                        selectedCards: refs.compactMap { if case .card(let key) = $0 { return key }; return nil },
                        selectedDisplays: refs.compactMap { if case .display(let key) = $0 { return key }; return nil },
-                       skillNames: used.filter { $0.path == "builtin:demo" }.map(\.name), skillReferences: skillReferences,
+                       skillNames: Array(Set(used.map(\.name))),
                        attachedResources: folders.compactMap { folderResources[$0] }, events: events)
       } catch { events(.error(String(describing: error))) }
     }
@@ -801,7 +781,7 @@ enum AgentSettings {
   static var chatGPTSpeechModel: String {
     let d = UserDefaults.standard
     if let m = d.string(forKey: "agent.speechModel.chatgpt"), !m.isEmpty { return m }
-    return speechModel(offered: d.stringArray(forKey: modelsKey("chatgpt")) ?? [], fallback: config(for: "chatgpt").model)
+    return speechModel(offered: ModelCatalogSnapshot.shared.models("chatgpt").map(\.id), fallback: config(for: "chatgpt").model)
   }
 
   /// gpt-6.1-luna if offered, else the newest luna offered, else `fallback`
@@ -817,7 +797,8 @@ enum AgentSettings {
   /// the canvas bird's thoughts: claude-haiku-5-5 on Anthropic, the speech model
   /// on the ChatGPT plan (OpenAI keeps the Agent's). Demo tours are led by the
   /// chat, with the chat's model.
-  static func guide() -> ProviderConfig {
+  static func guide() async -> ProviderConfig {
+    _ = try? await CoreAgentClient.shared.storedModels("chatgpt")
     var c = current()
     if c.auth == .chatGPT { c.model = chatGPTSpeechModel }
     else if c.auth == .apiKey, c.api == .anthropicMessages { c.model = "claude-haiku-5-5" }
@@ -875,6 +856,4 @@ enum AgentSettings {
     provider == "chatgpt" ? "agent.model.chatgpt" : provider == "openai" ? "agent.model.openai" : "agent.model"
   }
 
-  /// Where a connection keeps the models listed in Settings > API.
-  static func modelsKey(_ provider: String) -> String { "agent.models.\(provider)" }
 }

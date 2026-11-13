@@ -293,7 +293,7 @@ public struct MessagesProvider: Sendable {
   public let config: ProviderConfig
   public init(config: ProviderConfig) { self.config = config }
   public func models() async throws -> [String] { try await modelChoices().map(\.id) }
-  public func modelChoices(asking: Bool = true) async throws -> [(id: String, label: String)] {
+  public func modelChoices(asking: Bool = true) async throws -> [(id: String, name: String)] {
     try await CoreAgentClient.shared.models(config, asking: asking)
   }
   public struct HTTPStatusError: Error {

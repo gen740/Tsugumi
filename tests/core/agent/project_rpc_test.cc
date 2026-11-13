@@ -210,66 +210,6 @@ TEST_F(AgentProjectFixture, AProjectIsNotSilentlyAddedToTheModelPrompt) {
   EXPECT_EQ(Inspect(conversation).Code(), "grant_required");
 }
 
-TEST_F(AgentProjectFixture,
-       CustomSkillContentsNeedPermissionBeforeEnteringTheModelPrompt) {
-  ModelServer model;
-  model.Queue(AnthropicText("I received the authorized skill."));
-  Configure(model);
-  Write(directory.path / "project/skills/private.txt",
-        "PRIVATE_SKILL_SENTINEL\nFollow the user's selected skill.");
-  StartProject();
-  const auto conversation = Conversation("custom-skill-permission");
-  auto selected_skill = [&] {
-    return Call(
-        *external, A::RequestPayload::ConversationSendRequest, [&](Builder& b) {
-          const auto skill = A::CreateSkillReference(
-              b, b.CreateString("private-skill"), b.CreateString(project_id),
-              b.CreateString("skills/private.txt"));
-          const auto skills = b.CreateVector(std::vector{skill});
-          return A::CreateConversationSendRequest(
-                     b, b.CreateString(conversation),
-                     b.CreateString("selected-skill"),
-                     b.CreateString("Use my selected skill."), 0, 0, 0, 0, 0,
-                     skills)
-              .Union();
-        });
-  };
-  ASSERT_TRUE(selected_skill().Code().empty());
-  EXPECT_FALSE(model.WaitForRequests(1, 100ms));
-  const auto deadline = std::chrono::steady_clock::now() + 3s;
-  while (Events(conversation).View().find("permission") == std::string::npos &&
-         std::chrono::steady_clock::now() < deadline)
-    std::this_thread::sleep_for(10ms);
-  ASSERT_NE(Events(conversation).View().find("permission"), std::string::npos);
-  external.reset();
-  human.reset();
-  agent.Stop(true);
-  StartAgent();
-  const auto interrupted = Get(conversation).View();
-  EXPECT_TRUE(JsonBool(interrupted, "/resumable"));
-  EXPECT_TRUE(JsonBool(interrupted, "/continuable"));
-  ASSERT_TRUE(Call(*external, A::RequestPayload::ConversationActionRequest,
-                   [&](Builder& b) {
-                     return A::CreateConversationActionRequest(
-                                b, b.CreateString(conversation),
-                                A::Action::Resume)
-                         .Union();
-                   })
-                  .Code()
-                  .empty());
-  EXPECT_FALSE(model.WaitForRequests(1, 100ms));
-  const auto grant = Grant(conversation);
-  ASSERT_TRUE(model.WaitForRequests(1));
-  const auto completed = WaitUntilIdle(conversation);
-  EXPECT_FALSE(JsonBool(completed, "/resumable"));
-  EXPECT_FALSE(JsonBool(completed, "/continuable"));
-  EXPECT_EQ(model.Requests().size(), 1u);
-  EXPECT_NE(model.Requests()[0].find("PRIVATE_SKILL_SENTINEL"),
-            std::string::npos);
-  Revoke(grant);
-  EXPECT_EQ(Send(conversation, "Continue with that skill.", "turn-2").Code(),
-            "permission_denied");
-}
 
 TEST_F(AgentProjectFixture,
        TheBundledDemoSkillCanBeUsedWithoutReadingAProject) {

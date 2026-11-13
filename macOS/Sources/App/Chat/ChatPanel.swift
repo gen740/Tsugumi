@@ -526,19 +526,21 @@ struct ChatPanel: View {
   /// panel may ask the keychain for the ChatGPT record, once.
   private func loadModels() async {
     let accounts = await ChatGPTAuth.shared().accounts()
+    for id in ["anthropic", "openai", "chatgpt"] {
+      _ = try? await CoreAgentClient.shared.storedModels(id)
+    }
     showConnections(chatGPT: accounts.contains { $0.active && $0.signedIn && $0.planEnabled })
   }
 
   /// Everything saved, on the panel and in the menu. Without waiting for
   /// anything, as the main actor does not run while the menu is open.
   private func showConnections(chatGPT: Bool) {
-    let d = UserDefaults.standard
     let current = AgentSettings.current().model
-    let names = d.dictionary(forKey: "agent.modelNames") as? [String: String] ?? [:]
+    let names = Dictionary(ModelCatalogSnapshot.shared.models("chatgpt").map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
     var out: [Connection] = []
     func add(_ id: String, _ name: String) {
       let chosen = AgentSettings.config(for: id).model
-      let listed = d.stringArray(forKey: AgentSettings.modelsKey(id)) ?? []
+      let listed = ModelCatalogSnapshot.shared.models(id).map(\.id)
       out.append(Connection(id: id, name: name, models: Array(Set(listed + [chosen])).sorted()))
     }
     if Keychain.exists(account: ProviderConfig.anthropic.name) { add("anthropic", "Anthropic API") }
@@ -576,6 +578,9 @@ struct ChatPanel: View {
     let lists = modelLists
     let show = showConnections
     Task.detached {
+      for id in ["anthropic", "openai", "chatgpt"] {
+        _ = try? await CoreAgentClient.shared.storedModels(id)
+      }
       let accounts = await ChatGPTAuth.shared().accountsWithoutAsking()
       // A record that cannot be read without asking says nothing: the connection stays as it was.
       let chatGPT = accounts.map { $0.contains { $0.active && $0.signedIn && $0.planEnabled } } ?? wasOn

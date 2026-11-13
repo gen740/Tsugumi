@@ -44,7 +44,8 @@ class AgentProjectFixture : public AgentFixture {
                      b.CreateString("unix:" +
                                     JsonString(project_ready, "/unix_socket")),
                      b.CreateString(JsonString(project_ready, "/token")),
-                     b.CreateString("Private project"))
+                     b.CreateString("Private project"),
+                     b.CreateString((directory.path / "project").string()))
               .Union();
         });
     if (!reply.Code().empty())

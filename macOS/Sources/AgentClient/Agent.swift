@@ -89,12 +89,6 @@ public enum AgentEvent: Sendable {
   indirect case helper(name: String, event: AgentEvent)
 }
 
-public struct AgentSkillReference: Codable, Sendable {
-  public let name: String
-  public let resourceID: String
-  public let path: String
-  public init(name: String, resourceID: String, path: String) { self.name = name; self.resourceID = resourceID; self.path = path }
-}
 
 /// A UI handle to a durable conversation owned by core. All model calls,
 /// tools, persistence and authorization run behind the Agent socket.
@@ -117,7 +111,6 @@ public actor Agent {
   private var answeredAccess: [String: Bool] = [:]
   private let client = CoreAgentClient.shared
 
-  public static let demoSkill = Shared.demoSkill
   public static let guideScript = Shared.guideScript
   public static let guideScriptEnglish = Shared.guideScriptEnglish
   public static let contextFullText = "the conversation no longer fits the model's context"
@@ -137,7 +130,7 @@ public actor Agent {
     var fields: [String: Any] = ["conversation_id": id, "role": role.rawValue]
     if let project = try await transport.project() {
       _ = try await client.call("RegisterProjectRequest", ["project_id": project.id, "endpoint": project.endpoint,
-        "token": project.token, "title": project.title])
+        "token": project.token, "title": project.title, "path": project.path])
       fields["project_id"] = project.id
     }
     let result = try await client.call("ConversationCreateRequest", fields)
@@ -210,7 +203,7 @@ public actor Agent {
   public var hasUnfinishedWork: Bool { busy }
 
   public func send(prompt: String, title: String, display: String? = nil,
-                   selectedCards: [String] = [], selectedDisplays: [String] = [], skillNames: [String] = [], skillReferences: [AgentSkillReference] = [], attachedResources: [String] = [],
+                   selectedCards: [String] = [], selectedDisplays: [String] = [], skillNames: [String] = [], attachedResources: [String] = [],
                    events: @escaping @Sendable (AgentEvent) -> Void) {
     let turn = UUID().uuidString
     start(events) {
@@ -219,8 +212,7 @@ public actor Agent {
       try await self.beginTurn()
       _ = try await self.client.call("ConversationSendRequest", ["conversation_id": self.id,
         "turn_id": turn, "text": prompt, "selected_cards": selectedCards,
-        "selected_displays": selectedDisplays, "skill_names": skillNames, "attached_resources": attachedResources,
-        "skill_references": skillReferences.map { ["name": $0.name, "resource_id": $0.resourceID, "path": $0.path] }])
+        "selected_displays": selectedDisplays, "skill_names": skillNames, "attached_resources": attachedResources])
     }
   }
 

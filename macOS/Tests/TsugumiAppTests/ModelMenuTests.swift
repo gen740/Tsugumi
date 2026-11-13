@@ -3,9 +3,8 @@ import Foundation
 import Testing
 @testable import TsugumiApp
 
-/// The chat's model menu lists every connection again when it opens: new lists
-/// go where Settings > API keeps them, and a connection that fails, answers
-/// nothing or is slow never takes away what the menu can show.
+/// The menu asks agentd for each connection without blocking other menus.
+/// Stored-versus-refreshed catalog behavior is covered by models_rpc_test.cc.
 @MainActor
 struct ModelMenuTests {
   /// Counts the fetches of each connection.
@@ -24,23 +23,15 @@ struct ModelMenuTests {
     }
   }
 
-  private func defaults() -> UserDefaults {
-    let name = "tsugumi-test-\(UUID().uuidString)"
-    let d = UserDefaults(suiteName: name)!
-    d.removePersistentDomain(forName: name)
-    return d
-  }
-
   private func settle(_ done: @escaping () -> Bool) async {
     for _ in 0..<400 where !done() { try? await Task.sleep(for: .milliseconds(5)) }
   }
 
-  @Test func eachOpeningListsAgainAndSavesWhereSettingsDoes() async {
-    let d = defaults()
+  @Test func eachOpeningRequestsTheCoreCatalogAgain() async {
     let stub = Stub()
-    let r = ModelListRefresher(defaults: d) { id in
+    let r = ModelListRefresher { id in
       stub.count(id)
-      return [(id: "\(id)-\(stub.called(id))", label: "Name \(id)")]
+      return [(id: "\(id)-\(stub.called(id))", name: "Name \(id)")]
     }
     var finished: [String] = []
     for opening in 1...3 {
@@ -48,17 +39,11 @@ struct ModelMenuTests {
       await settle { finished.count == opening * 2 }
     }
     #expect(stub.called("anthropic") == 3 && stub.called("chatgpt") == 3)
-    #expect(d.stringArray(forKey: AgentSettings.modelsKey("anthropic")) == ["anthropic-3"])
-    #expect(d.stringArray(forKey: AgentSettings.modelsKey("chatgpt")) == ["chatgpt-3"])
-    #expect(d.dictionary(forKey: "agent.modelNames") as? [String: String] == ["chatgpt-3": "Name chatgpt"])
   }
 
-  @Test func aFailedOrEmptyAnswerKeepsTheSavedList() async {
+  @Test func aFailedOrEmptyAnswerReportsTheCoreOutcome() async {
     struct Down: Error {}
-    let d = defaults()
-    d.set(["saved-a"], forKey: AgentSettings.modelsKey("anthropic"))
-    d.set(["saved-o"], forKey: AgentSettings.modelsKey("openai"))
-    let r = ModelListRefresher(defaults: d) { id in
+    let r = ModelListRefresher { id in
       if id == "anthropic" { throw Down() }
       return []
     }
@@ -66,24 +51,20 @@ struct ModelMenuTests {
     r.refresh(["anthropic", "openai"]) { id, o in outcomes[id] = o }
     await settle { outcomes.count == 2 }
     #expect(outcomes == ["anthropic": .failed, "openai": .empty])
-    #expect(d.stringArray(forKey: AgentSettings.modelsKey("anthropic")) == ["saved-a"])
-    #expect(d.stringArray(forKey: AgentSettings.modelsKey("openai")) == ["saved-o"])
   }
 
   @Test func aSlowConnectionHoldsNothingAndIsNotAskedTwice() async {
-    let d = defaults()
     let stub = Stub()
     let gate = AsyncStream<Void>.makeStream()
-    let r = ModelListRefresher(defaults: d) { id in
+    let r = ModelListRefresher { id in
       stub.count(id)
       if id == "openai" { for await _ in gate.stream { break } }
-      return [(id: "\(id)-new", label: id)]
+      return [(id: "\(id)-new", name: id)]
     }
     var finished: [String] = []
     r.refresh(["anthropic", "openai"]) { id, _ in finished.append(id) }
     await settle { finished == ["anthropic"] }
     #expect(finished == ["anthropic"])
-    #expect(d.stringArray(forKey: AgentSettings.modelsKey("anthropic")) == ["anthropic-new"])
     // Opened again meanwhile: the fast one again, the slow one still on its way.
     r.refresh(["anthropic", "openai"]) { id, _ in finished.append(id) }
     await settle { finished == ["anthropic", "anthropic"] }
@@ -91,7 +72,6 @@ struct ModelMenuTests {
     gate.continuation.yield()
     await settle { finished.count == 3 }
     #expect(r.running.isEmpty)
-    #expect(d.stringArray(forKey: AgentSettings.modelsKey("openai")) == ["openai-new"])
   }
 
   @Test func theMenuShowsEachConnectionAndTheCurrentChoice() {

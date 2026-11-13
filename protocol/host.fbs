@@ -7,9 +7,17 @@ namespace Tsugumi.Host;
 
 // Global provisioning; the Agent's ConfigureRequest always names a conversation.
 table ConfigureRequest { provider:Tsugumi.Service.Provider (required); }
-table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string; title:string; }
+table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string; title:string; path:string; }
 table RegisterFolderRequest { project_id:string (required); resource_id:string (required); folder:string (required); title:string; }
-table ModelsListRequest { provider:Tsugumi.Service.Provider; }
+// Listing metadata never grants permission to put a skill in a prompt.
+// conversation_id records ordered sources for that send; omission only previews.
+table SkillsListRequest { project_path:string; folders:[string]; conversation_id:string; }
+table Skill { name:string (required); description:string; path:string (required); source_folder:string; status:string (required); }
+table SkillFolder { path:string (required); status:string (required); }
+table SkillsList { skills:[Skill]; folders:[SkillFolder]; }
+// provider_id keeps the existing per-connection catalogs. Only refresh needs
+// a provider configuration; ordinary reads never need credentials.
+table ModelsListRequest { provider_id:string (required); refresh:bool; provider:Tsugumi.Service.Provider; }
 table CredentialImportRequest { registration:CredentialRegistration (required); replace:bool; }
 table CredentialTokenRequest { client_id:string (required); stale_token:string; }
 table CredentialForgetRequest { client_id:string (required); }
@@ -55,13 +63,13 @@ table ModelList { models:[Model]; }
 union RequestPayload {
   HelloRequest:Tsugumi.Service.HelloRequest, ConfigureRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
-  RegisterProjectRequest, RegisterFolderRequest, ModelsListRequest, CredentialImportRequest, CredentialTokenRequest, CredentialForgetRequest, HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
+  RegisterProjectRequest, RegisterFolderRequest, SkillsListRequest, ModelsListRequest, CredentialImportRequest, CredentialTokenRequest, CredentialForgetRequest, HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   ExecutionServices, ExecutionAuthorization, CredentialToken, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
-  RecentList, DemoList, ModelList, Failure:Tsugumi.Service.Failure
+  RecentList, DemoList, SkillsList, ModelList, Failure:Tsugumi.Service.Failure
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply }

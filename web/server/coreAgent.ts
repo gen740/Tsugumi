@@ -179,7 +179,7 @@ export class CoreAgentHost {
     const state = await this.envs.start(folder)
     if (state.state !== 'ready') throw new Error(state.state === 'failed' ? state.message : 'Project core is not ready')
     await this.user.call('RegisterProjectRequest', { project_id: state.projectId,
-      endpoint: state.unix ? `unix:${state.unix}` : state.endpoint, token: state.token, title: path.basename(folder) })
+      endpoint: state.unix ? `unix:${state.unix}` : state.endpoint, token: state.token, title: path.basename(folder), path: folder })
     this.projects.set(folder, state.projectId)
     return state.projectId
   }
@@ -202,9 +202,13 @@ export class CoreAgentHost {
     if (conversationId) await this.user.call('ConfigureRequest', { conversation_id: conversationId, provider })
   }
 
-  async models(config: ProviderConfig): Promise<{ id: string; label: string }[]> {
-    const models = await this.user.call<{ id: string; name: string }[]>('ModelsListRequest', { provider: await this.provider(config) })
-    return models.map((m) => ({ id: m.id, label: m.id }))
+  async storedModels(id: string): Promise<{ id: string; name: string }[]> {
+    return this.user.call('ModelsListRequest', { provider_id: id })
+  }
+
+  async models(config: ProviderConfig): Promise<{ id: string; name: string }[]> {
+    const id = config.auth === 'chatgpt' ? 'chatgpt' : config.api === 'openAIResponses' ? 'openai' : 'anthropic'
+    return this.user.call('ModelsListRequest', { provider_id: id, refresh: true, provider: await this.provider(config) })
   }
 
   async summarize(conversationId: string, config: ProviderConfig): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {
