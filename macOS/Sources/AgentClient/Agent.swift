@@ -111,8 +111,6 @@ public actor Agent {
   private var answeredAccess: [String: Bool] = [:]
   private let client = CoreAgentClient.shared
 
-  public static let guideScript = Shared.guideScript
-  public static let guideScriptEnglish = Shared.guideScriptEnglish
   public static let contextFullText = "the conversation no longer fits the model's context"
 
   public init(id: String, transport: ToolTransport, provider: ProviderConfig, role: Role = .worker) {

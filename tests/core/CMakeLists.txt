@@ -48,10 +48,11 @@ if(TSUGUMI_INSTALLED_CORE)
 else()
   set(_test_environment_daemon "$<TARGET_FILE:tsugumi-environment-daemon-double>")
 endif()
-add_executable(tsugumi_agent_rpc_tests agent/rpc_test.cc agent/host_rpc_test.cc agent/environment_rpc_test.cc agent/skills_rpc_test.cc agent/models_rpc_test.cc agent/settings_rpc_test.cc agent/execution_broker_test.cc agent/project_rpc_test.cc agent_fixture_server.cc)
+add_executable(tsugumi_agent_rpc_tests agent/rpc_test.cc agent/host_rpc_test.cc agent/environment_rpc_test.cc agent/skills_rpc_test.cc agent/models_rpc_test.cc agent/settings_rpc_test.cc agent/guide_rpc_test.cc agent/execution_broker_test.cc agent/project_rpc_test.cc agent_fixture_server.cc)
 target_link_libraries(tsugumi_agent_rpc_tests PRIVATE tsugumi_client tsugumi_worker_protocol tsugumi_peer_tls GTest::gtest_main hosq Threads::Threads)
 target_compile_options(tsugumi_agent_rpc_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 target_compile_definitions(tsugumi_agent_rpc_tests PRIVATE
+  TSUGUMI_GUIDE_TEST_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/../.."
   TSUGUMI_ENVIRONMENT_DAEMON="${_test_environment_daemon}"
   TSUGUMI_AGENT_BINARY="$<TARGET_FILE:tsugumi-agentd>"
   TSUGUMI_PROJECT_BINARY="${_test_mock}"

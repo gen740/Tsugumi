@@ -204,7 +204,7 @@ struct GuideCorner: View {
   /// What changes in the project that the guide follows during a tour.
   private var runKey: String {
     guard let s = session else { return "" }
-    return "\(s.connected)|\(s.currentRunId ?? "")|\(s.runStatus.map { String(describing: $0.state) } ?? "")"
+    return "\(guide.tour?.path ?? "")|\(guide.tour?.started ?? false)|\(s.connected)|\(s.currentRunId ?? "")|\(s.runStatus.map { String(describing: $0.state) } ?? "")"
   }
 
   private var mood: GuideAvatar.Mood {
@@ -639,13 +639,14 @@ struct GuideFlyer: View {
     .onChange(of: guide.openRequest, initial: true) { _, r in
       guard let r, window != nil, let s = guide.flyerSession else { return }
       guide.openRequest = nil
-      if let p = GuideController.panel(r) { window?.showPanel(p); return }
-      if r == "versions" { openWindow(id: "versions", value: ProjectRef(path: s.identity.url.path)); return }
+      if let p = GuideController.panel(r) { window?.showPanel(p); guide.actionFinished("open:" + r, project: s.identity.url.path); return }
+      if r == "versions" { openWindow(id: "versions", value: ProjectRef(path: s.identity.url.path)); guide.actionFinished("open:" + r, project: s.identity.url.path); return }
       guard r.hasPrefix("card:") else { return }
       let path = String(r.dropFirst(5)).split(separator: "/").map(String.init)
       let k = s.instance(key(path)) != nil ? key(path) : key((guide.flyerTab?.scope ?? []) + path)
       guard s.instance(k) != nil else { return }
       openWindow(id: "card", value: CardRef(path: s.identity.url.path, card: k))
+      guide.actionFinished("open:" + r, project: s.identity.url.path)
     }
   }
 
@@ -747,25 +748,31 @@ struct GuidePerformer {
     case .showDemos:
       guide.demosRequested = true
       if session != nil { window?.home() }
+      guide.actionFinished("show_demos", project: session?.identity.url.path)
     case .run:
       guard let s = session, let tab, s.connected, !s.runActive else { return }
       RunActions.runAll(s, scope: tab.scope)
+      guide.actionFinished("run_requested", project: s.identity.url.path)
     case .stop:
       guard let s = session, s.runActive else { return }
-      Task { await s.cancelRun() }
+      Task { await s.cancelRun(); guide.actionFinished("stop_requested", project: s.identity.url.path) }
     case .openCard:
       guard let s = session, let id = a.card else { return }
       let scope = tab?.scope ?? []
       let k = s.instance(key(scope + [id])) != nil ? key(scope + [id]) : key([id])
       guard s.instance(k) != nil else { return }
       openWindow(id: "card", value: CardRef(path: s.identity.url.path, card: k))
+      guide.actionFinished("open_card", project: s.identity.url.path)
     case .openSettings:
       UserDefaults.standard.set(ApplicationSettings.Category.api.rawValue, forKey: "settings.category")
       openSettings()
+      guide.actionFinished("open_settings")
     case .newProject:
       window?.newProject()
+      guide.actionFinished("new_project_requested")
     case .home:
       window?.home()
+      guide.actionFinished("home")
     }
   }
 
@@ -794,7 +801,11 @@ struct GuidePerformer {
         // The bird stays by the demo's card until the loading card comes, then flies into it.
         guide.startTour(demo, copy: url)
         window?.openProject(url)
-      } catch { model.error = "\(error)" }
+        guide.actionFinished("open_demo", project: url.path)
+      } catch {
+        guide.actionFinished("open_demo_failed")
+        model.error = "\(error)"
+      }
     }
   }
 }

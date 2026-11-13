@@ -402,7 +402,7 @@ export class ChatController extends Observable {
   /** Replies to tap and buttons Tsugumi offered with its last answer (guide_show). */
   choices: string[] = []
   offered: GuideAction[] = []
-  /** Without a model connection: Tsugumi's fixed reply (guideScript) to what
+  /** Without a model connection: Tsugumi's fixed reply from agentd to what
    *  was asked or what the app noted, with its choices and buttons. */
   showScripted(asked: string | undefined, reply: string, shown: GuideShow) {
     this.items = [...this.items, ...(asked ? [{ id: uuid(), role: 'user', text: asked }] : []), { id: uuid(), role: 'assistant', text: reply }]

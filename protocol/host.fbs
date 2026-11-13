@@ -89,6 +89,31 @@ table HostRecentListRequest {}
 table HostRecentRememberRequest { path:string (required); }
 table HostRecentForgetRequest { paths:[string]; }
 
+// One app-wide native session ("desktop") or one session per Web host
+// ("web:<support directory>"), shared by every window. Language is presentation.
+// Persisted: setup_done, demo_answered, tour. The live step/run observations
+// last for the agentd lifetime. No model configuration is needed.
+table GuideTour { demo:string (required); title:string (required); path:string (required); started:bool; }
+table GuideAction { kind:string (required); label:string (required); demo:string; card:string; }
+table GuideGetRequest { session_id:string (required); language:string; }
+// kind: connection, setup, introduction, offered, start, end, resume,
+// message, interest, observe, action_finished. Clients report screen facts;
+// only agentd chooses a script step. expected_step guards stale choices.
+table GuideInput {
+  kind:string (required); text:string; project:string; demo:string; title:string;
+  connected:bool; active:bool; run:string; state:string; scripted:bool = true;
+  expected_step:string;
+}
+table GuideAdvanceRequest { session_id:string (required); language:string; event:GuideInput (required); }
+table GuideState {
+  session_id:string (required); revision:ulong; answer_revision:ulong; setup_done:bool; demo_answered:bool;
+  tour:GuideTour; step:string; text:string; say:string; choices:[string];
+  actions:[GuideAction]; highlight:string; open:string; end_tour:bool;
+  // present is true only for a new answer; note is the model-mode cue
+  // (start/resume/run/disconnected/reconnected), with its display text in asked.
+  present:bool; note:string; asked:string; project:string;
+}
+
 // Execution services contain public pins only. Private TLS keys never cross RPC.
 table ExecutionServicesRequest {}
 table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool; }
@@ -113,14 +138,14 @@ table DemoList { demos:[Demo]; }
 table Model { id:string; name:string; }
 table ModelList { models:[Model]; }
 union RequestPayload {
-  HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
+  GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
   RegisterProjectRequest, RegisterFolderRequest, SkillsListRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
-  EnvironmentState, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
+  GuideState, EnvironmentState, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
   RecentList, DemoList, SkillsList, ModelList, Failure:Tsugumi.Service.Failure
 }
 table Reply { value:ReplyPayload; }

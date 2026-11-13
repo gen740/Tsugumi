@@ -399,28 +399,32 @@ export function makePerform(session?: ProjectSession, tab?: WorkflowTab) {
       case 'show_demos':
         guide.set('demosRequested', true)
         if (session) windowActions?.home()
+        guide.actionFinished('show_demos', session?.dir)
         return
       case 'run':
-        if (session && session.connected && !session.runActive) runAll(session)
+        if (session && session.connected && !session.runActive) { runAll(session); guide.actionFinished('run_requested', session.dir) }
         return
       case 'stop':
-        if (session?.runActive) void session.cancelRun()
+        if (session?.runActive) void session.cancelRun().then(() => guide.actionFinished('stop_requested', session.dir))
         return
       case 'open_card': {
         if (!session || !a.card) return
         const scoped = key([...(tab?.scope ?? []), a.card])
         const k = session.instance(scoped) ? scoped : key([a.card])
-        if (session.instance(k)) app.openWindow(session, { kind: 'card', card: k })
+        if (session.instance(k)) { app.openWindow(session, { kind: 'card', card: k }); guide.actionFinished('open_card', session.dir) }
         return
       }
       case 'open_settings':
         app.openWindow(undefined, { kind: 'appSettings' })
+        guide.actionFinished('open_settings')
         return
       case 'new_project':
         windowActions?.newProject()
+        guide.actionFinished('new_project_requested')
         return
       case 'home':
         windowActions?.home()
+        guide.actionFinished('home')
     }
   }
 }
@@ -433,7 +437,9 @@ async function openDemo(id: string) {
     // The bird stays by the demo's card until the loading card comes, then flies into it.
     guide.startTour(demo, p)
     windowActions?.openProject(p)
+    guide.actionFinished('open_demo', p)
   } catch (e) {
+    guide.actionFinished('open_demo_failed')
     app.setError(e)
   }
 }

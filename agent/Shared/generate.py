@@ -55,8 +55,6 @@ def swift() -> str:
         f"  static let systemPrompt = {raw('system-prompt.md')}\n\n"
         f"  static let guidePrompt = {raw('guide-prompt.md')}\n\n"
         f"  static let agentJSON = {raw('agent.json')}\n\n"
-        f"  static let guideScript = {raw('guide-script.json')}\n\n"
-        f"  static let guideScriptEnglish = {raw('guide-script.en.json')}\n"
         "}\n"
     )
 

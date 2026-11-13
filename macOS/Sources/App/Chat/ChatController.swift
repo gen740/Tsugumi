@@ -398,7 +398,7 @@ final class ChatController {
   /// Replies to tap and buttons Tsugumi offered with its last answer (guide_show).
   private(set) var choices: [String] = []
   private(set) var offered: [GuideAction] = []
-  /// Without a model connection: Tsugumi's fixed reply (GuideScript) to what
+  /// Without a model connection: Tsugumi's fixed reply from agentd to what
   /// was asked or what the app noted, with its choices and buttons.
   func showScripted(asked: String?, reply: String, shown: GuideShow) {
     if let asked { items.append(Item(role: "user", text: asked)) }

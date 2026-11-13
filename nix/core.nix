@@ -69,6 +69,8 @@ clangStdenv.mkDerivation {
       ../agent/Shared/guide-prompt.md
       ../agent/Shared/demo-skill.md
       ../agent/Shared/agent.json
+      ../agent/Shared/guide-script.json
+      ../agent/Shared/guide-script.en.json
     ];
   };
   nativeBuildInputs = [

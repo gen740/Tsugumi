@@ -526,11 +526,9 @@
 "デフォルトに戻す" = "Use the Default";
 "デモ" = "Demos";
 "デモ「%@」の案内は中断中" = "Tour of the demo “%@” paused";
-"デモ「%@」の案内を始めます" = "Starting the tour of the demo “%@”";
 "デモ「%@」を案内中" = "Touring the demo “%@”";
 "デモが見つかりません" = "No demos found";
 "デモが見つかりません。" = "The demo was not found.";
-"デモの案内を続けます" = "Continuing the demo tour";
 "デモの言語が正しくありません。" = "The demo language is invalid.";
 "デモは Documents/Tsugumi に編集可能なコピーとして開きます。同梱の元データは変更されません。" = "Demos open as editable copies in Documents/Tsugumi. The bundled originals are never changed.";
 "デモを見せて" = "Show me a demo";
@@ -924,7 +922,6 @@
 "実行: %@" = "Run: %@";
 "実行が始まりました" = "A run started";
 "実行が終わったら保存します" = "Saved when the run ends";
-"実行が終わりました（%@）" = "The run ended (%@)";
 "実行ごとに残った版（git）を枝・タグ・実行結果と一緒に見ます" = "Shows the versions kept at each run (git) with their branches, tags and run results";
 "実行されていません" = "Not run";
 "実行されませんでした" = "Did not run";
@@ -981,8 +978,6 @@
 "実行条件" = "Execution conditions";
 "実行状況はありません" = "No run activity";
 "実行環境が起動の途中で止まりました: %@" = "The environment stopped while starting: %@";
-"実行環境との接続が切れました" = "Lost the connection to the environment";
-"実行環境に再接続しました" = "Reconnected to the environment";
 "実行環境に接続していません" = "Not connected to the environment";
 "実行環境に接続できませんでした" = "Could not connect to the environment";
 "実行環境の VM イメージがある" = "The environment's VM image is here";
