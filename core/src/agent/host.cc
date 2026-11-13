@@ -160,7 +160,7 @@ struct Host::State {
         db((options.state_dir / "agent.sqlite").string()),
         host_projects(options.state_dir, options.demos_dir),
         requests(4, 128, std::chrono::seconds(30)),
-        tool_requests(4, 128, std::chrono::seconds(30)) {
+        tool_requests(4, 128, std::chrono::seconds(30)), terminal_requests(1, 128, std::chrono::seconds(30)) {
     ::chmod((options.state_dir / "agent.sqlite").c_str(), 0600);
     db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
     db.exec(
@@ -229,12 +229,23 @@ struct Host::State {
     db.exec("UPDATE turns SET state='interrupted' WHERE state='running'");
     if (!options.broker_socket.empty())
       execution_broker = std::make_unique<host::ExecutionBroker>(options.state_dir, options.broker_socket);
+    if (!options.vm.binary.empty()) {
+      options.vm.broker_endpoint = execution_broker->endpoint();
+      options.vm.progress = [this](const Tsugumi::VMHost::ProgressT& value) {
+        H::EnvironmentProgressT progress;
+        progress.project = ""; progress.key = value.key; progress.stage = value.stage; progress.fraction = value.fraction; progress.preparing = value.preparing;
+        std::lock_guard lock(mutex); HostEvent(wire::HostEvent(std::move(progress)));
+      };
+      options.vm.runtime = [this](const H::HostRuntimeT& value) { std::lock_guard lock(mutex); HostEvent(wire::HostEvent(value)); };
+      options.vm.terminal = [this](const H::HostTerminalDataT& value) { std::lock_guard lock(mutex); HostEvent(wire::HostEvent(value)); };
+      options.environment.process = host::VMEnvironmentProcess(options.vm);
+    }
     if (execution_broker)
       environments = std::make_unique<host::Environments>(options.environment,
           host::EnvironmentAuthorization{
             [this](const std::string& key, const std::filesystem::path& path,
                    const std::filesystem::path& control) {
-              return execution_broker->Authorize(key, path, control, false);
+              return execution_broker->Authorize(key, path, control, options.environment.process && options.environment.process->Guest());
             },
             [this](const std::string& key) { execution_broker->Revoke(key); }},
           [this](const H::EnvironmentStateT& state) { EnvironmentChanged(state); },
@@ -274,6 +285,7 @@ struct Host::State {
   std::unique_ptr<host::ExecutionBroker> execution_broker;
   std::unique_ptr<host::Environments> environments;
   std::set<ConnId> host_connections;
+  std::map<uint64_t, ConnId> terminals;
   Catalog catalog;
   Server *server = nullptr;
   Server *host_server = nullptr;
@@ -293,6 +305,7 @@ struct Host::State {
   std::stop_source shutdown;
   Lane requests;
   Lane tool_requests;
+  Lane terminal_requests;
 
   auto HostEvent(const std::string& bytes) -> void {
     if (host_server)
@@ -2042,7 +2055,19 @@ struct Host::State {
     if (r->value_as_HostRuntimeRequest()) {
       lock.unlock();
       if (!environments) throw Failure("unavailable", "Environment service is not running");
-      return wire::HostReply(request.request_id, environments->Runtime());
+      auto input = std::unique_ptr<H::HostRuntimeRequestT>(r->value_as_HostRuntimeRequest()->UnPack());
+      return wire::HostReply(request.request_id, environments->Runtime(*input));
+    }
+    if (const auto* terminal = r->value_as_HostTerminalRequest()) {
+      auto input = std::unique_ptr<H::HostTerminalRequestT>(terminal->UnPack());
+      if (input->action != H::TerminalAction::Open && (!terminals.contains(input->session) || terminals.at(input->session) != request.conn))
+        throw Failure("permission_denied", "This terminal belongs to another connection");
+      lock.unlock();
+      auto result = environments->Terminal(*input);
+      lock.lock();
+      if (input->action == H::TerminalAction::Open) terminals[result.session] = request.conn;
+      if (input->action == H::TerminalAction::Close) terminals.erase(input->session);
+      return wire::HostReply(request.request_id, std::move(result));
     }
     if (host::ExecutionBroker::Handles(r->value_type())) {
       auto* broker = execution_broker.get();
@@ -2203,6 +2228,7 @@ auto Host::Shutdown() -> void {
   if (state_->execution_broker) state_->execution_broker->Stop();
   state_->requests.stop();
   state_->tool_requests.stop();
+  state_->terminal_requests.stop();
   for (const auto &job : jobs)
     if (job->joinable())
       job->join();
@@ -2277,7 +2303,8 @@ auto Host::dispatch(RequestIn request) -> void {
       !host && A::GetMessage(request.frame->data())
                        ->payload_as_Request()
                        ->value_type() == A::RequestPayload::ToolCallRequest;
-  auto &lane = tool ? state_->tool_requests : state_->requests;
+  const bool terminal = host && H::GetMessage(request.frame->data())->payload_as_Request()->value_type() == H::RequestPayload::HostTerminalRequest;
+  auto &lane = terminal ? state_->terminal_requests : tool ? state_->tool_requests : state_->requests;
   if (!lane.submit(task))
     server->reply(request.conn, fail(request.request_id, "busy",
                                      "Service request queue is full", {}));
@@ -2285,8 +2312,23 @@ auto Host::dispatch(RequestIn request) -> void {
 auto Host::disconnected(ConnId connection) -> void {
   std::lock_guard lock(state_->mutex);
   state_->principals.erase(connection);
-  state_->host_connections.erase(connection);
+
   // Connection lifetime never cancels a core-owned conversation.
+}
+
+auto Host::host_disconnected(ConnId connection) -> void {
+  std::vector<uint64_t> sessions;
+  {
+    std::lock_guard lock(state_->mutex);
+    state_->host_connections.erase(connection);
+    for (auto it = state_->terminals.begin(); it != state_->terminals.end();) {
+      if (it->second == connection) { sessions.push_back(it->first); it = state_->terminals.erase(it); }
+      else ++it;
+    }
+  }
+  for (const auto session : sessions) state_->terminal_requests.submit([this, session](bool) {
+    try { H::HostTerminalRequestT close; close.action = H::TerminalAction::Close; close.session = session; state_->environments->Terminal(close); } catch (...) {}
+  });
 }
 
 namespace {
@@ -2297,7 +2339,7 @@ public:
     return host_.hello(r);
   }
   auto dispatch(RequestIn r) -> void override { host_.dispatch(std::move(r)); }
-  auto disconnected(ConnId connection) -> void override { host_.disconnected(connection); }
+  auto disconnected(ConnId connection) -> void override { host_.host_disconnected(connection); }
 
 private:
   Host &host_;
@@ -2323,6 +2365,14 @@ auto RunHost(int argc, char **argv) -> int {
         options.state_dir = next();
       else if (arg == "--unix")
         listener.unix_path = next();
+      else if (arg == "--vmhost") options.vm.binary = next();
+      else if (arg == "--vm-support") options.vm.support = next();
+      else if (arg == "--vm-image") options.vm.image = next();
+      else if (arg == "--vm-source") options.vm.source = next();
+      else if (arg == "--vm-source-entry") options.vm.source_entries.push_back(next());
+      else if (arg == "--vm-cpus") options.vm.cpus = std::stoul(next());
+      else if (arg == "--vm-memory") options.vm.memory = std::stoul(next());
+      else if (arg == "--vm-store") options.vm.store = std::stoul(next());
       else if (arg == "--tsugumid")
         options.environment.tsugumid = next();
       else if (arg == "--worker")
@@ -2383,6 +2433,11 @@ auto RunHost(int argc, char **argv) -> int {
     if (options.environment.sdk.empty()) options.environment.sdk = binary_dir.parent_path() / "share/tsugumi/sdk";
     if (options.environment.directory.empty()) options.environment.directory = options.state_dir / "environments";
     options.environment.socket_directory = broker_dir / "env";
+    if (!options.vm.binary.empty()) {
+      if (options.vm.support.empty() || options.vm.image.empty() || options.vm.source.empty()) throw std::runtime_error("VM helper support, image and source paths are required");
+      options.environment.directory = options.vm.support / "environments";
+      options.environment.start_timeout = std::chrono::seconds(90);
+    }
     options.broker_socket = (broker_dir / "s").string();
     Host host(options);
     Server server(listener, &host);

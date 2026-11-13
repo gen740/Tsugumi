@@ -49,12 +49,24 @@ table EnvironmentState {
   startup_error_json:string;
   execution_scope_unavailable:bool;
 }
-table EnvironmentProgress { project:string (required); key:string (required); stage:string (required); fraction:double = null; }
+table EnvironmentProgress { project:string (required); key:string (required); stage:string (required); fraction:double = null; preparing:bool; }
 table EnvironmentStopped { state:EnvironmentState (required); }
 // Native hosts report vm_state="unavailable"; no VM is booted by this query.
-table HostRuntimeRequest {}
-table HostRuntime { vm_state:string (required); store_path:string; store_exists:bool; }
-union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped }
+// Command carries the operator tool's explicit supervisor diagnosis. Project
+// UIs use EnvironmentRequest; ordinary state queries do not boot a VM.
+enum RuntimeAction:ubyte { State, Shutdown, CleanupStore, Histories, DeleteHistory, Reset, DeleteEnvironment, Command }
+table HostRuntimeRequest { action:RuntimeAction; project_id:string; project:string; command:string; }
+table RuntimeHistory { id:string (required); bytes:ulong; last_start_ms:long; running:bool; }
+enum TerminalAction:ubyte { Open, Input, Resize, Close }
+table HostTerminalRequest { project:string; action:TerminalAction; session:ulong; rows:uint = 24; cols:uint = 80; data:[ubyte]; }
+table HostTerminal { session:ulong; }
+table HostTerminalData { session:ulong; data:[ubyte]; closed:bool; }
+table HostRuntime { vm_state:string (required); store_path:string; store_exists:bool;
+  virtualization_supported:bool; image_available:bool; image_version:string;
+  stage:string; message:string; console:[string]; bytes:ulong; paths:uint;
+  histories:[RuntimeHistory]; environments:uint; vm_removed:bool;
+}
+union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData }
 table Event { value:EventPayload; }
 table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string; title:string; path:string; }
 table RegisterFolderRequest { project_id:string (required); resource_id:string (required); folder:string (required); title:string; }
@@ -101,14 +113,14 @@ table DemoList { demos:[Demo]; }
 table Model { id:string; name:string; }
 table ModelList { models:[Model]; }
 union RequestPayload {
-  HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
+  HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
   RegisterProjectRequest, RegisterFolderRequest, SkillsListRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
-  EnvironmentState, HostRuntime, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
+  EnvironmentState, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
   RecentList, DemoList, SkillsList, ModelList, Failure:Tsugumi.Service.Failure
 }
 table Reply { value:ReplyPayload; }

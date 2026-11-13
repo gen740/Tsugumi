@@ -142,13 +142,10 @@ final class ChatController {
         }
       }
       let shared = folders + paths.filter { !folders.contains($0) }
-      await session.environments.setExtraFolders(session.identity, shared)
-      await session.restartEnvironment()
+      try await session.environments.setExtraFolders(session.identity, shared)
       guard session.connected, let project = try await RPCToolTransport(session: session).project() else {
         throw RPCError.disconnected
       }
-      _ = try await CoreAgentClient.shared.call("RegisterProjectRequest", ["project_id": project.id,
-        "endpoint": project.endpoint, "token": project.token, "title": project.title])
       for path in paths {
         let resource = "folder:\(project.id):" + SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
         _ = try await CoreAgentClient.shared.call("RegisterFolderRequest", ["project_id": project.id,
@@ -175,7 +172,7 @@ final class ChatController {
             if let id = grant["id"] as? String { _ = try await CoreAgentClient.shared.call("AccessRevokeRequest", ["grant_id": id]) }
           }
         }
-        await session.environments.setExtraFolders(session.identity, folders)
+        try await session.environments.setExtraFolders(session.identity, folders)
       } catch { status = String(describing: error) }
     }
   }

@@ -126,7 +126,8 @@ add_library(tsugumi_agent_core STATIC
   src/host/projects.cc
   src/host/execution_broker.cc
   src/host/environment.cc
-  src/host/environment_native.cc)
+  src/host/environment_native.cc
+  src/host/vm_process.cc)
 if(APPLE)
   target_link_libraries(tsugumi_agent_core PRIVATE "-framework CoreFoundation")
 else()

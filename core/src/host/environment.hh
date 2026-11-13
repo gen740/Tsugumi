@@ -5,6 +5,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <stop_token>
 #include <string>
 #include <vector>
@@ -12,6 +13,14 @@
 #include "tsugumi/protocol/host_generated.h"
 
 namespace tsugumi::host {
+
+struct EnvironmentFailure : std::runtime_error {
+  std::string recovery, log;
+  EnvironmentFailure(std::string message, std::string r, std::string l)
+      : std::runtime_error(std::move(message)),
+        recovery(std::move(r)),
+        log(std::move(l)) {}
+};
 
 struct EnvironmentAuthorization {
   std::function<Tsugumi::Host::ExecutionAuthorizationT(
@@ -21,7 +30,16 @@ struct EnvironmentAuthorization {
   std::function<void(const std::string&)> revoke;
 };
 
+struct EnvironmentMount {
+  std::string name;
+  std::string path;
+  bool read_only = false;
+};
 struct EnvironmentLaunch {
+  std::string key, project, control;
+  std::vector<std::string> origins, folders;
+  std::vector<EnvironmentMount> mounts;
+  bool archive = false;
   std::vector<std::string> arguments;
   std::filesystem::path log;
   Tsugumi::Host::ExecutionAuthorizationT authorization;
@@ -32,6 +50,18 @@ struct EnvironmentLaunch {
 class EnvironmentProcess {
  public:
   virtual ~EnvironmentProcess() = default;
+  virtual auto Shutdown() -> void {}
+  virtual auto Guest() const -> bool { return false; }
+  virtual auto Inspect(Tsugumi::Host::EnvironmentStateT& ready)
+      -> std::optional<int64_t> {
+    return Verify(ready) ? std::optional<int64_t>(ready.pid) : std::nullopt;
+  }
+  virtual auto GuardStart(const std::string&) -> void {}
+  virtual auto Shares(const EnvironmentLaunch&) -> void {}
+  virtual auto Runtime(const Tsugumi::Host::HostRuntimeRequestT&)
+      -> Tsugumi::Host::HostRuntimeT;
+  virtual auto Terminal(const Tsugumi::Host::HostTerminalRequestT&)
+      -> Tsugumi::Host::HostTerminalT;
   virtual auto Launch(const EnvironmentLaunch& launch) -> int64_t = 0;
   // nullopt while alive; otherwise raw wait status (-1 if unavailable).
   virtual auto Poll(int64_t pid, bool child) -> std::optional<int> = 0;
@@ -64,7 +94,10 @@ class Environments {
                Progress progress);
   ~Environments();
   auto Handle(const Tsugumi::Host::EnvironmentRequestT& request) -> State;
-  auto Runtime() const -> Tsugumi::Host::HostRuntimeT;
+  auto Runtime(const Tsugumi::Host::HostRuntimeRequestT& request)
+      -> Tsugumi::Host::HostRuntimeT;
+  auto Terminal(const Tsugumi::Host::HostTerminalRequestT& request)
+      -> Tsugumi::Host::HostTerminalT;
   // Stops observation and pending starts; ready processes remain resident.
   auto Shutdown() -> void;
 

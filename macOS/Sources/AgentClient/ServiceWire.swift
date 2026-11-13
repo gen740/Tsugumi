@@ -9,10 +9,34 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   static func request(_ method: String, _ fields: [String: Any], host: Bool) throws -> (UInt8, NativeObject) {
     if host {
       switch method {
+      case "EnvironmentRequest":
+        let v = Tsugumi_Host_EnvironmentRequestT()
+        v.project = fields["project"] as? String ?? ""
+        v.action = fields["action"] as? Tsugumi_Host_EnvironmentAction ?? .state
+        v.origins = (fields["origins"] as? [String] ?? []).map(Optional.some)
+        v.folders = (fields["folders"] as? [String] ?? []).map(Optional.some)
+        v.archiveIncompatibleHistory = fields["archive_incompatible_history"] as? Bool ?? false
+        return (Tsugumi_Host_RequestPayload.environmentrequest.rawValue, v)
+      case "HostRuntimeRequest":
+        let v = Tsugumi_Host_HostRuntimeRequestT()
+        v.action = fields["action"] as? Tsugumi_Host_RuntimeAction ?? .state
+        v.projectId = fields["project_id"] as? String
+        v.project = fields["project"] as? String
+        v.command = fields["command"] as? String
+        return (Tsugumi_Host_RequestPayload.hostruntimerequest.rawValue, v)
+      case "HostTerminalRequest":
+        let v = Tsugumi_Host_HostTerminalRequestT()
+        v.action = fields["action"] as? Tsugumi_Host_TerminalAction ?? .open_
+        v.project = fields["project"] as? String
+        v.session = (fields["session"] as? NSNumber)?.uint64Value ?? 0
+        v.rows = (fields["rows"] as? NSNumber)?.uint32Value ?? 24
+        v.cols = (fields["cols"] as? NSNumber)?.uint32Value ?? 80
+        v.data = fields["data"] as? [UInt8] ?? []
+        return (Tsugumi_Host_RequestPayload.hostterminalrequest.rawValue, v)
       case "SettingsGetRequest":
         let v = Tsugumi_Host_SettingsGetRequestT()
         v.profile = fields["profile"] as? String ?? "desktop"
@@ -314,6 +338,21 @@ enum ServiceWire {
     return result as? [String: Any] ?? ["value": result]
   }
 
+  static func decodeEvent(_ data: Data) throws -> [String: Any] {
+    var buffer = ByteBuffer(data: data)
+    let root: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
+    guard root.requestId == 0, let event = Tsugumi_Host_MessageT(root).payload?.value as? Tsugumi_Host_EventT,
+          let value = event.value?.value else { throw RPCError.disconnected }
+    switch value {
+    case let stopped as Tsugumi_Host_EnvironmentStoppedT: return ["type": "EnvironmentState", "value": try view(stopped.state)]
+    case let progress as Tsugumi_Host_EnvironmentProgressT: return ["type": "EnvironmentProgress", "key": progress.key, "stage": progress.stage, "preparing": progress.preparing]
+    case is Tsugumi_Host_EnvironmentStateT: return ["type": "EnvironmentState", "value": try view(value)]
+    case is Tsugumi_Host_HostRuntimeT: return ["type": "HostRuntime", "value": try view(value)]
+    case is Tsugumi_Host_HostTerminalDataT: return ["type": "HostTerminalData", "value": try view(value)]
+    default: throw RPCError.disconnected
+    }
+  }
+
   static func conversation(_ v: Tsugumi_Agent_ConversationT) throws -> Conversation {
     func messages(_ values: [Tsugumi_Agent_ModelMessageT?]) throws -> [ChatMessage] {
       try values.compactMap { v in
@@ -345,6 +384,20 @@ enum ServiceWire {
 
   private static func view(_ value: NativeObject) throws -> Any {
     switch value {
+    case let v as Tsugumi_Host_EnvironmentStateT:
+      return ["project": v.project, "key": v.key, "phase": v.phase, "endpoint": v.endpoint ?? "", "token": v.token ?? "",
+        "project_id": v.projectId ?? "", "server_instance_id": v.serverInstanceId ?? "", "control_dir": v.controlDir ?? "",
+        "ready_file": v.readyFile ?? "", "message": v.message ?? "", "recovery": v.recovery ?? "", "log": v.log ?? "",
+        "startup_error_json": v.startupErrorJson ?? ""] as [String: Any]
+    case let v as Tsugumi_Host_HostRuntimeT:
+      return ["vm_state": v.vmState, "store_path": v.storePath ?? "", "store_exists": v.storeExists,
+        "virtualization_supported": v.virtualizationSupported, "image_available": v.imageAvailable, "image_version": v.imageVersion ?? "",
+        "stage": v.stage ?? "", "message": v.message ?? "", "console": v.console.compactMap { $0 }, "bytes": v.bytes, "paths": v.paths,
+        "histories": try v.histories.compactMap { try $0.map(view) }, "environments": v.environments, "vm_removed": v.vmRemoved] as [String: Any]
+    case let v as Tsugumi_Host_RuntimeHistoryT:
+      return ["id": v.id, "bytes": v.bytes, "last_start_ms": v.lastStartMs, "running": v.running] as [String: Any]
+    case let v as Tsugumi_Host_HostTerminalT: return ["session": v.session]
+    case let v as Tsugumi_Host_HostTerminalDataT: return ["session": v.session, "data": v.data, "closed": v.closed] as [String: Any]
     case let v as Tsugumi_Host_ExecutionServicesT:
       return ["services": try v.services.compactMap { try $0.map(view) }, "hostPublicKey": v.hostPublicKey] as [String: Any]
     case let v as Tsugumi_Host_ExecutionServiceT:

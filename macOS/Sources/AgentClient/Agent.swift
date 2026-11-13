@@ -129,8 +129,6 @@ public actor Agent {
   public func open() async throws {
     var fields: [String: Any] = ["conversation_id": id, "role": role.rawValue]
     if let project = try await transport.project() {
-      _ = try await client.call("RegisterProjectRequest", ["project_id": project.id, "endpoint": project.endpoint,
-        "token": project.token, "title": project.title, "path": project.path])
       fields["project_id"] = project.id
     }
     let result = try await client.call("ConversationCreateRequest", fields)

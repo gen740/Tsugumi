@@ -85,7 +85,7 @@ struct Environments::Impl {
             }
           }
         }
-        std::this_thread::sleep_for(100ms);
+        std::this_thread::sleep_for(options.process->Guest() ? 1000ms : 100ms);
       }
     });
   }
@@ -94,6 +94,7 @@ struct Environments::Impl {
     shutdown.request_stop();
     observer.request_stop();
     if (observer.joinable()) observer.join();
+    options.process->Shutdown();
   }
   auto EntryFor(const std::string& project) -> std::shared_ptr<Entry> {
     const auto path = std::filesystem::canonical(project);
@@ -114,6 +115,19 @@ struct Environments::Impl {
       entry->state.ready_file =
           (std::filesystem::path(entry->state.control_dir) / "server.ready")
               .string();
+      for (const auto* name : {"origins", "folders"}) {
+        try {
+          const auto file = std::filesystem::path(entry->state.control_dir) /
+                            (std::string(name) == "origins" ? "origins.json"
+                                                            : "attached.json");
+          if (const auto raw = fs::read_file(file))
+            for (const auto& value :
+                 json::Array(json::Get(json::Object(*raw), name, "[]")))
+              (std::string(name) == "origins" ? entry->origins : entry->folders)
+                  .push_back(json::String(value));
+        } catch (const std::exception&) {
+        }
+      }
       // A State query may rediscover a resident daemon after agentd restarts.
     }
     return entry;
@@ -145,8 +159,8 @@ struct Environments::Impl {
     entry.state.phase = H::EnvironmentPhase::Failed;
     entry.state.message = message;
     entry.state.recovery = "Check the log and retry.";
-    const auto log =
-        std::filesystem::path(entry.state.control_dir) / "server.log";
+    const auto log = std::filesystem::path(entry.state.control_dir) /
+                     (options.process->Guest() ? "tsugumid.log" : "server.log");
     std::error_code error;
     const auto size = std::filesystem::file_size(log, error);
     entry.state.log =
@@ -198,11 +212,15 @@ struct Environments::Impl {
       ready.unix_socket = json::Text(object, "unix_socket");
       if (json::UInt(json::Get(object, "protocol")) != 1 || ready.pid <= 0 ||
           ready.token.empty() || ready.project_id.empty() ||
-          ready.server_instance_id.empty() || ready.unix_socket.empty() ||
-          (entry.pid && entry.pid != ready.pid) ||
-          !Alive(ready.pid, entry.child) || !options.process->Verify(ready))
+          ready.server_instance_id.empty() ||
+          (!options.process->Guest() && ready.unix_socket.empty()) ||
+          (!options.process->Guest() && entry.pid && entry.pid != ready.pid))
         return false;
-      entry.pid = ready.pid;
+      const auto handle = options.process->Inspect(ready);
+      if (!handle || (entry.pid && entry.pid != *handle) ||
+          !Alive(*handle, entry.child))
+        return false;
+      entry.pid = *handle;
       ready.phase = H::EnvironmentPhase::Ready;
       ready.message.clear();
       ready.recovery.clear();
@@ -227,6 +245,55 @@ struct Environments::Impl {
         json::Encode(json::Members{{"folders", Strings(folders)}}), 0600);
     entry.folders = folders;
   }
+  auto Plan(const Entry& entry) -> EnvironmentLaunch {
+    EnvironmentLaunch launch;
+    launch.key = entry.state.key;
+    launch.project = entry.state.project;
+    launch.control = entry.state.control_dir;
+    launch.origins = entry.origins;
+    launch.folders = entry.folders;
+    launch.mounts = {{"project", launch.project, false},
+                     {"control", launch.control, false}};
+    std::map<std::string, bool> host_folders;
+    std::function<void(const std::filesystem::path&, int)> scan =
+        [&](const auto& root, int depth) {
+          std::error_code error;
+          for (const auto& dir : std::filesystem::directory_iterator(
+                   root / "definitions", error)) {
+            try {
+              const auto raw = fs::read_file(dir.path() / "_card.json");
+              if (!raw) continue;
+              const auto card = json::Object(*raw);
+              for (const auto& value :
+                   json::Array(json::Get(card, "hostFolders", "[]"))) {
+                const auto folder = json::Object(value);
+                const auto path = json::Text(folder, "path");
+                if (path.starts_with("/") &&
+                    std::filesystem::is_directory(path))
+                  host_folders[path] = host_folders[path] ||
+                                       json::Bool(json::Get(folder, "write"));
+              }
+            } catch (const std::exception&) {
+            }
+          }
+          if (depth >= 15) return;
+          error.clear();
+          for (const auto& dir :
+               std::filesystem::directory_iterator(root / "externals", error))
+            scan(dir.path(), depth + 1);
+        };
+    if (options.process->Guest()) {
+      scan(entry.state.project, 0);
+      for (const auto& [path, write] : host_folders)
+        launch.mounts.push_back(
+            {"host-" + crypto::sha256_hex(path).substr(0, 16), path, !write});
+      for (const auto& path : entry.folders)
+        if (path.starts_with("/") && std::filesystem::is_directory(path))
+          launch.mounts.push_back(
+              {"chat-" + crypto::sha256_hex(path).substr(0, 16), path, true});
+    }
+    return launch;
+  }
   auto Start(Entry& entry, const H::EnvironmentRequestT& request) -> void {
     entry.starting = true;
     ++entry.start_generation;
@@ -237,11 +304,19 @@ struct Environments::Impl {
     PrivateDirectory(
         std::filesystem::path(entry.state.control_dir).parent_path());
     PrivateDirectory(entry.state.control_dir);
-    entry.origins = request.origins;
+    if (options.process->Guest())
+      ::chmod(entry.state.control_dir.c_str(), 0755);
+    if (options.process->Guest()) {
+      for (const auto& origin : request.origins)
+        if (std::find(entry.origins.begin(), entry.origins.end(), origin) ==
+            entry.origins.end())
+          entry.origins.push_back(origin);
+      std::sort(entry.origins.begin(), entry.origins.end());
+    } else
+      entry.origins = request.origins;
     fs::write_atomic(
         std::filesystem::path(entry.state.control_dir) / "origins.json",
-        json::Encode(json::Members{{"origins", Strings(request.origins)}}),
-        0600);
+        json::Encode(json::Members{{"origins", Strings(entry.origins)}}), 0600);
     WriteFolders(entry, request.folders);
     CheckDeath(entry);
     if (ReadReady(entry)) {
@@ -255,6 +330,7 @@ struct Environments::Impl {
       throw std::runtime_error(
           "tsugumid is alive but its endpoint is "
           "unavailable; stop it before retrying");
+    options.process->GuardStart(entry.state.key);
     entry.state.phase = H::EnvironmentPhase::Starting;
     entry.state.message = "Starting tsugumid";
     entry.state.log.clear();
@@ -273,7 +349,8 @@ struct Environments::Impl {
       const auto roots = options.directory.parent_path() / "build-roots";
       const auto scratch = std::filesystem::path("/var/tmp") /
                            ("tsugumi-scratch-" + std::to_string(::getuid()));
-      EnvironmentLaunch launch;
+      auto launch = Plan(entry);
+      launch.archive = request.archive_incompatible_history;
       launch.arguments = {
           options.tsugumid.string(),
           "--project",
@@ -327,13 +404,20 @@ struct Environments::Impl {
     } catch (const std::exception& error) {
       if (entry.pid) Stop(entry);
       Failed(entry, error.what());
+      if (const auto* failure =
+              dynamic_cast<const EnvironmentFailure*>(&error)) {
+        entry.state.recovery = failure->recovery;
+        entry.state.log = failure->log;
+        Notify(entry);
+      }
     }
   }
   auto Stop(Entry& entry) -> void {
     // State/Stop can be the first operation after an agentd restart.
     if (!entry.pid) ReadReady(entry);
     Revoke(entry);
-    if (entry.pid && !entry.child && !options.process->Verify(entry.state))
+    if (entry.pid && !entry.child && !options.process->Guest() &&
+        !options.process->Verify(entry.state))
       entry.pid = 0;
     if (entry.pid) {
       options.process->Signal(entry.pid, SIGTERM);
@@ -371,12 +455,77 @@ Environments::Environments(EnvironmentOptions options,
                                    std::move(changed), std::move(progress))) {}
 Environments::~Environments() = default;
 auto Environments::Shutdown() -> void { impl_->Shutdown(); }
-auto Environments::Runtime() const -> H::HostRuntimeT {
+auto EnvironmentProcess::Runtime(const H::HostRuntimeRequestT& request)
+    -> H::HostRuntimeT {
+  if (request.action != H::RuntimeAction::State)
+    throw std::runtime_error("This operation requires the VM runtime");
   H::HostRuntimeT runtime;
   runtime.vm_state = "unavailable";
   runtime.store_path = "/nix/store";
   runtime.store_exists = std::filesystem::is_directory(runtime.store_path);
   return runtime;
+}
+auto EnvironmentProcess::Terminal(const H::HostTerminalRequestT&)
+    -> H::HostTerminalT {
+  throw std::runtime_error("This terminal requires the VM runtime");
+}
+auto Environments::Runtime(const H::HostRuntimeRequestT& request)
+    -> H::HostRuntimeT {
+  auto input = request;
+  if (input.action == H::RuntimeAction::DeleteEnvironment) {
+    H::EnvironmentRequestT stop;
+    stop.project = input.project;
+    stop.action = H::EnvironmentAction::Stop;
+    const auto state = Handle(stop);
+    input.project_id = state.key;
+    input.action = H::RuntimeAction::DeleteHistory;
+    auto result = impl_->options.process->Runtime(input);
+    std::filesystem::remove_all(
+        std::filesystem::path(state.control_dir).parent_path());
+    return result;
+  }
+  if (input.action == H::RuntimeAction::Shutdown ||
+      input.action == H::RuntimeAction::Reset) {
+    std::vector<std::shared_ptr<Impl::Entry>> entries;
+    {
+      std::lock_guard lock(impl_->mutex);
+      for (const auto& [_, entry] : impl_->entries) entries.push_back(entry);
+    }
+    for (const auto& entry : entries) {
+      std::lock_guard lock(entry->mutex);
+      impl_->Stop(*entry);
+    }
+  }
+  auto result = impl_->options.process->Runtime(input);
+  if (input.action == H::RuntimeAction::Reset) {
+    for (const auto& entry :
+         std::filesystem::directory_iterator(impl_->options.directory)) {
+      if (!entry.path().filename().string().starts_with(".")) {
+        std::filesystem::remove_all(entry.path());
+        ++result.environments;
+      }
+    }
+  }
+  return result;
+}
+auto Environments::Terminal(const H::HostTerminalRequestT& request)
+    -> H::HostTerminalT {
+  auto input = request;
+  if (input.action == H::TerminalAction::Open) {
+    H::EnvironmentRequestT state;
+    state.project = input.project;
+    {
+      std::lock_guard lock(impl_->mutex);
+      if (const auto found = impl_->entries.find(input.project);
+          found != impl_->entries.end())
+        state.project = found->second->state.project;
+    }
+    const auto ready = Handle(state);
+    if (ready.phase != H::EnvironmentPhase::Ready)
+      throw std::runtime_error("The project's environment is not running");
+    input.project = ready.key;
+  }
+  return impl_->options.process->Terminal(input);
 }
 auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
   if (impl_->shutdown.stop_requested())
@@ -401,12 +550,29 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
     case H::EnvironmentAction::Stop:
       impl_->Stop(*entry);
       break;
-    case H::EnvironmentAction::Folders:
+    case H::EnvironmentAction::Folders: {
       PrivateDirectory(
           std::filesystem::path(entry->state.control_dir).parent_path());
       PrivateDirectory(entry->state.control_dir);
+      const bool added = std::any_of(
+          request.folders.begin(), request.folders.end(),
+          [&](const auto& folder) {
+            return std::find(entry->folders.begin(), entry->folders.end(),
+                             folder) == entry->folders.end();
+          });
       impl_->WriteFolders(*entry, request.folders);
-      [[fallthrough]];
+      if (impl_->options.process->Guest() &&
+          entry->state.phase == H::EnvironmentPhase::Ready) {
+        if (added) {
+          impl_->Stop(*entry);
+          H::EnvironmentRequestT restart = request;
+          restart.origins = entry->origins;
+          impl_->Start(*entry, restart);
+        } else
+          impl_->options.process->Shares(impl_->Plan(*entry));
+      }
+      break;
+    }
     case H::EnvironmentAction::State:
       if (!impl_->CheckDeath(*entry)) {
         if (!entry->pid) {

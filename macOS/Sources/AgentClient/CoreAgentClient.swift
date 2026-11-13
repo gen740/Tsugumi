@@ -53,6 +53,17 @@ public actor CoreAgentClient {
   private var connectionID = UUID()
   private var opening: Task<Void, Error>?
   private var nextID: UInt64 = 0
+  private var runtimeArguments: [String]?
+  private var hostObservers: [UUID: @Sendable ([String: Any]) -> Void] = [:]
+  public func configureRuntime(_ arguments: [String]) { runtimeArguments = arguments }
+  public func observeHost(_ handler: @escaping @Sendable ([String: Any]) -> Void) -> UUID {
+    let token = UUID(); hostObservers[token] = handler; return token
+  }
+  public func stopObservingHost(_ token: UUID) { hostObservers[token] = nil }
+  private func hostEvent(_ data: Data, identity: UUID) {
+    guard connectionID == identity, let event = try? ServiceWire.decodeEvent(data) else { return }
+    for handler in hostObservers.values { handler(event) }
+  }
 
   private var stateDirectory: URL {
     if let path = ProcessInfo.processInfo.environment["TSUGUMI_AGENT_STATE"] { return URL(fileURLWithPath: path) }
@@ -102,6 +113,7 @@ public actor CoreAgentClient {
     let demos = Bundle.main.url(forResource: "demos", withExtension: nil) ?? Self.repository.appendingPathComponent("demos")
     daemon.arguments = ["--state-dir", state.path, "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--demos-dir", demos.path]
+    daemon.arguments! += runtimeArguments ?? HostRuntimeConfiguration.arguments(support: state.deletingLastPathComponent())
     let log = state.appendingPathComponent("agent.log")
     if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil, attributes: [.posixPermissions: 0o600]) }
     let handle = try FileHandle(forWritingTo: log)
@@ -140,7 +152,9 @@ public actor CoreAgentClient {
     for host in [false, true] {
       let transport = NativeByteTransport(endpoint: "unix:" + (host ? hostSocket : agentSocket), contract: host ? .host : .agent)
       transports[host] = transport
-      transport.observe(receive: { _ in }, closed: { [weak self] in
+      transport.observe(receive: { [weak self] data in
+        if host { Task { await self?.hostEvent(data, identity: identity) } }
+      }, closed: { [weak self] in
         Task { await self?.closed(identity) }
       })
       try await transport.start()
@@ -158,6 +172,7 @@ public actor CoreAgentClient {
   private func closed(_ identity: UUID) {
     guard identity == connectionID else { return }
     close()
+    for handler in hostObservers.values { handler(["type": "Disconnected"]) }
   }
 
   private func exchange(_ method: String, _ fields: [String: Any], host: Bool) async throws -> [String: Any] {
@@ -167,7 +182,7 @@ public actor CoreAgentClient {
     nextID += 1
     let frame = try ServiceWire.encode(method, fields: fields, id: nextID, host: host)
     let data: Data = try await withCheckedThrowingContinuation { continuation in
-      transport.call(frame, timeout: .seconds(120), continuation: continuation)
+      transport.call(frame, timeout: .seconds(["EnvironmentRequest", "HostRuntimeRequest"].contains(method) ? 3600 : 120), continuation: continuation)
     }
     return try ServiceWire.decode(data, host: host)
   }

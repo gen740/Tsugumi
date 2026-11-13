@@ -12,6 +12,7 @@
 #include <stdexcept>
 
 #include "host/environment.hh"
+#include "host/vm_process.hh"
 #include "tsugumi/client/client.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 
@@ -97,7 +98,6 @@ class NativeProcess final : public EnvironmentProcess {
                                std::string(std::strerror(errno)));
   }
   auto Verify(const Tsugumi::Host::EnvironmentStateT& ready) -> bool override {
-    namespace R = Tsugumi::RPC;
     try {
       // A stale readiness file must never make an unrelated reused PID ours.
       struct stat metadata{};
@@ -137,37 +137,7 @@ class NativeProcess final : public EnvironmentProcess {
           peer != ready.pid)
         return false;
 #endif
-      client::Options options;
-      options.endpoint = "unix:" + ready.unix_socket;
-      options.connect_timeout = 500ms;
-      client::Connection connection(options);
-      if (connection.Start().get()) return false;
-      auto response =
-          connection
-              .Call(
-                  [&](uint64_t id) {
-                    flatbuffers::FlatBufferBuilder b;
-                    auto hello = R::CreateSessionHelloRequest(
-                        b, 1, b.CreateString("agentd-environment"),
-                        b.CreateString(ready.project_id),
-                        b.CreateString(ready.token));
-                    auto request = R::CreateRequest(
-                        b, R::RequestPayload::SessionHelloRequest,
-                        hello.Union());
-                    R::FinishMessageBuffer(
-                        b, R::CreateMessage(b, id, R::Payload::Request,
-                                            request.Union()));
-                    return client::Bytes(b.GetBufferPointer(),
-                                         b.GetBufferPointer() + b.GetSize());
-                  },
-                  500ms)
-              .get();
-      if (response.error) return false;
-      const auto* reply =
-          R::GetMessage(response.bytes.data())->payload_as_Reply();
-      const auto* hello = reply ? reply->value_as_HelloResult() : nullptr;
-      return hello && hello->project_id()->str() == ready.project_id &&
-             hello->server_instance_id()->str() == ready.server_instance_id;
+      return VerifyEnvironmentEndpoint(ready);
     } catch (const std::exception&) {
       return false;
     }
@@ -175,6 +145,45 @@ class NativeProcess final : public EnvironmentProcess {
 };
 }  // namespace
 
+auto VerifyEnvironmentEndpoint(const Tsugumi::Host::EnvironmentStateT& ready)
+    -> bool {
+  namespace R = Tsugumi::RPC;
+  try {
+    client::Options options;
+    options.endpoint = ready.unix_socket.empty() ? ready.endpoint
+                                                 : "unix:" + ready.unix_socket;
+    options.connect_timeout = 500ms;
+    client::Connection connection(options);
+    if (connection.Start().get()) return false;
+    auto response =
+        connection
+            .Call(
+                [&](uint64_t id) {
+                  flatbuffers::FlatBufferBuilder b;
+                  auto hello = R::CreateSessionHelloRequest(
+                      b, 1, b.CreateString("agentd-environment"),
+                      b.CreateString(ready.project_id),
+                      b.CreateString(ready.token));
+                  auto request = R::CreateRequest(
+                      b, R::RequestPayload::SessionHelloRequest, hello.Union());
+                  R::FinishMessageBuffer(
+                      b, R::CreateMessage(b, id, R::Payload::Request,
+                                          request.Union()));
+                  return client::Bytes(b.GetBufferPointer(),
+                                       b.GetBufferPointer() + b.GetSize());
+                },
+                500ms)
+            .get();
+    if (response.error) return false;
+    const auto* reply =
+        R::GetMessage(response.bytes.data())->payload_as_Reply();
+    const auto* hello = reply ? reply->value_as_HelloResult() : nullptr;
+    return hello && hello->project_id()->str() == ready.project_id &&
+           hello->server_instance_id()->str() == ready.server_instance_id;
+  } catch (...) {
+    return false;
+  }
+}
 auto NativeEnvironmentProcess() -> std::shared_ptr<EnvironmentProcess> {
   return std::make_shared<NativeProcess>();
 }

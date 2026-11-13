@@ -17,6 +17,12 @@ class HelperDouble final : public host::EnvironmentProcess {
   std::atomic<int> launches = 0;
   std::atomic<int> signals = 0;
   bool fail = false;
+  bool guest = false;
+  host::EnvironmentLaunch shares;
+  auto Guest() const -> bool override { return guest; }
+  auto Shares(const host::EnvironmentLaunch& value) -> void override {
+    shares = value;
+  }
   host::EnvironmentLaunch received;
   auto Launch(const host::EnvironmentLaunch& launch) -> int64_t override {
     ++launches;
@@ -119,6 +125,51 @@ TEST(EnvironmentAdapterTest, HelperFailureRevokesAuthorizationAndCanBeRetried) {
   EXPECT_EQ(service.Handle(input).phase, H::EnvironmentPhase::Stopped);
   EXPECT_EQ(helper->signals.load(), 1);
   EXPECT_FALSE(authorization.active);
+}
+TEST(EnvironmentAdapterTest, CorePlansMountsAndRestartsOnlyForFolderAdditions) {
+  TemporaryDirectory directory;
+  const auto project = directory.path / "project",
+             data = directory.path / "data", chat = directory.path / "chat";
+  std::filesystem::create_directory(data);
+  std::filesystem::create_directory(chat);
+  Write(project / "tsugumi.json", "{}");
+  Write(project / "definitions/a/_card.json",
+        "{\"hostFolders\":[{\"path\":" + Quote(data.string()) + "}]}");
+  Write(project / "externals/x/definitions/b/_card.json",
+        "{\"hostFolders\":[{\"path\":" + Quote(data.string()) +
+            ",\"write\":true}]}");
+  AuthorizationDouble authorization;
+  auto helper = std::make_shared<HelperDouble>();
+  helper->guest = true;
+  host::EnvironmentOptions options;
+  options.directory = directory.path / "environments";
+  options.socket_directory = directory.path / "sockets";
+  options.process = helper;
+  host::Environments service(
+      options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
+  H::EnvironmentRequestT input;
+  input.project = project.string();
+  input.action = H::EnvironmentAction::Start;
+  input.folders = {chat.string()};
+  ASSERT_EQ(service.Handle(input).phase, H::EnvironmentPhase::Ready);
+  EXPECT_FALSE(helper->received.archive);
+  const auto& mounts = helper->received.mounts;
+  ASSERT_EQ(mounts.size(), 4u);
+  EXPECT_EQ(mounts[2].path, data.string());
+  EXPECT_FALSE(mounts[2].read_only);
+  EXPECT_EQ(mounts[3].path, chat.string());
+  EXPECT_TRUE(mounts[3].read_only);
+  input.action = H::EnvironmentAction::Folders;
+  input.folders.clear();
+  service.Handle(input);
+  EXPECT_EQ(helper->shares.mounts.size(), 3u);
+  EXPECT_EQ(helper->launches, 1);
+  input.folders = {chat.string()};
+  service.Handle(input);
+  EXPECT_EQ(helper->launches, 2);
+  EXPECT_EQ(helper->signals, 1);
+  input.action = H::EnvironmentAction::Stop;
+  service.Handle(input);
 }
 }  // namespace
 }  // namespace tsugumi::test
