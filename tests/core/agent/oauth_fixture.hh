@@ -90,6 +90,8 @@ class OAuthServer {
               const std::string& profile = "desktop", uint64_t expiry = 3600)
       -> Reply {
     resource = endpoint;
+    // A second sign-in on the same server must check its own exchange.
+    const auto first_request = server.Requests().size();
     const auto begin = Begin(host, profile);
     if (!begin.Code().empty()) throw std::runtime_error(begin.Code());
     const auto* info = begin.HostValue()->value_as_SignInBegin();
@@ -135,7 +137,7 @@ class OAuthServer {
       const auto state =
           status.HostValue()->value_as_SignInStatus()->state()->str();
       if (state != "pending" && state != "committing") {
-        const auto exchange = URLFields("?" + server.Requests().at(0));
+        const auto exchange = URLFields("?" + server.Requests().at(first_request));
         const auto& verifier = exchange.at("code_verifier");
         unsigned char digest[EVP_MAX_MD_SIZE];
         unsigned length = 0;
