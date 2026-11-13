@@ -846,10 +846,11 @@ rec {
           );
         }
         // {
-          preRun = "export TSUGUMI_VIEW_MODULES=${lib.escapeShellArg (builtins.toJSON (
-            lib.mapAttrs (_: view: toString view) (builtinViews // (card.views or { }))
-          ))}\n" + (card.preRun or "");
+          # The identities of the view modules, read by the worker once when it
+          # starts (a preRun would start bash on every invocation).
+          views = builtins.toJSON (lib.mapAttrs (_: view: toString view) (builtinViews // (card.views or { })));
         }
+        // lib.optionalAttrs (card ? preRun) { inherit (card) preRun; }
         // lib.optionalAttrs (card ? postRun) { inherit (card) postRun; }
       )
     );

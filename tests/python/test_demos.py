@@ -336,6 +336,10 @@ def test_report_artifacts_survive_restart(report):
 
 def live_points(c, rid):
     rec = c.call("RunRecordRequest", runId=rid, card=path("plot"))
+    if rec.record.display is None:
+        # A cancel that lands in an invocation before it has shown anything ends
+        # that invocation without a display; the last chart is the one before.
+        rec = c.call("RunRecordRequest", runId=rid, card=path("plot"), invocation=rec.record.summary.invocation - 1)
     series = line_chart_series(rec.record.display.value)
     return [float(x) for x in series[0].x], rec.aggregate.calls
 
