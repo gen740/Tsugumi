@@ -55,7 +55,7 @@ class Host:
             self.close()
             raise
 
-    def call(self, name, **fields):
+    def call(self, name, /, **fields):
         namespace = "Service" if name == "HelloRequest" else "Host"
         value = getattr(importlib.import_module(f"Tsugumi.{namespace}.{name}"), name + "T")()
         for key, item in fields.items():
