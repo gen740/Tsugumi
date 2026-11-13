@@ -31,7 +31,7 @@ This reference follows `main` and covers the 0.7 pre-release series. If you are 
 ### Write Cards and pin environments
 
 - **Choose a language.** **Add Card** offers a processing Card in Python, C++, Go, Rust, Ruby or C#. For Bash, R or Julia, set `language` in the Card's `_card.json`. The Card guide has the same typed input/output example in all nine languages. [First Card](CardGuide.md) · [Ruby](CardGuide.md#the-same-card-in-ruby) · [Go](CardGuide.md#go-cards) · [Rust](CardGuide.md#rust-cards) · [C#](CSharp.md)
-- **Pin dependencies and control state.** Use **Project settings → Name and Environment** to pin Nixpkgs or add a trusted flake. Declare a Card-local lock where the SDK supports one (Python, Ruby, Go, Rust and C#). For a Card that needs interpreter or library state, turn on **Keep the worker's state** (`reuseWorker`) in its settings. [Nix environments](#3-reproducible-environments-with-nix) · [Language SDKs](#language-sdks) · [Resident workers](#resident-workers)
+- **Pin dependencies and control state.** Use **Project settings → Name and Environment** to pin Nixpkgs or add a trusted flake. Declare a Card-local lock where the SDK supports one (Python, Ruby, Go, Rust and C#). For a Card that needs interpreter or library state, turn on **Keep the worker's state** (`reuseWorker`) in its settings. [Nix environments](#3-reproducible-environments-with-nix) · [Language SDKs](CardGuide.md) · [Worker state](CardGuide.md#worker-state)
 - **Use a shell or a signed build cache.** Open the project Terminal to run a tool such as `nix --version`. On Mac, configure a shared signed cache in **Settings → Binary Caches** and apply it on the next VM start. [Project terminal](Usage.md#project-terminal) · [Binary caches](BinaryCaches.md) · [Browser and CLI platforms](WebUI.md#the-tsugumi-command)
 - **Run a Card on another Linux machine.** Start `tsugumi-remote-worker` there, register it in **Settings → Execution service**, and choose it under **Execution service** in the Card's settings. [Run a Card on a remote worker](RemoteExecution.md) · [Execution service](#execution-service)
 - **Control a Card's access.** Use **Card settings → General** to review **Restrict file access**, and the network and host folder permissions under **Experimental**, before running code from another project. [Security and isolation](security.md#summary)
@@ -44,25 +44,7 @@ This reference follows `main` and covers the 0.7 pre-release series. If you are 
 
 ## 1. Architecture
 
-```text
-macOS (host)                                       Shared Linux VM (one per app)
- SwiftUI UI ──┐                                     tsugumi-vmd (manages the VM)
- Agent ───────┼─ FlatBuffers RPC ─ 127.0.0.1 ─ vsock ─ project A: tsugumid ─ worker pool
- Other clients┘                                     project B: tsugumid ─ worker pool
-                                                   nix-daemon ─ shared /nix/store
-```
-
-- **tsugumid (the core)**: one process per project. It manages and saves the document and handles the RPC, the scheduler, Nix evaluation, workers and the run history. Saving, running and reading history are all possible through the RPC alone, with no UI.
-- **The UI and the Agent are equal clients**: both talk to the core with the same RPC contract, defined in `protocol/tsugumi.fbs`. The Agent does not imitate operations on screen; it sends RPC requests to the core directly. With the Agent disabled, every ordinary operation still works.
-- **The host-side core**: one `tsugumi-agentd` per host serves the Mac app and Web host before a project opens. Alongside conversations it owns project creation and duplication, bundled demo catalogs and editable copies, and the 30 most recent projects. `protocol/agent.fbs` separates these host requests from conversations; `core/src/host/` defines new documents, their build-time Nixpkgs pin, folder-name and flow validation, and stable error codes for both clients. The service alone writes `agent-core/recent-projects.json`, using Unix epoch milliseconds.
-- **The shared VM**: one Linux VM started with macOS's `Virtualization.framework`, inside which each project's `tsugumid` runs with its own namespaces, uid and cgroup (details in [security.md](security.md)).
-- **Web UI**: a browser workbench that uses the same project and RPC contract. With the Mac's `tsugumi` command the server runs on the Mac and its projects' `tsugumid` run in the same shared VM as the app; on Linux and when started from the repository, `tsugumid` runs directly on the host (Cards are isolated with Seatbelt on a Mac and bubblewrap on Linux; [Web UI](WebUI.md)).
-
-### VM files and startup
-
-Under the app's support folder (`Tsugumi/` or `Tsugumi-dev/` in `~/Library/Application Support/`), `vm/` holds the cloned boot image (`image/`), read-only source copied at each boot (`source/`, selected by `macOS/Container/vm-source.txt`), the sparse store disk (`store.img`, 64 GiB by default), and `console.log`, `console.prev.log` and `launcher.log`. Project control folders are `environments/<id>/control/`; `TSUGUMI_SUPPORT_DIR` relocates the VM and environments.
-
-Inside the VM, `/nix` overlays the boot image's store with the store disk mounted at `/persist`. `/init` builds `packages.<system>.vm-system` from the shared source (core, supervisor, terminal tools and formatters) inside the VM, reusing the GC-rooted `/persist/system/<source-hash>` until the source changes. A changed boot disk triggers `nix-store --verify --repair` once, restoring referenced paths from the binary cache and dropping unreferenced missing paths from the store database. Reset and isolation boundaries are in [Security](security.md#9-where-data-is-kept-and-how-to-delete-it).
+See the [trust boundaries](security.md#1-the-trust-boundaries), [RPC contract](Protocol.md) and [repository map](../AGENTS.md#map).
 
 ## 2. Cards and Workflows
 
@@ -104,12 +86,6 @@ The [Signal detection sweep demo](Demos.md#signal-detection-sweep-signal-sweep) 
 - An empty implementation list or input batch produces an empty output batch and starts no workers. Collect turns an empty batch into a typed empty vector or an empty Directory. With File or Directory inputs, Collect keeps each item in a numbered subdirectory, preserving its original name and any empty directories. Each entry in the Directory's ordered `items` has a `name` and relative `path`. Other File and Directory metadata remains in the producer's individual invocation records.
 - There are at most 256 combinations per trigger, 4,096 worker invocations per Run and 32 MiB of serialized port values for all the inputs of one activation and for all its outputs. If one invocation fails, the runtime cancels its siblings and withholds the batch. The history keeps each invocation's outcome. A partial rerun with last inputs uses the whole saved batch, including saved Files and Directories.
 - A collected value can be at most 16 MiB. Collect can copy up to 1,000 files and 64 GiB, with a total limit of 10,000 batch members and filesystem entries. Directory collection rejects symbolic links and special files.
-
-### Graph previews on the canvas
-
-- Plotly and Vega-Lite results appear as cached images on the canvas; Expand opens their full interactive viewer. The saved figure data is unchanged.
-- Web previews are generated only for visible frames, one at a time in one sandboxed viewer. Completed previews use a bounded memory cache keyed by the full figure content and preview dimensions; closing or hiding a frame cancels its pending work, and the renderer is released after one second idle. The 32 MiB cache budget includes encoded bytes and decoded pixels; small viewport rounding changes reuse preview dimensions. In the default `update` display mode a changed result keeps the previous picture, dimmed, until its own preview is ready; `live` mode keeps it at full strength.
-- The shared macOS/Web viewer serializes and coalesces rapid updates, and finalizes replaced Vega views so their event listeners and timers do not accumulate.
 
 ## 3. Reproducible environments with Nix
 
@@ -160,76 +136,17 @@ in { run = "${ciao}/bin/dmlist ..."; }
 - A package is built with the nixpkgs of that flake's `flake.lock` (not the project's nixpkgs).
 - A declaration applies only to that project's Cards (a Card in Card is another project). An external source whose name is not written in a `default.nix` is neither evaluated nor fetched (the check is a plain text match, so a mention in a comment counts).
 
-### The built-in evaluator
-
-- Card evaluation receives source files except `_card.json` and `_meta.json`, input types, Nix parameters and connected exports; runtime-only parameters stay with the invocation. A summary lives in `description` of `_meta.json` for every Card kind, so changing it causes no rebuild.
-- `tsugumid` embeds `libnixexpr` / `libnixstore` in its process and reuses the loading of nixpkgs, the evaluation state and the daemon connection across Cards and across runs. 
-- On cancellation or the Card's `buildTimeoutSeconds`, the current Nix evaluation or build is interrupted; the evaluator keeps serving later calls.
-
 ### Keeping build results
 
-- All projects share one `/nix/store`, and each project keeps its build results under `/nix/var/nix/gcroots/tsugumi/projects/<id>/<Card>--<result>`. Roots have no age or generation limit: removing them requires an explicit build-cache deletion, store/environment reset or project deletion. Each use takes a temporary root before the permanent project root, avoiding a race with GC; root-directory and symlink modification times record last use.
-- **Settings → project → Build Cache** in Mac and Web shows the shared total, each project's build usage, last root use and a separate latest-run scratch line. Open projects have Delete beside their usage; open a closed project to use its existing delete action. Core measures NAR bytes of rooted closures, including build dependencies covered by the store's GC settings. Shared paths count in every referencing project and once in the total, so the project amounts do not add up. Disk capacity and available bytes, measurement time and measurement errors are also shown; unavailable sizes are never shown as zero. A background snapshot refreshes at most once per minute (and after local changes); requests do not walk store contents. The core suggests reviewing Build Cache when the total is at least 20% of store disk capacity and at least 1 GiB. It never deletes in response to this notice. `ProjectCacheUsageRequest` returns this core-owned snapshot: the VM supervisor shares it read-only at `/run/tsugumi-cache-usage`, while host launchers register roots and scratch through `--usage-roots-dir` and `--usage-scratch-dir`. NAR size is logical closure size, not allocated disk blocks or space a deletion would free; other roots may retain the same paths.
-- A project's "Build Cache" pane (Delete) only removes that project's GC roots and build work files. Garbage collection of the shared store itself runs only from "Clean shared store" under "External Connections" in the app's settings. In the Mac shared VM, `keep-outputs = true` means compilers and the nixpkgs source stay after cleaning, so editing a Card does not download them again.
+Use [Build Cache settings](Usage.md#manage-build-and-scratch-space) to inspect and explicitly clear build registrations and store space. [Binary caches](BinaryCaches.md) explains shared caches.
 
 ## 4. Card SDK and workers
 
-### Stages
-
-```text
-SDK preparation → Nix evaluation → build → run (preRun → run → postRun) → output validation → saving
-```
-
-- An invocation records these six stages (`prepare`, `evaluate`, `build`, `execute`, `validate`, `save` in the RPC contract). A stage the Card does not need is skipped. The workbench adds "waiting for inputs" before them and "done" after them.
-- Each stage's start and end times and its outcome (running, done, cached, reused, failed, cancelled) are recorded in `InvocationSummary.stages` and returned both in real-time notifications and in the history. `cached` is a Nix store hit, and `reused` is a build or worker kept from an earlier invocation of the same run. The UI draws the stage display and the highlighting of wires from this record alone, never guessing from the final state.
-- One deadline covers the whole invocation, with cancellation and deadline checks before each stage. The record also keeps `worker_reused`, `outputs_sent` and `ready_at` (when inputs were complete).
-- `preRun`, `run` and `postRun` are steps of the one run stage. `preRun` prepares before the run, and `postRun` collects artifacts and cleans up. Both run per invocation without Card inputs; exports and `cd` from `preRun` carry forward. `TSUGUMI_OUTPUT_DIR` identifies the output folder. `postRun` also runs after `preRun` or `run` has failed, with `TSUGUMI_FAILED=1` and the ports already sent in `TSUGUMI_OUTPUTS`. After cancellation or a deadline, nothing further starts, `postRun` included.
-
-### Language SDKs
-
-`sdk { languages = [ … ]; }` generates and builds only the requested languages; `inputs`, `outputs` and `params` can be supplied explicitly.
-
-- **C++**: with the generated header `card.hh`, port names become typed members as they are.
-  ```cpp
-  auto run(Card::Input& input) -> Card::Output {
-    Card::Output out;
-    out.next.emplace().value = input.number.value / 2;
-    return out;
-  }
-  ```
-  What does not depend on the port contract (visualisation, logs, the run context) is in the C++ runtime `libtsugumi_card.so`, so all that is built per C++ Card is the type definitions and a thin adapter. Optional inputs and outputs use `std::optional`; only set outputs are sent. Numeric and Boolean params use `flatbuffers::Optional` (`.value()` / `.value_or(x)`), File / Directory paths are in `.value`, and `tsugumi::context().output_directory` gives the output location. Throw `tsugumi::Failure(kind, message)` to fail and check `tsugumi::cancelled()` for stopping.
-- **Python.** Implement `main(ctx)` with the generated FlatBuffers classes, either through their accessors and a builder or in their object form (`NumberT`, `Pack`). Use a Card-local `uv.lock` and a pinned dependency output hash to build locked dependencies. The SDK exports the lock with pinned `uv`, downloads hash-checked wheels and installs them offline (patching native libraries on Linux). [Python Card and dependency guide](CardGuide.md)
-- **bash**: `run` is a string instead of a package. Inputs arrive per port, named with the port in upper case, as `JSON_<PORT>` (the path of a JSON file) / `FILE_<PORT>` / `DIR_<PORT>`. The JSON written to `$TSUGUMI_OUTPUT` is the output, type-checked per port, and the JSON written to `$TSUGUMI_DISPLAY` is what the Card shows. `jq` is available; input JSON files and their converter are prepared only for a Bash `run`.
-- **Go.** Use `goCard` with generated typed inputs and outputs and managed goroutines. External modules are pinned with the Card's `go.sum` and the hash of its module cache. [Go Cards](CardGuide.md#go-cards)
-- **Rust.** Use `rustCard` with generated typed inputs and outputs and lock crate dependencies with `Cargo.lock` and a vendor hash. [Rust Cards](CardGuide.md#rust-cards)
-- **C#.** Use `csharpCard` with generated types and Tasks. The .NET runtime is hosted inside the worker process, and NuGet dependencies are pinned with the Card's `packages.lock.json` and the hash of its packages. [C# Cards](CSharp.md)
-- **Ruby** (`rubyCard`): MRI runs inside the worker with typed Hash/Array values, exact 64-bit integers, live displays and optional resident state. The Card can name a Gemfile.lock and the hash of its gem files to pin its dependencies at build time. [The Card guide](../agent/Reference/card-guide.md#ruby-srcmainrb) describes the API.
-- **R and Julia** (`rCard`, `juliaCard`): their interpreters run inside the worker. An invocation starts a new interpreter unless `reuseWorker` is on, which keeps the interpreter and its module state; displays publish during execution. How to write them is in [Your first Card](CardGuide.md).
-- Ruby, R and Julia receive lists, Hashes and Dicts through an in-memory JSON conversion against each port's FlatBuffers schema, without JSON files.
-- Every language other than bash is built into a `lib/main.so` that the native worker program (`tsugumi-worker`, `workerd/src/native_main.cc`) loads and calls through the same Card ABI.
-
-### Resident workers
-
-- By default a Card keeps no state: `reuseWorker` is `false`, and every invocation gets a new worker (a new process, a new interpreter).
-- A worker of a Card with `reuseWorker = true` stays resident across invocations and runs and keeps its state, static variables included (`onRunStart` / `on_run_start`, or `OnRunStartAsync` in C#, is called before the worker's first invocation of each run). Each invocation records whether its worker was reused.
-- It ends automatically when its build conditions change, on failure or cancellation, after 10 minutes unused, above 2 GiB of memory, or when more than 32 are resident (the least recently used ends first).
-- For a Card without `reuseWorker`, the new worker for next time is started ahead in the background (sandbox started, `.so` loaded, Python imports done, the Ruby, R or Julia source loaded) and kept waiting. At most 32 wait at once, and one unused for 10 minutes ends.
-
-Workers load packages in their own `work/` before `preRun`. For the body, environment precedence is worker startup → invocation → changes made while loading the package → `preRun` exports; Python's `os.environ` is synchronized per invocation. Set library import-time options at the top of `main.py` before imports (`flatbuffers`/numpy are not imported first by the SDK).
-
-Each worker's temporary `work/` and `tmp/` are emptied between invocations; `out/` is created only for File / Directory outputs. With `filesystem: true`, `work/` and `tmp/` are copied to invocation scratch afterward. Shell step scripts also live in the worker's private temporary area. [Worker isolation](security.md)
+Start with [Your first Card](CardGuide.md), then use the [SDK reference](../agent/Reference/card-guide.md), [worker state rules](CardGuide.md#worker-state) or [C# guide](CSharp.md). Inspect execution stages in [Run History](RunHistory.md#inspect-an-invocation).
 
 ### Execution service
 
-`workerd/` owns the light native `tsugumi-worker` (no Nix linkage) and the Linux C++ `tsugumi-remote-worker` (listener, supervisor and Nix runner). Host worker pools stay in `core/`; `core/src/remote_*` implements remote dispatch and recovery using the generated stream contract in `protocol/remote_worker.fbs`.
-
-- Card settings show the **Execution service** for a Code Card. Set `"executionService": "local"` in `_card.json` to select the service of the connected project daemon explicitly. Omitting the field uses the same local service.
-- The supported app and CLI installations run Cards on Linux. On macOS they use the shared Linux VM, and on Windows the command runs in WSL2. Running a macOS daemon directly is a development route with its own capabilities.
-- The project daemon reports the local service and registered remote workers. **CPU architecture** selects the Nix build and execution target within the selected service. A project keeps its saved service selection on installations where that service is unavailable. The selector shows the saved choice, and running stops with a diagnostic until the user registers that service or selects another one.
-- To build and run a Code Card on another Linux machine, register its worker in **Settings → Execution service** with a name, a service ID, its Unix socket or loopback TCP endpoint and an access token (use a separately established SSH tunnel across machines), then choose it in Card settings. The Card's `executionService` holds that service ID. [Run a Card on a remote worker](RemoteExecution.md)
-- A Card on a registered remote worker must keep **Restrict file access** on, and cannot use `reuseWorker` or host folders. Its timeout can be at most seven days. When the worker reports that it can enforce them, the Card can set CPU and memory limits (`executionResources`), which apply to the whole job, its build included.
-- Before evaluation, the selected execution service fixes the worker kind and system (the local host system or the remote worker probe's native system by default). The project's embedded evaluator produces a `WorkerDerivation` (`core/src/worker_derivation.hh`) without building; `NixRunner` realizes local outputs through nix-daemon or sends the derivation closure through `DerivationClosureTransport` for realization in the remote store. Remote workers never evaluate Nix, and unknown systems or evaluation errors fail before upload. Definition transport is separate from invocation data.
-- The C++ remote worker keeps submitted jobs in a durable queue and adopts surviving supervisors after it restarts. Job scratch stays available through result collection, then is removed after the host durably saves and acknowledges the outcome. Only the private Nix store, identities and compact replay tombstones persist. Key authentication over TLS or SSH is planned next. Each invocation records the service ID, the job ID, the architecture, the limits and the last confirmed state of the job, shown under **Info** in the Card's run history.
+[Register a remote worker](RemoteExecution.md) to build and run a Card on another Linux host. Review the [data boundary](security.md#remote-worker-boundary) before sending inputs.
 
 ### Another system (x86_64-linux)
 
@@ -248,72 +165,31 @@ Each worker's temporary `work/` and `tmp/` are emptied between invocations; `out
 
 ## 5. Documents and saving
 
-- A project is an ordinary folder of `tsugumi.json`, `definitions/<Card>/` (`_card.json`, `_meta.json` (intentions such as the summary), `default.nix`, `src/`, `_outputs.fbs`) and the layout in `layout.json`, (plus `_link.json` and `externals/` for a Card in Card), and can be managed with Git as it is. The hidden `.tsugumi/` folder holds the project id, the save journal and the run history.
-- Every JSON file is validated strictly against a typed schema (UTF-8; duplicate keys, non-finite numbers and unknown keys refused) before use. The core does not re-encode the document text it receives (apart from `layout.json` when a Card is renamed or deleted, and `_meta.json` when an empty description is filled), so the notation of 64-bit integers and the like is kept as it is. JSON files under `src/` are sources and are not schema-validated.
-- Internal JSON (journals, views and jobs) is encoded from typed hosq schemas with required fields.
-- **Save transactions**: apply provisionally in memory and validate → `fsync` a journal (the contents of all files and a receipt) → replace the target files atomically → commit. Should it crash in the middle, the journal is applied again at the next start, so the result is always "all applied" or "none applied" (tested with fault injection).
-- **Conflict detection**: a save is based on the revision at which editing began. If another window or the Agent saved first, it is detected as a conflict (`revision_conflict`, or `hash_conflict` per file) and nothing is silently overwritten. A file edited outside Tsugumi is reported as `external_change` and must be reloaded before saving. A resend with the same `op_id` is applied only once (if a response is lost to a dropped connection, `OperationGet` confirms the result).
-- **Saving during a run**: while a Workflow runs, a save that changes the computation's definition (its execution fingerprint) is refused with `busy`; only layout changes and the like are accepted, safely. Reload, version checkout, cache clearing and history deletion are refused during a run.
-- The core holds a non-blocking exclusive lock on `.tsugumi/tsugumid.lock` for its lifetime and refuses storage where a second lock is not rejected. This prevents two daemons from serving one project.
+[The Card guide](CardGuide.md#the-files) describes project files. [ProjectSave](Protocol.md#projectsave) defines save transactions and conflicts; [Versions](Versions.md) explains returning to saved code and settings.
 
 ## 6. Run history and artifacts
 
-See the [run history reference](RunHistory.md) for the workbench controls, examples and retention settings.
-
-- Runs, invocations, stages, values, logs, displays and receipts are recorded in SQLite. The shared Mac VM keeps its primary copy on a dedicated history disk (`vm/history.img`). That disk survives an environment reset. [Storage paths and export](RunHistory.md#history-storage)
-- Invocation work folders are disk-backed scratch outside the kept history: `/persist/run-scratch/<project>/runs/<run>` in the shared VM (seen as `/scratch/runs/<run>`), `/var/tmp/tsugumi-scratch-<uid>/<project>/runs/<run>` on Linux hosts, and `/private/var/tmp/tsugumi-scratch-<uid>/<project>/runs/<run>` on Mac hosts. Only the latest run stays; starting the next run removes earlier scratch, and startup removes scratch with no history record. Kept data are never removed by this cleanup. `--run-scratch-dir` can override the default; a canonical-project-path hash identifies standalone daemons. Completion copies retained outputs and saved inputs and flushes history before another run starts. Detached remote jobs preserve recorded inputs before detaching; recovery copies retained outputs through temporary staging and removes it without recreating old run scratch. After the host durably records an outcome, its retryable acknowledgement releases remote job scratch; host run retention is unchanged.
-- `recordIO` controls input and output value recording. File / Directory contents are copied into `.tsugumi/runs/<run>/values` before completion, independently of artifact retention. FlatBuffers values retain their schema by hash, so past values can be interpreted after a Card's types change. `retainArtifact` copies a selected File or Directory into history and checks retained files for tampering and path escapes.
-- `saveRunHistory` writes finished records into the project’s `.tsugumi/runs.sqlite`. When a copied or moved project opens, records missing from its local history are imported by run ID (runs with remote jobs are not exported). `saveRunHistory` is on by default.
+[Run History](RunHistory.md) owns recording, inspecting, comparing, copying and deleting results and artifacts.
 
 ## 7. Visualisation
 
-The [visualisation templates](Visualization.md) provide editable Matplotlib, Plotly and Altair examples. [marimo notebooks](Marimo.md) and [R reports](Reports.md) retain HTML results that can be inspected in the [static artifact preview](RunHistory.md#keep-and-open-artifacts).
-
-- **A Card can bring its own view.** Declare a JavaScript view output in Nix and
-  send a small JSON config plus named binary blobs. WebGPU, DOM and bundled
-  libraries run directly inside an isolated frame, with interaction independent
-  of the worker. Both UIs fetch immutable code from the core through RPC and
-  keep the existing canvas previews. [Writing a view](CardGuide.md#card-owned-web-views)
-- Built-in plotting libraries' upstream URLs and hashes are pinned in `sdk/views/packages.json`. Browser frames transfer binary buffers after copying retained display data; the WKWebView argument bridge uses base64 and copies/expands bytes.
-- Calling display APIs from a Card's code (`tsugumi::visualization::text(...)` in C++, `ctx.display_text(...)` and the like in Python) displays text, Markdown with TeX math, scalars, line charts, tables, images (PNG or JPEG), 3D point clouds and Card-owned web modules (including Plotly and Vega-Lite).
-- Line charts use the built-in WebGPU view module in the same isolated frame on Mac and the Web, with binary double-precision input and light/dark backgrounds. While a Card runs, its frame keeps the last settled display (dimmed) unless the Card's "Chart updates" setting is "Live", in which case it updates in real time.
-- matplotlib in a Python Card draws straight into the Card's display through the SDK's backend (`tsugumi.mpl`): code written for a window runs as it is, like X forwarding. `plt.show()` shows a figure (figures still open are shown at the end of a successful invocation, unless the Card sent a display of its own), and loops with `plt.pause()` and `FuncAnimation` update live during the run. Cards that use matplotlib get a Japanese font (IPAex) unless the Card sets its own `fonts`, so Japanese labels draw as they are.
-- Plotly's `fig.show()` and Altair's `chart.show()` appear in the Card's display as interactive charts (zoom, hover and legend operations in the enlarged view). They are drawn with the SDK-pinned plotly.js / Vega view outputs and never go to the network (a Card's charts cannot read data from outside). See the Plots demo ("Plots (matplotlib, Plotly, Altair)").
-- A display is a separate frame on the Canvas that can be placed and enlarged freely, and its layout is saved in `layout.json`. Renaming a Card moves its position, frame and group to the new name, and removing it from the Canvas removes them with it (the same whether from the UI or the Agent, through `tsugumid`'s save).
+Use the [visualisation templates](Visualization.md), [marimo notebooks](Marimo.md) or [R reports](Reports.md). Authors of custom views use [Card-owned web views](CardGuide.md#card-owned-web-views); users control [chart updates](Usage.md#chart-updates).
 
 ## 8. UI (the workbench)
 
-- The sidebar on the left: "Workflow Hierarchy", "Add Card" (definitions of imported projects, and definitions not placed) and "Cards Shown". At the bottom, buttons for "Version History" and "Project Settings".
-- The Canvas in the centre: one floating row at the top with breadcrumbs through the hierarchy, the run operations (with the issue list and a "+" Add Card menu), "Generate Cards" (only when the scope has Drafts), "Generate from comments (N)" (only when Cards have open comments), and buttons for going back Home and for the chat. Below, zoom, Fit All, Arrange, Untangle Wires and grid controls, the Nix references toggle and a status bar, and under them the collapsible log, timeline and terminal panels.
-- On the right: the chat is the right-hand column of the workbench; its width can be changed and it can be a separate window.
-- Canvas operations: adding and moving Cards (snapping to the grid while it is shown), folding Cards, duplicating, wiring, range selection, zoom, arranging (a layered layout with straight wires, in which Cards, output frames and sticky notes do not overlap, undone in one step), reducing wire crossings without moving Cards, groups, Markdown sticky notes and display frames.
-  Arrange and Untangle Wires use the same core RPC in the Mac app and Web UI. The core proposes a layout; the window applies and saves it as one undoable edit. Layout edits remain available during a run. Each window supplies measured Cards, ports, connections, output frames, notes and child boundaries for its draft scope; visual groups do not constrain placement. The core proposes without reading or saving the document, reruns placement if port order changes, and can untangle around a drag. Stale replies after edits, undo or changed measurements are discarded; drag proposals join the move's undo step.
-- "Untangle Wires" reduces crossings by reordering the visible ports while keeping Card positions. Arrange also runs this step after placing Cards. Both operations undo in one step. Port names, types, connections and execution stay unchanged; only the visual order is saved in `layout.json`. The pass considers routed wires, output-frame obstacles and child Workflow boundary wires, and keeps a proposed order only when it reduces crossings. Routing Cards retain their shape's port order; some graphs still have unavoidable crossings.
-- The Card settings window: General, Comments, Nix Definition, Source (syntax highlighting, a "Format" button, showing where errors are), Ports, Run History, Artifacts and Extra Context (the full list is for Code Cards; Input, Draft and Card in Card Cards show only the tabs that apply). Edits are made on a working copy and put in with "Apply".
-- The settings window: the whole app (General, Appearance, Editor, Shortcuts, Skills, API, External Connections, Binary Caches and Execution service; the Web UI has no Binary Caches pane) and the open project (Name and Environment, Canvas, Run history, Build Cache). Each pane shows where its values are kept.
-- Custom signed [binary caches](BinaryCaches.md) (Attic, Cachix and compatible servers), configured for the Mac shared execution environment, including private-cache authentication. Changes apply at the next VM start.
-- The [project terminal](Usage.md#project-terminal) opens in the project's execution environment. On Mac, it waits for the environment to connect and shares its tabs between windows of the same project. A tab whose shell ended gets a new shell when the environment connection comes back.
-- Japanese or English, chosen under "General" in the settings (Japanese by default, whatever the system's language; it takes effect when the app restarts, and the Web UI reloads the page by itself). The Mac app and the Web UI on the same Mac share it, and what tsugumid writes into a project's git for a run follows it ([Versions](Versions.md#the-results-of-runs)).
-- While running, changes to Cards and closing the project are blocked; progress, history and artifacts can still be seen.
+[Usage](Usage.md) covers Canvas tools, Card settings, project terminals and the Agent's controls.
 
 ### Several projects
 
-- The app shows one project (or Home) per window. ⌘⇧N adds a Home window, and ⌘N, ⌘O, demos and duplicates from a project's window open in a new window. A project already open has its window brought to the front.
-- ⌘W saves and closes only that project (not while it runs), and ⌘Q asks about the unsaved changes of all projects at once.
-- What is separate per project is `tsugumid` (document, runs, history), the chat and Agent, and tabs and selections. The shared VM, `/nix/store`, CPU and memory, API keys and app settings, and Home's guide conversation are shared. Closing one leaves the other running.
-- The Web UI has one per browser tab ([Several projects in the Web UI](WebUI.md#several-projects)).
+See [Several projects](Usage.md#several-projects) for windows and [Web UI tabs](WebUI.md#several-projects).
 
 ## 9. Agent
 
-The Agent runs as the `tsugumi-agentd` service (`core/src/agent/`; the contract shared with the frontends is in `agent/Shared/`). The Agent is one client using the same RPC as the UI; without the Agent, making, editing and running Cards can all be done on screen.
+Connect a model under **Settings → API**, then ask the chat to make or change Cards. [Permissions and sent data](security.md#8-the-models-api-keys-agent) · [Agent controls](Usage.md#working-with-the-agent)
 
 ### Commands in the project environment
 
-The Agent's `project_shell` tool uses the public `ProjectShell` RPC, enabled only by the isolated project launcher. It runs as the project's user in `/project`, never as a fallback shell on the Mac or Web host. Agent use needs separate human-granted **Shell** access in addition to Read, Write and Run. Shell access includes the project's shared folders and the VM network; it is broader than an individual Card's permissions.
-
-Commands and tool results remain in the conversation, with exit status, signal, timeout and cancellation. Each stream is bounded to 256 KiB and reports truncation; the default deadline is 10 seconds and the maximum is 30 seconds. Disconnecting cancels the process group. An operation ID is durable and cannot run twice after a retry or restart; an interrupted operation with an unknown outcome must be inspected before issuing a new one. Commands that edit project documents need `ProjectReload` before subsequent inspection or execution. These commands are recorded as tool operations, not fabricated Card invocations.
-
-The ordinary Web host daemon does not enable this tool. Web clients connected to the Mac VM can use the same RPC and approval boundary. The Web UI's human terminal is distinct from the Agent tool: with the Mac VM it is the project's shell in the environment, as in the app, and on an ordinary Web host it is a shell of that host in the project's folder.
+Grant **Shell** access separately from Read, Write and Run to use `project_shell`. It runs inside the isolated project environment and includes its shared folders and network; it is broader than one Card's permissions. [Shell contract and limits](Protocol.md#projectshell) · [Human terminal](Usage.md#project-terminal)
 
 ### Choosing Claude's features by purpose
 
@@ -341,118 +217,40 @@ Besides Anthropic's Messages API, OpenAI's API and the ChatGPT plan are supporte
 
 ### Tools and the RPC
 
-- The definitions of the tools the Agent uses are generated automatically from `tsugumi.bfbs` (the FlatBuffers schema with its doc comments), and the conversion between tool arguments and FlatBuffers messages uses the same schema. Updating the RPC contract updates the Agent's tools with it. 64-bit tool values use decimal strings. The shared instructions include Python/C++/Bash essentials, and `agent/Shared/generate.py` derives the Python method list from SDK source. `demo_list` and `demo_read` read bundled demo references; project reads use project RPC.
-- The Agent gives each tool call that changes something a unique `op_id`, and it goes through the same revision checks, conflict detection and confirmation notifications as the UI (an Agent save also gets extra checks: comment stamping, the Draft-intent refusal and approval of widened permissions).
-- Tool operations and their trail are persisted with the conversation; a lost mutation response is checked with `OperationGet` before retrying. PNG/JPEG tool results are sent as images; incomplete or oversized images produce a note instead, and a provider rejecting images is retried without them. Cancelling Agent work stops model requests and unsent tools; accepted runs continue.
-- Attach a Mac folder to the chat and the Agent can read it with `attached_folder_read` (Mac only; shared read-only with that project only and needing its own Read grant; what is read is sent to the model).
+See the [RPC contract](Protocol.md) and [Agent permission boundary](security.md#the-agents-permission-boundary).
 
 ### Web search
 
-- Turn it on under "API" in the settings and the chat's Agent can search the web at its own discretion. Off by default; while off, the model is not shown the tool. That search terms go outside, and the risk of unpublished data being in them, are in [Security](security.md#web-search).
-- Search uses the provider's feature (Anthropic's `web_search`, OpenAI's `web_search`; the same with the ChatGPT plan). Tsugumi does not connect to a search service. The local fixture has no search.
-- A search appears in the chat as a row like other tools, so its terms and the URLs found can be followed. Sources the response cites appear as links under it. With the ChatGPT plan, only the cited sources appear (because `include` is not sent).
-- Only the chat's Agent can use it; helpers and the guide's thrush use the same setting.
+[Web search settings and data sent](security.md#web-search).
 
 ### Links to the evidence
 
-Links in chat can open the current Card and an exact saved result. Mac and Web resolve these addresses within the open project. Missing Cards, runs, invocations, logs and artifacts appear as unavailable text. An invocation link opens its recorded display and input/output values while the Canvas keeps showing the current result.
-
-| Markdown destination | Opens |
-| --- | --- |
-| `card:<id>` or `card:<outer>/<inner>` | The current Card on the Canvas |
-| `run:<UUID>` | The run and its Card records |
-| `run:<UUID>/<Card path>#<invocation>` | The cited invocation's saved result |
-| `log:<UUID>/<Card path>?invocation=<number>&stream=stderr&offset=<bytes>` | The log at that byte offset (`stdout`, `stderr`, `build`, or `journal`) |
-| `artifact:<UUID>?id=<artifact id>&path=<member>` | The saved artifact; omit `path` for the whole artifact |
-
-Use these as Markdown links, such as `[spectrum](card:spectrum)`. URL-encode the query values. A Card link points to its present definition. An invocation link identifies the particular result you want to share.
+[Follow evidence from chat](RunHistory.md#follow-evidence-from-chat).
 
 ### Generating Cards from Drafts
 
-- The Draft Cards in scope are given to the Agent by key. After the access grant it reads their summary, processing, additional context, ports and the wires around them, saves the types, the Nix definition and the source code (one Card per save, each save one transaction) and then checks them by building and running.
-- The order is "write first, run later". The Agent finishes writing as many Cards as it can, then runs once from the trigger to check. It runs in between only when writing the next Card needs information that only a run can give (the columns of a downloaded file, say).
-- On failure or cancellation in the middle, the save in progress is not applied (the plan stays); Cards already saved remain.
-- The intention written in a Draft stays as it was. A summary and additional context that were empty are filled in by the Agent from the instructions in the chat and the Draft's content (it adds nothing that was not said). `tsugumid` refuses a save that leaves them empty or changes what was written. This check applies recursively when an Agent save changes an existing Draft into another kind: it requires a description, requires context when the Draft had a description or content, and preserves nonempty description/content/context. It checks emptiness and changes, not whether new text invents facts; replacing the Draft with another id and human saves are outside this check.
+[Generate from Drafts](Usage.md#working-with-the-agent) after describing each step and connecting its wires.
 
 ### Generating Cards from comments
 
-Write "I want this changed" on a Card and have the Agent follow it. If a Draft is the plan of a Card before implementation, a comment is an instruction to the Card itself. Any kind of Card can have them.
-
-- Write one with "Comments…" in the Card's context menu, or from the badge at the top right of a Card on the Canvas ("Comments" in the Card's settings). Adding, editing, resolving, reopening and deleting are saved on the spot (ones written during a run are saved when the run ends, like other edits).
-- "Generate from comments" on the Canvas hands the unresolved comments to the chat's Agent: only the selected Cards' comments if the selection has Cards with open comments, otherwise all of those at the level shown (the button shows the count). The chat shows a fixed note that Cards are being generated from comments; the Agent reads the comments itself after the grant.
-- By default the Agent rewrites the Cards that have comments, and adds or splits Cards if a comment asks for it. It saves with the same tools as for Drafts, and a save that widens a Card's permissions needs the same approval ([The Agent's permission boundary](security.md#the-agents-permission-boundary)).
-- The Agent can write, edit, resolve and delete comments as people do. In return, who did what is kept.
-
-**Who did what**
-
-- For the Agent's saves, `tsugumid` writes the record from the save's `origin` (`core/src/comments.cc`). Whatever the model writes in these fields is not used.
-  - `author`: who wrote it. `editedBy`: who last changed its text. `stateBy`: who last resolved or reopened it.
-  - `cards`: the Cards changed by the save that resolved the comment. Empty if it was resolved without changing anything.
-- In a Card's settings, comments the Agent wrote or changed carry an "Agent" mark, and the row of a resolution shows what was done and the Cards that changed. Resolved ones are folded, not removed, and anyone can reopen them.
-- Under the chat's "Save changes" row is how that save changed the comments (`comments` in the save's result).
-- The details of a version in the version history show how the comments changed in that version (added, edited, resolved, reopened, deleted), who did it and which Cards changed ([Versions](Versions.md#comments)).
-
-**Where they are kept**
-
-In `comments` of `definitions/<id>/_meta.json`. They do not affect execution, so results are not invalidated. They follow a Card when it is renamed, and a duplicate gets them too.
-
-How they differ from sticky notes: a sticky note is a memo for people, placed anywhere on the Canvas, kept in `layout.json`, with no route to the Agent. A comment belongs to a Card, has a state and a record, and is part of the version summaries.
+[Generate from comments](Usage.md#working-with-the-agent) to apply a request to existing Cards; [Versions](Versions.md#comments) records comment changes.
 
 ### Splitting the work (delegate)
 
-- Independent work (Drafts not connected by wires, for instance) can be split by the Agent among helper Agents and done at the same time.
-- A split is 1 to 8 tasks (`delegate` in `agent/Shared/agent.json`), each with a unique nonempty name and a nonempty instruction. The core runs them in groups of up to four concurrent helpers and gives each at most 15 model steps.
-- Each helper has its own conversation, the shared system rules and the same tools except `delegate`, using the parent's access. Assigning separate Cards in the instructions is advice to avoid overwriting work, not an enforced write boundary; helpers may read the whole project.
-- A helper's first user message is only its instruction. The parent conversation and a project snapshot are not automatically included, and there is no automatic warm-up. Include the Card ids, user requirements and shared decisions, and ask the helper to read the definitions, metadata, wires and upstream Cards it needs.
-- Coordinate when to run through the instructions. The suggested order is to have helpers save and check, then have the parent run once after they report, unless a helper needs run results to write its Cards. The core does not retry `busy` or `revision_conflict` for helpers: wait for an active run to finish before retrying, or inspect and re-apply after a revision conflict.
-- The call returns each helper's messages and error field for the parent to review before checking the Cards and reporting. Reaching the step limit can leave a helper without a final report and does not set its error field. Helper conversations are kept with the original conversation in the Agent core's database. When an interrupted call is reconciled, it returns completed results and an interruption notice for incomplete work; inspect the saved work before assigning more.
+Independent Drafts can be implemented by helper Agents. Try the [Dynamical systems gallery](Demos.md#dynamical-systems-gallery-dynamics-draft).
 
 ### The Agent on the Canvas
 
-While the Agent works, a thrush flies over the Canvas showing what it is doing (it does not take clicks).
-
-- Reading a Card, it perches on that Card; writing a Draft up into a code Card, it draws as if drawing a line; for a new connection it threads a string; running, it flies to the start Card. Its speech bubble says what it is doing now.
-- While the Agent writes a file into a save's arguments, the file name and the last few received lines appear next to that Card without simulated typing. `PutSource` shows file content; `PatchSource` shows only the current replacement text, explicitly marked as a patch. The latest file or patch replaces the previous one immediately, and a late path reveals the content already received. On the Mac the bird plays its scenes one at a time, and the scenes of a change that was already saved (writing its Cards out, threading its wires) are not cut for the next file: that file's panel appears once they have played, with everything received by then. Panels say "Not saved" (a patch: "Patch · not saved") until the save succeeds, disappear on failure/cancellation or when a run starts, and follow the Agent visibility setting. They take no clicks and hide below 50% canvas zoom. Helpers each have one panel in their own color.
-- When the work is split, a thrush of a different colour is added for each helper, and the parent Agent's thrush is gold, named "Agent".
-- On the Mac and Web, turn on "Draw thoughts" (the button under the input field) and a small model summarises the Agent's messages and tool results into one sentence for the speech bubble. It uses tokens apart from the Agent, asks for consent the first time it is turned on, and shows its input/output usage in the button's label (on the Mac, its tooltip). The core chooses the conversation content and prompt, and requests summaries only during work, after new messages or tool activity, at most once every four seconds with one request in flight per conversation. Windows refresh the presentation once a second; a thought stays for eight seconds or until a newer scene or the turn ends. Turning it off restores the plain activity line.
-- On the Mac, its look is chosen under "The Agent at work" in "Appearance" of the settings: a thrush, a dot or nothing. The Web does not have this appearance setting.
+[Agent activity and Draw thoughts](Usage.md#agent-activity).
 
 ### Skills and conversations
 
-- Skills (`skills/` in a project, or folders added in the settings) are called with `$`.
-- Conversations can be listed, searched in full text and compacted by summarising.
+[Skills and conversations](Usage.md#skills-and-conversations).
 
 ### The thrush (chat and guide)
 
-A project's chat is the thrush.
-
-- The bird waits at the top left of the chat (above the chat button when the chat is closed). To explain something on screen it flies there with `guide_show` (▶ Run, a Card, a demo's card and so on) and says a word in a speech bubble.
-- The speech bubble offers replies to tap ("Next", "Tell me more" and so on), buttons that act (open a demo, run, stop, open a Card's settings, the API settings, a new project and so on) and a field for a free reply. A tapped reply reaches the chat as the user's message.
-- Closing the speech bubble sends it back. With reduced motion, it appears in place. ⌥⌘G opens and closes the chat (on Home, the conversation panel).
-- The thrush guides step by step during a demo's guide. It starts when a demo's guide starts the built-in Skill `$demo`, or when you write `$demo` in the chat, and goes from explaining the Cards → running → explaining the results, ending with a farewell (the flow is in `agent/Shared/demo-skill.md`).
-  - Outside the guide it is an ordinary chat. Asked how to use a feature, the bird flies to the button and says a word only when showing it on screen helps. It opens closed panels (logs, timeline, terminal), the version history or a Card's settings only when really needed.
-- What the bird can point at are the main buttons of Home and of a project, Cards, the items of a Card's settings and "Apply" (the list is `guide_show` in `agent/Shared/agent.json`). It also flies inside a Card in Card (`card:<outer>/<inner>`, with the Canvas opening it) and into a Card settings window the thrush opens (`open`, `param:<name>`). While a project loads, it flies in over the bird of the loading card, matching its size, and comes out from there when loading ends.
-
-On Home, a single guide conversation for the whole app (`Agent.Role.guide`; its rules are `agent/Shared/guide-prompt.md`) speaks the same way from the bottom right.
-
-- The guide has only the reading tools (including `demo_list` and `demo_read` for the bundled demos) and `guide_show`. It does not save, run or stop.
-- The guide answers with a small model: `claude-haiku-5-5` for Anthropic, the luna model for the ChatGPT plan, and the Agent's model with an OpenAI API key. A demo's guide is carried on by the copy's chat, with the chat's model.
-- Conversations, the guide's included, are kept in the Agent core's database (`agent-core/agent.sqlite` in the support folder; `~/Library/Application Support/Tsugumi/agent-core/` on a Mac).
-- On first launch, choose Anthropic or OpenAI, enter one API key and confirm the connection before starting ("Skip and start" is also possible). The key is saved in the Keychain by the same route as "API" in the settings. If a usable key (or the ChatGPT plan) already exists, nothing is asked.
-- The first time it appears it asks "What would you like to do?" and offers "Look at an existing Workflow" and "Have AI implement Drafts". The former asks for a field (`field` in `demos/en/index.json`) and then a demo in it; the latter asks for a Draft demo. Up to here the app asks with fixed text, so no model is used. It flies to the chosen demo with the demo list open and offers "Open this demo" ("Other demos" chooses again). Only when you write a question or your interests, or press "Ask for a recommendation", does the guide answer with a model, choosing demos that fit by field, description and tags. Once a demo is opened, the thrush of that copy's chat carries on the guide.
-- While not connected to a model (no API key and no ChatGPT sign-in), the bird still appears and answers from a fixed script (`agent/Shared/guide-script.json`, the same file read by the Mac and the Web). It sends nothing anywhere and costs nothing.
-  - The script can guide through copies of three demos: Data to report, Kepler-6 b and Pharmacokinetics. It starts on opening one, or on sending `$demo` in its chat, and proceeds by following the choices. The results of a run lead on separately for success and failure.
-  - In other demos and projects, it offers buttons to open these three. To a free question it replies that connecting Claude (an Anthropic API key) or Codex (an OpenAI API key or ChatGPT sign-in) under "API" in the settings lets it answer, and that `$demo` starts the guide in a demo's copy.
-- The first time the user connects to a model by saving a key (or signing in to ChatGPT), the main window in front asks once "Would you like to see the guide?", noting that the guide uses the model's API and costs money. "See the guide" opens the Data to report demo and starts the guide; "Later" is the same as "Later" in the speech bubble.
-- During the guide, the start and end of runs (succeeded, failed, stopped) and disconnections and reconnections are reported to the chat as they really are. What happens while it is answering is reported after it finishes. The guide's state and the answer to the invitation are saved and not repeated after a restart.
+[Start a guided tour](Usage.md#working-with-the-agent).
 
 ## 10. Demos
 
-The bundled demos, including Draft versions, come in a Japanese set and an English set (`demos/ja`, `demos/en`): the same demos and files, their descriptions, notes and the text of their figures in one language. The app and the Web UI list the set of their language. What you can try, and how each demo's Cards connect and behave, is in [The bundled demos](Demos.md).
-New projects accept a destination that does not yet exist or a completely empty folder (including hidden files). Non-empty destinations are refused without overwriting their contents. The host-side core defines the initial documents, pins them to its build-time Card Nixpkgs revision, validates the folder name and flow direction, and maintains the 30 most recently opened projects for both clients. Forgetting a recent entry leaves its folder intact.
-
-Demo and project copies contain saved files, are writable even from a read-only source, and omit `.tsugumi` run history and state, `.git` repository identity and symbolic links.
-
-Choose "Open a Copy" on a demo from "Browse Demos" on the home screen to get an editable copy in `~/Documents/Tsugumi/<demo>` (`<demo>` is the demo's id; `-2`, `-3`, … is appended if the folder exists).
-
-For the design and implementation, see [Rationale](Rationale.md), [Security and isolation](security.md) and [Limitations](Limitations.md).
+[Choose a bundled demo and try a change](Demos.md). Use [Open a Copy](Usage.md#creating-and-copying-projects) to edit it.

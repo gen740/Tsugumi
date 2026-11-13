@@ -14,7 +14,7 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **Card in Card (child Workflow)** | A Card with a Workflow inside. From outside it looks like one Card; open it to go inside |
 | **Definition** | The folder `definitions/<id>/` that is a Card's substance. One per Card |
 | **Port** | A Card's input or output. Output types are written in `_outputs.fbs`; input types are derived from the connected outputs |
-| **`all` / `any`** | How inputs are awaited. `all` takes one value from each once all required inputs have arrived; `any` consumes them in order of arrival ([Execution semantics](features.md#execution-semantics-scheduler)) |
+| **`allInputs` / `eachInput`** | How inputs are awaited. `allInputs` waits for all required inputs; `eachInput` consumes arrivals independently ([Execution semantics](features.md#execution-semantics-scheduler)) |
 | **`maxRuns`** | The most times a Card can be triggered in one Run. A trigger can start multiple invocations when it uses a run list or receives a batch |
 
 ## Running and recording
@@ -24,9 +24,9 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **Run** | One execution of a Workflow. Records the version (commit) at its start |
 | **Invocation** | One execution of a Card within a Run. In a loop, the same Card is invoked many times |
 | **Batch** | An ordered set of values sent together on one wire. A run list or batch input can produce several invocations for one trigger |
-| **Stage** | A step within an invocation: SDK preparation, Nix evaluation, build, run, output validation, saving ([Stages](features.md#stages)) |
+| **Stage** | A step within an invocation: SDK preparation, Nix evaluation, build, run, output validation, saving ([Inspect a stage](RunHistory.md#inspect-an-invocation)) |
 | **`skipped`** | Downstream of a branch that was not taken. Not a failure |
-| **`blocked`** | A Card that cannot run because it depends on a Draft or a failed upstream Card. Comes with a reason |
+| **`blocked`** | A Card that cannot run because of a failed, blocked or cancelled upstream Card, or missing required inputs. Comes with a reason. Drafts and paths requiring their outputs receive no execution state |
 | **`interrupted`** | A run that was in progress when the process ended abnormally or restarted |
 | **Partial run (single run)** | Running only the chosen Cards, or "from here". Uses saved inputs ([Rerunning from the middle](Rationale.md#rerunning-from-the-middle)) |
 | **Saved inputs** | The full set of inputs of the latest trigger, including any batches. Partial runs use these inputs independently of `recordIO` |
@@ -46,7 +46,7 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **rev** | The document's revision. A save is based on it, and a save based on an old one is refused as a conflict |
 | **Shared VM** | The one Linux VM that the Mac app and the Mac's `tsugumi` command share. Only one of them can use it at a time (`vm.lock`; [Security and isolation](security.md)) |
 | **`tsugumi-vmd`** | The managing process inside the VM. Starts each project's `tsugumid` with its own uid, namespaces and cgroup |
-| **Worker** | The process that runs a Card's code. Can stay resident across runs ([Resident workers](features.md#resident-workers)) |
+| **Worker** | The process that runs a Card's code. Can stay resident across runs ([Worker state](CardGuide.md#worker-state)) |
 | **bubblewrap / Seatbelt** | How Cards are isolated: bubblewrap inside the VM and on Linux, Seatbelt in a Web UI run directly on a Mac from the repository |
 | **pkgsPath** | The nixpkgs that Cards use, pinned (`tsugumi.json`) |
 

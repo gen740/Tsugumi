@@ -40,6 +40,8 @@ The exact types come from the resolved Card contract: `inputs.<port>.<namespace>
 
 `context.Input(port)` and `context.Params` expose owned `Google.FlatBuffers.ByteBuffer` copies for direct generated-table access. `Output(port, builder)` and `OutputBytes(port, bytes)` provide lower-level emission. Each output port is emitted independently; returning from `RunAsync` does not implicitly emit anything.
 
+C# Cards use the Card's own system; `csharpCard` rejects another `system` under emulation. External NuGet dependencies require an explicit lock and hash, and their native libraries are used as published. [NuGet packages](#nuget-packages)
+
 ## Tasks, state and lifetime
 
 The worker waits for the `ValueTask` returned by `RunAsync`. Await every operation that belongs to the invocation, including child Tasks. Fire-and-forget Tasks are not joined and their later exceptions cannot become that invocation's structured failure. Native callbacks remain valid only until the awaited invocation and SDK finalization finish. A saved `Context` rejects later log, display, output, cancellation-status or deadline calls with `ObjectDisposedException`; managed input copies may still be read. The SDK pins output and display buffers only for the synchronous native callback, whose host copies the bytes before returning.

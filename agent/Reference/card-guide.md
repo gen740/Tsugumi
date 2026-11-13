@@ -1,7 +1,6 @@
-# Writing Tsugumi Cards (for the in-app Agent)
+# Card SDK reference
 
-Use `demo_list` and `demo_read` to find the working examples under `demos/`.
-Start with those files when implementing a Card.
+This developer reference is linked from the public Card guide and bundled with the app. The current Agent tools expose bundled demos through `demo_list` and `demo_read`; they do not expose this file.
 
 ## A Card's folder
 
@@ -257,39 +256,7 @@ What `main` or `on_run_start` sets in `os.environ` lasts for that call only.
 
 ### Visualization scaffolds
 
-The Mac/Web creation menu has one Python Card template each for Matplotlib,
-Plotly and Altair. The `kind` parameter chooses line, scatter or histogram.
-The runnable contract is `demos/en/visualization/definitions/line`. Each
-template writes column selection, filtering, sampling and plotting into
-`src/main.py`. The SDK's `input_rows` reads the connected `data` port and
-`emit_figure` saves plotted values and emits the `figure` Directory.
-
-The Directory includes `plotted.csv` and run, Card and invocation metadata.
-Matplotlib saves PNG/SVG/PDF; Plotly and Altair save JSON and offline HTML.
-`max_points` fails on over-limit input. Setting `sample_every` above 1
-explicitly samples in input order, with the sample size shown in the figure
-and metadata. See `docs/Visualization.md` for parameters and boundaries.
-
-### marimo notebooks
-
-The Mac/Web `marimo notebook` starting point is an ordinary Python Card. Its
-complete runnable contract is `demos/en/marimo/definitions/notebook`; shared
-source files are in `ui/templates/marimo.json`. `src/notebook.py` defines a normal
-`marimo.App`. The adapter uses `tsugumi.notebook.bindings(ctx, mapping)` for
-`input.<port>.<field>` / `param.<field>` variable bindings and
-`run(ctx, source_directory, notebook, definitions, selected)` to execute it once
-in a fresh child process. It returns selected JSON-compatible definitions and a
-saved Directory. The ordinary adapter packs those values into its declared
-output schema only after success.
-
-The example emits a finite number on `value` and retains the Directory on
-`report` (`retainArtifact: true`, `artifactOutput: "report"`). `reuseWorker: false`
-keeps process lifetime per invocation. Nix dependencies include `ps.marimo` and
-`ps.matplotlib`; add other imports there. The static snapshot keeps Markdown/HTML,
-text, figures, source and run metadata. Frontend-only widgets have a static note.
-There is no interactive server or reactive downstream emission. `docs/Marimo.md`
-describes configuration-cell override rules, errors and the future editor-session
-boundary. The upstream Card scales 7 by a factor of 2. The notebook visualizes both values and emits 14.
+See [Visualisation templates](../../docs/Visualization.md) for editable plotting Cards and [marimo notebooks](../../docs/Marimo.md) for notebook Cards.
 
 ### bash
 
@@ -482,42 +449,9 @@ a temporary copy and writes only `go.mod` and `go.sum` to the Card's source
 directory. It accepts `--offline` for a populated module cache. Reload the
 project after generating the files, then obtain the hash as above.
 
-## C# / .NET
+## C# and reports
 
-Set `language: "csharp"`. The Card body is a public `Card : Tsugumi.ICard` in `src/Card.cs`; implement `ValueTask RunAsync(Context context)`. Select the generated typed bindings and pinned runtime in `default.nix`:
-
-```nix
-{ pkgs, inputs, params }:
-let sdk = inputs.tsugumi.sdk { languages = [ "csharp" ]; };
-in { run = inputs.tsugumi.csharpCard { inherit sdk; src = ./src; }; }
-```
-
-`context.Inputs.<Port>` unpacks the generated object API (`inputs.<port>.<schema namespace>.<Table>T`); optional ports are nullable. `context.Parameters` is `params.ParamsT`; scalar fields are nullable, so use `??` with a default or throw `new Failure("validation_failed", "missing parameter")`. Emit each port with `context.Outputs.<Port>(new outputs.<port>.<namespace>.<Table>T { ... })`. Port names capitalize their first character. Read the exact schema instead of guessing namespaces.
-
-`DisplayText`, `DisplayMarkdown`, `DisplayScalar`, `DisplayTable`, `DisplayImage`, `DisplayLineChart`, `DisplayPoints`, `DisplayModule` and `Log` write into the current invocation. File/Directory messages contain `Value` paths; write under `OutputDirectory`, then emit the generated message. Text must be valid UTF-8 without embedded NUL. Input/param bytes are managed copies; native callbacks on a retained Context reject use after its invocation.
-
-Await all work belonging to `RunAsync`; pass `context.CancellationToken` to cancellable Tasks. Fire-and-forget Tasks are not joined. `OnRunStartAsync(Context)` resets per-run state; the Card instance and CLR persist across invocations only with `reuseWorker: true`. Exceptions produce structured failures and do not cross the native ABI.
-
-NuGet packages need both `lock = ./packages.lock.json;` (NuGet's own lock file, in the Card's folder) and `hash = "sha256-...";` in `csharpCard`. The lock is the only package list (its `Direct` entries become the references); `hash` is the NAR hash of the `.nupkg` files the lock names, fetched as `<name>-nuget-lock-<lock id>`. The build restores offline in locked mode; nothing is fetched while a Card runs. Never invent a lock, a `contentHash` or a `hash`, and do not add packages on your own: the person chooses them. The bundled `demos/csharp-calibration/definitions/calibrate` is a complete typed, parameterized example with a locked dependency, between C++ and Python Cards.
-
-When asked to make or update a lock:
-
-1. In the project shell, create a temporary .NET project using the Card's
-   framework (net10.0 by default). Put the requested packages in
-   `PackageReference` items and set `RestorePackagesWithLockFile=true`. For
-   example, `<PackageReference Include="Newtonsoft.Json" Version="13.0.3" />`.
-2. From that temporary directory, run
-   `nix shell nixpkgs#dotnet-sdk_10 -c env DOTNET_GENERATE_ASPNET_CERTIFICATE=false dotnet restore`.
-   Copy the resulting `packages.lock.json` beside the Card's `default.nix`,
-   reload the project and confirm the resolved versions.
-3. Give `csharpCard` the arguments `lock = ./packages.lock.json; hash = pkgs.lib.fakeHash;`
-   and run the Card. Copy the `got: sha256-…` value from that Card's build log
-   (`log_range`, stream 4) into `hash`. Run again to check the offline restore.
-   Keep the lock and hash together when updating dependencies.
-
-## R Markdown and Quarto reports
-
-`inputs.tsugumi.reportCard { src = ./src; entry = "report.Rmd"; packages = ps: [ ]; }` runs an R Markdown report; use `report.qmd` for Quarto/knitr. Both produce HTML only. Declare `params: { tsugumi: null }` in the document YAML. R chunks read `params$tsugumi$inputs$data`, `params$tsugumi$params` and File/Directory paths in `params$tsugumi$paths$data`. The adapter returns `report` (Directory) and `html` (File); define both ports, enable `filesystem`, and retain `report` as an artifact. The Mac/Web Add Card menus provide matching scaffolds, and `demos/en/r-reports` / `demos/ja/r-reports` show an aggregation feeding both formats. HTML embeds assets and the saved preview is static; PDF requires a separate pinned toolchain and is not supported. See docs/Reports.md.
+See [C# Cards](../../docs/CSharp.md) for typed APIs, Tasks and NuGet locks, and [R Markdown / Quarto](../../docs/Reports.md) for report Cards.
 
 ## Rust Cards
 
@@ -576,7 +510,7 @@ than returning an input's owned object. `Some` emits a port; `None` omits it and
 normal required-output validation still applies. Integers remain native `i64`/
 `u64`, including values outside a double's exact range.
 
-The worker retains the library and its state by default. Use
+With `reuseWorker: true`, the worker retains the library and its state. By default each invocation starts fresh. Use
 `tsugumi::export!(run, on_run_start)` with a `fn(&Context<'_>) -> Result<()>`
 hook for per-run initialization; `reuseWorker: false` starts fresh each call.
 Keep owned state in ordinary Rust synchronization/thread-local containers.
@@ -598,7 +532,6 @@ abort, double panic during unwinding and native crashes still terminate the
 worker, and the daemon records that failure. Cancellation/deadlines stop even
 uncooperative native code; check the context for cooperative early exit.
 
-
 Card-owned views: declare `views.name = inputs.tsugumi.viewModule { src = ./view; };`
 next to `run` in default.nix. The local ES module exports initialise(root, data, size),
 update(data), resize(size) and dispose(). `data` is `{config, blobs}`; blobs are
@@ -606,14 +539,6 @@ Uint8Array values; size has width, height, pixelRatio and visible. Local JS impo
 and Wasm imports are bundled at build time; runtime fetch is disabled. Python
 `ctx.display_module("name", config, {"points": packed_bytes})` publishes binary data
 without sending the code. Built-in plotly and vega-lite use the same mechanism.
-See docs/CardGuide.md, "Card-owned web views", for isolation and snapshot details.
+See [Card-owned web views](../../docs/CardGuide.md#card-owned-web-views) for the view API and snapshots, and [Security](../../docs/security.md) for isolation.
 
-
-Line-chart SDK calls keep their public names and now publish the built-in
-`line-chart` view. Its JSON contains `series: [{id, label, offset, count}]`;
-`x` and `y` blobs hold concatenated little-endian float64 coordinates. Offsets
-are element indexes. The view subtracts the visible origin in double precision
-before creating float32 GPU vertices. It shares the isolated frame, live update,
-thumbnail and light/dark appearance behavior of all view modules. The remaining
-planned view features are the standard-webgpu.h Wasm template/header and an
-optional module-to-worker channel relayed through RPC.
+For line-chart data and rendering behaviour, see [Built-in line chart](../../docs/CardGuide.md#built-in-line-chart).

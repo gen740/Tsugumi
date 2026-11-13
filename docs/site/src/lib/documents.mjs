@@ -8,7 +8,7 @@ const REPO = 'https://github.com/gen740/Tsugumi'
 const SITE = 'https://gen740.github.io/Tsugumi/'
 const RAW = 'https://raw.githubusercontent.com/gen740/Tsugumi/main'
 /** Documents an agent can skip when it needs less context ("Optional" in llms.txt). */
-const SECONDARY = ['docs/Lock.md', 'docs/LicenseAudit.md']
+const SECONDARY = ['docs/LicenseAudit.md']
 
 /** Pages read with the thread and the moving figures, in the order the slide show goes through them. */
 const STORY = [

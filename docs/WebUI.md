@@ -3,20 +3,7 @@
 The browser workbench supports editing and running Workflows, inspecting results and working with the Agent. It uses the same project and RPC contract as the macOS app. The host environment, rendering support and some shortcuts depend on how you run it. [Workbench operations](Usage.md) · [Platform behaviour](#the-tsugumi-command)
 File paths and commands on this page are relative to the root of the repository.
 
-## Architecture
-
-The `web/` server runs a `tsugumid` per project. The installed [`tsugumi` command](#the-tsugumi-command) runs Cards directly on Linux, in the same shared Linux VM as the macOS app on a Mac, and in WSL2 on Windows. When starting from the repository for development, the server can run the daemon directly on the host. The diagram below describes a daemon running directly.
-The browser connects **directly** to `tsugumid`'s WebSocket `/rpc` with the FlatBuffers RPC, as an equal client using the same contract as the macOS app and the Agent.
-
-```text
-Browser (React UI + WebGPU rendering) ── WebSocket /rpc (FlatBuffers) ── tsugumid (runs directly on the host, one per project)
-        └─ HTTP /api ── Node server (startup, files, Agent) ── Unix socket ──┘
-```
-
-- `tsugumid` allows only the UI's origins (`http://127.0.0.1:<port>` and `http://localhost:<port>`) with `--allow-origin`, and the token is sent only in SessionHello (never in a URL or a log).
-- The Node server (`web/server/`) takes on only what a browser cannot do: operations on project folders (creating, copying demos, choosing folders, reading a project to import as a Card in a Card), starting and stopping `tsugumid`, import grants, loading Skills, the Agent and the model's API key, and signing in to ChatGPT (`chatgpt.json` in the data folder, 0600). It listens only on `127.0.0.1`, checks the `Host` header, and requires, on APIs that change something, a header only a same-origin page can send.
-- The Agent runs on the server side, and the tool definitions and the JSON ⇄ FlatBuffers conversion are made from `tsugumi.bfbs` as in the macOS version. It connects to `tsugumid` over a Unix socket.
-- Line charts use the SDK-pinned WebGPU view module shared with the Mac app. It receives binary double-precision series data in the same isolated frame as other views. In a browser without WebGPU, the reason is shown.
+The browser and Agent use the [project RPC](Protocol.md); review the [execution and data boundaries](security.md) for the chosen host.
 
 ## The tsugumi command
 
@@ -49,13 +36,13 @@ What it shares with the desktop app (the release) and what it does not:
 
 As `vm.lock` says, only one app at a time can use the VM. If the desktop app has a project open, the page says so, and the other way round. Stopping the server stops the VM too. If the desktop app and the `tsugumi` command are different versions, switching between them has the VM assemble that version of Tsugumi again (Nix's cache makes it short from the second time).
 
-**On Linux**, `tsugumid` built with Nix runs directly on this host, and Cards are isolated with bubblewrap (`nix/cli.nix`). The terminal's `node-pty` is built with it. Data is in `~/.local/share/tsugumi-web`, and the API key is a 0600 file in it. Installation, connecting from a browser and running demos were checked in an OrbStack VM (Ubuntu 26.04, aarch64). It was also run on x86_64 Ubuntu (a friend's environment).
+**On Linux**, `tsugumid` built with Nix runs directly on this host, and Cards are isolated with bubblewrap (`nix/cli.nix`). The terminal's `node-pty` is built with it. Data is in `~/.local/share/tsugumi-web`, and the API key is a 0600 file in it.
 
 **On Windows**, `tsugumi.cmd` runs the Linux version inside WSL2 (`cli/install.ps1`). `tsugumid` needs Nix and bubblewrap, so it does not run on native Windows. The server recognises WSL by the environment variable `WSL_DISTRO_NAME` and opens the Windows browser; the page and `tsugumid`'s ports are reached through WSL's localhost forwarding.
 
 ### Running it on another machine, over SSH
 
-You can run `tsugumi` on a Linux machine and use it from the browser at hand through SSH port forwarding. On an x86_64 NixOS machine, this setup was checked through running whole demos, intentional failures, partial runs, restoring results after a reload, and the terminal.
+You can run `tsugumi` on a Linux machine and use it from the browser at hand through SSH port forwarding.
 
 Besides the server (port 8780), the page connects directly by WebSocket to the `tsugumid` of the open project. `tsugumid` listens on a free port of that machine's `127.0.0.1`, and the number changes each time a project is opened. Forwarding only 8780 is therefore not enough to connect to a project: also forward the project's port shown on screen.
 
@@ -102,27 +89,11 @@ The TypeScript bindings and `tsugumi.bfbs` are generated into `web/src/gen` by `
 
 ## Isolation (macOS host)
 
-Isolation for the development setup running directly on a Mac host from the repository. The installed `tsugumi` command runs Cards in the shared Linux VM.
-
-A `tsugumid` running directly on the host isolates `sandbox: true` Cards with `sandbox-exec` (Seatbelt; deprecated, but it works on current macOS) instead of bubblewrap (`core/src/worker_proc.cc`).
-
-- No network (unless the Card allows it).
-- Readable: only `/nix/store`, the run's and inputs' areas, system libraries and the worker itself. Not the home folder or the project's documents.
-- Writable: only the worker's own folder (not its scripts) and the run's output folder (`runs/<run>/work/…/out`). On Linux the output folder is passed through `/proc/self/fd`; macOS has none, so it is passed by path.
-- Unlike bubblewrap, checking whether a file exists (`stat`) is allowed everywhere (contents cannot be read), and uids are not separated.
-- Sharing a Mac folder with a Card (`/host/<name>`) needs the shared VM, so it is not available in a Web UI running directly on a Mac host (it is with the `tsugumi` command). Folders cannot be added in a Card's settings, and a Card that already has one says so (running it fails). On Linux with bubblewrap it should work without the shared VM (not checked here).
-- A Card allowed the network still cannot connect to this machine itself (so it cannot touch tsugumid or the web server): not loopback, nor its LAN or VPN addresses, nor `0.0.0.0` (Seatbelt's `localhost` means all of this machine's addresses). Unix sockets are closed too. The one exception is `mDNSResponder`'s socket (`/var/run/mDNSResponder`): name resolution on macOS goes through it, so closing it would make names unresolvable. That socket is also the gateway to DNS-SD, so through the same path a Card can browse and advertise services on the LAN.
-- The only Mach service a Card allowed the network can use is `com.apple.trustd.agent`, used for certificate validation. It cannot reach the clipboard, LaunchServices (opening apps and URLs) or Apple Events. Name resolution and HTTPS work with this (checked with Python, curl, Go and NSURLSession). On the other hand, as with Cards without network, user information (`getpwuid`) cannot be looked up, so `ssh` fails with `No user exists for uid`. System proxy settings are not read.
-- Three paths cannot be closed. On networks where they matter, do not give someone else's Card `network: true`.
-  - **Other devices on the same LAN or VPN can be reached.** Seatbelt's destinations can only be `*` and `localhost`; specific addresses or ranges cannot be denied.
-  - **UDP broadcast and multicast reach this machine too.** A service listening for UDP on `0.0.0.0` can be reached and its replies received. There is no way to stop only broadcasts, and stopping them would mean closing UDP altogether, so it is left open. tsugumid and the web server do not use UDP.
-  - **A Card can open a listening socket.** Connecting to it from this machine was confirmed; other devices on the LAN can reach it too if the firewall lets them.
-- For folders attached to the chat, tsugumid reads only what the server wrote into `attached.json` in the control folder (it cannot be changed through RPC).
-- A `sandbox: false` Card runs on this machine with the user's own permissions. Before turning off "Restrict file access" in a Card's settings, confirm this (`tsugumid` does not judge it). To run someone else's Cards on Linux, run `tsugumid` inside an isolated container.
+Starting the repository's daemon directly on a Mac uses Seatbelt. Review its [weaker guarantees and network limits](security.md#direct-macos-host) before running untrusted Cards. The installed Mac command uses the shared VM instead.
 
 ## Several projects
 
-Each browser tab can open a different project (how this corresponds to the app's windows: [Several projects in Features](features.md#several-projects)). ⌘O, demos and duplicates from a project's tab open in a new tab, and "Open Home in a New Tab" on the Canvas adds a Home tab. A browser cannot bring another tab to the front, though, so the same project can be open in two tabs (equal clients of the same `tsugumid`; a save in one shows in the other). Going back Home closes that project's windows, such as Card settings. If no other tab shows the same project, the chat's work and the terminal are stopped, and so is `tsugumid` (tabs of child Workflows close with it).
+Each browser tab can open a different project (how this corresponds to the app's windows: [Several projects](Usage.md#several-projects)). ⌘O, demos and duplicates from a project's tab open in a new tab, and "Open Home in a New Tab" on the Canvas adds a Home tab. A browser cannot bring another tab to the front, though, so the same project can be open in two tabs (equal clients of the same `tsugumid`; a save in one shows in the other). Going back Home closes that project's windows, such as Card settings. If no other tab shows the same project, the chat's work and the terminal are stopped, and so is `tsugumid` (tabs of child Workflows close with it).
 
 The server runs one `tsugumid` per project and knows which tab shows which project (`POST /api/page`), so a project Claude Code opened is shown in a tab showing it or in a Home tab, and a tab showing another project is not switched.
 

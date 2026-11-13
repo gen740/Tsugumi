@@ -8,8 +8,6 @@ That is the default kernel of Apple `container` 0.6.0, the version
 `versions.env` pins
 ([DefaultsStore.swift](https://github.com/apple/container/blob/0.6.0/Sources/ContainerPersistence/DefaultsStore.swift)).
 
-Checked on 2026-11-05 against the copy `container` installed under
-`~/Library/Application Support/com.apple.container/kernels/`. The file is the
-output of Linux's Kconfig for Kata's configuration; Kata Containers is under
+The file is the output of Linux's Kconfig for Kata's configuration; Kata Containers is under
 Apache-2.0. `kernel.nix` applies its changes to it when it builds, and the result
 is `kernel-config` in `licenses.tar.gz` of the boot disk's release.

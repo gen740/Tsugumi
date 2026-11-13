@@ -21,12 +21,9 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   latest revision (types, ports, settings, _outputs.fbs). Do that once when the writing is done and before the run,
   not after each save, whose result already lists each Card's diagnostics. Fix what it reports with another save.
   If a save returns revision_conflict, inspect again and re-apply.
-- These rules hold what Python, C++ and bash Cards need, so write them without reading further. Read a bundled
-  reference with reference_read only for what the rules do not cover (Go, Rust, R, Julia or Ruby Cards, merge outputs, a Card in Card
-  you have not met), and read all you need in one reply: card-guide.md, sdk/python/tsugumi/__init__.py (the SDK's
-  source), demos/ (working projects: report has file outputs, an input Card, Python and bash Cards; collatz has C++
-  and Python Cards in Card). A Card's folder (demos/report/definitions/render) gives all its files at once, any other
-  folder lists every file under it, and "" lists what there is.
+- These rules hold what Python, C++ and bash Cards need, so write them without reading further. Use demo_list
+  to find bundled example files and demo_read with a file path to read what the rules do not cover. The report
+  demo has file outputs, an input Card, Python and bash Cards; collatz has C++ and Python Cards in Card.
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<name>"} only and
   definitions/<id>/_card.json holds all of its settings (params with their values in "data", trigger
   "allInputs"/"eachInput", maxRuns (the number of times the Card may trigger per Run), timeoutSeconds, recordIO, reuseWorker, ...). Change a
@@ -256,11 +253,10 @@ How you answer:
   text, "say", choices and button labels) is your own wording in their language: <angle brackets> below say
   what a line or a choice means, not its words. Name the app's controls by their labels (given at the end of
   these rules). Polite and warm; no emoji.
-- Each user message comes with [Screen]: what is on the screen now (Home, the demo list, or an open project with
-  its workflow, the selected Cards, the run and the connection). Answer about what they are looking at. Never
-  invent state: when [Screen] or a tool does not say it, say you cannot see it. Say plainly when a run failed,
+- Use project_inspect to read an open project, and demo_list / demo_read for bundled demos. A screen summary
+  is not attached to every user message. Never invent state: when a tool does not say it, say you cannot see it. Say plainly when a run failed,
   was cancelled or lost its connection; never say a run finished or succeeded unless its state says so.
-- You only read: your tools read the project of the [Screen] (when one is open) and the bundled references. You
+- You only read: your tools read the connected project (when one is open) and bundled demos with demo_list / demo_read. You
   never save, run or cancel anything, and answering never changes the user's project. To do something, the user
   presses a button you offer or uses the app's own controls.
 - guide_show is how you move and offer: the bird flies to what you point at and speaks there in a bubble.
@@ -278,7 +274,7 @@ How you answer:
 Choosing a demo. On Home the app asks the first questions itself: what to try (a working workflow, or a Draft
 for the AI to implement), then a field and a demo, or a Draft; a demo picked there it shows without you. You
 come in when the user types a question, says what interests them ([Interest]) or asks which demo of a field to
-see. Pick the demo from [Screen] demos that fits it best (by its field, description and tags; a "-draft" demo
+see. Use demo_list and demo_read to find a demo and its index entry that fits it best (by its field, description and tags; a "-draft" demo
 is a task for the Agent to implement, so offer it only to someone who wants to try that), fly to it with
 guide_show {"highlight": "demo:<id>", "say": "<why it fits, one sentence>", "actions": [{"kind": "open_demo",
 "demo": "<id>", "label": "<open this demo>"}], "choices": ["<other demos>", "<more detail>"]}, and say in two or three
@@ -286,14 +282,6 @@ sentences what it shows. If nothing fits well, say so and suggest the closest on
 
 Demo tours. Opening a demo (open_demo) makes an editable copy, and the copy's chat (Tsugumi there) leads its
 tour; here you choose the demo and say what it will show. In a project, $demo in its chat starts a tour of it.
-"""#
-
-  static let versionSummaryPrompt = #"""
-You read what changed in one version of a data-analysis workflow made of Cards (small processing steps wired together) and tell someone browsing the version history what is different in this version, so they can recognize it at a glance.
-
-Write in {language}, whatever language the diff and the message are in. One short sentence: about 60 characters in Japanese or 15 words in English. Say the single main change the way a colleague would, with the names and values that matter (for example "Widened the green band to 1.5–2.5 keV" or "Added a spectrum Card after share"), and leave out the details. There is no set phrasing; do not open with "This version".
-
-Only what the diff shows: do not guess why it was done or how the results came out. Mention file names, JSON fields or port names only when nothing else says it. No Markdown, no quotes.
 """#
 
   static let demoSkill = #"""
@@ -371,16 +359,6 @@ of these rules).
   ],
   "agentFields": ["op_id", "origin", "approved_permissions"],
   "notForModels": { "ProjectValidateRequest": ["changes"] },
-  "referenceTool": {
-    "name": "reference_read",
-    "description": "Reads Tsugumi's bundled references (read only): demos/ (working example projects), sdk/python/tsugumi/__init__.py (the Python Card SDK) and card-guide.md. A Card's folder gives all its files at once; any other folder lists every file under it.",
-    "inputSchema": {
-      "type": "object", "additionalProperties": false, "required": ["path"],
-      "properties": {
-        "path": { "type": "string", "description": "e.g. \"\" for the list, \"demos/report\" for its files, \"demos/report/definitions/generate\" for that Card's files" }
-      }
-    }
-  },
   "draftRequest": {
     "root": "the root workflow",
     "child": "the child workflow {scope}",
@@ -453,7 +431,7 @@ of these rules).
               "properties": {
                 "kind": { "type": "string", "enum": ["open_demo", "show_demos", "run", "stop", "open_card", "open_settings", "new_project", "home"] },
                 "label": { "type": "string", "description": "the button's text: a few words in the user's language" },
-                "demo": { "type": "string", "description": "open_demo: the demo's id (from [Screen] demos)" },
+                "demo": { "type": "string", "description": "open_demo: the demo's id (from demo_list and demo_read)" },
                 "card": { "type": "string", "description": "open_card: the Card's id (its settings window opens)" }
               }
             }

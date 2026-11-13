@@ -80,7 +80,7 @@ An app built from source is the **development version** (Tsugumi Dev). It is a s
 - Xcode or the Command Line Tools
 - Only to build the VM's boot disk (when there is no [published one](https://github.com/gen740/tsugumi-vm)): Apple container (the version is `TSUGUMI_CONTAINER_VERSION` in [macOS/Container/versions.env](../macOS/Container/versions.env); after `container system start`)
 
-The pinned versions of the dependencies are in [docs/Lock.md](Lock.md).
+Dependency pins are defined in [flake.lock](../flake.lock), [Package.swift](../macOS/Package.swift) and the relevant package lock files.
 
 ### Minimal steps
 
