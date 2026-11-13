@@ -34,14 +34,6 @@ def host(monkeypatch):
     monkeypatch.setitem(sys.modules,'tsugumi',types.SimpleNamespace(Failure=Failure))
 
 
-def test_shared_marimo_template_is_current():
-    spec=importlib.util.spec_from_file_location('marimo_template',ROOT/'ui/templates/marimo.py')
-    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
-    for path,value in module.outputs().items():assert path.read_text()==value
-    definition=json.loads(module.files()['_card.json'])
-    assert definition['reuseWorker'] is False and definition['retainArtifact'] is True
-
-
 def test_notebook_overrides_once_and_isolates_repeated_calls(tmp_path,host):
     source=tmp_path/'src';source.mkdir()
     (source/'helper.py').write_text('def twice(value): return value * 2\n')

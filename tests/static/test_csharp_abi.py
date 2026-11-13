@@ -9,7 +9,7 @@ compare field order, field types and callback signatures, and that the two
 layout tables (host.cc, Layout.cs) name every field. Appending a callback to
 abi.h without the C# side fails here.
 
-Runs with pytest, or alone: python3 tests/python/test_csharp_abi.py
+Runs with pytest, or alone: python3 tests/static/test_csharp_abi.py
 """
 from __future__ import annotations
 

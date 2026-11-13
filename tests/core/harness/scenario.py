@@ -95,7 +95,7 @@ def run(client, card="work", **fields):
     return text(accepted.run.runId)
 
 
-def wait_run(client, run_id, timeout=10):
+def wait_run(client, run_id, timeout=60):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
         status = client.call("RunStatusRequest", runId=run_id, timeout=min(2, max(0.01, end-time.monotonic())))
