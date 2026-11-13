@@ -165,7 +165,7 @@ struct VersionTreeView: View {
   @State private var name = ""
   @State private var message = ""
   @State private var confirmStart: String?
-  @AppStorage(VersionSummarizer.defaultsKey) private var summaries = false
+  @HostStorage(VersionSummarizer.defaultsKey) private var summaries = false
   @State private var confirmSummaries = false
   // The version under the pointer, where the pointer came in, and the one
   // whose panel shows (a moment later).

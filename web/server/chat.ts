@@ -1,24 +1,20 @@
 // Chat, Agent and the settings it needs (skill folders, model connection,
 // API key) for the host server. Routes are merged into the server's table.
-import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { AGENT, modelChoices } from '../src/shared/agentShared'
-import { type AgentEvent, DEMO_SKILL, guideText, type ProviderConfig } from './agent'
+import { type AgentEvent, guideText, type ProviderConfig } from './agent'
 import { CoreAgentHost, CoreAgentError, RemoteAgent } from './coreAgent'
-import { keychainReader } from './keychain'
-import { withModelList } from './modelList'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
 import { Environments, projectKey } from './env'
-import { DesktopSettings } from './desktop'
 import { L, language, setLanguage, type Language } from './i18n'
 
 export interface ChatContext {
   support: string
   envs: Environments
   /** The desktop app's settings, when this server shares them (the Mac's tsugumi command). */
-  desktop?: DesktopSettings
+  desktop?: boolean
   projectDir: (p: unknown) => string
   broadcast: (v: unknown) => void
   httpError: (status: number, message: string) => Error
@@ -56,11 +52,6 @@ interface Settings {
   effort: string
   fastModel: string
   fixturePort: number
-  /** Models listed earlier with "List Models" (no request from the chat). */
-  /** Models listed with "List Models", per connection (no request from the chat). */
-  models: Partial<Record<'anthropic' | 'openai' | 'chatgpt', string[]>>
-  /** Their display names (the ChatGPT account's catalog has them). */
-  modelNames: Record<string, string>
   /** What the Agent may give Cards without asking (network, sandbox_off,
    *  host_folder_read, host_folder_write); the rest waits for the user. */
   allowedPermissions: string[]
@@ -82,131 +73,67 @@ interface GuideTour { demo: string; title: string; path: string; started: boolea
 interface GuideState { setupDone: boolean; demoAnswered: boolean; tour: GuideTour | null }
 
 export const PERMISSION_KINDS = ['network', 'sandbox_off', 'host_folder_read', 'host_folder_write']
-const settingsFile = () => path.join(ctx.support, 'settings.json')
-const defaultSettings: Settings = {
-  skillFolders: [], provider: 'anthropic', model: 'claude-sonnet-5-5', openAIModel: 'gpt-6.1-sol', chatGPTModel: 'gpt-6.1-sol', effort: '', fastModel: '', fixturePort: 8765,
-  models: {}, modelNames: {}, allowedPermissions: [], webSearch: false,
-  guide: { setupDone: false, demoAnswered: false, tour: null },
-  versionSummaries: false,
-  language: 'ja',
+// The host keeps presentation snapshots only; persistence and validation are RPC.
+const SHARED_KEYS: Record<string, string> = {
+  provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
+  effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort', allowedPermissions: 'agent.permissions.allowed',
+  webSearch: 'agent.webSearch', versionSummaries: 'versions.summaries', language: 'app.language',
 }
-const settings = (): Settings => {
-  const s: Settings = { ...defaultSettings, ...ctx.readJSON<Partial<Settings>>(settingsFile(), {}), ...ctx.desktop?.values }
-  if (s.language !== 'en') s.language = 'ja'
-  setLanguage(s.language)
-  return s
-}
-const saveSettings = (s: Settings) => {
-  ctx.desktop?.save(settings(), s)
-  ctx.writeJSON(settingsFile(), s)
-  setLanguage(s.language)
-}
-
-/** Only these keys are written from the page (never a key or anything else). */
-function cleanSettings(b: Record<string, unknown>): Partial<Settings> {
-  const out: Partial<Settings> = {}
-  if (Array.isArray(b.skillFolders)) {
-    out.skillFolders = b.skillFolders.filter((f) => f && typeof f.path === 'string').map((f) => ({ path: String(f.path), enabled: f.enabled !== false }))
+const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders', guide: 'web.guide' }
+const localProfile = () => `web:${ctx.support}`
+const settingsProfile = () => ctx.desktop ? 'desktop' : localProfile()
+const revisions: Record<string, number> = {}
+let snapshot = {} as Settings
+const settings = (): Settings => snapshot
+async function loadSettings() {
+  await core.provisionEnvironment()
+  const next: any = {}
+  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS]] as const) {
+    const reply = await core.getSettings(profile)
+    revisions[profile] = reply.revision
+    const values = Object.fromEntries(reply.values.map((s) => [s.key, JSON.parse(s.value_json)]))
+    for (const [name, key] of Object.entries(keys)) if (values[key] !== undefined) next[name] = values[key]
   }
-  if (b.provider === 'anthropic' || b.provider === 'openai' || b.provider === 'chatgpt' || b.provider === 'fixture') out.provider = b.provider
-  if (typeof b.versionSummaries === 'boolean') out.versionSummaries = b.versionSummaries
-  if (typeof b.model === 'string') out.model = b.model.trim()
-  if (typeof b.openAIModel === 'string') out.openAIModel = b.openAIModel.trim()
-  if (typeof b.chatGPTModel === 'string') out.chatGPTModel = b.chatGPTModel.trim()
-  if (b.effort === '' || AGENT.modelOptions.efforts.includes(b.effort as string)) out.effort = b.effort as string
-  if (typeof b.fastModel === 'string') out.fastModel = b.fastModel
-  if (typeof b.fixturePort === 'number' && Number.isInteger(b.fixturePort) && b.fixturePort > 0 && b.fixturePort < 65536) out.fixturePort = b.fixturePort
-  if (b.models && typeof b.models === 'object' && !Array.isArray(b.models)) {
-    const m = b.models as Record<string, unknown>
-    out.models = Object.fromEntries((['anthropic', 'openai', 'chatgpt'] as const).filter((k) => Array.isArray(m[k]))
-      .map((k) => [k, (m[k] as unknown[]).filter((x): x is string => typeof x === 'string')]))
-  }
-  const allowed = b.allowedPermissions
-  if (Array.isArray(allowed)) out.allowedPermissions = PERMISSION_KINDS.filter((k) => allowed.includes(k))
-  if (typeof b.webSearch === 'boolean') out.webSearch = b.webSearch
-  if (b.language === 'ja' || b.language === 'en') out.language = b.language
-  return out
+  snapshot = { ...next, guide: next.guide ?? { setupDone: false, demoAnswered: false, tour: null } }
+  setLanguage(snapshot.language)
 }
-
-// Model credentials stay on this host, one Keychain item per provider (the
-// same items as the macOS app: service app.tsugumi.agent, account = the
-// provider's name). They are never sent to the page, tsugumid or Card
-// workers, and never written to project files, settings or logs.
-const KEYCHAIN_SERVICE = 'app.tsugumi.agent'
-const PROVIDERS = {
-  anthropic: { name: 'Anthropic', env: 'ANTHROPIC_API_KEY', file: 'anthropic-key' },
-  openai: { name: 'OpenAI', env: 'OPENAI_API_KEY', file: 'openai-key' },
-} as const
+async function patchSettings(change: Partial<Settings>, expected: Record<string, number> = { ...revisions }) {
+  const patches = new Map<string, { key: string; value_json: string }[]>()
+  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS]] as const) {
+    const changes = Object.entries(keys).filter(([name]) => name in change).map(([name, key]) => ({ key, value_json: JSON.stringify((change as any)[name]) }))
+    if (changes.length) patches.set(profile, [...(patches.get(profile) ?? []), ...changes])
+  }
+  for (const [profile, changes] of patches) {
+    await core.user.call('SettingsUpdateRequest', { profile, revision: expected[profile], changes, client: 'web' })
+  }
+  await loadSettings()
+}
+async function saveSettings(next: Settings) { await patchSettings({ guide: next.guide }) }
+const PROVIDERS = { anthropic: { name: 'Anthropic', env: 'ANTHROPIC_API_KEY' }, openai: { name: 'OpenAI', env: 'OPENAI_API_KEY' } } as const
 type KeyedProvider = keyof typeof PROVIDERS
-const keyFile = (p: KeyedProvider) => path.join(ctx.support, PROVIDERS[p].file)
-
-function run(cmd: string, args: string[], input?: string): Promise<{ code: number; out: string }> {
-  return new Promise((resolve) => {
-    const c = execFile(cmd, args, (err, stdout) => resolve({ code: err ? (typeof err.code === 'number' ? err.code : 1) : 0, out: stdout.trim() }))
-    if (input !== undefined) c.stdin?.end(input)
-  })
+function keyedProvider(id: unknown): KeyedProvider {
+  if (id === 'anthropic' || id === 'openai') return id
+  throw ctx.httpError(400, 'Unknown provider')
 }
-
-const keychain = keychainReader(run, KEYCHAIN_SERVICE)
-
-async function keychainKey(p: KeyedProvider): Promise<string | undefined> {
-  if (process.platform !== 'darwin') return undefined
-  return keychain.read(PROVIDERS[p].name)
+async function keySource(p: KeyedProvider) {
+  return core.keys.source(p, settingsProfile())
 }
-
-async function apiKey(p: KeyedProvider): Promise<string | undefined> {
-  const env = process.env[PROVIDERS[p].env]
-  if (env) return env
-  const k = await keychainKey(p)
-  if (k) return k
-  try {
-    return fs.readFileSync(keyFile(p), 'utf8').trim() || undefined
-  } catch {
-    return undefined
-  }
+async function saveKey(p: KeyedProvider, key: string) {
+  const source = await core.keys.save(p, key, settingsProfile())
+  return source === 'keychain'
+    ? L('Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。')
+    : L('agentd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。')
 }
-
-/** Where a provider's key is (for the settings page; never the key itself). */
-async function keySource(p: KeyedProvider): Promise<'env' | 'keychain' | 'file' | null> {
-  if (process.env[PROVIDERS[p].env]) return 'env'
-  if (process.platform === 'darwin' && (await keychain.exists(PROVIDERS[p].name))) return 'keychain'
-  return fs.existsSync(keyFile(p)) ? 'file' : null
-}
-
-async function saveKey(p: KeyedProvider, raw: string) {
-  const key = raw.trim()
-  // An API key is printable ASCII without spaces or quotes.
-  if (!/^[\x21-\x7e]+$/.test(key) || /["\\]/.test(key)) throw ctx.httpError(400, L('API キーに使えない文字が含まれています。'))
-  if (process.platform === 'darwin') {
-    // The secret goes to `security` on its standard input, never as an argument.
-    const r = await run('security', ['-i'], `add-generic-password -U -s "${KEYCHAIN_SERVICE}" -a "${PROVIDERS[p].name}" -w "${key}"\n`)
-    keychain.forget(PROVIDERS[p].name)
-    if (r.code === 0 && (await keychainKey(p)) === key) {
-      fs.rmSync(keyFile(p), { force: true })
-      return L('Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。')
-    }
-  }
-  fs.mkdirSync(ctx.support, { recursive: true })
-  fs.writeFileSync(keyFile(p), key, { mode: 0o600 })
-  fs.chmodSync(keyFile(p), 0o600)
-  return L('{0}（0600）に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。', keyFile(p))
-}
-
 async function deleteKey(p: KeyedProvider) {
-  if (process.platform === 'darwin') {
-    await run('security', ['delete-generic-password', '-s', KEYCHAIN_SERVICE, '-a', PROVIDERS[p].name])
-    keychain.forget(PROVIDERS[p].name)
-  }
-  fs.rmSync(keyFile(p), { force: true })
-  return L('{0} のキーを削除しました。', PROVIDERS[p].name) + (process.env[PROVIDERS[p].env] ? L('（環境変数 {0} は残っています）', PROVIDERS[p].env) : '')
+  await core.keys.delete(p, settingsProfile())
+  return L('{0} のキーを削除しました。', PROVIDERS[p].name)
 }
 
-// Sign in with ChatGPT: this server's registrations and tokens, in a 0600
-// file of its data folder. TSUGUMI_CHATGPT_ISSUER and TSUGUMI_CHATGPT_API
-// point the sign-in and the requests at the local fixture (tests only).
+// Browser sign-in and account status are scoped to this Web host in agentd.
+// Test overrides point the issuer and resource at the local OAuth fixture.
 let chatGPTAuth: ChatGPTAuth | undefined
-const chatgpt = () => (chatGPTAuth ??= new ChatGPTAuth(path.join(ctx.support, 'chatgpt.json'),
-  process.env.TSUGUMI_CHATGPT_ISSUER ? endpointsFor(process.env.TSUGUMI_CHATGPT_ISSUER, OPENAI_ENDPOINTS.resource) : OPENAI_ENDPOINTS, (method, fields) => core.user.call(method, fields)))
+const chatgpt = () => (chatGPTAuth ??= new ChatGPTAuth(localProfile(),
+  process.env.TSUGUMI_CHATGPT_ISSUER ? endpointsFor(process.env.TSUGUMI_CHATGPT_ISSUER, process.env.TSUGUMI_CHATGPT_API ?? OPENAI_ENDPOINTS.resource) : OPENAI_ENDPOINTS, (method, fields) => core.user.call(method, fields)))
 /** The last sign-in started from the page: its outcome, once it came. */
 let signInOutcome: { ok: boolean; message: string; welcome?: string } | null = null
 
@@ -219,23 +146,27 @@ async function provider(): Promise<ProviderConfig> {
  *  use provider(), without them. */
 async function chatProvider(): Promise<ProviderConfig> {
   const p = await provider(), s = settings()
-  return { ...p, ...modelChoices(s.provider, p.model, s.effort, s.fastModel) }
+  return { ...p, usesChoices: true, ...modelChoices(s.provider, p.model, s.effort, s.fastModel) }
 }
 
-/** A connection with its chosen model (each keeps its own); its key or token when it has one. */
+/** Presentation labels and opaque service references for the chosen model. */
 async function providerFor(id: ProviderId): Promise<ProviderConfig> {
+  return { ...await providerDisplay(id), profile: settingsProfile(), accountProfile: localProfile() }
+}
+
+async function providerDisplay(id: ProviderId): Promise<ProviderConfig> {
   const s = { ...settings(), provider: id }
   if (s.provider === 'fixture') {
-    return { name: 'Local fixture', baseURL: `http://127.0.0.1:${s.fixturePort}`, model: 'fixture', api: 'anthropicMessages', auth: 'none', maxTokens: 32768, contextLimit: 6000 }
+    return { name: 'Local fixture', model: 'fixture', api: 'anthropicMessages', auth: 'none' }
   }
   if (s.provider === 'chatgpt') {
-    return { name: 'ChatGPT', baseURL: process.env.TSUGUMI_CHATGPT_API ?? 'https://api.openai.com', model: s.chatGPTModel || defaultSettings.chatGPTModel,
-             api: 'openAIResponses', auth: 'chatgpt', token: (stale) => chatgpt().accessToken(stale), maxTokens: 32768, contextLimit: 180_000, webSearch: s.webSearch }
+    return { name: 'ChatGPT', model: s.chatGPTModel,
+             api: 'openAIResponses', auth: 'chatgpt' }
   }
   if (s.provider === 'openai') {
-    return { name: 'OpenAI', baseURL: 'https://api.openai.com', model: s.openAIModel || defaultSettings.openAIModel, api: 'openAIResponses', auth: 'apiKey', apiKey: await apiKey('openai'), maxTokens: 32768, contextLimit: 180_000, webSearch: s.webSearch }
+    return { name: 'OpenAI', model: s.openAIModel, api: 'openAIResponses', auth: 'apiKey' }
   }
-  return { name: 'Anthropic', baseURL: 'https://api.anthropic.com', model: s.model || defaultSettings.model, api: 'anthropicMessages', auth: 'apiKey', apiKey: await apiKey('anthropic'), maxTokens: 32768, contextLimit: 180_000, webSearch: s.webSearch }
+  return { name: 'Anthropic', model: s.model, api: 'anthropicMessages', auth: 'apiKey' }
 }
 
 /** What the page may know of the connection (no key, no token). */
@@ -244,12 +175,12 @@ async function providerInfo() {
   const thought = await guideProvider()
   return { name: p.name, model: p.model, api: p.api, remote: p.auth !== 'none', plan: p.auth === 'chatgpt', effort: p.effort, fast: !!p.fast,
            thoughtModel: thought.auth === 'none' ? undefined : thought.model,
-           modelNames: p.auth === 'chatgpt' ? settings().modelNames : {} }
+           modelNames: p.auth === 'chatgpt' ? (await modelCatalogs()).modelNames : {} }
 }
 
 /** The ChatGPT accounts and the sign-in for the settings page (never a token). */
-function chatGPTState() {
-  return { accounts: chatgpt().accounts(), signingIn: chatgpt().signingIn, outcome: signInOutcome, usageURL: USAGE_URL }
+async function chatGPTState() {
+  return { accounts: await chatgpt().accounts(), signingIn: chatgpt().signingIn, outcome: signInOutcome, usageURL: USAGE_URL }
 }
 
 /** Attached folders as sent by the page: existing folders of this host. */
@@ -298,7 +229,7 @@ async function guide(): Promise<RemoteAgent> {
  *  led by the chat, with the chat's model. */
 async function guideProvider(): Promise<ProviderConfig> {
   const p = await provider(), id = settings().provider
-  if (id === 'chatgpt') return { ...p, model: speechModel(settings().models.chatgpt ?? [], p.model) }
+  if (id === 'chatgpt') return { ...p, model: speechModel((await core.storedModels('chatgpt')).map((m) => m.id), p.model) }
   return id === 'anthropic' ? { ...p, model: 'claude-haiku-5-5' } : p
 }
 
@@ -315,7 +246,7 @@ export function speechModel(offered: string[], fallback: string): string {
 async function guideAvailable(): Promise<boolean> {
   const s = settings()
   if (s.provider === 'fixture') return true
-  if (s.provider === 'chatgpt') return chatgpt().accounts().some((a) => a.active && a.signedIn && a.planEnabled)
+  if (s.provider === 'chatgpt') return (await chatgpt().accounts()).some((a) => a.active && a.signedIn && a.planEnabled)
   return !!(await keySource(s.provider))
 }
 
@@ -325,7 +256,7 @@ async function guideState() {
   let g = settings().guide
   if (available && !g.setupDone) {
     g = { ...g, setupDone: true }
-    saveSettings({ ...settings(), guide: g })
+    void saveSettings({ ...settings(), guide: g }).catch(() => {})
   }
   return { available, ...g }
 }
@@ -338,56 +269,25 @@ function cleanTour(v: unknown): GuideTour | null {
 
 // ---- Skills ----------------------------------------------------------------------
 
-interface Skill { name: string; description: string; path: string; content: string; source: string }
+interface Skill { name: string; description: string; path: string; source: string; source_folder: string; attachment_folder?: string; status: string }
+interface SkillListing { skills: Skill[]; folders: { path: string; status: string }[] }
 
-/** Reads skills from a folder: `<name>/SKILL.md` or `<name>.md`. */
-function loadSkills(folder: string, source: string): Skill[] {
-  let items: fs.Dirent[]
-  try {
-    items = fs.readdirSync(folder, { withFileTypes: true })
-  } catch {
-    return []
-  }
-  const out: Skill[] = []
-  for (const item of items.sort((a, b) => a.name.localeCompare(b.name))) {
-    let file = path.join(folder, item.name)
-    let name = item.name.replace(/\.[^.]+$/, '')
-    if (item.isDirectory()) {
-      file = path.join(file, 'SKILL.md')
-      name = item.name
-    } else if (!item.name.toLowerCase().endsWith('.md')) continue
-    let text: string
-    try {
-      if (fs.statSync(file).size >= 512 * 1024) continue
-      text = fs.readFileSync(file, 'utf8')
-    } catch {
-      continue
-    }
-    let description = ''
-    let lines = text.split('\n')
-    if (lines[0] === '---') {
-      const end = lines.indexOf('---', 1)
-      if (end > 0) {
-        for (const l of lines.slice(1, end)) {
-          if (l.startsWith('name:')) name = l.slice(5).trim()
-          if (l.startsWith('description:')) description = l.slice(12).trim()
-        }
-        lines = lines.slice(end + 1)
-      }
-    }
-    if (!description) description = (lines.find((l) => l.trim()) ?? '').replace(/^[#\s]+|[#\s]+$/g, '')
-    out.push({ name: name.replace(/[^\p{L}\p{N}_-]/gu, '-'), description, path: file, content: text, source })
-  }
-  return out
+async function skillMetadata(project?: string, folders = settings().skillFolders.filter((f) => f.enabled).map((f) => f.path), conversationId?: string): Promise<SkillListing> {
+  const result = await core.user.call<SkillListing>('SkillsListRequest', { project_path: project, folders, conversation_id: conversationId })
+  return { ...result, skills: result.skills.map((s) => ({ ...s,
+    description: s.path === 'builtin:demo' ? L('ツグミが画面を飛び回って、デモや画面の使い方を案内します') : s.description,
+    source: s.path === 'builtin:demo' ? 'Tsugumi' : s.source_folder === (project && path.join(project, 'skills')) ? L('プロジェクト') : path.basename(s.source_folder),
+  })) }
 }
 
-/** The built-in $demo: Tsugumi of the chat shows the screen around (it flies only then). */
-const demoSkill = (): Skill => ({ name: 'demo', description: L('ツグミが画面を飛び回って、デモや画面の使い方を案内します'), path: 'builtin:demo', content: DEMO_SKILL, source: 'Tsugumi' })
+async function skillsFor(project?: string, conversationId?: string): Promise<Skill[]> {
+  return (await skillMetadata(project, undefined, conversationId)).skills.filter((s) => s.status === 'ready')
+}
 
-function skillsFor(project: string | undefined): Skill[] {
-  const out = [demoSkill(), ...(project ? loadSkills(path.join(project, 'skills'), L('プロジェクト')) : [])]
-  for (const folder of settings().skillFolders) if (folder.enabled) out.push(...loadSkills(folder.path, path.basename(folder.path)))
-  return out
+async function modelCatalogs() {
+  const catalogs = await Promise.all(['anthropic', 'openai', 'chatgpt'].map(async (id) => [id, await core.storedModels(id)] as const))
+  return { models: Object.fromEntries(catalogs.map(([id, list]) => [id, list.map((m) => m.id)])),
+    modelNames: Object.fromEntries((catalogs.find(([id]) => id === 'chatgpt')?.[1] ?? []).map((m) => [m.id, m.name])) }
 }
 
 // ---- Agent hosting -------------------------------------------------------------
@@ -472,21 +372,10 @@ class ChatHost {
     await ctx.envs.attachFolders(this.project, this.key, [...this.folders])
   }
 
-  async skillReferences(names: string[]) {
-    const project = await core.project(this.project)
-    const references: { name: string; resource_id: string; path: string }[] = []
-    for (const skill of skillsFor(this.project).filter((s) => s.path !== 'builtin:demo' && names.includes(s.name))) {
-      const relative = path.relative(this.project, skill.path)
-      if (!relative.startsWith('..' + path.sep) && !path.isAbsolute(relative)) {
-        references.push({ name: skill.name, resource_id: project, path: relative })
-      } else {
-        const folder = settings().skillFolders.find((f) => f.enabled && skill.path.startsWith(path.resolve(f.path) + path.sep))
-        if (!folder) continue
-        const resource = await this.attach(path.resolve(folder.path))
-        references.push({ name: skill.name, resource_id: resource, path: path.relative(folder.path, skill.path) })
-      }
-    }
-    return references
+  async attachSkillFolders(names: string[], conversationId: string) {
+    const skills = (await skillsFor(this.project, conversationId)).filter((s) => names.includes(s.name))
+    const folders = new Set(skills.map((s) => s.attachment_folder).filter((s): s is string => !!s))
+    for (const folder of folders) await this.attach(folder)
   }
 
   events(id: string) {
@@ -566,7 +455,6 @@ async function externalAPI(name: string, args: unknown, project?: string) {
   }
 }
 
-const keyedProvider = (v: unknown): KeyedProvider => (v === 'openai' ? 'openai' : 'anthropic')
 
 /** The Agent of a session, ready for a new turn (current connection and folders). */
 async function turnAgent(b: any) {
@@ -584,21 +472,20 @@ export function hostRequest<T = any>(method: string, fields: unknown = {}): Prom
 export function chatRoutes(c: ChatContext): Record<string, Handler> {
   ctx = c
   // The language for the server's own messages, from the start (the app's, once read).
-  settings()
-  void ctx.desktop?.refresh().then(() => settings(), () => {})
   core = new CoreAgentHost(c.support, c.here, c.envs)
   const projectDir = c.projectDir
-  return {
-  'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined).map(({ content: _content, ...metadata }) => metadata),
+  const routes: Record<string, Handler> = {
+  'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined),
   'GET /api/settings': async () => ({
-    ...(await ctx.desktop?.refresh(), settings()),
+    ...settings(),
+    revision: { ...revisions },
+    ...await modelCatalogs(),
     keys: { Anthropic: await keySource('anthropic'), OpenAI: await keySource('openai') },
     keyEnv: { Anthropic: PROVIDERS.anthropic.env, OpenAI: PROVIDERS.openai.env },
   }),
-  'POST /api/settings': (b) => {
-    const next = { ...settings(), ...cleanSettings(b ?? {}) }
-    saveSettings(next)
-    return next
+  'POST /api/settings': async (b) => {
+    await patchSettings(b ?? {}, b?.revision ?? { ...revisions })
+    return { ...settings(), revision: { ...revisions }, ...await modelCatalogs() }
   },
   // Only while switched on, and not on the ChatGPT plan (its allowance is for the Agent).
   'POST /api/versions/summarize': async (b) => {
@@ -606,8 +493,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (!s.versionSummaries) throw ctx.httpError(400, L('版の要約はオフです。'))
     if (s.provider === 'chatgpt') throw ctx.httpError(400, L('ChatGPT プランでは版の要約を作りません。'))
     const project = await core.project(projectDir(b.path))
-    await core.configure(await provider())
-    return core.user.call('VersionSummarizeRequest', { project_id: project, commit: String(b.commit) })
+    return core.user.call('VersionSummarizeRequest', { project_id: project, commit: String(b.commit), provider: await core.provider(await guideProvider()) })
   },
   'POST /api/settings/key': async (b) => ({ message: await saveKey(keyedProvider(b.provider), String(b.key ?? '')) }),
   'POST /api/settings/key/delete': async (b) => ({ message: await deleteKey(keyedProvider(b.provider)) }),
@@ -616,17 +502,14 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const id: ProviderId = b.provider === 'anthropic' || b.provider === 'openai' || b.provider === 'chatgpt' ? b.provider : settings().provider
     if (id === 'fixture') throw ctx.httpError(400, L('fixture にはモデル一覧がありません。'))
     const list = await core.models(await providerFor(id))
-    // Read after the wait: the other connections' lists come at the same time.
-    const next = withModelList(settings(), id, list)
-    if (!next) throw ctx.httpError(502, L('モデル一覧が空でした。保存済みの一覧はそのままです。'))
-    saveSettings(next)
-    return { models: next.models[id], modelNames: next.modelNames }
+    if (!list.length) throw ctx.httpError(502, L('モデル一覧が空でした。保存済みの一覧はそのままです。'))
+    return { models: list.map((m) => m.id), modelNames: (await modelCatalogs()).modelNames }
   },
   /** The connections set up (a key, a signed-in ChatGPT plan), for the chat's model menu. */
   'GET /api/settings/connections': async () => ({
     anthropic: !!(await keySource('anthropic')),
     openai: !!(await keySource('openai')),
-    chatgpt: chatgpt().accounts().some((a) => a.active && a.signedIn && a.planEnabled),
+    chatgpt: (await chatgpt().accounts()).some((a) => a.active && a.signedIn && a.planEnabled),
   }),
   'GET /api/chatgpt': () => chatGPTState(),
   // Starts a sign-in: the page opens the URL in a tab; the outcome is read back with GET /api/chatgpt.
@@ -638,12 +521,12 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
         ? L('{0} でサインインしました。', r.account.email ?? r.account.clientId)
         : L('サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。') }
     }, (e: Error) => {
-      signInOutcome = { ok: false, message: e.message === new ChatGPTError('failed', 'cancelled').message ? L('サインインを中止しました。') : e.message }
+      signInOutcome = { ok: false, message: e.message === new ChatGPTError('cancelled').message ? L('サインインを中止しました。') : e.message }
     })
     return { url }
   },
-  'POST /api/chatgpt/cancel': () => {
-    chatgpt().cancel()
+  'POST /api/chatgpt/cancel': async () => {
+    await chatgpt().cancel()
     return chatGPTState()
   },
   'POST /api/chatgpt/select': async (b) => {
@@ -657,15 +540,15 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/chatgpt/signout': async (b) => {
     const id = String(b.clientId)
-    const email = chatgpt().accounts().find((a) => a.clientId === id)?.email ?? id
+    const email = (await chatgpt().accounts()).find((a) => a.clientId === id)?.email ?? id
     const revoked = await chatgpt().signOut(id)
-    return { ...chatGPTState(), message: revoked ? L('{0} からサインアウトしました。', email)
+    return { ...await chatGPTState(), message: revoked ? L('{0} からサインアウトしました。', email)
       : L('このホストのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。') }
   },
-  'POST /api/settings/skillCount': (b) => ({ count: loadSkills(String(b.path), '').length }),
-  'POST /api/settings/skillFolderStatus': (b) => {
-    const list = Array.isArray(b.paths) ? b.paths.map(String) : []
-    return Object.fromEntries(list.map((p: string) => [p, fs.existsSync(p)]))
+  'POST /api/settings/skillCount': async (b) => ({ count: (await skillMetadata(undefined, [String(b.path)])).skills.filter((s) => s.status === 'ready' && s.path !== 'builtin:demo').length }),
+  'POST /api/settings/skillFolderStatus': async (b) => {
+    const paths = Array.isArray(b.paths) ? b.paths.map(String) : []
+    return Object.fromEntries((await skillMetadata(undefined, paths)).folders.map((f) => [f.path, f.status === 'ready']))
   },
   'POST /api/chat/sessions': (b) => chatFor(projectDir(b.path)).sessions(),
   'POST /api/chat/conversation': async (b) => {
@@ -681,12 +564,11 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const { host, a } = await turnAgent(b)
     const turn = randomUUID()
     const skillNames = Array.isArray(b.skillNames) ? b.skillNames.map(String) : []
-    const skillReferences = await host.skillReferences(skillNames)
+    await host.attachSkillFolders(skillNames, a.id)
     await withAccess(host.project, a.id, () => a.send(String(b.text ?? ''), host.events(a.id), turn, {
       selected_cards: Array.isArray(b.selectedCards) ? b.selectedCards.map(String) : [],
       selected_displays: Array.isArray(b.selectedDisplays) ? b.selectedDisplays.map(String) : [],
-      skill_names: skillNames.filter((name: string) => name === 'demo'),
-      skill_references: skillReferences,
+      skill_names: [...new Set(skillNames)],
       attached_resources: Array.isArray(b.attachedResources) ? b.attachedResources.map(String) : [],
     }))
       .catch((e) => host.events(a.id)({ kind: 'error', message: e.message }))
@@ -771,7 +653,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (typeof b.setupDone === 'boolean') g.setupDone = b.setupDone
     if (typeof b.demoAnswered === 'boolean') g.demoAnswered = b.demoAnswered
     if ('tour' in (b ?? {})) g.tour = cleanTour(b.tour)
-    saveSettings({ ...settings(), guide: g })
+    await saveSettings({ ...settings(), guide: g })
     return guideState()
   },
   /** A connection check for the first start: the provider lists its models with the key. */
@@ -810,4 +692,8 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { ok: true }
   },
   }
+  return Object.fromEntries(Object.entries(routes).map(([key, handler]) => [key, async (body: any, url: URL) => {
+    await loadSettings()
+    return handler(body, url)
+  }]))
 }

@@ -7,11 +7,13 @@ public struct AgentProject: Sendable {
   public let endpoint: String
   public let token: String
   public let title: String
-  public init(id: String, endpoint: String, token: String, title: String) {
+  public let path: String
+  public init(id: String, endpoint: String, token: String, title: String, path: String = "") {
     self.id = id
     self.endpoint = endpoint
     self.token = token
     self.title = title
+    self.path = path
   }
 }
 
@@ -23,11 +25,28 @@ public struct CoreAgentFailure: LocalizedError, CustomStringConvertible, Sendabl
   public var errorDescription: String? { message }
 }
 
+/// A presentation snapshot of agentd's catalogs. Persistence and refresh policy
+/// belong to agentd; this lets an open native menu draw without an actor hop.
+public final class ModelCatalogSnapshot: @unchecked Sendable {
+  public static let shared = ModelCatalogSnapshot()
+  private let lock = NSLock()
+  private var catalogs: [String: [(id: String, name: String)]] = [:]
+  public func models(_ id: String) -> [(id: String, name: String)] {
+    lock.lock(); defer { lock.unlock() }
+    return catalogs[id] ?? []
+  }
+  fileprivate func show(_ id: String, _ models: [(id: String, name: String)]) {
+    lock.lock(); defer { lock.unlock() }
+    catalogs[id] = models
+  }
+}
+
 /// Binary Agent and Host connections share the project's C ABI byte transport.
 /// Framing, verification, deadlines and pending requests belong to client/.
 public actor CoreAgentClient {
   public static let shared = CoreAgentClient()
   private let supportOverride: URL?
+  private let keyProfile = "macos:keychain:" + UUID().uuidString
 
   public init(support: URL? = nil) { supportOverride = support }
   private var transports: [Bool: NativeByteTransport] = [:]
@@ -158,47 +177,51 @@ public actor CoreAgentClient {
     return try await exchange(method, fields, host: ServiceWire.hostMethod(method, fields))
   }
 
-  public func configure(_ config: ProviderConfig, conversationID: String? = nil, asking: Bool = false) async throws {
-    var fields: [String: Any] = ["provider": try await provider(config, asking: asking)]
-    _ = try await call("ConfigureRequest", fields)
-    if let conversationID {
-      fields["conversation_id"] = conversationID
-      _ = try await call("ConfigureRequest", fields)
-    }
+  public func configure(_ config: ProviderConfig, conversationID: String) async throws {
+    _ = try await call("ConfigureRequest", ["provider": try await provider(config), "conversation_id": conversationID])
   }
 
-  public func provider(_ config: ProviderConfig, asking: Bool = false) async throws -> Tsugumi_Service_ProviderT {
-    let value = Tsugumi_Service_ProviderT()
-    value.provider = config.auth == .chatGPT ? "chatgpt" : ""
-    value.api = config.api.rawValue
-    value.auth = config.auth == .chatGPT ? "chatgpt" : config.auth.rawValue
-    value.baseUrl = config.baseURL.absoluteString
+  public func provider(_ config: ProviderConfig, asking: Bool = true) async throws -> Tsugumi_Service_ProviderSelectionT {
+    let value = Tsugumi_Service_ProviderSelectionT()
     value.model = config.model
-    value.effort = config.effort
-    value.fast = config.fast
-    value.webSearch = config.webSearch
-    value.maxTokens = UInt32(clamping: config.maxTokens)
-    value.contextLimit = UInt32(clamping: config.contextLimit)
-    switch config.auth {
-    case .none: break
-    case .apiKey:
+    value.useChoices = config.usesChoices
+    value.profile = "desktop"
+    value.providerId = config.connection
+    value.accountProfile = "desktop"
+    if config.auth == .apiKey {
       guard let key = asking ? Keychain.load(account: config.name) : Keychain.loadWithoutAsking(account: config.name) else {
         throw CoreAgentFailure(code: "credentials", message: "No API key for \(config.name)", requestID: nil)
       }
-      value.credential = key
-    case .chatGPT:
-      let token = try await config.chatGPTAuth.accessToken(asking: asking)
-      value.credential = token.value
-      value.credentialId = token.clientId
+      try await provisionKey(key, id: config.connection)
+      value.keyProfile = keyProfile
     }
     return value
   }
 
-  public func models(_ config: ProviderConfig, asking: Bool = false) async throws -> [(id: String, label: String)] {
-    let result = try await call("ModelsListRequest", ["provider": try await provider(config, asking: asking)])
-    return (result["value"] as? [[String: Any]] ?? []).compactMap { item in
+  public func provisionKey(_ key: String?, id: String) async throws {
+    var fields: [String: Any] = ["profile": keyProfile, "id": id, "ephemeral": true, "remove": key == nil]
+    if let key { let input = Tsugumi_Service_ProviderInputT(); input.apiKey = key; fields["provider"] = input }
+    _ = try await call("ProviderSetRequest", fields)
+  }
+
+  public func storedModels(_ id: String) async throws -> [(id: String, name: String)] {
+    try await modelList(id: id)
+  }
+
+  private func modelList(id: String, refresh: Bool = false, keyProfile: String? = nil) async throws -> [(id: String, name: String)] {
+    var fields: [String: Any] = ["provider_id": id, "refresh": refresh, "profile": "desktop"]
+    if let keyProfile { fields["key_profile"] = keyProfile }
+    let result = try await call("ModelsListRequest", fields)
+    let list: [(id: String, name: String)] = (result["value"] as? [[String: Any]] ?? []).compactMap { item in
       guard let id = item["id"] as? String else { return nil }
-      return (id, item["label"] as? String ?? id)
+      return (id, item["name"] as? String ?? id)
     }
+    ModelCatalogSnapshot.shared.show(id, list)
+    return list
+  }
+
+  public func models(_ config: ProviderConfig, asking: Bool = false) async throws -> [(id: String, name: String)] {
+    let selection = try await provider(config, asking: asking)
+    return try await modelList(id: config.connection, refresh: true, keyProfile: selection.keyProfile)
   }
 }

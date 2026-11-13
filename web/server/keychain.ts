@@ -8,7 +8,7 @@ export type Run = (cmd: string, args: string[]) => Promise<{ code: number; out: 
 
 export function keychainReader(run: Run, service: string) {
   const known = new Map<string, { attributes: string; secret: Promise<string | undefined> }>()
-  const attributes = (account: string) => run('security', ['find-generic-password', '-s', service, '-a', account])
+  const attributes = (account: string) => run('/usr/bin/security', ['find-generic-password', '-s', service, '-a', account])
   return {
     /** Whether the item is there; never asks. */
     async exists(account: string) {
@@ -23,7 +23,7 @@ export function keychainReader(run: Run, service: string) {
       }
       const k = known.get(account)
       if (k && k.attributes === a.out) return k.secret
-      const secret = run('security', ['find-generic-password', '-s', service, '-a', account, '-w'])
+      const secret = run('/usr/bin/security', ['find-generic-password', '-s', service, '-a', account, '-w'])
         .then((r) => (r.code === 0 && r.out ? r.out : undefined))
       known.set(account, { attributes: a.out, secret })
       return secret

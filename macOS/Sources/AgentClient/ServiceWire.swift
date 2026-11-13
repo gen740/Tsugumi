@@ -6,27 +6,55 @@ import TsugumiRPC
 /// values. Only the model's open-ended content blocks are decoded from JSON.
 enum ServiceWire {
   static func hostMethod(_ method: String, _ fields: [String: Any]) -> Bool {
-    if method == "ConfigureRequest" { return fields["conversation_id"] == nil }
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "ModelsListRequest", "CredentialImportRequest", "CredentialTokenRequest", "CredentialForgetRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
-  private static func registration(_ fields: [String: Any]) -> Tsugumi_Host_CredentialRegistrationT {
-    let value = Tsugumi_Host_CredentialRegistrationT()
-    value.clientId = fields["client_id"] as? String ?? ""
-    value.accessToken = fields["access_token"] as? String
-    value.refreshToken = fields["refresh_token"] as? String ?? ""
-    value.tokenEndpoint = fields["token_endpoint"] as? String ?? ""
-    value.revocationEndpoint = fields["revocation_endpoint"] as? String
-    value.resource = fields["resource"] as? String
-    value.expiresAtMs = (fields["expires_at_ms"] as? NSNumber)?.uint64Value ?? 0
-    value.idToken = fields["id_token"] as? String
-    value.scope = fields["scope"] as? String
-    return value
-  }
+"ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   static func request(_ method: String, _ fields: [String: Any], host: Bool) throws -> (UInt8, NativeObject) {
     if host {
       switch method {
+      case "SettingsGetRequest":
+        let v = Tsugumi_Host_SettingsGetRequestT()
+        v.profile = fields["profile"] as? String ?? "desktop"
+        return (Tsugumi_Host_RequestPayload.settingsgetrequest.rawValue, v)
+      case "SettingsUpdateRequest":
+        let v = Tsugumi_Host_SettingsUpdateRequestT()
+        v.profile = fields["profile"] as? String ?? "desktop"
+        v.revision = (fields["revision"] as? NSNumber)?.uint64Value ?? 0
+        v.changes = (fields["changes"] as? [[String: String]] ?? []).map { item in let s = Tsugumi_Host_SettingT(); s.key = item["key"] ?? ""; s.valueJson = item["value_json"] ?? "null"; return s }
+        return (Tsugumi_Host_RequestPayload.settingsupdaterequest.rawValue, v)
+      case "ProviderSetRequest":
+        let v = Tsugumi_Host_ProviderSetRequestT()
+        v.profile = fields["profile"] as? String ?? "desktop"
+        v.id = fields["id"] as? String ?? ""
+        v.provider = fields["provider"] as? Tsugumi_Service_ProviderInputT
+        v.remove = fields["remove"] as? Bool ?? false
+        return (Tsugumi_Host_RequestPayload.providersetrequest.rawValue, v)
+      case "ProviderStatusRequest":
+        let v = Tsugumi_Host_ProviderStatusRequestT()
+        v.profile = fields["profile"] as? String ?? "desktop"
+        v.id = fields["id"] as? String ?? ""
+        return (Tsugumi_Host_RequestPayload.providerstatusrequest.rawValue, v)
+      case "SignInBeginRequest":
+        let v = Tsugumi_Host_SignInBeginRequestT()
+        v.profile = fields["profile"] as? String ?? "desktop"
+        v.clientId = fields["client_id"] as? String
+        v.consent = fields["consent"] as? Bool ?? false
+        v.issuer = fields["issuer"] as? String
+        v.resource = fields["resource"] as? String
+        return (Tsugumi_Host_RequestPayload.signinbeginrequest.rawValue, v)
+      case "SignInActionRequest":
+        let v = Tsugumi_Host_SignInActionRequestT()
+        v.profile = fields["profile"] as? String ?? "desktop"
+        v.attemptId = fields["attempt_id"] as? String
+        v.action = fields["action"] as? String ?? ""
+        v.clientId = fields["client_id"] as? String
+        return (Tsugumi_Host_RequestPayload.signinactionrequest.rawValue, v)
+      case "SignInStatusRequest":
+        let v = Tsugumi_Host_SignInStatusRequestT()
+        v.profile = fields["profile"] as? String ?? "desktop"
+        v.attemptId = fields["attempt_id"] as? String
+        return (Tsugumi_Host_RequestPayload.signinstatusrequest.rawValue, v)
       case "ExecutionServicesRequest": return (Tsugumi_Host_RequestPayload.executionservicesrequest.rawValue, Tsugumi_Host_ExecutionServicesRequestT())
       case "ExecutionServicePutRequest":
         let v = Tsugumi_Host_ExecutionServicePutRequestT()
@@ -59,19 +87,13 @@ enum ServiceWire {
         v.clientId = fields["client_id"] as? String ?? ""
         v.protocol_ = (fields["protocol"] as? NSNumber)?.uint32Value ?? 1
         return (Tsugumi_Host_RequestPayload.hellorequest.rawValue, v)
-      case "ConfigureRequest":
-        let v = Tsugumi_Host_ConfigureRequestT()
-        guard let provider = fields["provider"] as? Tsugumi_Service_ProviderT else {
-          throw CoreAgentFailure(code: "invalid_request", message: "A provider configuration is required", requestID: nil)
-        }
-        v.provider = provider
-        return (Tsugumi_Host_RequestPayload.configurerequest.rawValue, v)
       case "RegisterProjectRequest":
         let v = Tsugumi_Host_RegisterProjectRequestT()
         v.projectId = fields["project_id"] as? String ?? ""
         v.endpoint = fields["endpoint"] as? String ?? ""
         v.token = fields["token"] as? String
         v.title = fields["title"] as? String
+        v.path = fields["path"] as? String
         return (Tsugumi_Host_RequestPayload.registerprojectrequest.rawValue, v)
       case "RegisterFolderRequest":
         let v = Tsugumi_Host_RegisterFolderRequestT()
@@ -80,27 +102,19 @@ enum ServiceWire {
         v.folder = fields["folder"] as? String ?? ""
         v.title = fields["title"] as? String
         return (Tsugumi_Host_RequestPayload.registerfolderrequest.rawValue, v)
+      case "SkillsListRequest":
+        let v = Tsugumi_Host_SkillsListRequestT()
+        v.conversationId = fields["conversation_id"] as? String
+        v.projectPath = fields["project_path"] as? String
+        v.folders = fields["folders"] as? [String] ?? []
+        return (Tsugumi_Host_RequestPayload.skillslistrequest.rawValue, v)
       case "ModelsListRequest":
         let v = Tsugumi_Host_ModelsListRequestT()
-        guard let provider = fields["provider"] as? Tsugumi_Service_ProviderT else {
-          throw CoreAgentFailure(code: "invalid_request", message: "A provider configuration is required", requestID: nil)
-        }
-        v.provider = provider
+        v.providerId = fields["provider_id"] as? String ?? ""
+        v.refresh = fields["refresh"] as? Bool ?? false
+        v.profile = fields["profile"] as? String
+        v.accountProfile = fields["account_profile"] as? String
         return (Tsugumi_Host_RequestPayload.modelslistrequest.rawValue, v)
-      case "CredentialImportRequest":
-        let v = Tsugumi_Host_CredentialImportRequestT()
-        v.registration = registration(fields["registration"] as? [String: Any] ?? [:])
-        v.replace = fields["replace"] as? Bool ?? false
-        return (Tsugumi_Host_RequestPayload.credentialimportrequest.rawValue, v)
-      case "CredentialTokenRequest":
-        let v = Tsugumi_Host_CredentialTokenRequestT()
-        v.clientId = fields["client_id"] as? String ?? ""
-        v.staleToken = fields["stale_token"] as? String
-        return (Tsugumi_Host_RequestPayload.credentialtokenrequest.rawValue, v)
-      case "CredentialForgetRequest":
-        let v = Tsugumi_Host_CredentialForgetRequestT()
-        v.clientId = fields["client_id"] as? String ?? ""
-        return (Tsugumi_Host_RequestPayload.credentialforgetrequest.rawValue, v)
       case "HostProjectInfoRequest":
         let v = Tsugumi_Host_HostProjectInfoRequestT()
         v.path = fields["path"] as? String ?? ""
@@ -149,7 +163,7 @@ enum ServiceWire {
         return (Tsugumi_Agent_RequestPayload.hellorequest.rawValue, v)
       case "ConfigureRequest":
         let v = Tsugumi_Agent_ConfigureRequestT()
-        guard let provider = fields["provider"] as? Tsugumi_Service_ProviderT else {
+        guard let provider = fields["provider"] as? Tsugumi_Service_ProviderSelectionT else {
           throw CoreAgentFailure(code: "invalid_request", message: "A provider configuration is required", requestID: nil)
         }
         v.provider = provider
@@ -188,11 +202,6 @@ enum ServiceWire {
         v.skillNames = fields["skill_names"] as? [String] ?? []
         v.intent = fields["intent"] as? String
         v.attachedResources = fields["attached_resources"] as? [String] ?? []
-        v.skillReferences = (fields["skill_references"] as? [[String: String]] ?? []).map { fields in
-          let r = Tsugumi_Agent_SkillReferenceT()
-          r.name = fields["name"] ?? ""; r.resourceId = fields["resource_id"] ?? ""; r.path = fields["path"] ?? ""
-          return r
-        }
         return (Tsugumi_Agent_RequestPayload.conversationsendrequest.rawValue, v)
       case "ConversationActionRequest":
         let v = Tsugumi_Agent_ConversationActionRequestT()
@@ -246,11 +255,12 @@ enum ServiceWire {
         let v = Tsugumi_Agent_VersionSummarizeRequestT()
         v.projectId = fields["project_id"] as? String ?? ""
         v.commit = fields["commit"] as? String ?? ""
+        v.provider = fields["provider"] as? Tsugumi_Service_ProviderSelectionT
         return (Tsugumi_Agent_RequestPayload.versionsummarizerequest.rawValue, v)
       case "ConversationSummarizeRequest":
         let v = Tsugumi_Agent_ConversationSummarizeRequestT()
         v.conversationId = fields["conversation_id"] as? String ?? ""
-        guard let provider = fields["provider"] as? Tsugumi_Service_ProviderT else {
+        guard let provider = fields["provider"] as? Tsugumi_Service_ProviderSelectionT else {
           throw CoreAgentFailure(code: "invalid_request", message: "A provider configuration is required", requestID: nil)
         }
         v.provider = provider
@@ -361,12 +371,6 @@ enum ServiceWire {
       var out: [String: Any] = [:]
       out["accepted"] = v.accepted
       out["revoked"] = v.revoked
-      return out
-    case let v as Tsugumi_Agent_SkillReferenceT:
-      var out: [String: Any] = [:]
-      out["name"] = v.name
-      out["resource_id"] = v.resourceId
-      out["path"] = v.path
       return out
     case let v as Tsugumi_Agent_UsageT:
       var out: [String: Any] = [:]
@@ -482,11 +486,6 @@ enum ServiceWire {
       out["text"] = v.text ?? ""
       out["usage"] = try v.usage.map { try view($0) }
       return out
-    case let v as Tsugumi_Host_CredentialTokenT:
-      var out: [String: Any] = [:]
-      out["access_token"] = v.accessToken
-      out["client_id"] = v.clientId
-      return out
     case let v as Tsugumi_Host_ProjectDefaultsT:
       var out: [String: Any] = [:]
       out["nixpkgsPin"] = v.nixpkgsPin
@@ -519,6 +518,53 @@ enum ServiceWire {
       return out
     case let v as Tsugumi_Host_DemoListT:
       return try v.demos.compactMap { item in try item.map { try view($0) } }
+    case let v as Tsugumi_Host_SettingT:
+      var out: [String: Any] = [:]
+      out["key"] = v.key
+      out["value_json"] = v.valueJson
+      return out
+    case let v as Tsugumi_Host_SettingsT:
+      var out: [String: Any] = [:]
+      out["revision"] = v.revision
+      out["values"] = try v.values.compactMap { try $0.map { try view($0) } }
+      return out
+    case let v as Tsugumi_Host_ProviderStatusT:
+      var out: [String: Any] = [:]
+      out["id"] = v.id
+      out["configured"] = v.configured
+      out["source"] = v.source
+      out["endpoint"] = v.endpoint
+      return out
+    case let v as Tsugumi_Host_SignInBeginT:
+      var out: [String: Any] = [:]
+      out["attempt_id"] = v.attemptId
+      out["url"] = v.url
+      return out
+    case let v as Tsugumi_Host_AccountT:
+      var out: [String: Any] = [:]
+      out["clientId"] = v.clientId
+      out["email"] = v.email
+      out["signedIn"] = v.signedIn
+      out["planEnabled"] = v.planEnabled
+      out["active"] = v.active
+      return out
+    case let v as Tsugumi_Host_SignInStatusT:
+      var out: [String: Any] = [:]
+      out["attempt_id"] = v.attemptId
+      out["state"] = v.state
+      out["message"] = v.message
+      out["welcome"] = v.welcome
+      out["revoked"] = v.revoked
+      out["accounts"] = try v.accounts.compactMap { try $0.map { try view($0) } }
+      return out
+    case let v as Tsugumi_Host_SkillT:
+      return ["name": v.name, "description": v.description ?? "", "path": v.path,
+              "source_folder": v.sourceFolder ?? "", "attachment_folder": v.attachmentFolder ?? "", "status": v.status]
+    case let v as Tsugumi_Host_SkillFolderT:
+      return ["path": v.path, "status": v.status]
+    case let v as Tsugumi_Host_SkillsListT:
+      return ["skills": try v.skills.compactMap { try $0.map { try view($0) } },
+              "folders": try v.folders.compactMap { try $0.map { try view($0) } }]
     case let v as Tsugumi_Host_ModelT:
       var out: [String: Any] = [:]
       out["id"] = v.id

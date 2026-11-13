@@ -1,6 +1,7 @@
 // Platform adapter for the core-owned services. The browser keeps the HTTP/SSE
 // API; service credentials and binary socket connections stay in this host.
 import { spawn } from 'node:child_process'
+import { ProviderKeys } from './providerKeys'
 import net from 'node:net'
 import { CoreAgentError, encodeRequest, decodeReply, hostMethod } from './serviceWire'
 export { CoreAgentError } from './serviceWire'
@@ -113,6 +114,9 @@ class Connection {
 }
 
 export class CoreAgentHost {
+  readonly keyProfile = `web:keys:${randomUUID()}`
+  readonly keys = new ProviderKeys((method, fields) => this.user.call(method, fields), this.keyProfile)
+  private environment?: Promise<void>
   readonly schema: string
   readonly state: string
   private readonly binary: string
@@ -122,7 +126,7 @@ export class CoreAgentHost {
   private readonly host = new Connection(this, false, true)
   readonly user = {
     call: <T = any>(method: string, value: any = {}): Promise<T> =>
-      (hostMethod(method) || method === 'ConfigureRequest' && !value.conversation_id ? this.host : this.agent).call<T>(method, value),
+      (hostMethod(method) ? this.host : this.agent).call<T>(method, value),
   }
   readonly external = new Connection(this, true)
   private projects = new Map<string, string>()
@@ -175,11 +179,19 @@ export class CoreAgentHost {
     })().finally(() => { this.starting = undefined })
   }
 
+  provisionEnvironment(): Promise<void> {
+    return this.environment ??= this.keys.provisionEnvironment()
+  }
+
+  async getSettings(profile: string): Promise<{ revision: number; values: { key: string; value_json: string }[] }> {
+    return this.user.call('SettingsGetRequest', { profile })
+  }
+
   async project(folder: string): Promise<string> {
     const state = await this.envs.start(folder)
     if (state.state !== 'ready') throw new Error(state.state === 'failed' ? state.message : 'Project core is not ready')
     await this.user.call('RegisterProjectRequest', { project_id: state.projectId,
-      endpoint: state.unix ? `unix:${state.unix}` : state.endpoint, token: state.token, title: path.basename(folder) })
+      endpoint: state.unix ? `unix:${state.unix}` : state.endpoint, token: state.token, title: path.basename(folder), path: folder })
     this.projects.set(folder, state.projectId)
     return state.projectId
   }
@@ -189,22 +201,26 @@ export class CoreAgentHost {
     return undefined
   }
 
-  private async provider(config: ProviderConfig) {
-    const token = config.token ? await config.token() : undefined
-    return { provider: config.auth === 'chatgpt' ? 'chatgpt' : '', api: config.api, auth: config.auth, base_url: config.baseURL, model: config.model,
-      credential: token?.value ?? config.apiKey, credential_id: token?.clientId, effort: config.effort,
-      fast: config.fast, web_search: config.webSearch, max_tokens: config.maxTokens, context_limit: config.contextLimit }
+  async provider(config: ProviderConfig) {
+    const keyProfile = config.auth === 'apiKey'
+      ? await this.keys.provision(config.api === 'openAIResponses' ? 'openai' : 'anthropic') : undefined
+    return { profile: config.profile ?? 'desktop', account_profile: config.accountProfile, key_profile: keyProfile,
+      provider_id: config.auth === 'chatgpt' ? 'chatgpt' : config.auth === 'none' ? 'fixture' : config.api === 'openAIResponses' ? 'openai' : 'anthropic', model: config.model, use_choices: !!config.usesChoices }
   }
 
-  async configure(config: ProviderConfig, conversationId?: string) {
+  async configure(config: ProviderConfig, conversationId: string) {
     const provider = await this.provider(config)
-    await this.user.call('ConfigureRequest', { provider })
-    if (conversationId) await this.user.call('ConfigureRequest', { conversation_id: conversationId, provider })
+    await this.user.call('ConfigureRequest', { conversation_id: conversationId, provider })
   }
 
-  async models(config: ProviderConfig): Promise<{ id: string; label: string }[]> {
-    const models = await this.user.call<{ id: string; name: string }[]>('ModelsListRequest', { provider: await this.provider(config) })
-    return models.map((m) => ({ id: m.id, label: m.id }))
+  async storedModels(id: string): Promise<{ id: string; name: string }[]> {
+    return this.user.call('ModelsListRequest', { provider_id: id })
+  }
+
+  async models(config: ProviderConfig): Promise<{ id: string; name: string }[]> {
+    const id = config.auth === 'chatgpt' ? 'chatgpt' : config.auth === 'none' ? 'fixture' : config.api === 'openAIResponses' ? 'openai' : 'anthropic'
+    const selection = await this.provider(config)
+    return this.user.call('ModelsListRequest', { provider_id: id, refresh: true, profile: selection.profile, account_profile: selection.account_profile, key_profile: selection.key_profile })
   }
 
   async summarize(conversationId: string, config: ProviderConfig): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {

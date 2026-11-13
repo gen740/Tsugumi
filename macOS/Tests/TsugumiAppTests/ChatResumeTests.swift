@@ -65,7 +65,12 @@ import TsugumiRPC
         "endpoint": endpoint.url.absoluteString, "token": endpoint.token, "title": "Chat UI fixture"])
       _ = try await CoreAgentClient.shared.call("ConversationCreateRequest", ["conversation_id": conversationID,
         "project_id": endpoint.projectId, "role": "worker"])
-      try await CoreAgentClient.shared.configure(.localFixture(port: port), conversationID: conversationID)
+      let provider = Tsugumi_Service_ProviderInputT()
+      provider.endpoint = "http://127.0.0.1:\(port)"
+      provider.model = "fixture"
+      provider.contextLimit = 6000
+      _ = try await CoreAgentClient.shared.call("ProviderSetRequest", ["profile": "desktop", "id": "fixture", "provider": provider])
+      try await CoreAgentClient.shared.configure(.fixture, conversationID: conversationID)
     }
 
     func makeSession() throws -> ProjectSession {
@@ -87,9 +92,8 @@ import TsugumiRPC
     }
 
     func makeChat() -> ChatController {
-      let port = port
       let chat = ChatController(session: session, directory: directory.appendingPathComponent("ui"),
-                                connection: { .localFixture(port: port) })
+                                connection: { .fixture })
       chats.append(chat)
       return chat
     }

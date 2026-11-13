@@ -27,7 +27,7 @@ const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
   { id: 'editor', title: L('エディター'), icon: 'text.cursor', storage: L('このブラウザ（localStorage）') },
   { id: 'shortcuts', title: L('ショートカット'), icon: 'keyboard', storage: L('このブラウザ（localStorage）') },
   { id: 'skills', title: 'Skills', icon: 'wand.and.stars', storage: L('このホスト（Tsugumi web サーバーの設定）') },
-  { id: 'api', title: 'API', icon: 'key', storage: L('このホスト（API キーは macOS のキーチェーン）') },
+  { id: 'api', title: 'API', icon: 'key', storage: L('このホスト（API キーは macOS Keychain または agentd が保管）') },
   { id: 'connections', title: L('外部接続'), icon: 'network', storage: L('表示のみ（開いているプロジェクトの接続先）') },
   { id: 'executionServices', title: L('実行サービス'), icon: 'network', storage: L('このホスト（Tsugumi web サーバーの設定）') },
 ]
@@ -451,7 +451,7 @@ function SkillSettings() {
 }
 
 type ProviderId = 'anthropic' | 'openai' | 'chatgpt' | 'fixture'
-type KeySource = 'env' | 'keychain' | 'file' | null
+type KeySource = 'env' | 'keychain' | 'agentd' | null
 interface APIState {
   provider: ProviderId
   model: string
@@ -473,7 +473,7 @@ function refreshChats(saved = false) {
   void (saved ? guide.connectionSaved() : guide.refresh())
 }
 
-/** Model connections. API keys stay on this host (the macOS Keychain); they are
+/** Model connections. API keys stay in this host’s platform secret storage; they are
  *  never sent to this page, tsugumid or Cards, nor written to project files,
  *  settings or logs. */
 function APISettings() {
@@ -692,7 +692,7 @@ function KeySection({ id, s, reload, update }: { id: 'anthropic' | 'openai'; s: 
   const source = s.keys[name]
   const model = id === 'openai' ? s.openAIModel : s.model
   const setModel = (m: string) => update(id === 'openai' ? { openAIModel: m } : { model: m })
-  const sourceLabel = source === 'keychain' ? L('macOS Keychain（このホストのみ）') : source === 'env' ? L('環境変数 {0}', s.keyEnv[name]) : source === 'file' ? L('このホストのファイル（0600）') : L('未設定')
+  const sourceLabel = source === 'keychain' ? L('macOS Keychain（このデバイスのみ・ロック解除中に使用）') : source === 'agentd' ? L('agentd（このホストの所有者だけが読み書きできます）') : source === 'env' ? L('環境変数 {0}', s.keyEnv[name]) : L('未設定')
   const run = async (f: () => Promise<string>) => {
     try {
       setMessage(await f())
@@ -715,7 +715,7 @@ function KeySection({ id, s, reload, update }: { id: 'anthropic' | 'openai'; s: 
             refreshChats(true)
             return r.message
           })}>{L('キーを保存')}</Button>
-          <Button kind="destructive" disabled={source !== 'keychain' && source !== 'file'} onClick={() => void run(async () => {
+          <Button kind="destructive" disabled={source !== 'agentd' && source !== 'keychain'} onClick={() => void run(async () => {
             const r = await api<{ message: string }>('/api/settings/key/delete', { provider: id })
             await reload()
             refreshChats()

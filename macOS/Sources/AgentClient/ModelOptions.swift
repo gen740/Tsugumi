@@ -29,14 +29,12 @@ public struct ModelOptions: Equatable, Sendable {
       let effort: [Group]
       let fast: [String: Double]
     }
-    let largeOutputTokens: Int
     let connections: [String: Connection]
   }
 
   private struct Document: Decodable { let modelOptions: Table }
 
   private static let table = try! JSONDecoder().decode(Document.self, from: Data(Shared.agentJSON.utf8)).modelOptions
-  static var largeOutputTokens: Int { table.largeOutputTokens }
 }
 
 extension ProviderConfig {
@@ -55,22 +53,10 @@ extension ProviderConfig {
   public func choosing(effort: String, fastModel: String) -> ProviderConfig {
     let o = ModelOptions(connection: connection, model: model)
     var c = self
+    c.usesChoices = true
     c.effort = o.efforts.contains(effort) ? effort : nil
     c.fast = o.fastPrice != nil && fastModel == model
     return c
   }
 
-  /// Without those choices, for a request that is not the Agent's work.
-  var withoutChoices: ProviderConfig {
-    var c = self
-    c.effort = nil
-    c.fast = false
-    return c
-  }
-
-  /// The deep levels think for a long time, much of it in one reply.
-  var thinksLong: Bool { effort == "xhigh" || effort == "max" }
-
-  /// Room for a reply: those levels spend much of it on thinking.
-  var outputLimit: Int { thinksLong ? max(maxTokens, ModelOptions.largeOutputTokens) : maxTokens }
 }

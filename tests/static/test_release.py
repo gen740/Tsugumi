@@ -52,12 +52,17 @@ def test_paths_of_the_build_machine_stay_in_debug_builds():
     assert not outside
 
 
-def test_the_app_and_the_web_ui_keep_api_keys_in_the_same_keychain_item():
-    swift = (ROOT / "macOS/Sources/AgentClient/Provider.swift").read_text(encoding="utf-8")
-    web = (ROOT / "web/server/chat.ts").read_text(encoding="utf-8")
-    service = re.search(r'static let service = "([^"]+)"', swift).group(1)
-    assert f"const KEYCHAIN_SERVICE = '{service}'" in web
-    # the data protection keychain needs an entitlement ad-hoc builds lack
-    assert "kSecUseDataProtectionKeychain as String" not in swift
-    for name in ("Anthropic", "OpenAI"):
-        assert f"name: '{name}'" in web and f'name: "{name}"' in swift
+def test_credentials_are_host_only_inputs_and_absent_from_model_selection_and_replies():
+    common = (ROOT / "protocol/service_common.fbs").read_text(encoding="utf-8")
+    host = (ROOT / "protocol/host.fbs").read_text(encoding="utf-8")
+    agent = (ROOT / "protocol/agent.fbs").read_text(encoding="utf-8")
+    selection = re.search(r"table ProviderSelection \{([^}]+)\}", common).group(1)
+    assert "profile:string (required)" in selection
+    for secret in ("api_key", "access_token", "refresh_token", "credential", "endpoint"):
+        assert secret not in selection
+    assert "api_key:string" in re.search(r"table ProviderInput \{([^}]+)\}", common).group(1)
+    assert "provider:Tsugumi.Service.ProviderInput" in host
+    assert "provider:Tsugumi.Service.ProviderSelection" in agent
+    replies = re.search(r"union ReplyPayload \{([^}]+)\}", host).group(1)
+    assert "ProviderInput" not in replies and "CredentialToken" not in replies
+    assert "CredentialTokenRequest" not in host

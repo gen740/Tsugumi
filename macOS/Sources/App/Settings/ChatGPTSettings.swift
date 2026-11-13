@@ -3,17 +3,17 @@ import SwiftUI
 import TsugumiAgentClient
 
 /// Sign in with ChatGPT: the Agent uses the user's ChatGPT plan. Accounts
-/// (registrations) and their tokens stay in the login keychain (the web UI's
-/// server keeps its own); nothing of them reaches tsugumid, Cards, project
-/// files, settings or logs.
+/// (registrations) and their tokens stay in agentd, with a separate Web host
+/// account profile. Tokens never reach tsugumid, Cards, project files, settings
+/// or logs.
 struct ChatGPTSettings: View {
-  @AppStorage("agent.model.chatgpt") private var model = ProviderConfig.chatGPT.model
-  @AppStorage("agent.provider") private var provider = "anthropic"
+  @HostStorage("agent.model.chatgpt") private var model = ProviderConfig.chatGPT.model
+  @HostStorage("agent.provider") private var provider = "anthropic"
   @State private var accounts: [ChatGPTAccountInfo] = []
   @State private var signingIn: Task<Void, Never>?
   @State private var message: String?
   @State private var welcome: String?
-  @State private var models: [(id: String, label: String)] = []
+  @State private var models: [(id: String, name: String)] = []
 
   private var auth: ChatGPTAuth { ChatGPTAuth.shared() }
   private var active: ChatGPTAccountInfo? { accounts.first(where: \.active) }
@@ -50,10 +50,10 @@ struct ChatGPTSettings: View {
         if provider == "chatgpt" { Text("使用中").font(.caption).foregroundStyle(.green) }
       }
     } footer: {
-      Text("サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。トークンは macOS Keychain（このデバイスのみ）に置かれ、core や Card には渡されず、プロジェクト・設定・ログにも残りません。")
+      Text("サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は agentd が行います。トークンは Card やプロジェクト・設定・ログには残りません。")
         .font(.caption).foregroundStyle(.secondary)
     }
-    .onAppear { Task { await refresh() } }
+    .onAppear { Task { await refresh(); models = (try? await CoreAgentClient.shared.storedModels("chatgpt")) ?? [] } }
     .alert(Text("ChatGPT プランを使っています"), isPresented: Binding(get: { welcome != nil }, set: { if !$0 { welcome = nil } })) {
       Button("Got it") {
         if let id = welcome { Task { try? await auth.markWelcomed(clientId: id) } }
@@ -74,9 +74,6 @@ struct ChatGPTSettings: View {
           Task {
             do {
               models = try await MessagesProvider(config: AgentSettings.config(for: "chatgpt")).modelChoices()
-              UserDefaults.standard.set(models.map(\.id), forKey: AgentSettings.modelsKey("chatgpt"))
-              UserDefaults.standard.set(Dictionary(models.map { ($0.id, $0.label) }, uniquingKeysWith: { a, _ in a }),
-                                        forKey: "agent.modelNames")
               message = String(localized: "\(models.count) 件のモデルを取得しました。")
             } catch { message = "\(error)" }
           }
@@ -85,7 +82,7 @@ struct ChatGPTSettings: View {
       }
       if !models.isEmpty {
         Picker("一覧から選択", selection: $model) {
-          ForEach(models, id: \.id) { Text($0.label).tag($0.id) }
+          ForEach(models, id: \.id) { Text($0.name).tag($0.id) }
         }
       }
     }
@@ -149,6 +146,7 @@ struct ChatGPTSettings: View {
   }
 
   private func refresh(signedIn: Bool = false) async {
+    await CorePreferences.shared.reload()
     accounts = await auth.accounts()
     // The guide is there while the active account may use the plan.
     if signedIn { GuideController.shared.connectionSaved() } else { GuideController.shared.refreshAvailability() }

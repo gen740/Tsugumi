@@ -5,12 +5,19 @@ import type { HistoryVersionMismatch } from './shared/historyVersion'
 
 export class ApiError extends Error {}
 
+let settingsRevision: Record<string, number> | undefined
+
 export async function api<T = any>(path: string, body?: unknown): Promise<T> {
+  if (path === '/api/settings' && body !== undefined) {
+    if (!settingsRevision) await api('/api/settings')
+    body = { ...(body as object), revision: settingsRevision }
+  }
   const r = await fetch(path, body === undefined
     ? { headers: { 'x-tsugumi': '1' } }
     : { method: 'POST', headers: { 'content-type': 'application/json', 'x-tsugumi': '1' }, body: JSON.stringify(body) })
   const v = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
   if (!r.ok) throw new ApiError(v.error ?? `HTTP ${r.status}`)
+  if (path === '/api/settings' && v.revision) settingsRevision = v.revision
   return v as T
 }
 

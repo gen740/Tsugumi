@@ -9,12 +9,11 @@ import TsugumiRPC
 @MainActor
 enum VersionSummarizer {
   static let defaultsKey = "versions.summaries"
-  static var enabled: Bool { UserDefaults.standard.bool(forKey: defaultsKey) }
+  static var enabled: Bool { CorePreferences.shared.bool(forKey: defaultsKey) }
 
   /// The small model of the Agent's provider (none for the local fixture or the plan).
   static func config() -> ProviderConfig? {
-    guard var c = ThoughtSummarizer.config(), c.auth != .chatGPT else { return nil }
-    c.maxTokens = 1500  // room for its own reasoning on a large diff; the answer is cut to one line
+    guard let c = ThoughtSummarizer.config(), c.auth != .chatGPT else { return nil }
     return c
   }
 
@@ -34,8 +33,7 @@ enum VersionSummarizer {
     let client = CoreAgentClient.shared
     _ = try await client.call("RegisterProjectRequest", ["project_id": project.id, "endpoint": project.endpoint,
       "token": project.token, "title": project.title])
-    try await client.configure(config)
-    let result = try await client.call("VersionSummarizeRequest", ["project_id": project.id, "commit": commit])
+    let result = try await client.call("VersionSummarizeRequest", ["project_id": project.id, "commit": commit, "provider": try await client.provider(config)])
     return clean(result["text"] as? String ?? "")
   }
 

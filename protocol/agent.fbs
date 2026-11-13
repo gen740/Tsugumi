@@ -10,21 +10,19 @@ enum Access:ubyte { Read, Write, Run, CardPermissions, Shell }
 enum GrantScope:ubyte { Conversation, Server }
 
 // Conversation-specific selection; global provisioning uses the Host contract.
-table ConfigureRequest { provider:Tsugumi.Service.Provider (required); conversation_id:string (required); }
+table ConfigureRequest { provider:Tsugumi.Service.ProviderSelection (required); conversation_id:string (required); }
 
 table ConversationCreateRequest { conversation_id:string; project_id:string; role:string; }
 table ConversationListRequest { project_id:string; }
 table ConversationGetRequest { conversation_id:string (required); }
 table ConversationDeleteRequest { conversation_id:string (required); }
 table ConversationSearchRequest { project_id:string; text:string (required); }
-table SkillReference { name:string (required); resource_id:string (required); path:string (required); }
 // text is an explicit user message. Project context is read inside core,
 // after authorization, never silently appended by a UI.
 table ConversationSendRequest {
   conversation_id:string (required); turn_id:string (required); text:string (required);
   selected_cards:[string]; selected_displays:[string]; skill_names:[string]; intent:string;
   attached_resources:[string];
-  skill_references:[SkillReference];
 }
 table ConversationActionRequest { conversation_id:string (required); action:Action; }
 table ConversationCancelRequest { conversation_id:string (required); }
@@ -40,8 +38,8 @@ table AccessListRequest { conversation_id:string; }
 table DemoListRequest {}
 table DemoReadRequest { path:string (required); }
 
-table VersionSummarizeRequest { project_id:string (required); commit:string (required); }
-table ConversationSummarizeRequest { conversation_id:string (required); provider:Tsugumi.Service.Provider; }
+table VersionSummarizeRequest { project_id:string (required); commit:string (required); provider:Tsugumi.Service.ProviderSelection; }
+table ConversationSummarizeRequest { conversation_id:string (required); provider:Tsugumi.Service.ProviderSelection; }
 
 union RequestPayload {
   HelloRequest:Tsugumi.Service.HelloRequest,

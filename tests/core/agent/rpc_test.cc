@@ -1,5 +1,5 @@
 // Scenarios exercise only the public Agent RPC through the shipped client.
-#include "fixture.hh"
+#include "oauth_fixture.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 
 namespace tsugumi::test {
@@ -61,11 +61,11 @@ TEST_F(AgentFixture, ProjectProtocolCannotBeUsedOnTheAgentSocket) {
 
 TEST_F(AgentFixture, ExternalAgentsCannotConfigureConversationProviders) {
   const auto result =
-      Call(*external, A::RequestPayload::ConfigureRequest, [](Builder &b) {
-        Tsugumi::Service::ProviderT config;
-        config.provider = "fixture";
+      Call(*external, A::RequestPayload::ConfigureRequest, [](Builder& b) {
+        Tsugumi::Service::ProviderSelectionT config;
+        config.profile = "desktop";
         config.model = "injected";
-        const auto p = Tsugumi::Service::Provider::Pack(b, &config);
+        const auto p = Tsugumi::Service::ProviderSelection::Pack(b, &config);
         return A::CreateConfigureRequest(b, p, b.CreateString("untrusted"))
             .Union();
       });
@@ -127,58 +127,6 @@ TEST_F(AgentFixture, ExternalAgentsCannotReadOrReplaceHumanConversations) {
   EXPECT_TRUE(Get(conversation, true).Code().empty());
 }
 
-TEST_F(AgentFixture, CorePersistsRotatedCredentialsAndRevokesTheCurrentToken) {
-  ModelServer authorization;
-  authorization.QueueHTTP(
-      R"({"access_token":"access-new","refresh_token":"refresh-new","token_type":"Bearer","scope":"chatgpt.tokens.use.direct","expires_in":3600})");
-  authorization.QueueHTTP("", 204);
-  ASSERT_TRUE(ImportCredential(authorization).Code().empty());
-  EXPECT_EQ(JsonString(Token().View(), "/access_token"), "access-new");
-  ASSERT_TRUE(authorization.WaitForRequests(1));
-  EXPECT_EQ(JsonString(Token("access-old").View(), "/access_token"),
-            "access-new");
-  // A second UI opening with an old cached registration must not undo rotation.
-  ASSERT_TRUE(ImportCredential(authorization).Code().empty());
-  external.reset();
-  human.reset();
-  agent.Stop();
-  StartAgent();
-  EXPECT_EQ(JsonString(Token().View(), "/access_token"), "access-new");
-  EXPECT_EQ(authorization.Requests().size(), 1u);
-  const auto forgotten =
-      Call(*host, H::RequestPayload::CredentialForgetRequest, [](Builder &b) {
-        return H::CreateCredentialForgetRequest(
-                   b, b.CreateString("fixture-client"))
-            .Union();
-      });
-  ASSERT_TRUE(forgotten.Code().empty());
-  EXPECT_TRUE(JsonBool(forgotten.View(), "/revoked"));
-  ASSERT_TRUE(authorization.WaitForRequests(2));
-  const auto requests = authorization.Requests();
-  EXPECT_NE(requests[0].find("refresh_token=refresh-old"), std::string::npos);
-  EXPECT_NE(requests[0].find("resource=https%3A%2F%2Ffixture.invalid%2Fapi"),
-            std::string::npos);
-  EXPECT_NE(requests[1].find("token=refresh-new"), std::string::npos);
-  EXPECT_EQ(requests[1].find("refresh-old"), std::string::npos);
-  EXPECT_NE(
-      authorization.Headers()[0].find("application/x-www-form-urlencoded"),
-      std::string::npos);
-  EXPECT_EQ(Token().Code(), "not_configured");
-}
-
-TEST_F(AgentFixture, CredentialRefreshErrorsDoNotExposeTheSubmittedToken) {
-  ModelServer authorization;
-  authorization.QueueHTTP(
-      R"({"error":"invalid_grant","description":"rejected refresh-old"})", 400);
-  ASSERT_TRUE(ImportCredential(authorization).Code().empty());
-  const auto rejected = Token();
-  EXPECT_FALSE(rejected.Code().empty());
-  EXPECT_EQ(std::string(reinterpret_cast<const char*>(rejected.bytes.data()),
-                        rejected.bytes.size())
-                .find("refresh-old"),
-            std::string::npos);
-}
-
 TEST_F(AgentFixture,
        ChatGPTPlanLimitsStopWithoutRetryingAndUseThePlanWireFormat) {
   ModelServer model;
@@ -189,19 +137,17 @@ TEST_F(AgentFixture,
       "data: {\"type\":\"response.failed\",\"response\":{\"error\":{"
       "\"code\":\"subscription_sharing_usage_limit_exceeded\","
       "\"message\":\"usage limit reached\"}}}\n\n");
-  ASSERT_TRUE(Call(*host, H::RequestPayload::ConfigureRequest,
-                   [&](Builder &b) {
-                     Tsugumi::Service::ProviderT config;
-                     config.provider = "chatgpt";
-                     config.credential = "fixture-access";
-                     config.base_url = model.URL();
-                     config.model = "fixture-model";
-                     const auto p =
-                         Tsugumi::Service::Provider::Pack(b, &config);
-                     return H::CreateConfigureRequest(b, p).Union();
-                   })
-                  .Code()
-                  .empty());
+  OAuthServer oauth;
+  ASSERT_EQ(oauth.SignIn(*host, model.URL())
+                .HostValue()
+                ->value_as_SignInStatus()
+                ->state()
+                ->str(),
+            "complete");
+  ASSERT_TRUE(
+      SettingsPatch(*host, "desktop", {{"agent.provider", Quote("chatgpt")}})
+          .Code()
+          .empty());
   for (int turn = 0; turn < 2; ++turn) {
     const auto conversation =
         Conversation("plan-limit-" + std::to_string(turn));

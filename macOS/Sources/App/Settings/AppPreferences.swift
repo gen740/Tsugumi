@@ -132,8 +132,8 @@ struct SkillFolder: Codable, Hashable, Identifiable {
   var enabled = true
 }
 
-/// Application-wide settings (UserDefaults). Project settings live in the
-/// project documents instead.
+/// Presentation preferences remain in UserDefaults. Host settings are revisioned
+/// snapshots of agentd; project settings live in the project documents.
 @MainActor
 @Observable
 final class AppPreferences {
@@ -177,7 +177,7 @@ final class AppPreferences {
     var label: String { self == .returnKey ? String(localized: "Return で送信（⇧Return で改行）") : String(localized: "⌘Return で送信（Return で改行）") }
   }
 
-  var language: Language { didSet { d.set(language.rawValue, forKey: "app.language"); applyLanguage() } }
+  var language: Language { didSet { CorePreferences.shared.set(language.rawValue, forKey: "app.language"); applyLanguage() } }
   var maxConcurrency: Int { didSet { d.set(maxConcurrency, forKey: "run.maxConcurrency") } }
   var sendKey: SendKey { didSet { d.set(sendKey.rawValue, forKey: "chat.sendKey") } }
   var theme: Theme { didSet { d.set(theme.rawValue, forKey: "app.theme"); applyTheme() } }
@@ -203,12 +203,12 @@ final class AppPreferences {
   }
   /// What the Agent may give Cards without asking (CardPermission raw
   /// values); everything else waits for the user. Nothing by default.
-  var allowedPermissions: Set<String> { didSet { d.set(Array(allowedPermissions).sorted(), forKey: "agent.permissions.allowed") } }
+  var allowedPermissions: Set<String> { didSet { CorePreferences.shared.set(Array(allowedPermissions).sorted(), forKey: "agent.permissions.allowed") } }
   var shortcuts: [ShortcutAction: KeyBinding] { didSet { saveShortcuts() } }
   var skillFolders: [SkillFolder] { didSet { saveSkills() } }
 
   init() {
-    language = Language(rawValue: d.string(forKey: "app.language") ?? "") ?? .ja
+    language = Language(rawValue: CorePreferences.shared.string(forKey: "app.language") ?? d.stringArray(forKey: "AppleLanguages")?.first ?? "") ?? .ja
     maxConcurrency = d.object(forKey: "run.maxConcurrency") as? Int ?? 4
     sendKey = SendKey(rawValue: d.string(forKey: "chat.sendKey") ?? "") ?? .returnKey
     theme = Theme(rawValue: d.string(forKey: "app.theme") ?? "") ?? .system
@@ -222,18 +222,26 @@ final class AppPreferences {
     editorTheme = EditorTheme(rawValue: d.string(forKey: "editor.theme") ?? "") ?? .standard
     flowDirection = FlowDirection(rawValue: d.string(forKey: "canvas.flow") ?? "") ?? .topToBottom
     tsugumiMotion = Motion(rawValue: d.string(forKey: "app.tsugumiMotion") ?? "") ?? .system
-    allowedPermissions = Set(d.stringArray(forKey: "agent.permissions.allowed") ?? [])
+    allowedPermissions = Set(CorePreferences.shared.stringArray(forKey: "agent.permissions.allowed") ?? [])
     if let data = d.data(forKey: "app.shortcuts"), let s = try? JSONDecoder().decode([String: KeyBinding].self, from: data) {
       shortcuts = Dictionary(uniqueKeysWithValues: s.compactMap { k, v in ShortcutAction(rawValue: k).map { ($0, v) } })
     } else {
       shortcuts = [:]
     }
-    if let data = d.data(forKey: "agent.skillFolders"), let s = try? JSONDecoder().decode([SkillFolder].self, from: data) {
+    if let data = CorePreferences.shared.data(forKey: "agent.skillFolders"), let s = try? JSONDecoder().decode([SkillFolder].self, from: data) {
       skillFolders = s
     } else {
       skillFolders = []
     }
     applyLanguage()
+  }
+
+  func syncHostSettings() {
+    let core = CorePreferences.shared
+    if let value = core.string(forKey: "app.language"), let next = Language(rawValue: value), language != next { language = next }
+    let permissions = Set(core.stringArray(forKey: "agent.permissions.allowed") ?? [])
+    if allowedPermissions != permissions { allowedPermissions = permissions }
+    if let data = core.data(forKey: "agent.skillFolders"), let folders = try? JSONDecoder().decode([SkillFolder].self, from: data), skillFolders != folders { skillFolders = folders }
   }
 
   func shortcut(_ a: ShortcutAction) -> KeyBinding { shortcuts[a] ?? a.defaultKey }
@@ -249,7 +257,7 @@ final class AppPreferences {
   }
 
   private func saveSkills() {
-    d.set(try? JSONEncoder().encode(skillFolders), forKey: "agent.skillFolders")
+    CorePreferences.shared.set((try? JSONSerialization.jsonObject(with: JSONEncoder().encode(skillFolders))) ?? [], forKey: "agent.skillFolders")
   }
 
   func applyTheme() {

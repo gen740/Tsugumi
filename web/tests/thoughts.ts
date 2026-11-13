@@ -1,3 +1,4 @@
+import { mockHostSettings } from './hostSettingsFixture'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -133,7 +134,7 @@ try {
 }
 
 // The adapter sends the existing FlatBuffers request, including refreshed
-// credentials. No provider calls or sockets are opened in these tests.
+// provider references. No provider calls or sockets are opened in these tests.
 const host = new CoreAgentHost('/nonexistent', '/nonexistent', {} as never, 'ja')
 let forwarded: any
 host.user.call = async (method, fields) => {
@@ -142,12 +143,12 @@ host.user.call = async (method, fields) => {
   return reply('working') as any
 }
 assert.deepEqual(await host.summarize('conversation', {
-  name: 'ChatGPT', model: 'small', api: 'openAIResponses', auth: 'chatgpt', baseURL: 'https://example.invalid',
-  maxTokens: 120, contextLimit: 1000, token: async () => ({ value: 'test-token', clientId: 'test-account' }),
+  name: 'ChatGPT', model: 'small', api: 'openAIResponses', auth: 'chatgpt',
 }), reply('working'))
 assert.equal(forwarded.conversation_id, 'conversation')
-assert.equal(forwarded.provider.credential, 'test-token')
-assert.equal(forwarded.provider.credential_id, 'test-account')
+assert.equal(forwarded.provider.provider_id, 'chatgpt')
+assert.equal(forwarded.provider.credential, undefined)
+assert.equal(forwarded.provider.credential_id, undefined)
 
 // Page -> host route -> the same core adapter. The route chooses the speech
 // connection already used by the guide and never returns provider credentials.
@@ -159,6 +160,11 @@ try {
   RemoteAgent.prototype.open = async function () {
     this.host.user.call = async (method, fields) => {
       if (method === 'AccessListRequest') return { requests: [] } as any
+      if (method === 'ProviderSetRequest') {
+        assert.equal(fields.ephemeral, true)
+        assert.equal(fields.provider.api_key, 'test-key')
+        return { configured: true } as any
+      }
       assert.equal(method, 'ConversationSummarizeRequest')
       forwarded = fields
       return reply('reading') as any
@@ -167,10 +173,12 @@ try {
   }
   RemoteAgent.prototype.observe = () => {}
   RemoteAgent.prototype.refresh = async () => {}
-  const routes = chatRoutes({ support: root, here: root, envs: {}, projectDir: (p: unknown) => String(p),
+  const restoreSettings = mockHostSettings()
+    const routes = chatRoutes({ support: root, here: root, envs: {}, projectDir: (p: unknown) => String(p),
     readJSON: (_file: string, fallback: unknown) => fallback,
   } as any)
   const result = await routes['POST /api/chat/thoughts']({ path: root, session: 'web-thoughts' }, new URL('http://localhost'))
+  restoreSettings()
   assert.deepEqual(result, reply('reading'))
   assert.equal(forwarded.conversation_id, 'web-thoughts')
   assert.equal(forwarded.provider.model, 'claude-haiku-5-5')

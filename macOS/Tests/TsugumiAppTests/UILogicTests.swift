@@ -257,20 +257,6 @@ import Testing
   #expect(parseParam(" x ", "string") == .string(" x "))
 }
 
-@Test func skillsLoadFromFoldersAndFiles() throws {
-  let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tsugumi-skills-\(UUID().uuidString)")
-  try FileManager.default.createDirectory(at: dir.appendingPathComponent("review"), withIntermediateDirectories: true)
-  try "---\nname: review\ndescription: Review a Card\n---\nCheck the outputs.".write(
-    to: dir.appendingPathComponent("review/SKILL.md"), atomically: true, encoding: .utf8)
-  try "# Explain runs\nSay what happened.".write(to: dir.appendingPathComponent("explain.md"), atomically: true, encoding: .utf8)
-  try "ignored".write(to: dir.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
-  defer { try? FileManager.default.removeItem(at: dir) }
-  let skills = loadSkills(in: dir, source: "test")
-  #expect(skills.map(\.name) == ["explain", "review"])
-  #expect(skills[0].description == "Explain runs")
-  #expect(skills[1].description == "Review a Card")
-}
-
 @Test func theSmallCardsKeepTheirShapeWithASummary() {
   func geometry(_ kind: CardKind) -> CardGeometry {
     CardGeometry(CardNodeData(title: "x", kind: kind, summary: "what it does", inputs: [], outputs: []), flow: .topToBottom)
