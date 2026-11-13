@@ -461,6 +461,57 @@ auto ExecutionBroker::Stop() -> void { state_->Stop(); }
 auto ExecutionBroker::endpoint() const -> std::string {
   return "unix:" + state_->socket;
 }
+auto ExecutionBroker::Authorize(const std::string &project,
+                                const std::filesystem::path &path,
+                                const std::filesystem::path &control,
+                                bool guest) -> H::ExecutionAuthorizationT {
+  std::lock_guard lock(state_->mutex);
+  const auto identity = ProjectIdentity(path.string());
+  Require(!project.empty(), "Missing project identity");
+  Require(control.is_absolute() && std::filesystem::is_directory(control),
+          "Invalid project control directory");
+  if (identity.empty()) {
+    auto q = state_->db.prepare("DELETE FROM projects WHERE id=?");
+    q.bind(1, project).run();
+    fs::remove_file_durable(control / "execution-broker-capability");
+    H::ExecutionAuthorizationT result;
+    result.endpoint = endpoint();
+    result.capability_file = "";
+    return result;
+  }
+  const auto scope = Tag(state_->key, std::string("project\0", 8) + identity);
+  auto capability = crypto::random_token(32);
+  auto generation =
+      state_->db.prepare("SELECT value FROM generation WHERE id=1");
+  generation.step();
+  const auto version = generation.text(0);
+  auto previous = state_->db.prepare(
+      "SELECT capability,identity,generation FROM projects WHERE id=?");
+  previous.bind(1, project);
+  if (previous.step() && previous.text(1) == identity &&
+      previous.text(2) == version)
+    capability = previous.text(0);
+  auto q =
+      state_->db.prepare("INSERT OR REPLACE INTO projects VALUES(?,?,?,?,?)");
+  q.bind(1, project)
+      .bind(2, identity)
+      .bind(3, scope)
+      .bind(4, capability)
+      .bind(5, version)
+      .run();
+  fs::write_atomic(control / "execution-broker-capability", capability,
+                   guest ? 0644 : 0600);
+  H::ExecutionAuthorizationT result;
+  result.endpoint = endpoint();
+  result.capability_file = (control / "execution-broker-capability").string();
+  result.available = true;
+  return result;
+}
+auto ExecutionBroker::Revoke(const std::string &project) -> void {
+  std::lock_guard lock(state_->mutex);
+  auto q = state_->db.prepare("DELETE FROM projects WHERE id=?");
+  q.bind(1, project).run();
+}
 auto ExecutionBroker::Handles(H::RequestPayload type) -> bool {
   return type == H::RequestPayload::ExecutionServicesRequest ||
          type == H::RequestPayload::ExecutionServicePutRequest ||
@@ -471,6 +522,13 @@ auto ExecutionBroker::Handles(H::RequestPayload type) -> bool {
 auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
     -> std::string {
   try {
+    if (const auto* p = request.value_as_ExecutionProjectAuthorizeRequest())
+      return agent::wire::HostReply(id, Authorize(p->project_id()->str(),
+          p->path()->str(), p->control_dir()->str(), p->guest()));
+    if (const auto* p = request.value_as_ExecutionProjectRevokeRequest()) {
+      Revoke(p->project_id()->str());
+      return agent::wire::HostReply(id, Tsugumi::Service::AcknowledgementT{});
+    }
     if (const auto* p = request.value_as_ExecutionServicePutRequest()) {
       Entry entry{p->id()->str(),
                   p->name()->str(),
@@ -549,57 +607,6 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
           state_->db.prepare("UPDATE generation SET value=? WHERE id=1");
       changed.bind(1, crypto::random_token(32)).run();
       transaction.commit();
-    }
-    if (const auto* p = request.value_as_ExecutionProjectAuthorizeRequest()) {
-      const auto identity = ProjectIdentity(p->path()->str()),
-                 project = p->project_id()->str();
-      Require(!project.empty(), "Missing project identity");
-      const std::filesystem::path control(p->control_dir()->str());
-      Require(control.is_absolute() && std::filesystem::is_directory(control),
-              "Invalid project control directory");
-      if (identity.empty()) {
-        auto q = state_->db.prepare("DELETE FROM projects WHERE id=?");
-        q.bind(1, project).run();
-        fs::remove_file_durable(control / "execution-broker-capability");
-        H::ExecutionAuthorizationT result;
-        result.endpoint = endpoint();
-        result.capability_file = "";
-        return agent::wire::HostReply(id, std::move(result));
-      }
-      const auto scope =
-          Tag(state_->key, std::string("project\0", 8) + identity);
-      auto capability = crypto::random_token(32);
-      auto generation =
-          state_->db.prepare("SELECT value FROM generation WHERE id=1");
-      generation.step();
-      const auto version = generation.text(0);
-      auto previous = state_->db.prepare(
-          "SELECT capability,identity,generation FROM projects WHERE id=?");
-      previous.bind(1, project);
-      if (previous.step() && previous.text(1) == identity &&
-          previous.text(2) == version)
-        capability = previous.text(0);
-      auto q = state_->db.prepare(
-          "INSERT OR REPLACE INTO projects VALUES(?,?,?,?,?)");
-      q.bind(1, project)
-          .bind(2, identity)
-          .bind(3, scope)
-          .bind(4, capability)
-          .bind(5, version)
-          .run();
-      fs::write_atomic(control / "execution-broker-capability", capability,
-                       p->guest() ? 0644 : 0600);
-      H::ExecutionAuthorizationT result;
-      result.endpoint = endpoint();
-      result.capability_file =
-          (control / "execution-broker-capability").string();
-      result.available = true;
-      return agent::wire::HostReply(id, std::move(result));
-    }
-    if (const auto* p = request.value_as_ExecutionProjectRevokeRequest()) {
-      auto q = state_->db.prepare("DELETE FROM projects WHERE id=?");
-      q.bind(1, p->project_id()->str()).run();
-      return agent::wire::HostReply(id, Tsugumi::Service::AcknowledgementT{});
     }
     return agent::wire::HostReply(id, state_->List());
   } catch (const std::exception& e) {

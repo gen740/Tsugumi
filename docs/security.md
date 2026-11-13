@@ -89,6 +89,10 @@ The managing process inside the VM, `tsugumi-vmd`, starts each project's `tsugum
 
 - `nix-daemon` and `/nix/store` are shared. Every path in the store is identified by the hash of its inputs, and builds happen in `nix-daemon`'s sandbox (`sandbox = true`), so one project cannot rewrite another's build results. By Nix's design, however, **which paths exist in the store is visible to every project**. Do not put secrets in the Nix store.
 
+The human-authenticated Host environment service in `tsugumi-agentd` launches native project processes and grants their execution-broker capability before reporting readiness. It authenticates the project endpoint and checks its project/server identity when reattaching a resident process. Stop and observed process death revoke that capability and remove the Agent's endpoint registration. Attached-folder withdrawal replaces the control file immediately. The native service never archives history unless the person requests it with the archive flag.
+
+The signed Mac helper retains Virtualization.framework operations, virtiofs shares, vsock relays and the terminal descriptor bridge. The VM and project processes remain resident after UI disconnection; closing a page does not revoke an environment's execution authorization.
+
 ## 4. Card (worker) ⇄ tsugumid
 
 Each Card's code is further run inside a `bubblewrap` sandbox (`core/src/worker_proc.cc`).

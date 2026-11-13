@@ -5,6 +5,7 @@
 #include <string>
 
 #include "server.hh"
+#include "host/environment.hh"
 
 namespace tsugumi::agent {
 
@@ -15,6 +16,7 @@ struct HostOptions {
   std::string user_token;
   std::string external_token;
   std::string server_id;
+  host::EnvironmentOptions environment;
 };
 
 class Host final : public RequestSink {

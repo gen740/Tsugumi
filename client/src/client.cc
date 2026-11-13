@@ -98,6 +98,11 @@ auto Inspect(Protocol protocol, std::span<const uint8_t> bytes) -> Envelope {
           KnownPayload(message->payload_as_Reply()->value_type()))
         return {Kind::Reply, id};
       break;
+    case A::Payload::Event:
+      if (!id && message->payload_as_Event() &&
+          KnownPayload(message->payload_as_Event()->value_type()))
+        return {Kind::Event, 0};
+      break;
     default:
       break;
     }

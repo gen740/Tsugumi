@@ -46,6 +46,10 @@ This reference follows `main` and covers the 0.7 pre-release series. If you are 
 
 See the [trust boundaries](security.md#1-the-trust-boundaries), [RPC contract](Protocol.md) and [repository map](../AGENTS.md#map).
 
+The host-side `tsugumi-agentd` exposes environment operations through `EnvironmentRequest` in `protocol/host.fbs`: state, start, stop and attached-folder changes. Its native process adapter launches `tsugumid`; the service owns readiness checks, endpoint and project registration, execution-broker authorization, concurrent starts and process-exit reporting. Host events carry state, progress and stopped notifications. Environments remain resident when clients disconnect or agentd exits. Archiving incompatible history requires an explicit start flag. `HostRuntimeRequest` reports runtime/store state without starting a VM.
+
+On macOS, the signed resident `tsugumi-vmhost` owns Virtualization.framework, virtiofs/vsock and terminal file descriptors. Its launcher manages the shared VM and project processes; the desktop and Mac Web clients connect to that helper.
+
 ## 2. Cards and Workflows
 
 ### Kinds of Card

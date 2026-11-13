@@ -23,6 +23,7 @@
 #include "agent/tool_images.hh"
 #include "agent/wire.hh"
 #include "host/execution_broker.hh"
+#include "host/environment.hh"
 #include "host/projects.hh"
 #include "host/settings.hh"
 #include "host/skills.hh"
@@ -208,6 +209,7 @@ struct Host::State {
             "PRIMARY KEY, turn TEXT NOT NULL, frame BLOB NOT NULL, "
             "message_index INTEGER NOT NULL)");
     db.exec(
+        "CREATE TABLE IF NOT EXISTS environment_projects(key TEXT PRIMARY KEY, project TEXT NOT NULL);"
         "CREATE TABLE IF NOT EXISTS project_paths(id TEXT PRIMARY KEY, path "
         "TEXT NOT NULL);"
         "CREATE TABLE IF NOT EXISTS skill_catalogs(conversation TEXT PRIMARY "
@@ -227,6 +229,42 @@ struct Host::State {
     db.exec("UPDATE turns SET state='interrupted' WHERE state='running'");
     if (!options.broker_socket.empty())
       execution_broker = std::make_unique<host::ExecutionBroker>(options.state_dir, options.broker_socket);
+    if (execution_broker)
+      environments = std::make_unique<host::Environments>(options.environment,
+          host::EnvironmentAuthorization{
+            [this](const std::string& key, const std::filesystem::path& path,
+                   const std::filesystem::path& control) {
+              return execution_broker->Authorize(key, path, control, false);
+            },
+            [this](const std::string& key) { execution_broker->Revoke(key); }},
+          [this](const H::EnvironmentStateT& state) { EnvironmentChanged(state); },
+          [this](const H::EnvironmentProgressT& progress) {
+            std::lock_guard lock(mutex);
+            HostEvent(wire::HostEvent(progress));
+          });
+    // Resume observing resident native daemons even before a UI reconnects.
+    // This restores process capabilities, never cached run data.
+    if (environments) {
+      std::vector<std::pair<std::string, std::string>> resident;
+      {
+        std::lock_guard lock(mutex);
+        auto q = db.prepare("SELECT e.key,p.path FROM environment_projects e JOIN project_paths p ON p.id=e.project");
+        while (q.step()) resident.emplace_back(q.text(0), q.text(1));
+      }
+      for (const auto& [key, path] : resident) {
+        try {
+          H::EnvironmentRequestT request;
+          request.project = path;
+          environments->Handle(request);
+        } catch (const std::exception&) {
+          execution_broker->Revoke(key);
+          H::EnvironmentStateT stopped;
+          stopped.key = key;
+          stopped.project = path;
+          EnvironmentChanged(stopped);
+        }
+      }
+    }
   }
 
   HostOptions options;
@@ -234,6 +272,8 @@ struct Host::State {
   host::Projects host_projects;
   std::unique_ptr<host::Settings> host_settings;
   std::unique_ptr<host::ExecutionBroker> execution_broker;
+  std::unique_ptr<host::Environments> environments;
+  std::set<ConnId> host_connections;
   Catalog catalog;
   Server *server = nullptr;
   Server *host_server = nullptr;
@@ -254,6 +294,34 @@ struct Host::State {
   Lane requests;
   Lane tool_requests;
 
+  auto HostEvent(const std::string& bytes) -> void {
+    if (host_server)
+      for (const auto connection : host_connections) host_server->reply(connection, bytes);
+  }
+  auto EnvironmentChanged(const H::EnvironmentStateT& state) -> void {
+    std::lock_guard lock(mutex);
+    if (state.phase == H::EnvironmentPhase::Ready) {
+      sql::Transaction transaction(db);
+      auto environment = db.prepare("INSERT OR REPLACE INTO environment_projects VALUES(?,?)");
+      environment.bind(1, state.key).bind(2, state.project_id).run();
+      const auto endpoint = state.unix_socket.empty() ? state.endpoint : "unix:" + state.unix_socket;
+      auto q = db.prepare("INSERT OR REPLACE INTO projects VALUES(?,?,?,?)");
+      q.bind(1, state.project_id).bind(2, endpoint).bind(3, state.token)
+          .bind(4, std::filesystem::path(state.project).filename().string()).run();
+      auto path = db.prepare("INSERT OR REPLACE INTO project_paths VALUES(?,?)");
+      path.bind(1, state.project_id).bind(2, state.project).run();
+      transaction.commit();
+    } else if (state.phase == H::EnvironmentPhase::Stopped || state.phase == H::EnvironmentPhase::Failed) {
+      auto q = db.prepare("DELETE FROM projects WHERE id IN (SELECT project FROM environment_projects WHERE key=?)");
+      q.bind(1, state.key).run();
+    }
+    HostEvent(wire::HostEvent(state));
+    if (state.phase == H::EnvironmentPhase::Stopped || state.phase == H::EnvironmentPhase::Failed) {
+      H::EnvironmentStoppedT stopped;
+      stopped.state = std::make_unique<H::EnvironmentStateT>(state);
+      HostEvent(wire::HostEvent(std::move(stopped)));
+    }
+  }
   auto Human(bool human) -> void {
     if (!human)
       throw Failure("permission_denied",
@@ -1965,6 +2033,17 @@ struct Host::State {
     std::unique_lock lock(mutex);
     if (stopping)
       throw Failure("unavailable", "Host service is stopping");
+    if (const auto* environment = r->value_as_EnvironmentRequest()) {
+      auto input = std::unique_ptr<H::EnvironmentRequestT>(environment->UnPack());
+      lock.unlock();
+      if (!environments) throw Failure("unavailable", "Environment service is not running");
+      return wire::HostReply(request.request_id, environments->Handle(*input));
+    }
+    if (r->value_as_HostRuntimeRequest()) {
+      lock.unlock();
+      if (!environments) throw Failure("unavailable", "Environment service is not running");
+      return wire::HostReply(request.request_id, environments->Runtime());
+    }
     if (host::ExecutionBroker::Handles(r->value_type())) {
       auto* broker = execution_broker.get();
       lock.unlock();
@@ -2120,6 +2199,7 @@ auto Host::Shutdown() -> void {
     }
   }
   state_->changed.notify_all();
+  if (state_->environments) state_->environments->Shutdown();
   if (state_->execution_broker) state_->execution_broker->Stop();
   state_->requests.stop();
   state_->tool_requests.stop();
@@ -2151,9 +2231,10 @@ auto Host::hello(const RequestIn &request) -> std::pair<std::string, bool> {
                  host ? "permission_denied" : "unauthenticated",
                  "Invalid service credential", {}),
             false};
-  if (!host) {
+  {
     std::lock_guard lock(state_->mutex);
-    state_->principals[request.conn] = human;
+    if (host) state_->host_connections.insert(request.conn);
+    else state_->principals[request.conn] = human;
   }
   S::HelloResultT result;
   result.server_id = state_->options.server_id;
@@ -2204,6 +2285,7 @@ auto Host::dispatch(RequestIn request) -> void {
 auto Host::disconnected(ConnId connection) -> void {
   std::lock_guard lock(state_->mutex);
   state_->principals.erase(connection);
+  state_->host_connections.erase(connection);
   // Connection lifetime never cancels a core-owned conversation.
 }
 
@@ -2215,7 +2297,7 @@ public:
     return host_.hello(r);
   }
   auto dispatch(RequestIn r) -> void override { host_.dispatch(std::move(r)); }
-  auto disconnected(ConnId) -> void override {}
+  auto disconnected(ConnId connection) -> void override { host_.disconnected(connection); }
 
 private:
   Host &host_;
@@ -2241,6 +2323,14 @@ auto RunHost(int argc, char **argv) -> int {
         options.state_dir = next();
       else if (arg == "--unix")
         listener.unix_path = next();
+      else if (arg == "--tsugumid")
+        options.environment.tsugumid = next();
+      else if (arg == "--worker")
+        options.environment.worker = next();
+      else if (arg == "--sdk-dir")
+        options.environment.sdk = next();
+      else if (arg == "--environment-dir")
+        options.environment.directory = next();
       else if (arg == "--demos-dir")
         options.demos_dir = next();
       else if (arg == "--allow-origin")
@@ -2287,6 +2377,12 @@ auto RunHost(int argc, char **argv) -> int {
         !S_ISDIR(broker_stat.st_mode) || broker_stat.st_uid != ::getuid() ||
         (broker_stat.st_mode & 0077))
       throw std::runtime_error("Execution broker directory must be private");
+    const auto binary_dir = std::filesystem::absolute(argv[0]).parent_path();
+    if (options.environment.tsugumid.empty()) options.environment.tsugumid = binary_dir / "tsugumid";
+    if (options.environment.worker.empty()) options.environment.worker = binary_dir / "tsugumi-worker";
+    if (options.environment.sdk.empty()) options.environment.sdk = binary_dir.parent_path() / "share/tsugumi/sdk";
+    if (options.environment.directory.empty()) options.environment.directory = options.state_dir / "environments";
+    options.environment.socket_directory = broker_dir / "env";
     options.broker_socket = (broker_dir / "s").string();
     Host host(options);
     Server server(listener, &host);

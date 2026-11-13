@@ -18,6 +18,8 @@ The CI definitions are [ci.yml](../.github/workflows/ci.yml) and [ci-platform.ym
 
 The build generates C++/Python/Swift/TypeScript bindings and BFBS with `flatc`; these stay in build outputs and are not committed.
 
+`tests/core/agent/environment_rpc_test.cc` exercises Host environment requests against agentd and an external fake `tsugumid` with authenticated project RPC. It covers readiness/registration, concurrent starts and aliases, process death and retry, resident-process adoption, explicit history recovery, folder withdrawal, stop and broker capability revocation. `environment_adapter_test.cc` supplies a narrow helper double to the same lifecycle service. The RPC scenarios use Unix sockets; the helper-double scenarios run without sockets. Neither launches a VM or invokes Nix. Build `tsugumi_agent_rpc_tests` and `tsugumi_host_settings_tests`; run them with `--gtest_filter='EnvironmentFixture.*'` and `--gtest_filter='EnvironmentAdapterTest.*'`, respectively. The CLI start/origins/failure scenarios are in `tests/python/test_cli.py`; they exercise the Web host and its Mac helper adapter.
+
 For documentation changes, run `nix run .#build-doc` and `nix run .#test-doc`. Changes to the demo player also require `node docs/site/player/build.mjs --check`.
 
 ## Manual tools
