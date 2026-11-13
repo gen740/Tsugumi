@@ -15,17 +15,21 @@ public struct AgentProject: Sendable {
   }
 }
 
-public struct CoreAgentFailure: Error, CustomStringConvertible, Sendable {
+public struct CoreAgentFailure: LocalizedError, CustomStringConvertible, Sendable {
   public let code: String
   public let message: String
   public let requestID: String?
   public var description: String { message }
+  public var errorDescription: String? { message }
 }
 
 /// Binary Agent and Host connections share the project's C ABI byte transport.
 /// Framing, verification, deadlines and pending requests belong to client/.
 public actor CoreAgentClient {
   public static let shared = CoreAgentClient()
+  private let supportOverride: URL?
+
+  public init(support: URL? = nil) { supportOverride = support }
   private var transports: [Bool: NativeByteTransport] = [:]
   private var connectionID = UUID()
   private var opening: Task<Void, Error>?
@@ -33,6 +37,7 @@ public actor CoreAgentClient {
 
   private var stateDirectory: URL {
     if let path = ProcessInfo.processInfo.environment["TSUGUMI_AGENT_STATE"] { return URL(fileURLWithPath: path) }
+    if let supportOverride { return supportOverride.appendingPathComponent("agent-core") }
     let folder = Bundle.main.object(forInfoDictionaryKey: "TsugumiChannel") as? String == "release" ? "Tsugumi" : "Tsugumi-dev"
     let support = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"].map { URL(fileURLWithPath: $0) }
       ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/" + folder)

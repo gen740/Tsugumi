@@ -6,7 +6,7 @@ suite runs on the Linux CI runner, outside the build sandbox.
 import concurrent.futures
 import hashlib
 import os
-import secrets
+import ssl
 import socket
 import subprocess
 import sys
@@ -14,6 +14,7 @@ import time
 
 import pytest
 from harness import remote_worker as R
+from harness import peer_tls as TLS
 
 pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="remote workers require Linux")
 
@@ -21,16 +22,17 @@ pytestmark = pytest.mark.skipif(sys.platform != "linux", reason="remote workers 
 class Worker:
     def __init__(self, root, binary, *, extra=(), env=None):
         self.root = root
-        self.token = secrets.token_hex(32)
-        self.token_file = root / "token"
-        self.token_file.write_text(self.token)
-        self.token_file.chmod(0o600)
+        self.identity = TLS.identity(root)
         self.scope = "c" * 64
         with socket.socket() as temporary:
             temporary.bind(("127.0.0.1", 0))
             self.port = temporary.getsockname()[1]
         self.state = root / "state"
-        self.command = [binary, "--token-file", str(self.token_file), "--state-dir", str(self.state),
+        self.state.mkdir(mode=0o700)
+        self.authorized = self.state / "authorized_keys"
+        self.authorized.write_text(TLS.public_key(self.identity) + " # test host\n")
+        self.authorized.chmod(0o600)
+        self.command = [binary, "--state-dir", str(self.state),
                         "--port", str(self.port), "--max-jobs", "1", *extra]
         self.env = env
         self.process = None
@@ -64,8 +66,8 @@ class Worker:
         self.log.close()
         self.start()
 
-    def call(self, kind, body, *, job=None, scoped=True, unix=False, **routing):
-        fields = {"token": self.token}
+    def call(self, kind, body, *, job=None, scoped=True, unix=False, identity=None, **routing):
+        fields = {}
         if scoped:
             fields.update(serverId=self.caps.serverId, projectScope=self.scope)
             if kind != R.RequestBody.ProbeRequest:
@@ -78,10 +80,11 @@ class Worker:
         with peer:
             peer.settimeout(15)
             peer.connect(str(self.state / "worker.sock") if unix else ("127.0.0.1", self.port))
-            peer.sendall(R.frame(request))
-            peer.shutdown(socket.SHUT_WR)
-            with peer.makefile("rb") as stream:
-                return R.read(stream).payload
+            context = TLS.client_context(identity or self.identity, self.state / "identity.pem")
+            with context.wrap_socket(peer, server_hostname=None) as secure:
+                secure.sendall(R.frame(request))
+                with secure.makefile("rb") as stream:
+                    return R.read(stream).payload
 
     def upload(self, job, data):
         digest = hashlib.sha256(data).hexdigest()
@@ -111,8 +114,11 @@ def worker(tmp_path):
 def test_probe_authentication_unix_and_private_state(worker):
     assert worker.caps.workerContract == 3 and worker.caps.maxJobs == 1
     assert worker.caps.nativeSystem in (b"aarch64-linux", b"x86_64-linux")
-    denied = worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False, token="invalid")
-    assert denied.bodyType == R.ReplyBody.Failure and denied.body.code == R.ErrorCode.Unauthorized
+    stranger = TLS.identity(worker.root, "stranger")
+    with pytest.raises((ssl.SSLError, OSError, EOFError)):
+        worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False, identity=stranger)
+    assert TLS.public_key(worker.state / "identity.pem").startswith("ed25519:")
+    assert (worker.state / "identity.pem").stat().st_mode & 0o777 == 0o600
     local = worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), unix=True)
     assert local.body.instanceId == worker.instance
     before = (worker.caps.serverId, worker.instance)
@@ -174,15 +180,15 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
     if not binary:
         pytest.skip("needs packaged worker")
-    token = tmp_path / "token"
-    token.write_text("a" * 64)
-    token.chmod(0o600)
-    for extra in (["--host", "0.0.0.0"], ["--max-jobs", "0"], ["--state-dir", "relative"]):
-        result = subprocess.run([binary, "--token-file", str(token), "--state-dir", str(tmp_path / "state"), *extra],
+    for extra in (["--host", "not-an-IP"], ["--max-jobs", "0"], ["--state-dir", "relative"]):
+        result = subprocess.run([binary, "--state-dir", str(tmp_path / "state"), *extra],
                                 capture_output=True, timeout=10, check=False)
         assert result.returncode != 0
-    token.chmod(0o644)
-    result = subprocess.run([binary, "--token-file", str(token), "--state-dir", str(tmp_path / "other")], capture_output=True, timeout=10, check=False)
+    state = tmp_path / "unsafe-state"
+    state.mkdir(mode=0o700)
+    pem = TLS.identity(state, "identity")
+    pem.chmod(0o644)
+    result = subprocess.run([binary, "--state-dir", str(state), "--public-key"], capture_output=True, timeout=10, check=False)
     assert result.returncode != 0
 
 
@@ -254,3 +260,9 @@ def test_limits_require_delegation(worker):
     spec.memoryBytes = 256 << 20
     response = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=R.pack(spec)), job=job)
     assert response.bodyType == R.ReplyBody.Failure and response.body.code == R.ErrorCode.Rejected
+
+
+def test_authorized_key_removal_refuses_new_connections(worker):
+    worker.authorized.write_text("# No authorized hosts\n")
+    with pytest.raises((ssl.SSLError, OSError, EOFError)):
+        worker.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False)

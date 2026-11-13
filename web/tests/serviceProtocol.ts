@@ -1,3 +1,10 @@
+import { Reply as HostReply } from '../src/gen/tsugumi/host/reply'
+import { ReplyPayload as HostReplyPayload } from '../src/gen/tsugumi/host/reply-payload'
+import { Payload as HostPayload } from '../src/gen/tsugumi/host/payload'
+import { RecentList } from '../src/gen/tsugumi/host/recent-list'
+import { DemoList } from '../src/gen/tsugumi/host/demo-list'
+import { ModelList } from '../src/gen/tsugumi/host/model-list'
+import { ExecutionServices } from '../src/gen/tsugumi/host/execution-services'
 // Protocol boundaries are checked without sockets, including exact 64-bit
 // correlation/cursors and conversion to the existing HTTP/SSE presentation DTOs.
 import assert from 'node:assert/strict'
@@ -51,7 +58,7 @@ console.log('Agent/Host binary protocol: exact uint64, separation, typed events 
 // Execution settings send management requests only to the Host contract.
 for (const [method, fields] of [
   ['ExecutionServicesRequest', {}],
-  ['ExecutionServicePutRequest', { id: 'compute', name: 'Compute', endpoint: 'unix:/tmp/worker', token: 'a'.repeat(64) }],
+  ['ExecutionServicePutRequest', { id: 'compute', name: 'Compute', endpoint: 'unix:/tmp/worker', workerPublicKey: 'ed25519:test' }],
   ['ExecutionServiceRemoveRequest', { id: 'compute' }],
   ['ExecutionProjectAuthorizeRequest', { project_id: 'project', path: '/project', control_dir: '/control', guest: true }],
   ['ExecutionProjectRevokeRequest', { project_id: 'project' }],
@@ -63,3 +70,21 @@ for (const [method, fields] of [
   assert.throws(() => encodeRequest(method, fields, 2n, false), /Unknown Agent/)
 }
 console.log('Execution service settings: Host RPC adapters passed')
+
+// C++ object packing omits optional empty vectors. Every Host list reader
+// must return an empty list even when the vector offset is absent on the wire.
+for (const type of [HostReplyPayload.RecentList, HostReplyPayload.DemoList, HostReplyPayload.ModelList, HostReplyPayload.ExecutionServices]) {
+  const b = new fb.Builder()
+  let value: fb.Offset
+  switch (type) {
+    case HostReplyPayload.RecentList: value = RecentList.createRecentList(b, 0); break
+    case HostReplyPayload.DemoList: value = DemoList.createDemoList(b, 0); break
+    case HostReplyPayload.ModelList: value = ModelList.createModelList(b, 0); break
+    default: value = ExecutionServices.createExecutionServices(b, 0, b.createString('ed25519:fixture'))
+  }
+  const reply = HostReply.createReply(b, type, value)
+  HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
+  const decoded = decodeReply(b.asUint8Array(), true).value
+  assert.deepEqual(type === HostReplyPayload.ExecutionServices ? decoded.services : decoded, [])
+}
+console.log('Host list readers: omitted vectors are empty')

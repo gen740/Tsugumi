@@ -33,7 +33,8 @@ enum ServiceWire {
         v.id = fields["id"] as? String ?? ""
         v.name = fields["name"] as? String ?? ""
         v.endpoint = fields["endpoint"] as? String ?? ""
-        v.token = fields["token"] as? String
+        v.workerPublicKey = fields["workerPublicKey"] as? String ?? ""
+        v.verify = fields["verify"] as? Bool ?? false
         return (Tsugumi_Host_RequestPayload.executionserviceputrequest.rawValue, v)
       case "ExecutionServiceRemoveRequest":
         let v = Tsugumi_Host_ExecutionServiceRemoveRequestT()
@@ -298,6 +299,7 @@ enum ServiceWire {
     if let failure = value as? Tsugumi_Service_FailureT {
       throw CoreAgentFailure(code: failure.code, message: failure.message, requestID: failure.requestId)
     }
+    // Generated native objects normalize omitted Host vectors to empty arrays.
     let result = try view(value)
     return result as? [String: Any] ?? ["value": result]
   }
@@ -334,15 +336,15 @@ enum ServiceWire {
   private static func view(_ value: NativeObject) throws -> Any {
     switch value {
     case let v as Tsugumi_Host_ExecutionServicesT:
-      return ["services": try v.services.compactMap { try $0.map(view) }]
+      return ["services": try v.services.compactMap { try $0.map(view) }, "hostPublicKey": v.hostPublicKey] as [String: Any]
     case let v as Tsugumi_Host_ExecutionServiceT:
-      return ["id": v.id, "name": v.name, "endpoint": v.endpoint, "capabilities": try view(v.capabilities)] as [String: Any]
+      return ["id": v.id, "name": v.name, "endpoint": v.endpoint, "workerPublicKey": v.workerPublicKey, "capabilities": try view(v.capabilities)] as [String: Any]
     case let v as Tsugumi_Host_ExecutionCapabilitiesT:
       return ["serverId": v.serverId, "nativeSystem": v.nativeSystem, "systems": v.systems.compactMap { $0 },
               "isolation": v.isolation ?? "pid_namespace", "resourceLimits": v.resourceLimits,
               "maxConcurrentJobs": v.maxConcurrentJobs, "workerContract": v.workerContract] as [String: Any]
     case let v as Tsugumi_Host_ExecutionAuthorizationT:
-      return ["endpoint": v.endpoint, "token_file": v.tokenFile, "available": v.available] as [String: Any]
+      return ["endpoint": v.endpoint, "capability_file": v.capabilityFile, "available": v.available] as [String: Any]
     case let v as Tsugumi_Service_HelloResultT:
       var out: [String: Any] = [:]
       out["protocol"] = v.protocol_

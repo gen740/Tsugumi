@@ -85,7 +85,7 @@ export function hostMethod(method: string): boolean {
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
     case 'ExecutionServicesRequest': return new ExecutionServicesRequestT()
-    case 'ExecutionServicePutRequest': return new ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.token)
+    case 'ExecutionServicePutRequest': return new ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify)
     case 'ExecutionServiceRemoveRequest': return new ExecutionServiceRemoveRequestT(v.id)
     case 'ExecutionProjectAuthorizeRequest': return new ExecutionProjectAuthorizeRequestT(v.project_id, v.path, v.control_dir, v.guest)
     case 'ExecutionProjectRevokeRequest': return new ExecutionProjectRevokeRequestT(v.project_id)
@@ -163,7 +163,7 @@ function view(value: any): any {
   const names: Record<string, string> = { projectId: 'project_id', conversationId: 'conversation_id',
     eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
     inputJson: 'input', argumentsJson: 'arguments', resultJson: 'result', inputSchemaJson: 'inputSchema',
-    contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', accessToken: 'access_token', tokenFile: 'token_file' }
+    contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', accessToken: 'access_token', capabilityFile: 'capability_file' }
   for (const [key, v] of Object.entries(value)) {
     const name = names[key] ?? key
     if (v === null || v === undefined) {
@@ -186,6 +186,7 @@ export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; val
   const message = host ? HostMessage.getRootAsMessage(buffer).unpack() : AgentMessage.getRootAsMessage(buffer).unpack()
   if (message.payloadType !== (host ? HostPayload.Reply : AgentPayload.Reply) || !message.payload) throw new Error('Expected service reply')
   const reply = message.payload as any
+  // Generated unpack() normalizes omitted Host vectors to empty arrays.
   const value = view(reply.value)
   if (!value) throw new Error('Missing service reply value')
   if (value.code !== undefined) return { id: message.requestId, value: undefined,

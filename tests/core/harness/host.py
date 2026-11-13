@@ -81,7 +81,19 @@ class Host:
         reply = response.payload
         if reply.valueType == ReplyPayload.Failure:
             raise RuntimeError(string(reply.value.code) + ": " + string(reply.value.message))
-        return reply.value
+        # Python's generated native API uses None for absent vectors.
+        # All optional Host lists have the same omission-means-empty rule.
+        value = reply.value
+        for name in ("services", "projects", "models", "demos"):
+            if hasattr(value, name) and getattr(value, name) is None:
+                setattr(value, name, [])
+        for item in getattr(value, "services", []):
+            if item.capabilities.systems is None:
+                item.capabilities.systems = []
+        for item in getattr(value, "demos", []):
+            if item.tags is None:
+                item.tags = []
+        return value
 
     def close(self):
         if self.stream:

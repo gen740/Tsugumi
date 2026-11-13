@@ -14,6 +14,7 @@ public struct ExecutionServiceConnection: Codable, Identifiable, Equatable, Send
   public let id: String
   public let name: String
   public let endpoint: String
+  public let workerPublicKey: String
   public let capabilities: ExecutionServiceCapabilities
 }
 
@@ -21,24 +22,29 @@ public struct ExecutionServiceRegistration: Sendable {
   public var id = ""
   public var name = ""
   public var endpoint = ""
-  public var token: String?
+  public var workerPublicKey = ""
+  public var verify = false
   public init() {}
+}
+
+public struct ExecutionServicesState: Codable, Sendable {
+  public let services: [ExecutionServiceConnection]
+  public let hostPublicKey: String
 }
 
 /// Settings adapter only: validation, probing, persistence and secrets live in agentd.
 public enum ExecutionServices {
-  public static func list() async throws -> [ExecutionServiceConnection] {
+  public static func list() async throws -> ExecutionServicesState {
     try decode(await CoreAgentClient.shared.call("ExecutionServicesRequest"))
   }
-  public static func put(_ value: ExecutionServiceRegistration) async throws -> [ExecutionServiceConnection] {
-    var fields: [String: Any] = ["id": value.id, "name": value.name, "endpoint": value.endpoint]
-    fields["token"] = value.token
+  public static func put(_ value: ExecutionServiceRegistration) async throws -> ExecutionServicesState {
+    let fields: [String: Any] = ["id": value.id, "name": value.name, "endpoint": value.endpoint, "workerPublicKey": value.workerPublicKey, "verify": value.verify]
     return try decode(await CoreAgentClient.shared.call("ExecutionServicePutRequest", fields))
   }
-  public static func remove(_ id: String) async throws -> [ExecutionServiceConnection] {
+  public static func remove(_ id: String) async throws -> ExecutionServicesState {
     try decode(await CoreAgentClient.shared.call("ExecutionServiceRemoveRequest", ["id": id]))
   }
-  private static func decode(_ reply: [String: Any]) throws -> [ExecutionServiceConnection] {
-    try JSONDecoder().decode([ExecutionServiceConnection].self, from: JSONSerialization.data(withJSONObject: reply["services"] ?? []))
+  private static func decode(_ reply: [String: Any]) throws -> ExecutionServicesState {
+    try JSONDecoder().decode(ExecutionServicesState.self, from: JSONSerialization.data(withJSONObject: reply))
   }
 }

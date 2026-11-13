@@ -139,6 +139,7 @@ public actor EnvironmentManager {
     // have exited or crashed since; then it is started again).
     if case .ready(let ep) = states[p.id], bridges[p.id] != nil {
       if let status = try? await vm.request("status", timeout: 10), status.split(separator: " ").contains(where: { $0.hasPrefix("\(p.id):") }) {
+        _ = try await vm.executionBroker.authorize(p, control: controlDir(p))
         return ep
       }
       bridges[p.id]?.close()

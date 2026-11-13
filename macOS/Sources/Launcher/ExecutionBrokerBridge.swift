@@ -5,12 +5,14 @@ import Virtualization
 
 /// Virtualization.framework adapter. No worker protocol or registry lives here.
 final class ExecutionBrokerBridge: NSObject, VZVirtioSocketListenerDelegate, @unchecked Sendable {
+  private let client: CoreAgentClient
   private let listener = VZVirtioSocketListener()
   private let lock = NSLock()
   private var endpoint: String?
   private var active = 0
 
-  override init() {
+  init(support: URL) {
+    client = CoreAgentClient(support: support)
     super.init()
     listener.delegate = self
   }
@@ -18,7 +20,7 @@ final class ExecutionBrokerBridge: NSObject, VZVirtioSocketListenerDelegate, @un
   func install(on socket: VZVirtioSocketDevice) { socket.setSocketListener(listener, forPort: 1027) }
 
   func authorize(_ project: ProjectIdentity, control: URL) async throws -> Bool {
-    let result = try await CoreAgentClient.shared.call("ExecutionProjectAuthorizeRequest", [
+    let result = try await client.call("ExecutionProjectAuthorizeRequest", [
       "project_id": project.id, "path": project.url.path, "control_dir": control.path, "guest": true,
     ])
     guard let value = result["endpoint"] as? String, value.hasPrefix("unix:") else {
@@ -29,7 +31,7 @@ final class ExecutionBrokerBridge: NSObject, VZVirtioSocketListenerDelegate, @un
   }
 
   func revoke(_ project: String) async throws {
-    _ = try await CoreAgentClient.shared.call("ExecutionProjectRevokeRequest", ["project_id": project])
+    _ = try await client.call("ExecutionProjectRevokeRequest", ["project_id": project])
   }
 
   func listener(_ listener: VZVirtioSocketListener, shouldAcceptNewConnection connection: VZVirtioSocketConnection,

@@ -27,7 +27,7 @@ final class ServiceWireTests: XCTestCase {
   func testExecutionSettingsUseTheHostContract() throws {
     for (method, fields) in [
       ("ExecutionServicesRequest", [:]),
-      ("ExecutionServicePutRequest", ["id": "compute", "name": "Compute", "endpoint": "unix:/tmp/worker", "token": String(repeating: "a", count: 64)]),
+      ("ExecutionServicePutRequest", ["id": "compute", "name": "Compute", "endpoint": "unix:/tmp/worker", "workerPublicKey": "ed25519:test"]),
       ("ExecutionServiceRemoveRequest", ["id": "compute"]),
       ("ExecutionProjectAuthorizeRequest", ["project_id": "project", "path": "/project", "control_dir": "/control"]),
       ("ExecutionProjectRevokeRequest", ["project_id": "project"]),
@@ -38,6 +38,27 @@ final class ServiceWireTests: XCTestCase {
       let request: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
       XCTAssertEqual(request.requestId, 2)
       XCTAssertThrowsError(try ServiceWire.encode(method, fields: fields, id: 2, host: false))
+    }
+  }
+
+  func testOmittedHostListVectorsAreEmpty() throws {
+    for type in [Tsugumi_Host_ReplyPayload.recentlist, .demolist, .modellist, .executionservices] {
+      var b = FlatBufferBuilder(initialSize: 128)
+      let value: Offset
+      switch type {
+      case .recentlist: value = Tsugumi_Host_RecentList.createRecentList(&b)
+      case .demolist: value = Tsugumi_Host_DemoList.createDemoList(&b)
+      case .modellist: value = Tsugumi_Host_ModelList.createModelList(&b)
+      default:
+        let key = b.create(string: "ed25519:fixture")
+        value = Tsugumi_Host_ExecutionServices.createExecutionServices(&b, hostPublicKeyOffset: key)
+      }
+      let reply = Tsugumi_Host_Reply.createReply(&b, valueType: type, valueOffset: value)
+      let message = Tsugumi_Host_Message.createMessage(&b, requestId: 1, payloadType: .reply, payloadOffset: reply)
+      Tsugumi_Host_Message.finish(&b, end: message)
+      let decoded = try ServiceWire.decode(b.data, host: true)
+      let list = try XCTUnwrap(decoded[type == .executionservices ? "services" : "value"] as? [Any])
+      XCTAssertTrue(list.isEmpty)
     }
   }
 

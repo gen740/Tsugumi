@@ -8,6 +8,7 @@ sys.path.insert(0, os.environ.get("TSUGUMI_PY_BINDINGS", str(Path(__file__).reso
 
 import flatbuffers
 from Tsugumi.RemoteWorker.Ack import AckT
+from Tsugumi.RemoteWorker.BrokerRequest import BrokerRequestT
 from Tsugumi.RemoteWorker.BlobChunk import BlobChunkT
 from Tsugumi.RemoteWorker.CancelRequest import CancelRequestT
 from Tsugumi.RemoteWorker.Capabilities import CapabilitiesT
@@ -34,7 +35,7 @@ from Tsugumi.RemoteWorker.StatusRequest import StatusRequestT
 from Tsugumi.RemoteWorker.SubmitRequest import SubmitRequestT
 from Tsugumi.RemoteWorker.Target import TargetT
 
-__all__ = ['AckT', 'BlobChunkT', 'CancelRequestT', 'CapabilitiesT', 'CatalogRequestT', 'CatalogT', 'ErrorCode', 'FailureT', 'GetBlobRequestT', 'JobSpecT', 'JobState', 'JobStatusT', 'MessageT', 'Payload', 'ProbeRequestT', 'PutBlobRequestT', 'ReleaseRequestT', 'ReplyBody', 'ReplyT', 'RequestBody', 'RequestT', 'ResultFileT', 'ResultManifestT', 'StatusRequestT', 'SubmitRequestT', 'TargetT', 'exact', 'failure', 'frame', 'pack', 'read', 'reply', 'request', 'string']
+__all__ = ['BrokerRequestT', 'AckT', 'BlobChunkT', 'CancelRequestT', 'CapabilitiesT', 'CatalogRequestT', 'CatalogT', 'ErrorCode', 'FailureT', 'GetBlobRequestT', 'JobSpecT', 'JobState', 'JobStatusT', 'MessageT', 'Payload', 'ProbeRequestT', 'PutBlobRequestT', 'ReleaseRequestT', 'ReplyBody', 'ReplyT', 'RequestBody', 'RequestT', 'ResultFileT', 'ResultManifestT', 'StatusRequestT', 'SubmitRequestT', 'TargetT', 'exact', 'failure', 'frame', 'pack', 'read', 'reply', 'request', 'string']
 
 MAX_FRAME = 2 << 20
 

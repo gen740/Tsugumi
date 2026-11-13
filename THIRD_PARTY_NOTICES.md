@@ -178,3 +178,10 @@ Its source and hash are recorded in the demo definition. Those observations
 are not Tsugumi-authored data and are not relicensed under Tsugumi's MIT
 license; source-specific data use and acknowledgement requirements remain
 applicable when distributing results or datasets.
+
+## Host-side remote-worker TLS
+
+The macOS app bundles OpenSSL 3 (`libssl` and `libcrypto`) with `tsugumi-agentd`
+for TLS 1.3 and Ed25519 public-key authentication. OpenSSL is licensed under
+Apache-2.0; its full license is included in `licenses/openssl/LICENSE.txt`.
+Linux packages retain the same OpenSSL dependency through Nix.

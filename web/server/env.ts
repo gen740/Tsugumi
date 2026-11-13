@@ -87,7 +87,7 @@ export class EnvironmentManager implements Environments {
     readonly bins: Binaries,
     readonly support: string,
     private readonly origins: () => string[],
-    private readonly authorizeExecution?: (project: string, folder: string, control: string) => Promise<{ endpoint: string; token_file: string; available: boolean }>,
+    private readonly authorizeExecution?: (project: string, folder: string, control: string) => Promise<{ endpoint: string; capability_file: string; available: boolean }>,
     private readonly revokeExecution?: (project: string) => Promise<void>,
   ) {}
 
@@ -202,11 +202,11 @@ export class EnvironmentManager implements Environments {
       e.executionScopeUnavailable = !authorization.available
       if (authorization.available) {
         env.TSUGUMI_EXECUTION_BROKER = authorization.endpoint
-        env.TSUGUMI_EXECUTION_BROKER_TOKEN_FILE = authorization.token_file
+        env.TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE = authorization.capability_file
       }
       else {
         delete env.TSUGUMI_EXECUTION_BROKER
-        delete env.TSUGUMI_EXECUTION_BROKER_TOKEN_FILE
+        delete env.TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE
       }
     }
     const log = fs.openSync(logFile, 'a', 0o600)

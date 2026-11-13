@@ -324,11 +324,19 @@ function projectDir(p: unknown): string {
   return fs.realpathSync(p)
 }
 
+async function updateExecutionServices(method: string, body: unknown) {
+  const result = await hostRequest(method, body)
+  for (const environment of envs.list()) {
+    if (environment.state.state === 'ready') await envs.start(environment.project)
+  }
+  return result
+}
+
 type Handler = (b: any, url: URL) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
   'GET /api/execution-services': () => hostRequest('ExecutionServicesRequest'),
-  'POST /api/execution-services/register': (body) => hostRequest('ExecutionServicePutRequest', body),
-  'POST /api/execution-services/remove': (body) => hostRequest('ExecutionServiceRemoveRequest', body),
+  'POST /api/execution-services/register': (body) => updateExecutionServices('ExecutionServicePutRequest', body),
+  'POST /api/execution-services/remove': (body) => updateExecutionServices('ExecutionServiceRemoveRequest', body),
   'GET /api/status': async () => ({
     setup: setupStatus(), demos: await hostRequest('HostDemoListRequest', { language: language() }),
     recents: await hostRequest('HostRecentListRequest'), home: os.homedir(), launchProject: launchProject ?? null,

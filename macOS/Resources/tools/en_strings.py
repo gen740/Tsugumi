@@ -928,10 +928,7 @@ EN = {
 "実行履歴の形式は %@ です。このバージョンの Tsugumi には %@ が必要です。": "This run history uses format %@. This version of Tsugumi requires %@.",
 "互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 外部で実行中のジョブは実行先で継続し、新しい履歴には引き継がれません。": "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app. Running remote jobs continue on the execution host and will be unavailable in the new history.",
 "実行デーモンの接続先": "Execution daemon endpoint",
-"Unix ソケット、またはループバックアドレスの TCP 接続先を入力してください。": "Enter a Unix socket or loopback TCP endpoint.",
 "認証トークン": "Authentication token",
-"認証トークンは小文字の16進数64文字です。": "Enter a 64-character lowercase hexadecimal token.",
-"保存済みトークンを使用": "Use saved token",
 "隔離方式": "Isolation",
 "PID 名前空間": "PID namespace",
 "CPU とメモリの上限": "CPU and memory limits",
@@ -1404,6 +1401,14 @@ EN = {
     '参照を解決できません。Nix 定義と診断を確認してください。': 'This reference is invalid. Check the Nix definition and diagnostics.',
     'Nix 定義を開く': 'Open Nix definition',
     '一覧': 'List',
+"このホストの公開鍵": "This host's public key",
+"公開鍵をコピー": "Copy public key",
+"ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。": "Add this host's public key to the worker's authorized_keys before verifying the connection.",
+"実行デーモンの公開鍵": "Worker public key",
+"公開鍵は ed25519: で始まる SPKI 形式です。": "Use an SPKI public key beginning with ed25519:.",
+"TLS 接続先を入力してください（例: tls://worker.example:8765）。": "Enter a TLS endpoint, such as tls://worker.example:8765.",
+"公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。": "Public key registered. Add this host's public key to authorized_keys, then verify the connection.",
+"登録": "Register",
 }
 
 

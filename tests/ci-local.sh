@@ -27,6 +27,7 @@ extra-trusted-public-keys = tsugumi.cachix.org-1:am26Q4VFWYLyJ+t+O5j03MmMVmZ2Ifw
 step() { printf '\n== %s\n' "$1"; }
 core_run() { "$root/build-ci/bin/tsugumi-test-env" "$@"; }
 agent_checks() {
+  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_peer_tls_tests"
   core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_agent_rpc_tests"
 }
 core_checks() {

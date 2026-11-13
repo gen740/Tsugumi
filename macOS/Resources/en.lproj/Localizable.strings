@@ -179,6 +179,7 @@
 "Skill はまだありません" = "No Skills yet";
 "Skill を再読込" = "Reload Skills";
 "Skill を検索" = "Search Skills";
+"TLS 接続先を入力してください（例: tls://worker.example:8765）。" = "Enter a TLS endpoint, such as tls://worker.example:8765.";
 "Tsugumi %@ の準備ができました" = "Tsugumi %@ is ready";
 "Tsugumi %@ の準備ができました。次に終了したときに更新します。" = "Tsugumi %@ is ready. It is installed the next time you quit.";
 "Tsugumi で何ができる？" = "What can Tsugumi do?";
@@ -191,7 +192,6 @@
 "Tsugumi は最新です" = "Tsugumi is up to date";
 "Tsugumi を知る" = "Learn about Tsugumi";
 "Tsugumi を知る のページが見つかりません" = "The \"Learn about Tsugumi\" page was not found";
-"Unix ソケット、またはループバックアドレスの TCP 接続先を入力してください。" = "Enter a Unix socket or loopback TCP endpoint.";
 "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。" = "Usage limit reached: review your plan or this app's limit in ChatGPT settings.";
 "Using ChatGPT plan" = "Using ChatGPT plan";
 "VM と Nix store を削除" = "Deleted the VM and the Nix store";
@@ -315,6 +315,7 @@
 "このプロジェクト全体のコピーを Card in Card として置きます" = "Places a copy of this whole project as a Card in Card";
 "このプロジェクト（%@/layout.json）" = "This project (%@/layout.json)";
 "このプロジェクト（%@/tsugumi.json）" = "This project (%@/tsugumi.json)";
+"このホストの公開鍵" = "This host's public key";
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）" = "Not available for this model (only models checked against the official documents)";
 "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。" = "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).";
@@ -602,6 +603,7 @@
 "プロジェクト名" = "Project name";
 "ページ" = "Page";
 "ホストのフォルダへのアクセスを許可する" = "Allow access to folders of the host";
+"ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。" = "Add this host's public key to the worker's authorized_keys before verifying the connection.";
 "ホーム" = "Home";
 "ポートの並びを元に戻す" = "Reset Port Order";
 "メッセージ（%@ で送信）" = "Message (send with %@)";
@@ -711,7 +713,6 @@
 "保存前" = "Not saved";
 "保存済み" = "Saved";
 "保存済みの default.nix に書かれた Card 参照をそのまま表示します。別名や計算で決まる参照は含みません。" = "Shows the Card references written in saved default.nix files. References through aliases or computed names are not included.";
-"保存済みトークンを使用" = "Use saved token";
 "保持" = "Kept";
 "保持された成果物はありません" = "No artifacts are kept";
 "保持したファイル: %@" = "Kept file: %@";
@@ -749,6 +750,9 @@
 "全体を実行するには最上位の Workflow に開始 Card（trigger）を置いてください。Card を選んで個別に実行もできます。" = "To run the whole Workflow, place a start Card (trigger) at its top level. A selected Card can also be run by itself.";
 "全体表示" = "Fit All";
 "公開する出力" = "Exposed outputs";
+"公開鍵は ed25519: で始まる SPKI 形式です。" = "Use an SPKI public key beginning with ed25519:.";
+"公開鍵をコピー" = "Copy public key";
+"公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。" = "Public key registered. Add this host's public key to authorized_keys, then verify the connection.";
 "共有 Nix store の掃除は、どのプロジェクトのビルド結果としても登録されていない（GC root のない）ものを削除します。登録中の Card のビルド結果と、そのビルドに使ったコンパイラなどは残ります。各プロジェクトの「ビルドキャッシュを削除」は登録を外すだけで、store の掃除はここでだけ行います。" = "Cleaning the shared Nix store deletes what no project has registered as a build result (no GC root). Registered Card builds and the compilers used for them stay. A project's “Clear build cache” only unregisters; the store is cleaned only here.";
 "共有 Nix store を掃除しますか？" = "Clean the shared Nix store?";
 "共有 store を掃除…" = "Clean shared store…";
@@ -938,6 +942,7 @@
 "実行サービスで待機中" = "Queued at the execution service";
 "実行サービスの状態" = "Execution service status";
 "実行サービスを追加" = "Add execution service";
+"実行デーモンの公開鍵" = "Worker public key";
 "実行デーモンの接続先" = "Execution daemon endpoint";
 "実行デーモンへの接続に失敗しました（HTTP %@）。" = "Could not connect to the execution daemon (HTTP %@).";
 "実行リスト" = "Execution list";
@@ -1190,6 +1195,7 @@
 "画像" = "Image";
 "画像を表示できません" = "Cannot show the image";
 "異なる 2 つの実行を選んでください" = "Choose two different runs";
+"登録" = "Register";
 "登録されていないビルド結果を共有 store から削除します。登録を外したプロジェクトの Card は、次の実行でビルドし直します。" = "Deletes build results nothing registers from the shared store. Cards of projects whose registration was removed build again on their next run.";
 "登録したキャッシュには、全プロジェクトのビルドで必要になったパッケージのハッシュが問い合わされます。認証情報は、同じホストから固定ハッシュで取得するビルドにも使われます。" = "Registered caches are asked for the hashes of the packages that builds of every project need. Credentials are also used by builds that fetch from the same host by a fixed hash.";
 "直接実行" = "Direct execution";
@@ -1273,7 +1279,6 @@
 "詳しくはチャットに書きました" = "More in the chat";
 "詳細を閉じる" = "Close details";
 "認証トークン" = "Authentication token";
-"認証トークンは小文字の16進数64文字です。" = "Enter a 64-character lowercase hexadecimal token.";
 "認証情報はこの Mac のアプリ用ファイル（0600）に保存し、VM の Nix daemon だけに渡します。プロジェクトや実行記録には含めません。" = "Credentials are stored in a private application file on this Mac (0600) and provided only to the VM’s Nix daemon. They are excluded from project files and run history.";
 "認証（非公開キャッシュ）" = "Authentication (Private Caches)";
 "読み取り専用" = "Read only";

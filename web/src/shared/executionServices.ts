@@ -13,6 +13,7 @@ export interface ExecutionServiceConnection {
   id: string
   name: string
   endpoint: string
+  workerPublicKey: string
   capabilities: ExecutionServiceCapabilities
 }
 
@@ -20,6 +21,7 @@ export interface ExecutionServiceRegistration {
   id: string
   name: string
   endpoint: string
-  token?: string
+  workerPublicKey: string
 }
 
+export interface ExecutionServicesState { services: ExecutionServiceConnection[]; hostPublicKey: string }

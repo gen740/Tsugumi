@@ -56,7 +56,8 @@ build_opts=(-c release --build-system swiftbuild --arch arm64)
 bin="$(cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
 
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
+cp "$repo/build-host/Frameworks/"*.dylib "$app/Contents/Frameworks/"
 cp "$bin/Tsugumi" "$app/Contents/MacOS/Tsugumi"
 cp "$bin/tsugumi-vmhost" "$repo/build-host/core/tsugumi-agentd" "$repo/build-host/client/tsugumi-rpc" "$app/Contents/MacOS/"
 cp "$repo/build-host/generated/bfbs/"{agent,host}.bfbs "$app/Contents/Resources/"
@@ -150,6 +151,9 @@ identity=-
 if [ "$channel" = dev ] && [ -n "${TSUGUMI_CODESIGN_IDENTITY:-}" ]; then
   identity="$TSUGUMI_CODESIGN_IDENTITY"
 fi
+for library in "$app/Contents/Frameworks/"*.dylib; do
+  codesign --force --sign "$identity" "$library" >/dev/null
+done
 codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-agentd" >/dev/null
 codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-rpc" >/dev/null
 codesign --force --sign "$identity" --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app/Contents/MacOS/tsugumi-vmhost" >/dev/null

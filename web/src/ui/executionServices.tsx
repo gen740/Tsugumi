@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { ExecutionServiceConnection, ExecutionServiceRegistration } from '../shared/executionServices'
+import type { ExecutionServiceConnection, ExecutionServiceRegistration, ExecutionServicesState } from '../shared/executionServices'
 import { L } from '../i18n'
 import { api } from '../api'
 import { errorText } from '../model/session'
@@ -8,17 +8,19 @@ import { Button, Form, Row, Section, Spinner, TextField, Value } from './control
 const route = '/api/execution-services'
 
 export function ExecutionServicesSettings({ changed }: { changed: () => void }) {
+  const [hostPublicKey, setHostPublicKey] = useState('')
+  function adopt(state: ExecutionServicesState) { setEntries(state.services); setHostPublicKey(state.hostPublicKey) }
   const [entries, setEntries] = useState<ExecutionServiceConnection[]>([])
   const [edit, setEdit] = useState<ExecutionServiceRegistration>()
   const [original, setOriginal] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string>()
   const [message, setMessage] = useState<string>()
-  useEffect(() => { void api<ExecutionServiceConnection[]>(route).then(setEntries, (e) => setProblem(errorText(e))) }, [])
+  useEffect(() => { void api<ExecutionServicesState>(route).then(adopt, (e) => setProblem(errorText(e))) }, [])
 
   function choose(entry: ExecutionServiceRegistration, id?: string) {
-    const { name, endpoint, id: serviceId } = entry
-    setEdit({ id: serviceId, name, endpoint })
+    const { name, endpoint, workerPublicKey, id: serviceId } = entry
+    setEdit({ id: serviceId, name, endpoint, workerPublicKey })
     setOriginal(id)
     setProblem(undefined)
     setMessage(undefined)
@@ -27,7 +29,6 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
     setEdit((previous) => previous && {
       ...previous,
       [field]: value,
-      ...(field === 'endpoint' ? { token: undefined } : {}),
     })
     setMessage(undefined)
   }
@@ -41,27 +42,30 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
   }
   const saved = entries.find((entry) => entry.id === original)
   const sameEndpoint = !!saved && saved.endpoint === edit?.endpoint.trim()
-  const caps = sameEndpoint ? saved.capabilities : undefined
-  const valid = !!edit && [edit.id, edit.name, edit.endpoint].every((value) => value.trim()) &&
-    (sameEndpoint && !edit.token || /^[a-f0-9]{64}$/.test(edit.token ?? ''))
+  const caps = sameEndpoint && saved.capabilities.serverId ? saved.capabilities : undefined
+  const valid = !!edit && [edit.id, edit.name, edit.endpoint, edit.workerPublicKey].every((value) => value.trim())
 
   return <Form>
+    <Section title={L('このホストの公開鍵')}>
+      <Row><code className="selectable">{hostPublicKey}</code>
+        <Button disabled={!hostPublicKey} onClick={() => void perform(async () => { await navigator.clipboard.writeText(hostPublicKey) })}>{L('公開鍵をコピー')}</Button></Row>
+      <Row><span className="caption">{L('ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。')}</span></Row>
+    </Section>
     <Section title={L('実行サービス')}>
       {entries.map((entry) => <Row key={entry.id}>
         <Button kind="borderless" disabled={busy} onClick={() => choose(entry, entry.id)}>{entry.name} ({entry.id})</Button>
         <span className="secondary">{entry.capabilities.nativeSystem}</span>
       </Row>)}
-      <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '' })}>{L('実行サービスを追加')}</Button></Row>
+      <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '' })}>{L('実行サービスを追加')}</Button></Row>
     </Section>
     {edit && <Section>
       <Row label={L('名前')}><TextField value={edit.name} disabled={busy} onChange={(value) => update('name', value)} /></Row>
       <Row label={L('サービス ID')}><TextField value={edit.id} mono disabled={busy || !!original} onChange={(value) => update('id', value)} /></Row>
-      <Row label={L('実行デーモンの接続先')} help={L('Unix ソケット、またはループバックアドレスの TCP 接続先を入力してください。')}>
-        <TextField value={edit.endpoint} placeholder="tcp://127.0.0.1:8765" mono disabled={busy} onChange={(value) => update('endpoint', value)} />
+      <Row label={L('実行デーモンの接続先')} help={L('TLS 接続先を入力してください（例: tls://worker.example:8765）。')}>
+        <TextField value={edit.endpoint} placeholder="tls://worker.example:8765" mono disabled={busy} onChange={(value) => update('endpoint', value)} />
       </Row>
-      <Row label={L('認証トークン')} help={L('認証トークンは小文字の16進数64文字です。')}>
-        <input type="password" className="field mono" autoComplete="off" spellCheck={false} aria-label={L('認証トークン')}
-          value={edit.token ?? ''} placeholder={sameEndpoint ? L('保存済みトークンを使用') : undefined} disabled={busy} onChange={(event) => update('token', event.target.value)} />
+      <Row label={L('実行デーモンの公開鍵')} help={L('公開鍵は ed25519: で始まる SPKI 形式です。')}>
+        <TextField value={edit.workerPublicKey} mono disabled={busy} onChange={(value) => update('workerPublicKey', value)} />
       </Row>
       {caps && <>
         <Value label={L('CPU アーキテクチャ')} value={caps.systems.join(', ')} />
@@ -71,16 +75,16 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
       </>}
       <Row>
         <Button kind="prominent" disabled={!valid || busy} onClick={() => void perform(async () => {
-          const next = await api<ExecutionServiceConnection[]>(route + '/register', { ...edit, token: edit.token || undefined })
-          const registered = next.find((entry) => entry.id === edit.id)
+          const next = await api<ExecutionServicesState>(route + '/register', { ...edit, verify: !!original })
+          const registered = next.services.find((entry) => entry.id === edit.id)
           if (!registered) throw Error(L('実行サービスを登録できませんでした。'))
-          setEntries(next)
+          adopt(next)
           choose(registered, registered.id)
-          setMessage(L('接続を確認しました。'))
+          setMessage(original ? L('接続を確認しました。') : L('公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。'))
           changed()
-        })}>{original ? L('接続を確認して更新') : L('接続を確認して登録')}</Button>
+        })}>{original ? L('接続を確認して更新') : L('登録')}</Button>
         {original && <Button kind="destructive" disabled={busy} onClick={() => void perform(async () => {
-          setEntries(await api<ExecutionServiceConnection[]>(route + '/remove', { id: original }))
+          adopt(await api<ExecutionServicesState>(route + '/remove', { id: original }))
           setEdit(undefined)
           setOriginal(undefined)
           changed()

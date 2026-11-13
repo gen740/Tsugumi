@@ -49,8 +49,8 @@ clangStdenv.mkDerivation {
     libgit2
     curl
     gtest
-  ]
-  ++ lib.optionals clangStdenv.hostPlatform.isLinux [ openssl ];
+    openssl
+  ];
   cmakeFlags = [
     "-DTSUGUMI_CORE_ROOT=${core}"
     "-DTSUGUMI_CORE_TEST_SUPPORT=${core.testSupport}"

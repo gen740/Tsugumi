@@ -210,7 +210,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
 
   public init(directory: URL) {
     self.directory = directory
-    executionBroker = ExecutionBrokerBridge()
+    executionBroker = ExecutionBrokerBridge(support: directory.deletingLastPathComponent())
   }
 
   public var state: State {
