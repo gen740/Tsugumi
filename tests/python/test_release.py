@@ -28,8 +28,8 @@ def test_the_dev_build_can_be_signed_with_your_certificate_and_the_release_never
     assert "\nidentity=-\n" in script
     assert 'if [ "$channel" = dev ] && [ -n "${TSUGUMI_CODESIGN_IDENTITY:-}" ]; then' in script
     assert 'identity="$TSUGUMI_CODESIGN_IDENTITY"' in script
-    # the dylibs and the app are signed alike, and nothing is signed ad-hoc by a fixed "-"
-    assert 'codesign --force --sign "$identity" "$lib"' in script
+    # the helpers and the app are signed alike, and nothing is signed ad-hoc by a fixed "-"
+    assert 'codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-agentd"' in script
     assert 'codesign --force --sign "$identity" --entitlements' in script
     assert "--sign -" not in script
 

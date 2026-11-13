@@ -7,6 +7,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 - People ask the questions, give the results meaning and take responsibility. AI moves the trial and error forward (AI-driven science).
 - The hard part is whether people can come back to judging after handing work over. As with Level 3 of automated driving, "a person checks at the end" means nothing if the process has been lost from sight.
 - So keep the process, not a clean result and a long report. Split processing into pieces you can see through (Cards), make it possible to follow what went in, what was done and what came out, and let people change the conditions of a step they are curious about and run it again by their own hand.
+- What a definition fixes (code and its environment) the machine may build once, share and reuse. What a run produced is for people to judge: do not add automation that keeps, reuses or deletes run data on its own. The tool may suggest; a person decides.
 
 ## Map
 
