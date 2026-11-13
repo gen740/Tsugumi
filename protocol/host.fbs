@@ -3,6 +3,7 @@
 // buffer, subprotocol tsugumi.host.v1. The external Agent token is rejected.
 include "service_common.fbs";
 namespace Tsugumi.Host;
+// Every optional list in this contract is empty when its vector is omitted.
 
 // Global provisioning; the Agent's ConfigureRequest always names a conversation.
 table ConfigureRequest { provider:Tsugumi.Service.Provider (required); }
@@ -22,6 +23,19 @@ table HostRecentListRequest {}
 table HostRecentRememberRequest { path:string (required); }
 table HostRecentForgetRequest { paths:[string]; }
 
+// Execution services contain public pins only. Private TLS keys never cross RPC.
+table ExecutionServicesRequest {}
+table ExecutionServicePutRequest { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); verify:bool; }
+table ExecutionServiceRemoveRequest { id:string (required); }
+// agentd derives identity from the host filesystem, never the document UUID.
+// agentd writes the scoped capability into this project's control share.
+table ExecutionProjectAuthorizeRequest { project_id:string (required); path:string (required); control_dir:string (required); guest:bool; }
+table ExecutionProjectRevokeRequest { project_id:string (required); }
+table ExecutionCapabilities { server_id:string (required); native_system:string (required); systems:[string]; isolation:string; resource_limits:bool; max_concurrent_jobs:uint; worker_contract:uint; }
+table ExecutionService { id:string (required); name:string (required); endpoint:string (required); worker_public_key:string (required); capabilities:ExecutionCapabilities (required); }
+table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
+table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
+
 table CredentialRegistration {
   client_id:string (required); access_token:string; refresh_token:string (required);
   token_endpoint:string (required); revocation_endpoint:string; resource:string;
@@ -40,12 +54,13 @@ table Model { id:string; name:string; }
 table ModelList { models:[Model]; }
 union RequestPayload {
   HelloRequest:Tsugumi.Service.HelloRequest, ConfigureRequest,
+  ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
   RegisterProjectRequest, RegisterFolderRequest, ModelsListRequest, CredentialImportRequest, CredentialTokenRequest, CredentialForgetRequest, HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
-  CredentialToken, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
+  ExecutionServices, ExecutionAuthorization, CredentialToken, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
   RecentList, DemoList, ModelList, Failure:Tsugumi.Service.Failure
 }
 table Reply { value:ReplyPayload; }

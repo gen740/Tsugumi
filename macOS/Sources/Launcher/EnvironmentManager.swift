@@ -139,6 +139,7 @@ public actor EnvironmentManager {
     // have exited or crashed since; then it is started again).
     if case .ready(let ep) = states[p.id], bridges[p.id] != nil {
       if let status = try? await vm.request("status", timeout: 10), status.split(separator: " ").contains(where: { $0.hasPrefix("\(p.id):") }) {
+        _ = try await vm.executionBroker.authorize(p, control: controlDir(p))
         return ep
       }
       bridges[p.id]?.close()
@@ -185,9 +186,9 @@ public actor EnvironmentManager {
     // Restrict the host-side parent without changing the permissions of the
     // control share that the project daemon uses inside the guest.
     guard chmod(envDir(p).path, 0o700) == 0 else { throw POSIXError(.EACCES) }
-    try vm.executionBroker.authorize(p, control: control)
+    _ = try await vm.executionBroker.authorize(p, control: control)
     var connected = false
-    defer { if !connected { vm.executionBroker.revoke(p.id) } }
+    defer { if !connected { Task { try? await vm.executionBroker.revoke(p.id) } } }
     let ready = control.appendingPathComponent("server.ready")
     try? FileManager.default.removeItem(at: ready)
     let startupError = control.appendingPathComponent("server.startup-error.json")
@@ -274,7 +275,7 @@ public actor EnvironmentManager {
     }
     bridges[p.id]?.close()
     bridges[p.id] = nil
-    vm.executionBroker.revoke(p.id)
+    try await vm.executionBroker.revoke(p.id)
     try? FileManager.default.removeItem(at: controlDir(p).appendingPathComponent("server.ready"))
     set(p.id, .stopped)
   }

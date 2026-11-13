@@ -34,6 +34,7 @@
 #include "journal.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
+#include "util/peer_tls.hh"
 
 extern char** environ;
 namespace tsugumi::workerd {
@@ -54,31 +55,6 @@ struct Fd {
     if (value >= 0) ::close(value);
   }
 };
-auto exact(int fd, size_t size) -> std::string {
-  std::string result(size, '\0');
-  const auto deadline = std::chrono::steady_clock::now() + 15s;
-  size_t done = 0;
-  while (done < size) {
-    if (std::chrono::steady_clock::now() >= deadline)
-      throw std::runtime_error("stream read deadline exceeded");
-    auto n = ::read(fd, result.data() + done, size - done);
-    if (n < 0 && errno == EINTR) continue;
-    if (n <= 0) throw std::runtime_error("truncated stream");
-    done += static_cast<size_t>(n);
-  }
-  return result;
-}
-auto send(int fd, std::string_view bytes) -> void {
-  const auto deadline = std::chrono::steady_clock::now() + 15s;
-  while (!bytes.empty()) {
-    if (std::chrono::steady_clock::now() >= deadline)
-      throw std::runtime_error("stream write deadline exceeded");
-    auto n = ::send(fd, bytes.data(), bytes.size(), MSG_NOSIGNAL);
-    if (n < 0 && errno == EINTR) continue;
-    if (n <= 0) throw std::runtime_error("disconnected stream");
-    bytes.remove_prefix(static_cast<size_t>(n));
-  }
-}
 auto log(const std::string& line) -> void {
   std::cerr << "tsugumi-remote-worker: " << line << '\n';
 }
@@ -170,7 +146,8 @@ auto supervisor_lock(const Journal& journal, const std::string& job) -> int {
 struct Config {
   stdfs::path root;
   stdfs::path unix_socket;
-  stdfs::path token_file;
+  stdfs::path authorized_keys;
+  bool print_key = false;
   stdfs::path cgroup;
   std::string host = "127.0.0.1";
   uint16_t port = 8765;
@@ -228,20 +205,6 @@ auto check_namespace(const std::string& self) -> void {
     throw std::runtime_error(
         "remote worker requires unprivileged user, mount and PID namespaces");
 }
-auto load_token(const stdfs::path& path) -> std::string {
-  Fd fd(::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
-  struct stat s{};
-  if (fd.value < 0 || ::fstat(fd.value, &s) != 0 || !S_ISREG(s.st_mode) ||
-      s.st_uid != ::geteuid() || (s.st_mode & 0077) || s.st_size < 64 ||
-      s.st_size > 65)
-    throw std::runtime_error(
-        "token file must be a private owned regular file containing 64 hex "
-        "characters");
-  auto token = exact(fd.value, static_cast<size_t>(s.st_size));
-  if (token.back() == '\n') token.pop_back();
-  check_id(token);
-  return token;
-}
 auto system() -> std::string {
   utsname u{};
   if (::uname(&u) != 0)
@@ -257,7 +220,6 @@ class Daemon {
   explicit Daemon(Config config)
       : config_(std::move(config)),
         server_(identity(config_.root, "server_id")),
-        token_(load_token(config_.token_file)),
         system_(system()) {
     private_directory(config_.root / "projects");
     private_directory(config_.root / "store");
@@ -285,8 +247,6 @@ class Daemon {
     return entry;
   }
   auto handle(const R::RequestT& q) -> R::MessageT {
-    if (!crypto::equal_secret(q.token, token_))
-      throw Error(R::ErrorCode::Unauthorized, "invalid worker token");
     if (!q.server_id.empty() && q.server_id != server_)
       throw Error(R::ErrorCode::InstanceChanged,
                   "endpoint now serves a different worker");
@@ -347,18 +307,18 @@ class Daemon {
   }
   // Any secure carrier can call this framed stream handler. Authentication is
   // deliberately separate from framing and dispatch.
-  auto serve_stream(int fd) -> void {
+  auto serve_stream(peer_tls::Stream& stream) -> void {
     try {
-      auto n = frame_length(exact(fd, 4));
-      auto m = decode(exact(fd, n));
+      auto n = frame_length(stream.Read(4));
+      auto m = decode(stream.Read(n));
       auto* q = m->payload.AsRequest();
       if (!q) throw Error(R::ErrorCode::Invalid, "expected a request");
       auto response = encode(handle(*q));
-      send(fd, length_prefix(static_cast<uint32_t>(response.size())));
-      send(fd, response);
+      stream.Write(length_prefix(static_cast<uint32_t>(response.size())));
+      stream.Write(response);
     } catch (const Error& e) {
       auto bytes = encode(failure(e.code, e.what()));
-      send(fd, length_prefix(static_cast<uint32_t>(bytes.size())) + bytes);
+      stream.Write(length_prefix(static_cast<uint32_t>(bytes.size())) + bytes);
     }
   }
   auto tick() -> void {
@@ -472,7 +432,7 @@ class Daemon {
     return rc == 0;
   }
   Config config_;
-  std::string server_, token_, system_;
+  std::string server_, system_;
   std::mutex project_mutex_;
   std::map<std::string, std::shared_ptr<Journal>> projects_;
   std::map<std::string, uint64_t> cancelling_;
@@ -606,9 +566,7 @@ auto unix_listener(const stdfs::path& path) -> int {
   return fd;
 }
 auto tcp_listener(const Config& config) -> int {
-  if (config.host != "127.0.0.1" && config.host != "::1")
-    throw std::runtime_error("TCP listener must use a loopback literal");
-  const bool v6 = config.host == "::1";
+  const bool v6 = config.host.find(':') != std::string::npos;
   int fd = ::socket(v6 ? AF_INET6 : AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
   const int one = 1;
   ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
@@ -616,17 +574,20 @@ auto tcp_listener(const Config& config) -> int {
   sockaddr_in6 b{};
   a.sin_family = AF_INET;
   a.sin_port = htons(config.port);
-  ::inet_pton(AF_INET, config.host.c_str(), &a.sin_addr);
+  const bool ipv4 = ::inet_pton(AF_INET, config.host.c_str(), &a.sin_addr) == 1;
   b.sin6_family = AF_INET6;
   b.sin6_port = htons(config.port);
-  ::inet_pton(AF_INET6, config.host.c_str(), &b.sin6_addr);
+  const bool ipv6 =
+      ::inet_pton(AF_INET6, config.host.c_str(), &b.sin6_addr) == 1;
+  if (!(v6 ? ipv6 : ipv4))
+    throw std::runtime_error("--host must be an IP literal");
   if (fd < 0 ||
       ::bind(fd,
              v6 ? reinterpret_cast<sockaddr*>(&b)
                 : reinterpret_cast<sockaddr*>(&a),
              v6 ? sizeof b : sizeof a) != 0 ||
       ::listen(fd, 64) != 0)
-    throw std::runtime_error("cannot listen on loopback TCP");
+    throw std::runtime_error("cannot listen on TLS TCP");
   return fd;
 }
 auto run(Config config) -> int {
@@ -637,6 +598,19 @@ auto run(Config config) -> int {
     throw std::runtime_error("another remote worker owns this state directory");
   if (config.unix_socket.empty())
     config.unix_socket = config.root / "worker.sock";
+  peer_tls::Identity identity(config.root / "identity.pem");
+  if (config.print_key) {
+    std::cout << identity.public_key() << '\n';
+    return 0;
+  }
+  if (config.authorized_keys.empty())
+    config.authorized_keys = config.root / "authorized_keys";
+  if (!stdfs::exists(config.authorized_keys))
+    fs::write_atomic(config.authorized_keys,
+                     "# One ed25519: SPKI key per line.\n", 0600);
+  peer_tls::Context tls(identity, true, [&](std::string_view key) {
+    return peer_tls::Authorized(config.authorized_keys, key);
+  });
   Daemon daemon(config);
   Fd unixfd(unix_listener(config.unix_socket));
   Fd tcpfd(tcp_listener(config));
@@ -649,8 +623,9 @@ auto run(Config config) -> int {
     std::shared_ptr<std::atomic<bool>> done;
   };
   std::vector<Client> clients;
-  log("listening on unix:" + config.unix_socket.string() + " and tcp://" +
-      config.host + ":" + std::to_string(config.port));
+  log("public key: " + identity.public_key());
+  log("listening with TLS 1.3 on unix:" + config.unix_socket.string() +
+      " and tls://" + config.host + ":" + std::to_string(config.port));
   while (!stopping) {
     daemon.tick();
     for (auto i = clients.begin(); i != clients.end();) {
@@ -674,13 +649,10 @@ auto run(Config config) -> int {
         auto done = std::make_shared<std::atomic<bool>>(false);
         clients.push_back({std::thread([&, fd, done] {
                              Fd connection(fd);
-                             timeval timeout{15, 0};
-                             ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
-                                          sizeof timeout);
-                             ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
-                                          sizeof timeout);
                              try {
-                               daemon.serve_stream(fd);
+                               peer_tls::ConfigureSocket(fd, 15);
+                               peer_tls::Stream stream(tls, fd, true);
+                               daemon.serve_stream(stream);
                              } catch (const std::exception&) {
                              }
                              --active;
@@ -715,16 +687,20 @@ auto main(int argc, char** argv) -> int {
     Config c;
     c.root = default_root();
     c.executable = self;
-    for (int i = 1; i < argc; i += 2) {
-      if (i + 1 >= argc) throw std::runtime_error("expected option and value");
+    for (int i = 1; i < argc; ++i) {
       const std::string_view option(argv[i]);
-      const std::string value(argv[i + 1]);
+      if (option == "--public-key") {
+        c.print_key = true;
+        continue;
+      }
+      if (++i >= argc) throw std::runtime_error("expected option and value");
+      const std::string value(argv[i]);
       if (option == "--state-dir")
         c.root = value;
       else if (option == "--socket")
         c.unix_socket = value;
-      else if (option == "--token-file")
-        c.token_file = value;
+      else if (option == "--authorized-keys")
+        c.authorized_keys = value;
       else if (option == "--host")
         c.host = value;
       else if (option == "--port") {
@@ -740,13 +716,6 @@ auto main(int argc, char** argv) -> int {
       else
         throw std::runtime_error("unknown remote worker option");
     }
-    if (c.host != "127.0.0.1" && c.host != "::1")
-      throw std::runtime_error("TCP listener must use a loopback literal");
-    if (c.token_file.empty())
-      throw std::runtime_error(
-          "usage: tsugumi-remote-worker --token-file FILE [--socket PATH] "
-          "[--host 127.0.0.1] [--port 8765] [--max-jobs 8] [--state-dir DIR] "
-          "[--cgroup-root DIR]");
     return run(std::move(c));
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';

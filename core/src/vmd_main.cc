@@ -540,7 +540,7 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
   }
   args.env = project_env(id);
   args.env.emplace_back("TSUGUMI_EXECUTION_BROKER=vsock:1027");
-  args.env.emplace_back("TSUGUMI_EXECUTION_BROKER_TOKEN_FILE=/control/execution-broker-token");
+  args.env.emplace_back("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE=/control/execution-broker-capability");
   args.av = cstrings(args.argv);
   args.ev = cstrings(args.env);
   // The child's fds must survive exec only where dup2'ed, so CLOEXEC is fine.

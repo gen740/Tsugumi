@@ -64,8 +64,8 @@ public struct EnvironmentLimits: Sendable, Codable, Equatable {
 public struct ProjectIdentity: Sendable, Hashable {
   public let id: String  // 16 hex chars derived from device + inode
   public let url: URL    // canonical path
-  let executionScopeIdentity: String?
-  public var supportsExternalExecution: Bool { executionScopeIdentity != nil }
+  // Presentation hint; agentd independently authorizes the filesystem identity.
+  public let supportsExternalExecution: Bool
 
   public init(url: URL) throws {
     let canonical = url.resolvingSymlinksInPath().standardizedFileURL
@@ -76,8 +76,7 @@ public struct ProjectIdentity: Sendable, Hashable {
     }
     let key = "\(st.st_dev):\(st.st_ino)"
     id = SHA256.hash(data: Data(key.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
-    let created = st.st_birthtimespec
-    executionScopeIdentity = created.tv_sec > 0 ? "\(key):\(created.tv_sec):\(created.tv_nsec)" : nil
+    supportsExternalExecution = st.st_birthtimespec.tv_sec > 0
     self.url = canonical
   }
 }

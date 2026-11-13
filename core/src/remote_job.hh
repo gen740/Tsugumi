@@ -77,7 +77,7 @@ class RemoteJobClient {
   auto request(Tsugumi::RemoteWorker::RequestT message, const std::atomic<bool>* cancel = nullptr) const
       -> Tsugumi::RemoteWorker::ReplyT;
   std::string endpoint_;
-  std::filesystem::path token_file_;
+  std::filesystem::path capability_file_;
   std::atomic<bool> stopped_{false};
 };
 

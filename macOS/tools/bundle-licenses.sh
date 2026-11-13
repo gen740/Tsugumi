@@ -38,3 +38,10 @@ cp "$repo/docs/site/assets/YuseiMagic-OFL.txt" "$dest/fonts/"
 
 # The plot viewer's libraries and what they were built from (web/package-lock.json).
 nix develop "$repo" -c node "$repo/web/scripts/licenses.mjs" "$dest/plot-viewer"
+
+# OpenSSL libraries bundled with the host-side agentd.
+mkdir -p "$dest/openssl"
+openssl_source="$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#openssl.src)"
+openssl_license="$(tar -tf "$openssl_source" | grep -E '^[^/]+/LICENSE.txt$')"
+[ -n "$openssl_license" ] || { echo "OpenSSL license is missing" >&2; exit 1; }
+tar -xOf "$openssl_source" "$openssl_license" > "$dest/openssl/LICENSE.txt"

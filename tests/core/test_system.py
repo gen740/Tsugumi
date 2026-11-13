@@ -65,7 +65,7 @@ def diagnostics(c, card_id: str) -> list[str]:
 def registered_remote(monkeypatch, resource_limits):
     class Catalog(socketserver.StreamRequestHandler):
         def handle(self):
-            assert R.read(self.rfile).payload.bodyType == R.RequestBody.CatalogRequest
+            assert R.read_broker_request(self.rfile, "fixture-capability").bodyType == R.RequestBody.CatalogRequest
             caps = R.CapabilitiesT(serverId="2" * 64, nativeSystem=FOREIGN, systems=[FOREIGN],
                                    resourceLimits=resource_limits, maxJobs=8, workerContract=3)
             self.wfile.write(R.frame(R.reply(R.ReplyBody.Catalog, R.CatalogT(
@@ -74,7 +74,9 @@ def registered_remote(monkeypatch, resource_limits):
     with tempfile.TemporaryDirectory(prefix="tsg-broker-", dir="/tmp") as directory:
         endpoint = str(Path(directory) / "socket")
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", "unix:" + endpoint)
-        monkeypatch.delenv("TSUGUMI_EXECUTION_BROKER_TOKEN_FILE", raising=False)
+        capability = Path(directory) / "capability"
+        capability.write_text("fixture-capability")
+        monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE", str(capability))
         with socketserver.UnixStreamServer(endpoint, Catalog) as server:
             thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02})
             thread.start()

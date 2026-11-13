@@ -98,7 +98,7 @@ public enum VMHostIPC {
   }
 
   /// Transfers ownership of both descriptors until the stream has drained.
-  public static func relay(_ first: Int32, _ second: Int32) {
+  public static func relay(_ first: Int32, _ second: Int32, retained: AnyObject? = nil, completed: @escaping () -> Void = {}) {
     let done = DispatchGroup()
     for (source, destination) in [(first, second), (second, first)] {
       done.enter()
@@ -115,7 +115,7 @@ public enum VMHostIPC {
         done.leave()
       }
     }
-    done.notify(queue: .global()) { Darwin.close(first); Darwin.close(second) }
+    done.notify(queue: .global()) { withExtendedLifetime(retained) { Darwin.close(first); Darwin.close(second); completed() } }
   }
 }
 

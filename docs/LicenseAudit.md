@@ -6,6 +6,7 @@
 
 [macOS/tools/bundle-licenses.sh](../macOS/tools/bundle-licenses.sh) copies license texts from the sources used for the build into `Contents/Resources/licenses/`. Missing required files stop the build. Keep license files in the source list supplied to the VM, [vm-source.txt](../macOS/Container/vm-source.txt).
 
+- The native host Agent bundles OpenSSL 3's `libssl` and `libcrypto`; copy `LICENSE.txt` from the same nixpkgs OpenSSL source into `licenses/openssl/`. `build-agent.sh` rewrites their loader paths before the app signs them.
 - Keep Swift Markdown's `NOTICE.txt` and swift-cmark's complete `COPYING`, including the notices of embedded code.
 - Keep Tree-sitter runtime, grammar and query notices. Sources are listed in [Grammars/README.md](../macOS/Sources/Grammars/README.md) and [TreeSitter/SOURCES.md](../macOS/Sources/App/Resources/TreeSitter/SOURCES.md).
 - SwiftMath's MIT license covers its code, not its fonts. The app ships Latin Modern Math with the GUST Font License and its complete upstream package.

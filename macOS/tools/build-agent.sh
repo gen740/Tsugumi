@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Native Agent/client use Apple's compiler, SDK, TLS trust and SQLite.
+# Native Agent/client use Apple's compiler, SDK, provider HTTPS trust and SQLite.
+# Remote-worker TLS uses the OpenSSL already supplied by the development shell.
 # Nix supplies pinned build tools, FlatBuffers and source-only dependencies.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -27,7 +28,28 @@ run "$cmake_path" --fresh -S "$repo" -B "$repo/build-host" -G Ninja \
   -DTSUGUMI_AGENT_SQLITE_LIBRARY="$sdk_path/usr/lib/libsqlite3.tbd"
 run "$cmake_path" --build "$repo/build-host" --target tsugumi-agentd tsugumi-rpc
 
-for binary in "$repo/build-host/core/tsugumi-agentd" "$repo/build-host/client/tsugumi-rpc"; do
+# Bundle the two OpenSSL runtime libraries, keeping the native product usable
+# without a Nix installation. Provider HTTPS still uses the system libcurl.
+frameworks="$repo/build-host/Frameworks"
+mkdir -p "$frameworks"
+ssl_library=$(sed -n 's/^OPENSSL_SSL_LIBRARY:FILEPATH=//p' "$repo/build-host/CMakeCache.txt")
+crypto_library=$(sed -n 's/^OPENSSL_CRYPTO_LIBRARY:FILEPATH=//p' "$repo/build-host/CMakeCache.txt")
+ssl_id=$(/usr/bin/otool -D "$ssl_library" | tail -n 1)
+crypto_id=$(/usr/bin/otool -D "$crypto_library" | tail -n 1)
+cp -L "$ssl_library" "$frameworks/libssl.3.dylib"
+cp -L "$crypto_library" "$frameworks/libcrypto.3.dylib"
+chmod u+w "$frameworks/"*.dylib
+/usr/bin/install_name_tool -id @rpath/libssl.3.dylib -change "$crypto_id" @loader_path/libcrypto.3.dylib "$frameworks/libssl.3.dylib"
+/usr/bin/install_name_tool -id @rpath/libcrypto.3.dylib "$frameworks/libcrypto.3.dylib"
+/usr/bin/install_name_tool -change "$ssl_id" @executable_path/../Frameworks/libssl.3.dylib \
+  -change "$crypto_id" @executable_path/../Frameworks/libcrypto.3.dylib "$repo/build-host/core/tsugumi-agentd"
+# install_name_tool invalidates the linker-created ad-hoc signature. The app
+# build signs these again with the selected development identity.
+for binary in "$frameworks/"*.dylib "$repo/build-host/core/tsugumi-agentd"; do
+  /usr/bin/codesign --force --sign - "$binary"
+done
+
+for binary in "$repo/build-host/core/tsugumi-agentd" "$repo/build-host/client/tsugumi-rpc" "$frameworks/"*.dylib; do
   if /usr/bin/otool -L "$binary" | /usr/bin/grep -q '/nix/store/'; then
     echo "The distributable binary still depends on the Nix store: $binary" >&2
     exit 1

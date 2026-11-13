@@ -8,6 +8,10 @@
 namespace tsugumi::test {
 namespace A = Tsugumi::Agent;
 namespace H = Tsugumi::Host;
+// Optional FlatBuffers vectors represent an empty list when omitted.
+template<class T> auto ListSize(const flatbuffers::Vector<T>* values) -> size_t {
+  return values ? values->size() : 0;
+}
 inline auto View(const flatbuffers::String *s) -> std::string {
   return Quote(s ? s->str() : "");
 }

@@ -81,14 +81,13 @@ clangStdenv.mkDerivation {
     sqlite
     libgit2
     curl
+    openssl
     nix.libs.nix-expr
     nix.libs.nix-store
     nix.libs.nix-fetchers
     nix.libs.nix-flake
     nix.libs.nix-util
-  ]
-  # SHA-256 on Linux (macOS has CommonCrypto).
-  ++ lib.optionals clangStdenv.hostPlatform.isLinux [ openssl ];
+  ];
   cmakeFlags = [
     "-DHOSQ_INCLUDE_DIR=${hosq}/include"
     "-DTSUGUMI_BUILD_TESTS=OFF"

@@ -15,6 +15,8 @@
 
 namespace tsugumi::workerd {
 namespace {
+template<class T> concept HasWorkerToken = requires(T value) { value.token; };
+static_assert(!HasWorkerToken<R::RequestT>);
 auto expect(bool condition, const char* message) -> void {
   if (!condition) throw std::runtime_error(message);
 }
@@ -50,7 +52,6 @@ auto chunk(const std::string& data) -> R::PutBlobRequestT {
 }
 auto protocol_test() -> void {
   R::RequestT q;
-  q.token = std::string(64, 'a');
   q.server_id = std::string(64, 'b');
   q.project_scope = std::string(64, 'c');
   auto c = chunk(std::string("binary\0payload", 14));
@@ -66,7 +67,7 @@ auto protocol_test() -> void {
   auto restored = decode(bytes);
   const auto* request = restored->payload.AsRequest();
   expect(request && request->body.AsPutBlobRequest()->bytes == c.bytes &&
-             request->token == q.token,
+             request->server_id == q.server_id,
          "protocol roundtrip");
   for (const auto& data :
        {std::string{}, bytes.substr(0, 11), std::string(32, '\0')})

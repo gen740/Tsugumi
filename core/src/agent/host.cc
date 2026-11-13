@@ -23,6 +23,7 @@
 #include "agent/tool_images.hh"
 #include "agent/wire.hh"
 #include "host/projects.hh"
+#include "host/execution_broker.hh"
 #include "lanes.hh"
 #include "tsugumi/client/client.hh"
 #include "tsugumi/protocol/agent_generated.h"
@@ -237,11 +238,14 @@ struct Host::State {
             "PRIMARY KEY, turn TEXT NOT NULL, frame BLOB NOT NULL, "
             "message_index INTEGER NOT NULL)");
     db.exec("UPDATE turns SET state='interrupted' WHERE state='running'");
+    if (!options.broker_socket.empty())
+      execution_broker = std::make_unique<host::ExecutionBroker>(options.state_dir, options.broker_socket);
   }
 
   HostOptions options;
   sql::Db db;
   host::Projects host_projects;
+  std::unique_ptr<host::ExecutionBroker> execution_broker;
   Catalog catalog;
   Server *server = nullptr;
   Server *host_server = nullptr;
@@ -1905,6 +1909,12 @@ struct Host::State {
     std::unique_lock lock(mutex);
     if (stopping)
       throw Failure("unavailable", "Host service is stopping");
+    if (host::ExecutionBroker::Handles(r->value_type())) {
+      auto* broker = execution_broker.get();
+      lock.unlock();
+      if (!broker) throw Failure("unavailable", "Execution broker is not running");
+      return broker->Handle(*r, request.request_id);
+    }
     if (host::Projects::Handles(r->value_type()))
       return host_projects.Handle(*r, request.request_id);
     switch (r->value_type()) {
@@ -2049,6 +2059,7 @@ auto Host::Shutdown() -> void {
     }
   }
   state_->changed.notify_all();
+  if (state_->execution_broker) state_->execution_broker->Stop();
   state_->requests.stop();
   state_->tool_requests.stop();
   for (const auto &job : jobs)
@@ -2200,6 +2211,19 @@ auto RunHost(int argc, char **argv) -> int {
     sigaddset(&signals, SIGTERM);
     sigaddset(&signals, SIGINT);
     ::pthread_sigmask(SIG_BLOCK, &signals, nullptr);
+    // Detached project daemons must reconnect to the same broker after an
+    // agentd restart, even when its UI RPC sockets get a new temp directory.
+    const auto broker_dir = std::filesystem::path("/tmp") /
+        ("tsugumi-exec-" + std::to_string(::getuid()) + "-" +
+         crypto::sha256_hex(std::filesystem::canonical(options.state_dir).string()).substr(0, 16));
+    if (::mkdir(broker_dir.c_str(), 0700) != 0 && errno != EEXIST)
+      throw std::runtime_error("Cannot create execution broker directory");
+    struct stat broker_stat{};
+    if (::lstat(broker_dir.c_str(), &broker_stat) != 0 ||
+        !S_ISDIR(broker_stat.st_mode) || broker_stat.st_uid != ::getuid() ||
+        (broker_stat.st_mode & 0077))
+      throw std::runtime_error("Execution broker directory must be private");
+    options.broker_socket = (broker_dir / "s").string();
     Host host(options);
     Server server(listener, &host);
     auto host_listener = listener;
@@ -2223,6 +2247,7 @@ auto RunHost(int argc, char **argv) -> int {
             {"endpoint", json::Quote(endpoint)},
             {"unix_socket", json::Quote(listener.unix_path)},
             {"host_socket", json::Quote(host_listener.unix_path)},
+            {"execution_broker", json::Quote("unix:" + options.broker_socket)},
             {"host_endpoint",
              json::Quote(
                  host_listener.tcp_port < 0

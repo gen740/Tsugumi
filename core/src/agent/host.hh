@@ -11,6 +11,7 @@ namespace tsugumi::agent {
 struct HostOptions {
   std::filesystem::path state_dir;
   std::filesystem::path demos_dir;
+  std::string broker_socket;
   std::string user_token;
   std::string external_token;
   std::string server_id;

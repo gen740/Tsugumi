@@ -137,7 +137,7 @@ auto environment(const char* name) -> std::string {
   return value ? value : "";
 }
 
-auto connect_broker(std::string_view endpoint, [[maybe_unused]] bool has_token, const BrokerIo& io,
+auto connect_broker(std::string_view endpoint, [[maybe_unused]] bool has_capability, const BrokerIo& io,
                     Clock::time_point deadline) -> int {
   if (endpoint.starts_with("unix:")) {
     const std::string_view path = endpoint.substr(5);
@@ -153,7 +153,7 @@ auto connect_broker(std::string_view endpoint, [[maybe_unused]] bool has_token, 
     const std::string_view text = endpoint.substr(6);
     uint32_t port = 0;
     auto [end, ec] = std::from_chars(text.data(), text.data() + text.size(), port);
-    if (ec != std::errc{} || end != text.data() + text.size() || port == 0 || !has_token)
+    if (ec != std::errc{} || end != text.data() + text.size() || port == 0 || !has_capability)
       throw BrokerDisconnected("invalid authenticated execution broker vsock endpoint");
     sockaddr_vm address{};
     address.svm_family = AF_VSOCK;
@@ -198,22 +198,22 @@ auto require_ack(const R::ReplyT& reply) -> void {
 
 RemoteJobClient::RemoteJobClient()
     : endpoint_(environment("TSUGUMI_EXECUTION_BROKER")),
-      token_file_(environment("TSUGUMI_EXECUTION_BROKER_TOKEN_FILE")) {}
+      capability_file_(environment("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE")) {}
 
 auto RemoteJobClient::request(R::RequestT q, const std::atomic<bool>* cancel) const -> R::ReplyT {
   const bool upload = q.body.type == R::RequestBody::PutBlobRequest;
   const BrokerIo io{stopped_, cancel, upload};
   const auto start = Clock::now();
   const auto deadline = start + kControlTimeout;
-  Connection socket{connect_broker(endpoint_, !token_file_.empty(), io, start + kConnectTimeout)};
-  if (!token_file_.empty()) {
-    auto token = fs::read_file(token_file_);
-    if (!token || token->empty() || token->size() > 256) throw BrokerDisconnected("cannot read execution broker token");
-    while (!token->empty() && (token->back() == '\n' || token->back() == '\r')) token->pop_back();
-    q.token = *token;
-  }
+  Connection socket{connect_broker(endpoint_, !capability_file_.empty(), io, start + kConnectTimeout)};
+  auto capability = fs::read_file(capability_file_);
+  if (!capability || capability->empty() || capability->size() > 256)
+    throw BrokerDisconnected("cannot read execution broker capability");
+  R::BrokerRequestT broker;
+  broker.capability = *capability;
+  broker.request = std::make_unique<R::RequestT>(std::move(q));
   R::MessageT message;
-  message.payload.Set(std::move(q));
+  message.payload.Set(std::move(broker));
   const auto bytes = workerd::encode(std::move(message));
   send_exact(socket.fd, workerd::length_prefix(static_cast<uint32_t>(bytes.size())), io, deadline);
   send_exact(socket.fd, bytes, io, deadline);

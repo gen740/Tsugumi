@@ -2,14 +2,14 @@
 
 Set TSUGUMI_REMOTE_TEST_DAEMON to start a packaged daemon on loopback.
 For a daemon already running, set TSUGUMI_REMOTE_TEST_ENDPOINT and
-TSUGUMI_REMOTE_TEST_TOKEN_FILE. Use tsugumi-test-env and pytest -m environment.
+TSUGUMI_REMOTE_TEST_PUBLIC_KEY_FILE, plus TSUGUMI_REMOTE_TEST_AUTHORIZED_KEYS
+pointing to that worker's dedicated writable authorized-keys file.
+Use tsugumi-test-env and pytest -m environment.
 """
 
 import hashlib
 import json
 import os
-import secrets
-import select
 import shutil
 import socket
 import subprocess
@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 from harness import remote_worker as R
+from harness.host import Host
 from harness.observations import read_output
 from harness.values import reference_json
 from projects import (
@@ -46,62 +47,26 @@ RUN_LIST_REMOTE = {
     "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS, "_outputs": RUN_LIST_OUTPUT,
 }
 
-BROKER = """
-import fs from "node:fs";
-import { registerHooks } from "node:module";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-// Match the production bundler's TypeScript and JSON imports in this test.
-registerHooks({
-  resolve(specifier, context, nextResolve) {
-    const name = specifier.startsWith(".") && !path.extname(specifier) ? specifier + ".ts" : specifier;
-    return nextResolve(name, context);
-  },
-  load(url, context, nextLoad) {
-    const options = url.startsWith("file:") && url.endsWith(".json")
-      ? { ...context, importAttributes: { type: "json" } }
-      : context;
-    return nextLoad(url, options);
-  },
-});
-const [modulePath, support, project, copy, endpoint, tokenFile] = process.argv.slice(2);
-const { authorizeExecutionProject, registerExecutionService, startExecutionBroker } =
-  await import(pathToFileURL(modulePath));
-const authorize = (project, name) => {
-  const control = path.join(support, name);
-  fs.mkdirSync(control, {recursive: true, mode: 0o700});
-  const st = fs.statSync(project, {bigint: true});
-  return authorizeExecutionProject(support, [st.dev, st.ino, st.birthtimeNs || st.ctimeNs].join(":"), control);
-};
-const token = authorize(project, "control");
-const copyToken = authorize(copy, "copy-control");
-const entries = await registerExecutionService(support, {id: "remote-test", name: "Remote test", endpoint,
-                                                         token: fs.readFileSync(tokenFile, "utf8").trim()});
-const broker = await startExecutionBroker(support);
-console.log(JSON.stringify({endpoint: broker, token, copyToken, serverId: entries[0].capabilities.serverId}));
-setInterval(() => {}, 30000);
-"""
-
-
 @pytest.fixture
 def remote_daemon(tmp_path):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
     if not binary:
         endpoint = os.environ.get("TSUGUMI_REMOTE_TEST_ENDPOINT")
-        token_file = os.environ.get("TSUGUMI_REMOTE_TEST_TOKEN_FILE")
-        if not endpoint or not token_file:
-            pytest.skip("set TSUGUMI_REMOTE_TEST_DAEMON or a dedicated endpoint and token file")
-        yield endpoint, token_file, None
+        key_file = os.environ.get("TSUGUMI_REMOTE_TEST_PUBLIC_KEY_FILE")
+        if not endpoint or not key_file:
+            pytest.skip("set TSUGUMI_REMOTE_TEST_DAEMON or a dedicated endpoint and public key file")
+        yield endpoint, key_file, None
         return
 
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
-    token_file = tmp_path / "daemon-token"
-    with os.fdopen(os.open(token_file, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600), "w") as token:
-        token.write(secrets.token_hex(32) + "\n")
-    env = {**os.environ, "TSUGUMI_REMOTE_STATE_DIR": str(tmp_path / "daemon-state")}
-    command = [binary, "--host", "127.0.0.1", "--port", str(port), "--token-file", str(token_file)]
+    state = tmp_path / "daemon-state"
+    state.mkdir(mode=0o700)
+    env = {**os.environ, "TSUGUMI_REMOTE_STATE_DIR": str(state)}
+    command = [binary, "--host", "127.0.0.1", "--port", str(port)]
+    key_file = tmp_path / "worker-public-key"
+    key_file.write_bytes(subprocess.check_output([binary, "--public-key"], env=env))
     daemon_log = tmp_path / "execution-daemon.log"
     process = None
 
@@ -127,7 +92,7 @@ def remote_daemon(tmp_path):
 
     try:
         start()
-        yield f"tcp://127.0.0.1:{port}", str(token_file), restart
+        yield f"tls://127.0.0.1:{port}", str(key_file), restart
     finally:
         if process and process.poll() is None:
             process.terminate()
@@ -140,46 +105,63 @@ def remote_daemon(tmp_path):
 
 @pytest.fixture
 def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
-    endpoint, token_file, _ = remote_daemon
-    script = tmp_path / "broker.mjs"
-    script.write_text(BROKER)
+    endpoint, key_file, _ = remote_daemon
     copy = tmp_path / "copied-project"
     shutil.copytree(project, copy)
-    module = Path(os.environ.get("TSUGUMI_EXECUTION_BROKER_MODULE", str(Path(__file__).resolve().parents[3] / "web/server/executionServices.ts")))
-    process = subprocess.Popen(["node", str(script), str(module), str(tmp_path / "support"),
-                                str(project), str(copy), endpoint, token_file], stdout=subprocess.PIPE, text=True)
+    host = Host(tmp_path / "agent")
+    external_authorized = None
+    added_key = None
     try:
-        ready, _, _ = select.select([process.stdout], [], [], 30)
-        assert ready, "execution broker did not start"
-        line = process.stdout.readline()
-        assert line, "execution broker exited before starting"
-        ready = json.loads(line)
+        public = R.string(host.call("ExecutionServicesRequest").hostPublicKey)
+        if os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON"):
+            (tmp_path / "daemon-state/authorized_keys").write_text(public + "\n")
+        else:
+            authorized = os.environ.get("TSUGUMI_REMOTE_TEST_AUTHORIZED_KEYS")
+            assert authorized, "external test worker needs a dedicated writable authorized_keys file"
+            external_authorized = Path(authorized)
+            previous = external_authorized.read_text() if external_authorized.exists() else ""
+            added_key = public
+            external_authorized.write_text(previous.rstrip("\n") + "\n" + public + "\n")
+        entries = host.call("ExecutionServicePutRequest", id="remote-test", name="Remote test",
+                            endpoint=endpoint, workerPublicKey=Path(key_file).read_text().strip(), verify=True)
+
+        def authorize(folder, name):
+            control = tmp_path / name
+            control.mkdir(mode=0o700)
+            result = host.call("ExecutionProjectAuthorizeRequest", projectId=name,
+                               path=str(folder), controlDir=str(control))
+            assert result.available, "test filesystem must provide directory birth time"
+            return R.string(result.capabilityFile)
+
+        ready = {"endpoint": host.ready["execution_broker"],
+                 "capability": authorize(project, "control"),
+                 "copyCapability": authorize(copy, "copy-control"),
+                 "serverId": R.string(entries.services[0].capabilities.serverId)}
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", ready["endpoint"])
-        monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER_TOKEN_FILE", ready["token"])
+        monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE", ready["capability"])
         yield ready
     finally:
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
+        host.close()
+        if external_authorized is not None and added_key is not None:
+            # Remove only this fixture's key, preserving other hosts and edits.
+            lines = external_authorized.read_text().splitlines(keepends=True)
+            external_authorized.write_text("".join(line for line in lines if line.strip() != added_key))
 
 
-def broker_request(endpoint, token_file, server_id, body_type, body, **routing):
-    request = R.request(body_type, body, service="remote-test", token=Path(token_file).read_text().strip(),
-                        serverId=server_id, **routing)
+def broker_request(endpoint, capability_file, server_id, body_type, body, **routing):
+    envelope = R.broker_request(Path(capability_file).read_text().strip(), body_type, body,
+                                service="remote-test", serverId=server_id, **routing)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(30)
         connection.connect(endpoint.removeprefix("unix:"))
-        connection.sendall(R.frame(request))
+        connection.sendall(R.frame(envelope))
         connection.shutdown(socket.SHUT_WR)
         with connection.makefile("rb") as response:
             return R.read(response).payload
 
 
 def test_remote_broker_isolates_copies_of_a_project(remote_broker):
-    endpoint, original, copy, server_id = (remote_broker[name] for name in ("endpoint", "token", "copyToken", "serverId"))
+    endpoint, original, copy, server_id = (remote_broker[name] for name in ("endpoint", "capability", "copyCapability", "serverId"))
     first = broker_request(endpoint, original, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT()).body
     second = broker_request(endpoint, copy, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT()).body
     assert first.instanceId != second.instanceId
@@ -203,7 +185,7 @@ def fixture(project):
       set -e
       test "$(uname -s)" = Linux
       test ! -e /etc/hostname
-      test -z "$TSUGUMI_REMOTE_TOKEN"
+      test -z "$TSUGUMI_REMOTE_PRIVATE_KEY"
       printf 'remote-card-stdout\\n'
       printf '%s' '{"text":"remote Card display"}' > "$TSUGUMI_DISPLAY"
       cp "$FILE_IN" "$TSUGUMI_OUTPUT_DIR/copied.txt"

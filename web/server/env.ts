@@ -1,6 +1,6 @@
 // Runs one tsugumid per project directly on this host (no VM): the web UI
 // talks to it over its WebSocket endpoint, the Agent over its Unix socket.
-import { ChildProcess, spawn, spawnSync } from 'node:child_process'
+import { ChildProcess, spawn } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -71,33 +71,12 @@ interface Env {
   stopping?: Promise<void>
 }
 
-/** A creation time identifies a new directory even when its inode is reused. */
-export function executionScopeIdentity(st: Pick<fs.BigIntStats, 'dev' | 'ino' | 'birthtimeNs'>): string | undefined {
-  return st.birthtimeNs > 0n ? `${st.dev}:${st.ino}:${st.birthtimeNs}` : undefined
-}
-
 /** Stable identity of a project folder. Aliases and renames share its inode. */
 export function projectKey(dir: string): { key: string; real: string } {
   const real = fs.realpathSync(dir)
   const st = fs.statSync(real, { bigint: true })
   const inode = `${st.dev}:${st.ino}`
   return { key: createHash('sha256').update(inode).digest('hex').slice(0, 16), real }
-}
-
-export function projectExecutionScope(dir: string): string | undefined {
-  const st = fs.statSync(dir, { bigint: true })
-  if (process.platform !== 'linux') return executionScopeIdentity(st)
-  // Node's Linux stat can substitute ctime for a missing birth time. GNU
-  // stat reports missing creation time explicitly using statx.
-  const result = spawnSync('stat', ['--printf', '%d:%i:%W\n%w', '--', dir], {
-    encoding: 'utf8', timeout: 3000, env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' },
-  })
-  const [id, date] = result.stdout?.split('\n') ?? []
-  const prefix = `${st.dev}:${st.ino}:`
-  const seconds = id?.startsWith(prefix) ? id.slice(prefix.length) : ''
-  const nanos = date?.match(/\.(\d{9}) \+0000$/)?.[1]
-  if (result.status !== 0 || !/^[1-9]\d*$/.test(seconds) || !nanos) return undefined
-  return executionScopeIdentity({ dev: st.dev, ino: st.ino, birthtimeNs: BigInt(seconds) * 1_000_000_000n + BigInt(nanos) })
 }
 
 export class EnvironmentManager implements Environments {
@@ -108,7 +87,8 @@ export class EnvironmentManager implements Environments {
     readonly bins: Binaries,
     readonly support: string,
     private readonly origins: () => string[],
-    private readonly authorizeExecution?: (identity: string, control: string) => string,
+    private readonly authorizeExecution?: (project: string, folder: string, control: string) => Promise<{ endpoint: string; capability_file: string; available: boolean }>,
+    private readonly revokeExecution?: (project: string) => Promise<void>,
   ) {}
 
   observe(fn: (key: string, s: EnvState) => void) {
@@ -143,21 +123,24 @@ export class EnvironmentManager implements Environments {
   }
 
   /** Starts (or reuses) the project's tsugumid and waits for server.ready. */
-  start(dir: string, archiveIncompatibleHistory = false): Promise<EnvState> {
+  async start(dir: string, archiveIncompatibleHistory = false): Promise<EnvState> {
     const e = this.env(dir)
     // Opened again while it stops: a new one starts once the old one has gone.
     if (e.stopping) return e.stopping.then(() => this.start(dir, archiveIncompatibleHistory))
-    const identity = this.authorizeExecution ? projectExecutionScope(e.project) : undefined
-    e.executionScopeUnavailable = !!this.authorizeExecution && !identity
     fs.mkdirSync(e.control, { recursive: true, mode: 0o700 })
     const origins = path.join(e.control, 'origins.json')
     const temporary = origins + '.' + randomUUID()
     fs.writeFileSync(temporary, JSON.stringify({ origins: this.origins() }), { mode: 0o600 })
     fs.renameSync(temporary, origins)
+    // Re-authorize an existing detached daemon after host/agentd restart.
+    if (this.authorizeExecution) {
+      const authorization = await this.authorizeExecution(e.key, e.project, e.control)
+      e.executionScopeUnavailable = !authorization.available
+    }
     const running = this.readReady(e)
     if (running) { this.set(e, running); return Promise.resolve(running) }
     if (e.starting) return e.starting
-    e.starting = this.launch(e, archiveIncompatibleHistory, identity).finally(() => (e.starting = undefined))
+    e.starting = this.launch(e, archiveIncompatibleHistory).finally(() => (e.starting = undefined))
     return e.starting
   }
 
@@ -173,7 +156,7 @@ export class EnvironmentManager implements Environments {
     } catch { return undefined }
   }
 
-  private async launch(e: Env, archiveIncompatibleHistory: boolean, identity?: string): Promise<EnvState> {
+  private async launch(e: Env, archiveIncompatibleHistory: boolean): Promise<EnvState> {
     for (const [what, p] of [['tsugumid', this.bins.tsugumid], ['tsugumi-worker', this.bins.worker]] as const) {
       if (!fs.existsSync(p)) {
         const s: EnvState = { state: 'failed', message: L('{0} が見つかりません: {1}', what, p), recovery: L('リポジトリで core をビルドしてください（README の「Web UI」）。'), log: '' }
@@ -215,10 +198,15 @@ export class EnvironmentManager implements Environments {
     const logFile = path.join(e.control, 'server.log')
     const env = { ...process.env }
     if (this.authorizeExecution) {
-      if (identity) env.TSUGUMI_EXECUTION_BROKER_TOKEN_FILE = this.authorizeExecution(identity, e.control)
+      const authorization = await this.authorizeExecution(e.key, e.project, e.control)
+      e.executionScopeUnavailable = !authorization.available
+      if (authorization.available) {
+        env.TSUGUMI_EXECUTION_BROKER = authorization.endpoint
+        env.TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE = authorization.capability_file
+      }
       else {
         delete env.TSUGUMI_EXECUTION_BROKER
-        delete env.TSUGUMI_EXECUTION_BROKER_TOKEN_FILE
+        delete env.TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE
       }
     }
     const log = fs.openSync(logFile, 'a', 0o600)
@@ -272,6 +260,7 @@ export class EnvironmentManager implements Environments {
   async stop(dir: string): Promise<void> {
     const e = this.env(dir)
     const p = e.proc
+    await this.revokeExecution?.(e.key)
     if (!p) {
       const ready = this.readReady(e)
       if (ready?.state === 'ready' && ready.pid) {

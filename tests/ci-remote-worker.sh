@@ -9,8 +9,9 @@ fi
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 nix build .#remote-worker --out-link "$scratch/package"
-nix build .#web --out-link "$scratch/web"
-TSUGUMI_EXECUTION_BROKER_MODULE="$scratch/web/share/tsugumi/web/dist/execution-broker.js" \
+nix build .#tsugumid --out-link "$scratch/core"
+# Fixtures generate Ed25519 identities and authorize agentd by its public key.
+TSUGUMI_AGENTD="$scratch/core/bin/tsugumi-agentd" \
   TSUGUMI_REMOTE_TEST_DAEMON="$scratch/package/bin/tsugumi-remote-worker" \
   "$CORE_TEST_ENV" python3 -m pytest -q -m environment tests/core/integration/test_remote_execution.py
 

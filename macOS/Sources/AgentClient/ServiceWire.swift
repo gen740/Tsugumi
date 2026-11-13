@@ -10,7 +10,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"RegisterProjectRequest", "RegisterFolderRequest", "ModelsListRequest", "CredentialImportRequest", "CredentialTokenRequest", "CredentialForgetRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "ModelsListRequest", "CredentialImportRequest", "CredentialTokenRequest", "CredentialForgetRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   private static func registration(_ fields: [String: Any]) -> Tsugumi_Host_CredentialRegistrationT {
     let value = Tsugumi_Host_CredentialRegistrationT()
     value.clientId = fields["client_id"] as? String ?? ""
@@ -27,6 +27,30 @@ enum ServiceWire {
   static func request(_ method: String, _ fields: [String: Any], host: Bool) throws -> (UInt8, NativeObject) {
     if host {
       switch method {
+      case "ExecutionServicesRequest": return (Tsugumi_Host_RequestPayload.executionservicesrequest.rawValue, Tsugumi_Host_ExecutionServicesRequestT())
+      case "ExecutionServicePutRequest":
+        let v = Tsugumi_Host_ExecutionServicePutRequestT()
+        v.id = fields["id"] as? String ?? ""
+        v.name = fields["name"] as? String ?? ""
+        v.endpoint = fields["endpoint"] as? String ?? ""
+        v.workerPublicKey = fields["workerPublicKey"] as? String ?? ""
+        v.verify = fields["verify"] as? Bool ?? false
+        return (Tsugumi_Host_RequestPayload.executionserviceputrequest.rawValue, v)
+      case "ExecutionServiceRemoveRequest":
+        let v = Tsugumi_Host_ExecutionServiceRemoveRequestT()
+        v.id = fields["id"] as? String ?? ""
+        return (Tsugumi_Host_RequestPayload.executionserviceremoverequest.rawValue, v)
+      case "ExecutionProjectAuthorizeRequest":
+        let v = Tsugumi_Host_ExecutionProjectAuthorizeRequestT()
+        v.projectId = fields["project_id"] as? String ?? ""
+        v.path = fields["path"] as? String ?? ""
+        v.controlDir = fields["control_dir"] as? String ?? ""
+        v.guest = fields["guest"] as? Bool ?? false
+        return (Tsugumi_Host_RequestPayload.executionprojectauthorizerequest.rawValue, v)
+      case "ExecutionProjectRevokeRequest":
+        let v = Tsugumi_Host_ExecutionProjectRevokeRequestT()
+        v.projectId = fields["project_id"] as? String ?? ""
+        return (Tsugumi_Host_RequestPayload.executionprojectrevokerequest.rawValue, v)
       case "HostRecentListRequest": return (Tsugumi_Host_RequestPayload.hostrecentlistrequest.rawValue, Tsugumi_Host_HostRecentListRequestT())
       case "HostProjectDefaultsRequest": return (Tsugumi_Host_RequestPayload.hostprojectdefaultsrequest.rawValue, Tsugumi_Host_HostProjectDefaultsRequestT())
       case "HelloRequest":
@@ -275,6 +299,7 @@ enum ServiceWire {
     if let failure = value as? Tsugumi_Service_FailureT {
       throw CoreAgentFailure(code: failure.code, message: failure.message, requestID: failure.requestId)
     }
+    // Generated native objects normalize omitted Host vectors to empty arrays.
     let result = try view(value)
     return result as? [String: Any] ?? ["value": result]
   }
@@ -310,6 +335,16 @@ enum ServiceWire {
 
   private static func view(_ value: NativeObject) throws -> Any {
     switch value {
+    case let v as Tsugumi_Host_ExecutionServicesT:
+      return ["services": try v.services.compactMap { try $0.map(view) }, "hostPublicKey": v.hostPublicKey] as [String: Any]
+    case let v as Tsugumi_Host_ExecutionServiceT:
+      return ["id": v.id, "name": v.name, "endpoint": v.endpoint, "workerPublicKey": v.workerPublicKey, "capabilities": try view(v.capabilities)] as [String: Any]
+    case let v as Tsugumi_Host_ExecutionCapabilitiesT:
+      return ["serverId": v.serverId, "nativeSystem": v.nativeSystem, "systems": v.systems.compactMap { $0 },
+              "isolation": v.isolation ?? "pid_namespace", "resourceLimits": v.resourceLimits,
+              "maxConcurrentJobs": v.maxConcurrentJobs, "workerContract": v.workerContract] as [String: Any]
+    case let v as Tsugumi_Host_ExecutionAuthorizationT:
+      return ["endpoint": v.endpoint, "capability_file": v.capabilityFile, "available": v.available] as [String: Any]
     case let v as Tsugumi_Service_HelloResultT:
       var out: [String: Any] = [:]
       out["protocol"] = v.protocol_

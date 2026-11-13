@@ -3,7 +3,7 @@
 // Any byte stream: uint32 little-endian length, then one FlatBuffer (<= 2 MiB).
 // One request and reply per connection. Transfers use independent <= 1 MiB
 // chunks, with explicit offset/total; no unframed body follows a message.
-// A future TLS/SSH carrier wraps this exact stream. TCP is loopback-only today.
+// Worker connections use TLS 1.3 with mutually pinned Ed25519 SPKI keys.
 namespace Tsugumi.RemoteWorker;
 
 enum JobState:ubyte { Missing, Uploading, Queued, Running, Cancelling, Succeeded, Failed, Cancelled, Interrupted, Released }
@@ -29,7 +29,7 @@ table ReleaseRequest { fingerprint:string (required); }
 table CatalogRequest {}
 union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest }
 table Request {
-  token:string; service:string; server_id:string; instance_id:string;
+  service:string; server_id:string; instance_id:string;
   project_scope:string; job_id:string;
   body:RequestBody (required);
 }
@@ -46,7 +46,9 @@ table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
 union ReplyBody { Capabilities, Catalog, BlobChunk, JobStatus, Ack, Failure }
 table Reply { body:ReplyBody (required); }
-union Payload { Request, Reply }
+// Private host broker envelope. Never accepted by or forwarded to a worker.
+table BrokerRequest { capability:string (required); request:Request (required); }
+union Payload { Request, Reply, BrokerRequest }
 table Message { payload:Payload (required); }
 // Result manifest is a separate FlatBuffer root stored as a job blob.
 table ResultFile { path:string (required); sha256:string (required); size:ulong; }
