@@ -1378,5 +1378,6 @@
  "ビルドキャッシュが {0} を使用しています。設定の「ビルドキャッシュ」でプロジェクト別の容量を確認できます。": "Build caches use {0}. Review per-project usage in Settings → Build Cache.",
  "「{0}」のビルドキャッシュを削除しますか？": "Delete the build cache for “{0}”?",
  "\n保持したファイルの内容がありません（scratch は保持履歴ではありません）。": "\nThe kept file content is missing (scratch is separate from retained history).",
- "\n保持したファイル: {0}": "\nKept file: {0}"
+ "\n保持したファイル: {0}": "\nKept file: {0}",
+ "取得できません": "Unavailable"
 }
