@@ -679,6 +679,97 @@ table ModuleReadRequest {
   limit_bytes:uint32 = null (id: 2);
 }
 
+// ---- Layout ----------------------------------------------------------------------
+// Arrange and Untangle Wires are worked out here, once, for every client. A
+// client says what its canvas draws in one scope (a Card's size and where its
+// ports are depend on how the window draws them and on its grid), the answer is
+// a proposal, and the client saves it with ProjectSave as one edit, as it saves
+// any change of layout.json. Nothing is read from or written to the document.
+
+table LayoutPort {
+  name:string (id: 0, required);
+  /// Where the port is on its Card, from the Card's top-left corner.
+  x:double (id: 1);
+  y:double (id: 2);
+}
+
+table LayoutCard {
+  id:string (id: 0, required);
+  /// Where the Card is drawn now (on the grid, when the grid moves it there).
+  x:double (id: 1);
+  y:double (id: 2);
+  width:double (id: 3);
+  height:double (id: 4);
+  /// In the order drawn.
+  inputs:[LayoutPort] (id: 5, required);
+  outputs:[LayoutPort] (id: 6, required);
+  /// Its ports may be drawn in another order (not those of a fork, a branch
+  /// and the like, whose places have a meaning).
+  reorderable:bool (id: 7);
+}
+
+table LayoutWire {
+  from:string (id: 0, required);
+  from_port:string (id: 1, required);
+  to:string (id: 2, required);
+  to_port:string (id: 3, required);
+}
+
+/// An output frame (`id` is its Card's) or a note, where it is drawn now.
+table LayoutBox {
+  id:string (id: 0, required);
+  x:double (id: 1);
+  y:double (id: 2);
+  width:double (id: 3);
+  height:double (id: 4);
+}
+
+/// One port of a Card in Card and the inner Card it goes to or comes from.
+table LayoutBarEnd {
+  name:string (id: 0, required);
+  card:string (id: 1, required);
+  port:string (id: 2, required);
+}
+
+/// A bar of a Card in Card's inner canvas ("This Card's input" / "output").
+table LayoutBar {
+  ends:[LayoutBarEnd] (id: 0, required);
+  /// Where the bar was put by hand; omitted while it follows the Cards.
+  x:double = null (id: 1);
+  y:double = null (id: 2);
+}
+
+/// What a canvas draws in one scope.
+table LayoutScene {
+  /// "topToBottom" or "leftToRight".
+  flow:string (id: 0, required);
+  /// The grid's spacing (frames, notes and layers go on it; 20 when 0).
+  grid:double (id: 1);
+  /// The grid is on: Cards are placed on it.
+  snap:bool (id: 2);
+  cards:[LayoutCard] (id: 3, required);
+  wires:[LayoutWire] (id: 4, required);
+  /// The output frames shown.
+  frames:[LayoutBox] (id: 5, required);
+  notes:[LayoutBox] (id: 6, required);
+  /// Inside a Card in Card only.
+  inputs:LayoutBar (id: 7);
+  outputs:LayoutBar (id: 8);
+}
+
+/// -> LayoutProposal. Places the scope's Cards, output frames and notes, then
+/// gives ports the order that crosses fewer wires and places the Cards once
+/// more for it. The bars are taken to follow the Cards again. Nothing is saved.
+table LayoutArrangeRequest { scene:LayoutScene (id: 0, required); }
+
+/// -> LayoutProposal (port_orders only). Reorders ports where the wires then
+/// cross less; no Card moves. With `around` (the Cards a drag just moved) only
+/// they and the Cards wired to them may change. Nothing is saved.
+table LayoutUntangleRequest {
+  scene:LayoutScene (id: 0, required);
+  around:[string] (id: 1);
+}
+
 union RequestPayload {
   SessionHelloRequest = 1,
   ProjectOpenRequest = 2,
@@ -725,6 +816,8 @@ union RequestPayload {
   RunEnvironmentPathsRequest = 43,
   ProjectShellRequest = 44,
   ModuleReadRequest = 45,
+  LayoutArrangeRequest = 46,
+  LayoutUntangleRequest = 47,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1063,6 +1156,28 @@ table ViewSaveResult {
   view_rev:uint64 = null (id: 1);
 }
 
+table LayoutPlace {
+  id:string (id: 0, required);
+  x:double (id: 1);
+  y:double (id: 2);
+}
+
+/// The order a Card's ports are drawn in (layout.json's inputOrder / outputOrder).
+table LayoutPortOrder {
+  id:string (id: 0, required);
+  inputs:[string] (id: 1, required);
+  outputs:[string] (id: 2, required);
+}
+
+/// What LayoutArrange or LayoutUntangle would change; the client saves it.
+table LayoutProposal {
+  cards:[LayoutPlace] (id: 0, required);
+  frames:[LayoutPlace] (id: 1, required);
+  notes:[LayoutPlace] (id: 2, required);
+  /// Only the Cards whose order changes.
+  port_orders:[LayoutPortOrder] (id: 3, required);
+}
+
 union ReplyPayload {
   HelloResult = 1,
   OpenResult = 2,
@@ -1098,6 +1213,7 @@ union ReplyPayload {
   BuildEnvironmentPage = 32,
   EnvironmentPathPage = 33,
   ProjectShellResult = 34,
+  LayoutProposal = 35,
 }
 
 // ---- Notifications -----------------------------------------------------------

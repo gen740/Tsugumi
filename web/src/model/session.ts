@@ -12,11 +12,10 @@ import { api, EnvPublicState, onServerEvent } from '../api'
 import { arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../shared/json'
 import { cardPath, Change, D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../shared/rpc'
 import {
-  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, NEW_PORT, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
+  applicableStages, CardGeometry, CardNodeData, mergeStageStatus, NEW_PORT, orderedPorts, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
   snapToGrid,
 } from './canvasKit'
-import { arrangeCards } from './arrange'
-import { orderedPorts, PortOrder, untanglePorts } from './untangle'
+import type { LayoutBar, LayoutPortOrder, LayoutProposal, LayoutScene } from './layoutScene'
 import { FigureState, figureMode } from './moduleThumbnails'
 import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
 import { Observable } from './observable'
@@ -345,7 +344,7 @@ const svEq = (a: SourceValue, b: SourceValue) => a.kind === b.kind && (a.kind !=
 
 /** One saved operation: undo applies `before` over what is there now, so
  *  changes made since by the Agent or another window stay. */
-interface UndoEntry {
+export interface UndoEntry {
   before: DocState
   after: DocState
   sourcesBefore: Map<string, SourceValue>
@@ -1213,8 +1212,9 @@ export class ProjectSession extends Observable {
     return e
   }
 
-  /** Applies an edit and saves it at once. One call is one step of undo. */
-  edit(change: (s: this) => void) {
+  /** Applies an edit and saves it at once. One call is one step of undo
+   *  (returned; nothing when the edit changed nothing). */
+  edit(change: (s: this) => void): UndoEntry | undefined {
     const before = this.docState(), beforeSnap = this.snapshot()
     if (!this.dirty) this.draftBase = this.makeBase()
     change(this)
@@ -1223,14 +1223,33 @@ export class ProjectSession extends Observable {
     if (snapEq(beforeSnap, afterSnap)) {
       this.settleDraftBase()
       this.changed()
-      return
+      return undefined
     }
-    this.undoStack.push(this.record(before, beforeSnap, this.docState(), afterSnap))
+    const step = this.record(before, beforeSnap, this.docState(), afterSnap)
+    this.undoStack.push(step)
     if (this.undoStack.length > 500) this.undoStack.shift()
     this.redoStack = []
     this.settleDraftBase()
     this.changed()
     this.scheduleSave()
+    return step
+  }
+
+  /** A change of the layout that follows from the last edit (worked out by
+   *  tsugumid after it): it joins that step of undo while it is still the last
+   *  one, and is discarded otherwise. */
+  private editInto(step: UndoEntry | undefined, change: (s: this) => void) {
+    if (!step || this.undoStack[this.undoStack.length - 1] !== step) return
+    const beforeSnap = this.snapshot()
+    if (!this.dirty) this.draftBase = this.makeBase()
+    change(this)
+    this.normalizeExternalEdits()
+    if (!snapEq(beforeSnap, this.snapshot())) {
+      step.after = this.docState()
+      this.scheduleSave()
+    }
+    this.settleDraftBase()
+    this.changed()
   }
 
   undo() {
@@ -3045,55 +3064,86 @@ export class ProjectSession extends Observable {
     })
   }
 
-  /** Lays out a scope's Cards, output frames and notes (layout only, one undo):
-   *  see `arrangeCards`. Ports then take the order that crosses fewer wires, and
-   *  the Cards are placed once more for that order, so the wires the layout drew
-   *  straight are straight again. */
-  arrange(scope: string[]) {
-    this.edit((x) => {
-      x.placeArranged(scope)
-      const orders = x.untangledOrders(scope)
-      if (!orders.length) return
-      x.applyPortOrders(scope, orders)
-      x.placeArranged(scope)
-    })
+  /** Lays out a scope's Cards, output frames and notes (layout only, one undo).
+   *  tsugumid works the layout out (LayoutArrange) from what the canvas draws:
+   *  Cards are placed, ports then take the order that crosses fewer wires, and
+   *  the Cards are placed once more for that order. */
+  async arrange(scope: string[]) {
+    const scene = this.layoutScene(scope)
+    const placed = await this.proposed(scope, scene, (c) => c.layoutArrange(scene))
+    if (placed) this.edit((x) => x.applyArranged(scope, scene, placed))
   }
 
-  /** A step of an edit. Sizes and port positions are those of `CardGeometry`. */
-  private placeArranged(scope: string[]) {
+  /** What the canvas draws in a scope, for tsugumid to lay out. Sizes and port
+   *  positions are those of `CardGeometry`, and Cards are where they are drawn. */
+  layoutScene(scope: string[]): LayoutScene {
     const ids = this.cards(scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x)
     const cards = ids.map((id) => {
-      const g = this.geometry(key([...scope, id]))
+      const k = key([...scope, id]), g = this.geometry(k)
       const ports = (names: string[], output: boolean) => names.map((name) => ({ name, ...g.port(name, output) }))
-      return { id, ...g.size, inputs: ports(g.inputs, false), outputs: ports(g.outputs, true) }
+      return { id, ...this.placedPosition(k), ...g.size, reorderable: ['code', 'draft', 'input', 'subgraph'].includes(this.kind(k)),
+        inputs: ports(g.inputs, false), outputs: ports(g.outputs, true) }
     })
     const wires = this.connections(scope).flatMap((c) => {
       const from = str(get(c, 'from', 'card')), fromPort = str(get(c, 'from', 'port')), to = str(get(c, 'to', 'card')), toPort = str(get(c, 'to', 'port'))
       return from && fromPort && to && toPort ? [{ from, fromPort, to, toPort }] : []
     })
+    // A frame without a place of its own is drawn beside its Card.
     const frames = ids.flatMap((id) => {
       const k = key([...scope, id]), f = this.displayFrame(k)
       if ((!this.displays.has(k) && f === undefined) || bool(get(f, 'hidden')) === true) return []
-      return [{ id, width: dbl(get(f, 'width')) ?? 320, height: dbl(get(f, 'height')) ?? 170 }]
+      const at = this.placedPosition(k), g = this.geometry(k)
+      return [{ id, x: dbl(get(f, 'x')) ?? (this.flow === 'topToBottom' ? at.x + g.size.width + 40 : at.x),
+        y: dbl(get(f, 'y')) ?? (this.flow === 'topToBottom' ? at.y : at.y + g.height + 30),
+        width: dbl(get(f, 'width')) ?? 320, height: dbl(get(f, 'height')) ?? 170 }]
     })
     const notes = this.notes(scope).flatMap((n) => {
       const id = str(get(n, 'id'))
-      return id ? [{ id, width: dbl(get(n, 'width')) ?? 240, height: dbl(get(n, 'height')) ?? 120 }] : []
+      return id ? [{ id, x: dbl(get(n, 'x')) ?? 0, y: dbl(get(n, 'y')) ?? 0, width: dbl(get(n, 'width')) ?? 240, height: dbl(get(n, 'height')) ?? 120 }] : []
     })
-    const bar = (side: string) => {
-      const list = scope.length ? get(this.boundary(key(scope)), side) : undefined
-      return isObj(list) ? list.entries().map(([, v]) => ({ card: str(get(v, 'card')) ?? '', port: str(get(v, 'port')) ?? '' })) : []
+    const bar = (side: string): LayoutBar | undefined => {
+      if (!scope.length) return undefined
+      const list = get(this.boundary(key(scope)), side)
+      return {
+        ends: isObj(list) ? list.entries().map(([name, v]) => ({ name, card: str(get(v, 'card')) ?? '', port: str(get(v, 'port')) ?? '' })) : [],
+        at: this.boundaryPosition(scope, side),
+      }
     }
-    const placed = arrangeCards({ flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, frames, notes, boundary: { inputs: bar('inputs'), outputs: bar('outputs') } })
-    for (const c of placed.cards) this.setPosition(key([...scope, c.id]), c)
+    return { flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, frames, notes, inputs: bar('inputs'), outputs: bar('outputs') }
+  }
+
+  /** Asks tsugumid for a layout. Nothing is saved by asking: what it proposes
+   *  becomes an edit here, saved and undone like any other. */
+  private async proposed(scope: string[], scene: LayoutScene, ask: (c: RPCClient) => Promise<LayoutProposal>): Promise<LayoutProposal | undefined> {
+    const client = this.client
+    if (!client) return undefined
+    const before = this.snapshot(), measured = JSON.stringify(scene), step = this.undoStack.at(-1)
+    try {
+      const proposal = await ask(client)
+      // Undo, another edit, reconnect or changed measurements invalidate it.
+      return this.client === client && snapEq(before, this.snapshot()) && this.undoStack.at(-1) === step &&
+        JSON.stringify(this.layoutScene(scope)) === measured ? proposal : undefined
+    } catch (err) {
+      this.notice = err instanceof RPCFailure ? err.diagnostic ?? errorText(err) : errorText(err)
+      this.changed()
+      return undefined
+    }
+  }
+
+  /** A step of an edit: the places tsugumid proposed for the scene it was sent.
+   *  What is no longer on the canvas is left out. */
+  private applyArranged(scope: string[], scene: LayoutScene, placed: LayoutProposal) {
+    const there = new Set(this.cards(scope).map((c) => str(get(c, 'id'))))
+    const cards = placed.cards.filter((c) => there.has(c.id)), frames = placed.frames.filter((f) => there.has(f.id))
+    for (const c of cards) this.setPosition(key([...scope, c.id]), c)
     this.updateLayout(scope, (l) => {
-      if (placed.frames.length) {
+      if (frames.length) {
         let displays = l.get('displays')
         if (!isObj(displays)) {
           displays = obj()
           l.set('displays', displays)
         }
-        for (const f of placed.frames) {
+        for (const f of frames) {
           const lk = this.layoutKey(key([...scope, f.id]))
           let d = (displays as JObj).get(lk)
           if (!isObj(d)) {
@@ -3103,9 +3153,11 @@ export class ProjectSession extends Observable {
           ;(d as JObj).set('x', real(f.x))
           ;(d as JObj).set('y', real(f.y))
           // The layout keeps a frame only with its place and size: one still drawn beside its Card gets them now.
-          const size = frames.find((x) => x.id === f.id)!
-          ;(d as JObj).set('width', real(size.width))
-          ;(d as JObj).set('height', real(size.height))
+          const size = scene.frames.find((x) => x.id === f.id)
+          if (size) {
+            ;(d as JObj).set('width', real(size.width))
+            ;(d as JObj).set('height', real(size.height))
+          }
         }
       }
       if (placed.notes.length) {
@@ -3122,6 +3174,7 @@ export class ProjectSession extends Observable {
       // The bars of a Card in Card go back to following the Cards.
       l.set('boundary', undefined)
     })
+    this.applyPortOrders(scope, placed.portOrders.filter((o) => there.has(o.id)))
   }
 
   // ---- Definitions ---------------------------------------------------------------
@@ -3621,22 +3674,27 @@ auto run(Card::Input& input) -> Card::Output {
     return orderedPorts(ports, saved.flatMap(v => typeof v === 'string' ? [v] : []))
   }
 
-  /** Keep the layout while reducing crossings; one undo restores every port. */
-  untangle(scope: string[]) {
-    const orders = this.untangledOrders(scope)
-    if (orders.length) this.edit(s => s.applyPortOrders(scope, orders))
+  /** Keep the layout while reducing crossings (LayoutUntangle); one undo restores every port. */
+  async untangle(scope: string[]) {
+    const scene = this.layoutScene(scope)
+    const orders = (await this.proposed(scope, scene, (c) => c.layoutUntangle(scene, [])))?.portOrders ?? []
+    if (orders.length) this.edit((s) => s.applyPortOrders(scope, orders))
   }
 
-  /** A step of an edit that moved Cards: the ports of what moved and of the Cards
+  /** After an edit that moved Cards: the ports of what moved and of the Cards
    *  wired to it take a better order when that draws fewer crossings among their
-   *  wires. Other Cards retain their orders, and their wires still count. */
-  untangleAround(scope: string[], moved: Iterable<CardKey>) {
-    const ids = new Set<string>()
+   *  wires. Other Cards retain their orders, and their wires still count. The
+   *  order joins `step` (the move's step of undo) while that is still the last. */
+  async untangleAround(scope: string[], moved: Iterable<CardKey>, step: UndoEntry | undefined) {
+    const ids: string[] = []
     for (const k of moved) {
       const p = path(k)
-      if (p.length === scope.length + 1 && scope.every((s, i) => s === p[i])) ids.add(p[p.length - 1])
+      if (p.length === scope.length + 1 && scope.every((s, i) => s === p[i])) ids.push(p[p.length - 1])
     }
-    if (ids.size) this.applyPortOrders(scope, this.untangledOrders(scope, ids))
+    if (!ids.length) return
+    const scene = this.layoutScene(scope)
+    const orders = (await this.proposed(scope, scene, (c) => c.layoutUntangle(scene, ids)))?.portOrders ?? []
+    if (orders.length) this.editInto(step, (s) => s.applyPortOrders(scope, orders))
   }
 
   /** Whether the canvas shows this Card's ports in an order of its own. */
@@ -3659,59 +3717,7 @@ auto run(Card::Input& input) -> Card::Output {
     })
   }
 
-  private untangledOrders(scope: string[], around?: Set<string>): PortOrder[] {
-    const ids = this.cards(scope).flatMap(c => { const id = str(get(c, 'id')); return id ? [id] : [] })
-    const cards = ids.map(id => {
-      const k = key([...scope, id]), g = this.geometry(k)
-      const ports = (names: string[], output: boolean) => names.map(name => ({ name, ...g.port(name, output) }))
-      return { id, ...this.placedPosition(k), ...g.size, inputs: ports(g.inputs, false), outputs: ports(g.outputs, true),
-        movable: ['code', 'draft', 'input', 'subgraph'].includes(this.kind(k)) }
-    })
-    const wires = this.connections(scope).flatMap(c => {
-      const from = str(get(c, 'from', 'card')), fromPort = str(get(c, 'from', 'port')), to = str(get(c, 'to', 'card')), toPort = str(get(c, 'to', 'port'))
-      return from && fromPort && to && toPort ? [{ from, fromPort, to, toPort }] : []
-    })
-    // Boundary bars are fixed nodes, so reordering an inner port also accounts
-    // for its outer wire. Use the same positions as the canvas boundary bars.
-    if (scope.length) {
-      const boundary = this.boundary(key(scope))
-      const entries = (side: string): [string, J][] => { const v = get(boundary, side); return isObj(v) ? v.entries() : [] }
-      const ins = entries('inputs'), outs = entries('outputs')
-      if (ins.length || outs.length) {
-        const left = cards.length ? Math.min(...cards.map(c => c.x)) : 0, top = cards.length ? Math.min(...cards.map(c => c.y)) : 0
-        const right = cards.length ? Math.max(...cards.map(c => c.x + c.width)) : 240, bottom = cards.length ? Math.max(...cards.map(c => c.y + c.height)) : 120
-        const width = Math.max(right - left, Math.max(ins.length, outs.length) * 110 + 40), x = (left + right - width) / 2
-        for (const output of [false, true]) {
-          const side = output ? 'outputs' : 'inputs', list = output ? outs : ins, id = '\u0000' + side
-          const at = this.boundaryPosition(scope, side) ?? { x, y: output ? bottom + 56 : top - 96 }
-          const ports = list.map(([name], i) => ({ name, x: width * (i + 1) / (list.length + 1), y: output ? 0 : 40 }))
-          cards.push({ id, ...at, width, height: 40, movable: false, inputs: output ? ports : [], outputs: output ? [] : ports })
-          for (const [name, endpoint] of list) {
-            const card = str(get(endpoint, 'card')), port = str(get(endpoint, 'port'))
-            if (card && port) wires.push(output ? { from: card, fromPort: port, to: id, toPort: name } : { from: id, fromPort: name, to: card, toPort: port })
-          }
-        }
-      }
-    }
-    const frames = ids.map(id => key([...scope, id])).filter(k => (this.displays.has(k) || this.displayFrame(k) !== undefined) && bool(get(this.displayFrame(k), 'hidden')) !== true).map(k => {
-      const at = this.placedPosition(k), g = this.geometry(k), frame = this.displayFrame(k)
-      const x = dbl(get(frame, 'x')), y = dbl(get(frame, 'y'))
-      return { x: x ?? (this.flow === 'topToBottom' ? at.x + g.size.width + 40 : at.x),
-        y: y ?? (this.flow === 'topToBottom' ? at.y : at.y + g.height + 30),
-        width: dbl(get(frame, 'width')) ?? 320, height: dbl(get(frame, 'height')) ?? 170 }
-    })
-    if (!around) return untanglePorts(this.flow, cards, wires, frames)
-    // A move changes nothing among Cards that moved together, nor for a Card with no wires.
-    if (!wires.some(w => around.has(w.from) !== around.has(w.to))) return []
-    const neighbors = new Set(around)
-    for (const w of wires) {
-      if (around.has(w.from)) neighbors.add(w.to)
-      if (around.has(w.to)) neighbors.add(w.from)
-    }
-    return untanglePorts(this.flow, cards.map(c => ({ ...c, movable: c.movable && neighbors.has(c.id) })), wires, frames)
-  }
-
-  private applyPortOrders(scope: string[], orders: PortOrder[]) {
+  private applyPortOrders(scope: string[], orders: LayoutPortOrder[]) {
     for (const order of orders) {
       const k = key([...scope, order.id])
       const at = this.position(k)

@@ -317,3 +317,11 @@ func parseParam(_ s: String, _ type: String) -> JSONValue {
   default: return (try? JSONValue.parse(t)) ?? .string(s)
   }
 }
+
+func orderedPorts(_ ports: [PortData], saved: [String]) -> [PortData] {
+  var rank: [String: Int] = [:]
+  for (i, name) in saved.enumerated() where rank[name] == nil { rank[name] = i }
+  return ports.enumerated().sorted {
+    (rank[$0.element.name] ?? saved.count + $0.offset) < (rank[$1.element.name] ?? saved.count + $1.offset)
+  }.map(\.element)
+}

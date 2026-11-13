@@ -86,6 +86,14 @@ export interface PortData {
   note?: string
 }
 
+/** Ports in the order the layout saved for them (`inputOrder` / `outputOrder`):
+ *  vanished names are ignored, every new port is retained, and none is duplicated. */
+export function orderedPorts<T extends { name: string }>(ports: T[], saved: string[]): T[] {
+  const rank = new Map([...new Set(saved)].map((name, i) => [name, i]))
+  return ports.map((port, i) => ({ port, i })).sort((a, b) =>
+    (rank.get(a.port.name) ?? saved.length + a.i) - (rank.get(b.port.name) ?? saved.length + b.i)).map(p => p.port)
+}
+
 export interface ParamData {
   name: string
   type: string

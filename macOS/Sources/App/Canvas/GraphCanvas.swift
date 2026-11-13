@@ -649,8 +649,8 @@ struct GraphCanvas: View {
       Button("付箋を追加") { addNote(at: world(pointer)) }
       Divider()
       Button("全体表示") { fitAll() }
-      Button("整列") { session.arrange(tab.scope) }
-      Button("配線の交差を減らす") { session.untangle(tab.scope) }
+      Button("整列") { Task { await session.arrange(tab.scope) } }
+      Button("配線の交差を減らす") { Task { await session.untangle(tab.scope) } }
       if !tab.selection.isEmpty { Button("選択をグループ化") { groupSelection() }.disabled(!session.connected) }
     }
   }
