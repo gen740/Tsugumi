@@ -50,6 +50,27 @@ Each step of processing split into a size you can see through, so you can follow
 The conditions of a step you were curious about changed, and run again by your own hand.
 Connecting AI and researchers in this way is where Tsugumi starts.
 
+## A laboratory notebook, and who decides what is kept
+
+The closest thing I know is the laboratory notebook.
+At the bench you write down what you used, what you did and what came out, as it happens. The notebook is not the clean account written afterwards.
+Computation lost that habit somewhere. Tsugumi is meant to be that notebook for analysis: one you can open at any step, and run again.
+
+A notebook also draws a line, and I think this line matters most.
+
+Some things a machine can say are the same.
+Code and the environment it runs in are fixed by their definition, and are the same wherever and whenever they are built.
+Those the machine may build once, share and reuse without asking anyone.
+
+Results are different. What a result means, and whether it is worth keeping, is not something a machine can say.
+So Tsugumi keeps the record of what ran, and the inputs of the last run so that you can try again. Beyond that, it keeps only the values and files a person chose to keep.
+It may suggest clearing old runs. It should not decide on its own what to keep, what to reuse in place of a new run, or what to throw away.
+Data you want shared the way code is shared, you put into a definition yourself, and by doing so you are the one who says it is fixed.
+
+Caching every result and reusing it automatically would be more convenient.
+But a tool that quietly decides which result stands in for which has taken over a judgement that belongs to the researcher.
+Where convenience and that judgement pull apart, Tsugumi chooses the judgement.
+
 ## The name
 
 **Tsugumi** carries several meanings, all connected to why the tool was made.
