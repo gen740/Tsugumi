@@ -16,7 +16,7 @@ typedef void (*tsugumi_client_callback)(void* context, const uint8_t* bytes,
                                         size_t size, int error_code,
                                         const char* error_message);
 
-// protocol: 0 = project, 1 = agent. Exceptions never cross this ABI.
+// protocol: 0 = project, 1 = agent, 2 = host. Exceptions never cross this ABI.
 tsugumi_client* tsugumi_client_create(const char* endpoint, int protocol);
 void tsugumi_client_start(tsugumi_client* client,
                           tsugumi_client_callback callback, void* context);

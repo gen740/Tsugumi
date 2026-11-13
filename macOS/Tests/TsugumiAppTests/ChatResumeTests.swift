@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import Testing
 import TsugumiAgentClient
+import TsugumiRPC
 @testable import TsugumiApp
 @testable import TsugumiLauncher
 
@@ -213,10 +214,10 @@ import TsugumiAgentClient
       chat.send("hello from both attached folders")
       try await until("the message with both attachments ended") { !chat.busy && reply(chat, after: 0) }
       let snapshot = try await t.snapshot()
-      let conversation = try #require(snapshot["conversation"] as? [String: Any])
-      let messages = try #require(conversation["messages"] as? [[String: Any]])
-      let user = try #require(messages.first { $0["role"] as? String == "user" })
-      let content = try #require(user["content"] as? [[String: Any]])
+      let conversation = try #require(snapshot["conversation"] as? Tsugumi_Agent_ConversationT)
+      let messages = conversation.messages.compactMap { $0 }
+      let user = try #require(messages.first { $0.role == "user" })
+      let content = try #require(JSONSerialization.jsonObject(with: Data((user.contentJson ?? "[]").utf8)) as? [[String: Any]])
       let text = content.compactMap { $0["text"] as? String }.joined()
       for path in paths { #expect(text.contains(path)) }
       let attached = content.flatMap { $0["resource_ids"] as? [String] ?? [] }
@@ -277,9 +278,9 @@ import TsugumiAgentClient
       try await until("the answer is streaming") { left.busy && reply(left, after: 1) }
       left.detach()
       let complete = try await t.finished()
-      let conversation = try #require(complete["conversation"] as? [String: Any])
-      let messages = try #require(conversation["messages"] as? [[String: Any]])
-      #expect(messages.map { $0["role"] as? String } == ["user", "assistant"])
+      let conversation = try #require(complete["conversation"] as? Tsugumi_Agent_ConversationT)
+      let messages = conversation.messages.compactMap { $0 }
+      #expect(messages.map { $0.role } == ["user", "assistant"])
       let back = t.makeChat()
       try await until("the completed answer is restored") { back.currentId == t.conversationID && reply(back, after: 1) }
       #expect(!back.busy && !back.failed)

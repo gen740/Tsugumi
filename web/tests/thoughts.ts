@@ -146,8 +146,8 @@ assert.deepEqual(await host.summarize('conversation', {
   maxTokens: 120, contextLimit: 1000, token: async () => ({ value: 'test-token', clientId: 'test-account' }),
 }), reply('working'))
 assert.equal(forwarded.conversation_id, 'conversation')
-assert.equal(JSON.parse(forwarded.provider_json).token, 'test-token')
-assert.equal(JSON.parse(forwarded.provider_json).credential_id, 'test-account')
+assert.equal(forwarded.provider.credential, 'test-token')
+assert.equal(forwarded.provider.credential_id, 'test-account')
 
 // Page -> host route -> the same core adapter. The route chooses the speech
 // connection already used by the guide and never returns provider credentials.
@@ -173,7 +173,7 @@ try {
   const result = await routes['POST /api/chat/thoughts']({ path: root, session: 'web-thoughts' }, new URL('http://localhost'))
   assert.deepEqual(result, reply('reading'))
   assert.equal(forwarded.conversation_id, 'web-thoughts')
-  assert.equal(JSON.parse(forwarded.provider_json).model, 'claude-haiku-5-5')
+  assert.equal(forwarded.provider.model, 'claude-haiku-5-5')
   assert.equal(JSON.stringify(result).includes('test-key'), false)
 } finally {
   Object.assign(RemoteAgent.prototype, original)

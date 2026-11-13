@@ -1,11 +1,12 @@
-// Platform adapter for the core-owned Agent. The C++ client owns framing,
-// WebSocket/Unix transport and FlatBuffers validation; this process only
-// translates the web host's UI requests and events.
-import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
+// Platform adapter for the core-owned services. The browser keeps the HTTP/SSE
+// API; service credentials and binary socket connections stay in this host.
+import { spawn } from 'node:child_process'
+import net from 'node:net'
+import { CoreAgentError, encodeRequest, decodeReply, hostMethod } from './serviceWire'
+export { CoreAgentError } from './serviceWire'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import readline from 'node:readline'
 import { randomUUID } from 'node:crypto'
 import type { Environments } from './env'
 import { ToolCatalog, type ProviderConfig, type AgentEvent, type Conversation } from './agent'
@@ -14,6 +15,7 @@ import { BFBS } from '../src/shared/bfbs'
 interface Ready {
   endpoint: string
   unix_socket: string
+  host_socket: string
   user_token: string
   external_token: string
   server_id: string
@@ -31,19 +33,13 @@ export interface AgentAccessRequest {
   state?: string
 }
 
-export class CoreAgentError extends Error {
-  constructor(readonly code: string, message: string, readonly requestId?: string) {
-    super(message)
-  }
-}
-
 class Connection {
-  private process?: ChildProcessWithoutNullStreams
-  private nextId = 0
-  private waiting = new Map<string, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>()
+  private socket?: net.Socket
+  private nextId = 0n
+  private waiting = new Map<bigint, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>()
   private opening?: Promise<void>
 
-  constructor(private host: CoreAgentHost, private external: boolean) {}
+  constructor(private host: CoreAgentHost, private external: boolean, private hostContract = false) {}
 
   private open() {
     return this.opening ??= this.start().catch((e) => { this.opening = undefined; throw e })
@@ -51,52 +47,62 @@ class Connection {
 
   private async start() {
     const ready = await this.host.ready()
-    const proc = spawn(this.host.clientBinary, ['--endpoint', `unix:${ready.unix_socket}`, '--schema', this.host.schema,
-      '--subprotocol', 'tsugumi.agent.v1'], { stdio: ['pipe', 'pipe', 'pipe'] })
-    this.process = proc
-    let diagnostic = ''
-    proc.stderr.on('data', (d) => { diagnostic = (diagnostic + String(d)).slice(-4000) })
-    const fail = (reason: string) => {
-      if (this.process !== proc) return
-      this.process = undefined
+    const socket = net.createConnection(this.hostContract ? ready.host_socket : ready.unix_socket)
+    this.socket = socket
+    let input = Buffer.alloc(0)
+    const fail = (error: Error) => {
+      if (this.socket !== socket) return
+      this.socket = undefined
       this.opening = undefined
-      for (const p of this.waiting.values()) { clearTimeout(p.timer); p.reject(new Error(reason)) }
+      for (const p of this.waiting.values()) { clearTimeout(p.timer); p.reject(error) }
       this.waiting.clear()
+      socket.destroy()
     }
-    proc.on('error', (e) => fail(e.message))
-    proc.on('exit', () => fail(diagnostic || 'Agent connection closed'))
-    readline.createInterface({ input: proc.stdout }).on('line', (line) => {
-      let message: any
-      try { message = JSON.parse(line) } catch { fail('Invalid response from the C++ Agent client'); proc.kill(); return }
-      if (message.transport_error) { fail(message.transport_error.message ?? 'Agent transport failed'); proc.kill(); return }
-      const p = this.waiting.get(String(message.request_id))
-      if (!p) return
-      this.waiting.delete(String(message.request_id))
-      clearTimeout(p.timer)
-      const reply = message.payload?.value
-      if (message.payload_type !== 'Reply') return p.reject(new Error('Unexpected Agent message'))
-      if (message.payload.value_type === 'Failure') {
-        p.reject(new CoreAgentError(reply.code, reply.message, reply.request_id))
-      } else if (message.payload.value_type === 'Result') {
-        try { p.resolve(JSON.parse(reply.json)) } catch { p.reject(new Error('Invalid Agent result')) }
-      } else p.resolve(reply)
+    socket.on('error', fail)
+    socket.on('close', () => fail(new Error('Service connection closed')))
+    socket.on('data', (data) => {
+      try {
+        input = Buffer.concat([input, data])
+        while (input.length >= 4) {
+          const length = input.readUInt32LE(0)
+          if (length === 0 || length > 16 << 20) throw new Error('Invalid service frame length')
+          if (input.length < length + 4) break
+          const reply = decodeReply(input.subarray(4, 4 + length), this.hostContract)
+          input = input.subarray(4 + length)
+          if (reply.id > this.nextId || reply.id === 0n) throw new Error('Invalid service request ID')
+          const p = this.waiting.get(reply.id)
+          if (!p) continue // A late reply after its deadline.
+          this.waiting.delete(reply.id)
+          clearTimeout(p.timer)
+          if (reply.error) p.reject(reply.error)
+          else p.resolve(reply.value)
+        }
+      } catch (e) { fail(e as Error) }
+    })
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { reject(new Error('Service connection timed out')); socket.destroy() }, 3000)
+      socket.once('connect', () => { clearTimeout(timer); resolve() })
+      socket.once('error', (e) => { clearTimeout(timer); reject(e) })
     })
     await this.write('HelloRequest', { token: this.external ? ready.external_token : ready.user_token,
       client_id: `web-${this.external ? 'external' : 'user'}-${randomUUID()}`, protocol: 1 })
   }
 
   private write(method: string, value: unknown): Promise<any> {
+    if (!this.socket) return Promise.reject(new Error('Service connection is closed'))
     const requestId = ++this.nextId
+    const data = encodeRequest(method, value, requestId, this.hostContract)
+    const frame = Buffer.allocUnsafe(4 + data.length)
+    frame.writeUInt32LE(data.length)
+    frame.set(data, 4)
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.waiting.delete(String(requestId))
-        reject(new Error('Agent request timed out'))
+        this.waiting.delete(requestId)
+        reject(new Error('Service request timed out'))
       }, 120_000)
       timer.unref()
-      this.waiting.set(String(requestId), { resolve, reject, timer })
-      const data = JSON.stringify({ request_id: requestId, payload_type: 'Request', payload: { value_type: method, value } }) + '\n'
-      if (!this.process) { clearTimeout(timer); this.waiting.delete(String(requestId)); reject(new Error('Agent connection is closed')); return }
-      this.process.stdin.write(data)
+      this.waiting.set(requestId, { resolve, reject, timer })
+      this.socket!.write(frame)
     })
   }
 
@@ -107,13 +113,17 @@ class Connection {
 }
 
 export class CoreAgentHost {
-  readonly clientBinary: string
   readonly schema: string
   readonly state: string
   private readonly binary: string
   private readonly demoRoot: string
   private starting?: Promise<Ready>
-  readonly user = new Connection(this, false)
+  private readonly agent = new Connection(this, false)
+  private readonly host = new Connection(this, false, true)
+  readonly user = {
+    call: <T = any>(method: string, value: any = {}): Promise<T> =>
+      (hostMethod(method) || method === 'ConfigureRequest' && !value.conversation_id ? this.host : this.agent).call<T>(method, value),
+  }
   readonly external = new Connection(this, true)
   private projects = new Map<string, string>()
   private api?: ToolCatalog
@@ -123,7 +133,6 @@ export class CoreAgentHost {
     const build = process.env.TSUGUMI_BUILD_DIR ?? path.join(repo, 'build')
     const choose = (override: string | undefined, candidates: string[]) => override ?? candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
     this.binary = choose(process.env.TSUGUMI_AGENTD, [path.join(repo, 'bin', 'tsugumi-agentd'), path.join(build, 'core', 'tsugumi-agentd')])
-    this.clientBinary = choose(process.env.TSUGUMI_RPC_CLIENT, [path.join(repo, 'bin', 'tsugumi-rpc'), path.join(build, 'client', 'tsugumi-rpc')])
     this.schema = choose(process.env.TSUGUMI_AGENT_SCHEMA, [path.join(here, 'agent.bfbs'), path.join(build, 'generated', 'bfbs', 'agent.bfbs')])
     this.state = process.env.TSUGUMI_AGENT_STATE ?? (process.platform === 'darwin'
       ? path.join(process.env.TSUGUMI_SUPPORT_DIR ?? path.join(os.homedir(), 'Library', 'Application Support', 'Tsugumi'), 'agent-core')
@@ -136,7 +145,7 @@ export class CoreAgentHost {
     const read = (): Ready | undefined => {
       try {
         const r = JSON.parse(fs.readFileSync(file, 'utf8')) as Ready
-        if (r.protocol !== 1 || !r.unix_socket || !r.user_token || !r.external_token || !r.pid) return undefined
+        if (r.protocol !== 1 || !r.unix_socket || !r.host_socket || !r.user_token || !r.external_token || !r.pid) return undefined
         process.kill(r.pid, 0)
         return r
       } catch { return undefined }
@@ -180,23 +189,26 @@ export class CoreAgentHost {
     return undefined
   }
 
-  async configure(config: ProviderConfig, conversationId?: string) {
+  private async provider(config: ProviderConfig) {
     const token = config.token ? await config.token() : undefined
-    const provider_json = JSON.stringify({ ...config, token: token?.value, accountId: token?.clientId, credential_id: token?.clientId })
-    await this.user.call('ConfigureRequest', { provider_json })
-    if (conversationId) await this.user.call('ConfigureRequest', { conversation_id: conversationId, provider_json })
+    return { provider: config.auth === 'chatgpt' ? 'chatgpt' : '', api: config.api, auth: config.auth, base_url: config.baseURL, model: config.model,
+      credential: token?.value ?? config.apiKey, credential_id: token?.clientId, effort: config.effort,
+      fast: config.fast, web_search: config.webSearch, max_tokens: config.maxTokens, context_limit: config.contextLimit }
+  }
+
+  async configure(config: ProviderConfig, conversationId?: string) {
+    const provider = await this.provider(config)
+    await this.user.call('ConfigureRequest', { provider })
+    if (conversationId) await this.user.call('ConfigureRequest', { conversation_id: conversationId, provider })
   }
 
   async models(config: ProviderConfig): Promise<{ id: string; label: string }[]> {
-    const token = config.token ? await config.token() : undefined
-    return this.user.call('ModelsListRequest', { provider_json: JSON.stringify({ ...config, token: token?.value,
-      accountId: token?.clientId, credential_id: token?.clientId }) })
+    const models = await this.user.call<{ id: string; name: string }[]>('ModelsListRequest', { provider: await this.provider(config) })
+    return models.map((m) => ({ id: m.id, label: m.id }))
   }
 
   async summarize(conversationId: string, config: ProviderConfig): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {
-    const token = config.token ? await config.token() : undefined
-    return this.user.call('ConversationSummarizeRequest', { conversation_id: conversationId,
-      provider_json: JSON.stringify({ ...config, token: token?.value, accountId: token?.clientId, credential_id: token?.clientId }) })
+    return this.user.call('ConversationSummarizeRequest', { conversation_id: conversationId, provider: await this.provider(config) })
   }
 
   private apiCatalog(): ToolCatalog {
@@ -221,18 +233,18 @@ export class CoreAgentHost {
     if (!tool) throw new Error(`Unknown Agent operation: ${name}`)
     const request = this.apiCatalog().schema.objects[tool.object].name.split('.').at(-1)!
     const value = await this.external.call(request, args ?? {})
-    return { text: JSON.stringify(value), isError: false }
+    return { text: JSON.stringify(value, (_, v) => typeof v === 'bigint' ? v.toString() : v), isError: false }
   }
 }
 
-export interface RemoteConversation { conversation: Conversation; busy: boolean; resumable?: boolean; continuable?: boolean; project_id?: string; event_seq?: number }
+export interface RemoteConversation { conversation: Conversation; busy: boolean; resumable?: boolean; continuable?: boolean; project_id?: string; event_seq?: bigint }
 
 export class RemoteAgent {
   conversation: Conversation
   busy = false
   continuable = false
   private resumable = false
-  private seq = 0
+  private seq = 0n
   private observing = false
   private observationID = 0
   private listener?: (e: AgentEvent) => void
@@ -249,7 +261,7 @@ export class RemoteAgent {
       conversation_id: this.id, project_id: project, role: this.role,
     })
     this.adopt(result)
-    this.seq = Number(result.event_seq ?? 0)
+    this.seq = result.event_seq ?? 0n
     await this.resumeInterrupted()
     return this
   }
@@ -286,13 +298,13 @@ export class RemoteAgent {
   private async poll(identity: number) {
     try {
       while (this.observing && identity === this.observationID) {
-        const result = await this.host.user.call<{ events: { seq: number; event: AgentEvent }[]; next_seq: number; busy: boolean }>(
+        const result = await this.host.user.call<{ events: { seq: bigint; event: AgentEvent }[]; next_seq: bigint; busy: boolean }>(
           'EventsRequest', { conversation_id: this.id, after_seq: this.seq })
         if (identity !== this.observationID) return
         if (result.events.some((e) => e.event.kind === 'finished')) await this.refresh()
         if (identity !== this.observationID) return
-        for (const e of result.events) { this.seq = Math.max(this.seq, Number(e.seq)); this.listener?.(e.event) }
-        this.seq = Math.max(this.seq, Number(result.next_seq ?? this.seq))
+        for (const e of result.events) { this.seq = e.seq > this.seq ? e.seq : this.seq; this.listener?.(e.event) }
+        this.seq = result.next_seq > this.seq ? result.next_seq : this.seq
         const wasBusy = this.busy
         this.busy = result.busy
         if (wasBusy && !this.busy) await this.refresh()
@@ -319,7 +331,7 @@ export class RemoteAgent {
   private async beginTurn() {
     const result = await this.host.user.call<RemoteConversation>('ConversationGetRequest', { conversation_id: this.id })
     this.adopt(result)
-    this.seq = Number(result.event_seq ?? this.seq)
+    this.seq = result.event_seq ?? this.seq
   }
 
   send(text: string, listener: (e: AgentEvent) => void, turnId = randomUUID(), selections: Record<string, unknown> = {}) {

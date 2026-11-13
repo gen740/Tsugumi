@@ -18,6 +18,7 @@
 #include "../agent_fixture_server.hh"
 #include "tsugumi/client/client.hh"
 #include "tsugumi/protocol/agent_generated.h"
+#include "view.hh"
 
 namespace tsugumi::test {
 
@@ -34,23 +35,81 @@ struct Reply {
     if (!reply) throw std::runtime_error("Agent returned no reply payload");
     return reply;
   }
+  auto HostValue() const -> const H::Reply * {
+    return H::GetMessage(bytes.data())->payload_as_Reply();
+  }
+  auto Failure() const -> const Tsugumi::Service::Failure * {
+    return H::MessageBufferHasIdentifier(bytes.data())
+               ? HostValue()->value_as_Failure()
+               : Value()->value_as_Failure();
+  }
   auto Code() const -> std::string {
-    const auto* failure = Value()->value_as_Failure();
-    return failure ? failure->code()->str() : "";
+    const auto *f = Failure();
+    return f ? f->code()->str() : "";
   }
   auto RequestId() const -> std::string {
-    const auto* failure = Value()->value_as_Failure();
-    return failure && failure->request_id() ? failure->request_id()->str() : "";
+    const auto *f = Failure();
+    return f && f->request_id() ? f->request_id()->str() : "";
   }
-  auto Json() const -> std::string {
-    const auto* result = Value()->value_as_Result();
-    if (!result) {
-      const auto* failure = Value()->value_as_Failure();
-      throw std::runtime_error(failure ? failure->code()->str() + ": " +
-                                             failure->message()->str()
-                                       : "Expected a JSON result");
+  auto View() const -> std::string {
+    if (const auto *f = Failure())
+      throw std::runtime_error(f->code()->str() + ": " + f->message()->str());
+    if (H::MessageBufferHasIdentifier(bytes.data())) {
+      const auto *r = HostValue();
+      switch (r->value_type()) {
+      case H::ReplyPayload::HelloResult:
+        return test::View(r->value_as_HelloResult());
+      case H::ReplyPayload::Acknowledgement:
+        return test::View(r->value_as_Acknowledgement());
+      case H::ReplyPayload::CredentialToken:
+        return test::View(r->value_as_CredentialToken());
+      case H::ReplyPayload::ProjectDefaults:
+        return test::View(r->value_as_ProjectDefaults());
+      case H::ReplyPayload::ProjectInfo:
+        return test::View(r->value_as_ProjectInfo());
+      case H::ReplyPayload::ProjectLocation:
+        return test::View(r->value_as_ProjectLocation());
+      case H::ReplyPayload::RecentProject:
+        return test::View(r->value_as_RecentProject());
+      case H::ReplyPayload::RecentList:
+        return test::View(r->value_as_RecentList()->projects());
+      case H::ReplyPayload::DemoList:
+        return test::View(r->value_as_DemoList()->demos());
+      case H::ReplyPayload::ModelList:
+        return test::View(r->value_as_ModelList()->models());
+      default:
+        throw std::runtime_error("Unexpected typed Host reply");
+      }
     }
-    return result->json()->str();
+    const auto *r = Value();
+    switch (r->value_type()) {
+    case A::ReplyPayload::HelloResult:
+      return test::View(r->value_as_HelloResult());
+    case A::ReplyPayload::Acknowledgement:
+      return test::View(r->value_as_Acknowledgement());
+    case A::ReplyPayload::ConversationResult:
+      return test::View(r->value_as_ConversationResult());
+    case A::ReplyPayload::ConversationList:
+      return test::View(r->value_as_ConversationList()->conversations());
+    case A::ReplyPayload::SearchResult:
+      return test::View(r->value_as_SearchResult()->matches());
+    case A::ReplyPayload::EventsPage:
+      return test::View(r->value_as_EventsPage());
+    case A::ReplyPayload::ToolCatalog:
+      return test::View(r->value_as_ToolCatalog()->tools());
+    case A::ReplyPayload::ToolResult:
+      return test::View(r->value_as_ToolResult());
+    case A::ReplyPayload::AccessResult:
+      return test::View(r->value_as_AccessResult());
+    case A::ReplyPayload::AccessList:
+      return test::View(r->value_as_AccessList());
+    case A::ReplyPayload::DemoList:
+      return test::View(r->value_as_DemoList()->paths());
+    case A::ReplyPayload::TextResult:
+      return test::View(r->value_as_TextResult());
+    default:
+      throw std::runtime_error("Unexpected typed Agent reply");
+    }
   }
 };
 
@@ -76,6 +135,28 @@ inline auto Call(client::Connection& connection, A::RequestPayload type,
   return {std::move(result.bytes)};
 }
 
+inline auto Call(client::Connection &connection, H::RequestPayload type,
+                 const Build &build) -> Reply {
+  auto result =
+      connection
+          .Call(
+              [&](uint64_t id) {
+                Builder b;
+                const auto value = build(b);
+                const auto request = H::CreateRequest(b, type, value);
+                H::FinishMessageBuffer(b, H::CreateMessage(b, id,
+                                                           H::Payload::Request,
+                                                           request.Union()));
+                return client::Bytes(b.GetBufferPointer(),
+                                     b.GetBufferPointer() + b.GetSize());
+              },
+              5s)
+          .get();
+  if (result.error)
+    throw std::runtime_error("Host transport: " + result.error.message);
+  return {std::move(result.bytes)};
+}
+
 class AgentFixture : public ::testing::Test {
  protected:
   auto SetUp() -> void override {
@@ -89,6 +170,7 @@ class AgentFixture : public ::testing::Test {
   }
 
   auto TearDown() -> void override {
+    host.reset();
     external.reset();
     human.reset();
     agent.Stop();
@@ -106,6 +188,7 @@ class AgentFixture : public ::testing::Test {
                       directory.path / "agent.log");
     human = Connect(true);
     external = Connect(false);
+    host = ConnectHost();
   }
 
   auto Connect(bool user, bool websocket = false)
@@ -121,8 +204,8 @@ class AgentFixture : public ::testing::Test {
       throw std::runtime_error("Agent connection did not open");
     if (auto error = opened.get()) throw std::runtime_error(error.message);
     auto hello =
-        Call(*connection, A::RequestPayload::HelloRequest, [&](Builder& b) {
-          return A::CreateHelloRequest(
+        Call(*connection, A::RequestPayload::HelloRequest, [&](Builder &b) {
+          return Tsugumi::Service::CreateHelloRequest(
                      b,
                      b.CreateString(JsonString(
                          ready, user ? "/user_token" : "/external_token")),
@@ -131,6 +214,30 @@ class AgentFixture : public ::testing::Test {
         });
     if (!hello.Value()->value_as_HelloResult())
       throw std::runtime_error("Agent rejected a valid client credential");
+    return connection;
+  }
+
+  auto ConnectHost(bool websocket = false, bool user = true,
+                   bool accepted = true)
+      -> std::unique_ptr<client::Connection> {
+    client::Options options;
+    options.protocol = client::Protocol::Host;
+    options.endpoint = websocket ? JsonString(ready, "/host_endpoint")
+                                 : "unix:" + JsonString(ready, "/host_socket");
+    auto connection = std::make_unique<client::Connection>(options);
+    if (auto error = connection->Start().get())
+      throw std::runtime_error(error.message);
+    const auto hello =
+        Call(*connection, H::RequestPayload::HelloRequest, [&](Builder &b) {
+          return Tsugumi::Service::CreateHelloRequest(
+                     b,
+                     b.CreateString(JsonString(
+                         ready, user ? "/user_token" : "/external_token")),
+                     b.CreateString("host-test"))
+              .Union();
+        });
+    if (accepted != (hello.HostValue()->value_as_HelloResult() != nullptr))
+      throw std::runtime_error("Unexpected Host authentication result");
     return connection;
   }
 
@@ -143,7 +250,7 @@ class AgentFixture : public ::testing::Test {
                           project_id.empty() ? 0 : b.CreateString(project_id))
                    .Union();
              });
-    return JsonString(reply.Json(), "/conversation/id");
+    return JsonString(reply.View(), "/conversation/id");
   }
 
   auto Inspect(const std::string& conversation, std::string operation = {})
@@ -182,7 +289,7 @@ class AgentFixture : public ::testing::Test {
                      b.CreateString("Read this project for the requested work"))
               .Union();
         });
-    const auto id = JsonString(ask.Json(), "/id");
+    const auto id = JsonString(ask.View(), "/id");
     auto reply =
         Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
           return A::CreateAccessResolveRequest(b, b.CreateString(id), true)
@@ -204,14 +311,17 @@ class AgentFixture : public ::testing::Test {
 
   auto Configure(const ModelServer& model, std::string provider = "fixture",
                  uint32_t context_limit = 600000) -> void {
-    const auto config =
-        "{\"provider\":" + Quote(provider) +
-        ",\"auth\":\"none\",\"baseURL\":" + Quote(model.URL()) +
-        ",\"model\":\"fixture-model\",\"maxTokens\":1024,\"contextLimit\":" +
-        std::to_string(context_limit) + "}";
     auto reply =
-        Call(*human, A::RequestPayload::ConfigureRequest, [&](Builder& b) {
-          return A::CreateConfigureRequest(b, b.CreateString(config)).Union();
+        Call(*host, H::RequestPayload::ConfigureRequest, [&](Builder &b) {
+          Tsugumi::Service::ProviderT config;
+          config.provider = provider;
+          config.auth = "none";
+          config.base_url = model.URL();
+          config.model = "fixture-model";
+          config.max_tokens = 1024;
+          config.context_limit = context_limit;
+          const auto p = Tsugumi::Service::Provider::Pack(b, &config);
+          return H::CreateConfigureRequest(b, p).Union();
         });
     if (!reply.Code().empty())
       throw std::runtime_error("cannot configure external model fixture");
@@ -219,24 +329,25 @@ class AgentFixture : public ::testing::Test {
 
   auto ImportCredential(const ModelServer& server, bool replace = false)
       -> Reply {
-    const auto registration =
-        "{\"client_id\":\"fixture-client\",\"refresh_token\":\"refresh-old\","
-        "\"access_token\":\"access-old\",\"expires_at_ms\":0,"
-        "\"resource\":\"https://fixture.invalid/api\",\"token_endpoint\":" +
-        Quote(server.URL() + "/token") +
-        ",\"revocation_endpoint\":" + Quote(server.URL() + "/revoke") + "}";
-    return Call(*human, A::RequestPayload::CredentialImportRequest,
-                [&](Builder& b) {
-                  return A::CreateCredentialImportRequest(
-                             b, b.CreateString(registration), replace)
-                      .Union();
-                });
+    return Call(
+        *host, H::RequestPayload::CredentialImportRequest, [&](Builder &b) {
+          H::CredentialRegistrationT value;
+          value.client_id = "fixture-client";
+          value.refresh_token = "refresh-old";
+          value.access_token = "access-old";
+          value.resource = "https://fixture.invalid/api";
+          value.token_endpoint = server.URL() + "/token";
+          value.revocation_endpoint = server.URL() + "/revoke";
+          const auto registration = H::CredentialRegistration::Pack(b, &value);
+          return H::CreateCredentialImportRequest(b, registration, replace)
+              .Union();
+        });
   }
 
   auto Token(std::string_view stale = {}) -> Reply {
     return Call(
-        *human, A::RequestPayload::CredentialTokenRequest, [&](Builder& b) {
-          return A::CreateCredentialTokenRequest(
+        *host, H::RequestPayload::CredentialTokenRequest, [&](Builder &b) {
+          return H::CreateCredentialTokenRequest(
                      b, b.CreateString("fixture-client"), b.CreateString(stale))
               .Union();
         });
@@ -274,12 +385,12 @@ class AgentFixture : public ::testing::Test {
   auto WaitUntilIdle(const std::string& conversation) -> std::string {
     const auto deadline = std::chrono::steady_clock::now() + 8s;
     do {
-      auto state = Get(conversation, true).Json();
+      auto state = Get(conversation, true).View();
       if (!JsonBool(state, "/busy")) return state;
       std::this_thread::sleep_for(10ms);
     } while (std::chrono::steady_clock::now() < deadline);
     throw std::runtime_error("Agent did not finish:\n" +
-                             Events(conversation, true).Json() + "\n" +
+                             Events(conversation, true).View() + "\n" +
                              Read(directory.path / "agent.log"));
   }
 
@@ -287,6 +398,7 @@ class AgentFixture : public ::testing::Test {
   ChildProcess agent;
   std::string ready;
   std::string project_id;
+  std::unique_ptr<client::Connection> host;
   std::unique_ptr<client::Connection> human;
   std::unique_ptr<client::Connection> external;
   uint64_t operation_id = 0;

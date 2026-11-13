@@ -1,0 +1,13 @@
+// Shared authentication and failure vocabulary for the Host and Agent services.
+namespace Tsugumi.Service;
+table HelloRequest { token:string (required); client_id:string (required); protocol:uint = 1; }
+table HelloResult { protocol:uint = 1; server_id:string (required); principal:string (required); }
+table Failure { code:string (required); message:string (required); request_id:string; }
+table Acknowledgement { accepted:bool; revoked:bool; }
+// Explicit provider configuration shared by global and conversation selection.
+// Credentials are human-only input and are never included in model tools/events.
+table Provider {
+  provider:string; api:string; auth:string; base_url:string; model:string;
+  credential:string; credential_id:string; effort:string;
+  fast:bool; web_search:bool; max_tokens:uint = 16384; context_limit:uint = 600000;
+}

@@ -41,7 +41,7 @@ let package = Package(
     // macOS adapters for the core-owned Agent service.
     .target(
       name: "TsugumiAgentClient",
-      dependencies: [.product(name: "FlatBuffers", package: "flatbuffers")],
+      dependencies: ["TsugumiRPC", .product(name: "FlatBuffers", package: "flatbuffers")],
       path: "Sources/AgentClient",
       swiftSettings: [.swiftLanguageMode(.v5)]),
     // Runs the standard flatc on protocol/*.fbs; output stays in .build.

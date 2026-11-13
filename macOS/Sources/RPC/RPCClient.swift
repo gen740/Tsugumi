@@ -92,14 +92,15 @@ private final class NativeEvents {
 
 /// This bridge only owns buffers and Swift continuations. The C++ library owns
 /// framing, validation, request correlation, deadlines and disconnect handling.
-private final class NativeRPCTransport: @unchecked Sendable {
-  let handle: OpaquePointer?
-  let events = NativeEvents()
+public final class NativeByteTransport: @unchecked Sendable {
+  private let handle: OpaquePointer?
+  private let events = NativeEvents()
 
-  init(endpoint: URL) { handle = tsugumi_client_create(endpoint.absoluteString, 0) }
+  public enum Contract: Int32 { case project = 0, agent = 1, host = 2 }
+  public init(endpoint: String, contract: Contract = .project) { handle = tsugumi_client_create(endpoint, contract.rawValue) }
   deinit { tsugumi_client_destroy(handle) }
 
-  func observe(receive: @escaping (Data) -> Void, closed: @escaping () -> Void) {
+  public func observe(receive: @escaping (Data) -> Void, closed: @escaping () -> Void) {
     events.receive = receive
     events.closed = closed
     let context = Unmanaged.passUnretained(events).toOpaque()
@@ -113,14 +114,14 @@ private final class NativeRPCTransport: @unchecked Sendable {
     }, context)
   }
 
-  func start() async throws {
+  public func start() async throws {
     guard let handle else { throw RPCError.disconnected }
     let _: Data = try await withCheckedThrowingContinuation { continuation in
       tsugumi_client_start(handle, nativeReplyCallback, Unmanaged.passRetained(NativeReply(continuation)).toOpaque())
     }
   }
 
-  func call(_ data: Data, timeout: Duration, continuation: CheckedContinuation<Data, Error>) {
+  public func call(_ data: Data, timeout: Duration, continuation: CheckedContinuation<Data, Error>) {
     guard let handle else { continuation.resume(throwing: RPCError.disconnected); return }
     let parts = timeout.components
     let milliseconds = Double(parts.seconds) * 1000 + Double(parts.attoseconds) / 1e15
@@ -132,7 +133,7 @@ private final class NativeRPCTransport: @unchecked Sendable {
     }
   }
 
-  func close() { tsugumi_client_close(handle) }
+  public func close() { tsugumi_client_close(handle) }
 }
 
 /// Typed operations on the shared C++ client. Both native socket transports and
@@ -140,7 +141,7 @@ private final class NativeRPCTransport: @unchecked Sendable {
 public actor RPCClient {
   public nonisolated let notifications: AsyncStream<NotificationEvent>
   private let notify: AsyncStream<NotificationEvent>.Continuation
-  private let transport: NativeRPCTransport
+  private let transport: NativeByteTransport
   private var nextId: UInt64 = 1
   private var closed = false
   private var started = false
@@ -151,7 +152,7 @@ public actor RPCClient {
     var cont: AsyncStream<NotificationEvent>.Continuation!
     notifications = AsyncStream(bufferingPolicy: .unbounded) { cont = $0 }
     notify = cont
-    transport = NativeRPCTransport(endpoint: endpoint)
+    transport = NativeByteTransport(endpoint: endpoint.absoluteString)
   }
 
   /// Opens the socket and performs SessionHello. The token never appears in URLs.

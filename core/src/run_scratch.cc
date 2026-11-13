@@ -7,6 +7,7 @@
 #include <sys/vfs.h>
 #endif
 
+#include <cerrno>
 #include <stdexcept>
 
 #include "util/crypto.hh"
@@ -21,7 +22,8 @@ auto private_disk_scratch(const std::filesystem::path& directory) -> std::filesy
     part /= component;
     struct stat st{};
     if (::lstat(part.c_str(), &st) != 0) {
-      if (::mkdir(part.c_str(), 0700) != 0 || ::lstat(part.c_str(), &st) != 0)
+      // Another project's core may create the shared parent at the same moment.
+      if ((::mkdir(part.c_str(), 0700) != 0 && errno != EEXIST) || ::lstat(part.c_str(), &st) != 0)
         throw std::runtime_error("cannot create scratch directory " + part.string());
     }
     if (!S_ISDIR(st.st_mode)) throw std::runtime_error("scratch directory is not a folder: " + part.string());

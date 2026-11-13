@@ -208,9 +208,7 @@ auto Run(int argc, char** argv) -> int {
   if (!reflected->root_table() || !reflected->file_ident())
     throw std::runtime_error("RPC schema has no root or identifier");
   const auto identifier = reflected->file_ident()->str();
-  if (identifier == "TSA1")
-    options.protocol = C::Protocol::Agent;
-  else if (identifier != "TSG1")
+  if (identifier != "TSG1")
     throw std::runtime_error("unsupported RPC schema identifier");
   flatbuffers::Parser encoder;
   flatbuffers::Parser decoder;

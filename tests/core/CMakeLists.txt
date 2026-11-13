@@ -11,7 +11,6 @@ else()
   set(_core_headers ${PROJECT_SOURCE_DIR}/core/src)
   set(_test_mock "$<TARGET_FILE:tsugumid-mock>")
   set(_test_sdk ${PROJECT_SOURCE_DIR}/sdk)
-  set(_test_agent_schema ${TSUGUMI_GEN_DIR}/bfbs/agent.bfbs)
   set(_test_project_schema ${TSUGUMI_GEN_DIR}/bfbs/tsugumi.bfbs)
 endif()
 
@@ -44,7 +43,7 @@ add_test(NAME core_thought_schedule COMMAND tsugumi_thought_schedule_tests)
 # Product client -> real Agent/core sockets -> controlled external model.
 # These scenarios neither include nor link private core implementation APIs.
 find_package(GTest CONFIG REQUIRED)
-add_executable(tsugumi_agent_rpc_tests agent/rpc_test.cc agent/project_rpc_test.cc agent_fixture_server.cc)
+add_executable(tsugumi_agent_rpc_tests agent/rpc_test.cc agent/host_rpc_test.cc agent/project_rpc_test.cc agent_fixture_server.cc)
 target_link_libraries(tsugumi_agent_rpc_tests PRIVATE tsugumi_client GTest::gtest_main hosq Threads::Threads)
 target_compile_options(tsugumi_agent_rpc_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 target_compile_definitions(tsugumi_agent_rpc_tests PRIVATE
@@ -62,13 +61,11 @@ target_link_libraries(tsugumi_rpc_cli_tests PRIVATE GTest::gtest_main hosq Threa
 target_compile_options(tsugumi_rpc_cli_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 target_compile_definitions(tsugumi_rpc_cli_tests PRIVATE
   TSUGUMI_RPC_BINARY="$<TARGET_FILE:tsugumi-rpc>"
-  TSUGUMI_AGENT_BINARY="$<TARGET_FILE:tsugumi-agentd>"
   TSUGUMI_PROJECT_BINARY="${_test_mock}"
   TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
-  TSUGUMI_AGENT_SCHEMA="${_test_agent_schema}"
   TSUGUMI_PROJECT_SCHEMA="${_test_project_schema}"
   TSUGUMI_TEST_SDK="${_test_sdk}")
-add_dependencies(tsugumi_rpc_cli_tests tsugumi-rpc tsugumi-agentd tsugumid-mock)
+add_dependencies(tsugumi_rpc_cli_tests tsugumi-rpc tsugumid-mock)
 gtest_discover_tests(tsugumi_rpc_cli_tests TEST_PREFIX "core_rpc_cli." DISCOVERY_MODE PRE_TEST
   PROPERTIES TIMEOUT 30)
 

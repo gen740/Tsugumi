@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "tsugumi/protocol/agent_generated.h"
+#include "tsugumi/protocol/host_generated.h"
 // musl exposes these C streams as macros; the wire schema uses the same names
 // as scoped enum values. Keep the workaround local to generated declarations.
 #pragma push_macro("stdout")
@@ -60,7 +61,7 @@ auto Inspect(Protocol protocol, std::span<const uint8_t> bytes) -> Envelope {
       default:
         break;
     }
-  } else {
+  } else if (protocol == Protocol::Agent) {
     namespace A = Tsugumi::Agent;
     if (!A::VerifyMessageBuffer(verifier))
       throw std::runtime_error("invalid Agent RPC buffer");
@@ -77,11 +78,28 @@ auto Inspect(Protocol protocol, std::span<const uint8_t> bytes) -> Envelope {
             KnownPayload(message->payload_as_Reply()->value_type()))
           return {Kind::Reply, id};
         break;
-      case A::Payload::Event:
-        if (!id && message->payload_as_Event()) return {Kind::Event, 0};
-        break;
       default:
         break;
+      }
+  } else if (protocol == Protocol::Host) {
+    namespace A = Tsugumi::Host;
+    if (!A::VerifyMessageBuffer(verifier))
+      throw std::runtime_error("invalid Host RPC buffer");
+    const auto *message = A::GetMessage(bytes.data());
+    const auto id = message->request_id();
+    switch (message->payload_type()) {
+    case A::Payload::Request:
+      if (id && message->payload_as_Request() &&
+          KnownPayload(message->payload_as_Request()->value_type()))
+        return {Kind::Request, id};
+      break;
+    case A::Payload::Reply:
+      if (id && message->payload_as_Reply() &&
+          KnownPayload(message->payload_as_Reply()->value_type()))
+        return {Kind::Reply, id};
+      break;
+    default:
+      break;
     }
   }
   throw std::runtime_error("invalid RPC envelope");

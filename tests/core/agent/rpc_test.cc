@@ -9,13 +9,13 @@ namespace R = Tsugumi::RPC;
 TEST_F(AgentFixture, UnixAndWebSocketExposeTheSameAgentProtocol) {
   auto websocket = Connect(false, true);
   const auto unix_catalog =
-      Call(*external, A::RequestPayload::ToolCatalogRequest, [](Builder& b) {
+      Call(*external, A::RequestPayload::ToolCatalogRequest, [](Builder &b) {
         return A::CreateToolCatalogRequest(b).Union();
-      }).Json();
+      }).View();
   const auto websocket_catalog =
-      Call(*websocket, A::RequestPayload::ToolCatalogRequest, [](Builder& b) {
+      Call(*websocket, A::RequestPayload::ToolCatalogRequest, [](Builder &b) {
         return A::CreateToolCatalogRequest(b).Union();
-      }).Json();
+      }).View();
   EXPECT_EQ(unix_catalog, websocket_catalog);
   EXPECT_NE(unix_catalog.find("project_inspect"), std::string::npos);
   EXPECT_NE(unix_catalog.find("delegate"), std::string::npos);
@@ -59,33 +59,24 @@ TEST_F(AgentFixture, ProjectProtocolCannotBeUsedOnTheAgentSocket) {
           .empty());
 }
 
-TEST_F(AgentFixture, ExternalAgentsCannotConfigureProvidersOrRegisterProjects) {
-  EXPECT_EQ(
-      Call(*external, A::RequestPayload::ConfigureRequest,
-           [](Builder& b) {
-             return A::CreateConfigureRequest(
-                        b, b.CreateString(
-                               R"({"provider":"fixture","model":"injected"})"))
-                 .Union();
-           })
-          .Code(),
-      "permission_denied");
-  EXPECT_EQ(Call(*external, A::RequestPayload::RegisterProjectRequest,
-                 [](Builder& b) {
-                   return A::CreateRegisterProjectRequest(
-                              b, b.CreateString("untrusted"),
-                              b.CreateString("unix:/tmp/anything"))
-                       .Union();
-                 })
-                .Code(),
-            "permission_denied");
+TEST_F(AgentFixture, ExternalAgentsCannotConfigureConversationProviders) {
+  const auto result =
+      Call(*external, A::RequestPayload::ConfigureRequest, [](Builder &b) {
+        Tsugumi::Service::ProviderT config;
+        config.provider = "fixture";
+        config.model = "injected";
+        const auto p = Tsugumi::Service::Provider::Pack(b, &config);
+        return A::CreateConfigureRequest(b, p, b.CreateString("untrusted"))
+            .Union();
+      });
+  EXPECT_EQ(result.Code(), "permission_denied");
 }
 
 TEST_F(AgentFixture, InvalidRequestIdsAndActionsLeaveTheConversationUnchanged) {
   ModelServer model;
   Configure(model);
   const auto conversation = Conversation("invalid-request-values");
-  const auto initial = Get(conversation).Json();
+  const auto initial = Get(conversation).View();
   for (const auto& id : {std::string{}, std::string(257, 'x')}) {
     SCOPED_TRACE(id.empty() ? "empty ID" : "oversized ID");
     EXPECT_EQ(Send(conversation, "This must not reach the model.", id).Code(),
@@ -109,7 +100,7 @@ TEST_F(AgentFixture, InvalidRequestIdsAndActionsLeaveTheConversationUnchanged) {
       });
   EXPECT_EQ(action.Code(), "invalid_request");
   EXPECT_FALSE(model.WaitForRequests(1, 100ms));
-  EXPECT_EQ(Get(conversation).Json(), initial);
+  EXPECT_EQ(Get(conversation).View(), initial);
 }
 
 TEST_F(AgentFixture, ExternalAgentsCannotReadOrReplaceHumanConversations) {
@@ -128,40 +119,12 @@ TEST_F(AgentFixture, ExternalAgentsCannotReadOrReplaceHumanConversations) {
             "permission_denied");
   const auto visible =
       Call(*external, A::RequestPayload::ConversationListRequest,
-           [](Builder& b) {
+           [](Builder &b) {
              return A::CreateConversationListRequest(b).Union();
            })
-          .Json();
+          .View();
   EXPECT_EQ(visible.find(conversation), std::string::npos);
   EXPECT_TRUE(Get(conversation, true).Code().empty());
-}
-
-TEST_F(AgentFixture,
-       ExternalAgentsCannotProvisionReadOrRevokeModelCredentials) {
-  EXPECT_EQ(Call(*external, A::RequestPayload::CredentialImportRequest,
-                 [](Builder& b) {
-                   return A::CreateCredentialImportRequest(
-                              b, b.CreateString("{}"), true)
-                       .Union();
-                 })
-                .Code(),
-            "permission_denied");
-  EXPECT_EQ(Call(*external, A::RequestPayload::CredentialTokenRequest,
-                 [](Builder& b) {
-                   return A::CreateCredentialTokenRequest(
-                              b, b.CreateString("fixture-client"))
-                       .Union();
-                 })
-                .Code(),
-            "permission_denied");
-  EXPECT_EQ(Call(*external, A::RequestPayload::CredentialForgetRequest,
-                 [](Builder& b) {
-                   return A::CreateCredentialForgetRequest(
-                              b, b.CreateString("fixture-client"))
-                       .Union();
-                 })
-                .Code(),
-            "permission_denied");
 }
 
 TEST_F(AgentFixture, CorePersistsRotatedCredentialsAndRevokesTheCurrentToken) {
@@ -170,9 +133,9 @@ TEST_F(AgentFixture, CorePersistsRotatedCredentialsAndRevokesTheCurrentToken) {
       R"({"access_token":"access-new","refresh_token":"refresh-new","token_type":"Bearer","scope":"chatgpt.tokens.use.direct","expires_in":3600})");
   authorization.QueueHTTP("", 204);
   ASSERT_TRUE(ImportCredential(authorization).Code().empty());
-  EXPECT_EQ(JsonString(Token().Json(), "/access_token"), "access-new");
+  EXPECT_EQ(JsonString(Token().View(), "/access_token"), "access-new");
   ASSERT_TRUE(authorization.WaitForRequests(1));
-  EXPECT_EQ(JsonString(Token("access-old").Json(), "/access_token"),
+  EXPECT_EQ(JsonString(Token("access-old").View(), "/access_token"),
             "access-new");
   // A second UI opening with an old cached registration must not undo rotation.
   ASSERT_TRUE(ImportCredential(authorization).Code().empty());
@@ -180,16 +143,16 @@ TEST_F(AgentFixture, CorePersistsRotatedCredentialsAndRevokesTheCurrentToken) {
   human.reset();
   agent.Stop();
   StartAgent();
-  EXPECT_EQ(JsonString(Token().Json(), "/access_token"), "access-new");
+  EXPECT_EQ(JsonString(Token().View(), "/access_token"), "access-new");
   EXPECT_EQ(authorization.Requests().size(), 1u);
   const auto forgotten =
-      Call(*human, A::RequestPayload::CredentialForgetRequest, [](Builder& b) {
-        return A::CreateCredentialForgetRequest(
+      Call(*host, H::RequestPayload::CredentialForgetRequest, [](Builder &b) {
+        return H::CreateCredentialForgetRequest(
                    b, b.CreateString("fixture-client"))
             .Union();
       });
   ASSERT_TRUE(forgotten.Code().empty());
-  EXPECT_TRUE(JsonBool(forgotten.Json(), "/revoked"));
+  EXPECT_TRUE(JsonBool(forgotten.View(), "/revoked"));
   ASSERT_TRUE(authorization.WaitForRequests(2));
   const auto requests = authorization.Requests();
   EXPECT_NE(requests[0].find("refresh_token=refresh-old"), std::string::npos);
@@ -226,25 +189,26 @@ TEST_F(AgentFixture,
       "data: {\"type\":\"response.failed\",\"response\":{\"error\":{"
       "\"code\":\"subscription_sharing_usage_limit_exceeded\","
       "\"message\":\"usage limit reached\"}}}\n\n");
-  const auto config =
-      "{\"provider\":\"chatgpt\",\"token\":\"fixture-access\","
-      "\"baseURL\":" +
-      Quote(model.URL()) + ",\"model\":\"fixture-model\"}";
-  ASSERT_TRUE(
-      Call(
-          *human, A::RequestPayload::ConfigureRequest,
-          [&](Builder& b) {
-            return A::CreateConfigureRequest(b, b.CreateString(config)).Union();
-          })
-          .Code()
-          .empty());
+  ASSERT_TRUE(Call(*host, H::RequestPayload::ConfigureRequest,
+                   [&](Builder &b) {
+                     Tsugumi::Service::ProviderT config;
+                     config.provider = "chatgpt";
+                     config.credential = "fixture-access";
+                     config.base_url = model.URL();
+                     config.model = "fixture-model";
+                     const auto p =
+                         Tsugumi::Service::Provider::Pack(b, &config);
+                     return H::CreateConfigureRequest(b, p).Union();
+                   })
+                  .Code()
+                  .empty());
   for (int turn = 0; turn < 2; ++turn) {
     const auto conversation =
         Conversation("plan-limit-" + std::to_string(turn));
     ASSERT_TRUE(Send(conversation, "Respond on the plan.").Code().empty());
     ASSERT_TRUE(model.WaitForRequests(turn + 1));
     WaitUntilIdle(conversation);
-    const auto events = Events(conversation).Json();
+    const auto events = Events(conversation).View();
     EXPECT_NE(events.find("ChatGPT usage limit reached"), std::string::npos);
     EXPECT_EQ(events.find("retrying"), std::string::npos);
     EXPECT_EQ(model.Requests().size(), static_cast<size_t>(turn + 1));
@@ -262,7 +226,7 @@ TEST_F(AgentFixture, BundledDemosAreReadableButSymlinksAndTraversalAreNot) {
         return A::CreateDemoReadRequest(b, b.CreateString("ja/example.json"))
             .Union();
       });
-  EXPECT_NE(good.Json().find("BUNDLED_DEMO"), std::string::npos);
+  EXPECT_NE(good.View().find("BUNDLED_DEMO"), std::string::npos);
   for (const auto* path : {"../private.json", "escape.json", "/private.json"}) {
     SCOPED_TRACE(path);
     const auto reply =
@@ -291,7 +255,7 @@ TEST_F(AgentFixture, ConversationContinuesAfterTheClientDisconnects) {
   external = Connect(false, true);
   const auto state = WaitUntilIdle(conversation);
   EXPECT_NE(state.find("The core kept working."), std::string::npos);
-  EXPECT_NE(Events(conversation).Json().find("finished"), std::string::npos);
+  EXPECT_NE(Events(conversation).View().find("finished"), std::string::npos);
 }
 
 TEST_F(AgentFixture, PublicCancellationStopsAnInFlightModelRequest) {
@@ -315,7 +279,7 @@ TEST_F(AgentFixture, PublicCancellationStopsAnInFlightModelRequest) {
             std::string::npos);
   EXPECT_FALSE(JsonBool(state, "/resumable"));
   EXPECT_TRUE(JsonBool(state, "/continuable"));
-  EXPECT_NE(Events(conversation).Json().find("cancelled"), std::string::npos);
+  EXPECT_NE(Events(conversation).View().find("cancelled"), std::string::npos);
 }
 
 TEST_F(AgentFixture, OpenAIResponsesUsesTheSameCoreConversationService) {
@@ -350,7 +314,7 @@ TEST_F(AgentFixture, AnInterruptedModelStreamNeverExecutesItsToolCall) {
   EXPECT_NE(WaitUntilIdle(conversation)
                 .find("Recovered from the interrupted response."),
             std::string::npos);
-  const auto events = Events(conversation).Json();
+  const auto events = Events(conversation).View();
   EXPECT_EQ(events.find("\"kind\":\"toolStarted\""), std::string::npos);
   EXPECT_NE(events.find("retrying"), std::string::npos);
 }
@@ -372,7 +336,7 @@ TEST_F(AgentFixture, OutputLimitDoesNotExecuteEvenAnOtherwiseCompleteToolCall) {
   EXPECT_NE(WaitUntilIdle(conversation)
                 .find("The oversized response was replaced safely."),
             std::string::npos);
-  EXPECT_EQ(Events(conversation).Json().find("\"kind\":\"toolStarted\""),
+  EXPECT_EQ(Events(conversation).View().find("\"kind\":\"toolStarted\""),
             std::string::npos);
   EXPECT_EQ(model.Requests()[1].find("\"type\":\"tool_use\""),
             std::string::npos);
@@ -413,7 +377,7 @@ TEST_F(AgentFixture, AnEmptyModelReplyDoesNotPreventTheNextConversationTurn) {
       Send(conversation, "A request without a model answer.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(1));
   WaitUntilIdle(conversation);
-  EXPECT_NE(Events(conversation).Json().find("empty reply"), std::string::npos);
+  EXPECT_NE(Events(conversation).View().find("empty reply"), std::string::npos);
   ASSERT_TRUE(
       Send(conversation, "Try another request.", "turn-2").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(2));
@@ -474,15 +438,15 @@ TEST_F(AgentFixture,
   EXPECT_EQ(requests[4].find(earlier), std::string::npos);
   EXPECT_NE(requests[4].find("Earlier decisions were retained"),
             std::string::npos);
-  EXPECT_NE(Events(conversation).Json().find("compacted"), std::string::npos);
+  EXPECT_NE(Events(conversation).View().find("compacted"), std::string::npos);
   const auto found =
       Call(*external, A::RequestPayload::ConversationSearchRequest,
-           [](Builder& b) {
+           [](Builder &b) {
              return A::CreateConversationSearchRequest(
                         b, 0, b.CreateString("first_long_answer"))
                  .Union();
            })
-          .Json();
+          .View();
   EXPECT_EQ(JsonString(found, "/0/session"), conversation);
   const auto snippet = JsonString(found, "/0/snippet");
   EXPECT_NE(snippet.find("FIRST_LONG_ANSWER"), std::string::npos);
@@ -547,7 +511,7 @@ TEST_F(AgentFixture,
   agent.Stop();
   StartAgent();
   EXPECT_EQ(
-      JsonString(Get(conversation).Json(), "/conversation/helpers/0/state"),
+      JsonString(Get(conversation).View(), "/conversation/helpers/0/state"),
       "interrupted");
   ASSERT_TRUE(Call(*external, A::RequestPayload::ConversationActionRequest,
                    [&](Builder& b) {
@@ -564,7 +528,7 @@ TEST_F(AgentFixture,
             std::string::npos);
   EXPECT_EQ(model.Requests().size(), 3u);
   EXPECT_EQ(
-      JsonString(Get(conversation).Json(), "/conversation/helpers/0/state"),
+      JsonString(Get(conversation).View(), "/conversation/helpers/0/state"),
       "interrupted");
 }
 

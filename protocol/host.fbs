@@ -1,0 +1,55 @@
+// Human-only host operations, independent of project/conversation lifetimes.
+// Unix: little-endian uint32 length then one buffer. WebSocket: one binary
+// buffer, subprotocol tsugumi.host.v1. The external Agent token is rejected.
+include "service_common.fbs";
+namespace Tsugumi.Host;
+
+// Global provisioning; the Agent's ConfigureRequest always names a conversation.
+table ConfigureRequest { provider:Tsugumi.Service.Provider (required); }
+table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string; title:string; }
+table RegisterFolderRequest { project_id:string (required); resource_id:string (required); folder:string (required); title:string; }
+table ModelsListRequest { provider:Tsugumi.Service.Provider; }
+table CredentialImportRequest { registration:CredentialRegistration (required); replace:bool; }
+table CredentialTokenRequest { client_id:string (required); stale_token:string; }
+table CredentialForgetRequest { client_id:string (required); }
+table HostProjectDefaultsRequest {}
+table HostProjectInfoRequest { path:string (required); }
+table HostProjectCreateRequest { parent:string (required); name:string (required); flow:string; }
+table HostProjectDuplicateRequest { path:string (required); parent:string (required); name:string (required); }
+table HostDemoListRequest { language:string; }
+table HostDemoCopyRequest { id:string (required); parent:string (required); language:string; }
+table HostRecentListRequest {}
+table HostRecentRememberRequest { path:string (required); }
+table HostRecentForgetRequest { paths:[string]; }
+
+table CredentialRegistration {
+  client_id:string (required); access_token:string; refresh_token:string (required);
+  token_endpoint:string (required); revocation_endpoint:string; resource:string;
+  expires_at_ms:ulong; id_token:string; scope:string;
+}
+table CredentialToken { access_token:string (required); client_id:string (required); }
+table ProjectDefaults { nixpkgs_pin:string (required); }
+table ProjectInfo { path:string (required); name:string (required); }
+table ProjectLocation { path:string (required); }
+// opened_at is Unix epoch milliseconds. Forget never removes project folders.
+table RecentProject { path:string (required); name:string (required); opened_at:long; }
+table RecentList { projects:[RecentProject]; }
+table Demo { id:string (required); path:string (required); title:string (required); description:string (required); tags:[string]; field:string; }
+table DemoList { demos:[Demo]; }
+table Model { id:string; name:string; }
+table ModelList { models:[Model]; }
+union RequestPayload {
+  HelloRequest:Tsugumi.Service.HelloRequest, ConfigureRequest,
+  RegisterProjectRequest, RegisterFolderRequest, ModelsListRequest, CredentialImportRequest, CredentialTokenRequest, CredentialForgetRequest, HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
+}
+table Request { value:RequestPayload; }
+union ReplyPayload {
+  HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
+  CredentialToken, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
+  RecentList, DemoList, ModelList, Failure:Tsugumi.Service.Failure
+}
+table Reply { value:ReplyPayload; }
+union Payload { Request, Reply }
+table Message { request_id:ulong; payload:Payload; }
+root_type Message;
+file_identifier "TSH1";

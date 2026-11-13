@@ -71,7 +71,7 @@ class RequestSink {
 };
 
 struct ServerOptions {
-  enum class Protocol { Project, Agent };
+  enum class Protocol { Project, Agent, Host };
   Protocol protocol = Protocol::Project;
   std::string unix_path;           // empty: no Unix socket
   // WebSocket on a Unix socket (0600): the shared VM's projects, reached by

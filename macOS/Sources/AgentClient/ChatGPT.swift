@@ -392,8 +392,7 @@ public actor ChatGPTAuth {
       "token_endpoint": endpoints.token.absoluteString, "revocation_endpoint": endpoints.revoke.absoluteString,
       "resource": endpoints.resource, "expires_at_ms": max(0, saved.addingTimeInterval(Double(account.expiresIn ?? 0)).timeIntervalSince1970 * 1000),
       "scope": account.scopes.joined(separator: " ")]
-    let json = String(decoding: try JSONSerialization.data(withJSONObject: object), as: UTF8.self)
-    _ = try await CoreAgentClient.shared.call("CredentialImportRequest", ["registration_json": json, "replace": replace])
+    _ = try await CoreAgentClient.shared.call("CredentialImportRequest", ["registration": object, "replace": replace])
   }
 
   private func tokenRequest(_ form: [(String, String)]) async throws -> [String: Any] {

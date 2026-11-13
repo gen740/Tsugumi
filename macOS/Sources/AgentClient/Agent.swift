@@ -1,5 +1,6 @@
 import FlatBuffers
 import Foundation
+import TsugumiRPC
 
 /// Supplies a project endpoint to the core-owned Agent service. No tool call
 /// is executed by the application.
@@ -147,11 +148,7 @@ public actor Agent {
   }
 
   private func adopt(_ result: [String: Any]) throws {
-    if let value = result["conversation"] {
-      let decoder = JSONDecoder()
-      decoder.dateDecodingStrategy = .millisecondsSince1970
-      conversation = try decoder.decode(Conversation.self, from: JSONSerialization.data(withJSONObject: value))
-    }
+    if let value = result["conversation"] as? Tsugumi_Agent_ConversationT { conversation = try ServiceWire.conversation(value) }
     busy = result["busy"] as? Bool ?? false
     resumable = result["resumable"] as? Bool ?? false
     canContinue = result["continuable"] as? Bool ?? false
