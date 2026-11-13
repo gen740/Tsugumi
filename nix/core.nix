@@ -98,6 +98,12 @@ clangStdenv.mkDerivation {
     "-DTSUGUMI_CARD_PATH=${lib.makeBinPath cardTools}"
   ]
   ++ lib.optionals clangStdenv.hostPlatform.isLinux [ "-DTSUGUMI_BWRAP=${bubblewrap}/bin/bwrap" ];
+  # What the dev shell's own CMake configuration needs of the above.
+  passthru.devEnv = {
+    HOSQ_INCLUDE_DIR = "${hosq}/include";
+    TSUGUMI_CARD_NIXPKGS_REV = cardNixpkgs.rev;
+    TSUGUMI_CARD_NIXPKGS_NARHASH = cardNixpkgs.narHash;
+  };
   meta = {
     description = "Tsugumi core daemon and Card worker";
     mainProgram = "tsugumid";
