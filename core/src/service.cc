@@ -211,6 +211,26 @@ Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
   shell_lane_ = std::make_unique<Lane>(2, 8, std::chrono::milliseconds(opts_.limits.queue_wait_ms));
 }
 
+// Scratch may hold what a Card left read-only (a copy out of the Nix store, a
+// snapshot it protected): directories are made writable on the way down, or
+// their contents could not be removed. Best effort: a leftover is reported and
+// never fails the run that is starting.
+namespace {
+void remove_scratch_tree(const stdfs::path& path) {
+  std::error_code ec;
+  const auto status = stdfs::symlink_status(path, ec);
+  if (ec || !stdfs::exists(status)) return;
+  if (stdfs::is_directory(status)) {
+    stdfs::permissions(path, stdfs::perms::owner_all, stdfs::perm_options::add, ec);
+    std::vector<stdfs::path> children;
+    for (const auto& entry : stdfs::directory_iterator(path, ec)) children.push_back(entry.path());
+    for (const auto& child : children) remove_scratch_tree(child);
+  }
+  stdfs::remove(path, ec);
+  if (ec) log::warn("run scratch: cannot remove " + path.string() + ": " + ec.message());
+}
+}  // namespace
+
 Service::~Service() { shutdown(); }
 
 void Service::open() {
@@ -238,7 +258,7 @@ void Service::open() {
                                                                  : opts_.run_scratch_dir);
   stdfs::create_directories(run_scratch_ / "runs");
   clean_run_scratch();
-  stdfs::remove_all(run_scratch_ / "recovery");
+  remove_scratch_tree(run_scratch_ / "recovery");
   stdfs::create_directories(run_scratch_ / "recovery");
   execution_service_ = std::make_unique<NativeExecutionService>(*this, scratch / "workers");
   remote_execution_ = std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
@@ -297,7 +317,7 @@ auto Service::clean_run_scratch(const std::optional<std::string>& keep) -> void 
   for (const auto& entry : stdfs::directory_iterator(run_scratch_ / "runs")) {
     const auto id = entry.path().filename().string();
     const bool exists = crypto::is_uuid(id) && history_->read([&](sql::Db& db) { return History::run(db, id).has_value(); });
-    if (keep ? id != *keep : !exists) stdfs::remove_all(entry.path());
+    if (keep ? id != *keep : !exists) remove_scratch_tree(entry.path());
   }
 }
 
