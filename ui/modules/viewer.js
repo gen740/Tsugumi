@@ -10,11 +10,22 @@ function runtime() {
   const root = document.createElement('div')
   Object.assign(root.style, { position: 'absolute', inset: '0', overflow: 'auto' })
   document.body.append(root)
-  let module, identity, currentData, initialised = false, visible = true, colorScheme = 'light', pending, working = false, resizePending = false
+  let module, identity, currentData, viewError, initialised = false, visible = true, colorScheme = 'light', pending, working = false, resizePending = false
   const size = () => ({ width: innerWidth, height: innerHeight, pixelRatio: devicePixelRatio, visible, colorScheme })
   const send = data => parent.postMessage({ tsugumi: 'state', ...data }, '*')
+  root.addEventListener('tsugumi-view-error', event => {
+    const message = String(event.detail).slice(0, 4096)
+    viewError = new Error(message)
+    send({ state: 'error', message })
+    if (!working) {
+      identity = undefined; initialised = false
+      void module?.dispose()
+      root.textContent = message
+    }
+  })
   async function render(message) {
     try {
+      viewError = undefined
       visible = message.visible !== false
       colorScheme = message.colorScheme === 'dark' ? 'dark' : 'light'
       if (identity !== message.name) {
@@ -35,6 +46,7 @@ function runtime() {
         await module.resize(size())
       }
       await new Promise(resolve => setTimeout(resolve, 30))
+      if (viewError) throw viewError
       let image
       if (message.snapshot) {
         if (module.snapshot) image = await module.snapshot()
@@ -50,6 +62,7 @@ function runtime() {
       send({ state: 'ok', requestId: message.requestId, image })
     } catch (e) {
       identity = undefined; initialised = false
+      try { await module?.dispose() } catch { /* Keep the original diagnostic. */ }
       root.textContent = String(e?.message ?? e)
       send({ state: 'error', requestId: message.requestId, message: root.textContent })
     }

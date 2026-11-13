@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "document.hh"
+#include "module_source.hh"
 #include "tsugumi/protocol/tsugumi_enums_generated.h"
 #include "types.hh"
 
@@ -199,8 +200,6 @@ struct PointCloud {
 };
 struct Module { std::string module; std::string config_json; std::map<std::string, std::string> blobs; };
 }  // namespace display
-
-auto valid_module_identity(std::string_view identity) -> bool;
 
 struct DisplayData {
   CardPath card;

@@ -68,14 +68,6 @@ FailureData FailureData::make(FailureKind k, std::string diag,
   return f;
 }
 
-auto valid_module_identity(std::string_view identity) -> bool {
-  if (!identity.starts_with("/nix/store/") || identity.size() < 45 || identity[43] != '-') return false;
-  constexpr std::string_view hash = "0123456789abcdfghijklmnpqrsvwxyz";
-  for (size_t i = 11; i < 43; ++i)
-    if (hash.find(identity[i]) == std::string_view::npos) return false;
-  constexpr std::string_view name = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+-._?=";
-  return identity.substr(44).find_first_not_of(name) == std::string_view::npos;
-}
 
 std::optional<std::string> DisplayData::validate() const {
   constexpr size_t kMaxBytes = 1 << 20;
