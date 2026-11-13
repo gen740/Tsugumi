@@ -193,6 +193,12 @@ export class CoreAgentHost {
       accountId: token?.clientId, credential_id: token?.clientId }) })
   }
 
+  async summarize(conversationId: string, config: ProviderConfig): Promise<{ text: string; usage: { inputTokens: number; outputTokens: number } }> {
+    const token = config.token ? await config.token() : undefined
+    return this.user.call('ConversationSummarizeRequest', { conversation_id: conversationId,
+      provider_json: JSON.stringify({ ...config, token: token?.value, accountId: token?.clientId, credential_id: token?.clientId }) })
+  }
+
   private apiCatalog(): ToolCatalog {
     if (!this.api) {
       const schema = new BFBS(new Uint8Array(fs.readFileSync(this.schema)))

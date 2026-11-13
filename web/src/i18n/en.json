@@ -1,4 +1,10 @@
 {
+ "思考の過程を描きますか？": "Draw the Agent's thoughts?",
+ "描く": "Draw",
+ "思考の過程を描く: オン（使った token: 入力 {0}、出力 {1}）": "Draw thoughts: on (tokens used: input {0}, output {1})",
+ "思考の過程を描く: Agent の考えを要約して Canvas に出します（追加の token を使います）": "Draw thoughts: summarizes the Agent's thinking on the canvas (uses extra tokens)",
+ "入力 {0}、出力 {1}": "Input {0}, output {1}",
+ "Agent の発言とツールの結果を、数秒ごとに小さなモデル（{0}、接続先: {1}）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。": "Every few seconds the Agent's words and tool results are sent to a small model ({0}, via {1}) to be summarized and shown in the Tsugumi's speech bubble on the canvas. This uses tokens besides the Agent's. When off, the bubble shows only short lines made from tool calls.",
  "この実行にはありません": "Absent from this run",
  "コードと設定の差分": "Code and settings changes",
  "パラメータの記録がありません": "Parameters were not recorded",

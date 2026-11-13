@@ -1,5 +1,6 @@
 # Build test executables against the exact production archives. Private core
-# headers are used only by the external evaluator double, never by RPC tests.
+# headers are used by the evaluator double and socket-free schedule test,
+# never by RPC tests.
 set(TSUGUMI_INSTALLED_CORE ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
