@@ -33,7 +33,7 @@ else
   name="Tsugumi Dev"
 fi
 dist="$repo/dist"
-# The version (VERSION, see docs/Development.md) and a build number that only grows.
+# The version (VERSION, see RELEASING.md) and a build number that only grows.
 version="$(cat "$repo/VERSION")"
 build="$(git -C "$repo" rev-list --count HEAD 2>/dev/null || echo 1)"
 app="$dist/Tsugumi.app"
@@ -77,7 +77,7 @@ cp -R "$repo/demos" "$app/Contents/Resources/demos"
 mods="$app/Contents/Resources/modules"
 mkdir -p "$mods"
 cp "$repo/ui/modules/viewer.html" "$repo/ui/modules/viewer.js" "$mods/"
-# What the in-app Agent may read as references (reference_read).
+# Bundled developer reference (the current Agent tools expose demos separately).
 mkdir -p "$app/Contents/Resources/reference"
 cp "$repo/agent/Reference/card-guide.md" "$app/Contents/Resources/reference/card-guide.md"
 cp "$repo/sdk/python/tsugumi/__init__.py" "$app/Contents/Resources/reference/tsugumi-sdk.py"

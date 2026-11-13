@@ -13,22 +13,23 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 
 | Where | What |
 | --- | --- |
-| [protocol/](protocol/) | The FlatBuffers contracts for project RPC (`tsugumi.fbs`), the Agent service (`agent.fbs`), the native worker (`worker.fbs`) and the remote worker (`remote_worker.fbs`) |
-| [core/](core/) | `tsugumid`: the document model, type checking, the scheduler, the embedded Nix evaluator, history and artifacts, versions (git); `core/src/agent/` holds the host-side `tsugumi-agentd` service |
-| [sdk/](sdk/) | The Card ABI and runtime, the C++ / Python SDKs, the Nix SDK ([sdk/nix/default.nix](sdk/nix/default.nix)) |
-| [macOS/](macOS/) | The SwiftUI app, the shared Linux VM (Virtualization.framework), image definitions |
-| [ui/](ui/) | Shared isolated web-module host and UI resources |
-| [agent/](agent/) | Shared Agent prompts, contracts ([agent/Shared/](agent/Shared/)) and reference documents; the service implementation is in `core/src/agent/` |
-| [web/](web/) | The browser UI and its host server |
-| [workerd/](workerd/) | The light native worker, the C++ remote listener/supervisor/Nix runner, and shared worker libraries |
-| [cli/](cli/) | The `tsugumi` command (`install.sh` for Mac and Linux, `install.ps1` for Windows, building the distributions) |
-| [plugins/](plugins/) | The Claude Code plugin (installed from `.claude-plugin/marketplace.json`; [docs/claude-code.md](docs/claude-code.md)) |
-| [nix/](nix/) | Package definitions of `tsugumid`, the worker, the Card SDK and the `tsugumi` command |
-| [demos/](demos/) | The bundled demos and their Draft versions (only the shape of the processing, before implementation), as a Japanese and an English set (`demos/ja`, `demos/en`): change both |
-| [tests/](tests/) | Tests of the contract, scheduler, history, isolation, demos, fuzzing and more |
-| [docs/](docs/) | The list of documents is [docs/README.md](docs/README.md). Astro generates the web version and `llms.txt` in `build/docs/` with `nix run .#build-doc`; only source documents belong in `docs/` |
+| [protocol/](protocol/) | FlatBuffers contracts: project (`tsugumi.fbs`), Agent (`agent.fbs`), workers (`worker.fbs`, `remote_worker.fbs`), data and enums |
+| [core/](core/) | Project core `tsugumid`, host services (`src/host/`, `src/agent/`), worker pools, scheduling, Nix, history and versions |
+| [client/](client/) | Shared C++ RPC client, C interface and WebAssembly bindings |
+| [workerd/](workerd/) | Native Card host, C++ remote listener/supervisor/Nix runner, framing and job support |
+| [sdk/](sdk/) | Card ABI and runtime, language SDKs and code generation, views, [Nix SDK](sdk/nix/default.nix) |
+| [macOS/](macOS/) | SwiftUI app, RPC/Agent adapters, shared Linux VM, image definitions and app tests |
+| [ui/](ui/) | Shared isolated web-module host (`modules/`) and Card scaffolds (`templates/`) |
+| [agent/](agent/) | Shared Agent prompts, contracts (`Shared/`) and reference documents |
+| [web/](web/) | Browser UI, host server and platform adapters |
+| [cli/](cli/) | The `tsugumi` command, installers and distribution packaging |
+| [plugins/](plugins/) | Claude Code plugin; [installation and usage](docs/claude-code.md) |
+| [nix/](nix/) | Runtime, SDK, remote worker and CLI packages; flake outputs, checks and development shell |
+| [demos/](demos/) | Matching Japanese and English demos and Drafts (`ja/`, `en/`): change both |
+| [tests/](tests/) | Core, SDK, host, remote worker, static and prompt tests; [commands and manual tools](tests/README.md) |
+| [docs/](docs/) | User documents ([index](docs/README.md)), assets and [documentation site tooling](docs/site/README.md) |
 
-The overall architecture and the directories in detail are in "The runtime" and "Directories" of [docs/Development.md](docs/Development.md).
+The architecture and mechanisms are in [Features](docs/features.md#1-architecture). Release procedures are in [RELEASING.md](RELEASING.md).
 
 ## For agents working in this repository
 
@@ -43,14 +44,14 @@ Write documents, code comments, commit messages and pull requests in English. Th
 Someone is doing other work on the same Mac. Do not take the foreground, and do not show dialogs.
 
 - **Launching:** use [macOS/tools/run-ui.sh](macOS/tools/run-ui.sh) (it opens the app in the background with `open -g`, and capturing works as it is). To launch directly, use `open -g -n --env TSUGUMI_UI_SCRIPT=<absolute path> <Tsugumi.app>`; never run the executable directly.
-- **Building:** sign with `TSUGUMI_CODESIGN_IDENTITY="Apple Development" macOS/build-app.sh`. An ad hoc signed build is treated as a different app on every rebuild, and reading the API key shows a password dialog ("Signing development builds" in [docs/Development.md](docs/Development.md)). Where there is no certificate (`security find-identity -v -p codesigning`), build as it is.
+- **Building:** sign with `TSUGUMI_CODESIGN_IDENTITY="Apple Development" macOS/build-app.sh`. An ad hoc signed build is treated as a different app on every rebuild, and reading the API key shows a password dialog ("Signing development builds" in [RELEASING.md](RELEASING.md)). Where there is no certificate (`security find-identity -v -p codesigning`), build as it is.
 
 ### Checks before merging
 
 CI runs on GitHub Actions (the Linux and macOS jobs of [.github/workflows/ci.yml](.github/workflows/ci.yml)). To run the same checks locally, use [tests/ci-local.sh](tests/ci-local.sh). On a Mac it runs the macOS job as it is, and the Linux job in a Docker (OrbStack) container.
 
 Run [tests/check-fast.sh](tests/check-fast.sh) before every push: it runs the static tests (`tests/static`, which CI runs first, in about a minute) and builds the Web UI and site player checks.
-Use `--no-nix` for only the static tests (seconds).
+Use `--no-nix` for only the static tests (seconds). See [tests/README.md](tests/README.md) for suite details and manual tools.
 
 ### Compatibility
 

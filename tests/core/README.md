@@ -113,17 +113,6 @@ even when ignoring cancellation. Daemon logs are attached to failing pytest repo
   they consume (for example, a completed operation can contain a failure receipt).
   It cannot establish that a client renders or interprets that receipt correctly.
 
-The core contract suites now live here: documents, permissions, comments,
-versions, graph resolution, scheduling, history, transport and malformed frames.
-The RPC client and fixture helpers are shared with the remaining application,
-SDK and VM suites under `tests/python`.
-
-The former `tests/cpp` cases have been replaced by RPC-observable behavior.
-Assertions about private hash helpers, SQL schemas, journal encoding and internal
-queue objects are retired. Malicious journal/SQLite fixture construction is not
-retained; public path rejection tests do not claim to cover those same corrupt
-on-disk formats. New core tests belong at the RPC boundary.
-
 Real Nix and host sandbox tests live in `integration`, marked `environment`.
 CTest's `core_rpc` runs the deterministic suite; CI runs the environment suite
 separately with:
@@ -131,8 +120,3 @@ separately with:
 ```sh
 nix develop -c python3 -m pytest tests/core/integration -q --core-report
 ```
-
-Most execution scenarios use the protocol-speaking worker double. The shell-step
-reuse regression deliberately uses the real worker because the defect depends
-on which shell steps its resident process executes. Builtin Cards run in core and
-do not launch a worker. The environment suite uses real packages and workers.

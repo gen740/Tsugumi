@@ -42,10 +42,6 @@ See the [grammar notes](macOS/Sources/Grammars/README.md) and
 The copied queries' upstream license texts are retained in
 [`third-party/tree-sitter/`](third-party/tree-sitter/README.md).
 
-`tree-sitter-swift` is used by SwiftTreeSitter's **test target**, not by the
-`SwiftTreeSitter` product that Tsugumi links. It is not an app dependency
-in the `macOS/Package.swift` / `Package.resolved` graph.
-
 ## Other macOS app dependencies
 
 | Component | Pinned version / license text | License and scope |
@@ -57,9 +53,7 @@ in the `macOS/Package.swift` / `Package.resolved` graph.
 | SwiftMath | [1.7.3](https://github.com/mgriebling/SwiftMath/blob/fa8244ed032f4a1ade4cb0571bf87d2f1a9fd2d7/LICENSE) | MIT for code. Of its 12 OTF fonts, which have **separate** terms, the app ships only Latin Modern Math 1.959 (GUST Font License, an instance of the LPPL), the one it draws with, and with it the font's complete upstream package; see [LicenseAudit.md](docs/LicenseAudit.md) |
 
 Swift Argument Parser 1.8.2 (Apache-2.0 with Swift runtime exception) is
-resolved for dependency command-line / example targets; it is not a direct
-Tsugumi app product dependency. A lock file entry alone is not proof that
-its code is present in the final executable. Apple's system frameworks are
+resolved for dependency command-line / example targets. Apple's system frameworks are
 used from the operating system, not copied into the app.
 
 ## The `tsugumi` command

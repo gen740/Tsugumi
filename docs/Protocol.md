@@ -9,7 +9,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 - **Requests that change something**: carry an `op_id`, and a resend with the same `op_id` is applied only once. If a response is lost, check with `OperationGet`.
 - **The Agent's tools**: made from the same schema (`tsugumi.bfbs`) ([Features](features.md#9-agent)).
 
-There are 44 requests.
+There are 48 requests.
 
 ## Connection
 
@@ -41,6 +41,7 @@ There are 44 requests.
 | [`ProjectImport`](#projectimport) | ProjectImportResult | definitions = [] imports every definition of the grant. |
 | [`ProjectShell`](#projectshell) | ProjectShellResult | Runs in the project VM as the project user, with the project directory as cwd. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream is capped at 262144 bytes. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Agent use requires explicit Shell access in addition to Read, Write and Run. After editing project definitions or tsugumi.json with a command, use ProjectReload before inspecting or running the changed project through core. |
 | [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Only while no run or SDK job is active. |
+| [`ProjectCacheUsage`](#projectcacheusage) |  | Cached shared-store measurement; never triggers a store traversal on the RPC lane. |
 | [`OperationGet`](#operationget) | OperationResult |  |
 
 ### ProjectOpen
@@ -110,6 +111,10 @@ No fields.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `op_id` | `string` | yes |  |
+
+### ProjectCacheUsage
+
+No fields.
 
 ### OperationGet
 
@@ -375,6 +380,9 @@ No fields.
 | --- | --- | --- |
 | [`ViewSetVisible`](#viewsetvisible) | Ack | Replaces the subscription's Display targets. enabled = true. |
 | [`ViewSave`](#viewsave) | ViewSaveResult | CAS on view_rev only. |
+| [`ModuleRead`](#moduleread) | FileContent | Reads immutable module source in bounded pages. For a Wasm view, the core assembles the shared index.js template and local view.wasm. Only canonical /nix/store/<hash>-<name> directories with index.js qualify. |
+| [`LayoutArrange`](#layoutarrange) | LayoutProposal | Places the scope's Cards, output frames and notes, then gives ports the order that crosses fewer wires and places the Cards once more for it. The bars are taken to follow the Cards again. Nothing is saved. |
+| [`LayoutUntangle`](#layoutuntangle) | LayoutProposal (port_orders only) | Reorders ports where the wires then cross less; no Card moves. With `around` (the Cards a drag just moved) only they and the Cards wired to them may change. Nothing is saved. |
 
 ### ViewSetVisible
 
@@ -391,6 +399,27 @@ No fields.
 | `view_id` | `string` | yes |  |
 | `base_view_rev` | `uint64` |  |  |
 | `view` | `ViewState` | yes |  |
+
+### ModuleRead
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `module` | `string` | yes |  |
+| `offset` | `uint64` |  |  |
+| `limit_bytes` | `uint32` |  |  |
+
+### LayoutArrange
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `scene` | `LayoutScene` | yes |  |
+
+### LayoutUntangle
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `scene` | `LayoutScene` | yes |  |
+| `around` | `[string]` |  |  |
 
 ## Versions
 

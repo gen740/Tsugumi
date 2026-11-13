@@ -54,7 +54,7 @@ In the Mac app, open it with "Version History…" (⌥⌘Y) in the Workflow menu
 
 Turn on "Version summaries" above the version history (it asks first; off by default) and a small model (`claude-haiku-5-5` for Anthropic; for OpenAI, the Agent's model) writes a short sentence on what changed in each version. This is different from the run summary: it is text a model writes.
 
-- **When it is made**: once, when a run of that version ends, or when you hover a version without a summary. It is made in the app and in the Web UI's server (the only places with the API key); `tsugumid` never calls a model. For runs while no page or app is open, it is made the next time you hover.
+- **When it is made**: once, when a run of that version ends, or when you hover a version without a summary. The host-side Agent service reads the authorized version diff and requests the model summary; `tsugumid` never calls a model. For runs while no page or app is open, it is made the next time you hover.
 - **What is sent**: that version's `VersionDiff`, limited to diffs of `tsugumi.json`, the Cards' `_card.json`, `_meta.json`, `_link.json`, `_outputs.fbs` and `default.nix`, and the code in `src/` (`.py` `.cc` `.cpp` `.cxx` `.c` `.h` `.hh` `.hpp` `.nix` `.fbs` `.sh`). Data files such as `data/`, non-code files in `src/` and `layout.json` are not sent. Long diffs are cut (4,000 bytes per file, 12,000 in all). Parameter values in `_card.json` and values written in code are sent, though.
 - **Where it is kept**: a commit note (`refs/notes/tsugumi-summary`). It is kept apart from the run records (`refs/notes/tsugumi`), so `git log --notes=tsugumi --grep=failed` is not affected by the model's text. Read it from git with:
 
@@ -67,7 +67,7 @@ git log --notes=tsugumi-summary
 
 ## Comments
 
-A Card's comments ([Generating Cards from comments](features.md#generating-cards-from-comments)) are in `definitions/<id>/_meta.json`, so they are committed like the other settings. The details of a version in the version history show how the comments changed since the previous version (`VersionCommit.comments`).
+A Card's comments ([Generating Cards from comments](Usage.md#working-with-the-agent)) are in `definitions/<id>/_meta.json`, so they are committed like the other settings. The details of a version in the version history show how the comments changed since the previous version (`VersionCommit.comments`).
 
 - The changes are of five kinds: added, edited, resolved, reopened and deleted. One written and resolved within the same version counts as resolved.
 - Each shows who did it (the Agent or the user) and, for a resolving save, the Cards it changed. Who deleted a comment goes with the comment, so it is not shown for deletions (an Agent's deletion remains in the chat's row).
@@ -82,10 +82,6 @@ A new project holds the nixpkgs of the Tsugumi that made it (`flake.lock`) as a 
 ## Demo histories
 
 A demo folder's `.tsugumi-history.json` becomes commits, branches, tags and notes when a copy becomes a repository (the file itself goes away). The Cas A demo carries the process of trying bands, grids and stretches: failed branches, branches not adopted, the adopted version `rgb-v1`, the version that added the spectrum on top of it, and the version that pinned CIAO.
-
-## Implementation
-
-`core/src/versions.cc` (libgit2). The RPCs are `VersionInit`, `VersionMark`, `VersionCheckout`, `VersionGraph`, `VersionCanvas`, `VersionDiff` and `VersionSummary`. A failing git operation does not stop a run (that run records no version).
 
 ## Not yet possible
 

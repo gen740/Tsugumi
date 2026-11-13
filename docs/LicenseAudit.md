@@ -21,7 +21,7 @@ Keep the corresponding source available while distributing the binaries. Before 
 
 ## Web bundles
 
-The standalone `web/dist` is built from a checkout rather than published as a separate release. If distributing it separately, collect the license texts of its bundled dependencies using the build's esbuild metafile.
+The `tsugumi` CLI packages the Web UI. `cli/package-macos.sh` collects its npm license texts with `web/scripts/licenses.mjs --all`; preserve those notices when distributing `web/dist` separately too.
 
 `plotly.min.js` is distributed in upstream's minified form. Its overall license and some dependency notices are included, but not all dependency license texts. Vega's dependency license texts are collected from the lock file.
 

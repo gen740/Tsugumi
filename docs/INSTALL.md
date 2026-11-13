@@ -72,7 +72,7 @@ tsugumi update
 
 What follows is how to build the app, and how to develop or change Tsugumi itself and its runtime. Unless stated otherwise, run the commands at the root of the repository.
 
-An app built from source is the **development version** (Tsugumi Dev). It is a separate app from the release, with its own support folder (`~/Library/Application Support/Tsugumi-dev/`), so it does not touch the release's VM and both can run at once. The development version does not update itself ("Development and release versions" in [Development](Development.md#releases)).
+An app built from source is the **development version** (Tsugumi Dev). It is a separate app from the release, with its own support folder (`~/Library/Application Support/Tsugumi-dev/`), so it does not touch the release's VM and both can run at once. The development version does not update itself ("Development and release versions" in [Releasing](../RELEASING.md)).
 
 ### Prerequisites
 
@@ -80,7 +80,7 @@ An app built from source is the **development version** (Tsugumi Dev). It is a s
 - Xcode or the Command Line Tools
 - Only to build the VM's boot disk (when there is no [published one](https://github.com/gen740/tsugumi-vm)): Apple container (the version is `TSUGUMI_CONTAINER_VERSION` in [macOS/Container/versions.env](../macOS/Container/versions.env); after `container system start`)
 
-The pinned versions of the dependencies are in [docs/Lock.md](Lock.md).
+Dependency pins are defined in [flake.lock](../flake.lock), [Package.swift](../macOS/Package.swift) and the relevant package lock files.
 
 ### Minimal steps
 
@@ -112,7 +112,7 @@ macOS/Container/build-image.sh --vm
 
 The builder's resources can be set with the environment variables `TSUGUMI_BUILDER_CPUS` (default `8`), `TSUGUMI_BUILDER_MEMORY` (default `16G`) and `TSUGUMI_BUILDER_VOLUME` (the volume for the Nix cache, default `tsugumi-builder-nix`).
 
-`macOS/build-app.sh` packages the app into `dist/Tsugumi.app`. It bundles the shared module host, the demos, the VM's boot disk and the source the VM assembles Tsugumi from (`macOS/Container/vm-source.txt`), and signs it ad hoc for this machine. If there is no boot disk, run `build-image.sh --vm` first. With `--release` it builds a release (used by the release workflow; [Development](Development.md#releases)).
+`macOS/build-app.sh` packages the app into `dist/Tsugumi.app`. It bundles the shared module host, the demos, the VM's boot disk and the source the VM assembles Tsugumi from (`macOS/Container/vm-source.txt`), and signs it ad hoc for this machine. If there is no boot disk, run `build-image.sh --vm` first. With `--release` it builds a release (used by the release workflow; [Releasing](../RELEASING.md)).
 
 Starting the VM needs a code signature with the virtualization entitlement, so during development too, use the `dist/Tsugumi.app` that `macOS/build-app.sh` makes (a binary started directly with `swift run` has no signature and cannot start the VM). `tsugumi-vmctl`, which test scripts use to operate the VM, is built with `macOS/tools/build-vmctl.sh`.
 
@@ -124,7 +124,7 @@ The app icon `macOS/Resources/AppIcon.icns` is generated from `docs/assets/tsugu
 tests/ci-local.sh
 ```
 
-The test suites and commands are in [Tests in Development](Development.md#tests).
+The test suites and commands are in [Repository tests](../tests/README.md).
 
 ## Uninstalling
 

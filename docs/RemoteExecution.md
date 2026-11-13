@@ -2,18 +2,7 @@
 
 The host's `tsugumid` evaluates a Card's Nix definition for the worker's reported system. The remote worker receives that derivation's input closure, realises it by substitution or building, runs the Card in a sandbox and returns typed outputs, files, logs, displays and provenance. Workers never evaluate Card definitions.
 
-## Binaries and contract
-
-`workerd/` owns two executables:
-
-- `tsugumi-worker` is the light native Card host. It shares the host's `/nix/store`, loads the Card and handles invocations using `protocol/worker.fbs`. It does not link Nix. The pool and process management that start it remain in `core/`.
-- `tsugumi-remote-worker` is the Linux listener, durable queue, detached supervisor and Nix runner. It links Nix. Its internal invocation mode starts the same light Card host inside the job sandbox.
-
-`protocol/remote_worker.fbs` defines the host-to-remote contract once. C++, Swift and TypeScript use generated types. A message is a little-endian uint32 length followed by a FlatBuffer, at most 2 MiB. There is no HTTP or JSON operation header and no unframed body. Each connection carries one request and reply. Blob transfers use independent, contiguous chunks of at most 1 MiB, with digest, total size and offset. Published blobs are SHA-256 verified. A blob and the aggregate uploaded input bytes of one job are bounded to 64 GiB; specifications are bounded to 256 KiB and 1024 input blobs.
-
-Requests are `ProbeRequest`, `PutBlobRequest`, `GetBlobRequest`, `SubmitRequest`, `StatusRequest`, `CancelRequest` and `ReleaseRequest`. `CatalogRequest` is broker-local. Probe reports the server identity, project journal identity, native and supported systems, resource-limit capability and job cap. The specification and result manifest also use generated FlatBuffers types. Invocation values still use the independent Card worker contract.
-
-`WorkerDerivation` (`core/src/worker_derivation.hh`) fixes the `.drv`, expected manifest output and system. `DerivationClosureTransport` separates availability from execution: native workers use the shared store; remote assignments export/import the derivation's input closure through `ArchiveDerivationTransport`. Built outputs are not pushed. Each remote job uploads its own archive and invocation blobs; run data are never reused as a cache.
+The [worker contract](../protocol/remote_worker.fbs) defines requests and transfer limits; implementation is in [workerd/](../workerd/).
 
 ## Install and run
 
@@ -49,7 +38,7 @@ The invocation's **Run History → Info** shows its service, job ID, architectur
 State defaults to `$XDG_STATE_HOME/tsugumi/remote-execution` or `$HOME/.local/state/tsugumi/remote-execution`; override with `--state-dir` or `TSUGUMI_REMOTE_STATE_DIR`.
 
 - `server_id` and `projects/SCOPE/instance_id` are stable identities. Replacing them makes the host reject recovery against a different journal.
-- `store/nix/store` and the private store's Nix database persist across jobs. Only derivations, sources and built definitions enter this store. It is shared by this worker's jobs; the old per-invocation disposable store is gone.
+- `store/nix/store` and the private store's Nix database persist across jobs. Only derivations, sources and built definitions enter this store. It is shared by this worker's jobs.
 - `projects/SCOPE/jobs/JOB/` is job scratch: chunk staging, verified input/archive blobs, exact `spec.fb`, private workspace, result blobs and logs. Inputs remain isolated by project and job. The workspace is removed after the sandbox exits and results are imported. Accepted-job blobs stay until the host has durably saved the result or failure. A disconnected host can fetch them again; there is no result expiry or automatic reuse. Never-submitted uploads expire after one hour without an upload chunk.
 - `state` is atomically replaced and fsynced. It records state, fingerprint, deadline, supervisor identity and the result reference or bounded diagnostic needed for recovery. Locks serialize submission, cancellation, completion and release. A cancellation that wins before terminal commit suppresses the result.
 - The host's completion transaction queues `ReleaseRequest` in a small acknowledgement outbox. It retries after disconnects and restarts. On release the worker first commits a `Released` tombstone, then removes **all** job scratch, including inputs, outputs and logs. A crash during deletion is finished at the next inspection. Only identity/fingerprint tombstones and lock files remain to reject delayed submissions; they contain no spec, result reference, logs or run payload. Release is idempotent.
@@ -60,4 +49,4 @@ A host that never returns leaves its accepted job scratch available for recovery
 
 Key authentication over TLS, or SSH as the stream carrier, is the next change. It will wrap the same framing and generated contract. This revision intentionally implements neither keys nor TLS and does not move the broker into `tsugumi-agentd` or add a cache service.
 
-The socket-free C++ suite replaces journal/protocol cases from the Python daemon tests. Linux tests drive the C++ listener for admission, scoping, chunk integrity, parallel submissions, tombstones and restart identity. `tests/ci-remote-worker.sh` also runs real Cards through the TypeScript broker, covering results, cancellation and listener/host restarts. The old HTTP-specific tests and Python daemon are deleted. Full supervisor/cgroup fault injection and exhaustive crash-boundary coverage remain work in progress; the Linux/Nix integration must be run outside a sandbox that forbids listeners and Nix builds.
+Linux tests drive the C++ listener for admission, scoping, chunk integrity, parallel submissions, tombstones and restart identity. `tests/ci-remote-worker.sh` also runs real Cards through the TypeScript broker, covering results, cancellation and listener/host restarts. Full supervisor/cgroup fault injection and exhaustive crash-boundary coverage remain work in progress; the Linux/Nix integration must be run outside a sandbox that forbids listeners and Nix builds.

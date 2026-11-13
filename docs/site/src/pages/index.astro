@@ -6,7 +6,7 @@ const { groups, pages } = catalog()
 const { tagline, lead } = introduction()
 const know = STORY.filter(s => s.know)
 const shortNote = source => (notes.get(source) ?? '').replace(/`/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-const subtitles = { 'Getting started': 'Start using it', 'The ideas': 'Why it takes this shape', 'How it works': 'What is inside', Development: 'Build and maintain Tsugumi' }
+const subtitles = { 'Getting started': 'Start using it', 'The ideas': 'Why it takes this shape', 'How it works': 'What is inside', 'Dependencies and distribution': 'Pinned versions and licenses' }
 const doors = [
   { id: 'know', title: 'Learn about Tsugumi', subtitle: 'What problem it takes on, and how', items: know.map(s => ({ out: s.out, title: s.title ?? titleOf(s.source), note: s.sections ? 'The wall and the thread, from three boxes to Cas A' : shortNote(s.source) })) },
   ...groups.map(g => ({ id: g.title, title: g.title, subtitle: subtitles[g.title], items: g.docs

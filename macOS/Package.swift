@@ -124,11 +124,5 @@ let package = Package(
       dependencies: ["TsugumiRPC", "TsugumiLauncher", "TsugumiApp", "TsugumiAgentClient"],
       path: "Tests/TsugumiAppTests",
       swiftSettings: [.swiftLanguageMode(.v5)]),
-    // Drawing benchmarks: TSUGUMI_BENCH=1 swift test --filter TsugumiBenchmarks.
-    .testTarget(
-      name: "TsugumiBenchmarks",
-      dependencies: ["TsugumiApp"],
-      path: "Tests/TsugumiBenchmarks",
-      swiftSettings: [.swiftLanguageMode(.v5)]),
   ]
 )

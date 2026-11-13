@@ -394,7 +394,7 @@ It runs with the standard library alone. The Nix helper retains `packages = [ "J
 - R's `options()`, `par()` and open graphics devices;
 - the position of the random number generator (`.Random.seed`, Julia's default RNG): a second run continues the sequence where the first stopped unless the Card seeds it, in `main(ctx)` or in the hook below.
 
-The working directory and environment variables do not carry over: the worker sets both again for every call. The optional `on_run_start(ctx)` hook runs once before the first invocation of each run; reset per-run state there. Each invocation's record says whether its worker had served an earlier call. The kept interpreter ends when the Card's source or packages change, after a failed, stopped or timed out call, and under the limits in [Resident workers](features.md#resident-workers); the next call then starts a new one.
+The working directory and environment variables do not carry over: the worker sets both again for every call. The optional `on_run_start(ctx)` hook runs once before the first invocation of each run; reset per-run state there. Each invocation's record says whether its worker had served an earlier call. The kept interpreter ends when the Card's source or packages change, after a failed, stopped or timed out call, and under the limits below; the next call then starts a new one.
 
 Source loading happens before any invocation; read inputs and params inside `main(ctx)` or `on_run_start(ctx)`.
 
@@ -436,6 +436,10 @@ For gems, keep a `Gemfile` and its `Gemfile.lock` together in the Card's directo
 Native gems are built by Nix; the worker never installs them at runtime. See the
 [Ruby API](../agent/Reference/card-guide.md#ruby-srcmainrb) for files, displays and lifecycle details.
 
+## Worker state
+
+Cards start a fresh worker for each invocation by default. Set `reuseWorker: true` to retain state across invocations and runs; use the language's run-start hook to reset per-run state. Workers end when their build conditions change, on failure, cancellation or deadline, or when the project closes. Idle workers end after ten minutes; resident workers are limited to 2 GiB and 32 workers (least recently used ends first).
+
 ## What to read next
 
 | To know | Document |
@@ -447,88 +451,7 @@ Native gems are built by Nix; the worker never installs them at runtime. See the
 
 ## Go Cards
 
-
-Use `"language": "go"` and start from the whole
-`demos/en/go-pipeline/definitions/scale` folder. The **Go step** menu creates the
-same scaffold. `default.nix` selects its typed SDK:
-
-```nix
-{ pkgs, inputs, params }:
-let sdk = inputs.tsugumi.sdk { languages = [ "go" ]; };
-in { run = inputs.tsugumi.goCard { inherit sdk; src = ./src; }; }
-```
-
-The source is one `package main` module. `go.mod` requires `tsugumi v0.0.0`
-and replaces it with `./tsugumi`; Nix supplies that reserved directory and
-`tsugumi_adapter.go`. Define both functions (the run hook may be a no-op):
-
-```go
-package main
-
-import "tsugumi"
-
-func run(ctx *tsugumi.Context, input tsugumi.Input) (tsugumi.Output, error) {
-    params, err := ctx.Params()
-    if err != nil { return tsugumi.Output{}, err }
-    product := input.Number.Value * *params.Factor
-    if err := ctx.DisplayScalar(float64(product), "product"); err != nil {
-        return tsugumi.Output{}, err
-    }
-    return tsugumi.Output{Out: &tsugumi.OutputOut{Value: product}}, nil
-}
-
-func onRunStart(ctx *tsugumi.Context) error { return nil }
-```
-
-The generated `Input` fields are pointers to FlatBuffers object API values:
-`input.Number.Value`, not a raw message buffer. Missing optional inputs are nil.
-Every input/param buffer is copied to Go memory before unpacking, so values may
-be retained safely. Outputs own objects; an alias `Output<Port>` (for example
-`OutputOut`) identifies each output's type. A non-nil field emits that port;
-required outputs are still checked by the host. Optional scalar params are
-pointers, such as `params.Factor`. Use native `int64`/`uint64` without a float
-conversion for full integer precision.
-
-State in the library lives for the resident worker's lifetime. `onRunStart`
-runs before the first invocation of each run; `reuseWorker: false` creates a
-fresh process per invocation. The Go runtime is never unloaded from a live
-worker. `Context` copies share an internal guard: after the invocation ends,
-callbacks return `tsugumi.ErrClosed`. It exposes `RunID`, `Card`, `Invocation`,
-`WorkingDirectory`, `TemporaryDirectory`, `OutputDirectory`, `Cancelled`,
-`Done` and `Remaining` (`-1` means no deadline).
-
-Use `ctx.Go(func() error { ... })` for concurrent work. Schedule tasks before
-`run` returns; the SDK joins them before packing outputs and serializes host
-callbacks. Task panics/errors fail the invocation. Select on `ctx.Done()` to
-stop cooperatively. Cancellation or deadline also kills the entire worker,
-including an uncooperative goroutine, and the next call starts clean. Ordinary
-`go` statements are outside this task group: join them yourself, and do not
-expect their panics to be recovered by the caller. Such a crash is still
-reported as a worker failure. Data shared between tasks needs ordinary Go
-synchronization.
-
-File/Directory inputs have a `Value` path staged for this call. Write outputs
-under `ctx.OutputDirectory()` and assign the path to the owned output's
-`Value`. `ctx.Log` and `DisplayText`, `DisplayMarkdown`, `DisplayScalar`,
-`DisplayLineChart` (one series), `DisplayTable`, `DisplayImage`, `DisplayPoints`
-and `DisplayModule` return errors; propagate them. Displays stream while the
-Card runs. Return `tsugumi.Fail("output_invalid", "explanation")` for a
-structured failure, or an ordinary error for `worker_failed`.
-
-The default scaffold uses the standard library and FlatBuffers' Go runtime
-from the same pinned nixpkgs source as `flatc`. For external modules, keep
-`go.mod` and `go.sum` in the Card's `src` and name the lock in `default.nix`:
-`goCard { inherit sdk; src = ./src; lock = ./src/go.sum; hash = pkgs.lib.fakeHash; }`.
-Run the Card once and copy the actual `got: sha256-…` value from the build log
-into `hash`. Builds use a local immutable module cache and never update the
-lock. A Card without `lock` and `hash` cannot fetch external modules.
-Native libraries use `buildInputs`, and build tools use `nativeBuildInputs`.
-
-To make or update the lock on request, use the project shell with Go on PATH:
-`python3 <sdk>/go/update-lock.py <card>/src`. The helper runs `go mod tidy` in
-a temporary copy and writes only `go.mod` and `go.sum` to the Card's source
-directory. It accepts `--offline` for a populated module cache. Reload the
-project after generating the files, then obtain the hash as above.
+Start with the bundled `go-pipeline` demo. The [Go SDK and lock procedure](../agent/Reference/card-guide.md#go-cards) is the reference for typed values, managed goroutines and worker state.
 
 ## C#
 
@@ -536,84 +459,7 @@ Choose Processing (C#) for a .NET Card. The [C# guide](CSharp.md) covers typed i
 
 ## Rust Cards
 
-
-Use `"language": "rust"`. Start from `demos/en/rust-pipeline/definitions/scale`
-for a Card using only the standard library and SDK. The UI's **Rust step**
-creates the same scaffold. `default.nix`:
-
-```nix
-{ pkgs, inputs, params }:
-let sdk = inputs.tsugumi.sdk { languages = [ "rust" ]; };
-in { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }
-```
-
-`src/Cargo.toml` declares a `cdylib` and `tsugumi = { path = "tsugumi" }`.
-That path is reserved for the crate generated from the Card's contract. The
-SDK includes the Rust runtime source of the same FlatBuffers version as
-`flatc`. A Card without a lock builds offline using the SDK's own crates.
-
-To add crates.io dependencies on request, add them to `src/Cargo.toml`, then
-use the project shell with Cargo on PATH. Build the FlatBuffers source from
-the Card's nixpkgs pin and pass it to the lock helper. For a GitHub nixpkgs
-pin, for example:
-
-```sh
-flatbuffers_src=$(nix build --no-link --print-out-paths "github:NixOS/nixpkgs/<revision>#flatbuffers.src")
-python3 <sdk>/rust/update-lock.py <card>/src --flatbuffers-source "$flatbuffers_src"
-```
-
-The helper resolves in a temporary copy and writes only `src/Cargo.lock`.
-Reload the project and name it in `rustCard` with
-`lock = ./src/Cargo.lock; hash = pkgs.lib.fakeHash;`. Run once and copy the
-`got: sha256-…` value from the build log into `hash`. This pins the whole
-vendored directory. Repeat when updating dependencies. Native libraries go in
-`buildInputs` and build tools such as pkg-config in `nativeBuildInputs`. The
-Card never fetches crates when it runs.
-
-```rust
-use tsugumi::{Context, Input, Output, Result};
-
-fn run(ctx: &Context<'_>, input: Input<'_>) -> Result<Output> {
-    let mut out = tsugumi::outputs::Out::default();
-    out.value = input.number.value() * ctx.params()?.factor().unwrap_or(1);
-    ctx.display_scalar(out.value as f64, "product")?;
-    Ok(Output { out: Some(out) })
-}
-tsugumi::export!(run);
-```
-
-`Input` contains verified, borrowed FlatBuffers views; optional ports are
-`Option`. Inputs and `ctx.params()?` cannot outlive the current context. Copy or
-`unpack()` a value before retaining it. `Output` holds owned FlatBuffers object
-API types, aliased by port under `tsugumi::outputs` (for example `Out`). Construct
-them with `Default` and assign fields: generated types are non-exhaustive.
-Input/output namespaces differ, so explicitly construct an output object rather
-than returning an input's owned object. `Some` emits a port; `None` omits it and
-normal required-output validation still applies. Integers remain native `i64`/
-`u64`, including values outside a double's exact range.
-
-The worker retains the library and its state by default. Use
-`tsugumi::export!(run, on_run_start)` with a `fn(&Context<'_>) -> Result<()>`
-hook for per-run initialization; `reuseWorker: false` starts fresh each call.
-Keep owned state in ordinary Rust synchronization/thread-local containers.
-`Context` cannot be sent/shared across threads. `ctx.invocation()`, `run_id()`,
-`card()`, `cancelled()` and `remaining_ms()` describe the current call.
-
-File/Directory inputs are typed tables with a `value()` path, staged afresh for
-each invocation. Write output files beneath `ctx.output_directory()` and put
-that absolute path in the output object's `value`. Other paths are
-`working_directory()` and `temporary_directory()`.
-
-`ctx.log()` and all display methods return `Result<()>`: `display_text`,
-`display_markdown`, `display_scalar`, `display_line_chart` (one series),
-`display_table`, `display_image`, `display_points`, and `display_module` (Plotly/
-Vega-Lite JSON). Displays stream before completion. Propagate errors with `?` or
-return `Error::new("output_invalid", "explanation")`. Panics are caught at the
-FFI boundary and fail the invocation; the failed worker is discarded. Explicit
-abort, double panic during unwinding and native crashes still terminate the
-worker, and the daemon records that failure. Cancellation/deadlines stop even
-uncooperative native code; check the context for cooperative early exit.
-
+Start with the bundled `rust-pipeline` demo. The [Rust SDK and lock procedure](../agent/Reference/card-guide.md#rust-cards) covers borrowed inputs, owned outputs, state and failures.
 
 ## Card-owned web views
 
@@ -691,19 +537,7 @@ to 1 MiB; up to 64 blobs together to 8 MiB (within the existing 16 MiB frame lim
 outputs of this same SDK and use the same loader and RPC. There is no old
 named-renderer JSON-only wire form.
 
-Both UIs read code through `ModuleReadRequest` in pages of at most 1 MiB,
-cache it by identity, and never read the Nix store themselves. Code is separate
-from retained display data; display and run retention rules are unchanged.
-Browser frames have opaque origins (`sandbox="allow-scripts"`, without
-`allow-same-origin`), no host DOM, storage or application bridge. CSP denies
-connections and external resources, forms, objects and base URLs. The outer
-document allows no nested frame to load a URL (`frame-src 'none'`, in the
-server's header and in `viewer.html` itself), which also stops the Card's frame
-from navigating itself to another address and carrying data out in the URL. Mac uses the same inner frame in a nonpersistent
-WKWebView, with no file read grant, a navigation delegate refusing non-`about:`
-navigation, and content rules blocking network and file resources. Failure to
-compile these rules prevents loading. Only the trusted outer document has the
-ready/state bridge to native code; messages from subframes are rejected there.
+The [view isolation boundary](security.md#showing-card-views-line-charts-plotly-vega-lite-and-card-owned-modules) applies to both platforms; code is separate from retained display data.
 
 The runnable example is
 [`tests/fixtures/view-point-cloud`](../tests/fixtures/view-point-cloud): Python
@@ -771,38 +605,7 @@ resources. The host cancels animation, removes listeners and frees input memory.
 Initialization failures, callback failures and device loss reach the ordinary
 module error bridge. No worker needs to remain alive.
 
-The shared template builds on [Emdawnwebgpu](https://dawn.googlesource.com/dawn/+/01940842b667a7812d0e4ca0ef4367fbec294241/src/emdawnwebgpu/pkg/README.md),
-Dawn's implementation of `webgpu.h` over the browser's WebGPU. Emscripten 6.0.9
-in the pinned nixpkgs selects release `v20260423.175430`; the SDK fetches that
-text-only port with its upstream SHA-512 through Nix, so compilation makes no
-network downloads. It retains the full WebGPU/C/C++ runtime in a shared main
-module rather than generating a different JS binding for each Card. The main
-module's supporting Wasm is embedded in the shared ES module. No GPU-call
-marshaling has been reimplemented in Tsugumi.
-
-The core assembles the shared template and the Card's Wasm into self-contained
-source when serving `ModuleReadRequest`. Both UIs keep the same loader, page
-limit and opaque-frame isolation. Only a canonical store `index.js` may be a
-shared target, `view.wasm` must resolve inside the Card's output, and the
-assembled source is limited to 32 MiB (the Wasm binary to 8 MiB). There are no
-runtime imports, relative fetches, new host-server endpoints or UI store reads.
-
-[`tests/fixtures/view-point-cloud-wasm`](../tests/fixtures/view-point-cloud-wasm)
-uses the same Python data generator as the JavaScript example: 12,000 float32
-XYZ triples, rotated in C on WebGPU. It also demonstrates frame animation and
-wheel zoom. `tests/python/test_sdk_examples.py` checks both fixtures through
-core RPC, including shared-template identity and Wasm packaging.
-`node web/tests/wasmView.mjs` exercises the boundary with a GPU/DOM stand-in;
-set `TSUGUMI_WASM_TEMPLATE` and `TSUGUMI_WASM_VIEW` to built file paths to test
-the actual binding and C Wasm with that same stand-in. This does not render in
-a browser or verify WebKit/WebGPU availability. Each Nix output records its
-uncompressed byte count in `size-bytes`; these are definition outputs, never
-run data. Nix builds and browser rendering must be checked in an unrestricted
-environment.
-
-A possible follow-up is an RPC-relayed channel to a live worker; a view has no
-direct worker socket.
-
+Use the [C/Wasm point-cloud example](../tests/fixtures/view-point-cloud-wasm) to try the API.
 
 ### Built-in line chart
 

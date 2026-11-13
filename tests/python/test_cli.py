@@ -2,7 +2,7 @@
 Nix are stand-ins here, so all of it runs anywhere), and the web server with the
 Mac's VM backend against a stand-in for tsugumi-vmhost: the desktop app's
 settings and recent projects, with no second copy. A real VM is checked by hand
-(docs/Development.md)."""
+(tests/README.md)."""
 
 from __future__ import annotations
 
