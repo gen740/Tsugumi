@@ -1,2 +1,3 @@
-node_modules/
+# Also the link `nix run .#dev-doc` makes to the Nix store.
+node_modules
 .astro/

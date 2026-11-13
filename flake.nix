@@ -68,6 +68,14 @@
     in
     {
       packages = forAll packagesFor;
+      apps = forAll (pkgs: {
+        # The documentation site's dev server on the working tree (docs/site).
+        dev-doc = {
+          type = "app";
+          program = pkgs.lib.getExe (pkgs.callPackage ./nix/dev-doc.nix { });
+          meta.description = "Serve the documentation site from the working tree with live reload";
+        };
+      });
       checks = forAll (pkgs: {
         web = pkgs.callPackage ./nix/web-checks.nix { web = (packagesFor pkgs).web; };
         site-player = pkgs.callPackage ./nix/site-player-check.nix { web = (packagesFor pkgs).web; };
