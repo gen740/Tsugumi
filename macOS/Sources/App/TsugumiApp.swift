@@ -328,7 +328,7 @@ struct WorkbenchCommands: Commands {
         Button("100% で表示") { post(.canvasZoom, ["zoom": 0.0]) }.shortcut(.actualSize).disabled(!onCanvas)
         Button("拡大") { post(.canvasZoom, ["zoom": 1.2]) }.shortcut(.zoomIn).disabled(!onCanvas)
         Button("縮小") { post(.canvasZoom, ["zoom": 1 / 1.2]) }.shortcut(.zoomOut).disabled(!onCanvas)
-        Button("整列") { if let s = session, let t = tab { s.arrange(t.scope) } }
+        Button("整列") { if let s = session, let t = tab { Task { await s.arrange(t.scope) } } }
           .shortcut(.arrange).disabled(!onCanvas || !(session?.connected ?? false))
         Button("グループ操作") { post(.canvasGroup) }
           .shortcut(.group).disabled(!onCanvas || (tab?.selection.isEmpty ?? true))
