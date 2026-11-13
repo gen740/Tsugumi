@@ -231,3 +231,26 @@ def test_a_terminal_is_a_real_terminal(web, tmp_path):
         time.sleep(0.1)
     else:
         raise AssertionError("the terminal did not end")
+
+
+def test_project_creation_forwards_core_errors_and_accepts_empty_folders(web, tmp_path):
+    _, port, key = web
+    headers = {"Cookie": f"tsugumi_{port}={key}", "X-Tsugumi": "1", "Content-Type": "application/json"}
+    destination = tmp_path / "created"
+    destination.mkdir()
+
+    def create(name, flow="leftToRight"):
+        response, data = request(port, "POST", "/api/project/create", headers,
+                                 json.dumps({"parent": str(tmp_path), "name": name, "flow": flow}))
+        return response.status, json.loads(data)
+
+    status, result = create(destination.name)
+    assert status == 200 and result["path"] == str(destination.resolve())
+    assert json.loads((destination / "layout.json").read_text()) == {"flow": "leftToRight"}
+    status, result = create(destination.name)
+    assert status == 400 and result["code"] == "folder_not_empty"
+    status, result = create("bad/name")
+    assert status == 400 and result["code"] == "invalid_project_name"
+    status, result = create("bad-flow", "sideways")
+    assert status == 400 and result["code"] == "invalid_flow"
+    assert not (tmp_path / "bad-flow").exists()

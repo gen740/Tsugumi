@@ -24,7 +24,6 @@
 "%@ の準備ができました。次に終了したときに更新します。" = "%@ is ready. It is installed the next time you quit.";
 "%@ は別の場所でも変更されたため保存していません。変更は保持しています。" = "%@ was also changed elsewhere, so it was not saved. The changes are kept.";
 "%@ は削除されたか、まだ保存されていません。" = "%@ was deleted or has not been saved yet.";
-"%@ は空ではありません。空のフォルダか新しい名前を選んでください。" = "%@ is not empty. Choose an empty folder or a new name.";
 "%@ を Workflow に配置しました（未保存）。" = "Placed %@ in the Workflow (not saved).";
 "%@ をダウンロードしています" = "Downloading %@";
 "%@ を削除できませんでした: %@" = "Could not delete %@: %@";
@@ -293,6 +292,7 @@
 "このデバイスのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。" = "The tokens on this device were removed, but the revocation at OpenAI could not be confirmed. You can disconnect Tsugumi in ChatGPT settings.";
 "このデモを開く" = "Open This Demo";
 "このビルドにはグラフの表示部品（modules）がありません" = "This build has no chart viewer (modules)";
+"このビルドには既定の Nixpkgs が設定されていません。" = "This build has no default Nixpkgs pin.";
 "このプロジェクト" = "This project";
 "このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。" = "The Nixpkgs this project uses (kept with its versions). Changing it rebuilds the Cards.";
 "このプロジェクトに根拠の記録がありません" = "This evidence is not available in this project";
@@ -328,6 +328,7 @@
 "この形式の整形には対応していません" = "Formatting is not available for this file type";
 "この接続では版の要約を作りません。" = "This connection does not make version summaries.";
 "この接続先の認証トークンを入力してください。" = "Enter the authentication token for this endpoint.";
+"この操作にはユーザーの権限が必要です。" = "This operation requires user authorization.";
 "この操作はできません" = "This cannot be done";
 "この日時より前に終わった実行を削除しますか？" = "Delete the runs that ended before this date?";
 "この版から始めますか？" = "Start from this version?";
@@ -516,7 +517,9 @@
 "デモ「%@」の案内を始めます" = "Starting the tour of the demo “%@”";
 "デモ「%@」を案内中" = "Touring the demo “%@”";
 "デモが見つかりません" = "No demos found";
+"デモが見つかりません。" = "The demo was not found.";
 "デモの案内を続けます" = "Continuing the demo tour";
+"デモの言語が正しくありません。" = "The demo language is invalid.";
 "デモは Documents/Tsugumi に編集可能なコピーとして開きます。同梱の元データは変更されません。" = "Demos open as editable copies in Documents/Tsugumi. The bundled originals are never changed.";
 "デモを見せて" = "Show me a demo";
 "デモを見る" = "Browse Demos";
@@ -559,6 +562,8 @@
 "フォルダを添付…" = "Attach a folder…";
 "フォルダを添付しますか？" = "Attach the folder?";
 "フォルダを追加…" = "Add Folder…";
+"フォルダ名に使えない文字が含まれているか、名前が空です。" = "The folder name is empty or contains invalid characters.";
+"フローの方向が正しくありません。" = "The flow direction is invalid.";
 "ブラウザでサインインを続けてください…" = "Continue signing in in your browser…";
 "ブロック" = "Blocked";
 "プランの利用を許可" = "Allow Plan Use";
@@ -572,6 +577,7 @@
 "プロジェクトのフォルダを作成する場所を選んでください" = "Choose where to make the project's folder";
 "プロジェクトの実行環境" = "Project execution environment";
 "プロジェクトの実行環境が起動するとターミナルを使えます。" = "The terminal can be used once the project's environment is running.";
+"プロジェクトの操作に失敗しました。" = "The project operation failed.";
 "プロジェクトの環境 %lld 件を削除しました" = "Deleted %lld project environments";
 "プロジェクトの設定" = "Project Settings";
 "プロジェクトへのアクセスは許可されませんでした。" = "Access to the project was not allowed.";
@@ -660,6 +666,7 @@
 "何が起きたか" = "What happened";
 "何を受け取り、何を出し、どう処理するかを書きます" = "Write what it takes, what it gives and how";
 "作成" = "Create";
+"作成先は空ではありません。空のフォルダか新しい名前を選んでください。" = "The destination is not empty. Choose an empty folder or a new name.";
 "作成場所を選ぶ…" = "Choose Location…";
 "作業・出力領域を使う" = "Use work and output area";
 "作業中の Agent" = "The Agent at work";
@@ -1094,6 +1101,7 @@
 "最新を読み込む" = "Load Latest";
 "最近のプロジェクト" = "Recent Projects";
 "最近開いたプロジェクトはありません" = "No recent projects";
+"有効なプロジェクトのフォルダを指定してください。複製先は元のフォルダの外にしてください。" = "Choose a valid project folder and a destination outside the source folder.";
 "未保存" = "Unsaved";
 "未保存の変更" = "Unsaved changes";
 "未保存の変更があります。保存してから選んでください。" = "There are unsaved changes. Save them first.";

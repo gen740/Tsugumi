@@ -525,16 +525,13 @@ import Testing
   #expect(MathImages.image("a \\quad b \\bmod 2", size: 13, display: false) != nil)
 }
 
-/// A new project goes into a new or empty folder, never over another.
+/// The host registry uses Unix epoch milliseconds on every client.
 @MainActor
-@Test func aNewProjectNeverOverwritesAFolder() throws {
-  let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tsugumi-new-\(UUID().uuidString)")
-  defer { try? FileManager.default.removeItem(at: dir) }
-  try AppModel.writeNewProject(at: dir, name: "first", flow: "leftToRight")
-  #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent("tsugumi.json").path))
-  #expect(throws: FolderNotEmpty.self) { try AppModel.writeNewProject(at: dir, name: "second", flow: "leftToRight") }
-  let doc = try String(contentsOf: dir.appendingPathComponent("tsugumi.json"), encoding: .utf8)
-  #expect(doc.contains("first") && !doc.contains("second"))
+@Test func hostRecentDatesUseUnixMilliseconds() throws {
+  let recents = try AppModel.decodeRecents([["path": "/project", "name": "Project", "openedAt": 1_700_000_000_125]])
+  #expect(recents.count == 1)
+  #expect(recents[0].openedAt.timeIntervalSince1970 == 1_700_000_000.125)
+  #expect(!HostProjectError(code: "folder_not_empty").description.isEmpty)
 }
 
 /// The same numbers as the web (tests/fixtures/port-grid-contract.json, web/tests/portGrid.ts).

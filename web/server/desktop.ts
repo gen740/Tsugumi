@@ -1,11 +1,9 @@
 // The desktop app's settings for the Mac's `tsugumi` command: what both have
 // lives where the app keeps it, not in a second copy. The app's connection and
 // model choices are in its UserDefaults (read and written through
-// tsugumi-vmhost, vm.ts), its recent projects in its support folder. API keys
+// tsugumi-vmhost, vm.ts). Recent projects belong to the host-side core. API keys
 // are its Keychain items already (chat.ts). What only this server has (the
 // guide's state, the chats) stays in its data folder.
-import fs from 'node:fs'
-import path from 'node:path'
 import type { VMEnvironmentManager } from './vm'
 
 // The server's settings and the app's keys for them (ChatController.AgentSettings,
@@ -77,30 +75,4 @@ export function desktopSettings(vm: VMEnvironmentManager): DesktopSettings {
     },
   }
   return d
-}
-
-// ---- Recent projects ---------------------------------------------------------
-
-/** Seconds from 1970 to 2001: the app's JSONEncoder writes dates from there. */
-const APPLE_EPOCH = 978_307_200
-
-export interface Recent { path: string; name: string; openedAt: number }
-
-/** The app's recent-projects.json; openedAt in milliseconds here, as the page takes it. */
-export function desktopRecents(support: string) {
-  const file = path.join(support, 'recent-projects.json')
-  return {
-    read(): Recent[] {
-      try {
-        return (JSON.parse(fs.readFileSync(file, 'utf8')) as Recent[]).map((r) => ({ ...r, openedAt: (r.openedAt + APPLE_EPOCH) * 1000 }))
-      } catch {
-        return []
-      }
-    },
-    write(list: Recent[]) {
-      fs.mkdirSync(support, { recursive: true })
-      fs.writeFileSync(file + '.tmp', JSON.stringify(list.map((r) => ({ ...r, openedAt: r.openedAt / 1000 - APPLE_EPOCH }))))
-      fs.renameSync(file + '.tmp', file)
-    },
-  }
 }

@@ -11,7 +11,10 @@ flatbuffers_root=$(cd "$(dirname "$(command -v flatc)")/.." && pwd)
 cmake_path=$(command -v cmake)
 run() {
   env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" \
-    HOSQ_INCLUDE_DIR="$HOSQ_INCLUDE_DIR" PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-}" \
+    HOSQ_INCLUDE_DIR="$HOSQ_INCLUDE_DIR" \
+    TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV:?}" \
+    TSUGUMI_CARD_NIXPKGS_NARHASH="${TSUGUMI_CARD_NIXPKGS_NARHASH:?}" \
+    PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-}" \
     CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-}" "$@"
 }
 run "$cmake_path" --fresh -S "$repo" -B "$repo/build-host" -G Ninja \
