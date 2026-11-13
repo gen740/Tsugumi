@@ -332,5 +332,39 @@
   {"connection": "chatgpt", "model": "gpt-6-luna", "effort": "", "fastModel": "", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "fastPrice": null, "present": {}, "absent": ["reasoning", "service_tier", "max_output_tokens", "output_config", "speed", "max_tokens"]}},
   {"connection": "chatgpt", "model": "gpt-6.1-luna", "effort": "high", "fastModel": "gpt-6.1-luna", "expect": {"efforts": [], "default": null, "fastPrice": null, "present": {}, "absent": ["reasoning", "service_tier", "max_output_tokens", "output_config", "speed", "max_tokens"]}},
   {"connection": "fixture", "model": "fixture", "effort": "high", "fastModel": "fixture", "expect": {"efforts": [], "default": null, "fastPrice": null, "present": {"max_tokens": 32768}, "absent": ["output_config", "speed", "reasoning", "service_tier", "max_output_tokens"]}}
-]
+],
+ "delegateSchema": {
+   "type": "object",
+   "additionalProperties": false,
+   "required": [
+     "tasks"
+   ],
+   "properties": {
+     "tasks": {
+       "type": "array",
+       "minItems": 1,
+       "maxItems": 8,
+       "items": {
+         "type": "object",
+         "additionalProperties": false,
+         "required": [
+           "name",
+           "instruction"
+         ],
+         "properties": {
+           "name": {
+             "type": "string",
+             "minLength": 1,
+             "description": "a unique nonempty name for the helper"
+           },
+           "instruction": {
+             "type": "string",
+             "minLength": 1,
+             "description": "the helper's initial user message: the task, Card ids, user requirements and shared decisions; ask it to read the project context it needs. It receives the system rules, but no parent conversation, automatic project snapshot or warm-up. State whether it should run or leave that to the main Agent."
+           }
+         }
+       }
+     }
+   }
+ }
 }

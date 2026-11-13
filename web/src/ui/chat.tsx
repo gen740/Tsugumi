@@ -292,6 +292,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
   const [toAttach, setToAttach] = useState<string[]>()
   const [attaching, setAttaching] = useState(false)
   const [attachError, setAttachError] = useState<string>()
+  const [askThoughts, setAskThoughts] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   // The saved models per connection set up (no request to the provider from here).
@@ -478,6 +479,12 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
             <span className="ellipsis">{[modelName(model), chat.provider.effort, chat.provider.fast && 'Fast'].filter(Boolean).join(' · ')}</span>
             <Icon name="chevron.down" size={8} />
           </button>
+          <button type="button" className="model-menu" disabled={!chat.provider.thoughtModel}
+            title={chat.thoughts.label} aria-label={chat.thoughts.label} aria-pressed={chat.thoughts.enabled}
+            onClick={() => { if (!chat.thoughts.toggle()) setAskThoughts(true) }}>
+            <Icon name={chat.thoughts.enabled ? 'bubble.left.and.text.bubble.right.fill' : 'bubble.left.and.text.bubble.right'} />
+            {chat.thoughts.enabled && <span className="caption2">{L('入力 {0}、出力 {1}', chat.thoughts.usage.inputTokens, chat.thoughts.usage.outputTokens)}</span>}
+          </button>
           <span className="spacer" />
           <span className="caption2 tertiary" title={L('直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 {0}、キャッシュに書いた量 {1}', chat.usage.cacheReadTokens ?? 0, chat.usage.cacheWriteTokens ?? 0)}>{Math.floor(chat.usage.inputTokens / 1000)}k</span>
           {chat.busy
@@ -486,6 +493,16 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
                 title={prefs.sendKey === 'returnKey' ? L('送信（Return）') : L('送信（{0}Return）', cmd)} aria-label={L('送信')}><Icon name="arrow.up.circle.fill" size={22} /></button>}
         </div>
       </div>
+      {askThoughts && <Sheet onClose={() => setAskThoughts(false)} width={520}>
+        <div className="confirm">
+          <div className="confirm-title">{L('思考の過程を描きますか？')}</div>
+          <div className="secondary">{L('Agent の発言とツールの結果を、数秒ごとに小さなモデル（{0}、接続先: {1}）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。', chat.provider.thoughtModel ?? '', chat.provider.name)}</div>
+          <div className="row end gap8">
+            <Button onClick={() => setAskThoughts(false)}>{L('キャンセル')}</Button>
+            <Button kind="prominent" disabled={!chat.provider.thoughtModel} onClick={() => { chat.thoughts.accept(); setAskThoughts(false) }}>{L('描く')}</Button>
+          </div>
+        </div>
+      </Sheet>}
       {picking && <FolderPicker message={L('チャットに添付するフォルダ（中身は Agent が読み、接続先に送られます）')} onClose={() => setPicking(false)} onPickMultiple={(p) => {
         setPicking(false)
         setAttachError(undefined)
