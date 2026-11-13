@@ -18,6 +18,7 @@ let
   inherit (pkgs) lib;
   sdkRoot = ./..;
   builtinViews = import ./builtin-views.nix { inherit pkgs; };
+  wasmViews = import ./wasm-view.nix { inherit pkgs; };
   flatc = "${pkgs.flatbuffers}/bin/flatc";
   schemas = [ "_inputs" "_outputs" "_params" ];
 
@@ -795,6 +796,9 @@ rec {
   # Whether the worker stays across invocations and runs (reuseWorker) is a
   # setting of the Card (_card.json), not of its build.
   viewModule = import ./view-module.nix { inherit pkgs; };
+  wasmViewModule = wasmViews.build;
+  wasmViewHeaders = wasmViews.headers;
+  wasmViewTemplate = wasmViews.template;
 
   manifest = manifestFor false;
   manifestFor =
