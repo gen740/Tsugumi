@@ -52,11 +52,10 @@ import TsugumiRPC
     let p = Tsugumi_Service_ProviderInputT()
     p.apiKey = "NATIVE_SECRET_SENTINEL"
     let reply = try await client.call("ProviderSetRequest", ["profile": "native-test", "id": "anthropic", "provider": p])
-    let status = try #require(reply["value"] as? [String: Any])
-    #expect(status["configured"] as? Bool == true)
+    #expect(reply["configured"] as? Bool == true)
     #expect(!String(describing: reply).contains(p.apiKey!))
     let removed = try await client.call("ProviderSetRequest", ["profile": "native-test", "id": "anthropic", "remove": true])
-    #expect((removed["value"] as? [String: Any])?["configured"] as? Bool == false)
+    #expect(removed["configured"] as? Bool == false)
   }
 }
 

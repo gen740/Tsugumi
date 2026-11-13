@@ -36,8 +36,7 @@ func availableSkills(project: URL? = nil, folders: [String], conversationID: Str
   var fields: [String: Any] = ["folders": folders]
   if let conversationID { fields["conversation_id"] = conversationID }
   if let project { fields["project_path"] = project.standardizedFileURL.path }
-  let result = try await CoreAgentClient.shared.call("SkillsListRequest", fields)
-  let value = result["value"] as? [String: Any] ?? [:]
+  let value = try await CoreAgentClient.shared.call("SkillsListRequest", fields)
   let skills = (value["skills"] as? [[String: String]] ?? []).filter { $0["status"] == "ready" && (project != nil || $0["path"] != "builtin:demo") }.map { s in
     let path = s["path"] ?? ""
     if path == "builtin:demo" { return ChatController.demoSkill }
