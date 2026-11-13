@@ -49,6 +49,9 @@ Someone is doing other work on the same Mac. Do not take the foreground, and do 
 
 CI runs on GitHub Actions (the Linux and macOS jobs of [.github/workflows/ci.yml](.github/workflows/ci.yml)). To run the same checks locally, use [tests/ci-local.sh](tests/ci-local.sh). On a Mac it runs the macOS job as it is, and the Linux job in a Docker (OrbStack) container.
 
+Run [tests/check-fast.sh](tests/check-fast.sh) before every push: it runs the static tests (`tests/static`, which CI runs first, in about a minute) and builds the Web UI and site player checks.
+Use `--no-nix` for only the static tests (seconds).
+
 ### Compatibility
 
 - **Do not worry about compatibility until v1.0.0.** Project documents (`tsugumi.json`, `layout.json` and so on), settings, the RPC protocol, storage formats and the contents of the VM and support folders may change without migration code or compatibility layers.
