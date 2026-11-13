@@ -95,8 +95,12 @@ final class AppModel {
     // that must not touch the user's own environment.
     let support = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"].map { URL(fileURLWithPath: $0) }
     environments = EnvironmentManager(support: support, image: VMImage.find(bundle: bundle))
-    Task { await refreshHome() }
+    initialRefresh = Task { await refreshHome() }
   }
+
+  /// The refresh started by `init`. A caller that sets the core's state directory
+  /// itself waits for it, so it cannot start the shared core there later.
+  private(set) var initialRefresh: Task<Void, Never>?
 
   private func hostRequest(_ method: String, _ fields: [String: Any] = [:]) async throws -> [String: Any] {
     do { return try await CoreAgentClient.shared.call(method, fields) }
