@@ -2,10 +2,12 @@
 #include "nix_store.hh"
 
 #include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <memory>
 #include <mutex>
 #include <nix/store/derivations.hh>
@@ -64,6 +66,19 @@ auto RemoteWorkerStore::realise(
     const DerivationClosureTransport& transport,
     const std::filesystem::path& store_root, const WorkerDerivation& derivation,
     const std::function<void(const std::string&)>& log) -> NixResult {
+  // Invocations run in separate processes but share this persistent store.
+  // Serialize its entire connection lifetime, including database creation and
+  // closure import. The lock ends before Card execution, so Cards can still run
+  // concurrently. Never unlink it: surviving supervisors also use this inode.
+  nix::AutoCloseFD store_lock{::open((store_root / "realise.lock").c_str(),
+                                    O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
+                                    0600)};
+  if (!store_lock)
+    throw std::runtime_error("cannot open remote Nix store lock");
+  while (::flock(store_lock.get(), LOCK_EX) != 0) {
+    if (errno == EINTR) continue;
+    throw std::runtime_error("cannot lock remote Nix store");
+  }
   nix::initLibStore(true);
   auto logger = std::make_unique<WorkerLogger>(log);
   auto* sink = logger.get();
