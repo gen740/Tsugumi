@@ -792,7 +792,7 @@ uses the same Python data generator as the JavaScript example: 12,000 float32
 XYZ triples, rotated in C on WebGPU. It also demonstrates frame animation and
 wheel zoom. `tests/python/test_sdk_examples.py` checks both fixtures through
 core RPC, including shared-template identity and Wasm packaging.
-`node tests/sdk/wasm-view.mjs` exercises the boundary with a GPU/DOM stand-in;
+`node web/tests/wasmView.mjs` exercises the boundary with a GPU/DOM stand-in;
 set `TSUGUMI_WASM_TEMPLATE` and `TSUGUMI_WASM_VIEW` to built file paths to test
 the actual binding and C Wasm with that same stand-in. This does not render in
 a browser or verify WebKit/WebGPU availability. Each Nix output records its
