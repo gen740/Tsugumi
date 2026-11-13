@@ -71,6 +71,11 @@ table NamedValue {
   /// SHA-256 (hex) of a recorded value's bytes, present on values read from
   /// the run history; it tells two values apart when inline_bytes is omitted.
   content_hash:string (id: 7);
+  /// Current location of the independently kept File / Directory content.
+  /// Separate from the original recorded bytes, so copied projects retain
+  /// the evidence's hash while reporting the content's actual location.
+  file_path:string (id: 8);
+  file_missing:bool (id: 9);
 }
 
 // ---- Display ---------------------------------------------------------------

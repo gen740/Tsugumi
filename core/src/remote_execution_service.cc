@@ -113,7 +113,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
   const auto& settings = node.settings;
   auto& s = request.summary;
   stdfs::create_directories(request.directory);
-  auto spec = stage_remote_invocation(client_, target_, server_id_, instance_, service_.project_id(), service_.store().state_dir(),
+  auto spec = stage_remote_invocation(client_, target_, server_id_, instance_, service_.project_id(), service_.file_roots(),
                                       archive_digest_, request);
   if (request.cancel.load()) throw Failed(FailureKind::cancelled, "run cancelled before external submission");
 
@@ -124,8 +124,15 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
   s.execution_resources = settings.execution_resources;
   s.execution_state = RemoteExecutionState::queued;
   s.worker_reused = false;
-  RemoteJobRecord job{{}, instance_, server_id_, std::move(spec), remote_recovery_contract(node, request.inputs, request.sources),
-                      request.directory.lexically_relative(run_dir_of(service_, s.run_id)).generic_string()};
+  // A detached job can outlive the latest local scratch. Keep its recorded
+  // inputs before submission; the gateway already owns the staged job inputs.
+  auto recorded_inputs = request.inputs;
+  if (settings.record_io)
+    for (auto& value : recorded_inputs)
+      value = service_.keep_file_value(value, run_dir_of(service_, s.run_id) / "values" / path_key(node.path) /
+                                                std::to_string(s.invocation) / "input" / value.name, request.cancel);
+  RemoteJobRecord job{{}, instance_, server_id_, std::move(spec), remote_recovery_contract(node, recorded_inputs, request.sources),
+                      request.directory.lexically_relative(service_.run_scratch() / "runs" / s.run_id).generic_string()};
   // The job is durable before it can be submitted.
   request.start([&](sql::Db& db) {
     job.invocation = s;
@@ -253,7 +260,14 @@ auto RemoteExecutionService::recover(RemoteJobRecord& job, const RemoteJobState&
   try {
     auto contract = remote_recovery_contract(job.contract);
     const auto run_dir = run_dir_of(service_, inv.run_id);
-    const auto directory = run_dir / remote::relative_path(job.directory);
+    // Recovery never recreates an older run's scratch. This staging folder is
+    // removed after its recorded files and artifact have been copied.
+    const auto staging = service_.run_scratch() / "recovery" / crypto::uuid4();
+    const auto directory = staging / remote::relative_path(job.directory);
+    struct RemoveStaging {
+      stdfs::path path;
+      ~RemoveStaging() { std::error_code ec; stdfs::remove_all(path, ec); }
+    } remove{staging};
     auto imported = import_remote_result(client_, inv.execution_service, job.server_id, job.instance, reply.result_sha256,
         job.spec, directory, contract.outputs,
         [&](LogStream stream, const std::string& line) { recovered.logs.emplace_back(stream, line); },
@@ -278,7 +292,11 @@ auto RemoteExecutionService::recover(RemoteJobRecord& job, const RemoteJobState&
         Value value{name, port->kind, port->type, std::move(bytes), {}};
         if (!contract.artifact_output.empty() && name == contract.artifact_output)
           recovered.artifact = prepare_remote_artifact(run_dir, directory / "out", inv, value);
-        if (result.record_io) result.outputs.push_back(std::move(value));
+        if (result.record_io) {
+          value = service_.keep_file_value(value, run_dir / "values" / path_key(inv.card) /
+                                                        std::to_string(inv.invocation) / "output" / value.name, stop);
+          result.outputs.push_back(std::move(value));
+        }
       }
     }
   } catch (const BrokerDisconnected&) {
@@ -315,24 +333,16 @@ auto prepare_remote_artifact(const stdfs::path& run_dir, const stdfs::path& out_
   stdfs::create_directories(destination);
   const auto copy = [&](const stdfs::path& from, const std::string& name) {
     const auto target = destination / remote::relative_path(name);
-    stdfs::create_directories(target.parent_path());
-    std::ofstream file(target, std::ios::binary);
-    if (!file) throw std::runtime_error("cannot stage recovered artifact");
     crypto::Sha256 hash;
-    const auto size = fs::stream_beneath(out_dir, from, uint64_t{64} << 30, [&](std::string_view chunk) {
-      file.write(chunk.data(), static_cast<std::streamsize>(chunk.size()));
-      if (!file) throw std::runtime_error("cannot stage recovered artifact");
-      hash.update(chunk);
-    });
-    file.close();
-    if (!file) throw std::runtime_error("cannot store recovered artifact");
+    const auto size = fs::copy_beneath(out_dir, from, target, [&](std::string_view chunk) { hash.update(chunk); });
     artifact.members.push_back({name, size, hash.finish_hex()});
   };
   if (value.kind == PortKind::File) copy(relative, artifact.name);
   else {
     const auto list = fs::list_beneath(out_dir, relative == "." ? stdfs::path{} : relative);
-    if (!list.links.empty() || list.files.size() > 1000)
-      throw Failed(FailureKind::output_invalid, "recovered artifact has symlinks or too many files");
+    if (!list.links.empty() || !list.special.empty() || list.files.size() > 1000)
+      throw Failed(FailureKind::output_invalid, "recovered artifact has symlinks, special files or too many files");
+    for (const auto& directory : list.directories) stdfs::create_directories(destination / directory);
     for (const auto& file : list.files) copy(relative == "." ? stdfs::path(file) : relative / file, file);
   }
   value.artifact_id = artifact.artifact_id;

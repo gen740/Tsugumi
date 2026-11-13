@@ -31,6 +31,7 @@ class NixRunner;
 class ExecutionService;
 class NativeExecutionService;
 class RemoteExecutionService;
+class CacheUsage;
 
 struct ServiceOptions {
   std::filesystem::path root;
@@ -51,6 +52,12 @@ struct ServiceOptions {
   // Local folder for the workers' own work/tmp/scripts folders (never the
   // project share). Empty: <system temp>/tsugumi-<project id>.
   std::filesystem::path scratch_dir;
+  // Disk-backed, private scratch for invocation outputs. Never kept history.
+  std::filesystem::path run_scratch_dir;
+  std::filesystem::path usage_roots_dir;
+  std::filesystem::path usage_scratch_dir;
+  // The VM supervisor publishes one shared measurement for all projects.
+  std::filesystem::path usage_file;
   // Folder of the run history database (history.sqlite). Empty: the
   // project's .tsugumi. The shared VM keeps it on the VM's disk; finished
   // runs are then also kept in the project (.tsugumi/runs.sqlite).
@@ -100,6 +107,11 @@ class Service : public RequestSink {
   // credentials or query strings), fixed when the project opens.
   const std::vector<std::string>& substituters() const { return substituters_; }
   NixRunner& nix() { return *nix_; }
+  auto run_scratch() const -> const std::filesystem::path& { return run_scratch_; }
+  auto file_roots() const -> std::vector<std::filesystem::path>;
+  auto keep_file_value(const Value& value, const std::filesystem::path& directory,
+                       const std::atomic<bool>& stop) -> Value;
+  auto clean_run_scratch(const std::optional<std::string>& keep = std::nullopt) -> void;
   // The backend that runs the Cards naming execution service `id`.
   auto execution_service(const std::string& id) -> ExecutionService&;
   // The daemon backend also recovers its jobs.
@@ -108,6 +120,7 @@ class Service : public RequestSink {
   static auto execution_diagnostic(const Node& node, const std::vector<RemoteTarget>& targets) -> std::optional<Diag>;
   // A run finished: its record goes to the project's copy soon.
   void schedule_export();
+  auto refresh_cache_usage() -> void;
   // A run ended: its result goes to the note of the version it started from.
   void note_run_end(const RunStatusData& s, const std::string& summary);
 
@@ -123,6 +136,7 @@ class Service : public RequestSink {
   void reload(RequestIn& req);
   void import_definitions(RequestIn& req);
   void cache_clear(RequestIn& req);
+  void cache_usage(RequestIn& req);
   void history_delete(RequestIn& req);
   void run(RequestIn& req);
   void sdk_prepare(RequestIn& req);
@@ -200,6 +214,8 @@ class Service : public RequestSink {
   std::mutex verified_mu_;
   std::map<std::string, std::pair<uint64_t, int64_t>> verified_;
   std::unique_ptr<NixRunner> nix_;
+  std::filesystem::path run_scratch_;
+  std::unique_ptr<CacheUsage> cache_usage_;
   std::unique_ptr<NativeExecutionService> execution_service_;
   RemoteJobClient remote_jobs_;
   std::unique_ptr<RemoteExecutionService> remote_execution_;

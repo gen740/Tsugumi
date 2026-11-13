@@ -119,13 +119,13 @@ bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
       --ro-bind /nix/store /nix/store --proc /proc --dev /dev --tmpfs /tmp
       --symlink <bash from the store> /bin/sh
       --uid <like nobody> --gid <…>
-      --ro-bind <saved inputs, runs>  --bind <the worker's temporary area>
+      --ro-bind <saved inputs, retained runs, invocation scratch>  --bind <the worker's temporary area>
       -- tsugumi-worker
 ```
 
 - **All namespaces are separated** (user, mount, PID, network, IPC, UTS, cgroup). The only network interface is loopback (`lo`). Only for a Card with `network: true` is the network namespace left shared (`--share-net`), with the name-resolution settings and the CA certificate file mounted read-only.
 - **All Linux capabilities are dropped** (`--cap-drop ALL`).
-- **Visible files** are limited to `/nix/store` (read-only), for a Card built for another system the folder of its emulator when that is outside `/nix/store` (Rosetta's `/run/rosetta`, read-only), the worker's executable (for a C++ or Python Card of another system, the worker its build made for that system, in `/nix/store`; when it is outside `/nix/store` in a development build, that file alone, read-only), the project's `runs` and saved inputs (read-only), a temporary work area for that worker alone (writable), and the Mac folders that Card specified in `hostFolders` (`/host/<name>`, writable only with `write: true`). The project's definition documents and source code, the control folder, the authentication token, other Cards' work areas, host folders other Cards specified and folders attached to the chat are not visible.
+- **Visible files** are limited to `/nix/store` (read-only), for a Card built for another system the folder of its emulator when that is outside `/nix/store` (Rosetta's `/run/rosetta`, read-only), the worker's executable (for a C++ or Python Card of another system, the worker its build made for that system, in `/nix/store`; when it is outside `/nix/store` in a development build, that file alone, read-only), the project's retained `runs`, saved inputs and invocation scratch (read-only), a temporary work area for that worker alone (writable), and the Mac folders that Card specified in `hostFolders` (`/host/<name>`, writable only with `write: true`). The project's definition documents and source code, the control folder, the authentication token, other Cards' work areas, host folders other Cards specified and folders attached to the chat are not visible.
 - **The environment variables are rebuilt from empty** (`PATH=/var/empty`, `LANG=C.UTF-8` and only the variables Tsugumi passes); nothing is inherited from `tsugumid` or the host.
 - **Passing outputs**: each invocation's output directory is passed as a file descriptor (FD) with `SCM_RIGHTS` and accessed inside the worker as `/proc/self/fd/900`. After the run, the core maps it back to its real path and validates it.
 - **Why inputs are not passed as FDs**: measurement showed that on Linux, even an FD opened read-only can in some cases be reopened for writing through `/proc/self/fd/N`. Inputs are therefore protected with read-only bind mounts.

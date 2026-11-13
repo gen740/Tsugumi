@@ -80,6 +80,8 @@ Keeping every invocation's inputs and outputs unconditionally would make storage
 | Artifacts (files and folders a Card wrote) | Not kept | The Card's `retainArtifact` |
 | The run history written into the project (`.tsugumi/runs.sqlite`) | Written | The project's `saveRunHistory` |
 
+Invocation work folders are scratch, separate from retained run history. The most recent run’s scratch remains available for inspection; starting another run of that project removes the earlier scratch. This does not remove retained run data: recorded File / Directory values, declared artifacts and the last inputs for partial runs are copied to their own retained locations before completion. Startup removes scratch whose run no longer exists. Scratch is disk-backed and private to the project’s user, and its size is shown separately in Build Cache settings.
+
 Even with `recordIO` off, the last inputs used for partial runs are kept ([Rerunning from the middle](#rerunning-from-the-middle)). Computation results you will keep using belong in Nix outputs; data you want to look at during trials belongs in the history or the artifacts.
 
 | Where | What it keeps | What it is for |

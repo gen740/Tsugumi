@@ -584,4 +584,26 @@ bool NixEvaluator::valid(const std::string& store_path) {
 
 uint64_t NixEvaluator::heap_bytes() { return GC_get_heap_size(); }
 
+auto NixEvaluator::rooted_usage(const std::vector<std::vector<std::string>>& roots)
+    -> std::vector<std::map<std::string, uint64_t>> {
+  auto store = nix::openStore();
+  std::vector<std::map<std::string, uint64_t>> result;
+  std::map<std::string, uint64_t> sizes;
+  for (const auto& project : roots) {
+    nix::StorePathSet closure;
+    for (const auto& path : project)
+      store->computeFSClosure(store->parseStorePath(path), closure, false,
+                              nix::settings.getLocalSettings().keepOutputs,
+                              nix::settings.getLocalSettings().keepDerivations);
+    auto& measured = result.emplace_back();
+    for (const auto& path : closure) {
+      auto name = store->printStorePath(path);
+      auto [it, inserted] = sizes.try_emplace(name, 0);
+      if (inserted) it->second = store->queryPathInfo(path)->narSize;
+      measured.emplace(name, it->second);
+    }
+  }
+  return result;
+}
+
 }  // namespace tsugumi

@@ -95,7 +95,7 @@ auto stage_remote_archive(const RemoteJobClient& client, const std::string& serv
 
 auto stage_remote_invocation(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
                              const std::string& instance, const std::string& project_id,
-                             const std::filesystem::path& state, const std::string& archive_digest,
+                             const std::vector<std::filesystem::path>& file_roots, const std::string& archive_digest,
                              const ExecutionRequest& request) -> std::string;
 auto import_remote_result(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
                           const std::string& instance, const std::string& result_digest,

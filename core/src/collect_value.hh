@@ -27,11 +27,11 @@ auto collect_output_type(const types::PortType& source, std::string& error) -> t
 
 // Collects `members` (values of the `source` port, in order) into one value of
 // the `output` port. File / Directory members must live below
-// `state_root/runs` or `state_root/inputs`; their copies are staged beside
+// one of `file_roots`; their copies are staged beside
 // `output_dir` (which must not exist yet) and moved there only once complete.
 // Throws Failed (cancelled, output_invalid or internal_error).
 auto collect_values(const types::PortType& source, const types::PortType& output,
-                    std::span<const Value> members, const std::filesystem::path& state_root,
+                    std::span<const Value> members, std::span<const std::filesystem::path> file_roots,
                     const std::filesystem::path& output_dir, const std::atomic<bool>& cancel) -> Value;
 
 }  // namespace tsugumi

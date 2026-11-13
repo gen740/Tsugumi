@@ -31,6 +31,23 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+    '保持したファイルの内容がありません（scratch は保持履歴ではありません）。': 'The kept file content is missing (scratch is separate from retained history).',
+    '保持したファイル: %@': 'Kept file: %@',
+
+    'キャッシュ使用量': 'Cache usage',
+    '合計（共有パスは一度だけ計上）': 'Total (shared paths counted once)',
+    'store ディスクの空き': 'Store disk available',
+    '計測中または取得できません': 'Measuring or unavailable',
+    'キャッシュの使用量が大きくなっています。必要なビルド結果を確認して、削除するものを選んでください。': 'The cache is using substantial space. Review the build results and choose which ones to delete.',
+    'NAR サイズによる概算です。共有する依存関係は各プロジェクトにも含まれるため、内訳の和と合計は異なります。最大 1 分ごとに再計測します。': 'Estimated from NAR sizes. Shared dependencies count in each project, so project sizes do not add up to the total. Measurements refresh once per minute.',
+    '計測日時': 'Measured at',
+    '直近の実行の scratch': 'Latest run scratch',
+    'root の最終使用': 'Roots last used',
+    '削除するにはこのプロジェクトを開いてください。': 'Open this project to delete its build cache.',
+    'scratch は次の実行を始めると削除します。保持した記録・成果物・最後の入力は残ります。ビルドキャッシュは自動では削除しません。': 'Scratch is removed when the next run starts. Kept records, artifacts and last inputs remain. Build caches are never deleted automatically.',
+    'ビルドキャッシュが %@ を使用しています。設定の「ビルドキャッシュ」でプロジェクト別の容量を確認できます。': 'Build caches use %@. Review per-project usage in Settings → Build Cache.',
+    '「%@」のビルドキャッシュを削除しますか？': 'Delete the build cache for “%@”?',
+
     'この実行にはありません': 'Absent from this run',
     'コードと設定の差分': 'Code and settings changes',
     'パラメータの記録がありません': 'Parameters were not recorded',

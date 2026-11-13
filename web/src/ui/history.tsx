@@ -243,7 +243,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
 function ValueBox({ v }: { v: D.NamedValueT }) {
   const text = useMemo(() => describeValue({
     name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifactId: v.artifactId === null ? null : s(v.artifactId),
-    inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs,
+    filePath: v.filePath === null ? null : s(v.filePath), fileMissing: v.fileMissing, inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs,
   }), [v])
   return <pre className="value-box selectable">{text}</pre>
 }

@@ -201,7 +201,13 @@ export class EnvironmentManager implements Environments {
     fs.rmSync(startupErrorFile, { force: true })
     const unix = path.join(e.sockDir, 's')
     fs.rmSync(unix, { force: true })
-    const args = ['--project', e.project, '--listen', '127.0.0.1:0', '--unix', unix, '--control-dir', e.control,
+    // Run outputs can be large: /var/tmp is disk-backed; core checks ownership
+    // and rejects tmpfs. TMPDIR is often memory-backed on Linux.
+    const scratchBase = path.join(process.platform === 'darwin' ? '/private/var/tmp' : '/var/tmp', `tsugumi-scratch-${process.getuid!()}`)
+    const rootsBase = path.join(this.support, 'build-roots')
+    const args = ['--run-scratch-dir', path.join(scratchBase, e.key),
+      '--gcroots-dir', path.join(rootsBase, e.key), '--usage-roots-dir', rootsBase, '--usage-scratch-dir', scratchBase,
+      '--project', e.project, '--listen', '127.0.0.1:0', '--unix', unix, '--control-dir', e.control,
       '--worker', this.bins.worker, '--sdk-dir', this.bins.sdkDir, '--cpus', String(Math.max(1, os.cpus().length))]
     if (archiveIncompatibleHistory) args.push('--archive-incompatible-history')
     for (const o of this.origins()) args.push('--allow-origin', o)

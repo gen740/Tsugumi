@@ -164,7 +164,6 @@ NixRunner::NixRunner(Service& svc, stdfs::path eval_dir) : svc_(svc), eval_dir_(
   eval_dir_ = stdfs::canonical(eval_dir_);
   sdk_dir_ = stdfs::canonical(svc_.options().sdk_dir, ec);
   if (ec) sdk_dir_ = svc_.options().sdk_dir;
-  prune_roots();
   // SDK jobs left pending by a previous process were interrupted.
   auto dir = svc_.store().state_dir() / "sdk";
   if (stdfs::is_directory(dir, ec)) {
@@ -221,34 +220,6 @@ NixEvaluator& NixRunner::evaluator() {
   if (!evaluator_)
     evaluator_ = std::make_unique<NixEvaluator>(entry_nix(), std::vector<std::string>{sdk_dir_.string(), eval_dir_.string()});
   return *evaluator_;
-}
-
-// Roots of results not needed for a while end (a Card keeps its two most
-// recent results; any root unused for 30 days goes).
-void NixRunner::prune_roots(const std::string& prefix, const std::string& keep) {
-  std::error_code ec;
-  auto dir = gcroots_dir();
-  if (!stdfs::is_directory(dir, ec)) return;
-  std::vector<std::pair<stdfs::file_time_type, stdfs::path>> mine;
-  auto now = stdfs::file_time_type::clock::now();
-  for (const auto& e : stdfs::directory_iterator(dir, ec)) {
-    auto name = e.path().filename().string();
-    auto st = stdfs::symlink_status(e.path(), ec);
-    if (!stdfs::is_symlink(st)) continue;
-    struct ::stat lst {};
-    if (::lstat(e.path().c_str(), &lst) != 0) continue;
-    auto age = std::chrono::system_clock::now() - std::chrono::system_clock::from_time_t(lst.st_mtime);
-    if (age > std::chrono::hours(24 * 30)) {
-      stdfs::remove(e.path(), ec);
-      continue;
-    }
-    if (!prefix.empty() && name.starts_with(prefix) && name != keep)
-      mine.emplace_back(stdfs::file_time_type(std::chrono::duration_cast<stdfs::file_time_type::duration>(
-                            std::chrono::seconds(lst.st_mtime))), e.path());
-  }
-  (void)now;
-  std::sort(mine.begin(), mine.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
-  for (size_t i = 1; i < mine.size(); ++i) stdfs::remove(mine[i].second, ec);
 }
 
 stdfs::path NixRunner::cache_dir() const { return svc_.store().state_dir() / "cache"; }
@@ -625,7 +596,6 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
     plan.implementations.resize(res.implementation_count);
     return plan;
   }
-  prune_roots(prefix, res.root.filename().string());
   schema::CardManifest manifest;
   if (auto error = schema::decode(res.manifest, manifest))
     throw Failed(FailureKind::nix_failed, "the Card manifest is invalid: " + error->message);
@@ -747,8 +717,10 @@ CacheClearOutcome NixRunner::clear_cache() {
   {
     std::error_code ec;
     size_t n = 0;
-    for (const auto& e : stdfs::directory_iterator(gcroots_dir(), ec))
+    for (const auto& e : stdfs::directory_iterator(gcroots_dir(), ec)) {
+      if (e.path().filename() == ".name") continue;
       if (stdfs::remove(e.path(), ec)) ++n;
+    }
     if (n) out.deleted.push_back("build-roots");
   }
   remove(state / "cache", "build-cache");
@@ -759,7 +731,6 @@ CacheClearOutcome NixRunner::clear_cache() {
     for (const auto& run : stdfs::directory_iterator(state / "runs", ec)) {
       remove(run.path() / "build", "runs/" + run.path().filename().string() + "/build");
       remove(run.path() / "defs", "runs/" + run.path().filename().string() + "/defs");
-      remove(run.path() / "work", "runs/" + run.path().filename().string() + "/work");
       if (stdfs::exists(run.path() / "artifacts", ec))
         out.retained.push_back("runs/" + run.path().filename().string() + "/artifacts");
     }

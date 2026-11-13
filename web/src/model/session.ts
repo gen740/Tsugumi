@@ -449,6 +449,9 @@ export class ProjectSession extends Observable {
   /** Edits wait for the run to end (the core keeps Card changes back while it runs). */
   savingAfterRun = false
   /** Last user-facing problem of an action (run refused, import failed, ...). */
+  cacheUsage?: R.ProjectCacheUsageResultT
+  private cacheUsageTimer?: ReturnType<typeof setTimeout>
+  private cacheNoticeShown = false
   notice?: string
 
   private draftBase?: DraftBase
@@ -685,6 +688,7 @@ export class ProjectSession extends Observable {
       this.subscription = s(opened.subscriptionId)
       this.lastSeq = opened.seq ?? 1n
       this.connected = true
+      void this.refreshCacheUsage()
       this.listen(c)
       c.onClose = () => {
         if (this.client !== c) return
@@ -760,6 +764,7 @@ export class ProjectSession extends Observable {
   /** The project was left: no more connections, whatever is under way. */
   close() {
     this.closed = true
+    clearTimeout(this.cacheUsageTimer)
     this.offEvents?.()
     clearTimeout(this.viewSaveTimer)
     const c = this.client
@@ -3255,6 +3260,21 @@ auto run(Card::Input& input) -> Card::Output {
   async resolveNixSource(ref: string): Promise<R.NixSourceResolvedT> {
     if (!this.client) throw new RPCError('disconnected', L('接続していません'))
     return this.client.resolveNixSource(ref)
+  }
+
+  async refreshCacheUsage() {
+    clearTimeout(this.cacheUsageTimer)
+    if (this.closed || !this.connected || !this.client) return
+    try {
+      const usage = await this.client.cacheUsage()
+      this.cacheUsage = usage
+      if (usage.large && !this.cacheNoticeShown && !this.notice) {
+        this.notice = L('ビルドキャッシュが {0} を使用しています。設定の「ビルドキャッシュ」でプロジェクト別の容量を確認できます。', formatBytes(usage.buildBytes ?? 0n))
+        this.cacheNoticeShown = true
+      } else if (!usage.large && usage.buildBytes !== null) this.cacheNoticeShown = false
+      this.changed()
+    } catch { /* A failed measurement never interrupts execution. */ }
+    if (!this.closed && this.connected) this.cacheUsageTimer = setTimeout(() => void this.refreshCacheUsage(), 15000)
   }
 
   async clearBuildCache(): Promise<R.ProjectCacheClearResultT> {

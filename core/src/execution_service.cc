@@ -88,7 +88,8 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   // Every File / Directory input lives in these trees: one set of binds
   // serves any input, so the worker is reused whatever the paths.
   const std::filesystem::path state_dir = service_.store().state_dir();
-  sp.ro_paths = {(state_dir / "runs").string(), (state_dir / "inputs").string()};
+  for (const auto& root : service_.file_roots()) sp.ro_paths.push_back(root.string());
+  sp.outputs_root = (service_.run_scratch() / "runs").string();
   // Another system's binaries run with the emulator the kernel opened when it
   // was registered; Rosetta also reads its own folder while it runs.
   if (const auto& e = build.emulator; !e.empty() && !e.starts_with("/nix/store/"))
@@ -192,7 +193,7 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   request.on_timing(t0, now_ms());
 
   if (node.settings.filesystem) {
-    // Kept for inspection in the run (CacheClear removes it).
+    // Scratch for inspection until the next run starts.
     std::error_code ec;
     for (const auto& [from, to] : {std::pair{worker.work_dir(), dir / "work"}, std::pair{worker.tmp_dir(), dir / "tmp"}}) {
       std::filesystem::create_directories(to, ec);

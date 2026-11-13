@@ -355,6 +355,34 @@ table ProjectImportRequest {
 /// -> ProjectCacheClearResult. Only while no run or SDK job is active.
 table ProjectCacheClearRequest { op_id:string (id: 0, required); }
 
+/// Cached shared-store measurement; never triggers a store traversal on the RPC lane.
+table ProjectCacheUsageRequest {}
+
+table ProjectCacheUsage {
+  project:string (id: 0, required);
+  name:string (id: 1, required);
+  /// NAR bytes of the rooted closure, including build dependencies. Shared paths
+  /// count once in each project, and only once in the total.
+  build_bytes:uint64 = null (id: 2);
+  scratch_bytes:uint64 = null (id: 3);
+  /// Latest project start or root use; absent when there are no roots.
+  last_used:int64 = null (id: 4);
+  error:string (id: 5);
+}
+
+table ProjectCacheUsageResult {
+  projects:[ProjectCacheUsage] (id: 0, required);
+  build_bytes:uint64 = null (id: 1);
+  store_capacity_bytes:uint64 = null (id: 2);
+  store_available_bytes:uint64 = null (id: 3);
+  measured_at:int64 = null (id: 4);
+  /// Suggest reviewing Build Cache settings at >= max(1 GiB, 20% of disk capacity).
+  large:bool (id: 5);
+  threshold_bytes:uint64 = null (id: 6);
+  current_project:string (id: 7);
+  error:string (id: 8);
+}
+
 /// -> NixSourceResolved. Looks a flake up for nixSources (nothing is saved):
 /// its current commit and hash, and the packages it has for this system.
 /// To customize an approved package, save nixSources[].overrides =
@@ -725,6 +753,7 @@ union RequestPayload {
   RunEnvironmentPathsRequest = 43,
   ProjectShellRequest = 44,
   ModuleReadRequest = 45,
+  ProjectCacheUsageRequest = 46,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1098,6 +1127,7 @@ union ReplyPayload {
   BuildEnvironmentPage = 32,
   EnvironmentPathPage = 33,
   ProjectShellResult = 34,
+  ProjectCacheUsageResult = 35,
 }
 
 // ---- Notifications -----------------------------------------------------------

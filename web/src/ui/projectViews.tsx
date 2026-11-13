@@ -6,7 +6,7 @@ import { useObserve } from '../model/observable'
 import { FLOW_LABELS, FlowDirection } from '../model/prefs'
 import { definitionKind, errorText, formatBytes, key, KIND_ICON, KIND_LABEL, path, ProjectSession, TEMPLATES } from '../model/session'
 import { arr, bool, get, isObj, J, JObj, obj, parse, serialize, str } from '../shared/json'
-import { R } from '../shared/rpc'
+import { R, s } from '../shared/rpc'
 import { DEFINITION_DRAG } from './actions'
 import { Button, Confirm, Empty, Form, HSplit, MenuButton, Row, Section, Select, Spinner, TextField, Toggle, Value } from './controls'
 import { CodeEditor } from './editor'
@@ -389,6 +389,8 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
 }
 
 function CacheSettings({ session }: { session: ProjectSession }) {
+  useObserve(session)
+  const [clearTarget, setClearTarget] = useState(session)
   const [result, setResult] = useState<R.ProjectCacheClearResultT>()
   const [working, setWorking] = useState(false)
   const [message, setMessage] = useState<string>()
@@ -397,7 +399,8 @@ function CacheSettings({ session }: { session: ProjectSession }) {
     setWorking(true)
     setMessage(undefined)
     try {
-      setResult(await session.clearBuildCache())
+      setResult(await clearTarget.clearBuildCache())
+      await session.refreshCacheUsage()
     } catch (e) {
       setMessage(L('削除できませんでした: {0}', errorText(e)))
     }
@@ -407,6 +410,28 @@ function CacheSettings({ session }: { session: ProjectSession }) {
     <div className="col fill pad16 gap12">
       <div>{L('このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。')}</div>
       <div className="callout secondary">{L('実行中・SDK 準備中は削除できません。')}</div>
+      <div className="groupbox col gap8" style={{ overflow: 'auto' }}>
+        <div className="headline">{L('キャッシュ使用量')}</div>
+        <Value label={L('合計（共有パスは一度だけ計上）')} value={session.cacheUsage?.buildBytes != null ? formatBytes(session.cacheUsage.buildBytes) : L('計測中または取得できません')} />
+        {session.cacheUsage?.storeAvailableBytes != null && <Value label={L('store ディスクの空き')} value={formatBytes(session.cacheUsage.storeAvailableBytes)} />}
+        {session.cacheUsage?.large && <div className="callout">{L('キャッシュの使用量が大きくなっています。必要なビルド結果を確認して、削除するものを選んでください。')}</div>}
+        <div className="caption secondary">{L('NAR サイズによる概算です。共有する依存関係は各プロジェクトにも含まれるため、内訳の和と合計は異なります。最大 1 分ごとに再計測します。')}</div>
+        {session.cacheUsage?.measuredAt != null && <Value label={L('計測日時')} value={new Date(Number(session.cacheUsage.measuredAt)).toLocaleString()} />}
+        {session.cacheUsage?.error && <div className="caption selectable">{s(session.cacheUsage.error)}</div>}
+        {session.cacheUsage?.projects.map(p => {
+          const target = s(p.project) === s(session.cacheUsage?.currentProject) ? session : app.sessions.get(s(p.project))
+          return <div className="col gap4" key={s(p.project)} style={{ borderTop: '1px solid var(--separator)', paddingTop: 8 }}>
+            <div className="row gap8"><span className="headline flex1">{s(p.name)}</span><Button kind="destructive" disabled={!target?.connected || working || !!target?.runActive}
+              onClick={() => { if (target) { setClearTarget(target); setConfirm(true) } }}>{L('削除')}</Button></div>
+            <Value label={L('ビルドキャッシュ')} value={p.buildBytes !== null ? formatBytes(p.buildBytes) : L('取得できません')} />
+            <Value label={L('直近の実行の scratch')} value={p.scratchBytes !== null ? formatBytes(p.scratchBytes) : L('取得できません')} />
+            <Value label={L('root の最終使用')} value={p.lastUsed !== null ? new Date(Number(p.lastUsed)).toLocaleString() : L('不明')} />
+            {!target && <div className="caption secondary">{L('削除するにはこのプロジェクトを開いてください。')}</div>}
+            {p.error && <div className="caption selectable">{s(p.error)}</div>}
+          </div>
+        })}
+      </div>
+      <div className="caption secondary">{L('scratch は次の実行を始めると削除します。保持した記録・成果物・最後の入力は残ります。ビルドキャッシュは自動では削除しません。')}</div>
       {result && (
         <div className="groupbox col gap4">
           <div className="headline">{L('結果')}</div>
@@ -419,9 +444,9 @@ function CacheSettings({ session }: { session: ProjectSession }) {
       <span className="flex1" />
       <div className="row end gap8">
         {working && <Spinner small />}
-        <Button kind="destructive" disabled={working || session.runActive || !session.connected} onClick={() => setConfirm(true)}>{L('削除')}</Button>
+        <Button kind="destructive" disabled={working || session.runActive || !session.connected} onClick={() => { setClearTarget(session); setConfirm(true) }}>{L('削除')}</Button>
       </div>
-      {confirm && <Confirm title={L('ビルドキャッシュを削除しますか？')} confirm={L('削除')} onConfirm={() => void clear()} onCancel={() => setConfirm(false)} />}
+      {confirm && <Confirm title={L('「{0}」のビルドキャッシュを削除しますか？', clearTarget.scopeName([]))} confirm={L('削除')} onConfirm={() => void clear()} onCancel={() => setConfirm(false)} />}
     </div>
   )
 }

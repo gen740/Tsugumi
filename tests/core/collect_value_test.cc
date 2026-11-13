@@ -121,7 +121,7 @@ class CollectFiles : public ::testing::Test {
     std::string error;
     const auto type = collect_output_type(source, error);
     EXPECT_TRUE(type) << error;
-    return collect_values(source, port("out", PortKind::Directory, type), members, state, output_dir, cancel);
+    return collect_values(source, port("out", PortKind::Directory, type), members, std::vector{state / "runs", state / "inputs"}, output_dir, cancel);
   }
 
   // Nothing but the original invocation folder content (no staging left over).
@@ -320,6 +320,21 @@ TEST_F(CollectFiles, EmptyListMakesEmptyRoot) {
   const auto* items = items_of(root_of(value), kSlot1);
   ASSERT_NE(items, nullptr);
   EXPECT_EQ(items->size(), 0u);
+}
+
+TEST_F(CollectFiles, CopiesFromExplicitInvocationScratchRoot) {
+  const auto scratch = state / "scratch";
+  const auto file = scratch / "run" / "out" / "result.txt";
+  write_text(file, "latest run scratch");
+  const auto source = port("in", PortKind::File, path_type());
+  std::string error;
+  const auto type = collect_output_type(source, error);
+  ASSERT_TRUE(type) << error;
+  const std::vector members{path_value_of(source.type, PortKind::File, file)};
+  const std::vector roots{state / "runs", state / "inputs", scratch};
+  const auto value = collect_values(source, port("out", PortKind::Directory, type), members, roots, output_dir, cancel);
+  EXPECT_EQ(path_value(value), output_dir.string());
+  EXPECT_EQ(read_text(output_dir / "0" / "result.txt"), "latest run scratch");
 }
 
 TEST_F(CollectFiles, FilesKeepOrderAndDuplicateBasenames) {

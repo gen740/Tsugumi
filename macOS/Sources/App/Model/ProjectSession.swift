@@ -305,6 +305,9 @@ final class ProjectSession {
   /// Edits wait for the run to end (the core keeps Card changes back while it runs).
   private(set) var savingAfterRun = false
   /// Last user-facing problem of an action (run refused, import failed, ...).
+  var cacheUsage: Tsugumi_RPC_ProjectCacheUsageResultT?
+  @ObservationIgnored private var cacheUsageTask: Task<Void, Never>?
+  @ObservationIgnored private var cacheNoticeShown = false
   var notice: String?
   /// The Draft being written on the canvas (geometry opens its Card up).
   var inlineDraft: InlineDraft?
@@ -502,6 +505,19 @@ final class ProjectSession {
   }
 
   /// The one place `connected` changes: terminals open their shells on it.
+  func refreshCacheUsage() async {
+    guard let rpc else { return }
+    do {
+      let usage = try await rpc.cacheUsage()
+      cacheUsage = usage
+      if usage.large && !cacheNoticeShown && notice == nil {
+        let size = ByteCountFormatter.string(fromByteCount: Int64(clamping: usage.buildBytes ?? 0), countStyle: .file)
+        notice = String(localized: "ビルドキャッシュが \(size) を使用しています。設定の「ビルドキャッシュ」でプロジェクト別の容量を確認できます。")
+        cacheNoticeShown = true
+      } else if !usage.large && usage.buildBytes != nil { cacheNoticeShown = false }
+    } catch { /* A failed measurement never interrupts execution. */ }
+  }
+
   private func setConnected(_ value: Bool) {
     connected = value
     terminals.environment(connected: value)
@@ -511,6 +527,7 @@ final class ProjectSession {
   /// host keeps project execution alive. The caller first settles unsaved edits.
   func close() async {
     closed = true
+    cacheUsageTask?.cancel()
     terminals.closeAll()
     listenTask?.cancel()
     reconnectTask?.cancel()
@@ -557,6 +574,14 @@ final class ProjectSession {
       subscription = opened.subscriptionId
       lastSeq = opened.seq ?? 1
       setConnected(true)
+      cacheUsageTask?.cancel()
+      cacheUsageTask = Task { [weak self] in
+        while !Task.isCancelled {
+          guard let self, self.connected, !self.closed else { return }
+          await self.refreshCacheUsage()
+          try? await Task.sleep(for: .seconds(15))
+        }
+      }
       listen(c)
       if makeRepositoryOnConnect {
         makeRepositoryOnConnect = false

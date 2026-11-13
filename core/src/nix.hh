@@ -118,7 +118,6 @@ class NixRunner {
   NixEvaluator& evaluator();
   std::filesystem::path content_dir(const char* kind, const std::string& digest,
                                     const std::function<std::map<std::string, std::string>()>& files);
-  void prune_roots(const std::string& prefix = {}, const std::string& keep = {});
 
   Service& svc_;
   std::filesystem::path eval_dir_;  // local folder: definitions and generated files by content

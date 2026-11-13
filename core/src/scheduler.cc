@@ -1111,6 +1111,24 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       }
       if (rec.record_io) rec.outputs = out.outputs;
     }
+    if (rec.record_io) {
+      try {
+        // Keeping requested records completes even when execution was stopped.
+        const std::atomic<bool> recording_stop{false};
+        const auto base = run_dir_ / "values" / path_key(node.path) / std::to_string(w.invocation);
+        for (auto& v : rec.inputs) v = svc_.keep_file_value(v, base / "input" / v.name, recording_stop);
+        for (auto& v : rec.outputs) v = svc_.keep_file_value(v, base / "output" / v.name, recording_stop);
+      } catch (const std::exception& error) {
+        s.state = CardState::failed;
+        s.failure = FailureData::make(FailureKind::persistence_failed, std::string("keeping recorded files failed: ") + error.what());
+        rec.summary = s;
+        out.failure = s.failure;
+        out.outputs.clear();
+        s.outputs_sent.clear();
+        rec.inputs.clear();
+        rec.outputs.clear();
+      }
+    }
     // The completion is durable before it is announced or its outputs move on.
     // The record holds the save stage as done; a failed write reports it failed.
     {
@@ -1195,6 +1213,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         copy_file(rel, destination);
       } else {
         const auto listing = fs::list_beneath(root, rel);
+        if (!listing.links.empty() || !listing.special.empty())
+          throw Failed(FailureKind::output_invalid, "saved input directory contains a link or special file");
         stdfs::create_directories(destination);
         for (const auto& child : listing.directories) {
           check_cancel();
@@ -1301,8 +1321,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   // (the runs, the saved inputs): read from there without following links,
   // since the worker that wrote it may still be running.
   std::pair<stdfs::path, stdfs::path> beneath(const std::string& p) const {
-    auto state = svc_.store().state_dir();
-    for (const auto& root : {state / "runs", state / "inputs"}) {
+    for (const auto& root : svc_.file_roots()) {
       auto rel = stdfs::path(p).lexically_normal().lexically_relative(root);
       if (!rel.empty() && *rel.begin() != ".." && rel != ".") return {root, rel};
     }
@@ -1310,7 +1329,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   stdfs::path invocation_dir(const Node& node, uint64_t inv) {
-    return run_dir_ / "work" / path_key(node.path) / std::to_string(inv);
+    return svc_.run_scratch() / "runs" / run_id_ / "work" / path_key(node.path) / std::to_string(inv);
   }
 
   auto retain_artifact(const Node& node, uint64_t inv, Value& v, const std::atomic<bool>& stop) -> void {
@@ -1345,6 +1364,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         const auto listing = fs::list_beneath(root, rel);
         if (!listing.links.empty())
           throw Failed(FailureKind::output_invalid, "artifact directory contains symlink " + listing.links.front());
+        if (!listing.special.empty())
+          throw Failed(FailureKind::output_invalid, "artifact directory contains special file " + listing.special.front());
         if (listing.files.size() > 1000)
           throw Failed(FailureKind::resource_limit, "artifact directory exceeds 1,000 files");
         stdfs::create_directories(destination);
@@ -1443,7 +1464,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         break;
       }
       case Template::Collect:
-        p.outputs.push_back(collect_values(*node.input("in"), node.outputs.front(), in, svc_.store().state_dir(),
+        p.outputs.push_back(collect_values(*node.input("in"), node.outputs.front(), in, svc_.file_roots(),
                                            invocation_dir(node, s.invocation) / "out", w.cancellation->stop));
         break;
       case Template::Merge: {
@@ -2018,6 +2039,9 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
   auto rc = R::CreateOperationReceipt(b, b.CreateString(p.op_id), R::ReceiptValue::RunAccepted, ra.Union());
   b.Finish(rc);
   std::string receipt(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
+  // All previous completions and saved last inputs have committed before active_ clears.
+  svc_.clean_run_scratch(*s.status.run_id);
+  stdfs::create_directories(svc_.run_scratch() / "runs" / *s.status.run_id);
   // The run id and the receipt are durable before any processing starts.
   svc_.history().write_sync([&](sql::Db& db) {
     History::insert_run(db, s, p.op_id);
@@ -2163,6 +2187,7 @@ std::optional<Note> Scheduler::latest_display_note(const std::string& card_key) 
 
 void Scheduler::finished(RunExec* exec) {
   svc_.schedule_export();
+  svc_.refresh_cache_usage();
   std::shared_ptr<RunExec> done;
   {
     std::lock_guard<std::mutex> l(mu_);
