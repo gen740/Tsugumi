@@ -44,7 +44,7 @@ auto String(const Dom &d, std::string_view path = "") -> std::string {
 }
 auto State(const Reply &r) -> H::GuideStateT {
   if (!r.Code().empty())
-    throw std::runtime_error(r.Code());
+    throw std::runtime_error(r.Code() + ": " + r.Failure()->message()->str());
   const auto *s = r.HostValue()->value_as_GuideState();
   if (!s)
     throw std::runtime_error("Missing guide state");
@@ -75,15 +75,21 @@ auto Event(std::string kind, std::string text = "") -> H::GuideInputT {
   return e;
 }
 const std::filesystem::path root = TSUGUMI_GUIDE_TEST_ROOT;
+auto ReadResource(const std::filesystem::path &relative) -> std::string {
+  const auto path = root / relative;
+  if (!std::filesystem::is_regular_file(path))
+    throw std::runtime_error("Missing guide test resource: " + path.string());
+  return Read(path);
+}
 const std::vector<std::string> demos{"report", "exoplanet-transit",
                                      "pharmacokinetics"};
 
 TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
   for (const auto &language : {"ja", "en"}) {
-    const auto script =
-        Parse(Read(root / "agent/Shared" /
-                   (std::string(language) == "en" ? "guide-script.en.json"
-                                                  : "guide-script.json")));
+    const auto script = Parse(
+        ReadResource(std::filesystem::path("agent/Shared") /
+                     (std::string(language) == "en" ? "guide-script.en.json"
+                                                    : "guide-script.json")));
     const auto tours = Members(script, "/tours");
     ASSERT_EQ(tours.size(), demos.size());
     std::map<std::string, Dom> steps;
@@ -97,14 +103,15 @@ TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
            {"pick", "about", "start", "resume", "run", "ranOk", "ranFailed",
             "change", "runAgain", "ranAgain", "next", "farewell"})
         EXPECT_TRUE(steps.contains(demo + "/" + id));
-      const auto index = Parse(Read(root / "demos" / language / "index.json"));
+      const auto index = Parse(ReadResource(std::filesystem::path("demos") /
+                                            language / "index.json"));
       std::string folder;
       for (const auto &entry : Array(index, "/demos"))
         if (String(entry, "/id") == demo)
           folder = String(entry, "/path");
       ASSERT_FALSE(folder.empty());
-      const auto dir = root / "demos" / language / folder;
-      const auto project = Parse(Read(dir / "tsugumi.json"));
+      const auto dir = std::filesystem::path("demos") / language / folder;
+      const auto project = Parse(ReadResource(dir / "tsugumi.json"));
       std::set<std::string> cards;
       for (const auto &card : Array(project, "/canvas/cards"))
         cards.insert(String(card, "/id"));
@@ -145,8 +152,8 @@ TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
         if (h.starts_with("param:")) {
           const auto opened = String(step, "/show/open");
           ASSERT_TRUE(opened.starts_with("card:"));
-          const auto card = Parse(
-              Read(dir / "definitions" / opened.substr(5) / "_card.json"));
+          const auto card = Parse(ReadResource(
+              dir / "definitions" / opened.substr(5) / "_card.json"));
           bool found = false;
           for (const auto &param : Array(card, "/params"))
             found |= String(param, "/name") == h.substr(6);
@@ -177,7 +184,8 @@ protected:
     // agentd resolves $demo against its installed catalog, never a client list.
     for (const auto &language : {"ja", "en"})
       Write(directory.path / "demos" / language / "index.json",
-            Read(root / "demos" / language / "index.json"));
+            ReadResource(std::filesystem::path("demos") / language /
+                         "index.json"));
     AgentFixture::SetUp();
   }
   auto Choose(const H::GuideStateT &s, const std::string &choice,
@@ -346,7 +354,7 @@ TEST_F(GuideFixture, DemoCommandUnknownProjectsAndAbsentVectors) {
   auto s = Advance(*host, e);
   EXPECT_EQ(s.step, "otherProject");
   EXPECT_EQ(s.actions.size(), 3u);
-  const auto index = Parse(Read(root / "demos/en/index.json"));
+  const auto index = Parse(ReadResource("demos/en/index.json"));
   for (const auto &demo : Array(index, "/demos"))
     if (String(demo, "/id") == "pharmacokinetics")
       e.title = String(demo, "/title");
