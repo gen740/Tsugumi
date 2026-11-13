@@ -26,7 +26,7 @@
 #include <nix/flake/flakeref.hh>
 #include <nix/flake/settings.hh>
 #include <nix/store/derived-path.hh>
-#include <nix/store/export-import.hh>
+#include <nix/store/derivations.hh>
 #include <nix/store/globals.hh>
 #include <nix/store/indirect-root-store.hh>
 #include <nix/store/store-api.hh>
@@ -233,7 +233,7 @@ struct NixEvaluator::Impl {
     };
     std::string expr = "import (builtins.fetchTarball { url = " + quote(c.pin_url) + "; sha256 = " +
                        quote(c.pin_hash) + "; }) { system = " +
-                       (c.system.empty() ? std::string("builtins.currentSystem") : quote(c.system)) +
+                       quote(c.system) +
                        "; config = { }; overlays = [ ]; }";
     auto* v = state->allocValue();
     state->eval(state->parseExprFromString(expr, state->rootPath(nix::CanonPath("/"))), *v);
@@ -361,7 +361,7 @@ struct NixEvaluator::Impl {
     return info;
   }
 
-  NixResult build(const NixCall& c) {
+  auto evaluate(const NixCall& c) -> NixResult {
     current = &c;
     g_logger->set(c.log);
     struct Done {
@@ -396,21 +396,16 @@ struct NixEvaluator::Impl {
     if (!drv) throw std::runtime_error("the Card manifest is not a derivation");
     auto out = drv->queryOutPath();
     auto drv_path = drv->requireDrvPath();
-    r.out = store->printStorePath(out);
-    r.derivation = store->printStorePath(drv_path);
-    r.system = c.system.empty() ? eval_settings->getCurrentSystem() : c.system;
-    if (!c.derivation_archive.empty()) {
-      store->addTempRoot(drv_path);
-      nix::StorePathSet inputs;
-      store->computeFSClosure(drv_path, inputs);
-      const int fd = ::open(c.derivation_archive.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-      if (fd < 0) throw std::runtime_error("cannot create remote Nix derivation archive");
-      nix::AutoCloseFD file{fd};
-      nix::FdSink sink{fd};
-      nix::exportPaths(*store, inputs, sink);
-      sink.flush();
-      return r;
-    }
+    r.derivation = {store->printStorePath(drv_path), store->printStorePath(out), c.system};
+    if (store->readDerivation(drv_path).platform != c.system)
+      throw std::runtime_error("Card derivation does not target system " + c.system);
+    store->addTempRoot(drv_path);
+    return r;
+  }
+
+  auto realise_native(const NixCall& c, NixResult r) -> NixResult {
+    const auto drv_path = store->parseStorePath(r.derivation.path);
+    const auto out = store->parseStorePath(r.derivation.output);
     // Held by this process's daemon connection from here: a concurrent GC
     // never removes it between the check, the build and the permanent root.
     store->addTempRoot(out);
@@ -426,9 +421,9 @@ struct NixEvaluator::Impl {
     std::sort(r.closure.begin(), r.closure.end());
     if (!c.root_dir.empty()) {
       r.root = c.root_dir / (c.root_prefix + std::string(out.to_string()));
-      add_root(r.out, r.root);
+      add_root(r.derivation.output, r.root);
     }
-    std::ifstream f(r.out, std::ios::binary);
+    std::ifstream f(r.derivation.output, std::ios::binary);
     std::stringstream ss;
     ss << f.rdbuf();
     r.manifest = ss.str();
@@ -489,13 +484,45 @@ NixEvaluator::~NixEvaluator() {
   pthread_join(impl_->thread, nullptr);
 }
 
-NixResult NixEvaluator::build(const NixCall& call) {
-  return impl_->guarded(call, [&] { return impl_->build(call); });
+auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
+  if (call.system.empty()) throw std::runtime_error("execution target system is unknown");
+  return impl_->guarded(call, [&] { return impl_->evaluate(call); });
 }
 
-auto NixEvaluator::realise_remote(const std::filesystem::path& archive, const std::filesystem::path& store_root,
-                                  const std::string& derivation, const std::string& output,
-                                  const std::function<void(const std::string&)>& log) -> NixResult {
+auto NixEvaluator::make_available(const NixCall& call, const DerivationClosureTransport& transport,
+                                  const WorkerDerivation& derivation) -> void {
+  impl_->guarded(call, [&] {
+    impl_->current = &call;
+    g_logger->set(call.log);
+    struct Done {
+      Impl* impl;
+      ~Done() {
+        g_logger->set(nullptr);
+        impl->current = nullptr;
+      }
+    } done{impl_.get()};
+    transport.send(derivation);
+  });
+}
+
+auto NixEvaluator::realise_native(const NixCall& call, NixResult result) -> NixResult {
+  return impl_->guarded(call, [&] {
+    impl_->current = &call;
+    g_logger->set(call.log);
+    struct Done {
+      Impl* impl;
+      ~Done() {
+        g_logger->set(nullptr);
+        impl->current = nullptr;
+      }
+    } done{impl_.get()};
+    return impl_->realise_native(call, std::move(result));
+  });
+}
+
+auto RemoteWorkerStore::realise(const DerivationClosureTransport& transport, const std::filesystem::path& store_root,
+                              const WorkerDerivation& derivation,
+                              const std::function<void(const std::string&)>& log) -> NixResult {
   g_logger->set(log);
   struct ClearLog {
     ~ClearLog() { g_logger->set(nullptr); }
@@ -503,19 +530,13 @@ auto NixEvaluator::realise_remote(const std::filesystem::path& archive, const st
   nix::settings.getLocalSettings().sandboxMode = nix::smEnabled;
   nix::settings.getLocalSettings().sandboxFallback = false;
   auto store = nix::openStore("local", {{"root", store_root.string()}});
-  const auto drv = store->parseStorePath(derivation);
-  const auto out = store->parseStorePath(output);
+  const auto drv = store->parseStorePath(derivation.path);
+  const auto out = store->parseStorePath(derivation.output);
   store->addTempRoot(drv);
   store->addTempRoot(out);
-  if (!store->isValidPath(drv)) {
-    const int fd = ::open(archive.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-    if (fd < 0) throw std::runtime_error("cannot read the remote Nix derivation archive");
-    nix::AutoCloseFD file{fd};
-    nix::FdSource source{fd};
-    // This is the SSH account's private chroot store. Incoming paths have
-    // already been bound to the invocation by their SHA-256 digest.
-    nix::importPaths(*store, source, nix::NoCheckSigs);
-  }
+  transport.receive(*store, derivation);
+  if (store->readDerivation(drv).platform != derivation.system)
+    throw std::runtime_error("remote derivation has a different system");
   const auto declared = store->queryDerivationOutputMap(drv);
   const auto declared_out = declared.find("out");
   if (declared_out == declared.end() || declared_out->second != out)
@@ -531,7 +552,7 @@ auto NixEvaluator::realise_remote(const std::filesystem::path& archive, const st
   store->computeFSClosure(out, closure);
   for (const auto& path : closure) result.closure.push_back(store->printStorePath(path));
   std::sort(result.closure.begin(), result.closure.end());
-  const auto manifest = store_root / std::filesystem::path(output).relative_path();
+  const auto manifest = store_root / std::filesystem::path(derivation.output).relative_path();
   const int fd = ::open(manifest.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
   if (fd < 0) throw std::runtime_error("cannot open the remote Nix Card manifest");
   nix::AutoCloseFD file{fd};
@@ -547,7 +568,6 @@ auto NixEvaluator::realise_remote(const std::filesystem::path& archive, const st
     offset += static_cast<size_t>(n);
   }
   result.derivation = derivation;
-  result.out = output;
   return result;
 }
 

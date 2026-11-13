@@ -34,6 +34,7 @@ struct CardBuild {
   // The worker that loads a package of another system, built with the Card's
   // nixpkgs for that system; "" for tsugumid's own worker.
   std::string worker;
+  WorkerDerivation derivation;
   BuildEnvironmentData environment;
   std::string key;      // the manifest's store path
   bool cached = false;  // the store already had the result: nothing was built
@@ -56,8 +57,8 @@ struct BuildRequest {
   uint32_t cores = 1;
   uint32_t max_implementations = kMaxExecutionBatchSize;
   std::optional<uint64_t> timeout_seconds;
-  std::string remote_system;
-  std::filesystem::path derivation_archive;
+  ExecutionTarget target;
+  const DerivationClosureTransport* transport = nullptr;
   const std::atomic<bool>* cancel = nullptr;
   std::function<void(const std::string&)> log;  // build output lines
   std::function<void(Phase)> on_phase;          // evaluate, then build (only when the store lacks the result)

@@ -29,6 +29,7 @@ struct RemoteJobState {
 };
 
 struct RemoteProbe {
+  std::string native_system;
   std::string instance;
   std::string server_id;
   std::vector<std::string> systems;

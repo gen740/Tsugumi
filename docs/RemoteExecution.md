@@ -1,6 +1,17 @@
 # Run a Card on an execution daemon
 
-Register a Linux execution daemon in Tsugumi to run Code Cards on another machine. The project daemon evaluates the Card's Nix definition. The execution daemon builds it in a private Nix store, runs the isolated worker and returns typed outputs, files, logs, displays and execution provenance.
+Register a Linux execution daemon in Tsugumi to run Code Cards on another machine. The project daemon evaluates the Card's Nix definition. The remote worker realises the derivation in a private Nix store by substituting or building, runs the isolated Card worker and returns typed outputs, files, logs, displays and execution provenance.
+
+## Worker contract
+
+Only the host-side `tsugumid` evaluates a Card's Nix definition. Assignment resolves an `ExecutionTarget` (worker kind and Nix system) before evaluating the Card and its connected exports or external sources. The remote daemon's `probe` already reports `native_system` and `systems`; the core uses the fresh probe's native system unless the Card selects an explicitly supported system. An unknown system or an evaluation failure for that system stops assignment with a diagnostic before any closure or invocation is uploaded. Evaluation caches include the target system, and evaluating for another system never builds an output on the host.
+
+The common contract is `WorkerDerivation` in `core/src/worker_derivation.hh`: the `.drv` path, expected manifest output and target system, with the derivation's input closure made available. The invocation separately supplies typed inputs, parameters and call identity. Sharing the derivation is mandatory whenever an invocation is assigned to a remote worker, and it is evaluated for that worker's system; there is no per-Card switch for sharing it. Workers never evaluate Card definitions.
+
+- A **native worker** (`tsugumi-worker`, service ID `local`) shares the host's `/nix/store` paths. Host-side preparation realises the derivation through nix-daemon in that store, reads the manifest and starts the native worker with the resulting paths. The native worker runs them directly.
+- A **remote worker** (`tsugumi-remote-worker`, supervised by the Python daemon in `remote/`) has its own store. It receives the derivation contract and invocation, verifies the system and expected output, realises the derivation by substituting or building in that store, and runs its output.
+
+`DerivationClosureTransport` is the narrow availability interface. `SharedStoreDerivationTransport` requires no transfer for native workers. `ArchiveDerivationTransport` in `core/src/derivation_transport.cc` exports the `.drv` input closure with `computeFSClosure` and `exportPaths`; the existing content-addressed blob upload carries that archive to the remote worker, which imports it before realisation. A binary-cache implementation can replace this transport without changing the scheduler or evaluator. Built outputs are not pushed by this transport.
 
 ## Start a daemon
 
@@ -51,3 +62,13 @@ Archiving incompatible local history also leaves existing jobs on the execution 
 Each job builds in its own Nix store under the daemon's work directory. The supervisor attempts to remove this workspace when the job ends. A forced stop or failed cleanup can leave files behind.
 
 To remove a daemon's data, stop submitting jobs, wait for its active jobs to finish or cancel them, then stop the daemon and remove its state directory. This removes jobs and blobs for every project using that daemon state.
+
+## Planned
+
+This contract prepares a binary-cache transport, but this change adds no cache server or output uploads. The planned shared cache service will live in the core's code, separately from each per-project `tsugumid`, and will be off when only native workers are used. What it keeps for reuse is derivations and built outputs only, never invocation results.
+
+Run data (a Card's input and output values, files and directories) remain managed by `tsugumid`. The cache must not extend the existing retention rules: the last run's inputs are kept by default for partial runs, and an output is kept only when the Card explicitly declares it an artifact. This follows the project's [philosophy](Philosophy.md): people give results their meaning, so deciding which result is worth keeping belongs to a person, explicitly, rather than to a machine accumulating results on its own. It is also a practical boundary: run data grow with every combination of inputs and parameters, and a Card need not be deterministic. Caching invocation results would both cause unbounded growth and risk returning wrong results.
+
+Run data always travel on `tsugumid`'s own channel with each invocation, separately from the derivation transport, whatever their size. Data that a user wants shared the way builds are goes into a Nix definition by the user's choice; it is then a derivation output and is cached like any other. Stored run data are deleted only by the user, in the UI: `tsugumid` may suggest a deletion (past runs, for example) but never deletes on its own, in the way backups are handled. The run history is planned to show, for each run, whether its data are still kept. These rules do not yet apply to the current remote daemon's journal and blobs described above, which stay on the remote host until someone removes them; how to handle them is undecided.
+
+Derivation sharing remains mandatory for every remote assignment. Only pushing a Card's built output will be a per-Card setting, on by default. A remote worker is trusted once the user registers it, so it may push built outputs to the planned cache. Cards built with machine-specific optimisation must turn pushing off. Detecting such optimisation in a derivation to default pushing off or warn is planned only; this change implements neither detection nor warnings. Per-project nix-daemon ownership and build attribution are unchanged.

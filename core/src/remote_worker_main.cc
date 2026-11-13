@@ -109,6 +109,7 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
   spawn.bash = *shell;
   spawn.store_path = (store / "nix/store").string();
   spawn.scratch = (directory / "scratch").string();
+  spawn.build.derivation = env.derivation;
   spawn.build.package = *run->package;
   spawn.build.bash = *run->bash;
   if (spawn.build.package.has_value() == spawn.build.bash.has_value())
@@ -268,14 +269,15 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs) -> void {
   // source paths or outputs realised for another invocation or project.
   const auto store = directory / "nix-root";
   try {
-    environment = NixEvaluator::realise_remote(blob(*invocation.archive_sha256), store, derivation, output,
+    environment = RemoteWorkerStore::realise(ArchiveDerivationTransport(blob(*invocation.archive_sha256)), store,
+        WorkerDerivation{derivation, output, *schema::get(job.system)},
         [&](const std::string& line) { log(LogStream::build, line + "\n"); });
     outcome = run_worker(*call, invocation, input, directory, store, environment, log,
         [&](const DisplayData& data) { display = wire::standalone_display(data); });
   } catch (const Failed& error) {
     outcome.failure = error.failure;
   } catch (const std::exception& error) {
-    outcome.failure = FailureData::make(environment.out.empty() ? FailureKind::nix_failed : FailureKind::worker_failed, error.what());
+    outcome.failure = FailureData::make(environment.derivation.output.empty() ? FailureKind::nix_failed : FailureKind::worker_failed, error.what());
   }
   remote::EnvironmentJson info;
   *info.paths = std::move(environment.closure);

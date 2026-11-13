@@ -29,7 +29,7 @@ namespace tsugumi {
 class Scheduler;
 class NixRunner;
 class ExecutionService;
-class LocalExecutionService;
+class NativeExecutionService;
 class RemoteExecutionService;
 
 struct ServiceOptions {
@@ -199,7 +199,7 @@ class Service : public RequestSink {
   std::mutex verified_mu_;
   std::map<std::string, std::pair<uint64_t, int64_t>> verified_;
   std::unique_ptr<NixRunner> nix_;
-  std::unique_ptr<LocalExecutionService> execution_service_;
+  std::unique_ptr<NativeExecutionService> execution_service_;
   RemoteJobClient remote_jobs_;
   std::unique_ptr<RemoteExecutionService> remote_execution_;
   std::unique_ptr<Scheduler> scheduler_;
