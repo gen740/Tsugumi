@@ -16,8 +16,9 @@ enum SmokeTest {
       var report: [String: Any] = ["demo": demoId]
       let t0 = Date()
       do {
+        await model.refreshHome()
         guard let demo = model.demos.first(where: { $0.id == demoId }) else { throw CocoaError(.fileNoSuchFile) }
-        let url = try model.copyDemo(demo)
+        let url = try await model.copyDemo(demo)
         report["project"] = url.path
         let s = try model.session(for: url)
         while !s.connected {

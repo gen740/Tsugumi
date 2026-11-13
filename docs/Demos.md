@@ -692,9 +692,9 @@ start → load → prepare → share ─┬→ knn ──────┐
 | `knn`, `logistic`, `svm`, `forest`, `boosting`, `mlp`, `cnn` | Drafts. No wires between them, and separate environments (scikit-learn, xgboost, torch) | Helpers, one each, at the same time |
 | `compare` | A Draft. Waits for the seven results and makes a ranking and a scatter plot | The Agent, after the helpers report |
 
-- **Why they can merge:** each Draft's description writes out the type of the output `result` (`mnist.Result`). Helpers cannot see what the others write, so without this agreement `compare` could not read them with one type.
+- **Why they can merge:** each Draft's description writes out the type of the output `result` (`mnist.Result`). This shared agreement lets helpers implement independently and lets `compare` read their outputs with one type.
 - **What is checked:** each Draft's description has the steps of the computation and `assert`s. Besides the counts, the 0–9 range and a minimum accuracy, they check properties that each method's result must have (kNN agreeing with brute force in numpy, logistic regression's predictions agreeing with the weighted sums, the forest's predictions agreeing with the average of its trees, formulas for the networks' parameter counts and so on). `compare` checks that the digests agree and that the accuracies agree with values recomputed from the predictions.
-- **Why the counts are small:** a project can run only one run at a time, so the helpers' runs wait their turn (at most 900 seconds per wait). So it uses 5000 training and 1000 test images, smaller than the finished version (10000 and 2000).
+- **Why the counts are small:** 5000 training and 1000 test images keep verification runs short, compared with the finished version's 10000 and 2000. A project can run only one run at a time; coordinate through the helper instructions so the parent runs after the helpers finish writing.
 - **The answers:** neither this demo nor the finished `mnist-classifiers` appears in the Agent's `reference_read` list or can be read with it.
 
 ## csharp-calibration
