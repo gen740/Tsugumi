@@ -329,6 +329,9 @@ import TsugumiAgentClient
     try await withFixture(slow: 0) { t in
       let back = try t.makeSession()
       let model = AppModel()
+      // Its home refresh talks to this fixture's core; it must not outlive the
+      // fixture and start the shared core in whatever state directory comes next.
+      await model.initialRefresh?.value
       let first = model.chat(for: t.session)
       t.keep(first)
       try await until("the first UI is attached") { first.currentId == t.conversationID }

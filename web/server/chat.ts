@@ -574,12 +574,17 @@ async function turnAgent(b: any) {
   return { host, a }
 }
 
+// The same authenticated host connection also serves Home's project requests.
+export function hostRequest<T = any>(method: string, fields: unknown = {}): Promise<T> {
+  return core.user.call<T>(method, fields)
+}
+
 export function chatRoutes(c: ChatContext): Record<string, Handler> {
   ctx = c
   // The language for the server's own messages, from the start (the app's, once read).
   settings()
   void ctx.desktop?.refresh().then(() => settings(), () => {})
-  core = new CoreAgentHost(c.support, c.here, c.envs, language())
+  core = new CoreAgentHost(c.support, c.here, c.envs)
   const projectDir = c.projectDir
   return {
   'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined).map(({ content: _content, ...metadata }) => metadata),

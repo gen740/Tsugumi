@@ -13,11 +13,13 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { IPty } from 'node-pty'
 import { AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir } from './paths'
-import { cancelChats, chatRoutes, chatStatus } from './chat'
+import { cancelChats, chatRoutes, chatStatus, hostRequest } from './chat'
 import { EnvironmentManager, Environments, EnvState, projectKey } from './env'
 import { VMEnvironmentManager, VMTerminal } from './vm'
-import { desktopRecents, desktopSettings, Recent } from './desktop'
+import { desktopSettings } from './desktop'
 import { L, language } from './i18n'
+import { CoreAgentError } from './coreAgent'
+import { hostProjectErrorText } from './hostProjects'
 import { uninstall } from './uninstall'
 import { authorizeExecutionProject, loadExecutionServices, registerExecutionService, removeExecutionService, startExecutionBroker } from './executionServices'
 
@@ -73,8 +75,6 @@ const bins = {
 }
 const support = webDataDir()
 fs.mkdirSync(support, { recursive: true })
-// The demos in the UI's language (demos/ja, demos/en: each a set of its own).
-const demosRoot = () => path.join(repo, 'demos', language())
 // TSUGUMI_PROJECTS_DIR: where demo copies go instead of ~/Documents/Tsugumi (checks).
 const projectsDir = process.env.TSUGUMI_PROJECTS_DIR ?? path.join(os.homedir(), 'Documents', 'Tsugumi')
 const publicDir = path.join(here, 'public')
@@ -108,83 +108,6 @@ function writeJSON(file: string, v: unknown) {
   fs.mkdirSync(path.dirname(file), { recursive: true })
   fs.writeFileSync(file + '.tmp', JSON.stringify(v, null, 2))
   fs.renameSync(file + '.tmp', file)
-}
-
-const recentsFile = path.join(support, 'recent-projects.json')
-const recentStore = vm
-  ? desktopRecents(vm.options.support)
-  : { read: () => readJSON<Recent[]>(recentsFile, []), write: (list: Recent[]) => writeJSON(recentsFile, list) }
-const recents = () => recentStore.read().filter((r) => fs.existsSync(r.path))
-
-function projectName(dir: string) {
-  return readJSON<{ name?: string }>(path.join(dir, 'tsugumi.json'), {}).name || path.basename(dir)
-}
-
-function remember(dir: string) {
-  const list = recents().filter((r) => r.path !== dir)
-  list.unshift({ path: dir, name: projectName(dir), openedAt: Date.now() })
-  recentStore.write(list.slice(0, 30))
-}
-
-/** Takes projects off the recent list; the folders themselves stay. */
-function forgetRecents(paths: unknown) {
-  const gone = new Set(Array.isArray(paths) ? paths.map(String) : [])
-  recentStore.write(recents().filter((r) => !gone.has(r.path)))
-  return { ok: true }
-}
-
-// ---- Projects --------------------------------------------------------------------
-
-interface Demo { id: string; title: string; description: string; path: string; tags: string[]; field?: string }
-function demos(): Demo[] {
-  const idx = readJSON<{ demos?: { id: string; title: string; description?: string; path: string; tags?: string[]; field?: string }[] }>(path.join(demosRoot(), 'index.json'), {})
-  return (idx.demos ?? []).map((d) => {
-    const dir = path.join(demosRoot(), d.path)
-    return { id: d.id, title: d.title, description: d.description ?? '', path: dir, tags: Array.isArray(d.tags) ? d.tags.map(String) : [], ...(d.field ? { field: String(d.field) } : {}) }
-  })
-}
-
-/** Copies a bundled demo into a new, editable project (the original stays untouched). */
-function copyDemo(id: string): string {
-  const demo = demos().find((d) => d.id === id)
-  if (!demo) throw new Error(`unknown demo ${id}`)
-  fs.mkdirSync(projectsDir, { recursive: true })
-  let dest = path.join(projectsDir, id)
-  for (let n = 2; fs.existsSync(dest); n++) dest = path.join(projectsDir, `${id}-${n}`)
-  // Not a demo's own state folder (.tsugumi/); its history file comes along.
-  fs.cpSync(demo.path, dest, { recursive: true, filter: (src) => !/[\\/]\.tsugumi([\\/]|$)/.test(src) })
-  // Yours to edit: on Linux the demos are in the Nix store, and a copy keeps their read-only modes.
-  for (const f of [dest, ...fs.readdirSync(dest, { recursive: true }).map((r) => path.join(dest, String(r)))]) {
-    const st = fs.lstatSync(f)
-    if (!st.isSymbolicLink()) fs.chmodSync(f, st.mode | 0o200)
-  }
-  return dest
-}
-
-const FLOWS = ['topToBottom', 'leftToRight']
-
-/** The nixpkgs this Tsugumi builds with (its flake.lock): new projects are
- *  pinned to it, so a later Tsugumi with another nixpkgs leaves them as they are. */
-const nixpkgsPin: string | null = (() => {
-  try {
-    const locked = JSON.parse(fs.readFileSync(path.join(repo, 'flake.lock'), 'utf8')).nodes.nixpkgs.locked
-    return `https://github.com/NixOS/nixpkgs/archive/${locked.rev}.tar.gz#${locked.narHash}`
-  } catch {
-    return null
-  }
-})()
-
-/** Creates an empty project; the initial documents are placed before the environment starts. */
-function createProject(parent: string, name: string, flow: unknown): string {
-  const dir = path.join(parent, name.replace(/[/\\]/g, '-'))
-  if (fs.existsSync(dir)) throw new HttpError(409, L('{0} は既に存在します', dir))
-  fs.mkdirSync(dir, { recursive: true })
-  const project = { name, pkgsPath: nixpkgsPin ?? 'tsugumi:default', canvas: { cards: [], connections: [] } }
-  fs.writeFileSync(path.join(dir, 'tsugumi.json'), JSON.stringify(project, null, 2) + '\n')
-  // The direction the new project's Cards are laid out in (the app's default).
-  const f = typeof flow === 'string' && FLOWS.includes(flow) ? flow : 'topToBottom'
-  fs.writeFileSync(path.join(dir, 'layout.json'), JSON.stringify({ flow: f }) + '\n')
-  return dir
 }
 
 /** Regular files of a project folder, without hidden files and folders
@@ -226,26 +149,6 @@ function importProject(folder: unknown) {
     }
   }
   return { name: path.basename(root), files, binary }
-}
-
-/** A copy of a project's saved documents and sources (what is in its folder,
- *  without hidden folders such as .tsugumi), as a new project folder. */
-function duplicateProject(from: string, parent: unknown, name: unknown): string {
-  if (typeof parent !== 'string' || typeof name !== 'string' || !name.trim()) throw new HttpError(400, L('複製先を指定してください'))
-  const dest = path.join(parent, name.trim().replace(/[/\\]/g, '-'))
-  if (fs.existsSync(dest)) throw new HttpError(409, L('{0} は既に存在します', dest))
-  const files = projectFiles(from, 1 << 30)
-  try {
-    for (const [rel, d] of files) {
-      const f = path.join(dest, rel)
-      fs.mkdirSync(path.dirname(f), { recursive: true })
-      fs.writeFileSync(f, d)
-    }
-  } catch (e) {
-    fs.rmSync(dest, { recursive: true, force: true })
-    throw e
-  }
-  return dest
 }
 
 function listDir(dir: string) {
@@ -427,8 +330,10 @@ const routes: Record<string, Handler> = {
   'GET /api/execution-services': () => loadExecutionServices(executionServiceSettings),
   'POST /api/execution-services/register': (body) => registerExecutionService(executionServiceSettings, body),
   'POST /api/execution-services/remove': (body) => removeExecutionService(executionServiceSettings, body),
-  'GET /api/status': () => ({
-    setup: setupStatus(), demos: demos(), recents: recents(), home: os.homedir(), launchProject: launchProject ?? null, nixpkgsPin,
+  'GET /api/status': async () => ({
+    setup: setupStatus(), demos: await hostRequest('HostDemoListRequest', { language: language() }),
+    recents: await hostRequest('HostRecentListRequest'), home: os.homedir(), launchProject: launchProject ?? null,
+    ...await hostRequest('HostProjectDefaultsRequest'),
     // /host/<name> needs bubblewrap: on a Mac, the app's shared VM (core/src/worker_proc.cc).
     hostFolders: process.platform !== 'darwin' || !!vm,
     ...chatStatus(), documents: projectsDir,
@@ -437,23 +342,22 @@ const routes: Record<string, Handler> = {
     startBuild()
     return setupStatus()
   },
-  'POST /api/project/open': (b) => {
-    const dir = projectDir(b.path)
-    remember(dir)
-    return { path: dir, key: projectKey(dir).key, name: projectName(dir) }
+  'POST /api/project/open': async (b) => {
+    const recent = await hostRequest('HostRecentRememberRequest', { path: b.path })
+    return { path: recent.path, key: projectKey(recent.path).key, name: recent.name }
   },
-  'POST /api/project/create': (b) => ({ path: createProject(String(b.parent), String(b.name), b.flow) }),
-  'POST /api/project/duplicate': (b) => ({ path: duplicateProject(projectDir(b.path), b.parent, b.name) }),
-  'POST /api/recents/forget': (b) => forgetRecents(b.paths),
+  'POST /api/project/create': (b) => hostRequest('HostProjectCreateRequest', { parent: b.parent, name: b.name, flow: b.flow }),
+  'POST /api/project/duplicate': (b) => hostRequest('HostProjectDuplicateRequest', { path: b.path, parent: b.parent, name: b.name }),
+  'POST /api/recents/forget': (b) => hostRequest('HostRecentForgetRequest', { paths: b.paths }),
   // Finder (or the file manager) at a recent project; only folders on the list.
-  'POST /api/reveal': (b) => {
+  'POST /api/reveal': async (b) => {
     const p = String(b.path)
-    if (!recents().some((r) => r.path === p)) throw new HttpError(400, L('一覧にないフォルダです'))
+    if (!(await hostRequest<{ path: string }[]>('HostRecentListRequest')).some((r) => r.path === p)) throw new HttpError(400, L('一覧にないフォルダです'))
     const [cmd, args] = process.platform === 'darwin' ? ['open', ['-R', p]] : ['xdg-open', [path.dirname(p)]]
     spawn(cmd, args, { stdio: 'ignore', detached: true }).on('error', () => {}).unref()
     return { ok: true }
   },
-  'POST /api/demo/copy': (b) => ({ path: copyDemo(String(b.id)) }),
+  'POST /api/demo/copy': (b) => hostRequest('HostDemoCopyRequest', { id: b.id, parent: projectsDir, language: language() }),
   // What a page shows now (Home: no project); see showOnPage.
   'POST /api/page': (b) => {
     if (b.project) pageProjects.set(String(b.page), projectDir(b.project))
@@ -483,7 +387,8 @@ const routes: Record<string, Handler> = {
     await envs.stop(projectDir(b.path))
     return { ok: true }
   },
-  'GET /api/env/list': () => envs.list().map((e) => ({ key: e.key, project: e.project, name: projectName(e.project), state: publicState(e.state) })),
+  'GET /api/env/list': () => Promise.all(envs.list().map(async (e) => ({ key: e.key, project: e.project,
+    name: (await hostRequest('HostProjectInfoRequest', { path: e.project })).name, state: publicState(e.state) }))),
   // Another run of the tsugumi command: a page opens (its key goes to `open` alone).
   'POST /api/page/open': () => {
     openPage(undefined)
@@ -628,7 +533,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     try {
       send(res, 200, await h(req.method === 'GET' ? {} : await body(req), url))
     } catch (e) {
-      send(res, e instanceof HttpError ? e.status : 500, { error: (e as Error).message ?? String(e) })
+      send(res, e instanceof HttpError ? e.status : e instanceof CoreAgentError ? 400 : 500,
+        e instanceof CoreAgentError ? { code: e.code, error: hostProjectErrorText(e.code) } : { error: (e as Error).message ?? String(e) })
     }
     return
   }

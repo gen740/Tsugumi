@@ -104,8 +104,8 @@ extension AppModel {
     guard p.runModal() == .OK, let url = p.url else { return }
     Task {
       do {
-        try await s.duplicate(to: url)
-        openProject(url, from: w, openWindow: openWindow)
+        let copy = try await duplicateProject(from: s.identity.url, to: url)
+        openProject(copy, from: w, openWindow: openWindow)
       } catch {
         w.alert = String(localized: "複製できませんでした: ") + "\(error)"
       }
