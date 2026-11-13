@@ -46,6 +46,7 @@ web/               Browser UI and host server (the Agent's contract shared throu
 cli/               The tsugumi command: installers (install.sh, install.ps1), the Mac launch script, scripts that make the distributions
 plugins/tsugumi/   The Claude Code plugin (installed from .claude-plugin/marketplace.json)
 nix/               core.nix: package definitions of tsugumid, tsugumi-worker and the Card SDK
+                   flake/: the flake's outputs as flake-parts modules (packages, checks, dev shell, docs apps)
 tests/core, tests/python, tests/fixtures   Contracts, integration and packaging tests, model fixtures
 demos/ja, demos/en The demos, a set per UI language (the same demos and files, their text in one language): the UI's demo list (index.json);
                    basic, science and Plots (matplotlib, Plotly, Altair) demos, and Draft versions of the science demos
@@ -108,21 +109,20 @@ Generated bindings (C++/Python/Swift) and BFBS are made by `flatc` into each bui
 
 The Markdown files in `docs/` are the source documents. The repository's `README.md` is the entry point; `THIRD_PARTY_NOTICES.md` stays with the license. Edit these sources, never a generated copy. [docs/README.md](README.md) supplies the navigation groups and descriptions.
 
-The site is an Astro project in `docs/site/`, with its own pinned dependencies. It requires Node.js 22.23.4 or later.
+The site is an Astro project in `docs/site/`, with its own pinned dependencies. Nix supplies Node.js and builds the site's packages from `docs/site/package-lock.json` ([nix/docs-site.nix](../nix/docs-site.nix)); `docs/site/node_modules` is a link to them, and nothing is installed with npm.
 
 ```bash
-npm ci --prefix docs/site
-npm --prefix docs/site run dev
+nix run .#dev-doc
 ```
 
 Astro serves the site at `http://localhost:4321` and reloads when documents, components or illustrations change. To build and check the static output:
 
 ```bash
-npm --prefix docs/site run build
-npm --prefix docs/site test
+nix run .#build-doc
+nix run .#test-doc
 ```
 
-- **Output:** `build/docs/` contains the HTML, linked Markdown downloads, `llms.txt` and static assets. It is ignored by Git and can be deleted and rebuilt. `npm --prefix docs/site run preview` serves that output locally.
+- **Output:** `build/docs/` contains the HTML, linked Markdown downloads, `llms.txt` and static assets. It is ignored by Git and can be deleted and rebuilt. After one of the commands above has made the link, `npm --prefix docs/site run preview` in the dev shell serves that output locally.
 - **Content:** `src/content.config.ts` loads the source documents into an Astro content collection. Astro renders Markdown; the `.astro` components provide the common layout, navigation and home page. `src/lib/documents.mjs` defines the story illustrations and resolves repository links for the website and Markdown downloads.
 - **Publication:** [.github/workflows/docs.yml](../.github/workflows/docs.yml) builds and checks the site on pull requests and publishes `build/docs/` on pushes to `main`. Set the repository's Pages source to **GitHub Actions**. No generated pages are committed.
 - **App help:** `macOS/build-app.sh` builds the same site and `macOS/tools/bundle-docs.sh` bundles its story pages and assets. The development app reads `build/docs/` when no bundled help is present. Relative URLs let the pages work under both GitHub Pages and the app's local URL scheme.
@@ -144,7 +144,7 @@ The CI definitions are [ci.yml](../.github/workflows/ci.yml) and [ci-platform.ym
 | `web/` | Browser UI type checks and behavior contracts |
 | `tests/prompt/` | Offline prompt probe scoring |
 
-For documentation changes, run `npm --prefix docs/site run build` and `npm --prefix docs/site test`. Changes to the demo player also require `node docs/site/player/build.mjs --check`.
+For documentation changes, run `nix run .#build-doc` and `nix run .#test-doc`. Changes to the demo player also require `node docs/site/player/build.mjs --check`.
 
 ### R and Julia worker measurement
 

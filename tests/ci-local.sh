@@ -96,8 +96,7 @@ mac_job() {
   step "Build the Dawn renderer (the app package links it)"
   ui/renderer/build.sh
   step "Build the application help"
-  core_run npm ci --prefix docs/site --no-audit --no-fund
-  ASTRO_TELEMETRY_DISABLED=1 core_run npm --prefix docs/site run build
+  nix --extra-experimental-features 'nix-command flakes' run .#build-doc
   step "App logic (macOS/Tests)"
   core_run /usr/bin/swift test --package-path macOS
 }

@@ -47,7 +47,7 @@ vm="$dist/tsugumi-vm"
 "$repo/macOS/tools/build-agent.sh"
 
 # Swift uses the Apple toolchain with a clean environment; only flatc comes from Nix.
-flatc_bin="$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#flatbuffers)/bin"
+flatc_bin="$("$repo/macOS/tools/flatc-bin.sh")"
 swiftenv=(env -i HOME="$HOME" TSUGUMI_CLIENT_LIB_DIR="$repo/build-host/client" PATH="$flatc_bin:/usr/bin:/bin:/usr/sbin:/sbin")
 # Swift Build, also where it is not the default yet (Xcode 26.6 of the release
 # runner), for Apple silicon only (the renderer is arm64): its Bundle.module finds the packages' resource bundles in
@@ -96,8 +96,7 @@ cp "$repo/agent/Reference/card-guide.md" "$app/Contents/Resources/reference/card
 cp "$repo/sdk/python/tsugumi/__init__.py" "$app/Contents/Resources/reference/tsugumi-sdk.py"
 # Help > Learn about Tsugumi: the documentation site's story pages, as they are, with
 # what they use (Sources/App/Explainer/ExplainerWindow.swift).
-nix develop "$repo" -c npm ci --prefix "$repo/docs/site" --no-audit --no-fund
-ASTRO_TELEMETRY_DISABLED=1 nix develop "$repo" -c npm --prefix "$repo/docs/site" run build
+(cd "$repo" && nix run .#build-doc)
 bash "$repo/macOS/tools/bundle-docs.sh" "$app/Contents/Resources/explainer"
 # Home's demo thumbnails (Sources/App/Home/DemoThumbnail.swift): the site's data of
 # each demo and the images it names, without what only builds that data.

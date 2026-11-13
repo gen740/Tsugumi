@@ -7,6 +7,9 @@ on:
       - 'README.md'
       - 'THIRD_PARTY_NOTICES.md'
       - 'macOS/tools/bundle-docs.sh'
+      - 'nix/docs-site.nix'
+      - 'nix/flake/docs.nix'
+      - 'flake.lock'
       - '.github/workflows/docs.yml'
   pull_request:
     paths:
@@ -14,6 +17,9 @@ on:
       - 'README.md'
       - 'THIRD_PARTY_NOTICES.md'
       - 'macOS/tools/bundle-docs.sh'
+      - 'nix/docs-site.nix'
+      - 'nix/flake/docs.nix'
+      - 'flake.lock'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 permissions:
@@ -21,22 +27,16 @@ permissions:
 concurrency:
   group: docs-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-env:
-  ASTRO_TELEMETRY_DISABLED: '1'
 jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: npm
-          cache-dependency-path: docs/site/package-lock.json
-      - run: npm ci --prefix docs/site --no-audit --no-fund
-      - run: npm --prefix docs/site run build
-      - run: npm --prefix docs/site test
+      # The same Node.js and packages as `nix run .#dev-doc` (nix/docs-site.nix).
+      - uses: ./.github/actions/setup-nix
+      - run: nix run .#build-doc
+      - run: nix run .#test-doc
       - uses: actions/upload-pages-artifact@v3
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         with:

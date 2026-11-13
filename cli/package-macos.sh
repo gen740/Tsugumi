@@ -23,7 +23,7 @@ nix develop "$repo" -c bash -c "cd '$repo/web' && npm ci --ignore-scripts && npm
 "$repo/macOS/tools/build-agent.sh"
 
 # As for the app: Apple's toolchain in a clean environment, only flatc from Nix.
-flatc_bin="$(nix build --no-link --print-out-paths --inputs-from "$repo" nixpkgs#flatbuffers)/bin"
+flatc_bin="$("$repo/macOS/tools/flatc-bin.sh")"
 swiftenv=(env -i HOME="$HOME" TSUGUMI_CLIENT_LIB_DIR="$repo/build-host/client" PATH="$flatc_bin:/usr/bin:/bin:/usr/sbin:/sbin")
 build_opts=(-c release --build-system swiftbuild --arch arm64)
 (cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --product tsugumi-vmhost)
