@@ -235,6 +235,8 @@ export function GuideFlyer() {
   // Where the bird goes: what Tsugumi points at, or (the chat's Agent at work) the Card it works on.
   const writing = guide.writer?.at(Date.now() / 1000)?.card
   const working = guide.bubble ? undefined : writing ? { card: writing, line: L('{0} を書いています', writing), from: undefined } : guide.work?.card ? guide.work : undefined
+  const thought = guide.thoughtLine()
+  const workLine = thought ?? working?.line
   const target = guide.present ? guide.bubble?.target ?? (working?.card ? `card:${working.card}` : undefined) : undefined
   const still = prefs.tsugumiStill
   // Where the target and home are now (Cards move with the canvas, loading comes and goes).
@@ -334,7 +336,11 @@ export function GuideFlyer() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key])
-  if (!guide.away || !box || inCard) return <GuideRings />
+  if (!guide.away || !box || inCard) return <>
+    <GuideRings />
+    {!guide.away && !loading && !guide.bubble && home && thought && <div className="guide-work-line material" aria-live="polite"
+      style={{ left: Math.min(home.left, window.innerWidth - 228), top: home.top + home.height + 6, maxWidth: 220 }}>{thought}</div>}
+  </>
   const bw = bubbleRef.current?.offsetWidth ?? 300, bh = bubbleRef.current?.offsetHeight ?? 100
   const dx = drag?.dx ?? 0, dy = drag?.dy ?? 0
   const feetX = box.left + box.width / 2 + dx, feetY = box.top + box.height + dy
@@ -375,9 +381,9 @@ export function GuideFlyer() {
           <BubbleView bubble={guide.bubble} perform={makePerform(guide.speakingChat?.session ?? guide.contextSession, guide.contextTab)} />
         </div>
       )}
-      {arrived && goal === 'perch' && !guide.bubble && working?.line && (
+      {arrived && goal === 'perch' && !guide.bubble && workLine && (
         // The Agent at work: what it does, in a line beside the bird (nothing to press).
-        <div className={`guide-work-line material${lead ? ' lead' : ''}`} style={{ ...(box.flip ? { left: feetX - 10 } : { right: window.innerWidth - feetX - 10 }), top: feetY + 6, maxWidth: Math.min(220, (box.flip ? window.innerWidth - feetX : feetX) + 2), ...leadStyle }} aria-live="polite">{working.from ? `${working.from}: ${working.line}` : working.line}</div>
+        <div className={`guide-work-line material${lead ? ' lead' : ''}`} style={{ ...(box.flip ? { left: feetX - 10 } : { right: window.innerWidth - feetX - 10 }), top: feetY + 6, maxWidth: Math.min(220, (box.flip ? window.innerWidth - feetX : feetX) + 2), ...leadStyle }} aria-live="polite">{working?.from && !thought ? `${working.from}: ${workLine}` : workLine}</div>
       )}
     </div>
   )

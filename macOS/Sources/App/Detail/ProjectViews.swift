@@ -262,12 +262,12 @@ private struct GeneralProjectSettings: View {
     VStack(alignment: .leading) {
       Form {
         TextField("プロジェクト名", text: $name)
-        TextField("実行環境（Nixpkgs）", text: $pkgs, prompt: Text(NixpkgsPin.current ?? "tsugumi:default"))
+        TextField("実行環境（Nixpkgs）", text: $pkgs, prompt: Text(AppModel.shared.nixpkgsPin ?? "tsugumi:default"))
         if pkgs.isEmpty || pkgs == "tsugumi:default" {
           Label("Nixpkgs が固定されていません。アプリを更新すると、このプロジェクトの Card のパッケージも変わります。", systemImage: "exclamationmark.triangle")
             .font(.caption).foregroundStyle(.orange)
         }
-        if let pin = NixpkgsPin.current, pkgs != pin {
+        if let pin = AppModel.shared.nixpkgsPin, pkgs != pin {
           Button(pkgs.isEmpty || pkgs == "tsugumi:default" ? String(localized: "このアプリの Nixpkgs に固定")
                                                            : String(localized: "このアプリの Nixpkgs に更新")) { pkgs = pin }
         }

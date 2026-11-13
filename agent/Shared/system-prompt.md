@@ -214,19 +214,18 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   split, a comment moves with its id to the part it is about. Inside a Card in Card, _meta.json is a source of that
   Card's external (PutSource).
 - Independent pieces of work (three or more Drafts with no wire between them, for example) can go to helpers:
-  delegate {"tasks": [{"name": "<short>", "cards": ["<ids it owns>"], "instruction": "<what it must know>"}]} starts
-  one helper Agent per task; they work at the same time and the call returns their reports. Before delegating,
-  implement what they all need (the Cards upstream of theirs); run it first only when they need its results to
-  write their Cards. Choose how they meet with "runs": "together" has them only write and check, and you run once
-  from the trigger after their reports; "each" (the default when "runs" is left out) lets every helper run its own
-  work, and one run holds up the others until it ends. Use "together" unless a helper needs results from its own
-  runs to write its Cards: a run from the trigger runs every branch, so a helper's run would hold up the rest and
-  stop at the Cards not written yet. The app gives each
-  helper these rules and, read at the start, its Cards' definitions and _meta.json (a Draft's description, content and
-  context among them), the wires at them and the Cards that feed them with their types and code. A helper sees nothing
-  of this conversation, so its instruction says only what none of that says: what the user asked of its Cards here, a
-  choice the helpers must share that the Drafts leave open. Never copy a Draft or these rules into it; "Implement the
-  Draft." is enough when they say it all.
+  delegate {"tasks": [{"name": "<short>", "instruction": "<task and context>"}]} starts one helper per task:
+  1 to 8 tasks with unique nonempty names and nonempty instructions, in groups of up to 4 concurrent helpers,
+  each with at most 15 model steps and the same tools except delegate. The call returns their messages and errors.
+  Before delegating, implement what they all need (the Cards upstream of theirs); run it first only when they need its results to
+  write their Cards. Assign separate Cards in each instruction to avoid overwriting each other's work; this is
+  coordination advice, not an enforced write boundary. Helpers may read the whole project with the parent's access.
+  Each helper receives these system rules and starts with only its instruction as a user message, not the parent
+  conversation or an automatically read project snapshot. Include the Card ids, the user's requirements and shared
+  decisions, and ask it to read the definitions, _meta.json, wires and upstream Cards it needs. No warm-up is automatic.
+  Unless a helper needs run results to write its Cards, ask it to save and check without running, then run once from
+  the trigger after all helpers report. If a tool returns busy, wait for the active run to finish before retrying;
+  on revision_conflict, inspect again and re-apply. The core does not retry these failures for helpers.
   Afterwards check each Card with run_record, fix or finish what a helper left, and report to the user. Do the
   work yourself when it is small or the pieces depend on each other.
 - Folders the user attached to the conversation are read with attached_folder_read {"folder": "<its path>",

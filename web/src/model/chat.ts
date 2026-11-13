@@ -9,6 +9,7 @@ import { guide, GuideAction, type GuideShow, parseShow } from './guide'
 import { HelperTeam } from './helperBirds'
 import { LiveCodePlayer, writesSources } from './liveCode'
 import { Observable } from './observable'
+import { Thoughts, type ThoughtReply } from './thoughts'
 import { CardKey, cardState, KIND_LABEL, path, ProjectSession } from './session'
 import { L } from '../i18n'
 
@@ -64,6 +65,7 @@ export interface ProviderInfo {
   fast?: boolean
   /** Display names of the models (the ChatGPT account's catalog). */
   modelNames: Record<string, string>
+  thoughtModel?: string
 }
 
 /** The Agent's error at the ChatGPT plan's usage limit (web/server/chatgpt.ts). */
@@ -131,9 +133,14 @@ export class ChatController extends Observable {
   provider: ProviderInfo = { name: 'Anthropic', model: 'claude-sonnet-5-5', api: 'anthropicMessages', remote: true, plan: false, modelNames: {} }
 
   private readonly offEvents: () => void
+  readonly thoughts: Thoughts
 
   constructor(readonly session: ProjectSession, private readonly app: AppModel) {
     super()
+    this.thoughts = new Thoughts(() => ({ identity: `${this.currentId}:${this.turn}`, active: this.busy && !!this.provider.thoughtModel }),
+      () => api<ThoughtReply>('/api/chat/thoughts', this.base),
+      (text) => guide.chatThought(this, text), () => this.changed())
+    this.thoughts.start()
     this.available = app.status?.chatAvailable ?? true
     if (!this.available) this.status = app.status?.chatError ?? L('RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。')
     this.offEvents = onServerEvent((e) => {
@@ -148,6 +155,7 @@ export class ChatController extends Observable {
 
   /** The project was left: this chat hears nothing more. */
   close() {
+    this.thoughts.close()
     this.offEvents()
     this.permission = undefined
     this.team.endAll('stopped', Date.now() / 1000)
@@ -183,12 +191,15 @@ export class ChatController extends Observable {
       this.stoppedAtLimit = r.continuable === true
       this.permission = r.permission ?? undefined
       this.usage = r.conversation.usage
+      this.provider = r.provider
       this.load(r.conversation)
       this.changed()
     } catch {}
   }
 
   select(id: string) {
+    this.turn++
+    guide.chatThought(this)
     this.busy = false
     this.failed = false
     this.usageLimited = false
@@ -354,6 +365,7 @@ export class ChatController extends Observable {
 
   cancel() {
     this.turn++
+    guide.chatThought(this)
     void this.request('/api/chat/cancel', this.base).catch(() => {})
     this.stopping = true
     this.stoppedAtLimit = true
@@ -428,6 +440,7 @@ export class ChatController extends Observable {
 
   private begin() {
     this.turn++
+    guide.chatThought(this)
     this.choices = []
     this.offered = []
     guide.chatTurnBegan(this)
