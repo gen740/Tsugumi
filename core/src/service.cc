@@ -232,7 +232,7 @@ void Service::open() {
   nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
   substituters_ = configured_substituters(opts_.substituters_file);
   for (const char* d : {"runs", "inputs"}) stdfs::create_directories(store_->state_dir() / d);
-  execution_service_ = std::make_unique<LocalExecutionService>(*this, scratch / "workers");
+  execution_service_ = std::make_unique<NativeExecutionService>(*this, scratch / "workers");
   remote_execution_ = std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);
   scheduler_->recover_interrupted();

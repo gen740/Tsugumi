@@ -88,6 +88,8 @@ class CapabilityTests(DaemonCase):
         reply, _ = self.call({"version": 1, "operation": "probe", "project_scope": SCOPE_A})
         self.assertEqual((reply["ok"], reply["code"]), (False, "request_rejected"))
         reply = self.scoped("probe")
+        self.assertEqual(reply["native_system"], NATIVE)
+        self.assertEqual(reply["systems"], [NATIVE])
         self.assertEqual(reply["instance_id"], self.journal().instance_id)
         self.assertEqual(reply["server_id"], self.daemon.server_id)
         reply = self.scoped("probe", server_id="f" * 64)

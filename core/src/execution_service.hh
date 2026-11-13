@@ -1,8 +1,8 @@
-// Where a Card invocation runs. The scheduler plans and builds the Card,
-// then hands the invocation to the execution service the Card names; it
-// validates, records and routes what comes back. A backend configures the
-// build it needs (prepare) and runs the invocation (execute):
-// LocalExecutionService on a local tsugumi-worker process,
+// Where a Card invocation runs. The scheduler resolves the target before
+// evaluating the Card, then hands the derivation and invocation to the service
+// the Card names; it validates, records and routes what comes back. A backend
+// resolves its target (prepare) and runs the invocation (execute):
+// NativeExecutionService on a native tsugumi-worker process sharing the host store,
 // RemoteExecutionService on a remote execution daemon with durable jobs.
 #pragma once
 
@@ -79,7 +79,7 @@ struct ExecutionDetached {};
 class PreparedExecution {
  public:
   virtual ~PreparedExecution() = default;
-  // Make shared build outputs available before starting any invocation.
+  // Make the derivation closure available before starting any invocation.
   virtual auto stage(const std::atomic<bool>&) -> void {}
   // Record the cancellation of work already submitted for this activation.
   virtual auto cancel_batch(sql::Db&, const std::string&, const CardPath&, uint64_t) -> void {}
@@ -94,15 +94,15 @@ class ExecutionService {
   // invocations.
   virtual auto reuses_builds() const -> bool = 0;
   // Checks that the invocation can run here and configures the backend's
-  // part of `build` (target system, derivation export). Called before the
-  // Card is built, for every activation.
+  // part of `build` (worker kind, target system and closure transport). Called
+  // before the Card is evaluated, for every activation.
   virtual auto prepare(const Node& node, const std::filesystem::path& directory, BuildRequest& build)
       -> std::unique_ptr<PreparedExecution> = 0;
 };
 
-class LocalExecutionService final : public ExecutionService {
+class NativeExecutionService final : public ExecutionService {
  public:
-  LocalExecutionService(Service& service, std::filesystem::path scratch_root);
+  NativeExecutionService(Service& service, std::filesystem::path scratch_root);
 
   auto reuses_builds() const -> bool override { return true; }
   auto prepare(const Node& node, const std::filesystem::path& directory, BuildRequest& build)

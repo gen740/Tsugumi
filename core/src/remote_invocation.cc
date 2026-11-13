@@ -270,10 +270,10 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
   blob_array.value().assign(blobs.begin(), blobs.end());
   const auto input_blobs = schema::capture(schema::encode(blob_array));
   const auto invocation_sha256 = schema::string_value(invocation_digest);
-  const auto& env_info = request.build.environment;
-  const auto system = schema::string_value(env_info.system);
-  const auto derivation = schema::string_value(env_info.derivation);
-  const auto output = schema::string_value(env_info.manifest);
+  const auto& derivation_contract = request.build.derivation;
+  const auto system = schema::string_value(derivation_contract.system);
+  const auto derivation = schema::string_value(derivation_contract.path);
+  const auto output = schema::string_value(derivation_contract.output);
   const auto& settings = request.node.settings;
   const auto timeout = schema::capture(std::to_string(settings.timeout_seconds.value_or(3600)));
   std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>> fields{

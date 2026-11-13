@@ -28,28 +28,31 @@ constexpr uid_t kCardUid = 65534;
 // The descriptor slot through which a call's out/ folder reaches the Card.
 constexpr int32_t kOutSlot = 900;
 
-class PreparedLocalExecution final : public PreparedExecution {
+class PreparedNativeExecution final : public PreparedExecution {
  public:
-  explicit PreparedLocalExecution(LocalExecutionService& service) : service_(service) {}
+  explicit PreparedNativeExecution(NativeExecutionService& service) : service_(service) {}
   auto execute(const ExecutionRequest& request) -> ExecutionResult override { return service_.run(request); }
 
  private:
-  LocalExecutionService& service_;
+  NativeExecutionService& service_;
 };
 
 }  // namespace
 
-LocalExecutionService::LocalExecutionService(Service& service, std::filesystem::path scratch_root)
+NativeExecutionService::NativeExecutionService(Service& service, std::filesystem::path scratch_root)
     : service_(service), workers_(std::move(scratch_root)) {}
 
-auto LocalExecutionService::clear() -> void { workers_.clear(); }
+auto NativeExecutionService::clear() -> void { workers_.clear(); }
 
-auto LocalExecutionService::prepare(const Node& /*node*/, const std::filesystem::path& /*directory*/,
-                                    BuildRequest& /*build*/) -> std::unique_ptr<PreparedExecution> {
-  return std::make_unique<PreparedLocalExecution>(*this);
+auto NativeExecutionService::prepare(const Node& node, const std::filesystem::path& /*directory*/,
+                                    BuildRequest& build) -> std::unique_ptr<PreparedExecution> {
+  static const SharedStoreDerivationTransport transport;
+  build.target = {WorkerKind::native, node.settings.system.empty() ? native_system() : node.settings.system};
+  build.transport = &transport;
+  return std::make_unique<PreparedNativeExecution>(*this);
 }
 
-auto LocalExecutionService::run(const ExecutionRequest& request) -> ExecutionResult {
+auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionResult {
   const Node& node = request.node;
   const CardBuild& build = request.build;
   InvocationSummaryData& s = request.summary;

@@ -1,3 +1,4 @@
+// Native workers share the host store; their outputs are realised before spawn.
 // The project's Card workers: resident ones that stay across runs, and
 // standby ones started ahead for Cards that take a fresh worker per call.
 #pragma once

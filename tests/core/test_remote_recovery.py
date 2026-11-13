@@ -5,14 +5,17 @@ import json
 import signal
 import socketserver
 import struct
+import subprocess
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 
 import flatbuffers
 import pytest
 from harness.fixtures import worker_project
+from harness.scenario import Project
 from projects import FILE_FBS, start_run, wait_run
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.LogStream import LogStream
@@ -39,6 +42,9 @@ class Gateway(socketserver.UnixStreamServer):
         self.receipts = {}
         self.submit_count = 0
         self.blobs = set()
+        self.blob_contents = {}
+        self.specs = {}
+        self.catalog_system = self.system
         self.results = {}
         self.stall = None
         self.stall_operation = "status"
@@ -85,7 +91,8 @@ class Gateway(socketserver.UnixStreamServer):
             "max_jobs": 8, "worker_contract": 2,
         }
         if operation == "catalog":
-            return {"services": [{"id": "cluster", "available": True, **capabilities}]}
+            return {"services": [{"id": "cluster", "available": True, **capabilities,
+                                   "native_system": self.catalog_system, "systems": [self.catalog_system]}]}
         assert header["server_id"] == self.server_id
         if header["server_id"] != self.registered_server:
             return {"ok": False, "code": "registration_changed", "error": "execution service was replaced"}
@@ -97,6 +104,7 @@ class Gateway(socketserver.UnixStreamServer):
         if operation == "put_blob":
             assert hashlib.sha256(body).hexdigest() == header["sha256"]
             self.blobs.add(header["sha256"])
+            self.blob_contents[header["sha256"]] = body
             return {}
         if not self.online:
             return None  # EOF leaves the job outcome unknown
@@ -106,6 +114,7 @@ class Gateway(socketserver.UnixStreamServer):
         if operation == "submit":
             self.submit_count += 1
             spec = json.loads(body)
+            self.specs[job] = spec
             assert set(spec["input_blobs"]) <= self.blobs
             assert spec["system"] == self.system
             if self.resource_limits:
@@ -154,8 +163,8 @@ class Handler(socketserver.StreamRequestHandler):
             self.wfile.write(struct.pack(">I", len(response)) + response)
 
 
-def wait_for_state(client, run_id, expected, card_state=None):
-    deadline = time.monotonic() + 15
+def wait_for_state(client, run_id, expected, card_state=None, timeout=15):
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
             rows = client.call("RunInvocationsRequest", runId=run_id, card=path("work")).records
@@ -211,6 +220,9 @@ def running_job(project, remote_gateway, core_factory, tmp_path):
     ("server_id", "3" * 64, "server ID changed"),
     ("isolation", None, "does not provide PID namespace isolation"),
     ("resource_limits", False, "cannot enforce resource limits"),
+    ("native_system", None, "did not report a supported native system"),
+    ("native_system", "", "did not report a supported native system"),
+    ("systems", [], "did not report a supported native system"),
     ("max_jobs", 0, "did not report a valid concurrent job limit"),
 ])
 def test_incompatible_remote_gateway_prevents_upload(project, remote_gateway, core_factory, tmp_path, field, value, diagnostic):
@@ -222,6 +234,85 @@ def test_incompatible_remote_gateway_prevents_upload(project, remote_gateway, co
     status = wait_run(client, run_id, timeout=10)
     assert status.state == RunState.failed
     assert diagnostic in text(status.failure.diagnostic)
+    assert not remote_gateway.blobs and remote_gateway.submit_count == 0
+
+
+
+def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tmp_path):
+    """Assignment evaluates for the worker's current system, even with a stale catalog."""
+    remote_gateway.system = "aarch64-linux"
+    remote_gateway.resource_limits = False
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster")
+    run_id = start_run(client, "work", propagate=False)
+    live = wait_for_state(client, run_id, RemoteExecutionState.running)
+    spec = remote_gateway.specs[text(live.executionJobId)]
+    assert spec["system"] == text(live.executionSystem) == "aarch64-linux"
+    assert spec["derivation"].endswith(".drv")
+    invocation = json.loads(remote_gateway.blob_contents[spec["invocation_sha256"]])
+    assert invocation["archive_sha256"] in spec["input_blobs"]
+    assert invocation["call_sha256"] in spec["input_blobs"]
+    assert remote_gateway.blob_contents[invocation["archive_sha256"]] == b"test Nix derivation archive"
+    remote_gateway.finish(text(live.executionJobId))
+    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+
+
+def test_evaluation_failure_prevents_transfer(project, remote_gateway, core_factory):
+    """A target-system evaluation error is visible before any upload or submission."""
+    client = core_factory(mocked_builds=True).connect()
+    Project(project).card("work", {"language": "bash", "sandbox": True, "executionService": "cluster"},
+                          outputs=FILE_FBS, plan={"error": "package is unavailable on this platform"}).save(client)
+    run_id = start_run(client, "work", propagate=False)
+    status = wait_run(client, run_id, timeout=10)
+    assert status.state == RunState.failed
+    diagnostic = text(status.failure.diagnostic)
+    assert remote_gateway.system in diagnostic and "package is unavailable on this platform" in diagnostic
+    assert not remote_gateway.blobs and remote_gateway.submit_count == 0
+
+
+@pytest.mark.environment
+def test_each_system_evaluates_without_host_builds(project, remote_gateway, core_factory):
+    """One real evaluator produces distinct system-specific derivations without building outputs."""
+    remote_gateway.resource_limits = False
+    client = core_factory().connect()
+    graph = Project(project)
+    nonce = uuid.uuid4().hex
+    graph.card("work", {"language": "bash", "sandbox": True, "executionService": "cluster"},
+               outputs=FILE_FBS, sources={"default.nix":
+                   '{ pkgs, inputs, params }: { run = "echo ${pkgs.stdenv.hostPlatform.system} ' + nonce + '"; }'})
+    graph.save(client)
+    derivations = {}
+    for system in ["aarch64-linux", "x86_64-linux", "aarch64-linux"]:
+        remote_gateway.system = system
+        run_id = start_run(client, "work", propagate=False)
+        live = wait_for_state(client, run_id, RemoteExecutionState.running, timeout=120)
+        job_id = text(live.executionJobId)
+        spec = remote_gateway.specs[job_id]
+        assert spec["system"] == system
+        assert not Path(spec["output"]).exists()
+        drv = json.loads(subprocess.check_output(["nix", "derivation", "show", spec["derivation"]], text=True))
+        # Read the actual .drv rather than trusting only the job's system label.
+        assert drv[spec["derivation"]]["system"] == system
+        if system in derivations:
+            assert derivations[system] == spec["derivation"]
+        derivations[system] = spec["derivation"]
+        remote_gateway.finish(job_id)
+        assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+    assert len(set(derivations.values())) == 2
+
+
+@pytest.mark.environment
+def test_real_target_evaluation_error_prevents_transfer(project, remote_gateway, core_factory):
+    """A Card unsupported on the worker system fails at assignment, before transport."""
+    remote_gateway.resource_limits = False
+    client = core_factory().connect()
+    Project(project).card("work", {"language": "bash", "sandbox": True, "executionService": "cluster"},
+        outputs=FILE_FBS, sources={"default.nix":
+            '{ pkgs, inputs, params }: throw "unavailable for ${pkgs.stdenv.hostPlatform.system}"'}).save(client)
+    run_id = start_run(client, "work", propagate=False)
+    status = wait_run(client, run_id, timeout=120)
+    assert status.state == RunState.failed
+    assert "unavailable for " + remote_gateway.system in text(status.failure.diagnostic)
     assert not remote_gateway.blobs and remote_gateway.submit_count == 0
 
 
