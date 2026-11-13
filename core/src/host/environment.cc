@@ -48,6 +48,7 @@ struct Environments::Impl {
     std::vector<std::string> origins;
     int64_t pid = 0;
     bool child = false;
+    std::vector<std::string> secrets;
   };
   EnvironmentOptions options;
   EnvironmentAuthorization authorization;
@@ -140,6 +141,54 @@ struct Environments::Impl {
     event.stage = stage;
     progress(event);
   }
+  auto RememberSecret(Entry& entry, const std::string& secret) -> void {
+    if (!secret.empty() && std::find(entry.secrets.begin(), entry.secrets.end(),
+                                     secret) == entry.secrets.end())
+      entry.secrets.push_back(secret);
+    std::sort(entry.secrets.begin(), entry.secrets.end(),
+              [](const auto& a, const auto& b) { return a.size() > b.size(); });
+  }
+  auto RememberSecrets(Entry& entry) -> void {
+    RememberSecret(entry, entry.state.token);
+    try {
+      if (const auto raw = fs::read_file(entry.state.ready_file))
+        RememberSecret(entry, json::Text(json::Object(*raw), "token"));
+    } catch (const std::exception&) {
+    }
+    RememberSecret(
+        entry, fs::read_file(std::filesystem::path(entry.state.control_dir) /
+                             "execution-broker-capability")
+                   .value_or(""));
+  }
+  auto Redact(const Entry& entry, std::string text) -> std::string {
+    for (const auto& secret : entry.secrets) {
+      size_t offset = 0;
+      while ((offset = text.find(secret, offset)) != std::string::npos) {
+        // Preserve byte positions so bounding the tail cannot expose the end
+        // of a credential that crossed the read boundary.
+        text.replace(offset, secret.size(), secret.size(), '*');
+        offset += secret.size();
+      }
+    }
+    return text;
+  }
+  auto LogTail(const Entry& entry) -> std::string {
+    const auto log = std::filesystem::path(entry.state.control_dir) /
+                     (options.process->Guest() ? "tsugumid.log" : "server.log");
+    std::error_code error;
+    const auto size = std::filesystem::file_size(log, error);
+    if (error) return "";
+    // Include enough prefix to redact a credential straddling the tail
+    // boundary.
+    size_t limit = 65536;
+    for (const auto& secret : entry.secrets)
+      limit = std::max(limit, 65536 + secret.size());
+    auto text = Redact(
+        entry, fs::read_range(log, size > limit ? size - limit : 0, limit)
+                   .value_or(""));
+    if (text.size() > 65536) text.erase(0, text.size() - 65536);
+    return text;
+  }
   auto Revoke(Entry& entry) -> void {
     authorization.revoke(entry.state.key);
     std::filesystem::remove(std::filesystem::path(entry.state.control_dir) /
@@ -153,20 +202,23 @@ struct Environments::Impl {
     entry.state.unix_socket.clear();
     entry.state.pid = 0;
   }
-  auto Failed(Entry& entry, const std::string& message) -> void {
+  auto Failed(Entry& entry, const std::string& message,
+              const EnvironmentFailure* failure = nullptr) -> void {
+    RememberSecrets(entry);
     Revoke(entry);
     ClearEndpoint(entry);
     entry.state.phase = H::EnvironmentPhase::Failed;
-    entry.state.message = message;
-    entry.state.recovery = "Check the log and retry.";
-    const auto log = std::filesystem::path(entry.state.control_dir) /
-                     (options.process->Guest() ? "tsugumid.log" : "server.log");
-    std::error_code error;
-    const auto size = std::filesystem::file_size(log, error);
-    entry.state.log =
-        error ? ""
-              : fs::read_range(log, size > 65536 ? size - 65536 : 0, 65536)
-                    .value_or("");
+    entry.state.recovery =
+        failure ? failure->recovery : "Check the log and retry.";
+    entry.state.log = failure ? Redact(entry, failure->log) : LogTail(entry);
+    if (entry.state.log.size() > 65536)
+      entry.state.log.erase(0, entry.state.log.size() - 65536);
+    entry.state.message = Redact(entry, message);
+    if (!entry.state.log.empty()) {
+      const auto& log = entry.state.log;
+      entry.state.message +=
+          "\n" + log.substr(log.size() > 4096 ? log.size() - 4096 : 0);
+    }
     entry.state.startup_error_json =
         fs::read_file(std::filesystem::path(entry.state.control_dir) /
                       "server.startup-error.json")
@@ -207,6 +259,7 @@ struct Environments::Impl {
       ready.pid = static_cast<int64_t>(json::UInt(json::Get(object, "pid")));
       ready.endpoint = json::Text(object, "endpoint");
       ready.token = json::Text(object, "token");
+      RememberSecret(entry, ready.token);
       ready.project_id = json::Text(object, "project_id");
       ready.server_instance_id = json::Text(object, "server_instance_id");
       ready.unix_socket = json::Text(object, "unix_socket");
@@ -235,6 +288,7 @@ struct Environments::Impl {
   auto Authorize(Entry& entry) -> H::ExecutionAuthorizationT {
     auto grant = authorization.authorize(entry.state.key, entry.state.project,
                                          entry.state.control_dir);
+    RememberSecret(entry, fs::read_file(grant.capability_file).value_or(""));
     entry.state.execution_scope_unavailable = !grant.available;
     return grant;
   }
@@ -403,16 +457,12 @@ struct Environments::Impl {
                         : "tsugumid did not become ready within 60 seconds");
     } catch (const std::exception& error) {
       if (entry.pid) Stop(entry);
-      Failed(entry, error.what());
-      if (const auto* failure =
-              dynamic_cast<const EnvironmentFailure*>(&error)) {
-        entry.state.recovery = failure->recovery;
-        entry.state.log = failure->log;
-        Notify(entry);
-      }
+      Failed(entry, error.what(),
+             dynamic_cast<const EnvironmentFailure*>(&error));
     }
   }
   auto Stop(Entry& entry) -> void {
+    RememberSecrets(entry);
     // State/Stop can be the first operation after an agentd restart.
     if (!entry.pid) ReadReady(entry);
     Revoke(entry);

@@ -18,6 +18,9 @@ class HelperDouble final : public host::EnvironmentProcess {
   std::atomic<int> signals = 0;
   bool fail = false;
   bool guest = false;
+  bool verify = true;
+  bool die = false;
+  std::string log;
   host::EnvironmentLaunch shares;
   auto Guest() const -> bool override { return guest; }
   auto Shares(const host::EnvironmentLaunch& value) -> void override {
@@ -35,7 +38,8 @@ class HelperDouble final : public host::EnvironmentProcess {
     Write(
         std::filesystem::path(*std::next(control)) / "server.ready",
         R"({"protocol":1,"pid":42,"endpoint":"ws://localhost:1/rpc","token":"fixture","project_id":"project","server_instance_id":"instance","unix_socket":"fixture"})");
-    running = true;
+    Write(launch.log, log);
+    running = !die;
     return 42;
   }
   auto Poll(int64_t, bool) -> std::optional<int> override {
@@ -46,7 +50,7 @@ class HelperDouble final : public host::EnvironmentProcess {
     running = false;
   }
   auto Verify(const H::EnvironmentStateT& ready) -> bool override {
-    return running && ready.token == "fixture";
+    return running && verify && ready.token == "fixture";
   }
 };
 struct AuthorizationDouble {
@@ -125,6 +129,50 @@ TEST(EnvironmentAdapterTest, HelperFailureRevokesAuthorizationAndCanBeRetried) {
   EXPECT_EQ(service.Handle(input).phase, H::EnvironmentPhase::Stopped);
   EXPECT_EQ(helper->signals.load(), 1);
   EXPECT_FALSE(authorization.active);
+}
+TEST(EnvironmentAdapterTest,
+     FailureAndTimeoutIncludeBoundedRedactedDaemonTail) {
+  for (const bool die : {false, true}) {
+    SCOPED_TRACE(die ? "exit" : "timeout");
+    TemporaryDirectory directory;
+    Write(directory.path / "project/tsugumi.json", "{}");
+    AuthorizationDouble authorization;
+    auto helper = std::make_shared<HelperDouble>();
+    helper->verify = false;
+    helper->die = die;
+    // Credentials at both tail boundaries must not be partially exposed.
+    helper->log = "discarded beginning\n" + std::string(70000, 'x') +
+                  "fixture fixture-capability\nfinal stderr diagnosis\n";
+    helper->log.replace(helper->log.size() - 65536 - 3, 7, "fixture");
+    helper->log.replace(helper->log.size() - 4096 - 3, 18,
+                        "fixture-capability");
+    host::EnvironmentOptions options;
+    options.directory = directory.path / "environments";
+    options.socket_directory = directory.path / "sockets";
+    options.start_timeout = std::chrono::milliseconds(1);
+    options.process = helper;
+    host::Environments service(
+        options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
+    H::EnvironmentRequestT input;
+    input.project = (directory.path / "project").string();
+    input.action = H::EnvironmentAction::Start;
+    const auto failed = service.Handle(input);
+    EXPECT_EQ(failed.phase, H::EnvironmentPhase::Failed);
+    EXPECT_NE(
+        failed.message.find(die ? "tsugumid exited" : "did not become ready"),
+        std::string::npos);
+    EXPECT_NE(failed.message.find("final stderr diagnosis"), std::string::npos);
+    EXPECT_NE(failed.message.find("*******"), std::string::npos);
+    EXPECT_EQ(failed.message.find("discarded beginning"), std::string::npos);
+    EXPECT_EQ(failed.message.find("fixture"), std::string::npos);
+    EXPECT_EQ(failed.log.find("fixture"), std::string::npos);
+    EXPECT_EQ(failed.log.find("ture"), std::string::npos);
+    EXPECT_EQ(failed.message.find("capability"), std::string::npos);
+    EXPECT_LE(failed.message.size(), 4200u);
+    EXPECT_LE(failed.log.size(), 65536u);
+    EXPECT_FALSE(authorization.active);
+    EXPECT_FALSE(helper->running);
+  }
 }
 TEST(EnvironmentAdapterTest, CorePlansMountsAndRestartsOnlyForFolderAdditions) {
   TemporaryDirectory directory;
