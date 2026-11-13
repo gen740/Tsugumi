@@ -14,7 +14,8 @@ def scene_object(scene):
                          ("frames", "LayoutBox"), ("notes", "LayoutBox")]:
         fields[field] = []
         for item in scene[field]:
-            item = dict(item)
+            # Fields named like Python keywords carry a trailing underscore in the generated classes.
+            item = {("from_" if key == "from" else key): value for key, value in item.items()}
             if field == "cards":
                 for side in ("inputs", "outputs"):
                     item[side] = [make("LayoutPort", **port) for port in item[side]]
