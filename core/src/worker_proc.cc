@@ -130,9 +130,9 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, 
   std::string write = "(literal \"/dev/null\") (literal \"/dev/tty\") (subpath " + quote(scratch) + ")";
   for (const auto& p : sp.ro_paths) {
     read += " (subpath " + quote(p) + ")";
-    if (std::filesystem::path(p).filename() == "runs")
-      write += " (regex #\"^" + regex_quote(p) + "/[^/]+/work/" + regex_text(sp.card) + "/[0-9]+/out(/|$)\")";
   }
+  if (!sp.outputs_root.empty())
+    write += " (regex #\"^" + regex_quote(sp.outputs_root) + "/[^/]+/work/" + regex_text(sp.card) + "/[0-9]+/out(/|$)\")";
   return "(version 1)\n(deny default)\n"
          "(allow process-fork)\n(allow process-exec)\n(allow signal (target same-sandbox))\n"
          "(allow sysctl-read)\n(allow ipc-posix-shm)\n(allow file-read-metadata)\n"

@@ -170,6 +170,16 @@ auto NixEvaluator::valid(const std::string& store_path) -> bool {
   return fs::resolves_inside(impl_->products, store_path) && std::filesystem::is_regular_file(store_path);
 }
 
+auto NixEvaluator::rooted_usage(const std::vector<std::vector<std::string>>& roots)
+    -> std::vector<std::map<std::string, uint64_t>> {
+  std::vector<std::map<std::string, uint64_t>> result;
+  for (const auto& project : roots) {
+    auto& sizes = result.emplace_back();
+    for (const auto& path : project) sizes.emplace(path, std::filesystem::file_size(path));
+  }
+  return result;
+}
+
 auto NixEvaluator::heap_bytes() -> uint64_t { return 0; }
 
 }  // namespace tsugumi

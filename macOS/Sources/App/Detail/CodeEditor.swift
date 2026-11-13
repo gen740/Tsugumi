@@ -387,6 +387,8 @@ func describeValue(_ v: Tsugumi_Data_NamedValueT, includeArtifact: Bool = true) 
   var head = "\(v.name) : \(v.rootType)"
   if let n = v.sizeBytes { head += " · \(n) bytes" }
   if includeArtifact, let a = v.artifactId { head += String(localized: " · 成果物 ") + a }
+  if v.fileMissing { head += "\n" + String(localized: "保持したファイルの内容がありません（scratch は保持履歴ではありません）。") }
+  else if let file = v.filePath { head += "\n" + String(localized: "保持したファイル: \(file)") }
   guard !v.inlineBytes.isEmpty else { return head + "\n" + String(localized: "（内容は記録されていません）") }
   guard let schema = try? BFBS(data: Data(v.schemaBfbs)),
         let (index, _) = schema.object(named: v.rootType) ??

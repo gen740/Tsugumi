@@ -18,7 +18,7 @@
 //   Nix            the shared store through the one nix-daemon; build roots
 //                  under /nix/var/nix/gcroots/tsugumi/projects/<id>, a folder
 //                  only vmd creates (the parent is not writable by projects);
-//                  folders of projects not started for 30 days go at boot
+//                  roots are removed only by an explicit user action
 //
 // The host talks to vsock ports:
 //
@@ -84,6 +84,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#include "cache_usage.hh"
+#include "nix_eval.hh"
 
 namespace fs = std::filesystem;
 
@@ -210,6 +213,7 @@ struct ProjectView {
   std::string project;
   std::string control;
   std::string history;
+  std::string scratch;
   std::string rpc;
   std::string slots;
   std::vector<std::pair<std::string, std::string>> extra;  // folders of the Mac / of chats: source, target
@@ -235,20 +239,17 @@ void die(const char* what) {
 
 const std::string kRoots = "/nix/var/nix/gcroots/tsugumi/projects";
 
-// Root folders of projects not started for 30 days go (their builds become
-// garbage for the next cleanup); the parent is writable by vmd only.
-void prune_project_roots() {
+// Only malformed entries go. A build result may be a computation someone kept.
+void prepare_project_roots() {
   fs::create_directories(kRoots);
   ::chown(kRoots.c_str(), 0, 0);
   ::chmod(kRoots.c_str(), 0755);
-  auto now = std::chrono::system_clock::now();
   std::error_code ec;
   for (const auto& e : fs::directory_iterator(kRoots, ec)) {
     struct stat st {};
     if (::lstat(e.path().c_str(), &st) != 0) continue;
-    auto age = now - std::chrono::system_clock::from_time_t(st.st_mtime);
-    if (!S_ISDIR(st.st_mode) || age > std::chrono::hours(24 * 30)) {
-      logf("removing build roots %s (%s)", e.path().filename().c_str(), S_ISDIR(st.st_mode) ? "unused for 30 days" : "not a folder");
+    if (!S_ISDIR(st.st_mode)) {
+      logf("removing malformed build root entry %s", e.path().filename().c_str());
       fs::remove_all(e.path(), ec);
     }
   }
@@ -266,6 +267,10 @@ std::vector<std::string> project_env(const std::string& id) {
           "TSUGUMI_PROJECT_ID=" + id};
 }
 
+// Disk-backed scratch, isolated by project uid and bind-mounted before /persist is hidden.
+const std::string kScratch = "/persist/run-scratch";
+const std::string kUsage = "/run/tsugumi-cache-usage";
+std::unique_ptr<tsugumi::CacheUsage> cache_usage;
 const std::string kHistory = "/history-disk";
 std::string history_dir(const std::string& id) { return kHistory + "/" + id; }
 // Per project: the folder of its tsugumid's socket (0700, the project's user).
@@ -286,6 +291,7 @@ ProjectView project_view(int slot, const std::string& id) {
   v.project = dir + "/project";
   v.control = dir + "/control";
   v.history = history_dir(id);
+  v.scratch = kScratch + "/" + id;
   v.rpc = rpc_dir(id);
   v.slots = fs::path(opt.host).parent_path().string();
   std::error_code ec;
@@ -307,6 +313,7 @@ void enter_project_view(const ProjectView& v) {
   if (::mount(v.project.c_str(), "/project", nullptr, MS_BIND, nullptr) != 0) die("bind /project");
   if (::mount(v.control.c_str(), "/control", nullptr, MS_BIND, nullptr) != 0) die("bind /control");
   if (::mount(v.history.c_str(), "/history", nullptr, MS_BIND | MS_NOSUID | MS_NODEV, nullptr) != 0) die("bind /history");
+  if (::mount(v.scratch.c_str(), "/scratch", nullptr, MS_BIND | MS_NOSUID | MS_NODEV, nullptr) != 0) die("bind /scratch");
   if (::mount("tmpfs", "/run/tsugumi", "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755") != 0) die("private /run/tsugumi");
   // tsugumid's socket: in a folder only this project's user (and vmd) enters.
   ::mkdir("/run/tsugumi/rpc", 0700);
@@ -462,7 +469,18 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
   if (::lstat(roots.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode)) return "error cannot create the build root folder";
   ::lchown(roots.c_str(), pr.uid, pr.uid);
   ::chmod(roots.c_str(), 0755);
-  ::utimensat(AT_FDCWD, roots.c_str(), nullptr, AT_SYMLINK_NOFOLLOW);  // last start: for the 30-day cleanup
+  ::utimensat(AT_FDCWD, roots.c_str(), nullptr, AT_SYMLINK_NOFOLLOW);  // last use, shown in settings
+  fs::create_directories(kScratch);
+  ::chmod(kScratch.c_str(), 0700);
+  std::string scratch = kScratch + "/" + id;
+  if (::lstat(scratch.c_str(), &rst) == 0 && !S_ISDIR(rst.st_mode)) {
+    std::error_code ec;
+    fs::remove(scratch, ec);
+  }
+  ::mkdir(scratch.c_str(), 0700);
+  if (::lstat(scratch.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode)) return "error cannot create run scratch";
+  ::lchown(scratch.c_str(), pr.uid, pr.uid);
+  ::chmod(scratch.c_str(), 0700);
   // Run history on its own disk, readable by this project only; kept until
   // the project's data is deleted (never by age).
   std::string hist = history_dir(id);
@@ -506,6 +524,7 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
                "--listen-unix-ws", "/run/tsugumi/rpc/s", "--control-dir", "/control",
                "--cpus", std::to_string(cpus), "--allow-missing-origin",
                "--gcroots-dir", kRoots + "/" + id, "--history-dir", "/history",
+               "--run-scratch-dir", "/scratch", "--usage-file", kUsage,
                "--host-folders", "/run/tsugumi/host", "--chat-folders", "/run/tsugumi/chat", "--project-shell"};
   if (archive_history) args.argv.push_back("--archive-incompatible-history");
   // The binary caches of this VM's nix-daemon, for the run records. A project
@@ -578,6 +597,8 @@ std::string forget_project(const std::string& id) {
   if (r != "ok") return r;
   std::error_code ec;
   fs::remove_all(kRoots + "/" + id, ec);
+  fs::remove_all(kScratch + "/" + id, ec);
+  if (cache_usage) cache_usage->refresh();
   std::error_code hec;
   fs::remove_all(history_dir(id), hec);
   if (!ec) ec = hec;
@@ -920,7 +941,9 @@ int main(int argc, char** argv) {
   fs::create_directories("/sys/fs/cgroup/tsugumi");
   fs::create_directories("/run/tsugumi");
   fs::create_directories(opt.host);
-  prune_project_roots();
+  prepare_project_roots();
+  tsugumi::NixEvaluator::init_process();
+  cache_usage = std::make_unique<tsugumi::CacheUsage>(kRoots, kScratch, fs::path{}, fs::path{}, "", kUsage);
   std::thread(reaper).detach();
   std::thread(serve, opt.rpc_port, rpc).detach();
   logf("ready (control vsock %d, rpc vsock %d)", opt.control_port, opt.rpc_port);

@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -68,6 +69,10 @@ class NixEvaluator {
   // configuration from this process, it passes the daemon's list instead
   // (ServiceOptions::substituters_file).
   static std::vector<std::string> substituters();
+  // Store metadata only: no traversal of output contents and no evaluation.
+  // Includes derivations and outputs kept by the store's GC settings.
+  static auto rooted_usage(const std::vector<std::vector<std::string>>& roots)
+      -> std::vector<std::map<std::string, uint64_t>>;
 
   // `entry` is the entry function's source; `allowed` the folders evaluation
   // may read (restricted mode): the SDK and the evaluation folder.

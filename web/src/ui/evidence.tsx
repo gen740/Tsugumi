@@ -105,7 +105,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
           {display && <div style={{ height: 360, display: 'flex' }}><DisplayContent display={display} large /></div>}
           {record && [[L('入力'), record.inputs], [L('出力'), record.outputs]].map(([label, values], i) => <section key={i}>
             <h4>{label as string}</h4>
-            {(values as D.NamedValueT[]).map((v, j) => <pre key={j} className="selectable wrap-pre">{describeValue({ name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifactId: v.artifactId === null ? null : s(v.artifactId), inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs })}</pre>)}
+            {(values as D.NamedValueT[]).map((v, j) => <pre key={j} className="selectable wrap-pre">{describeValue({ name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifactId: v.artifactId === null ? null : s(v.artifactId), filePath: v.filePath === null ? null : s(v.filePath), fileMissing: v.fileMissing, inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs })}</pre>)}
           </section>)}
         </>
       }

@@ -63,7 +63,7 @@ export function comparedValues(side: 'inputs' | 'outputs', left?: R.RecordResult
   const values = (r?: R.RecordResultT) => new Map((r?.record?.[side] ?? []).map(v => [s(v.name), v]))
   const text = (v?: D.NamedValueT) => v && describeValue({
     name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifactId: null,
-    inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs,
+    filePath: v.filePath === null ? null : s(v.filePath), fileMissing: v.fileMissing, inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs,
   })
   const a = values(left), b = values(right)
   return names(a.keys(), b.keys()).map(name => ({ name, left: text(a.get(name)), right: text(b.get(name)), difference: valueDifference(a.get(name), b.get(name)) }))

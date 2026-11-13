@@ -41,13 +41,9 @@ set(_gen_bfbs "")
 foreach(schema ${TSUGUMI_SCHEMAS})
   set(_src ${TSUGUMI_PROTOCOL_DIR}/${schema}.fbs)
   list(APPEND _gen_cpp ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol/${schema}_generated.h)
-  set(_cpp_object_api "")
-  if(schema STREQUAL "remote_worker")
-    set(_cpp_object_api --gen-object-api)
-  endif()
   add_custom_command(
     OUTPUT ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol/${schema}_generated.h
-    COMMAND ${TSUGUMI_FLATC} --cpp --scoped-enums --gen-mutable ${_cpp_object_api}
+    COMMAND ${TSUGUMI_FLATC} --cpp --scoped-enums --gen-mutable --gen-object-api
             --keep-prefix --include-prefix tsugumi/protocol
             -I ${TSUGUMI_PROTOCOL_DIR} -o ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol ${_src}
     COMMAND ${TSUGUMI_FLATC} --python --gen-object-api --python-typing -I ${TSUGUMI_PROTOCOL_DIR}

@@ -331,6 +331,9 @@ export class RPCClient {
   clearCache(opId: string) {
     return this.call<R.ProjectCacheClearResultT>(RequestPayload.ProjectCacheClearRequest, Object.assign(new R.ProjectCacheClearRequestT(), { opId }), 300_000)
   }
+  cacheUsage() {
+    return this.call<R.ProjectCacheUsageResultT>(RequestPayload.ProjectCacheUsageRequest, new R.ProjectCacheUsageRequestT())
+  }
   // ---- Versions (git): core/src/versions.cc
   versionGraph(limit = 500) {
     return this.call<R.VersionGraphT>(RequestPayload.VersionGraphRequest, Object.assign(new R.VersionGraphRequestT(), { limit }))

@@ -64,8 +64,8 @@ auto download(const RemoteJobClient& client, const std::string& service, const s
   return bytes.str();
 }
 
-auto input_location(const stdfs::path& state, const std::string& path) -> std::pair<stdfs::path, stdfs::path> {
-  for (const auto& root : {state / "runs", state / "inputs"}) {
+auto input_location(const std::vector<stdfs::path>& file_roots, const std::string& path) -> std::pair<stdfs::path, stdfs::path> {
+  for (const auto& root : file_roots) {
     auto rel = stdfs::path(path).lexically_normal().lexically_relative(root);
     if (!rel.empty() && rel != "." && *rel.begin() != "..") return {root, rel};
   }
@@ -168,7 +168,7 @@ auto stage_remote_archive(const RemoteJobClient& client, const std::string& serv
 
 auto stage_remote_invocation(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
                              const std::string& instance, const std::string& job_id, const std::string& project_id,
-                             const stdfs::path& state, const std::string& archive_digest,
+                             const std::vector<stdfs::path>& file_roots, const std::string& archive_digest,
                              const ExecutionRequest& request) -> std::string {
   remote::InvocationJson invocation;
   *invocation.project_id = project_id;
@@ -216,7 +216,7 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
     if (input.kind == PortKind::FlatBuffer) continue;
     const auto source = path_value(input);
     if (!source) throw std::runtime_error("remote file input has no path");
-    const auto [root, rel] = input_location(state, *source);
+    const auto [root, rel] = input_location(file_roots, *source);
     const auto destination = remote::relative_path((stdfs::path("inputs") / std::to_string(i) / rel.filename()).generic_string());
     if (input.kind == PortKind::File) {
       stage_file(root, rel, destination);
