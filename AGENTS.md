@@ -13,12 +13,12 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 
 | Where | What |
 | --- | --- |
-| [protocol/](protocol/) | The FlatBuffers contracts: project and Agent RPC, native worker and remote worker |
-| [core/](core/) | `tsugumid`: the document model, type checking, the scheduler, the embedded Nix evaluator, history and artifacts, versions (git) |
+| [protocol/](protocol/) | The FlatBuffers contracts for project RPC (`tsugumi.fbs`), the Agent service (`agent.fbs`), the native worker (`worker.fbs`) and the remote worker (`remote_worker.fbs`) |
+| [core/](core/) | `tsugumid`: the document model, type checking, the scheduler, the embedded Nix evaluator, history and artifacts, versions (git); `core/src/agent/` holds the host-side `tsugumi-agentd` service |
 | [sdk/](sdk/) | The Card ABI and runtime, the C++ / Python SDKs, the Nix SDK ([sdk/nix/default.nix](sdk/nix/default.nix)) |
 | [macOS/](macOS/) | The SwiftUI app, the shared Linux VM (Virtualization.framework), image definitions |
 | [ui/](ui/) | Shared isolated web-module host and UI resources |
-| [agent/](agent/) | The Agent (model connections, conversations, tools derived from the RPC). The contract shared with the Web is in [agent/Shared/](agent/Shared/) |
+| [agent/](agent/) | Shared Agent prompts, contracts ([agent/Shared/](agent/Shared/)) and reference documents; the service implementation is in `core/src/agent/` |
 | [web/](web/) | The browser UI and its host server |
 | [workerd/](workerd/) | The light native worker, the C++ remote listener/supervisor/Nix runner, and shared worker libraries |
 | [cli/](cli/) | The `tsugumi` command (`install.sh` for Mac and Linux, `install.ps1` for Windows, building the distributions) |

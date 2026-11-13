@@ -1,7 +1,7 @@
 # Security and isolation
 
 This document describes Tsugumi's four trust boundaries (what is isolated from what) and how secrets (the API keys of outside models and the RPC's authentication token) are handled.
-Everything here is based on the current implementation (`core/src/vmd_main.cc`, `core/src/worker_proc.cc`, `core/src/server.cc`, `macOS/Sources/Launcher/`, `macOS/Sources/AgentClient/Provider.swift`).
+Everything here is based on the current implementation (`core/src/vmd_main.cc`, `core/src/worker_proc.cc`, `core/src/server.cc`, `core/src/agent/`, `macOS/Sources/Launcher/`, `macOS/Sources/AgentClient/Provider.swift`, `web/server/coreAgent.ts`).
 
 ## Summary
 
@@ -30,9 +30,10 @@ The table below lists the limits of these guarantees. Details are in each sectio
 
 ```text
 ┌─ macOS (user's permissions) ───────────────────────────────────────────┐
-│  Tsugumi.app                                                           │
+│  Tsugumi.app (starts or reconnects to tsugumi-agentd)                    │
 │   ├ SwiftUI UI                                                         │
-│   ├ Agent ── HTTPS ──▶ model provider (API key from the Keychain)      │
+│   ├ Agent client ── Unix socket ──▶ tsugumi-agentd (host-side core)    │
+│   │                                  └ HTTPS ──▶ model provider       │
 │   └ LoopbackBridge 127.0.0.1:<free port>  ◀── other clients            │
 │        │ vsock                                                         │
 │  ┌─ Shared Linux VM (Virtualization.framework) ─────────────────────┐  │
@@ -125,7 +126,7 @@ bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL
 
 - **All namespaces are separated** (user, mount, PID, network, IPC, UTS, cgroup). The only network interface is loopback (`lo`). Only for a Card with `network: true` is the network namespace left shared (`--share-net`), with the name-resolution settings and the CA certificate file mounted read-only.
 - **All Linux capabilities are dropped** (`--cap-drop ALL`).
-- **Visible files** are limited to `/nix/store` (read-only), for a Card built for another system the folder of its emulator when that is outside `/nix/store` (Rosetta's `/run/rosetta`, read-only), the worker's executable (for a C++ or Python Card of another system, the worker its build made for that system, in `/nix/store`; when it is outside `/nix/store` in a development build, that file alone, read-only), the project's `runs` and saved inputs (read-only), a temporary work area for that worker alone (writable), and the Mac folders that Card specified in `hostFolders` (`/host/<name>`, writable only with `write: true`). The project's definition documents and source code, the control folder, the authentication token, other Cards' work areas, host folders other Cards specified and folders attached to the chat are not visible.
+- **Visible files** are limited to `/nix/store` (read-only), for a Card built for another system the folder of its emulator when that is outside `/nix/store` (Rosetta's `/run/rosetta`, read-only), the worker's executable (for a package Card of another system, the worker its build made for that system, in `/nix/store`; when it is outside `/nix/store` in a development build, that file alone, read-only), the project's `runs` and saved inputs (read-only), a temporary work area for that worker alone (writable), and the Mac folders that Card specified in `hostFolders` (`/host/<name>`, writable only with `write: true`). The project's definition documents and source code, the control folder, the authentication token, other Cards' work areas, host folders other Cards specified and folders attached to the chat are not visible.
 - **The environment variables are rebuilt from empty** (`PATH=/var/empty`, `LANG=C.UTF-8` and only the variables Tsugumi passes); nothing is inherited from `tsugumid` or the host.
 - **Passing outputs**: each invocation's output directory is passed as a file descriptor (FD) with `SCM_RIGHTS` and accessed inside the worker as `/proc/self/fd/900`. After the run, the core maps it back to its real path and validates it.
 - **Why inputs are not passed as FDs**: measurement showed that on Linux, even an FD opened read-only can in some cases be reopened for writing through `/proc/self/fd/N`. Inputs are therefore protected with read-only bind mounts.
@@ -173,7 +174,8 @@ A Card's `default.nix` may contain any Nix expression, but evaluation enforces t
 - To the Mac, it is **relayed through vsock only to the host's `127.0.0.1:<free port>`** (`LoopbackBridge`; on vsock 1025, `tsugumi-vmd` connects to the socket by project ID). It is not exposed to the LAN or outside networks.
 - With no ports on the VM's loopback, there is no route to `tsugumid` from another project or from a Card allowed the network.
 - The Mac's `tsugumi` command uses this route too (relayed by `tsugumi-vmhost`). In a Web UI started from the repository, and with the `tsugumi` command on Linux, `tsugumid` runs directly on the host and listens with a WebSocket on `127.0.0.1` ([Web UI](WebUI.md)).
-- Unix domain sockets, when used, are created with `umask 0177` (permissions `0600`). The app's standard route is the WebSocket, and token authentication is always required.
+- Unix domain sockets, when used, are created with `umask 0177` (permissions `0600`). The app's standard route to `tsugumid` is the WebSocket, and token authentication is always required.
+- The host-side `tsugumi-agentd` has a separate listener (`protocol/agent.fbs`): a Unix socket and a loopback WebSocket using `tsugumi.agent.v1`. The app and the Web host server start or reconnect to it through the C++ `tsugumi-rpc` client over Unix. `HelloRequest` authenticates distinct user and external-agent principals; only the user principal can register project endpoints or credentials and resolve or revoke grants. Its `agent.ready` file holds the tokens (0600, in a 0700 state directory).
 
 ### The authentication token
 
@@ -202,30 +204,30 @@ A mechanism that stops an RPC client (the Agent included) from having `tsugumid`
 
 ## 8. The model's API keys (Agent)
 
-- LLM providers' API keys are kept in the user's **login keychain** (the macOS Keychain) (`macOS/Sources/AgentClient/Provider.swift`).
+- LLM providers' API keys are registered in the user's **login keychain** (the macOS Keychain) (`macOS/Sources/AgentClient/Provider.swift`).
   - The service name is `app.tsugumi.agent` and the account name is the provider's name (`Anthropic` / `OpenAI`). The app and the Web UI's server use the same item, so a key registered in either works in both.
   - Login keychain items are not synced to iCloud Keychain. They can be read while the login keychain is unlocked (normally, while logged in).
   - An item's access list trusts only the program that saved it. When another program (the `security` command included) tries to read a key the app saved, macOS asks the user. An app built with an ad hoc signature asks once on the first read after each rebuild (it does not if signed with `TSUGUMI_CODESIGN_IDENTITY`; "Signing development builds" in [Development](Development.md)).
   - The Web UI's server reads and writes through `/usr/bin/security`. A key saved in the Web UI trusts `security`, so any program running as this user can read it without confirmation with `security find-generic-password`. If you use both, registering the key from the app's settings is recommended. Outside macOS (or when it could not be saved in the Keychain), it is kept in a file (0600) in the Web UI's data folder.
   - The data protection keychain (`kSecUseDataProtectionKeychain`) is not used. It needs an entitlement that only a provisioning profile can grant, which an ad hoc signed build cannot have (`errSecMissingEntitlement`).
-- An API key is **read from the Keychain when a request is sent to the model, and put only in the HTTPS request header (`x-api-key` / `Authorization: Bearer`)**. The Web UI's server keeps a key it read in that process's memory (rereading it when the item's attributes change) and also remembers refused reads, so `security`'s confirmation does not appear again and again for the same key.
+- Platform adapters read API keys and pass them to the host-side `tsugumi-agentd` through authenticated Agent RPC. The service persists provider configuration, including the key, in its `agent.sqlite` (0600) and sends model requests with libcurl, putting the key in the HTTPS request header (`x-api-key` / `Authorization: Bearer`). The Web UI's server keeps a key it read in that process's memory (rereading it when the item's attributes change) and also remembers refused reads, so `security`'s confirmation does not appear again and again for the same key.
 - When the model menu refetches the list of models, that read is not one the user asked for, so the app reads only keys it can read without confirmation (`Keychain.loadWithoutAsking`; running the chat and "Fetch model list" in the settings do ask). The Web UI's server has no way to read without confirmation, so for a key it has not read yet, it may ask at most once per start.
-- API keys are never passed to `tsugumid`, the Linux VM or Card workers, and are not recorded in project files, app settings, logs or conversation history.
-- HTTPS uses `URLSessionConfiguration.ephemeral`, leaving no cache or cookies on disk.
+- API keys are never passed to the project's `tsugumid`, the Linux VM or Card workers, and are not recorded in project files, UI settings, logs or conversation history.
+- Model HTTPS requests use libcurl without enabling a cookie engine or a disk response cache (`core/src/agent/provider.cc`).
 - The settings screen can only register and delete keys; there is no way to show a registered key again.
 
 ### The ChatGPT plan (Sign in with ChatGPT)
 
-Instead of an API key, the Agent can use the user's ChatGPT (Plus, Pro) plan. This follows the [procedure OpenAI publishes for open-source tools](https://developers.openai.com/siwc/token-sharing-open-source) (ChatGPT plan usage) (`agent/Sources/TsugumiAgent/ChatGPT.swift`; the Web UI's is `web/server/chatgpt.ts`).
+Instead of an API key, the Agent can use the user's ChatGPT (Plus, Pro) plan. This follows the [procedure OpenAI publishes for open-source tools](https://developers.openai.com/siwc/token-sharing-open-source) (ChatGPT plan usage) (`macOS/Sources/AgentClient/ChatGPT.swift` and `web/server/chatgpt.ts` for browser sign-in; `core/src/agent/host.cc` and `provider.cc` for token refresh and revocation).
 
 - Sign-in happens in the default browser. Tsugumi waits for `/auth/callback` on a free port of `127.0.0.1` and closes it as soon as the result arrives. Each time it uses a new `state`, `nonce` and PKCE (S256), and a response whose `state` does not match is discarded. No client secret and no developer API key are used (the first time, Tsugumi registers itself with `dynamic_agent_client` and uses the issued `client_id` for later sign-ins).
 - The ID token's RS256 signature is checked against OpenAI's JWKS (`https://auth.openai.com/.well-known/jwks.json`), and its issuer, audience (the issued `client_id`), expiry and `nonce` are checked. Signing back in to a previous account, it also checks that it is the same account (`sub`). If permission to use the plan (`chatgpt.tokens.use.direct`) was not granted, the Agent does not use the plan and suggests granting it again or using an API key.
 - The host ID (`ext_agent_host_id`) is a `urn:uuid:` (UUIDv4) made before the first sign-in, containing nothing that identifies the user.
-- In the app, the host ID, the `client_id` per registration (account), the email address and the ID / access / refresh tokens are kept in one item of the **login keychain** under the same service as the API keys (account name `ChatGPT`). The development and release versions use the same item, and token refreshes happen one at a time under a file lock.
+- In the app, the host ID, the `client_id` per registration (account), the email address and the ID / access / refresh tokens are kept in one item of the **login keychain** under the same service as the API keys (account name `ChatGPT`). The development and release versions use the same item. Registrations and tokens are also imported into the host-side Agent service's `agent.sqlite`; that service serializes token refreshes and persists rotated tokens.
 - The Web UI's server is a separate agent host. `security -i` cannot write long records, so the host ID, registrations and tokens are kept in `chatgpt.json` in the data folder (0600, rewritten by renaming a temporary file). Even if you are signed in in the app, the Web UI signs in separately. Sign in with a browser on the same machine as the server (it must reach the receiver on `127.0.0.1`).
-- Access tokens are refreshed before they expire. The tokens of a session whose refresh ended with `invalid_grant` or the like are deleted and the user is asked to sign in again; a temporary communication failure does not delete them.
-- Signing out revokes the refresh token at OpenAI's revocation endpoint and then deletes the local tokens (the registration and host ID stay). If the revocation could not be confirmed, it says that Tsugumi's connection can be removed from ChatGPT's settings.
-- Like API keys, the tokens are never passed to `tsugumid`, the Linux VM, Card workers or the page, and are not recorded in project files, settings, logs or conversation history. They go only in the request header (`Authorization: Bearer`), and only to `https://api.openai.com/v1/responses` and `/v1/models`.
+- The Agent service refreshes access tokens within five minutes of expiry and when a stale token is rejected. A refresh failure is reported without deleting the stored credentials.
+- Signing out asks the Agent service to revoke the refresh token at OpenAI's revocation endpoint and delete its credential record, then clears the platform adapter's tokens (the registration and host ID stay). A revocation failure is reported before deletion.
+- Like API keys, the tokens are never passed to `tsugumid`, the Linux VM, Card workers or the page, and are not recorded in project files, settings, logs or conversation history. Access tokens go in the model request header (`Authorization: Bearer`) to `https://api.openai.com/v1/responses` and `/v1/models`; refresh tokens go to OpenAI's token and revocation endpoints. Credentials are provisioned to the host-side Agent service through user-authenticated Agent RPC, never through model tools or conversation events.
 - Requests on the plan are sent with `store: false` (asking that the conversation's state not be stored; how data is handled at the destination follows OpenAI's policies). At a usage limit it stops without retrying, and never silently switches to another way of paying.
 
 ### What is sent to the model
@@ -234,7 +236,7 @@ When the Agent is used, the following is sent to the connected model provider (A
 - The text of the chat conversation
 - Information on Cards and visualisations added to the chat as references
 - What the Agent read through its tools (the RPC): Card definitions, source code, run logs, input and output values, and the contents of files read with `AttachedFolderRead` from folders attached to the chat
-- When asking the guide's thrush a question, and during a demo's guide: the question and a summary of what is on screen at the time (the project's name and folder, the Cards of the Workflow shown, the state and a summary of the result of the selected Card, the state of runs and of the connection, and the list of bundled demos; on a project's screen, only the demos' ids), and what the guide read with its reading tools. The guide has no tools to save, run or stop, and does not change the project. While not connected to a model, the thrush answers from its script and sends nothing.
+- When asking the guide's thrush a question, and during a demo's guide: the question or tour message, and what the guide reads through authorized tools. The UI no longer appends a screen summary; project references and selected Skills are read in the Agent service after authorization. The guide has no tools to save, run or stop, and does not change the project. While not connected to a model, the thrush answers from its script and sends nothing.
 - With web search turned on under "API" in the settings: the search terms the Agent writes are passed on by the provider to its search service ([Web search](#web-search)).
 
 - With "Version summaries" on (off by default; [Versions](Versions.md#version-summaries)): the diffs of code and settings changed in each version, the commit message and the names of the Cards that changed. Data files are not sent.
@@ -251,13 +253,13 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
 - **Search terms go outside, with the risk of unpublished data in them.** The model writes the search terms, and Tsugumi does not inspect them. The model's rules tell it not to put unpublished data, results, names, paths or code of files and Cards in search terms, but **this cannot be relied on to prevent it**. What the Agent has read may end up in a search term. For projects with unpublished research, decide whether to turn it on considering whether it may reach not only the provider but also the search service.
 - **Searches are kept.** Search terms and the URLs found are kept, like other tools, in the chat's rows and the conversation's record (`tools`, `messages`). Even if a response fails and is discarded, the record of the search stays (the terms have already gone out).
 - **Search results are outside text.** They may contain instructions to the Agent. The model's rules tell it not to treat them as instructions, but this is not a guarantee either. That a save widening a Card's permissions does not go through without the user's approval ([The Agent's permission boundary](#the-agents-permission-boundary)) does not change with search.
-- **Only the chat's Agent can use it.** It is not given to helpers (`delegate`) or the guide's thrush.
+- **Helpers and the guide inherit the provider's web-search setting too.** Conversation compaction disables search for its summary request.
 - **Counts and charges.** With Anthropic, searches are limited to five per turn; OpenAI has no such limit. Search may be charged separately from tokens (check the provider's pricing).
-- With Anthropic, the basic version (`web_search_20250305`) is used: the newer version with dynamic filtering runs code on the provider's side and is not covered by zero data retention. Search results are kept encrypted in the conversation's record (the conversation file on a Mac, the data folder on the Web) and sent back to the provider in the next request. After the setting is turned off, they are not sent in that form; the search terms and URLs are sent as text.
+- With Anthropic, the basic version (`web_search_20250305`) is used: the newer version with dynamic filtering runs code on the provider's side and is not covered by zero data retention. The provider's opaque search-result blocks are kept in the Agent service's conversation record (`agent.sqlite`) and sent back to the provider in the next request. After the setting is turned off, they are not sent in that form; the search terms and URLs are sent as text.
 
 ### The Agent's permission boundary
 
-- The only operations the Agent can perform are the published RPC tools; it cannot operate the UI or the Mac's file system directly. To `tsugumid` it is one client equal to the UI, going through the same revision checks and conflict detection.
+- The only operations the Agent can perform are the published Agent and project RPC tools; it cannot operate the UI or the Mac's file system directly. To `tsugumid` it is one client equal to the UI, going through the same revision checks and conflict detection.
 - Tool calls that change something carry a unique `op_id`, and when a response is cut off the applied state is confirmed with `OperationGet`, so blind retries never apply anything twice.
 - Arguments the model wrote are checked by the Agent and `tsugumid`, and a tool call that is not a JSON object, or from a response cut off at the output limit, is not run.
 - **A Card's permissions belong to the user.** When an Agent's save newly gives a Card any of the following, `tsugumid` does not save it and returns `approval_required`, listing each permission that widens (Cards inside a Card in Card included; `core/src/permissions.cc`):
@@ -267,19 +269,19 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
   - external Nix sources (`nixSources` in `tsugumi.json`)
 
   The approval works like this:
-  - The app (Mac and Web) approves directly only the kinds listed under "Permissions the Agent may give Cards without asking" in "API" of the settings, and asks the user about the rest. By default it asks about all of them; the confirmation screen also offers "Don't ask again".
-  - The approval is sent in a field the Agent's runtime fills (`approved_permissions`), which the model cannot set.
+  - The Agent service requires a `CardPermissions` grant, resolved by the user through Agent RPC. It consumes this grant for one widening; the UI presents the request rather than deciding the permission rule.
+  - The approval is sent in a field the Agent service fills (`approved_permissions`); model-supplied approval and origin fields are removed.
   - If not allowed, nothing is saved, and the Agent is told to explain the reason to the user.
   - When the user changes it themselves in the Card's settings, nothing is asked. A Card on the Canvas shows the permissions it has as icons.
 - **Shell commands need a separate Shell grant.** `project_shell` is available only when the isolated project launcher enables it, and requires Read, Write, Run and Shell access. It runs as the project user in the VM, with access to the project, its shared folders and the VM network. This is broader than per-Card permissions: a shell can edit documents directly. The model cannot grant itself Shell access. Commands and results are kept in the conversation; bounded output, deadlines, cancellation and durable operation receipts are enforced by core (`tests/core/test_project_shell.py`). An ordinary host daemon rejects the RPC instead of falling back to a host shell.
 - **The Agent can write a Card's comments too.** This is not refused, but `tsugumid` records who wrote, changed and resolved each comment from the save's `origin`, so the model cannot pose as the user's comment (`core/src/comments.cc`, [test_card_comments.py](../tests/core/test_card_comments.py)). Saves that follow comments go through the same approval as above.
 - **The Claude Code plugin** ([Using it from Claude Code](claude-code.md)) operates only through the Web UI's server.
-  - The server runs the same tools as the chat's Agent, with the same checks. A save that widens a Card's permissions waits for the user's approval on the Web UI's page (and is not saved if no page is open). Reading folders attached to the chat is not provided.
+  - The server forwards tools to `tsugumi-agentd` as an external-agent principal, with the same core-owned Read, Write, Run and CardPermissions checks as the chat. Pending access requests are presented on the Web UI's page; a disconnected page does not cancel a core conversation. Attached-folder reads require a user-registered folder and its own Read grant.
   - The plugin's MCP server finds the server through `server.json`, which the server writes in the data folder (the port and a per-start key for agents; 0600, deleted on exit).
   - That key reaches only the six routes the plugin and a second run of the `tsugumi` command (which has the running server open a page) use (`/api/project/open`, `/api/project/create`, `/api/agent/tools`, `/api/agent/open`, `/api/agent/call`, `/api/page/open`; `AGENT_ROUTES` in `web/server/paths.ts`). It does not reach answers to approvals (`/api/chat/permission`), event subscriptions, the terminal, file listings or settings (`tests/python/test_claude_code_plugin.py`).
   - The page's key (the key in the URL shown at startup) is not written to `server.json`. To open a page, the server opens the browser itself.
   - What this boundary protects is **operations through Tsugumi's tools**. Claude Code also has a shell and file operations, so with the same permissions as the user it can rewrite the project's files (`_card.json` and the like) directly and read what the user can read (such as the URL in the log `server.log` of a server Claude Code started). Stopping that is up to Claude Code's own permission settings, not Tsugumi.
-- Of the folders attached to the chat, the Agent reads only the ones currently attached, with `attached_folder_read` (checked before sending by `agent/Sources/TsugumiAgent/Agent.swift` in the app and `web/server/agent.ts` in the Web UI). A folder removed in the app stays shared with the VM until the environment next starts, but the Agent stops reading it from the moment it is removed (`onlyAttachedFoldersAreRead` in `macOS/CoreTests`).
+- `attached_folder_read` requires a folder registered by the user and an active Read grant for that resource, checked in `core/src/agent/host.cc` before the project RPC is called. Removing a folder from the UI's attachment list is separate from revoking its Agent access grant; VM sharing may last until the environment next starts.
 
 ## 9. Where data is kept, and how to delete it
 
@@ -290,9 +292,9 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
 | Run history (copy in the project) | `.tsugumi/runs.sqlite`, `.tsugumi/runs/` | "Delete Run History", or stop writing it with `saveRunHistory = false` |
 | Nix store, build roots | `~/Library/Application Support/Tsugumi/vm/store.img` | "Delete the build cache" and "Clean shared store" |
 | Control folders (token, grants) | `~/Library/Application Support/Tsugumi/environments/<id>/control/` | "Reset all environments" |
-| API keys | The macOS Keychain (a 0600 file in the data folder for the Web UI on Linux) | Delete under Settings > API |
-| Chat conversation history (app) | Under `~/Library/Application Support` | — |
-| The Web UI's (`tsugumi` command's) conversation history, ChatGPT sign-in (`chatgpt.json`) and Skill folders | The data folder (`~/Library/Application Support/Tsugumi/web/` on a Mac, `~/.local/share/tsugumi-web` on Linux) | — |
+| API keys | The macOS Keychain (or the Web host's environment / 0600 credential file), plus provider configuration in the Agent service's `agent.sqlite` | Settings > API manages the platform copy; the service's stored provider configuration is separate |
+| Agent conversations, events, receipts, grants and provisioned credentials | `agent-core/agent.sqlite` under the Mac support folder (`Tsugumi/` or `Tsugumi-dev/`), or under the Web data folder on Linux (`TSUGUMI_AGENT_STATE` overrides it) | Conversation deletion goes through Agent RPC |
+| The Web UI's (`tsugumi` command's) ChatGPT sign-in copy (`chatgpt.json`) and Skill folders | The data folder (`~/Library/Application Support/Tsugumi/web/` on a Mac, `~/.local/share/tsugumi-web` on Linux) | — |
 
 "Reset all environments" in the settings stops the VM and deletes `vm/` (except the run-history disk `vm/history.img`) and `environments/`. The documents, artifacts and `.tsugumi/runs.sqlite` in project folders, and the run-history disk of the VM, are kept.
 
