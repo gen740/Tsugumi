@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Bundles the Astro story pages and their local assets for Help > Learn about Tsugumi.
-# The site must already have been built with npm --prefix docs/site run build.
+# The site must already have been built with nix run .#build-doc.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 site="$repo/build/docs"

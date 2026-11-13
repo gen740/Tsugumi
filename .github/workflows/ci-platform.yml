@@ -311,17 +311,8 @@ jobs:
             renderer-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('flake.lock') }}-
       - name: Build the Dawn renderer
         run: ui/renderer/build.sh
-      - name: Cache the application help dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.npm
-          key: app-help-npm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('docs/site/package-lock.json') }}
       - name: Build the application help
-        env:
-          ASTRO_TELEMETRY_DISABLED: '1'
-        run: |
-          "$CORE_TEST_ENV" npm ci --prefix docs/site --no-audit --no-fund
-          "$CORE_TEST_ENV" npm --prefix docs/site run build
+        run: nix run .#build-doc
       - name: Application behavior
         run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path macOS'
 

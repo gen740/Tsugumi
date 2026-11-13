@@ -25,7 +25,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 | [nix/](nix/) | Package definitions of `tsugumid`, the worker, the Card SDK and the `tsugumi` command |
 | [demos/](demos/) | The bundled demos and their Draft versions (only the shape of the processing, before implementation), as a Japanese and an English set (`demos/ja`, `demos/en`): change both |
 | [tests/](tests/) | Tests of the contract, scheduler, history, isolation, demos, fuzzing and more |
-| [docs/](docs/) | The list of documents is [docs/README.md](docs/README.md). Astro generates the web version and `llms.txt` in `build/docs/` with `npm --prefix docs/site run build`; only source documents belong in `docs/` |
+| [docs/](docs/) | The list of documents is [docs/README.md](docs/README.md). Astro generates the web version and `llms.txt` in `build/docs/` with `nix run .#build-doc`; only source documents belong in `docs/` |
 
 The overall architecture and the directories in detail are in "The runtime" and "Directories" of [docs/Development.md](docs/Development.md).
 
