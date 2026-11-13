@@ -903,7 +903,7 @@ EN = {
 "実行履歴の形式は %@ です。このバージョンの Tsugumi には %@ が必要です。": "This run history uses format %@. This version of Tsugumi requires %@.",
 "互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 外部で実行中のジョブは実行先で継続し、新しい履歴には引き継がれません。": "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app. Running remote jobs continue on the execution host and will be unavailable in the new history.",
 "実行デーモンの接続先": "Execution daemon endpoint",
-"HTTPS の接続先、またはループバックアドレスの HTTP 接続先を入力してください。": "Enter an HTTPS endpoint or a loopback HTTP endpoint.",
+"Unix ソケット、またはループバックアドレスの TCP 接続先を入力してください。": "Enter a Unix socket or loopback TCP endpoint.",
 "認証トークン": "Authentication token",
 "認証トークンは小文字の16進数64文字です。": "Enter a 64-character lowercase hexadecimal token.",
 "保存済みトークンを使用": "Use saved token",

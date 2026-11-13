@@ -58,6 +58,7 @@ clangStdenv.mkDerivation {
       ../VERSION
       ../CMakeLists.txt
       ../cmake
+      ../workerd
       ../core
       ../client
       ../sdk

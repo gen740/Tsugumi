@@ -9,7 +9,7 @@ struct FlatcPlugin: BuildToolPlugin {
     let protocolDir = context.package.directoryURL.appending(path: "../protocol").standardizedFileURL
     let flatc = try locateFlatc()
     let out = context.pluginWorkDirectoryURL.appending(path: "generated")
-    let schemas = ["tsugumi_enums", "data", "worker", "tsugumi"]
+    let schemas = ["tsugumi_enums", "data", "worker", "remote_worker", "tsugumi"]
     // The binary schema (with doc comments) drives the Agent's tool definitions.
     let bfbs = Command.buildCommand(
       displayName: "flatc tsugumi.bfbs",

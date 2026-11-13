@@ -520,57 +520,6 @@ auto NixEvaluator::realise_native(const NixCall& call, NixResult result) -> NixR
   });
 }
 
-auto RemoteWorkerStore::realise(const DerivationClosureTransport& transport, const std::filesystem::path& store_root,
-                              const WorkerDerivation& derivation,
-                              const std::function<void(const std::string&)>& log) -> NixResult {
-  g_logger->set(log);
-  struct ClearLog {
-    ~ClearLog() { g_logger->set(nullptr); }
-  } clear_log;
-  nix::settings.getLocalSettings().sandboxMode = nix::smEnabled;
-  nix::settings.getLocalSettings().sandboxFallback = false;
-  auto store = nix::openStore("local", {{"root", store_root.string()}});
-  const auto drv = store->parseStorePath(derivation.path);
-  const auto out = store->parseStorePath(derivation.output);
-  store->addTempRoot(drv);
-  store->addTempRoot(out);
-  transport.receive(*store, derivation);
-  if (store->readDerivation(drv).platform != derivation.system)
-    throw std::runtime_error("remote derivation has a different system");
-  const auto declared = store->queryDerivationOutputMap(drv);
-  const auto declared_out = declared.find("out");
-  if (declared_out == declared.end() || declared_out->second != out)
-    throw std::runtime_error("remote Nix derivation has a different output path");
-  NixResult result;
-  if (!store->isValidPath(out)) {
-    store->buildPaths({nix::DerivedPath::Built{.drvPath = nix::makeConstantStorePathRef(drv),
-                                              .outputs = nix::OutputsSpec::All{}}});
-    result.built = true;
-  }
-  if (!store->isValidPath(out)) throw std::runtime_error("remote Nix build produced no Card manifest");
-  nix::StorePathSet closure;
-  store->computeFSClosure(out, closure);
-  for (const auto& path : closure) result.closure.push_back(store->printStorePath(path));
-  std::sort(result.closure.begin(), result.closure.end());
-  const auto manifest = store_root / std::filesystem::path(derivation.output).relative_path();
-  const int fd = ::open(manifest.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
-  if (fd < 0) throw std::runtime_error("cannot open the remote Nix Card manifest");
-  nix::AutoCloseFD file{fd};
-  struct stat info{};
-  if (::fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0 || info.st_size > 16 * 1024 * 1024)
-    throw std::runtime_error("invalid remote Nix Card manifest size or type");
-  result.manifest.resize(static_cast<size_t>(info.st_size));
-  size_t offset = 0;
-  while (offset < result.manifest.size()) {
-    const ssize_t n = ::read(fd, result.manifest.data() + offset, result.manifest.size() - offset);
-    if (n < 0 && errno == EINTR) continue;
-    if (n <= 0) throw std::runtime_error("cannot read the remote Nix Card manifest");
-    offset += static_cast<size_t>(n);
-  }
-  result.derivation = derivation;
-  return result;
-}
-
 bool NixEvaluator::valid(const std::string& store_path) {
   return impl_->run([&]() -> bool {
     try {

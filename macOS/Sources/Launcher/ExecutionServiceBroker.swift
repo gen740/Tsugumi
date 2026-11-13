@@ -1,9 +1,10 @@
+import FlatBuffers
+import TsugumiRPC
 import CoreFoundation
 import CryptoKit
 import Darwin
 import Foundation
 import Network
-import Security
 import Virtualization
 
 /// Bridges one framed request per connection from a project daemon to its
@@ -18,7 +19,6 @@ final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @u
   }
   private var tokens: [String: Authorization] = [:]
   private var active = 0
-  private static let operations = Set(["probe", "put_blob", "get_blob", "submit", "status", "cancel"])
 
   init(support: URL) {
     self.support = support
@@ -106,157 +106,127 @@ final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @u
 
   func forward(_ fd: Int32) {
     forward(fd) { entry, request, guest in
-      _ = try Self.remote(entry, request: request, guest: guest)
+      try Frame.write(Self.remote(entry, request: request), to: guest)
     }
   }
 
-  func forward(_ fd: Int32, send: (StoredExecutionService, [String: Any], Int32) throws -> Void) {
+  func forward(_ fd: Int32, send: (StoredExecutionService, Tsugumi_RemoteWorker_RequestT, Int32) throws -> Void) {
     var forwarding = false
     do {
-      var request = try Frame.read(from: fd)
-      guard let token = request.removeValue(forKey: "broker_token") as? String,
+      let message = try Frame.read(from: fd)
+      guard message.payload?.type == .request,
+            let request = message.payload?.value as? Tsugumi_RemoteWorker_RequestT,
+            let token = request.token,
             let scope = lock.withLock({ tokens.values.first(where: { $0.token == token })?.scope }) else {
         throw BrokerError("The project is not authorized to use this execution broker.")
       }
       let entries = try ExecutionServiceRegistry.loadStored(support: support)
-      if request["operation"] as? String == "catalog" {
-        let services: [[String: Any]] = entries.map { entry in
-          let caps = entry.capabilities
-          return ["id": entry.id, "native_system": caps.nativeSystem, "systems": caps.systems,
-                  "available": caps.workerContract == ExecutionServiceRegistry.workerContract,
-                  "server_id": caps.serverId, "executor": "daemon", "isolation": caps.isolation,
-                  "resource_limits": caps.resourceLimits, "max_jobs": caps.maxConcurrentJobs, "worker_contract": caps.workerContract]
+      if request.body?.type == .catalogrequest {
+        let catalog = Tsugumi_RemoteWorker_CatalogT()
+        catalog.services = entries.map { entry in
+          let target = Tsugumi_RemoteWorker_TargetT()
+          target.id = entry.id
+          target.available = entry.capabilities.workerContract == ExecutionServiceRegistry.workerContract
+          target.capabilities = Self.wireCapabilities(entry.capabilities)
+          return target
         }
-        try Frame.write(["version": 1, "ok": true, "services": services], to: fd)
+        try Frame.write(Self.reply(catalog, type: .catalog), to: fd)
         return
       }
-      guard let operation = request["operation"] as? String, Self.operations.contains(operation) else {
-        throw BrokerError("Unknown execution service operation.")
-      }
-      guard let entry = entries.first(where: { $0.id == request["service"] as? String }),
-            request["server_id"] as? String == entry.capabilities.serverId,
+      guard request.body != nil, request.body?.type != .none_ else { throw BrokerError("Missing remote worker request.") }
+      guard let entry = entries.first(where: { $0.id == request.service }),
+            request.serverId == entry.capabilities.serverId,
             entry.capabilities.workerContract == ExecutionServiceRegistry.workerContract else {
-        throw BrokerError("The execution service registration changed. Verify its connection in settings.", code: "registration_changed")
+        throw BrokerError("The execution service registration changed. Verify its connection in settings.", code: .registrationchanged)
       }
-      request["project_scope"] = scope
-      request["server_id"] = entry.capabilities.serverId
+      request.projectScope = scope
+      request.serverId = entry.capabilities.serverId
       forwarding = true
       try send(entry, request, fd)
     } catch {
-      // EOF preserves an unconfirmed outcome after a transport interruption.
-      let failure = error as? BrokerError
-      if !forwarding || failure?.code == "registration_changed" {
-        var reply: [String: Any] = ["version": 1, "ok": false, "error": failure?.message ?? "The execution broker could not complete the request."]
-        if let code = failure?.code { reply["code"] = code }
-        try? Frame.write(reply, to: fd)
+      let error = error as? BrokerError ?? BrokerError("The execution broker could not complete the request.")
+      if !forwarding || error.code == .registrationchanged {
+        let failure = Tsugumi_RemoteWorker_FailureT()
+        failure.code = error.code
+        failure.message = error.message
+        try? Frame.write(Self.reply(failure, type: .failure), to: fd)
       }
     }
   }
 
-  static func probe(_ entry: ExecutionServiceRegistration, token: String) throws -> ExecutionServiceCapabilities {
-    let reply = try remote(endpoint: entry.endpoint, token: token, request: ["version": 1, "operation": "probe", "service": entry.id])
-    return try checkedProbe(reply)
+  private static func reply(_ body: NativeObject, type: Tsugumi_RemoteWorker_ReplyBody) -> Tsugumi_RemoteWorker_MessageT {
+    let reply = Tsugumi_RemoteWorker_ReplyT()
+    reply.body = Tsugumi_RemoteWorker_ReplyBodyUnion(body, type: type)
+    let message = Tsugumi_RemoteWorker_MessageT()
+    message.payload = Tsugumi_RemoteWorker_PayloadUnion(reply, type: .reply)
+    return message
   }
 
-  static func checkedProbe(_ reply: [String: Any]) throws -> ExecutionServiceCapabilities {
-    guard reply["ok"] as? Bool == true else {
-      throw BrokerError(reply["error"] as? String ?? "The execution service probe failed.")
+  private static func wireCapabilities(_ c: ExecutionServiceCapabilities) -> Tsugumi_RemoteWorker_CapabilitiesT {
+    let result = Tsugumi_RemoteWorker_CapabilitiesT()
+    result.serverId = c.serverId
+    result.nativeSystem = c.nativeSystem
+    result.systems = c.systems
+    result.resourceLimits = c.resourceLimits
+    result.maxJobs = UInt32(c.maxConcurrentJobs)
+    result.workerContract = UInt32(c.workerContract)
+    return result
+  }
+
+  static func probe(_ entry: ExecutionServiceRegistration, token: String) throws -> ExecutionServiceCapabilities {
+    let request = Tsugumi_RemoteWorker_RequestT()
+    request.body = Tsugumi_RemoteWorker_RequestBodyUnion(Tsugumi_RemoteWorker_ProbeRequestT(), type: .proberequest)
+    return try checkedProbe(remote(endpoint: entry.endpoint, token: token, request: request))
+  }
+
+  static func checkedProbe(_ message: Tsugumi_RemoteWorker_MessageT) throws -> ExecutionServiceCapabilities {
+    guard message.payload?.type == .reply, let reply = message.payload?.value as? Tsugumi_RemoteWorker_ReplyT else {
+      throw BrokerError("Expected remote worker reply.")
     }
-    guard reply["executor"] as? String == "daemon" else {
-      throw BrokerError(String(localized: "接続先で Tsugumi の実行デーモンを起動してください。", bundle: .main))
+    if let failure = reply.body?.value as? Tsugumi_RemoteWorker_FailureT { throw BrokerError(failure.message, code: failure.code) }
+    guard reply.body?.type == .capabilities, let c = reply.body?.value as? Tsugumi_RemoteWorker_CapabilitiesT else {
+      throw BrokerError("The remote worker did not report its capabilities.")
     }
     let expected = ExecutionServiceRegistry.workerContract
-    let actual = jsonInteger(reply["worker_contract"])
-    guard actual == expected else {
-      throw BrokerError("Execution daemon worker contract is \(actual.map(String.init) ?? "unreported"). Expected \(expected). Rebuild the execution daemon with this Tsugumi revision.")
-    }
-    guard let id = reply["server_id"] as? String, let native = reply["native_system"] as? String,
-          let systems = reply["systems"] as? [String], let isolation = reply["isolation"] as? String,
-          let limit = reply["resource_limits"] as? NSNumber, CFGetTypeID(limit) == CFBooleanGetTypeID(),
-          let maxJobs = jsonInteger(reply["max_jobs"]) else {
-      throw BrokerError(String(localized: "実行デーモンが有効な実行環境情報を返しませんでした。", bundle: .main))
-    }
-    let caps = ExecutionServiceCapabilities(serverId: id, nativeSystem: native, systems: systems, isolation: isolation,
-                                            resourceLimits: limit.boolValue, maxConcurrentJobs: maxJobs, workerContract: expected)
+    guard c.workerContract == expected else { throw BrokerError("Rebuild the remote worker with this Tsugumi revision (expected contract \(expected)).") }
+    let caps = ExecutionServiceCapabilities(serverId: c.serverId, nativeSystem: c.nativeSystem, systems: c.systems.compactMap { $0 },
+                                            isolation: "pid_namespace", resourceLimits: c.resourceLimits,
+                                            maxConcurrentJobs: Int(c.maxJobs), workerContract: expected)
     try ExecutionServiceRegistry.validate(caps)
     return caps
   }
 
-  private static func jsonInteger(_ value: Any?) -> Int? {
-    guard let value = value as? NSNumber, CFGetTypeID(value) != CFBooleanGetTypeID() else { return nil }
-    return value as? Int
+  private static func remote(_ entry: StoredExecutionService, request: Tsugumi_RemoteWorker_RequestT) throws -> Tsugumi_RemoteWorker_MessageT {
+    try remote(endpoint: entry.endpoint, token: entry.token, request: request)
   }
 
-  private static func remote(_ entry: StoredExecutionService, request: [String: Any], guest: Int32) throws -> [String: Any] {
-    try remote(endpoint: entry.endpoint, token: entry.token, request: request, guest: guest)
-  }
-
-  private static func remote(endpoint: String, token: String, request: [String: Any], guest: Int32? = nil) throws -> [String: Any] {
+  private static func remote(endpoint: String, token: String, request: Tsugumi_RemoteWorker_RequestT) throws -> Tsugumi_RemoteWorker_MessageT {
     let url = try ExecutionServiceRegistry.endpointURL(endpoint)
-    let transport = try HTTPTransport(endpoint: url)
-    let prefix = try Frame.encode(request)
-    let size = try Frame.bodySize(request)
-    var fields = "POST /rpc HTTP/1.1\r\nHost: \(transport.authority)\r\nAuthorization: Bearer \(token)\r\nContent-Type: application/octet-stream\r\nContent-Length: \(prefix.count + size)\r\nConnection: close\r\n"
-    let pin = request["server_id"] as? String
-    if let pin { fields += "X-Tsugumi-Server: \(pin)\r\n" }
-    if size > 0 { fields += "Expect: 100-continue\r\n" }
-    try transport.send(Data((fields + "\r\n").utf8))
-    if size > 0 { try transport.waitForContinue(pinned: pin != nil) }
-    try transport.send(prefix)
-    if let guest {
-      var remaining = size
-      while remaining > 0 {
-        let chunk = try Frame.exact(min(65536, remaining), from: guest)
-        try transport.send(chunk)
-        remaining -= chunk.count
-      }
-    } else if size != 0 {
-      throw BrokerError("The execution service request body is missing.")
-    }
-
-    let length = try transport.readResponseLength(rejectedBeforeBody: pin != nil && size == 0)
-    var consumed = 0
-    let reply = try Frame.read { size in
-      consumed += size
-      return try transport.exact(size)
-    }
-    var remaining = try Frame.bodySize(reply)
-    guard consumed + remaining == length, guest != nil || remaining == 0 else {
-      throw BrokerError("Invalid execution daemon response size.")
-    }
-    if let guest {
-      try Frame.write(reply, to: guest)
-      while remaining > 0 {
-        let chunk = try transport.exact(min(65536, remaining))
-        try writeAll(guest, chunk)
-        remaining -= chunk.count
-      }
-    }
-    return reply
+    let transport = try StreamTransport(endpoint: url)
+    request.token = token
+    let message = Tsugumi_RemoteWorker_MessageT()
+    message.payload = Tsugumi_RemoteWorker_PayloadUnion(request, type: .request)
+    try transport.send(Frame.encode(message))
+    return try Frame.read { try transport.exact($0) }
   }
 
-  /// One fixed-length HTTP request over the system TCP/TLS transport.
-  private final class HTTPTransport {
-    let authority: String
+  /// The same framed stream can later run over a secure carrier.
+  private final class StreamTransport {
     private let connection: NWConnection
     private var pending = Data()
 
     init(endpoint: URL) throws {
-      guard let parts = URLComponents(url: endpoint, resolvingAgainstBaseURL: false),
-            let host = parts.host, let port = NWEndpoint.Port(rawValue: UInt16(parts.port ?? (parts.scheme == "https" ? 443 : 80))) else {
-        throw BrokerError("Invalid execution daemon endpoint.")
-      }
-      authority = host + (parts.port.map { ":\($0)" } ?? "")
-      let hostname = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-      let parameters: NWParameters
-      if parts.scheme == "https" {
-        let tls = NWProtocolTLS.Options()
-        sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, hostname)
-        parameters = NWParameters(tls: tls, tcp: NWProtocolTCP.Options())
+      let destination: NWEndpoint
+      if endpoint.scheme == "unix" {
+        destination = .unix(path: endpoint.path)
       } else {
-        parameters = .tcp
+        guard let parts = URLComponents(url: endpoint, resolvingAgainstBaseURL: false),
+              let host = parts.host, let number = parts.port, let port = NWEndpoint.Port(rawValue: UInt16(exactly: number) ?? 0) else {
+          throw BrokerError("Invalid remote worker endpoint.")
+        }
+        destination = .hostPort(host: .init(host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))), port: port)
       }
-      connection = NWConnection(host: NWEndpoint.Host(hostname), port: port, using: parameters)
+      connection = NWConnection(to: destination, using: .tcp)
       do {
         try wait(seconds: 10) { (finish: @escaping (Result<Void, Error>) -> Void) in
           connection.stateUpdateHandler = { state in
@@ -323,109 +293,45 @@ final class ExecutionServiceBroker: NSObject, VZVirtioSocketListenerDelegate, @u
       return result
     }
 
-    func waitForContinue(pinned: Bool) throws {
-      let (code, _) = try readResponse()
-      guard code == 100 else { throw Self.unexpectedStatus(code, rejectedBeforeBody: pinned) }
-    }
-
-    func readResponseLength(rejectedBeforeBody: Bool) throws -> Int {
-      let (code, length) = try readResponse()
-      guard code == 200 else { throw Self.unexpectedStatus(code, rejectedBeforeBody: rejectedBeforeBody) }
-      guard let length else { throw BrokerError("The execution daemon did not report its response length.") }
-      return length
-    }
-
-    private static func unexpectedStatus(_ code: Int, rejectedBeforeBody: Bool) -> BrokerError {
-      if code == 409, rejectedBeforeBody {
-        return BrokerError("The execution daemon at this endpoint has changed. Verify its connection in settings.", code: "registration_changed")
-      }
-      return BrokerError(String(localized: "実行デーモンへの接続に失敗しました（HTTP \(code)）。", bundle: .main))
-    }
-
-    private func readResponse() throws -> (Int, Int?) {
-      let end = Data([13, 10, 13, 10])
-      while pending.range(of: end) == nil {
-        guard pending.count < 16 * 1024 else { throw BrokerError("The execution daemon HTTP headers are too large.") }
-        pending.append(try receive(maximum: 4096))
-      }
-      guard let boundary = pending.range(of: end), boundary.lowerBound < 16 * 1024,
-            let header = String(data: pending[..<boundary.lowerBound], encoding: .utf8) else {
-        throw BrokerError("Invalid execution daemon HTTP response.")
-      }
-      pending = Data(pending[boundary.upperBound...])
-      let lines = header.components(separatedBy: "\r\n")
-      let status = lines[0].split(separator: " ", maxSplits: 2)
-      guard status.count >= 2, status[0] == "HTTP/1.1" || status[0] == "HTTP/1.0", let code = Int(status[1]) else {
-        throw BrokerError("Invalid execution daemon HTTP status.")
-      }
-      if code != 200 { return (code, nil) }
-      var length: Int?
-      for line in lines.dropFirst() {
-        guard let colon = line.firstIndex(of: ":") else { throw BrokerError("Invalid execution daemon HTTP header.") }
-        switch line[..<colon].lowercased() {
-        case "content-length":
-          let value = line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces)
-          guard length == nil, let parsed = Int(value), parsed >= 5, value.utf8.allSatisfy({ (48...57).contains($0) }) else {
-            throw BrokerError("Invalid execution daemon response length.")
-          }
-          length = parsed
-        case "transfer-encoding", "content-encoding":
-          throw BrokerError("The execution daemon must send an unencoded, fixed-length frame.")
-        default: break
-        }
-      }
-      return (code, length)
-    }
   }
 
   private struct BrokerError: LocalizedError {
     let message: String
-    let code: String?
-    init(_ message: String, code: String? = nil) { self.message = message; self.code = code }
+    let code: Tsugumi_RemoteWorker_ErrorCode
+    init(_ message: String, code: Tsugumi_RemoteWorker_ErrorCode = .invalid) { self.message = message; self.code = code }
     var errorDescription: String? { message }
   }
 
-  private enum Frame {
-    static func bodySize(_ header: [String: Any]) throws -> Int {
-      guard let size = jsonInteger(header["size"] ?? 0), (0...(64 << 30)).contains(size) else {
-        throw BrokerError("Invalid execution service body size.")
-      }
-      return size
+  enum Frame {
+    static func read(from fd: Int32) throws -> Tsugumi_RemoteWorker_MessageT { try read { try exact($0, from: fd) } }
+    static func read(exact: (Int) throws -> Data) throws -> Tsugumi_RemoteWorker_MessageT {
+      let prefix = try exact(4)
+      let length = prefix.enumerated().reduce(0) { $0 | (Int($1.element) << (8 * $1.offset)) }
+      guard (12...(2 << 20)).contains(length) else { throw BrokerError("Invalid remote worker frame length.") }
+      var buffer = ByteBuffer(data: try exact(length))
+      let root: Tsugumi_RemoteWorker_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSR1")
+      return root.unpack()
     }
-
-    static func read(from fd: Int32) throws -> [String: Any] {
-      try read { try exact($0, from: fd) }
+    static func encode(_ message: Tsugumi_RemoteWorker_MessageT) throws -> Data {
+      var builder = FlatBufferBuilder(initialSize: 1024)
+      var object: Tsugumi_RemoteWorker_MessageT? = message
+      let offset = Tsugumi_RemoteWorker_Message.pack(&builder, obj: &object)
+      Tsugumi_RemoteWorker_Message.finish(&builder, end: offset)
+      let bytes = Data(builder.sizedByteArray)
+      guard bytes.count <= 2 << 20 else { throw BrokerError("Remote worker frame exceeds 2 MiB.") }
+      var length = UInt32(bytes.count).littleEndian
+      return withUnsafeBytes(of: &length) { Data($0) } + bytes
     }
-
-    static func read(exact: (Int) throws -> Data) throws -> [String: Any] {
-      let length = try exact(4).reduce(0) { ($0 << 8) | Int($1) }
-      guard (1...65536).contains(length),
-            let header = try JSONSerialization.jsonObject(with: exact(length)) as? [String: Any],
-            jsonInteger(header["version"]) == 1 else { throw BrokerError("Invalid execution service header.") }
-      _ = try bodySize(header)
-      return header
-    }
-
-    static func encode(_ header: [String: Any]) throws -> Data {
-      let json = try JSONSerialization.data(withJSONObject: header)
-      guard (1...65536).contains(json.count) else { throw BrokerError("Invalid execution service header size.") }
-      var length = UInt32(json.count).bigEndian
-      return withUnsafeBytes(of: &length) { Data($0) } + json
-    }
-
-    static func write(_ header: [String: Any], to fd: Int32) throws {
-      try writeAll(fd, encode(header))
-    }
-
+    static func write(_ message: Tsugumi_RemoteWorker_MessageT, to fd: Int32) throws { try writeAll(fd, encode(message)) }
     static func exact(_ count: Int, from fd: Int32) throws -> Data {
       var data = Data(count: count)
       try data.withUnsafeMutableBytes { (buffer: UnsafeMutableRawBufferPointer) in
         var offset = 0
         while offset < count {
-          let size = Darwin.read(fd, buffer.baseAddress! + offset, count - offset)
-          if size < 0, errno == EINTR { continue }
-          guard size > 0 else { throw BrokerError("The execution service closed the connection before replying.") }
-          offset += size
+          let n = Darwin.read(fd, buffer.baseAddress! + offset, count - offset)
+          if n < 0, errno == EINTR { continue }
+          guard n > 0 else { throw BrokerError("The remote worker closed the stream before replying.") }
+          offset += n
         }
       }
       return data

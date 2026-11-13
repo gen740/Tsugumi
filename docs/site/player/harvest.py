@@ -5,7 +5,7 @@ Nothing here is written by hand: every value comes from RunInvocationsRequest
 and RunRecordRequest of the run named in the file's `run` note.
 
   nix develop --command python3 docs/site/player/harvest.py report collatz ...
-  TSUGUMI_BUILD_DIR=<build dir>  (default: <repo>/build; core/tsugumid, sdk/tsugumi-worker)
+  TSUGUMI_BUILD_DIR=<build dir>  (default: <repo>/build; core/tsugumid, workerd/tsugumi-worker)
   TSUGUMI_PY_BINDINGS=<dir>      (default: <build dir>/generated/python)
   --no-sandbox                   run the Cards without Seatbelt, as tests/python does on a host
   --ports                        also write assets/ports.json: the core's resolved ports of every project

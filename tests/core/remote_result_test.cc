@@ -1,31 +1,24 @@
 #include <gtest/gtest.h>
 
-#include "remote_invocation.hh"
+#include "tsugumi/workerd/protocol.hh"
 
-namespace tsugumi {
-
-TEST(RemoteResult, ManifestObjectKeysCanArriveInAnyOrder) {
-  const std::string cases[] = {
-      R"({"invocation_result_sha256":"worker","outputs":[{"path":"out.txt","sha256":"file","size":42}]})",
-      R"({"outputs":[{"size":42,"sha256":"file","path":"out.txt"}],"invocation_result_sha256":"worker"})",
-  };
-  for (const auto& text : cases) {
-    remote::ResultJson manifest;
-    ASSERT_FALSE(schema::decode(text, manifest));
-    const auto* worker = schema::get(manifest.invocation_result_sha256);
-    ASSERT_NE(worker, nullptr);
-    EXPECT_EQ(*worker, "worker");
-    const auto* outputs = schema::get(manifest.outputs);
-    ASSERT_NE(outputs, nullptr);
-    ASSERT_EQ(outputs->size(), 1u);
-    const auto& file = outputs->front();
-    ASSERT_NE(schema::get(file.path), nullptr);
-    ASSERT_NE(schema::get(file.sha256), nullptr);
-    ASSERT_NE(schema::get(file.size), nullptr);
-    EXPECT_EQ(*schema::get(file.path), "out.txt");
-    EXPECT_EQ(*schema::get(file.sha256), "file");
-    EXPECT_EQ(*schema::get(file.size), 42u);
-  }
+TEST(RemoteResult, GeneratedManifestRoundtrip) {
+  namespace R = Tsugumi::RemoteWorker;
+  R::ResultManifestT manifest;
+  manifest.invocation_result_sha256 = "worker";
+  auto file = std::make_unique<R::ResultFileT>();
+  file->path = "out.txt";
+  file->sha256 = "file";
+  file->size = 42;
+  manifest.outputs.push_back(std::move(file));
+  flatbuffers::FlatBufferBuilder builder;
+  builder.Finish(R::ResultManifest::Pack(builder, &manifest));
+  flatbuffers::Verifier v(builder.GetBufferPointer(), builder.GetSize());
+  ASSERT_TRUE(v.VerifyBuffer<R::ResultManifest>(nullptr));
+  const auto* result =
+      flatbuffers::GetRoot<R::ResultManifest>(builder.GetBufferPointer());
+  EXPECT_EQ(result->invocation_result_sha256()->str(), "worker");
+  ASSERT_EQ(result->outputs()->size(), 1u);
+  EXPECT_EQ(result->outputs()->Get(0)->path()->str(), "out.txt");
+  EXPECT_EQ(result->outputs()->Get(0)->size(), 42u);
 }
-
-}  // namespace tsugumi

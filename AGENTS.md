@@ -13,14 +13,14 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 
 | Where | What |
 | --- | --- |
-| [protocol/](protocol/) | The FlatBuffers contract. The UI, the Web and the Agent all talk to `tsugumid` through this same RPC |
+| [protocol/](protocol/) | The FlatBuffers contracts: project and Agent RPC, native worker and remote worker |
 | [core/](core/) | `tsugumid`: the document model, type checking, the scheduler, the embedded Nix evaluator, history and artifacts, versions (git) |
-| [sdk/](sdk/) | The Card ABI and runtime, the C++ / Python SDKs, the Nix SDK ([sdk/nix/default.nix](sdk/nix/default.nix)), the worker |
+| [sdk/](sdk/) | The Card ABI and runtime, the C++ / Python SDKs, the Nix SDK ([sdk/nix/default.nix](sdk/nix/default.nix)) |
 | [macOS/](macOS/) | The SwiftUI app, the shared Linux VM (Virtualization.framework), image definitions |
 | [ui/](ui/) | Shared isolated web-module host and UI resources |
 | [agent/](agent/) | The Agent (model connections, conversations, tools derived from the RPC). The contract shared with the Web is in [agent/Shared/](agent/Shared/) |
 | [web/](web/) | The browser UI and its host server |
-| [remote/](remote/) | The Python execution daemon and durable job journal on the remote Linux host |
+| [workerd/](workerd/) | The light native worker, the C++ remote listener/supervisor/Nix runner, and shared worker libraries |
 | [cli/](cli/) | The `tsugumi` command (`install.sh` for Mac and Linux, `install.ps1` for Windows, building the distributions) |
 | [plugins/](plugins/) | The Claude Code plugin (installed from `.claude-plugin/marketplace.json`; [docs/claude-code.md](docs/claude-code.md)) |
 | [nix/](nix/) | Package definitions of `tsugumid`, the worker, the Card SDK and the `tsugumi` command |

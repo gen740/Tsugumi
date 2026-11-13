@@ -33,7 +33,7 @@ endif()
 
 set(TSUGUMI_PROTOCOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/protocol)
 set(TSUGUMI_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
-set(TSUGUMI_SCHEMAS tsugumi_enums data worker tsugumi agent)
+set(TSUGUMI_SCHEMAS tsugumi_enums data worker remote_worker tsugumi agent)
 
 # Bindings are generated with the standard flatc into the build tree only.
 set(_gen_cpp "")
@@ -41,9 +41,13 @@ set(_gen_bfbs "")
 foreach(schema ${TSUGUMI_SCHEMAS})
   set(_src ${TSUGUMI_PROTOCOL_DIR}/${schema}.fbs)
   list(APPEND _gen_cpp ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol/${schema}_generated.h)
+  set(_cpp_object_api "")
+  if(schema STREQUAL "remote_worker")
+    set(_cpp_object_api --gen-object-api)
+  endif()
   add_custom_command(
     OUTPUT ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol/${schema}_generated.h
-    COMMAND ${TSUGUMI_FLATC} --cpp --scoped-enums --gen-mutable
+    COMMAND ${TSUGUMI_FLATC} --cpp --scoped-enums --gen-mutable ${_cpp_object_api}
             --keep-prefix --include-prefix tsugumi/protocol
             -I ${TSUGUMI_PROTOCOL_DIR} -o ${TSUGUMI_GEN_DIR}/cpp/tsugumi/protocol ${_src}
     COMMAND ${TSUGUMI_FLATC} --python --gen-object-api --python-typing -I ${TSUGUMI_PROTOCOL_DIR}
@@ -54,7 +58,7 @@ foreach(schema ${TSUGUMI_SCHEMAS})
     COMMENT "flatc ${schema}.fbs"
     VERBATIM)
 endforeach()
-foreach(schema worker tsugumi agent)
+foreach(schema worker remote_worker tsugumi agent)
   list(APPEND _gen_bfbs ${TSUGUMI_GEN_DIR}/bfbs/${schema}.bfbs)
   add_custom_command(
     OUTPUT ${TSUGUMI_GEN_DIR}/bfbs/${schema}.bfbs
@@ -90,6 +94,7 @@ if(TSUGUMI_BUILD_CORE)
   find_package(Threads REQUIRED)
   find_package(CURL REQUIRED)
   add_subdirectory(sdk)
+  add_subdirectory(workerd)
   add_subdirectory(core)
 endif()
 

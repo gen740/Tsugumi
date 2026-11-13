@@ -8,19 +8,28 @@ TSUGUMI_REMOTE_TEST_TOKEN_FILE. Use tsugumi-test-env and pytest -m environment.
 import hashlib
 import json
 import os
-import select
 import secrets
+import select
 import shutil
 import socket
-import struct
 import subprocess
 import time
 from pathlib import Path
 
 import pytest
+from harness import remote_worker as R
 from harness.observations import read_output
 from harness.values import reference_json
-from projects import FILE_FBS, SINK, card, conn, run_and_wait, start_run, wait_run, write
+from projects import (
+    FILE_FBS,
+    SINK,
+    card,
+    conn,
+    run_and_wait,
+    start_run,
+    wait_run,
+    write,
+)
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
@@ -118,7 +127,7 @@ def remote_daemon(tmp_path):
 
     try:
         start()
-        yield f"http://127.0.0.1:{port}", str(token_file), restart
+        yield f"tcp://127.0.0.1:{port}", str(token_file), restart
     finally:
         if process and process.poll() is None:
             process.terminate()
@@ -136,7 +145,7 @@ def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
     script.write_text(BROKER)
     copy = tmp_path / "copied-project"
     shutil.copytree(project, copy)
-    module = Path(__file__).resolve().parents[3] / "web/server/executionServices.ts"
+    module = Path(os.environ.get("TSUGUMI_EXECUTION_BROKER_MODULE", str(Path(__file__).resolve().parents[3] / "web/server/executionServices.ts")))
     process = subprocess.Popen(["node", str(script), str(module), str(tmp_path / "support"),
                                 str(project), str(copy), endpoint, token_file], stdout=subprocess.PIPE, text=True)
     try:
@@ -157,35 +166,36 @@ def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
             process.wait(timeout=5)
 
 
-def broker_request(endpoint, token_file, server_id, operation, body=b"", **fields):
-    request = json.dumps({"version": 1, "operation": operation, "service": "remote-test",
-                          "broker_token": Path(token_file).read_text().strip(), "server_id": server_id, **fields}).encode()
+def broker_request(endpoint, token_file, server_id, body_type, body, **routing):
+    request = R.request(body_type, body, service="remote-test", token=Path(token_file).read_text().strip(),
+                        serverId=server_id, **routing)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(30)
         connection.connect(endpoint.removeprefix("unix:"))
-        connection.sendall(struct.pack(">I", len(request)) + request + body)
+        connection.sendall(R.frame(request))
         connection.shutdown(socket.SHUT_WR)
         with connection.makefile("rb") as response:
-            size, = struct.unpack(">I", response.read(4))
-            return json.loads(response.read(size)), response.read()
+            return R.read(response).payload
 
 
 def test_remote_broker_isolates_copies_of_a_project(remote_broker):
     endpoint, original, copy, server_id = (remote_broker[name] for name in ("endpoint", "token", "copyToken", "serverId"))
-    first, _ = broker_request(endpoint, original, server_id, "probe")
-    second, _ = broker_request(endpoint, copy, server_id, "probe")
-    assert first["ok"] and second["ok"] and first["instance_id"] != second["instance_id"]
-
+    first = broker_request(endpoint, original, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT()).body
+    second = broker_request(endpoint, copy, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT()).body
+    assert first.instanceId != second.instanceId
     value = b"private to the original project\n"
     digest = hashlib.sha256(value).hexdigest()
-    uploaded, _ = broker_request(endpoint, original, server_id, "put_blob", value, instance_id=first["instance_id"],
-                                 sha256=digest, size=len(value))
-    assert uploaded["ok"]
-    accepted, body = broker_request(endpoint, original, server_id, "get_blob", instance_id=first["instance_id"], sha256=digest)
-    assert accepted["ok"] and body == value
-    for instance in (first["instance_id"], second["instance_id"]):
-        refused, body = broker_request(endpoint, copy, server_id, "get_blob", instance_id=instance, sha256=digest)
-        assert not refused["ok"] and not body
+    job = "8" * 64
+    uploaded = broker_request(endpoint, original, server_id, R.RequestBody.PutBlobRequest,
+        R.PutBlobRequestT(digest=digest, total=len(value), bytes=value), instanceId=first.instanceId, jobId=job)
+    assert uploaded.bodyType == R.ReplyBody.Ack
+    accepted = broker_request(endpoint, original, server_id, R.RequestBody.GetBlobRequest,
+        R.GetBlobRequestT(digest=digest), instanceId=first.instanceId, jobId=job)
+    assert accepted.bodyType == R.ReplyBody.BlobChunk and bytes(accepted.body.bytes) == value
+    for instance in (first.instanceId, second.instanceId):
+        refused = broker_request(endpoint, copy, server_id, R.RequestBody.GetBlobRequest,
+            R.GetBlobRequestT(digest=digest), instanceId=instance, jobId=job)
+        assert refused.bodyType == R.ReplyBody.Failure
 
 
 def fixture(project):

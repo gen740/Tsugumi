@@ -56,8 +56,8 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
     {edit && <Section>
       <Row label={L('名前')}><TextField value={edit.name} disabled={busy} onChange={(value) => update('name', value)} /></Row>
       <Row label={L('サービス ID')}><TextField value={edit.id} mono disabled={busy || !!original} onChange={(value) => update('id', value)} /></Row>
-      <Row label={L('実行デーモンの接続先')} help={L('HTTPS の接続先、またはループバックアドレスの HTTP 接続先を入力してください。')}>
-        <TextField value={edit.endpoint} placeholder="https://compute.example.org:8781" mono disabled={busy} onChange={(value) => update('endpoint', value)} />
+      <Row label={L('実行デーモンの接続先')} help={L('Unix ソケット、またはループバックアドレスの TCP 接続先を入力してください。')}>
+        <TextField value={edit.endpoint} placeholder="tcp://127.0.0.1:8765" mono disabled={busy} onChange={(value) => update('endpoint', value)} />
       </Row>
       <Row label={L('認証トークン')} help={L('認証トークンは小文字の16進数64文字です。')}>
         <input type="password" className="field mono" autoComplete="off" spellCheck={false} aria-label={L('認証トークン')}

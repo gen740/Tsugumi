@@ -1827,12 +1827,12 @@ auto Scheduler::reconcile_remote_job(RemoteJobRecord& job) -> bool {
 
 auto Scheduler::recover_remote_jobs() -> void {
   const auto jobs = svc_.history().read([](sql::Db& db) { return History::remote_jobs(db); });
-  if (jobs.empty()) return;
   std::set<std::string> pending;
   for (const auto& job : jobs) pending.insert(job.invocation.execution_job_id);
   remote_recovery_ = std::thread([this, pending = std::move(pending)]() mutable {
-    while (!stop_recovery_.load() && !pending.empty()) {
+    while (!stop_recovery_.load()) {
       try {
+        svc_.remote_execution().release_completed();
         auto jobs = svc_.history().read([](sql::Db& db) { return History::remote_jobs(db); });
         for (auto& job : jobs) {
           if (stop_recovery_.load()) return;
@@ -1842,7 +1842,7 @@ auto Scheduler::recover_remote_jobs() -> void {
       } catch (const std::exception& error) {
         log::warn(std::string("external job recovery: ") + error.what());
       }
-      if (!pending.empty()) std::this_thread::sleep_for(std::chrono::seconds(1));
+      std::this_thread::sleep_for(std::chrono::seconds(1));
     }
   });
 }

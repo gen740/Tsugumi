@@ -45,7 +45,7 @@ copy()
 
 const server = {
   // The host server, and the Claude Code plugin's MCP server (plugins/tsugumi).
-  entryPoints: { server: path.join(root, 'server', 'main.ts'), mcp: path.join(root, 'server', 'mcp.ts') },
+  entryPoints: { server: path.join(root, 'server', 'main.ts'), mcp: path.join(root, 'server', 'mcp.ts'), 'execution-broker': path.join(root, 'server', 'executionServices.ts') },
   outdir: out,
   bundle: true, platform: 'node', format: 'esm', target: 'node22', sourcemap: true, loader: { '.md': 'text' },
   // A native module: loaded from node_modules when a terminal opens.

@@ -54,12 +54,4 @@ class ArchiveDerivationTransport final : public DerivationClosureTransport {
   std::filesystem::path archive_;
 };
 
-// Store operations only: remote workers never construct a NixEvaluator.
-class RemoteWorkerStore {
- public:
-  static auto realise(const DerivationClosureTransport& transport, const std::filesystem::path& store_root,
-                      const WorkerDerivation& derivation,
-                      const std::function<void(const std::string&)>& log) -> NixResult;
-};
-
 }  // namespace tsugumi

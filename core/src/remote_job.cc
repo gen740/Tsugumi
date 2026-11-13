@@ -13,13 +13,13 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <sstream>
 
-#include "schema.hh"
 #include "model.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -27,9 +27,7 @@
 namespace tsugumi {
 namespace {
 
-constexpr uint32_t kProtocolVersion = 1;
-constexpr uint32_t kWorkerContract = 2;
-constexpr uint32_t kMaxHeaderBytes = 64 * 1024;
+namespace R = Tsugumi::RemoteWorker;
 using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
 constexpr auto kConnectTimeout = 5s;
@@ -139,86 +137,6 @@ auto environment(const char* name) -> std::string {
   return value ? value : "";
 }
 
-template <typename Field>
-auto string_or_empty(const Field& field) -> std::string {
-  if (const auto* value = schema::get(field)) return *value;
-  return {};
-}
-
-struct TargetJson {
-  schema::Opt<"id", schema::v::String> id;
-  schema::Opt<"server_id", schema::v::String> server_id;
-  schema::Opt<"native_system", schema::v::String> native_system;
-  schema::Opt<"systems", schema::v::Array<schema::v::String>> systems;
-  schema::Opt<"executor", schema::v::String> executor;
-  schema::Opt<"isolation", schema::v::String> isolation;
-  schema::Opt<"resource_limits", schema::v::Bool> resource_limits;
-  schema::Opt<"max_jobs", schema::v::Uint64> max_jobs;
-  schema::Opt<"worker_contract", schema::v::Uint64> worker_contract;
-  schema::Opt<"available", schema::v::Bool> available;
-};
-
-template <typename T>
-auto daemon_capability_error(const T& target) -> std::string {
-  const auto* contract = schema::get(target.worker_contract);
-  if (!contract || *contract != kWorkerContract)
-    return "Execution daemon worker contract is " + (contract ? std::to_string(*contract) : "unreported") +
-           "; expected " + std::to_string(kWorkerContract) + ". Rebuild the daemon with this Tsugumi revision.";
-  if (string_or_empty(target.executor) != "daemon")
-    return "Start the Tsugumi remote execution daemon at the registered endpoint.";
-  if (string_or_empty(target.isolation) != "pid_namespace")
-    return "The execution daemon does not provide PID namespace isolation.";
-  const auto* server = schema::get(target.server_id);
-  if (!server || !crypto::is_sha256_hex(*server))
-    return "The execution daemon did not report a valid server ID.";
-  const auto* native = schema::get(target.native_system);
-  const auto* systems = schema::get(target.systems);
-  if (!native || native->empty() || !systems || std::ranges::find(*systems, *native) == systems->end())
-    return "The execution daemon did not report a supported native system.";
-  if (!schema::get(target.resource_limits))
-    return "The execution daemon did not report its resource limit capability.";
-  const auto* max_jobs = schema::get(target.max_jobs);
-  if (!max_jobs || *max_jobs == 0 || *max_jobs > std::numeric_limits<uint32_t>::max())
-    return "The execution daemon did not report a valid concurrent job limit.";
-  return {};
-}
-
-}  // namespace
-
-struct RemoteJobClient::Reply {
-  schema::Opt<"version", schema::v::Uint64> version;
-  schema::Opt<"ok", schema::v::Bool> ok;
-  schema::Opt<"error", schema::v::String> error;
-  schema::Opt<"code", schema::v::String> code;
-  schema::Opt<"sha256", schema::v::String> sha256;
-  schema::Opt<"size", schema::v::Uint64> size;
-  schema::Opt<"services", schema::v::Array<schema::Obj<TargetJson>>> services;
-  schema::Opt<"server_id", schema::v::String> server_id;
-  schema::Opt<"instance_id", schema::v::String> instance_id;
-  schema::Opt<"worker_contract", schema::v::Uint64> worker_contract;
-  schema::Opt<"executor", schema::v::String> executor;
-  schema::Opt<"isolation", schema::v::String> isolation;
-  schema::Opt<"resource_limits", schema::v::Bool> resource_limits;
-  schema::Opt<"max_jobs", schema::v::Uint64> max_jobs;
-  schema::Opt<"native_system", schema::v::String> native_system;
-  schema::Opt<"systems", schema::v::Array<schema::v::String>> systems;
-  schema::Opt<"state", schema::v::String> state;
-  schema::Opt<"fingerprint", schema::v::String> fingerprint;
-  schema::Opt<"result_sha256", schema::v::String> result_sha256;
-  schema::Opt<"diagnostic", schema::v::String> diagnostic;
-
-  auto job() const -> RemoteJobState {
-    return {string_or_empty(state), string_or_empty(fingerprint), string_or_empty(result_sha256),
-            string_or_empty(diagnostic)};
-  }
-};
-
-RemoteJobClient::RemoteJobClient()
-    : endpoint_(environment("TSUGUMI_EXECUTION_BROKER")),
-      token_file_(environment("TSUGUMI_EXECUTION_BROKER_TOKEN_FILE")) {}
-
-namespace {
-
 auto connect_broker(std::string_view endpoint, [[maybe_unused]] bool has_token, const BrokerIo& io,
                     Clock::time_point deadline) -> int {
   if (endpoint.starts_with("unix:")) {
@@ -247,162 +165,157 @@ auto connect_broker(std::string_view endpoint, [[maybe_unused]] bool has_token, 
   throw BrokerDisconnected("no execution broker endpoint is configured");
 }
 
+
+template <typename T>
+auto command(T body, std::string_view service = {}, std::string_view server = {}, std::string_view instance = {},
+             std::string_view job = {}) -> R::RequestT {
+  R::RequestT q;
+  q.service = service; q.server_id = server; q.instance_id = instance; q.job_id = job;
+  q.body.Set(std::move(body));
+  return q;
+}
+auto checked_capabilities(const R::CapabilitiesT* c) -> const R::CapabilitiesT& {
+  if (!c || c->worker_contract != workerd::kContract)
+    throw Failed(FailureKind::unsupported, "Rebuild the remote worker with this Tsugumi revision.");
+  if (!crypto::is_sha256_hex(c->server_id) || c->native_system.empty() ||
+      std::ranges::find(c->systems, c->native_system) == c->systems.end() || !c->max_jobs)
+    throw Failed(FailureKind::unsupported, "The remote worker did not report a valid system or concurrent job limit.");
+  return *c;
+}
+auto job_state(const R::ReplyT& reply) -> RemoteJobState {
+  const auto* j = reply.body.AsJobStatus();
+  if (!j) throw BrokerDisconnected("expected remote job status");
+  const auto* name = R::EnumNameJobState(j->state);
+  if (!name || !*name) throw BrokerDisconnected("unknown remote job state");
+  std::string state(name);
+  std::ranges::transform(state, state.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return {state, j->fingerprint, j->result_sha256, j->diagnostic};
+}
+auto require_ack(const R::ReplyT& reply) -> void {
+  if (!reply.body.AsAck()) throw BrokerDisconnected("expected remote worker acknowledgement");
+}
 }  // namespace
 
-auto RemoteJobClient::request(std::string_view operation, std::string_view service, std::string_view server_id,
-                              std::string_view instance, std::string_view job_id, std::string_view digest, uint64_t size, std::istream* body,
-                              std::ostream* destination, uint64_t limit, const std::atomic<bool>* cancel) const -> Reply {
-  const bool uploading = operation == "put_blob";
-  const BrokerIo io{stopped_, cancel, uploading};
-  const auto start = Clock::now();
-  // Control frames have a fixed deadline even if the peer trickles bytes.
-  // Blob bodies can take longer, provided the socket keeps making progress.
-  const auto deadline = start + ((uploading || destination) ? kTransferTimeout : kControlTimeout);
-  Connection socket{connect_broker(endpoint_, !token_file_.empty(), io, start + kConnectTimeout)};
-  const auto version = schema::capture(std::to_string(kProtocolVersion));
-  const auto name = schema::string_value(std::string(operation));
-  const auto id = schema::string_value(std::string(service));
-  const auto server = schema::string_value(std::string(server_id));
-  const auto identity = schema::string_value(std::string(instance));
-  const auto job = schema::string_value(std::string(job_id));
-  const auto hash = schema::string_value(std::string(digest));
-  const auto length = schema::capture(std::to_string(size));
-  std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>> fields{{"version", &version}, {"operation", &name}};
-  if (!service.empty()) fields.emplace_back("service", &id);
-  if (!server_id.empty()) fields.emplace_back("server_id", &server);
-  if (!instance.empty()) fields.emplace_back("instance_id", &identity);
-  if (!job_id.empty()) fields.emplace_back("job_id", &job);
-  if (!digest.empty()) fields.emplace_back(operation == "cancel" ? "fingerprint" : "sha256", &hash);
-  if (body) fields.emplace_back("size", &length);
-  hosq::json::GenericDom<> token;
-  if (!token_file_.empty()) {
-    auto value = fs::read_file(token_file_);
-    if (!value || value->empty() || value->size() > 256)
-      throw BrokerDisconnected("cannot read the execution broker token");
-    while (!value->empty() && (value->back() == '\r' || value->back() == '\n')) value->pop_back();
-    token = schema::string_value(*value);
-    fields.emplace_back("broker_token", &token);
-  }
-  const std::string header = schema::object_text(fields);
-  if (header.size() > kMaxHeaderBytes) throw std::runtime_error("execution broker request header exceeds its limit");
-  const uint32_t wire_size = htonl(static_cast<uint32_t>(header.size()));
-  const auto request_deadline = std::min(deadline, Clock::now() + kControlTimeout);
-  send_exact(socket.fd, {reinterpret_cast<const char*>(&wire_size), sizeof wire_size}, io, request_deadline);
-  send_exact(socket.fd, header, io, request_deadline);
-  std::array<char, 64 * 1024> buffer{};
-  while (body && size > 0) {
-    io.check(deadline);
-    const auto n = static_cast<std::streamsize>(std::min<uint64_t>(size, buffer.size()));
-    body->read(buffer.data(), n);
-    if (body->gcount() != n) throw std::runtime_error("execution broker request body is truncated");
-    send_exact(socket.fd, {buffer.data(), static_cast<size_t>(n)}, io, deadline);
-    size -= static_cast<uint64_t>(n);
-  }
-  // Close the request stream while leaving the broker response readable.
-  ::shutdown(socket.fd, SHUT_WR);
-  uint32_t response_size = 0;
-  const auto response_deadline = std::min(deadline, Clock::now() + kControlTimeout);
-  read_exact(socket.fd, reinterpret_cast<char*>(&response_size), sizeof response_size, io, response_deadline);
-  response_size = ntohl(response_size);
-  if (response_size == 0 || response_size > kMaxHeaderBytes)
-    throw BrokerDisconnected("invalid execution broker response header length");
-  std::string response(response_size, '\0');
-  read_exact(socket.fd, response.data(), response.size(), io, response_deadline);
-  Reply reply;
-  const auto invalid = schema::decode(response, reply);
-  const auto* protocol = schema::get(reply.version);
-  const auto* ok = schema::get(reply.ok);
-  if (invalid || !protocol || *protocol != kProtocolVersion || !ok)
-    throw BrokerDisconnected("invalid execution broker response");
-  if (!*ok) {
-    const auto code = string_or_empty(reply.code);
-    if (code == "instance_changed") throw BrokerInstanceChanged(string_or_empty(reply.error));
-    if (code == "registration_changed") throw BrokerDisconnected(string_or_empty(reply.error));
-    if (code == "request_rejected") throw BrokerRequestRejected(string_or_empty(reply.error));
-    throw std::runtime_error("execution broker: " + string_or_empty(reply.error));
-  }
-  const auto* incoming = schema::get(reply.size);
-  if (destination) {
-    if (!incoming || *incoming > limit) throw std::runtime_error("execution broker blob exceeds its size limit");
-    crypto::Sha256 hash_check;
-    uint64_t remaining = *incoming;
-    while (remaining > 0) {
-      const size_t n = std::min<uint64_t>(remaining, buffer.size());
-      read_exact(socket.fd, buffer.data(), n, io, deadline);
-      hash_check.update(buffer.data(), n);
-      destination->write(buffer.data(), static_cast<std::streamsize>(n));
-      if (!*destination) throw std::runtime_error("cannot store execution broker blob");
-      remaining -= n;
-    }
-    if (hash_check.finish_hex() != digest) throw std::runtime_error("execution broker blob failed SHA-256 verification");
-  } else if (incoming && *incoming != 0) {
-    throw BrokerDisconnected("unexpected execution broker response body");
-  }
-  return reply;
-}
+RemoteJobClient::RemoteJobClient()
+    : endpoint_(environment("TSUGUMI_EXECUTION_BROKER")),
+      token_file_(environment("TSUGUMI_EXECUTION_BROKER_TOKEN_FILE")) {}
 
+auto RemoteJobClient::request(R::RequestT q, const std::atomic<bool>* cancel) const -> R::ReplyT {
+  const bool upload = q.body.type == R::RequestBody::PutBlobRequest;
+  const BrokerIo io{stopped_, cancel, upload};
+  const auto start = Clock::now();
+  const auto deadline = start + kControlTimeout;
+  Connection socket{connect_broker(endpoint_, !token_file_.empty(), io, start + kConnectTimeout)};
+  if (!token_file_.empty()) {
+    auto token = fs::read_file(token_file_);
+    if (!token || token->empty() || token->size() > 256) throw BrokerDisconnected("cannot read execution broker token");
+    while (!token->empty() && (token->back() == '\n' || token->back() == '\r')) token->pop_back();
+    q.token = *token;
+  }
+  R::MessageT message;
+  message.payload.Set(std::move(q));
+  const auto bytes = workerd::encode(std::move(message));
+  send_exact(socket.fd, workerd::length_prefix(static_cast<uint32_t>(bytes.size())), io, deadline);
+  send_exact(socket.fd, bytes, io, deadline);
+  ::shutdown(socket.fd, SHUT_WR);
+  std::string prefix(4, '\0');
+  read_exact(socket.fd, prefix.data(), prefix.size(), io, deadline);
+  std::string response(workerd::frame_length(prefix), '\0');
+  read_exact(socket.fd, response.data(), response.size(), io, deadline);
+  auto incoming = workerd::decode(response);
+  auto* reply = incoming->payload.AsReply();
+  if (!reply) throw BrokerDisconnected("expected execution broker reply");
+  if (const auto* error = reply->body.AsFailure()) {
+    switch (error->code) {
+      case R::ErrorCode::InstanceChanged: throw BrokerInstanceChanged(error->message);
+      case R::ErrorCode::RegistrationChanged: throw BrokerDisconnected(error->message);
+      case R::ErrorCode::Rejected: case R::ErrorCode::Invalid: throw BrokerRequestRejected(error->message);
+      default: throw std::runtime_error("remote worker: " + error->message);
+    }
+  }
+  return std::move(*reply);
+}
 auto RemoteJobClient::catalog() const -> std::vector<RemoteTarget> {
   if (!enabled()) return {};
-  auto reply = request("catalog");
-  std::vector<RemoteTarget> result;
-  if (const auto* services = schema::get(reply.services)) {
-    for (const auto& service : *services) {
-      const auto* id = schema::get(service.id);
-      if (!id || id->empty()) continue;
-      RemoteTarget target{.id = *id, .native_system = string_or_empty(service.native_system),
-                          .systems = {}, .server_id = string_or_empty(service.server_id)};
-      if (const auto* systems = schema::get(service.systems)) target.systems = *systems;
-      if (daemon_capability_error(service).empty()) {
-        const auto* available = schema::get(service.available);
-        target.available = available && *available;
-        target.resource_limits = *schema::get(service.resource_limits);
-        target.max_jobs = static_cast<uint32_t>(*schema::get(service.max_jobs));
-      }
-      result.push_back(std::move(target));
-    }
+  auto reply = request(command(R::CatalogRequestT{}));
+  const auto* catalog = reply.body.AsCatalog();
+  if (!catalog) throw BrokerDisconnected("expected execution broker catalog");
+  std::vector<RemoteTarget> targets;
+  for (const auto& t : catalog->services) {
+    if (!t->capabilities) throw BrokerDisconnected("missing target capabilities");
+    const auto& c = *t->capabilities;
+    targets.push_back({t->id, c.native_system, c.systems, c.server_id,
+                      t->available && c.worker_contract == workerd::kContract, c.resource_limits, c.max_jobs});
   }
-  return result;
+  return targets;
 }
-
 auto RemoteJobClient::probe(std::string_view service, std::string_view registered_server) const -> RemoteProbe {
-  auto reply = request("probe", service, registered_server);
-  if (auto error = daemon_capability_error(reply); !error.empty())
-    throw Failed(FailureKind::unsupported, std::move(error));
-  auto server_id = string_or_empty(reply.server_id);
-  if (server_id != registered_server)
-    throw Failed(FailureKind::unsupported, "The execution daemon's server ID changed. Verify the registered endpoint.");
-  auto instance = string_or_empty(reply.instance_id);
-  if (!crypto::is_sha256_hex(instance)) throw BrokerDisconnected("execution daemon did not identify its project journal");
-  return {*schema::get(reply.native_system), std::move(instance), std::move(server_id),
-          *schema::get(reply.systems), *schema::get(reply.resource_limits)};
+  auto reply = request(command(R::ProbeRequestT{}, service, registered_server));
+  const auto& c = checked_capabilities(reply.body.AsCapabilities());
+  if (c.server_id != registered_server) throw Failed(FailureKind::unsupported, "The remote worker's server ID changed. Verify the registered endpoint.");
+  if (!crypto::is_sha256_hex(c.instance_id)) throw BrokerDisconnected("remote worker did not identify its project journal");
+  return {c.native_system, c.instance_id, c.server_id, c.systems, c.resource_limits};
 }
-
-auto RemoteJobClient::put_blob(std::string_view service, std::string_view server_id, std::string_view instance,
-                               std::string_view digest, uint64_t size, std::istream& contents,
+auto RemoteJobClient::put_blob(std::string_view service, std::string_view server, std::string_view instance,
+                               std::string_view job, std::string_view digest, uint64_t size, std::istream& contents,
                                const std::atomic<bool>* cancel) const -> void {
-  request("put_blob", service, server_id, instance, {}, digest, size, &contents, nullptr, 0, cancel);
+  if (size > workerd::kMaxBlob) throw std::runtime_error("upload exceeds 64 GiB");
+  const auto deadline = Clock::now() + kTransferTimeout;
+  uint64_t offset = 0;
+  do {
+    BrokerIo{stopped_, cancel, true}.check(deadline);
+    R::PutBlobRequestT chunk;
+    chunk.digest = digest; chunk.total = size; chunk.offset = offset;
+    chunk.bytes.resize(static_cast<size_t>(std::min<uint64_t>(size - offset, workerd::kChunkBytes)));
+    if (!chunk.bytes.empty()) {
+      contents.read(reinterpret_cast<char*>(chunk.bytes.data()), static_cast<std::streamsize>(chunk.bytes.size()));
+      if (static_cast<size_t>(contents.gcount()) != chunk.bytes.size()) throw std::runtime_error("truncated upload");
+    }
+    offset += chunk.bytes.size();
+    require_ack(request(command(std::move(chunk), service, server, instance, job), cancel));
+  } while (offset < size);
 }
-
-auto RemoteJobClient::get_blob(std::string_view service, std::string_view server_id, std::string_view instance,
-                               std::string_view digest, std::ostream& destination, uint64_t limit,
+auto RemoteJobClient::get_blob(std::string_view service, std::string_view server, std::string_view instance,
+                               std::string_view job, std::string_view digest, std::ostream& destination, uint64_t limit,
                                const std::atomic<bool>* stop) const -> void {
-  request("get_blob", service, server_id, instance, {}, digest, 0, nullptr, &destination, limit, stop);
+  crypto::Sha256 hash;
+  uint64_t offset = 0, total = 0;
+  const auto deadline = Clock::now() + kTransferTimeout;
+  do {
+    BrokerIo{stopped_, stop, false}.check(deadline);
+    R::GetBlobRequestT chunk;
+    chunk.digest = digest; chunk.offset = offset; chunk.limit = workerd::kChunkBytes;
+    auto reply = request(command(std::move(chunk), service, server, instance, job), stop);
+    const auto* body = reply.body.AsBlobChunk();
+    if (!body || body->digest != digest || body->offset != offset || body->total > limit ||
+        (offset && body->total != total) || body->offset > body->total || body->bytes.size() > body->total - offset ||
+        body->bytes.size() > workerd::kChunkBytes || (body->bytes.empty() && offset < body->total))
+      throw BrokerDisconnected("invalid remote blob chunk");
+    total = body->total;
+    hash.update(body->bytes.data(), body->bytes.size());
+    destination.write(reinterpret_cast<const char*>(body->bytes.data()), static_cast<std::streamsize>(body->bytes.size()));
+    if (!destination) throw std::runtime_error("cannot store remote blob");
+    offset += body->bytes.size();
+  } while (offset < total);
+  if (hash.finish_hex() != digest) throw std::runtime_error("remote blob failed SHA-256 verification");
 }
-
-auto RemoteJobClient::submit(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id,
-                             std::string_view spec) const -> RemoteJobState {
-  std::istringstream body{std::string(spec)};
-  return request("submit", service, server_id, instance, job_id, {}, spec.size(), &body).job();
+auto RemoteJobClient::submit(std::string_view service, std::string_view server, std::string_view instance,
+                             std::string_view job, std::string_view spec) const -> RemoteJobState {
+  R::SubmitRequestT body; body.spec.assign(spec.begin(), spec.end());
+  return job_state(request(command(std::move(body), service, server, instance, job)));
 }
-
-auto RemoteJobClient::status(std::string_view service, std::string_view server_id, std::string_view instance,
-                             std::string_view job_id) const -> RemoteJobState {
-  return request("status", service, server_id, instance, job_id).job();
+auto RemoteJobClient::status(std::string_view service, std::string_view server, std::string_view instance,
+                             std::string_view job) const -> RemoteJobState {
+  return job_state(request(command(R::StatusRequestT{}, service, server, instance, job)));
 }
-
-auto RemoteJobClient::cancel(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id,
-                             std::string_view fingerprint) const -> RemoteJobState {
-  return request("cancel", service, server_id, instance, job_id, fingerprint).job();
+auto RemoteJobClient::cancel(std::string_view service, std::string_view server, std::string_view instance,
+                             std::string_view job, std::string_view fingerprint) const -> RemoteJobState {
+  R::CancelRequestT body; body.fingerprint = fingerprint;
+  return job_state(request(command(std::move(body), service, server, instance, job)));
 }
-
+auto RemoteJobClient::release(std::string_view service, std::string_view server, std::string_view instance,
+                              std::string_view job, std::string_view fingerprint) const -> void {
+  R::ReleaseRequestT body; body.fingerprint = fingerprint;
+  require_ack(request(command(std::move(body), service, server, instance, job)));
+}
 }  // namespace tsugumi

@@ -56,7 +56,7 @@ let package = Package(
       plugins: ["FlatcPlugin"]),
     .target(
       name: "TsugumiLauncher",
-      dependencies: ["TsugumiRPC"],
+      dependencies: ["TsugumiRPC", .product(name: "FlatBuffers", package: "flatbuffers")],
       path: "Sources/Launcher",
       swiftSettings: [.swiftLanguageMode(.v5)]),
     // Drives the shared VM without the app (tests); needs the virtualization entitlement.

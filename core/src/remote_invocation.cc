@@ -16,29 +16,8 @@
 namespace tsugumi {
 namespace stdfs = std::filesystem;
 namespace W = Tsugumi::Worker;
+namespace R = Tsugumi::RemoteWorker;
 
-auto remote::relative_path(std::string_view path) -> stdfs::path {
-  if (path.empty() || path.size() > 4096 || path.front() == '/' || path.back() == '/' ||
-      path.find("//") != std::string_view::npos || path.find('\\') != std::string_view::npos ||
-      std::ranges::any_of(path, [](unsigned char c) { return c < 32 || c == 127; }))
-    throw std::runtime_error("invalid remote file path");
-  stdfs::path result(path);
-  for (const auto& part : result)
-    if (part == "." || part == "..") throw std::runtime_error("invalid remote file path");
-  return result;
-}
-
-auto remote::store_path(std::string_view path) -> bool {
-  constexpr std::string_view prefix = "/nix/store/";
-  if (!path.starts_with(prefix)) return false;
-  path.remove_prefix(prefix.size());
-  return path.size() > 33 && path.size() < 256 && path[32] == '-' &&
-         std::ranges::all_of(path.substr(0, 32), [](char c) {
-           return std::string_view("0123456789abcdfghijklmnpqrsvwxyz").find(c) != std::string_view::npos;
-         }) && std::ranges::all_of(path.substr(33), [](unsigned char c) {
-           return std::isalnum(c) != 0 || c == '_' || c == '-' || c == '+' || c == '.' || c == '=' || c == '?';
-         });
-}
 
 namespace {
 
@@ -70,18 +49,18 @@ struct RecoveryJson {
 };
 
 auto upload(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
-            const std::string& instance, const std::string& bytes, const std::atomic<bool>& cancel) -> std::string {
+            const std::string& instance, const std::string& job_id, const std::string& bytes, const std::atomic<bool>& cancel) -> std::string {
   const std::string digest = crypto::sha256_hex(bytes);
   std::istringstream stream(bytes);
-  client.put_blob(service, server_id, instance, digest, bytes.size(), stream, &cancel);
+  client.put_blob(service, server_id, instance, job_id, digest, bytes.size(), stream, &cancel);
   return digest;
 }
 
 auto download(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
-              const std::string& instance, const std::string& digest, uint64_t limit, const std::atomic<bool>& stop) -> std::string {
+              const std::string& instance, const std::string& job_id, const std::string& digest, uint64_t limit, const std::atomic<bool>& stop) -> std::string {
   if (!crypto::is_sha256_hex(digest)) throw std::runtime_error("invalid remote blob digest");
   std::ostringstream bytes;
-  client.get_blob(service, server_id, instance, digest, bytes, limit, &stop);
+  client.get_blob(service, server_id, instance, job_id, digest, bytes, limit, &stop);
   return bytes.str();
 }
 
@@ -173,7 +152,7 @@ auto remote_recovery_contract(const std::string& encoded) -> RemoteRecoveryContr
 }
 
 auto stage_remote_archive(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
-                          const std::string& instance, const stdfs::path& archive,
+                          const std::string& instance, const std::string& job_id, const stdfs::path& archive,
                           const std::atomic<bool>& cancel) -> std::string {
   crypto::Sha256 archive_hash;
   const auto archive_size = fs::stream_beneath(archive.parent_path(), archive.filename(), kMaxBlobBytes,
@@ -183,12 +162,12 @@ auto stage_remote_archive(const RemoteJobClient& client, const std::string& serv
       });
   const auto archive_digest = archive_hash.finish_hex();
   std::ifstream nar(archive, std::ios::binary);
-  client.put_blob(service, server_id, instance, archive_digest, archive_size, nar, &cancel);
+  client.put_blob(service, server_id, instance, job_id, archive_digest, archive_size, nar, &cancel);
   return archive_digest;
 }
 
 auto stage_remote_invocation(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
-                             const std::string& instance, const std::string& project_id,
+                             const std::string& instance, const std::string& job_id, const std::string& project_id,
                              const stdfs::path& state, const std::string& archive_digest,
                              const ExecutionRequest& request) -> std::string {
   remote::InvocationJson invocation;
@@ -223,7 +202,7 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
     const auto digest = hash.finish_hex();
     if (blobs.insert(digest).second) {
       std::ifstream stream(temporary, std::ios::binary);
-      client.put_blob(service, server_id, instance, digest, size, stream, &request.cancel);
+      client.put_blob(service, server_id, instance, job_id, digest, size, stream, &request.cancel);
     }
     remote::FileJson file;
     *file.path = path.generic_string();
@@ -260,58 +239,50 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
   };
   auto call = worker_call_frame(1, request.summary.run_id, request.node.path, request.summary.invocation, inputs,
       ptype->bfbs, ptype->root_type, params, request.node.outputs, "", "", "", env, {}, {});
-  *invocation.call_sha256 = upload(client, service, server_id, instance, call, request.cancel);
+  *invocation.call_sha256 = upload(client, service, server_id, instance, job_id, call, request.cancel);
   blobs.insert(*invocation.call_sha256);
   *invocation.archive_sha256 = archive_digest;
   blobs.insert(archive_digest);
-  const auto invocation_digest = upload(client, service, server_id, instance, schema::encode(invocation), request.cancel);
+  const auto invocation_digest = upload(client, service, server_id, instance, job_id, schema::encode(invocation), request.cancel);
   blobs.insert(invocation_digest);
-  schema::v::Array<schema::v::String> blob_array;
-  blob_array.value().assign(blobs.begin(), blobs.end());
-  const auto input_blobs = schema::capture(schema::encode(blob_array));
-  const auto invocation_sha256 = schema::string_value(invocation_digest);
-  const auto& derivation_contract = request.build.derivation;
-  const auto system = schema::string_value(derivation_contract.system);
-  const auto derivation = schema::string_value(derivation_contract.path);
-  const auto output = schema::string_value(derivation_contract.output);
-  const auto& settings = request.node.settings;
-  const auto timeout = schema::capture(std::to_string(settings.timeout_seconds.value_or(3600)));
-  std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>> fields{
-      {"system", &system}, {"derivation", &derivation}, {"output", &output},
-      {"invocation_sha256", &invocation_sha256}, {"input_blobs", &input_blobs}, {"timeout_seconds", &timeout},
-  };
-  hosq::json::GenericDom<> cpu, memory;
-  if (settings.execution_resources) {
-    cpu = schema::capture(std::to_string(settings.execution_resources->cpu_millis));
-    memory = schema::capture(std::to_string(settings.execution_resources->memory_bytes));
-    fields.emplace_back("cpu_millis", &cpu);
-    fields.emplace_back("memory_bytes", &memory);
+  R::JobSpecT job;
+  job.input_blobs.assign(blobs.begin(), blobs.end());
+  job.invocation_sha256 = invocation_digest;
+  job.system = request.build.derivation.system;
+  job.derivation = request.build.derivation.path;
+  job.output = request.build.derivation.output;
+  job.timeout_seconds = request.node.settings.timeout_seconds.value_or(3600);
+  if (request.node.settings.execution_resources) {
+    job.cpu_millis = request.node.settings.execution_resources->cpu_millis;
+    job.memory_bytes = request.node.settings.execution_resources->memory_bytes;
   }
-  return schema::object_text(fields);
+  workerd::validate_spec(job);
+  flatbuffers::FlatBufferBuilder b;
+  b.Finish(R::JobSpec::Pack(b, &job));
+  return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
 }
 
 auto import_remote_result(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
-                          const std::string& instance, const std::string& result_digest,
+                          const std::string& instance, const std::string& job_id, const std::string& result_digest,
                           const std::string& spec, const stdfs::path& directory,
                           const std::vector<types::PortType>& outputs, const WorkerProc::LogSink& log,
                           const WorkerProc::DisplaySink& display, const std::atomic<bool>& stop) -> RemoteInvocationResult {
-  remote::JobJson job;
-  if (schema::decode(spec, job) || !job.has_required_fields()) throw std::runtime_error("invalid saved remote job spec");
-  remote::ResultJson manifest;
-  if (auto error = schema::decode(download(client, service, server_id, instance, result_digest, kMaxManifestBytes, stop), manifest))
-    throw std::runtime_error("invalid remote result manifest: " + error->message);
-  const auto* result_hash = schema::get(manifest.invocation_result_sha256);
-  const auto* files = schema::get(manifest.outputs);
-  if (!result_hash || !files || files->size() > 65'536)
-    throw std::runtime_error("remote result manifest is missing fields or exceeds its entry limit");
-  auto bytes = download(client, service, server_id, instance, *result_hash, kMaxWorkerBytes, stop);
+  const auto job = workerd::parse_spec(spec);
+  const auto manifest_bytes = download(client, service, server_id, instance, job_id, result_digest, kMaxManifestBytes, stop);
+  flatbuffers::Verifier manifest_verifier(reinterpret_cast<const uint8_t*>(manifest_bytes.data()), manifest_bytes.size());
+  if (!manifest_verifier.VerifyBuffer<R::ResultManifest>(nullptr)) throw std::runtime_error("invalid remote result manifest");
+  const auto* manifest = flatbuffers::GetRoot<R::ResultManifest>(manifest_bytes.data());
+  const auto result_hash = manifest->invocation_result_sha256()->str();
+  const auto* files = manifest->outputs();
+  if (files->size() > 65536) throw std::runtime_error("too many remote result members");
+  auto bytes = download(client, service, server_id, instance, job_id, result_hash, kMaxWorkerBytes, stop);
   flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
   if (!W::VerifyWorkerMessageBuffer(verifier)) throw std::runtime_error("invalid remote WorkerResult");
   const auto* message = W::GetWorkerMessage(bytes.data());
   RemoteInvocationResult result;
-  result.environment.derivation = *schema::get(job.derivation);
-  result.environment.manifest = *schema::get(job.output);
-  result.environment.system = *schema::get(job.system);
+  result.environment.derivation = job->derivation;
+  result.environment.manifest = job->output;
+  result.environment.system = job->system;
   const auto temp = directory / (".remote-import-" + crypto::uuid4());
   stdfs::create_directories(temp);
   struct Remove {
@@ -320,11 +291,13 @@ auto import_remote_result(const RemoteJobClient& client, const std::string& serv
   } remove{temp};
   std::set<stdfs::path> written;
   uint64_t total = 0;
-  for (const auto& file : *files) {
-    const auto* name = schema::get(file.path);
-    const auto* digest = schema::get(file.sha256);
-    const auto* size = schema::get(file.size);
-    if (!name || !digest || !size) throw std::runtime_error("remote result member is missing required fields");
+  for (const auto* file : *files) {
+    const auto name_value = file->path()->str();
+    const auto digest_value = file->sha256()->str();
+    const auto size_value = file->size();
+    const auto* name = &name_value;
+    const auto* digest = &digest_value;
+    const auto* size = &size_value;
     const auto rel = remote::relative_path(*name);
     const auto base = *rel.begin();
     if (base != "files" && rel != "environment.json" && rel != "logs.jsonl" && rel != "display.fb")
@@ -342,7 +315,7 @@ auto import_remote_result(const RemoteJobClient& client, const std::string& serv
     stdfs::create_directories(path.parent_path());
     std::ofstream destination(path, std::ios::binary | std::ios::trunc);
     if (!destination) throw std::runtime_error("cannot stage remote result");
-    client.get_blob(service, server_id, instance, *digest, destination, *size, &stop);
+    client.get_blob(service, server_id, instance, job_id, *digest, destination, *size, &stop);
     destination.close();
     if (!destination || stdfs::file_size(path) != *size) throw std::runtime_error("remote result size mismatch");
     total += *size;
