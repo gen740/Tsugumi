@@ -301,6 +301,9 @@ struct ChartConfig {
   tsugumi::schema::t::Array<"series", tsugumi::schema::Obj<ChartSeriesConfig>> series;
 };
 
+// The view module mapping of the Card (--views), set once when the worker starts.
+std::string g_views;
+
 auto display_module_impl(void*, const char*, const char*, const tsugumi_blob*, size_t) -> int;
 
 // All language SDKs keep their line-chart API. Only the common worker encodes
@@ -389,10 +392,9 @@ auto display_module_impl(void*, const char* name, const char* config_json,
   }
   std::string identity = name;
   if (!identity.starts_with("/nix/store/")) {
-    const char* mappings = std::getenv("TSUGUMI_VIEW_MODULES");
-    if (!mappings) return -1;
+    if (g_views.empty()) return -1;
     tsugumi::schema::v::Mapping<tsugumi::schema::v::String, tsugumi::schema::v::String> views;
-    if (tsugumi::schema::decode(mappings, views)) return -1;
+    if (tsugumi::schema::decode(g_views, views)) return -1;
     bool found = false;
     for (const auto& [key, value] : views.value())
       if (key == identity) { identity = value; found = true; break; }
@@ -983,6 +985,7 @@ int main(int argc, char** argv) {
     else if (k == "--pre") opt.pre = argv[i + 1];
     else if (k == "--run") opt.run = argv[i + 1];
     else if (k == "--post") opt.post = argv[i + 1];
+    else if (k == "--views") g_views = argv[i + 1];
   }
   if (!opt.package.empty()) {
     auto before = process_env();
