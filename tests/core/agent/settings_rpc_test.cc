@@ -28,6 +28,42 @@ TEST_F(AgentFixture, AgentWorkAnimationDefaultsOnAndPersistsAsABoolean) {
   StartAgent();
   EXPECT_EQ(animation(SettingsGet(*host)), "false");
 }
+TEST_F(AgentFixture, HelperSettingsAreValidatedSharedAndPersisted) {
+  const auto value = [](const Reply &reply, const std::string &key) {
+    for (const auto *entry : *reply.HostValue()->value_as_Settings()->values())
+      if (entry->key()->str() == key)
+        return entry->value_json()->str();
+    return std::string{};
+  };
+  EXPECT_EQ(value(SettingsGet(*host), "agent.helperParallelism"), "4");
+  EXPECT_EQ(value(SettingsGet(*host), "agent.allowUnscopedHelpers"), "false");
+  for (const auto &invalid : {"0", "9", "1.5", "true", "\"2\""})
+    EXPECT_FALSE(
+        SettingsPatch(*host, "desktop", {{"agent.helperParallelism", invalid}})
+            .Code()
+            .empty());
+  EXPECT_FALSE(
+      SettingsPatch(*host, "desktop", {{"agent.allowUnscopedHelpers", "1"}})
+          .Code()
+          .empty());
+  ASSERT_TRUE(SettingsPatch(*host, "desktop",
+                            {{"agent.helperParallelism", "1"},
+                             {"agent.allowUnscopedHelpers", "true"}})
+                  .Code()
+                  .empty());
+  auto web = ConnectHost(true);
+  EXPECT_EQ(value(SettingsGet(*web), "agent.helperParallelism"), "1");
+  EXPECT_EQ(value(SettingsGet(*web), "agent.allowUnscopedHelpers"), "true");
+  web.reset();
+  host.reset();
+  human.reset();
+  external.reset();
+  agent.Stop();
+  StartAgent();
+  EXPECT_EQ(value(SettingsGet(*host), "agent.helperParallelism"), "1");
+  EXPECT_EQ(value(SettingsGet(*host), "agent.allowUnscopedHelpers"), "true");
+}
+
 TEST_F(AgentFixture,
        ConcurrentSettingsUpdatesRejectStaleRevisionsWithoutLosingFields) {
   const auto before = SettingsGet(*host);

@@ -136,6 +136,7 @@ add_library(tsugumi_agent_core STATIC
   src/agent/host.cc
   src/host/comments.cc
   src/host/save.cc
+  src/agent/helper_scope.cc
   src/host/guide.cc
   src/host/settings.cc
   src/host/skills.cc

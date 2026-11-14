@@ -298,12 +298,27 @@
            "name": {
              "type": "string",
              "minLength": 1,
-             "description": "a unique nonempty name for the helper"
+             "description": "a unique nonempty name for the helper",
+             "maxLength": 128
            },
            "instruction": {
              "type": "string",
              "minLength": 1,
              "description": "the helper's initial user message: the task, Card ids, user requirements and shared decisions; ask it to read the project context it needs. It receives the system rules, but no parent conversation, automatic project snapshot or warm-up. State whether it should run or leave that to the main Agent."
+           },
+           "read_cards": {
+             "type": "array",
+             "items": {
+               "type": "string"
+             },
+             "description": "Exact permanent Card paths this helper may read, including nested paths such as outer/step. No implicit descendants; supply both sets. Empty means none."
+           },
+           "write_cards": {
+             "type": "array",
+             "items": {
+               "type": "string"
+             },
+             "description": "Exact permanent Card paths this helper may change or run, including nested paths such as outer/step. No implicit descendants; supply both sets. Empty means none."
            }
          }
        }
