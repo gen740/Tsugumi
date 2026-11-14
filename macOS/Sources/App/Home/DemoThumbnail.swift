@@ -132,13 +132,13 @@ struct DemoPlayerData: Decodable {
   var outputs: [String: Output]
 
   /// Where the site's data is: in the app's bundle (build-app.sh) or, in a
-  /// development build, the repository.
+  /// development build, the documentation build (`nix run .#build-doc`).
   static let root: URL? = {
     if let dir = Bundle.main.url(forResource: "player-data", withExtension: nil) { return dir }
     #if DEBUG
     var repo = URL(fileURLWithPath: #filePath)
     for _ in 0..<5 { repo.deleteLastPathComponent() }
-    let dir = repo.appendingPathComponent("docs/site/player-data")
+    let dir = repo.appendingPathComponent("build/docs/site/player-data")
     if FileManager.default.fileExists(atPath: dir.path) { return dir }
     #endif
     return nil

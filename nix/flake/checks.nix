@@ -10,7 +10,6 @@
     {
       checks = {
         web = pkgs.callPackage ../web-checks.nix { inherit web; };
-        site-player = pkgs.callPackage ../site-player-check.nix { inherit web; };
       };
       formatter = pkgs.nixfmt-tree;
     };

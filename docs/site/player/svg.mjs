@@ -12,20 +12,21 @@
 // during the frames that drew it. Chrome (headless) lays that HTML out and dom-to-svg turns
 // it into plain SVG (`render`), the animations staying on its elements' classes. Images come
 // from player-data/assets/ as data: URIs (a tile's shrunk with sips, macOS, as harvest.py does).
-// Needs what build.mjs needs (web/node_modules, web/src/gen), its outputs up to date, and
+// Builds its data first; needs web/node_modules, web/src/gen and
 // Chrome (/Applications/Google Chrome.app, or TSUGUMI_CHROME). Run on a Mac; the SVGs are committed.
 import { execFileSync, spawn } from 'node:child_process'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { finalsFromRun, flowOf, readJson, readProject, stepsFromRun } from './build.mjs'
+import { preparePlayer, finalsFromRun, flowOf, readJson, readProject, stepsFromRun } from './build.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SITE = path.dirname(HERE)
 const ROOT = path.resolve(SITE, '..', '..')
 const WEB = path.join(ROOT, 'web')
-const DATA = path.join(SITE, 'player-data')
+const PLAYER = preparePlayer()
+const DATA = path.join(PLAYER, 'player-data')
 const OUT = path.join(ROOT, 'docs', 'assets')
 const require = createRequire(path.join(WEB, 'package.json'))
 const esbuild = require('esbuild')
@@ -352,7 +353,7 @@ function replay(data, view, compact, kind = compact ? 'tile' : 'large', only, dr
   return { frames, starts, total, surface, layer, anim, perFrame, zoom, custom, cardBox }
 }
 
-const playerCss = fs.readFileSync(path.join(SITE, 'player.css'), 'utf8')
+const playerCss = fs.readFileSync(path.join(PLAYER, 'player.css'), 'utf8')
 const FONT = `-apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif`
 const readDemo = (id) => JSON.parse(fs.readFileSync(path.join(DATA, `${id}.json`), 'utf8'))
 const titleOf = (data) => `${data.title} — a Tsugumi demo (${data.run ? `replaying the record of a run on ${data.run.date}` : 'replayed in the order of its wires'})`

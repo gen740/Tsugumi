@@ -15,6 +15,7 @@ buildNpmPackage {
   outputs = [
     "out"
     "testSupport"
+    "sitePlayer"
   ];
   src = lib.fileset.toSource {
     root = ../.;
@@ -43,7 +44,10 @@ buildNpmPackage {
       ../sdk
       ../flake.lock
       ../VERSION
-      ../docs/site/player-data
+      ../docs/site/player/build.mjs
+      ../docs/site/player/narration.json
+      ../docs/site/player-data/assets
+      ../docs/CardGuide.md
       ../docs/assets/tsugumi-icon.svg
     ];
   };
@@ -58,7 +62,12 @@ buildNpmPackage {
   TSUGUMI_WASM_CLIENT_DIR = "${client-wasm}/share/tsugumi/client";
   buildPhase = ''
     runHook preBuild
-    (cd web && npm run gen && npm run build)
+    (cd web && npm run gen)
+    # Build once with this package's pinned dependencies and generated bindings.
+    # The site, thumbnails and tests all consume this same output.
+    node docs/site/player/build.mjs --out-dir "$sitePlayer"
+    export TSUGUMI_SITE_PLAYER_DIR="$sitePlayer"
+    (cd web && npm run build)
     runHook postBuild
   '';
   dontNpmInstall = true;

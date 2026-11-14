@@ -25,6 +25,7 @@ runCommand "tsugumi-web-checks"
     cp -R $testSources/. source/
     ln -s ${web.testSupport}/node_modules source/web/node_modules
     cp -R ${web.testSupport}/gen source/web/src/gen
+    export TSUGUMI_SITE_PLAYER_DIR=${web.sitePlayer}
     cd source/web
     npm run typecheck
     npm test

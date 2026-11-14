@@ -250,26 +250,6 @@ jobs:
       - name: Runnable SDK examples
         run: '"$CORE_TEST_ENV" "${{ steps.sdk-python.outputs.python }}" -m pytest -q tests/python/test_sdk_examples.py'
 
-  site-player:
-    name: Site player
-    if: inputs.system == 'x86_64-linux'
-    needs: web
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - uses: ./.github/actions/fetch-nix
-        with:
-          package: web
-          system: ${{ inputs.system }}
-          artifact-name: web-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-      - name: Generated site player
-        run: nix build --no-link .#checks.${{ inputs.system }}.site-player
-
   swift:
     name: Swift adapters and application
     if: inputs.system == 'aarch64-darwin'
