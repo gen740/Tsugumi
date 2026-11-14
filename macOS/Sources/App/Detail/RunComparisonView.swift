@@ -201,7 +201,7 @@ struct ComparedRunField: Identifiable {
   }
 
   static func sameDisplay(_ a: DisplaySnapshot?, _ b: DisplaySnapshot?) -> Bool {
-    switch (a?.value, b?.value) {
+    switch (a?.content, b?.content) {
     case (nil, nil), (.unavailable?, .unavailable?): return true
     case let (.text(x)?, .text(y)?), let (.markdown(x)?, .markdown(y)?): return x == y
     case let (.scalar(x, xl)?, .scalar(y, yl)?): return x == y && xl == yl

@@ -4,6 +4,7 @@
 #undef main
 
 #include <gtest/gtest.h>
+#include <bit>
 #include <filesystem>
 
 namespace {
@@ -123,6 +124,15 @@ TEST(NumberConversion, CanonicalNonFiniteValuesRemainNumbersAndNullRemainsAbsent
   EXPECT_NE(json.find("-Infinity"), std::string::npos);
   EXPECT_NE(json.find("-0.0"), std::string::npos);
   EXPECT_NE(json.find("nan inf NaN Infinity"), std::string::npos);
-  EXPECT_TRUE(tsugumi::message_json::parse_json(parser, json));
+  ASSERT_TRUE(tsugumi::message_json::parse_json(parser, json));
+  const auto* table = flatbuffers::GetRoot<flatbuffers::Table>(parser.builder_.GetBufferPointer());
+  const auto* values = table->GetPointer<const flatbuffers::Vector<double>*>(4);
+  ASSERT_NE(values, nullptr);
+  ASSERT_EQ(values->size(), 6u);
+  EXPECT_TRUE(std::isnan(values->Get(0)));
+  const double expected[] = {NAN, INFINITY, -INFINITY, -0.0, 1e-20, 5e-324};
+  for (flatbuffers::uoffset_t i = 1; i < values->size(); ++i)
+    EXPECT_EQ(std::bit_cast<uint64_t>(values->Get(i)), std::bit_cast<uint64_t>(expected[i])) << i;
+  EXPECT_FALSE((table->GetOptional<double, double>(8)).has_value());
   EXPECT_TRUE(tsugumi::message_json::parse_json(parser, R"({"values":["NaN","Inf","-Inf"]})"));
 }

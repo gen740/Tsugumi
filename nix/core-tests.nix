@@ -23,6 +23,7 @@
   nixfmt,
   shfmt,
   python3,
+  ruby,
   core,
   hosq,
 }:
@@ -97,6 +98,8 @@ clangStdenv.mkDerivation {
             ps.websockets
           ]))
           flatbuffers
+          # Interpreter adapter tests must use the SDK's Ruby, not macOS Ruby 2.6.
+          ruby
           bash
           coreutils
           openssl

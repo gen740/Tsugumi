@@ -248,6 +248,8 @@ struct DisplaySnapshot {
   let runId: String
   let invocation: UInt64
   let revision: UInt64
+  /// Preserve the result's content even when it cannot be rendered.
+  let content: DisplayValue
   let value: DisplayValue
   /// What the Card's result row says of it. Worked out once, here: the canvas
   /// asks at every move, and a figure's title is found by parsing its JSON.
@@ -257,6 +259,7 @@ struct DisplaySnapshot {
     self.runId = runId
     self.invocation = invocation
     self.revision = revision
+    self.content = value
     self.value = value.displayable ? value : .unavailable
     summary = Self.summary(of: self.value)
   }

@@ -222,7 +222,7 @@ module Tsugumi
 
   class Card; end
 
-  def self.guard
+  def self.guard(finish_outputs: false)
     require 'json'
     before = Thread.list
     scope = CallScope.new
@@ -231,6 +231,7 @@ module Tsugumi
       if (Thread.list - before).any?(&:alive?)
         raise Failure.new('worker_failed', 'join Ruby threads before returning from a Card')
       end
+      TsugumiHost.finish_outputs if finish_outputs
       true
     rescue Exception => error # SystemExit and syntax errors also fail the invocation.
       warn error.full_message
@@ -262,9 +263,6 @@ module Tsugumi
   end
 
   def self._invoke
-    guard do |scope|
-      call(@card.method(:main), scope)
-      TsugumiHost.finish_outputs
-    end
+    guard(finish_outputs: true) { |scope| call(@card.method(:main), scope) }
   end
 end

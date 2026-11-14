@@ -26,6 +26,9 @@ def test_number_face_vectors(tmp_path, language):
         script.write_text('''require 'json'
 require ARGV[0]
 v=JSON.parse(File.read(ARGV[1]),allow_nan:true)
+numbers=v.fetch('values')
+raise unless numbers[0].nan? && numbers[1].infinite? == 1 && numbers[2].infinite? == -1
+raise unless numbers[3].zero? && 1.0 / numbers[3] == -Float::INFINITY
 puts JSON.generate(Tsugumi.json_value(v),allow_nan:true)
 ''')
         args = [executable('RUBY'), str(script), str(ROOT / 'sdk/ruby/tsugumi.rb'), str(input_file)]
@@ -33,6 +36,9 @@ puts JSON.generate(Tsugumi.json_value(v),allow_nan:true)
         script = tmp_path / 'test.jl'
         script.write_text('''include(ARGS[1])
 v=Tsugumi.parse_json(read(ARGS[2],String))
+numbers=v["values"]
+@assert isnan(numbers[1]) && numbers[2] == Inf && numbers[3] == -Inf
+@assert iszero(numbers[4]) && signbit(numbers[4])
 println(Tsugumi.json_text(v))
 ''')
         args = [executable('JULIA'), '--startup-file=no', '--history-file=no', str(script), str(ROOT / 'sdk/julia/tsugumi.jl'), str(input_file)]
@@ -43,6 +49,9 @@ println(Tsugumi.json_text(v))
 scope <- new.env(); scope$active <- TRUE
 .tsugumi_arguments(scope)
 v <- .tsugumi_from_json(paste(readLines(commandArgs(TRUE)[[2]]),collapse=""))
+numbers <- v$values
+stopifnot(is.numeric(numbers), is.nan(numbers[1]), numbers[2] == Inf, numbers[3] == -Inf,
+          numbers[4] == 0, 1 / numbers[4] == -Inf)
 cat(.tsugumi_json(v))
 bad <- try(.tsugumi_json(list(value=NA_real_)),silent=TRUE)
 stopifnot(inherits(bad,"try-error"))

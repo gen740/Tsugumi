@@ -8,7 +8,7 @@ import flatbuffers.table
 import flatbuffers.number_types as flags
 import pytest
 
-from test_language_cards import project, write_project
+from test_language_cards import JULIA_NIX, R_NIX, project, write_project
 from projects import run_and_wait
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
@@ -74,8 +74,10 @@ def sdk_card(language):
         files.update({'go.mod': (ROOT / 'sdk/go/template/go.mod').read_text(), 'go.sum': ''})
     if language == 'rust':
         files['Cargo.toml'] = (ROOT / 'sdk/rust/template/Cargo.toml').read_text()
-    return {'card': {'language': language, 'inputs': [{'name': 'number'}]}, 'outputs': SCHEMA,
-            'src': files, 'nix': '{pkgs,inputs,params}:let sdk=inputs.tsugumi.sdk {languages=["' + language + '"];};in {run=inputs.tsugumi.' + helper + ' {inherit sdk;src=./src;};}'}
+    nix = {'r': R_NIX, 'julia': JULIA_NIX}.get(language,
+        '{pkgs,inputs,params}:let sdk=inputs.tsugumi.sdk {languages=["' + language + '"];};in {run=inputs.tsugumi.' + helper + ' {inherit sdk;src=./src;};}')
+    return {'card': {'language': language, 'inputs': [{'name': 'number'}], 'recordIO': True},
+            'outputs': SCHEMA, 'src': files, 'nix': nix}
 
 
 @pytest.mark.environment
@@ -93,7 +95,8 @@ def main(inputs):
     client = connect()
     run_id, status = run_and_wait(client, 'start', timeout=1800)
     assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic),
-        text(client.call('LogRangeRequest', runId=run_id, card=path('check'), stream=2).text))
+        [(card, stream, text(client.call('LogRangeRequest', runId=run_id, card=path(card),
+            stream=stream, limitBytes=65536).text)) for card in ('make', 'check') for stream in (2, 4)])
     value = client.call('RunRecordRequest', runId=run_id, card=path('check')).record.outputs[0]
     data = bytes(value.inlineBytes)
     table = flatbuffers.table.Table(bytearray(data), struct.unpack_from('<I', data)[0])

@@ -121,6 +121,48 @@ end
     subprocess.run([executable("RUBY"), str(script), str(ROOT / "sdk/ruby/tsugumi.rb")], check=True)
 
 
+def test_ruby_unjoined_threads_fail_before_required_outputs(tmp_path):
+    script = tmp_path / "threads.rb"
+    script.write_text(r'''
+require ARGV[0]
+module TsugumiHost
+  @events = []
+  class << self
+    attr_reader :events
+    def info = {}
+    def params = '{}'
+    def inputs = []
+    def finish_outputs
+      @events << :finish
+      raise ArgumentError, 'required outputs were not emitted'
+    end
+    def fail(kind, message) = @events << [kind, message]
+  end
+end
+class Tsugumi::Card
+  def main(inputs)
+    $leftover = Thread.new { sleep 60 }
+    nil
+  end
+end
+Tsugumi.instance_variable_set(:@card, Tsugumi::Card.new)
+raise if Tsugumi._invoke
+raise unless TsugumiHost.events.length == 1
+kind, message = TsugumiHost.events.first
+raise unless kind == 'worker_failed' && message.include?('join Ruby threads')
+raise if $leftover.alive?
+# With no leftover thread, required-output validation still runs.
+class Tsugumi::Card
+  def main(inputs) = nil
+end
+TsugumiHost.events.clear
+raise if Tsugumi._invoke
+raise unless TsugumiHost.events.first == :finish
+raise unless TsugumiHost.events.last[1].include?('required outputs')
+''')
+    subprocess.run([executable("RUBY"), str(script), str(ROOT / "sdk/ruby/tsugumi.rb")], check=True)
+
+
 def test_julia_roles_hook_and_result_iterator(tmp_path):
     compiler = shutil.which(os.environ.get("CC", "cc"))
     if not compiler:
