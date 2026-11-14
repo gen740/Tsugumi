@@ -10,6 +10,9 @@
 
 namespace tsugumi::host {
 
+// Presentation metadata only; a missing/unreadable manifest falls back to the folder name.
+auto ProjectDisplayName(const std::filesystem::path& folder) -> std::string;
+
 struct ProjectFailure : std::runtime_error {
   ProjectFailure(std::string c, std::string message)
       : std::runtime_error(std::move(message)), code(std::move(c)) {}

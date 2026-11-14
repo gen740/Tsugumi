@@ -75,6 +75,7 @@ final class ModelListRefresher {
 /// change while it is open.
 @MainActor
 final class ModelMenu: NSObject, NSMenuDelegate {
+  var beforeOpen: (() async -> Void)?
   var onOpen: (() -> Void)?
   var onChoose: ((String, String) -> Void)?
   /// The effort chosen ("": the model's default), and Fast mode turned on or off.
@@ -98,10 +99,13 @@ final class ModelMenu: NSObject, NSMenuDelegate {
   }
 
   func show() {
-    guard let anchor else { return }
-    // After the button's action returns: popUp stays until the menu closes.
-    DispatchQueue.main.async { [menu] in
-      menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.isFlipped ? anchor.bounds.maxY + 2 : -2), in: anchor)
+    Task {
+      await beforeOpen?()
+      guard let anchor else { return }
+      // After the button's action returns: popUp stays until the menu closes.
+      DispatchQueue.main.async { [menu] in
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.isFlipped ? anchor.bounds.maxY + 2 : -2), in: anchor)
+      }
     }
   }
 

@@ -85,8 +85,9 @@ public extension RPCClient {
     return try await call(.operationgetrequest, r)
   }
 
-  /// Reads a whole file in chunks, verifying the final hash.
-  func readFile(path: String, atRev: UInt64) async throws -> Data {
+  /// Reads a whole file in chunks, verifying the final hash. A content hash
+  /// pins every chunk without depending on unrelated document revisions.
+  func readFile(path: String, atRev: UInt64?, ifHash: String? = nil) async throws -> Data {
     var out = Data()
     var offset: UInt64 = 0
     var hash = ""
@@ -94,6 +95,7 @@ public extension RPCClient {
       let r = Tsugumi_RPC_ProjectFileReadRequestT()
       r.path = path
       r.atRev = atRev
+      r.ifHash = ifHash
       r.offset = offset
       r.limitBytes = 1 << 20
       let c: Tsugumi_RPC_FileContentT = try await call(.projectfilereadrequest, r)

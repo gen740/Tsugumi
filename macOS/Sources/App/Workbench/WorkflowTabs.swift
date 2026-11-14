@@ -55,8 +55,8 @@ struct WorkflowTabs: View {
     }
     .tsugumiLoading(EnvironmentOverlay.loading(session))
     .sheet(item: Binding(get: { model.chat(for: session).permissionPrompt }, set: { _ in })) { prompt in
-      PermissionPromptView(prompt: prompt) { allow, always in
-        model.chat(for: session).answerPermissions(id: prompt.id, allow: allow, always: always)
+      PermissionPromptView(prompt: prompt) { allow, always, selected in
+        model.chat(for: session).answerPermissions(id: prompt.id, allow: allow, always: always, selected: selected)
       }
     }
     // A demo tour: Tsugumi of this chat leads it, following the real runs.

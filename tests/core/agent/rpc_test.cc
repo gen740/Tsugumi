@@ -5,6 +5,34 @@
 
 namespace tsugumi::test {
 namespace {
+TEST_F(AgentFixture, ConversationSnapshotReportsTheAcceptedModelAcrossHostEditsAndRestart) {
+  ModelServer model;
+  model.Queue(AnthropicText("done"));
+  Configure(model);
+  const auto conversation = Conversation("bound-model");
+  ASSERT_TRUE(Send(conversation, "hello").Code().empty());
+  WaitUntilIdle(conversation);
+  const auto check = [&] {
+    const auto reply = Get(conversation, true);
+    const auto* binding = reply.Value()->value_as_ConversationResult()->model_binding();
+    ASSERT_NE(binding, nullptr);
+    EXPECT_EQ(binding->provider_id()->str(), "fixture");
+    EXPECT_EQ(binding->model()->str(), "fixture-model");
+  };
+  check();
+  // A host setting edit changes future selections, never the recorded model.
+  const auto selected = Call(*host, H::RequestPayload::SettingsGetRequest, [](Builder& b) {
+    return H::CreateSettingsGetRequest(b, b.CreateString("desktop")).Union();
+  });
+  ASSERT_TRUE(Call(*host, H::RequestPayload::SettingsUpdateRequest, [&](Builder& b) {
+    const auto item = H::CreateSetting(b, b.CreateString("agent.model.chatgpt"), b.CreateString(Quote("gpt-6.1-terra")));
+    return H::CreateSettingsUpdateRequest(b, b.CreateString("desktop"),
+        selected.HostValue()->value_as_Settings()->revision(), b.CreateVector(std::vector{item})).Union();
+  }).Code().empty());
+  check();
+  human.reset(); external.reset(); host.reset(); agent.Stop(); StartAgent();
+  check();
+}
 namespace R = Tsugumi::RPC;
 
 TEST_F(AgentFixture, UnixAndWebSocketExposeTheSameAgentProtocol) {

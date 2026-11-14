@@ -54,7 +54,7 @@ assert.equal(valueDifference(omitted('aa'), omitted('bb')), 'changed')
 assert.equal(valueDifference(omitted('aa'), omitted()), 'unknown', 'one digest alone settles nothing')
 assert.equal(valueDifference(v, omitted(null, 3n)), 'unknown', 'inline on one side only')
 assert.equal(valueDifference(v, Object.assign(new D.NamedValueT(), v, { rootType: 'Other' })), 'changed', 'a type change is a difference')
-assert.equal(valueDifference(v, undefined), 'changed')
+assert.equal(valueDifference(v, undefined), 'unknown')
 {
   const x = record('left', 'big', '{}'), y = record('right', 'big', '{}')
   x.record!.outputs = [omitted()]; y.record!.outputs = [omitted()]
@@ -64,6 +64,30 @@ assert.equal(valueDifference(v, undefined), 'changed')
   assert.equal(field.difference, 'unknown')
   const html = renderToStaticMarkup(<ComparedCardView row={{ card: 'big', left: { summary: x.record!.summary!, record: x }, right: { summary: y.record!.summary!, record: y } }} />)
   assert.ok(html.includes('comparison-field unknown') && html.includes('比較できません'), 'an omitted value is marked not comparable')
+}
+
+// Files compare their recorded content, never the serialized storage path.
+{
+  const file = (path: string, digest: string | null) => Object.assign(new D.NamedValueT(), {
+    name: 'file', kind: D.PortKind.File, rootType: 'File', schemaBfbs: [1],
+    inlineBytes: [...new TextEncoder().encode(path)], contentHash: path, fileContentHash: digest,
+  })
+  const x = file('/runs/left/value', 'bytes'), y = file('/runs/right/value', 'bytes')
+  assert.equal(valueDifference(x, y), 'same')
+  y.fileContentHash = 'other'; assert.equal(valueDifference(x, y), 'changed')
+  y.fileContentHash = null; assert.equal(valueDifference(x, y), 'unknown')
+  assert.equal(valueDifference(file('/same/path', null), file('/same/path', null)), 'unknown')
+  y.fileContentHash = 'bytes'; y.fileMissing = true; assert.equal(valueDifference(x, y), 'same')
+  y.rootType = 'Other'; assert.equal(valueDifference(x, y), 'changed')
+  assert.equal(valueDifference(x, undefined), 'unknown')
+  assert.equal(valueDifference(undefined, x), 'unknown')
+  assert.equal(valueDifference(undefined, undefined), 'same')
+  for (const side of ['inputs', 'outputs'] as const) {
+    const left = record('left', 'files', '{}'), right = record('right', 'files', '{}')
+    left.record![side] = [x]
+    assert.equal(comparedValues(side, left, right)[0].difference, 'unknown')
+    assert.equal(comparedValues(side, undefined, left)[0].difference, 'unknown')
+  }
 }
 
 // Execution conditions beyond parameters: environment, service, emulation and input sources.

@@ -66,7 +66,8 @@ table HostRuntime { vm_state:string (required); store_path:string; store_exists:
   stage:string; message:string; console:[string]; bytes:ulong; paths:uint;
   histories:[RuntimeHistory]; environments:uint; vm_removed:bool;
 }
-union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData }
+table SettingsChanged { profile:string (required); revision:ulong; }
+union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged }
 table Event { value:EventPayload; }
 table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string; title:string; path:string; }
 table RegisterFolderRequest { project_id:string (required); resource_id:string (required); folder:string (required); title:string; }

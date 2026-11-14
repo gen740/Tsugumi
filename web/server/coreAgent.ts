@@ -265,7 +265,8 @@ export class CoreAgentHost {
 
 export interface InterruptedOperation { kind: string; id?: string; name?: string; arguments?: string }
 
-export interface RemoteConversation { interruptedOperation?: InterruptedOperation; conversation: Conversation; busy: boolean; resumable?: boolean; continuable?: boolean; project_id?: string; event_seq?: bigint }
+export interface ModelBinding { providerId: string; model: string; effort?: string; fast: boolean }
+export interface RemoteConversation { modelBinding?: ModelBinding; interruptedOperation?: InterruptedOperation; conversation: Conversation; busy: boolean; resumable?: boolean; continuable?: boolean; project_id?: string; event_seq?: bigint }
 
 export class RemoteAgent {
   conversation: Conversation
@@ -273,6 +274,7 @@ export class RemoteAgent {
   continuable = false
   resumable = false
   interruptedOperation?: InterruptedOperation
+  modelBinding?: ModelBinding
   private seq = 0n
   private observing = false
   private observationID = 0
@@ -300,6 +302,7 @@ export class RemoteAgent {
     this.resumable = result.resumable === true
     this.continuable = result.continuable === true
     this.interruptedOperation = result.interruptedOperation
+    this.modelBinding = result.modelBinding
   }
 
   async refresh() {
@@ -357,7 +360,8 @@ export class RemoteAgent {
     return this.change(async () => {
       await this.beginTurn()
       await this.host.user.call('ConversationSendRequest', { conversation_id: this.id, turn_id: turnId, text, ...selections })
-      this.busy = true
+      await this.refresh()
+      this.listener?.({ kind: 'modelAccepted' })
     })
   }
 
@@ -367,6 +371,7 @@ export class RemoteAgent {
       await this.beginTurn()
       await this.host.user.call('ConversationActionRequest', { conversation_id: this.id, action })
       await this.refresh()
+      this.listener?.({ kind: 'modelAccepted' })
     })
   }
 

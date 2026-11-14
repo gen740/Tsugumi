@@ -364,6 +364,31 @@ final class UIScript {
         // guideshow <json>: the chat's Tsugumi calls guide_show with these arguments, as a model would.
         if let s = session { GuideController.shared.chatShow(AppModel.shared.chat(for: s), arguments: w.dropFirst().joined(separator: " ")) }
       case "guideclose": GuideController.shared.dismissBubble()
+      case "setting":
+        // setting <key> <json>: a host setting (the settings live in the host service, not in
+        // UserDefaults, so a launch argument cannot set them), e.g. `setting agent.model.chatgpt "gpt-6.1-terra"`.
+        let raw = w.dropFirst(2).joined(separator: " ")
+        if w.count > 2, let data = raw.data(using: .utf8), let value = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) {
+          CorePreferences.shared.set(value, forKey: w[1])
+          await CorePreferences.shared.reload()
+          say("setting \(w[1])=\(CorePreferences.shared.data(forKey: w[1]).flatMap { String(data: $0, encoding: .utf8) } ?? "-")")
+        } else {
+          say("setting: expected <key> <json>")
+        }
+      case "permission":
+        // permission allow|deny [minutes]: answers the Agent's next access or approval prompt
+        // (waiting for it to come up) and writes what was asked.
+        if let s = session {
+          let chat = AppModel.shared.chat(for: s)
+          let deadline = Date().addingTimeInterval((Double(w.count > 2 ? w[2] : "5") ?? 5) * 60)
+          while chat.permissionPrompt == nil && chat.busy && Date() < deadline { try? await Task.sleep(for: .milliseconds(500)) }
+          if let p = chat.permissionPrompt {
+            say("permission \(w[1]): " + p.raw.joined(separator: " | ").replacingOccurrences(of: "\n", with: " "))
+            chat.answerPermissions(id: p.id, allow: w[1] == "allow", always: [])
+          } else {
+            say("permission: none asked")
+          }
+        }
       case "chatsend":
         // chatsend <text>: sends to the configured model (real provider)
         if let s = session { AppModel.shared.chat(for: s).send(w.dropFirst().joined(separator: " ")) }

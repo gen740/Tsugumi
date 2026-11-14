@@ -18,6 +18,9 @@ export async function api<T = any>(path: string, body?: unknown): Promise<T> {
   const v = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
   if (!r.ok) throw new ApiError(v.error ?? `HTTP ${r.status}`)
   if (path === '/api/settings' && v.revision) settingsRevision = v.revision
+  if (path === '/api/settings' && body !== undefined) {
+    for (const l of [...listeners]) l({ type: 'settingsChanged', provider: v.chatProvider })
+  }
   return v as T
 }
 

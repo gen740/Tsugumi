@@ -148,3 +148,24 @@ interrupted.interruptedOperation = new InterruptedOperationT('tool', 'call-7', '
 const interruptedView = decodeReply(reply(ReplyPayload.ConversationResult, interrupted), false).value
 assert.equal(interruptedView.resumable, true)
 assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call-7', name: 'project_save', arguments: '{"changes":[]}' })
+
+// Settings changes travel on the existing Host event stream.
+{
+  const { SettingsChangedT } = await import('../src/gen/tsugumi/host/settings-changed')
+  const { EventT } = await import('../src/gen/tsugumi/host/event')
+  const { EventPayload } = await import('../src/gen/tsugumi/host/event-payload')
+  const { MessageT } = await import('../src/gen/tsugumi/host/message')
+  const b = new fb.Builder()
+  const message = new MessageT(0n, HostPayload.Event, new EventT(EventPayload.SettingsChanged, new SettingsChangedT('desktop', 42n)))
+  HostMessage.finishMessageBuffer(b, message.pack(b))
+  assert.deepEqual(decodeReply(b.asUint8Array(), true).event, { type: 'SettingsChanged', value: { profile: 'desktop', revision: 42 } })
+}
+
+// Each checkbox travels independently; no implicit Write/Run grant.
+{
+  const bytes = encodeRequest('AccessResolveRequest', { request_id: 'first-access', allow: true, also_allow: ['Write'] }, 5n, false)
+  const message = Message.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
+  const value = (message.payload as any).value
+  assert.equal(value.allow, true)
+  assert.deepEqual(value.alsoAllow, [1])
+}

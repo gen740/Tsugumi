@@ -28,7 +28,7 @@ struct StatusBar: View {
     }
     .sheet(item: Binding(get: { session.reloadApproval }, set: { session.reloadApproval = $0 })) { request in
       PermissionPromptView(prompt: ChatController.PermissionPrompt(raw: request.permissions, answer: { _ in }),
-                           answer: { allow, _ in Task { await session.answerReloadApproval(allow) } }, reload: true)
+                           answer: { allow, _, _ in Task { await session.answerReloadApproval(allow) } }, reload: true)
     }
     .font(.callout)
     .padding(.horizontal, 12).padding(.vertical, 5)
