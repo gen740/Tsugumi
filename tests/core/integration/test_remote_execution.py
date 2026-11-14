@@ -527,3 +527,16 @@ def test_remote_transfers_only_declared_outputs(project, core_factory, remote_br
         assert saved.read_text() == "safe\n"
     invocation = scratch / "runs" / run_id / "work/copy/1"
     assert not list(invocation.rglob("undeclared-*"))
+
+
+def test_remote_tools_come_from_the_definition_and_are_recorded(project, core_factory, remote_broker):
+    """Remote bodies and hooks use the same definition-owned tools and inventory as local runs."""
+    from harness.real_cards import DEFINITION_TOOLS_NIX, TXT, check_definition_tools
+
+    write(project, {"work": {"language": "bash", "recordIO": True, "executionService": "remote-test",
+                             "timeoutSeconds": 600, "_outputs": TXT, "_nix": DEFINITION_TOOLS_NIX}},
+          [card("work", "work")], [])
+    client = core_factory().connect()
+    run_id, status = run_and_wait(client, "work", timeout=600)
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    check_definition_tools(client, run_id)

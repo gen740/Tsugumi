@@ -17,13 +17,6 @@
 #include "util/crypto.hh"
 #include "util/staging.hh"
 
-#ifndef TSUGUMI_CARD_PATH
-#define TSUGUMI_CARD_PATH "/usr/bin:/bin"
-#endif
-#ifndef TSUGUMI_BASH
-#define TSUGUMI_BASH "/bin/bash"
-#endif
-
 namespace tsugumi {
 
 namespace {
@@ -99,7 +92,9 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   // A package of another system is loaded by the worker its build made for
   // that system, which the kernel runs under the emulator.
   sp.worker_binary = build.worker.empty() ? service_.options().worker_binary.string() : build.worker;
-  sp.bash = TSUGUMI_BASH;
+  // The shell and PATH are the definition's (the manifest's), so they are in
+  // the recorded environment and do not change with this build of the core.
+  sp.bash = build.shell;
   sp.build = build;
   sp.sandbox = node.settings.sandbox;
   sp.uid = uid;
@@ -196,7 +191,7 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
     auto ptype = NixRunner::params_type(node);
     std::string params = NixRunner::params_buffer(node);
     std::vector<std::pair<std::string, std::string>> env = {
-        {"PATH", TSUGUMI_CARD_PATH},
+        {"PATH", build.path},
         {"HOME", work},
         {"LANG", "C.UTF-8"},
         {"TSUGUMI_RUN_ID", s.run_id},

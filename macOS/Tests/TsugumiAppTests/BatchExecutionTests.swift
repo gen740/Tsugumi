@@ -16,7 +16,9 @@ func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) 
   let implementations = (0..<count).map { index in
     ["bash": "printf '%s' '{\"out\":{\"value\":\(index)}}' > \"$TSUGUMI_OUTPUT\"; printf 'member \(index)'"]
   }
-  let mock = try JSONSerialization.data(withJSONObject: ["manifest": ["runs": implementations]])
+  let mock = try JSONSerialization.data(withJSONObject: [
+    "manifest": ["runs": implementations, "shell": "/bin/bash", "path": "/usr/bin:/bin"]
+  ])
   try mock.write(to: card.appendingPathComponent("mock-build.json"))
 
   let daemon = try SyncTests.Daemon(project: directory, mockedBuilds: true)
