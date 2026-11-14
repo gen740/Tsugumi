@@ -293,6 +293,14 @@ struct GraphCanvas: View {
         addBuiltin(t, at: world(CGPoint(x: size.width / 2 - 120, y: size.height / 2 - 60)))
       }
       .modifier(CommandHandlers(canvas: self))
+      .overlay(alignment: .topLeading) {
+        if let draft = session.inlineDraft {
+          RevisionEditNotice(edit: draft.revision, text: { draft.name + "\n" + draft.content },
+            overwrite: { Task { _ = await session.finishDraftEdit(overwrite: true) } },
+            reload: { session.startDraftEdit(draft.card, revision: draft.revision) })
+            .padding(12).frame(maxWidth: 520)
+        }
+      }
       .sheet(item: Binding(get: { editingNote.map(IdBox.init) }, set: { editingNote = $0?.id })) { box in
         NoteEditor(session: session, noteId: box.id)
       }

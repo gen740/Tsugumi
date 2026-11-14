@@ -141,3 +141,39 @@ assert.equal(c.status, STOPPED)
 }
 
 console.log('chat stopped behavior: passed')
+
+// Results belong to tool-use IDs, including across the archive boundary and
+// when an unrelated/missing result appears between two completed calls.
+{
+  const c = chat()
+  c.load({ archive: [{ role: 'assistant', content: [
+    { type: 'tool_use', id: 'save-a', name: 'project_save', input: 'A' },
+    { type: 'tool_use', id: 'save-b', name: 'project_save', input: 'B' },
+  ] }], messages: [{ role: 'user', content: [
+    { type: 'tool_result', tool_use_id: 'unknown', content: 'ignored', is_error: false },
+    { type: 'tool_result', tool_use_id: 'save-a', content: 'A rejected', is_error: true },
+    { type: 'tool_result', tool_use_id: 'save-b', content: 'B saved', is_error: false },
+  ] }], usage: {} })
+  assert.deepEqual(c.items.map((i: any) => [i.text, i.tool.ok]), [['A\n→ A rejected', false], ['B\n→ B saved', true]])
+}
+{
+  const beforeFetch = globalThis.fetch
+  const answers: any[] = []
+  globalThis.fetch = async (_url, init) => { answers.push(JSON.parse(String(init?.body))); return { ok: true, json: async () => ({}) } as Response }
+  const c = chat()
+  c.handle({ kind: 'permission', id: 'first', asked: ['first'] })
+  c.handle({ kind: 'permission', id: 'second', asked: ['second'] })
+  c.handle({ kind: 'permission', id: 'second', asked: ['second'] })
+  assert.equal(c.permission.id, 'first')
+  c.answerPermission(true, [])
+  assert.equal(c.permission.id, 'second')
+  c.answerPermission(true, [], 'first')
+  assert.equal(c.permission.id, 'second', 'a stale view cannot answer the next request')
+  c.handle({ kind: 'permissionAnswered', id: 'first' })
+  assert.equal(c.permission.id, 'second')
+  c.answerPermission(false, [])
+  assert.equal(c.permission, undefined)
+  assert.deepEqual(answers.map(a => [a.id, a.allow]), [['first', true], ['second', false]])
+  globalThis.fetch = beforeFetch
+}
+console.log('tool result identity and queued approvals: passed')

@@ -557,6 +557,9 @@ final class GuideController {
       let reply = items.last { $0.role == "assistant" }?.text ?? ""
       if !reply.isEmpty { AccessibilityNotification.Announcement(String(reply.prefix(300))).post() }
       flush()
+    case .interrupted:
+      ended()
+      queued = []
     case .stepLimit:
       ended()
       status = String(localized: "答えをまとめきれませんでした。聞き方を変えてもう一度どうぞ。")

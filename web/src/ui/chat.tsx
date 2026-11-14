@@ -61,7 +61,7 @@ export function PermissionHost({ session }: { session: ProjectSession }) {
   const chat = app.chat(session)
   useObserve(chat)
   const p = chat.permission
-  return p ? <PermissionPrompt key={p.id} asked={p.asked} from={p.from} onAnswer={(allow, always) => chat.answerPermission(allow, always)} /> : null
+  return p ? <PermissionPrompt key={p.id} asked={p.asked} from={p.from} onAnswer={(allow, always) => chat.answerPermission(allow, always, p.id)} /> : null
 }
 
 /** Presents core-owned access and operation requests. Operations have no

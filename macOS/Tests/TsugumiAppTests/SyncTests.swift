@@ -536,8 +536,12 @@ import Testing
     let b = key(["b"])
     s.deleteCards([key(["a"]), key(["c"])], in: [])
     try await s.connect(from: (key(["start"]), "out"), to: (b, "in"), in: [])
-    s.updateDisplayFrame(b) { $0["width"] = .real(300); $0["height"] = .real(200) }
+    s.updateDisplayFrame(b) {
+      $0["x"] = .real(400); $0["y"] = .real(300)
+      $0["width"] = .real(300); $0["height"] = .real(200)
+    }
     await s.save()
+    try #require(!s.dirty, "\(s.saveError ?? "")")
     try await s.run(card: ["start"], propagate: true)
     try await Self.waitForSuccessfulRun(s)
     for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
@@ -549,6 +553,7 @@ import Testing
     #expect(s.nodeData(b, meta: .object([("name", .string("Preview"))])).title == "Preview")
     #expect(s.nodeData(b, meta: .object([("name", .string(""))])).title == b)
     #expect(s.displays[b]?.runId == run && s.displayFrame(b)?["width"]?.double == 300)
+    #expect(s.displayFrame(b)?["x"]?.double == 400 && s.displayFrame(b)?["y"]?.double == 300)
     let first = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 400), name: "同じ名前")
     let second = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 800), name: "同じ名前")
     #expect(first != second && first != b && second != b)
@@ -564,6 +569,7 @@ import Testing
     await s.save()
     for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
     #expect(s.displays[b]?.runId == run)
+    #expect(s.displayFrame(b)?["x"]?.double == 400 && s.displayFrame(b)?["y"]?.double == 300)
   }
 
   /// A new Card put on the canvas covers nothing: not a Card, a frame or a note,
@@ -700,7 +706,7 @@ import Testing
     #expect(CardComment.change("resolved", by: "agent").contains("Agent") && !CardComment.change("removed", by: nil).contains("（"))
 
     for c in s.comments(k) { s.removeComment(k, id: c.id) }
-    #expect(s.cardMeta(k) == nil, "no comments left, no _meta.json made for them")
+    #expect(s.cardMeta(k) == .object([("name", .string("plot"))]), "Removing all comments keeps the Card's name only")
     s.undo()
     #expect(s.comments(k).map(\.text) == ["軸に名前を"])
   }
@@ -765,12 +771,23 @@ import Testing
     let same = await s.finishDraftEdit()
     #expect(same == nil && s.instance(plain) != nil)
 
-    // A name the Card cannot take is reported and not kept.
+    // Names are free text and need not be unique; exact addresses stay fixed.
     s.startDraftEdit(b)
     s.inlineDraft?.name = "日本語"
-    #expect(s.cardNameProblem(b, "日本語") != nil)
+    #expect(s.cardNameProblem(b, "日本語") == nil)
     let kept = await s.finishDraftEdit()
-    #expect(kept == nil && s.notice != nil && s.instance(b) != nil)
+    #expect(kept == b && s.displayName(b) == "日本語" && s.instance(b) != nil)
+    try await s.renameCard(c, to: "日本語")
+    #expect(s.displayName(c) == s.displayName(b) && b != c)
+    #expect(wires() == ["p.out2>r.in"])
+    #expect(s.cardNameProblem(b, " \n ") != nil)
+    // An overlong name is still refused without changing the Card.
+    let overlong = String(repeating: "あ", count: 1366)
+    s.startDraftEdit(b)
+    s.inlineDraft?.name = overlong
+    #expect(s.cardNameProblem(b, overlong) != nil)
+    let refused = await s.finishDraftEdit()
+    #expect(refused == nil && s.notice != nil && s.displayName(b) == "日本語" && s.instance(b) != nil)
     await s.close()
   }
 

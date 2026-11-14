@@ -1,10 +1,10 @@
 // Settings copies never inherit a newer session revision without a user choice.
 import assert from 'node:assert/strict'
-import { get, parse, str } from '../src/shared/json'
+import { clone, get, parse, str } from '../src/shared/json'
 import { D, R, RPCFailure } from '../src/shared/rpc'
 import { ProjectSession } from '../src/model/session'
 import { CardEditorModel } from '../src/ui/cardSettings'
-import { RevisionEdit } from '../src/ui/revisionEdit'
+import { InlineParamEdit, RevisionEdit } from '../src/ui/revisionEdit'
 
 function session() {
   const s = new ProjectSession('/p', 'k', 'p')
@@ -22,6 +22,7 @@ function session() {
       Object.assign(delta, { baseRev: base, rev: base + 1n, executionRev: 0n, opId: op, origin })
       for (const c of changes) {
         if (c.valueType === R.DocumentChangeValue.SetProject) delta.projectJson = (c.value as R.SetProjectT).json
+        if (c.valueType === R.DocumentChangeValue.SetLayout) delta.layoutJson = (c.value as R.SetLayoutT).json
         if (c.valueType === R.DocumentChangeValue.PutDefinition) {
           const put = c.value as R.PutDefinitionT
           delta.definitionsUpsert.push(Object.assign(new R.DefinitionT(), put))
@@ -183,4 +184,72 @@ for (const operation of ['create', 'remove']) {
   assert.equal(await m.apply(), true)
   assert.equal(m.loadedText(p), undefined)
   assert.equal(await m.text(p), 'newer')
+}
+
+// Opening and closing an unchanged Draft never writes the Agent's newer text/name.
+for (const field of ['content', 'name']) {
+  const { s, requests } = session()
+  s.confirmedDefinitionMeta.set('a', parse('{"name":"base","content":"base"}'))
+  s.startDraftEdit('a')
+  s.rev = 1n
+  s.confirmedDefinitionMeta.set('a', parse('{"name":"agent","content":"agent"}'))
+  await s.finishDraftEdit()
+  assert.equal(s.inlineDraft, undefined)
+  assert.equal(s.dirty, false)
+  assert.deepEqual(requests, [])
+  assert.equal(str(get(s.cardMeta('a'), field)), 'agent')
+
+  s.startDraftEdit('a')
+  s.setDraftEdit({ [field]: 'mine' })
+  s.rev = 2n
+  s.confirmedDefinitionMeta.set('a', parse('{"name":"newer","content":"newer"}'))
+  await s.finishDraftEdit()
+  assert.equal(s.inlineDraft?.revision.conflictRev, 2n)
+  assert.equal(s.inlineDraft?.[field], 'mine')
+  assert.equal(s.dirty, false)
+  assert.deepEqual(requests, [])
+  s.rev = 3n
+  await s.finishDraftEdit(true)
+  assert.equal(s.inlineDraft?.revision.conflictRev, 3n, 'overwrite is bound to the reviewed revision')
+  await s.finishDraftEdit(true)
+  assert.equal(s.inlineDraft, undefined)
+  assert.deepEqual(requests, [3n])
+  assert.equal(str(get(s.cardMeta('a'), field)), 'mine')
+  assert.equal(str(get(s.cardMeta('a'), field === 'name' ? 'content' : 'name')), 'newer', 'untouched fields follow the Agent')
+}
+console.log('Draft no-op, conflict and explicit overwrite: passed')
+
+// The sticky-note and group-title forms submit through the same unchanged
+// guard and raw layout mutations; no rejected value reaches autosave.
+for (const kind of ['notes', 'groups']) {
+  const { s, requests } = session()
+  const install = (value: string) => {
+    s.layout = parse(JSON.stringify({ [kind]: [{ id: 'row', text: value, name: value }] }))
+    s.confirmedLayout = clone(s.layout)
+  }
+  install('base')
+  const edit = new InlineParamEdit(); edit.begin('base', s.rev)
+  s.rev = 1n; install('agent')
+  const change = (value: string) => (x: ProjectSession) => {
+    if (kind === 'notes') x.changeNote('row', n => n.set('text', value))
+    else x.updateGroups([], groups => (groups[0] as import('../src/shared/json').JObj).set('name', value))
+  }
+  assert.equal(await edit.commit(s, 'base', false, change('base')), true)
+  assert.deepEqual(requests, [])
+  assert.equal(await edit.commit(s, 'mine', false, change('mine')), false)
+  assert.equal(s.dirty, false)
+  assert.equal(edit.conflictRev, 1n)
+  assert.equal(await edit.commit(s, 'mine', true, change('mine')), true)
+  assert.deepEqual(requests, [1n])
+  assert.equal(kind === 'notes' ? str(get(s.note('row'), 'text')) : str(get(s.groups([])[0], 'name')), 'mine')
+}
+console.log('note and group edits retain their opening revision: passed')
+
+{
+  const { s } = session()
+  s.startDraftEdit('a'); s.setDraftEdit({ content: 'keep this text' })
+  const revision = s.inlineDraft!.revision
+  revision.keepAndReload(s.inlineDraft!.content, () => s.startDraftEdit('a', revision))
+  assert.equal(s.inlineDraft!.revision.keptText, 'keep this text')
+  assert.equal(s.inlineDraft!.content, '')
 }

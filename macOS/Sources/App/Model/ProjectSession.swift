@@ -312,10 +312,13 @@ final class ProjectSession {
   var inlineDraft: InlineDraft?
 
   /// A Draft being written on its Card: its name and content as typed so far.
-  struct InlineDraft: Equatable {
+  struct InlineDraft {
     var card: CardKey
     var name: String
     var content: String
+    var initialName: String
+    var initialContent: String
+    let revision: RevisionEdit
   }
 
   struct Snapshot: Equatable {
@@ -442,7 +445,12 @@ final class ProjectSession {
   @ObservationIgnored var makeRepositoryOnConnect = false
 
   // Runs
-  private(set) var runStatus: Tsugumi_RPC_RunStatusT?
+  private var runProvenance: [String: Tsugumi_RPC_RunStatusT] = [:]
+  private var loadingProvenance: Set<String> = []
+  private(set) var runStatus: Tsugumi_RPC_RunStatusT? {
+    didSet { if let status = runStatus, let id = status.runId { runProvenance[id] = status } }
+  }
+  func markForRun(_ runId: String) -> String? { runMark(runProvenance[runId]) }
   private(set) var cardStates: [CardKey: CardRunState] = [:]
   private(set) var displays: [CardKey: DisplaySnapshot] = [:]
   private(set) var lastFinished: Date?
@@ -929,7 +937,7 @@ final class ProjectSession {
     }
   }
 
-  private func applyRunEvent(_ e: Tsugumi_RPC_RunEventT) {
+  func applyRunEvent(_ e: Tsugumi_RPC_RunEventT) {
     guard let v = e.value else { return }
     switch v.type {
     case .runacceptedevent:
@@ -976,11 +984,23 @@ final class ProjectSession {
     }
   }
 
-  private func applyDisplay(_ d: Tsugumi_Data_DisplayT) {
+  func applyDisplay(_ d: Tsugumi_Data_DisplayT) {
     let k = key(d.card.path)
     let rev = d.revision ?? 0
     if let old = displays[k], old.runId == d.runId, old.revision >= rev { return }  // stale frame
-    if let display = recordedDisplay(d) { displays[k] = display }
+    if let display = recordedDisplay(d) {
+      displays[k] = display
+      // A reconnected canvas may receive a display from an older run.
+      if let client, runProvenance[display.runId] == nil, !loadingProvenance.contains(display.runId) {
+        loadingProvenance.insert(display.runId)
+        Task {
+          defer { loadingProvenance.remove(display.runId) }
+          if let record = try? await client.record(runId: display.runId, card: path(k), invocation: display.invocation) {
+            runProvenance[display.runId] = record.run.status
+          }
+        }
+      }
+    }
   }
 
   private func recordTimeline(_ k: CardKey, _ inv: Tsugumi_RPC_InvocationSummaryT) {

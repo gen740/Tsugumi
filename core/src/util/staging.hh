@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 
 namespace tsugumi::fs {
 
@@ -11,7 +12,11 @@ namespace tsugumi::fs {
 // resident worker). Follow no symlinks. Restore owner permissions on opened
 // directories, since Cards can copy read-only trees from the Nix store.
 // Throws std::system_error with the operation, path and errno on failure.
-auto clear_staging(const std::filesystem::path& path) -> void;
+// Darwin cannot pin an unreadable directory. A live worker's owner supplies
+// recover(parent, name), executed with the Card's own identity and sandbox.
+// Without a callback, unreadable Darwin directories fail with EACCES.
+auto clear_staging(const std::filesystem::path& path,
+                   const std::function<void(int, const char*)>& recover = {}) -> void;
 
 // Copy only one declared File/Directory from a pinned staging root. Within a
 // Directory, materialize relative symlinks whose fully resolved targets stay

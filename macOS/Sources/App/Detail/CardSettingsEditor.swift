@@ -497,6 +497,7 @@ struct CardPreview: View {
 private struct GeneralCategory: View {
   @Bindable var model: CardEditorModel
   @State private var name = ""
+  @State private var nameEdit = InlineParamEdit()
   @State private var renaming = false
   @State private var renameError: String?
 
@@ -509,13 +510,17 @@ private struct GeneralCategory: View {
       Section {
         HStack {
           TextField("名前", text: $name)
-            .onSubmit(rename)
+            .onSubmit { rename() }
           if name != model.session.displayName(model.cardKey) {
             Button("名前を変更") { rename() }.disabled(renaming || !model.session.isEditable)
           }
           if renaming { ProgressView().controlSize(.small) }
         }
         .help("表示する名前です。同じ名前を複数の Card に使えます。変えても ID・接続・実行履歴は変わりません（すぐに保存します）。")
+        RevisionEditNotice(edit: nameEdit.revision, text: { name }, overwrite: { rename(overwrite: true) }, reload: {
+          name = model.session.displayName(model.cardKey)
+          nameEdit.begin(name, rev: model.session.rev)
+        })
         if let renameError { Text(renameError).font(.caption).foregroundStyle(.red) }
         LabeledContent("種類", value: model.kind.label)
         if model.kind != .switchCard {
@@ -596,10 +601,10 @@ private struct GeneralCategory: View {
       }
     }
     .formStyle(.grouped)
-    .onAppear { name = model.session.displayName(model.cardKey) }
-    .onChange(of: model.cardKey) { name = model.session.displayName(model.cardKey) }
+    .onAppear { name = model.session.displayName(model.cardKey); nameEdit.begin(name, rev: model.session.rev) }
+    .onChange(of: model.cardKey) { name = model.session.displayName(model.cardKey); nameEdit.begin(name, rev: model.session.rev) }
     .onChange(of: model.session.displayName(model.cardKey)) { before, current in
-      if name == before { name = current }
+      if name == before { name = current; nameEdit.begin(name, rev: model.session.rev) }
     }
   }
 
@@ -685,18 +690,19 @@ private struct GeneralCategory: View {
       }), prompt: Text(example))
   }
 
-  private func rename() {
+  private func rename(overwrite: Bool = false) {
     let new = name.trimmingCharacters(in: .whitespaces)
     guard new != model.session.displayName(model.cardKey) else { return }
     renaming = true
     renameError = nil
     Task {
       do {
-        if model.unapplied { guard await model.apply() else { renaming = false; return } }
-        try await model.session.renameCard(model.cardKey, to: new)
+        if let problem = model.session.cardNameProblem(model.cardKey, new) { throw RPCFailure(kind: .invalidRequest, diagnostic: problem) }
+        _ = await nameEdit.commit(model.session, text: new, overwrite: overwrite) { s in
+          s.updateMeta(model.cardKey) { $0["name"] = .string(new) }
+        }
       } catch {
         renameError = "\(error)"
-        name = model.session.displayName(model.cardKey)
       }
       renaming = false
     }
@@ -1076,7 +1082,7 @@ private struct CommentsCategory: View {
   let card: CardKey
   @State private var text = ""
   @State private var editing: CardComment?
-  @State private var revisionEdit = RevisionEdit()
+  @State private var revisionEdit = InlineParamEdit()
   @State private var showResolved = false
 
   var body: some View {
@@ -1094,10 +1100,10 @@ private struct CommentsCategory: View {
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.connected)
         }
-        RevisionEditNotice(edit: revisionEdit, text: { editing?.text ?? "" },
+        RevisionEditNotice(edit: revisionEdit.revision, text: { editing?.text ?? "" },
                            overwrite: { Task { await saveEdit(overwrite: true) } }, reload: {
                              editing = comments.first { $0.id == editing?.id }
-                             revisionEdit.reload(session.rev)
+                             revisionEdit.begin(editing?.text ?? "", rev: session.rev)
                            })
         if let editing, !comments.contains(where: { $0.id == editing.id }) { row(editing) }
         ForEach(comments.filter { !$0.resolved }) { row($0) }
@@ -1115,7 +1121,7 @@ private struct CommentsCategory: View {
 
   private func saveEdit(overwrite: Bool = false) async {
     guard let copy = editing else { return }
-    if await revisionEdit.apply(session, overwrite: overwrite, { $0.setCommentText(card, id: copy.id, text: copy.text) }) {
+    if await revisionEdit.commit(session, text: copy.text, overwrite: overwrite, { $0.setCommentText(card, id: copy.id, text: copy.text) }) {
       editing = nil
     }
   }
@@ -1171,7 +1177,7 @@ private struct CommentsCategory: View {
         }
         HStack {
           Spacer()
-          Button("編集") { revisionEdit.reload(baseRev); editing = c }
+          Button("編集") { revisionEdit.begin(c.text, rev: baseRev); editing = c }
           if c.resolved {
             Button("開き直す") { session.setCommentResolved(card, id: c.id, false) }
           } else {

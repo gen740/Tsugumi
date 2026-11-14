@@ -1,3 +1,4 @@
+import { RevisionEdit } from '../ui/revisionEdit'
 import { registerModuleClient, ModuleBlobs } from './moduleSources'
 import { GO_SCAFFOLD } from './go-scaffold'
 import csharpFiles from '../../../ui/templates/csharp.json'
@@ -167,6 +168,9 @@ export interface InlineDraft {
   card: CardKey
   name: string
   content: string
+  initialName: string
+  initialContent: string
+  revision: RevisionEdit
 }
 
 /** Draft of one Card's definition (`_card.json` and `_meta.json`, or for a
@@ -465,7 +469,15 @@ export class ProjectSession extends Observable {
   private closed = false
 
   // Runs
-  runStatus?: R.RunStatusT
+  private runProvenance = new Map<string, R.RunStatusT>()
+  private loadingProvenance = new Set<string>()
+  private _runStatus?: R.RunStatusT
+  get runStatus() { return this._runStatus }
+  set runStatus(status: R.RunStatusT | undefined) {
+    this._runStatus = status
+    if (status?.runId) this.runProvenance.set(s(status.runId), status)
+  }
+  markForRun(runId: string) { return runMark(this.runProvenance.get(runId)) }
   cardStates = new Map<CardKey, CardRunState>()
   displays = new Map<CardKey, DisplaySnapshot>()
   lastFinished = 0
@@ -1062,7 +1074,17 @@ export class ProjectSession extends Observable {
     const old = this.displays.get(k)
     if (old && old.runId === s(d.runId) && old.revision >= rev) return // stale frame
     const display = recordedDisplay(d)
-    if (display) this.displays.set(k, display)
+    if (display) {
+      this.displays.set(k, display)
+      // A reconnected canvas may receive a display from an older run.
+      if (this.client && !this.runProvenance.has(display.runId) && !this.loadingProvenance.has(display.runId)) {
+        this.loadingProvenance.add(display.runId)
+        void this.client.record(display.runId, path(k), display.invocation).then(record => {
+          if (record.run?.status) this.runProvenance.set(display.runId, record.run.status)
+          this.changed()
+        }).catch(() => {}).finally(() => this.loadingProvenance.delete(display.runId))
+      }
+    }
   }
 
   private recordTimeline(k: CardKey, inv: R.InvocationSummaryT) {
@@ -2457,8 +2479,10 @@ export class ProjectSession extends Observable {
   }
 
   /** Starts writing a Draft's name and content on its Card. */
-  startDraftEdit(k: CardKey) {
-    this.inlineDraft = { card: k, name: this.draftUntitled(k) ? '' : this.displayName(k), content: str(get(this.cardMeta(k), 'content')) ?? '' }
+  startDraftEdit(k: CardKey, revision = new RevisionEdit()) {
+    const name = this.draftUntitled(k) ? '' : this.displayName(k), content = str(get(this.cardMeta(k), 'content')) ?? ''
+    revision.reload(this.rev)
+    this.inlineDraft = { card: k, name, content, initialName: name, initialContent: content, revision }
     this.changed()
   }
 
@@ -2475,27 +2499,27 @@ export class ProjectSession extends Observable {
 
   /** Keeps what was written. A name the Card cannot take stays as it was, with
    *  a notice. The Card's permanent key when its name changed. */
-  async finishDraftEdit(): Promise<CardKey | undefined> {
+  async finishDraftEdit(overwrite = false): Promise<CardKey | undefined> {
     const e = this.inlineDraft
     if (!e) return undefined
-    this.inlineDraft = undefined
-    this.changed()
-    if (!this.instance(e.card)) return undefined
-    if (e.content !== (str(get(this.cardMeta(e.card), 'content')) ?? '')) {
-      this.edit((x) => x.updateMeta(e.card, (m) => m.set('content', e.content || undefined)))
+    const contentChanged = e.content !== e.initialContent
+    const nameChanged = e.name !== e.initialName
+    if (!this.instance(e.card) || (!contentChanged && !nameChanged)) {
+      this.inlineDraft = undefined; this.changed(); return undefined
     }
-    // An empty name restores the default Draft label; the identifier stays fixed.
-    if (!e.name.trim() && this.draftUntitled(e.card)) return undefined
     const name = e.name.trim() || 'draft'
-    if (name === this.displayName(e.card)) return undefined
-    try {
-      await this.renameCard(e.card, name)
-      return e.card
-    } catch (err) {
-      this.notice = err instanceof RPCFailure ? err.diagnostic ?? errorText(err) : errorText(err)
-      this.changed()
-      return undefined
+    const problem = nameChanged ? this.cardNameProblem(e.card, name) : undefined
+    if (problem) { this.notice = problem; e.revision.error = problem; e.revision.changed(); this.changed(); return undefined }
+    const ok = await e.revision.apply(this, overwrite, x => x.updateMeta(e.card, m => {
+      if (contentChanged) m.set('content', e.content || undefined)
+      if (nameChanged) m.set('name', name)
+    }))
+    if (ok && this.inlineDraft?.revision === e.revision) {
+      if (this.inlineDraft.name === e.name && this.inlineDraft.content === e.content) this.inlineDraft = undefined
+      else this.inlineDraft = { ...this.inlineDraft, initialName: e.name, initialContent: e.content }
     }
+    this.changed()
+    return ok && nameChanged ? e.card : undefined
   }
 
   async renameCard(k: CardKey, raw: string): Promise<void> {
@@ -3652,7 +3676,7 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
     const pending = state?.executionState === D.RemoteExecutionState.queued || state?.executionState === D.RemoteExecutionState.disconnected ||
       state?.executionState === D.RemoteExecutionState.cancelling ? remoteExecutionLabel(state.executionState) : undefined
     return {
-      title: str(get(m, 'name')) || path(k).pop() || k, kind, runMark: runMark(this.runStatus), symbol: sym || undefined, summary: summary || undefined,
+      title: str(get(m, 'name')) || path(k).pop() || k, kind, runMark: d ? this.markForRun(d.runId) : state || batch ? runMark(this.runStatus) : undefined, symbol: sym || undefined, summary: summary || undefined,
       inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
       result: pending ?? (d ? (executionList ? `#${d.invocation} · ` : '') + displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,

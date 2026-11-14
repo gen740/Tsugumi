@@ -138,5 +138,75 @@ TEST(HistoryCopy, SavedInputProvenanceSurvivesBothSnapshotPathsAndReplacement) {
   }
 }
 
+TEST(HistoryCopy, DeletionCannotExpandBeyondTheApprovedRuns) {
+  const auto directory = std::filesystem::temp_directory_path() / ("tsugumi-history-" + crypto::uuid4());
+  std::filesystem::create_directories(directory);
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() { std::filesystem::remove_all(path); }
+  } cleanup{directory};
+  History history(directory / "history.sqlite", "secret");
+  const auto copy = directory / "copy.sqlite";
+  RunSummaryData approved, running;
+  approved.status.run_id = crypto::uuid4();
+  approved.status.state = RunState::succeeded;
+  approved.status.ended_at = 10;
+  running.status.run_id = crypto::uuid4();
+  running.status.state = RunState::running;
+  history.write_sync([&](sql::Db& db) {
+    History::insert_run(db, approved, crypto::uuid4());
+    History::insert_run(db, running, crypto::uuid4());
+  });
+  ASSERT_EQ(history.export_runs(copy), 1);
+  const std::vector<std::string> selected{*approved.status.run_id};
+  // The second run was not shown for approval. It finishes before deletion.
+  running.status.state = RunState::succeeded;
+  running.status.ended_at = 20;
+  history.write_sync([&](sql::Db& db) { History::update_run(db, running.status); });
+  ASSERT_EQ(history.export_runs(copy), 1);
+
+  EXPECT_TRUE(history.delete_runs(copy, std::nullopt, std::vector<std::string>{}).empty());
+  EXPECT_EQ(history.delete_runs(copy, std::nullopt, selected), selected);
+  history.read([&](sql::Db& db) {
+    EXPECT_FALSE(History::run(db, *approved.status.run_id));
+    EXPECT_TRUE(History::run(db, *running.status.run_id));
+  });
+  History restored(directory / "restored.sqlite", "secret");
+  ASSERT_EQ(restored.import_runs(copy), 1);
+  restored.read([&](sql::Db& db) {
+    EXPECT_FALSE(History::run(db, *approved.status.run_id));
+    EXPECT_TRUE(History::run(db, *running.status.run_id));
+  });
+}
+
+TEST(HistoryCopy, SelectedDeletionStillRequiresFinishedRunsBeforeTheCutoff) {
+  const auto directory = std::filesystem::temp_directory_path() / ("tsugumi-history-" + crypto::uuid4());
+  std::filesystem::create_directories(directory);
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() { std::filesystem::remove_all(path); }
+  } cleanup{directory};
+  History history(directory / "history.sqlite", "secret");
+  RunSummaryData old, recent, running;
+  old.status.run_id = crypto::uuid4();
+  old.status.state = RunState::succeeded;
+  old.status.ended_at = 10;
+  recent = old;
+  recent.status.run_id = crypto::uuid4();
+  recent.status.ended_at = 30;
+  running.status.run_id = crypto::uuid4();
+  running.status.state = RunState::running;
+  history.write_sync([&](sql::Db& db) {
+    for (const auto& run : {old, recent, running}) History::insert_run(db, run, crypto::uuid4());
+  });
+  const auto copy = directory / "absent.sqlite";
+  const std::vector<std::string> selected{
+      *old.status.run_id, *recent.status.run_id, *running.status.run_id, crypto::uuid4(), *old.status.run_id};
+  EXPECT_EQ(history.delete_runs(copy, 20, selected), std::vector<std::string>{*old.status.run_id});
+  // The UI's all-runs request still deletes only finished runs.
+  EXPECT_EQ(history.delete_runs(copy, std::nullopt, std::nullopt), std::vector<std::string>{*recent.status.run_id});
+  history.read([&](sql::Db& db) { EXPECT_TRUE(History::run(db, *running.status.run_id)); });
+}
+
 }  // namespace
 }  // namespace tsugumi

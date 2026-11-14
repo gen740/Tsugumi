@@ -2,7 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 import Testing
-import TsugumiAgentClient
+@testable import TsugumiAgentClient
 import TsugumiRPC
 @testable import TsugumiApp
 @testable import TsugumiLauncher
@@ -44,6 +44,10 @@ import TsugumiRPC
       while !FileManager.default.fileExists(atPath: state.appendingPathComponent("agent.ready").path),
             core.isRunning, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
       try #require(core.isRunning && FileManager.default.fileExists(atPath: state.appendingPathComponent("agent.ready").path))
+      // Other UI tests can initialize the shared client before this fixture.
+      // Join Home's startup and release its sockets before using our service.
+      await AppModel.shared.initialRefresh?.value
+      await CoreAgentClient.shared.disconnect()
 
       model.executableURL = URL(fileURLWithPath: "/usr/bin/env")
       model.arguments = ["python3", SyncTests.root.appendingPathComponent("tests/fixtures/model_fixture.py").path,
@@ -91,6 +95,7 @@ import TsugumiRPC
         try await Task.sleep(for: .milliseconds(20))
       }
       try #require(core.isRunning && FileManager.default.fileExists(atPath: ready.path))
+      kill(model.processIdentifier, SIGCONT)
     }
 
     func makeSession() throws -> ProjectSession {
@@ -120,7 +125,9 @@ import TsugumiRPC
 
     func keep(_ chat: ChatController) { chats.append(chat) }
 
-    func send(_ text: String = "hello") async throws {
+    func send(_ text: String = "hello", holdingModel: Bool = false) async throws {
+      // Keep the response pending until restart, regardless of CI scheduling.
+      if holdingModel { try #require(kill(model.processIdentifier, SIGSTOP) == 0) }
       _ = try await CoreAgentClient.shared.call("ConversationSendRequest", ["conversation_id": conversationID,
         "turn_id": UUID().uuidString, "text": text])
     }
@@ -146,6 +153,7 @@ import TsugumiRPC
       // Let the UI's detach tasks release their socket observations before
       // terminating the isolated daemon and restoring the environment.
       try? await Task.sleep(for: .milliseconds(100))
+      if model.isRunning { kill(model.processIdentifier, SIGCONT) }
       for process in [core, model] where process.isRunning {
         process.terminate()
         let deadline = Date().addingTimeInterval(5)
@@ -155,6 +163,7 @@ import TsugumiRPC
       }
       daemon?.stop()
       try? await Task.sleep(for: .milliseconds(100))
+      await CoreAgentClient.shared.disconnect()
       if let previousState { setenv("TSUGUMI_AGENT_STATE", previousState, 1) } else { unsetenv("TSUGUMI_AGENT_STATE") }
       if let previousSupport { setenv("TSUGUMI_SUPPORT_DIR", previousSupport, 1) } else { unsetenv("TSUGUMI_SUPPORT_DIR") }
       if let project { try? FileManager.default.removeItem(at: project) }
@@ -187,11 +196,13 @@ import TsugumiRPC
 
   @Test func openingAndRefreshingAnInterruptedConversationOnlyObserve() async throws {
     try await withFixture(slow: 0.3) { t in
-      try await t.send("hello interrupted")
+      try await t.send("hello interrupted", holdingModel: true)
       // The core records preparing/model before sending the RPC acknowledgement.
       try await t.restartAgent()
       let before = try await t.snapshot()
-      #expect(before["resumable"] as? Bool == true)
+      try #require(before["resumable"] as? Bool == true)
+      let operation = try #require(before["interrupted_operation"] as? Tsugumi_Agent_InterruptedOperationT)
+      #expect(["preparing", "model"].contains(operation.kind))
       let chat = t.makeChat()
       try await until("the interruption is visible") { chat.interrupted }
       #expect(!chat.busy && !chat.stoppedAtLimit)
@@ -205,7 +216,7 @@ import TsugumiRPC
       #expect(after["resumable"] as? Bool == true)
       #expect(after["event_seq"] as? UInt64 == before["event_seq"] as? UInt64)
       #expect((after["conversation"] as? Tsugumi_Agent_ConversationT)?.messages.count == 1)
-      #expect(chat.interruptedOperation?.kind == (before["interrupted_operation"] as? Tsugumi_Agent_InterruptedOperationT)?.kind)
+      #expect(chat.interruptedOperation?.kind == operation.kind)
       t.session.start()
       try await SyncTests.connected(t.session)
       chat.resume()
@@ -218,7 +229,7 @@ import TsugumiRPC
     try await withFixture(slow: 2) { t in
       t.session.start()
       try await SyncTests.connected(t.session)
-      try await t.send("hello interrupted")
+      try await t.send("hello interrupted", holdingModel: true)
       let chat = t.makeChat()
       try await until("the running conversation is observed") { chat.busy }
       try await t.restartAgent()
@@ -233,7 +244,7 @@ import TsugumiRPC
 
   @Test func anInterruptedConversationAcceptsANewMessageWithoutResume() async throws {
     try await withFixture(slow: 0.3) { t in
-      try await t.send("hello interrupted")
+      try await t.send("hello interrupted", holdingModel: true)
       try await t.restartAgent()
       let chat = t.makeChat()
       try await until("the interruption is visible") { chat.interrupted }
@@ -323,8 +334,10 @@ import TsugumiRPC
     try await withFixture(slow: 0.1) { t in
       try await t.send()
       let chat = t.makeChat()
-      try await until("the persisted request is visible") { chat.currentId == t.conversationID && !chat.items.isEmpty }
-      #expect(!chat.busy, "The UI waits for its project connection; core keeps working.")
+      try await until("the running answer is observed before the project connects") {
+        chat.currentId == t.conversationID && !chat.items.isEmpty && chat.busy
+      }
+      #expect(!t.session.connected, "Observing core work does not need a project connection")
       t.session.start()
       try await SyncTests.connected(t.session)
       try await until("the running answer is observed") { chat.busy }

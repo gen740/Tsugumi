@@ -234,6 +234,37 @@ final class ServiceWireTests: XCTestCase {
     XCTAssertEqual(decoded["event_seq"] as? UInt64, UInt64.max - 1)
   }
 
+  func testInterruptionUsesTheCoreFlagsAndKeepsTheOperation() throws {
+    let conversation = Tsugumi_Agent_ConversationT()
+    conversation.id = "interrupted"
+    let operation = Tsugumi_Agent_InterruptedOperationT()
+    operation.kind = "tool"
+    operation.id = "pending-read"
+    operation.name = "project_inspect"
+    operation.argumentsJson = #"{"at_rev":42}"#
+    let result = Tsugumi_Agent_ConversationResultT()
+    result.conversation = conversation
+    result.resumable = true
+    result.continuable = true
+    result.interruptedOperation = operation
+    let decoded = try ServiceWire.decode(reply(result, type: .conversationresult), host: false)
+    XCTAssertEqual(decoded["busy"] as? Bool, false)
+    XCTAssertEqual(decoded["resumable"] as? Bool, true)
+    XCTAssertEqual(decoded["continuable"] as? Bool, true)
+    let saved = try XCTUnwrap(decoded["interrupted_operation"] as? Tsugumi_Agent_InterruptedOperationT)
+    XCTAssertEqual(saved.kind, "tool")
+    XCTAssertEqual(saved.id, "pending-read")
+    XCTAssertEqual(saved.name, "project_inspect")
+    XCTAssertEqual(saved.argumentsJson, operation.argumentsJson)
+
+    // An event page reports liveness only; it has no interruption flags.
+    let page = Tsugumi_Agent_EventsPageT()
+    let idle = try ServiceWire.decode(reply(page, type: .eventspage), host: false)
+    XCTAssertEqual(idle["busy"] as? Bool, false)
+    XCTAssertNil(idle["resumable"])
+    XCTAssertNil(idle["interrupted_operation"])
+  }
+
   func testFailuresKeepTheApprovalRequestIdentity() throws {
     let failure = Tsugumi_Service_FailureT()
     failure.code = "grant_required"
