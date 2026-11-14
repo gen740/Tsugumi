@@ -1,11 +1,27 @@
-"""Layout proposals go through the project RPC without mutating the document."""
+"""Layout proposals go through the host RPC without mutating the document."""
 
 import json
 from pathlib import Path
 
 import pytest
 
-from tsugumi_client import RpcFailure, make, text
+import importlib
+from tsugumi_client import text
+from harness.host import Host
+
+
+def make(name, /, **fields):
+    value = getattr(importlib.import_module(f"Tsugumi.Host.{name}"), name + "T")()
+    for key, item in fields.items():
+        setattr(value, key, item)
+    return value
+
+
+@pytest.fixture
+def host(tmp_path):
+    value = Host(tmp_path / "host")
+    yield value
+    value.close()
 
 
 def scene_object(scene):
@@ -30,35 +46,41 @@ def scene_object(scene):
 
 
 def proposal_object(proposal):
-    out = {key: [{"id": text(p.id), "x": p.x, "y": p.y} for p in getattr(proposal, key)]
+    out = {key: [{"id": text(p.id), "x": p.x, "y": p.y} for p in (getattr(proposal, key) or [])]
            for key in ("cards", "frames", "notes")}
-    out["portOrders"] = [{"id": text(o.id), "inputs": [text(p) for p in o.inputs],
-                          "outputs": [text(p) for p in o.outputs]} for o in proposal.portOrders]
+    out["portOrders"] = [{"id": text(o.id), "inputs": [text(p) for p in (o.inputs or [])],
+                          "outputs": [text(p) for p in (o.outputs or [])]} for o in (proposal.portOrders or [])]
     return out
 
 
-def test_layout_rpc_matches_golden_without_saving(client):
+def test_layout_rpc_matches_golden_without_saving(host):
     """Both layout requests return the TypeScript goldens and leave the revision and layout untouched."""
-    before = client.call("ProjectInspectRequest")
-    vectors = json.loads((Path(__file__).parents[1] / "fixtures/layout-golden.json").read_text())
+    vectors = json.loads((Path(__file__).parents[2] / "fixtures/layout-golden.json").read_text())
     for case in vectors:
         fields = {"scene": scene_object(case["scene"])}
         if case["request"] == "untangle":
             fields["around"] = case.get("around", [])
-        proposal = client.call("LayoutArrangeRequest" if case["request"] == "arrange" else "LayoutUntangleRequest", **fields)
+        proposal = host.call("LayoutArrangeRequest" if case["request"] == "arrange" else "LayoutUntangleRequest", **fields)
         assert proposal_object(proposal) == case["expect"], case["name"]
-    after = client.call("ProjectInspectRequest")
-    assert after.rev == before.rev
-    assert after.layoutJson == before.layoutJson
-    assert after.projectJson == before.projectJson
 
 
 @pytest.mark.parametrize("field,value", [("grid", -1), ("grid", float("nan")),
                                         ("grid", float("inf")), ("flow", "unknown")])
-def test_layout_rejects_invalid_measurements(client, field, value):
+def test_layout_rejects_invalid_measurements(host, field, value):
     """Invalid geometry is rejected before arithmetic can produce a proposal."""
     scene = {"flow": "topToBottom", "grid": 20, "snap": False,
              "cards": [], "wires": [], "frames": [], "notes": [], field: value}
-    with pytest.raises(RpcFailure) as failure:
-        client.call("LayoutArrangeRequest", scene=scene_object(scene))
-    assert failure.value.kind == "invalid_request"
+    with pytest.raises(RuntimeError) as failure:
+        host.call("LayoutArrangeRequest", scene=scene_object(scene))
+    assert "invalid_request" in str(failure.value)
+
+
+@pytest.mark.parametrize("case", json.loads(
+    (Path(__file__).parents[2] / "fixtures/layout-invalid.json").read_text()),
+    ids=lambda case: case["name"])
+def test_layout_validation_rejects_near_miss_fields_and_overflow(host, case):
+    """The host refuses the exact layout vectors that the core preserves as opaque text."""
+    with pytest.raises(RuntimeError, match="invalid_request"):
+        host.call("LayoutValidateRequest", json=case["json"])
+    # A rejected layout still receives a reply and leaves the connection usable.
+    assert text(host.call("LayoutValidateRequest", json=" { } ").json) == " { } "

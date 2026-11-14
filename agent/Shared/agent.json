@@ -31,10 +31,9 @@
     "RunEnvironmentPathsRequest",
     "ProjectShellRequest",
     "ModuleReadRequest",
-    "LayoutArrangeRequest",
-    "LayoutUntangleRequest",
     "ProjectCacheUsageRequest"
   ],
+  "hostRequests": ["LayoutArrangeRequest", "LayoutUntangleRequest", "LayoutValidateRequest"],
   "approvalRequests": [
     "RunHistoryDeleteRequest",
     "ProjectCacheClearRequest",

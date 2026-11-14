@@ -1,3 +1,4 @@
+import FlatBuffers
 import Darwin
 import Foundation
 import TsugumiRPC
@@ -200,6 +201,40 @@ public actor CoreAgentClient {
   public func call(_ method: String, _ fields: [String: Any] = [:]) async throws -> [String: Any] {
     try await connect()
     return try await exchange(method, fields, host: ServiceWire.hostMethod(method, fields))
+  }
+
+  /// Stateless presentation operations use the host contract, independently of a project socket.
+  public func layoutCall<T: NativeObject>(_ type: Tsugumi_Host_RequestPayload, _ value: NativeObject) async throws -> T {
+    try await connect()
+    guard let transport = transports[true], nextID < UInt64.max else { throw RPCError.disconnected }
+    nextID += 1
+    let request = Tsugumi_Host_RequestT()
+    request.value = Tsugumi_Host_RequestPayloadUnion(value, type: type)
+    let message = Tsugumi_Host_MessageT()
+    message.requestId = nextID
+    message.payload = Tsugumi_Host_PayloadUnion(request, type: .request)
+    var builder = FlatBufferBuilder(initialSize: 1024)
+    var object: Tsugumi_Host_MessageT? = message
+    let offset = Tsugumi_Host_Message.pack(&builder, obj: &object)
+    Tsugumi_Host_Message.finish(&builder, end: offset)
+    let data: Data = try await withCheckedThrowingContinuation { continuation in
+      transport.call(builder.data, timeout: .seconds(120), continuation: continuation)
+    }
+    var buffer = ByteBuffer(data: data)
+    let root: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
+    let result = (Tsugumi_Host_MessageT(root).payload?.value as? Tsugumi_Host_ReplyT)?.value?.value
+    if let failure = result as? Tsugumi_Service_FailureT {
+      throw CoreAgentFailure(code: failure.code, message: failure.message, requestID: failure.requestId)
+    }
+    guard let result = result as? T else { throw CoreAgentFailure(code: "protocol", message: "Invalid layout reply", requestID: nil) }
+    return result
+  }
+
+  public func validateLayout(_ json: String, removedCards: [String] = []) async throws -> String {
+    let request = Tsugumi_Host_LayoutValidateRequestT()
+    request.json = json; request.removedCards = removedCards.map(Optional.some)
+    let result: Tsugumi_Host_LayoutValidatedT = try await layoutCall(.layoutvalidaterequest, request)
+    return result.json
   }
 
   public func configure(_ config: ProviderConfig, conversationID: String) async throws {
