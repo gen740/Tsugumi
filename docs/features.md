@@ -9,7 +9,7 @@ This reference follows `main` and covers the 0.7 pre-release series. If you are 
 ### Build and navigate a Workflow
 
 - **Sketch before writing code.** Add a Draft with `e` while the Canvas has focus, describe a step, and draw its wires. Add a Start, Input, Switch, Fork, Branch, Merge or Collect Card when you already know how data should flow. [Canvas tools](Usage.md#canvas-tools) · [Kinds of Card](#kinds-of-card)
-- **Organise a larger graph.** Right-click the Canvas and choose **Arrange** to place Cards or **Untangle Wires** to reduce crossings while keeping their positions. Group related Cards with **Group Selection**, or open a Card in Card to see its child Workflow and boundary ports. Import another Workflow as a Card in Card with the import button by **Add Card**. [Canvas tools](Usage.md#canvas-tools) · [Cards and Workflows](#2-cards-and-workflows)
+- **Organise a larger graph.** Right-click the Canvas and choose **Arrange** to place Cards or **Untangle Wires** to reduce crossings while keeping their positions. Group related Cards with **Group Selection**, or open a Card in Card to see its child Workflow and boundary ports. The import button by **Add Card** copies another project into `externals/` and places its Workflow as a Card in Card. [Canvas tools](Usage.md#canvas-tools) · [Cards and Workflows](#2-cards-and-workflows)
 - **Sweep inputs and implementations.** Give a Card a list of implementations in `run`, or send it a batch, and it runs every combination. Connect the batch to a Collect Card to pass one vector or Directory on. [Run lists and Collect](#run-lists-and-collect)
 - **See references between Card definitions.** Turn on **Nix references (as written)**, then hover a Card or open the list. Follow `inputs.data` to the Card connected to the `data` input. [Nix references](Usage.md#canvas-tools)
 
@@ -38,7 +38,7 @@ This reference follows `main` and covers the 0.7 pre-release series. If you are 
 
 ### Work with the Agent and explore examples
 
-- **Turn a Draft into a Card.** Connect a model under **Settings → API**, describe an operation in a Draft and choose **Generate Cards**. Review the generated source, ports and run record. Use Card comments to request a specific change. [Generate from Drafts](#generating-cards-from-drafts) · [Generate from comments](#generating-cards-from-comments) · [Data and permissions](security.md#8-the-models-api-keys-agent)
+- **Turn a Draft into a Card.** Connect a model under **Settings → API**, describe an operation in a Draft and choose **Generate Cards**. Review the generated source, ports and run record. Use Card comments to request a specific change. [Generate from Drafts](#generating-cards-from-drafts) · [Generate from comments](#generating-cards-from-comments) · [Data and permissions](security.md#7-the-models-api-keys-agent)
 - **Start from an example.** Browse Demos and open a copy to change a parameter, run it again, or follow the thrush's guide. Use the [documentation site](https://gen740.github.io/Tsugumi/)'s recordings to inspect example Workflows before installing. [Bundled demos](Demos.md)
 - **Work from Claude Code.** Install the plugin to have Claude Code make and run Cards through Tsugumi's tools, with the work shown in the Web UI. [Claude Code plugin](claude-code.md)
 
@@ -189,7 +189,7 @@ See [Several projects](Usage.md#several-projects) for windows and [Web UI tabs](
 
 ## 9. Agent
 
-Connect a model under **Settings → API**, then ask the chat to make or change Cards. [Permissions and sent data](security.md#8-the-models-api-keys-agent) · [Agent controls](Usage.md#working-with-the-agent)
+Connect a model under **Settings → API**, then ask the chat to make or change Cards. [Permissions and sent data](security.md#7-the-models-api-keys-agent) · [Agent controls](Usage.md#working-with-the-agent)
 
 ### Commands in the project environment
 
@@ -216,7 +216,7 @@ Besides Anthropic's Messages API, OpenAI's API and the ChatGPT plan are supporte
 
 ### Connecting to models
 
-The host-side `tsugumi-agentd` owns provider endpoints, revisioned settings and OAuth credentials. The clients keep settings screens, presentation snapshots, browser opening and macOS login Keychain access. Keychain-backed API keys are provisioned to agentd in memory only; non-Mac and Web Keychain-save fallback keys use its owner-only store. Host RPC supplies settings get/update, secret-input provider set/status and sign-in begin/action/status; ordinary model selections contain no endpoint or credential. Desktop settings are shared; the app and Web hosts have separate ChatGPT account profiles. OAuth validation, callback handling, refresh rotation and revocation run in core. See [API keys and sign-in](security.md#8-the-models-api-keys-agent).
+The host-side `tsugumi-agentd` owns provider endpoints, revisioned settings and OAuth credentials. The clients keep settings screens, presentation snapshots, browser opening and macOS login Keychain access. Keychain-backed API keys are provisioned to agentd in memory only; non-Mac and Web Keychain-save fallback keys use its owner-only store. Host RPC supplies settings get/update, secret-input provider set/status and sign-in begin/action/status; ordinary model selections contain no endpoint or credential. Desktop settings are shared; the app and Web hosts have separate ChatGPT account profiles. OAuth validation, callback handling, refresh rotation and revocation run in core. See [API keys and sign-in](security.md#7-the-models-api-keys-agent).
 
 - Supports the Anthropic Messages API and the OpenAI Responses API, responding by streaming. OpenAI can be used with an API key or with the user's ChatGPT plan (Sign in with ChatGPT, the procedure for open-source tools) ([Security](security.md#the-chatgpt-plan-sign-in-with-chatgpt)).
 - The chat's model menu chooses effort and Fast mode. The model list comes from the provider; the effort levels and Fast mode offered for a model are only those confirmed in the provider's documentation (`modelOptions` in `agent/Shared/agent.json`). If nothing is chosen, these fields are not sent and the model's defaults apply.

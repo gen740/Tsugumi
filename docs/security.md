@@ -11,7 +11,7 @@ A Tsugumi project is code to run and the definition of the environment it runs i
 
 Inside it, Tsugumi takes on the following:
 
-- **AI does not widen permissions without the user's approval.** A save in which the Agent gives a Card the network, running without isolation, a Mac folder or an external Nix source does not go through until the user approves (§8). For a tool you hand work to AI with, this is the boundary that matters most.
+- **AI does not widen permissions without the user's approval.** A save in which the Agent gives a Card the network, running without isolation, a Mac folder or an external Nix source does not go through until the user approves (§7). For a tool you hand work to AI with, this is the boundary that matters most.
 - **Closed by default.** By default a Card cannot reach the network, and cannot see the project's definitions, the authentication token or other Cards' work areas. It widens only when the project says so (§4).
 - **The permissions written are visible.** Widened permissions are in readable files, `_card.json` and `tsugumi.json`, and appear on the Card's icons on the Canvas and among the Experimental items of the Card's settings. The `.tsugumi/` of a project from someone else is inspected before use.
 - **The Mac and other projects are protected.** In the app (the shared VM), even if a project could not be trusted, its files and processes reach only that project and the folders explicitly shared with it (§2, §3).
@@ -20,10 +20,10 @@ The table below lists the limits of these guarantees. Details are in each sectio
 
 | Outside the guarantees | Why | Details |
 | --- | --- | --- |
-| Opening someone else's project, there is no confirmation for `network`, `sandbox: false` and `hostFolders` written in `_card.json`, or for `nixSources` in `tsugumi.json` | Opening a project is a decision to trust its contents ("What Tsugumi takes on" above). The permissions written are visible in the files and on the Cards, and only when the Agent adds one does it wait for approval | [§10](#10-known-limitations-and-cautions) |
+| Opening someone else's project, there is no confirmation for `network`, `sandbox: false` and `hostFolders` written in `_card.json`, or for `nixSources` in `tsugumi.json` | Opening a project is a decision to trust its contents ("What Tsugumi takes on" above). The permissions written are visible in the files and on the Cards, and only when the Agent adds one does it wait for approval | [§9](#9-known-limitations-and-cautions) |
 | With the Agent, the code, logs and input and output values the Agent reads are sent to the model's provider | Having an outside model read something means sending it. Only what the Agent reads is sent, and whether to use it, and which provider, is the user's choice. Without the Agent, every operation can be done from the UI | [What is sent to the model](#what-is-sent-to-the-model) |
 | With web search on, search terms go to the search service. It cannot be guaranteed that unpublished data stays out of them | Off by default; turning it on is the user's choice. While off, the model is not shown the search tool | [Web search](#web-search) |
-| Isolation between projects is on one Linux kernel and does not prevent kernel vulnerabilities | The same isolation as containers; the Mac is separated by the VM. Do not open at the same time projects you want strongly separated | [§10](#10-known-limitations-and-cautions) |
+| Isolation between projects is on one Linux kernel and does not prevent kernel vulnerabilities | The same isolation as containers; the Mac is separated by the VM. Do not open at the same time projects you want strongly separated | [§9](#9-known-limitations-and-cautions) |
 | Even with `network: false`, Nix's fixed-output derivations can communicate at build time | How Nix works. What is fetched is checked against its hash and discarded if it does not match, so the content cannot change. What goes out is the request to the source the author wrote | [§5](#5-limits-on-nix-evaluation) |
 
 ## 1. The trust boundaries
@@ -54,7 +54,7 @@ There are four boundaries, from the innermost outwards.
 
 - **Of the Mac's files, the VM sees only the folder of each open project and its control folder, and the folders explicitly specified in that project's Card definitions or chat.** Neither the whole home folder nor other projects are shared. Stopping a project ends its slot's sharing; closing a UI leaves the resident environment running.
 - There are two routes for sharing a Mac folder with the VM (`core/src/host/environment.cc`; the signed helper applies the resulting mount plan).
-  - **A Card's "Allow access to folders of the host"** (`hostFolders` in `_card.json`, Experimental): folders written in the Card definitions of the project (and its `externals`) are shared into that project's slot when the environment starts. Those without write permission (`write: true`) are read-only. **This sharing is decided by what is written in the definition files alone, with no confirmation on opening** (a save the Agent makes waits for approval; §8, §10).
+  - **A Card's "Allow access to folders of the host"** (`hostFolders` in `_card.json`, Experimental): folders written in the Card definitions of the project (and its `externals`) are shared into that project's slot when the environment starts. Those without write permission (`write: true`) are read-only. **This sharing is decided by what is written in the definition files alone, with no confirmation on opening** (a save the Agent makes waits for approval; §7, §9).
   - **Attaching a folder to the chat**: a folder for the Agent to read is shared read-only with that project.
 - Each project is given its own virtiofs device (`tsugumi-<slot>`) for sharing, so replacing one project's shares does not affect others.
 - The only entitlement given to the app is `com.apple.security.virtualization` (`macOS/Resources/Tsugumi.entitlements`).
@@ -110,7 +110,7 @@ Each Card's code is further run inside a `bubblewrap` sandbox (`core/src/worker_
 
 ### `sandbox: false`
 
-A setting that relaxes only the restrictions on seeing the file system. Where bubblewrap is available (the shared VM, the `tsugumi` command on Linux), these protections remain (on a `tsugumid` run directly on a Mac host without bubblewrap, a `sandbox: false` Card runs without isolation, with the user's permissions; §10):
+A setting that relaxes only the restrictions on seeing the file system. Where bubblewrap is available (the shared VM, the `tsugumi` command on Linux), these protections remain (on a `tsugumid` run directly on a Mac host without bubblewrap, a `sandbox: false` Card runs without isolation, with the user's permissions; §9):
 
 - The user, PID, **network** and IPC namespaces are separated (no outside communication unless `network: true` is also set, and all descendant processes are reaped when the worker ends).
 - The control folder and the `.tsugumi` directory are hidden behind empty `tmpfs` mounts. virtiofs presents every file as owned by the process looking at it, so ordinary file permissions (mode) alone cannot protect the authentication token.
@@ -174,15 +174,7 @@ A Card's `default.nix` may contain any Nix expression, but evaluation enforces t
 
 Paging cursors, for reading history and the like, carry a signature like an HMAC with a secret key generated at each start (the first 32 hex digits of `sha256(secret + payload)`), so a client cannot tamper with a cursor to read data out of range.
 
-## 7. Importing files (import grants)
-
-A mechanism that stops an RPC client (the Agent included) from having `tsugumid` read arbitrary file paths on the host when importing Card definitions from another project.
-
-1. When the user chooses the source in the app's file dialog, the app copies its content at that moment into `grants/<uuid>/` in the control folder and registers it in `grants.json`.
-2. An RPC `Import` request can name only this grant ID, and `tsugumid` reads nothing other than the paths registered in `grants.json`.
-3. `grants.json` cannot be changed through the RPC; only the app itself writes it. And a Card's worker cannot see the control folder at all.
-
-## 8. The model's API keys (Agent)
+## 7. The model's API keys (Agent)
 
 - On macOS, the app stores API keys in the user's **login keychain** (`macOS/Sources/AgentClient/Provider.swift`). The service name is `app.tsugumi.agent`, and the account name is the provider's name (`Anthropic` / `OpenAI`). The app and the Web host use the same items.
   - Login keychain items are not synced to iCloud Keychain. They can be read while the login keychain is unlocked (normally, while logged in).
@@ -262,7 +254,7 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
   - What this boundary protects is **operations through Tsugumi's tools**. Claude Code also has a shell and file operations, so with the same permissions as the user it can rewrite the project's files (`_card.json` and the like) directly and read what the user can read (such as the URL in the log `server.log` of a server Claude Code started). Stopping that is up to Claude Code's own permission settings, not Tsugumi.
 - `attached_folder_read` requires a folder registered by the user and an active Read grant for that resource, checked in `core/src/agent/host.cc` before the project RPC is called. Removing a folder from the UI's attachment list is separate from revoking its Agent access grant; agentd updates the attached-folder control file and withdraws the corresponding VM share when the folder is removed.
 
-## 9. Where data is kept, and how to delete it
+## 8. Where data is kept, and how to delete it
 
 | Data | Where | Deleting and managing |
 | --- | --- | --- |
@@ -270,18 +262,18 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
 | Run history (primary) | The VM's run-history disk `vm/history.img` (`/history-disk/<id>/` inside the VM) | "Delete Run History" in the project's settings, or "Run history in the VM" in the settings |
 | Run history (copy in the project) | `.tsugumi/runs.sqlite`, `.tsugumi/runs/` | "Delete Run History", or stop writing it with `saveRunHistory = false` |
 | Nix store, build roots | `~/Library/Application Support/Tsugumi/vm/store.img` | "Delete the build cache" and "Clean shared store" |
-| Control folders (token, grants) | `~/Library/Application Support/Tsugumi/environments/<id>/control/` | "Reset all environments" |
+| Control folders (token, origins, attached folders) | `~/Library/Application Support/Tsugumi/environments/<id>/control/` | "Reset all environments" |
 | API keys | macOS login Keychain; agentd's owner-only `host-settings.sqlite` for non-Mac/Web save fallback; Web environment keys in memory | Settings > API registers or deletes a key |
 | Agent conversations, events, receipts, grants and provisioned credentials | `agent-core/agent.sqlite` under the Mac support folder (`Tsugumi/` or `Tsugumi-dev/`), or under the Web data folder on Linux (`TSUGUMI_AGENT_STATE` overrides it) | Conversation deletion goes through Agent RPC |
 | ChatGPT account metadata and Skill folder settings | agentd's `host-settings.sqlite`, scoped separately for the app and each Web host | Settings > API / Skills |
 
 "Reset all environments" in the settings stops the VM and deletes `vm/` (except the run-history disk `vm/history.img`) and `environments/`. The documents, artifacts and `.tsugumi/runs.sqlite` in project folders, and the run-history disk of the VM, are kept.
 
-## 10. Known limitations and cautions
+## 9. Known limitations and cautions
 
 Most of these spell out, as practical cautions, what lies outside the boundary in the [summary](#what-tsugumi-takes-on) (whether to trust a project's contents).
 
-- **Check the permissions written in a project you received before running it.** `network`, `sandbox: false` and `hostFolders` (especially `write: true`) in `_card.json`, and `nixSources` in `tsugumi.json`, take effect without confirmation both on opening and at run time (only saves the Agent makes wait for approval; §8). Look at the Cards' icons and the Experimental items of the Cards' settings. A `sandbox: false` Card can read every Mac folder shared with that project (§4).
+- **Check the permissions written in a project you received before running it.** `network`, `sandbox: false` and `hostFolders` (especially `write: true`) in `_card.json`, and `nixSources` in `tsugumi.json`, take effect without confirmation both on opening and at run time (only saves the Agent makes wait for approval; §7). Look at the Cards' icons and the Experimental items of the Cards' settings. A `sandbox: false` Card can read every Mac folder shared with that project (§4).
 - **Projects share one Linux kernel.** An exploited kernel vulnerability could reach other projects, so do not open at the same time projects you want strongly separated (§3).
 - **A Web UI run directly on a Mac host from the repository has weaker isolation.** A `sandbox: false` Card runs without isolation with the user's permissions (`network: false` does not apply either), and a `network: true` Card can reach devices on the same LAN or VPN ([Direct macOS host](#direct-macos-host)). The `tsugumi` command uses the shared VM, so this does not apply to it.
 - **Releases are signed ad hoc, without Apple's notarisation.** GitHub Actions builds them from this repository's tags (`.github/workflows/release.yml`), and automatic updates are installed after their checksum, code signature and more are checked ("Automatic updates" in [Releasing](../RELEASING.md)). The correctness of updates rests on trusting the people who can write to this repository and its GitHub Releases.

@@ -201,24 +201,6 @@ public actor EnvironmentManager {
   public func resizeTerminal(session: UInt64, rows: Int, cols: Int) async {
     _ = try? await client.call("HostTerminalRequest", ["action": Tsugumi_Host_TerminalAction.resize, "session": session, "rows": rows, "cols": cols])
   }
-  public func grantImport(_ p: ProjectIdentity, source: URL) async throws -> String {
-    let grant = UUID().uuidString.lowercased()
-    let control = controlDir(p)
-    let dest = control.appendingPathComponent("grants/\(grant)", isDirectory: true)
-    try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
-    for item in ["tsugumi.json", "layout.json", "definitions"] {
-      let src = source.appendingPathComponent(item)
-      if FileManager.default.fileExists(atPath: src.path) {
-        try FileManager.default.copyItem(at: src, to: dest.appendingPathComponent(item))
-      }
-    }
-    let grantsURL = control.appendingPathComponent("grants.json")
-    var grants = (try? JSONSerialization.jsonObject(with: Data(contentsOf: grantsURL))) as? [String: [String: String]] ?? [:]
-    grants["grants", default: [:]][grant] = "/control/grants/\(grant)"
-    try JSONSerialization.data(withJSONObject: grants).write(to: grantsURL, options: .atomic)
-    return grant
-  }
-
 }
 
 /// Runtime state and console presentation; it has no VM control methods.

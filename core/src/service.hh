@@ -37,7 +37,7 @@ struct ServiceOptions {
   std::filesystem::path root;
   std::string token;                 // required on WebSocket connections
   std::string server_instance_id;
-  std::filesystem::path grants_file;  // launcher-managed import grants (JSON)
+  std::filesystem::path control_dir;  // launcher-managed files hidden from workers
   // Launcher-managed list of the folders attached to a chat (JSON), for a
   // tsugumid on the host (no chat_folders): only these are read.
   std::filesystem::path attached_file;
@@ -134,7 +134,6 @@ class Service : public RequestSink {
   void open_project(RequestIn& req);
   void save(RequestIn& req);
   void reload(RequestIn& req);
-  void import_definitions(RequestIn& req);
   void cache_clear(RequestIn& req);
   void cache_usage(RequestIn& req);
   void history_delete(RequestIn& req);

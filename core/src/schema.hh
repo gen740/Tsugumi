@@ -456,11 +456,6 @@ struct SdkJobJson {
   t::String<"failure"> failure_b64;  // Failure FlatBuffer, empty when none
 };
 
-// Launcher-managed import grants: grant id -> read-only container path.
-struct Grants {
-  t::Mapping<"grants", v::String, v::String> grants;
-};
-
 // ---- .tsugumi-history.json (a demo's versions, core/src/versions.cc) ------------
 
 
