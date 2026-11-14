@@ -69,5 +69,5 @@ def test_wired_drafts_can_be_saved_written_and_renamed(client, daemon):
     definitions = {text(d.id): d for d in after.definitions}
     assert json.loads(text(definitions["p"].metaJson))["content"] == "count words"
     assert json.loads(text(definitions["q"].metaJson))["name"] == "日本語"
-    resolved = {text(card.card.segments[0]): card for card in after.resolution}
-    assert text(resolved["q"].name) == "日本語"
+    # The core speaks in ids: the display name stays in the Card's own _meta.json.
+    assert {text(card.card.segments[0]) for card in after.resolution} == {"p", "q", "r"}
