@@ -1,13 +1,11 @@
 """The maximum flow by networkx, checked against the capacities and conservation,
 drawn on the network: each edge shows flow / capacity, thicker for more flow."""
-import tsugumi
 import json
 
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 
-from inputs.network.flow.Network import Network
 from tsugumi import Failure
 
 
@@ -23,9 +21,9 @@ def positions(nodes):
 
 
 def main(inputs, report):
-    net = inputs.input("network", Network)
-    nodes = net.Nodes().decode().split()
-    edges = [(nodes[u], nodes[v], int(c)) for u, v, c in zip(net.TailAsNumpy(), net.HeadAsNumpy(), net.CapacityAsNumpy())]
+    net = inputs.network
+    nodes = net.nodes.decode().split()
+    edges = [(nodes[u], nodes[v], int(c)) for u, v, c in zip(net.tail, net.head, net.capacity)]
     graph = nx.DiGraph()
     graph.add_nodes_from(nodes)
     graph.add_weighted_edges_from(edges, weight="capacity")
@@ -59,17 +57,17 @@ def main(inputs, report):
     ax.set_axis_off()
     fig.tight_layout()
     report.figure()
-    report.log(str("result: " + json.dumps({"value": value, "flow": [[u, v, f] for (u, v, _), f in zip(edges, amounts)]})))
-    names = net.Nodes()
-    tail = net.TailAsNumpy()
-    head = net.HeadAsNumpy()
-    caps = net.CapacityAsNumpy()
+    report.log("result: " + json.dumps({"value": value, "flow": [[u, v, f] for (u, v, _), f in zip(edges, amounts)]}))
+    names = net.nodes
+    tail = net.tail
+    head = net.head
+    caps = net.capacity
     vec = np.array(amounts, dtype=np.uint64)
-    _out_value = {}
-    _out_value['nodes'] = names
-    _out_value['tail'] = tail
-    _out_value['head'] = head
-    _out_value['capacity'] = caps
-    _out_value['flow'] = vec
-    _out_value['value'] = value
-    return {'flow': _out_value}
+    return {'flow': {
+        'nodes': names,
+        'tail': tail,
+        'head': head,
+        'capacity': caps,
+        'flow': vec,
+        'value': value,
+    }}

@@ -1,6 +1,6 @@
 """Assigns the three band images to R, G and B with an asinh stretch per
 channel and shows the PNG. Not exposure corrected: a picture, not a flux map."""
-import tsugumi
+from tsugumi import contract
 import hashlib
 import json
 import shutil
@@ -10,11 +10,9 @@ import numpy as np
 from astropy.io import fits
 from PIL import Image
 
-from inputs.input.casa.BandDir import BandDir
-
 
 def main(inputs, report, run):
-    source = Path(inputs.input("input", BandDir).Value().decode())
+    source = Path(contract.input_object(inputs, "input").value.decode())
     p = inputs.params
     percentile, q = p.percentile, p.q
     assert 90 <= percentile <= 100 and q > 0
@@ -38,9 +36,7 @@ def main(inputs, report, run):
     digest = hashlib.sha256(png.read_bytes()).hexdigest()
     manifest["display"] = {"stretch": "asinh", "q": q, "percentile": percentile, "scales": scales, "png_sha256": digest}
     (dest / "provenance.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
-    report.log(str(f"casa-rgb.png sha256 {digest}"))
+    report.log(f"casa-rgb.png sha256 {digest}")
     report.image(png.read_bytes())
     s = str(dest)
-    _out_value = {}
-    _out_value['value'] = s
-    return {'rgb': _out_value}
+    return {'rgb': {'value': s}}

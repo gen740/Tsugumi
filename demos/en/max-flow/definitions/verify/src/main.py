@@ -6,7 +6,6 @@ import numpy as np
 from scipy.sparse import csr_array
 from scipy.sparse.csgraph import maximum_flow
 
-from inputs.cut.flow.Cut import Cut
 from tsugumi import Failure
 
 BRUTE_LIMIT = 22  # 2^22 subsets is about a second here; beyond that it is skipped and says so
@@ -27,10 +26,10 @@ def brute_force(n, tail, head, capacity):
 
 
 def main(inputs, report):
-    c = inputs.input("cut", Cut)
-    nodes = c.Nodes().decode().split()
-    tail, head, capacity = c.TailAsNumpy(), c.HeadAsNumpy(), c.CapacityAsNumpy()
-    value = int(c.Value())
+    c = inputs.cut
+    nodes = c.nodes.decode().split()
+    tail, head, capacity = c.tail, c.head, c.capacity
+    value = int(c.value)
 
     matrix = csr_array((capacity.astype(np.int32), (tail.astype(np.int32), head.astype(np.int32))), shape=(len(nodes), len(nodes)))
     by_scipy = int(maximum_flow(matrix, 0, len(nodes) - 1).flow_value)
@@ -56,4 +55,4 @@ def main(inputs, report):
     else:
         lines += ["", f"Too many nodes ({len(nodes) - 2} inside), so brute force was skipped."]
     report.markdown("\n".join(lines))
-    report.log(str("result: " + json.dumps({"networkx": value, "scipy": by_scipy, "minimum_cuts": minimum_cuts})))
+    report.log("result: " + json.dumps({"networkx": value, "scipy": by_scipy, "minimum_cuts": minimum_cuts}))

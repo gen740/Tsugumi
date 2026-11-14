@@ -1,4 +1,3 @@
-import tsugumi
 import os
 
 import matplotlib
@@ -7,18 +6,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import csv
-
-from inputs.data.quake.QuakeFiles import QuakeFiles
-import outputs.section.quake.SectionDir as out
-
-
-def emit(inputs, port, out):
-    result_ports = {}
-    s = '.'
-    _out_value = {}
-    _out_value['value'] = s
-    result_ports.update({port: _out_value})
-    return result_ports
 
 
 def png(fig):
@@ -30,9 +17,8 @@ def png(fig):
 
 
 def main(inputs, report, run):
-    result_ports = {}
     p = inputs.params
-    folder = inputs.input("data", QuakeFiles).Value().decode()
+    folder = inputs.data.value.decode()
     rows = list(csv.DictReader(open(os.path.join(folder, sorted(os.listdir(folder))[0]))))
     ev = np.array([(float(r["latitude"]), float(r["longitude"]), float(r["depth"]), float(r["mag"]))
                    for r in rows if r.get("type") == "earthquake" and r["mag"] and r["depth"]])
@@ -55,7 +41,6 @@ def main(inputs, report, run):
         fh.write(data)
     np.savetxt(os.path.join(run.output_directory, "selected.csv"), sel, delimiter=",",
                header="latitude,longitude,depth_km,mag", comments="", fmt="%.4f")
-    report.log(str(f"{len(sel)} of {len(ev)} events between {p.latMin:g} and {p.latMax:g} N"))
+    report.log(f"{len(sel)} of {len(ev)} events between {p.latMin:g} and {p.latMax:g} N")
     report.image(data, "image/png", "Japan Trench: events and depth cross-section")
-    result_ports.update(emit(inputs, 'section', out))
-    return result_ports
+    return {'section': {"value": run.output_directory}}

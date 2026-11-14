@@ -2,7 +2,6 @@
 the worker keeps the window between invocations; each run starts with an empty one."""
 from collections import deque
 
-from inputs.sample.live.Sample import Sample
 
 points = None
 
@@ -13,8 +12,8 @@ def on_run_start(inputs):
 
 
 def main(inputs, report):
-    s = inputs.input("sample", Sample)
-    points.append((s.Index(), s.Value()))
+    s = inputs.sample
+    points.append((s.index, s.value))
     xs = [float(i) for i, _ in points]
     ys = [v for _, v in points]
     mean = sum(ys) / len(ys)

@@ -1,4 +1,3 @@
-import tsugumi
 import os
 
 import matplotlib
@@ -6,17 +5,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from inputs.atoms.protein.AtomsDir import AtomsDir
-import outputs.pocket.protein.PocketDir as out
-
-
-def emit(inputs, port, out):
-    result_ports = {}
-    s = '.'
-    _out_value = {}
-    _out_value['value'] = s
-    result_ports.update({port: _out_value})
-    return result_ports
 
 
 def png(fig):
@@ -28,9 +16,8 @@ def png(fig):
 
 
 def main(inputs, report, run):
-    result_ports = {}
     p = inputs.params
-    d = np.load(os.path.join(inputs.input("atoms", AtomsDir).Value().decode(), "structure.npz"))
+    d = np.load(os.path.join(inputs.atoms.value.decode(), "structure.npz"))
     prot, res, lig = d["protein_xyz"], d["protein_res"], d["ligand_xyz"]
     dist = np.linalg.norm(prot[:, None, :] - lig[None, :, :], axis=2)
     near = dist.min(axis=1) <= p.cutoff
@@ -51,8 +38,7 @@ def main(inputs, report, run):
         fh.write(png(fig))
     with open(os.path.join(run.output_directory, "pocket.csv"), "w") as fh:
         fh.write("residue,min_distance_A,contacts\n" + "".join(f"{r},{v[0]:.2f},{v[1]}\n" for r, v in table))
-    report.log(str(f"{len(table)} residues within {p.cutoff:g} A of the ligand"))
+    report.log(f"{len(table)} residues within {p.cutoff:g} A of the ligand")
     report.table(["residue", "min distance (A)", "contacts"],
                       [[r, f"{v[0]:.2f}", str(v[1])] for r, v in table])
-    result_ports.update(emit(inputs, 'pocket', out))
-    return result_ports
+    return {'pocket': {"value": run.output_directory}}

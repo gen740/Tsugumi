@@ -61,6 +61,7 @@
       "description": "A time series plotted while the run is still going.",
       "path": "live-stream",
       "tags": [
+        "C++",
         "Python",
         "Live display",
         "Loops",
@@ -498,7 +499,7 @@
       "id": "r-reports-draft",
       "path": "r-reports-draft",
       "title": "R reports: R Markdown and Quarto (Draft)",
-      "description": "Aggregate observations, render parameterized reports with tables and figures, and keep their HTML artifacts.",
+      "description": "A plan in Draft Cards: aggregate observations, render tables and figures with R Markdown and Quarto, and save both HTML reports.",
       "tags": [
         "R",
         "Quarto",
@@ -510,7 +511,7 @@
     {
       "id": "go-pipeline",
       "title": "Go pipeline",
-      "description": "Python → Go → C++: owned typed values and managed goroutines.",
+      "description": "Python → Go → C++: multiply an owned typed integer and display the result.",
       "path": "go-pipeline",
       "tags": [
         "Go",
@@ -522,18 +523,20 @@
     {
       "id": "go-pipeline-draft",
       "title": "Go pipeline (Draft)",
-      "description": "Python → Go → C++: owned typed values and managed goroutines.",
+      "description": "Python → Go → C++: multiply an owned typed integer and display the result. A plan to implement as three Draft Cards.",
       "path": "go-pipeline-draft",
       "tags": [
         "Go",
         "Python",
-        "C++"
+        "C++",
+        "Draft",
+        "Agent"
       ]
     },
     {
       "id": "rust-pipeline",
       "title": "Rust pipeline",
-      "description": "Python → Rust → C++: typed borrowed inputs, owned outputs and pinned crates.",
+      "description": "Python → Rust → C++: multiply a typed borrowed integer and return an owned result.",
       "path": "rust-pipeline",
       "tags": [
         "Rust",
@@ -545,12 +548,14 @@
     {
       "id": "rust-pipeline-draft",
       "title": "Rust pipeline (Draft)",
-      "description": "Python → Rust → C++: typed borrowed inputs, owned outputs and pinned crates.",
+      "description": "Python → Rust → C++: multiply a typed borrowed integer and return an owned result. A plan to implement as three Draft Cards.",
       "path": "rust-pipeline-draft",
       "tags": [
         "Rust",
         "Python",
-        "C++"
+        "C++",
+        "Draft",
+        "Agent"
       ]
     }
   ]

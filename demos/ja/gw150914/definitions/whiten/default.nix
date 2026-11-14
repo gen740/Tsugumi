@@ -6,6 +6,6 @@ in
   run = inputs.tsugumi.pythonCard {
     inherit sdk;
     src = ./src;
-    packages = ps: [ ps.numpy ps.scipy ps.h5py ps.matplotlib ];
+    packages = ps: [ ps.numpy ps.scipy ps.h5py ];
   };
 }

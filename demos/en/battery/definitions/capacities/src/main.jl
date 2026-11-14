@@ -3,7 +3,7 @@ include("dp.jl")
 
 # How much each added kWh of battery is worth, and how the schedule changes with size.
 function main(inputs, report)
-    m = Tsugumi.input(inputs, "scenario")
+    m = inputs.scenario
     sizes = sort(Float64.(inputs.params["capacities_kwh"]))
     shown = Float64.(inputs.params["schedule_sizes_kwh"])
     net_load = Float64.(m["load"]) .- Float64.(m["solar"])

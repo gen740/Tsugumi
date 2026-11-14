@@ -6,7 +6,6 @@ import math
 import matplotlib.pyplot as plt
 import numpy as np
 
-from inputs.curves.pk.Curves import Curves
 from tsugumi import Failure
 
 
@@ -20,16 +19,16 @@ def concentration(t, dose_times, dose, ke, ka, volume, fraction):
 
 
 def main(inputs, report):
-    c = inputs.input("curves", Curves)
+    c = inputs.curves
     params = inputs.params
     missed_at, count = params.missedAtH, int(params.missedCount)
-    doses, intervals = c.DosesMgAsNumpy(), c.IntervalsHAsNumpy()
-    ke = math.log(2) / c.HalfLifeH()
-    ka, volume, fraction = c.KaPerH(), c.VolumeL(), c.Bioavailability()
+    doses, intervals = c.dosesMg, c.intervalsH
+    ke = math.log(2) / c.halfLifeH
+    ka, volume, fraction = c.kaPerH, c.volumeL, c.bioavailability
     if abs(ka - ke) < 1e-9:
         raise Failure("output_invalid", "ka equals ke: the closed form here divides by ka - ke")
-    low, high = c.LowMgL(), c.HighMgL()
-    t = c.THAsNumpy()
+    low, high = c.lowMgL, c.highMgL
+    t = c.tH
     step = t[1] - t[0]
 
     n = len(doses)
@@ -75,4 +74,4 @@ def main(inputs, report):
         ax.set_xlabel("Time (h)")
     fig.suptitle(f"Missing {count} doses from hour {missed_at:g} (a made-up drug. Green is an invented therapeutic range, not dosing guidance)", fontsize=12)
     report.figure()
-    report.log(str("result: " + json.dumps(rows)))
+    report.log("result: " + json.dumps(rows))

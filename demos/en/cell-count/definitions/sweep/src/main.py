@@ -14,7 +14,6 @@ from skimage.measure import label, regionprops
 from skimage.morphology import remove_small_objects
 from skimage.segmentation import watershed
 
-from inputs.scene.cells.Scene import Scene
 from tsugumi import Failure
 
 
@@ -97,27 +96,27 @@ def f1_score(lab, truth, gate):
 
 
 def main(inputs, report):
-    scene = inputs.input("scene", Scene)
+    scene = inputs.scene
     p = inputs.params
-    size, radius = scene.Size(), scene.Radius()
-    counts = p.cellsAsNumpy
-    noises = p.noisesAsNumpy
-    base_cells = scene.TrueXLength()
+    size, radius = scene.size, scene.radius
+    counts = p.cells
+    noises = p.noises
+    base_cells = len(scene.trueX)
     plain_f1 = np.zeros((len(noises), len(counts)))
     split_f1 = np.zeros((len(noises), len(counts)))
     split_count = np.zeros((len(noises), len(counts)), dtype=int)
     for i, noise in enumerate(noises):
         for j, cells in enumerate(counts):
-            rng = np.random.default_rng(scene.Seed())
-            pairs = round(scene.Pairs() * int(cells) / base_cells)  # the same share of touching cells
+            rng = np.random.default_rng(scene.seed)
+            pairs = round(scene.pairs * int(cells) / base_cells)  # the same share of touching cells
             truth = place(rng, size, int(cells), pairs, radius)
-            image = render(rng, size, truth, radius, float(noise), scene.Unevenness()).astype(np.float32).astype(np.float64)
+            image = render(rng, size, truth, radius, float(noise), scene.unevenness).astype(np.float32).astype(np.float64)
             plain, split = segment(image, p)
             plain_f1[i, j] = f1_score(plain, truth, radius)[0]
             split_f1[i, j], split_count[i, j] = f1_score(split, truth, radius)
-    report.log(str("sweep " + json.dumps({"cells": counts.tolist(), "noises": noises.tolist(),
+    report.log("sweep " + json.dumps({"cells": counts.tolist(), "noises": noises.tolist(),
                                  "plain": plain_f1.tolist(), "split": split_f1.tolist(),
-                                 "split_count": split_count.tolist()})))
+                                 "split_count": split_count.tolist()}))
 
     fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.4), sharey=True)
     for ax, title, table in ((axes[0], "Threshold only", plain_f1), (axes[1], "watershed", split_f1)):

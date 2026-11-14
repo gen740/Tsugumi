@@ -12,5 +12,5 @@
       "description": "Integer value"
     }
   ],
-  "content": "Python で整数 7 を out に出力する。型は namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;"
+  "content": "Python で整数 7 を out の戻り値として返す。型は namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;"
 }

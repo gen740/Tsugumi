@@ -4,12 +4,10 @@ expanded view)."""
 import numpy as np
 import plotly.graph_objects as go
 
-from inputs.walks.walk.Walks import Walks
-
 
 def main(inputs, report):
-    w = inputs.input("walks", Walks)
-    paths = w.PositionsAsNumpy().reshape(w.Walkers(), w.Steps() + 1)
+    w = inputs.walks
+    paths = w.positions.reshape(w.walkers, w.steps + 1)
     final = paths[:, -1]
     reach = np.abs(paths).max(axis=1)
     above = (paths[:, 1:] > 0).mean(axis=1)  # share of the time spent above 0
@@ -23,8 +21,8 @@ def main(inputs, report):
                       "time above 0: %{customdata[1]}%<extra></extra>",
     ))
     fig.update_layout(
-        title=f"Where {w.Walkers()} walkers end and how far they reach",
-        xaxis_title=f"position after {w.Steps()} steps", yaxis_title="largest distance from 0",
+        title=f"Where {w.walkers} walkers end and how far they reach",
+        xaxis_title=f"position after {w.steps} steps", yaxis_title="largest distance from 0",
         template="plotly_white", margin=dict(l=60, r=20, t=50, b=50),
     )
     report.figure(fig)

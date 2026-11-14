@@ -22,7 +22,7 @@ const STAN = (a=(0.542, 0.465, 0.630), b=(0.027, 0.022, 0.033), c=(0.024, 0.020,
               H0=(33.908, 30.415, 37.630), L0=(5.912, 5.273, 6.614))
 
 function main(inputs, report)
-    f = Tsugumi.input(inputs, "fits")
+    f = inputs.fits
     years = Int(inputs.params["years"])
     steps = Float64.(inputs.params["dt"])
     lv = f["models"][1]

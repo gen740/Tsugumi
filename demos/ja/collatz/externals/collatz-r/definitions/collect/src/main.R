@@ -7,8 +7,8 @@ exact <- function(x, what = "a value") {
 
 # The loop delivers a merge union tagged with the arrival port: `init` carries a Number, `half` and `triple`
 # a Walk (the value and every value before it, so that no Card has to remember anything between calls).
-arrival <- function(inputs, report) {
-  m <- inputs$input("arrival")
+arrival <- function(inputs) {
+  m <- inputs$arrival
   n <- exact(m$value$value, "n")
   list(n = n, path = if (m$value_type == "init") n else exact(m$value$path, "the sequence"))
 }
@@ -18,7 +18,7 @@ whole <- function(x) sprintf("%.0f", x)
 
 main <- function(inputs, report) {
   outputs <- list()
-  a <- arrival(inputs, report)
+  a <- arrival(inputs)
   report$text(paste0(length(a$path), " values: ", paste(format(a$path, scientific = FALSE, trim = TRUE), collapse = " ")))
   if (a$n == 1) outputs[["sequence"]] <- list(values = I(whole(a$path)))
 

@@ -2,7 +2,7 @@ using Printf
 include("dp.jl")
 
 function main(inputs, report)
-    m = Tsugumi.input(inputs, "scenario")
+    m = inputs.scenario
     tariff = inputs.params["tariff"]
     tariff in ("flat", "tou", "spot") || error("tariff is flat, tou or spot, not $tariff")
     price = Float64.(m[tariff])

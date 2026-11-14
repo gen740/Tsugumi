@@ -1,5 +1,4 @@
 """Gradient boosting: each round adds small trees that correct what the earlier ones got wrong."""
-import tsugumi
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -10,8 +9,6 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import xgboost as xgb
-
-from inputs.data.mnist.SubsetFile import SubsetFile
 
 
 def confusions(ax, y, pred):
@@ -26,29 +23,24 @@ def confusions(ax, y, pred):
     ax.tick_params(length=0, labelsize=8)
 
 
-def send(inputs, name, settings, digest, y, pred, fit, predict):
-    result_ports = {}
+def result(name, settings, digest, y, pred, fit, predict):
     model = name
-    settings = settings
-    digest = digest
     predictions = pred.astype(np.uint8)
-    _out_value = {}
-    _out_value['model'] = model
-    _out_value['settings'] = settings
-    _out_value['digest'] = digest
-    _out_value['accuracy'] = float(np.mean(pred == y))
-    _out_value['fit_seconds'] = fit
-    _out_value['predict_seconds'] = predict
-    _out_value['predictions'] = predictions
-    result_ports.update({'result': _out_value})
-    return result_ports
+    return {'result': {
+        'model': model,
+        'settings': settings,
+        'digest': digest,
+        'accuracy': float(np.mean(pred == y)),
+        'fit_seconds': fit,
+        'predict_seconds': predict,
+        'predictions': predictions,
+    }}
 
 
 def main(inputs, report):
-    result_ports = {}
     params = inputs.params
     rounds, max_depth, eta, seed = params.rounds, params.maxDepth, params.eta, params.seed
-    data = np.load(inputs.input("data", SubsetFile).Value().decode())
+    data = np.load(inputs.data.value.decode())
     train_x, train_y, test_x, test_y = data["train_images"], data["train_labels"], data["test_images"], data["test_labels"]
 
     settings = {"objective": "multi:softprob", "num_class": 10, "max_depth": max_depth, "eta": eta,
@@ -62,7 +54,7 @@ def main(inputs, report):
     pred = model.predict(test).argmax(axis=1)
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    report.log(str(f"boosting rounds={rounds} depth={max_depth} eta={eta}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s"))
+    report.log(f"boosting rounds={rounds} depth={max_depth} eta={eta}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
 
     # The test error after each round, read back from the finished model (outside the timers).
     upto = np.unique(np.geomspace(1, rounds, 20).astype(int))
@@ -76,5 +68,4 @@ def main(inputs, report):
     fig.suptitle(f"Gradient boosting, {rounds} rounds, depth {max_depth}, η={eta:g}: accuracy {accuracy:.4f}, training {fit:.2f} s, prediction {predict:.3f} s", fontsize=11)
     report.figure()
 
-    result_ports.update(send(inputs, 'boosting', f'rounds={rounds}, depth={max_depth}, eta={eta:g}', str(data['digest']), test_y, pred, fit, predict))
-    return result_ports
+    return result('boosting', f'rounds={rounds}, depth={max_depth}, eta={eta:g}', str(data['digest']), test_y, pred, fit, predict)

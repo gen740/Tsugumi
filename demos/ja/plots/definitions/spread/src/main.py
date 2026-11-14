@@ -4,13 +4,11 @@ view, a tooltip on each point)."""
 import altair as alt
 import numpy as np
 
-from inputs.walks.walk.Walks import Walks
-
 
 def main(inputs, report):
-    w = inputs.input("walks", Walks)
-    paths = w.PositionsAsNumpy().reshape(w.Walkers(), w.Steps() + 1)
-    steps = np.unique(np.linspace(0, w.Steps(), 60).astype(int))
+    w = inputs.walks
+    paths = w.positions.reshape(w.walkers, w.steps + 1)
+    steps = np.unique(np.linspace(0, w.steps, 60).astype(int))
     msd = (paths[:, steps] ** 2).mean(axis=0)
     rows = [{"step": int(t), "value": float(v), "series": "measured ⟨x²⟩"} for t, v in zip(steps, msd)]
     rows += [{"step": int(t), "value": float(t), "series": "theory: t"} for t in steps]
@@ -22,5 +20,5 @@ def main(inputs, report):
     )
     chart = (base.mark_line() + base.mark_point(size=30, filled=True).encode(
         tooltip=[alt.Tooltip("series:N"), alt.Tooltip("step:Q"), alt.Tooltip("value:Q", format=".1f")],
-    )).properties(title=f"Mean squared distance grows as t ({w.Walkers()} walkers)").interactive()
+    )).properties(title=f"Mean squared distance grows as t ({w.walkers} walkers)").interactive()
     report.figure(chart)
