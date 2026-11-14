@@ -15,7 +15,6 @@
 #include <string>
 #include <vector>
 
-#include "comments.hh"
 
 namespace tsugumi {
 
@@ -42,7 +41,6 @@ struct VersionCommit {
   // Card keys ("a", "outer/b") whose files changed from the first parent;
   // "" for the project's own documents (tsugumi.json, layout.json).
   std::vector<std::string> changed;
-  std::vector<comments::Change> comments;
 };
 
 // A version's own Cards and how they connect, for a minimap.

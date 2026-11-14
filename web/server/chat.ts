@@ -481,6 +481,10 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     await patchSettings(b ?? {}, b?.revision ?? { ...revisions })
     return { ...settings(), revision: { ...revisions }, ...await modelCatalogs() }
   },
+  'POST /api/versions/comments': async (b) => {
+    const project = await core.project(projectDir(b.path))
+    return core.user.call('VersionCommentsRequest', { project, commit: String(b.commit) })
+  },
   'POST /api/versions/note': async (b) => {
     const project = await core.project(projectDir(b.path))
     const [anthropic_key_profile, openai_key_profile] = await Promise.all([core.keys.provision('anthropic'), core.keys.provision('openai')])

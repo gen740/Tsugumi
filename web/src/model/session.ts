@@ -1,3 +1,4 @@
+import { VersionCommentT } from '../gen/tsugumi/host/version-comment'
 import { RevisionEdit } from '../ui/revisionEdit'
 import { registerModuleClient, ModuleBlobs } from './moduleSources'
 import { GO_SCAFFOLD } from './go-scaffold'
@@ -3387,6 +3388,7 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
   // ---- Versions (git) ----------------------------------------------------------
 
   /** The project's versions as last read (core/src/versions.cc). */
+  versionComments = new Map<string, VersionCommentT[]>()
   versionGraph?: R.VersionGraphT
   /** Why the last read of it failed. */
   versionGraphError?: string
@@ -3438,6 +3440,13 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
   }
 
   /** Ask agentd for the displayed note; it owns policy, generation and storage. */
+  async loadVersionComments(commit: string) {
+    if (this.versionComments.has(commit)) return
+    const value = await api<{ comments: VersionCommentT[] }>('/api/versions/comments', { path: this.dir, commit })
+    this.versionComments.set(commit, value.comments ?? [])
+    this.changed()
+  }
+
   async loadVersionNote(commit: string) {
     if (!this.client) return
     const request = uuid()
@@ -3446,6 +3455,7 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
     this.versionNoteErrors.delete(commit)
     this.changed()
     try {
+      await this.loadVersionComments(commit)
       const { text } = await api<{ text: string }>('/api/versions/note', { path: this.dir, commit })
       if (this.versionNoteRequests.get(commit) === request) this.versionNotes.set(commit, text)
     } catch (e) {

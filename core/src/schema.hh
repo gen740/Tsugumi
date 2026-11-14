@@ -89,7 +89,7 @@ struct NixSource {
 };
 
 struct Project {
-  Opt<"name", v::String> name;
+  Opt<"name", Json> name;
   Opt<"pkgsPath", v::String> pkgs_path;
   Opt<"nixSources", v::Array<Obj<NixSource>>> nix_sources;
   // Additional literal project-relative files or folders kept in versions.
@@ -156,8 +156,8 @@ struct CardDefinition {
   // How a figure on the canvas follows the Card's results: "update" (the
   // default: the last figure, dimmed while the Card or one upstream runs) or
   // "live" (each revision of a running Card replaces the last one in place).
-  // The clients read it; core only checks the value.
-  Opt<"displayMode", v::String> display_mode;
+  // Carried opaquely; only clients interpret it.
+  Opt<"displayMode", Json> display_mode;
   Opt<"hostFolders", v::Array<Obj<HostFolder>>> host_folders;  // Experimental
 };
 
@@ -165,39 +165,6 @@ struct CardDefinition {
 // externals/<external>/ (never a symlink).
 struct CardLink {
   Opt<"external", v::String> external;
-};
-
-// Purpose of a port in words (Drafts have no types yet).
-struct PortNote {
-  Opt<"name", v::String> name;
-  Opt<"description", v::String> description;
-};
-
-// What the user and the Agent write about a Card already written. author,
-// editedBy, stateBy ("agent" or "user") and cards are the record of who did what;
-// a model's save has them stamped (comments.hh).
-struct CardComment {
-  Opt<"id", v::String> id;
-  Opt<"text", v::String> text;
-  Opt<"resolved", v::Bool> resolved;
-  Opt<"resolution", v::String> resolution;  // one line on what was done about it
-  Opt<"author", v::String> author;
-  Opt<"editedBy", v::String> edited_by;
-  Opt<"stateBy", v::String> state_by;
-  Opt<"cards", v::Array<v::String>> cards;  // what the save that resolved it changed
-};
-
-// _meta.json: the intent of a definition, for every kind of Card (a Card in
-// Card too); kept when a Draft is implemented. The summary is only here.
-struct CardMeta {
-  Opt<"name", v::String> name;  // display name; absent means the identifier
-  Opt<"description", v::String> description;  // short summary
-  Opt<"content", v::String> content;          // a Draft's plan: inputs, outputs, processing (free text)
-  Opt<"context", v::String> context;          // extra intent/notes for the Agent and readers
-  Opt<"origin", v::String> origin;            // where an imported definition came from
-  Opt<"inputs", v::Array<Obj<PortNote>>> inputs;
-  Opt<"outputs", v::Array<Obj<PortNote>>> outputs;
-  Opt<"comments", v::Array<Obj<CardComment>>> comments;
 };
 
 // ---- layout.json -------------------------------------------------------------

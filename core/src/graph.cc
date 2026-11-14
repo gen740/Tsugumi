@@ -298,8 +298,6 @@ class Builder {
       else
         s.execution_resources = ExecutionResources{static_cast<uint32_t>(*cpu), *memory};
     }
-    if (const auto* v = schema::get(d.display_mode); v && *v != "update" && *v != "live")
-      n.diags.push_back(diag(n.path, "invalid_setting", "displayMode must be update or live"));
     if (const auto* v = schema::get(d.system)) {
       if (!remote && *v == native_system())
         s.system.clear();
@@ -421,7 +419,7 @@ class Builder {
         d.link_json = *link;
       }
       if (auto meta = read_(n.def_dir + "_meta.json")) {
-        d.meta = parse_meta_json(*meta);
+        check_meta_json(*meta);
         d.meta_json = *meta;
       }
     } catch (const DocumentError& e) {
@@ -457,7 +455,6 @@ class Builder {
       } else {
         def = external_definition(n);
       }
-      n.name = def && def->meta && def->meta->name->has_value() ? def->meta->name->value() : card.id->value();
       n.kind = template_of(def);
       read_settings(n, def);
       switch (n.kind) {
@@ -522,11 +519,26 @@ class Builder {
           // from the Draft adds one there), carrying an empty message until
           // implemented.
           load_catalog(n);
-          if (def && def->meta)
-            if (const auto* outs = schema::get(def->meta->outputs))
-              for (const auto& o : *outs)
-                if (const auto* name = schema::get(o.name); name && valid_id(*name) && !n.output(*name))
-                  n.outputs.push_back({*name, PortKind::FlatBuffer, true, types::empty_type()});
+          if (def && def->meta_json) {
+            // Provisional Draft ports remain an explicit owner decision. Ignore
+            // every other field, including malformed presentation fields.
+            schema::v::Mapping<schema::v::String, schema::Json> meta;
+            if (!schema::decode(*def->meta_json, meta))
+              for (const auto& [key, value] : meta.value()) {
+                if (key != "outputs") continue;
+                schema::v::Array<schema::Json> outputs;
+                if (schema::decode(value, outputs)) continue;
+                for (const auto& output : outputs.value()) {
+                  schema::v::Mapping<schema::v::String, schema::Json> port;
+                  if (schema::decode(output, port)) continue;
+                  for (const auto& [field, v] : port.value()) {
+                    schema::v::String name;
+                    if (field == "name" && !schema::decode(v, name) && valid_id(name.value()) && !n.output(name.value()))
+                      n.outputs.push_back({name.value(), PortKind::FlatBuffer, true, types::empty_type()});
+                  }
+                }
+              }
+          }
           n.exec_diags.push_back(diag(n.path, "draft", "draft cards are not implemented and cannot run"));
           break;
         case Template::Subgraph:

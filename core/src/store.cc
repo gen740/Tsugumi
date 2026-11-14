@@ -71,9 +71,9 @@ std::string journal_payload(const char* type, uint64_t rev, uint64_t exec_rev, c
 
 Store::Store(StoreOptions opts) : opts_(std::move(opts)) {}
 
-auto Store::allocate_card_id(const std::string& name, const std::string& project_path) -> std::string {
-  if (name.empty() || name.size() > 4096 || !text::valid_utf8(name))
-    throw Failed(FailureKind::invalid_request, "Card name must be nonempty UTF-8 (at most 4096 bytes)");
+auto Store::allocate_card_id(const std::string& stem, const std::string& project_path) -> std::string {
+  if (!valid_id(stem) || stem.size() > 123)
+    throw Failed(FailureKind::invalid_request, "Card stem must be 1..123 ASCII identifier characters");
   // A scope can still be a local draft, so validate its path rather than requiring it on disk.
   auto rest = project_path;
   while (!rest.empty()) {
@@ -86,15 +86,6 @@ auto Store::allocate_card_id(const std::string& name, const std::string& project
   }
   if (!fs::resolves_inside(opts_.root, opts_.root / project_path))
     throw Failed(FailureKind::invalid_path, "project_path leaves the project");
-  std::string stem;
-  for (unsigned char c : name) {
-    if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
-    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) stem += static_cast<char>(c);
-    else if (!stem.empty() && stem.back() != '-') stem += '-';
-    if (stem.size() == 123) break;  // valid_id allows 128 bytes including the salt
-  }
-  while (!stem.empty() && stem.back() == '-') stem.pop_back();
-  if (stem.empty()) stem = "card";
   // Reservations survive reconnects and restarts, including abandoned drafts.
   auto reservations = fs::read_file(state_dir() / "card-ids").value_or("");
   std::set<std::string> issued;
@@ -185,7 +176,7 @@ DocumentPtr Store::preview(const std::vector<ChangeIn>& changes) const {
 std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc, const std::vector<FileOp>* pending,
                                           const Document* base) const {
   // Staged documents carry their fingerprint already; a loaded one does not.
-  if (doc->execution_fingerprint.empty()) doc->execution_fingerprint = execution_fingerprint(*doc);
+  if (doc->execution_fingerprint.empty()) doc->execution_fingerprint = execution_fingerprint(*doc, reader(*doc, pending));
   crypto::Sha256 key;
   key.update(doc->execution_fingerprint);
   for (const auto& [id, def] : doc->definitions) {
@@ -529,16 +520,11 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
             d.card_json = c.json;
           }
           if (c.meta_json) {
-            d.meta = parse_meta_json(*c.meta_json);
+            check_meta_json(*c.meta_json);
             d.meta_json = *c.meta_json;
           } else if (c.keep_meta) {
             if (auto old = doc->definitions.find(c.id); old != doc->definitions.end() && old->second.meta_json) {
-              d.meta = old->second.meta;
               d.meta_json = old->second.meta_json;
-            }
-            if (c.fill_description || c.fill_context) {
-              d.meta_json = fill_meta_json(d.meta_json.value_or("{}"), c.fill_description, c.fill_context);
-              d.meta = parse_meta_json(*d.meta_json);
             }
           }
         });
@@ -694,6 +680,7 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
     if (d.meta_json) files[def_dir(id) + "_meta.json"] = std::nullopt;
   }
   for (const auto& [path, content] : files) {
+    if (content && Document::is_card_meta_file(path)) wrap([&] { check_meta_json(*content); });
     if (Document::is_document_file(path)) continue;
     auto old = base->sources.find(path);
     if (content) {
@@ -726,7 +713,7 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
     if (op.content) doc->disk_hashes[op.path] = crypto::sha256_hex(*op.content);
     else doc->disk_hashes.erase(op.path);
   }
-  doc->execution_fingerprint = execution_fingerprint(*doc);
+  doc->execution_fingerprint = execution_fingerprint(*doc, reader(*doc, &st.ops));
   st.doc = doc;
   return st;
 }
@@ -775,7 +762,7 @@ Store::Staged Store::stage_reload(const std::string& op_id, const std::string& o
   // Disk hashes always follow what is on disk now, even without effective changes.
   doc->rev = base->rev;
   doc->execution_rev = base->execution_rev;
-  doc->execution_fingerprint = execution_fingerprint(*doc);
+  doc->execution_fingerprint = execution_fingerprint(*doc, reader(*doc, &st.ops));
   st.doc = doc;
   return st;
 }
