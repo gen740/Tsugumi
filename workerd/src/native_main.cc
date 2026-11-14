@@ -27,6 +27,7 @@
 #include <cmath>
 #include <dlfcn.h>
 #include <flatbuffers/idl.h>
+#include <flatbuffers/reflection.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/socket.h>
@@ -54,6 +55,7 @@
 #include "tsugumi/message_json.hh"
 #include "schema.hh"
 #include "tsugumi/workerd/frame.hh"
+#include "tsugumi/workerd/display.hh"
 
 extern char** environ;
 
@@ -110,6 +112,7 @@ std::optional<std::string> read_frame(int fd) {
 }
 
 void send_frame(flatbuffers::FlatBufferBuilder& b) {
+  if (b.GetSize() > kMaxFrame) throw std::runtime_error("worker frame exceeds 16 MiB");
   std::lock_guard<std::mutex> l(g_write_mu);
   const auto prefix = tsugumi::workerd::encode_length(b.GetSize());
   write_full(kData, prefix.data(), prefix.size());
@@ -169,6 +172,7 @@ struct Call {
   std::string card;
   std::string run_id;
   std::map<std::string, std::string> json_values;
+  std::string display_error;
 };
 
 Call* g_call = nullptr;
@@ -180,28 +184,78 @@ int64_t remaining_ms_impl(void*) {
 }
 
 void record_failure(D::FailureKind kind, std::string message) {
-  if (g_call && !g_call->failure) g_call->failure = Failure{kind, std::move(message)};
+  if (g_call && !g_call->failure) g_call->failure = Failure{kind, message.substr(0, 4096)};
+}
+
+// Build the actual result envelope when budgeting: port names, alignment and
+// FlatBuffers metadata count towards the same 16 MiB limit as message bytes.
+auto result_frame(const Call& call) -> flatbuffers::FlatBufferBuilder {
+  flatbuffers::FlatBufferBuilder b;
+  std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
+  for (const auto& [name, bytes] : call.outputs)
+    outputs.push_back(W::CreateWorkerOutput(b, b.CreateString(name),
+        b.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size())));
+  auto result = W::CreateWorkerResult(b, b.CreateVector(outputs));
+  W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(b, call.call_id, W::WorkerPayload::WorkerResult, result.Union()));
+  return b;
 }
 
 int emit_output_impl(void*, const char* port, const uint8_t* data, size_t size) {
   if (!g_call) return 1;
-  for (const auto& [name, _] : g_call->outputs)
-    if (name == port) {
-      record_failure(D::FailureKind::output_invalid, std::string("output ") + port + " emitted twice");
-      return 1;
-    }
-  bool known = false;
-  for (const auto* p : *g_call->msg->outputs()) known |= p->name()->str() == port;
-  if (!known) {
-    record_failure(D::FailureKind::output_invalid, std::string("unknown output port ") + port);
+  const auto invalid = [&](const std::string& reason) {
+    record_failure(D::FailureKind::output_invalid, reason);
     return 1;
+  };
+  if (!port || !data || size > kMaxFrame) return invalid("output exceeds 16 MiB or has no data");
+  for (const auto& [name, _] : g_call->outputs)
+    if (name == port) return invalid(std::string("output ") + port + " emitted twice");
+  const D::Port* declared = nullptr;
+  for (const auto* p : *g_call->msg->outputs())
+    if (p->name()->string_view() == port) declared = p;
+  if (!declared) return invalid(std::string("unknown output port ") + port);
+  if (declared->schema_bfbs() && declared->root_type()) {
+    const auto* bfbs = declared->schema_bfbs();
+    flatbuffers::Verifier verifier(bfbs->data(), bfbs->size());
+    if (!reflection::VerifySchemaBuffer(verifier)) return invalid("invalid output schema");
+    const auto* schema = reflection::GetSchema(bfbs->data());
+    const auto* root = schema->objects()->LookupByKey(declared->root_type()->c_str());
+    if (!root || !flatbuffers::Verify(*schema, *root, data, size))
+      return invalid(std::string("output ") + port + " does not match its declared type");
   }
   g_call->outputs.emplace_back(port, std::string(reinterpret_cast<const char*>(data), size));
+  if (result_frame(*g_call).GetSize() > kMaxFrame) {
+    g_call->outputs.pop_back();
+    return invalid("combined outputs exceed the 16 MiB result frame limit");
+  }
   return 0;
 }
 
-void send_display(const std::function<std::pair<D::DisplayValue, flatbuffers::Offset<void>>(flatbuffers::FlatBufferBuilder&)>& f) {
-  if (!g_call) return;
+void validate_required_outputs(Call& call) {
+  if (call.failure) return;
+  for (const auto* port : *call.msg->outputs()) {
+    if (port->optional().value_or(false)) continue;
+    if (std::none_of(call.outputs.begin(), call.outputs.end(), [&](const auto& output) {
+          return output.first == port->name()->string_view();
+        })) {
+      record_failure(D::FailureKind::output_invalid, "required output " + port->name()->str() + " is missing");
+      return;
+    }
+  }
+}
+
+int finish_outputs_impl(void*) {
+  if (!g_call) return 1;
+  validate_required_outputs(*g_call);
+  return g_call->failure ? 1 : 0;
+}
+
+auto invalid_display(const std::string& message) -> int {
+  if (g_call) g_call->display_error = message;
+  return 1;
+}
+
+int send_display(const std::function<std::pair<D::DisplayValue, flatbuffers::Offset<void>>(flatbuffers::FlatBufferBuilder&)>& f) {
+  if (!g_call) return 1;
   flatbuffers::FlatBufferBuilder b;
   auto [type, value] = f(b);
   std::vector<flatbuffers::Offset<flatbuffers::String>> segs;
@@ -223,41 +277,45 @@ void send_display(const std::function<std::pair<D::DisplayValue, flatbuffers::Of
   db.add_value_type(type);
   db.add_value(value);
   auto d = db.Finish();
+  const auto* display = flatbuffers::GetTemporaryPointer(b, d);
+  if (auto error = tsugumi::workerd::validate_display(*display)) { g_call->display_error = *error; return 1; }
   auto wd = W::CreateWorkerDisplay(b, d);
   W::WorkerMessageBuilder mb(b);
   mb.add_call_id(g_call->call_id);
   mb.add_value_type(W::WorkerPayload::WorkerDisplay);
   mb.add_value(wd.Union());
   W::FinishWorkerMessageBuffer(b, mb.Finish());
+  if (b.GetSize() > kMaxFrame) { g_call->display_error = "display frame exceeds 16 MiB"; return 1; }
   send_frame(b);
+  return 0;
 }
 
 int display_text_impl(void*, const char* text) {
+  if (!text || std::strlen(text) > (1u << 20)) return invalid_display("display text exceeds 1 MiB or is missing");
   std::string t = text;
-  send_display([&](flatbuffers::FlatBufferBuilder& b) {
+  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
     return std::make_pair(D::DisplayValue::DisplayText, D::CreateDisplayText(b, b.CreateString(t)).Union());
   });
-  return 0;
 }
 
 int display_markdown_impl(void*, const char* text) {
+  if (!text || std::strlen(text) > (1u << 20)) return invalid_display("display text exceeds 1 MiB or is missing");
   std::string t = text;
-  send_display([&](flatbuffers::FlatBufferBuilder& b) {
+  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
     return std::make_pair(D::DisplayValue::DisplayText, D::CreateDisplayText(b, b.CreateString(t), true).Union());
   });
-  return 0;
 }
 
 int display_scalar_impl(void*, double value, const char* label) {
+  if (!label) return invalid_display("display scalar needs a label");
   std::string l = label;
-  send_display([&](flatbuffers::FlatBufferBuilder& b) {
+  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
     auto ls = b.CreateString(l);
     D::DisplayScalarBuilder sb(b);
     sb.add_value(value);
     sb.add_label(ls);
     return std::make_pair(D::DisplayValue::DisplayScalar, sb.Finish().Union());
   });
-  return 0;
 }
 
 struct ChartSeriesConfig {
@@ -279,7 +337,7 @@ auto display_module_impl(void*, const char*, const char*, const tsugumi_blob*, s
 // its immutable view identity and run data; coordinates never pass through JSON.
 auto display_line_chart_impl(void*, const tsugumi_series* series, size_t count) -> int {
   const auto invalid = [](const char* message) {
-    record_failure(D::FailureKind::output_invalid, message);
+    if (g_call) g_call->display_error = message;
     return -1;
   };
   if (count && !series) return invalid("missing line series");
@@ -316,7 +374,18 @@ auto display_line_chart_impl(void*, const tsugumi_series* series, size_t count) 
 
 int display_table_impl(void*, const char* const* columns, size_t column_count, const char* const* cells,
                        size_t row_count) {
-  send_display([&](flatbuffers::FlatBufferBuilder& b) {
+  if (column_count == 0 || column_count > 64 || row_count > 10000 || !columns || (row_count && !cells))
+    return invalid_display("a table needs 1 to 64 columns and at most 10,000 rows");
+  size_t bytes = 0;
+  const auto fits = [&](const char* text) {
+    if (!text) return false;
+    const auto size = ::strnlen(text, 4097);
+    bytes += size + 16;  // Include per-string metadata before allocating copies.
+    return size <= 4096 && bytes <= kMaxFrame;
+  };
+  for (size_t i = 0; i < column_count; ++i) if (!fits(columns[i])) return invalid_display("table strings exceed 4 KiB or the display frame exceeds 16 MiB");
+  for (size_t i = 0; i < column_count * row_count; ++i) if (!fits(cells[i])) return invalid_display("table strings exceed 4 KiB or the display frame exceeds 16 MiB");
+  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
     std::vector<std::string> cols(columns, columns + column_count);
     std::vector<flatbuffers::Offset<D::TableRow>> rows;
     for (size_t r = 0; r < row_count; ++r) {
@@ -326,28 +395,27 @@ int display_table_impl(void*, const char* const* columns, size_t column_count, c
     auto c = b.CreateVectorOfStrings(cols);
     return std::make_pair(D::DisplayValue::DisplayTable, D::CreateDisplayTable(b, c, b.CreateVector(rows)).Union());
   });
-  return 0;
 }
 
 int display_image_impl(void*, const char* media_type, const uint8_t* data, size_t size, const char* alt) {
-  send_display([&](flatbuffers::FlatBufferBuilder& b) {
+  if (!media_type || !data || size > (8u << 20)) return invalid_display("an image exceeds 8 MiB or is missing");
+  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
     auto mt = b.CreateString(media_type);
     auto d = b.CreateVector(data, size);
     auto a = b.CreateString(alt ? alt : "");
     return std::make_pair(D::DisplayValue::DisplayImage, D::CreateDisplayImage(b, mt, d, a).Union());
   });
-  return 0;
 }
 
 int display_points_impl(void*, const float* x, const float* y, const float* z, const uint32_t* colors, size_t count) {
-  send_display([&](flatbuffers::FlatBufferBuilder& b) {
+  if (count > 1000000 || (count && (!x || !y || !z))) return invalid_display("a point cloud needs x, y and z, up to 1,000,000 points");
+  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
     auto xv = b.CreateVector(x, count);
     auto yv = b.CreateVector(y, count);
     auto zv = b.CreateVector(z, count);
     auto cv = b.CreateVector(colors, colors ? count : 0);
     return std::make_pair(D::DisplayValue::DisplayPointCloud, D::CreateDisplayPointCloud(b, xv, yv, zv, cv).Union());
   });
-  return 0;
 }
 
 auto display_module_impl(void*, const char* name, const char* config_json,
@@ -369,7 +437,7 @@ auto display_module_impl(void*, const char* name, const char* config_json,
       if (key == identity) { identity = value; found = true; break; }
     if (!found) return -1;
   }
-  send_display([&](flatbuffers::FlatBufferBuilder& b) {
+  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
     auto n = b.CreateString(identity);
     auto d = b.CreateString(config_json);
     std::vector<flatbuffers::Offset<D::DisplayBlob>> values;
@@ -379,7 +447,6 @@ auto display_module_impl(void*, const char* name, const char* config_json,
     return std::make_pair(D::DisplayValue::DisplayModule,
         D::CreateDisplayModule(b, n, d, b.CreateVector(values)).Union());
   });
-  return 0;
 }
 
 void log_impl(void*, const char* message) {
@@ -485,7 +552,7 @@ auto input_json_impl(void*, const char* port) -> const char* {
     if (in->name()->str() != port) continue;
     auto* parser = parser_for(in->value()->schema_bfbs(), in->value()->root_type()->str());
     std::string json;
-    if (!parser || tsugumi::message_json::gen_text(*parser, in->value()->bytes()->data(), &json)) {
+    if (!parser || tsugumi::message_json::gen_language_text(*parser, in->value()->bytes()->data(), &json)) {
       record_failure(D::FailureKind::worker_failed, std::string("cannot decode input ") + port);
       return nullptr;
     }
@@ -502,7 +569,7 @@ auto params_json_impl(void*) -> const char* {
   const auto* params = g_call->msg->params();
   auto* parser = parser_for(params->schema_bfbs(), params->root_type()->str());
   std::string json;
-  if (!parser || tsugumi::message_json::gen_text(*parser, params->bytes()->data(), &json)) {
+  if (!parser || tsugumi::message_json::gen_language_text(*parser, params->bytes()->data(), &json)) {
     record_failure(D::FailureKind::worker_failed, "cannot decode params");
     return nullptr;
   }
@@ -514,7 +581,7 @@ auto emit_json_impl(void*, const char* name, const char* json) -> int {
   for (const auto* port : *g_call->msg->outputs()) {
     if (port->name()->str() != name) continue;
     auto* parser = parser_for(port->schema_bfbs(), port->root_type()->str());
-    if (!parser || !parser->ParseJson(json)) {
+    if (!parser || !tsugumi::message_json::parse_json(*parser, json)) {
       record_failure(D::FailureKind::output_invalid, std::string("output ") + name +
                      " does not match its type" + (parser ? ": " + parser->error_ : ""));
       return 1;
@@ -625,6 +692,7 @@ tsugumi_call make_call(const Call& call, std::vector<tsugumi_value>& values, con
   c.params_json = params_json_impl;
   c.emit_json = emit_json_impl;
   c.display_json = display_json_impl;
+  c.finish_outputs = finish_outputs_impl;
   return c;
 }
 
@@ -712,7 +780,7 @@ void bash_outputs(const W::WorkerCall* m, const std::string& out_json) {
     }
     auto* p = parser_for(port->schema_bfbs(), port->root_type()->str());
     std::string obj = sc::text(value);
-    if (!p || !p->ParseJson(obj.c_str())) {
+    if (!p || !tsugumi::message_json::parse_json(*p, obj)) {
       record_failure(D::FailureKind::output_invalid,
                      "output " + name + " JSON does not match its type" + (p ? ": " + p->error_ : ""));
       return;
@@ -744,17 +812,18 @@ struct BashDisplay {
   tsugumi::schema::Opt<"module", tsugumi::schema::Obj<BashDisplayModule>> module;
 };
 
-auto json_display(const std::string& json, const std::string& cwd) -> void {
+auto json_display(const std::string& json, const std::string& cwd) -> int {
   namespace sc = tsugumi::schema;
   auto invalid = [](const std::string& why) {
-    record_failure(D::FailureKind::output_invalid, "$TSUGUMI_REPORT: " + why);
+    if (g_call) g_call->display_error = why;
+    return 1;
   };
   BashDisplay d;
   if (auto err = sc::decode(json, d)) return invalid(err->message);
   if (const auto* t = sc::get(d.text)) {
-    display_text_impl(nullptr, t->c_str());
+    return display_text_impl(nullptr, t->c_str());
   } else if (const auto* m = sc::get(d.markdown)) {
-    display_markdown_impl(nullptr, m->c_str());
+    return display_markdown_impl(nullptr, m->c_str());
   } else if (const auto* table = sc::get(d.table)) {
     const auto* columns = sc::get(table->columns);
     if (!columns) return invalid("a table needs columns");
@@ -767,7 +836,7 @@ auto json_display(const std::string& json, const std::string& cwd) -> void {
         for (const auto& c : row) cells.push_back(c.c_str());
         ++row_count;
       }
-    display_table_impl(nullptr, names.data(), names.size(), cells.data(), row_count);
+    return display_table_impl(nullptr, names.data(), names.size(), cells.data(), row_count);
   } else if (const auto* image = sc::get(d.image)) {
     const auto* file = sc::get(image->path);
     if (!file) return invalid("an image needs a path");
@@ -777,7 +846,7 @@ auto json_display(const std::string& json, const std::string& cwd) -> void {
     const char* media = bytes.starts_with("\x89PNG") ? "image/png" : bytes.starts_with("\xFF\xD8") ? "image/jpeg" : nullptr;
     if (!media) return invalid(*file + " is neither PNG nor JPEG");
     const auto* alt = sc::get(image->alt);
-    display_image_impl(nullptr, media, reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), alt ? alt->c_str() : "");
+    return display_image_impl(nullptr, media, reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), alt ? alt->c_str() : "");
   } else if (const auto* module = sc::get(d.module)) {
     const auto* name = sc::get(module->module);
     const auto* data = sc::get(module->config);
@@ -795,20 +864,22 @@ auto json_display(const std::string& json, const std::string& cwd) -> void {
     if (display_module_impl(nullptr, name->c_str(), sc::text(*data).c_str(), blobs.data(), blobs.size()))
       return invalid("unknown view module; declare it in views");
   } else {
-    invalid("name one of text, markdown, table, image or module");
+    return invalid("name one of text, markdown, table, image or module");
   }
+  return 0;
 }
 
 auto bash_display(const std::string& path, const std::string& cwd) -> void {
-  if (::access(path.c_str(), R_OK) == 0) json_display(read_text(path), cwd);
+  if (::access(path.c_str(), R_OK) == 0 && json_display(read_text(path), cwd))
+    record_failure(D::FailureKind::output_invalid, "$TSUGUMI_REPORT: " + g_call->display_error);
 }
 
 auto display_json_impl(void*, const char* json) -> int {
   if (!g_call) return 1;
   char* cwd = ::getcwd(nullptr, 0);
-  json_display(json, cwd ? cwd : ".");
+  const int status = json_display(json, cwd ? cwd : ".");
   std::free(cwd);
-  return g_call->failure ? 1 : 0;
+  return status;
 }
 
 void execute(const Options& opt, Call& call) {
@@ -939,6 +1010,7 @@ void execute(const Options& opt, Call& call) {
       }
     }
   }
+  validate_required_outputs(call);
   // postRun also runs after a failed step (cleanup), but never after a
   // cancel or the deadline; its success never clears an earlier failure.
   bool stopped = call.failure && (call.failure->kind == D::FailureKind::cancelled || call.failure->kind == D::FailureKind::timeout);
@@ -958,32 +1030,17 @@ void execute(const Options& opt, Call& call) {
 }
 
 void reply(const Call& call) {
-  flatbuffers::FlatBufferBuilder b;
-  W::WorkerPayload type;
-  flatbuffers::Offset<void> value;
-  if (call.failure) {
-    auto diag = b.CreateString(call.failure->message);
-    auto args = b.CreateVector(std::vector<flatbuffers::Offset<D::KeyValue>>{});
-    D::FailureBuilder fb(b);
-    fb.add_kind(call.failure->kind);
-    fb.add_args(args);
-    fb.add_diagnostic(diag);
-    auto f = fb.Finish();
-    value = W::CreateWorkerFailure(b, f).Union();
-    type = W::WorkerPayload::WorkerFailure;
-  } else {
-    std::vector<flatbuffers::Offset<W::WorkerOutput>> outs;
-    for (const auto& [name, bytes] : call.outputs)
-      outs.push_back(W::CreateWorkerOutput(b, b.CreateString(name),
-                                           b.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size())));
-    value = W::CreateWorkerResult(b, b.CreateVector(outs)).Union();
-    type = W::WorkerPayload::WorkerResult;
+  if (!call.failure) {
+    auto b = result_frame(call);
+    send_frame(b);
+    return;
   }
-  W::WorkerMessageBuilder mb(b);
-  mb.add_call_id(call.call_id);
-  mb.add_value_type(type);
-  mb.add_value(value);
-  W::FinishWorkerMessageBuffer(b, mb.Finish());
+  flatbuffers::FlatBufferBuilder b;
+  auto diag = b.CreateString(call.failure->message);
+  auto args = b.CreateVector(std::vector<flatbuffers::Offset<D::KeyValue>>{});
+  auto failure = D::CreateFailure(b, call.failure->kind, args, diag);
+  auto value = W::CreateWorkerFailure(b, failure);
+  W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(b, call.call_id, W::WorkerPayload::WorkerFailure, value.Union()));
   send_frame(b);
 }
 

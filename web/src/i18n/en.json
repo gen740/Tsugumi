@@ -6,6 +6,7 @@
  "入力 wire には実入力ポート、出力 wire には実出力ポートを指定します。候補が一つでも指定が必要です。": "Name a real input for each incoming wire and a real output for each outgoing wire, even when there is only one candidate.",
  "実ポート名": "Real port name",
 
+  "この結果は表示できません": "This result cannot be displayed",
     "版に含める追加パス": "Additional paths to version",
     "定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。": "Definitions are versioned automatically. List additional project-relative files or folders, one per line (no wildcards). This applies when a run starts and to Keep as Version. .tsugumi/, .git/ and symbolic links are excluded.",
     "今の定義と追加パスの内容に名前を付けて残します（git の tag）。": "Name the current definitions and additional version paths (a Git tag).",
