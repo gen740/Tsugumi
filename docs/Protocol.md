@@ -35,7 +35,7 @@ There are 51 requests.
 | [`ProjectOpen`](#projectopen) | OpenResult | Creates (or replaces) the connection's subscription. |
 | [`ProjectClose`](#projectclose) | Ack | Ends only the given subscription. Unknown ids are acknowledged. |
 | [`ProjectInspect`](#projectinspect) | ProjectSnapshot | No subscription, build or reload. |
-| [`CardId`](#cardid) | CardIdResult | Reserves a permanent identifier for a new Card without changing the document revision. Supply its human name; use the returned id in the canvas, definition paths and wires, and name in _meta.json.name. Each call reserves a fresh id; save the definition and canvas with project_save. |
+| [`CardId`](#cardid) | CardIdResult | Reserves a permanent identifier for a new Card without changing the document revision. Supply a caller-derived stem (1..123 ASCII identifier characters); use the returned id in the canvas, paths and wires. Each call reserves a fresh id; save the definition and canvas with project_save. |
 | [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. |
 | [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. Every permission widening requires explicit approval, regardless of origin. |
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
@@ -65,7 +65,7 @@ No fields.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `name` | `string` | yes |  |
+| `stem` | `string` | yes |  |
 | `project_path` | `string` |  | Project-relative directory: empty for the root, or externals/<id>/, repeated for nesting. May name a project being created in the same draft. |
 
 ### ProjectSave

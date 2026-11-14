@@ -9,7 +9,6 @@
 #include <fstream>
 #include <set>
 
-#include "comments.hh"
 #include "execution_service.hh"
 #include "remote_execution_service.hh"
 #include "nix.hh"
@@ -246,8 +245,7 @@ void Service::open() {
   scheduler_->recover_interrupted();
   const auto roots = opts_.gcroots_dir.empty() ? store_->state_dir() / "cache" / "gcroots" : opts_.gcroots_dir;
   stdfs::create_directories(roots);
-  fs::write_atomic(roots / ".name", schema::get(store_->current()->project.name)
-                                        ? *schema::get(store_->current()->project.name) : opts_.root.filename().string(), 0644);
+  fs::write_atomic(roots / ".name", opts_.root.filename().string(), 0644);
   if (opts_.usage_file.empty()) {
     if (opts_.usage_roots_dir.empty())
       cache_usage_ = std::make_unique<CacheUsage>(stdfs::path{}, stdfs::path{}, roots, run_scratch_, project_id());
@@ -862,27 +860,11 @@ flatbuffers::Offset<R::DocumentDelta> delta_offset(FBB& b, const Delta& d) {
   return db.Finish();
 }
 
-flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<R::VersionComment>>> comment_changes(
-    FBB& b, const std::vector<comments::Change>& changes) {
-  std::vector<flatbuffers::Offset<R::VersionComment>> out;
-  for (const auto& c : changes) {
-    std::vector<flatbuffers::Offset<flatbuffers::String>> cards;
-    for (const auto& k : c.cards) cards.push_back(b.CreateString(k));
-    out.push_back(R::CreateVersionComment(b, b.CreateString(c.card), b.CreateString(c.text), b.CreateString(c.change),
-                                          c.resolution.empty() ? 0 : b.CreateString(c.resolution),
-                                          c.by.empty() ? 0 : b.CreateString(c.by), b.CreateVector(cards)));
-  }
-  return b.CreateVector(out);
-}
-
-flatbuffers::Offset<R::SaveResult> save_result(FBB& b, const Delta* d, const Document& base,
-                                               const std::vector<comments::Change>& comments = {}) {
+flatbuffers::Offset<R::SaveResult> save_result(FBB& b, const Delta* d, const Document& base) {
   flatbuffers::Offset<R::DocumentDelta> delta;
   if (d) delta = delta_offset(b, *d);
-  auto told = comments.empty() ? 0 : comment_changes(b, comments);
   R::SaveResultBuilder sb(b);
   if (d) sb.add_delta(delta);
-  if (!comments.empty()) sb.add_comments(told);
   sb.add_rev(d ? d->rev : base.rev);
   sb.add_execution_rev(d ? d->execution_rev : base.execution_rev);
   sb.add_replayed(false);
@@ -969,10 +951,7 @@ std::vector<ChangeIn> decode_changes(const flatbuffers::Vector<flatbuffers::Offs
         // the user's intent, and leaving a field blank must not remove that.
         if (p->meta_json() && p->meta_json()->size() > 0) ch.meta_json = p->meta_json()->str();
         if (p->link_json() && p->link_json()->size() > 0) ch.link_json = p->link_json()->str();
-        if (p->fill_description() && p->fill_description()->size() > 0) ch.fill_description = p->fill_description()->str();
-        if (p->fill_context() && p->fill_context()->size() > 0) ch.fill_context = p->fill_context()->str();
-        ch.keep_meta = p->keep_meta() || (p->meta_json() && p->meta_json()->size() == 0) ||
-                       (!ch.meta_json && (ch.fill_description || ch.fill_context));
+        ch.keep_meta = p->keep_meta() || (p->meta_json() && p->meta_json()->size() == 0);
         break;
       }
       case R::DocumentChangeValue::RemoveDefinition:
@@ -1041,9 +1020,9 @@ auto RequireApprovedPermissions(
 
 auto Service::card_id(RequestIn& req) -> void {
   const auto* r = req.request()->value_as_CardIdRequest();
-  auto id = store_->allocate_card_id(r->name()->str(), r->project_path() ? r->project_path()->str() : "");
+  auto id = store_->allocate_card_id(r->stem()->str(), r->project_path() ? r->project_path()->str() : "");
   FBB b;
-  auto result = R::CreateCardIdResult(b, b.CreateString(id), b.CreateString(r->name()->str()));
+  auto result = R::CreateCardIdResult(b, b.CreateString(id));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::CardIdResult, result.Union()));
 }
 
@@ -1067,23 +1046,6 @@ void Service::save(RequestIn& req) {
     // each widening (the client asks, then lists them).
     if (r->origin()->str() == "agent" && staged.effective) {
       store_->resolve_staged(staged);
-      // Who did what to the comments is recorded, whatever the model wrote.
-      if (comments::stamp_model_save(*base, store_->reader(*base), staged, store_->reader(*staged.doc, &staged.ops), changes)) {
-        staged = store_->stage(changes, op_id, r->origin()->str());
-        store_->resolve_staged(staged);
-      }
-      // Checked first, so that the user is not asked to approve a save that is refused anyway.
-      auto incomplete = permissions::incomplete_draft_intents(*base, store_->reader(*base), *staged.doc,
-                                                              store_->reader(*staged.doc, &staged.ops));
-      if (!incomplete.empty()) {
-        std::string why = "implementing a Draft keeps its intent in _meta.json; nothing was saved";
-        std::vector<std::pair<std::string, std::string>> args;
-        for (auto& line : incomplete) {
-          why += "\n" + line;
-          args.emplace_back("problem", std::move(line));
-        }
-        throw Failed(FailureKind::validation_failed, why, std::move(args));
-      }
       RequireApprovedPermissions(base->resolution.get(), *staged.doc->resolution,
                                  r->approved_permissions());
     }
@@ -1092,15 +1054,10 @@ void Service::save(RequestIn& req) {
         throw Failed(FailureKind::busy, "a run is in progress; computational changes are rejected until it ends",
                      {{"run_id", *active->run_id}});
     }
-    // What the Agent's save did to the comments, told back in its result.
-    std::vector<comments::Change> comment_record;
-    if (r->origin()->str() == "agent" && staged.effective)
-      comment_record = comments::changes(comments::of(*base, store_->reader(*base)),
-                                         comments::of(*staged.doc, store_->reader(*staged.doc, &staged.ops)));
     std::string receipt;
     store_->commit(staged, "save", digest, [&](const Delta* d) {
       FBB b(1 << 14);
-      auto sr = save_result(b, d, *base, comment_record);
+      auto sr = save_result(b, d, *base);
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
     });
@@ -1294,8 +1251,7 @@ void Service::version_graph(RequestIn& req) {
                                          n.summary.empty() ? 0 : b.CreateString(n.summary)));
     commits.push_back(R::CreateVersionCommit(b, b.CreateString(c.id), strings(c.parents), b.CreateString(c.summary),
                                              b.CreateString(c.message), b.CreateString(c.author), c.time_ms,
-                                             strings(c.branches), strings(c.tags), b.CreateVector(runs), strings(c.changed),
-                                             comment_changes(b, c.comments)));
+                                             strings(c.branches), strings(c.tags), b.CreateVector(runs), strings(c.changed)));
   }
   auto vg = R::CreateVersionGraph(b, g.enabled, b.CreateString(g.head), b.CreateString(g.branch), g.dirty, b.CreateVector(commits));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph, vg.Union()));
@@ -1367,8 +1323,7 @@ void Service::cache_clear(RequestIn& req) {
     execution_service_->clear();  // resident workers hold the builds being removed
     auto result = nix_->clear_cache();
     const auto roots = opts_.gcroots_dir.empty() ? store_->state_dir() / "cache" / "gcroots" : opts_.gcroots_dir;
-    fs::write_atomic(roots / ".name", schema::get(store_->current()->project.name)
-                                          ? *schema::get(store_->current()->project.name) : opts_.root.filename().string(), 0644);
+    fs::write_atomic(roots / ".name", opts_.root.filename().string(), 0644);
     if (cache_usage_) cache_usage_->refresh();
     FBB b;
     std::vector<flatbuffers::Offset<flatbuffers::String>> del;

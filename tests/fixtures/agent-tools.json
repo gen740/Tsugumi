@@ -132,11 +132,11 @@
            },
            "fill_description": {
             "type": "string",
-            "description": " Fill _meta.json's description if it is empty; what has text stays as it is  (keeps the rest of _meta.json, as keep_meta)."
+            "description": "Fill an empty description, preserving existing text."
            },
            "fill_context": {
             "type": "string",
-            "description": " Fill _meta.json's context if it is empty; what has text stays as it is."
+            "description": "Fill an empty context, preserving existing text."
            }
           },
           "additionalProperties": false,
@@ -731,12 +731,13 @@
  {
   "name": "card_id",
   "payloadType": 49,
-  "description": "Reserves a permanent identifier for a new Card. Supply its human name; save its definition and canvas with the returned id and _meta.json.name.",
+  "description": "Reserve a permanent Card id from its human name. The host derives a readable stem; core reserves a unique id. Use the id in paths and wires and keep the name in _meta.json.name. project_path selects a nested project.",
   "inputSchema": {
    "type": "object",
    "properties": {
     "name": {
-     "type": "string"
+     "type": "string",
+     "description": "Human name; the host derives the identifier stem."
     },
     "project_path": {
      "type": "string",

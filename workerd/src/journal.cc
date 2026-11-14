@@ -323,7 +323,9 @@ auto Journal::release(std::string_view job, const std::string& fingerprint)
     if (!terminal(state.state) || state.fingerprint != fingerprint)
       throw Error(R::ErrorCode::Rejected,
                   "release requires a terminal job and matching fingerprint");
-    state = Record{.state = R::JobState::Released, .fingerprint = fingerprint};
+    state = Record{};
+    state.state = R::JobState::Released;
+    state.fingerprint = fingerprint;
     write(dir, state);  // commit tombstone before erasing; recovery finishes an
                         // interrupted erase
     erase_scratch(dir);

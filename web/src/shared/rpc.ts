@@ -169,7 +169,7 @@ export class RPCClient {
   }
 
   cardId(name: string, projectPath = '') {
-    return this.call<R.CardIdResultT>(RequestPayload.CardIdRequest, Object.assign(new R.CardIdRequestT(), { name, projectPath }))
+    return this.call<R.CardIdResultT>(RequestPayload.CardIdRequest, Object.assign(new R.CardIdRequestT(), { stem: cardStem(name), projectPath }))
   }
 
   // ---- Typed wrappers ---------------------------------------------------------
@@ -466,4 +466,9 @@ export async function webSocketTransport(url: string): Promise<Transport> {
     release()
     throw error
   }
+}
+
+/** Presentation choice made by the caller; core only reserves the id. */
+export function cardStem(name: string): string {
+  return name.replace(/[A-Z]/g, c => c.toLowerCase()).replace(/[^a-z0-9]+/g, '-').replace(/^-/, '').slice(0, 123).replace(/-$/, '') || 'card'
 }

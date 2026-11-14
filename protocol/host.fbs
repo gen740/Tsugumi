@@ -138,13 +138,34 @@ table Demo { id:string (required); path:string (required); title:string (require
 table DemoList { demos:[Demo]; }
 table Model { id:string; name:string; }
 table ModelList { models:[Model]; }
+/// A comment on a Card that a version or a save changed.
+table VersionComment {
+  card:string (id: 0, required);
+  text:string (id: 1, required);
+  /// added, edited, resolved, reopened or removed. A comment written and
+  /// resolved within one version is resolved.
+  change:string (id: 2, required);
+  resolution:string (id: 3);
+  /// Who did it, as the comment records it: agent or user. Absent when it is
+  /// not recorded, as for a comment that is gone.
+  by:string (id: 4);
+  /// The Cards the save that resolved it changed.
+  cards:[string] (id: 5);
+}
+
+// The host reads comment records from the registered project repository.
+table VersionCommentsRequest { project:string (required); commit:string (required); }
+table VersionComments { comments:[VersionComment]; }
+
 union RequestPayload {
+  VersionCommentsRequest,
   GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
   RegisterProjectRequest, RegisterFolderRequest, SkillsListRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
+  VersionComments,
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   GuideState, EnvironmentState, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
   RecentList, DemoList, SkillsList, ModelList, Failure:Tsugumi.Service.Failure
