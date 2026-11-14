@@ -5,6 +5,29 @@ namespace {
 auto Bytes(const Reply& reply) -> std::string {
   return {reply.bytes.begin(), reply.bytes.end()};
 }
+TEST_F(AgentFixture, AgentWorkAnimationDefaultsOnAndPersistsAsABoolean) {
+  auto animation = [](const Reply& reply) {
+    for (const auto* value : *reply.HostValue()->value_as_Settings()->values())
+      if (value->key()->str() == "agent.animateWork")
+        return value->value_json()->str();
+    return std::string{};
+  };
+  EXPECT_EQ(animation(SettingsGet(*host)), "true");
+  EXPECT_FALSE(SettingsPatch(*host, "desktop",
+                             {{"agent.animateWork", Quote("false")}})
+                   .Code().empty());
+  ASSERT_TRUE(SettingsPatch(*host, "desktop", {{"agent.animateWork", "false"}})
+                  .Code().empty());
+  auto web = ConnectHost(true);
+  EXPECT_EQ(animation(SettingsGet(*web)), "false");
+  web.reset();
+  host.reset();
+  human.reset();
+  external.reset();
+  agent.Stop();
+  StartAgent();
+  EXPECT_EQ(animation(SettingsGet(*host)), "false");
+}
 TEST_F(AgentFixture,
        ConcurrentSettingsUpdatesRejectStaleRevisionsWithoutLosingFields) {
   const auto before = SettingsGet(*host);

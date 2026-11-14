@@ -480,7 +480,6 @@ final class ChatController {
   func detach() {
     resuming?.cancel()
     resuming = nil
-    tidyTask?.cancel()
     answer += 1
     let remote = agent
     agent = nil
@@ -578,23 +577,6 @@ final class ChatController {
     }
   }
 
-  /// Blocks moved by tidying in this session (for checks).
-  private(set) var tidied = 0
-  private var tidyTask: Task<Void, Never>?
-
-  /// While the Agent works, what its Cards show must not cover other Cards:
-  /// a moment after each step (when new output frames have come), room is
-  /// made where blocks overlap (LayoutTidy).
-  private func tidySoon() {
-    guard session.isEditable else { return }
-    tidyTask?.cancel()
-    tidyTask = Task { @MainActor [weak self] in
-      try? await Task.sleep(for: .milliseconds(900))
-      guard let self, !Task.isCancelled else { return }
-      withAnimation(.easeInOut(duration: 0.6)) { self.tidied += self.session.tidy() }
-    }
-  }
-
   /// A delegate call: its helpers' birds come out, each with a row here.
   private func startHelpers(_ arguments: String) {
     guard let v = try? JSONValue.parse(arguments), let tasks = v["tasks"]?.array else { return }
@@ -621,7 +603,6 @@ final class ChatController {
       if let row { items[row].tool = (tool, nil); items[row].text = args }
     case .toolFinished(_, let tool, let ok, _):
       if PresenceEvents.writesSources(tool: tool) { bird.toolInputEnded(ok: ok) }
-      tidySoon()
       if let row, items[row].tool?.name == tool { items[row].tool?.ok = ok }
     case .finished:
       bird.turnEnded(.done)
@@ -679,7 +660,6 @@ final class ChatController {
       showOnCanvas(tool: name, arguments: args)
     case .toolFinished(_, let name, let ok, let summary):
       if PresenceEvents.writesSources(tool: name) { session.presence.toolInputEnded(ok: ok) }
-      tidySoon()
       if let i = items.lastIndex(where: { $0.role == "tool" && $0.tool?.name == name && $0.tool?.ok == nil }) {
         items[i].tool = (name, ok)
         items[i].text += "\n→ " + summary
@@ -724,7 +704,6 @@ final class ChatController {
       status = nil
       session.presence.turnEnded()
       refreshAfterTurn()
-      tidySoon()
       flushNotes()
     case .stepLimit(let steps, let run):
       GuideController.shared.chatTurnEnded(self, reply: lastReply)

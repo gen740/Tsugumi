@@ -1,6 +1,7 @@
 // A bird per helper on the canvas (the Mac app's PresenceLayer): its thread, the
 // halo where it stands, its name beside it and a bubble with what it does, all in
 // its colour; a mark at the edge when it is out of view. Never takes a click.
+import { agentAppearance } from '../model/agentAppearance'
 import { CSSProperties, useEffect, useState } from 'react'
 import type { ChatController } from '../model/chat'
 import { guide } from '../model/guide'
@@ -25,7 +26,7 @@ export function HelperBirds({ chat, known, rect, screen, zoom, size }: {
   zoom: number
   size: { width: number; height: number }
 }) {
-  useObserve(chat, guide, prefs)
+  useObserve(chat, guide, prefs, agentAppearance)
   const now = Date.now() / 1000
   const birds = guide.present ? chat.team.birds.filter((b) => b.visible(now)) : []
   const live = birds.length > 0

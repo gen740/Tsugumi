@@ -250,6 +250,7 @@ auto Defaults() -> j::Members {
           {"agent.effort", j::Quote("")},
           {"agent.fastModel", j::Quote("")},
           {"agent.webSearch", "false"},
+          {"agent.animateWork", "true"},
           {"agent.permissions.allowed", "[]"},
           {"agent.skillFolders", "[]"},
           {"versions.summaries", "false"},
@@ -693,7 +694,8 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                   throw std::runtime_error("Invalid permission kind");
             if ((key == "versions.summaries" || key == "agent.webSearch" ||
                  key == "agent.drawThoughts" ||
-                 key == "agent.drawThoughtsAsked") &&
+                 key == "agent.drawThoughtsAsked" ||
+                 key == "agent.animateWork") &&
                 value != "true" && value != "false")
               throw std::runtime_error("Expected a boolean setting");
             if ((key == "agent.provider" || key.starts_with("agent.model") ||

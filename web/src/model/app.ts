@@ -1,6 +1,7 @@
 // Application wide state: setup, the Demos catalog, recent projects, one
 // ProjectSession per project shared by all of its views, and the detail
 // windows (floating inside the page, like the macOS app's own windows).
+import { agentAppearance } from './agentAppearance'
 import { api, onServerEvent, Status } from '../api'
 import { uuid } from '../shared/rpc'
 import { ChatController } from './chat'
@@ -51,12 +52,14 @@ export class AppModel extends Observable {
 
   constructor() {
     super()
+    window.addEventListener?.('focus', () => void agentAppearance.reload())
     onServerEvent((e) => {
       if (e.type === 'setup' || e.type === 'reconnected') void this.refresh()
     })
   }
 
   async refresh() {
+    void agentAppearance.reload()
     try {
       this.status = await api<Status>('/api/status')
     } catch (e) {

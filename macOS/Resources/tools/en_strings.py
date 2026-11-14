@@ -31,6 +31,10 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"一覧を読み込めませんでした": "Could not load the list",
+"この Mac の外観設定と、このホストの agentd の Agent 表示設定": "Appearance on this Mac; Agent presentation in agentd on this host",
+"Agent の作業をアニメーションで表示": "Animate the Agent’s work",
+"オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの agentd に保存します。": "When off, saved Cards and wires appear immediately. The work marker, thought summaries and source streaming continue. This setting is stored in agentd on this host.",
 "実行環境の状態を確認できませんでした": "Could not check the execution environment",
 "実行環境の状態を確認しています…": "Checking the execution environment…",
 "実行環境からの状態の応答が不正です。": "The execution environment returned an invalid status reply.",
@@ -126,7 +130,6 @@ EN = {
 "ページ": "Page",
 "前へ": "Previous",
 "次へ": "Next",
-"クリックでスキップ": "Click to skip",
 "できました": "Done",
 "考えています": "Thinking",
 "%@ を読んでいます": "Reading %@",

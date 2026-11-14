@@ -19,6 +19,62 @@ class MemorySecrets final : public host::SecretStore {
   }
   auto Erase(const std::string& id) -> void override { values.erase(id); }
 };
+TEST(HostSettingsStore, AgentAnimationIsValidatedAndSurvivesReopening) {
+  TemporaryDirectory directory;
+  const auto make = [&] {
+    return std::make_unique<host::Settings>(
+        directory.path, [](const auto&, const auto&) {},
+        [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+        std::make_unique<MemorySecrets>());
+  };
+  auto service = make();
+  auto call = [&](H::RequestT request) {
+    flatbuffers::FlatBufferBuilder b;
+    H::MessageT message;
+    message.request_id = 1;
+    message.payload.Set(std::move(request));
+    H::FinishMessageBuffer(b, H::Message::Pack(b, &message));
+    return service->Handle(
+        *H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 1);
+  };
+  auto get = [&] {
+    H::RequestT request;
+    H::SettingsGetRequestT value;
+    value.profile = "desktop";
+    request.value.Set(std::move(value));
+    return call(std::move(request));
+  };
+  auto animation = [](const std::string& reply) {
+    for (const auto* item : *H::GetMessage(reply.data())
+                                ->payload_as_Reply()->value_as_Settings()->values())
+      if (item->key()->str() == "agent.animateWork")
+        return item->value_json()->str();
+    return std::string{};
+  };
+  auto update = [&](const std::string& raw) {
+    const auto before = get();
+    H::SettingsUpdateRequestT value;
+    value.profile = "desktop";
+    value.revision = H::GetMessage(before.data())
+                         ->payload_as_Reply()->value_as_Settings()->revision();
+    auto item = std::make_unique<H::SettingT>();
+    item->key = "agent.animateWork";
+    item->value_json = raw;
+    value.changes.push_back(std::move(item));
+    H::RequestT request;
+    request.value.Set(std::move(value));
+    return call(std::move(request));
+  };
+  EXPECT_EQ(animation(get()), "true");
+  const auto invalid = update(Quote("false"));
+  EXPECT_NE(H::GetMessage(invalid.data())->payload_as_Reply()->value_as_Failure(),
+            nullptr);
+  EXPECT_EQ(animation(get()), "true");
+  EXPECT_EQ(animation(update("false")), "false");
+  service.reset();
+  service = make();
+  EXPECT_EQ(animation(get()), "false");
+}
 TEST(HostSettingsStore,
      ProviderInputsStayInTheSecretStoreAndFailuresAreSanitized) {
   TemporaryDirectory directory;

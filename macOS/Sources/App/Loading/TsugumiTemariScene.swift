@@ -6,8 +6,6 @@ import SwiftUI
 /// back in, leaning back. The ball turns as it rolls, without slipping.
 struct TsugumiTemariScene: View {
   var birdScale: CGFloat = 0.19
-  /// false: the perch and the temari only (the welcome flies the bird in).
-  var showsBird = true
   /// How far the ball rolls out, in points.
   var distance: CGFloat = 30
   /// One cycle, in seconds.
@@ -90,17 +88,15 @@ struct TsugumiTemariScene: View {
     }()
 
     let k = 1 - pose.hop / 40   // the shadow shrinks in the air
-    if showsBird {
-      g.fill(Path(ellipseIn: CGRect(x: fx - 30 * k, y: y - 6, width: 60 * k, height: 6)), with: .color(.black.opacity(0.2)))
-      TsugumiBird.draw(g, at: feet, scale: s, pose: pose) { g in
-        if holding {
-          TsugumiThread.up(g, from: lead, to: bill)
-          TsugumiThread.loose(g, from: bill, time: t)
-        }
+    g.fill(Path(ellipseIn: CGRect(x: fx - 30 * k, y: y - 6, width: 60 * k, height: 6)), with: .color(.black.opacity(0.2)))
+    TsugumiBird.draw(g, at: feet, scale: s, pose: pose) { g in
+      if holding {
+        TsugumiThread.up(g, from: lead, to: bill)
+        TsugumiThread.loose(g, from: bill, time: t)
       }
     }
     TsugumiTemari.draw(g, center: ball, radius: r, spin: Double(out / r))
-    if !holding || !showsBird { TsugumiThread.slack(g, from: lead, to: dropped, time: t) }
+    if !holding { TsugumiThread.slack(g, from: lead, to: dropped, time: t) }
   }
 }
 
