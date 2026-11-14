@@ -10,14 +10,13 @@ import TsugumiRPC
 /// UI subscriptions follow core-owned conversations through the production
 /// client. Only the HTTP model response is replaced by a local fixture.
 @MainActor
-@Suite(.serialized) struct ChatResumeTests {
+@Suite(.serialized, .hostService) struct ChatResumeTests {
   @MainActor final class Fixture {
     let directory = URL(fileURLWithPath: "/tmp/tsugumi-chat-\(UUID().uuidString.prefix(8))")
     let conversationID = UUID().uuidString.lowercased()
     var core = Process()
     let model = Process()
-    private let previousState = ProcessInfo.processInfo.environment["TSUGUMI_AGENT_STATE"]
-    private let previousSupport = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"]
+    private let environment = HostServiceEnvironment()
     private var project: URL?
     private var daemon: SyncTests.Daemon?
     private var sessions: [ProjectSession] = []
@@ -30,8 +29,7 @@ import TsugumiRPC
     func start(slow: Double, options: [String]) async throws {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       let state = directory.appendingPathComponent("state")
-      setenv("TSUGUMI_AGENT_STATE", state.path, 1)
-      setenv("TSUGUMI_SUPPORT_DIR", directory.appendingPathComponent("support").path, 1)
+      await environment.install(state: state, support: directory.appendingPathComponent("support"))
       let build = ProcessInfo.processInfo.environment["TSUGUMI_BUILD_DIR"].map { URL(fileURLWithPath: $0) }
         ?? SyncTests.root.appendingPathComponent("build")
       core.executableURL = ProcessInfo.processInfo.environment["TSUGUMI_AGENTD"].map { URL(fileURLWithPath: $0) }
@@ -42,11 +40,6 @@ import TsugumiRPC
       core.standardError = FileHandle.nullDevice
       try core.run()
       try await waitForAgent()
-      // Other UI tests can initialize the shared client before this fixture.
-      // Join Home's startup and release its sockets before using our service.
-      await AppModel.shared.initialRefresh?.value
-      await CoreAgentClient.shared.disconnect()
-
       model.executableURL = URL(fileURLWithPath: "/usr/bin/env")
       model.arguments = ["python3", SyncTests.root.appendingPathComponent("tests/fixtures/model_fixture.py").path,
                          "--port", "0", "--slow", "\(slow)"] + options
@@ -189,9 +182,7 @@ import TsugumiRPC
       }
       daemon?.stop()
       try? await Task.sleep(for: .milliseconds(100))
-      await CoreAgentClient.shared.disconnect()
-      if let previousState { setenv("TSUGUMI_AGENT_STATE", previousState, 1) } else { unsetenv("TSUGUMI_AGENT_STATE") }
-      if let previousSupport { setenv("TSUGUMI_SUPPORT_DIR", previousSupport, 1) } else { unsetenv("TSUGUMI_SUPPORT_DIR") }
+      await environment.restore()
       if let project { try? FileManager.default.removeItem(at: project) }
       try? FileManager.default.removeItem(at: directory)
     }
