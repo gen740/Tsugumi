@@ -26,8 +26,8 @@ def brute_force(n, tail, head, capacity):
     return best, codes[total == best], subsets.size
 
 
-def main(ctx):
-    c = ctx.input("cut", Cut)
+def main(inputs, report):
+    c = inputs.input("cut", Cut)
     nodes = c.Nodes().decode().split()
     tail, head, capacity = c.TailAsNumpy(), c.HeadAsNumpy(), c.CapacityAsNumpy()
     value = int(c.Value())
@@ -55,5 +55,5 @@ def main(ctx):
             lines.append(f"- and {len(minimum_cuts) - 6} more")
     else:
         lines += ["", f"Too many nodes ({len(nodes) - 2} inside), so brute force was skipped."]
-    ctx.display_markdown("\n".join(lines))
-    print("result: " + json.dumps({"networkx": value, "scipy": by_scipy, "minimum_cuts": minimum_cuts}))
+    report.markdown("\n".join(lines))
+    report.log(str("result: " + json.dumps({"networkx": value, "scipy": by_scipy, "minimum_cuts": minimum_cuts})))

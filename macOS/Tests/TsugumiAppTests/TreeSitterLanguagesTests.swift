@@ -35,14 +35,14 @@ private let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent
 }
 
 @Test func treeSitterColorsJulia() {
-  let t = tokens("# note\nusing Printf\n\nfunction main(ctx::Dict)\n    x = 1.5\n    if x > 1 && true\n        @printf(\"%d\", 2)\n    end\n    return :sym\nend\n", "jl")
+  let t = tokens("# note\nusing Printf\n\nfunction main(inputs, report)\n    x = 1.5\n    if x > 1 && true\n        @printf(\"%d\", 2)\n    end\n    return Dict{String,Any}(\"result\" => Dict(\"value\" => x, \"tag\" => :sym))\nend\n", "jl")
   #expect(t.contains("comment:# note") && t.contains("keyword:using") && t.contains("keyword:function") && t.contains("keyword:end"))
   #expect(t.contains("keyword:if") && t.contains("keyword:return") && t.contains("number:1.5") && t.contains("constant:true"))
   #expect(t.contains("string:\"%d\"") && t.contains("function:main") && t.contains("type:Dict"))
 }
 
 @Test func treeSitterColorsR() {
-  let t = tokens("# note\nlibrary(ggplot2)\nmain <- function(ctx) {\n  x <- c(1, 2.5, TRUE)\n  if (x[1] > 1) print(\"hi\") else NULL\n  for (i in 1:3) next\n}\n", "R")
+  let t = tokens("# note\nlibrary(ggplot2)\nmain <- function(inputs, report) {\n  x <- c(1, 2.5, TRUE)\n  if (x[1] > 1) print(\"hi\") else NULL\n  for (i in 1:3) next\n}\n", "R")
   #expect(t.contains("comment:# note") && t.contains("keyword:function") && t.contains("keyword:if") && t.contains("keyword:else") && t.contains("keyword:for"))
   #expect(t.contains("string:\"hi\"") && t.contains("number:2.5") && t.contains("function:library") && t.contains("function:print"))
   #expect(t.contains("constant:TRUE") && t.contains("constant:NULL"))

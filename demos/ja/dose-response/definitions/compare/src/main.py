@@ -8,8 +8,8 @@ from inputs.intervals.dose.Intervals import Intervals
 COLORS = ["#2a78d6", "#eb6834"]
 
 
-def main(ctx):
-    r = ctx.input("intervals", Intervals)
+def main(inputs, report):
+    r = inputs.input("intervals", Intervals)
     n = r.NamesLength()
     names = [r.Names(i).decode() for i in range(n)]
     log_samples = r.LogEc50SamplesAsNumpy().reshape(n, -1)
@@ -22,8 +22,8 @@ def main(ctx):
     true_ratio = r.Ec50True(1) / r.Ec50True(0)
     hill_low, hill_high = np.nanpercentile(hill_samples[1] - hill_samples[0], [2.5, 97.5])
     parallel = hill_low <= 0 <= hill_high
-    print(f"relative potency {names[1]}/{names[0]} {ratio:.4g} [{low:.4g}, {high:.4g}] true {true_ratio:g}; "
-          f"hill difference [{hill_low:.3f}, {hill_high:.3f}]")
+    report.log(str(f"relative potency {names[1]}/{names[0]} {ratio:.4g} [{low:.4g}, {high:.4g}] true {true_ratio:g}; "
+          f"hill difference [{hill_low:.3f}, {hill_high:.3f}]"))
 
     fig, (left, right) = plt.subplots(1, 2, figsize=(9, 4), gridspec_kw={"width_ratios": [1.1, 1]})
     for i in range(n):
@@ -70,4 +70,4 @@ def main(ctx):
         text = f"Hill 勾配の差の区間 {hill_low:.2f} – {hill_high:.2f} は 0 を含みません。曲線は平行でなく、この比は EC50 の水準でだけ言えます。"
     fig.text(0.5, 0.01, text, ha="center", fontsize=9)
     fig.tight_layout(rect=(0, 0.05, 1, 1))
-    plt.show()
+    report.figure()

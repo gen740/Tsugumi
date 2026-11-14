@@ -2,11 +2,12 @@ library(survival)
 library(ggplot2)
 
 # The same hazard ratio under every combination of who is included and what is adjusted for.
-main <- function(ctx) {
-  subsets <- ctx$params$subsets
-  adjustments <- ctx$params$adjustments
-  exposure <- ctx$params$exposure
-  d <- read.csv(ctx$path("lung"))
+main <- function(inputs, report, run) {
+  outputs <- list()
+  subsets <- inputs$params$subsets
+  adjustments <- inputs$params$adjustments
+  exposure <- inputs$params$exposure
+  d <- read.csv(inputs$path("lung"))
 
   one <- function(subset_text, adjustment) {
     x <- subset(d, eval(parse(text = subset_text)))
@@ -17,9 +18,9 @@ main <- function(ctx) {
                hr = s$conf.int[exposure, "exp(coef)"], lower = s$conf.int[exposure, "lower .95"], upper = s$conf.int[exposure, "upper .95"])
   }
   rows <- do.call(rbind, lapply(subsets, function(s) do.call(rbind, lapply(adjustments, function(a) one(s, a)))))
-  file <- file.path(ctx$output_directory, "specifications.csv")
+  file <- file.path(run$output_directory, "specifications.csv")
   write.csv(rows, file, row.names = FALSE)
-  ctx$output("specifications", list(value = file))
+  outputs[["specifications"]] <- list(value = file)
 
   rows$subset <- factor(ifelse(rows$subset == "TRUE", "everyone", rows$subset), levels = ifelse(subsets == "TRUE", "everyone", subsets))
   labelled <- ifelse(adjustments == "", "no adjustment", adjustments)
@@ -38,5 +39,7 @@ main <- function(ctx) {
     theme_minimal(base_size = 11) +
     theme(strip.placement = "outside", strip.text.y.left = element_text(angle = 0, face = "bold"),
           panel.grid.minor = element_blank(), panel.spacing.y = unit(6, "pt"))
-  ctx$plot(print(figure), alt = "Hazard ratio across specifications", width = 8.5, height = 1 + 0.27 * nrow(rows) + 0.1 * length(subsets))
+  report$figure(print(figure), alt = "Hazard ratio across specifications", width = 8.5, height = 1 + 0.27 * nrow(rows) + 0.1 * length(subsets))
+
+  outputs
 }

@@ -6,7 +6,6 @@ namespace tsugumi {
 namespace {
 
 thread_local const tsugumi_call* g_call = nullptr;
-thread_local Context g_context;
 
 const tsugumi_call& current() {
   if (!g_call) throw Failure("worker_failed", "no Card invocation is running");
@@ -19,26 +18,22 @@ void check(int rc, const char* what) {
 
 }  // namespace
 
-const Context& context() {
-  current();
-  return g_context;
+auto Run::cancelled() const -> bool { return call_->cancelled(call_->host) != 0; }
+auto Run::remaining_ms() const -> int64_t { return call_->remaining_ms(call_->host); }
+auto Report::log(const std::string& message) const -> void { current().log(current().host, message.c_str()); }
+
+auto Report::text(const std::string& text) const -> void {
+  check(current().display_text(current().host, text.c_str()), "text display");
 }
-bool cancelled() { return current().cancelled(current().host) != 0; }
-int64_t remaining_ms() { return current().remaining_ms(current().host); }
-void log(const std::string& message) { current().log(current().host, message.c_str()); }
-
-namespace visualization {
-
-void text(const std::string& text) { check(current().display_text(current().host, text.c_str()), "text display"); }
-void markdown(const std::string& text) {
+auto Report::markdown(const std::string& text) const -> void {
   check(current().display_markdown(current().host, text.c_str()), "markdown display");
 }
 
-void scalar(double value, const std::string& label) {
+auto Report::scalar(double value, const std::string& label) const -> void {
   check(current().display_scalar(current().host, value, label.c_str()), "scalar display");
 }
 
-void line_chart(const std::vector<Series>& series) {
+auto Report::line_chart(const std::vector<Series>& series) const -> void {
   std::vector<tsugumi_series> s;
   for (const auto& x : series) {
     if (x.x.size() != x.y.size()) throw Failure("output_invalid", "series x and y differ in length");
@@ -47,7 +42,8 @@ void line_chart(const std::vector<Series>& series) {
   check(current().display_line_chart(current().host, s.data(), s.size()), "line chart");
 }
 
-void table(const std::vector<std::string>& columns, const std::vector<std::vector<std::string>>& rows) {
+auto Report::table(const std::vector<std::string>& columns, const std::vector<std::vector<std::string>>& rows) const
+    -> void {
   std::vector<const char*> cols;
   std::vector<const char*> cells;
   for (const auto& c : columns) cols.push_back(c.c_str());
@@ -58,25 +54,25 @@ void table(const std::vector<std::string>& columns, const std::vector<std::vecto
   check(current().display_table(current().host, cols.data(), cols.size(), cells.data(), rows.size()), "table");
 }
 
-void image(const std::string& media_type, const std::string& bytes, const std::string& alt) {
+auto Report::image(const std::string& media_type, const std::string& bytes, const std::string& alt) const -> void {
   check(current().display_image(current().host, media_type.c_str(), reinterpret_cast<const uint8_t*>(bytes.data()),
                                 bytes.size(), alt.c_str()),
         "image");
 }
 
-void points(const std::vector<float>& x, const std::vector<float>& y, const std::vector<float>& z,
-            const std::vector<uint32_t>& colors) {
+auto Report::points(const std::vector<float>& x, const std::vector<float>& y, const std::vector<float>& z,
+                    const std::vector<uint32_t>& colors) const -> void {
   if (x.size() != y.size() || x.size() != z.size()) throw Failure("output_invalid", "x, y and z differ in length");
   check(current().display_points(current().host, x.data(), y.data(), z.data(), colors.empty() ? nullptr : colors.data(),
                                  x.size()),
         "point cloud");
 }
 
-auto module(const std::string& name, const std::string& config_json, const std::vector<tsugumi_blob>& blobs) -> void {
-  check(current().display_module(current().host, name.c_str(), config_json.c_str(), blobs.data(), blobs.size()), "module display");
+auto Report::module(const std::string& name, const std::string& config_json,
+                    const std::vector<tsugumi_blob>& blobs) const -> void {
+  check(current().display_module(current().host, name.c_str(), config_json.c_str(), blobs.data(), blobs.size()),
+        "module display");
 }
-
-}  // namespace visualization
 
 namespace card {
 
@@ -98,8 +94,6 @@ int invoke(const tsugumi_call* call, const std::function<void(Call&)>& body) {
     return 1;
   }
   g_call = call;
-  g_context = Context{call->run_id, call->card, call->invocation, call->working_directory, call->temporary_directory,
-                      call->output_directory};
   struct Reset {
     ~Reset() { g_call = nullptr; }
   } reset;

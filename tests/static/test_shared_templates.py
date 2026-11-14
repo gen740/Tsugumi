@@ -32,7 +32,7 @@ def test_shared_templates_are_current():
         assert card['params'] == defaults and card['retainArtifact'] and card['artifactOutput'] == 'figure'
         source = files['src/main.py']
         assert '# @select@' not in source and '# @insert@' not in source
-        assert 'def select(' in source and 'def marks(' in source and 'def main(ctx)' in source
+        assert 'def select(' in source and 'def marks(' in source and 'def main(inputs, report, run)' in source
         compile(source, f'{library}.py', 'exec')
     # The demo's three figures are the Matplotlib template with their own kind and title.
     for language in ('en', 'ja'):

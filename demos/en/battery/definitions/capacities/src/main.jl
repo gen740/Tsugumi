@@ -2,10 +2,10 @@ using Printf
 include("dp.jl")
 
 # How much each added kWh of battery is worth, and how the schedule changes with size.
-function main(ctx)
-    m = input(ctx, "scenario")
-    sizes = sort(Float64.(ctx.params["capacities_kwh"]))
-    shown = Float64.(ctx.params["schedule_sizes_kwh"])
+function main(inputs, report)
+    m = Tsugumi.input(inputs, "scenario")
+    sizes = sort(Float64.(inputs.params["capacities_kwh"]))
+    shown = Float64.(inputs.params["schedule_sizes_kwh"])
     net_load = Float64.(m["load"]) .- Float64.(m["solar"])
     solve(price, capacity) = optimal_schedule(net_load, price, m["export_ratio"]; capacity, power=m["power_kw"],
                                               efficiency=m["round_trip_efficiency"], step=m["soc_step_kwh"])
@@ -22,7 +22,7 @@ function main(ctx)
             push!(rows, Dict("kWh" => sizes[i], "saved" => round(saved[i]; digits=1), "tariff" => name))
             i > 1 && push!(marginal, Dict("kWh" => (sizes[i] + sizes[i - 1]) / 2, "per" => round((saved[i] - saved[i - 1]) / (sizes[i] - sizes[i - 1]); digits=1), "tariff" => name))
         end
-        println(name, ": ", join((@sprintf("%g kWh %.0f yen", sizes[i], saved[i]) for i in eachindex(sizes)), ", "))
+        report.log(string(name, ": ", join((@sprintf("%g kWh %.0f yen", sizes[i], saved[i]) for i in eachindex(sizes)), ", ")))
     end
 
     # The first three days of the schedule under the market tariff, at a few sizes.
@@ -37,7 +37,7 @@ function main(ctx)
 
     tariff_colors = Dict("domain" => ["Market-linked", "Time-of-use"], "range" => ["#2a78d6", "#1baf7a"])
     lines = Dict("type" => "line", "point" => true, "strokeWidth" => 1.8)
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("text" => "More capacity, but the saving levels off",
@@ -63,4 +63,6 @@ function main(ctx)
                                     "color" => Dict("field" => "size", "type" => "nominal", "title" => "Capacity", "sort" => labels,
                                                     "scale" => Dict("range" => ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"])))),
         ]))
+
+    return nothing
 end

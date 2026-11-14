@@ -3,20 +3,20 @@ library(ggplot2)
 library(ggrepel)
 
 # Meta-regression: does the effect change with the moderator?
-main <- function(ctx) {
-  name <- ctx$params$moderator
-  method <- ctx$params$method
-  d <- read.csv(ctx$path("trials"))
+main <- function(inputs, report, run) {
+  outputs <- list()
+  name <- inputs$params$moderator
+  method <- inputs$params$method
+  d <- read.csv(inputs$path("trials"))
   d$x <- d[[name]]
   overall <- rma(yi, vi, data = d, method = method)
   m <- rma(yi, vi, mods = ~ x, data = d, method = method)
   rows <- data.frame(moderator = name, method = method, intercept = coef(m)[1], slope = coef(m)[2], slope_se = m$se[2],
                      QM = m$QM, QM_p = m$QMp, tau2 = m$tau2, tau2_without = overall$tau2, R2 = m$R2, I2 = m$I2)
-  file <- file.path(ctx$output_directory, "regression.csv")
+  file <- file.path(run$output_directory, "regression.csv")
   write.csv(rows, file, row.names = FALSE)
-  ctx$output("regression", list(value = file))
-  print(rows)
-
+  outputs[["regression"]] <- list(value = file)
+  report$log(paste(capture.output(print(rows)), collapse = "\n"))
   grid <- seq(min(d$x), max(d$x), length.out = 100)
   band <- as.data.frame(predict(m, newmods = grid))
   band$x <- grid
@@ -33,5 +33,7 @@ main <- function(ctx) {
          title = sprintf("傾き %.4f (p = %.2g)。τ² は %.3f → %.3f、説明された割合 R² = %.0f%%", m$b[2], m$pval[2], overall$tau2, m$tau2, m$R2),
          subtitle = "点の大きさは重み、数字は試験番号、帯は 95% 信頼区間") +
     theme_minimal(base_size = 12)
-  ctx$plot(print(figure), alt = sprintf("Meta-regression on %s, slope %.4f", name, m$b[2]), width = 7.5, height = 5)
+  report$figure(print(figure), alt = sprintf("Meta-regression on %s, slope %.4f", name, m$b[2]), width = 7.5, height = 5)
+
+  outputs
 }

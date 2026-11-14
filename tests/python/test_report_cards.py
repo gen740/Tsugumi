@@ -58,7 +58,7 @@ def report_project(root, extension, source=REPORT):
         'read': {'card': {'language': 'bash', 'inputs': [{'name': 'report'}], 'filesystem': True},
                  'nix': '''{ pkgs, inputs, params }: { run = ''
                    test -s "$DIR_REPORT/index.html"
-                   printf '%s' '{"text":"saved report"}' > "$TSUGUMI_DISPLAY"
+                   printf '%s' '{"text":"saved report"}' > "$TSUGUMI_REPORT"
                  ''; }'''},
     }, [('start', 'out', 'data', 'start'), ('data', 'numbers', 'report', 'data'), ('report', 'report', 'read', 'report')])
 
@@ -110,7 +110,12 @@ def test_quarto_project_output_directory(project, nested):
     root, connect = project
     report_project(root, 'qmd')
     source = root / 'definitions/report/src'
-    (source / '_quarto.yml').write_text('project:\n  type: default\n  output-dir: _site\nexecute:\n  freeze: true\n')
+    (source / '_quarto.yml').write_text('''project:
+  type: default
+  output-dir: _site
+execute:
+  freeze: true
+''')
     if nested:
         (source / 'nested').mkdir()
         for name in ('report.qmd', 'badge.svg'):
@@ -155,7 +160,8 @@ stopifnot(readLines(file.path(params$tsugumi$paths$folder, "data.txt")) == "file
     card = json.loads((definition / '_card.json').read_text())
     card['filesystem'] = True
     (definition / '_card.json').write_text(json.dumps(card))
-    (definition / '_outputs.fbs').write_text(NUMBERS.replace('table Outputs {', 'table Path { value:string; }\ntable Outputs { file:Path (required, tsugumi:"file"); folder:Path (required, tsugumi:"directory");'))
+    (definition / '_outputs.fbs').write_text(NUMBERS.replace('table Outputs {', '''table Path { value:string; }
+table Outputs { file:Path (required, tsugumi:"file"); folder:Path (required, tsugumi:"directory");'''))
     (definition / 'default.nix').write_text('''{ pkgs, inputs, params }: { run = ''
       mkdir -p "$TSUGUMI_OUTPUT_DIR/files"
       printf '%s\\n' file-data > "$TSUGUMI_OUTPUT_DIR/files/data.txt"

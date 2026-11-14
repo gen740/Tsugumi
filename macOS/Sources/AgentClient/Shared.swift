@@ -87,10 +87,9 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
     Use project:<path> for a file relative to the Card's own project root (also inside an external project).
     When it runs, the file is copied into the run and the next Card receives its path. Fixed values are params of
     the same names as the fields of its output table (demos/report/definitions/settings). Other built-ins: fork,
-    branch, merge (card-guide.md).
+    branch, merge.
   * Otherwise a code Card: set "language" ("python", "cpp", "go", "rust", "csharp", "bash", "r", "julia" or "ruby") and remove "template" in _card.json, write
     _outputs.fbs (one table per output port; the root table Outputs), default.nix and the sources in src/.
-    For Go, Rust, C#, R, Julia and Ruby, card-guide.md has the entry points and Nix helpers.
     default.nix is a function of { pkgs, inputs, params }. Python (demos/report/definitions/generate/default.nix):
       { pkgs, inputs, params }:
       let
@@ -145,56 +144,64 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
       }
   * File and folder outputs: declare attribute "tsugumi"; in _outputs.fbs and mark the port (required, tsugumi:
     "file") or (required, tsugumi: "directory"); its table has one field value:string holding the path. Set
-    "filesystem": true in _card.json and write under ctx.output_directory. demos/report/definitions/generate:
+    "filesystem": true in _card.json and write under run.output_directory. demos/report/definitions/generate:
       attribute "tsugumi";
       namespace report;
       table CsvFile { value:string; }
       table Outputs { csv:CsvFile (required, tsugumi: "file"); }
       root_type Outputs;
-  * Python: src/main.py defines main(ctx). Input classes are generated from the types of the connected outputs,
+  * Python: src/main.py defines main(inputs), main(inputs, report), or main(inputs, report, run). Input classes are generated from the types of the connected outputs,
     output classes from _outputs.fbs, params from _card.json:
+        import tsugumi
         from inputs.events.data.EventsFile import EventsFile    # inputs.<port>.<namespace>.<Table>
         import outputs.images.bands.ImagesDir as images_out      # outputs.<port>.<namespace>.<Table>
-        path = ctx.input("events", EventsFile).Value().decode()  # a File input is a path
-        low = ctx.params().Low()                                 # param "low" ({"name": "low", "type": "double", "data": 600})
-        out_dir = ctx.output_directory                           # with "filesystem": true
-        b = ctx.builder(); p = b.CreateString(out_dir)
-        images_out.Start(b); images_out.AddValue(b, p); ctx.output("images", b, images_out.End(b))
-        ctx.display_table(["band", "photons"], [["red", 703367]])
-    The whole SDK (ctx is a Context; generated from its source):
-      ctx.run_id, ctx.card, ctx.invocation, ctx.working_directory, ctx.temporary_directory, ctx.output_directory
-      ctx.has_input(port: str)
-      ctx.input_bytes(port: str)
-      ctx.input(port: str, cls: Any)  # Returns the input message as the generated class ``cls``.
-      ctx.params()
-      ctx.builder(size: int=1024)
-      ctx.output(port: str, builder: flatbuffers.Builder, root: Optional[int]=None)
-      ctx.output_bytes(port: str, data: bytes)
-      ctx.display_text(text: str)
-      ctx.display_markdown(text: str)  # Markdown with TeX math ($…$ inline, $$…$$ displayed), shown formatted.
-      ctx.display_scalar(value: float, label: str)
-      ctx.display_line_chart(series: Iterable[dict])
-      ctx.display_table(columns: list, rows: Iterable[Iterable])
-      ctx.display_image(data: bytes, media_type: str='image/png', alt: str='')
-      ctx.display_points(x, y, z, colors=None)
-      ctx.display_figure(*figures)  # matplotlib figures as the Card's image (several are stacked), whatever the
-      ctx.display_module(module: str, config, blobs=None)
-      ctx.log(message: str)
-      ctx.cancelled()
-      ctx.remaining_ms()
-    raise tsugumi.Failure("output_invalid", "why") to fail with a reason; print() goes to the Card's log.
-    matplotlib (packages = ps: [ ps.matplotlib ]) draws into the Card's display: write it as for a window
-    (plt.show(), or leave the figures open; plt.pause() loops and FuncAnimation update it live; never
-    matplotlib.use or savefig for display), or ctx.display_figure(fig). Plotly fig.show() and Altair chart.show()
-    (ps.plotly, ps.altair) show interactive plots there (at most 1 MiB of JSON, data inline).
+        path = inputs.input("events", EventsFile).Value().decode()  # a File input is a path
+        low = inputs.params.low                                 # param "low" ({"name": "low", "type": "double", "data": 600})
+        out_dir = run.output_directory                           # with "filesystem": true
+        b = tsugumi.builder(); p = b.CreateString(out_dir)
+        images_out.Start(b); images_out.AddValue(b, p)
+        report.table(["band", "photons"], [["red", 703367]])
+        return {"images": tsugumi.message(b, images_out.End(b))}
+    The whole SDK (Inputs, Report and Run; generated from their source):
+      inputs.<port>, inputs.params.<field> (read-only generated objects)
+      return {port: generated_object_or_bytes}; yield mappings for streaming
+      inputs.params
+      inputs.has_input(port: str)
+      inputs.input_bytes(port: str)
+      inputs.input(port: str, cls: Any)
+      report.text(text: str)
+      report.markdown(text: str)
+      report.scalar(value: float, label: str)
+      report.line_chart(series: Iterable[dict])
+      report.table(columns: list, rows: Iterable[Iterable])
+      report.image(data: bytes, media_type: str='image/png', alt: str='')
+      report.points(x, y, z, colors=None)
+      report.figure(*figures, wait: Optional[float]=None)
+      report.module(module: str, config, blobs=None)
+      report.log(message: str)
+      run.run_id
+      run.card
+      run.invocation
+      run.working_directory
+      run.temporary_directory
+      run.output_directory
+      run.cancelled()
+      run.remaining_ms()
+      tsugumi.builder(size=1024)
+      tsugumi.message(value, root=None)
+    raise tsugumi.Failure("output_invalid", "why") to fail with a reason; report.log writes a log line.
+    Return output mappings; use a generator yielding mappings for incremental batches of distinct ports; each port may be returned once per invocation.
+    Use report.figure(fig) for Matplotlib, Plotly and Altair. report.figure() renders open Matplotlib figures
+    and drives animations; report.figure(wait=seconds) publishes live frames. Drawing alone never publishes.
+    Plotly/Altair interactive plots carry at most 1 MiB of JSON, data inline.
     HOME, XDG_CONFIG_HOME and XDG_CACHE_HOME are writable folders of the worker (libraries such as astropy and
     matplotlib need nothing more).
-  * C++: sources are `#include <card.hh>` and `auto run(Card::Input& input) -> Card::Output` with one member per
-    port (input.<port>, Output's ports are std::optional); visualization is
-    tsugumi::visualization::text/markdown/scalar/line_chart/table/image/points/module.
+  * C++: sources are `#include <card.hh>` and `auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output` with one member per
+    port (inputs.<port>, Output's ports are std::optional); visualization is
+    report.text/markdown/scalar/line_chart/table/image/points/module.
   * Each invocation starts a fresh worker by default. Set `reuseWorker: true` in _card.json to keep this Card's
-    state across invocations and runs. To reset that state at the start of each run, use `auto onRunStart() -> void`
-    (Python: on_run_start(ctx)). Input types come from the connected outputs; never write _inputs.fbs.
+    state across invocations and runs. To reset that state at the start of each run, use `auto onRunStart(const Card::Inputs& inputs) -> void`
+    (Python: on_run_start(inputs, report, run)). Input types come from the connected outputs; never write _inputs.fbs.
     Optional preRun / postRun are bash without the Card inputs.
   Keep each reply short enough to finish: one Card per project_save, long sources in saves of their own.
   Write all the Drafts first, upstream first (write first, run afterwards: see the rule above): write and save each.

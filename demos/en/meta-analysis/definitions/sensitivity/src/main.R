@@ -2,9 +2,10 @@ suppressPackageStartupMessages(library(metafor))
 library(ggplot2)
 
 # What moves the pooled estimate: dropping one trial, or changing the tau^2 estimator.
-main <- function(ctx) {
-  d <- read.csv(ctx$path("trials"))
-  methods <- ctx$params$estimators
+main <- function(inputs, report, run) {
+  outputs <- list()
+  d <- read.csv(inputs$path("trials"))
+  methods <- inputs$params$estimators
   fit <- function(x, method) {
     m <- rma(yi, vi, data = x, method = method)
     data.frame(rr = exp(as.numeric(coef(m))), lower = exp(m$ci.lb), upper = exp(m$ci.ub), tau2 = m$tau2, I2 = m$I2)
@@ -14,9 +15,9 @@ main <- function(ctx) {
   leave <- rbind(loo("EE", "Leaving one trial out: fixed effect"), loo("DL", "Leaving one trial out: random effects DL"))
   estimators <- do.call(rbind, lapply(methods, function(k) cbind(panel = "Changing the estimator (all trials)", name = k, left_out = NA, fit(d, k))))
   rows <- rbind(leave, estimators)
-  file <- file.path(ctx$output_directory, "sensitivity.csv")
+  file <- file.path(run$output_directory, "sensitivity.csv")
   write.csv(rows, file, row.names = FALSE)
-  ctx$output("sensitivity", list(value = file))
+  outputs[["sensitivity"]] <- list(value = file)
 
   full <- data.frame(panel = c("Leaving one trial out: fixed effect", "Leaving one trial out: random effects DL"), rr = c(fit(d, "EE")$rr, fit(d, "DL")$rr))
   span <- function(x) sprintf("%.2f–%.2f", min(x$rr), max(x$rr))
@@ -34,5 +35,7 @@ main <- function(ctx) {
                          span(leave[leave$panel == full$panel[1], ]), span(leave[leave$panel == full$panel[2], ]), span(estimators))) +
     theme_minimal(base_size = 11) +
     theme(panel.grid.minor = element_blank())
-  ctx$plot(print(figure), alt = "Leave-one-out and estimator comparison of the pooled risk ratio", width = 10, height = 4.8)
+  report$figure(print(figure), alt = "Leave-one-out and estimator comparison of the pooled risk ratio", width = 10, height = 4.8)
+
+  outputs
 }

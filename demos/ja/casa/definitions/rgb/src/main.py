@@ -1,5 +1,6 @@
 """Assigns the three band images to R, G and B with an asinh stretch per
 channel and shows the PNG. Not exposure corrected: a picture, not a flux map."""
+import tsugumi
 import hashlib
 import json
 import shutil
@@ -10,15 +11,14 @@ from astropy.io import fits
 from PIL import Image
 
 from inputs.input.casa.BandDir import BandDir
-import outputs.rgb.casa.RgbDir as out
 
 
-def main(ctx):
-    source = Path(ctx.input("input", BandDir).Value().decode())
-    p = ctx.params()
-    percentile, q = p.Percentile(), p.Q()
+def main(inputs, report, run):
+    source = Path(inputs.input("input", BandDir).Value().decode())
+    p = inputs.params
+    percentile, q = p.percentile, p.q
     assert 90 <= percentile <= 100 and q > 0
-    dest = Path(ctx.output_directory) / "rgb"
+    dest = Path(run.output_directory) / "rgb"
     dest.mkdir(parents=True, exist_ok=True)
     manifest = json.loads((source / "provenance.json").read_text())
     channels, scales, shape = [], [], None
@@ -38,10 +38,9 @@ def main(ctx):
     digest = hashlib.sha256(png.read_bytes()).hexdigest()
     manifest["display"] = {"stretch": "asinh", "q": q, "percentile": percentile, "scales": scales, "png_sha256": digest}
     (dest / "provenance.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
-    print(f"casa-rgb.png sha256 {digest}")
-    ctx.display_image(png.read_bytes())
-    b = ctx.builder()
-    s = b.CreateString(str(dest))
-    out.Start(b)
-    out.AddValue(b, s)
-    ctx.output("rgb", b, out.End(b))
+    report.log(str(f"casa-rgb.png sha256 {digest}"))
+    report.image(png.read_bytes())
+    s = str(dest)
+    _out_value = {}
+    _out_value['value'] = s
+    return {'rgb': _out_value}

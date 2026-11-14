@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 
 namespace Tsugumi;
 
-// NativeValue, NativeSeries and NativeCall (Context.cs) mirror
+// NativeValue, NativeSeries and NativeCall (InvocationScope.cs) mirror
 // sdk/include/tsugumi/sdk/abi.h by hand. host.cc passes the C compiler's
 // offsetof/sizeof of every field; this compares them with the managed layout
 // by C field name, so a field missing, moved or resized on either side fails

@@ -147,7 +147,8 @@ class SharedVM:
 
     def _pump(self):
         for line in self.proc.stdout:
-            self.lines.put(line.rstrip("\n"))
+            self.lines.put(line.rstrip('''
+'''))
         self.lines.put(None)
 
     @classmethod
@@ -160,7 +161,8 @@ class SharedVM:
         """Sends one command and reads its answer up to the line `until` accepts.
         A vmctl that does not answer in time is ended (the next test starts a
         new one) and the test fails with where to look."""
-        self.proc.stdin.write(line + "\n")
+        self.proc.stdin.write(line + '''
+''')
         self.proc.stdin.flush()
         out = []
         deadline = time.monotonic() + timeout
@@ -219,10 +221,13 @@ class VMEnv:
         out = self.vm.command(f"sh {self.id} {script}", until=lambda l: l.startswith("exit ") or l.startswith("error"))
         # Terminal control sequences (bracketed paste and the like) are not
         # output, nor is the echo of the final `exit`.
-        lines = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", "\n".join(out[:-1])).split("\n")
+        lines = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", '''
+'''.join(out[:-1])).split('''
+''')
         while lines and lines[-1].strip() in ("", "exit"):
             lines.pop()
-        return "\n".join(lines)
+        return '''
+'''.join(lines)
 
     def crash(self):
         """Abnormal termination: the project's tsugumid is killed."""

@@ -13,12 +13,12 @@ end
 
 # Why it is ill-posed: the singular values fall steeply, and all modes whose
 # signal is under the noise are lost to any inversion.
-function main(ctx)
-    m = input(ctx, "measurement")
+function main(inputs, report)
+    m = Tsugumi.input(inputs, "measurement")
     x, truth, measured = Float64.(m["x"]), Float64.(m["truth"]), Float64.(m["measured"])
     alpha, T, noise = m["alpha"], m["final_time"], m["noise"]
     n = length(x)
-    factors = Float64.(ctx.params["time_factors"])
+    factors = Float64.(inputs.params["time_factors"])
 
     smallest = 1e-30 # below this the chart stops
     decay = Dict{String,Any}[]
@@ -37,12 +37,12 @@ function main(ctx)
     signal = abs.(s .* (V' * truth))
     seen = abs.(V' * measured)
     resolved = noise > 0 ? count(signal .> noise) : n
-    println(@sprintf("modes with a signal above the noise at T = %g: %d of %d; sigma_1 = %.3g, sigma_%d = %.3g", T, resolved, n, s[1], n, s[n]))
+    report.log(string(@sprintf("modes with a signal above the noise at T = %g: %d of %d; sigma_1 = %.3g, sigma_%d = %.3g", T, resolved, n, s[1], n, s[n])))
     floor_value = 1e-6
     picard = [Dict("k" => k, "v" => v[k], "series" => name)
               for (name, v) in (("Signal left by the initial temperature", signal), ("Components in the measurement", seen)) for k in 1:n if v[k] >= floor_value]
 
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("text" => @sprintf("Singular values drop sharply: %d of %d modes stay above the noise", resolved, n),
@@ -73,4 +73,6 @@ function main(ctx)
                           "encoding" => Dict("y" => Dict("field" => "v", "type" => "quantitative"))),
                  ]),
         ]))
+
+    return nothing
 end

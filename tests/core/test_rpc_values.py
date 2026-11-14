@@ -32,8 +32,10 @@ def display_graph(project, schema, source_script=None, *, payload=None, display_
         ]}, outputs=schema, sources={
             "default.nix": PYTHON_NIX % "",
             "src/main.py": ("from tsugumi import contract\n\n"
-                            "def main(ctx):\n"
-                            "    ctx.output_bytes('out', bytes.fromhex(contract.params_object(ctx).payload))\n"),
+                            '''def main(inputs, report):
+'''
+                            '''    yield {'out': bytes.fromhex(contract.params_object(inputs).payload)}
+'''),
         })
     definition = json.loads((DEFINITION / "_card.json").read_text())
     for param in definition["params"]:

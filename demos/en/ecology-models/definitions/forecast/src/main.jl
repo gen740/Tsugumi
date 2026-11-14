@@ -3,17 +3,18 @@ include("ecology.jl")
 
 # The test AIC cannot give: fit only the early years, then compare each model's
 # simulation with the years it has not seen.
-function main(ctx)
-    m = input(ctx, "pelts")
+function main(inputs, report)
+    outputs = Dict{String,Any}()
+    m = Tsugumi.input(inputs, "pelts")
     years = Int.(m["years"])
     hare, lynx = Float64.(m["hare"]), Float64.(m["lynx"])
-    until = Int(ctx.params["fit_until"])
-    restarts = Int(ctx.params["restarts"])
-    dt = ctx.params["dt"]
+    until = Int(inputs.params["fit_until"])
+    restarts = Int(inputs.params["restarts"])
+    dt = inputs.params["dt"]
     used = findall(<=(until), years)
     held = findall(>(until), years)
     isempty(held) && error("fit_until must leave at least one year out")
-    rng = Xoshiro(ctx.params["seed"])
+    rng = Xoshiro(inputs.params["seed"])
 
     span = years[end] - years[1]
     results = Dict{String,Any}[]
@@ -25,7 +26,7 @@ function main(ctx)
         errors = vcat(log.(hare[held]) .- log.(Hs[held]), log.(lynx[held]) .- log.(Ls[held]))
         rmse = sqrt(sum(abs2, errors) / length(errors))
         in_sample = sqrt(fit.error / (2 * length(used)))
-        println(@sprintf("%s: RMSE of log counts %.3f on the fitted years, %.3f on the held-out years", model.name, in_sample, rmse))
+        report.log(string(@sprintf("%s: RMSE of log counts %.3f on the fitted years, %.3f on the held-out years", model.name, in_sample, rmse)))
         push!(results, Dict("name" => model.name, "rmse_fit" => in_sample, "rmse_heldout" => rmse, "parameters" => p,
                             "hare" => Hs, "lynx" => Ls))
         fine_H, fine_L = simulate(model.rhs, p, p[end - 1], p[end], span; per_year=4, dt)
@@ -35,8 +36,8 @@ function main(ctx)
             push!(curves, Dict("year" => year, "pelts" => round(fine_L[i]; digits=2), "species" => "Lynx", "model" => model.name))
         end
     end
-    output(ctx, "forecast", Dict("fit_until" => until, "last_year" => years[end],
-                                 "names" => [r["name"] for r in results], "rmse_fit" => [r["rmse_fit"] for r in results], "rmse_heldout" => [r["rmse_heldout"] for r in results]))
+    outputs["forecast"] = Dict("fit_until" => until, "last_year" => years[end],
+                                 "names" => [r["name"] for r in results], "rmse_fit" => [r["rmse_fit"] for r in results], "rmse_heldout" => [r["rmse_heldout"] for r in results])
 
     observed = [Dict("year" => years[i], "pelts" => series[i], "species" => name)
                 for (name, series) in (("Hare", hare), ("Lynx", lynx)) for i in eachindex(years)]
@@ -58,7 +59,7 @@ function main(ctx)
             Dict("data" => Dict("values" => filter(r -> r["species"] == species, observed)), "mark" => Dict("type" => "point", "filled" => true, "size" => 34, "color" => "#111111"),
                  "encoding" => Dict("x" => Dict("field" => "year", "type" => "quantitative"), "y" => Dict("field" => "pelts", "type" => "quantitative"))),
         ])
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("text" => @sprintf("Fitted up to %d, predicting %d–%d (grey)", until, years[held[1]], years[end]),
@@ -66,4 +67,6 @@ function main(ctx)
                                        join((@sprintf("%s %.2f / %.2f", r["name"], r["rmse_heldout"], r["rmse_fit"]) for r in results), ", ")]),
         "usermeta" => Dict("results" => results, "fit_until" => until, "best" => best["name"]),
         "vconcat" => [panel("Hare", "Hare (thousands of pelts)", hare), panel("Lynx", "Lynx (thousands of pelts)", lynx)]))
+
+    return outputs
 end

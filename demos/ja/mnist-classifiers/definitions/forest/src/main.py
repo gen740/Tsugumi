@@ -1,4 +1,5 @@
 """A random forest: the vote of many decision trees, each grown on a random draw of the digits."""
+import tsugumi
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -11,7 +12,6 @@ import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 
 from inputs.data.mnist.SubsetFile import SubsetFile
-import outputs.result.mnist.Result as out
 
 
 def confusions(ax, y, pred):
@@ -26,27 +26,29 @@ def confusions(ax, y, pred):
     ax.tick_params(length=0, labelsize=8)
 
 
-def send(ctx, name, settings, digest, y, pred, fit, predict):
-    b = ctx.builder()
-    model = b.CreateString(name)
-    settings = b.CreateString(settings)
-    digest = b.CreateString(digest)
-    predictions = b.CreateNumpyVector(pred.astype(np.uint8))
-    out.Start(b)
-    out.AddModel(b, model)
-    out.AddSettings(b, settings)
-    out.AddDigest(b, digest)
-    out.AddAccuracy(b, float(np.mean(pred == y)))
-    out.AddFitSeconds(b, fit)
-    out.AddPredictSeconds(b, predict)
-    out.AddPredictions(b, predictions)
-    ctx.output("result", b, out.End(b))
+def send(inputs, name, settings, digest, y, pred, fit, predict):
+    result_ports = {}
+    model = name
+    settings = settings
+    digest = digest
+    predictions = pred.astype(np.uint8)
+    _out_value = {}
+    _out_value['model'] = model
+    _out_value['settings'] = settings
+    _out_value['digest'] = digest
+    _out_value['accuracy'] = float(np.mean(pred == y))
+    _out_value['fit_seconds'] = fit
+    _out_value['predict_seconds'] = predict
+    _out_value['predictions'] = predictions
+    result_ports.update({'result': _out_value})
+    return result_ports
 
 
-def main(ctx):
-    params = ctx.params()
-    trees, max_depth, seed = params.Trees(), params.MaxDepth(), params.Seed()
-    data = np.load(ctx.input("data", SubsetFile).Value().decode())
+def main(inputs, report):
+    result_ports = {}
+    params = inputs.params
+    trees, max_depth, seed = params.trees, params.maxDepth, params.seed
+    data = np.load(inputs.input("data", SubsetFile).Value().decode())
     train_x, train_y, test_x, test_y = data["train_images"], data["train_labels"], data["test_images"], data["test_labels"]
 
     model = RandomForestClassifier(n_estimators=trees, max_depth=max_depth, random_state=seed, n_jobs=1)
@@ -57,13 +59,14 @@ def main(ctx):
     pred = model.predict(test_x)
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    print(f"forest trees={trees} depth={max_depth}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
+    report.log(str(f"forest trees={trees} depth={max_depth}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s"))
 
     fig, (left, right) = plt.subplots(1, 2, figsize=(9, 4.2), layout="constrained")
     confusions(left, test_y, pred)
     right.imshow(model.feature_importances_.reshape(28, 28), cmap="magma")
     right.set(xticks=[], yticks=[], title="判定に効いた画素（明るいほど重要）")
     fig.suptitle(f"ランダムフォレスト {trees} 本、深さ {max_depth} まで: 正解率 {accuracy:.4f}、学習 {fit:.2f} 秒、予測 {predict:.2f} 秒", fontsize=11)
-    plt.show()
+    report.figure()
 
-    send(ctx, "forest", f"trees={trees}, depth={max_depth}", str(data["digest"]), test_y, pred, fit, predict)
+    result_ports.update(send(inputs, 'forest', f'trees={trees}, depth={max_depth}', str(data['digest']), test_y, pred, fit, predict))
+    return result_ports

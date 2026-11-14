@@ -45,13 +45,13 @@ def newton_grid(coeffs, z, damping, tolerance, max_iter):
     return z.reshape(count.shape), count, done
 
 
-def main(ctx):
-    p = ctx.input("problem", Problem)
+def main(inputs, report):
+    p = inputs.input("problem", Problem)
     coeffs = p.CoeffsAsNumpy().copy()
     roots = p.RootsReAsNumpy() + 1j * p.RootsImAsNumpy()
     critical = p.CriticalReAsNumpy() + 1j * p.CriticalImAsNumpy()
-    params = ctx.params()
-    n, cx, cy, half = int(params.Grid()), params.CenterRe(), params.CenterIm(), params.HalfWidth()
+    params = inputs.params
+    n, cx, cy, half = int(params.grid), params.centerRe, params.centerIm, params.halfWidth
 
     x = np.linspace(cx - half, cx + half, n)
     y = np.linspace(cy - half, cy + half, n)
@@ -93,6 +93,6 @@ def main(ctx):
     share_text = ", ".join(f"r{k} {100 * s:.1f}%" for k, s in enumerate(shares))
     fig.suptitle(f"$p(z) = {p.Label().decode()}$,  $\\lambda = {p.Damping():g}$,  {n} × {n}\n"
                  f"★ are roots, × are critical points. {share_text}, not converged {100 * unconverged:.2f}%", fontsize=12)
-    plt.show()
-    print("result: " + json.dumps({"shares": shares, "unconverged": unconverged, "mean_iterations": float(count.mean()),
-                                   "max_iterations": int(count.max()), "worst_gap": float(gap[done].max()) if done.any() else None}))
+    report.figure()
+    report.log(str("result: " + json.dumps({"shares": shares, "unconverged": unconverged, "mean_iterations": float(count.mean()),
+                                   "max_iterations": int(count.max()), "worst_gap": float(gap[done].max()) if done.any() else None})))

@@ -64,7 +64,7 @@
     {
       "id": "n1",
       "scope": "",
-      "text": "4 つの描画ライブラリを、Tsugumi の外で書くのと同じ書き方で使っています。summary は plt.show()、diffusion は matplotlib の FuncAnimation（実行中に動きます）、explore は Plotly の fig.show()、spread は Altair の chart.show() です。Plotly と Altair の図は、拡大表示でズームやホバー、凡例の操作ができます。settings の walkers・steps・seed や diffusion の frames を変えて、実行し直してみてください。",
+      "text": "同じデータを Matplotlib・Plotly・Altair で描き、report.figure で表示します。summary は静止図、diffusion は FuncAnimation、explore と spread は対話できる Plotly・Altair の図です。",
       "x": -900.0,
       "y": 0.0
     }

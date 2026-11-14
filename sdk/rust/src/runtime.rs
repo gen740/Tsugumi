@@ -2,8 +2,8 @@
 use std::ffi::{CStr, CString, c_char, c_int, c_void};
 use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::Path;
 use std::rc::Rc;
+use std::path::Path;
 
 #[derive(Debug)]
 pub struct Error {
@@ -54,11 +54,11 @@ unsafe extern "C" {
         colors: *const u32,
         count: usize,
     ) -> c_int;
+    fn tsugumi_rs_info(call: *const c_void, field: u32) -> *const c_char;
+    fn tsugumi_rs_invocation(call: *const c_void) -> u64;
     fn tsugumi_rs_check(call: *const c_void) -> c_int;
     fn tsugumi_rs_input(call: *const c_void, name: *const c_char, size: *mut usize) -> *const u8;
     fn tsugumi_rs_params(call: *const c_void, size: *mut usize) -> *const u8;
-    fn tsugumi_rs_info(call: *const c_void, field: u32) -> *const c_char;
-    fn tsugumi_rs_invocation(call: *const c_void) -> u64;
     fn tsugumi_rs_emit(
         call: *const c_void,
         port: *const c_char,
@@ -103,33 +103,14 @@ fn accepted(code: c_int) -> Result<()> {
 }
 
 /// Valid only within the current invocation. It cannot be sent to another thread.
-/// Input/params views borrow this context; emitted output bytes are copied by the host.
-pub struct Context<'call> {
+/// Input/params views borrow this call; emitted output bytes are copied by the host.
+#[doc(hidden)]
+pub struct Call<'call> {
     raw: *const c_void,
     lifetime: PhantomData<&'call ()>,
     thread: PhantomData<Rc<()>>,
 }
-impl Context<'_> {
-    pub(crate) fn input_bytes(&self, port: &str) -> Result<Option<&[u8]>> {
-        let port = string(port)?;
-        let mut size = 0;
-        // SAFETY: Context is made only for a validated live host call; the host owns its slices.
-        let bytes = unsafe { tsugumi_rs_input(self.raw, port.as_ptr(), &mut size) };
-        Ok(if bytes.is_null() {
-            None
-        } else {
-            Some(unsafe { std::slice::from_raw_parts(bytes, size) })
-        })
-    }
-    pub(crate) fn params_bytes(&self) -> &[u8] {
-        let mut size = 0;
-        let bytes = unsafe { tsugumi_rs_params(self.raw, &mut size) };
-        if bytes.is_null() {
-            &[]
-        } else {
-            unsafe { std::slice::from_raw_parts(bytes, size) }
-        }
-    }
+impl Call<'_> {
     fn info(&self, field: u32) -> &str {
         let value = unsafe { tsugumi_rs_info(self.raw, field) };
         if value.is_null() {
@@ -156,6 +137,27 @@ impl Context<'_> {
     pub fn invocation(&self) -> u64 {
         unsafe { tsugumi_rs_invocation(self.raw) }
     }
+
+    pub(crate) fn input_bytes(&self, port: &str) -> Result<Option<&[u8]>> {
+        let port = string(port)?;
+        let mut size = 0;
+        // SAFETY: Call is made only for a validated live host call; the host owns its slices.
+        let bytes = unsafe { tsugumi_rs_input(self.raw, port.as_ptr(), &mut size) };
+        Ok(if bytes.is_null() {
+            None
+        } else {
+            Some(unsafe { std::slice::from_raw_parts(bytes, size) })
+        })
+    }
+    pub(crate) fn params_bytes(&self) -> &[u8] {
+        let mut size = 0;
+        let bytes = unsafe { tsugumi_rs_params(self.raw, &mut size) };
+        if bytes.is_null() {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(bytes, size) }
+        }
+    }
     pub fn cancelled(&self) -> bool {
         unsafe { tsugumi_rs_cancelled(self.raw) != 0 }
     }
@@ -172,25 +174,25 @@ impl Context<'_> {
         let port = string(port)?;
         accepted(unsafe { tsugumi_rs_emit(self.raw, port.as_ptr(), bytes.as_ptr(), bytes.len()) })
     }
-    pub fn display_text(&self, text: &str) -> Result<()> {
-        self.text(text, false)
+    pub fn text(&self, text: &str) -> Result<()> {
+        self.send_text(text, false)
     }
-    pub fn display_markdown(&self, text: &str) -> Result<()> {
-        self.text(text, true)
+    pub fn markdown(&self, text: &str) -> Result<()> {
+        self.send_text(text, true)
     }
-    fn text(&self, text: &str, markdown: bool) -> Result<()> {
+    fn send_text(&self, text: &str, markdown: bool) -> Result<()> {
         let text = string(text)?;
         accepted(unsafe { tsugumi_rs_text(self.raw, text.as_ptr(), markdown.into()) })
     }
-    pub fn display_scalar(&self, value: f64, label: &str) -> Result<()> {
+    pub fn scalar(&self, value: f64, label: &str) -> Result<()> {
         let label = string(label)?;
         accepted(unsafe { tsugumi_rs_scalar(self.raw, value, label.as_ptr()) })
     }
-    pub fn display_module(&self, name: &str, json: &str) -> Result<()> {
+    pub fn module(&self, name: &str, json: &str) -> Result<()> {
         let (name, json) = (string(name)?, string(json)?);
         accepted(unsafe { tsugumi_rs_module(self.raw, name.as_ptr(), json.as_ptr()) })
     }
-    pub fn display_image(&self, media_type: &str, bytes: &[u8], alt: &str) -> Result<()> {
+    pub fn image(&self, media_type: &str, bytes: &[u8], alt: &str) -> Result<()> {
         let (media, alt) = (string(media_type)?, string(alt)?);
         accepted(unsafe {
             tsugumi_rs_image(
@@ -202,7 +204,7 @@ impl Context<'_> {
             )
         })
     }
-    pub fn display_line_chart(&self, id: &str, label: &str, x: &[f64], y: &[f64]) -> Result<()> {
+    pub fn line_chart(&self, id: &str, label: &str, x: &[f64], y: &[f64]) -> Result<()> {
         if x.len() != y.len() {
             return Err(Error::new(
                 "output_invalid",
@@ -221,13 +223,7 @@ impl Context<'_> {
             )
         })
     }
-    pub fn display_points(
-        &self,
-        x: &[f32],
-        y: &[f32],
-        z: &[f32],
-        colors: Option<&[u32]>,
-    ) -> Result<()> {
+    pub fn points(&self, x: &[f32], y: &[f32], z: &[f32], colors: Option<&[u32]>) -> Result<()> {
         if x.len() != y.len() || x.len() != z.len() || colors.is_some_and(|c| c.len() != x.len()) {
             return Err(Error::new(
                 "output_invalid",
@@ -245,7 +241,7 @@ impl Context<'_> {
             )
         })
     }
-    pub fn display_table(&self, columns: &[&str], rows: &[Vec<String>]) -> Result<()> {
+    pub fn table(&self, columns: &[&str], rows: &[Vec<String>]) -> Result<()> {
         if rows.iter().any(|r| r.len() != columns.len()) {
             return Err(Error::new(
                 "output_invalid",
@@ -276,17 +272,17 @@ impl Context<'_> {
 /// # Safety
 /// `raw` must be the host's valid call pointer for the duration of this function.
 #[doc(hidden)]
-pub unsafe fn invoke(raw: *const c_void, body: impl FnOnce(&Context<'_>) -> Result<()>) -> c_int {
+pub unsafe fn invoke(raw: *const c_void, body: impl FnOnce(&Call<'_>) -> Result<()>) -> c_int {
     // SAFETY: caller is the worker; C checks the version before accessing further fields.
     if unsafe { tsugumi_rs_check(raw) } == 0 {
         return 1;
     }
-    let context = Context {
+    let call = Call {
         raw,
         lifetime: PhantomData,
         thread: PhantomData,
     };
-    let result = catch_unwind(AssertUnwindSafe(|| body(&context)));
+    let result = catch_unwind(AssertUnwindSafe(|| body(&call)));
     let error = match result {
         Ok(Ok(())) => return 0,
         Ok(Err(error)) => error,
@@ -311,4 +307,53 @@ pub unsafe fn invoke(raw: *const c_void, body: impl FnOnce(&Context<'_>) -> Resu
         tsugumi_rs_fail(raw, kind.as_ptr(), message.as_ptr());
     }
     1
+}
+
+pub struct Report<'a>(pub(crate) &'a Call<'a>);
+impl<'a> Report<'a> {
+    #[doc(hidden)]
+    pub fn from_call(call: &'a Call<'a>) -> Self {
+        Self(call)
+    }
+    pub fn log(&self, text: &str) -> Result<()> {
+        self.0.log(text)
+    }
+    pub fn text(&self, text: &str) -> Result<()> {
+        self.0.text(text)
+    }
+    pub fn markdown(&self, text: &str) -> Result<()> {
+        self.0.markdown(text)
+    }
+    pub fn scalar(&self, value: f64, label: &str) -> Result<()> {
+        self.0.scalar(value, label)
+    }
+    pub fn module(&self, name: &str, json: &str) -> Result<()> {
+        self.0.module(name, json)
+    }
+    pub fn image(&self, media_type: &str, bytes: &[u8], alt: &str) -> Result<()> {
+        self.0.image(media_type, bytes, alt)
+    }
+    pub fn line_chart(&self, id: &str, label: &str, x: &[f64], y: &[f64]) -> Result<()> {
+        self.0.line_chart(id, label, x, y)
+    }
+    pub fn points(&self, x: &[f32], y: &[f32], z: &[f32], colors: Option<&[u32]>) -> Result<()> {
+        self.0.points(x, y, z, colors)
+    }
+    pub fn table(&self, columns: &[&str], rows: &[Vec<String>]) -> Result<()> {
+        self.0.table(columns, rows)
+    }
+}
+
+pub struct Run<'a>(&'a Call<'a>);
+impl<'a> Run<'a> {
+    #[doc(hidden)]
+    pub fn from_call(call: &'a Call<'a>) -> Self { Self(call) }
+    pub fn run_id(&self) -> &str { self.0.run_id() }
+    pub fn card(&self) -> &str { self.0.card() }
+    pub fn invocation(&self) -> u64 { self.0.invocation() }
+    pub fn working_directory(&self) -> &Path { self.0.working_directory() }
+    pub fn temporary_directory(&self) -> &Path { self.0.temporary_directory() }
+    pub fn output_directory(&self) -> &Path { self.0.output_directory() }
+    pub fn cancelled(&self) -> bool { self.0.cancelled() }
+    pub fn remaining_ms(&self) -> Option<u64> { self.0.remaining_ms() }
 }

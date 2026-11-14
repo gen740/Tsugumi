@@ -58,16 +58,19 @@ def shown(client, run, card='ruby'):
 def test_ruby_resident_state_gc_and_run_start(ruby_project):
     _, connect = ruby_project
     c = connect({'ruby': ruby('''
-def on_run_start(ctx)
+def on_run_start(inputs)
   @runs = (@runs || 0) + 1
+  nil
 end
 
-def main(ctx)
+def main(inputs, report)
   GC.start
   @calls = (@calls || 0) + 1
-  raise 'params differ' unless ctx.params['offset'] == 9007199254740993
-  ctx.log("run=#{@runs} call=#{@calls}")
-  ctx.display_table(['runs', 'calls', 'param'], [[@runs, @calls, ctx.params['offset']]])
+  raise 'params differ' unless inputs.params['offset'] == 9007199254740993
+  report.log("run=#{@runs} call=#{@calls}")
+  report.table(['runs', 'calls', 'param'], [[@runs, @calls, inputs.params['offset']]])
+
+  nil
 end
 ''', params=[{'name':'offset', 'type':'uint64', 'data':9007199254740993}], reuseWorker=True)})
     for expected in [1, 2]:
@@ -82,7 +85,9 @@ end
 
 def test_ruby_no_reuse_starts_with_fresh_state(ruby_project):
     _, connect = ruby_project
-    c = connect({'ruby': ruby('def main(ctx); @n = (@n || 0) + 1; ctx.display_scalar(@n, "counter"); end', reuseWorker=False)})
+    c = connect({'ruby': ruby('''def main(inputs, report); @n = (@n || 0) + 1; report.scalar(@n, "counter");
+  nil
+end''', reuseWorker=False)})
     for _ in range(2):
         rid, status = run_and_wait(c, 'ruby', timeout=240)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
@@ -91,10 +96,11 @@ def test_ruby_no_reuse_starts_with_fresh_state(ruby_project):
 
 def test_python_ruby_cpp_preserve_typed_values_and_binary(ruby_project):
     _, connect = ruby_project
-    source = '''import outputs.out.sample.Number as number
+    source = '''import tsugumi
+import outputs.out.sample.Number as number
 
-def main(ctx):
-    b = ctx.builder()
+def main(inputs):
+    b = tsugumi.builder()
     label = b.CreateString("hello 日本語")
     raw = b.CreateByteVector(bytes([0, 127, 255]))
     number.Start(b)
@@ -102,25 +108,28 @@ def main(ctx):
     number.AddTiny(b, 1e-20)
     number.AddLabel(b, label)
     number.AddBytes(b, raw)
-    ctx.output("out", b, number.End(b))
+    return {"out": tsugumi.message(b, number.End(b))}
 '''
     transform = '''Message = Struct.new(:value, :tiny, :label, :bytes, keyword_init: true)
-def main(ctx)
-  input = ctx.input('in')
-  raise 'integer changed' unless input['value'] == 18446744073709551615
-  raise 'float changed' unless input['tiny'] == 1e-20
-  raise 'bytes changed' unless input['bytes'] == [0, 127, 255]
-  ctx.output('out', Message.new(value: input['value'], tiny: input['tiny'], label: input['label'].upcase,
-                              bytes: Tsugumi.bytes("\\x00\\x7f\\xff".b)))
-  ctx.display_text(input['label'])
+def main(inputs, report)
+  result = {}
+  received = inputs.input('in')
+  raise 'integer changed' unless received['value'] == 18446744073709551615
+  raise 'float changed' unless received['tiny'] == 1e-20
+  raise 'bytes changed' unless received['bytes'] == [0, 127, 255]
+  result['out'] = Message.new(value: received['value'], tiny: received['tiny'], label: received['label'].upcase,
+                              bytes: Tsugumi.bytes("\\x00\\x7f\\xff".b))
+  report.text(received['label'])
+
+  result
 end
 '''
     sink = '''#include <card.hh>
 #include <stdexcept>
-auto run(Card::Input& input) -> Card::Output {
-  if (input.in.value != UINT64_MAX || input.in.tiny != 1e-20 || input.in.bytes.size() != 3 || input.in.bytes[2] != 255)
+auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
+  if (inputs.in.value != UINT64_MAX || inputs.in.tiny != 1e-20 || inputs.in.bytes.size() != 3 || inputs.in.bytes[2] != 255)
     throw std::runtime_error("Ruby output changed");
-  tsugumi::visualization::text(input.in.label);
+  report.text(inputs.in.label);
   return {};
 }
 '''
@@ -139,7 +148,8 @@ def test_ruby_files_directories_and_context_lifetime(ruby_project):
     files = '''attribute "tsugumi"; namespace f; table Path { value:string; }
       table Outputs { file:Path (required, tsugumi:"file"); directory:Path (required, tsugumi:"directory"); }
       root_type Outputs;'''
-    produce = '''def main(ctx)
+    produce = '''def main(inputs, report, run)
+  result = {}
   if @previous
     begin
       @previous.log('expired')
@@ -148,22 +158,26 @@ def test_ruby_files_directories_and_context_lifetime(ruby_project):
       raise unless e.message.include?('expired')
     end
   end
-  @previous = ctx.dup
-  error = Thread.new { begin; ctx.params; rescue Tsugumi::Failure => e; e.message; end }.value
+  @previous = report.dup
+  error = Thread.new { begin; report.log('wrong thread'); rescue Tsugumi::Failure => e; e.message; end }.value
   raise 'cross-thread context accepted' unless error.include?('thread')
-  file = File.join(ctx.output_directory, 'report.txt')
-  directory = File.join(ctx.output_directory, 'bundle')
+  file = File.join(run.output_directory, 'report.txt')
+  directory = File.join(run.output_directory, 'bundle')
   Dir.mkdir(directory)
   File.write(file, '日本語')
   File.write(File.join(directory, 'value.txt'), 'directory')
-  ctx.output('file', value: file)
-  ctx.output('directory', value: directory)
+  result['file'] = {value: file}
+  result['directory'] = {value: directory}
+
+  result
 end'''
-    consume = '''def main(ctx)
-  raise 'file changed' unless File.read(ctx.path('file')) == '日本語'
-  raise 'directory changed' unless File.read(File.join(ctx.path('directory'), 'value.txt')) == 'directory'
-  raise 'unexpected optional input' unless ctx.input('optional').nil?
-  ctx.display_markdown('## Read both artifacts')
+    consume = '''def main(inputs, report)
+  raise 'file changed' unless File.read(inputs.path('file')) == '日本語'
+  raise 'directory changed' unless File.read(File.join(inputs.path('directory'), 'value.txt')) == 'directory'
+  raise 'unexpected optional input' unless inputs.input('optional').nil?
+  report.markdown('## Read both artifacts')
+
+  nil
 end'''
     c = connect({'ruby': ruby(produce, outputs=files),
                  'read': ruby(consume, inputs=[{'name':'file'}, {'name':'directory'}, {'name':'optional','optional':True}])},
@@ -175,21 +189,23 @@ end'''
 
 
 @pytest.mark.parametrize('expression,diagnostic', [
-    ("ctx.output('out', nil)", 'omit the call'),
-    ("ctx.output('out', value: 18446744073709551616)", 'does not fit'),
-    ("ctx.output('out', label: \"\\xff\".b)", 'UTF-8'),
-    ("ctx.output('out', value: 'wrong')", 'enum values'),
-    ("ctx.fail('worker_failed', 'specific failure')", 'specific failure'),
-    ("Thread.new { sleep 60 }", 'join Ruby threads'),
+    ("{out: nil}", "omit the"),
+    ("{out: {value: 18446744073709551616}}", "does not fit"),
+    ('{out: {label: "\\xff".b}}', 'UTF-8'),
+    ("{out: {value: 'wrong'}}", "enum values"),
+    ("raise Tsugumi::Failure.new('worker_failed', 'specific failure')", 'specific failure'),
+    ("Thread.new { sleep 60 }; nil", 'join Ruby threads'),
 ])
 def test_ruby_failures_are_structured_and_next_worker_is_fresh(ruby_project, expression, diagnostic):
     root, connect = ruby_project
-    source = f'''def main(ctx)
+    source = f'''def main(inputs, report, run)
   @calls = (@calls || 0) + 1
   raise 'failed worker was reused' unless @calls == 1
   {expression}
 end'''
-    c = connect({'ruby': ruby(source, outputs=NUMBERS), 'good': ruby("def main(ctx); ctx.display_text('alive'); end")})
+    c = connect({'ruby': ruby(source, outputs=NUMBERS), 'good': ruby('''def main(inputs, report); report.text('alive');
+  nil
+end''')})
     for _ in range(2):
         rid, status = run_and_wait(c, 'ruby', timeout=300)
         assert status.state == RunState.failed
@@ -203,8 +219,12 @@ end'''
 @pytest.mark.parametrize('cancel', [False, True])
 def test_ruby_deadline_and_cancel_leave_next_run_working(ruby_project, cancel):
     _, connect = ruby_project
-    c = connect({'ruby': ruby("def main(ctx); ctx.log('ready'); loop { sleep 0.01 }; end", timeoutSeconds=60 if cancel else 1),
-                 'good': ruby("def main(ctx); ctx.display_text('alive'); end")})
+    c = connect({'ruby': ruby('''def main(inputs, report); report.log('ready'); loop { sleep 0.01 };
+  nil
+end''', timeoutSeconds=60 if cancel else 1),
+                 'good': ruby('''def main(inputs, report); report.text('alive');
+  nil
+end''')})
     rid = start_run(c, 'ruby')
     if cancel:
         deadline = time.monotonic() + 300
@@ -229,19 +249,21 @@ COLORIZE_HASH = "sha256-pINRA2ThhG24fQ1Ewj7K4pmEE/ytgPxSlRQtTKOoLdY="
 
 
 def colorize_card(arguments, requirement="1.1.0"):
-    card = ruby("""require 'colorize'
+    card = ruby('''require 'colorize'
 require 'socket'
-def main(ctx)
+def main(inputs, report)
   spec = Gem.loaded_specs.fetch('colorize')
   raise "gem came from #{spec.full_gem_path}" unless spec.full_gem_path.include?('tsugumi-ruby-card-gems')
   begin
     Socket.tcp('1.1.1.1', 443, connect_timeout: 3).close
   rescue SystemCallError, IOError
-    ctx.display_text("offline #{spec.version}")
+    report.text("offline #{spec.version}")
   else
     raise 'network was available'
   end
-end""")
+
+  nil
+end''')
     card['nix'] = RUBY_NIX.replace('src = ./src;', f'src = ./src; {arguments}')
     card['src'].update({
         'gems/Gemfile': f'source "https://rubygems.org"\ngem "colorize", "{requirement}"\n',
@@ -286,34 +308,38 @@ def test_ruby_rejects_an_invalid_pin(ruby_project, arguments, requirement, messa
 
 
 @pytest.mark.parametrize('expression,kind', [
-    ("ctx.display_text('text')", 1),
-    ("ctx.display_markdown('**bold**')", 1),
-    ("ctx.display_line_chart([{id: 'line', x: [1, 2], y: [2, 4]}])",7),
-    ("ctx.display_points([1], [2], [3], [0xff00ff])", 6),
-    ("ctx.display_image(['89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082'].pack('H*'), alt: 'pixel')", 5),
-    ("ctx.display_plotly(data: [{x: [1], y: [2], type: 'scatter'}])", 7),
+    ("report.text('text')", 1),
+    ("report.markdown('**bold**')", 1),
+    ("report.line_chart([{id: 'line', x: [1, 2], y: [2, 4]}])",7),
+    ('report.points([1], [2], [3], [0xff00ff])', 6),
+    ("report.image(['89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082'].pack('H*'), alt: 'pixel')", 5),
+    ("report.plotly(data: [{x: [1], y: [2], type: 'scatter'}])", 7),
 ])
 def test_ruby_display_bridge_owns_bytes(ruby_project, expression, kind):
     _, connect = ruby_project
-    c = connect({'ruby': ruby(f'def main(ctx); {expression}; GC.start; end')})
+    c = connect({'ruby': ruby(f'def main(inputs, report, run); {expression}; GC.start; nil; end')})
     rid, status = run_and_wait(c, 'ruby', timeout=300)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     display = c.call('RunRecordRequest', runId=rid, card=path('ruby')).record.display
     assert display.valueType == kind
-    if 'display_markdown' in expression:
+    if 'markdown' in expression:
         assert display.value.markdown
     if kind == 5:
         assert bytes(display.value.data).startswith(b'\x89PNG')
         assert text(display.value.alt) == 'pixel'
-    if "display_line_chart" in expression:
+    if "line_chart" in expression:
         from tsugumi_client import line_chart_series
         assert list(line_chart_series(display.value)[0].y) == [2, 4]
-    if "display_plotly" in expression:
+    if "plotly" in expression:
         assert json.loads(text(display.value.configJson))['data'][0]['y'] == [2]
 
 @pytest.mark.parametrize(('source', 'message'), [
-    ('def main(ctx)\n', 'syntax error'),
-    ('def helper; end\n', 'main'),
+    ('''def main(inputs, report)
+  nil
+
+''', 'syntax error'),
+    ('''def helper; end
+''', 'main'),
 ])
 def test_ruby_load_errors_are_structured(ruby_project, source, message):
     _, connect = ruby_project
@@ -326,7 +352,10 @@ def test_ruby_load_errors_are_structured(ruby_project, source, message):
 
 def test_ruby_rejects_an_unknown_output_field(ruby_project):
     _, connect = ruby_project
-    card = ruby("def main(ctx); ctx.output('out', {vale: 42}); end", outputs=NUMBERS)
+    card = ruby('''def main(inputs, report)
+  result = {}; result['out'] = {vale: 42};
+  result
+end''', outputs=NUMBERS)
     c = connect({'ruby': card})
     rid, status = run_and_wait(c, 'ruby', timeout=600)
     assert status.state == RunState.failed

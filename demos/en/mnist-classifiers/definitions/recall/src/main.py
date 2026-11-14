@@ -5,8 +5,8 @@ import numpy as np
 from inputs.comparison.mnist.Comparison import Comparison
 
 
-def main(ctx):
-    c = ctx.input("comparison", Comparison)
+def main(inputs, report):
+    c = inputs.input("comparison", Comparison)
     models = [c.Models(i).decode() for i in range(c.ModelsLength())]
     accuracy = c.AccuracyAsNumpy()
     labels = c.TestLabelsAsNumpy()
@@ -16,7 +16,7 @@ def main(ctx):
     recall = np.array([[np.mean(predictions[m][labels == d] == d) for d in range(10)] for m in order])
     mean_by_digit = recall.mean(axis=0)
     hardest, easiest = np.argmin(mean_by_digit), np.argmax(mean_by_digit)
-    print("mean recall by digit:", np.round(mean_by_digit, 4).tolist())
+    report.log(" ".join(str(value) for value in ("mean recall by digit:", np.round(mean_by_digit, 4).tolist(),)))
 
     fig, ax = plt.subplots(figsize=(8, 4.4), layout="constrained")
     image = ax.imshow(recall, cmap="viridis", vmin=recall.min(), vmax=1, aspect="auto")
@@ -32,4 +32,4 @@ def main(ctx):
     ax.set_title(f"Recall per digit. The hardest is {hardest} (mean {mean_by_digit[hardest]:.3f}), "
                  f"the easiest is {easiest} (mean {mean_by_digit[easiest]:.3f})", fontsize=11)
     fig.colorbar(image, ax=ax, shrink=0.8, label="Recall")
-    plt.show()
+    report.figure()

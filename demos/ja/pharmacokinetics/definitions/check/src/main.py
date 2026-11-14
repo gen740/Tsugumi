@@ -19,8 +19,8 @@ def superposition(t, dose, tau, ke, ka, volume, fraction):
     return total
 
 
-def main(ctx):
-    c = ctx.input("curves", Curves)
+def main(inputs, report):
+    c = inputs.input("curves", Curves)
     doses, intervals = c.DosesMgAsNumpy(), c.IntervalsHAsNumpy()
     ke = math.log(2) / c.HalfLifeH()
     ka, volume, fraction = c.KaPerH(), c.VolumeL(), c.Bioavailability()
@@ -60,5 +60,5 @@ def main(ctx):
         rows.append({"dose": float(dose), "tau": float(tau), "gap": gap, "ratio_numeric": ratio_numeric, "ratio_exact": ratio_exact,
                      "ratio_simple": ratio_simple, "mean_numeric": mean_numeric, "mean_exact": mean_exact, "reached": reached})
     lines += ["", "$R$ は最初の谷に対する最後の谷の比です。到達が 99.9% に満たないときは、$R$ の差で失敗にはしません（`days` を延ばすと近づきます）。"]
-    ctx.display_markdown("\n".join(lines))
-    print("result: " + json.dumps(rows))
+    report.markdown("\n".join(lines))
+    report.log(str("result: " + json.dumps(rows)))

@@ -10,8 +10,8 @@ from inputs.curves.pk.Curves import Curves
 COLORS = ["#2a7ab9", "#d9622b", "#3a9a4a", "#8a5ec2", "#c23b4b", "#7a7a7a"]
 
 
-def main(ctx):
-    c = ctx.input("curves", Curves)
+def main(inputs, report):
+    c = inputs.input("curves", Curves)
     doses, intervals, last_dose = c.DosesMgAsNumpy(), c.IntervalsHAsNumpy(), c.LastDoseHAsNumpy()
     t = c.THAsNumpy()
     conc = c.ConcAsNumpy().reshape(len(doses), len(t))
@@ -48,5 +48,5 @@ def main(ctx):
     right.set_xlim(0, 100)
     right.set_xlabel("Share of the interval (%): below (blue), in range (green), above (orange)")
     right.set_title("Time inside the therapeutic range", fontsize=12)
-    plt.show()
-    print("result: " + json.dumps(rows))
+    report.figure()
+    report.log(str("result: " + json.dumps(rows)))

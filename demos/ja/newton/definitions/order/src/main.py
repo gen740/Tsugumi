@@ -24,8 +24,8 @@ def estimate(e, m):
     return None, None, None
 
 
-def main(ctx):
-    o = ctx.input("errors", Orbits)
+def main(inputs, report):
+    o = inputs.input("errors", Orbits)
     coeffs = o.CoeffsAsNumpy()
     damping = o.Damping()
     statuses = o.Status().decode().split()
@@ -75,5 +75,5 @@ def main(ctx):
         d1, d2 = np.polyder(coeffs), np.polyder(coeffs, 2)
         shown = sorted({round(abs(np.polyval(d2, complex(*r["root"])) / (2 * np.polyval(d1, complex(*r["root"])))), 3) for r in simple})
         lines += ["", "単純根での定数の理論値 $|p''(r) / (2 p'(r))|$: " + "、".join(f"{v:g}" for v in shown) + "。"]
-    ctx.display_markdown("\n".join(lines))
-    print("result: " + json.dumps(rows))
+    report.markdown("\n".join(lines))
+    report.log(str("result: " + json.dumps(rows)))

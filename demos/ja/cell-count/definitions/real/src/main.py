@@ -20,22 +20,22 @@ def background(image, radius):
     return ndi.zoom(smooth, np.array(image.shape) / np.array(smooth.shape), order=1)
 
 
-def main(ctx):
-    p = ctx.params()
-    source = ctx.input("image", RealImage)
+def main(inputs, report):
+    p = inputs.params
+    source = inputs.input("image", RealImage)
     raw = imread(source.Path().decode()).astype(np.float64)
     image = raw / np.percentile(raw, 99.9)
-    clean = gaussian(image - background(image, p.BackgroundRadius()), sigma=p.Sigma())
-    mask = remove_small_objects(ndi.binary_fill_holes(clean > threshold_otsu(clean)), max_size=p.MinArea())
+    clean = gaussian(image - background(image, p.backgroundRadius), sigma=p.sigma)
+    mask = remove_small_objects(ndi.binary_fill_holes(clean > threshold_otsu(clean)), max_size=p.minArea)
     plain = label(mask)
     distance = ndi.gaussian_filter(ndi.distance_transform_edt(mask), 1)
-    peaks = peak_local_max(distance, min_distance=p.MinDistance(), labels=plain, exclude_border=False)
+    peaks = peak_local_max(distance, min_distance=p.minDistance, labels=plain, exclude_border=False)
     markers = np.zeros(image.shape, dtype=np.int32)
     markers[tuple(peaks.T)] = np.arange(1, len(peaks) + 1)
     split = watershed(-distance, markers, mask=mask)
     areas = [r.area for r in regionprops(split)]
-    print(f"{raw.shape[1]} x {raw.shape[0]} px from {source.Source().decode()}")
-    print(f"threshold only {plain.max()} objects; watershed {split.max()} objects; median area {np.median(areas):.0f} px")
+    report.log(str(f"{raw.shape[1]} x {raw.shape[0]} px from {source.Source().decode()}"))
+    report.log(str(f"threshold only {plain.max()} objects; watershed {split.max()} objects; median area {np.median(areas):.0f} px"))
 
     fig, axes = plt.subplots(1, 2, figsize=(9, 5.2))
     for ax in axes:
@@ -48,4 +48,4 @@ def main(ctx):
     fig.text(0.5, 0.02, "正解がないので採点はしません。接した核や、分裂中の明るい核を輪郭で確かめてください。",
              ha="center", fontsize=9)
     fig.tight_layout(rect=(0, 0.06, 1, 1))
-    plt.show()
+    report.figure()

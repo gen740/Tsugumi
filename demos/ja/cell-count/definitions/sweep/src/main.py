@@ -75,11 +75,11 @@ def background(image, radius):
 
 
 def segment(image, p):
-    clean = gaussian(image - background(image, p.BackgroundRadius()), sigma=p.Sigma()).astype(np.float32)
-    mask = remove_small_objects(ndi.binary_fill_holes(clean > threshold_otsu(clean)), max_size=p.MinArea())
+    clean = gaussian(image - background(image, p.backgroundRadius), sigma=p.sigma).astype(np.float32)
+    mask = remove_small_objects(ndi.binary_fill_holes(clean > threshold_otsu(clean)), max_size=p.minArea)
     plain = label(mask)
     distance = ndi.gaussian_filter(ndi.distance_transform_edt(mask), 1)
-    peaks = peak_local_max(distance, min_distance=p.MinDistance(), labels=plain, exclude_border=False)
+    peaks = peak_local_max(distance, min_distance=p.minDistance, labels=plain, exclude_border=False)
     markers = np.zeros(image.shape, dtype=np.int32)
     markers[tuple(peaks.T)] = np.arange(1, len(peaks) + 1)
     return plain, watershed(-distance, markers, mask=mask)
@@ -96,12 +96,12 @@ def f1_score(lab, truth, gate):
     return 2 * matched / (len(found) + len(truth)), len(found)
 
 
-def main(ctx):
-    scene = ctx.input("scene", Scene)
-    p = ctx.params()
+def main(inputs, report):
+    scene = inputs.input("scene", Scene)
+    p = inputs.params
     size, radius = scene.Size(), scene.Radius()
-    counts = p.CellsAsNumpy()
-    noises = p.NoisesAsNumpy()
+    counts = p.cellsAsNumpy
+    noises = p.noisesAsNumpy
     base_cells = scene.TrueXLength()
     plain_f1 = np.zeros((len(noises), len(counts)))
     split_f1 = np.zeros((len(noises), len(counts)))
@@ -115,9 +115,9 @@ def main(ctx):
             plain, split = segment(image, p)
             plain_f1[i, j] = f1_score(plain, truth, radius)[0]
             split_f1[i, j], split_count[i, j] = f1_score(split, truth, radius)
-    print("sweep " + json.dumps({"cells": counts.tolist(), "noises": noises.tolist(),
+    report.log(str("sweep " + json.dumps({"cells": counts.tolist(), "noises": noises.tolist(),
                                  "plain": plain_f1.tolist(), "split": split_f1.tolist(),
-                                 "split_count": split_count.tolist()}))
+                                 "split_count": split_count.tolist()})))
 
     fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.4), sharey=True)
     for ax, title, table in ((axes[0], "閾値のみ", plain_f1), (axes[1], "watershed", split_f1)):
@@ -135,4 +135,4 @@ def main(ctx):
     fig.subplots_adjust(bottom=0.24)
     fig.colorbar(image, ax=axes, shrink=0.85, label="F1")
     fig.text(0.46, 0.03, "左上（少ない細胞に強いノイズ）: 閾値が雑音に落ちて数えすぎる。右端（混みすぎ）: つながって見逃す。", ha="center", fontsize=9)
-    plt.show()
+    report.figure()

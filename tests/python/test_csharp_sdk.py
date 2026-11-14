@@ -57,7 +57,7 @@ table Outputs { report:Location (required, tsugumi:"directory"); }
 root_type Outputs;
 '''
 CPP = '''#include <card.hh>
-auto run(Card::Input&) -> Card::Output {
+auto run(const Card::Inputs& inputs) -> Card::Output {
   Card::Output out;
   auto& value = out.numbers.emplace();
   value.values = {1.0, 2.0, 3.0}; value.label = "typed 日本語";
@@ -70,58 +70,63 @@ using System.Linq;
 using System.Threading.Tasks;
 using Tsugumi;
 public sealed class Card : ICard {
-  private Context? previous;
+  private Report? previous;
   private readonly string identity = Guid.NewGuid().ToString();
   private int runs;
-  public ValueTask OnRunStartAsync(Context context) { runs++; return ValueTask.CompletedTask; }
-  public async ValueTask RunAsync(Context context) {
+  public ValueTask<Outputs> OnRunStartAsync(Inputs inputs) {
+        runs++; return ValueTask.FromResult(new Outputs()); }
+  public async ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) {
+        var result = new Outputs();
     if (previous != null) {
       try { previous.Log("late callback"); throw new Exception("stale context remained live"); }
       catch (ObjectDisposedException) { }
     }
-    previous = context;
-    try { context.DisplayText("\\uD800"); throw new Exception("invalid UTF-16 was accepted"); }
+    previous = report;
+    try { report.Text("\\uD800"); throw new Exception("invalid UTF-16 was accepted"); }
     catch (System.Text.EncoderFallbackException) { }
-    var input = context.Inputs.Numbers;
-    if (input.Label != "typed 日本語") throw new Exception("input string was corrupted");
-    if (context.Parameters.Mode == "fail") throw new Failure("validation_failed", "requested failure");
-    if (context.Parameters.Mode is "wait" or "callback") {
-      using var registration = context.Parameters.Mode == "callback" ? context.CancellationToken.Register(() => throw new InvalidOperationException("cancel callback failure")) : default;
-      context.Log("waiting for cancellation");
-      await Task.Delay(60000, context.CancellationToken);
+    var received = inputs.Numbers;
+    if (received.Label != "typed 日本語") throw new Exception("input string was corrupted");
+    if (inputs.Params.Mode == "fail") throw new Failure("validation_failed", "requested failure");
+    if (inputs.Params.Mode is "wait" or "callback") {
+      using var registration = inputs.Params.Mode == "callback" ? run.CancellationToken.Register(() => throw new InvalidOperationException("cancel callback failure")) : default;
+      report.Log("waiting for cancellation");
+      await Task.Delay(60000, run.CancellationToken);
     }
-    await Task.Delay(1, context.CancellationToken);
-    var values = input.Values.Select(x => x * (context.Parameters.Factor ?? throw new Failure("validation_failed", "factor is required"))).ToList();
+    await Task.Delay(1, run.CancellationToken);
+    var values = received.Values.Select(x => x * (inputs.Params.Factor ?? throw new Failure("validation_failed", "factor is required"))).ToList();
     var roundTrip = Newtonsoft.Json.JsonConvert.DeserializeObject<double[]>(Newtonsoft.Json.JsonConvert.SerializeObject(values));
     if (roundTrip == null || !values.SequenceEqual(roundTrip)) throw new Exception("NuGet reflection round trip failed");
-    context.Log($"worker {identity} runs {runs}");
-    context.DisplayText("intermediate");
-    context.DisplayMarkdown("**ready**");
-    context.DisplayScalar(values.Sum(), "sum");
-    context.DisplayImage(Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="), alt: "one pixel");
-    context.DisplayPoints([0], [1], [2], [0xff0000]);
-    context.DisplayLineChart(new Series("a", "values", [1, 2, 3], values.ToArray()));
-    context.DisplayModule("plotly", "{\\"data\\":[],\\"layout\\":{}}");
-    context.DisplayTable(["sum", "worker", "runs"], [[values.Sum().ToString(System.Globalization.CultureInfo.InvariantCulture), identity, runs.ToString()]]);
-    context.Outputs.Numbers(new outputs.numbers.sample.NumbersT { Values = values, Label = input.Label });
-  }
+    report.Log($"worker {identity} runs {runs}");
+    report.Text("intermediate");
+    report.Markdown("**ready**");
+    report.Scalar(values.Sum(), "sum");
+    report.Image(Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="), alt: "one pixel");
+    report.Points([0], [1], [2], [0xff0000]);
+    report.LineChart(new Series("a", "values", [1, 2, 3], values.ToArray()));
+    report.Module("plotly", "{\\"data\\":[],\\"layout\\":{}}");
+    report.Table(["sum", "worker", "runs"], [[values.Sum().ToString(System.Globalization.CultureInfo.InvariantCulture), identity, runs.ToString()]]);
+    result.Numbers = new outputs.numbers.sample.NumbersT { Values = values, Label = received.Label };
+
+        return result;
+}
 }
 '''
-PYTHON = '''from inputs.numbers.sample.Numbers import Numbers
+PYTHON = '''import tsugumi
+from inputs.numbers.sample.Numbers import Numbers
 import outputs.report.sample.Location as Location
 from pathlib import Path
 
-def main(ctx):
-    value = ctx.input("numbers", Numbers)
+def main(inputs, report, run):
+    value = inputs.input("numbers", Numbers)
     values = [value.Values(i) for i in range(value.ValuesLength())]
     assert value.Label().decode() == "typed 日本語"
-    target = Path(ctx.output_directory) / "report"
+    target = Path(run.output_directory) / "report"
     target.mkdir()
     (target / "values.txt").write_text(",".join(str(x) for x in values))
-    b = ctx.builder()
+    b = tsugumi.builder()
     name = b.CreateString(str(target))
     Location.Start(b); Location.AddValue(b, name)
-    ctx.output("report", b, Location.End(b))
+    return {"report": tsugumi.message(b, Location.End(b))}
 '''
 PY_NIX = '''{ pkgs, inputs, params }:
 let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
@@ -129,18 +134,60 @@ in { run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }
 '''
 
 RECEIPT = REPORT.replace('report:Location', 'receipt:Location').replace('"directory"', '"file"')
-FILE_CARD = """using System; using System.IO; using System.Threading.Tasks; using Tsugumi;
+FILE_CARD = '''using System; using System.IO; using System.Threading.Tasks; using Tsugumi;
 public sealed class Card : ICard {
- public ValueTask RunAsync(Context context) {
-  if (context.InputKind("report") != PortKind.Directory) throw new Exception("wrong port kind");
-  string data = File.ReadAllText(Path.Combine(context.Inputs.Report.Value, "values.txt"));
-  string output = Path.Combine(context.OutputDirectory, "receipt.txt");
+ public ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) {
+        var result = new Outputs();
+  if (inputs.InputKind("report") != PortKind.Directory) throw new Exception("wrong port kind");
+  string data = File.ReadAllText(Path.Combine(inputs.Report.Value, "values.txt"));
+  string output = Path.Combine(run.OutputDirectory, "receipt.txt");
   File.WriteAllText(output, data);
-  context.Outputs.Receipt(new outputs.receipt.sample.LocationT { Value = output });
-  return ValueTask.CompletedTask;
+  result.Receipt = new outputs.receipt.sample.LocationT { Value = output };
+  return ValueTask.FromResult(result);
  }
 }
-"""
+'''
+
+# These methods compile because ICard has default implementations, but none
+# implements a supported entry point. Keep their rejection actionable.
+INVALID_ENTRIES = [
+    ("skipped-report", "public ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
+     ["Card.RunAsync(Tsugumi.Inputs inputs, Tsugumi.Run run)", "parameter 2: expected Tsugumi.Report, found Tsugumi.Run"]),
+    ("static", "public static ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
+     ["public static", "must be an instance method"]),
+    ("private", "private ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
+     ["private instance", "must be public"]),
+    ("task", "public Task<Outputs> RunAsync(Inputs inputs, Run run) => Task.FromResult(new Outputs());",
+     ["Task<Tsugumi.Outputs>", "return type: expected System.Threading.Tasks.ValueTask<Tsugumi.Outputs>"]),
+    ("typed-output", "public ValueTask<Other.Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Other.Outputs());",
+     ["ValueTask<Other.Outputs>", "return type: expected System.Threading.Tasks.ValueTask<Tsugumi.Outputs>"]),
+    ("foreign-input", "public ValueTask<Outputs> RunAsync(Other.Inputs inputs) => ValueTask.FromResult(new Outputs());",
+     ["Other.Inputs inputs", "parameter 1: expected Tsugumi.Inputs, found Other.Inputs"]),
+    ("missing", "", ["no RunAsync methods"]),
+]
+
+
+@pytest.mark.parametrize("name, method, expected", INVALID_ENTRIES, ids=[entry[0] for entry in INVALID_ENTRIES])
+def test_invalid_entry_names_the_candidate_and_rejection(tmp_path, name, method, expected):
+    root = tmp_path / name
+    source = ("using Tsugumi; using System.Threading.Tasks; public sealed class Card : ICard {" + method
+              + "} namespace Other { public class Inputs {} public class Outputs {} }")
+    write_project(root, {"bad": {"card": {"language": "csharp", "inputs": [{"name": "start"}]},
+                                "nix": NIX, "src": {"Card.cs": source}}}, [("start", "out", "bad", "start")])
+    env, c = open_environment(root, "tsugumi-test-csharp-entry")
+    try:
+        rid, status = run_and_wait(c, "start", timeout=2400)
+        assert status.state == RunState.failed
+        failure = c.call("RunRecordRequest", runId=rid, card=path("bad")).status.failure
+        assert failure.kind == FailureKind.worker_failed
+        diagnostic = text(failure.diagnostic)
+        assert "Found:" in diagnostic
+        for detail in expected:
+            assert detail in diagnostic, diagnostic
+    finally:
+        c.close()
+        env.cleanup()
+
 
 def open_environment(root, name):
     env = real_environment(root, name) if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1" else Daemon(root).start()
@@ -149,14 +196,15 @@ def open_environment(root, name):
     return env, c
 
 
-PROBE = """using System.Threading.Tasks; using Tsugumi;
+PROBE = '''using System.Threading.Tasks; using Tsugumi;
 public sealed class Card : ICard {
-  public ValueTask RunAsync(Context context) {
-    context.DisplayText(Newtonsoft.Json.JsonConvert.SerializeObject(new[] { 1, 2 }));
-    return ValueTask.CompletedTask;
+  public ValueTask<Outputs> RunAsync(Inputs inputs, Report report) {
+        var result = new Outputs();
+    report.Text(Newtonsoft.Json.JsonConvert.SerializeObject(new[] { 1, 2 }));
+    return ValueTask.FromResult(result);
   }
 }
-"""
+'''
 
 
 def lock_name(lock):
@@ -176,7 +224,8 @@ def build_lock(root, lock, hash):
     try:
         rid, status = run_and_wait(c, "start", timeout=2400)
         said = text(c.call("LogRangeRequest", runId=rid, card=path("probe"), stream=4, limitBytes=262144).text)
-        if status.failure: said += "\n" + text(status.failure.diagnostic)
+        if status.failure: said += '''
+''' + text(status.failure.diagnostic)
         shown = None
         if status.state == RunState.succeeded:
             display = c.call("RunRecordRequest", runId=rid, card=path("probe")).record.display
@@ -231,7 +280,8 @@ def project(tmp_path, nuget_hash):
         "make": {"card": {"language":"cpp", "inputs":[{"name":"start"}]}, "nix":CPP_NIX, "outputs":NUMBERS, "src":{"card.cc":CPP}},
         "scale": {"card": {"language":"csharp", "reuseWorker":True, "inputs":[{"name":"numbers"}], "params":[
             {"name":"factor", "type":"double", "data":2}, {"name":"mode", "type":"string", "data":"ok"}]},
-            "nix":nuget_nix(f'"{nuget_hash}"'), "outputs":NUMBERS, "src":{"Card.cs":"#nullable enable\n"+CSHARP}},
+            "nix":nuget_nix(f'"{nuget_hash}"'), "outputs":NUMBERS, "src":{"Card.cs":'''#nullable enable
+'''+CSHARP}},
         "report": {"card": {"language":"python", "inputs":[{"name":"numbers"}], "retainArtifact":True, "artifactOutput":"report"}, "nix":PY_NIX, "outputs":REPORT, "src":{"main.py":PYTHON}},
         "receipt": {"card": {"language":"csharp", "inputs":[{"name":"report"}], "retainArtifact":True, "artifactOutput":"receipt"}, "nix":NIX, "outputs":RECEIPT, "src":{"Card.cs":FILE_CARD}},
     }, [("start","out","make","start"),("make","numbers","scale","numbers"),("scale","numbers","report","numbers"),("report","report","receipt","report")])

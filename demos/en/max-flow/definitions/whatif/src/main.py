@@ -19,11 +19,11 @@ def text(pairs):
     return ", ".join(f"{u}→{v}" for u, v in pairs)
 
 
-def main(ctx):
-    c = ctx.input("cut", Cut)
-    params = ctx.params()
-    raise_by = int(params.RaiseBy())
-    wanted = params.Edge().decode().strip() if params.Edge() else ""
+def main(inputs, report):
+    c = inputs.input("cut", Cut)
+    params = inputs.params
+    raise_by = int(params.raiseBy)
+    wanted = params.edge.decode().strip() if params.edge else ""
     nodes = c.Nodes().decode().split()
     edges = [(nodes[u], nodes[v], int(x)) for u, v, x in zip(c.TailAsNumpy(), c.HeadAsNumpy(), c.CapacityAsNumpy())]
     amounts = {(nodes[u], nodes[v]): int(x) for u, v, x in zip(c.TailAsNumpy(), c.HeadAsNumpy(), c.FlowAsNumpy())}
@@ -73,5 +73,5 @@ def main(ctx):
             lines.append(f"{first[0]}→{first[1]} gained as much as it was raised. Raise it further and another cut will get in the way sooner or later.")
     if third is not None:
         lines.append(f"{third[0]}→{third[1]} is on the cut, but another minimum cut without this edge remains, so nothing is gained.")
-    ctx.display_markdown("\n".join(lines))
-    print("result: " + json.dumps({"base": base, "rows": rows}))
+    report.markdown("\n".join(lines))
+    report.log(str("result: " + json.dumps({"base": base, "rows": rows})))

@@ -19,10 +19,10 @@ def concentration(t, dose_times, dose, ke, ka, volume, fraction):
     return total
 
 
-def main(ctx):
-    c = ctx.input("curves", Curves)
-    params = ctx.params()
-    missed_at, count = params.MissedAtH(), int(params.MissedCount())
+def main(inputs, report):
+    c = inputs.input("curves", Curves)
+    params = inputs.params
+    missed_at, count = params.missedAtH, int(params.missedCount)
     doses, intervals = c.DosesMgAsNumpy(), c.IntervalsHAsNumpy()
     ke = math.log(2) / c.HalfLifeH()
     ka, volume, fraction = c.KaPerH(), c.VolumeL(), c.Bioavailability()
@@ -74,5 +74,5 @@ def main(ctx):
     for ax in axes[-1]:
         ax.set_xlabel("Time (h)")
     fig.suptitle(f"Missing {count} doses from hour {missed_at:g} (a made-up drug. Green is an invented therapeutic range, not dosing guidance)", fontsize=12)
-    plt.show()
-    print("result: " + json.dumps(rows))
+    report.figure()
+    report.log(str("result: " + json.dumps(rows)))

@@ -17,7 +17,7 @@ notebook=importlib.util.module_from_spec(spec);spec.loader.exec_module(notebook)
 class Failure(Exception):
     def __init__(self,kind,message):super().__init__(message);self.kind=kind
 
-class Context:
+class Run:
     run_id='notebook-test'
     card='notebook'
     invocation=1
@@ -27,7 +27,6 @@ class Context:
         self.stop=False;self.deadline=60000
     def cancelled(self):return self.stop
     def remaining_ms(self):return self.deadline
-    def display_markdown(self,value):self.display=value
 
 @pytest.fixture
 def host(monkeypatch):
@@ -36,7 +35,8 @@ def host(monkeypatch):
 
 def test_notebook_overrides_once_and_isolates_repeated_calls(tmp_path,host):
     source=tmp_path/'src';source.mkdir()
-    (source/'helper.py').write_text('def twice(value): return value * 2\n')
+    (source/'helper.py').write_text('''def twice(value): return value * 2
+''')
     (source/'notebook.py').write_text('''import marimo
 app=marimo.App()
 @app.cell
@@ -59,8 +59,8 @@ def show(result):
 ''')
     snapshots=[]
     for i in [1,2]:
-        ctx=Context(tmp_path/str(i));ctx.invocation=i;ctx.card=f"notebook-{i}"
-        result,folder=notebook.run(ctx,source,'notebook.py',{'value':i},['result'])
+        run_info=Run(tmp_path/str(i));run_info.invocation=i;run_info.card=f"notebook-{i}"
+        result,folder=notebook.run(types.SimpleNamespace(markdown=lambda value: None), run_info,source,'notebook.py',{'value':i},['result'])
         assert result=={'result':i*2}
         assert json.loads((folder/'metadata.json').read_text())['card']==f'notebook-{i}'
         assert (folder/'source/counter.txt').read_text()=='1'
@@ -78,14 +78,14 @@ def failing_cell():
     result=1/0
     return result,
 ''')
-    ctx=Context(tmp_path/'call')
+    run_info=Run(tmp_path/'call')
     with pytest.raises(Failure,match='broken.py') as e:
-        notebook.run(ctx,source,'broken.py',{},['result'])
+        notebook.run(types.SimpleNamespace(markdown=lambda value: None), run_info,source,'broken.py',{},['result'])
     assert e.value.kind=='worker_failed'
     output=capfd.readouterr()
     assert 'failing_cell (broken.py:4)' in output.out
     assert 'ZeroDivisionError' in output.err
-    assert not (ctx.output_directory/'notebook/result.json').exists()
+    assert not (run_info.output_directory/'notebook/result.json').exists()
 
 
 @pytest.mark.parametrize('kind',['cancelled','timeout'])
@@ -96,13 +96,13 @@ from pathlib import Path
 Path("pid").write_text(str(os.getpid()))
 time.sleep(60)
 ''')
-    ctx=Context(tmp_path/'call')
-    timer=threading.Timer(1,lambda:setattr(ctx,'stop' if kind=='cancelled' else 'deadline',True if kind=='cancelled' else 0))
+    run_info=Run(tmp_path/'call')
+    timer=threading.Timer(1,lambda:setattr(run_info,'stop' if kind=='cancelled' else 'deadline',True if kind=='cancelled' else 0))
     timer.start()
     try:
-        with pytest.raises(Failure) as e:notebook.run(ctx,source,'slow.py',{},[])
+        with pytest.raises(Failure) as e:notebook.run(types.SimpleNamespace(markdown=lambda value: None), run_info,source,'slow.py',{},[])
         assert e.value.kind==kind
     finally:timer.cancel()
-    pid=int((ctx.temporary_directory/'marimo/notebook/source/pid').read_text())
+    pid=int((run_info.temporary_directory/'marimo/notebook/source/pid').read_text())
     with pytest.raises(ProcessLookupError):os.kill(pid,0)
-    assert not (ctx.output_directory / 'notebook').exists()
+    assert not (run_info.output_directory / 'notebook').exists()

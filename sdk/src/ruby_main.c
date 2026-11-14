@@ -18,7 +18,7 @@ static int ready = 0;
 
 static void require_call(void) {
   if (!current || rb_thread_current() != owner)
-    rb_raise(rb_eRuntimeError, "Card context is available only on the invocation thread during a call");
+    rb_raise(rb_eRuntimeError, "Card invocation is available only on the invocation thread during a call");
 }
 
 static VALUE string(const char* text) { return rb_utf8_str_new_cstr(text ? text : ""); }

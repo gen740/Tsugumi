@@ -1,18 +1,8 @@
-# Tsugumi Julia Card SDK. A Card provides `main(ctx)` in src/main.jl:
-#
-#   function main(ctx)
-#       n = input(ctx, "number")["value"]
-#       output(ctx, "result", Dict("value" => n * ctx.params["factor"]))
-#       display_markdown(ctx, "**$n**")
-#   end
-#
-# The worker uses the same FlatBuffers ABI as C++/Python. Its in-memory adapter
-# presents messages as Dicts; no files or subprocess protocol carry values.
-# A Card keeps no state by default (a new interpreter per invocation); module
-# state persists with reuseWorker: true. Displays publish during the call.
+# Tsugumi Julia Cards return Dicts by output port, or an iterator of Dicts.
+# main(inputs[, report[, run]]); presentation functions take report first.
 module Tsugumi
 
-export input, path, output, display_text, display_markdown, display_table, display_image, display_module, display_vegalite, cancelled, remaining_ms
+export Inputs, Report, input, path, text, markdown, table, image, vegalite, Run, cancelled, remaining_ms
 
 # ---- JSON (the standard library has none) ------------------------------------
 
@@ -157,8 +147,7 @@ json_text(v) = (io = IOBuffer(); write_json(io, v); String(take!(io)))
 
 const HOST = ENV["TSUGUMI_NATIVE_LIBRARY"]
 
-struct Context
-    params::Dict{String,Any}
+struct Run
     output_directory::String
     temporary_directory::String
     working_directory::String
@@ -166,66 +155,91 @@ struct Context
     card::String
     invocation::UInt64
 end
-
 function info(field)
     value = ccall((:tsugumi_native_info, HOST), Cstring, (Cint,), field)
     value == C_NULL && error("no active Card invocation")
     return unsafe_string(value)
 end
 
-function Context()
-    value = ccall((:tsugumi_native_params, HOST), Cstring, ())
-    value == C_NULL && error("no active Card invocation")
-    Context(parse_json(unsafe_string(value)), info(4), info(3), info(2), info(0), info(1),
+function Run()
+    Run( info(4), info(3), info(2), info(0), info(1),
             ccall((:tsugumi_native_invocation, HOST), UInt64, ()))
 end
 
-function input(ctx::Context, port::AbstractString)
+
+struct Report end
+function Base.getproperty(report::Report, name::Symbol)
+    method = name == :module ? module_view : getfield(Tsugumi, name)
+    return (args...; kwargs...) -> method(report, args...; kwargs...)
+end
+struct Inputs
+    params::Dict{String,Any}
+end
+function Inputs()
+    value = ccall((:tsugumi_native_params, HOST), Cstring, ())
+    value == C_NULL && error("no active Card invocation")
+    Inputs(parse_json(unsafe_string(value)))
+end
+Base.getproperty(inputs::Inputs, name::Symbol) = name == :params ? deepcopy(getfield(inputs, :params)) : input(inputs, string(name))
+
+function input(inputs::Inputs, port::AbstractString)
     value = ccall((:tsugumi_native_input, HOST), Cstring, (Cstring,), port)
     value == C_NULL && return nothing
     return parse_json(unsafe_string(value))
 end
 
-function path(ctx::Context, port::AbstractString)
+function path(inputs::Inputs, port::AbstractString)
     ccall((:tsugumi_native_input_kind, HOST), Cint, (Cstring,), port) in (1, 2) || error("no File or Directory input port named $port")
-    value = input(ctx, port)
+    value = input(inputs, port)
     value !== nothing && get(value, "value", nothing) isa AbstractString || error("no File or Directory input port named $port")
     return value["value"]
 end
 
-function output(ctx::Context, port::AbstractString, message)
-    ccall((:tsugumi_native_output, HOST), Cint, (Cstring, Cstring), port, json_text(message)) == 0 || error("output was rejected by the worker: $port")
-    return nothing
+function send_outputs(result)
+    result === nothing && return
+    if result isa AbstractDict
+        for (port, message) in result
+            ccall((:tsugumi_native_output, HOST), Cint, (Cstring, Cstring), port, json_text(message)) == 0 || error("output was rejected by the worker: $port")
+        end
+    else
+        for batch in result
+            send_outputs(batch)
+        end
+    end
 end
-
-cancelled(ctx::Context) = ccall((:tsugumi_native_cancelled, HOST), Cint, ()) != 0
-remaining_ms(ctx::Context) = ccall((:tsugumi_native_remaining_ms, HOST), Int64, ())
+cancelled(run::Run) = ccall((:tsugumi_native_cancelled, HOST), Cint, ()) != 0
+remaining_ms(run::Run) = ccall((:tsugumi_native_remaining_ms, HOST), Int64, ())
+log(report::Report, message::AbstractString) = ccall((:tsugumi_native_log, HOST), Cvoid, (Cstring,), message)
 
 function show_member(member)
     ccall((:tsugumi_native_display, HOST), Cint, (Cstring,), json_text(member)) == 0 || error("display was rejected by the worker")
     return nothing
 end
 
-display_text(ctx::Context, text::AbstractString) = show_member(Dict("text" => text))
-display_markdown(ctx::Context, text::AbstractString) = show_member(Dict("markdown" => text))
-display_image(ctx::Context, file::AbstractString; alt::AbstractString="") = show_member(Dict("image" => Dict("path" => file, "alt" => alt)))
-display_module(ctx::Context, name::AbstractString, data) = show_member(Dict("module" => Dict("module" => name, "config" => data)))
-display_vegalite(ctx::Context, spec) = display_module(ctx, "vega-lite", spec)
+text(report::Report, text::AbstractString) = show_member(Dict("text" => text))
+markdown(report::Report, text::AbstractString) = show_member(Dict("markdown" => text))
+image(report::Report, file::AbstractString; alt::AbstractString="") = show_member(Dict("image" => Dict("path" => file, "alt" => alt)))
+module_view(report::Report, name::AbstractString, data) = show_member(Dict("module" => Dict("module" => name, "config" => data)))
+vegalite(report::Report, spec) = module_view(report, "vega-lite", spec)
 
 # columns: names; rows: vectors of cells, shown with `string`.
-function display_table(ctx::Context, columns, rows)
+function table(report::Report, columns, rows)
     return show_member(Dict("table" => Dict("columns" => collect(string.(columns)), "rows" => [collect(string.(row)) for row in rows])))
 end
 
 function invoke(hook::Bool)
     try
-        ctx = Context()
-        if hook
-            if isdefined(Main, :on_run_start)
-                Base.invokelatest(Main.on_run_start, ctx)
+        arguments = (Inputs(), Report(), Run())
+        function_ = hook ? (isdefined(Main, :on_run_start) ? Main.on_run_start : nothing) : Main.main
+        if function_ !== nothing
+            for count in 1:3
+                args = arguments[1:count]
+                if applicable(function_, args...)
+                    send_outputs(Base.invokelatest(function_, args...))
+                    break
+                end
+                count == 3 && error("Card functions take inputs, optionally report and run")
             end
-        else
-            Base.invokelatest(Main.main, ctx)
         end
         return true
     catch error

@@ -77,7 +77,7 @@ def test_the_backend_is_chosen_and_show_sends_one_image(run):
     r = run('''
         import matplotlib.pyplot as plt
         def body():
-            plt.plot([1, 2, 3], [1, 4, 9]); plt.title("squares"); plt.show()
+            plt.plot([1, 2, 3], [1, 4, 9]); plt.title("squares"); tsugumi.Report().figure()
         res = call(body); res["backend"] = plt.get_backend(); print(json.dumps(res))
     ''')
     assert r["backend"] == "module://tsugumi.mpl"
@@ -85,7 +85,7 @@ def test_the_backend_is_chosen_and_show_sends_one_image(run):
     assert r["open"] == []  # show() closes the figures, as closing the window would
 
 
-def test_figures_left_open_are_shown_and_closed(run):
+def test_figures_left_open_are_closed_without_publishing(run):
     r = run('''
         import matplotlib.pyplot as plt
         def body():
@@ -93,10 +93,7 @@ def test_figures_left_open_are_shown_and_closed(run):
             plt.figure(); plt.bar([1, 2], [3, 4]); plt.title("b")
         print(json.dumps(call(body)))
     ''')
-    # Both figures in one image (the Card shows one display), one above the other.
-    assert r["ok"] and r["frames"] == 1 and r["alts"] == ["a; b"] and r["open"] == []
-    w, h = r["sizes"][0]
-    assert h > w
+    assert r["ok"] and r["frames"] == 0 and r["open"] == []
 
 
 def test_pause_sends_live_frames_and_a_sharp_last_one(run):
@@ -105,7 +102,8 @@ def test_pause_sends_live_frames_and_a_sharp_last_one(run):
         def body():
             fig, ax = plt.subplots(); line, = ax.plot([], []); ax.set_xlim(0, 60); ax.set_ylim(-1, 1)
             for i in range(20):
-                line.set_data(np.arange(i * 3), np.sin(np.arange(i * 3) / 5)); plt.pause(0.05)
+                line.set_data(np.arange(i * 3), np.sin(np.arange(i * 3) / 5)); tsugumi.Report().figure(wait=0.05)
+            tsugumi.Report().figure(fig)
         print(json.dumps(call(body)))
     ''')
     assert r["ok"] and r["frames"] >= 5 and r["open"] == []
@@ -121,7 +119,7 @@ def test_animations_play_while_show_waits(run):
             fig, ax = plt.subplots(); ln, = ax.plot([], [], "r-", lw=4); ax.set_xlim(0, 20); ax.set_ylim(0, 20)
             anim = FuncAnimation(fig, lambda k: (ln.set_data([0, k], [0, k]), ln)[1:], frames=20,
                                  interval=20, blit=True, repeat=False)
-            plt.show()
+            tsugumi.Report().figure()
         res = call(body)
         from PIL import Image
         import io
@@ -142,7 +140,7 @@ def test_an_endless_animation_ends_when_the_run_is_stopped(run):
             anim = FuncAnimation(fig, lambda k: (ln.set_data([0, k], [0, k]), ln)[1:], interval=20,
                                  cache_frame_data=False)
             h.cancel_at = time.monotonic() + 0.5
-            plt.show()
+            tsugumi.Report().figure()
         t0 = time.monotonic(); res = call(body); res["took"] = time.monotonic() - t0
         print(json.dumps(res))
     ''')
@@ -167,7 +165,7 @@ def test_a_card_that_picks_its_backend_keeps_it(run):
         import matplotlib.pyplot as plt
         def body():
             fig = plt.figure(); plt.plot([1, 2]); plt.title("explicit")
-            tsugumi.Context.__new__(tsugumi.Context).display_figure(fig)
+            tsugumi.Report().figure(fig)
         res = call(body); res["backend"] = plt.get_backend(); print(json.dumps(res))
     ''')
     # Agg: nothing is sent by itself, figures stay as the Card left them; display_figure still works.
@@ -180,7 +178,7 @@ def test_a_display_of_the_card_is_not_replaced_by_a_figure_left_open(run):
         import matplotlib.pyplot as plt
         def body():
             plt.plot([1, 2]); plt.title("forgotten")
-            tsugumi.Context.__new__(tsugumi.Context).display_text("the result")
+            tsugumi.Report().text("the result")
         res = call(body); res["texts"] = h.texts; print(json.dumps(res))
     ''')
     assert r["ok"] and r["frames"] == 0 and r["texts"] == ["the result"] and r["open"] == []

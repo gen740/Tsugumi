@@ -1,4 +1,4 @@
-"""Plain Plotly, as written for a notebook or a browser: fig.show() puts the
+"""Plain Plotly, as written for a notebook or a browser: report.figure(fig) puts the
 interactive figure in the Card's display (zoom, hover and legend work in the
 expanded view)."""
 import numpy as np
@@ -7,8 +7,8 @@ import plotly.graph_objects as go
 from inputs.walks.walk.Walks import Walks
 
 
-def main(ctx):
-    w = ctx.input("walks", Walks)
+def main(inputs, report):
+    w = inputs.input("walks", Walks)
     paths = w.PositionsAsNumpy().reshape(w.Walkers(), w.Steps() + 1)
     final = paths[:, -1]
     reach = np.abs(paths).max(axis=1)
@@ -27,4 +27,4 @@ def main(ctx):
         xaxis_title=f"position after {w.Steps()} steps", yaxis_title="largest distance from 0",
         template="plotly_white", margin=dict(l=60, r=20, t=50, b=50),
     )
-    fig.show()
+    report.figure(fig)

@@ -1,5 +1,6 @@
 """The maximum flow by networkx, checked against the capacities and conservation,
 drawn on the network: each edge shows flow / capacity, thicker for more flow."""
+import tsugumi
 import json
 
 import matplotlib.pyplot as plt
@@ -7,7 +8,6 @@ import networkx as nx
 import numpy as np
 
 from inputs.network.flow.Network import Network
-import outputs.flow.flow.Flow as out
 from tsugumi import Failure
 
 
@@ -22,8 +22,8 @@ def positions(nodes):
     return pos
 
 
-def main(ctx):
-    net = ctx.input("network", Network)
+def main(inputs, report):
+    net = inputs.input("network", Network)
     nodes = net.Nodes().decode().split()
     edges = [(nodes[u], nodes[v], int(c)) for u, v, c in zip(net.TailAsNumpy(), net.HeadAsNumpy(), net.CapacityAsNumpy())]
     graph = nx.DiGraph()
@@ -58,20 +58,18 @@ def main(ctx):
     ax.set_title(f"最大流 = {value}（各辺は 流量/容量、橙は容量いっぱい、灰は流れなし。架空のネットワーク）", fontsize=11)
     ax.set_axis_off()
     fig.tight_layout()
-    plt.show()
-    print("result: " + json.dumps({"value": value, "flow": [[u, v, f] for (u, v, _), f in zip(edges, amounts)]}))
-
-    b = ctx.builder()
-    names = b.CreateString(net.Nodes())
-    tail = b.CreateNumpyVector(net.TailAsNumpy())
-    head = b.CreateNumpyVector(net.HeadAsNumpy())
-    caps = b.CreateNumpyVector(net.CapacityAsNumpy())
-    vec = b.CreateNumpyVector(np.array(amounts, dtype=np.uint64))
-    out.Start(b)
-    out.AddNodes(b, names)
-    out.AddTail(b, tail)
-    out.AddHead(b, head)
-    out.AddCapacity(b, caps)
-    out.AddFlow(b, vec)
-    out.AddValue(b, value)
-    ctx.output("flow", b, out.End(b))
+    report.figure()
+    report.log(str("result: " + json.dumps({"value": value, "flow": [[u, v, f] for (u, v, _), f in zip(edges, amounts)]})))
+    names = net.Nodes()
+    tail = net.TailAsNumpy()
+    head = net.HeadAsNumpy()
+    caps = net.CapacityAsNumpy()
+    vec = np.array(amounts, dtype=np.uint64)
+    _out_value = {}
+    _out_value['nodes'] = names
+    _out_value['tail'] = tail
+    _out_value['head'] = head
+    _out_value['capacity'] = caps
+    _out_value['flow'] = vec
+    _out_value['value'] = value
+    return {'flow': _out_value}

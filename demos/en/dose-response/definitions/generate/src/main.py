@@ -1,11 +1,11 @@
 """A synthetic plate: four-parameter logistic curves plus Gaussian noise."""
+import tsugumi
 import json
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 from tsugumi import Failure
-import outputs.plate.dose.Plate as out
 
 # Fictional compounds: name, bottom, top, EC50 (uM), Hill slope.
 COMPOUNDS = [
@@ -19,24 +19,24 @@ def hill4(x, bottom, top, ec50, hill):
     return bottom + (top - bottom) / (1 + (ec50 / x) ** hill)
 
 
-def strings(b, items):
-    offsets = [b.CreateString(s) for s in items]
-    b.StartVector(4, len(offsets), 4)
+def strings(items):
+    offsets = [s for s in items]
+    _b_items = []
     for o in reversed(offsets):
-        b.PrependUOffsetTRelative(o)
-    return b.EndVector()
+        _b_items.append(o)
+    return list(reversed(_b_items))
 
 
-def main(ctx):
-    p = ctx.params()
-    seed, noise, n_conc, reps = p.Seed(), p.NoiseSd(), p.Concentrations(), p.Replicates()
+def main(inputs, report):
+    p = inputs.params
+    seed, noise, n_conc, reps = p.seed, p.noiseSd, p.concentrations, p.replicates
     if n_conc * reps <= 4:
         raise Failure("output_invalid", "concentrations x replicates must exceed the 4 fitted parameters")
-    conc = p.TopUm() / p.Dilution() ** np.arange(n_conc - 1, -1, -1.0)
+    conc = p.topUm / p.dilution ** np.arange(n_conc - 1, -1, -1.0)
     rng = np.random.default_rng(seed)
     response = np.array([hill4(conc, *c[1:])[:, None] + rng.normal(0, noise, (n_conc, reps)) for c in COMPOUNDS])
-    print(f"seed {seed}, noise {noise}, {n_conc} concentrations {conc[0]:.4g}..{conc[-1]:.4g} uM, {reps} replicates")
-    print("plate " + json.dumps({"conc": conc.tolist(), "response": response.round(6).tolist()}))
+    report.log(str(f"seed {seed}, noise {noise}, {n_conc} concentrations {conc[0]:.4g}..{conc[-1]:.4g} uM, {reps} replicates"))
+    report.log(str("plate " + json.dumps({"conc": conc.tolist(), "response": response.round(6).tolist()})))
 
     fig, ax = plt.subplots(figsize=(7, 4.2))
     grid = np.geomspace(conc[0] / 2, conc[-1] * 2, 200)
@@ -50,23 +50,21 @@ def main(ctx):
     ax.grid(alpha=0.25)
     ax.spines[["top", "right"]].set_visible(False)
     ax.legend(frameon=False, loc="upper left")
-    plt.show()
-
-    b = ctx.builder(response.size * 8 + 2048)
-    names = strings(b, [c[0] for c in COMPOUNDS])
-    columns = [b.CreateNumpyVector(np.array([c[k] for c in COMPOUNDS])) for k in (1, 2, 3, 4)]
-    conc_v = b.CreateNumpyVector(conc)
-    resp_v = b.CreateNumpyVector(response.ravel())
-    out.Start(b)
-    out.AddNames(b, names)
-    out.AddBottom(b, columns[0])
-    out.AddTop(b, columns[1])
-    out.AddEc50(b, columns[2])
-    out.AddHill(b, columns[3])
-    out.AddConc(b, conc_v)
-    out.AddReplicates(b, reps)
-    out.AddResponse(b, resp_v)
-    out.AddSeed(b, seed)
-    out.AddNoiseSd(b, noise)
-    out.AddDilution(b, p.Dilution())
-    ctx.output("plate", b, out.End(b))
+    report.figure()
+    names = strings([c[0] for c in COMPOUNDS])
+    columns = [np.array([c[k] for c in COMPOUNDS]) for k in (1, 2, 3, 4)]
+    conc_v = conc
+    resp_v = response.ravel()
+    _out_value = {}
+    _out_value['names'] = names
+    _out_value['bottom'] = columns[0]
+    _out_value['top'] = columns[1]
+    _out_value['ec50'] = columns[2]
+    _out_value['hill'] = columns[3]
+    _out_value['conc'] = conc_v
+    _out_value['replicates'] = reps
+    _out_value['response'] = resp_v
+    _out_value['seed'] = seed
+    _out_value['noise_sd'] = noise
+    _out_value['dilution'] = p.dilution
+    return {'plate': _out_value}

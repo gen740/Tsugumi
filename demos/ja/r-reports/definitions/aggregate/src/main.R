@@ -1,6 +1,9 @@
-main <- function(ctx) {
-  observations <- c(2, 4, 8, 10) * ctx$params$scale
+main <- function(inputs, report) {
+  outputs <- list()
+  observations <- c(2, 4, 8, 10) * inputs$params$scale
   values <- c(mean(observations), min(observations), max(observations))
-  ctx$output("data", list(values = values))
-  ctx$display_table(data.frame(statistic = c("mean", "minimum", "maximum"), value = values))
+  outputs[["data"]] <- list(values = values)
+  report$table(data.frame(statistic = c("mean", "minimum", "maximum"), value = values))
+
+  outputs
 }

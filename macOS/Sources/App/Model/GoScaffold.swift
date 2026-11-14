@@ -6,14 +6,14 @@ package main
 
 import "tsugumi"
 
-func run(ctx *tsugumi.Context, input tsugumi.Input) (tsugumi.Output, error) {
-	if err := ctx.DisplayText("hello"); err != nil {
+func run(inputs tsugumi.Inputs, report *tsugumi.Report) (tsugumi.Output, error) {
+	if err := report.Text("hello"); err != nil {
 		return tsugumi.Output{}, err
 	}
 	return tsugumi.Output{Out: &tsugumi.OutputOut{Value: "hello"}}, nil
 }
 
-func onRunStart(ctx *tsugumi.Context) error { return nil }
+func onRunStart(inputs tsugumi.Inputs) error { return nil }
 
 """#,
     "go.mod": #"""

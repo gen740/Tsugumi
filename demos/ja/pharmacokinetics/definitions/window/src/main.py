@@ -10,8 +10,8 @@ from inputs.curves.pk.Curves import Curves
 COLORS = ["#2a7ab9", "#d9622b", "#3a9a4a", "#8a5ec2", "#c23b4b", "#7a7a7a"]
 
 
-def main(ctx):
-    c = ctx.input("curves", Curves)
+def main(inputs, report):
+    c = inputs.input("curves", Curves)
     doses, intervals, last_dose = c.DosesMgAsNumpy(), c.IntervalsHAsNumpy(), c.LastDoseHAsNumpy()
     t = c.THAsNumpy()
     conc = c.ConcAsNumpy().reshape(len(doses), len(t))
@@ -48,5 +48,5 @@ def main(ctx):
     right.set_xlim(0, 100)
     right.set_xlabel("間隔のうちの時間 (%): 下（青）、域内（緑）、上（橙）")
     right.set_title("有効域の中にいる時間", fontsize=12)
-    plt.show()
-    print("result: " + json.dumps(rows))
+    report.figure()
+    report.log(str("result: " + json.dumps(rows)))

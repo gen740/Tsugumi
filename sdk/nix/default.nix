@@ -20,16 +20,23 @@ let
   builtinViews = import ./builtin-views.nix { inherit pkgs; };
   wasmViews = import ./wasm-view.nix { inherit pkgs; };
   flatc = "${pkgs.flatbuffers}/bin/flatc";
-  schemas = [ "_inputs" "_outputs" "_params" ];
+  schemas = [
+    "_inputs"
+    "_outputs"
+    "_params"
+  ];
 
   # Only these files go into the shared runtime, so it does not change (and
   # is not rebuilt) when anything else in the SDK or any Card changes.
   runtimeSrc = lib.fileset.toSource {
     root = sdkRoot;
-    fileset = lib.fileset.unions [ (sdkRoot + "/include") (sdkRoot + "/src/card_runtime.cc") ];
+    fileset = lib.fileset.unions [
+      (sdkRoot + "/include")
+      (sdkRoot + "/src/card_runtime.cc")
+    ];
   };
 
-  # libtsugumi_card.so: call glue, context, logging and tsugumi::visualization.
+  # libtsugumi_card.so: call glue, Run and Report.
   # Independent of any Card's contract: one build per environment.
   runtime = pkgs.stdenv.mkDerivation {
     name = "tsugumi-card-runtime";
@@ -39,7 +46,12 @@ let
     # Cards find it through their rpath (Linux) or its absolute install name (macOS hosts).
     buildPhase = ''
       $CXX -std=c++20 -O2 -fPIC -shared -Wall -Iinclude src/card_runtime.cc -o libtsugumi_card.so \
-        ${if pkgs.stdenv.hostPlatform.isDarwin then "-Wl,-install_name,$out/lib/libtsugumi_card.so" else "-Wl,-soname,libtsugumi_card.so"}
+        ${
+          if pkgs.stdenv.hostPlatform.isDarwin then
+            "-Wl,-install_name,$out/lib/libtsugumi_card.so"
+          else
+            "-Wl,-soname,libtsugumi_card.so"
+        }
     '';
     installPhase = ''
       mkdir -p $out/lib $out/include
@@ -49,7 +61,13 @@ let
   };
 
   # The contract files under their fixed names (flatc names its output after them).
-  contractDir = { inputs, outputs, params, contract }:
+  contractDir =
+    {
+      inputs,
+      outputs,
+      params,
+      contract,
+    }:
     pkgs.runCommand "tsugumi-card-contract" { } ''
       mkdir -p $out
       cp ${inputs} $out/_inputs.fbs
@@ -58,22 +76,29 @@ let
       cp ${contract} $out/_contract.json
     '';
 
-  cppFace = dir: pkgs.runCommand "tsugumi-card-sdk-cpp" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-    mkdir -p $out/include $out/src
-    for f in ${lib.concatStringsSep " " schemas}; do
-      ${flatc} --cpp --gen-object-api --scoped-enums -o $out/include ${dir}/$f.fbs
-    done
-    python3 ${sdkRoot}/codegen/card_cpp.py ${dir}/_contract.json $out
-  '';
+  cppFace =
+    dir:
+    pkgs.runCommand "tsugumi-card-sdk-cpp" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      mkdir -p $out/include $out/src
+      for f in ${lib.concatStringsSep " " schemas}; do
+        ${flatc} --cpp --gen-object-api --scoped-enums -o $out/include ${dir}/$f.fbs
+      done
+      python3 ${sdkRoot}/codegen/card_cpp.py ${dir}/_contract.json $out
+    '';
 
-  pythonFace = dir: pkgs.runCommand "tsugumi-card-sdk-python" { } ''
-    mkdir -p $out
-    for f in ${lib.concatStringsSep " " schemas}; do
-      ${flatc} --python --gen-object-api -o $out ${dir}/$f.fbs
-    done
-    # For code that learns the port types at run time (tsugumi.contract).
-    cp ${dir}/_contract.json $out/_contract.json
-  '';
+  pythonFace =
+    dir:
+    pkgs.runCommand "tsugumi-card-sdk-python" { } ''
+      mkdir -p $out
+      for f in ${lib.concatStringsSep " " schemas}; do
+        ${flatc} --python --gen-object-api -o $out ${dir}/$f.fbs
+      done
+      # Reflection metadata drives conversion of ordinary returned Python values.
+      ${flatc} -b --schema --bfbs-builtins -o $out ${dir}/_outputs.fbs
+      ${flatc} -t --strict-json --defaults-json -o $out \
+        ${pkgs.flatbuffers.src}/reflection/reflection.fbs -- $out/_outputs.bfbs
+      cp ${dir}/_contract.json $out/_contract.json
+    '';
 
   # The JSON face (sdk/src/json_face.cc): binary schemas of the Card's ports
   # and params, and which root type each port carries. Ruby uses it today; it
@@ -123,15 +148,24 @@ let
       python3 ${sdkRoot}/codegen/card_go.py ${dir}/_contract.json $out
     '';
 
-  csharpFace = dir: pkgs.runCommand "tsugumi-card-sdk-csharp" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-    mkdir -p $out
-    for f in ${lib.concatStringsSep " " schemas}; do
-      ${flatc} --csharp --gen-object-api --cs-global-alias -o $out ${dir}/$f.fbs
-    done
-    python3 ${sdkRoot}/codegen/card_csharp.py ${dir}/_contract.json $out/CardBindings.cs ${sdkRoot}/include/tsugumi/sdk/abi.h
-  '';
+  csharpFace =
+    dir:
+    pkgs.runCommand "tsugumi-card-sdk-csharp" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      mkdir -p $out
+      for f in ${lib.concatStringsSep " " schemas}; do
+        ${flatc} --csharp --gen-object-api --cs-global-alias -o $out ${dir}/$f.fbs
+      done
+      python3 ${sdkRoot}/codegen/card_csharp.py ${dir}/_contract.json $out/CardBindings.cs ${sdkRoot}/include/tsugumi/sdk/abi.h
+    '';
 
-  languagesKnown = [ "cpp" "python" "go" "rust" "ruby" "csharp" ];
+  languagesKnown = [
+    "cpp"
+    "python"
+    "go"
+    "rust"
+    "ruby"
+    "csharp"
+  ];
 
   # Whether this Card is built for another system than the one evaluating it
   # (x86_64-linux in the aarch64 VM): its binaries run under the emulator the
@@ -154,7 +188,10 @@ let
       name = "tsugumi-worker";
       src = lib.fileset.toSource {
         root = sdkRoot;
-        fileset = lib.fileset.unions [ dir (sdkRoot + "/include") ];
+        fileset = lib.fileset.unions [
+          dir
+          (sdkRoot + "/include")
+        ];
       };
       nativeBuildInputs = [ pkgs.flatbuffers ];
       buildInputs = [ pkgs.flatbuffers ];
@@ -181,19 +218,29 @@ rec {
   # The SDK of this Card: its contract compiled for the requested languages
   # only (nothing is generated or built for languages left out).
   sdk =
-    { languages
-    , inputs ? "${generated}/_inputs.fbs"
-    , outputs ? "${generated}/_outputs.fbs"
-    , params ? "${generated}/_params.fbs"
-    , contract ? "${generated}/_contract.json"
+    {
+      languages,
+      inputs ? "${generated}/_inputs.fbs",
+      outputs ? "${generated}/_outputs.fbs",
+      params ? "${generated}/_params.fbs",
+      contract ? "${generated}/_contract.json",
     }:
     let
       unknown = lib.subtractLists languagesKnown languages;
-      dir = contractDir { inherit inputs outputs params contract; };
+      dir = contractDir {
+        inherit
+          inputs
+          outputs
+          params
+          contract
+          ;
+      };
       want = l: builtins.elem l languages;
     in
     assert lib.assertMsg (languages != [ ]) "sdk: name the languages, e.g. languages = [ \"cpp\" ]";
-    assert lib.assertMsg (unknown == [ ]) "sdk: unknown languages ${toString unknown} (known: ${toString languagesKnown})";
+    assert lib.assertMsg (
+      unknown == [ ]
+    ) "sdk: unknown languages ${toString unknown} (known: ${toString languagesKnown})";
     {
       inherit languages;
       contract = dir;
@@ -210,7 +257,13 @@ rec {
   # A C++ Card: every *.cc below `src` (with `sdk`: plus the generated
   # adapter) compiled into lib/main.so, linked against the shared runtime.
   cppCard =
-    { src, sdk, name ? "tsugumi-cpp-card", buildInputs ? [ ], cxxflags ? [ ] }:
+    {
+      src,
+      sdk,
+      name ? "tsugumi-cpp-card",
+      buildInputs ? [ ],
+      cxxflags ? [ ],
+    }:
     assert lib.assertMsg (sdk.cpp != null) "cppCard: the SDK was made without \"cpp\" in languages";
     pkgs.stdenv.mkDerivation {
       inherit name src;
@@ -220,9 +273,11 @@ rec {
         runHook preBuild
         sources=$(find . -name '*.cc' | sort)
         if [ -z "$sources" ]; then echo "no .cc sources in src" >&2; exit 1; fi
+        # Optional role overloads are weak imports; Mach-O leaves missing ones for the loader.
         $CXX -std=c++20 -O2 -fPIC -shared -Wall \
           -I${sdk.cpp}/include -I${runtime}/include ${lib.escapeShellArgs cxxflags} \
           $sources ${sdk.cpp}/src/card_adapter.cc \
+          ${lib.optionalString pkgs.stdenv.hostPlatform.isDarwin "-Wl,-undefined,dynamic_lookup"} \
           -L${runtime}/lib -ltsugumi_card -Wl,-rpath,${runtime}/lib -o main.so
         runHook postBuild
       '';
@@ -245,13 +300,19 @@ rec {
       nativeBuildInputs ? [ ],
     }:
     assert lib.assertMsg (sdk.go != null) "goCard: the SDK was made without \"go\" in languages";
-    assert lib.assertMsg ((lock == null) == (hash == null))
-      "goCard: give `lock = ./src/go.sum;` and `hash` together for external modules";
+    assert lib.assertMsg (
+      (lock == null) == (hash == null)
+    ) "goCard: give `lock = ./src/go.sum;` and `hash` together for external modules";
     let
       # Invalidate the module cache when either Go dependency file changes.
-      cacheKey = lib.optionalString (lock != null) ("-" + builtins.substring 0 16 (
-        builtins.hashString "sha256" (builtins.hashFile "sha256" lock + builtins.hashFile "sha256" (src + "/go.mod"))
-      ));
+      cacheKey = lib.optionalString (lock != null) (
+        "-"
+        + builtins.substring 0 16 (
+          builtins.hashString "sha256" (
+            builtins.hashFile "sha256" lock + builtins.hashFile "sha256" (src + "/go.mod")
+          )
+        )
+      );
       checkLock = lib.optionalString (lock != null) ''
         if ! cmp -s go.sum ${lock}; then
           echo "goCard: go.sum is stale. Regenerate the Card's lock and update hash." >&2
@@ -317,21 +378,30 @@ rec {
       lockedCrates = pkgs.rustPlatform.importCargoLock { lockFile = lock; };
       # Match the cached path to the lock that produced it, even if an old
       # hash was left in the Card. Keep all output paths inside the archive.
-      vendor = if lock == null then sdkCrates else
-        pkgs.runCommand "tsugumi-rust-vendor-${builtins.substring 0 16 (builtins.hashFile "sha256" lock)}" {
-          outputHashMode = "recursive";
-          outputHashAlgo = "sha256";
-          outputHash = hash;
-        } ''
-          mkdir -p "$out"
-          cp -rL ${lockedCrates}/. "$out"
-        '';
+      vendor =
+        if lock == null then
+          sdkCrates
+        else
+          pkgs.runCommand "tsugumi-rust-vendor-${builtins.substring 0 16 (builtins.hashFile "sha256" lock)}"
+            {
+              outputHashMode = "recursive";
+              outputHashAlgo = "sha256";
+              outputHash = hash;
+            }
+            ''
+              mkdir -p "$out"
+              cp -rL ${lockedCrates}/. "$out"
+            '';
       target = pkgs.stdenv.hostPlatform.rust.rustcTarget;
       lockFlag = lib.optionalString (lock != null) "--locked";
     in
     pkgs.stdenv.mkDerivation {
       inherit name src buildInputs;
-      nativeBuildInputs = [ pkgs.cargo pkgs.rustc ] ++ nativeBuildInputs;
+      nativeBuildInputs = [
+        pkgs.cargo
+        pkgs.rustc
+      ]
+      ++ nativeBuildInputs;
       dontConfigure = true;
       # A panic must unwind to the SDK's catch_unwind, never across C.
       CARGO_PROFILE_RELEASE_PANIC = "unwind";
@@ -403,20 +473,32 @@ rec {
   # Wheels only: a source distribution would be compiled inside the
   # fixed-output derivation, and its bytes would differ from build to build.
   uvPackages =
-    { python, lock, pyproject, hash, libraries }:
+    {
+      python,
+      lock,
+      pyproject,
+      hash,
+      libraries,
+    }:
     let
       system = pkgs.stdenv.hostPlatform.system;
       outputHash =
         if builtins.isAttrs hash then
-          hash.${system} or (throw "pythonCard: `hash` has no entry for ${system} (it names ${toString (builtins.attrNames hash)})")
+          hash.${system}
+            or (throw "pythonCard: `hash` has no entry for ${system} (it names ${toString (builtins.attrNames hash)})")
         else
           hash;
-      key = builtins.substring 0 16 (builtins.hashString "sha256"
-        "${builtins.hashFile "sha256" lock}${builtins.hashFile "sha256" pyproject}${python.pythonVersion}${system}");
+      key = builtins.substring 0 16 (
+        builtins.hashString "sha256" "${builtins.hashFile "sha256" lock}${builtins.hashFile "sha256" pyproject}${python.pythonVersion}${system}"
+      );
       wheels = pkgs.stdenvNoCC.mkDerivation {
         name = "tsugumi-python-wheels-${key}";
         dontUnpack = true;
-        nativeBuildInputs = [ pkgs.uv (python.withPackages (ps: [ ps.pip ])) pkgs.cacert ];
+        nativeBuildInputs = [
+          pkgs.uv
+          (python.withPackages (ps: [ ps.pip ]))
+          pkgs.cacert
+        ];
         impureEnvVars = lib.fetchers.proxyImpureEnvVars;
         buildPhase = ''
           export HOME=$TMPDIR UV_NO_CACHE=1 UV_PYTHON_DOWNLOADS=never PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -447,10 +529,17 @@ rec {
     pkgs.stdenv.mkDerivation {
       name = "tsugumi-python-locked-${key}";
       dontUnpack = true;
-      nativeBuildInputs = [ (python.withPackages (ps: [ ps.pip ])) ]
-        ++ lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.autoPatchelfHook;
+      nativeBuildInputs = [
+        (python.withPackages (ps: [ ps.pip ]))
+      ]
+      ++ lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.autoPatchelfHook;
       # What compiled wheels expect from the system (manylinux), and what the Card adds.
-      buildInputs = lib.optionals pkgs.stdenv.hostPlatform.isLinux [ pkgs.stdenv.cc.cc.lib pkgs.zlib ] ++ libraries;
+      buildInputs =
+        lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+          pkgs.stdenv.cc.cc.lib
+          pkgs.zlib
+        ]
+        ++ libraries;
       installPhase = ''
         mkdir -p $out
         shopt -s nullglob
@@ -464,7 +553,7 @@ rec {
       passthru = { inherit wheels; };
     };
 
-  # A Python Card: `src/main.py` defines `main(ctx)`. The package contains the
+  # A Python Card: `src/main.py` defines `main(inputs, report)`. The package contains the
   # interpreter, the requested packages and a main.so that embeds Python.
   # `packages` picks from the pinned nixpkgs. `lock` (the Card's own uv.lock,
   # with pyproject.toml beside it) and `hash` together add exactly the PyPI
@@ -488,17 +577,31 @@ rec {
       libraries ? [ ],
       fonts ? null,
     }:
-    assert lib.assertMsg (sdk.python != null) "pythonCard: the SDK was made without \"python\" in languages";
+    assert lib.assertMsg (
+      sdk.python != null
+    ) "pythonCard: the SDK was made without \"python\" in languages";
     assert lib.assertMsg (lock == null || hash != null)
       "pythonCard: `lock` needs `hash`, the hash of the wheels it names. Write `hash = pkgs.lib.fakeHash;`, run the Card once and copy the hash the failure reports as `got:`";
-    assert lib.assertMsg (hash == null || lock != null)
-      "pythonCard: `hash` is given without `lock`. Name the Card's lock: `lock = ./uv.lock;`";
+    assert lib.assertMsg (
+      hash == null || lock != null
+    ) "pythonCard: `hash` is given without `lock`. Name the Card's lock: `lock = ./uv.lock;`";
     assert lib.assertMsg (lock == null || builtins.pathExists pyproject)
       "pythonCard: no pyproject.toml beside the lock. uv.lock is made from it: keep both in the Card's folder";
     let
       env = python.withPackages (ps: [ ps.flatbuffers ] ++ packages ps);
-      locked = lib.optionalString (lock != null)
-        "${uvPackages { inherit python lock pyproject hash libraries; }}:";
+      locked =
+        lib.optionalString (lock != null)
+          "${
+            uvPackages {
+              inherit
+                python
+                lock
+                pyproject
+                hash
+                libraries
+                ;
+            }
+          }:";
       bindings = sdk.python;
       usesMatplotlib = lib.any (p: (p.pname or "") == "matplotlib") (packages python.pkgs);
       fallbackFonts = if fonts != null then fonts else lib.optional usesMatplotlib pkgs.ipaexfont;
@@ -551,9 +654,8 @@ rec {
       buildInputs ? [ ],
     }:
     assert lib.assertMsg (sdk.ruby != null) "rubyCard: the SDK needs ruby in languages";
-    assert lib.assertMsg (
-      (lock == null) == (hash == null)
-    ) "rubyCard: gems need both `lock = ./Gemfile.lock;` and `hash = \"sha256-...\";` (or neither, for no gems)";
+    assert lib.assertMsg ((lock == null) == (hash == null))
+      "rubyCard: gems need both `lock = ./Gemfile.lock;` and `hash = \"sha256-...\";` (or neither, for no gems)";
     assert lib.assertMsg (
       lock == null || builtins.pathExists (dirOf lock + "/Gemfile")
     ) "rubyCard: `lock` needs its Gemfile in the same directory";
@@ -566,9 +668,9 @@ rec {
       # The .gem files Gemfile.lock names, as source gems whatever the
       # platform, so the hash is the same on every system that builds the Card.
       gemfile = dirOf lock + "/Gemfile";
-      lockKey = builtins.substring 0 16 (builtins.hashString "sha256" (
-        builtins.hashFile "sha256" lock + builtins.hashFile "sha256" gemfile
-      ));
+      lockKey = builtins.substring 0 16 (
+        builtins.hashString "sha256" (builtins.hashFile "sha256" lock + builtins.hashFile "sha256" gemfile)
+      );
       gemSources = pkgs.stdenvNoCC.mkDerivation {
         name = "${name}-gem-sources-${lockKey}";
         impureEnvVars = lib.fetchers.proxyImpureEnvVars;
@@ -852,7 +954,9 @@ rec {
         // {
           # The identities of the view modules, read by the worker once when it
           # starts (a preRun would start bash on every invocation).
-          views = builtins.toJSON (lib.mapAttrs (_: view: toString view) (builtinViews // (card.views or { })));
+          views = builtins.toJSON (
+            lib.mapAttrs (_: view: toString view) (builtinViews // (card.views or { }))
+          );
         }
         // lib.optionalAttrs (card ? preRun) { inherit (card) preRun; }
         // lib.optionalAttrs (card ? postRun) { inherit (card) postRun; }

@@ -55,9 +55,6 @@ cp -R "$repo/web/dist" "$tree/web/dist"
 find "$tree/web/dist" -name '*.map' -delete
 cp -R "$repo/demos" "$tree/demos"
 cp "$repo/flake.lock" "$tree/"
-mkdir -p "$tree/agent/Reference" "$tree/sdk/python/tsugumi"
-cp "$repo/agent/Reference/card-guide.md" "$tree/agent/Reference/"
-cp "$repo/sdk/python/tsugumi/__init__.py" "$tree/sdk/python/tsugumi/"
 
 cp -R "$vm" "$tree/vm"
 src="$tree/vm-source"

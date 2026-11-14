@@ -1,5 +1,6 @@
 """The minimum cut by networkx: max-flow = min-cut is asserted, and the network is
 drawn with the source side, the sink side and the cut edges marked."""
+import tsugumi
 import json
 
 import matplotlib.pyplot as plt
@@ -7,7 +8,6 @@ import networkx as nx
 import numpy as np
 
 from inputs.flow.flow.Flow import Flow
-import outputs.cut.flow.Cut as out
 from tsugumi import Failure
 
 
@@ -21,8 +21,8 @@ def positions(nodes):
     return pos
 
 
-def main(ctx):
-    f = ctx.input("flow", Flow)
+def main(inputs, report):
+    f = inputs.input("flow", Flow)
     nodes = f.Nodes().decode().split()
     edges = [(nodes[u], nodes[v], int(c)) for u, v, c in zip(f.TailAsNumpy(), f.HeadAsNumpy(), f.CapacityAsNumpy())]
     amounts = [int(x) for x in f.FlowAsNumpy()]
@@ -55,22 +55,20 @@ def main(ctx):
     ax.set_title(f"Minimum cut = {capacity} = maximum flow (the capacities of the {len(crossing)} red edges; blue is the s side, orange the t side)", fontsize=11)
     ax.set_axis_off()
     fig.tight_layout()
-    plt.show()
-    print("result: " + json.dumps({"capacity": capacity, "source_side": sorted(source_side), "cut_edges": [[u, v, c] for u, v, c in crossing]}))
-
-    b = ctx.builder()
-    names = b.CreateString(f.Nodes())
-    side = b.CreateString(" ".join(sorted(source_side)))
-    tail = b.CreateNumpyVector(f.TailAsNumpy())
-    head = b.CreateNumpyVector(f.HeadAsNumpy())
-    caps = b.CreateNumpyVector(f.CapacityAsNumpy())
-    flow = b.CreateNumpyVector(f.FlowAsNumpy())
-    out.Start(b)
-    out.AddNodes(b, names)
-    out.AddTail(b, tail)
-    out.AddHead(b, head)
-    out.AddCapacity(b, caps)
-    out.AddFlow(b, flow)
-    out.AddValue(b, f.Value())
-    out.AddSourceSide(b, side)
-    ctx.output("cut", b, out.End(b))
+    report.figure()
+    report.log(str("result: " + json.dumps({"capacity": capacity, "source_side": sorted(source_side), "cut_edges": [[u, v, c] for u, v, c in crossing]})))
+    names = f.Nodes()
+    side = ' '.join(sorted(source_side))
+    tail = f.TailAsNumpy()
+    head = f.HeadAsNumpy()
+    caps = f.CapacityAsNumpy()
+    flow = f.FlowAsNumpy()
+    _out_value = {}
+    _out_value['nodes'] = names
+    _out_value['tail'] = tail
+    _out_value['head'] = head
+    _out_value['capacity'] = caps
+    _out_value['flow'] = flow
+    _out_value['value'] = f.Value()
+    _out_value['source_side'] = side
+    return {'cut': _out_value}

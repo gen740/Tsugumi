@@ -467,7 +467,7 @@ import Testing
   }
   let cc = tokens("// note\n#include <card.hh>\nstruct Out { int v; };\nauto run() -> int { return 1; }\n", "cc")
   #expect(cc.contains("comment:// note") && cc.contains("keyword:struct") && cc.contains("keyword:return"))
-  let py = tokens("# note\ndef main(ctx):\n    return \"x\"\n", "py")
+  let py = tokens("# note\ndef main(inputs, report):\n    return \"x\"\n", "py")
   #expect(py.contains("comment:# note") && py.contains("keyword:def") && py.contains("string:\"x\""))
   let nix = tokens("# note\n{ pkgs, ... }: let x = 1; in { a = \"s\"; }\n", "nix")
   #expect(nix.contains("comment:# note") && nix.contains("keyword:let") && nix.contains("number:1"))
@@ -632,7 +632,7 @@ func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
   let template = try #require(DefinitionTemplate(rawValue: language))
   let sources = ["go": ("src/card.go", "func run("),
                  "rust": ("src/src/lib.rs", "fn run("),
-                 "ruby": ("src/main.rb", "def main(ctx)")]
+                 "ruby": ("src/main.rb", "def main(inputs)")]
   let (source, entry) = try #require(sources[language])
   #expect(BuiltinCardItems.written.contains(template))
   let card = session.addCard(template: template, in: [], at: .zero, name: language)

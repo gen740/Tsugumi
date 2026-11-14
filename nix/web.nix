@@ -29,7 +29,6 @@ buildNpmPackage {
       ../web/tsconfig.json
       ../agent/Shared/agent.json
       ../agent/Shared/demo-skill.md
-      ../agent/Reference
       ../ui/modules
       ../ui/templates
       ../protocol/remote_worker.fbs
@@ -69,7 +68,6 @@ buildNpmPackage {
     mkdir -p $share/web/node_modules $share/agent $testSupport
     cp -R web/dist $share/web/dist
     cp -R demos flake.lock VERSION $share/
-    cp -R agent/Reference $share/agent/
     cp -R sdk $share/sdk
     # Native addon installation remains part of the Node package build. Keep
     # its platform binaries beside the server for runtime module resolution.

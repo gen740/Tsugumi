@@ -1,5 +1,5 @@
-"""An animation as it would play in a window: FuncAnimation and plt.show().
-The Card's display shows it live; plt.show() returns when it has played."""
+"""An animation as it would play in a window: FuncAnimation and report.figure().
+The Card's display shows it live; report.figure() returns when it has played."""
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
@@ -7,11 +7,11 @@ from matplotlib.animation import FuncAnimation
 from inputs.walks.walk.Walks import Walks
 
 
-def main(ctx):
-    w = ctx.input("walks", Walks)
+def main(inputs, report):
+    w = inputs.input("walks", Walks)
     paths = w.PositionsAsNumpy().reshape(w.Walkers(), w.Steps() + 1)
     n = w.Steps()
-    frames = np.unique(np.linspace(1, n, ctx.params().Frames()).astype(int))
+    frames = np.unique(np.linspace(1, n, inputs.params.frames).astype(int))
     lim = 3.5 * np.sqrt(n)
 
     fig, (left, right) = plt.subplots(1, 2, figsize=(9, 3.6))
@@ -49,4 +49,4 @@ def main(ctx):
     draw(frames[0])  # titles in place before the layout is fitted
     fig.tight_layout()
     anim = FuncAnimation(fig, draw, frames=frames, interval=60, repeat=False)
-    plt.show()
+    report.figure()

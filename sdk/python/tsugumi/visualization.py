@@ -13,7 +13,7 @@ from pathlib import Path
 
 from tsugumi import Failure, contract
 
-__all__ = ["input_rows", "figure_directory", "embed_font", "emit_figure"]
+__all__ = ["input_rows", "figure_directory", "embed_font", "figure_result"]
 
 MAX_ROWS = 1_000_000
 MAX_FILE_BYTES = 64 * 1024 * 1024
@@ -23,10 +23,10 @@ def _fail(message):
     raise Failure("validation_failed", message)
 
 
-def _check(ctx):
-    if ctx.cancelled():
+def _check(run):
+    if run.cancelled():
         raise Failure("cancelled", "Visualization cancelled")
-    if ctx.remaining_ms() == 0:
+    if run.remaining_ms() == 0:
         raise Failure("timeout", "Visualization deadline reached")
 
 
@@ -42,7 +42,7 @@ def _plain(value):
     return value
 
 
-def input_rows(ctx, field="", member="data.csv"):
+def input_rows(inputs, run, field="", member="data.csv"):
     """The connected `data` port as a list of row dictionaries.
 
     A typed input is read through its generated type. A File input is UTF-8
@@ -52,7 +52,7 @@ def input_rows(ctx, field="", member="data.csv"):
     port = contract.port("data")
     if port is None:
         _fail("Connect an upstream output to data before running this Visualization Card")
-    value = _plain(contract.input_object(ctx, "data"))
+    value = _plain(contract.input_object(inputs, "data"))
     if port["kind"] != "flatbuffer":
         source = Path(value["value"])
         if port["kind"] == "directory":
@@ -69,7 +69,7 @@ def input_rows(ctx, field="", member="data.csv"):
                     if len(rows) >= MAX_ROWS:
                         _fail("Input exceeds 1,000,000 rows; aggregate it upstream")
                     if len(rows) % 1024 == 0:
-                        _check(ctx)
+                        _check(run)
                     rows.append(row)
             value = rows
         elif source.suffix.lower() == ".json":
@@ -87,13 +87,13 @@ def input_rows(ctx, field="", member="data.csv"):
         value = [dict(zip(columns, row)) for row in zip(*columns.values())]
     if not isinstance(value, list) or len(value) > MAX_ROWS or not all(isinstance(row, dict) for row in value):
         _fail("Data must be a row table or equally sized column arrays (at most 1,000,000 rows)")
-    _check(ctx)
+    _check(run)
     return value
 
 
-def figure_directory(ctx):
+def figure_directory(run):
     """The directory this invocation's `figure` output is made of (created empty)."""
-    folder = Path(ctx.output_directory) / "figure"
+    folder = Path(run.output_directory) / "figure"
     folder.mkdir(parents=True, exist_ok=True)
     return folder
 
@@ -112,7 +112,7 @@ def embed_font(html):
     html.write_text(html.read_text(encoding="utf-8").replace("<head>", "<head>" + style, 1), encoding="utf-8")
 
 
-def emit_figure(ctx, folder, plotted, **facts):
+def figure_result(run, folder, plotted, **facts):
     """Save what was drawn beside the figure files, then send `folder` as the
     `figure` Directory output.
 
@@ -125,12 +125,10 @@ def emit_figure(ctx, folder, plotted, **facts):
         writer = csv.DictWriter(f, fieldnames=columns)
         writer.writeheader()
         writer.writerows(plotted)
-    metadata = {**facts, "run_id": ctx.run_id, "card": ctx.card, "invocation": ctx.invocation}
+    metadata = {**facts, "run_id": run.run_id, "card": run.card, "invocation": run.invocation}
     (folder / "metadata.json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    _check(ctx)
-    import outputs.figure.visualization.Files as output
-    b = ctx.builder()
-    value = b.CreateString(str(folder))
-    output.Start(b)
-    output.AddValue(b, value)
-    ctx.output("figure", b, output.End(b))
+    _check(run)
+    from outputs.figure.visualization.Files import FilesT
+    result = FilesT()
+    result.value = str(folder.resolve())
+    return {"figure": result}

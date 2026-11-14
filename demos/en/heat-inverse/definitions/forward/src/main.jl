@@ -22,8 +22,9 @@ function heat_modes(n, alpha, T)
     return F.vectors, exp.(-alpha * T .* max.(F.values, 0.0))
 end
 
-function main(ctx)
-    s = input(ctx, "settings")
+function main(inputs, report)
+    outputs = Dict{String,Any}()
+    s = Tsugumi.input(inputs, "settings")
     n, alpha, T, noise = Int(s["cells"]), s["alpha"], s["final_time"], s["noise"]
     x, truth = true_profile(n)
     V, sigma = heat_modes(n, alpha, T)
@@ -33,15 +34,15 @@ function main(ctx)
 
     heat_change = (sum(clean) - sum(truth)) / sum(truth)
     abs(heat_change) < 1e-10 || error("insulated ends must keep the heat: relative change $heat_change")
-    println(@sprintf("relative change of the total heat: %.2e", heat_change))
+    report.log(string(@sprintf("relative change of the total heat: %.2e", heat_change)))
 
-    output(ctx, "measurement", Dict("seed" => s["seed"], "alpha" => alpha, "final_time" => T, "noise" => noise,
-                                    "x" => x, "truth" => truth, "measured" => measured))
+    outputs["measurement"] = Dict("seed" => s["seed"], "alpha" => alpha, "final_time" => T, "noise" => noise,
+                                    "x" => x, "truth" => truth, "measured" => measured)
     round3(v) = round(v; digits=3)
     lines = [Dict("x" => x[j], "u" => round3(series[j]), "line" => name)
              for (name, series) in (("Initial temperature (true, made up)", truth), ("Temperature at time T", clean)) for j in 1:n]
     points = [Dict("x" => x[j], "u" => round3(measured[j])) for j in 1:n]
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("anchor" => "start", "text" => @sprintf("Heat loses its details first: measured at T = %g (noise %g °C)", T, noise),
@@ -58,4 +59,6 @@ function main(ctx)
                  "encoding" => Dict("x" => Dict("field" => "x", "type" => "quantitative"), "y" => Dict("field" => "u", "type" => "quantitative"),
                                     "color" => Dict("datum" => "Measurements"))),
         ]))
+
+    return outputs
 end

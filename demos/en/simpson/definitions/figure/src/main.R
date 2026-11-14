@@ -1,9 +1,9 @@
 library(ggplot2)
 
 # The same points with the overall line and one line per stratum.
-main <- function(ctx) {
-  d <- read.csv(ctx$path("points"))
-  r <- read.csv(ctx$path("correlations"))
+main <- function(inputs, report) {
+  d <- read.csv(inputs$path("points"))
+  r <- read.csv(inputs$path("correlations"))
   strata <- r[r$stratum != "All", ]
   labels <- setNames(sprintf("%s (r = %.2f)", strata$stratum, strata$r), strata$stratum)
   figure <- ggplot(d, aes(bill_length_mm, bill_depth_mm)) +
@@ -15,5 +15,7 @@ main <- function(ctx) {
          title = sprintf("Stratified by %s: all (dashed) r = %.2f", r$stratify[1], r$r[r$stratum == "All"])) +
     theme_minimal(base_size = 13) +
     theme(legend.position = "top")
-  ctx$plot(print(figure), alt = "Bill length against bill depth, overall and by stratum", width = 7.5, height = 5.2)
+  report$figure(print(figure), alt = "Bill length against bill depth, overall and by stratum", width = 7.5, height = 5.2)
+
+  invisible(NULL)
 }

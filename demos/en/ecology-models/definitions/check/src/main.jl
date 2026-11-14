@@ -21,10 +21,10 @@ end
 const STAN = (a=(0.542, 0.465, 0.630), b=(0.027, 0.022, 0.033), c=(0.024, 0.020, 0.029), d=(0.797, 0.692, 0.926),
               H0=(33.908, 30.415, 37.630), L0=(5.912, 5.273, 6.614))
 
-function main(ctx)
-    f = input(ctx, "fits")
-    years = Int(ctx.params["years"])
-    steps = Float64.(ctx.params["dt"])
+function main(inputs, report)
+    f = Tsugumi.input(inputs, "fits")
+    years = Int(inputs.params["years"])
+    steps = Float64.(inputs.params["dt"])
     lv = f["models"][1]
     p = Float64.(lv["parameters"])
     rows = Vector{Any}[]
@@ -50,5 +50,7 @@ function main(ctx)
     else
         push!(rows, ["LV and the Stan case study", "fit_until = $(f["fit_until"])", "values for 1900–1920", "not the whole period, so not compared"])
     end
-    display_table(ctx, ["Checked", "Value", "Expected", "Verdict"], rows)
+    report.table(["Checked", "Value", "Expected", "Verdict"], rows)
+
+    return nothing
 end

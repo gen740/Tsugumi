@@ -13,14 +13,14 @@ struct SourceWritingTests {
   private let save = #"""
   {"base_rev": "3", "changes": [
     {"value_type": "PutDefinition", "value": {"id": "load", "card_json": "{\"path\": \"no\", \"bytes\": \"no\"}", "keep_meta": true}},
-    {"value_type": "PutSource", "value": {"path": "definitions/load/src/main.py", "bytes": "def main(ctx):\n\tprint(\"日本語 é 😀\")\n"}}
+    {"value_type": "PutSource", "value": {"path": "definitions/load/src/main.py", "bytes": "def main(inputs, report):\n\tprint(\"日本語 é 😀\")\n"}}
   ]}
   """#
 
   @Test func aFileIsReadWhereverTheStreamIsCut() {
     let whole = scan([save])
     #expect(whole.current?.path == "definitions/load/src/main.py")
-    #expect(whole.current?.text == "def main(ctx):\n\tprint(\"日本語 é 😀\")\n")
+    #expect(whole.current?.text == "def main(inputs, report):\n\tprint(\"日本語 é 😀\")\n")
     #expect(whole.current?.done == true)
     for at in 1..<save.count {
       let cut = save.index(save.startIndex, offsetBy: at)

@@ -1,11 +1,11 @@
 """Least-squares fit of the four-parameter logistic curve, one compound at a time."""
+import tsugumi
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import curve_fit
 
 from inputs.plate.dose.Plate import Plate
 from tsugumi import Failure
-import outputs.fit.dose.Fit as out
 
 COLORS = ["#2a78d6", "#eb6834"]
 
@@ -22,8 +22,8 @@ def start_values(x, y):
     return [low, high, np.log10(conc[np.argmin(np.abs(mean - (low + high) / 2))]), 1.0]
 
 
-def main(ctx):
-    plate = ctx.input("plate", Plate)
+def main(inputs, report):
+    plate = inputs.input("plate", Plate)
     conc = plate.ConcAsNumpy()
     reps = plate.Replicates()
     n = plate.NamesLength()
@@ -44,7 +44,7 @@ def main(ctx):
         sd = np.sqrt(np.sum((y - hill4(x, *est)) ** 2) / max(len(y) - 4, 1))
         params.append(est)
         residual_sd.append(sd)
-        print(f"{name}: bottom {est[0]:.2f} top {est[1]:.2f} EC50 {10 ** est[2]:.4g} uM hill {est[3]:.3f} residual sd {sd:.2f}")
+        report.log(str(f"{name}: bottom {est[0]:.2f} top {est[1]:.2f} EC50 {10 ** est[2]:.4g} uM hill {est[3]:.3f} residual sd {sd:.2f}"))
         ax.plot(x, y, "o", ms=4, color=COLORS[i], alpha=0.6, mec="none")
         ax.plot(grid, hill4(grid, *est), color=COLORS[i], lw=2,
                 label=f"{name}: EC50 = {10 ** est[2]:.3g} µM, h = {est[3]:.2f}, top {est[1]:.0f}, bottom {est[0]:.0f}")
@@ -56,12 +56,10 @@ def main(ctx):
     ax.spines[["top", "right"]].set_visible(False)
     ax.legend(frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=1)
     fig.tight_layout()
-    plt.show()
-
-    b = ctx.builder()
-    params_v = b.CreateNumpyVector(np.array(params).ravel())
-    sd_v = b.CreateNumpyVector(np.array(residual_sd))
-    out.Start(b)
-    out.AddParams(b, params_v)
-    out.AddResidualSd(b, sd_v)
-    ctx.output("fit", b, out.End(b))
+    report.figure()
+    params_v = np.array(params).ravel()
+    sd_v = np.array(residual_sd)
+    _out_value = {}
+    _out_value['params'] = params_v
+    _out_value['residual_sd'] = sd_v
+    return {'fit': _out_value}

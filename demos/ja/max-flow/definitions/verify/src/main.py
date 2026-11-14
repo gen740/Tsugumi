@@ -26,8 +26,8 @@ def brute_force(n, tail, head, capacity):
     return best, codes[total == best], subsets.size
 
 
-def main(ctx):
-    c = ctx.input("cut", Cut)
+def main(inputs, report):
+    c = inputs.input("cut", Cut)
     nodes = c.Nodes().decode().split()
     tail, head, capacity = c.TailAsNumpy(), c.HeadAsNumpy(), c.CapacityAsNumpy()
     value = int(c.Value())
@@ -55,5 +55,5 @@ def main(ctx):
             lines.append(f"- ほか {len(minimum_cuts) - 6} 個")
     else:
         lines += ["", f"節点が多い（内側 {len(nodes) - 2} 個）ので、総当たりは省きました。"]
-    ctx.display_markdown("\n".join(lines))
-    print("result: " + json.dumps({"networkx": value, "scipy": by_scipy, "minimum_cuts": minimum_cuts}))
+    report.markdown("\n".join(lines))
+    report.log(str("result: " + json.dumps({"networkx": value, "scipy": by_scipy, "minimum_cuts": minimum_cuts})))

@@ -13,7 +13,7 @@ description: Tsugumi の Agent に指示や skill を追加・整理するとき
 | helper の依頼文、Draft ボタンから送る定型文、個別 tool の説明 | `agent/Shared/agent.json` の該当フィールド。RPC 生成の説明なら `protocol/*.fbs` の定義を確認 |
 | ホームのガイド、またはユーザーが選んだデモツアー | それぞれ `agent/Shared/guide-prompt.md`、`agent/Shared/demo-skill.md` |
 | 特定のプロジェクトで明示して使う手順 | そのプロジェクトの `skills/<name>/SKILL.md`。Tsugumi チャットの `$name` で本文が入る |
-| 言語別の実装例、SDK の書き方 | `agent/Reference/card-guide.md` と同梱デモ。モデルが `reference_read` で引ける例を使う |
+| 言語別の実装例、SDK の書き方 | `docs/CardGuide.md` と言語別のページ、同梱デモ。モデルが `demo_read` で引ける例を使う |
 | このリポジトリを開く Codex の開発手順 | `.agents/skills/<name>/SKILL.md`。今回のような評価手順はここに置く |
 
 発火条件が特定モデルや特定画面に限られるときは、共有文を書き換える前に、どのクライアント・role に届くかを確かめる。`agent/Shared/` を編集したら `python3 agent/Shared/generate.py` で Swift 側を生成し、`--check` で一致を確かめる。Web は原本を直接使う。

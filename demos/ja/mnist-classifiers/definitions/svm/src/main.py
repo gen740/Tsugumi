@@ -1,4 +1,5 @@
 """A support vector machine with an RBF kernel: decides by similarity to a few training digits."""
+import tsugumi
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -11,7 +12,6 @@ import numpy as np
 from sklearn.svm import SVC
 
 from inputs.data.mnist.SubsetFile import SubsetFile
-import outputs.result.mnist.Result as out
 
 
 def confusions(ax, y, pred):
@@ -26,26 +26,28 @@ def confusions(ax, y, pred):
     ax.tick_params(length=0, labelsize=8)
 
 
-def send(ctx, name, settings, digest, y, pred, fit, predict):
-    b = ctx.builder()
-    model = b.CreateString(name)
-    settings = b.CreateString(settings)
-    digest = b.CreateString(digest)
-    predictions = b.CreateNumpyVector(pred.astype(np.uint8))
-    out.Start(b)
-    out.AddModel(b, model)
-    out.AddSettings(b, settings)
-    out.AddDigest(b, digest)
-    out.AddAccuracy(b, float(np.mean(pred == y)))
-    out.AddFitSeconds(b, fit)
-    out.AddPredictSeconds(b, predict)
-    out.AddPredictions(b, predictions)
-    ctx.output("result", b, out.End(b))
+def send(inputs, name, settings, digest, y, pred, fit, predict):
+    result_ports = {}
+    model = name
+    settings = settings
+    digest = digest
+    predictions = pred.astype(np.uint8)
+    _out_value = {}
+    _out_value['model'] = model
+    _out_value['settings'] = settings
+    _out_value['digest'] = digest
+    _out_value['accuracy'] = float(np.mean(pred == y))
+    _out_value['fit_seconds'] = fit
+    _out_value['predict_seconds'] = predict
+    _out_value['predictions'] = predictions
+    result_ports.update({'result': _out_value})
+    return result_ports
 
 
-def main(ctx):
-    c, gamma = ctx.params().C(), ctx.params().Gamma()
-    data = np.load(ctx.input("data", SubsetFile).Value().decode())
+def main(inputs, report):
+    result_ports = {}
+    c, gamma = inputs.params.c, inputs.params.gamma
+    data = np.load(inputs.input("data", SubsetFile).Value().decode())
     train_x, train_y, test_x, test_y = data["train_images"], data["train_labels"], data["test_images"], data["test_labels"]
 
     model = SVC(C=c, gamma=gamma, kernel="rbf")
@@ -56,8 +58,8 @@ def main(ctx):
     pred = model.predict(test_x)
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    print(f"svm C={c} gamma={gamma}: accuracy {accuracy:.4f}, {model.n_support_.sum()} support vectors, "
-          f"fit {fit:.3f} s, predict {predict:.3f} s")
+    report.log(str(f"svm C={c} gamma={gamma}: accuracy {accuracy:.4f}, {model.n_support_.sum()} support vectors, "
+          f"fit {fit:.3f} s, predict {predict:.3f} s"))
 
     fig, (left, right) = plt.subplots(1, 2, figsize=(9, 4.2), layout="constrained")
     confusions(left, test_y, pred)
@@ -69,6 +71,7 @@ def main(ctx):
     right.set_ylim(0, 1.2 * train_counts.max())
     right.legend(fontsize=8, loc="upper center", ncols=2)
     fig.suptitle(f"SVM (RBF) C={c:g}, γ={gamma:g}: 正解率 {accuracy:.4f}、学習 {fit:.2f} 秒、予測 {predict:.2f} 秒", fontsize=11)
-    plt.show()
+    report.figure()
 
-    send(ctx, "svm", f"C={c:g}, gamma={gamma:g}", str(data["digest"]), test_y, pred, fit, predict)
+    result_ports.update(send(inputs, 'svm', f'C={c:g}, gamma={gamma:g}', str(data['digest']), test_y, pred, fit, predict))
+    return result_ports

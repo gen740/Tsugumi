@@ -855,7 +855,7 @@ function highlighted(code) {
   return (out + esc(code.slice(at))).split('\n')
 }
 
-/** The scene's moments in ms: the window opens over the Canvas, the code scrolls down to plt.show(). */
+/** The scene's moments in ms: the window opens over the Canvas, the code scrolls down to report.figure(). */
 const SOURCE_T = { total: 13000, open: 1400, opened: 1750, scroll: 4600, scrolled: 6400 }
 const SETTINGS = { left: 120, top: 70, width: 1200, height: 760, side: 160, files: 360, line: 16, header: 52 }
 
@@ -866,7 +866,7 @@ function sourceSvg() {
   const code = fs.readFileSync(path.join(dir, 'src', 'main.py'), 'utf8').replace(/\n$/, '')
   const lines = highlighted(code)
   // The call that puts the figure in the Card's display (the docstring names it too: the last one).
-  const show = code.split('\n').findLastIndex((l) => l.trim() === 'plt.show()')
+  const show = code.split('\n').findLastIndex((l) => l.trim() === 'report.figure()')
   const viewH = Z.height - Z.header - 26 - 48
   const visible = Math.floor(viewH / Z.line)
   const scrollTo = Math.max(0, Math.min(lines.length - visible, show - Math.floor(visible / 2))) * Z.line

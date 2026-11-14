@@ -1,7 +1,8 @@
 # Pearson's r of bill length and bill depth: overall and within each stratum.
-main <- function(ctx) {
-  by <- ctx$params$stratify
-  d <- read.csv(ctx$path("penguins"))
+main <- function(inputs, report, run) {
+  outputs <- list()
+  by <- inputs$params$stratify
+  d <- read.csv(inputs$path("penguins"))
   if (!by %in% c("species", "sex", "island")) stop("stratify must be species, sex or island, not ", by)
   d$stratum <- d[[by]]
   d <- d[!is.na(d$stratum), ]  # sex is unknown for some penguins
@@ -17,12 +18,12 @@ main <- function(ctx) {
   result <- rbind(overall, strata)
   result$reversed <- sign(result$r) != sign(overall$r)
 
-  points <- file.path(ctx$output_directory, "points.csv")
+  points <- file.path(run$output_directory, "points.csv")
   write.csv(d[, c("stratum", "bill_length_mm", "bill_depth_mm")], points, row.names = FALSE)
-  correlations <- file.path(ctx$output_directory, "correlations.csv")
+  correlations <- file.path(run$output_directory, "correlations.csv")
   write.csv(result, correlations, row.names = FALSE)
-  ctx$output("points", list(value = points))
-  ctx$output("correlations", list(value = correlations))
+  outputs[["points"]] <- list(value = points)
+  outputs[["correlations"]] <- list(value = correlations)
 
   shown <- data.frame(
     Stratum = result$stratum, n = result$n, r = sprintf("%.3f", result$r),
@@ -30,5 +31,7 @@ main <- function(ctx) {
     Slope = sprintf("%.3f", result$slope),
     Direction = ifelse(result$stratum == "All", "", ifelse(result$reversed, "opposite to all", "same as all")),
     check.names = FALSE)
-  ctx$display_table(shown)
+  report$table(shown)
+
+  outputs
 }

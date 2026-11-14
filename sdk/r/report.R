@@ -75,4 +75,4 @@ writeLines(json(metadata), file.path(destination, "metadata.json"), useBytes = T
 writeLines(json(list(report = list(value = destination), html = list(value = file.path(destination, html)))),
            Sys.getenv("TSUGUMI_OUTPUT"), useBytes = TRUE)
 writeLines(json(list(markdown = "Report rendered. Open **Artifacts** to preview the saved HTML and inspect its source and assets.")),
-           Sys.getenv("TSUGUMI_DISPLAY"), useBytes = TRUE)
+           Sys.getenv("TSUGUMI_REPORT"), useBytes = TRUE)

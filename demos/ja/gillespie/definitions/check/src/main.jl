@@ -2,11 +2,11 @@ using Printf
 
 # Each simulated value against its closed form. More than `limit` standard errors
 # away fails the Card: a seed can be unlucky, a wrong simulation always is.
-function main(ctx)
-    limit = ctx.params["limit_sigma"]
-    s = input(ctx, "stationary")
-    c = input(ctx, "scaling")
-    b = input(ctx, "binding")
+function main(inputs, report)
+    limit = inputs.params["limit_sigma"]
+    s = Tsugumi.input(inputs, "stationary")
+    c = Tsugumi.input(inputs, "scaling")
+    b = Tsugumi.input(inputs, "binding")
     rows = Vector{Any}[]
     function compare(name, value, theory, se)
         z = (value - theory) / se
@@ -28,5 +28,7 @@ function main(ctx)
     for i in eachindex(b["totals"])
         compare(@sprintf("A + B ⇌ C の結合割合（各 %d 個、厳密解と）", b["totals"][i]), b["ssa"][i], b["exact"][i], b["se"][i])
     end
-    display_table(ctx, ["量", "シミュレーション", "閉じた式", "ずれ（標準誤差）", "判定"], rows)
+    report.table(["量", "シミュレーション", "閉じた式", "ずれ（標準誤差）", "判定"], rows)
+
+    return nothing
 end

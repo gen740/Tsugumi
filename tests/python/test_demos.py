@@ -131,9 +131,7 @@ def without_julia_and_r(dst):
     card["inputs"] = [i for i in card["inputs"] if i["name"] in ("cpp", "python")]
     (compare / "_card.json").write_text(json.dumps(card))
     code = (compare / "src" / "main.py").read_text()
-    for old, new in [("from inputs.julia.collatz.Sequence import Sequence as JuliaSequence\n", ""),
-                     ("from inputs.r.collatz.Sequence import Sequence as RSequence\n", ""),
-                     ('        "Julia": values(ctx.input("julia", JuliaSequence)),\n        "R": values(ctx.input("r", RSequence)),\n', ""),
+    for old, new in [('        "Julia": list(inputs.julia.values),\n        "R": list(inputs.r.values),\n', ""),
                      ("C++, Python, Julia and R agree", "C++ and Python agree")]:
         assert old in code, old
         code = code.replace(old, new)

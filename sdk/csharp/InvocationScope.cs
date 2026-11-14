@@ -15,8 +15,12 @@ public sealed class Failure : Exception {
 }
 
 public interface ICard {
-    ValueTask RunAsync(Context context);
-    ValueTask OnRunStartAsync(Context context) => ValueTask.CompletedTask;
+    ValueTask<Outputs> RunAsync(Inputs inputs) => throw Entry.MissingRunAsync(this);
+    ValueTask<Outputs> RunAsync(Inputs inputs, Report report) => RunAsync(inputs);
+    ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) => RunAsync(inputs, report);
+    ValueTask<Outputs> OnRunStartAsync(Inputs inputs) => ValueTask.FromResult(new Outputs());
+    ValueTask<Outputs> OnRunStartAsync(Inputs inputs, Report report) => OnRunStartAsync(inputs);
+    ValueTask<Outputs> OnRunStartAsync(Inputs inputs, Report report, Run run) => OnRunStartAsync(inputs, report);
 }
 
 public enum PortKind : uint { File = 1, Directory = 2, FlatBuffer = 3 }
@@ -84,8 +88,8 @@ internal unsafe struct NativeCall {
 }
 
 /// Input/param bytes are managed copies. Native callbacks are valid only while
-/// the awaited Card invocation is active; a retained Context rejects later use.
-public sealed partial class Context {
+/// the awaited Card invocation is active; a retained InvocationScope rejects later use.
+internal sealed class InvocationScope {
     private readonly NativeCall call;
     private readonly object gate = new();
     private readonly Dictionary<string, (PortKind Kind, byte[] Bytes)> inputs = new();
@@ -102,7 +106,7 @@ public sealed partial class Context {
     public string OutputDirectory { get; }
     public CancellationToken CancellationToken => cancellation.Token;
 
-    internal unsafe Context(nint pointer) {
+    internal unsafe InvocationScope(nint pointer) {
         call = *(NativeCall*)pointer;
         if (call.AbiVersion != Abi.Version) throw new InvalidOperationException($"C# SDK requires Card ABI {Abi.Version}");
         RunId = String(call.RunId); Card = String(call.Card); Invocation = call.Invocation;
@@ -124,11 +128,11 @@ public sealed partial class Context {
         if (value.Contains('\0')) throw new ArgumentException("Text cannot contain a NUL character");
         return new UTF8Encoding(false, true).GetBytes(value + '\0');
     }
-    private void CheckActive() { if (!active) throw new ObjectDisposedException(nameof(Context)); }
+    private void CheckActive() { if (!active) throw new ObjectDisposedException(nameof(InvocationScope)); }
     public bool HasInput(string port) => inputs.ContainsKey(port);
     public PortKind InputKind(string port) => inputs[port].Kind;
-    public ByteBuffer Input(string port) => new(inputs.TryGetValue(port, out var value) ? value.Bytes : throw new Failure("validation_failed", $"Input {port} is absent"));
-    public ByteBuffer Params => new(parameters);
+    public ByteBuffer Input(string port) => new(inputs.TryGetValue(port, out var value) ? (byte[])value.Bytes.Clone() : throw new Failure("validation_failed", $"Input {port} is absent"));
+    public ByteBuffer Params => new((byte[])parameters.Clone());
     public unsafe long RemainingMilliseconds {
         get { lock (gate) { CheckActive(); return call.Remaining(call.Host); } }
     }
@@ -152,20 +156,20 @@ public sealed partial class Context {
         }
     }
     public unsafe void Log(string message) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(message)) call.Log(call.Host, text); } }
-    public unsafe void DisplayText(string message) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(message)) CheckDisplay(call.Text(call.Host, text)); } }
-    public unsafe void DisplayMarkdown(string message) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(message)) CheckDisplay(call.Markdown(call.Host, text)); } }
-    public unsafe void DisplayScalar(double value, string label) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(label)) CheckDisplay(call.Scalar(call.Host, value, text)); } }
-    public unsafe void DisplayImage(byte[] data, string mediaType = "image/png", string alt = "") {
+    public unsafe void Text(string message) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(message)) CheckDisplay(call.Text(call.Host, text)); } }
+    public unsafe void Markdown(string message) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(message)) CheckDisplay(call.Markdown(call.Host, text)); } }
+    public unsafe void Scalar(double value, string label) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(label)) CheckDisplay(call.Scalar(call.Host, value, text)); } }
+    public unsafe void Image(byte[] data, string mediaType = "image/png", string alt = "") {
         lock (gate) { CheckActive(); fixed (byte* bytes = data, type = Utf8(mediaType), text = Utf8(alt)) CheckDisplay(call.Image(call.Host, type, bytes, (nuint)data.Length, text)); }
     }
-    public unsafe void DisplayModule(string name, string json) { lock (gate) { CheckActive(); fixed (byte* n = Utf8(name), data = Utf8(json)) CheckDisplay(call.Module(call.Host, n, data, null, 0)); } }
-    public unsafe void DisplayPoints(float[] x, float[] y, float[] z, uint[]? colors = null) {
+    public unsafe void Module(string name, string json) { lock (gate) { CheckActive(); fixed (byte* n = Utf8(name), data = Utf8(json)) CheckDisplay(call.Module(call.Host, n, data, null, 0)); } }
+    public unsafe void Points(float[] x, float[] y, float[] z, uint[]? colors = null) {
         if (x.Length != y.Length || x.Length != z.Length || (colors != null && colors.Length != x.Length))
             throw new ArgumentException("Point arrays must have equal lengths");
         lock (gate) { CheckActive(); fixed (float* a = x, b = y, c = z) fixed (uint* d = colors)
             CheckDisplay(call.Points(call.Host, a, b, c, d, (nuint)x.Length)); }
     }
-    public unsafe void DisplayLineChart(params Series[] series) {
+    public unsafe void LineChart(params Series[] series) {
         var pins = new List<GCHandle>();
         nint Pin(object value) { var pin = GCHandle.Alloc(value, GCHandleType.Pinned); pins.Add(pin); return pin.AddrOfPinnedObject(); }
         try {
@@ -182,7 +186,7 @@ public sealed partial class Context {
     private static void CheckDisplay(int status) {
         if (status != 0) throw new Failure("output_invalid", "Display was rejected by the worker");
     }
-    public unsafe void DisplayTable(string[] columns, string[][] rows) {
+    public unsafe void Table(string[] columns, string[][] rows) {
         var pins = new List<GCHandle>();
         nint Pin(string value) { var pin = GCHandle.Alloc(Utf8(value), GCHandleType.Pinned); pins.Add(pin); return pin.AddrOfPinnedObject(); }
         try {
@@ -209,4 +213,32 @@ public sealed partial class Context {
             cancellation.Dispose();
         }
     }
+}
+
+public sealed class Report {
+    private readonly InvocationScope scope;
+    internal Report(InvocationScope scope) => this.scope = scope;
+    public void Log(string message) => scope.Log(message);
+    public void Text(string message) => scope.Text(message);
+    public void Markdown(string message) => scope.Markdown(message);
+    public void Scalar(double value, string label) => scope.Scalar(value, label);
+    public void Image(byte[] data, string mediaType = "image/png", string alt = "") => scope.Image(data, mediaType, alt);
+    public void Module(string name, string json) => scope.Module(name, json);
+    public void Points(float[] x, float[] y, float[] z, uint[]? colors = null) => scope.Points(x, y, z, colors);
+    public void LineChart(params Series[] series) => scope.LineChart(series);
+    public void Table(string[] columns, string[][] rows) => scope.Table(columns, rows);
+}
+
+public sealed class Run {
+    private readonly InvocationScope scope;
+    internal Run(InvocationScope value) => scope = value;
+    public string RunId => scope.RunId;
+    public string Card => scope.Card;
+    public ulong Invocation => scope.Invocation;
+    public string WorkingDirectory => scope.WorkingDirectory;
+    public string TemporaryDirectory => scope.TemporaryDirectory;
+    public string OutputDirectory => scope.OutputDirectory;
+    public CancellationToken CancellationToken => scope.CancellationToken;
+    public bool IsCancelled => scope.IsCancelled;
+    public long RemainingMilliseconds => scope.RemainingMilliseconds;
 }

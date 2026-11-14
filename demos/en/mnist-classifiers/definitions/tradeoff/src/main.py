@@ -16,8 +16,8 @@ def frontier(times, accuracy):
     return chosen
 
 
-def main(ctx):
-    c = ctx.input("comparison", Comparison)
+def main(inputs, report):
+    c = inputs.input("comparison", Comparison)
     models = [c.Models(i).decode() for i in range(c.ModelsLength())]
     accuracy = c.AccuracyAsNumpy()
     fit = c.FitSecondsAsNumpy()
@@ -42,6 +42,6 @@ def main(ctx):
     fig.update_yaxes(title_text="Test accuracy", row=1, col=1)
     fig.update_layout(template="plotly_white", margin=dict(l=60, r=40, t=40, b=50),
                       yaxis=dict(range=[accuracy.min() - 0.01, accuracy.max() + 0.01]))
-    fig.show()
-    print("frontier by fit time:", [models[i] for i in frontier(fit, accuracy)])
-    print("frontier by predict time:", [models[i] for i in frontier(predict, accuracy)])
+    report.figure(fig)
+    report.log(" ".join(str(value) for value in ("frontier by fit time:", [models[i] for i in frontier(fit, accuracy)],)))
+    report.log(" ".join(str(value) for value in ("frontier by predict time:", [models[i] for i in frontier(predict, accuracy)],)))

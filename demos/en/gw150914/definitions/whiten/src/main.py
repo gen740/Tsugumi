@@ -1,3 +1,4 @@
+import tsugumi
 import os
 
 import matplotlib
@@ -13,12 +14,13 @@ from inputs.data.gw.GwFiles import GwFiles
 import outputs.whitened.gw.WhitenedDir as out
 
 
-def emit(ctx, port, out):
-    b = ctx.builder()
-    s = b.CreateString(ctx.output_directory)
-    out.Start(b)
-    out.AddValue(b, s)
-    ctx.output(port, b, out.End(b))
+def emit(inputs, port, out):
+    result_ports = {}
+    s = '.'
+    _out_value = {}
+    _out_value['value'] = s
+    result_ports.update({port: _out_value})
+    return result_ports
 
 
 def png(fig):
@@ -46,23 +48,25 @@ def whiten(h, fs, f_low, f_high):
     return filtfilt(b, a, white)
 
 
-def main(ctx):
-    p = ctx.params()
-    folder = ctx.input("data", GwFiles).Value().decode()
+def main(inputs, report, run):
+    result_ports = {}
+    p = inputs.params
+    folder = inputs.input("data", GwFiles).Value().decode()
     names = sorted(n for n in os.listdir(folder) if n.endswith(".hdf5"))
     series, saved = [], {}
     for name in names:
         det = name.split("-")[0] + "1"
         h, fs, t0 = read(os.path.join(folder, name))
-        w = whiten(h, fs, p.FLow(), p.FHigh())
-        t = t0 + np.arange(len(h)) / fs - p.TEvent()
+        w = whiten(h, fs, p.fLow, p.fHigh)
+        t = t0 + np.arange(len(h)) / fs - p.tEvent
         saved[det] = w
         saved["t"] = t
-        keep = (t > -p.Before()) & (t < p.After())
+        keep = (t > -p.before) & (t < p.after)
         w_std = w[(t > -10) & (t < -2)].std()
-        series.append({"id": det, "label": f"{det} whitened ({p.FLow():g}-{p.FHigh():g} Hz)",
+        series.append({"id": det, "label": f"{det} whitened ({p.fLow:g}-{p.fHigh:g} Hz)",
                        "x": t[keep].tolist(), "y": (w[keep] / w_std).tolist()})
-        print(f"{det}: {len(h)} samples at {fs} Hz from GPS {t0:.0f}")
-    np.savez(os.path.join(ctx.output_directory, "whitened.npz"), fs=fs, **saved)
-    ctx.display_line_chart(series)
-    emit(ctx, "whitened", out)
+        report.log(str(f"{det}: {len(h)} samples at {fs} Hz from GPS {t0:.0f}"))
+    np.savez(os.path.join(run.output_directory, "whitened.npz"), fs=fs, **saved)
+    report.line_chart(series)
+    result_ports.update(emit(inputs, 'whitened', out))
+    return result_ports

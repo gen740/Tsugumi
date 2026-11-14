@@ -232,18 +232,22 @@ def test_a_terminal_is_a_real_terminal(web, tmp_path):
         post(port, cookie, "/api/terminal/input", {"id": t["id"], "data": data})
 
     # It has a terminal, of the size the page draws, and programs may use it.
-    send('tty; echo "size=$(stty size)" "term=$TERM"; echo 日本語\n')
+    send('''tty; echo "size=$(stty size)" "term=$TERM"; echo 日本語
+''')
     until("/dev/")
     until("size=17 91 term=xterm-256color")
     until("日本語")
     post(port, cookie, "/api/terminal/resize", {"id": t["id"], "cols": 100, "rows": 30})
-    send('echo "now=$(stty size)"\n')
+    send('''echo "now=$(stty size)"
+''')
     until("now=30 100")
     # A key: ⌃C stops what runs, not the shell.
-    send("sleep 100\n")
+    send('''sleep 100
+''')
     time.sleep(0.3)
     send("\x03")
-    send("echo after-interrupt-$((1 + 1))\n")
+    send('''echo after-interrupt-$((1 + 1))
+''')
     until("after-interrupt-2")
     post(port, cookie, "/api/terminal/stop", {"id": t["id"]})
     for _ in range(100):

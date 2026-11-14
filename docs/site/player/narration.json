@@ -45,7 +45,7 @@
       "settings": "Sends the seed, the number of walkers and the number of steps.",
       "simulate": "Makes ±1 random walks with numpy.",
       "share": "Hands the same walks to the four figures.",
-      "summary": "Four Cards each draw their figure from the same walks. plt.show(), FuncAnimation, fig.show() and chart.show() become the Card's display as they are.",
+      "summary": "Four Cards draw figures from the same walks. Report publishes the Matplotlib animation, Plotly figure and Altair chart through explicit report.figure calls.",
       "diffusion": "Draws with FuncAnimation how the distribution spreads as √t.",
       "explore": "Makes a Plotly scatter plot of each walker's final position and farthest distance.",
       "spread": "Draws with Altair the mean squared distance growing in proportion to t, next to the theory."

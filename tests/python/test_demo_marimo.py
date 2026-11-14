@@ -64,12 +64,13 @@ def test_a_failed_notebook_sends_no_downstream_result(tmp_path, problem):
         if problem == 'binding':
             settings = notebook / '_card.json'
             card = json.loads(settings.read_text())
-            set_param(card, 'bindings', '{"source":"input.data.source","result":"input.data.unknown"}')
+            set_param(card, 'bindings', '{"source":"inputs.data.source","result":"inputs.data.unknown"}')
             settings.write_text(json.dumps(card))
         else:
             source = notebook / 'src/notebook.py'
             source.write_text(source.read_text().replace(
-                'def explanation(result):', 'def explanation(result):\n    raise RuntimeError("notebook test failure")'
+                'def explanation(result):', '''def explanation(result):
+    raise RuntimeError("notebook test failure")'''
             ))
 
     env = demo_environment(tmp_path, 'marimo', edit=edit)
@@ -105,7 +106,9 @@ def test_project_owns_notebook_process_tree(tmp_path,ending):
         (root/'definitions/notebook/src/notebook.py').write_text('''import os,sys,subprocess,time
 child=subprocess.Popen([sys.executable,"-c","import time; time.sleep(120)"])
 print("NOTEBOOK_PROCESSES",os.getpid(),child.pid,flush=True)
-''' + ('raise RuntimeError("intentional cell failure")\n' if ending=='failure' else 'time.sleep(120)\n'))
+''' + ('''raise RuntimeError("intentional cell failure")
+''' if ending=='failure' else '''time.sleep(120)
+'''))
     env=demo_environment(tmp_path,'marimo',edit=edit)
     try:
         c=connect(env);rid=start_run(c,['start'],propagate=True)

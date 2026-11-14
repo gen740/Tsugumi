@@ -9,7 +9,6 @@ import Testing
   #expect(PresenceEvents.look(tool: "run_record", arguments: #"{"run_id": "r", "card": ["rgb"]}"#) == .visit(["rgb"]))
   // Not a Card's file, nor a tool that looks at one.
   #expect(PresenceEvents.look(tool: "project_file_read", arguments: #"{"path": "tsugumi.json"}"#) == nil)
-  #expect(PresenceEvents.look(tool: "reference_read", arguments: #"{"path": "card-guide.md"}"#) == nil)
   #expect(PresenceEvents.look(tool: "run", arguments: "not json") == nil)
   // The CardPath as the model writes it (the tools' schema), also in Card.
   #expect(PresenceEvents.look(tool: "run", arguments: #"{"base_rev": "3", "card": {"segments": ["start"]}}"#) == .run(["start"]))
@@ -25,10 +24,10 @@ import Testing
   p.enqueue(.write("load", reveal: true), now: t0)
   let end = p.beats[0].end
   // Looking something up while the scene still plays: the scene is said.
-  p.doing(PresenceEvents.activity(tool: "reference_read"), now: t0.addingTimeInterval(0.5))
+  p.doing(PresenceEvents.activity(tool: "project_inspect"), now: t0.addingTimeInterval(0.5))
   #expect(p.line(at: t0.addingTimeInterval(0.6))?.text == "load を書いています")
   // Once it has played, what the Agent does now, not the old scene.
-  #expect(p.line(at: end.addingTimeInterval(0.1))?.text == "書き方を調べています")
+  #expect(p.line(at: end.addingTimeInterval(0.1))?.text == "プロジェクトを見ています")
   p.doing(PresenceEvents.activity(tool: "run_status"), now: end.addingTimeInterval(1))
   #expect(p.line(at: end.addingTimeInterval(1.1))?.text == "実行の終わりを待っています")
   // A tool the scenes show says nothing of its own; text streaming keeps its time.

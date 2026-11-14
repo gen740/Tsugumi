@@ -14,8 +14,8 @@ end
 # Dividing by the singular values: the noise (or even round-off) along the
 # smallest ones is multiplied by 1 / sigma. The values are limited only so that
 # they stay representable.
-function main(ctx)
-    m = input(ctx, "measurement")
+function main(inputs, report)
+    m = Tsugumi.input(inputs, "measurement")
     x, truth, measured = Float64.(m["x"]), Float64.(m["truth"]), Float64.(m["measured"])
     n = length(x)
     V, s = heat_modes(n, m["alpha"], m["final_time"])
@@ -25,11 +25,11 @@ function main(ctx)
     from_clean = invert(V * (s .* (V' * truth)))
     peak = maximum(abs, from_measured)
     peak_clean = maximum(abs, from_clean)
-    println(@sprintf("largest |u0| from the measured data %.3g, from noise-free data (round-off only) %.3g; truth %.3g", peak, peak_clean, maximum(abs, truth)))
+    report.log(string(@sprintf("largest |u0| from the measured data %.3g, from noise-free data (round-off only) %.3g; truth %.3g", peak, peak_clean, maximum(abs, truth))))
 
     rows = [Dict("x" => x[j], "u" => series[j], "line" => name)
             for (name, series) in (("Naive inverse (from measurements)", from_measured), ("Naive inverse (without noise)", from_clean), ("True initial temperature", truth)) for j in 1:n]
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("anchor" => "start", "text" => @sprintf("Solving the inverse naively diverges: up to %.1e °C", peak),
@@ -44,4 +44,6 @@ function main(ctx)
                            "color" => Dict("field" => "line", "type" => "nominal", "title" => nothing,
                                            "scale" => Dict("domain" => ["Naive inverse (from measurements)", "Naive inverse (without noise)", "True initial temperature"], "range" => ["#2a78d6", "#eda100", "#111111"]),
                                            "legend" => Dict("orient" => "bottom")))))
+
+    return nothing
 end

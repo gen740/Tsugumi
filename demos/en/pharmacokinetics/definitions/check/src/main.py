@@ -19,8 +19,8 @@ def superposition(t, dose, tau, ke, ka, volume, fraction):
     return total
 
 
-def main(ctx):
-    c = ctx.input("curves", Curves)
+def main(inputs, report):
+    c = inputs.input("curves", Curves)
     doses, intervals = c.DosesMgAsNumpy(), c.IntervalsHAsNumpy()
     ke = math.log(2) / c.HalfLifeH()
     ka, volume, fraction = c.KaPerH(), c.VolumeL(), c.Bioavailability()
@@ -60,5 +60,5 @@ def main(ctx):
         rows.append({"dose": float(dose), "tau": float(tau), "gap": gap, "ratio_numeric": ratio_numeric, "ratio_exact": ratio_exact,
                      "ratio_simple": ratio_simple, "mean_numeric": mean_numeric, "mean_exact": mean_exact, "reached": reached})
     lines += ["", "$R$ is the ratio of the last trough to the first. When steady state is under 99.9% reached, a difference in $R$ is not counted as a failure (extending `days` brings it closer)."]
-    ctx.display_markdown("\n".join(lines))
-    print("result: " + json.dumps(rows))
+    report.markdown("\n".join(lines))
+    report.log(str("result: " + json.dumps(rows)))

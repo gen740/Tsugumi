@@ -71,8 +71,8 @@ CWD_AT_LOAD_MAIN = '''
 import os
 AT_LOAD = os.getcwd()
 
-def main(ctx):
-    ctx.display_text(AT_LOAD)
+def main(inputs, report):
+    report.text(AT_LOAD)
 '''
 
 
@@ -84,11 +84,11 @@ libc = ctypes.CDLL(None)
 libc.getenv.argtypes = [ctypes.c_char_p]
 libc.getenv.restype = ctypes.c_char_p
 
-def main(ctx):
+def main(inputs, report):
     names = ["FROM_PRE", "FROM_TOP", "FROM_TOP_AND_PRE", "FROM_MAIN", "TSUGUMI_RUN_ID", "XDG_CACHE_HOME", "MPLBACKEND"]
     values = {n: os.environ.get(n) for n in names}
     native = {n: (libc.getenv(n.encode()) or b"").decode() or None for n in names}
-    ctx.display_text(json.dumps({"pid": os.getpid(), "cwd": os.getcwd(), "python": values, "native": native}))
+    report.text(json.dumps({"pid": os.getpid(), "cwd": os.getcwd(), "python": values, "native": native}))
     os.environ["FROM_MAIN"] = "main"
 '''
 

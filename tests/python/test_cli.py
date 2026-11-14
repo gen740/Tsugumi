@@ -43,8 +43,11 @@ def artifact(release: Path, name: str, version: str, sha: str | None = None):
     """A release file: tsugumi/ with VERSION and a command that prints it."""
     tree = release / "build" / version / "tsugumi"
     tree.mkdir(parents=True)
-    (tree / "VERSION").write_text(version + "\n")
-    executable(tree / "tsugumi", "#!/bin/sh\ncat \"$(dirname \"$(readlink -f \"$0\")\")/VERSION\"\n")
+    (tree / "VERSION").write_text(version + '''
+''')
+    executable(tree / "tsugumi", '''#!/bin/sh
+cat "$(dirname "$(readlink -f "$0")")/VERSION"
+''')
     with tarfile.open(release / name, "w:gz") as t:
         t.add(tree, "tsugumi")
     digest = sha or hashlib.sha256((release / name).read_bytes()).hexdigest()
@@ -190,7 +193,8 @@ def test_windows_installs_in_wsl_and_leaves_a_command_that_starts_it_there():
     assert "wsl --install" in script and "Nix is needed" in script
     assert "SetEnvironmentVariable" not in script
     # Never delete the Windows launcher on preview or a failed WSL uninstall.
-    wrapper = script[script.index("@echo off"):script.index("\n'@", script.index("@echo off"))]
+    wrapper = script[script.index("@echo off"):script.index('''
+'@''', script.index("@echo off"))]
     assert wrapper.index("if errorlevel 1 exit /b %errorlevel%") < wrapper.index('del "%~f0"')
     assert 'if "%~1"=="uninstall" if "%~2"=="--yes" if "%~3"=="" (del "%~f0" & exit /b)' in wrapper
 

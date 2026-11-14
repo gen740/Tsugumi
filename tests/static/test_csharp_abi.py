@@ -1,6 +1,6 @@
 """The C# SDK's handwritten mirror of the Card ABI stays the ABI.
 
-sdk/csharp/Context.cs declares NativeValue, NativeSeries and NativeCall by
+sdk/csharp/InvocationScope.cs declares NativeValue, NativeSeries and NativeCall by
 hand, in the field order of sdk/include/tsugumi/sdk/abi.h. When a C# Card
 loads, sdk/csharp/host.cc passes the compiler's offsetof/sizeof of every abi.h
 field and sdk/csharp/Layout.cs compares them with the managed layout (a drift
@@ -18,7 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 ABI = ROOT / "sdk/include/tsugumi/sdk/abi.h"
-CONTEXT = ROOT / "sdk/csharp/Context.cs"
+CONTEXT = ROOT / "sdk/csharp/InvocationScope.cs"
 HOST = ROOT / "sdk/csharp/host.cc"
 LAYOUT = ROOT / "sdk/csharp/Layout.cs"
 
@@ -95,7 +95,7 @@ def mirror_errors(abi: str, context: str) -> list[str]:
             left = f"{c_name}.{a[i][0]} ({a[i][1]})" if i < len(a) else "nothing"
             right = f"{cs_name}.{b[i][0]} ({b[i][1]})" if i < len(b) else "nothing"
             if i >= len(a) or i >= len(b) or a[i][1] != b[i][1]:
-                errors.append(f"field {i}: abi.h has {left}, Context.cs has {right}")
+                errors.append(f"field {i}: abi.h has {left}, InvocationScope.cs has {right}")
     return errors
 
 

@@ -88,7 +88,7 @@ export function workScene(tool: string, args: string): { card?: string; line?: s
     }
   }
   const lines: Record<string, string> = {
-    project_inspect: L('プロジェクトを見ています'), reference_read: L('書き方を調べています'), project_validate: L('変更を確かめています'),
+    project_inspect: L('プロジェクトを見ています'), project_validate: L('変更を確かめています'),
     run_status: L('実行の終わりを待っています'), run_invocations: L('実行の記録を見ています'), run_history: L('実行の記録を見ています'),
     artifact_list: L('出力を見ています'), artifact_read: L('出力を見ています'), project_file_list: L('ファイルを読んでいます'),
     attached_folder_read: L('添えられたフォルダを読んでいます'), run_cancel: L('実行を止めています'), delegate: L('手分けして進めています'),

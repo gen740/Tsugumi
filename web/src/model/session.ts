@@ -3256,15 +3256,16 @@ export class ProjectSession extends Observable {
         set(obj([['language', 'python'], ['inputs', [obj([['name', 'in']])]]]))
         this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };\nin\n{\n  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };\n}\n')
         this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
-        this.putSource(dir + 'src/main.py', `import outputs.out.${ns}.Text as out
+        this.putSource(dir + 'src/main.py', `import tsugumi
+import outputs.out.${ns}.Text as out
 
 
-def main(ctx):
-    b = ctx.builder()
+def main(inputs):
+    b = tsugumi.builder()
     text = b.CreateString("hello")
     out.Start(b)
     out.AddValue(b, text)
-    ctx.output("out", b, out.End(b))
+    return {"out": tsugumi.message(b, out.End(b))}
 `)
         break
       case 'go':
@@ -3283,7 +3284,7 @@ def main(ctx):
         set(obj([['language', 'ruby'], ['inputs', [obj([['name', 'in']])]]]))
         this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ "ruby" ]; };\nin\n{\n  run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; };\n}\n')
         this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
-        this.putSource(dir + 'src/main.rb', 'def main(ctx)\n  ctx.output("out", { value: "hello" })\nend\n')
+        this.putSource(dir + 'src/main.rb', 'def main(inputs)\n  { out: { value: "hello" } }\nend\n')
         break
       case 'cpp':
         set(obj([['language', 'cpp'], ['inputs', [obj([['name', 'in']])]]]))
@@ -3291,7 +3292,7 @@ def main(ctx):
         this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
         this.putSource(dir + 'src/card.cc', `#include <card.hh>
 
-auto run(Card::Input& input) -> Card::Output {
+auto run(const Card::Inputs& inputs) -> Card::Output {
   Card::Output out;
   out.out.emplace().value = "hello";
   return out;

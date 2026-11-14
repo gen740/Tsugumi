@@ -2,6 +2,8 @@
 
 C# uses the same typed ports, parameters, worker and saved run records as C++ and Python. Choose **Processing (C#)** when adding a Card. Edit `src/Card.cs`, change its parameters in Card settings and run it. The [cross-language calibration demo](Demos.md#csharp-calibration) connects C++ readings to a C# transformation and a Python report.
 
+See [Inputs, results and reports](CardGuide.md#inputs-results-and-reports) for the shared SDK contract.
+
 ## A Card
 
 Set `language` to `csharp` in `_card.json`. `default.nix` selects the generated C# bindings and the pinned .NET SDK:
@@ -14,7 +16,7 @@ in {
 }
 ```
 
-Define `public sealed class Card : Tsugumi.ICard` in `src/Card.cs`. The generated `Context.Inputs` and `Context.Outputs` use FlatBuffers object API classes. Port names become properties/methods with their first character capitalized. For a port `numbers` whose schema declares `sample.Numbers`, for example:
+Define `public sealed class Card : Tsugumi.ICard` in `src/Card.cs`. The read-only generated `Inputs` properties and returned `Outputs` use FlatBuffers object API classes. Port names become properties with their first character capitalized. For a port `numbers` whose schema declares `sample.Numbers`, for example:
 
 ```csharp
 using System.Linq;
@@ -22,43 +24,47 @@ using System.Threading.Tasks;
 using Tsugumi;
 
 public sealed class Card : ICard {
-    public ValueTask RunAsync(Context context) {
-        var input = context.Inputs.Numbers;
-        double factor = context.Parameters.Factor
+    public ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) {
+        var result = new Outputs();
+        var input = inputs.Numbers;
+        double factor = inputs.Params.Factor
             ?? throw new Failure("validation_failed", "factor is required");
         var values = input.Values.Select(value => value * factor).ToList();
-        context.Outputs.Numbers(new outputs.numbers.sample.NumbersT {
+        result.Numbers = new outputs.numbers.sample.NumbersT {
             Values = values, Label = input.Label
-        });
-        context.DisplayScalar(values.Sum(), "sum");
-        return ValueTask.CompletedTask;
+        };
+        report.Scalar(values.Sum(), "sum");
+        return ValueTask.FromResult(result);
     }
 }
 ```
 
 The exact types come from the resolved Card contract: `inputs.<port>.<namespace>.<Table>T`, `outputs.<port>.<namespace>.<Table>T`, and `params.ParamsT`. Optional ports return nullable objects; check them before use. Scalar parameters are nullable, so choose a fallback or report a missing value explicitly. C# namespaces use verbatim identifiers when needed (`@params`). Unions use FlatBuffers' generated union object API. Core validation still checks every emitted message.
 
-`context.Input(port)` and `context.Params` expose owned `Google.FlatBuffers.ByteBuffer` copies for direct generated-table access. `Output(port, builder)` and `OutputBytes(port, bytes)` provide lower-level emission. Each output port is emitted independently; returning from `RunAsync` does not implicitly emit anything.
+Implement an instance `ICard.RunAsync` returning exactly `ValueTask<Tsugumi.Outputs>`, using this Card's generated types. Trailing roles may be omitted, but requesting `Run` requires `(Inputs inputs, Report report, Run run)`. A method with a different signature can compile without implementing the interface's entry point; the runtime diagnostic lists the candidates and why they were rejected.
+
+`inputs.Input(port)` exposes an owned `Google.FlatBuffers.ByteBuffer` for direct generated-table access. Return typed properties on `Outputs`, or finished bytes in its dictionary (`new Outputs { ["port"] = builder.SizedByteArray() }`). The adapter emits the returned result after awaiting `RunAsync`. For repeated or incremental results, return `Outputs.Stream(IAsyncEnumerable<Outputs>)`; each yielded batch is sent before advancing the iterator. File/Directory properties contain their path messages, including files written beneath `run.OutputDirectory`.
+
 
 C# Cards use the Card's own system; `csharpCard` rejects another `system` under emulation. External NuGet dependencies require an explicit lock and hash, and their native libraries are used as published. [NuGet packages](#nuget-packages)
 
 ## Tasks, state and lifetime
 
-The worker waits for the `ValueTask` returned by `RunAsync`. Await every operation that belongs to the invocation, including child Tasks. Fire-and-forget Tasks are not joined and their later exceptions cannot become that invocation's structured failure. Native callbacks remain valid only until the awaited invocation and SDK finalization finish. A saved `Context` rejects later log, display, output, cancellation-status or deadline calls with `ObjectDisposedException`; managed input copies may still be read. The SDK pins output and display buffers only for the synchronous native callback, whose host copies the bytes before returning.
+The worker waits for the `ValueTask` returned by `RunAsync`. Await every operation that belongs to the invocation, including child Tasks. Fire-and-forget Tasks are not joined and their later exceptions cannot become that invocation's structured failure. Native callbacks remain valid only until the awaited invocation and SDK finalization finish. A saved `Report` or `Run` rejects later log, display, cancellation-status or deadline calls with `ObjectDisposedException`; managed input copies may still be read. The SDK pins output and display buffers only for the synchronous native callback, whose host copies the bytes before returning.
 
-Pass `context.CancellationToken` to cancellable asynchronous work. The SDK polls the worker cancellation flag and deadline; the worker remains the final enforcement boundary for code that ignores cancellation. `RemainingMilliseconds` is `-1` without a deadline. Exceptions become structured worker failures; `new Failure(kind, message)` chooses a `FailureKind` name, and cancelled Tasks report cancellation or timeout. Exceptions do not cross the native ABI.
+Pass `run.CancellationToken` to cancellable asynchronous work. The SDK polls the worker cancellation flag and deadline; the worker remains the final enforcement boundary for code that ignores cancellation. `RemainingMilliseconds` is `-1` without a deadline. Exceptions become structured worker failures; `new Failure(kind, message)` chooses a `FailureKind` name, and cancelled Tasks report cancellation or timeout. Exceptions do not cross the native ABI.
 
-One `Card` instance and one .NET runtime live for the resident worker's lifetime. `OnRunStartAsync(Context)` runs once at each run's start, before that run's invocations. Use it to reset run-local state. `reuseWorker: false` starts a fresh process/runtime per invocation. Process exit frees the CLR; the SDK does not attempt to unload it. After failed or cancelled invocations, the scheduler's existing worker policy applies.
+One `Card` instance and one .NET runtime live for the resident worker's lifetime. `OnRunStartAsync(Inputs inputs, Report report, Run run)` runs once at each run's start, before that run's invocations. Use it to reset run-local state. `reuseWorker: false` starts a fresh process/runtime per invocation. Process exit frees the CLR; the SDK does not attempt to unload it. After failed or cancelled invocations, the scheduler's existing worker policy applies.
 
 ## Files, logs and displays
 
 File and Directory ports use their generated message's `Value` path, just as in other SDKs. Read an input path directly; write outputs below `context.OutputDirectory` and emit the generated path message. `InputKind(port)` distinguishes `File`, `Directory` and `FlatBuffer`. `WorkingDirectory` and `TemporaryDirectory` follow the Card's existing filesystem policy. Retain an output by selecting `artifactOutput` and enabling `retainArtifact` in Card settings.
 
-The SDK provides `Log`, `DisplayText`, `DisplayMarkdown`, `DisplayScalar`, `DisplayTable`, `DisplayImage`, `DisplayLineChart`, `DisplayPoints` and `DisplayModule`. Text is strict UTF-8 and rejects embedded NUL characters. Display arrays must have matching lengths; rejected native displays fail the invocation. Image bytes and FlatBuffer bytes are binary, not text. The same sandbox/network restrictions apply to .NET and NuGet code as to other Cards.
+The SDK provides `Log`, `Text`, `Markdown`, `Scalar`, `Table`, `Image`, `LineChart`, `Points` and `Module`. Text is strict UTF-8 and rejects embedded NUL characters. Display arrays must have matching lengths; rejected native displays fail the invocation. Image bytes and FlatBuffer bytes are binary, not text. The same sandbox/network restrictions apply to .NET and NuGet code as to other Cards.
 
 ## The native boundary
 
-`sdk/csharp/Context.cs` declares the Card ABI's structs (`tsugumi_call`, `tsugumi_value`, `tsugumi_series` in `sdk/include/tsugumi/sdk/abi.h`) by hand. Before the first call, the C++ host passes the compiler's `offsetof`/`sizeof` of every field to the managed SDK, which compares them with its own layout; any field missing, moved or resized on either side fails `tsugumi_load` with the field named in the Card's log. `tests/static/test_csharp_abi.py` checks field order and callback signatures from the sources without .NET. Extending the ABI (a new callback at the end of `tsugumi_call`) means adding the field to `abi.h`, `host.cc`'s layout table, `NativeCall` and `Layout.cs`.
+`sdk/csharp/InvocationScope.cs` declares the Card ABI's structs (`tsugumi_call`, `tsugumi_value`, `tsugumi_series` in `sdk/include/tsugumi/sdk/abi.h`) by hand. Before the first call, the C++ host passes the compiler's `offsetof`/`sizeof` of every field to the managed SDK, which compares them with its own layout; any field missing, moved or resized on either side fails `tsugumi_load` with the field named in the Card's log. `tests/static/test_csharp_abi.py` checks field order and callback signatures from the sources without .NET. Extending the ABI (a new callback at the end of `tsugumi_call`) means adding the field to `abi.h`, `host.cc`'s layout table, `NativeCall` and `Layout.cs`.
 
 ## NuGet packages
 

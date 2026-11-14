@@ -1,5 +1,6 @@
 """A one-compartment oral model of a fictional drug, solved numerically dose by
 dose. Teaching model only: not medical advice or dosing guidance."""
+import tsugumi
 import math
 
 import numpy as np
@@ -8,7 +9,6 @@ from plotly.subplots import make_subplots
 from scipy.integrate import solve_ivp
 
 from inputs.settings.pk.Settings import Settings
-import outputs.curves.pk.Curves as out
 from tsugumi import Failure
 
 STEP_H = 0.1
@@ -43,8 +43,8 @@ def simulate(dose, tau, ke, ka, volume, fraction, t_grid):
     return conc, troughs[0], troughs[doses - 2], last_dose
 
 
-def main(ctx):
-    s = ctx.input("settings", Settings)
+def main(inputs, report):
+    s = inputs.input("settings", Settings)
     doses = s.DosesMgAsNumpy()
     intervals = s.IntervalsHAsNumpy()
     if len(doses) != len(intervals) or len(doses) == 0:
@@ -65,7 +65,7 @@ def main(ctx):
         first.append(a)
         last.append(b)
         last_dose.append(d)
-        print(f"dose={dose} tau={tau} doses_given={int(d / tau) + 1} first_trough={a:.5f} last_trough={b:.5f} peak={c.max():.5f}")
+        report.log(str(f"dose={dose} tau={tau} doses_given={int(d / tau) + 1} first_trough={a:.5f} last_trough={b:.5f} peak={c.max():.5f}"))
     curves = np.array(curves)
 
     rows = (len(doses) + 1) // 2
@@ -85,31 +85,21 @@ def main(ctx):
     fig.update_layout(
         title=dict(text=f"架空の薬物ツグミシンの濃度（半減期 {s.HalfLifeH():g} 時間、緑は作り物の有効域 {s.LowMgL():g}–{s.HighMgL():g} mg/L）", font=dict(size=14)),
         template="plotly_white", margin=dict(l=60, r=20, t=70, b=50))
-    fig.show()
-
-    b = ctx.builder(curves.size * 8 + t.size * 8 + 4096)
-    vec = {
-        "doses": b.CreateNumpyVector(np.asarray(doses, dtype=np.float64)),
-        "intervals": b.CreateNumpyVector(np.asarray(intervals, dtype=np.float64)),
-        "t": b.CreateNumpyVector(t),
-        "conc": b.CreateNumpyVector(curves.ravel()),
-        "first": b.CreateNumpyVector(np.array(first)),
-        "last": b.CreateNumpyVector(np.array(last)),
-        "last_dose": b.CreateNumpyVector(np.array(last_dose)),
-    }
-    out.Start(b)
-    out.AddDosesMg(b, vec["doses"])
-    out.AddIntervalsH(b, vec["intervals"])
-    out.AddHalfLifeH(b, s.HalfLifeH())
-    out.AddKaPerH(b, ka)
-    out.AddVolumeL(b, volume)
-    out.AddBioavailability(b, fraction)
-    out.AddLowMgL(b, s.LowMgL())
-    out.AddHighMgL(b, s.HighMgL())
-    out.AddDays(b, s.Days())
-    out.AddTH(b, vec["t"])
-    out.AddConc(b, vec["conc"])
-    out.AddFirstTrough(b, vec["first"])
-    out.AddLastTrough(b, vec["last"])
-    out.AddLastDoseH(b, vec["last_dose"])
-    ctx.output("curves", b, out.End(b))
+    report.figure(fig)
+    vec = {'doses': np.asarray(doses, dtype=np.float64), 'intervals': np.asarray(intervals, dtype=np.float64), 't': t, 'conc': curves.ravel(), 'first': np.array(first), 'last': np.array(last), 'last_dose': np.array(last_dose)}
+    _out_value = {}
+    _out_value['doses_mg'] = vec['doses']
+    _out_value['intervals_h'] = vec['intervals']
+    _out_value['half_life_h'] = s.HalfLifeH()
+    _out_value['ka_per_h'] = ka
+    _out_value['volume_l'] = volume
+    _out_value['bioavailability'] = fraction
+    _out_value['low_mg_l'] = s.LowMgL()
+    _out_value['high_mg_l'] = s.HighMgL()
+    _out_value['days'] = s.Days()
+    _out_value['t_h'] = vec['t']
+    _out_value['conc'] = vec['conc']
+    _out_value['first_trough'] = vec['first']
+    _out_value['last_trough'] = vec['last']
+    _out_value['last_dose_h'] = vec['last_dose']
+    return {'curves': _out_value}

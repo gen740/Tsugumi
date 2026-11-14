@@ -30,10 +30,14 @@ in
   run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
 }
 """
-DOC = ("namespace t; table Doc { value:string; }\ntable Outputs { doc:Doc (required, tsugumi: \"file\"); }\n"
-       "root_type Outputs;\nattribute \"tsugumi\";\n")
+DOC = ('''namespace t; table Doc { value:string; }
+table Outputs { doc:Doc (required, tsugumi: "file"); }
+'''
+       '''root_type Outputs;
+attribute "tsugumi";
+''')
 
-COUNT = r"""
+COUNT = '''
 #include <card.hh>
 
 #include <random>
@@ -43,24 +47,24 @@ COUNT = r"""
 static const unsigned worker = std::random_device{}();
 static int runs = 0, calls = 0;
 
-auto onRunStart() -> void {
+auto onRunStart(const Card::Inputs& inputs) -> void {
   ++runs;
   calls = 0;
 }
 
-auto run(Card::Input&) -> Card::Output {
+auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
   ++calls;
-  tsugumi::visualization::text("worker " + std::to_string(worker) + " runs " + std::to_string(runs) + " calls " +
+  report.text("worker " + std::to_string(worker) + " runs " + std::to_string(runs) + " calls " +
                                std::to_string(calls));
   Card::Output out;
   out.out.emplace().value = runs * 1000 + calls;
   return out;
 }
-"""
+'''
 
 # Reads its File input, keeps every line it saw (a stream kept by the
 # resident worker) and must not be able to change the input.
-READ = r"""
+READ = '''
 #include <card.hh>
 
 #include <fstream>
@@ -69,24 +73,24 @@ READ = r"""
 
 static std::vector<std::string> lines;
 
-auto run(Card::Input& input) -> Card::Output {
+auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
   // No folder descriptor of this or an earlier call is left (this Card has no File outputs).
   if (std::ifstream("/proc/self/fd/900")) throw tsugumi::Failure("worker_failed", "a passed descriptor was left open");
-  std::ifstream in(input.doc.value);
+  std::ifstream in(inputs.doc.value);
   std::string line;
-  if (!std::getline(in, line)) throw tsugumi::Failure("input_missing", "cannot read " + input.doc.value);
+  if (!std::getline(in, line)) throw tsugumi::Failure("input_missing", "cannot read " + inputs.doc.value);
   lines.push_back(line);
-  if (std::ofstream(input.doc.value, std::ios::app) << "x" << std::flush)
-    throw tsugumi::Failure("output_invalid", "the input file was writable");
-  tsugumi::visualization::text(std::to_string(lines.size()) + " lines");
+  if (std::ofstream(inputs.doc.value, std::ios::app) << "x" << std::flush)
+    throw tsugumi::Failure("output_invalid", "the inputs file was writable");
+  report.text(std::to_string(lines.size()) + " lines");
   Card::Output out;
   out.out.emplace().value = lines.size();
   return out;
 }
-"""
+'''
 
 # Without reuseWorker (the default): a new process per call, each starting with calls = 1.
-FRESH = r"""
+FRESH = '''
 #include <card.hh>
 
 #include <random>
@@ -95,17 +99,17 @@ FRESH = r"""
 static const unsigned worker = std::random_device{}();
 static int calls = 0;
 
-auto run(Card::Input& input) -> Card::Output {
+auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
   ++calls;
   uint64_t n = 0;
-  if (const auto* v = input.x.value.Asinit()) n = v->value;
-  else if (const auto* v = input.x.value.Asagain()) n = v->value;
-  tsugumi::log("worker " + std::to_string(worker) + " calls " + std::to_string(calls));
+  if (const auto* v = inputs.x.value.Asinit()) n = v->value;
+  else if (const auto* v = inputs.x.value.Asagain()) n = v->value;
+  report.log("worker " + std::to_string(worker) + " calls " + std::to_string(calls));
   Card::Output out;
   if (n > 0) out.again.emplace().value = n - 1;
   return out;
 }
-"""
+'''
 
 
 @pytest.fixture(scope="module")
@@ -174,7 +178,10 @@ def test_file_inputs_keep_the_worker_and_stay_read_only(env):
 
 def test_fresh_worker_per_call(env):
     nix = CPP_NIX
-    out = ("namespace t; table Num { value:ulong; }\ntable Outputs { again:Num; }\nroot_type Outputs;\n")
+    out = ('''namespace t; table Num { value:ulong; }
+table Outputs { again:Num; }
+root_type Outputs;
+''')
     seed = bash('echo \'{"out":{"value":3}}\' > "$TSUGUMI_OUTPUT"')
     c = load(env, {"trigger": {"template": "trigger"}, "seed": seed,
                    "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
@@ -202,9 +209,13 @@ def test_evaluator_errors_and_timeouts_leave_tsugumid_working(env):
     """The evaluator runs inside tsugumid: endless recursion is an error of
     the Card (never a crash), buildTimeoutSeconds stops a build, and the next
     Card evaluates and runs as before."""
-    loop_nix = "{ pkgs, inputs, params }:\nlet f = x: f (x + 1); in { run = f 0; }\n"
-    slow_nix = ("{ pkgs, inputs, params }:\n{ run = pkgs.runCommand \"tsugumi-test-slow-${toString builtins.currentTime}\" { } "
-                "\"sleep 60; mkdir -p $out/lib\"; }\n")
+    loop_nix = '''{ pkgs, inputs, params }:
+let f = x: f (x + 1); in { run = f 0; }
+'''
+    slow_nix = ('''{ pkgs, inputs, params }:
+{ run = pkgs.runCommand "tsugumi-test-slow-${toString builtins.currentTime}" { } '''
+                '''"sleep 60; mkdir -p $out/lib"; }
+''')
     ok = bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"')
     import time
     c = load(env, {"trigger": {"template": "trigger"},
@@ -239,8 +250,8 @@ def number(c, run_id, card_id):
 
 
 def fan_out(names):
-    """The trigger's value to each named Card: an output feeds one input, so
-    through a fork with one branch per Card (its Card, wires)."""
+    '''The trigger's value to each named Card: an output feeds one inputs, so
+    through a fork with one branch per Card (its Card, wires).'''
     fork = {"template": "fork", "params": [{"name": "branches", "type": "string[]", "data": list(names)}]}
     wires = [conn("start", "out", "fan", "in")] + [conn("fan", n, n, "go") for n in names]
     return fork, wires

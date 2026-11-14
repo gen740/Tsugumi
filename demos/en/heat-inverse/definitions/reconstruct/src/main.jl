@@ -13,18 +13,18 @@ end
 
 # The reconstruction at the chosen lambda, with one too small and one too large
 # beside it. `lambda` = 0 takes the discrepancy principle's choice.
-function main(ctx)
-    m = input(ctx, "measurement")
-    choice = input(ctx, "choice")
+function main(inputs, report)
+    m = Tsugumi.input(inputs, "measurement")
+    choice = Tsugumi.input(inputs, "choice")
     x, truth, measured = Float64.(m["x"]), Float64.(m["truth"]), Float64.(m["measured"])
     n = length(x)
-    chosen = ctx.params["lambda"] > 0 ? ctx.params["lambda"] : choice["discrepancy"]
+    chosen = inputs.params["lambda"] > 0 ? inputs.params["lambda"] : choice["discrepancy"]
     V, s = heat_modes(n, m["alpha"], m["final_time"])
     coefficients = V' * measured
     solve(l) = V * ((s ./ (s .^ 2 .+ l^2)) .* coefficients)
     rms(v) = sqrt(sum(abs2, v) / length(v))
 
-    factor = ctx.params["too_far_factor"]
+    factor = inputs.params["too_far_factor"]
     cases = (("λ too small", chosen / factor), ("Chosen λ", chosen), ("λ too large", chosen * factor))
     solutions = [solve(l) for (_, l) in cases]
     errors = [rms(u - truth) for u in solutions]
@@ -37,7 +37,7 @@ function main(ctx)
     shown = [merge(p, Dict("u" => clamp(p["u"], low, high))) for p in panels]
     reference = [Dict("x" => x[j], "truth" => truth[j], "panel" => names[i]) for i in 1:3 for j in 1:n]
     yscale = Dict("domain" => [low, high], "nice" => false)
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("text" => @sprintf("Recovery with different λ: error %.2f °C at the chosen λ = %.2g", errors[2], chosen),
@@ -55,4 +55,6 @@ function main(ctx)
                                 "encoding" => Dict("x" => Dict("field" => "x", "type" => "quantitative"),
                                                    "y" => Dict("field" => "u", "type" => "quantitative", "scale" => yscale))),
                        ])))
+
+    return nothing
 end

@@ -311,7 +311,7 @@ std::map<std::string, std::string> NixRunner::generate(const Node& node) {
   }
   ocat += "}\nroot_type Outputs;\n";
   files["_outputs.fbs"] = outputs + ocat;
-  // The ports in plain form for SDK code generation (typed Card::Input /
+  // The ports in plain form for SDK code generation (typed Card::Inputs /
   // Card::Output): name, root type, kind, required.
   {
     auto json_quote = [](const std::string& v) {
