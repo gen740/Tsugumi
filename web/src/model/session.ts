@@ -350,7 +350,7 @@ function plotTitle(name: string, json: string): string | undefined {
 
 export type EnvironmentState = EnvPublicState | { state: 'reconnecting' }
 
-/** A file's new content: text, or bytes for a file taken in with another project. */
+/** A file's new content: editor text, or bytes preserved by copy, import and undo. */
 type SourceEdit = string | Uint8Array
 const sourceBytes = (e: SourceEdit) => (typeof e === 'string' ? new TextEncoder().encode(e) : e)
 
@@ -2249,6 +2249,14 @@ export class ProjectSession extends Observable {
     return k
   }
 
+  /** Source bytes as the draft sees them; copying must never decode binary files. */
+  async sourceData(p: string): Promise<Uint8Array> {
+    const e = this.sourceEdits.get(p)
+    if (e !== undefined) return sourceBytes(e)
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
+    return this.client.readFile(p, this.rev)
+  }
+
   /** Source text as the draft sees it. */
   async sourceText(p: string): Promise<string> {
     const e = this.sourceEdits.get(p)
@@ -2431,10 +2439,11 @@ export class ProjectSession extends Observable {
   }
 
   /** Takes in another Tsugumi project as a Card in Card: its folder (read by
-   *  the host server, without hidden folders) goes to externals/<name>/. */
+   *  the Host service, using its project-copy rule) goes to externals/<name>/. */
   async importProject(folder: string, scope: string[], at: { x: number; y: number }): Promise<CardKey> {
-    const { name: folderName, files, binary } = await api<{ name: string; files: Record<string, string>; binary: Record<string, string> }>('/api/import/project', { folder })
-    const json = (rel: string) => (files[rel] !== undefined ? tryParse(files[rel]) : undefined)
+    const { name: folderName, files: encoded } = await api<{ name: string; files: Record<string, string> }>('/api/import/project', { folder })
+    const files = Object.fromEntries(Object.entries(encoded).map(([p, b64]) => [p, Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))]))
+    const json = (rel: string) => (files[rel] !== undefined ? tryParse(new TextDecoder().decode(files[rel])) : undefined)
     // The project and the externals in it, each with its documents.
     const projects = Object.keys(files).filter((rel) => {
       if (!rel.endsWith('tsugumi.json')) return false
@@ -2470,10 +2479,6 @@ export class ProjectSession extends Observable {
         if (projects.some((p) => rel.startsWith(p) && isDocument(rel.slice(p.length)))) continue
         x.sourceRemovals.delete(to + rel)
         x.sourceEdits.set(to + rel, text)
-      }
-      for (const [rel, base64] of Object.entries(binary)) {
-        x.sourceRemovals.delete(to + rel)
-        x.sourceEdits.set(to + rel, Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)))
       }
       for (const [p, e] of [...docs].sort(([a], [b]) => a.localeCompare(b))) x.createExternal(p, e)
       x.setCardDefinition(k, { card: obj(), meta: obj([['name', folderName]]), link: obj([['external', name]]) })

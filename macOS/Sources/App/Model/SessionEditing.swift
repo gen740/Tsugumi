@@ -2,6 +2,7 @@ import AppKit
 import FlatBuffers
 import Foundation
 import TsugumiRPC
+import TsugumiAgentClient
 
 /// What a Card is, for choosing what the canvas and the editor offer.
 enum CardKind: String {
@@ -404,30 +405,35 @@ extension ProjectSession {
   }
 
   /// Takes in another Tsugumi project as a Card in Card: its folder is
-  /// copied to externals/<name>/ (without .tsugumi, .git and other hidden
-  /// folders) and placed in the scope.
+  /// copied to externals/<name>/ using the Host's project-copy rule
+  /// (excluding .tsugumi, .git and symbolic links), then placed in the scope.
   @discardableResult
   func importProject(from folder: URL, in scope: [String], at point: CGPoint) async throws -> CardKey {
-    let fm = FileManager.default
-    guard fm.fileExists(atPath: folder.appendingPathComponent("tsugumi.json").path) else {
-      throw RPCFailure(kind: .invalidRequest, diagnostic: String(localized: "tsugumi.json のあるフォルダを選んでください。"))
-    }
     var files: [String: Data] = [:]
-    var total = 0
-    let root = folder.standardizedFileURL.resolvingSymlinksInPath()
-    let e = fm.enumerator(at: root, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey],
-                          options: [.skipsHiddenFiles])
-    while let u = e?.nextObject() as? URL {
-      let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey, .isRegularFileKey])
-      if v?.isSymbolicLink == true { if v?.isDirectory == true { e?.skipDescendants() }; continue }  // e.g. Nix result links
-      guard v?.isRegularFile == true else { continue }
-      let rel = String(u.standardizedFileURL.resolvingSymlinksInPath().path.dropFirst(root.path.count + 1))
-      guard let d = try? Data(contentsOf: u) else { continue }
-      total += d.count
-      if total > 64 << 20 {
-        throw RPCFailure(kind: .invalidRequest, diagnostic: String(localized: "プロジェクトが大きすぎます（64 MB まで）。"))
+    var fileIndex: UInt32 = 0, offset: UInt64 = 0
+    while true {
+      let result: [String: Any]
+      do {
+        result = try await CoreAgentClient.shared.call("HostProjectReadRequest",
+          ["path": folder.path, "file_index": fileIndex, "offset": offset])
+      } catch let failure as CoreAgentFailure {
+        throw HostProjectError(code: failure.code)
       }
-      files[rel] = d
+      guard let entries = result["files"] as? [[String: Any]] else {
+        throw RPCFailure(kind: .invalidRequest, diagnostic: "Missing project files in Host reply")
+      }
+      for entry in entries {
+        guard let path = entry["path"] as? String, let bytes = entry["bytes"] as? [UInt8] else {
+          throw RPCFailure(kind: .invalidRequest, diagnostic: "Invalid project file in Host reply")
+        }
+        files[path, default: Data()].append(contentsOf: bytes)
+      }
+      if result["complete"] as? Bool == true { break }
+      guard let nextFile = result["nextFile"] as? UInt32, let nextOffset = result["nextOffset"] as? UInt64 else {
+        throw RPCFailure(kind: .invalidRequest, diagnostic: "Missing project import cursor in Host reply")
+      }
+      fileIndex = nextFile
+      offset = nextOffset
     }
     func json(_ rel: String) -> JSONValue? { files[rel].flatMap { try? JSONValue.parse(String(decoding: $0, as: UTF8.self)) } }
     // The project and the externals in it, each with its documents.

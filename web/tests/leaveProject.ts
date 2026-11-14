@@ -60,13 +60,18 @@ const session = (dir = '/p', key = 'k') => {
   const bytes = Uint8Array.from({ length: 256 }, (_, i) => i)
   answer = {
     name: 'other',
-    files: { 'tsugumi.json': '{"name":"o","canvas":{"cards":[],"connections":[]}}', 'definitions/x/note.txt': 'text' },
-    binary: { 'definitions/x/blob.bin': Buffer.from(bytes).toString('base64') },
+    files: Object.fromEntries(Object.entries({
+      'tsugumi.json': Buffer.from('{"name":"o","canvas":{"cards":[],"connections":[]}}'),
+      'definitions/x/note.txt': Buffer.from('text'),
+      'definitions/x/src/.config': Buffer.from('hidden'),
+      'definitions/x/blob.bin': bytes,
+    }).map(([p, bytes]) => [p, Buffer.from(bytes).toString('base64')])),
   }
   const s = session()
   s.connected = true
   await s.importProject('/o', [], { x: 0, y: 0 })
-  assert.equal(s.sourceEdits.get('externals/other/definitions/x/note.txt'), 'text')
+  assert.equal(await s.sourceText('externals/other/definitions/x/note.txt'), 'text')
+  assert.equal(await s.sourceText('externals/other/definitions/x/src/.config'), 'hidden')
   assert.deepEqual(s.sourceEdits.get('externals/other/definitions/x/blob.bin'), bytes)
   assert.equal(await s.sourceText('externals/other/definitions/x/note.txt'), 'text')
 

@@ -60,7 +60,10 @@ class Project:
         if manifest is not None or plan is not None:
             # This source is interpreted only by the test build adapter.
             files["default.nix"] = "{ pkgs, inputs, params }: { }"
-            files["mock-build.json"] = json.dumps({**(plan or {}), **({"manifest": manifest} if manifest else {})})
+            product = {**(plan or {}), **({"manifest": manifest} if manifest else {})}
+            if "manifest" in product:
+                product["manifest"] = {"shell": "/bin/bash", "path": "/usr/bin:/bin", **product["manifest"]}
+            files["mock-build.json"] = json.dumps(product)
         self.cards[name] = (definition, files)
         return self
 

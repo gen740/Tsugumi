@@ -13,32 +13,10 @@
   nix,
   openssl,
   bash,
-  coreutils,
-  findutils,
-  gnugrep,
-  gnused,
-  gawk,
-  gnutar,
-  gzip,
-  jq,
   bubblewrap,
   cardNixpkgs,
   hosq,
 }:
-let
-  # Tools on PATH for Card bash steps (preRun, a bash run, postRun).
-  cardTools = [
-    bash
-    coreutils
-    findutils
-    gnugrep
-    gnused
-    gawk
-    gnutar
-    gzip
-    jq
-  ];
-in
 # Clang on Linux too (with GCC's libstdc++, as the Nix libraries linked here):
 # GCC 16 did not finish compiling one of the core's files.
 clangStdenv.mkDerivation {
@@ -99,7 +77,6 @@ clangStdenv.mkDerivation {
     "-DTSUGUMI_CARD_NIXPKGS_REV=${cardNixpkgs.rev}"
     "-DTSUGUMI_CARD_NIXPKGS_NARHASH=${cardNixpkgs.narHash}"
     "-DTSUGUMI_BASH=${bash}/bin/bash"
-    "-DTSUGUMI_CARD_PATH=${lib.makeBinPath cardTools}"
   ]
   ++ lib.optionals clangStdenv.hostPlatform.isLinux [ "-DTSUGUMI_BWRAP=${bubblewrap}/bin/bwrap" ];
   # What the dev shell's own CMake configuration needs of the above.

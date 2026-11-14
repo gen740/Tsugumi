@@ -5,6 +5,36 @@ import XCTest
 @testable import TsugumiAgentClient
 
 final class ServiceWireTests: XCTestCase {
+  func testProjectImportUsesHostCopyRuleAndPreservesBinaryBytes() throws {
+    XCTAssertTrue(ServiceWire.hostMethod("HostProjectReadRequest", [:]))
+    let encoded = try ServiceWire.encode("HostProjectReadRequest", fields: ["path": "/source",
+      "file_index": UInt32(2), "offset": UInt64(1048576)], id: 1, host: true)
+    var buffer = ByteBuffer(data: encoded)
+    let message: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
+    let request = try XCTUnwrap(message.payload(type: Tsugumi_Host_Request.self)?.value(type: Tsugumi_Host_HostProjectReadRequest.self))
+    XCTAssertEqual(request.path, "/source")
+    XCTAssertEqual(request.fileIndex, 2)
+    XCTAssertEqual(request.offset, 1048576)
+    var builder = FlatBufferBuilder(initialSize: 256)
+    let path = builder.create(string: "definitions/card/src/.config")
+    let bytes = builder.createVector([UInt8(255), 0, 128])
+    let file = Tsugumi_Host_ProjectFile.createProjectFile(&builder, pathOffset: path, bytesVectorOffset: bytes)
+    let files = builder.createVector(ofOffsets: [file])
+    let name = builder.create(string: "source")
+    let value = Tsugumi_Host_ProjectFiles.createProjectFiles(&builder, nameOffset: name, filesVectorOffset: files,
+      nextFile: 3, nextOffset: 0, complete: true)
+    let reply = Tsugumi_Host_Reply.createReply(&builder, valueType: .projectfiles, valueOffset: value)
+    let root = Tsugumi_Host_Message.createMessage(&builder, requestId: 1, payloadType: .reply, payloadOffset: reply)
+    Tsugumi_Host_Message.finish(&builder, end: root)
+    let decoded = try ServiceWire.decode(builder.data, host: true)
+    let entry = try XCTUnwrap((decoded["files"] as? [[String: Any]])?.first)
+    XCTAssertEqual(entry["path"] as? String, "definitions/card/src/.config")
+    XCTAssertEqual(entry["bytes"] as? [UInt8], [255, 0, 128])
+    XCTAssertEqual(decoded["nextFile"] as? UInt32, 3)
+    XCTAssertEqual(decoded["nextOffset"] as? UInt64, 0)
+    XCTAssertEqual(decoded["complete"] as? Bool, true)
+  }
+
   func testSendCarriesTheOptimisticDisplaySeparatelyFromModelInput() throws {
     let bytes = try ServiceWire.encode("ConversationSendRequest", fields: [
       "conversation_id": "c", "turn_id": "t", "text": "Model instructions",

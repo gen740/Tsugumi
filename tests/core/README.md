@@ -93,13 +93,15 @@ Build plans are ordinary fixture sources named `mock-build.json`:
 
 ```json
 {
-  "manifest": { "run": { "bash": "true" } },
+  "manifest": { "run": { "bash": "true" }, "shell": "/bin/bash", "path": "/usr/bin:/bin" },
   "gate": "build-ready"
 }
 ```
 
 `manifest` uses the actual build-product format (`run.bash` or `run.package`,
-optional `preRun`/`postRun`). `error` produces a build failure. `gate` pauses before
+the `shell` and `path` of the Card's processes, optional `preRun`/`postRun`);
+`Project.card` fills in the host's `/bin/bash` and `/usr/bin:/bin` when a fixture
+does not name them. `closure` adds paths to the recorded environment. `error` produces a build failure. `gate` pauses before
 the product is returned; use `Gate(daemon.gates, name)` to wait/release it.
 `cached` can explicitly control the external cache result.
 
