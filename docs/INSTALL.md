@@ -54,7 +54,7 @@ This installs `~/.local/bin/tsugumi`. Run it to start the server and open the br
 tsugumi
 ```
 
-Stop it with Ctrl-C. If it is already running, it only opens a new page. `tsugumi <project folder>` opens that project.
+Stop it with Ctrl-C. If the same build is already running, it opens a new page on that host. `tsugumi <project folder>` opens that project on either a new or an existing host. Starts, including starts from the Claude Code plugin, share one lock per data folder, so concurrent commands use one host. A running host from a different build is refused with a message identifying its PID and URL; stop that host before starting the new build.
 
 When a new version comes out, replace it with this command (if it is already the latest, it says so and does nothing). A running `tsugumi` opens with the new version after you stop and start it again.
 
@@ -62,11 +62,11 @@ When a new version comes out, replace it with this command (if it is already the
 tsugumi update
 ```
 
-- **What is installed**: only the command (`~/.local/bin/tsugumi`) and what it runs (`~/.local/share/tsugumi/<version>/`). If `~/.local/bin` is not on `PATH`, it says so; it does not change your shell's settings. `tsugumi update` or installing again replaces it with a new version (it does not update itself). To remove it, see [Uninstalling](#uninstalling).
+- **What is installed**: only the command (`~/.local/bin/tsugumi`) and what it runs (`~/.local/share/tsugumi/<version>.<generation>/`). If `~/.local/bin` is not on `PATH`, it says so; it does not change your shell's settings. `tsugumi update` or installing again replaces it with a new version (it does not update itself). To remove it, see [Uninstalling](#uninstalling).
 - **Mac (Apple silicon, macOS 26 or later)**: fetches `tsugumi-macos-arm64.tar.gz`, which includes Node.js and the VM's boot disk. Cards run in the same shared Linux VM as the desktop app, so Nix need not be installed separately. The first start takes a few minutes while Tsugumi is assembled inside the VM. The settings shared with the desktop app, and when the two cannot be used at once, are in [Web UI](WebUI.md#the-tsugumi-command).
 - **Linux (x86_64 / aarch64)**: needs [Nix](https://nixos.org/download). It fetches the source, `tsugumi-linux.tar.gz`, and builds it with Nix (the first time takes a few minutes; how it works is in [Web UI](WebUI.md#the-tsugumi-command)).
 - **Windows**: needs WSL2 and [Nix](https://nixos.org/download) installed in its Linux. `install.ps1` runs `install.sh` in the default WSL Linux and creates `%USERPROFILE%\.local\bin\tsugumi.cmd` (it does not change `PATH`). `tsugumi` runs inside WSL just as on Linux, and the page opens in the Windows browser. Keep projects on the WSL file system and pass folders as absolute paths as WSL sees them. It can also be installed from a shell in the WSL Linux with the same `curl … | sh` as on Linux (no `tsugumi.cmd` is made, but the page still opens in the Windows browser).
-- Downloaded files are installed after their checksum (`.sha256`) is checked. To choose a version, use the environment variable `TSUGUMI_VERSION`.
+- Each installation, including the same version again, gets a separate runtime directory. The installer checks the checksum (`.sha256`), builds or unpacks there, and runs `tsugumi --version` before atomically switching `current`. A failed build or version check leaves the current command usable. Old runtimes stay available because a running host can still read their assets; stop hosts and use `tsugumi uninstall --yes` to remove installer-marked generations. Foreign directories under the install root are preserved. To choose a version, use the environment variable `TSUGUMI_VERSION`.
 
 ## Building from source
 
@@ -135,7 +135,7 @@ tsugumi uninstall
 tsugumi uninstall --yes
 ```
 
-This removes the installed runtime, its Nix result link on Linux, and `~/.local/bin/tsugumi`. It preserves projects and their run history, settings, API credentials, the Mac shared VM, Nix, and the Nix store. Unrelated files alongside the installed version directory are preserved; the installed version directory itself is removed entirely. A launcher or installation directory that has been replaced or redirected is refused rather than deleted. This command applies to installations made by `install.sh`; manage a Nix profile installation with Nix instead.
+This removes all runtime generations carrying the installer's marker, their Nix result links on Linux, and `~/.local/bin/tsugumi`. It preserves projects and their run history, settings, API credentials, the Mac shared VM, Nix, and the Nix store. Unrelated files and unmarked directories under the installation root are preserved; each marked generation is removed entirely. A launcher or installation directory that has been replaced or redirected is refused rather than deleted. This command applies to installations made by `install.sh`; manage a Nix profile installation with Nix instead.
 
 On Windows, run `tsugumi uninstall --yes` from Windows through the installed `tsugumi.cmd`. The command removes the installation in the default WSL distribution and deletes the Windows launcher only after success. Running it directly inside WSL leaves the Windows launcher in place; remove `%USERPROFILE%\.local\bin\tsugumi.cmd` separately in that case. WSL and its distributions are preserved.
 

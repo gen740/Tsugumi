@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
-import { AGENT_KEY_HEADER, ServerInfo, webDataDir } from './paths'
+import { ServerInfo, webDataDir, serverBuild, runningServer, serverRequest } from './paths'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -40,53 +40,32 @@ let rulesSent = false
 
 // ---- The web UI host -------------------------------------------------------------
 
-const serverFile = () => path.join(webDataDir(), 'server.json')
-
-function readServer(): ServerInfo | undefined {
-  try {
-    return JSON.parse(fs.readFileSync(serverFile(), 'utf8'))
-  } catch {
-    return undefined
-  }
-}
-
-async function request(s: ServerInfo, route: string, body: unknown): Promise<Response> {
-  return fetch(`http://127.0.0.1:${s.port}${route}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-tsugumi': '1', [AGENT_KEY_HEADER]: s.agentKey },
-    body: JSON.stringify(body ?? {}),
-  })
-}
-
-async function alive(s: ServerInfo | undefined): Promise<boolean> {
-  if (!s) return false
-  try {
-    return (await request(s, '/api/agent/tools', {})).ok
-  } catch {
-    return false
-  }
-}
+const buildIdentity = serverBuild(path.join(here, 'server.js'))
+const request = serverRequest
 
 let starting: Promise<ServerInfo> | undefined
 
 /** The running host, or one started now (it keeps running after Claude Code ends, like one started by hand). */
 async function host(): Promise<ServerInfo> {
-  const s = readServer()
-  if (await alive(s)) return s!
+  const s = await runningServer(webDataDir(), buildIdentity)
+  if (s) return s
   starting ??= (async () => {
     const data = webDataDir()
     fs.mkdirSync(data, { recursive: true })
     const log = fs.openSync(path.join(data, 'server.log'), 'a')
-    const child = spawn(process.execPath, [path.join(here, 'server.js'), '--port', process.env.TSUGUMI_WEB_PORT ?? '0'],
+    const child = spawn(process.execPath, [path.join(here, 'server.js'), '--reuse', '--port', process.env.TSUGUMI_WEB_PORT ?? '0'],
       { detached: true, stdio: ['ignore', log, log] })
+    let startError: Error | undefined
+    child.on('error', e => { startError = e })
     child.unref()
     fs.closeSync(log)
     const deadline = Date.now() + 30_000
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 200))
-      if (child.exitCode !== null) break
-      const next = readServer()
-      if (next && next.pid === child.pid && (await alive(next))) return next
+      const next = await runningServer(data, buildIdentity)
+      // A concurrent command or MCP process may win the shared startup lock.
+      if (next) return next
+      if (child.exitCode !== null || startError) break
     }
     throw new Error(`the Tsugumi web UI host did not start; see ${path.join(data, 'server.log')}`)
   })().finally(() => { starting = undefined })

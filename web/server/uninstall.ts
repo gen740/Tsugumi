@@ -47,6 +47,15 @@ export function uninstall(args: string[]): number {
       }
       targets.push(release, current)
     }
+    // Old immutable generations stay available during updates. The user stops
+    // running hosts before explicitly uninstalling them; foreign entries stay.
+    if (stat(data)) for (const name of fs.readdirSync(data)) {
+      const release = path.join(data, name)
+      if (targets.includes(release)) continue
+      const marker = path.join(release, '.installed-by-tsugumi')
+      const r = stat(release), m = r?.isDirectory() && !r.isSymbolicLink() ? stat(marker) : undefined
+      if (m?.isFile() && !m.isSymbolicLink() && fs.readFileSync(marker, 'utf8').trim() === name) targets.push(release)
+    }
     if (launcher) targets.push(command)
     if (!targets.length) {
       console.log('No installer-managed tsugumi command is installed.')

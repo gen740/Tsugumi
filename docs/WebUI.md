@@ -77,7 +77,7 @@ Open the `http://127.0.0.1:8780/?key=…` shown at startup (`--open` opens it au
 
 `key` is a key made at each start. It is replaced by a cookie only this page sends (HttpOnly, SameSite=Strict) and disappears from the address bar. Browser requests to `/api/` (GET and event subscriptions included) require this cookie. Selected external-agent routes also accept the separate key described below. Calls that change something require a dedicated header as well. Responses carry a CSP (`frame-ancestors 'none'`) and `nosniff`.
 
-The [Claude Code plugin](claude-code.md) finds a running server through the `server.json` it puts in the data folder (how far that key reaches: [Security §7](security.md#the-agents-permission-boundary)).
+The command and the [Claude Code plugin](claude-code.md) discover the host through `server.json` in the data folder. It contains the port, PID, build fingerprint and agent key (how far that key reaches: [Security §7](security.md#the-agents-permission-boundary)). The fingerprint covers the server bundle, its runtime location and native executables, including builds sharing a release version. Discovery and publication use one startup lock, so concurrent starts reuse the same host. An existing host from a different build is refused; stop it before starting the new build. A project argument is forwarded to the existing host when one is reused. A `server.json` without the current fields is rejected; there is no older-format fallback.
 
 | Environment variable | Meaning |
 | --- | --- |
