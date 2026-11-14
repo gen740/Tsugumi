@@ -294,12 +294,15 @@ enum ServiceWire {
         let v = Tsugumi_Agent_DemoReadRequestT()
         v.path = fields["path"] as? String ?? ""
         return (Tsugumi_Agent_RequestPayload.demoreadrequest.rawValue, v)
-      case "VersionSummarizeRequest":
-        let v = Tsugumi_Agent_VersionSummarizeRequestT()
+      case "VersionNoteRequest":
+        let v = Tsugumi_Agent_VersionNoteRequestT()
         v.projectId = fields["project_id"] as? String ?? ""
         v.commit = fields["commit"] as? String ?? ""
-        v.provider = fields["provider"] as? Tsugumi_Service_ProviderSelectionT
-        return (Tsugumi_Agent_RequestPayload.versionsummarizerequest.rawValue, v)
+        v.profile = fields["profile"] as? String ?? "desktop"
+        v.language = fields["language"] as? String ?? "ja"
+        v.anthropicKeyProfile = fields["anthropic_key_profile"] as? String
+        v.openaiKeyProfile = fields["openai_key_profile"] as? String
+        return (Tsugumi_Agent_RequestPayload.versionnoterequest.rawValue, v)
       case "ConversationSummarizeRequest":
         let v = Tsugumi_Agent_ConversationSummarizeRequestT()
         v.conversationId = fields["conversation_id"] as? String ?? ""

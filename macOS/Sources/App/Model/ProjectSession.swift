@@ -435,9 +435,10 @@ final class ProjectSession {
   var versionGraph: Tsugumi_RPC_VersionGraphT?
   /// A version's Cards and wires (a commit never changes: read once).
   var versionCanvases: [String: Tsugumi_RPC_VersionCanvasT] = [:]
-  var versionSummaryBusy: Set<String> = []
-  var versionSummaryErrors: [String: String] = [:]
-  var versionSummaryTried: Set<String> = []
+  var versionNoteBusy: Set<String> = []
+  var versionNoteErrors: [String: String] = [:]
+  var versionNotes: [String: String] = [:]
+  var versionNoteRequests: [String: UUID] = [:]
   @ObservationIgnored var makeRepositoryOnConnect = false
 
   // Runs
@@ -969,7 +970,6 @@ final class ProjectSession {
     case .runfinished:
       if let s = (v.value as? Tsugumi_RPC_RunFinishedT)?.summary.status { runStatus = s }
       lastFinished = Date()
-      if let commit = runStatus?.commit { Task { await summarizeVersion(commit) } }
       if dirty { scheduleSave() }
     default:
       break

@@ -407,7 +407,7 @@ std::vector<std::string> Service::capabilities() {
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
       "ArtifactRead", "ModuleRead", "LogRange", "ViewSetVisible", "ViewSave",
-      "NixSourceResolve", "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionSummary"};
+      "NixSourceResolve", "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionNote", "VersionNoteStore"};
   // Every Display kind of the protocol, and the languages ProjectFileFormat formats.
   for (auto v : D::EnumValuesDisplayValue())
     if (v != D::DisplayValue::NONE) caps.push_back(std::string("display:") + D::EnumNameDisplayValue(v));
@@ -513,7 +513,8 @@ void Service::dispatch(RequestIn req) {
     case P::VersionGraphRequest: return on_lane(r, std::move(req), &Service::version_graph);
     case P::VersionCanvasRequest: return on_lane(r, std::move(req), &Service::version_canvas);
     case P::VersionDiffRequest: return on_lane(r, std::move(req), &Service::version_diff);
-    case P::VersionSummaryRequest: return on_lane(m, std::move(req), &Service::version_summary);
+    case P::VersionNoteRequest: return on_lane(m, std::move(req), &Service::version_note);
+    case P::VersionNoteStoreRequest: return on_lane(m, std::move(req), &Service::version_note_store);
     case P::ProjectCloseRequest: return on_lane(r, std::move(req), &Service::close_project);
     case P::ProjectInspectRequest: return on_lane(r, std::move(req), &Service::inspect);
     case P::ProjectValidateRequest: return on_lane(r, std::move(req), &Service::validate);
@@ -1293,7 +1294,7 @@ void Service::version_graph(RequestIn& req) {
     commits.push_back(R::CreateVersionCommit(b, b.CreateString(c.id), strings(c.parents), b.CreateString(c.summary),
                                              b.CreateString(c.message), b.CreateString(c.author), c.time_ms,
                                              strings(c.branches), strings(c.tags), b.CreateVector(runs), strings(c.changed),
-                                             c.change_summary.empty() ? 0 : b.CreateString(c.change_summary), comment_changes(b, c.comments)));
+                                             comment_changes(b, c.comments)));
   }
   auto vg = R::CreateVersionGraph(b, g.enabled, b.CreateString(g.head), b.CreateString(g.branch), g.dirty, b.CreateVector(commits));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph, vg.Union()));
@@ -1319,8 +1320,16 @@ void Service::version_diff(RequestIn& req) {
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionDiff, vd.Union()));
 }
 
-void Service::version_summary(RequestIn& req) {
-  const auto* r = req.request()->value_as_VersionSummaryRequest();
+void Service::version_note(RequestIn& req) {
+  const auto* r = req.request()->value_as_VersionNoteRequest();
+  auto note = versions_->note(r->commit()->str(), r->language()->str() == "en");
+  FBB b;
+  auto n = R::CreateVersionNote(b, b.CreateString(note.text), b.CreateString(note.agent_summary));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionNote, n.Union()));
+}
+
+void Service::version_note_store(RequestIn& req) {
+  const auto* r = req.request()->value_as_VersionNoteStoreRequest();
   std::string op_id = r->op_id()->str();
   std::string digest = request_digest(req.request());
   if (replay_or_join(req, op_id, "version", digest)) return;

@@ -40,12 +40,13 @@ table AccessListRequest { conversation_id:string; }
 table DemoListRequest {}
 table DemoReadRequest { path:string (required); }
 
-table VersionSummarizeRequest { project_id:string (required); commit:string (required); provider:Tsugumi.Service.ProviderSelection; }
+// Human UI requests a note; policy, provider, deduplication and storage belong to agentd.
+table VersionNoteRequest { project_id:string (required); commit:string (required); profile:string (required); language:string (required); anthropic_key_profile:string; openai_key_profile:string; }
 table ConversationSummarizeRequest { conversation_id:string (required); provider:Tsugumi.Service.ProviderSelection; }
 
 union RequestPayload {
   HelloRequest:Tsugumi.Service.HelloRequest,
-  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, DemoListRequest, DemoReadRequest, VersionSummarizeRequest, ConversationSummarizeRequest
+  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, DemoListRequest, DemoReadRequest, VersionNoteRequest, ConversationSummarizeRequest
 }
 table Request { value:RequestPayload; }
 

@@ -165,8 +165,7 @@ struct VersionTreeView: View {
   @State private var name = ""
   @State private var message = ""
   @State private var confirmStart: String?
-  @HostStorage(VersionSummarizer.defaultsKey) private var summaries = false
-  @State private var confirmSummaries = false
+  @HostStorage("versions.noteMode") private var noteMode = "mechanical"
   // The version under the pointer, where the pointer came in, and the one
   // whose panel shows (a moment later).
   @State private var pointed: String?
@@ -226,15 +225,17 @@ struct VersionTreeView: View {
     } message: {
       Text("今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。")
     }
-    .alert("版の要約をオンにしますか？", isPresented: $confirmSummaries) {
-      Button("オンにする") {
-        summaries = true
-        session.versionSummaryTried.removeAll()
-        session.versionSummaryErrors.removeAll()
+    .onChange(of: noteMode) {
+      session.versionNotes.removeAll()
+      session.versionNoteRequests.removeAll()
+      session.versionNoteBusy.removeAll()
+      session.versionNoteErrors.removeAll()
+      Task {
+        for commit in Set([selected, pointed].compactMap { $0 }) { await session.loadVersionNote(commit) }
       }
-      Button("キャンセル", role: .cancel) {}
-    } message: {
-      Text("新しい版ができたときと、要約のない版にポインタを乗せたときに、その版で変わったコードと設定を接続中のモデルのプロバイダへ送り、小さなモデル（Anthropic なら claude-haiku-5-5）が短い文にします。データのファイルは送りません。Agent とは別に token を使います。ChatGPT プランでは作りません。")
+    }
+    .task(id: selected) {
+      if let selected { await session.loadVersionNote(selected) }
     }
     .task(id: pointed) {
       hovered = nil
@@ -243,7 +244,7 @@ struct VersionTreeView: View {
       guard !Task.isCancelled, pointed == commit else { return }
       hovered = commit
       await session.loadVersionCanvas(commit)
-      await session.summarizeVersion(commit)
+      await session.loadVersionNote(commit)
     }
     .onReceive(NotificationCenter.default.publisher(for: .versionHover)) { n in
       guard let row = n.object as? Int, let commits = session.versionGraph?.commitList, commits.indices.contains(row) else { return }
@@ -271,9 +272,16 @@ struct VersionTreeView: View {
         }
       }
       Spacer()
-      Toggle("版の要約", isOn: Binding(get: { summaries }, set: { if $0 { confirmSummaries = true } else { summaries = false } }))
-        .toggleStyle(.switch).controlSize(.mini)
-        .help("オンにすると、小さなモデルが各版の変更を短い文にします（コードと設定を送ります）")
+      VStack(alignment: .leading, spacing: 3) {
+        Picker("版のノート", selection: $noteMode) {
+          Text("変更の記録").tag("mechanical")
+          Text("Agent の要約").tag("agent")
+        }
+        .fixedSize()
+        Text("変更の記録は Card の追加・削除と定義・ソース・パラメータ・接続の変更を無料で記録します。Agent の要約は差分をモデルのプロバイダへ送り、token を使います。この設定は全プロジェクトに適用します。")
+          .font(.caption).foregroundStyle(.secondary)
+        if let error = CorePreferences.shared.error { Text(error).font(.caption).foregroundStyle(.red) }
+      }
       Button("版として残す…") {
         name = ""
         message = ""
@@ -322,7 +330,7 @@ struct VersionTreeView: View {
   }
 
   /// What shows while the pointer is on a version: what it changed, in a
-  /// model's words, and its Cards. Below the pointer, or above it near the
+  /// selected note style, and its Cards. Below the pointer, or above it near the
   /// bottom of the tree.
   @ViewBuilder
   private func hoverPanel(_ g: Tsugumi_RPC_VersionGraphT, in size: CGSize) -> some View {
@@ -330,15 +338,15 @@ struct VersionTreeView: View {
       let below = pointerY + 20
       let top = below + Self.hoverHeight > size.height ? max(4, pointerY - 20 - Self.hoverHeight) : below
       VStack(alignment: .leading, spacing: 8) {
-        if let summary = c.changeSummary, !summary.isEmpty {
+        if let summary = session.versionNotes[c.id], !summary.isEmpty {
           Text(summary)
-        } else if session.versionSummaryBusy.contains(c.id) {
-          Text("要約しています…").foregroundStyle(.secondary)
+        } else if session.versionNoteBusy.contains(c.id) {
+          Text("ノートを読み込んでいます…").foregroundStyle(.secondary)
         } else {
           Text(c.summary ?? "")
         }
-        if let error = session.versionSummaryErrors[c.id] {
-          Text("要約を作れませんでした: \(error)").font(.caption).foregroundStyle(.red)
+        if let error = session.versionNoteErrors[c.id] {
+          Text("ノートを読み込めませんでした: \(error)").font(.caption).foregroundStyle(.red)
         }
         if let canvas = session.versionCanvases[c.id], !canvas.cards.isEmpty {
           VersionMiniMap(canvas: canvas, changed: c.changedList)
@@ -466,7 +474,12 @@ struct VersionTreeView: View {
       ScrollView {
         VStack(alignment: .leading, spacing: 10) {
           Text(c.summary ?? "").font(.headline)
-          if let summary = c.changeSummary, !summary.isEmpty { Text(summary).font(.callout).textSelection(.enabled) }
+          if let summary = session.versionNotes[c.id], !summary.isEmpty { Text(summary).font(.callout).textSelection(.enabled) }
+          if session.versionNoteBusy.contains(c.id) { Text("ノートを読み込んでいます…").foregroundStyle(.secondary) }
+          if let error = session.versionNoteErrors[c.id] {
+            Text("ノートを読み込めませんでした: \(error)").font(.caption).foregroundStyle(.red)
+            Button("再試行") { Task { await session.loadVersionNote(c.id) } }
+          }
           // The message's body: what follows its first line (the summary).
           let body = (c.message ?? "").split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).dropFirst()
             .joined().trimmingCharacters(in: .whitespacesAndNewlines)

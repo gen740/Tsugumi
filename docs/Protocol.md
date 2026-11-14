@@ -9,7 +9,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 - **Requests that change something**: carry an `op_id`, and a resend with the same `op_id` is applied only once. If a response is lost, check with `OperationGet`.
 - **The Agent's tools**: made from the same schema (`tsugumi.bfbs`) ([Features](features.md#9-agent)).
 
-There are 49 requests.
+There are 50 requests.
 
 ## Connection
 
@@ -437,7 +437,8 @@ No fields.
 | [`VersionGraph`](#versiongraph) | VersionGraph, newest first |  |
 | [`VersionCanvas`](#versioncanvas) | VersionCanvas: the Cards of a version and how they connect (a minimap) |  |
 | [`VersionDiff`](#versiondiff) | VersionDiff: what a version changed from another version (its first parent by default), in the text a summary is written from | Only code and settings: never data files. |
-| [`VersionSummary`](#versionsummary) | VersionResult | Keeps a client's summary of a version in the commit's own note (refs/notes/tsugumi-summary), replacing the one there. |
+| [`VersionNote`](#versionnote) | VersionNote | Core-generated mechanical record and the saved Agent note. The host Agent service chooses which to return to the UI. Mechanical records are kept in refs/notes/tsugumi-record-{ja,en}. |
+| [`VersionNoteStore`](#versionnotestore) | VersionResult | The host Agent service stores the generated note in refs/notes/tsugumi-summary. Clients request notes from agentd. |
 
 ### VersionInit
 
@@ -483,7 +484,14 @@ No fields.
 | `commit` | `string` | yes |  |
 | `from_commit` | `string` |  | Compare from this version; absent means the first parent of commit. |
 
-### VersionSummary
+### VersionNote
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `commit` | `string` | yes |  |
+| `language` | `string` | yes |  |
+
+### VersionNoteStore
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |

@@ -100,3 +100,56 @@ assert.equal(folded.h, CardGeometry.header * 0.3)
 // The kinds as the daemon names them.
 assert.equal(cardKindNamed('fork'), 'fork')
 assert.equal(cardKindNamed('something new'), 'code')
+
+// The UI asks only for a note. No client-side diff, model choice or note write.
+const { ProjectSession } = await import('../src/model/session')
+const fetchBefore = globalThis.fetch
+let mode: 'mechanical' | 'agent' = 'mechanical'
+let failNote = false
+const calls: { path: string; body?: Record<string, unknown> }[] = []
+globalThis.fetch = async (url, init) => {
+  const path = String(url)
+  const body = init?.body ? JSON.parse(String(init.body)) : undefined
+  calls.push({ path, body })
+  if (path === '/api/settings') {
+    if (body?.versionNoteMode) mode = body.versionNoteMode
+    return new Response(JSON.stringify({ versionNoteMode: mode, revision: { desktop: 0 } }))
+  }
+  assert.equal(path, '/api/versions/note')
+  return new Response(JSON.stringify(failNote ? { error: 'retry me' } : { text: 'Host-owned note' }), { status: failNote ? 503 : 200 })
+}
+try {
+  // Avoid connecting a project: only the presentation methods under test run.
+  const session = Object.create(ProjectSession.prototype) as InstanceType<typeof ProjectSession>
+  Object.assign(session, { client: {}, dir: '/project', versionNoteRequests: new Map(), versionNoteBusy: new Set(), versionNoteErrors: new Map(), versionNotes: new Map(), changed() {} })
+  await session.loadVersionNoteMode()
+  assert.equal(session.versionNoteMode, 'mechanical')
+  await session.loadVersionNote('version')
+  assert.equal(session.versionNotes.get('version'), 'Host-owned note')
+  assert.deepEqual(calls.at(-1), { path: '/api/versions/note', body: { path: '/project', commit: 'version' } })
+  await session.setVersionNoteMode('agent')
+  assert.equal(session.versionNoteMode, 'agent')
+  assert.equal(session.versionNotes.size, 0)
+  failNote = true
+  await session.loadVersionNote('version')
+  assert.equal(session.versionNoteBusy.size, 0)
+  assert.equal(session.versionNoteErrors.get('version'), 'retry me')
+  failNote = false
+  await session.loadVersionNote('version')
+  assert.equal(session.versionNoteErrors.size, 0)
+  assert.equal(session.versionNotes.get('version'), 'Host-owned note')
+  const immediateFetch = globalThis.fetch
+  let release!: (response: Response) => void
+  globalThis.fetch = (url, init) => String(url) === '/api/versions/note'
+    ? new Promise<Response>((resolve) => { release = resolve }) : immediateFetch(url, init)
+  const oldRequest = session.loadVersionNote('version')
+  await session.setVersionNoteMode('mechanical')
+  globalThis.fetch = immediateFetch
+  await session.loadVersionNote('version')
+  release(new Response(JSON.stringify({ text: 'Late response for the previous mode' })))
+  await oldRequest
+  assert.equal(session.versionNotes.get('version'), 'Host-owned note', 'a late response cannot overwrite the chosen mode')
+} finally {
+  globalThis.fetch = fetchBefore
+}
+console.log('version notes: host-only request, mode switching, failure display and retry passed')

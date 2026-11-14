@@ -67,6 +67,7 @@
 "Agent が開き直しました" = "Reopened by the Agent";
 "Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。" = "The Agent's requests use your ChatGPT plan. You can review and manage usage in ChatGPT settings (Usage).";
 "Agent の発言とツールの結果を、数秒ごとに小さなモデル（%@、接続先: %@）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。" = "Every few seconds the Agent's words and tool results are sent to a small model (%@, via %@) to be summarized and shown in the Tsugumi's speech bubble on the canvas. This uses tokens besides the Agent's. When off, the bubble shows only short lines made from tool calls.";
+"Agent の要約" = "Agent summary";
 "Altair（対話型 HTML）" = "Altair (interactive HTML)";
 "Anthropic API キー" = "Anthropic API Key";
 "Anthropic API（API キー）" = "Anthropic API (API key)";
@@ -329,7 +330,6 @@
 "この実行環境の既定" = "Execution environment default";
 "この実行環境の既定（%@）" = "Execution environment default (%@)";
 "この形式の整形には対応していません" = "Formatting is not available for this file type";
-"この接続では版の要約を作りません。" = "This connection does not make version summaries.";
 "この操作にはユーザーの権限が必要です。" = "This operation requires user authorization.";
 "この操作はできません" = "This cannot be done";
 "この日時より前に終わった実行を削除しますか？" = "Delete the runs that ended before this date?";
@@ -393,7 +393,6 @@
 "オン" = "On";
 "オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。" = "On: the loaded worker is used for later calls and runs too, keeping its state (static variables and the like). Off: a new worker for every call.";
 "オンにする" = "Turn On";
-"オンにすると、小さなモデルが各版の変更を短い文にします（コードと設定を送ります）" = "When on, a small model writes each version's change in a short sentence (code and settings are sent)";
 "オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。" = "When on, search queries go through the connected provider to its search service. The Agent is told to keep unpublished data out of them, but this cannot be guaranteed. Queries and sources stay in the chat. Searches may be charged.";
 "ガイドのツグミ" = "Tsugumi the Guide";
 "ガイドのツグミとの会話" = "Conversation with Tsugumi the Guide";
@@ -534,6 +533,8 @@
 "ネットワークへのアクセス" = "Network access";
 "ネットワークへのアクセスを許可する" = "Allow network access";
 "ネットワークを設定しています" = "Setting up the network";
+"ノートを読み込めませんでした: %@" = "Could not load note: %@";
+"ノートを読み込んでいます…" = "Loading note…";
 "バイナリ %lld bytes。書き出して確認してください。" = "Binary, %lld bytes. Export it to inspect.";
 "バイナリの成果物です" = "This artifact contains binary data";
 "バイナリキャッシュ" = "Binary Caches";
@@ -877,6 +878,8 @@
 "変更: %@" = "Changed: %@";
 "変更した Card: %@" = "Changed Cards: %@";
 "変更できませんでした" = "Could not change";
+"変更の記録" = "Change record";
+"変更の記録は Card の追加・削除と定義・ソース・パラメータ・接続の変更を無料で記録します。Agent の要約は差分をモデルのプロバイダへ送り、token を使います。この設定は全プロジェクトに適用します。" = "The change record lists added and removed Cards and changes to definitions, source, parameters and wiring at no cost. The Agent summary sends the diff to the model provider and uses tokens. This setting applies to all projects.";
 "変更はありません" = "No changes";
 "変更はメニューに反映されます（反映されない場合はウインドウを開き直してください）。" = "Changes apply to the menus (reopen the window if they do not).";
 "変更は操作するたびに保存されます。チャットや別のウインドウでの変更もすぐに反映されます。" = "Changes are saved as you make them. Changes from the chat or other windows show up at once.";
@@ -1085,7 +1088,6 @@
 "新しいプロジェクトの作り方は？" = "How do I make a new project?";
 "新しいプロジェクトの流れの向き" = "Flow direction of new projects";
 "新しい会話" = "New Conversation";
-"新しい版ができたときと、要約のない版にポインタを乗せたときに、その版で変わったコードと設定を接続中のモデルのプロバイダへ送り、小さなモデル（Anthropic なら claude-haiku-5-5）が短い文にします。データのファイルは送りません。Agent とは別に token を使います。ChatGPT プランでは作りません。" = "When a new version is made, and when you point at a version with no summary, the code and settings it changed go to the connected model provider, and a small model (claude-haiku-5-5 on Anthropic) writes a short sentence. Data files are not sent. This uses tokens apart from the Agent's. Summaries are not made on the ChatGPT plan.";
 "新しく作るプロジェクトの Card を並べる向きです。開いているプロジェクトの向きは、設定の「このプロジェクト」→「Canvas」で変えます。" = "The direction new projects lay out their Cards in. For an open project, change it in Settings → This project → Canvas.";
 "新規" = "New";
 "新規プロジェクト" = "New Project";
@@ -1167,12 +1169,11 @@
 "版が記録されていないため差分を表示できません。" = "A version was not recorded, so its changes are unavailable.";
 "版として残す" = "Keep as Version";
 "版として残す…" = "Keep as Version…";
+"版のノート" = "Version note";
 "版の履歴" = "Version History";
 "版の履歴…" = "Version History…";
 "版の履歴を開く（確定 revision %llu、⌥⌘Y）" = "Open the version history (saved revision %llu, ⌥⌘Y)";
 "版の履歴（git、⌥⌘Y）" = "Version history (git, ⌥⌘Y)";
-"版の要約" = "Version summaries";
-"版の要約をオンにしますか？" = "Turn on version summaries?";
 "版を操作できませんでした" = "The version could not be changed";
 "版を選ぶと、その実行の結果と変わった Card を表示します。" = "Select a version to see its runs and the Cards it changed.";
 "版管理されていません" = "Not versioned";
@@ -1245,8 +1246,6 @@
 "複製" = "Duplicate";
 "複製できませんでした: " = "Could not duplicate: ";
 "複製を作る場所を選んでください（保存済みの内容を複製します）" = "Choose where to make the copy (the saved contents are copied)";
-"要約しています…" = "Summarizing…";
-"要約を作れませんでした: %@" = "Could not write a summary: %@";
 "見つからないフォルダ: " = "Missing folders: ";
 "見つかりません" = "Not found";
 "見る" = "Show Me";

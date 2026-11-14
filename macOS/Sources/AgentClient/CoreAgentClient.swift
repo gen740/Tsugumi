@@ -208,6 +208,17 @@ public actor CoreAgentClient {
     return value
   }
 
+  /// Platform credential transport only; agentd chooses the note mode and model.
+  public func versionNote(project: String, commit: String, language: String) async throws -> String {
+    for (id, account) in [("anthropic", "Anthropic"), ("openai", "OpenAI")] {
+      try await provisionKey(Keychain.loadWithoutAsking(account: account), id: id)
+    }
+    let reply = try await call("VersionNoteRequest", ["project_id": project, "commit": commit,
+      "profile": "desktop", "language": language,
+      "anthropic_key_profile": keyProfile, "openai_key_profile": keyProfile])
+    return reply["text"] as? String ?? ""
+  }
+
   public func provisionKey(_ key: String?, id: String) async throws {
     var fields: [String: Any] = ["profile": keyProfile, "id": id, "ephemeral": true, "remove": key == nil]
     if let key { let input = Tsugumi_Service_ProviderInputT(); input.apiKey = key; fields["provider"] = input }

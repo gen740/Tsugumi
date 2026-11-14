@@ -212,11 +212,11 @@ When the Agent is used, the following is sent to the connected model provider (A
 - When asking the guide's thrush a question, and during a demo's guide: the question or tour message, and what the guide reads through authorized tools. The UI sends project references and selected Skill names; the Agent service reads their contents after authorization. The guide has no tools to save, run or stop, and does not change the project. While not connected to a model, the thrush answers from its script and sends nothing.
 - With web search turned on under "API" in the settings: the search terms the Agent writes are passed on by the provider to its search service ([Web search](#web-search)).
 
-- With "Version summaries" on (off by default; [Versions](Versions.md#version-summaries)): the diffs of code and settings changed in each version, the commit message and the names of the Cards that changed. Data files are not sent.
+- With "Agent summary" selected for version notes (the default is the mechanical Change record; [Versions](Versions.md#version-notes)): the diffs of code and settings changed in a requested version. Data files are not sent.
 
 **Note that using the Agent sends part of the code, logs, input and output data and the contents of attached folders in the project to an outside model provider.** Before using the Agent on a project containing unpublished data or confidential information, check that it may be sent to the provider.
 
-Conversely, **without the Agent, with "Version summaries" off and with no Card that has `network: true`, the project's content and data stay in the local execution environment, provided all Cards use the local execution service** (apart from Nix fetching packages). A Card allowed `network: true` can send the data it can access (its inputs, the contents of host folders specified for it and so on) to the outside network.
+Conversely, **without the Agent, with "Change record" selected for version notes and with no Card that has `network: true`, the project's content and data stay in the local execution environment, provided all Cards use the local execution service** (apart from Nix fetching packages). A Card allowed `network: true` can send the data it can access (its inputs, the contents of host folders specified for it and so on) to the outside network.
 
 ### Web search
 

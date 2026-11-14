@@ -1014,7 +1014,6 @@ export class ProjectSession extends Observable {
       case R.RunEventValue.RunStatusChanged: {
         const st = (e.value as R.RunStatusChangedT).status
         if (st && (!this.runStatus || s(st.runId) === s(this.runStatus.runId))) this.runStatus = st
-        if (st?.commit && (st.state === D.RunState.succeeded || st.state === D.RunState.failed || st.state === D.RunState.cancelled)) void this.summarizeVersion(s(st.commit))
         break
       }
       case R.RunEventValue.RunCardChanged: {
@@ -3259,9 +3258,10 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
 
   /** A version's Cards and wires (a commit never changes: read once). */
   versionCanvases = new Map<string, R.VersionCanvasT>()
-  versionSummaryBusy = new Set<string>()
-  versionSummaryErrors = new Map<string, string>()
-  private versionSummaryTried = new Set<string>()
+  versionNoteBusy = new Set<string>()
+  versionNoteErrors = new Map<string, string>()
+  versionNotes = new Map<string, string>()
+  private versionNoteRequests = new Map<string, string>()
 
   async loadVersionCanvas(commit: string) {
     if (!this.client || this.versionCanvases.has(commit)) return
@@ -3271,50 +3271,44 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
     } catch {}
   }
 
-  /** Switched in the version tree; the server keeps it and refuses while off. */
-  versionSummaries = false
+  versionNoteMode: 'mechanical' | 'agent' = 'mechanical'
 
-  async loadVersionSummaries() {
-    const v = await api<{ versionSummaries?: boolean }>('/api/settings').catch(() => null)
-    this.versionSummaries = !!v?.versionSummaries
+  async loadVersionNoteMode() {
+    const v = await api<{ versionNoteMode: 'mechanical' | 'agent' }>('/api/settings')
+    this.versionNoteMode = v.versionNoteMode
     this.changed()
   }
 
-  async setVersionSummaries(on: boolean) {
-    await api('/api/settings', { versionSummaries: on })
-    this.versionSummaries = on
-    this.versionSummaryTried.clear()
-    this.versionSummaryErrors.clear()
+  async setVersionNoteMode(mode: 'mechanical' | 'agent') {
+    const v = await api<{ versionNoteMode: 'mechanical' | 'agent' }>('/api/settings', { versionNoteMode: mode })
+    this.versionNoteMode = v.versionNoteMode
+    this.versionNotes.clear()
+    this.versionNoteRequests.clear()
+    this.versionNoteBusy.clear()
+    this.versionNoteErrors.clear()
     this.changed()
   }
 
-  /** Has a small model write what `commit` changed, once, while switched on:
-   *  as a run of it ends and when it is hovered without a summary. Only its
-   *  code and settings go out (VersionDiff); the sentence goes to its note. */
-  async summarizeVersion(commit: string) {
-    if (!this.client || this.versionSummaryTried.has(commit)) return
-    await this.loadVersionSummaries()
-    if (!this.versionSummaries || this.versionSummaryTried.has(commit)) return
-    this.versionSummaryTried.add(commit)
-    this.versionSummaryBusy.add(commit)
+  /** Ask agentd for the displayed note; it owns policy, generation and storage. */
+  async loadVersionNote(commit: string) {
+    if (!this.client) return
+    const request = uuid()
+    this.versionNoteRequests.set(commit, request)
+    this.versionNoteBusy.add(commit)
+    this.versionNoteErrors.delete(commit)
     this.changed()
     try {
-      await this.refreshVersions()
-      const c = this.versionGraph?.commits.find((x) => x && s(x.id) === commit)
-      if (c && !c.changeSummary) {
-        const diff = await this.client.versionDiff(commit)
-        // Nothing a summary may read changed (the layout, data files).
-        if (s(diff.text)) {
-          const { text } = await api<{ text: string }>('/api/versions/summarize', { path: this.dir, commit })
-          await this.client.versionSummary(uuid(), 'ui', commit, text)
-          await this.refreshVersions()
-        }
-      }
+      const { text } = await api<{ text: string }>('/api/versions/note', { path: this.dir, commit })
+      if (this.versionNoteRequests.get(commit) === request) this.versionNotes.set(commit, text)
     } catch (e) {
-      this.versionSummaryErrors.set(commit, String((e as Error)?.message ?? e))
+      if (this.versionNoteRequests.get(commit) === request) this.versionNoteErrors.set(commit, String((e as Error)?.message ?? e))
+    } finally {
+      if (this.versionNoteRequests.get(commit) === request) {
+        this.versionNoteBusy.delete(commit)
+        this.versionNoteRequests.delete(commit)
+      }
+      this.changed()
     }
-    this.versionSummaryBusy.delete(commit)
-    this.changed()
   }
 
   async makeRepository() {
