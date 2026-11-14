@@ -518,6 +518,7 @@ void Service::run_record(RequestIn& req) {
         }
         auto art = m.artifact_id ? b.CreateString(*m.artifact_id) : flatbuffers::Offset<flatbuffers::String>();
         auto hash = m.hash.empty() ? flatbuffers::Offset<flatbuffers::String>() : b.CreateString(m.hash);
+        auto file_hash = m.file_content_hash.empty() ? flatbuffers::Offset<flatbuffers::String>() : b.CreateString(m.file_content_hash);
         flatbuffers::Offset<flatbuffers::String> file_path;
         bool file_missing = false;
         if (m.kind != PortKind::FlatBuffer) {
@@ -555,6 +556,7 @@ void Service::run_record(RequestIn& req) {
         if (include) nb.add_inline_bytes(inl);
         if (m.artifact_id) nb.add_artifact_id(art);
         if (!hash.IsNull()) nb.add_content_hash(hash);
+        if (!file_hash.IsNull()) nb.add_file_content_hash(file_hash);
         if (!file_path.IsNull()) nb.add_file_path(file_path);
         nb.add_file_missing(file_missing);
         v.push_back(nb.Finish());

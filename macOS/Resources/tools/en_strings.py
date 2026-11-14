@@ -31,6 +31,7 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"ファイル「%@」を読み込めませんでした: %@": "Could not read file “%@”: %@",
 "外部の変更が Card の権限を広げます": "External changes widen Card permissions",
 "表示された権限を許可して、外部の変更を読み込みますか？": "Allow the listed permissions and reload the external changes?",
 "部分実行": "Partial run",

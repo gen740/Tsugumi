@@ -51,8 +51,12 @@ const sameBytes = (a: number[], b: number[]) => a.length === b.length && a.every
 /** The kind and schema come first, then the digest or the returned payload.
  *  The response may omit a large payload. Its size alone cannot show equality. */
 export function valueDifference(a?: D.NamedValueT, b?: D.NamedValueT): Difference {
-  if (!a || !b) return a || b ? 'changed' : 'same'
+  if (!a || !b) return a || b ? 'unknown' : 'same'
   if (a.kind !== b.kind || s(a.rootType) !== s(b.rootType) || !sameBytes(a.schemaBfbs, b.schemaBfbs)) return 'changed'
+  if (a.kind === D.PortKind.File) {
+    const x = s(a.fileContentHash), y = s(b.fileContentHash)
+    return x && y ? x === y ? 'same' : 'changed' : 'unknown'
+  }
   const leftHash = s(a.contentHash), rightHash = s(b.contentHash)
   if (leftHash && rightHash) return leftHash === rightHash ? 'same' : 'changed'
   if ((!a.inlineBytes.length && a.sizeBytes !== 0n) || (!b.inlineBytes.length && b.sizeBytes !== 0n)) return 'unknown'

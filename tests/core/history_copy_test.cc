@@ -3,10 +3,69 @@
 #include <gtest/gtest.h>
 
 #include "util/crypto.hh"
+#include "util/fs.hh"
 #include "wire.hh"
 
 namespace tsugumi {
 namespace {
+
+TEST(HistoryCopy, FileContentDigestsSurviveMissingFilesAndPortableHistory) {
+  const auto directory = std::filesystem::temp_directory_path() / ("tsugumi-history-" + crypto::uuid4());
+  std::filesystem::create_directories(directory);
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() { std::filesystem::remove_all(path); }
+  } cleanup{directory};
+  History original(directory / "original.sqlite", "secret");
+  History restored(directory / "restored.sqlite", "secret");
+  std::string error;
+  const auto type = types::compile("table File { value:string; } root_type File;", "File", &error);
+  ASSERT_TRUE(type) << error;
+  const std::string bytes("\0\xff\x80\xc3(\n", 6);
+  std::vector<std::string> runs, hashes;
+  for (int i = 0; i < 3; ++i) {
+    const auto file = directory / ("file-" + std::to_string(i));
+    fs::write_atomic(file, i == 2 ? "other" : bytes);
+    flatbuffers::FlatBufferBuilder builder;
+    const auto text = builder.CreateString(file.string());
+    const auto start = builder.StartTable();
+    builder.AddOffset(4, text);
+    builder.Finish(flatbuffers::Offset<flatbuffers::Table>(builder.EndTable(start)));
+    Value value{"file", PortKind::File, *type,
+                std::string(reinterpret_cast<const char*>(builder.GetBufferPointer()), builder.GetSize()), {}};
+    RunSummaryData run;
+    run.status.run_id = crypto::uuid4();
+    run.status.state = RunState::succeeded;
+    InvocationRecordData invocation;
+    invocation.summary.run_id = *run.status.run_id;
+    invocation.summary.card = {"card"};
+    invocation.summary.invocation = 1;
+    invocation.summary.state = CardState::succeeded;
+    invocation.record_io = true;
+    invocation.inputs = {value};
+    invocation.outputs = {value};
+    original.write_sync([&](sql::Db& db) {
+      History::insert_run(db, run, crypto::uuid4());
+      original.complete_invocation(db, invocation);
+    });
+    hashes.push_back(crypto::sha256_hex(value.bytes));
+    runs.push_back(*run.status.run_id);
+    std::filesystem::remove(file);
+  }
+  ASSERT_NE(hashes[0], hashes[1]);
+  ASSERT_EQ(original.export_runs(directory / "runs.sqlite"), 3u);
+  ASSERT_EQ(restored.import_runs(directory / "runs.sqlite"), 3u);
+  for (size_t i = 0; i < runs.size(); ++i) {
+    for (const bool input : {false, true}) {
+      restored.read([&](sql::Db& db) {
+        const auto values = History::value_metas(db, runs[i], {"card"}, 1, input);
+        ASSERT_EQ(values.size(), 1u);
+        EXPECT_EQ(values[0].hash, hashes[i]);
+        EXPECT_EQ(values[0].file_content_hash, crypto::sha256_hex(i == 2 ? "other" : bytes));
+      });
+    }
+  }
+}
 
 TEST(HistoryCopy, RoundTripPreservesEveryRunFieldIncludingCommit) {
   const auto directory = std::filesystem::temp_directory_path() / ("tsugumi-history-" + crypto::uuid4());

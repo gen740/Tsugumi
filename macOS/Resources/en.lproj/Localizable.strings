@@ -554,6 +554,7 @@
 "ビルドキャッシュまたは実行の scratch が大きくなっています。設定の「ビルドキャッシュ」で容量と削除対象を確認できます。" = "Build cache or run scratch is growing. Review sizes and deletion candidates in Settings → Build Cache.";
 "ビルドキャッシュを削除しますか？" = "Delete the build cache?";
 "ファイル" = "File";
+"ファイル「%@」を読み込めませんでした: %@" = "Could not read file “%@”: %@";
 "ファイルを作成" = "Create File";
 "ファイルを検索" = "Search files";
 "ファイルを読み込めませんでした" = "Could not read the file";

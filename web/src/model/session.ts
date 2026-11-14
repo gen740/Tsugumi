@@ -1316,7 +1316,7 @@ export class ProjectSession extends Observable {
       for (const [p, v] of e.sourcesBefore) {
         if (v.kind !== 'confirmed') continue
         try {
-          e.sourcesBefore.set(p, { kind: 'text', text: new TextDecoder().decode(await client.readFile(p, this.rev)) })
+          e.sourcesBefore.set(p, { kind: 'text', text: await client.readFile(p, this.rev) })
         } catch {}
       }
     }
@@ -2187,6 +2187,21 @@ export class ProjectSession extends Observable {
     return new TextDecoder().decode(await this.client.readFile(p, this.rev))
   }
 
+  /** Read every byte before a destructive edit; a missing file aborts the edit. */
+  async copyBytes(p: string): Promise<Uint8Array> {
+    try {
+      const edit = this.sourceEdits.get(p)
+      if (edit !== undefined) return sourceBytes(edit).slice()
+      if (!this.client) throw new RPCError('disconnected', L('接続していません'))
+      return await this.client.readFile(p, this.rev)
+    } catch (e) { throw new Error(L('ファイル「{0}」を読み込めませんでした: {1}', p, errorText(e))) }
+  }
+
+  private cardEditFailed(e: unknown) {
+    this.notice = errorText(e)
+    this.changed()
+  }
+
   collapsed(k: CardKey): boolean {
     return bool(get(this.layoutOf(path(k).slice(0, -1)), 'cards', this.layoutKey(k), 'collapsed')) ?? false
   }
@@ -2257,14 +2272,12 @@ export class ProjectSession extends Observable {
     const dir = `${prefix}definitions/${id}/`
     const newId = await this.newCardId(name ?? str(get(d.meta, 'name')) ?? id, scope)
     const toPrefix = this.projectPrefix(scope) ?? ''
-    const files = new Map<string, string>()
+    const files = new Map<string, Uint8Array>()
     for (const p of this.sourcePaths) {
       if (!p.startsWith(dir)) continue
       const rel = p.slice(dir.length)
       if (['_card.json', '_link.json', '_meta.json'].includes(rel)) continue
-      try {
-        files.set(`${toPrefix}definitions/${newId}/${rel}`, await this.sourceText(p))
-      } catch {}
+      files.set(`${toPrefix}definitions/${newId}/${rel}`, await this.copyBytes(p))
     }
     let link = d.link
     let copy: ExternalCopy | undefined
@@ -2308,9 +2321,7 @@ export class ProjectSession extends Observable {
       if (!p.startsWith(from)) continue
       // Documents come from the parsed externals; every other file is copied.
       if (inside.some(([pre]) => p.startsWith(pre) && isDocument(p.slice(pre.length)))) continue
-      try {
-        c.files.set(to + p.slice(from.length), await this.sourceText(p))
-      } catch {}
+      c.files.set(to + p.slice(from.length), await this.copyBytes(p))
     }
     return c
   }
@@ -2321,7 +2332,9 @@ export class ProjectSession extends Observable {
     const base = from.split('/').filter(Boolean).pop() ?? 'sub'
     const name = await this.newCardId(base, scope)
     const toPrefix = this.projectPrefix(scope) ?? ''
-    const copy = await this.copyExternal(from, `${toPrefix}externals/${name}/`)
+    let copy: ExternalCopy
+    try { copy = await this.copyExternal(from, `${toPrefix}externals/${name}/`) }
+    catch (e) { this.cardEditFailed(e); return undefined }
     const k = key([...scope, name])
     this.edit((x) => {
       copy.apply(x)
@@ -2334,7 +2347,9 @@ export class ProjectSession extends Observable {
 
   /** Places a copy of a definition of an external (or of this project) as a new Card. */
   async placeDefinitionCopy(prefix: string, id: string, scope: string[], at: { x: number; y: number }): Promise<CardKey | undefined> {
-    const c = await this.copyDefinition(prefix, id, scope)
+    let c: Awaited<ReturnType<ProjectSession['copyDefinition']>>
+    try { c = await this.copyDefinition(prefix, id, scope) }
+    catch (e) { this.cardEditFailed(e); return undefined }
     if (!c) return undefined
     const k = key([...scope, c.id])
     this.edit((x) => {
@@ -2405,15 +2420,17 @@ export class ProjectSession extends Observable {
     const applies: ((sess: ProjectSession) => void)[] = []
     const taken = new Set<string>()
     const prefix = this.projectPrefix(scope) ?? ''
-    for (const k of [...keys].sort()) {
-      const id = path(k).pop()
-      if (!id) continue
-      const c = await this.copyDefinition(prefix, id, scope)
-      if (!c) continue
-      taken.add(c.id)
-      map.set(id, c.id)
-      applies.push(c.apply)
-    }
+    try {
+      for (const k of [...keys].sort()) {
+        const id = path(k).pop()
+        if (!id) continue
+        const c = await this.copyDefinition(prefix, id, scope)
+        if (!c) return keys
+        taken.add(c.id)
+        map.set(id, c.id)
+        applies.push(c.apply)
+      }
+    } catch (e) { this.cardEditFailed(e); return keys }
     const made = new Set<CardKey>()
     this.edit((x) => {
       for (const a of applies) a(x)
@@ -2763,25 +2780,26 @@ export class ProjectSession extends Observable {
     const newKey = key([...scope, newId])
     const ext = `${scopePrefix}externals/${newId}/`
     // Files of the Cards' definition folders, and of their own externals.
-    const files = new Map<string, string>()
+    const files = new Map<string, Uint8Array>()
     const moved = new Map<string, ExternalProject>()
-    for (const k of keys) {
-      const dir = this.definitionDir(k), id = path(k).pop()
-      if (!dir || !id) continue
-      for (const p of this.sourcePaths) {
-        if (p.startsWith(dir) && !isDocument(p.slice(scopePrefix.length))) files.set(`${ext}definitions/${id}/${p.slice(dir.length)}`, await this.sourceText(p).catch(() => ''))
-      }
-      const inner = this.cardExternal(k)
-      const e = inner ? this.external(inner) : undefined
-      const n = str(get(this.cardDefinitionDraft(k)?.link, 'external'))
-      if (inner && e && n) {
-        const to = `${ext}externals/${n}/`
+    try {
+      for (const k of [...keys].sort()) {
+        const dir = this.definitionDir(k), id = path(k).pop()
+        if (!dir || !id) continue
         for (const p of this.sourcePaths) {
-          if (p.startsWith(inner) && !isDocument(p.slice(inner.length))) files.set(to + p.slice(inner.length), await this.sourceText(p).catch(() => ''))
+          if (p.startsWith(dir) && !isDocument(p.slice(scopePrefix.length))) files.set(`${ext}definitions/${id}/${p.slice(dir.length)}`, await this.copyBytes(p))
         }
-        moved.set(to, cloneExternal(e))
+        const inner = this.cardExternal(k)
+        const e = inner ? this.external(inner) : undefined
+        const n = str(get(this.cardDefinitionDraft(k)?.link, 'external'))
+        if (inner && e && n) {
+          const to = `${ext}externals/${n}/`
+          const copy = await this.copyExternal(inner, to)
+          for (const [p, bytes] of copy.files) files.set(p, bytes)
+          for (const [p, doc] of copy.docs) moved.set(p, doc)
+        }
       }
-    }
+    } catch (e) { this.cardEditFailed(e); return undefined }
     this.edit((x) => {
       let cx = 0, cy = 0
       for (const k of keys) {
@@ -2838,6 +2856,7 @@ export class ProjectSession extends Observable {
         ]),
         layout: obj(), definitions: new Map(),
       }
+      if (isObj(e.project)) e.project.set('nixSources', clone(get(root, 'nixSources')))
       const extCards: [string, J][] = []
       for (const k of [...keys].sort()) {
         const id = path(k).pop()
@@ -2850,7 +2869,7 @@ export class ProjectSession extends Observable {
       e.layout = obj([['cards', new JObj(extCards)]])
       for (const k of keys) {
         const inn = x.cardExternal(k)
-        if (inn) x.removeExternal(inn)
+        if (inn) for (const p of [...x.effectiveExternals.keys()].filter(p => p.startsWith(inn))) x.removeExternal(p)
         x.removeCardDefinition(k)
       }
       for (const [p, t] of files) {
@@ -3745,7 +3764,7 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
 /** An external's documents and files, ready to be written under another folder. */
 export class ExternalCopy {
   docs = new Map<string, ExternalProject>() // folder -> documents (the external and the ones in it)
-  files = new Map<string, string>()
+  files = new Map<string, Uint8Array>()
 
   apply(sess: ProjectSession) {
     for (const [p, t] of this.files) {

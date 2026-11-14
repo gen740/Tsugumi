@@ -78,8 +78,12 @@ struct ComparedRunField: Identifiable {
 
   /// Compares the type and content digest, or the payload when both are available.
   static func valueDifference(_ a: Tsugumi_Data_NamedValueT?, _ b: Tsugumi_Data_NamedValueT?) -> ComparedDifference {
-    guard let a, let b else { return a == nil && b == nil ? .same : .changed }
+    guard let a, let b else { return a == nil && b == nil ? .same : .unknown }
     if a.kind != b.kind || a.rootType != b.rootType || a.schemaBfbs != b.schemaBfbs { return .changed }
+    if a.kind == .file {
+      guard let x = a.fileContentHash, !x.isEmpty, let y = b.fileContentHash, !y.isEmpty else { return .unknown }
+      return x == y ? .same : .changed
+    }
     if let x = a.contentHash, !x.isEmpty, let y = b.contentHash, !y.isEmpty { return x == y ? .same : .changed }
     if omitted(a) || omitted(b) { return .unknown }
     return a.inlineBytes == b.inlineBytes ? .same : .changed
