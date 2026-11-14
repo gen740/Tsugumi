@@ -9,7 +9,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 - **Requests that change something**: carry an `op_id`, and a resend with the same `op_id` is applied only once. If a response is lost, check with `OperationGet`.
 - **The Agent's tools**: made from the same schema (`tsugumi.bfbs`) ([Features](features.md#9-agent)).
 
-There are 51 requests.
+There are 52 requests.
 
 ## Connection
 
@@ -35,6 +35,7 @@ There are 51 requests.
 | [`ProjectOpen`](#projectopen) | OpenResult | Creates (or replaces) the connection's subscription. |
 | [`ProjectClose`](#projectclose) | Ack | Ends only the given subscription. Unknown ids are acknowledged. |
 | [`ProjectInspect`](#projectinspect) | ProjectSnapshot | No subscription, build or reload. |
+| [`ProjectHostRequirements`](#projecthostrequirements) | ProjectHostRequirements | Reads the accepted document, never the disk. |
 | [`CardId`](#cardid) | CardIdResult | Reserves a permanent identifier for a new Card without changing the document revision. Supply a caller-derived stem (1..123 ASCII identifier characters); use the returned id in the canvas, paths and wires. Each call reserves a fresh id; save the definition and canvas with project_save. |
 | [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. |
 | [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. Every permission widening requires explicit approval, regardless of origin. |
@@ -58,6 +59,10 @@ There are 51 requests.
 | `subscription_id` | `string` | yes |  |
 
 ### ProjectInspect
+
+No fields.
+
+### ProjectHostRequirements
 
 No fields.
 

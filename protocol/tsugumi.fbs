@@ -136,6 +136,22 @@ table ProjectSnapshot {
   execution_services:[ExecutionService] (id: 13);
 }
 
+/// Requirements of the accepted, resolved definitions, per executable Card.
+/// Host policy and mount availability do not change this description.
+table HostFolderRequirement {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  path:string (id: 1, required);
+  write:bool (id: 2);
+}
+
+table ProjectHostRequirements {
+  rev:uint64 (id: 0);
+  folders:[HostFolderRequirement] (id: 1);
+}
+
+/// -> ProjectHostRequirements. Reads the accepted document, never the disk.
+table ProjectHostRequirementsRequest {}
+
 // ---- Document changes --------------------------------------------------------
 
 table SetProject { json:string (id: 0, required); }
@@ -897,6 +913,7 @@ union RequestPayload {
   CardIdRequest = 50,
   VersionNoteRequest = 51,
   RunEnvironmentUsesRequest = 52,
+  ProjectHostRequirementsRequest = 53,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1282,6 +1299,7 @@ union ReplyPayload {
   CardIdResult = 38,
   VersionNote = 39,
   EnvironmentUsePage = 40,
+  ProjectHostRequirements = 41,
 }
 
 // ---- Notifications -----------------------------------------------------------

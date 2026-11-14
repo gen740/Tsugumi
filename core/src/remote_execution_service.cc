@@ -210,9 +210,9 @@ auto RemoteExecutionService::prepare(const Node& node, const stdfs::path& direct
     -> std::unique_ptr<PreparedExecution> {
   const auto& settings = node.settings;
   const auto targets = service_.remote_targets();
-  if (auto diagnostic = Service::execution_diagnostic(node, targets))
-    throw Failed(FailureKind::unsupported, diagnostic->message);
   const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
+  if (target == targets.end())
+    throw Failed(FailureKind::unsupported, "execution service " + settings.execution_service + " is not registered");
   auto probe = client_.probe(target->id, target->server_id);
   auto system = settings.system.empty() ? probe.native_system : settings.system;
   if (system.empty()) throw Failed(FailureKind::unsupported, "remote worker system is unknown");

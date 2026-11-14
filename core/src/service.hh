@@ -150,6 +150,7 @@ class Service : public RequestSink {
   void version_note(RequestIn& req);
   void version_note_store(RequestIn& req);
   void close_project(RequestIn& req);
+  auto project_host_requirements(RequestIn& req) -> void;
   void inspect(RequestIn& req);
   void validate(RequestIn& req);
   void operation_get(RequestIn& req);

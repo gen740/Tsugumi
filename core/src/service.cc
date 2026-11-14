@@ -1,4 +1,5 @@
 #include "service.hh"
+#include "host_requirements.hh"
 
 #include <unistd.h>
 
@@ -319,11 +320,9 @@ auto Service::execution_diagnostic(const Node& node, const std::vector<RemoteTar
   };
   if (target == targets.end() || !target->available)
     return error("execution service " + settings.execution_service + " is not available");
-  if (settings.execution_resources && !target->resource_limits)
-    return error("execution service " + target->id + " cannot enforce resource limits");
-  const auto& system = settings.system.empty() ? target->native_system : settings.system;
-  if (std::ranges::find(target->systems, system) == target->systems.end())
-    return error("execution service " + target->id + " does not support system " + system);
+  // Cached capabilities describe the last observation, not a reason to refuse
+  // a run. RemoteExecutionService probes the worker before choosing a system
+  // or checking resources.
   return std::nullopt;
 }
 
@@ -399,7 +398,7 @@ void Service::export_now() {
 
 std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {
-      "SessionHello", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
+      "SessionHello", "ProjectHostRequirements", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
       "ProjectReload", "ProjectValidate", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "RunHistoryDelete", "OperationGet",
       "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "LayoutArrange", "LayoutUntangle", "AttachedFolderRead",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
@@ -495,6 +494,7 @@ void Service::dispatch(RequestIn req) {
   Lane& m = *mutation_lane_;
   Lane& r = *read_pool_;
   switch (req.request()->value_type()) {
+    case P::ProjectHostRequirementsRequest: return on_lane(r, std::move(req), &Service::project_host_requirements);
     case P::ProjectOpenRequest: return on_lane(m, std::move(req), &Service::open_project);
     case P::CardIdRequest: return on_lane(m, std::move(req), &Service::card_id);
     case P::ProjectSaveRequest: return on_lane(m, std::move(req), &Service::save);
@@ -1494,6 +1494,14 @@ void Service::close_project(RequestIn& req) {
   auto ack = R::CreateAck(b);
   server_->unsubscribe(req.conn, r->subscription_id()->str(),
                        wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union()));
+}
+
+auto Service::project_host_requirements(RequestIn& req) -> void {
+  const auto doc = store_->current();
+  auto value = host_requirements(*doc->resolution, doc->rev);
+  flatbuffers::FlatBufferBuilder b;
+  auto result = Tsugumi::RPC::ProjectHostRequirements::Pack(b, &value);
+  reply(req, wire::reply(b, req.request_id, Tsugumi::RPC::ReplyPayload::ProjectHostRequirements, result.Union()));
 }
 
 void Service::inspect(RequestIn& req) {
