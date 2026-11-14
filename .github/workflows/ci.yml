@@ -4,6 +4,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '17 18 * * *' # Nightly at 03:17 JST.
 permissions:
   contents: read
 concurrency:
@@ -14,29 +16,22 @@ jobs:
   changes:
     name: What changed
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     outputs:
-      matrix: ${{ steps.diff.outputs.matrix }}
+      selection: ${{ steps.diff.outputs.selection }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - id: diff
         env:
+          EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          app=true
-          if files="$(git diff --name-only "$BASE" HEAD)" && [ -n "$files" ]; then
-            others="$(grep -vE '^docs/|^[A-Z_]+\.md$' <<<"$files" || true)"
-            read_by_app="$(grep -E '^(README\.md$|docs/(Philosophy|Rationale|Vision)\.md$|docs/site/)' <<<"$files" || true)"
-            if [ -z "$others$read_by_app" ]; then app=false; fi
-          fi
-          matrix=$(jq -cn --argjson app "$app" '{include: ([
-            {system: "x86_64-linux", runner: "ubuntu-24.04"},
-            {system: "aarch64-linux", runner: "ubuntu-24.04-arm"}
-          ] + (if $app then [
-            {system: "aarch64-darwin", runner: "macos-26"}
-          ] else [] end))}')
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          selection=$(python3 tests/ci/select_jobs.py --event "$EVENT" --base "$BASE" --head "$HEAD")
+          echo "$selection" | jq .
+          echo "selection=$selection" >> "$GITHUB_OUTPUT"
 
   static:
     name: Static checks
@@ -52,28 +47,42 @@ jobs:
 
   platform:
     name: Platform (${{ matrix.system }})
-    needs: changes
+    needs: [changes, static]
+    if: ${{ fromJSON(needs.changes.outputs.selection).platform }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.changes.outputs.selection).matrix }}
     uses: ./.github/workflows/ci-platform.yml
     with:
       system: ${{ matrix.system }}
       runner: ${{ matrix.runner }}
+      checks: ${{ toJSON(matrix.checks) }}
     secrets:
       CACHIX_AUTH_TOKEN: ${{ github.event_name != 'pull_request' && github.actor != 'dependabot[bot]' && secrets.CACHIX_AUTH_TOKEN || '' }}
 
   prompt:
     name: Offline prompt scoring
+    needs: [changes, static]
+    if: ${{ fromJSON(needs.changes.outputs.selection).prompt }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - run: python3 -m unittest discover -s tests/prompt
 
+  docs:
+    name: Documentation
+    needs: [changes, static]
+    if: ${{ fromJSON(needs.changes.outputs.selection).docs }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/docs.yml
+
   result:
     name: CI
-    needs: [changes, static, platform, prompt]
+    needs: [changes, static, platform, prompt, docs]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -81,6 +90,13 @@ jobs:
       - name: Require every check to succeed
         env:
           RESULTS: ${{ toJSON(needs) }}
+          SELECTION: ${{ needs.changes.outputs.selection }}
         run: |
           jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$RESULTS"
-          jq -e 'all(.[]; .result == "success")' <<<"$RESULTS" > /dev/null
+          # Skips are allowed only for checks the selector did not request.
+          jq -e --argjson selected "$SELECTION" '
+            . as $results |
+            (.changes.result == "success" and .static.result == "success") and
+            (["platform", "prompt", "docs"] | all(.[]; . as $job |
+              $results[$job].result == (if $selected[$job] then "success" else "skipped" end)))
+          ' <<<"$RESULTS" > /dev/null

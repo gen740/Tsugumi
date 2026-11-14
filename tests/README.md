@@ -4,7 +4,11 @@ Run commands from the repository root. Build instructions are in [Installing and
 
 Run `tests/check-fast.sh` before every push: the static tests (`tests/static`: tests that only read files of the repository, which CI runs first in its own job) and the Web UI Nix check, including the generated demo player (`--no-nix` skips it). Run the platform checks with `tests/ci-local.sh`. On macOS this runs the Mac checks locally and the Linux checks in Docker or OrbStack. Use `tests/ci-local.sh mac` or `tests/ci-local.sh linux` for one platform, and `tests/ci-local.sh agent` for the public Agent RPC fixtures.
 
-The CI definitions are [ci.yml](../.github/workflows/ci.yml) and [ci-platform.yml](../.github/workflows/ci-platform.yml).
+The CI definitions are [ci.yml](../.github/workflows/ci.yml), [ci-platform.yml](../.github/workflows/ci-platform.yml) and the reusable [docs.yml](../.github/workflows/docs.yml). [tests/ci/select_jobs.py](ci/select_jobs.py) selects consumers from PR merge-base diffs or push before/after diffs; static tests always run first and block heavier jobs on failure.
+
+Prose and `README.md` run the documentation build/tests; `docs/features.md` also runs prompt contracts, and `docs/CardGuide.md` runs its SDK examples and player consumers. Web, SDK, shared UI and demos run Web/player checks and documentation; demos also run SDK, Guide RPC and Swift tests. Native core/worker changes run runtime consumers on both Linux architectures and macOS; client changes also run Web/player checks. Swift changes run Mac tests; CLI/plugin changes run adapter tests (CLI also selects Mac tests). Build prerequisites follow each selected job. Site tooling also runs Swift help tests.
+
+`protocol/`, `flake.nix`, `flake.lock`, `nix/`, CMake, CI files and unclassified paths run everything, as do uncertain/empty diffs, nightly runs (03:17 JST) and manual dispatches. Local scripts still run their full suites. Branch protection requires only **CI**, the always-running gate: it requires static/selection success and every selected workflow/job to succeed, allowing only intentional skips. Remove individual platform and Documentation checks from required checks.
 
 | Location | Coverage |
 | --- | --- |
