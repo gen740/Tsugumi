@@ -405,7 +405,7 @@ std::vector<std::string> Service::capabilities() {
       "ProjectReload", "ProjectValidate", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "RunHistoryDelete", "OperationGet",
       "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "LayoutArrange", "LayoutUntangle", "AttachedFolderRead",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
-      "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
+      "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
       "ArtifactRead", "ModuleRead", "LogRange", "ViewSetVisible", "ViewSave",
       "NixSourceResolve", "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionNote", "VersionNoteStore"};
   // Every Display kind of the protocol, and the languages ProjectFileFormat formats.
@@ -537,6 +537,7 @@ void Service::dispatch(RequestIn req) {
     case P::RunLatestInvocationsRequest: return on_lane(r, std::move(req), &Service::run_latest_invocations);
     case P::ProjectShellRequest: return dispatch_shell(std::move(req));
     case P::RunEnvironmentsRequest: return on_lane(r, std::move(req), &Service::run_environments);
+    case P::RunEnvironmentUsesRequest: return on_lane(r, std::move(req), &Service::run_environment_uses);
     case P::RunEnvironmentPathsRequest: return on_lane(r, std::move(req), &Service::run_environment_paths);
     case P::RunRecordRequest: return on_lane(r, std::move(req), &Service::run_record);
     case P::RunValueReadRequest: return on_lane(r, std::move(req), &Service::run_value_read);

@@ -641,6 +641,26 @@ table RunEnvironmentPathsRequest {
   limit:uint32 = null (id: 3);
   /// Case-insensitive literal substring search. Offset and total refer to matching paths.
   query:string (id: 4);
+  /// If both are present, return paths absent from this other recorded environment.
+  /// Difference and search run in the history database, with bounded result pages.
+  excluding_run_id:string (id: 5);
+  excluding_environment_id:string (id: 6);
+}
+
+/// -> EnvironmentUsePage. Recorded users of a shared environment, ordered by Card and invocation.
+table RunEnvironmentUsesRequest {
+  run_id:string (id: 0, required);
+  environment_id:string (id: 1, required);
+  offset:uint64 = null (id: 2);
+  limit:uint32 = null (id: 3);
+}
+table EnvironmentUse {
+  card:string (id: 0, required);
+  invocation:uint64 (id: 1);
+}
+table EnvironmentUsePage {
+  uses:[EnvironmentUse] (id: 0, required);
+  next_offset:uint64 = null (id: 1);
 }
 
 table BuildEnvironment {
@@ -880,6 +900,7 @@ union RequestPayload {
   RunScratchDeleteRequest = 49,
   CardIdRequest = 50,
   VersionNoteRequest = 51,
+  RunEnvironmentUsesRequest = 52,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1281,6 +1302,7 @@ union ReplyPayload {
   RunScratchDeleteResult = 37,
   CardIdResult = 38,
   VersionNote = 39,
+  EnvironmentUsePage = 40,
 }
 
 // ---- Notifications -----------------------------------------------------------

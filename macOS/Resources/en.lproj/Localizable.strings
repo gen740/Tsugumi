@@ -113,6 +113,7 @@
 "ChatGPT プラン（Sign in with ChatGPT）" = "ChatGPT plan (Sign in with ChatGPT)";
 "Continue with ChatGPT" = "Continue with ChatGPT";
 "Continue with ChatGPT（別のアカウント）" = "Continue with ChatGPT (another account)";
+"Derivation" = "Derivation";
 "Draft %lld 枚（%@）から Card を生成します" = "Generating Cards from %lld Drafts (%@)";
 "Draft Card を追加" = "Add Draft Card";
 "Draft から Card を生成" = "Generate Cards from Drafts";
@@ -141,6 +142,7 @@
 "Mac のフォルダに書く" = "Write to folders of the Mac";
 "Mac のフォルダを読む" = "Read folders of the Mac";
 "Manage usage" = "Manage usage";
+"Manifest の出力パス" = "Manifest output store path";
 "Markdown（見出し・太字・リスト・表・コード）と数式（$…$、$$…$$）を使えます。付箋は実行には参加しません。" = "Markdown (headings, bold, lists, tables, code) and math ($…$, $$…$$) can be used. Notes take no part in runs.";
 "Matplotlib（PNG / SVG / PDF）" = "Matplotlib (PNG / SVG / PDF)";
 "Nix store の保存領域を作っています" = "Making the Nix store's space";
@@ -319,13 +321,13 @@
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）" = "Not available for this model (only models checked against the official documents)";
 "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。" = "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).";
-"この呼び出しで記録されたものです。ビルド時だけに使う依存関係は含まれません。" = "Recorded for this invocation. Build-only dependencies are not included.";
 "この呼び出しの環境は記録されていません" = "No environment was recorded for this invocation.";
 "この実行では、この Card はまだ動いていません" = "This Card has not run in this Run yet";
 "この実行では、この Card はまだ動いていません。" = "This Card has not run in this Run yet.";
 "この実行では呼び出されていません" = "Not invoked in this run";
 "この実行にはありません" = "Absent from this run";
 "この実行の Card からは届いていません" = "Not sent by a Card of this run";
+"この実行の共有環境" = "Shared environments in this run";
 "この実行の未完了ジョブを取り消す" = "Cancel pending jobs in this run";
 "この実行サービスではリソースを指定できません。" = "This execution service does not support resource requests.";
 "この実行環境では %@ を実行できません。" = "%@ cannot run in this execution environment.";
@@ -340,6 +342,7 @@
 "この版から始める…" = "Start from This Version…";
 "この版での実行はありません。" = "No runs of this version.";
 "この環境の package はありません" = "No packages for this system";
+"この環境を共有する Card と呼び出し" = "Cards and invocations sharing this environment";
 "この返事を送ります" = "Sends this reply";
 "この階層の Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。" = "Rewrites the Cards of this level in the chat as their open comments ask (adding Cards when a comment asks for it). Progress appears in the chat.";
 "この階層の Draft をチャットで実装します。進捗はチャットに表示されます。" = "Implements the Drafts of this level through the chat. Progress appears in the chat.";
@@ -808,6 +811,7 @@
 "別ウインドウで開く" = "Open in New Window";
 "削除" = "Delete";
 "削除…" = "Delete…";
+"削除された実行時の依存パス" = "Removed runtime dependencies";
 "削除するにはこのプロジェクトを開いてください。" = "Open this project to delete its build cache.";
 "削除できず残ったフォルダ" = "Folders that could not be deleted";
 "削除できませんでした: " = "Could not delete: ";
@@ -845,6 +849,7 @@
 "合計（共有パスは一度だけ計上）" = "Total (shared paths counted once)";
 "同じ名前があります" = "That name is taken";
 "同じ版です" = "Same version";
+"同じ環境です" = "Same environment";
 "同期できません" = "Cannot sync";
 "名前" = "Name";
 "名前と内容を書く" = "Write name and content";
@@ -979,6 +984,7 @@
 "実行待ち" = "Ready";
 "実行後に保存" = "Save after the run";
 "実行方式" = "Execution";
+"実行時の closure は、ビルド時の依存関係の完全な一覧ではありません。" = "The runtime closure is not a complete inventory of build-time dependencies.";
 "実行時の依存パス" = "Runtime dependencies";
 "実行条件" = "Execution conditions";
 "実行状況はありません" = "No run activity";
@@ -1005,6 +1011,7 @@
 "実行環境（全プロジェクト共通の VM、その Nix store と実行履歴のディスクイメージ、各プロジェクトの control フォルダ）は次のフォルダにあります。プロジェクトの文書・成果物と、プロジェクトに保存した実行履歴（.tsugumi/runs.sqlite）はプロジェクトのフォルダにあり、ここには含まれません。" = "The environment (the VM all projects share, its Nix store and run history disk images, each project's control folder) is in the folder below. Projects' documents and artifacts, and the run history saved in a project (.tsugumi/runs.sqlite), are in the project folders, not here.";
 "対応" = "Supported";
 "対象" = "Which";
+"対象システム" = "Target system";
 "小さく" = "Smaller";
 "展開" = "Expand";
 "履歴の退避が中断されました" = "History Archive Interrupted";
@@ -1186,6 +1193,7 @@
 "版管理を始める" = "Start Versioning";
 "状態" = "State";
 "環境" = "Environment";
+"環境が変わった Card" = "Card with a changed environment";
 "環境を停止" = "Stop Environment";
 "生命・医療" = "Life and medicine";
 "生成" = "Generated";
@@ -1300,6 +1308,7 @@
 "起動中: %@" = "Starting: %@";
 "起動後と 6 時間ごとに GitHub の最新リリースを確認し、新しい版があればダウンロードして、次に終了したときに更新します。" = "After launch and every 6 hours, checks the latest release on GitHub; a newer version is downloaded and installed the next time you quit.";
 "追加" = "Add";
+"追加された実行時の依存パス" = "Added runtime dependencies";
 "追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。" = "A Card's default.nix can use the packages of a flake added here like inputs.sources.ciao.packages.ciao. It is fixed by its commit and hash. Adding, updating and removing are saved at once. A flake's expressions are evaluated outside the Cards' isolation, so add only what you trust.";
 "追加コンテキスト" = "Extra Context";
 "送信" = "Send";
