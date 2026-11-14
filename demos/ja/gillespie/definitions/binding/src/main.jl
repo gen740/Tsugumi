@@ -44,7 +44,7 @@ end
 # small volume the true mean differs from it, and the gap closes as V grows.
 function main(inputs, report)
     outputs = Dict{String,Any}()
-    m = Tsugumi.input(inputs, "settings")
+    m = inputs.settings
     concentration = inputs.params["concentration"]
     on, off = inputs.params["on_rate"], inputs.params["off_rate"]
     volumes = sort(Float64.(inputs.params["volumes"]))

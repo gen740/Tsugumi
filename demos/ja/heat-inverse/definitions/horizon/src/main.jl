@@ -15,7 +15,7 @@ end
 # The same rod and the same noise, measured later and later: each time lambda is
 # set by the discrepancy principle. Waiting loses detail that no method brings back.
 function main(inputs, report)
-    m = Tsugumi.input(inputs, "measurement")
+    m = inputs.measurement
     x, truth = Float64.(m["x"]), Float64.(m["truth"])
     n = length(x)
     noise = m["noise"]

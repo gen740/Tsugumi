@@ -3,8 +3,6 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from inputs.comparison.mnist.Comparison import Comparison
-
 
 def frontier(times, accuracy):
     """The indices no other model beats on both: faster and at least as accurate."""
@@ -17,11 +15,11 @@ def frontier(times, accuracy):
 
 
 def main(inputs, report):
-    c = inputs.input("comparison", Comparison)
-    models = [c.Models(i).decode() for i in range(c.ModelsLength())]
-    accuracy = c.AccuracyAsNumpy()
-    fit = c.FitSecondsAsNumpy()
-    predict = c.PredictSecondsAsNumpy()
+    c = inputs.comparison
+    models = [c.models[i].decode() for i in range(len(c.models))]
+    accuracy = c.accuracy
+    fit = c.fitSeconds
+    predict = c.predictSeconds
 
     fig = make_subplots(rows=1, cols=2, shared_yaxes=True, horizontal_spacing=0.04,
                         subplot_titles=("正解率 と 学習時間", "正解率 と 予測時間"))

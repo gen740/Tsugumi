@@ -30,7 +30,7 @@ end
 # filter sigma / (sigma^2 + lambda^2). Three ways to choose lambda are compared.
 function main(inputs, report)
     outputs = Dict{String,Any}()
-    m = Tsugumi.input(inputs, "measurement")
+    m = inputs.measurement
     x, truth, measured = Float64.(m["x"]), Float64.(m["truth"]), Float64.(m["measured"])
     n = length(x)
     noise = m["noise"]

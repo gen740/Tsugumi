@@ -1,36 +1,11 @@
-import tsugumi
 import os
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
-from inputs.section.quake.SectionDir import SectionDir
-import outputs.fmd.quake.FmdDir as out
-
-
-def emit(inputs, port, out):
-    result_ports = {}
-    s = '.'
-    _out_value = {}
-    _out_value['value'] = s
-    result_ports.update({port: _out_value})
-    return result_ports
-
-
-def png(fig):
-    import io
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
-    plt.close(fig)
-    return buf.getvalue()
 
 
 def main(inputs, report, run):
-    result_ports = {}
     p = inputs.params
-    sel = np.loadtxt(os.path.join(inputs.input("section", SectionDir).Value().decode(), "selected.csv"),
+    sel = np.loadtxt(os.path.join(inputs.section.value.decode(), "selected.csv"),
                      delimiter=",", skiprows=1, ndmin=2)
     mags = sel[:, 3]
     mc, dm = p.mc, p.binWidth
@@ -45,11 +20,10 @@ def main(inputs, report, run):
     fit = grid >= mc
     with open(os.path.join(run.output_directory, "fmd.csv"), "w") as fh:
         fh.write("magnitude,N_ge_M\n" + "".join(f"{m:.1f},{n}\n" for m, n in zip(grid, cum)))
-    report.log(str(f"{len(use)} events with M >= {mc:g}: b = {b:.2f} +/- {b_err:.2f}, a = {a:.2f}"))
+    report.log(f"{len(use)} events with M >= {mc:g}: b = {b:.2f} +/- {b_err:.2f}, a = {a:.2f}")
     report.line_chart([
         {"id": "observed", "label": "log10 N(>=M) observed", "x": grid[ok].tolist(), "y": np.log10(cum[ok]).tolist()},
         {"id": "fit", "label": f"Gutenberg-Richter fit b = {b:.2f} +/- {b_err:.2f} (M >= {mc:g})",
          "x": grid[fit].tolist(), "y": (a - b * grid[fit]).tolist()},
     ])
-    result_ports.update(emit(inputs, 'fmd', out))
-    return result_ports
+    return {'fmd': {"value": run.output_directory}}

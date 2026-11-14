@@ -5,12 +5,10 @@ import matplotlib.pyplot as plt
 from rdkit import Chem
 from rdkit.Chem import Draw
 
-from inputs.molecules.mol.Molecules import Molecules
-
 
 def main(inputs, report):
-    m = inputs.input("molecules", Molecules)
-    n = m.NamesLength()
+    m = inputs.molecules
+    n = len(m.names)
     cols = min(5, n)
     rows = math.ceil(n / cols)
     fig, axes = plt.subplots(rows, cols, figsize=(2.7 * cols, 2.6 * rows), squeeze=False)
@@ -18,7 +16,7 @@ def main(inputs, report):
         ax.axis("off")
     for i in range(n):
         ax = axes.ravel()[i]
-        ax.imshow(Draw.MolToImage(Chem.MolFromSmiles(m.Smiles(i).decode()), size=(420, 360)))
-        ax.set_title(f"{m.Names(i).decode()}\n{m.Formula(i).decode()}", fontsize=10)
+        ax.imshow(Draw.MolToImage(Chem.MolFromSmiles(m.smiles[i].decode()), size=(420, 360)))
+        ax.set_title(f"{m.names[i].decode()}\n{m.formula[i].decode()}", fontsize=10)
     fig.tight_layout()
     report.figure()

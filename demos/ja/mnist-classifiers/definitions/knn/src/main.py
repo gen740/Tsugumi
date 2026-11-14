@@ -1,5 +1,4 @@
 """k nearest neighbours: a test digit takes the majority label of the k closest training digits."""
-import tsugumi
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -10,8 +9,6 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
-
-from inputs.data.mnist.SubsetFile import SubsetFile
 
 
 def confusions(ax, y, pred):
@@ -26,28 +23,23 @@ def confusions(ax, y, pred):
     ax.tick_params(length=0, labelsize=8)
 
 
-def send(inputs, name, settings, digest, y, pred, fit, predict):
-    result_ports = {}
+def result(name, settings, digest, y, pred, fit, predict):
     model = name
-    settings = settings
-    digest = digest
     predictions = pred.astype(np.uint8)
-    _out_value = {}
-    _out_value['model'] = model
-    _out_value['settings'] = settings
-    _out_value['digest'] = digest
-    _out_value['accuracy'] = float(np.mean(pred == y))
-    _out_value['fit_seconds'] = fit
-    _out_value['predict_seconds'] = predict
-    _out_value['predictions'] = predictions
-    result_ports.update({'result': _out_value})
-    return result_ports
+    return {'result': {
+        'model': model,
+        'settings': settings,
+        'digest': digest,
+        'accuracy': float(np.mean(pred == y)),
+        'fit_seconds': fit,
+        'predict_seconds': predict,
+        'predictions': predictions,
+    }}
 
 
 def main(inputs, report):
-    result_ports = {}
     k = inputs.params.k
-    data = np.load(inputs.input("data", SubsetFile).Value().decode())
+    data = np.load(inputs.data.value.decode())
     train_x, train_y, test_x, test_y = data["train_images"], data["train_labels"], data["test_images"], data["test_labels"]
 
     model = KNeighborsClassifier(n_neighbors=k, algorithm="brute")
@@ -58,7 +50,7 @@ def main(inputs, report):
     pred = model.predict(test_x)
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    report.log(str(f"knn k={k}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s"))
+    report.log(f"knn k={k}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
 
     # What it did on a few mistakes: the test digit, then its nearest training digits.
     wrong = np.flatnonzero(pred != test_y)[:6]
@@ -80,5 +72,4 @@ def main(inputs, report):
     fig.suptitle(f"k 近傍法 k={k}: 正解率 {accuracy:.4f}、学習 {fit:.2f} 秒、予測 {predict:.2f} 秒", fontsize=11)
     report.figure()
 
-    result_ports.update(send(inputs, 'knn', f'k={k}', str(data['digest']), test_y, pred, fit, predict))
-    return result_ports
+    return result('knn', f'k={k}', str(data['digest']), test_y, pred, fit, predict)

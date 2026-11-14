@@ -4,11 +4,10 @@ include("ecology.jl")
 # Similar fits over 21 years can mean different futures: a closed orbit, a spiral
 # into a fixed point or a limit cycle. Each fit is run far beyond the data.
 function main(inputs, report)
-    f = Tsugumi.input(inputs, "fits")
+    f = inputs.fits
     years = Int(inputs.params["years"])
     dt = inputs.params["dt"]
     rows = Dict{String,Any}[]
-    ends = Dict{String,Any}[]
     swing = Dict{String,Float64}()
     for (model, m) in zip(MODELS, f["models"])
         p = Float64.(m["parameters"])

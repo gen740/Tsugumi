@@ -1,34 +1,9 @@
-import tsugumi
 import os
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import h5py
 from scipy.signal import butter, filtfilt, welch
 from scipy.signal.windows import tukey
-
-from inputs.data.gw.GwFiles import GwFiles
-import outputs.whitened.gw.WhitenedDir as out
-
-
-def emit(inputs, port, out):
-    result_ports = {}
-    s = '.'
-    _out_value = {}
-    _out_value['value'] = s
-    result_ports.update({port: _out_value})
-    return result_ports
-
-
-def png(fig):
-    import io
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
-    plt.close(fig)
-    return buf.getvalue()
 
 
 def read(path):
@@ -49,9 +24,8 @@ def whiten(h, fs, f_low, f_high):
 
 
 def main(inputs, report, run):
-    result_ports = {}
     p = inputs.params
-    folder = inputs.input("data", GwFiles).Value().decode()
+    folder = inputs.data.value.decode()
     names = sorted(n for n in os.listdir(folder) if n.endswith(".hdf5"))
     series, saved = [], {}
     for name in names:
@@ -65,8 +39,7 @@ def main(inputs, report, run):
         w_std = w[(t > -10) & (t < -2)].std()
         series.append({"id": det, "label": f"{det} whitened ({p.fLow:g}-{p.fHigh:g} Hz)",
                        "x": t[keep].tolist(), "y": (w[keep] / w_std).tolist()})
-        report.log(str(f"{det}: {len(h)} samples at {fs} Hz from GPS {t0:.0f}"))
+        report.log(f"{det}: {len(h)} samples at {fs} Hz from GPS {t0:.0f}")
     np.savez(os.path.join(run.output_directory, "whitened.npz"), fs=fs, **saved)
     report.line_chart(series)
-    result_ports.update(emit(inputs, 'whitened', out))
-    return result_ports
+    return {'whitened': {"value": run.output_directory}}

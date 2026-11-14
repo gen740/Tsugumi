@@ -1,5 +1,4 @@
 """Checks the MNIST files fixed by Nix (IDX format) and shows samples of each digit."""
-import tsugumi
 import struct
 
 import matplotlib.pyplot as plt
@@ -29,8 +28,8 @@ def main(inputs, report):
         raise Failure("output_invalid", f"unexpected shapes {train_images.shape}, {test_images.shape}")
     if len(train_labels) != 60000 or len(test_labels) != 10000:
         raise Failure("output_invalid", "the label files do not match the image files")
-    report.log(str(f"source: {source}"))
-    report.log(str(f"train: {train_images.shape}, test: {test_images.shape}, directory: {directory}"))
+    report.log(f"source: {source}")
+    report.log(f"train: {train_images.shape}, test: {test_images.shape}, directory: {directory}")
 
     per_digit = 20
     rows = [np.hstack(test_images[test_labels == d][:per_digit]) for d in range(10)]
@@ -42,11 +41,9 @@ def main(inputs, report):
     ax.set_title(f"MNIST handwritten digits: {len(train_labels)} training, {len(test_labels)} test images\n"
                  f"The first {per_digit} test images of each digit. Source: {source}", fontsize=10)
     report.figure()
-    directory_offset = directory
-    source_offset = source
-    _out_value = {}
-    _out_value['directory'] = directory_offset
-    _out_value['source'] = source_offset
-    _out_value['train_count'] = len(train_labels)
-    _out_value['test_count'] = len(test_labels)
-    return {'dataset': _out_value}
+    return {'dataset': {
+        'directory': directory,
+        'source': source,
+        'train_count': len(train_labels),
+        'test_count': len(test_labels),
+    }}

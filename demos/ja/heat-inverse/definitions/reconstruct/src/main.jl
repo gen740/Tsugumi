@@ -14,8 +14,8 @@ end
 # The reconstruction at the chosen lambda, with one too small and one too large
 # beside it. `lambda` = 0 takes the discrepancy principle's choice.
 function main(inputs, report)
-    m = Tsugumi.input(inputs, "measurement")
-    choice = Tsugumi.input(inputs, "choice")
+    m = inputs.measurement
+    choice = inputs.choice
     x, truth, measured = Float64.(m["x"]), Float64.(m["truth"]), Float64.(m["measured"])
     n = length(x)
     chosen = inputs.params["lambda"] > 0 ? inputs.params["lambda"] : choice["discrepancy"]

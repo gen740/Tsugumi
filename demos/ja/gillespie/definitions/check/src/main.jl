@@ -4,9 +4,9 @@ using Printf
 # away fails the Card: a seed can be unlucky, a wrong simulation always is.
 function main(inputs, report)
     limit = inputs.params["limit_sigma"]
-    s = Tsugumi.input(inputs, "stationary")
-    c = Tsugumi.input(inputs, "scaling")
-    b = Tsugumi.input(inputs, "binding")
+    s = inputs.stationary
+    c = inputs.scaling
+    b = inputs.binding
     rows = Vector{Any}[]
     function compare(name, value, theory, se)
         z = (value - theory) / se

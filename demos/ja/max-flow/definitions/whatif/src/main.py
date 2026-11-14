@@ -3,7 +3,6 @@ import json
 
 import networkx as nx
 
-from inputs.cut.flow.Cut import Cut
 from tsugumi import Failure
 
 
@@ -20,14 +19,14 @@ def text(pairs):
 
 
 def main(inputs, report):
-    c = inputs.input("cut", Cut)
+    c = inputs.cut
     params = inputs.params
     raise_by = int(params.raiseBy)
     wanted = params.edge.decode().strip() if params.edge else ""
-    nodes = c.Nodes().decode().split()
-    edges = [(nodes[u], nodes[v], int(x)) for u, v, x in zip(c.TailAsNumpy(), c.HeadAsNumpy(), c.CapacityAsNumpy())]
-    amounts = {(nodes[u], nodes[v]): int(x) for u, v, x in zip(c.TailAsNumpy(), c.HeadAsNumpy(), c.FlowAsNumpy())}
-    side = set(c.SourceSide().decode().split())
+    nodes = c.nodes.decode().split()
+    edges = [(nodes[u], nodes[v], int(x)) for u, v, x in zip(c.tail, c.head, c.capacity)]
+    amounts = {(nodes[u], nodes[v]): int(x) for u, v, x in zip(c.tail, c.head, c.flow)}
+    side = set(c.sourceSide.decode().split())
     on_cut = [(u, v) for u, v, _ in edges if u in side and v not in side]
     off_cut = [(u, v) for u, v, _ in edges if not (u in side and v not in side)]
     base, base_cut = solve(edges)
@@ -74,4 +73,4 @@ def main(inputs, report):
     if third is not None:
         lines.append(f"{third[0]}→{third[1]} はカットの上にありますが、この辺を含まない別の最小カットが残っているので増えません。")
     report.markdown("\n".join(lines))
-    report.log(str("result: " + json.dumps({"base": base, "rows": rows})))
+    report.log("result: " + json.dumps({"base": base, "rows": rows}))

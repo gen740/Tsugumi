@@ -5,17 +5,16 @@ import json
 import matplotlib.pyplot as plt
 import numpy as np
 
-from inputs.curves.pk.Curves import Curves
 
 COLORS = ["#2a7ab9", "#d9622b", "#3a9a4a", "#8a5ec2", "#c23b4b", "#7a7a7a"]
 
 
 def main(inputs, report):
-    c = inputs.input("curves", Curves)
-    doses, intervals, last_dose = c.DosesMgAsNumpy(), c.IntervalsHAsNumpy(), c.LastDoseHAsNumpy()
-    t = c.THAsNumpy()
-    conc = c.ConcAsNumpy().reshape(len(doses), len(t))
-    low, high = c.LowMgL(), c.HighMgL()
+    c = inputs.curves
+    doses, intervals, last_dose = c.dosesMg, c.intervalsH, c.lastDoseH
+    t = c.tH
+    conc = c.conc.reshape(len(doses), len(t))
+    low, high = c.lowMgL, c.highMgL
 
     fig, (left, right) = plt.subplots(1, 2, figsize=(11, 5), width_ratios=[1.7, 1], constrained_layout=True)
     left.axhspan(low, high, color="#3a9a4a", alpha=0.14, linewidth=0, label=f"有効域 {low:g}–{high:g} mg/L（作り物）")
@@ -49,4 +48,4 @@ def main(inputs, report):
     right.set_xlabel("間隔のうちの時間 (%): 下（青）、域内（緑）、上（橙）")
     right.set_title("有効域の中にいる時間", fontsize=12)
     report.figure()
-    report.log(str("result: " + json.dumps(rows)))
+    report.log("result: " + json.dumps(rows))

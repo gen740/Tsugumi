@@ -5,7 +5,7 @@ include("ecology.jl")
 # is estimated too, so it counts as one more parameter in AIC and BIC.
 function main(inputs, report)
     outputs = Dict{String,Any}()
-    m = Tsugumi.input(inputs, "pelts")
+    m = inputs.pelts
     years = Int.(m["years"])
     hare, lynx = Float64.(m["hare"]), Float64.(m["lynx"])
     until = Int(inputs.params["fit_until"])

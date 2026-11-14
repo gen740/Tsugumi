@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import curve_fit
 
-from inputs.plate.dose.Plate import Plate
 
 COLORS = ["#2a78d6", "#eb6834"]
 
@@ -42,30 +41,30 @@ def interval(conc, reps, y, n_boot, rng):
 
 
 def main(inputs, report):
-    plate = inputs.input("plate", Plate)
+    plate = inputs.plate
     p = inputs.params
-    tops = p.topsAsNumpy
-    design = plate.ConcAsNumpy() / plate.ConcAsNumpy()[-1]  # the dilution series, relative to its top
-    reps = plate.Replicates()
-    rng = np.random.default_rng(plate.Seed() + 1)
+    tops = p.tops
+    design = plate.conc / plate.conc[-1]  # the dilution series, relative to its top
+    reps = plate.replicates
+    rng = np.random.default_rng(plate.seed + 1)
 
     fig, ax = plt.subplots(figsize=(7.5, 4.4))
     results = {}
-    for i in range(plate.NamesLength()):
-        name = plate.Names(i).decode()
+    for i in range(len(plate.names)):
+        name = plate.names[i].decode()
         widths = []
         for top in tops:
             conc = top * design
-            truth = plate.Bottom(i) + (plate.Top(i) - plate.Bottom(i)) / (1 + (plate.Ec50(i) / conc) ** plate.Hill(i))
-            y = (truth[:, None] + rng.normal(0, plate.NoiseSd(), (len(conc), reps))).ravel()
+            truth = plate.bottom[i] + (plate.top[i] - plate.bottom[i]) / (1 + (plate.ec50[i] / conc) ** plate.hill[i])
+            y = (truth[:, None] + rng.normal(0, plate.noiseSd, (len(conc), reps))).ravel()
             found = interval(conc, reps, y, p.nBoot, rng)
             widths.append(np.nan if found is None else found[1] / found[0])
         results[name] = [float(w) for w in widths]
-        ax.plot(tops, widths, "o-", color=COLORS[i], lw=2, ms=6, label=f"{name} (true EC50 = {plate.Ec50(i):g} µM)")
-        ax.axvline(plate.Ec50(i), color=COLORS[i], lw=1, ls=":")
-        ax.axvline(plate.Ec50(i) / design[0], color=COLORS[i], lw=1, ls=":")
-        ax.axvspan(plate.Ec50(i), plate.Ec50(i) / design[0], color=COLORS[i], alpha=0.07)
-    report.log(str("interval widths " + json.dumps({"tops": [float(t) for t in tops], "widths": results})))
+        ax.plot(tops, widths, "o-", color=COLORS[i], lw=2, ms=6, label=f"{name} (true EC50 = {plate.ec50[i]:g} µM)")
+        ax.axvline(plate.ec50[i], color=COLORS[i], lw=1, ls=":")
+        ax.axvline(plate.ec50[i] / design[0], color=COLORS[i], lw=1, ls=":")
+        ax.axvspan(plate.ec50[i], plate.ec50[i] / design[0], color=COLORS[i], alpha=0.07)
+    report.log("interval widths " + json.dumps({"tops": [float(t) for t in tops], "widths": results}))
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("Highest concentration top (µM)")

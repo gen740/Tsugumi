@@ -1,13 +1,10 @@
 """The minimum cut by networkx: max-flow = min-cut is asserted, and the network is
 drawn with the source side, the sink side and the cut edges marked."""
-import tsugumi
 import json
 
 import matplotlib.pyplot as plt
 import networkx as nx
-import numpy as np
 
-from inputs.flow.flow.Flow import Flow
 from tsugumi import Failure
 
 
@@ -22,10 +19,10 @@ def positions(nodes):
 
 
 def main(inputs, report):
-    f = inputs.input("flow", Flow)
-    nodes = f.Nodes().decode().split()
-    edges = [(nodes[u], nodes[v], int(c)) for u, v, c in zip(f.TailAsNumpy(), f.HeadAsNumpy(), f.CapacityAsNumpy())]
-    amounts = [int(x) for x in f.FlowAsNumpy()]
+    f = inputs.flow
+    nodes = f.nodes.decode().split()
+    edges = [(nodes[u], nodes[v], int(c)) for u, v, c in zip(f.tail, f.head, f.capacity)]
+    amounts = [int(x) for x in f.flow]
     graph = nx.DiGraph()
     graph.add_nodes_from(nodes)
     graph.add_weighted_edges_from(edges, weight="capacity")
@@ -33,8 +30,8 @@ def main(inputs, report):
     capacity, (source_side, _) = nx.minimum_cut(graph, "s", "t")
     crossing = [(u, v, c) for u, v, c in edges if u in source_side and v not in source_side]
     total = sum(c for _, _, c in crossing)
-    if total != capacity or capacity != f.Value():
-        raise Failure("output_invalid", f"max-flow {f.Value()}, cut capacity {capacity}, crossing edges add up to {total}")
+    if total != capacity or capacity != f.value:
+        raise Failure("output_invalid", f"max-flow {f.value}, cut capacity {capacity}, crossing edges add up to {total}")
     for (u, v, c), amount in zip(edges, amounts):
         if (u, v, c) in crossing and amount != c:
             raise Failure("output_invalid", f"cut edge {u}->{v} is not saturated: {amount} of {c}")
@@ -56,19 +53,19 @@ def main(inputs, report):
     ax.set_axis_off()
     fig.tight_layout()
     report.figure()
-    report.log(str("result: " + json.dumps({"capacity": capacity, "source_side": sorted(source_side), "cut_edges": [[u, v, c] for u, v, c in crossing]})))
-    names = f.Nodes()
+    report.log("result: " + json.dumps({"capacity": capacity, "source_side": sorted(source_side), "cut_edges": [[u, v, c] for u, v, c in crossing]}))
+    names = f.nodes
     side = ' '.join(sorted(source_side))
-    tail = f.TailAsNumpy()
-    head = f.HeadAsNumpy()
-    caps = f.CapacityAsNumpy()
-    flow = f.FlowAsNumpy()
-    _out_value = {}
-    _out_value['nodes'] = names
-    _out_value['tail'] = tail
-    _out_value['head'] = head
-    _out_value['capacity'] = caps
-    _out_value['flow'] = flow
-    _out_value['value'] = f.Value()
-    _out_value['source_side'] = side
-    return {'cut': _out_value}
+    tail = f.tail
+    head = f.head
+    caps = f.capacity
+    flow = f.flow
+    return {'cut': {
+        'nodes': names,
+        'tail': tail,
+        'head': head,
+        'capacity': caps,
+        'flow': flow,
+        'value': f.value,
+        'source_side': side,
+    }}

@@ -24,7 +24,7 @@ end
 
 function main(inputs, report)
     outputs = Dict{String,Any}()
-    s = Tsugumi.input(inputs, "settings")
+    s = inputs.settings
     n, alpha, T, noise = Int(s["cells"]), s["alpha"], s["final_time"], s["noise"]
     x, truth = true_profile(n)
     V, sigma = heat_modes(n, alpha, T)
