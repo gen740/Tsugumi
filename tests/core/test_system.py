@@ -67,7 +67,7 @@ def registered_remote(monkeypatch, resource_limits):
         def handle(self):
             assert R.read_broker_request(self.rfile, "fixture-capability").bodyType == R.RequestBody.CatalogRequest
             caps = R.CapabilitiesT(serverId="2" * 64, nativeSystem=FOREIGN, systems=[FOREIGN],
-                                   resourceLimits=resource_limits, maxJobs=8, workerContract=3)
+                                   resourceLimits=resource_limits, maxJobs=8, workerContract=4)
             self.wfile.write(R.frame(R.reply(R.ReplyBody.Catalog, R.CatalogT(
                 services=[R.TargetT(id="cluster", available=True, capabilities=caps)]))))
 

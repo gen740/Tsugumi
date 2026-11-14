@@ -83,7 +83,8 @@ macro_rules! export {
                 let $i = $crate::Inputs::read(call)?;
                 let $p = &$crate::Report::from_call(call);
                 let $r = &$crate::Run::from_call(call);
-                $body?.emit(call)
+                $body?.emit(call)?;
+                call.finish_outputs()
             }) }
         }
         #[unsafe(no_mangle)]

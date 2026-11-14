@@ -85,6 +85,9 @@ static SEXP host_display(SEXP json) {
   return Rf_ScalarLogical(
       tsugumi_native_display(Rf_translateCharUTF8(STRING_ELT(json, 0))) == 0);
 }
+static SEXP host_finish_outputs(void) {
+  return Rf_ScalarLogical(tsugumi_native_finish_outputs() == 0);
+}
 static SEXP host_cancelled(void) {
   return Rf_ScalarLogical(tsugumi_native_cancelled());
 }
@@ -116,6 +119,7 @@ static const R_CallMethodDef methods[] = {
     {"tsugumi_invocation", (DL_FUNC)&host_invocation, 0},
     {"tsugumi_output", (DL_FUNC)&host_output, 2},
     {"tsugumi_display", (DL_FUNC)&host_display, 1},
+    {"tsugumi_finish_outputs", (DL_FUNC)&host_finish_outputs, 0},
     {"tsugumi_cancelled", (DL_FUNC)&host_cancelled, 0},
     {"tsugumi_remaining", (DL_FUNC)&host_remaining, 0},
     {"tsugumi_log", (DL_FUNC)&host_log, 1},

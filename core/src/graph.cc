@@ -459,11 +459,6 @@ class Builder {
       read_settings(n, def);
       switch (n.kind) {
         case Template::Code:
-          if (n.settings.language != "cpp" && n.settings.language != "python" &&
-              n.settings.language != "csharp" && n.settings.language != "bash" && n.settings.language != "r" && n.settings.language != "julia" &&
-              n.settings.language != "go" && n.settings.language != "rust" && n.settings.language != "ruby")
-            n.exec_diags.push_back(diag(n.path, "invalid_language",
-                                        "language must be cpp, python, go, rust, csharp, bash, r, julia or ruby"));
           if (!doc_.sources.count(n.def_dir + "default.nix"))
             n.exec_diags.push_back(diag(n.path, "missing_nix", "default.nix is missing", true,
                                         n.def_dir + "default.nix"));

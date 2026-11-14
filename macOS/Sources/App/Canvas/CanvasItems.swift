@@ -245,6 +245,8 @@ struct DisplayContent: View {
 
   var body: some View {
     switch display?.value {
+    case .unavailable?:
+      Text("この結果は表示できません").font(.system(size: size(10, 13))).foregroundStyle(.secondary)
     case .text(let t)?:
       scrolling {
         Text(t).font(.system(size: size(11, 13), design: .monospaced)).textSelection(.enabled)

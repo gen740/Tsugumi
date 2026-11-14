@@ -273,7 +273,7 @@ auto RemoteExecutionService::recover(RemoteJobRecord& job, const RemoteJobState&
         job.spec, directory, service_.store().state_dir() / "modules", contract.outputs,
         [&](LogStream stream, const std::string& line) { recovered.logs.emplace_back(stream, line); },
         [&](DisplayData display) {
-          if (display.run_id == inv.run_id && display.invocation == inv.invocation && !display.validate()) {
+          if (display.run_id == inv.run_id && display.invocation == inv.invocation && display.card == inv.card) {
             display.card = inv.card;
             result.display = std::move(display);
           }

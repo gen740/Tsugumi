@@ -274,6 +274,7 @@ extension ProjectSession {
 extension DisplaySnapshot {
   static func summary(of value: DisplayValue) -> String {
     switch value {
+    case .unavailable: return String(localized: "この結果は表示できません")
     case .text(let t): return t.split(separator: "\n").first.map(String.init) ?? ""
     case .markdown(let t):
       // The first line with text, without Markdown marks.

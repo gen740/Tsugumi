@@ -53,5 +53,5 @@ import TsugumiRPC
   #expect(snapshot.revision == 7)
   guard case .text(let value) = snapshot.value else { Issue.record("Expected recorded text"); return }
   #expect(value == "recorded photons: 157471")
-  #expect(recordedDisplay(Tsugumi_Data_DisplayT()) == nil)
+  if case .unavailable? = recordedDisplay(Tsugumi_Data_DisplayT())?.value {} else { Issue.record("Malformed display needs an unavailable state") }
 }

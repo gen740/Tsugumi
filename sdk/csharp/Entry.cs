@@ -80,6 +80,7 @@ public static class Entry {
             var run = new Run(scope);
             var outputs = (start ? card.OnRunStartAsync(inputs, report, run) : card.RunAsync(inputs, report, run)).AsTask().GetAwaiter().GetResult();
             outputs.SendAsync(scope).AsTask().GetAwaiter().GetResult();
+            if (!start) scope.FinishOutputs();
             result = 0;
         } catch (Exception error) {
             Console.Error.WriteLine(error);

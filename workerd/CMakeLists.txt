@@ -42,4 +42,4 @@ install(FILES ${TSUGUMI_PROTOCOL_DIR}/worker.fbs ${TSUGUMI_PROTOCOL_DIR}/data.fb
 install(DIRECTORY ${HOSQ_INCLUDE_DIR}/hosq DESTINATION share/tsugumi/sdk/worker/include)
 install(FILES ${HOSQ_INCLUDE_DIR}/../LICENSE DESTINATION share/tsugumi/sdk/worker/include/hosq RENAME LICENSE OPTIONAL)
 
-install(FILES include/tsugumi/workerd/frame.hh DESTINATION share/tsugumi/sdk/worker/include/tsugumi/workerd)
+install(FILES include/tsugumi/workerd/frame.hh include/tsugumi/workerd/display.hh DESTINATION share/tsugumi/sdk/worker/include/tsugumi/workerd)

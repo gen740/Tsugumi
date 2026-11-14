@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "model.hh"
+#include "log_policy.hh"
 #include "nix.hh"
 #include "worker_pool.hh"
 
@@ -62,6 +63,7 @@ struct ExecutionRequest {
   // Native residents are reusable only after the scheduler accepts all
   // required outputs, their types and their paths. Throws Failed on rejection.
   std::function<void(const ExecutionResult&)> validate = {};
+  uint64_t log_limit_bytes = kInvocationLogLimitBytes;
 };
 
 struct ExecutionResult {

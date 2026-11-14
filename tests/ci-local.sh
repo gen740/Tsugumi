@@ -36,6 +36,8 @@ core_checks() {
   core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_remote_result_tests"
   core_run python3 -m pytest -q --core-report -m 'not environment' -n auto --dist load --durations=40 tests/core
   core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_workerd_tests"
+  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_native_contract_tests"
+  core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_execution_service_tests"
   core_run "$root/build-ci/libexec/tsugumi-tests/tsugumi_worker_staging_tests"
 }
 

@@ -249,61 +249,41 @@ auto run_batch(FBB& b, const RunBatchData& batch) -> Off<R::RunBatch> {
                           batch.complete, batch.failed, b.CreateVector(outputs));
 }
 
-Off<D::Display> display(FBB& b, const DisplayData& d) {
-  auto card = path(b, d.card);
-  auto run = b.CreateString(d.run_id);
-  Off<void> value;
-  D::DisplayValue type = D::DisplayValue::NONE;
-  if (const auto* t = std::get_if<DisplayData::Text>(&d.value)) {
-    value = D::CreateDisplayText(b, b.CreateString(t->text), t->markdown).Union();
-    type = D::DisplayValue::DisplayText;
-  } else if (const auto* s = std::get_if<DisplayData::Scalar>(&d.value)) {
-    auto label = b.CreateString(s->label);
-    D::DisplayScalarBuilder sb(b);
-    sb.add_value(s->value);
-    sb.add_label(label);
-    value = sb.Finish().Union();
-    type = D::DisplayValue::DisplayScalar;
-  } else if (const auto* t = std::get_if<DisplayData::Table>(&d.value)) {
-    std::vector<Off<D::TableRow>> rows;
-    for (const auto& r : t->rows) rows.push_back(D::CreateTableRow(b, b.CreateVectorOfStrings(r)));
-    auto cols = b.CreateVectorOfStrings(t->columns);
-    value = D::CreateDisplayTable(b, cols, b.CreateVector(rows)).Union();
-    type = D::DisplayValue::DisplayTable;
-  } else if (const auto* im = std::get_if<DisplayData::Image>(&d.value)) {
-    auto mt = b.CreateString(im->media_type);
-    auto data = b.CreateVector(reinterpret_cast<const uint8_t*>(im->data.data()), im->data.size());
-    auto alt = b.CreateString(im->alt);
-    value = D::CreateDisplayImage(b, mt, data, alt).Union();
-    type = D::DisplayValue::DisplayImage;
-  } else if (const auto* p = std::get_if<DisplayData::PointCloud>(&d.value)) {
-    auto x = b.CreateVector(p->x);
-    auto y = b.CreateVector(p->y);
-    auto z = b.CreateVector(p->z);
-    auto c = b.CreateVector(p->colors);
-    value = D::CreateDisplayPointCloud(b, x, y, z, c).Union();
-    type = D::DisplayValue::DisplayPointCloud;
-  } else if (const auto* m = std::get_if<DisplayData::Module>(&d.value)) {
-    auto name = b.CreateString(m->module);
-    auto data = b.CreateString(m->config_json);
-    std::vector<flatbuffers::Offset<D::DisplayBlob>> blobs;
-    for (const auto& [key, bytes] : m->blobs)
-      blobs.push_back(D::CreateDisplayBlob(b, b.CreateString(key),
-          b.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size())));
-    value = D::CreateDisplayModule(b, name, data, b.CreateVector(blobs)).Union();
-    type = D::DisplayValue::DisplayModule;
-  }
-  D::DisplayBuilder db(b);
-  db.add_card(card);
-  db.add_run_id(run);
-  db.add_invocation(d.invocation);
-  db.add_revision(d.revision);
-  db.add_value_type(type);
-  db.add_value(value);
-  return db.Finish();
+// Patch only the envelope. Presentation bytes and sharing stay untouched;
+// unpacking shared strings/rows can expand a small frame into gigabytes.
+auto patched_display(const DisplayData& d) -> std::optional<std::string> {
+  const auto* original = reinterpret_cast<const D::Display*>(d.bytes.data() + d.root_offset);
+  if (path(original->card()) != d.card || original->run_id()->string_view() != d.run_id ||
+      original->invocation().value_or(0) != d.invocation) return std::nullopt;
+  std::string bytes = d.bytes;
+  auto* copy = reinterpret_cast<D::Display*>(bytes.data() + d.root_offset);
+  if (copy->revision().value_or(0) != d.revision && !copy->mutate_revision(d.revision)) return std::nullopt;
+  flatbuffers::WriteScalar<flatbuffers::uoffset_t>(bytes.data(), d.root_offset);
+  return bytes;
 }
 
-DisplayData display(const D::Display* d) {
+Off<D::Display> display(FBB& b, const DisplayData& d) {
+  if (const auto bytes = patched_display(d)) {
+    b.PreAlign(bytes->size(), 8);
+    b.PushBytes(reinterpret_cast<const uint8_t*>(bytes->data()), bytes->size());
+    return Off<D::Display>(b.GetSize() - d.root_offset);
+  }
+  const auto* original = reinterpret_cast<const D::Display*>(d.bytes.data() + d.root_offset);
+  b.PreAlign(d.bytes.size(), 8);
+  b.PushBytes(reinterpret_cast<const uint8_t*>(d.bytes.data()), d.bytes.size());
+  Off<void> value;
+  if (original->value()) {
+    const auto offset = reinterpret_cast<const char*>(original->value()) - d.bytes.data();
+    value = Off<void>(b.GetSize() - offset);
+  }
+  // An envelope can change when its Card moves. Copy the union reference
+  // without walking or interpreting the presentation it points to.
+  const auto card = path(b, d.card);
+  const auto run = b.CreateString(d.run_id);
+  return D::CreateDisplay(b, card, run, d.invocation, d.revision, original->value_type(), value);
+}
+
+DisplayData display(const D::Display* d, std::string_view buffer) {
   DisplayData out;
   if (!d->card() || !d->run_id())
     throw Failed(FailureKind::output_invalid, "display needs card and run_id");
@@ -311,70 +291,8 @@ DisplayData display(const D::Display* d) {
   out.run_id = d->run_id()->str();
   out.invocation = d->invocation().value_or(0);
   out.revision = d->revision().value_or(0);
-  switch (d->value_type()) {
-    case D::DisplayValue::DisplayText: {
-      const auto* t = d->value_as_DisplayText();
-      if (!t || !t->text()) throw Failed(FailureKind::output_invalid, "display text missing");
-      out.value = DisplayData::Text{t->text()->str(), t->markdown()};
-      break;
-    }
-    case D::DisplayValue::DisplayScalar: {
-      const auto* s = d->value_as_DisplayScalar();
-      if (!s || !s->value() || !s->label())
-        throw Failed(FailureKind::output_invalid, "display scalar needs value and label");
-      out.value = DisplayData::Scalar{*s->value(), s->label()->str()};
-      break;
-    }
-    case D::DisplayValue::DisplayTable: {
-      const auto* t = d->value_as_DisplayTable();
-      if (!t || !t->columns() || !t->rows()) throw Failed(FailureKind::output_invalid, "a table needs columns and rows");
-      DisplayData::Table tb;
-      for (const auto* c : *t->columns()) tb.columns.push_back(c->str());
-      for (const auto* r : *t->rows()) {
-        if (!r->cells()) throw Failed(FailureKind::output_invalid, "a table row needs cells");
-        std::vector<std::string> cells;
-        for (const auto* c : *r->cells()) cells.push_back(c->str());
-        tb.rows.push_back(std::move(cells));
-      }
-      out.value = std::move(tb);
-      break;
-    }
-    case D::DisplayValue::DisplayImage: {
-      const auto* im = d->value_as_DisplayImage();
-      if (!im || !im->media_type() || !im->data()) throw Failed(FailureKind::output_invalid, "an image needs media_type and data");
-      out.value = DisplayData::Image{im->media_type()->str(),
-                                     std::string(reinterpret_cast<const char*>(im->data()->data()), im->data()->size()),
-                                     im->alt() ? im->alt()->str() : ""};
-      break;
-    }
-    case D::DisplayValue::DisplayPointCloud: {
-      const auto* p = d->value_as_DisplayPointCloud();
-      if (!p || !p->x() || !p->y() || !p->z()) throw Failed(FailureKind::output_invalid, "a point cloud needs x, y and z");
-      DisplayData::PointCloud pc;
-      pc.x.assign(p->x()->begin(), p->x()->end());
-      pc.y.assign(p->y()->begin(), p->y()->end());
-      pc.z.assign(p->z()->begin(), p->z()->end());
-      if (p->colors()) pc.colors.assign(p->colors()->begin(), p->colors()->end());
-      out.value = std::move(pc);
-      break;
-    }
-    case D::DisplayValue::DisplayModule: {
-      const auto* m = d->value_as_DisplayModule();
-      if (!m || !m->module_() || !m->config_json() || !m->blobs())
-        throw Failed(FailureKind::output_invalid, "a module needs an identity, config and blobs");
-      DisplayData::Module module{m->module_()->str(), m->config_json()->str(), {}};
-      for (const auto* blob : *m->blobs()) {
-        if (!blob || !blob->name() || !blob->data() || !module.blobs.emplace(blob->name()->str(),
-            std::string(reinterpret_cast<const char*>(blob->data()->data()), blob->data()->size())).second)
-          throw Failed(FailureKind::output_invalid, "invalid or duplicate module blob");
-      }
-      out.value = std::move(module);
-      break;
-    }
-    default:
-      throw Failed(FailureKind::output_invalid, "unknown display variant");
-  }
-  if (auto err = out.validate()) throw Failed(FailureKind::output_invalid, *err);
+  out.bytes = buffer;
+  out.root_offset = static_cast<size_t>(reinterpret_cast<const char*>(d) - buffer.data());
   return out;
 }
 
@@ -434,6 +352,7 @@ std::string failure_reply(uint64_t request_id, const FailureData& f) {
 }
 
 std::string standalone_display(const DisplayData& d) {
+  if (auto bytes = patched_display(d)) return std::move(*bytes);
   FBB b;
   b.Finish(display(b, d));
   return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
@@ -441,9 +360,9 @@ std::string standalone_display(const DisplayData& d) {
 
 std::optional<DisplayData> standalone_display(const std::string& bytes) {
   flatbuffers::Verifier v(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
-  if (!v.VerifyBuffer<D::Display>(nullptr)) return std::nullopt;
+  if (bytes.size() > (16u << 20) || !v.VerifyBuffer<D::Display>(nullptr)) return std::nullopt;
   try {
-    return display(flatbuffers::GetRoot<D::Display>(bytes.data()));
+    return display(flatbuffers::GetRoot<D::Display>(bytes.data()), bytes);
   } catch (const Failed&) {
     return std::nullopt;
   }

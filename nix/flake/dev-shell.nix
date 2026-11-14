@@ -22,6 +22,8 @@
               gtest
               emscripten
               git
+              # Use the SDK's Ruby for interpreter adapter tests on macOS too.
+              ruby
               (python3.withPackages (ps: [
                 ps.flatbuffers
                 ps.pytest

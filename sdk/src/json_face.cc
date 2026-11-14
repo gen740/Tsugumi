@@ -14,15 +14,12 @@
 // libraries with a non-finite extension read and write.
 #include <flatbuffers/idl.h>
 
-#include <algorithm>
-#include <cctype>
 #include <cstring>
 #include <fstream>
 #include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <utility>
 
 #include "json_contract.hh"
@@ -59,40 +56,6 @@ auto parser(const char* direction, const char* name) -> flatbuffers::Parser& {
   return *(parsers[key] = std::move(value));
 }
 
-// Rewrites the bare non-finite tokens outside strings from one spelling to
-// the other. A bare word in JSON text is otherwise only true, false or null.
-auto respell(std::string_view text, bool to_flatbuffers) -> std::string {
-  static constexpr std::pair<std::string_view, std::string_view> words[] = {
-      {"nan", "NaN"}, {"inf", "Infinity"}, {"infinity", "Infinity"}};
-  std::string out;
-  out.reserve(text.size());
-  for (size_t i = 0; i < text.size();) {
-    const char c = text[i];
-    if (c == '"') {
-      const size_t start = i++;
-      while (i < text.size() && text[i] != '"') i += text[i] == '\\' ? 2 : 1;
-      i = std::min(i + 1, text.size());
-      out.append(text.substr(start, i - start));
-      continue;
-    }
-    if (!std::isalpha(static_cast<unsigned char>(c))) {
-      out += c;
-      ++i;
-      continue;
-    }
-    size_t end = i;
-    while (end < text.size() && std::isalpha(static_cast<unsigned char>(text[end]))) ++end;
-    const std::string_view word = text.substr(i, end - i);
-    std::string_view replacement = word;
-    for (const auto& [flat, json] : words) {
-      if (to_flatbuffers && word == json) replacement = flat == "infinity" ? "inf" : flat;
-      if (!to_flatbuffers && word == flat) replacement = json;
-    }
-    out.append(replacement);
-    i = end;
-  }
-  return out;
-}
 }  // namespace
 
 extern "C" auto tsugumi_json_error() -> const char* { return error.c_str(); }
@@ -105,9 +68,9 @@ extern "C" auto tsugumi_json_decode(const char* direction, const char* name, con
     result.clear();
     if (!bytes || !size) return "{}";
     std::string text;
-    if (const char* why = tsugumi::message_json::gen_text(parser(direction, name), bytes, &text))
+    if (const char* why = tsugumi::message_json::gen_language_text(parser(direction, name), bytes, &text))
       throw std::runtime_error(why);
-    result = respell(text, false);
+    result = std::move(text);
     return result.c_str();
   } catch (const std::exception& e) {
     error = e.what();
@@ -120,7 +83,7 @@ extern "C" auto tsugumi_json_decode(const char* direction, const char* name, con
 extern "C" auto tsugumi_json_emit(const tsugumi_call* call, const char* port, const char* json) -> int {
   try {
     auto& p = parser("outputs", port);
-    if (!p.ParseJson(respell(json, true).c_str()))
+    if (!tsugumi::message_json::parse_json(p, json))
       throw std::runtime_error("output " + std::string(port) + ": " + p.error_);
     if (call->emit_output(call->host, port, p.builder_.GetBufferPointer(), p.builder_.GetSize()) != 0)
       throw std::runtime_error("output " + std::string(port) + " was rejected");

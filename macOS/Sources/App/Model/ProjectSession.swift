@@ -53,7 +53,7 @@ func recordedDisplay(_ d: Tsugumi_Data_DisplayT) -> DisplaySnapshot? {
     value = t?.markdown == true ? .markdown(t?.text ?? "") : .text(t?.text ?? "")
   case .displayscalar:
     let s = d.value?.value as? Tsugumi_Data_DisplayScalarT
-    value = .scalar(s?.value ?? 0, s?.label ?? "")
+    value = .scalar(s?.value ?? .nan, s?.label ?? "")
   case .displaytable:
     let t = d.value?.value as? Tsugumi_Data_DisplayTableT
     value = .table(columns: (t?.columns ?? []).compactMap { $0 }, rows: (t?.rows ?? []).compactMap { $0?.cells.compactMap { $0 } })
@@ -65,8 +65,12 @@ func recordedDisplay(_ d: Tsugumi_Data_DisplayT) -> DisplaySnapshot? {
     value = .points(x: p?.x ?? [], y: p?.y ?? [], z: p?.z ?? [], colors: p?.colors ?? [])
   case .displaymodule:
     let m = d.value?.value as? Tsugumi_Data_DisplayModuleT
+    let names = (m?.blobs ?? []).compactMap { $0?.name }
+    guard Set(names).count == names.count else {
+      return DisplaySnapshot(runId: d.runId, invocation: d.invocation ?? 0, revision: d.revision ?? 0, value: .unavailable)
+    }
     value = .module(name: m?.module ?? "", json: m?.configJson ?? "", blobs: Dictionary(uniqueKeysWithValues: (m?.blobs ?? []).compactMap { $0 }.map { ($0.name, Data($0.data)) }))
-  default: return nil
+  default: value = .unavailable
   }
   return DisplaySnapshot(runId: d.runId, invocation: d.invocation ?? 0, revision: d.revision ?? 0, value: value)
 }
@@ -198,6 +202,7 @@ enum SyncState: Equatable {
 }
 
 enum DisplayValue {
+  case unavailable
   case text(String)
   /// Markdown with TeX math (the SDK's Markdown display).
   case markdown(String)
@@ -206,6 +211,31 @@ enum DisplayValue {
   case image(mediaType: String, data: Data, alt: String)
   case points(x: [Float], y: [Float], z: [Float], colors: [UInt32])
   case module(name: String, json: String, blobs: [String: Data] = [:])
+}
+
+extension DisplayValue {
+  var displayable: Bool {
+    switch self {
+    case .unavailable: return false
+    case .text(let text), .markdown(let text): return text.utf8.count <= 1 << 20
+    case .scalar(let value, _): return value.isFinite
+    case .table(let columns, let rows):
+      return !columns.isEmpty && columns.count <= 64 && rows.count <= 10000 && columns.allSatisfy { $0.utf8.count <= 4096 } &&
+        rows.allSatisfy { $0.count == columns.count && $0.allSatisfy { $0.utf8.count <= 4096 } }
+    case .image(let media, let data, _):
+      return data.count <= 8 << 20 && (media == "image/png" ? data.count > 8 && data.starts(with: [137,80,78,71,13,10,26,10]) :
+        media == "image/jpeg" && data.count > 3 && data.starts(with: [255,216]))
+    case .points(let x, let y, let z, let colors):
+      return x.count <= 1000000 && x.count == y.count && x.count == z.count && (colors.isEmpty || colors.count == x.count) &&
+        [x,y,z].allSatisfy { $0.allSatisfy(\.isFinite) }
+    case .module(let name, let json, let blobs):
+      let pattern = #"^/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[a-zA-Z0-9+._?=-]+$"#
+      return name.range(of: pattern, options: .regularExpression) != nil && json.utf8.count <= 1 << 20 &&
+        (try? JSONSerialization.jsonObject(with: Data(json.utf8), options: [.fragmentsAllowed])) != nil &&
+        blobs.count <= 64 && blobs.keys.allSatisfy { $0 != "." && $0 != ".." && $0.range(of: #"^[a-zA-Z0-9_.-]{1,128}$"#, options: .regularExpression) != nil } &&
+        blobs.values.reduce(0) { $0 + $1.count } <= 8 << 20
+    }
+  }
 }
 
 struct DisplaySnapshot {
@@ -218,6 +248,8 @@ struct DisplaySnapshot {
   let runId: String
   let invocation: UInt64
   let revision: UInt64
+  /// Preserve the result's content even when it cannot be rendered.
+  let content: DisplayValue
   let value: DisplayValue
   /// What the Card's result row says of it. Worked out once, here: the canvas
   /// asks at every move, and a figure's title is found by parsing its JSON.
@@ -227,8 +259,9 @@ struct DisplaySnapshot {
     self.runId = runId
     self.invocation = invocation
     self.revision = revision
-    self.value = value
-    summary = Self.summary(of: value)
+    self.content = value
+    self.value = value.displayable ? value : .unavailable
+    summary = Self.summary(of: self.value)
   }
 }
 
