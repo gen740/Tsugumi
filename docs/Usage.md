@@ -82,7 +82,7 @@ The core suggests reviewing this pane when build caches occupy at least 20% of t
 
 ## Card settings and app settings
 
-Open a Card's settings to edit its working copy, then choose **Apply**. Settings JSON, Card settings and project settings use the same revision check. If another save conflicts, choose **Overwrite** or **Keep edits and reload**; the latter keeps your previous text available to reapply. [Settings editing and exclusion](SettingsEditing.md) Tabs include Source, Ports, Comments, Nix Definition, Run History and Artifacts; the available tabs depend on the Card's kind. Run history and artifacts remain readable while running, but changes to Cards and closing a running project are blocked.
+Open a Card's settings to edit its working copy, then choose **Apply**. Settings JSON, Card settings and project settings use the same revision check. If another save conflicts, choose **Overwrite** or **Keep edits and reload**; the latter keeps your previous text available to reapply. Tabs include Source, Ports, Comments, Nix Definition, Run History and Artifacts; the available tabs depend on the Card's kind. Run history and artifacts remain readable while running, but changes to Cards and closing a running project are blocked.
 
 Use the app settings for language, appearance, model connections, Skills and shortcuts; use project settings for its environment, Canvas, history and Build Cache. Choose Japanese or English under **General** (Japanese by default); restart the Mac app to apply it, while the Web UI reloads itself. Signed [binary caches](BinaryCaches.md) apply at the next Mac VM start.
 
