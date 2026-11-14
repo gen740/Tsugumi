@@ -1428,6 +1428,12 @@ EN = {
 "TLS 接続先を入力してください（例: tls://worker.example:8765）。": "Enter a TLS endpoint, such as tls://worker.example:8765.",
 "公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。": "Public key registered. Add this host's public key to authorized_keys, then verify the connection.",
 "登録": "Register",
+'ヘルパー': 'Helpers',
+'同時に動かすヘルパーの数': 'Concurrent helpers',
+'1 にすると、ヘルパーは順番に動きます。': 'Set to 1 to run helpers sequentially.',
+'範囲を指定しないヘルパーを許可する': 'Allow unscoped helpers',
+'オフにすると、各ヘルパーが読める Card と変更・実行できる Card を Agent が指定します。': 'When off, the Agent specifies which Cards each helper may read and which it may change or run.',
+
 }
 
 

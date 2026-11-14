@@ -206,7 +206,7 @@ Tsugumi uses Claude's models and features by choosing the one that fits each job
 | Make, fix, run and check Cards | Tool use in the Messages API. The tools are generated from the RPC contract (`protocol/tsugumi.fbs`) for the explicit `requests` allow list in `agent/Shared/agent.json` | [Tools and the RPC](#tools-and-the-rpc), `core/src/agent/catalog.cc`, `tests/core/agent/` |
 | A model sized to the job | Implementing Cards uses the model the user chooses (default `claude-sonnet-5-5`, with effort and, on models that offer it, Fast mode selectable). With an Anthropic API key, the guide's conversation, the summaries of the thinking of the bird on the Canvas and opt-in Agent version summaries use the small `claude-haiku-5-5` (other providers use a small model of their own or the Agent's model) | [Connecting to models](#connecting-to-models), `modelOptions` in `agent/Shared/agent.json`, [Version notes](Versions.md#version-notes) |
 | Judging from the figures a run makes (multimodal) | `run_record` passes the images a Card displayed (charts, RGB images and so on) to the model as images. The same in the app, the Web UI and the Claude Code plugin | `core/src/agent/tool_images.cc`, `web/server/mcp.ts`, `tests/core/agent/project_rpc_test.cc` |
-| Implementing independent Drafts at the same time (subagents) | `delegate` takes 1 to 8 tasks, runs up to 4 helpers at a time, and returns their messages and errors | [Splitting the work](#splitting-the-work-delegate), `tests/core/agent/project_rpc_test.cc` |
+| Implementing independent Drafts at the same time (subagents) | `delegate` takes 1 to 8 tasks, uses the user’s concurrent-helper setting (default 4; 1 is sequential), and returns their messages and errors | [Splitting the work](#splitting-the-work-delegate), `tests/core/agent/project_rpc_test.cc` |
 | Guiding through a fixed procedure (Skills) | The built-in Skill `$demo` (`agent/Shared/demo-skill.md`) guides through a demo, and Skills the user adds are loaded too | [Skills and conversations](#skills-and-conversations), [the guide](#the-thrush-chat-and-guide) |
 | Showing work in progress | Tool arguments are received by streaming (`eager_input_streaming`), and the Card's code is shown on the Canvas as it is written | [The Agent on the Canvas](#the-agent-on-the-canvas), `core/src/agent/provider.cc` |
 | Making long work faster and cheaper | Prompt caching on the system prompt and the tool definitions | `core/src/agent/provider.cc` |
@@ -246,6 +246,10 @@ See the [RPC contract](Protocol.md) and [Agent permission boundary](security.md#
 ### Splitting the work (delegate)
 
 Independent Drafts can be implemented by helper Agents. Try the [Dynamical systems gallery](Demos.md#dynamical-systems-gallery-dynamics-draft).
+
+In either UI’s Agent settings, choose 1–8 concurrent helpers and whether to allow unscoped helpers. Unscoped helpers are off by default so each helper’s work has a boundary a person can follow. The parent supplies separate `read_cards` and `write_cards` arrays of exact permanent Card paths (`outer/step` includes only that Card). Inspection, files, saves, runs, records and logs enforce those boundaries in agentd; a container does not grant its children. A helper’s new `card_id` reservation grants it both access kinds. The parent handles project-wide operations, canvas/layout edits, container-link changes and tools that cannot identify a Card.
+
+Helper usage adds to the conversation’s usage. A shortened delegate result says so and identifies its full trace in the conversation’s existing helper records.
 
 ### The Agent on the Canvas
 
