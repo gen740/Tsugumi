@@ -9,6 +9,7 @@
   importNpmLock,
   nodejs,
   git,
+  web,
 }:
 let
   nodeModules = importNpmLock.buildNodeModules {
@@ -35,6 +36,7 @@ let
         if [ ! -L "$site/node_modules" ]; then rm -rf "$site/node_modules"; fi
         ln -sfn ${nodeModules}/node_modules "$site/node_modules"
         cd "$site"
+        export TSUGUMI_SITE_PLAYER_DIR=${web.sitePlayer}
         export ASTRO_TELEMETRY_DISABLED=1
         ${run}
       '';

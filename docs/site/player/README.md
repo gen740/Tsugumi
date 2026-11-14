@@ -16,15 +16,17 @@ player.destroy()
 - With `prefers-reduced-motion`, it does not play automatically (`compact` shows the state at the end of the run, still).
 - The height can be changed with `--tp-height`.
 
-## Regenerating
+## Building
 
-After changing Cards or demos, first prepare `web/src/gen` (`nix develop --command npm run gen` in `web/`), then run:
+`nix build .#site-player` builds the player with the Web package's pinned dependencies and generated protocol bindings. The documentation site, Web package and Mac app take their player files from this shared output. These generated files are ignored by Git: `site/js/player.js`, `site/player.css`, and the top-level `player-data/*.json`. Recorded runs, images and `ports.json` in `player-data/assets/`, narration and handwritten scripts remain committed.
+
+Without Nix, install the Web dependencies (`npm ci` in `web/`) and prepare `web/src/gen` (`npm run gen` there, with `flatc` on PATH), then run:
 
 ```sh
 node docs/site/player/build.mjs
 ```
 
-`node docs/site/player/build.mjs --check` (which writes nothing and fails if `player.js`, `player.css` or `player-data/` differ from the current inputs) shows when regenerating was forgotten. CI's Web step runs it.
+`build.mjs --out-dir <directory>` writes the same layout and copies the recorded assets into a separate output directory. It removes stray top-level JSON files for demos no longer present. Site and Web builds, Web tests, SVG rendering and the evidence tool generate the player before using it; `TSUGUMI_SITE_PLAYER_DIR` selects an existing shared build.
 
 Recording runs is a separate step. It needs a `tsugumid` build and Nix (the first time takes a few minutes to fetch dependencies).
 
@@ -53,16 +55,14 @@ entries = json.loads(Path("demos/en/index.json").read_text())["demos"]
 ids = [entry["id"] for entry in entries if "Draft" not in entry.get("tags", [])]
 subprocess.run([sys.executable, "docs/site/player/harvest.py", "--ports", *ids, "card-guide"], check=True)
 PYTHON
-node docs/site/player/build.mjs
 node docs/site/player/svg.mjs
-node docs/site/player/build.mjs --check
 ```
 
 `harvest.py` produces `player-data/assets/ports.json`, each `<id>.run.json` and its images. `build.mjs` embeds the current Card sources, descriptions and narration in `player-data/<id>.json` and `index.json`, and rebuilds `site/js/player.js` and `site/player.css`. `svg.mjs` then refreshes the gallery SVGs and the README's scenes, including the source-code scene. Recording and SVG rendering need daemon sockets and headless Chrome; they cannot run in a sandbox that forbids listeners or app launches. The old records and SVGs remain evidence of their original runs until a person runs these commands. Finally regenerate and check the documentation with `nix run .#build-doc` and `nix run .#test-doc`.
 
 ## Moving SVGs
 
-For places like GitHub's README, where scripts do not run and only images can be placed, the replay is made into SVGs. After regenerating `player-data/`, run this on a Mac and commit the SVGs it makes (it uses Chrome without a screen, and shrinks the tiles' images with `sips`).
+For places like GitHub's README, where scripts do not run and only images can be placed, the replay is made into SVGs. Run this on a Mac and commit the SVGs it makes (it uses Chrome without a screen, and shrinks the tiles' images with `sips`).
 
 ```sh
 node docs/site/player/svg.mjs            # every demo with a record; list IDs for only those

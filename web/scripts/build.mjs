@@ -1,5 +1,6 @@
 // Bundles the host server, the plugin's MCP server and the browser UI into dist/ with esbuild.
 import * as esbuild from 'esbuild'
+import { preparePlayer } from '../../docs/site/player/build.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -19,7 +20,7 @@ fs.mkdirSync(path.join(out, 'public'), { recursive: true })
 const viewer = path.join(root, '..', 'ui', 'modules')
 // The demo player's data (ui/demoPlayer.tsx, Home's thumbnails): each demo and the
 // images it names, without what only builds that data.
-const playerData = path.join(root, '..', 'docs', 'site', 'player-data')
+const playerData = path.join(preparePlayer(), 'player-data')
 const copy = () => {
   fs.copyFileSync(path.join(root, 'src', 'index.html'), path.join(out, 'public', 'index.html'))
   fs.mkdirSync(path.join(out, 'public', 'modules'), { recursive: true })
@@ -29,6 +30,7 @@ const copy = () => {
   if (!page.includes(script)) throw new Error('viewer.html has no <script src="viewer.js"></script> to inline')
   fs.writeFileSync(path.join(out, 'public', 'modules', 'viewer.html'), page)
   fs.copyFileSync(path.join(root, '..', 'docs', 'assets', 'tsugumi-icon.svg'), path.join(out, 'public', 'icon.svg'))
+  fs.rmSync(path.join(out, 'public', 'player-data'), { recursive: true, force: true })
   fs.cpSync(playerData, path.join(out, 'public', 'player-data'), {
     recursive: true,
     filter: (from) => !['index.json', 'ports.json'].includes(path.basename(from)) && !from.endsWith('.run.json'),

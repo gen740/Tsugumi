@@ -125,3 +125,21 @@ test('the app help bundle contains all local script, style and image dependencie
     fs.rmSync(destination, { recursive: true, force: true })
   }
 })
+
+test('the published player contains exactly the source demos and their recorded images', () => {
+  const data = path.join(site, 'site/player-data')
+  const entries = JSON.parse(fs.readFileSync(path.join(ROOT, 'demos/en/index.json'), 'utf8')).demos
+  const ids = [...entries.map(entry => entry.id), 'card-guide'].sort()
+  const index = JSON.parse(fs.readFileSync(path.join(data, 'index.json'), 'utf8'))
+  assert.deepEqual(index.demos.map(demo => demo.id).sort(), ids)
+  assert.deepEqual(fs.readdirSync(data).filter(file => file.endsWith('.json')).sort(), [...ids.map(id => `${id}.json`), 'index.json'].sort())
+  assert.ok(read('site/js/player.js').length > 0)
+  assert.ok(read('site/player.css').length > 0)
+  for (const id of ids) {
+    const demo = JSON.parse(fs.readFileSync(path.join(data, `${id}.json`), 'utf8'))
+    assert.equal(demo.id, id)
+    for (const output of Object.values(demo.outputs)) {
+      if (output.src) assert.ok(fs.existsSync(path.join(data, output.src)), `${id}: ${output.src}`)
+    }
+  }
+})
