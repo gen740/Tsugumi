@@ -1196,6 +1196,29 @@ struct Host::State {
                             Resources(conversation));
         op_id = old.text(4);
         interrupted = true;
+        if (!spec->approval_required) {
+          auto approval = db.prepare(
+              "SELECT a.state,o.request,o.preview FROM operation_approvals o "
+              "JOIN access_requests a ON a.id=o.request "
+              "WHERE o.conversation=? AND o.call=?");
+          approval.bind(1, conversation).bind(2, call.id);
+          if (approval.step()) {
+            const auto state = approval.text(0);
+            if (state == "pending" && !wait)
+              throw Failure("grant_required", approval.text(2), approval.text(1));
+            if (state == "denied")
+              throw Failure("permission_denied",
+                            "The user declined this operation. Nothing was "
+                            "changed; continue without retrying it.");
+            // The core rejected this attempt before asking for Card permissions;
+            // approval_required has no durable core receipt. Recheck the same
+            // unapproved request, including reload's current on-disk widening.
+            // ApproveOperation compares its exact binding before consuming it.
+            // Once consumed, only receipt recovery may resolve the operation.
+            if (state == "pending" || state == "allowed")
+              interrupted = false;
+          }
+        }
       } else if (!spec->approval_required) {
         auto q = db.prepare("INSERT INTO receipts VALUES(?,?,?,'sent','',0,?,?)");
         q.bind(1, conversation).bind(2, call.id).bind(3, digest)

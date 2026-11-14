@@ -762,10 +762,13 @@ TEST_F(AgentProjectFixture,
   ASSERT_EQ(b.Code(), "grant_required");
   ASSERT_EQ(independent.Code(), "grant_required");
   ASSERT_FALSE(a.RequestId().empty());
+  ASSERT_FALSE(b.RequestId().empty());
+  ASSERT_FALSE(independent.RequestId().empty());
   EXPECT_NE(a.RequestId(), b.RequestId());
   EXPECT_NE(a.RequestId(), independent.RequestId());
-  EXPECT_EQ(Tool(conversation, "project_save", network, "save-a").RequestId(),
-            a.RequestId());
+  const auto repeated = Tool(conversation, "project_save", network, "save-a");
+  EXPECT_EQ(repeated.Code(), "grant_required");
+  EXPECT_EQ(repeated.RequestId(), a.RequestId());
   ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
                    [&](Builder& builder) {
                      return A::CreateAccessResolveRequest(
@@ -778,8 +781,9 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(still_pending.RequestId(), b.RequestId());
   EXPECT_EQ(Tool(conversation, "project_save", sandbox, "save-a").Code(),
             "conflict");
-  EXPECT_EQ(Tool(conversation, "project_save", network, "save-c").Code(),
-            "grant_required");
+  const auto still_independent = Tool(conversation, "project_save", network, "save-c");
+  EXPECT_EQ(still_independent.Code(), "grant_required");
+  EXPECT_EQ(still_independent.RequestId(), independent.RequestId());
   const auto result = Tool(conversation, "project_save", network, "save-a");
   ASSERT_TRUE(result.Code().empty());
   ASSERT_FALSE(JsonBool(result.View(), "/isError")) << result.View();
@@ -832,18 +836,35 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
                    }).Code().empty());
   Write(definition, R"({"template":"draft","sandbox":false})");
   const auto result = Tool(conversation, "project_reload", arguments, "reload-a");
-  ASSERT_TRUE(result.Code().empty());
-  ASSERT_TRUE(JsonBool(result.View(), "/isError")) << result.View();
-  const auto failure = JsonString(result.View(), "/text");
-  EXPECT_EQ(JsonString(failure, "/value/kind"), "approval_required");
-  EXPECT_NE(failure.find("sandbox_off work"), std::string::npos);
+  // The same arguments now require different permissions. Like other changed
+  // approval targets, this needs a new call rather than consuming the old one.
+  EXPECT_EQ(result.Code(), "conflict");
   EXPECT_EQ(JsonString(JsonString(Inspect(conversation).View(), "/text"),
                        "/value/rev"), JsonString(snapshot, "/value/rev"));
-  EXPECT_EQ(Tool(conversation, "project_reload", arguments, "reload-a").View(),
-            result.View());
+  EXPECT_EQ(Tool(conversation, "project_reload", arguments, "reload-a").Code(),
+            "conflict");
   const auto next = Tool(conversation, "project_reload", arguments, "reload-b");
-  EXPECT_EQ(next.Code(), "grant_required");
+  ASSERT_EQ(next.Code(), "grant_required");
+  ASSERT_FALSE(next.RequestId().empty());
   EXPECT_NE(next.RequestId(), pending.RequestId());
+  EXPECT_NE(next.Failure()->message()->str().find("sandbox_off work"),
+            std::string::npos);
+  EXPECT_EQ(Tool(conversation, "project_reload", arguments, "reload-b").RequestId(),
+            next.RequestId());
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
+                   [&](Builder& builder) {
+                     return A::CreateAccessResolveRequest(
+                                builder, builder.CreateString(next.RequestId()), true)
+                         .Union();
+                   }).Code().empty());
+  EXPECT_EQ(Tool(conversation, "project_reload",
+                 R"({"base_rev":0,"different":true})", "reload-b").Code(),
+            "conflict");
+  const auto reloaded = Tool(conversation, "project_reload", arguments, "reload-b");
+  ASSERT_TRUE(reloaded.Code().empty());
+  ASSERT_FALSE(JsonBool(reloaded.View(), "/isError")) << reloaded.View();
+  EXPECT_EQ(Tool(conversation, "project_reload", arguments, "reload-b").View(),
+            reloaded.View());
 }
 
 TEST_F(AgentProjectFixture,
