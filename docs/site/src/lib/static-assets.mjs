@@ -2,28 +2,39 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sirv from 'sirv'
+import { preparePlayer } from '../../player/build.mjs'
 
 const docs = fileURLToPath(new URL('../../../', import.meta.url))
-const directories = ['assets', 'site/assets', 'site/js', 'site/player-data']
-const files = ['site/site.css', 'site/player.css']
 
-// Keep shared illustrations and demo recordings in one place. Astro serves them
-// in development and copies them into the disposable site output for publication.
+// Handwritten scripts and recorded assets stay in the checkout. Player outputs
+// come from the shared Nix build, or are generated before Astro uses them.
 export function staticAssets() {
+  let assets
   return {
     name: 'tsugumi-static-assets',
     hooks: {
+      'astro:config:setup': () => {
+        const player = preparePlayer()
+        assets = new Map([
+          ...['assets', 'site/assets', 'site/js', 'site/site.css'].map(relative => [relative, path.join(docs, relative)]),
+          ...['js/player.js', 'player.css', 'player-data'].map(relative => [`site/${relative}`, path.join(player, relative)]),
+        ])
+      },
       'astro:server:setup': ({ server }) => {
-        for (const relative of directories) {
-          server.middlewares.use(`/${relative}`, sirv(path.join(docs, relative), { dev: true }))
-        }
+        // Exact files precede directory middleware so a local player.js cannot
+        // shadow the supplied build inside the handwritten scripts' directory.
+        const files = [...assets].filter(([, source]) => fs.statSync(source).isFile())
         server.middlewares.use((req, res, next) => {
           const relative = new URL(req.url, 'http://localhost').pathname.slice(1)
-          if (!files.includes(relative)) return next()
-          res.setHeader('Content-Type', 'text/css; charset=utf-8')
-          fs.createReadStream(path.join(docs, relative)).pipe(res)
+          const source = files.find(([name]) => name === relative)?.[1]
+          if (!source) return next()
+          res.setHeader('Content-Type', relative.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/css; charset=utf-8')
+          fs.createReadStream(source).pipe(res)
         })
-        const sources = [...directories, ...files].map(relative => path.join(docs, relative))
+        for (const [relative, source] of assets) {
+          if (fs.statSync(source).isDirectory()) server.middlewares.use(`/${relative}`, sirv(source, { dev: true }))
+        }
+        const sources = [...assets.values()]
         server.watcher.add(sources)
         server.watcher.on('change', file => {
           if (sources.some(source => file === source || file.startsWith(source + path.sep))) {
@@ -32,8 +43,8 @@ export function staticAssets() {
         })
       },
       'astro:build:done': ({ dir }) => {
-        for (const relative of [...directories, ...files]) {
-          fs.cpSync(path.join(docs, relative), new URL(relative, dir), { recursive: true })
+        for (const [relative, source] of assets) {
+          fs.cpSync(source, new URL(relative, dir), { recursive: true })
         }
       },
     },

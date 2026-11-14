@@ -7,8 +7,18 @@ on:
       - 'README.md'
       - 'THIRD_PARTY_NOTICES.md'
       - 'macOS/tools/bundle-docs.sh'
-      - 'nix/docs-site.nix'
-      - 'nix/flake/docs.nix'
+      - 'web/**'
+      - 'demos/**'
+      - 'ui/**'
+      - 'protocol/**'
+      - 'client/**'
+      - 'sdk/**'
+      - 'agent/Shared/**'
+      - 'nix/**'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'VERSION'
+      - 'flake.nix'
       - 'flake.lock'
       - '.github/workflows/docs.yml'
   pull_request:
@@ -17,8 +27,18 @@ on:
       - 'README.md'
       - 'THIRD_PARTY_NOTICES.md'
       - 'macOS/tools/bundle-docs.sh'
-      - 'nix/docs-site.nix'
-      - 'nix/flake/docs.nix'
+      - 'web/**'
+      - 'demos/**'
+      - 'ui/**'
+      - 'protocol/**'
+      - 'client/**'
+      - 'sdk/**'
+      - 'agent/Shared/**'
+      - 'nix/**'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'VERSION'
+      - 'flake.nix'
       - 'flake.lock'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
@@ -30,7 +50,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       # The same Node.js and packages as `nix run .#dev-doc` (nix/docs-site.nix).
