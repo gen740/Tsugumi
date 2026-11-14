@@ -159,8 +159,8 @@ table LayoutCard {
   width:double (id: 3);
   height:double (id: 4);
   /// In the order drawn.
-  inputs:[LayoutPort] (id: 5, required);
-  outputs:[LayoutPort] (id: 6, required);
+  inputs:[LayoutPort] (id: 5);
+  outputs:[LayoutPort] (id: 6);
   /// Its ports may be drawn in another order (not those of a fork, a branch
   /// and the like, whose places have a meaning).
   reorderable:bool (id: 7);
@@ -191,7 +191,7 @@ table LayoutBarEnd {
 
 /// A bar of a Card in Card's inner canvas ("This Card's input" / "output").
 table LayoutBar {
-  ends:[LayoutBarEnd] (id: 0, required);
+  ends:[LayoutBarEnd] (id: 0);
   /// Where the bar was put by hand; omitted while it follows the Cards.
   x:double = null (id: 1);
   y:double = null (id: 2);
@@ -205,11 +205,11 @@ table LayoutScene {
   grid:double (id: 1);
   /// The grid is on: Cards are placed on it.
   snap:bool (id: 2);
-  cards:[LayoutCard] (id: 3, required);
-  wires:[LayoutWire] (id: 4, required);
+  cards:[LayoutCard] (id: 3);
+  wires:[LayoutWire] (id: 4);
   /// The output frames shown.
-  frames:[LayoutBox] (id: 5, required);
-  notes:[LayoutBox] (id: 6, required);
+  frames:[LayoutBox] (id: 5);
+  notes:[LayoutBox] (id: 6);
   /// Inside a Card in Card only.
   inputs:LayoutBar (id: 7);
   outputs:LayoutBar (id: 8);
@@ -237,17 +237,17 @@ table LayoutPlace {
 /// The order a Card's ports are drawn in (layout.json's inputOrder / outputOrder).
 table LayoutPortOrder {
   id:string (id: 0, required);
-  inputs:[string] (id: 1, required);
-  outputs:[string] (id: 2, required);
+  inputs:[string] (id: 1);
+  outputs:[string] (id: 2);
 }
 
 /// What LayoutArrange or LayoutUntangle would change; the client saves it.
 table LayoutProposal {
-  cards:[LayoutPlace] (id: 0, required);
-  frames:[LayoutPlace] (id: 1, required);
-  notes:[LayoutPlace] (id: 2, required);
+  cards:[LayoutPlace] (id: 0);
+  frames:[LayoutPlace] (id: 1);
+  notes:[LayoutPlace] (id: 2);
   /// Only the Cards whose order changes.
-  port_orders:[LayoutPortOrder] (id: 3, required);
+  port_orders:[LayoutPortOrder] (id: 3);
 }
 
 table VersionCanvasCard {
@@ -271,8 +271,8 @@ table VersionCanvasWire {
 /// A version's own Cards: Card in Card is one Card here. Saved positions, or
 /// columns by depth when a Card has none.
 table VersionCanvas {
-  cards:[VersionCanvasCard] (id: 0, required);
-  wires:[VersionCanvasWire] (id: 1, required);
+  cards:[VersionCanvasCard] (id: 0);
+  wires:[VersionCanvasWire] (id: 1);
   /// The way the Cards run: "leftToRight" or "topToBottom". Columns by depth
   /// are always leftToRight.
   flow:string (id: 2, required);
@@ -286,8 +286,8 @@ table LayoutValidated { json:string (required); }
 /// project's VersionCanvasRequest; no document is changed.
 table VersionCanvasRequest {
   layout_json:string (required);
-  cards:[VersionCanvasCard] (required);
-  wires:[VersionCanvasWire] (required);
+  cards:[VersionCanvasCard];
+  wires:[VersionCanvasWire];
 }
 
 union RequestPayload {

@@ -84,6 +84,18 @@ clangStdenv.mkDerivation {
       echo 'Usage: tsugumi-test-env COMMAND [ARGUMENT...]' >&2
       exit 2
     fi
+    # Tests never use the person's own application data. A client that starts
+    # the host service by itself would otherwise use the real support folder
+    # (settings, sign-in, conversations) and leave a service running on it.
+    if [ -z "''${TSUGUMI_SUPPORT_DIR:-}" ]; then
+      TSUGUMI_SUPPORT_DIR="$(mktemp -d "''${TMPDIR:-/tmp}/tsugumi-test-support.XXXXXX")"
+      export TSUGUMI_SUPPORT_DIR
+      status=0
+      "$@" || status=$?
+      pkill -TERM -f "tsugumi-agentd --state-dir $TSUGUMI_SUPPORT_DIR" 2>/dev/null || true
+      rm -rf "$TSUGUMI_SUPPORT_DIR"
+      exit "$status"
+    fi
     exec "$@"
     EOF
     chmod +x "$out/libexec/tsugumi-tests/run-command"

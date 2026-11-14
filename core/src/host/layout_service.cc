@@ -47,7 +47,7 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
   auto ports = [](const auto* ps) {
     std::vector<layout::Port> out;
     std::set<std::string> names;
-    for (const auto* p : *ps) {
+    if (ps) for (const auto* p : *ps) {
       if (!names.insert(p->name()->str()).second)
         throw LayoutFailure("duplicate layout port");
       out.push_back({p->name()->str(), measured(p->x()), measured(p->y())});
@@ -55,7 +55,7 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
     return out;
   };
   std::set<std::string> ids;
-  for (const auto* c : *in.cards()) {
+  if (in.cards()) for (const auto* c : *in.cards()) {
     const auto id = c->id()->str();
     if (id.empty() || id.find('\0') != std::string::npos ||
         !ids.insert(id).second)
@@ -64,12 +64,12 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
                        size(c->height()), ports(c->inputs()),
                        ports(c->outputs()), c->reorderable()});
   }
-  for (const auto* w : *in.wires())
+  if (in.wires()) for (const auto* w : *in.wires())
     s.wires.push_back({w->from()->str(), w->from_port()->str(), w->to()->str(),
                        w->to_port()->str()});
   auto boxes = [](const auto* bs) {
     std::vector<layout::Box> out;
-    for (const auto* b : *bs)
+    if (bs) for (const auto* b : *bs)
       out.push_back({b->id()->str(), measured(b->x()), measured(b->y()),
                      size(b->width()), size(b->height())});
     return out;
@@ -79,7 +79,7 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
   auto bar = [](const R::LayoutBar* b) {
     layout::Bar out;
     if (!b) return out;
-    for (const auto* e : *b->ends())
+    if (b->ends()) for (const auto* e : *b->ends())
       out.ends.push_back(
           {e->name()->str(), e->card()->str(), e->port()->str()});
     if (b->x().has_value() != b->y().has_value())
@@ -205,12 +205,12 @@ auto VersionCanvas(const R::VersionCanvasRequest& in) -> R::VersionCanvasT {
     std::string flow = "leftToRight";
   } out;
   std::map<std::string, size_t> index;
-  for (const auto* card : *in.cards()) {
+  if (in.cards()) for (const auto* card : *in.cards()) {
     index[card->id()->str()] = out.cards.size();
     out.cards.push_back(
         {card->id()->str(), 0, 0, card->kind()->str(), card->fan(), false});
   }
-  for (const auto* wire : *in.wires())
+  if (in.wires()) for (const auto* wire : *in.wires())
     if (index.contains(wire->from()->str()) &&
         index.contains(wire->to()->str()))
       out.wires.emplace_back(wire->from()->str(), wire->to()->str());
