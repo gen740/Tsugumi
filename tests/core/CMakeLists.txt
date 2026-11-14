@@ -126,7 +126,7 @@ endif()
 # Storage, Skill reads, environment adapters and thought timing need no sockets.
 add_executable(tsugumi_host_settings_tests agent/catalog_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc agent_fixture_server.cc agent/helper_scope_test.cc)
 target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
-target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_agent_core GTest::gtest_main)
+target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_agent_core PkgConfig::LIBGIT2 GTest::gtest_main)
 target_compile_options(tsugumi_host_settings_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 gtest_discover_tests(tsugumi_host_settings_tests TEST_PREFIX "core_host_settings." DISCOVERY_MODE PRE_TEST)
 if(TSUGUMI_INSTALLED_CORE)
