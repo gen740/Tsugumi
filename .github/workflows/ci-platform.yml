@@ -77,6 +77,9 @@ jobs:
           artifact-name: native-${{ inputs.system }}
           artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
           out-link: build-ci
+      - name: Allow user namespaces for bubblewrap
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Pinned public-key TLS handshakes
         run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_peer_tls_tests"'
       - name: Public Agent RPC scenarios
