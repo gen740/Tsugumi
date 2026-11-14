@@ -237,7 +237,7 @@ void validate_required_outputs(Call& call) {
     if (std::none_of(call.outputs.begin(), call.outputs.end(), [&](const auto& output) {
           return output.first == port->name()->string_view();
         })) {
-      record_failure(D::FailureKind::output_invalid, "required output " + port->name()->str() + " was not emitted");
+      record_failure(D::FailureKind::output_invalid, "required output " + port->name()->str() + " is missing");
       return;
     }
   }

@@ -148,7 +148,9 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
       [sink = request.log](uint64_t stream, const std::string& text) {
         if (sink) sink(static_cast<LogStream>(stream), text);
       }, request.log_limit_bytes);
-  // Every failed invocation discards its worker, including transfer failures.
+  // A transfer/staging error does not discard a living resident's state.
+  // If the call itself throws, its protocol state is unknown: end the worker.
+  bool between_calls = true;
   auto return_worker = [&] {
     if (result.outcome.failure) {
       const auto kind = result.outcome.failure->kind;
@@ -224,7 +226,9 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
     });
     StagingHandle output_directory(worker.out_dir());
     int64_t t0 = now_ms();
+    between_calls = false;
     result.outcome = worker.call(frame, call_id, &request.cancel, deadline, request.display);
+    between_calls = true;
     worker.set_logs(nullptr);
     invocation_log->finish();
     request.on_timing(t0, now_ms());
@@ -287,10 +291,11 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   } catch (...) {
     try {
       if (lease.worker) {
-        workers_.release(worker_card, key, std::move(lease.worker), false, "the previous call failed");
+        if (between_calls) return_worker();
+        else workers_.release(worker_card, key, std::move(lease.worker), false, "the previous call failed");
       }
     } catch (...) {
-      // Preserve the original failure while ending the worker.
+      // Preserve the original failure if clearing staging also fails.
     }
     try { invocation_log->finish(); } catch (...) {}
     throw;
