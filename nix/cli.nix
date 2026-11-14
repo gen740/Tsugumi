@@ -6,7 +6,6 @@
   makeWrapper,
   coreutils,
   nodejs,
-  openssh,
   tsugumid,
   web,
 }:
@@ -27,12 +26,10 @@ runCommand "tsugumi-${lib.fileContents ../VERSION}"
       --prefix PATH : ${
         lib.makeBinPath [
           coreutils
-          openssh
         ]
       } \
       --set-default TSUGUMID ${tsugumid}/bin/tsugumid \
       --set-default TSUGUMI_AGENTD ${tsugumid}/bin/tsugumi-agentd \
-      --set-default TSUGUMI_RPC_CLIENT ${tsugumid}/bin/tsugumi-rpc \
       --set-default TSUGUMI_WORKER ${tsugumid}/bin/tsugumi-worker \
       --set-default TSUGUMI_SDK_DIR ${tsugumid}/share/tsugumi/sdk
   ''

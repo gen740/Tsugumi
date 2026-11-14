@@ -24,7 +24,7 @@ esac
 # The builder VM runs on Tsugumi's guest kernel when it exists (the stock
 # kernel's SELinux oops leaves builder VMs stuck on shutdown; kernel.nix).
 kernel_args=()
-kernel="${TSUGUMI_KERNEL:-$repo/dist/tsugumi-kernel}"
+kernel="$repo/dist/tsugumi-kernel"
 [ -f "$kernel" ] && kernel_args=(--kernel "$kernel")
 
 stage="$(mktemp -d "${TMPDIR:-/tmp}/tsugumi-src.XXXXXX")"
