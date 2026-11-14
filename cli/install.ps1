@@ -42,12 +42,25 @@ $bin = Join-Path $env:USERPROFILE '.local\bin'
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
 $command = Join-Path $bin 'tsugumi.cmd'
 # From WSL's home folder; a project folder is given as WSL sees it, as an absolute path.
-Set-Content -Path $command -Encoding Ascii -Value @'
+$wrapper = @'
 @echo off
 wsl.exe --cd ~ --exec .local/bin/tsugumi %*
 if errorlevel 1 exit /b %errorlevel%
 if "%~1"=="uninstall" if "%~2"=="--yes" if "%~3"=="" (del "%~f0" & exit /b)
 '@
+# Stage alongside the launcher, then replace it atomically. A write failure
+# leaves the existing Windows command available as well as the WSL command.
+$staged = Join-Path $bin ('.tsugumi.' + [Guid]::NewGuid().ToString() + '.cmd')
+try {
+  [IO.File]::WriteAllText($staged, $wrapper, [Text.Encoding]::ASCII)
+  if ([IO.File]::Exists($command)) {
+    [IO.File]::Replace($staged, $command, $null)
+  } else {
+    [IO.File]::Move($staged, $command)
+  }
+} finally {
+  if ([IO.File]::Exists($staged)) { [IO.File]::Delete($staged) }
+}
 
 Write-Host "tsugumi: installed $command"
 if (($env:PATH -split ';') | Where-Object { $_.TrimEnd('\') -ieq $bin }) {

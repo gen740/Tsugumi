@@ -3,7 +3,7 @@
 #
 #   curl -fsSL https://github.com/gen740/Tsugumi/releases/latest/download/install.sh | sh
 #
-#   ~/.local/share/tsugumi/<version>/   what the command runs
+#   ~/.local/share/tsugumi/<version>.<generation>/   immutable runtimes
 #   ~/.local/share/tsugumi/current      that version
 #   ~/.local/bin/tsugumi                the command
 #
@@ -65,7 +65,16 @@ fi
 mkdir -p "$data" "$bin"
 # Next to where it goes, so that moving it into place is a rename.
 work="$(mktemp -d "$data/.install.XXXXXX")"
-trap 'rm -rf "$work"' EXIT
+dest=
+committed=false
+cleanup() {
+  rm -rf "$work"
+  # A signal can arrive just after the commit rename and before assignment.
+  if [ "$committed" = false ] && [ -n "$dest" ] &&
+     [ "$(readlink "$data/current" 2>/dev/null || :)" != "${dest##*/}" ]; then rm -rf "$dest"; fi
+  rm -f "$bin/.tsugumi.$$"
+}
+trap cleanup EXIT
 # Ctrl-C: sh runs a trap and goes on, so stop here (the EXIT trap cleans up).
 trap 'echo >&2; echo "tsugumi のインストールを中止しました。何も入れていません。" >&2; exit 130' INT TERM
 
@@ -82,31 +91,43 @@ tree="$work/tree/tsugumi"
 [ -f "$tree/VERSION" ] || fail "$artifact の中身が想定と違います。"
 version="$(cat "$tree/VERSION")"
 
-dest="$data/$version"
-rm -rf "$dest"
+# A generation is never overwritten, even when reinstalling the same version.
+case "$version" in
+  '' | *[!A-Za-z0-9._+-]* | [!A-Za-z0-9]*) fail "Invalid release version: $version" ;;
+esac
+dest="$(mktemp -d "$data/$version.XXXXXX")"
+generation="${dest##*/}"
 if [ "$artifact" = tsugumi-linux.tar.gz ]; then
   echo "Nix で tsugumi $version を組み立てています（初回は数分かかります）…"
-  mkdir -p "$dest"
-  # An out-link keeps the build from Nix's garbage collection, as long as it
-  # stays where Nix was told it is.
-  nix --extra-experimental-features 'nix-command flakes' --accept-flake-config build "path:$tree#cli" --out-link "$dest/result" || {
-    rm -rf "$dest"
+  # Keep the out-link at its final path: moving it loses Nix's GC root.
+  nix --extra-experimental-features 'nix-command flakes' --accept-flake-config build "path:$tree#cli" --out-link "$dest/result" ||
     fail "Nix でのビルドに失敗しました（上の出力を確かめてください）。"
-  }
   ln -s result/bin/tsugumi "$dest/tsugumi"
 else
-  mv "$tree" "$dest"
+  mv "$tree" "$dest/runtime"
+  ln -s runtime/tsugumi "$dest/tsugumi"
 fi
-printf '%s\n' "$version" > "$dest/.installed-by-tsugumi"
-ln -sfn "$version" "$data/current"
-ln -sfn "$data/current/tsugumi" "$bin/tsugumi"
-# Earlier versions: what runs now keeps its open files.
-for old in "$data"/*; do
-  case "$old" in
-    "$dest" | "$data/current") ;;
-    *) rm -rf "$old" ;;
+reported="$("$dest/tsugumi" --version)" || fail "The new command does not run."
+[ "$reported" = "$version" ] || fail "Version check failed: expected $version, got $reported"
+printf '%s\n' "$generation" > "$dest/.installed-by-tsugumi"
+# Rename over a symlink itself, never into the directory it points at.
+# Both links are prepared on the same filesystem as their destination.
+replace_link() {
+  case "$(uname -s)" in
+    Darwin) mv -fh "$1" "$2" ;;
+    *) mv -fT "$1" "$2" ;;
   esac
-done
+}
+[ ! -e "$data/current" ] || [ -L "$data/current" ] || fail "Not an installer version link: $data/current"
+ln -s "$generation" "$work/current"
+# Prepare the launcher before committing. An existing launcher already uses current.
+launcher="$bin/.tsugumi.$$"
+ln -s "$data/current/tsugumi" "$launcher"
+replace_link "$launcher" "$bin/tsugumi"
+replace_link "$work/current" "$data/current"
+committed=true
+# Retain old runtimes: a running host may open their assets later. Explicit
+# uninstall, after stopping hosts, removes only generations with our marker.
 
 echo "tsugumi $version を $bin/tsugumi に入れました。"
 case ":$PATH:" in
