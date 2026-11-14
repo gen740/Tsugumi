@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import BUILD, WEB_DIST
+from conftest import WEB_DIST, BUILD, WORKER, SDK, write_project
 from test_claude_code_plugin import isolated_environment, stop_resident_services
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -281,66 +281,21 @@ def test_uninstall_rejects_unknown_options_without_deleting(machine):
 
 # ---- The web server on the VM -------------------------------------------------
 
-HOST = r'''
-import fcntl, hashlib, json, os, pathlib, socket, sys, threading
-support = pathlib.Path(sys.argv[sys.argv.index("--support") + 1]).resolve()
-lock = open(support / "vmhost.lock", "a")
-try:
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-except BlockingIOError:
-    sys.exit(0)
-endpoint = pathlib.Path("/tmp") / ("tsugumi-vmhost-%d-%s.sock" % (os.getuid(), hashlib.sha256(str(support).encode()).hexdigest()[:24]))
-if endpoint.exists():
-    endpoint.unlink()
-listener = socket.socket(socket.AF_UNIX)
-listener.bind(str(endpoint))
-endpoint.chmod(0o600)
-listener.listen()
-pathlib.Path(os.environ["HOST_PID"]).write_text(str(os.getpid()))
-prefs_file, log_file = os.environ["HOST_PREFS"], os.environ["HOST_LOG"]
-mutex = threading.Lock()
-def serve(peer):
-    with peer, peer.makefile("r") as lines:
-        for line in lines:
-            with mutex:
-                r = json.loads(line)
-                with open(log_file, "a") as log:
-                    log.write(line)
-                with open(prefs_file) as source:
-                    prefs = json.load(source)
-                a = {"id": r["id"], "result": {}}
-                if r["op"] == "prefs":
-                    a["result"] = {k: prefs[k] for k in r["keys"] if k in prefs}
-                elif r["op"] == "setPrefs":
-                    prefs.update(r["values"])
-                    temporary = prefs_file + ".new"
-                    with open(temporary, "w") as target:
-                        json.dump(prefs, target)
-                    os.replace(temporary, prefs_file)
-                elif r["op"] == "start":
-                    if os.path.exists(os.environ["HOST_BUSY"]):
-                        a = {"id": r["id"], "error": "fixture VM failed", "recovery": "Retry the virtual machine"}
-                    else:
-                        a["result"] = {"endpoint": "ws://127.0.0.1:1/rpc", "token": "t", "projectId": "p", "serverInstanceId": "s", "readyFile": "/r"}
-                peer.sendall((json.dumps(a) + "\n").encode())
-while True:
-    peer, _ = listener.accept()
-    threading.Thread(target=serve, args=(peer,), daemon=True).start()
-'''
 
 
 @pytest.fixture
 def vm_server(tmp_path):
     support = tmp_path / "support"
     support.mkdir()
-    prefs = tmp_path / "prefs.json"
-    prefs.write_text(json.dumps({"agent.provider": "openai", "agent.model.openai": "from-the-app", "agent.permissions.allowed": ["network", "nix_source"]}))
+    state = tmp_path / "agent-core"
+    state.mkdir()
+    prefs = state / "host-settings.sqlite"
     project = tmp_path / "project"
-    project.mkdir()
-    (project / "tsugumi.json").write_text('{"name": "P"}')
-    executable(tmp_path / "host", f"#!{sys.executable}\n{HOST}")
+    write_project(project)
+    helper = (Path(__file__).parent / "vm_helper_double.py").read_text()
+    executable(tmp_path / "host", f"#!{sys.executable}\n{helper}")
     env = isolated_environment(tmp_path, TSUGUMI_VMHOST=str(tmp_path / "host"), TSUGUMI_VM_IMAGE="/image", TSUGUMI_VM_SOURCE="/source", TSUGUMI_SUPPORT_DIR=str(support),
-               TSUGUMI_WEB_DATA=str(support / "web"), HOST_PREFS=str(prefs), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"), HOST_PID=str(tmp_path / "host.pid"))
+               TSUGUMI_WEB_DATA=str(support / "web"), TSUGUMI_PY_BINDINGS=os.environ.get("TSUGUMI_PY_BINDINGS", str(BUILD / "generated/python")), TSUGUMI_WORKER=str(WORKER), TSUGUMI_SDK_DIR=str(SDK), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"), HOST_PID=str(tmp_path / "host.pid"))
     p = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
         m = re.search(r"http://127\.0\.0\.1:(\d+)/\?key=([0-9a-f]+)", p.stdout.readline())
@@ -396,7 +351,7 @@ def test_recent_projects_are_owned_by_the_host_core(vm_server):
 
 
 def core_settings(root: Path, changes: dict | None = None):
-    """The app's public Host contract, separate from the VM helper protocol."""
+    """The app's public Host contract."""
     bindings = str(Path(os.environ.get("TSUGUMI_PY_BINDINGS", BUILD / "generated/python")))
     if bindings not in sys.path:
         sys.path.insert(0, bindings)
@@ -455,10 +410,8 @@ def core_settings(root: Path, changes: dict | None = None):
 @needs_server
 def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
     root, _, prefs, port, cookie = vm_server
-    # Start agentd, then act as the app through Host RPC. The VM helper's
-    # preferences file is not the settings authority.
+    # Start agentd, then act as the app through Host RPC.
     api(port, cookie, "GET", "/api/settings")
-    legacy_prefs = prefs.read_text()
     revision, before = core_settings(root, {
         "agent.provider": "openai", "agent.model.openai": "from-the-app",
         "agent.permissions.allowed": ["network", "nix_source"],
@@ -477,15 +430,14 @@ def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
     assert sorted(final["agent.permissions.allowed"]) == ["network", "nix_source", "sandbox_off"]
     assert {k: v for k, v in final.items() if k != "agent.permissions.allowed"} == {
         k: v for k, v in after.items() if k != "agent.permissions.allowed"}
-    assert prefs.read_text() == legacy_prefs
 
 
 @needs_server
 def test_a_project_starts_through_the_helper_with_the_pages_origins(vm_server):
     tmp, project, _, port, cookie = vm_server
     s = api(port, cookie, "POST", "/api/env/start", {"path": str(project)})
-    assert s["state"] == "ready" and s["endpoint"] == "ws://127.0.0.1:1/rpc" and s["token"] == "t"
-    start = [json.loads(l) for l in (tmp / "log").read_text().splitlines() if '"start"' in l][0]
+    assert s["state"] == "ready" and s["endpoint"].startswith("ws://127.0.0.1:") and s["token"] and s["projectId"]
+    start = [json.loads(l) for l in (tmp / "log").read_text().splitlines() if '"run"' in l][0]
     assert start["origins"] == [f"http://127.0.0.1:{port}", f"http://localhost:{port}"]
 
 

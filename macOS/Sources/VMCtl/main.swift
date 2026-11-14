@@ -7,7 +7,7 @@
 //   start <project folder>   -> ready <id> <ws url> <control folder> | error <message>
 //   stop <project folder>    -> stopped | error <message>
 //   delete <project folder>  -> deleted | error <message>
-//   vm <request>             -> ok <reply> | error <message>   (raw tsugumi-vmd request)
+//   vm <request>             -> ok <reply> | error <message> (explicit supervisor diagnosis via agentd)
 //   sh <id> <command>        -> the command's terminal output, then "exit <status>"
 //                               (runs in the project's terminal environment)
 //   quit                     -> stops every project and the VM, then exits
@@ -38,7 +38,7 @@ guard let support else {
   exit(2)
 }
 setvbuf(stdout, nil, _IOLBF, 0)
-let manager = EnvironmentManager(support: support, resources: resources, ownsVM: true)
+let manager = EnvironmentManager(support: support, resources: resources)
 if echoConsole {
   _ = manager.vm.console.observe { line in FileHandle.standardError.write(Data((line + "\n").utf8)) }
 }
@@ -62,20 +62,13 @@ Task {
       case "delete":
         try await manager.deleteData(try ProjectIdentity(url: URL(fileURLWithPath: arg)))
         say("deleted")
-      case "vm":
-        say("ok " + (try await manager.vm.request(arg)))
+      case "vm": say("ok " + (try await manager.runtimeCommand(arg)))
       case "sh":
         let sp = arg.split(separator: " ", maxSplits: 1).map(String.init)
         guard sp.count == 2 else { say("error usage: sh <id> <command>"); continue }
-        let fd = try await manager.vm.connect(port: SharedVM.controlPort)
+        let terminal = try await manager.openTerminal(id: sp[0], rows: 50, cols: 200)
+        let fd = terminal.fd
         defer { close(fd) }
-        let req = "shell \(sp[0]) 50 200\n"
-        _ = req.withCString { write(fd, $0, strlen($0)) }
-        var reply: [UInt8] = []
-        var ch: UInt8 = 0
-        while read(fd, &ch, 1) == 1, ch != 10 { reply.append(ch) }
-        let r = String(decoding: reply, as: UTF8.self)
-        guard r.hasPrefix("ok") else { say(r); continue }
         // No echo, a fixed marker for the status, then leave.
         let script = "stty -echo; PS1=; \(sp[1]); echo __TSUGUMI_EXIT=$?; exit\n"
         _ = script.withCString { write(fd, $0, strlen($0)) }

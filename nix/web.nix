@@ -36,6 +36,7 @@ buildNpmPackage {
       ../protocol/remote_worker.fbs
       ../protocol/service_common.fbs
       ../protocol/host.fbs
+      ../protocol/vm_host.fbs
       ../protocol/agent.fbs
       ../protocol/tsugumi.fbs
       ../protocol/tsugumi_enums.fbs

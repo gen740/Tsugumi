@@ -1,0 +1,25 @@
+// Private same-user adapter channel: agentd alone drives the signed VM helper.
+// uint32 LE length and one FlatBuffer; independent request connections and a
+// Watch connection for progress, runtime snapshots and terminal bytes.
+include "host.fbs";
+namespace Tsugumi.VMHost;
+table Watch {}
+table Boot { key:string; broker_endpoint:string (required); }
+table Mount { name:string (required); path:string (required); read_only:bool; }
+table Run { key:string (required); mounts:[Mount]; origins:[string]; cpus:uint; host_name:string (required); archive_incompatible_history:bool; }
+enum ProcessAction:ubyte { Poll, Stop }
+table ProcessRequest { key:string (required); action:ProcessAction; }
+table Shares { key:string (required); mounts:[Mount]; }
+union RequestPayload { Watch, Boot, Run, ProcessRequest, Shares, HostRuntimeRequest:Tsugumi.Host.HostRuntimeRequest, HostTerminalRequest:Tsugumi.Host.HostTerminalRequest }
+table Request { value:RequestPayload; }
+table Process { pid:long; running:bool; endpoint:string; }
+table Failure { message:string (required); recovery:string; log:string; }
+union ReplyPayload { Process, HostRuntime:Tsugumi.Host.HostRuntime, HostTerminal:Tsugumi.Host.HostTerminal, Acknowledgement:Tsugumi.Service.Acknowledgement, Failure }
+table Reply { value:ReplyPayload; }
+table Progress { key:string (required); stage:string (required); fraction:double = null; preparing:bool; }
+union EventPayload { Progress, HostRuntime:Tsugumi.Host.HostRuntime, HostTerminalData:Tsugumi.Host.HostTerminalData }
+table Event { value:EventPayload; }
+union Payload { Request, Reply, Event }
+table Message { request_id:ulong; payload:Payload; }
+root_type Message;
+file_identifier "TSV1";

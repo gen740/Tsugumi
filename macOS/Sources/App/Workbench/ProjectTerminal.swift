@@ -404,7 +404,7 @@ struct VMConsoleView: View {
   @State private var tokens: (UUID, UUID)?
   @State private var follow = true
 
-  private var vm: SharedVM { AppModel.shared.environments.vm }
+  private var vm: HostRuntimeSnapshot { AppModel.shared.environments.vm }
 
   var body: some View {
     VStack(spacing: 0) {

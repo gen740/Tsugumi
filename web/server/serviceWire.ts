@@ -1,3 +1,10 @@
+import { RuntimeAction } from '../src/gen/tsugumi/host/runtime-action'
+import { TerminalAction } from '../src/gen/tsugumi/host/terminal-action'
+import { HostTerminalRequestT } from '../src/gen/tsugumi/host/host-terminal-request'
+import { EnvironmentRequestT } from '../src/gen/tsugumi/host/environment-request'
+import { EnvironmentAction } from '../src/gen/tsugumi/host/environment-action'
+import { HostRuntimeRequestT } from '../src/gen/tsugumi/host/host-runtime-request'
+import { EventPayload as HostEventPayload } from '../src/gen/tsugumi/host/event-payload'
 import { SettingT } from '../src/gen/tsugumi/host/setting'
 import { SettingsGetRequestT as HSettingsGetRequest } from '../src/gen/tsugumi/host/settings-get-request'
 import { SettingsUpdateRequestT as HSettingsUpdateRequest } from '../src/gen/tsugumi/host/settings-update-request'
@@ -85,6 +92,9 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
+    case 'EnvironmentRequest': return new EnvironmentRequestT(v.project, enumValue(EnvironmentAction, v.action), v.origins ?? [], v.folders ?? [], v.archive_incompatible_history)
+    case 'HostRuntimeRequest': return new HostRuntimeRequestT(enumValue(RuntimeAction, v.action), v.project_id, v.project, v.command)
+    case 'HostTerminalRequest': return new HostTerminalRequestT(v.project, enumValue(TerminalAction, v.action), BigInt(v.session ?? 0), v.rows ?? 24, v.cols ?? 80, v.data ?? [])
     case 'SettingsGetRequest': return new HSettingsGetRequest(v.profile)
     case 'SettingsUpdateRequest': return new HSettingsUpdateRequest(v.profile, BigInt(v.revision ?? 0), (v.changes ?? []).map((s: any) => new SettingT(s.key, s.value_json)), v.client)
     case 'ProviderSetRequest': return new HProviderSetRequest(v.profile, v.id, providerInput(v.provider), v.remove, v.ephemeral)
@@ -183,12 +193,16 @@ function view(value: any): any {
   }
   return out
 }
-export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; value: any; error?: CoreAgentError } {
+export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; value: any; error?: CoreAgentError; event?: { type: string; value: any } } {
   if (bytes.length < 12) throw new Error('Truncated service reply')
   const buffer = new fb.ByteBuffer(bytes)
   const identifier = host ? 'TSH1' : 'TSA1'
   if (!buffer.__has_identifier(identifier)) throw new Error('Wrong service identifier')
   const message = host ? HostMessage.getRootAsMessage(buffer).unpack() : AgentMessage.getRootAsMessage(buffer).unpack()
+  if (host && message.payloadType === HostPayload.Event && message.requestId === 0n && message.payload) {
+    const event = message.payload as any
+    return { id: 0n, value: undefined, event: { type: HostEventPayload[event.valueType], value: view(event.value) } }
+  }
   if (message.payloadType !== (host ? HostPayload.Reply : AgentPayload.Reply) || !message.payload) throw new Error('Expected service reply')
   const reply = message.payload as any
   // Generated unpack() normalizes omitted Host vectors to empty arrays.

@@ -19,6 +19,10 @@ class ExecutionBroker {
   static auto Handles(Tsugumi::Host::RequestPayload type) -> bool;
   auto Handle(const Tsugumi::Host::Request& request, uint64_t id)
       -> std::string;
+  auto Authorize(const std::string& project, const std::filesystem::path& path,
+                 const std::filesystem::path& control, bool guest)
+      -> Tsugumi::Host::ExecutionAuthorizationT;
+  auto Revoke(const std::string& project) -> void;
   auto endpoint() const -> std::string;
   auto Stop() -> void;
 

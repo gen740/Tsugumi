@@ -65,11 +65,11 @@ let package = Package(
       dependencies: ["TsugumiLauncher"],
       path: "Sources/VMCtl",
       swiftSettings: [.swiftLanguageMode(.v5)]),
-    // The shared VM for the web server of the `tsugumi` command (cli/, web/server/vm.ts);
+    // The signed VM adapter driven by agentd;
     // needs the virtualization entitlement.
     .executableTarget(
       name: "TsugumiVMHost",
-      dependencies: ["TsugumiLauncher"],
+      dependencies: ["TsugumiLauncher", "TsugumiRPC", .product(name: "FlatBuffers", package: "flatbuffers")],
       path: "Sources/VMHost",
       swiftSettings: [.swiftLanguageMode(.v5)]),
     // Grammars with no Swift package of their own (Sources/Grammars/README.md).

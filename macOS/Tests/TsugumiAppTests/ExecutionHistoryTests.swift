@@ -1,95 +1,150 @@
 import Darwin
 import Foundation
+import FlatBuffers
 import Testing
 @testable import TsugumiLauncher
 @testable import TsugumiApp
 @testable import TsugumiRPC
 
-@MainActor @Test func executionHistoryRecoveryRequiresExplicitArchive() async throws {
-  let dir = try SyncTests.project()
-  defer { try? FileManager.default.removeItem(at: dir) }
-  let support = dir.appendingPathComponent("test-support")
-  try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-  let socket = VMHostIPC.socketPath(support: support)
-  let listener = try VMHostIPC.listen(path: socket)
-  defer { Darwin.close(listener); unlink(socket) }
-  let host = Task {
-    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[Bool], Error>) in
-      // The fake host blocks on its socket, independently of Swift test tasks.
-      Thread.detachNewThread {
-        continuation.resume(with: Result {
-          var incoming = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
-          guard poll(&incoming, 1, 60_000) == 1 else { throw POSIXError(.ETIMEDOUT) }
-          let peer = accept(listener, nil, nil)
-          guard peer >= 0 else { throw POSIXError(.ECONNABORTED) }
-          defer { Darwin.close(peer) }
-          // The application suite can hold the main actor while it launches other test daemons.
-          var timeout = timeval(tv_sec: 60, tv_usec: 0)
-          setsockopt(peer, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-          var archives: [Bool] = []
-          for attempt in 0..<3 {
-            guard let request = try VMHostIPC.read(peer), request["op"] as? String == "start",
-                  let id = request["id"] as? String else { throw POSIXError(.EPROTO) }
-            archives.append(request["archive_incompatible_history"] as? Bool == true)
-            let kind = attempt < 2 ? "incompatible_history" : "database_corrupt"
-            try VMHostIPC.write([
-              "id": id,
-              "error": "cannot open history",
-              "startup_error": ["kind": kind, "found": attempt == 1 ? "pending" : "2", "expected": "3"],
-            ], to: peer)
-          }
-          return archives
-        })
-      }
-    }
-  }
-  let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(support: support, image: nil))
-  func waitForProblem(found: String?) async throws {
-    let deadline = ContinuousClock.now + .seconds(60)
-    while true {
-      if EnvironmentOverlay.hasProblem(session), session.connectionMessage != nil {
-        switch session.environment {
-        case .incompatibleHistory(let issue) where issue.found == found: return
-        case .failed where found == nil: return
-        default: break
+// Serialize with the fixtures that temporarily override the core service state directory.
+extension ChatResumeTests {
+  @MainActor @Test func executionHistoryRecoveryRequiresExplicitArchive() async throws {
+    let dir = try SyncTests.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let support = dir.appendingPathComponent("test-support")
+    try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+    let identity = try ProjectIdentity(url: dir)
+    // Model agentd's public Host contract; the UI never speaks to VMHost.
+    let socket = VMHostIPC.socketPath(support: support)
+    let listener = try VMHostIPC.listen(path: socket)
+    defer { Darwin.close(listener); unlink(socket) }
+    let state = support.appendingPathComponent("agent-core")
+    try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
+    try JSONSerialization.data(withJSONObject: ["protocol": 1, "pid": getpid(),
+      "unix_socket": socket, "host_socket": socket, "user_token": "fixture"])
+      .write(to: state.appendingPathComponent("agent.ready"))
+    let host = Task {
+      try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[Bool], Error>) in
+        Thread.detachNewThread {
+          continuation.resume(with: Result {
+            func acceptPeer() throws -> Int32 {
+              var incoming = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
+              guard poll(&incoming, 1, 60_000) == 1 else { throw POSIXError(.ETIMEDOUT) }
+              let peer = accept(listener, nil, nil)
+              guard peer >= 0 else { throw POSIXError(.ECONNABORTED) }
+              var timeout = timeval(tv_sec: 60, tv_usec: 0)
+              setsockopt(peer, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+              return peer
+            }
+            let hello = Tsugumi_Service_HelloResultT()
+            hello.serverId = "history-fixture"; hello.principal = "user"
+            // CoreAgentClient authenticates both its Agent and Host connections.
+            let agent = try acceptPeer()
+            defer { Darwin.close(agent) }
+            guard let agentBytes = try VMHostIPC.read(agent) else { throw POSIXError(.EPROTO) }
+            var agentBuffer = ByteBuffer(data: agentBytes)
+            let agentRoot: Tsugumi_Agent_Message = try getCheckedRoot(byteBuffer: &agentBuffer, fileId: "TSA1")
+            let agentRequest = Tsugumi_Agent_MessageT(agentRoot)
+            guard (agentRequest.payload?.value as? Tsugumi_Agent_RequestT)?.value?.type == .hellorequest else { throw POSIXError(.EPROTO) }
+            let agentReply = Tsugumi_Agent_ReplyT(); agentReply.value = Tsugumi_Agent_ReplyPayloadUnion(hello, type: .helloresult)
+            let agentMessage = Tsugumi_Agent_MessageT(); agentMessage.requestId = agentRequest.requestId
+            agentMessage.payload = Tsugumi_Agent_PayloadUnion(agentReply, type: .reply)
+            var builder = FlatBufferBuilder(initialSize: 256); var agentObject: Tsugumi_Agent_MessageT? = agentMessage
+            let offset = Tsugumi_Agent_Message.pack(&builder, obj: &agentObject)
+            Tsugumi_Agent_Message.finish(&builder, end: offset)
+            try VMHostIPC.write(builder.data, to: agent)
+
+            let peer = try acceptPeer()
+            defer { Darwin.close(peer) }
+            var archives: [Bool] = []
+            var latest = Tsugumi_Host_EnvironmentStateT()
+            latest.project = identity.url.path; latest.key = identity.id; latest.phase = .stopped
+            while archives.count < 3 {
+              guard let bytes = try VMHostIPC.read(peer) else { throw POSIXError(.EPROTO) }
+              var buffer = ByteBuffer(data: bytes)
+              let root: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
+              let message = Tsugumi_Host_MessageT(root)
+              guard let request = message.payload?.value as? Tsugumi_Host_RequestT else { throw POSIXError(.EPROTO) }
+              let reply = Tsugumi_Host_ReplyT()
+              if request.value?.type == .hellorequest {
+                reply.value = Tsugumi_Host_ReplyPayloadUnion(hello, type: .helloresult)
+              } else if let input = request.value?.value as? Tsugumi_Host_EnvironmentRequestT {
+                guard input.project == identity.url.path else { throw POSIXError(.EPROTO) }
+                if input.action == .start {
+                  let environment = Tsugumi_Host_EnvironmentStateT()
+                  environment.project = identity.url.path; environment.key = identity.id
+                  let attempt = archives.count
+                  archives.append(input.archiveIncompatibleHistory)
+                  environment.phase = .failed; environment.message = "cannot open history"
+                  let diagnostic = ["kind": attempt < 2 ? "incompatible_history" : "database_corrupt",
+                                    "found": attempt == 1 ? "pending" : "2", "expected": "3"]
+                  environment.startupErrorJson = String(decoding: try JSONSerialization.data(withJSONObject: diagnostic), as: UTF8.self)
+                  latest = environment
+                } else {
+                  guard input.action == .state else { throw POSIXError(.EPROTO) }
+                }
+                reply.value = Tsugumi_Host_ReplyPayloadUnion(latest, type: .environmentstate)
+              } else { throw POSIXError(.EPROTO) }
+              let response = Tsugumi_Host_MessageT(); response.requestId = message.requestId
+              response.payload = Tsugumi_Host_PayloadUnion(reply, type: .reply)
+              builder = FlatBufferBuilder(initialSize: 512); var object: Tsugumi_Host_MessageT? = response
+              let result = Tsugumi_Host_Message.pack(&builder, obj: &object)
+              Tsugumi_Host_Message.finish(&builder, end: result)
+              try VMHostIPC.write(builder.data, to: peer)
+            }
+            return archives
+          })
         }
       }
-      guard ContinuousClock.now < deadline else {
-        Issue.record("Expected history startup state \(found ?? "failed"), got \(session.environment.label)")
-        throw POSIXError(.ETIMEDOUT)
-      }
-      try await Task.sleep(for: .milliseconds(10))
     }
-  }
-  session.start()
-  try await waitForProblem(found: "2")
-  guard case .incompatibleHistory(let mismatch) = session.environment else {
-    Issue.record("Expected a typed history mismatch")
+    let session = ProjectSession(identity: identity, environments: EnvironmentManager(support: support, image: nil))
+    func waitForProblem(found: String?) async throws {
+      let deadline = ContinuousClock.now + .seconds(60)
+      while true {
+        if EnvironmentOverlay.hasProblem(session), session.connectionMessage != nil {
+          switch session.environment {
+          case .incompatibleHistory(let issue) where issue.found == found: return
+          case .failed where found == nil: return
+          default: break
+          }
+        }
+        guard ContinuousClock.now < deadline else {
+          Issue.record("Expected history startup state \(found ?? "failed"), got \(session.environment.label)")
+          throw POSIXError(.ETIMEDOUT)
+        }
+        try await Task.sleep(for: .milliseconds(10))
+      }
+    }
+    session.start()
+    try await waitForProblem(found: "2")
+    guard case .incompatibleHistory(let mismatch) = session.environment else {
+      Issue.record("Expected a typed history mismatch")
+      await session.close()
+      return
+    }
+    #expect(mismatch.found == "2")
+    #expect(mismatch.expected == "3")
+    #expect(!mismatch.archiveInterrupted)
+    session.start()
+    try await waitForProblem(found: "pending")
+    if case .incompatibleHistory(let pending) = session.environment {
+      #expect(pending.archiveInterrupted)
+      #expect(!LauncherError.incompatibleHistory(pending).description.contains("pending"))
+    } else {
+      Issue.record("Expected an interrupted archive")
+    }
+    session.archiveHistoryAndStart()
+    try await waitForProblem(found: nil)
+    #expect(try await host.value == [false, false, true])
+    guard case .failed = session.environment else {
+      Issue.record("Expected an ordinary startup failure for a corrupt database")
+      await session.close()
+      return
+    }
+    session.archiveHistoryAndStart()
+    if case .failed = session.environment {} else { Issue.record("A corrupt database cannot be archived here") }
     await session.close()
-    return
   }
-  #expect(mismatch.found == "2")
-  #expect(mismatch.expected == "3")
-  #expect(!mismatch.archiveInterrupted)
-  session.start()
-  try await waitForProblem(found: "pending")
-  if case .incompatibleHistory(let pending) = session.environment {
-    #expect(pending.archiveInterrupted)
-    #expect(!LauncherError.incompatibleHistory(pending).description.contains("pending"))
-  } else {
-    Issue.record("Expected an interrupted archive")
-  }
-  session.archiveHistoryAndStart()
-  try await waitForProblem(found: nil)
-  #expect(try await host.value == [false, false, true])
-  guard case .failed = session.environment else {
-    Issue.record("Expected an ordinary startup failure for a corrupt database")
-    await session.close()
-    return
-  }
-  session.archiveHistoryAndStart()
-  if case .failed = session.environment {} else { Issue.record("A corrupt database cannot be archived here") }
-  await session.close()
 }
 
 @Test func executionHistoryFindsTheActiveRunWithoutReplacingAHistoricalSelection() {

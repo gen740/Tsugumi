@@ -101,6 +101,48 @@ final class ServiceWireTests: XCTestCase {
     }
   }
 
+  func testEnvironmentRequestsAndTopLevelReplies() throws {
+    let fields: [String: Any] = ["project": "/project", "action": Tsugumi_Host_EnvironmentAction.start, "archive_incompatible_history": true]
+    XCTAssertTrue(ServiceWire.hostMethod("EnvironmentRequest", fields))
+    let bytes = try ServiceWire.encode("EnvironmentRequest", fields: fields, id: 4, host: true)
+    var buffer = ByteBuffer(data: bytes)
+    let root: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
+    let request = try XCTUnwrap((Tsugumi_Host_MessageT(root).payload?.value as? Tsugumi_Host_RequestT)?.value?.value as? Tsugumi_Host_EnvironmentRequestT)
+    XCTAssertEqual(request.action, .start)
+    XCTAssertTrue(request.archiveIncompatibleHistory)
+    XCTAssertTrue(request.origins.isEmpty)
+    XCTAssertTrue(request.folders.isEmpty)
+    let state = Tsugumi_Host_EnvironmentStateT(); state.project = "/project"; state.key = "key"; state.phase = .ready; state.endpoint = "ws://localhost:1/rpc"
+    let reply = Tsugumi_Host_ReplyT(); reply.value = Tsugumi_Host_ReplyPayloadUnion(state, type: .environmentstate)
+    let message = Tsugumi_Host_MessageT(); message.requestId = 4; message.payload = Tsugumi_Host_PayloadUnion(reply, type: .reply)
+    var builder = FlatBufferBuilder(initialSize: 128); var object: Tsugumi_Host_MessageT? = message
+    let offset = Tsugumi_Host_Message.pack(&builder, obj: &object); Tsugumi_Host_Message.finish(&builder, end: offset)
+    let decoded = try ServiceWire.decode(builder.data, host: true)
+    XCTAssertNil(decoded["value"])
+    XCTAssertEqual(decoded["phase"] as? Tsugumi_Host_EnvironmentPhase, .ready)
+    XCTAssertEqual(decoded["endpoint"] as? String, state.endpoint)
+  }
+
+  func testRuntimeAndTerminalOmittedVectorsAndEvents() throws {
+    let runtime = Tsugumi_Host_HostRuntimeT(); runtime.vmState = "stopped"
+    let reply = Tsugumi_Host_ReplyT(); reply.value = Tsugumi_Host_ReplyPayloadUnion(runtime, type: .hostruntime)
+    let message = Tsugumi_Host_MessageT(); message.requestId = 1; message.payload = Tsugumi_Host_PayloadUnion(reply, type: .reply)
+    var builder = FlatBufferBuilder(initialSize: 128); var object: Tsugumi_Host_MessageT? = message
+    let offset = Tsugumi_Host_Message.pack(&builder, obj: &object); Tsugumi_Host_Message.finish(&builder, end: offset)
+    let decoded = try ServiceWire.decode(builder.data, host: true)
+    XCTAssertTrue(try XCTUnwrap(decoded["console"] as? [String]).isEmpty)
+    XCTAssertTrue(try XCTUnwrap(decoded["histories"] as? [Any]).isEmpty)
+    let terminal = Tsugumi_Host_HostTerminalDataT(); terminal.session = UInt64.max - 1; terminal.closed = true
+    let event = Tsugumi_Host_EventT(); event.value = Tsugumi_Host_EventPayloadUnion(terminal, type: .hostterminaldata)
+    message.requestId = 0; message.payload = Tsugumi_Host_PayloadUnion(event, type: .event)
+    builder = FlatBufferBuilder(initialSize: 128); object = message
+    let eventOffset = Tsugumi_Host_Message.pack(&builder, obj: &object); Tsugumi_Host_Message.finish(&builder, end: eventOffset)
+    let notification = try ServiceWire.decodeEvent(builder.data)
+    let value = try XCTUnwrap(notification["value"] as? [String: Any])
+    XCTAssertEqual(value["session"] as? UInt64, UInt64.max - 1)
+    XCTAssertTrue(try XCTUnwrap(value["data"] as? [UInt8]).isEmpty)
+  }
+
   func testSettingsAndAuthenticationRepliesExposeTheirTypedFields() throws {
     let setting = Tsugumi_Host_SettingT()
     setting.key = "agent.model.openai"

@@ -2,69 +2,12 @@ import Darwin
 import Foundation
 // (its configuration types are not Sendable; they are handed to the VM queue only)
 @preconcurrency import Virtualization
+import TsugumiAgentClient
 
 /// The shared VM's boot disk (macOS/Container/vm-boot.nix: kernel and a
 /// small root file system with Nix) and Tsugumi's source, from which the VM
 /// builds Tsugumi itself on its first boot (vm-system.nix). From the app
 /// bundle, or dist/tsugumi-vm and the repository when run from the source tree.
-public struct VMImage: Sendable, Equatable {
-  static let files = ["vmlinux", "rootfs.erofs"]
-  public let kernel: URL
-  public let rootfs: URL
-  /// The source folder; `sourceEntries` lists what of it the VM gets (all of
-  /// it when nil, as in the bundle, which holds only those).
-  public let source: URL
-  public let sourceEntries: [String]?
-  public let version: String
-
-  public init?(directory: URL, source: URL, sourceEntries: [String]? = nil) {
-    let urls = Self.files.map { directory.appendingPathComponent($0) }
-    guard urls.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }),
-          FileManager.default.fileExists(atPath: source.appendingPathComponent("flake.nix").path) else { return nil }
-    kernel = urls[0]
-    rootfs = urls[1]
-    self.source = source
-    self.sourceEntries = sourceEntries
-    version = (try? String(contentsOf: directory.appendingPathComponent("vm-version"), encoding: .utf8))?
-      .trimmingCharacters(in: .whitespacesAndNewlines) ?? "dev"
-  }
-
-  public static func find(bundle: Bundle = .main) -> VMImage? {
-    if let dir = bundle.url(forResource: "tsugumi-vm", withExtension: nil),
-       let source = bundle.url(forResource: "tsugumi-source", withExtension: nil),
-       let image = VMImage(directory: dir, source: source) { return image }
-    #if DEBUG
-    // A development build (tsugumi-vmctl, tests) uses the repository.
-    var repo = URL(fileURLWithPath: #filePath)
-    for _ in 0..<4 { repo.deleteLastPathComponent() }
-    return VMImage(directory: repo.appendingPathComponent("dist/tsugumi-vm"), source: repo,
-                   sourceEntries: sourceList(repo.appendingPathComponent("macOS/Container/vm-source.txt")))
-    #else
-    return nil
-    #endif
-  }
-
-  /// macOS/Container/vm-source.txt: one path per line, `#` comments.
-  static func sourceList(_ url: URL) -> [String]? {
-    guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-    return text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") }
-  }
-}
-
-/// Size of the shared VM (all projects share it).
-public struct VMResources: Sendable, Equatable {
-  public var cpus: Int
-  public var memoryGiB: Int
-  public var storeGiB: Int
-
-  /// Half the Mac's memory (4–16 GiB), all but two cores (2–8).
-  public static var `default`: VMResources {
-    let mem = Int(ProcessInfo.processInfo.physicalMemory >> 30)
-    let cores = ProcessInfo.processInfo.activeProcessorCount
-    return VMResources(cpus: min(8, max(2, cores - 2)), memoryGiB: min(16, max(4, mem / 2)), storeGiB: 64)
-  }
-}
-
 /// How the VM runs x86_64-linux binaries (Cards with "system": "x86_64-linux"):
 /// with Rosetta when it is installed on this Mac, with qemu only when
 /// TSUGUMI_VM_X86=qemu asks for it. The guest's supervisor (vm-system.nix)
@@ -213,6 +156,8 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     executionBroker = ExecutionBrokerBridge(support: directory.deletingLastPathComponent())
   }
 
+  public func configureBroker(_ endpoint: String) throws { try executionBroker.configure(endpoint) }
+
   public var state: State {
     lock.lock()
     defer { lock.unlock() }
@@ -233,20 +178,6 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     lock.lock()
     stateObservers[id] = nil
     lock.unlock()
-  }
-
-  func mirrorHostEvent(_ event: [String: Any]) {
-    if event["event"] as? String == "console", let line = event["line"] as? String {
-      _ = console.feed(Data((line + "\n").utf8))
-      return
-    }
-    switch event["state"] as? String {
-    case "stopped": setState(.stopped)
-    case "running": setState(.running)
-    case "starting": setState(.starting(Stage(rawValue: event["stage"] as? String ?? "boot") ?? .boot))
-    case "failed": setState(.failed(event["message"] as? String ?? "VM host failed"))
-    default: break
-    }
   }
 
   private func setState(_ s: State) {

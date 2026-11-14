@@ -5,6 +5,8 @@
 #include <string>
 
 #include "server.hh"
+#include "host/environment.hh"
+#include "host/vm_process.hh"
 
 namespace tsugumi::agent {
 
@@ -15,6 +17,8 @@ struct HostOptions {
   std::string user_token;
   std::string external_token;
   std::string server_id;
+  host::EnvironmentOptions environment;
+  host::VMProcessOptions vm;
 };
 
 class Host final : public RequestSink {
@@ -26,6 +30,7 @@ public:
   auto hello(const RequestIn &request) -> std::pair<std::string, bool> override;
   auto dispatch(RequestIn request) -> void override;
   auto disconnected(ConnId connection) -> void override;
+  auto host_disconnected(ConnId connection) -> void;
 
 private:
   struct State;
