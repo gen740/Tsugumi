@@ -53,10 +53,6 @@ std::unique_ptr<WorkerProc> WorkerPool::spawn(WorkerSpawn sp) {
 WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string& key, const WorkerSpawn& sp,
                                       bool reuse) {
   std::string standby_key = key;
-#ifdef __APPLE__
-  // Seatbelt grants each worker write access to this Card's outputs.
-  if (sp.sandbox) standby_key += "|" + card;
-#endif
   Lease lease;
   std::vector<std::unique_ptr<WorkerProc>> ended;
   {

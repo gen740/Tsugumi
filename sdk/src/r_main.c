@@ -140,7 +140,7 @@ static int eval(const char* code) {
   return error;
 }
 
-int tsugumi_load(void) {
+int tsugumi_prepare(void) {
   /* R packages resolve their R symbols through the global loader scope. */
   if (!dlopen(TSUGUMI_LIBR, RTLD_NOW | RTLD_GLOBAL)) {
     fprintf(stderr, "%s\n", dlerror());
@@ -165,9 +165,13 @@ int tsugumi_load(void) {
   free(saved_tmp);
   if (initialized < 0) return 1;
   R_registerRoutines(R_getEmbeddingDllInfo(), NULL, methods, NULL, NULL);
-  return eval("source(\"" TSUGUMI_R_SDK
-              "\", keep.source=FALSE); source(\"" TSUGUMI_R_SOURCE
-              "/main.R\", keep.source=FALSE)");
+  return eval("source(\"" TSUGUMI_R_SDK "\", keep.source=FALSE)");
+}
+int tsugumi_load(const tsugumi_call* call) {
+  current_call = call;
+  int error = eval("source(\"" TSUGUMI_R_SOURCE "/main.R\", keep.source=FALSE)");
+  current_call = NULL;
+  return error;
 }
 
 static int invoke(const tsugumi_call* call, int hook) {

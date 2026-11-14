@@ -1,7 +1,4 @@
 // Realises and runs one accepted invocation inside its supervised namespace.
-#include <fcntl.h>
-#include <unistd.h>
-
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -26,7 +23,6 @@ namespace W = Tsugumi::Worker;
 namespace stdfs = std::filesystem;
 
 constexpr uint64_t kWorkerLimit = uint64_t{16} << 20;
-constexpr int32_t kOutSlot = 900;
 
 auto read(const stdfs::path& path, uint64_t limit) -> std::string {
   if (stdfs::file_size(path) > limit) throw std::runtime_error("remote invocation member is too large");
@@ -146,20 +142,9 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
     outputs.push_back({port->name()->str(), port->kind(), port->optional().value_or(false),
         type(port->schema_bfbs(), port->root_type())});
   WorkerProc worker(spawn);
-  if (!worker.passes_directories()) throw Failed(FailureKind::permission_denied, "remote worker requires bubblewrap");
   const auto out = directory / "result/files/out";
   const bool needs_out = std::ranges::any_of(outputs, [](const auto& port) { return port.kind != PortKind::FlatBuffer; });
-  int out_fd = -1;
-  const std::string out_alias = "/proc/self/fd/" + std::to_string(kOutSlot);
-  if (needs_out) {
-    stdfs::create_directories(out);
-    out_fd = ::open(out.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (out_fd < 0) throw std::runtime_error("cannot open remote output directory");
-  }
-  struct Close {
-    int fd;
-    ~Close() { if (fd >= 0) ::close(fd); }
-  } close{out_fd};
+  const std::string out_alias = worker.out_dir();
   std::vector<std::pair<std::string, std::string>> environment{
       {"PATH", *path}, {"HOME", worker.work_dir()}, {"LANG", "C.UTF-8"},
       {"TSUGUMI_RUN_ID", call.run_id()->str()}, {"TSUGUMI_CARD", spawn.card},
@@ -171,13 +156,13 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
   const auto id = worker.next_call_id();
   auto frame = worker_call_frame(id, call.run_id()->str(), card, call.invocation().value_or(0), values,
       bytes(call.params()->schema_bfbs()), call.params()->root_type()->str(), bytes(call.params()->bytes()), outputs,
-      worker.work_dir(), worker.tmp_dir(), needs_out ? out_alias : "", environment, {},
-      needs_out ? std::vector<int32_t>{kOutSlot} : std::vector<int32_t>{});
+      worker.work_dir(), worker.tmp_dir(), needs_out ? out_alias : "", environment, {});
   worker.set_logs(log);
-  auto outcome = worker.call(frame, id, needs_out ? std::vector<int>{out_fd} : std::vector<int>{}, nullptr, {}, display);
+  auto outcome = worker.call(frame, id, nullptr, {}, display);
   // Nothing written by the Card can change once we inspect its output tree.
   worker.terminate();
   if (outcome.failure) return outcome;
+  if (needs_out) copy_tree(worker.out_dir(), out);
   stdfs::path forwarded;
   for (auto& [name, data] : outcome.outputs) {
     const auto port = std::ranges::find(outputs, name, &types::PortType::name);

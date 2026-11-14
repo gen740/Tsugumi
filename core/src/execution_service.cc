@@ -1,6 +1,5 @@
 #include "execution_service.hh"
 
-#include <fcntl.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -25,8 +24,6 @@ namespace {
 
 // The unprivileged identity for Card processes.
 constexpr uid_t kCardUid = 65534;
-// The descriptor slot through which a call's out/ folder reaches the Card.
-constexpr int32_t kOutSlot = 900;
 
 class PreparedNativeExecution final : public PreparedExecution {
  public:
@@ -85,11 +82,8 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   sp.sandbox = node.settings.sandbox;
   sp.uid = uid;
   sp.gid = uid;
-  // Every File / Directory input lives in these trees: one set of binds
-  // serves any input, so the worker is reused whatever the paths.
+  // Project data roots are used by the core to stage inputs, never mounted.
   const std::filesystem::path state_dir = service_.store().state_dir();
-  for (const auto& root : service_.file_roots()) sp.ro_paths.push_back(root.string());
-  sp.outputs_root = (service_.run_scratch() / "runs").string();
   // Another system's binaries run with the emulator the kernel opened when it
   // was registered; Rosetta also reads its own folder while it runs.
   if (const auto& e = build.emulator; !e.empty() && !e.starts_with("/nix/store/"))
@@ -141,27 +135,22 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
     out = d.string();
   }
 
-  // Under bubblewrap the call's output folder reaches the Card as a
-  // descriptor (/proc/self/fd/<slot>); the run trees are bound read-only.
-  // Working folders are never passed that way (a current directory outside
-  // the sandbox has no path): with filesystem: true they are copied into
-  // the run after the call.
-  std::vector<int> fds;
-  std::vector<int32_t> slots;
-  struct Close {
-    std::vector<int>& fds;
-    ~Close() {
-      for (int f : fds) ::close(f);
-    }
-  } close_fds{fds};
-  if (!out.empty() && worker.passes_directories()) {
-    int fd = ::open(out.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (fd < 0) throw Failed(FailureKind::worker_failed, "cannot open " + out);
-    fds.push_back(fd);
-    slots.push_back(kOutSlot);
-    std::string alias = "/proc/self/fd/" + std::to_string(kOutSlot);
-    result.out_alias = std::make_pair(alias, out);
-    out = alias;
+  // One fixed read-only mount per worker preserves reuse across input paths.
+  // Copy through the core's no-symlink traversal, not through Card-controlled
+  // links or hard links. Only this invocation's File / Directory bytes enter it.
+  auto inputs = request.inputs;
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    if (request.cancel.load()) throw Failed(FailureKind::cancelled, "staging inputs cancelled");
+    if (inputs[i].kind == PortKind::FlatBuffer) continue;
+    const auto destination = std::filesystem::path(worker.inputs_dir()) / std::to_string(i);
+    std::filesystem::create_directories(destination);
+    inputs[i] = service_.keep_file_value(inputs[i], destination, request.cancel);
+  }
+
+  const std::string recorded_out = out;
+  if (!out.empty()) {
+    result.out_alias = std::make_pair(worker.out_dir(), out);
+    out = worker.out_dir();
   }
 
   auto ptype = NixRunner::params_type(node);
@@ -183,14 +172,29 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
     deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(*deadline_ms + 500);
   }
   uint64_t call_id = worker.next_call_id();
-  std::string frame = worker_call_frame(call_id, s.run_id, node.path, s.invocation, request.inputs,
+  std::string frame = worker_call_frame(call_id, s.run_id, node.path, s.invocation, inputs,
                                         ptype->bfbs, ptype->root_type, params, node.outputs, work, tmp, out, env,
-                                        deadline_ms, slots);
+                                        deadline_ms);
   // Logs and displays of this call belong to this run and invocation.
   worker.set_logs(request.log);
   int64_t t0 = now_ms();
-  result.outcome = worker.call(frame, call_id, fds, &request.cancel, deadline, request.display);
+  result.outcome = worker.call(frame, call_id, &request.cancel, deadline, request.display);
   request.on_timing(t0, now_ms());
+  if (!recorded_out.empty())
+    std::filesystem::copy(worker.out_dir(), recorded_out,
+                          std::filesystem::copy_options::recursive | std::filesystem::copy_options::copy_symlinks);
+  // Forwarded inputs retain their recorded path, not the worker's temporary
+  // staging path. All other output paths go through normal output validation.
+  for (auto& [name, bytes] : result.outcome.outputs) {
+    const auto* port = node.output(name);
+    if (!port || port->kind == PortKind::FlatBuffer || !types::verify(*port->type, bytes)) continue;
+    Value value{name, port->kind, port->type, bytes, {}};
+    for (size_t i = 0; i < inputs.size(); ++i)
+      if (inputs[i].kind == value.kind && path_value(inputs[i]) == path_value(value)) {
+        bytes = with_path(value, *path_value(request.inputs[i])).bytes;
+        break;
+      }
+  }
 
   if (node.settings.filesystem) {
     // Scratch for inspection until the next run starts.

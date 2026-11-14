@@ -554,7 +554,7 @@ rec {
     };
 
   # A Python Card: `src/main.py` defines `main(inputs, report)`. The package contains the
-  # interpreter, the requested packages and a main.so that embeds Python.
+  # interpreter, the requested packages and an SDK-only runtime.so.
   # `packages` picks from the pinned nixpkgs. `lock` (the Card's own uv.lock,
   # with pyproject.toml beside it) and `hash` together add exactly the PyPI
   # packages the lock names; nothing is resolved when the Card is built, so a
@@ -611,7 +611,7 @@ rec {
       dontConfigure = true;
       buildPhase = ''
         runHook preBuild
-        $CC -O2 -fPIC -shared ${sdkRoot}/src/python_main.c -o $NIX_BUILD_TOP/main.so \
+        $CC -O2 -fPIC -shared ${sdkRoot}/src/python_main.c -o $NIX_BUILD_TOP/runtime.so \
           -I${sdkRoot}/include -I${python}/include/python${python.pythonVersion} \
           -L${python}/lib -lpython${python.pythonVersion} \
           -Wl,-rpath,${python}/lib \
@@ -630,11 +630,11 @@ rec {
         for f in ${lib.concatStringsSep " " (map toString fallbackFonts)}; do
           find "$f/share/fonts" -type f \( -name '*.ttf' -o -name '*.otf' \) | sort
         done > $out/lib/python/tsugumi/_fonts.txt
-        cp $NIX_BUILD_TOP/main.so $out/lib/main.so
+        cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
       '';
     };
 
-  # A Ruby Card: MRI embedded in `lib/main.so`, on the JSON face.
+  # A Ruby Card: MRI embedded in `lib/runtime.so`, on the JSON face.
   #
   # Gems are used only when the Card names its own lock: `lock` is the Card's
   # Gemfile.lock (its Gemfile beside it) and `hash` the hash of the .gem files
@@ -743,7 +743,7 @@ rec {
           -DTSUGUMI_RUBY_BUNDLE='"${if lock == null then "" else "${gems}"}"'
         $CXX -std=c++20 -O2 -fPIC -c ${sdkRoot}/src/json_face.cc -o $NIX_BUILD_TOP/json_face.o \
           -I${sdkRoot}/include -I${sdk.ruby} -DTSUGUMI_JSON_CONTRACT='"${sdk.ruby}"'
-        $CXX -shared $NIX_BUILD_TOP/ruby_main.o $NIX_BUILD_TOP/json_face.o -o $NIX_BUILD_TOP/main.so \
+        $CXX -shared $NIX_BUILD_TOP/ruby_main.o $NIX_BUILD_TOP/json_face.o -o $NIX_BUILD_TOP/runtime.so \
           $(pkg-config --libs ruby-${ruby.version.majMin}) -L${ruby}/lib -lflatbuffers \
           -Wl,-rpath,${ruby}/lib
         runHook postBuild
@@ -751,7 +751,7 @@ rec {
       installPhase = ''
         mkdir -p $out/lib/card
         cp -r --no-preserve=mode ./. $out/lib/card/
-        cp $NIX_BUILD_TOP/main.so $out/lib/main.so
+        cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
       '';
     };
 
@@ -778,7 +778,7 @@ rec {
       dontConfigure = true;
       buildPhase = ''
         runHook preBuild
-        $CC -O2 -fPIC -shared -Wall -Wextra -Werror ${sdkRoot}/src/r_main.c -o $NIX_BUILD_TOP/main.so \
+        $CC -O2 -fPIC -shared -Wall -Wextra -Werror ${sdkRoot}/src/r_main.c -o $NIX_BUILD_TOP/runtime.so \
           -I${sdkRoot}/include -I${pkgs.R}/lib/R/include -L${pkgs.R}/lib/R/lib -lR \
           -Wl,-rpath,${pkgs.R}/lib/R/lib \
           -DTSUGUMI_LIBR='"${pkgs.R}/lib/R/lib/libR${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
@@ -791,7 +791,7 @@ rec {
         mkdir -p $out/lib/card
         cp -r --no-preserve=mode ./. $out/lib/card/
         cp ${sdkRoot}/r/tsugumi.R $out/lib/tsugumi.R
-        cp $NIX_BUILD_TOP/main.so $out/lib/main.so
+        cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
       '';
     };
 
@@ -858,11 +858,11 @@ rec {
       # Runtime headers are external; keep warnings fatal for our shim.
       buildPhase = ''
         runHook preBuild
-        $CC -O2 -fPIC -shared -Wall -Wextra -Werror ${sdkRoot}/src/julia_main.c -o $NIX_BUILD_TOP/main.so \
+        $CC -O2 -fPIC -shared -Wall -Wextra -Werror ${sdkRoot}/src/julia_main.c -o $NIX_BUILD_TOP/runtime.so \
           -I${sdkRoot}/include -isystem ${base}/include/julia -L${base}/lib -ljulia \
           -Wl,-rpath,${base}/lib \
           -DTSUGUMI_LIBJULIA='"${base}/lib/libjulia${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
-          -DTSUGUMI_JULIA_ENV='"'$out'/lib/julia-env"' -DTSUGUMI_SHIM='"'$out'/lib/main.so"' \
+          -DTSUGUMI_JULIA_ENV='"'$out'/lib/julia-env"' -DTSUGUMI_SHIM='"'$out'/lib/runtime.so"' \
           -DTSUGUMI_JULIA_SDK='"'$out'/lib/tsugumi.jl"' -DTSUGUMI_JULIA_SOURCE='"'$out'/lib/card"'
         # Keep only wrapper settings, never a builder's HOME or temporary depot.
         JULIA_DEPOT_PATH= ${julia}/bin/julia --startup-file=no --history-file=no -e '
@@ -875,21 +875,21 @@ rec {
         mkdir -p $out/lib/card
         cp -r --no-preserve=mode ./. $out/lib/card/
         cp ${sdkRoot}/julia/tsugumi.jl $out/lib/tsugumi.jl
-        cp $NIX_BUILD_TOP/main.so $NIX_BUILD_TOP/julia-env $out/lib/
+        cp $NIX_BUILD_TOP/runtime.so $NIX_BUILD_TOP/julia-env $out/lib/
       '';
     };
 
   # Serializes the Card attribute set for tsugumid. Store paths in the
   # strings keep their closures alive through string context.
   #   run      the body: a package (derivation; the worker loads its
-  #            lib/main.so and calls it in memory; for another system,
+  #            lib/main.so (native) or lib/runtime.so (SDK adapter); for another system,
   #            run.worker names the worker built for it) or a bash script (string;
   #            inputs as $JSON_<PORT> files and $FILE_<PORT> / $DIR_<PORT>
   #            paths, outputs as JSON written to $TSUGUMI_OUTPUT), or an ordered
   #            list of those implementations
   #   preRun   bash before the body, every invocation (also with a resident
   #            worker); no Card inputs; its environment and `cd` carry over
-  #            to the call, not to the loading of a package, which comes first
+  #            to source loading in the first invocation and to every call
   #   postRun  bash at the end, also after a failed step (TSUGUMI_FAILED=1; it
   #            cannot turn a failure into success), not after a stop or a
   #            missed deadline (the invocation is ended at once)
