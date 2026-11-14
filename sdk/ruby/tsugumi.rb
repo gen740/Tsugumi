@@ -53,11 +53,6 @@ module Tsugumi
       @lifetime = { active: true }
       @info = TsugumiHost.info
       @params = JSON.parse(TsugumiHost.params, allow_nan: true)
-      @inputs, @kinds = {}, {}
-      TsugumiHost.inputs.each do |name, kind, json|
-        @inputs[name] = JSON.parse(json, allow_nan: true)
-        @kinds[name] = kind
-      end
     end
 
     def info
@@ -78,25 +73,10 @@ module Tsugumi
       @params
     end
 
-    # A missing optional port returns nil. A present message is a Hash; nil
-    # fields in that Hash are distinct from a port that was not produced.
-    def input(name)
-      check
-      @inputs[name.to_s]
-    end
-
-    def path(name)
-      check
-      name = name.to_s
-      return nil unless @inputs.key?(name)
-      raise ArgumentError, "#{name} is not a File or Directory port" unless [1, 2].include?(@kinds[name])
-      @inputs.fetch(name).fetch('value')
-    end
-
     def output(name, value)
       check
       value = Tsugumi.json_value(value)
-      raise ArgumentError, 'an output message must be a Hash or #to_h value object; omit the call to leave a port unproduced' unless value.is_a?(Hash)
+      raise ArgumentError, 'an output message must be a Hash or #to_h value object; omit the port to leave it unproduced' unless value.is_a?(Hash)
       TsugumiHost.output(name.to_s, JSON.generate(value, allow_nan: true))
     rescue ArgumentError, JSON::GeneratorError => e
       raise Failure.new('output_invalid', e.message)
@@ -172,11 +152,6 @@ module Tsugumi
     def log(message)
       check
       TsugumiHost.log(Tsugumi.text(message))
-    end
-
-    def fail(kind, message)
-      check
-      raise Failure.new(kind, message)
     end
   end
 
