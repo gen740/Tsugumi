@@ -2,14 +2,14 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
-import { EvidenceSource, evidenceExists, parseEvidence } from '../src/model/evidence'
+import { EvidenceSource, evidenceExists, parseEvidence, findings } from '../src/model/evidence'
 import { Markdown } from '../src/ui/markdown'
 
 const cases = JSON.parse(fs.readFileSync(path.join(process.argv[2], 'tests/fixtures/evidence-links.json'), 'utf8'))
 for (const c of cases) {
   const target = parseEvidence(c.href)
   assert.equal(target?.kind, c.kind, c.href)
-  if (c.kind) for (const field of ['card', 'invocation', 'offset', 'artifact', 'member']) {
+  if (c.kind) for (const field of ['card', 'invocation', 'offset', 'artifact', 'member', 'file', 'lineStart', 'lineEnd']) {
     const value = target![field as keyof typeof target]
     assert.deepEqual(typeof value === 'bigint' ? String(value) : value, c[field], `${c.href} ${field}`)
   }
@@ -60,3 +60,8 @@ assert.equal(snapshot.invocation, 2n)
 assert.equal(snapshot.revision, 7n)
 assert.match(renderToStaticMarkup(<DisplayContent display={snapshot} large />), /157471/)
 assert.equal(recordedDisplay(new D.DisplayT()), undefined)
+
+const report = 'Read only: [source](card:outer/inner?file=src%2Fmain.py&lines=12-18) uses a clock.\n\nUnrelated prose.\n\nRun and observed: [other](card:b?file=main.cc&lines=1-3) differs.'
+assert.equal(findings(report).length, 2)
+assert.deepEqual(findings(report)[0].target.card, ['outer', 'inner'])
+assert.equal(findings(report)[0].target.lineStart, 12)

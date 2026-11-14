@@ -83,6 +83,7 @@ export interface CardComment {
   id: string
   text: string
   resolved: boolean
+  finding?: boolean
   /** One line on what was done about it. */
   resolution?: string
   author?: string
@@ -96,7 +97,7 @@ export function cardComments(meta: J | undefined): CardComment[] {
   return (arr(get(meta, 'comments')) ?? []).flatMap((c) => {
     const id = str(get(c, 'id')), text = str(get(c, 'text'))
     return id && text !== undefined ? [{
-      id, text, resolved: bool(get(c, 'resolved')) ?? false, resolution: str(get(c, 'resolution')) || undefined,
+      id, text, resolved: bool(get(c, 'resolved')) ?? false, finding: bool(get(c, 'finding')) ?? false, resolution: str(get(c, 'resolution')) || undefined,
       author: str(get(c, 'author')), editedBy: str(get(c, 'editedBy')), stateBy: str(get(c, 'stateBy')),
       cards: (arr(get(c, 'cards')) ?? []).map((x) => str(x)).filter((x): x is string => !!x),
     }] : []
@@ -2011,10 +2012,12 @@ export class ProjectSession extends Observable {
     return this.comments(k).filter((c) => !c.resolved)
   }
 
-  /** The Cards of a scope with comments not resolved yet. */
+  changeRequests(k: CardKey): CardComment[] { return this.openComments(k).filter(c => !c.finding) }
+
+  /** The Cards of a scope with change requests not resolved yet. */
   cardsWithOpenComments(scope: string[]): CardKey[] {
     return this.cards(scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x)
-      .map((id) => key([...scope, id])).filter((k) => this.openComments(k).length > 0)
+      .map((id) => key([...scope, id])).filter((k) => this.changeRequests(k).length > 0)
   }
 
   /** Changes comments through the common definition setter. */
@@ -2034,9 +2037,9 @@ export class ProjectSession extends Observable {
     this.edit((x) => x.changeComments(k, fn))
   }
 
-  addComment(k: CardKey, text: string) {
+  addComment(k: CardKey, text: string, finding = false) {
     const t = text.trim()
-    if (t) this.editComments(k, (list) => [...list, obj([['id', uuid()], ['text', t], ['author', 'user']])])
+    if (t) this.editComments(k, (list) => [...list, obj([['id', uuid()], ['text', t], ['author', 'user'], ['finding', finding]])])
   }
 
   setCommentText(k: CardKey, id: string, text: string) {

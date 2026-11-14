@@ -1803,9 +1803,11 @@ final class ProjectSession {
   /// Comments not resolved yet.
   func openComments(_ k: CardKey) -> [CardComment] { comments(k).filter { !$0.resolved } }
 
-  /// The Cards of a scope with comments not resolved yet.
+  func changeRequests(_ k: CardKey) -> [CardComment] { openComments(k).filter { !$0.finding } }
+
+  /// The Cards of a scope with change requests not resolved yet.
   func cardsWithOpenComments(in scope: [String]) -> [CardKey] {
-    cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }.filter { !openComments($0).isEmpty }
+    cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }.filter { !changeRequests($0).isEmpty }
   }
 
   /// Changes comments in the draft, through the same definition setter.
@@ -1823,10 +1825,10 @@ final class ProjectSession {
     edit { $0.changeComments(k, fn) }
   }
 
-  func addComment(_ k: CardKey, _ text: String) {
+  func addComment(_ k: CardKey, _ text: String, finding: Bool = false) {
     let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !t.isEmpty else { return }
-    editComments(k) { $0 + [.object([("id", .string(UUID().uuidString.lowercased())), ("text", .string(t)), ("author", .string("user"))])] }
+    editComments(k) { $0 + [.object([("id", .string(UUID().uuidString.lowercased())), ("text", .string(t)), ("author", .string("user")), ("finding", .bool(finding))])] }
   }
 
   func setCommentText(_ k: CardKey, id: String, text: String) {
