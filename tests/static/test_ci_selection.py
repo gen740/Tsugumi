@@ -8,7 +8,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-spec = importlib.util.spec_from_file_location("ci_selection", ROOT / "tests/ci/select.py")
+spec = importlib.util.spec_from_file_location("ci_selection", ROOT / "tests/ci/select_jobs.py")
 selection = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(selection)
 
@@ -65,7 +65,7 @@ def test_swift_and_tooling_select_only_their_platform_dependencies():
     "protocol/host.fbs", "flake.lock", "flake.nix", "nix/core.nix", "CMakeLists.txt",
     "core/CMakeLists.txt", "sdk/CMakeLists.txt", "tests/core/cmake/installed-core.cmake",
     ".github/workflows/docs.yml", ".github/actions/setup-nix/action.yml",
-    "tests/ci/select.py", "tests/conftest.py", "tests/fixtures/agent-contract.json",
+    "tests/ci/select_jobs.py", "tests/conftest.py", "tests/fixtures/agent-contract.json",
     "unknown/new-file", "docs-with-a-new-name/Usage.md",
 ])
 def test_shared_or_unclassified_paths_run_everything(path):
@@ -132,3 +132,12 @@ def test_empty_or_failed_push_diff_runs_all(monkeypatch):
         raise subprocess.CalledProcessError(128, "git diff")
     monkeypatch.setattr(subprocess, "run", failed)
     assert selection.changed_paths("push", "before", "head") is None
+
+
+def test_ci_scripts_do_not_shadow_standard_modules():
+    # A script's own folder is first on sys.path: a file named like a standard
+    # module replaces it for every other script in that folder.
+    import sys
+
+    shadowing = sorted(p.name for p in (ROOT / "tests/ci").glob("*.py") if p.stem in sys.stdlib_module_names)
+    assert shadowing == []

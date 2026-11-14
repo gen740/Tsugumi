@@ -9,7 +9,7 @@ on:
         required: true
         type: string
       checks:
-        description: JSON job selection from tests/ci/select.py.
+        description: JSON job selection from tests/ci/select_jobs.py.
         required: true
         type: string
     secrets:

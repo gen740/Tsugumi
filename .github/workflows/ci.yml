@@ -29,7 +29,7 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
-          selection=$(python3 tests/ci/select.py --event "$EVENT" --base "$BASE" --head "$HEAD")
+          selection=$(python3 tests/ci/select_jobs.py --event "$EVENT" --base "$BASE" --head "$HEAD")
           echo "$selection" | jq .
           echo "selection=$selection" >> "$GITHUB_OUTPUT"
 
