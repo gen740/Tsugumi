@@ -269,6 +269,7 @@ class VMProcess final : public EnvironmentProcess {
     std::lock_guard lock(open_mutex_);
     if (auto fd = TryConnect(); fd >= 0) return fd;
     EnvironmentLaunch launch;
+    launch.vm_helper = true;
     launch.arguments = {options_.binary.string(),        "--support",
                         options_.support.string(),       "--image",
                         options_.image.string(),         "--source",

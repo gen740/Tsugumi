@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
@@ -28,8 +29,8 @@ class NativeProcess final : public EnvironmentProcess {
     for (const auto &argument : launch.arguments)
       arguments.push_back(const_cast<char *>(argument.c_str()));
     arguments.push_back(nullptr);
-    // Runtime values come from the OS and fixed installation paths, never
-    // from agentd's environment (which may contain provider credentials).
+    // Project runtime values come from the OS and fixed installation paths.
+    // The VM helper additionally receives only its named startup options.
     passwd user{};
     passwd *found = nullptr;
     std::vector<char> buffer(16384);
@@ -42,6 +43,15 @@ class NativeProcess final : public EnvironmentProcess {
         "PATH=" + home +
             "/.nix-profile/bin:/nix/var/nix/profiles/default/bin:"
             "/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin"};
+    if (launch.vm_helper) {
+      for (const auto *name :
+           {"TSUGUMI_VM_X86", "TSUGUMI_VM_CMDLINE", "TSUGUMI_PY_BINDINGS",
+            "TSUGUMID", "TSUGUMI_WORKER", "TSUGUMI_SDK_DIR", "HOST_LOG",
+            "HOST_BUSY", "HOST_PID"}) {
+        if (const auto *value = std::getenv(name))
+          environment.push_back(std::string(name) + "=" + value);
+      }
+    }
     for (const auto *certificate :
          {"/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem",
           "/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt"}) {
