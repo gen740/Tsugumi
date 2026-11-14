@@ -51,7 +51,7 @@
     "root": "the root workflow",
     "child": "the child workflow {scope}",
     "card": "- {key} (definition {definition}): {description}\n  content: {content}\n  context: {context}",
-    "text": "Implement these Draft Cards in {where}, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: with keep_meta, fill_description if it has none and fill_context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). The rules hold what Python, C++ and bash Cards need, so start writing; read a reference only for what they do not cover.\nWrite and save all of them first, upstream first. Then check them once with project_validate, fix what it reports, run the workflow once from its trigger Card and confirm each Card's result with run_record. Run earlier only when what you write next needs something you can learn only from a run. When three or more of them do not depend on each other (no wire between them), hand those to helpers that work at the same time (delegate, one Draft each), once the Cards they need are implemented. At the end, report what each Card does and what the run produced.\n{list}"
+    "text": "Implement these Draft Cards in {where}, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: with keep_meta, fill_description if it has none and fill_context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). The rules hold what Python, C++ and bash Cards need, so start writing; read a reference only for what they do not cover.\nWrite and save all of them first, upstream first. Then check them once with project_validate, fix what it reports, run the workflow once from its trigger Card and confirm each Card's result with run_record. Run earlier only when what you write next needs something you can learn only from a run. When three or more of them do not depend on each other (no wire between them), hand those to helpers (delegate, one Draft each), with concurrency from the person's setting, once the Cards they need are implemented. At the end, report what each Card does and what the run produced.\n{list}"
   },
   "commentRequest": {
     "card": "- {key} (definition {definition}):\n{comments}",
@@ -60,7 +60,7 @@
   },
   "delegateTool": {
     "name": "delegate",
-    "description": "Starts 1 to 8 independent helper tasks in this project, in groups of up to 4 concurrent helpers, each with at most 15 model steps and the same tools except delegate. Returns their messages and errors. Give helpers separate Cards in their instructions to avoid overwriting each other; this is coordination advice, not an enforced write boundary. Helpers may read the whole project with the parent's access.",
+    "description": "Starts 1 to 8 independent helper tasks. The application setting limits concurrent helpers (default 4; 1 runs them sequentially). Each gets at most 15 model steps and the same tools except delegate. Supply read_cards and write_cards as separate exact sets of permanent Card paths, e.g. [\"outer/step\"], with no implicit descendants. Empty sets are allowed. The core enforces both sets, including inspection, files, saves, execution plans, records and logs. Newly reserved card_id Cards belong to their creator for reading and writing. Project-wide operations, canvas/layout edits, container-link changes and tools without a Card boundary go to the parent. Omitting both sets works only when the user enables unscoped helpers (off by default). Returns messages and errors; a shortened result identifies the full helper trace in the conversation. Helper usage counts toward the conversation.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -83,12 +83,27 @@
               "name": {
                 "type": "string",
                 "minLength": 1,
-                "description": "a unique nonempty name for the helper"
+                "description": "a unique nonempty name for the helper",
+                "maxLength": 128
               },
               "instruction": {
                 "type": "string",
                 "minLength": 1,
                 "description": "the helper's initial user message: the task, Card ids, user requirements and shared decisions; ask it to read the project context it needs. It receives the system rules, but no parent conversation, automatic project snapshot or warm-up. State whether it should run or leave that to the main Agent."
+              },
+              "read_cards": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Exact permanent Card paths this helper may read, including nested paths such as outer/step. No implicit descendants; supply both sets. Empty means none."
+              },
+              "write_cards": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Exact permanent Card paths this helper may change or run, including nested paths such as outer/step. No implicit descendants; supply both sets. Empty means none."
               }
             }
           }

@@ -48,6 +48,7 @@
 "%lld–%lld / %lld 行" = "%lld–%lld of %lld rows";
 "%llu 件の実行を削除し、%@ を解放しました。" = "Deleted %llu runs and freed %@.";
 "0 秒" = "0 s";
+"1 にすると、ヘルパーは順番に動きます。" = "Set to 1 to run helpers sequentially.";
 "100% で表示" = "Actual Size";
 "100% に戻す" = "Reset to 100%";
 "90 秒たっても準備ができませんでした" = "no readiness signal within 90 s";
@@ -403,6 +404,7 @@
 "エラー: %@" = "Error: %@";
 "オフ" = "Off";
 "オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの agentd に保存します。" = "When off, saved Cards and wires appear immediately. The work marker, thought summaries and source streaming continue. This setting is stored in agentd on this host.";
+"オフにすると、各ヘルパーが読める Card と変更・実行できる Card を Agent が指定します。" = "When off, the Agent specifies which Cards each helper may read and which it may change or run.";
 "オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。" = "When the Agent gives a Card a permission that is off here, you are asked before it is saved. Changes you make yourself in Card settings are not asked.";
 "オフ（デフォルト）: preRun・run・postRun のどれからも外へ通信できません。" = "Off (default): nothing in preRun, run or postRun can reach the outside.";
 "オフ（デフォルト）: 読み取り専用" = "Off (default): read only";
@@ -621,6 +623,7 @@
 "プロジェクトを開くと実行環境が起動し、その記録がここに表示されます。" = "When a project opens, the environment starts and its log appears here.";
 "プロジェクトを開けません" = "Cannot open the project";
 "プロジェクト名" = "Project name";
+"ヘルパー" = "Helpers";
 "ページ" = "Page";
 "ホストのフォルダへのアクセスを許可する" = "Allow access to folders of the host";
 "ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。" = "Add this host's public key to the worker's authorized_keys before verifying the connection.";
@@ -878,6 +881,7 @@
 "同じ名前があります" = "That name is taken";
 "同じ版です" = "Same version";
 "同じ環境です" = "Same environment";
+"同時に動かすヘルパーの数" = "Concurrent helpers";
 "同期できません" = "Cannot sync";
 "名前" = "Name";
 "名前と内容を書く" = "Write name and content";
@@ -1259,6 +1263,7 @@
 "稼働中" = "Running";
 "空の実行リスト" = "Empty execution list";
 "答えをまとめきれませんでした。聞き方を変えてもう一度どうぞ。" = "Could not put an answer together. Please try asking another way.";
+"範囲を指定しないヘルパーを許可する" = "Allow unscoped helpers";
 "終える" = "End";
 "終わりました" = "Finished";
 "終了" = "Ended";

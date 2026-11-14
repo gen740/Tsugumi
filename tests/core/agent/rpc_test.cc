@@ -582,7 +582,8 @@ TEST_F(AgentFixture, OversizedDelegationsAreRefusedBeforeStartingAnyHelper) {
   for (int i = 0; i < 9; ++i) {
     if (i) tasks += ',';
     tasks += "{\"name\":\"helper-" + std::to_string(i) +
-             "\",\"instruction\":\"Do a bounded task.\",\"cards\":[]}";
+             "\",\"instruction\":\"Do a bounded "
+             "task.\",\"read_cards\":[],\"write_cards\":[]}";
   }
   tasks += "]}";
   model.Queue(AnthropicTool("oversized-delegation", "delegate", tasks));
@@ -603,7 +604,7 @@ TEST_F(AgentFixture,
   ModelServer model;
   model.Queue(AnthropicTool(
       "cancelled-delegation", "delegate",
-      R"({"tasks":[{"name":"review","instruction":"Prepare a bounded review."}]})"));
+      R"({"tasks":[{"name":"review","instruction":"Prepare a bounded review.","read_cards":[],"write_cards":[]}]})"));
   model.Queue(AnthropicText("This cancelled helper answer must not be saved."),
               true);
   model.Queue(AnthropicText("The parent acknowledged the interrupted helper."));
@@ -652,6 +653,162 @@ TEST_F(AgentFixture,
   EXPECT_EQ(
       JsonString(Get(conversation).View(), "/conversation/helpers/0/state"),
       "interrupted");
+}
+
+TEST_F(AgentFixture, HelpersRequireScopeUnlessThePersonAllowsUnscopedWork) {
+  ModelServer model;
+  Configure(model);
+  const auto conversation = Conversation("helper-policy");
+  const std::string task =
+      R"({"tasks":[{"name":"review","instruction":"Review only this instruction."}]})";
+  EXPECT_EQ(Tool(conversation, "delegate", task, "unscoped-denied").Code(),
+            "invalid_request");
+  EXPECT_TRUE(model.Requests().empty());
+  ASSERT_TRUE(
+      SettingsPatch(*host, "desktop", {{"agent.allowUnscopedHelpers", "true"}})
+          .Code()
+          .empty());
+  model.Queue(AnthropicText("The unscoped task is complete."));
+  EXPECT_TRUE(
+      Tool(conversation, "delegate", task, "unscoped-allowed").Code().empty());
+  EXPECT_EQ(model.Requests().size(), 1u);
+  EXPECT_EQ(
+      Tool(
+          conversation, "delegate",
+          R"({"tasks":[{"name":"partial","instruction":"Review.","read_cards":[]}]})",
+          "partial-scope")
+          .Code(),
+      "invalid_request");
+  EXPECT_EQ(model.Requests().size(), 1u);
+}
+
+TEST_F(AgentFixture, HelpersShareTheParallelLimitAcrossDelegateCalls) {
+  for (const auto limit : {1, 2}) {
+    SCOPED_TRACE(limit);
+    ModelServer model;
+    Configure(model);
+    ASSERT_TRUE(
+        SettingsPatch(*host, "desktop",
+                      {{"agent.helperParallelism", std::to_string(limit)}})
+            .Code()
+            .empty());
+    const auto conversation =
+        Conversation("helper-parallel-" + std::to_string(limit));
+    model.Queue(AnthropicText("First helper completed."), true);
+    for (int i = 0; i < 3; ++i)
+      model.Queue(AnthropicText("Another helper completed."));
+    const std::string tasks =
+        R"({"tasks":[{"name":"one","instruction":"First task.","read_cards":[],"write_cards":[]},{"name":"two","instruction":"Second task.","read_cards":[],"write_cards":[]}]})";
+    auto first = std::async(std::launch::async, [&] {
+      return Tool(conversation, "delegate", tasks, "batch-one");
+    });
+    auto second = std::async(std::launch::async, [&] {
+      return Tool(conversation, "delegate", tasks, "batch-two");
+    });
+    EXPECT_TRUE(model.WaitForRequests(1));
+    // The provider holds its first reply. Count started, persisted helpers,
+    // rather than HTTP requests: this fixture serves one HTTP peer at a time.
+    auto started = [&] {
+      const auto reply = Get(conversation);
+      return ListSize(reply.Value()
+                          ->value_as_ConversationResult()
+                          ->conversation()
+                          ->helpers());
+    };
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    while (started() < static_cast<size_t>(limit) &&
+           std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(10ms);
+    std::this_thread::sleep_for(100ms);
+    EXPECT_EQ(started(), static_cast<size_t>(limit));
+    if (limit == 1) {
+      EXPECT_TRUE(
+          SettingsPatch(*host, "desktop", {{"agent.helperParallelism", "2"}})
+              .Code()
+              .empty());
+      const auto raised_deadline = std::chrono::steady_clock::now() + 2s;
+      while (started() < 2 &&
+             std::chrono::steady_clock::now() < raised_deadline)
+        std::this_thread::sleep_for(10ms);
+      EXPECT_EQ(started(), 2u);
+    }
+    model.Release();
+    EXPECT_TRUE(first.get().Code().empty());
+    EXPECT_TRUE(second.get().Code().empty());
+    EXPECT_EQ(model.Requests().size(), 4u);
+    EXPECT_EQ(
+        JsonUInt(Get(conversation).View(), "/conversation/usage/inputTokens"),
+        48u);
+  }
+}
+
+TEST_F(AgentFixture, ShortenedHelperResultsPointToFullTraceAndSumUsageOnce) {
+  ModelServer model;
+  model.Queue(AnthropicTool(
+      "long-helper", "delegate",
+      R"({"tasks":[{"name":"long","instruction":"Produce a long result.","read_cards":[],"write_cards":[]}]})"));
+  const auto long_text = std::string(70000, 'x') + "FULL_HELPER_TRACE_END";
+  auto helper_stream = AnthropicText(long_text);
+  const auto at = helper_stream.find("\"input_tokens\":12");
+  ASSERT_NE(at, std::string::npos);
+  helper_stream.replace(at, std::string("\"input_tokens\":12").size(),
+                        "\"input_tokens\":12,\"cache_read_input_tokens\":7,"
+                        "\"cache_creation_input_tokens\":3");
+  model.Queue(helper_stream);
+  model.Queue(AnthropicText("The helper result is retained."));
+  Configure(model);
+  const auto conversation = Conversation("long-helper-usage");
+  ASSERT_TRUE(Send(conversation, "Delegate the review.").Code().empty());
+  const auto state = WaitUntilIdle(conversation);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 3u);
+  EXPECT_EQ(JsonString(requests[0], "/messages/0/content/0/text"),
+            "Delegate the review.");
+  // Tool results carry their payload in content, not a text block's text.
+  EXPECT_EQ(JsonString(requests[2], "/messages/2/content/0/type"),
+            "tool_result");
+  EXPECT_EQ(JsonString(requests[2], "/messages/2/content/0/tool_use_id"),
+            "long-helper");
+  EXPECT_FALSE(JsonBool(requests[2], "/messages/2/content/0/is_error"));
+  const auto result = JsonString(requests[2], "/messages/2/content/0/content");
+  EXPECT_TRUE(JsonBool(result, "/0/shortened"));
+  EXPECT_EQ(JsonString(result, "/0/conversation_id"), conversation);
+  EXPECT_EQ(JsonString(result, "/0/call_id"), "long-helper");
+  EXPECT_NE(JsonString(result, "/0/notice").find("full"), std::string::npos);
+  EXPECT_LT(result.size(), 60000u);
+  EXPECT_NE(state.find("FULL_HELPER_TRACE_END"), std::string::npos);
+  EXPECT_EQ(
+      JsonString(state,
+                 "/conversation/helpers/0/result/messages/1/content/0/text"),
+      long_text);
+  // Runtime reports its last input size: parent 12 + helper (12 + 7 + 3).
+  // Outputs accumulate across every reply: delegate 8 + helper 4 + parent 4.
+  EXPECT_EQ(JsonUInt(state, "/conversation/usage/inputTokens"), 34u);
+  EXPECT_EQ(JsonUInt(state, "/conversation/usage/outputTokens"), 16u);
+  EXPECT_EQ(JsonUInt(state, "/conversation/usage/cacheReadTokens"), 7u);
+  EXPECT_EQ(JsonUInt(state, "/conversation/usage/cacheWriteTokens"), 3u);
+  // Replaying the completed delegation returns its receipt without another
+  // model call or charging the helper a second time.
+  ASSERT_TRUE(
+      Tool(
+          conversation, "delegate",
+          R"({"tasks":[{"name":"long","instruction":"Produce a long result.","read_cards":[],"write_cards":[]}]})",
+          "long-helper")
+          .Code()
+          .empty());
+  EXPECT_EQ(model.Requests().size(), 3u);
+  const auto replayed = Get(conversation).View();
+  EXPECT_EQ(JsonUInt(replayed, "/conversation/usage/inputTokens"), 34u);
+  EXPECT_EQ(JsonUInt(replayed, "/conversation/usage/outputTokens"), 16u);
+  EXPECT_EQ(JsonUInt(replayed, "/conversation/usage/cacheReadTokens"), 7u);
+  EXPECT_EQ(JsonUInt(replayed, "/conversation/usage/cacheWriteTokens"), 3u);
+  model.Queue(AnthropicText("A separate turn."));
+  ASSERT_TRUE(Send(conversation, "Continue.", "turn-2").Code().empty());
+  const auto next = WaitUntilIdle(conversation);
+  EXPECT_EQ(JsonUInt(next, "/conversation/usage/inputTokens"), 46u);
+  EXPECT_EQ(JsonUInt(next, "/conversation/usage/outputTokens"), 20u);
+  EXPECT_EQ(JsonUInt(next, "/conversation/usage/cacheReadTokens"), 7u);
+  EXPECT_EQ(JsonUInt(next, "/conversation/usage/cacheWriteTokens"), 3u);
 }
 
 }  // namespace

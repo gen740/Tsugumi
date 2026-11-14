@@ -58,6 +58,8 @@ interface Settings {
   webSearch: boolean
   /** Agentd chooses how to produce version notes. */
   versionNoteMode: 'mechanical' | 'agent'
+  helperParallelism: number
+  allowUnscopedHelpers: boolean
   animateAgentWork: boolean
   /** The UI's language (the desktop app's too, on a Mac): the page's strings, the
    *  server's messages, and what tsugumid writes into a project's git. */
@@ -68,6 +70,7 @@ interface Settings {
 const SHARED_KEYS: Record<string, string> = {
   provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
   effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort', allowedPermissions: 'agent.permissions.allowed',
+  helperParallelism: 'agent.helperParallelism', allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
   animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
 }
 const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }
