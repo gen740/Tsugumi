@@ -23,7 +23,6 @@ namespace tsugumi {
 using CardPath = std::vector<std::string>;
 std::string path_key(const CardPath& p);  // "a/b"
 CardPath path_from_key(const std::string& key);
-std::string path_display(const CardPath& p);
 
 struct Diag {
   bool error = true;

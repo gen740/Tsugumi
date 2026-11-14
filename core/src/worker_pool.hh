@@ -47,9 +47,6 @@ class WorkerPool {
   // Ends every worker of the project (definitions reloaded, cache cleared).
   void clear();
 
-  size_t resident_count();
-  size_t standby_count();
-
  private:
   struct Idle {
     std::string card;

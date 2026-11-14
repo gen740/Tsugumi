@@ -99,9 +99,6 @@ class Connection {
   auto CallFrame(Bytes frame, Completion completion,
                  std::chrono::milliseconds timeout = std::chrono::seconds(60))
       -> void;
-  auto CallFrame(Bytes frame,
-                 std::chrono::milliseconds timeout = std::chrono::seconds(60))
-      -> std::future<Result>;
   auto Close() -> void;
 
  private:
