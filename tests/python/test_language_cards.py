@@ -587,7 +587,8 @@ public sealed class Card : ICard {
   public async ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) {
     report.Text($"call {++calls}");
     if (calls == 2) {
-      if ("HOW" == "fail") throw new Exception("on purpose");
+      var how = "HOW";
+      if (how == "fail") throw new Exception("on purpose");
       await Task.Delay(60000, run.CancellationToken);
     }
     return new Outputs();
