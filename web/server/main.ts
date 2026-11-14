@@ -316,6 +316,8 @@ async function updateExecutionServices(method: string, body: unknown) {
 
 type Handler = (b: any, url: URL) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
+  'GET /api/permission-kinds': () => hostRequest('PermissionKindsRequest', { language: language() }),
+  'POST /api/document/subgraph': (b) => hostRequest('DocumentSubgraphRequest', b),
   'GET /api/execution-services': () => hostRequest('ExecutionServicesRequest'),
   'POST /api/execution-services/register': (body) => updateExecutionServices('ExecutionServicePutRequest', body),
   'POST /api/execution-services/remove': (body) => updateExecutionServices('ExecutionServiceRemoveRequest', body),

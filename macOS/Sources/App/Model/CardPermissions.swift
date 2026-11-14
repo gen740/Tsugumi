@@ -1,41 +1,40 @@
 import Foundation
+import Observation
+import TsugumiAgentClient
 import TsugumiRPC
 
-/// What a Card may do beyond computing (core/src/permissions.hh): reach the
-/// network, run without the sandbox, see folders of the Mac, have Nix read a
-/// source outside nixpkgs. The Agent's
-/// saves that widen these wait for the user (ChatController.approve), except
-/// for the kinds the user allows without asking (AppPreferences).
-enum CardPermission: String, CaseIterable, Identifiable {
-  case network
-  case sandboxOff = "sandbox_off"
-  case hostFolderRead = "host_folder_read"
-  case hostFolderWrite = "host_folder_write"
-  case nixSource = "nix_source"
+/// Presentation catalog supplied by the host. Missing entries use their id.
+@MainActor @Observable final class PermissionCatalog {
+  static let shared = PermissionCatalog()
+  var entries: [Tsugumi_Host_PermissionKindT] = []
+  private var loaded = false
+  func load() async {
+    guard !loaded else { return }
+    do {
+      entries = try await CoreAgentClient.shared.permissionKinds(language: AppPreferences.Language.running.rawValue)
+      loaded = true
+    } catch { /* Requests still show their ids and require explicit selection. */ }
+  }
+}
 
+struct CardPermission: RawRepresentable, Identifiable, Hashable {
+  let rawValue: String
+  init?(rawValue: String) {
+    guard !rawValue.isEmpty else { return nil }
+    self.rawValue = rawValue
+  }
   var id: String { rawValue }
+  @MainActor static var allCases: [CardPermission] { PermissionCatalog.shared.entries.compactMap { CardPermission(rawValue: $0.id) } }
+  @MainActor var known: Bool { PermissionCatalog.shared.entries.contains { $0.id == rawValue } }
+  @MainActor var label: String { PermissionCatalog.shared.entries.first { $0.id == rawValue }?.label ?? rawValue }
+  @MainActor var symbol: String { PermissionCatalog.shared.entries.first { $0.id == rawValue }?.icon ?? "hand.raised" }
 
-  var label: String {
-    switch self {
-    case .network: return String(localized: "ネットワークへのアクセス")
-    case .sandboxOff: return String(localized: "隔離（sandbox）なしで実行")
-    case .hostFolderRead: return String(localized: "Mac のフォルダを読む")
-    case .hostFolderWrite: return String(localized: "Mac のフォルダに書く")
-    case .nixSource: return String(localized: "外部の Nix ソースを読む")
-    }
-  }
+  // These are only the properties shown as badges on a Card, not a catalog.
+  static let network = CardPermission(rawValue: "network")!
+  static let sandboxOff = CardPermission(rawValue: "sandbox_off")!
+  static let hostFolderRead = CardPermission(rawValue: "host_folder_read")!
+  static let hostFolderWrite = CardPermission(rawValue: "host_folder_write")!
 
-  var symbol: String {
-    switch self {
-    case .network: return "network"
-    case .sandboxOff: return "shield.slash"
-    case .hostFolderRead: return "folder"
-    case .hostFolderWrite: return "folder.badge.plus"
-    case .nixSource: return "shippingbox"
-    }
-  }
-
-  /// One widening a save asks for: "<kind> <card>[ <folder>]" (nix_source: "<kind> <name> <url>#<hash>").
   struct Request: Identifiable, Hashable {
     let raw: String
     let kind: CardPermission
@@ -44,16 +43,17 @@ enum CardPermission: String, CaseIterable, Identifiable {
     var id: String { raw }
 
     init?(_ raw: String) {
+      guard !raw.hasPrefix("project_access "), !raw.contains("operation_approval\n") else { return nil }
       let parts = raw.split(separator: " ", maxSplits: 2).map(String.init)
-      guard parts.count >= 2, let kind = CardPermission(rawValue: parts[0]) else { return nil }
+      guard let first = parts.first, let kind = CardPermission(rawValue: first) else { return nil }
       self.raw = raw
       self.kind = kind
-      card = parts[1]
+      card = parts.count > 1 ? parts[1] : ""
       folder = parts.count > 2 ? parts[2] : nil
     }
   }
 
-  /// What a Card's settings (_card.json) give it, for its icons.
+  /// What a Card's settings give it, for its badges.
   static func of(_ card: JSONValue?) -> [CardPermission] {
     guard let card else { return [] }
     var out: [CardPermission] = []

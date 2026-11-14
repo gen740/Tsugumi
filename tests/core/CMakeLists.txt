@@ -124,11 +124,25 @@ if(TSUGUMI_INSTALLED_CORE)
 endif()
 
 # Storage, Skill reads, environment adapters and thought timing need no sockets.
-add_executable(tsugumi_host_settings_tests agent/catalog_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc agent_fixture_server.cc agent/helper_scope_test.cc)
+add_executable(tsugumi_host_settings_tests agent/document_edits_test.cc agent/catalog_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc agent_fixture_server.cc agent/helper_scope_test.cc)
 target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
+target_compile_definitions(tsugumi_host_settings_tests PRIVATE
+  TSUGUMI_SUBGRAPH_FIXTURES="${_test_guide_root}/tests/fixtures/subgraph-edits.json")
+if(TSUGUMI_INSTALLED_CORE)
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/subgraph-edits.json
+    DESTINATION share/tsugumi/guide-tests/tests/fixtures)
+endif()
 target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_agent_core PkgConfig::LIBGIT2 GTest::gtest_main)
 target_compile_options(tsugumi_host_settings_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 gtest_discover_tests(tsugumi_host_settings_tests TEST_PREFIX "core_host_settings." DISCOVERY_MODE PRE_TEST)
 if(TSUGUMI_INSTALLED_CORE)
   install(TARGETS tsugumi_host_settings_tests RUNTIME DESTINATION libexec/tsugumi-tests)
+endif()
+
+# Lets native client fixtures exercise the real pure host edit without sockets.
+add_executable(tsugumi_document_edit_driver agent/document_edit_driver.cc)
+target_link_libraries(tsugumi_document_edit_driver PRIVATE tsugumi_agent_core)
+target_compile_options(tsugumi_document_edit_driver PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
+if(TSUGUMI_INSTALLED_CORE)
+  install(TARGETS tsugumi_document_edit_driver RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()

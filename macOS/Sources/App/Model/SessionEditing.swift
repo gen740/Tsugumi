@@ -855,9 +855,10 @@ extension ProjectSession {
   @discardableResult
   func makeSubgraph(_ keys: Set<CardKey>, in scope: [String], name: String = "sub") async -> CardKey? {
     let ids = Set(keys.compactMap { path($0).last })
-    guard !ids.isEmpty, let scopePrefix = projectPrefix(scope) else { return nil }
+    guard !ids.isEmpty, keys.allSatisfy({ Array(path($0).dropLast()) == scope }), let scopePrefix = projectPrefix(scope) else { return nil }
     guard let newId = try? await newCardId(name, in: scope) else { return nil }
     let newKey = key(scope + [newId])
+    let before = docState(), beforeSources = sourceEdits, beforeRemovals = sourceRemovals, beforeHashes = sources.mapValues(\.hash)
     let ext = scopePrefix + "externals/\(newId)/"
     // Files of the Cards' definition folders, and of their own externals.
     var files: [String: Data] = [:]
@@ -876,59 +877,21 @@ extension ProjectSession {
         }
       }
     } catch { notice = error.localizedDescription; return nil }
+    let root = scopePrefix.isEmpty ? project : (external(scopePrefix)?.project ?? .object([]))
+    let transformed: (project: JSONValue, external: JSONValue, link: JSONValue)
+    do {
+      let reply = try await prepareSubgraph(root.serialized(), ids.sorted(), newId)
+      transformed = (try JSONValue.parse(reply.project), try JSONValue.parse(reply.external), try JSONValue.parse(reply.link))
+    } catch { notice = error.localizedDescription; return nil }
+    guard before == docState(), beforeSources == sourceEdits, beforeRemovals == sourceRemovals, beforeHashes == sources.mapValues(\.hash), isEditable else { return nil }
     edit { s in
       var center = CGPoint.zero
       for k in keys { let p = s.position(k); center.x += p.x; center.y += p.y }
       center.x /= CGFloat(keys.count)
       center.y /= CGFloat(keys.count)
-      var inner: [JSONValue] = [], innerConns: [JSONValue] = []
-      var inputs: [(String, JSONValue)] = [], outputs: [(String, JSONValue)] = []
-      s.updateGraph(scope) { g in
-        let all = g["cards"]?.array ?? []
-        let conns = g["connections"]?.array ?? []
-        var outer: [JSONValue] = [], outerConns: [JSONValue] = []
-        for c in all { if ids.contains(c["id"]?.string ?? "") { inner.append(c) } else { outer.append(c) } }
-        func portName(_ list: [(String, JSONValue)], _ card: String, _ port: String) -> String {
-          var n = "\(card)_\(port)"
-          var i = 2
-          while list.contains(where: { $0.0 == n }) { n = "\(card)_\(port)\(i)"; i += 1 }
-          return n
-        }
-        for c in conns {
-          let f = c["from"]?["card"]?.string ?? "", t = c["to"]?["card"]?.string ?? ""
-          let fp = c["from"]?["port"]?.string ?? "", tp = c["to"]?["port"]?.string ?? ""
-          switch (ids.contains(f), ids.contains(t)) {
-          case (true, true): innerConns.append(c)
-          case (false, false): outerConns.append(c)
-          case (false, true):
-            // One boundary input per inner input port (several wires may share it).
-            let existing = inputs.first { $0.1["card"]?.string == t && $0.1["port"]?.string == tp }?.0
-            let n = existing ?? portName(inputs, t, tp)
-            if existing == nil { inputs.append((n, .object([("card", .string(t)), ("port", .string(tp))]))) }
-            var nc = c
-            nc["to"] = .object([("card", .string(newId)), ("port", .string(n))])
-            outerConns.append(nc)
-          case (true, false):
-            let existing = outputs.first { $0.1["card"]?.string == f && $0.1["port"]?.string == fp }?.0
-            let n = existing ?? portName(outputs, f, fp)
-            if existing == nil { outputs.append((n, .object([("card", .string(f)), ("port", .string(fp))]))) }
-            var nc = c
-            nc["from"] = .object([("card", .string(newId)), ("port", .string(n))])
-            outerConns.append(nc)
-          }
-        }
-        outer.append(.object([("id", .string(newId))]))
-        g["cards"] = .array(outer)
-        g["connections"] = .array(outerConns)
-      }
-      // The external: a project of its own (it also opens on its own).
-      let root = scopePrefix.isEmpty ? s.project : (s.external(scopePrefix)?.project ?? .object([]))
-      var e = ExternalProject(project: .object([
-        ("name", .string(newId)), ("pkgsPath", root["pkgsPath"] ?? .string("tsugumi:default")),
-        ("canvas", .object([("cards", .array(inner)), ("connections", .array(innerConns))])),
-        ("boundary", .object([("inputs", .object(inputs)), ("outputs", .object(outputs))])),
-      ]), layout: .object([]), definitions: [:])
-      e.project["nixSources"] = root["nixSources"]
+      if scopePrefix.isEmpty { s.project = transformed.project }
+      else { s.updateExternal(scopePrefix) { $0.project = transformed.project } }
+      var e = ExternalProject(project: transformed.external, layout: .object([]), definitions: [:])
       var extCards: [(String, JSONValue)] = []
       for k in keys.sorted() {
         guard let id = path(k).last else { continue }
@@ -949,7 +912,7 @@ extension ProjectSession {
       }
       for (to, inner) in moved { s.createExternal(to, inner) }
       s.createExternal(ext, e)
-      s.setCardDefinition(newKey, DefinitionDraft(card: .object([]), meta: .object([("name", .string(name))]), link: .object([("external", .string(newId))])))
+      s.setCardDefinition(newKey, DefinitionDraft(card: .object([]), meta: .object([("name", .string(name))]), link: transformed.link))
       s.updateLayout(of: scope) { l in
         if var cards = l["cards"]?.object {
           cards.removeAll { k, _ in ids.contains(where: { k == $0 || k.hasPrefix($0 + "/") }) }

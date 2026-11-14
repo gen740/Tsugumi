@@ -1,3 +1,4 @@
+import TsugumiAgentClient
 import FlatBuffers
 import Foundation
 import Observation
@@ -239,6 +240,9 @@ struct DisplaySnapshot {
 @Observable
 final class ProjectSession {
   /// Replaceable RPC boundary for embedded sessions and tests.
+  var prepareSubgraph: (String, [String], String) async throws -> (project: String, external: String, link: String) = {
+    try await CoreAgentClient.shared.makeSubgraph(project: $0, cards: $1, id: $2)
+  }
   var cardIdProvider: ((String, String) async throws -> String)?
   let identity: ProjectIdentity
   let environments: EnvironmentManager
@@ -1538,10 +1542,10 @@ final class ProjectSession {
   var reloadApproval: ReloadApproval?
   private(set) var reloadingExternal = false
 
-  func answerReloadApproval(_ allow: Bool) async {
+  func answerReloadApproval(_ allow: Bool, selected: Set<String>) async {
     let request = reloadApproval
     reloadApproval = nil
-    if allow, let request { await reloadExternal(approved: request.permissions, baseRev: request.baseRev) }
+    if allow, let request { await reloadExternal(approved: request.permissions.filter { selected.contains($0) }, baseRev: request.baseRev) }
   }
 
   func reloadExternal(approved: [String] = [], baseRev: UInt64? = nil) async {

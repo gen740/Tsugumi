@@ -1725,11 +1725,11 @@ export class ProjectSession extends Observable {
   reloadApproval?: { baseRev: bigint; permissions: string[] }
   reloadingExternal = false
 
-  async answerReloadApproval(allow: boolean) {
+  async answerReloadApproval(allow: boolean, selected: string[]) {
     const request = this.reloadApproval
     this.reloadApproval = undefined
     this.changed()
-    if (allow && request) await this.reloadExternal(request.permissions, request.baseRev)
+    if (allow && request) await this.reloadExternal(request.permissions.filter(p => selected.includes(p)), request.baseRev)
   }
 
   async reloadExternal(approved: string[] = [], baseRev = this.rev) {
@@ -2836,15 +2836,20 @@ export class ProjectSession extends Observable {
     })
   }
 
-  /** Moves the selected Cards into a new Card in Card: a new external project
-   *  with their definitions and the wires between them. Wires crossing the
-   *  selection become its boundary ports, so the graph computes the same. */
+  /** Transport boundary, also used by display/gesture fixtures. */
+  prepareSubgraph = (project: string, cards: string[], id: string): Promise<{ projectJson: string; externalJson: string; linkJson: string }> =>
+    api('/api/document/subgraph', { project_json: project, cards, id })
+
+  /** The host prepares the document edit; this gesture keeps its bytes, layout and undo. */
   async makeSubgraph(keys: Set<CardKey>, scope: string[], name = 'sub'): Promise<CardKey | undefined> {
+    keys = new Set(keys)
+    scope = [...scope]
     const ids = new Set([...keys].map((k) => path(k).pop()!).filter(Boolean))
     const scopePrefix = this.projectPrefix(scope)
-    if (!ids.size || scopePrefix === undefined) return undefined
+    if (!ids.size || scopePrefix === undefined || [...keys].some(k => key(path(k).slice(0, -1)) !== key(scope))) return undefined
     const newId = await this.newCardId(name, scope)
     const newKey = key([...scope, newId])
+    const before = this.docState(), beforeSources = new Map(this.sourceEdits), beforeRemovals = new Set(this.sourceRemovals), beforeManifest = new Map(this.sources)
     const ext = `${scopePrefix}externals/${newId}/`
     // Files of the Cards' definition folders, and of their own externals.
     const files = new Map<string, Uint8Array>()
@@ -2867,6 +2872,21 @@ export class ProjectSession extends Observable {
         }
       }
     } catch (e) { this.cardEditFailed(e); return undefined }
+    const root = clone(scopePrefix === '' ? this.project : this.external(scopePrefix)?.project ?? obj())
+    let transformed: { project: J; external: J; link: J }
+    try {
+      const reply = await this.prepareSubgraph(serialize(root), [...ids].sort(), newId)
+      const project = tryParse(reply.projectJson), external = tryParse(reply.externalJson), link = tryParse(reply.linkJson)
+      if (!project || !external || !link) throw new Error('Missing subgraph documents')
+      transformed = { project, external, link }
+    } catch (e) { this.cardEditFailed(e); return undefined }
+    const current = this.docState()
+    if (!this.isEditable || !jeq(before.project, current.project) || !jeq(before.layout, current.layout)
+      || before.definitions.size !== current.definitions.size || [...before.definitions].some(([k, v]) => !defEq(v, current.definitions.get(k)))
+      || before.externals.size !== current.externals.size || [...before.externals].some(([k, v]) => !extEq(v, current.externals.get(k)))
+      || beforeManifest.size !== this.sources.size || [...beforeManifest].some(([k, v]) => v.hash !== this.sources.get(k)?.hash)
+      || beforeSources.size !== this.sourceEdits.size || [...beforeSources].some(([k, v]) => v !== this.sourceEdits.get(k))
+      || beforeRemovals.size !== this.sourceRemovals.size || [...beforeRemovals].some(k => !this.sourceRemovals.has(k))) return undefined
     this.edit((x) => {
       let cx = 0, cy = 0
       for (const k of keys) {
@@ -2876,54 +2896,9 @@ export class ProjectSession extends Observable {
       }
       cx /= keys.size
       cy /= keys.size
-      const inner: J[] = [], innerConns: J[] = []
-      const inputs: [string, J][] = [], outputs: [string, J][] = []
-      x.updateGraph(scope, (g) => {
-        const outer: J[] = [], outerConns: J[] = []
-        for (const c of arr(g.get('cards')) ?? []) (ids.has(str(get(c, 'id')) ?? '') ? inner : outer).push(c)
-        const portName = (list: [string, J][], card: string, port: string) => {
-          let n = `${card}_${port}`
-          for (let i = 2; list.some(([nn]) => nn === n); i++) n = `${card}_${port}${i}`
-          return n
-        }
-        for (const c of arr(g.get('connections')) ?? []) {
-          const f = str(get(c, 'from', 'card')) ?? '', t = str(get(c, 'to', 'card')) ?? ''
-          const fp = str(get(c, 'from', 'port')) ?? '', tp = str(get(c, 'to', 'port')) ?? ''
-          const fi = ids.has(f), ti = ids.has(t)
-          if (fi && ti) innerConns.push(c)
-          else if (!fi && !ti) outerConns.push(c)
-          else if (!fi && ti) {
-            // One boundary input per inner input port (several wires may share it).
-            const existing = inputs.find(([, v]) => str(get(v, 'card')) === t && str(get(v, 'port')) === tp)?.[0]
-            const n = existing ?? portName(inputs, t, tp)
-            if (!existing) inputs.push([n, obj([['card', t], ['port', tp]])])
-            const nc = clone(c) as JObj
-            nc.set('to', obj([['card', newId], ['port', n]]))
-            outerConns.push(nc)
-          } else {
-            const existing = outputs.find(([, v]) => str(get(v, 'card')) === f && str(get(v, 'port')) === fp)?.[0]
-            const n = existing ?? portName(outputs, f, fp)
-            if (!existing) outputs.push([n, obj([['card', f], ['port', fp]])])
-            const nc = clone(c) as JObj
-            nc.set('from', obj([['card', newId], ['port', n]]))
-            outerConns.push(nc)
-          }
-        }
-        outer.push(obj([['id', newId]]))
-        g.set('cards', outer)
-        g.set('connections', outerConns)
-      })
-      // The external: a project of its own (it also opens on its own).
-      const root = scopePrefix === '' ? x.project : x.external(scopePrefix)?.project ?? obj()
-      const e: ExternalProject = {
-        project: obj([
-          ['name', newId], ['pkgsPath', clone(get(root, 'pkgsPath')) ?? 'tsugumi:default'],
-          ['canvas', obj([['cards', inner], ['connections', innerConns]])],
-          ['boundary', obj([['inputs', new JObj(inputs)], ['outputs', new JObj(outputs)]])],
-        ]),
-        layout: obj(), definitions: new Map(),
-      }
-      if (isObj(e.project)) e.project.set('nixSources', clone(get(root, 'nixSources')))
+      if (scopePrefix === '') x.project = clone(transformed.project)
+      else x.updateExternal(scopePrefix, e => { e.project = clone(transformed.project) })
+      const e: ExternalProject = { project: clone(transformed.external), layout: obj(), definitions: new Map() }
       const extCards: [string, J][] = []
       for (const k of [...keys].sort()) {
         const id = path(k).pop()
@@ -2945,7 +2920,7 @@ export class ProjectSession extends Observable {
       }
       for (const [to, inn] of moved) x.createExternal(to, inn)
       x.createExternal(ext, e)
-      x.setCardDefinition(newKey, { card: obj(), meta: obj([['name', name]]), link: obj([['external', newId]]) })
+      x.setCardDefinition(newKey, { card: obj(), meta: obj([['name', name]]), link: clone(transformed.link) })
       x.updateLayout(scope, (l) => {
         const cards = l.get('cards')
         if (isObj(cards)) for (const kk of cards.keys()) if ([...ids].some((id) => kk === id || kk.startsWith(id + '/'))) cards.set(kk, undefined)

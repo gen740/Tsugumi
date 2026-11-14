@@ -90,6 +90,18 @@ table HostRecentListRequest {}
 table HostRecentRememberRequest { path:string (required); }
 table HostRecentForgetRequest { paths:[string]; }
 
+// Pure edit of the affected project document. Definition folders and their
+// bytes move unchanged under externals/<id>/ in the caller's single save.
+// Existing scope boundary references are rerouted through the new Card.
+table DocumentSubgraphRequest { project_json:string (required); cards:[string]; id:string (required); }
+table DocumentSubgraph { project_json:string (required); external_json:string (required); link_json:string (required); }
+
+// Host policy owns the permission catalog. Unknown ids must still be displayed
+// verbatim by clients, and cannot become standing approvals implicitly.
+table PermissionKindsRequest { language:string; }
+table PermissionKind { id:string (required); label:string (required); icon:string (required); }
+table PermissionKinds { kinds:[PermissionKind]; }
+
 // One app-wide native session ("desktop") or one session per Web host
 // ("web:<support directory>"), shared by every window. Language is presentation.
 // Persisted: setup_done, demo_answered, tour. The live step/run observations
@@ -158,6 +170,8 @@ table VersionCommentsRequest { project:string (required); commit:string (require
 table VersionComments { comments:[VersionComment]; }
 
 union RequestPayload {
+  DocumentSubgraphRequest,
+  PermissionKindsRequest,
   VersionCommentsRequest,
   GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
@@ -165,6 +179,8 @@ union RequestPayload {
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
+  DocumentSubgraph,
+  PermissionKinds,
   VersionComments,
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   GuideState, EnvironmentState, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,

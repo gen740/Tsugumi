@@ -536,20 +536,26 @@ final class ChatController {
       }.joined(separator: "\n")
     }
     var access: [String] { raw.filter { $0.hasPrefix("project_access ") } }
-    var defaultSelection: Set<String> { Set(raw.filter { !$0.hasPrefix("project_access ") || ProjectAccessLabel.neededNow($0) }) }
+    @MainActor var defaultSelection: Set<String> {
+      Set(raw.filter { value in
+        if value.hasPrefix("project_access ") { return ProjectAccessLabel.neededNow(value) }
+        if let request = CardPermission.Request(value) { return request.kind.known }
+        return true
+      })
+    }
     let answer: (Set<String>) -> Void
   }
   struct PermissionQueue {
     private var pending: [PermissionPrompt] = []
     var first: PermissionPrompt? { pending.first }
     mutating func append(_ prompt: PermissionPrompt) { pending.append(prompt) }
-    @discardableResult mutating func answer(_ id: UUID, allow: Bool, selected: Set<String>? = nil) -> PermissionPrompt? {
+    @MainActor @discardableResult mutating func answer(_ id: UUID, allow: Bool, selected: Set<String>? = nil) -> PermissionPrompt? {
       guard first?.id == id else { return nil }
       let prompt = pending.removeFirst()
       prompt.answer(allow ? (selected ?? prompt.defaultSelection).intersection(prompt.raw) : [])
       return prompt
     }
-    mutating func release() { while let id = first?.id { answer(id, allow: false) } }
+    @MainActor mutating func release() { while let id = first?.id { answer(id, allow: false) } }
   }
   private var permissionQueue = PermissionQueue()
   var permissionPrompt: PermissionPrompt? { permissionQueue.first }
@@ -565,7 +571,7 @@ final class ChatController {
   /// The user's answer; `always` are kinds allowed without asking from now on.
   func answerPermissions(id: UUID, allow: Bool, always: Set<CardPermission>, selected: Set<String>? = nil) {
     guard let p = permissionPrompt, p.id == id else { return }
-    if allow && p.operation == nil { AppPreferences.shared.allowedPermissions.formUnion(always.map(\.rawValue)) }
+    if allow && p.operation == nil { AppPreferences.shared.allowedPermissions.formUnion(always.filter { $0.known }.map(\.rawValue)) }
     permissionQueue.answer(id, allow: allow, selected: selected)
   }
 

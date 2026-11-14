@@ -8,3 +8,5 @@ Update fixtures only when the expected public behaviour changes. The suite comma
 - `layout-golden.json` checks core layout results. Regenerate only for an intended layout change and review the resulting coordinates.
 - `wire-routes.json`: after changing routing, regenerate with `WIRE_ROUTES_WRITE=1 npm --prefix web test`.
 - `port-grid-contract.json` and `nix-source-refs.json` are shared by native and Web UI tests; update both consumers when changing their contracts.
+
+- `subgraph-edits.json` records host document edits for Web gesture and undo fixtures. The host unit tests verify every reply; graph transformation expectations belong to `tests/core/agent/document_edits_test.cc`. Native gesture fixtures call `tsugumi_document_edit_driver` directly (override its path with `TSUGUMI_DOCUMENT_EDIT_DRIVER`).

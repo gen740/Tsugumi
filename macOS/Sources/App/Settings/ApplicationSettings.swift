@@ -634,6 +634,7 @@ private struct APISettings: View {
       Text("チャットは任意機能です。通常の操作はすべて UI から行えます。").font(.caption).foregroundStyle(.secondary)
     }
     .formStyle(.grouped)
+    .task { await PermissionCatalog.shared.load() }
     .onAppear { GuideController.shared.refreshAvailability() }
     .onChange(of: provider) { GuideController.shared.refreshAvailability() }
   }

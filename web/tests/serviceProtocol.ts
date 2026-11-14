@@ -1,3 +1,4 @@
+import { PermissionKinds } from '../src/gen/tsugumi/host/permission-kinds'
 import { Settings } from '../src/gen/tsugumi/host/settings'
 import { SignInStatus } from '../src/gen/tsugumi/host/sign-in-status'
 import { Reply as HostReply } from '../src/gen/tsugumi/host/reply'
@@ -80,19 +81,20 @@ console.log('Execution service settings: Host RPC adapters passed')
 
 // C++ object packing omits optional empty vectors. Every Host list reader
 // must return an empty list even when the vector offset is absent on the wire.
-for (const type of [HostReplyPayload.RecentList, HostReplyPayload.DemoList, HostReplyPayload.ModelList, HostReplyPayload.ExecutionServices]) {
+for (const type of [HostReplyPayload.RecentList, HostReplyPayload.DemoList, HostReplyPayload.ModelList, HostReplyPayload.ExecutionServices, HostReplyPayload.PermissionKinds]) {
   const b = new fb.Builder()
   let value: fb.Offset
   switch (type) {
     case HostReplyPayload.RecentList: value = RecentList.createRecentList(b, 0); break
     case HostReplyPayload.DemoList: value = DemoList.createDemoList(b, 0); break
     case HostReplyPayload.ModelList: value = ModelList.createModelList(b, 0); break
+    case HostReplyPayload.PermissionKinds: value = PermissionKinds.createPermissionKinds(b, 0); break
     default: value = ExecutionServices.createExecutionServices(b, 0, b.createString('ed25519:fixture'))
   }
   const reply = HostReply.createReply(b, type, value)
   HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
   const decoded = decodeReply(b.asUint8Array(), true).value
-  assert.deepEqual(type === HostReplyPayload.ExecutionServices ? decoded.services : decoded, [])
+  assert.deepEqual(type === HostReplyPayload.ExecutionServices ? decoded.services : type === HostReplyPayload.PermissionKinds ? decoded.kinds : decoded, [])
 }
 console.log('Host list readers: omitted vectors are empty')
 
@@ -168,4 +170,20 @@ assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call
   const value = (message.payload as any).value
   assert.equal(value.allow, true)
   assert.deepEqual(value.alsoAllow, [1])
+}
+
+// Pure document edits and the permission catalog use typed Host requests.
+{
+  const { DocumentSubgraphRequestT } = await import('../src/gen/tsugumi/host/document-subgraph-request')
+  const { PermissionKindsRequestT } = await import('../src/gen/tsugumi/host/permission-kinds-request')
+  const bytes = encodeRequest('DocumentSubgraphRequest', { project_json: '{"canvas":{}}', cards: ['a'], id: 'sub' }, high, true)
+  const message = HostMessage.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
+  const value = (message.payload as any).value as InstanceType<typeof DocumentSubgraphRequestT>
+  assert.ok(value instanceof DocumentSubgraphRequestT)
+  assert.equal(value.projectJson, '{"canvas":{}}')
+  assert.deepEqual(value.cards, ['a'])
+  assert.equal(value.id, 'sub')
+  const catalog = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('PermissionKindsRequest', { language: 'en' }, 9n, true))).unpack()
+  assert.ok((catalog.payload as any).value instanceof PermissionKindsRequestT)
+  assert.equal((catalog.payload as any).value.language, 'en')
 }

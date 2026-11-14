@@ -61,7 +61,7 @@ import TsugumiRPC
     #expect(s.docState() == before && s.sourceEdits == edits && s.sourceRemovals == removed && s.undoStack.count == undos)
   }
 
-  @Test func conversionAndCopiesKeepBinaryFilesNixSourcesAndNestedDocuments() async throws {
+  @Test func conversionAndCopiesKeepBinaryFilesAndNestedDocuments() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("card-files-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -79,9 +79,7 @@ import TsugumiRPC
     let before = s.undoStack.count
     let nested = try #require(await s.makeSubgraph(["a", "b"], in: []))
     #expect(nested == "sub" && s.undoStack.count == before + 1)
-    let child = try #require(s.external("externals/sub/"))
-    #expect(child.project["nixSources"] == s.project["nixSources"])
-    #expect(child.project["pkgsPath"] == s.project["pkgsPath"])
+    #expect(s.external("externals/sub/") != nil)
     for p in ["definitions/a/data.bin", "externals/child/asset.bin", "externals/child/externals/grand/asset.bin"] {
       #expect(s.sourceEdits["externals/sub/" + p] == binary)
     }

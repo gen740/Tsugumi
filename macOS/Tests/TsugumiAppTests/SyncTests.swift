@@ -1252,11 +1252,11 @@ extension SyncTests {
     let base = s.rev
     await s.reloadExternal()
     #expect(s.reloadApproval?.permissions.contains("network a") == true)
-    await s.answerReloadApproval(false)
+    await s.answerReloadApproval(false, selected: [])
     #expect(s.rev == base && s.reloadApproval == nil)
     await s.reloadExternal()
     #expect(s.reloadApproval != nil)
-    await s.answerReloadApproval(true)
+    await s.answerReloadApproval(true, selected: ["network a"])
     #expect(s.saveError == nil && s.reloadApproval == nil)
     for _ in 0..<100 where s.rev == base { try await Task.sleep(for: .milliseconds(20)) }
     #expect(s.cardDefinition("a")?["network"]?.bool == true)

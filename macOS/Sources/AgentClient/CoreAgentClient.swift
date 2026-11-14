@@ -223,6 +223,19 @@ public actor CoreAgentClient {
     return value
   }
 
+  public func permissionKinds(language: String) async throws -> [Tsugumi_Host_PermissionKindT] {
+    let result = try await call("PermissionKindsRequest", ["language": language])
+    return result["kinds"] as? [Tsugumi_Host_PermissionKindT] ?? []
+  }
+
+  public func makeSubgraph(project: String, cards: [String], id: String) async throws -> (project: String, external: String, link: String) {
+    let result = try await call("DocumentSubgraphRequest", ["project_json": project, "cards": cards, "id": id])
+    guard let project = result["projectJson"] as? String, let external = result["externalJson"] as? String, let link = result["linkJson"] as? String else {
+      throw CoreAgentFailure(code: "invalid_reply", message: "Missing subgraph documents", requestID: nil)
+    }
+    return (project, external, link)
+  }
+
   public func versionComments(project: String, commit: String) async throws -> [Tsugumi_Host_VersionCommentT] {
     let result = try await call("VersionCommentsRequest", ["project": project, "commit": commit])
     return result["comments"] as? [Tsugumi_Host_VersionCommentT] ?? []

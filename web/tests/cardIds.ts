@@ -1,8 +1,10 @@
+import { subgraphReply } from './subgraphHost'
 // A deterministic RPC double for presentation tests. Identity behavior itself
 // is checked against the core; unrelated fixtures keep their readable keys.
 import type { ProjectSession } from '../src/model/session'
 import { get, str } from '../src/shared/json'
 export function cardIds<T extends ProjectSession>(s: T): T {
+  s.prepareSubgraph = subgraphReply
   s.connected = true // This boundary stands in for the connected core.
   const issued = new Set<string>()
   s.cardIdProvider = async (name, prefix) => {

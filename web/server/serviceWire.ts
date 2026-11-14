@@ -1,3 +1,5 @@
+import { PermissionKindsRequestT } from '../src/gen/tsugumi/host/permission-kinds-request'
+import { DocumentSubgraphRequestT } from '../src/gen/tsugumi/host/document-subgraph-request'
 import { VersionCommentsRequestT } from '../src/gen/tsugumi/host/version-comments-request'
 import { RuntimeAction } from '../src/gen/tsugumi/host/runtime-action'
 import { TerminalAction } from '../src/gen/tsugumi/host/terminal-action'
@@ -97,6 +99,8 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
+    case 'PermissionKindsRequest': return new PermissionKindsRequestT(v.language)
+    case 'DocumentSubgraphRequest': return new DocumentSubgraphRequestT(v.project_json, v.cards ?? [], v.id)
     case 'VersionCommentsRequest': return new VersionCommentsRequestT(v.project, v.commit)
     case 'GuideGetRequest': return new GuideGetRequestT(v.session_id, v.language)
     case 'GuideAdvanceRequest': {

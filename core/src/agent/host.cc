@@ -27,6 +27,8 @@
 #include "agent/thought_schedule.hh"
 #include "agent/tool_images.hh"
 #include "agent/wire.hh"
+#include "host/document_edits.hh"
+#include "host/permission_kinds.hh"
 #include "host/environment.hh"
 #include "host/projects.hh"
 #include "host/save.hh"
@@ -1113,6 +1115,14 @@ struct Host::State {
                      tool.spec.name != "view_save"))
         specs.push_back(tool.spec);
     specs.push_back(
+        {"document_make_subgraph",
+         "Prepare a Card in Card edit from the current affected tsugumi.json. "
+         "Returns project_json, external_json and link_json; move the selected "
+         "definition folders and their external folders unchanged under "
+         "externals/<id>/, then save all changes together with project_save. "
+         "This tool writes nothing.",
+         R"({"type":"object","properties":{"project_json":{"type":"string"},"cards":{"type":"array","items":{"type":"string"}},"id":{"type":"string"}},"required":["project_json","cards","id"],"additionalProperties":false})"});
+    specs.push_back(
         {"demo_list", "List bundled read-only demo references",
          R"({"type":"object","properties":{},"additionalProperties":false})"});
     specs.push_back(
@@ -1592,6 +1602,18 @@ struct Host::State {
     const auto project =
         requested_project.empty() ? c.project : requested_project;
     auto args = json::Object(call.arguments);
+    if (call.name == "document_make_subgraph") {
+      std::vector<std::string> cards;
+      for (const auto& card : json::Array(json::Get(args, "cards", "[]")))
+        cards.push_back(json::String(card));
+      const auto edit = host::MakeSubgraph(json::Text(args, "project_json"), cards,
+                                           json::Text(args, "id"));
+      return {json::Encode(json::Members{
+                  {"project_json", json::Quote(edit.project_json)},
+                  {"external_json", json::Quote(edit.external_json)},
+                  {"link_json", json::Quote(edit.link_json)}}),
+              false, {}, {}};
+    }
     if (call.name == "demo_list")
       return {DemoList(), false, {}, {}};
     if (call.name == "demo_read")
@@ -3003,6 +3025,18 @@ struct Host::State {
     if (host::Projects::Handles(r->value_type()))
       return host_projects.Handle(*r, request.request_id);
     switch (r->value_type()) {
+    case H::RequestPayload::PermissionKindsRequest: {
+      const auto* p = r->value_as_PermissionKindsRequest();
+      return wire::HostReply(request.request_id, host::PermissionKinds(Text(p->language())));
+    }
+    case H::RequestPayload::DocumentSubgraphRequest: {
+      const auto* p = r->value_as_DocumentSubgraphRequest();
+      std::vector<std::string> cards;
+      if (p->cards())
+        for (const auto* card : *p->cards()) cards.push_back(card->str());
+      return wire::HostReply(request.request_id,
+          host::MakeSubgraph(p->project_json()->str(), cards, p->id()->str()));
+    }
     case H::RequestPayload::VersionCommentsRequest: {
       Human(human);
       const auto* p = r->value_as_VersionCommentsRequest();

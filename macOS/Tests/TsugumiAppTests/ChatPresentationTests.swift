@@ -49,3 +49,26 @@ import Testing
     }
   }
 }
+
+@MainActor struct PermissionPresentationTests {
+  @Test func unknownAndExecutionServicePermissionsAreVisibleAndNeedAnExplicitChoice() throws {
+    let execution = "execution_service a remote-west", future = "future_permission b exact target"
+    let request = try #require(CardPermission.Request(execution))
+    #expect(request.kind.rawValue == "execution_service")
+    #expect(request.card == "a" && request.folder == "remote-west")
+    let unknown = try #require(CardPermission.Request(future))
+    #expect(unknown.kind.rawValue == "future_permission" && unknown.folder == "exact target")
+    #expect(unknown.kind.label == "future_permission")
+    let prompt = ChatController.PermissionPrompt(raw: [execution, future]) { _ in }
+    #expect(!prompt.defaultSelection.contains(future))
+    var approved: Set<String> = []
+    let queued = ChatController.PermissionPrompt(raw: [execution, future]) { approved = $0 }
+    var queue = ChatController.PermissionQueue()
+    queue.append(queued)
+    queue.answer(queued.id, allow: true, selected: [execution])
+    #expect(approved == [execution])
+    queue.append(queued)
+    queue.answer(queued.id, allow: true, selected: [future])
+    #expect(approved == [future])
+  }
+}
