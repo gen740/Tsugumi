@@ -155,15 +155,28 @@ final class CardEditorModel {
   private(set) var shownFile: String?
   var collapsedFolders: Set<String> = []
 
-  func openFile(_ p: String) {
+  func openSource(_ source: String, line: Int) {
+    guard let prefix = session.definitionDir(cardKey), line > 0, !source.hasPrefix("/"),
+          !source.split(separator: "/").contains(where: { $0 == ".." || $0 == "." }) else { return }
+    category = .source
+    openFile(prefix + source, line: line)
+  }
+
+  private(set) var sourceLine: Int?
+
+  func openFile(_ p: String, line: Int? = nil) {
     if !openFiles.contains(p) { openFiles.append(p) }
     shownFile = p
+    sourceLine = line
   }
 
   func closeFile(_ p: String) {
     guard let i = openFiles.firstIndex(of: p) else { return }
     openFiles.remove(at: i)
-    if shownFile == p { shownFile = openFiles.isEmpty ? nil : openFiles[min(i, openFiles.count - 1)] }
+    if shownFile == p {
+      shownFile = openFiles.isEmpty ? nil : openFiles[min(i, openFiles.count - 1)]
+      sourceLine = nil
+    }
   }
 
   /// Reads a source file once (later calls return the working copy).
@@ -369,7 +382,9 @@ struct CardSettingsEditor: View {
           case .nix: SourceCategory(model: m, only: "default.nix")
           case .source: SourceCategory(model: m, only: nil)
           case .ports: m.kind == .subgraph ? AnyView(BoundaryCategory(model: m)) : AnyView(PortsCategory(model: m))
-          case .executions: CardExecutionView(session: session, cardKey: ref.card)
+          case .executions: CardExecutionView(session: session, cardKey: ref.card) { source, line in
+            m.openSource(source, line: line)
+          }
           case .artifacts: CardArtifactsView(session: session, cardKey: ref.card)
           case .context: ContextCategory(model: m)
           }
@@ -1406,7 +1421,7 @@ private struct SourceCategory: View {
           if loaded {
             CodeEditor(text: Binding(get: { model.loadedText(selected) ?? "" },
                                      set: { model.texts[selected] = $0; formatMarkers = [] }),
-                       language: (selected as NSString).pathExtension, markers: markers, documentID: selected)
+                       language: (selected as NSString).pathExtension, markers: markers, documentID: selected, revealLine: model.sourceLine)
           } else if case .failed(let e)? = model.loads[selected] {
             // Never an editable empty file: the content is unknown.
             ContentUnavailableView {

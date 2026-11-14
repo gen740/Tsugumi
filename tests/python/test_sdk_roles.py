@@ -47,7 +47,7 @@ def display_text(text): events.append(("text", text))
 def log(text): events.append(("log", text))
 def cancelled(): return False
 def remaining_ms(): return -1
-def fail(kind, message): events.append(("failure", kind, message))
+def fail(kind, message, *position): events.append(("failure", kind, message, *position))
 ''')
     # Each test uses a distinct generated package and module lifetime.
     names = [n for n in sys.modules if n.split(".")[0] in ("tsugumi", "_tsugumi_host", "inputs", "outputs", "params")]
@@ -123,3 +123,11 @@ def test_hook_uses_same_roles_and_rejection_fails_invocation(sdk):
     host.accept = False
     assert not module._invoke()
     assert host.events[-1][0:2] == ("failure", "output_invalid")
+
+
+def test_source_failure_reaches_the_host_without_losing_position(sdk):
+    module, host = sdk
+    def body():
+        raise module.Failure("worker_failed", "cell traceback", source="src/notebook.py", line=17, cell="calculation")
+    assert not module._guard(body)
+    assert host.events[-1] == ("failure", "worker_failed", "cell traceback", "src/notebook.py", 17, "calculation")

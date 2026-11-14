@@ -103,3 +103,5 @@ await import('./cardIdentity')
 await import('./agentAppearance')
 
 await import("./cardFileEdits")
+
+await import('./marimo')

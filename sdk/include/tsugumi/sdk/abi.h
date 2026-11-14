@@ -12,7 +12,7 @@
 extern "C" {
 #endif
 
-#define TSUGUMI_ABI_VERSION 5u
+#define TSUGUMI_ABI_VERSION 6u
 
 enum tsugumi_port_kind { TSUGUMI_FILE = 1, TSUGUMI_DIRECTORY = 2, TSUGUMI_FLATBUFFER = 3 };
 
@@ -86,6 +86,11 @@ typedef struct tsugumi_call {
   const char* (*params_json)(void* host);
   int (*emit_json)(void* host, const char* port, const char* json);
   int (*display_json)(void* host, const char* json);
+
+  /* ABI 6. Failure at a source position. source is relative to the Card's
+   * definition directory; line is one-based. cell may be NULL. */
+  void (*fail_at)(void* host, const char* kind, const char* message,
+                  const char* source, uint32_t line, const char* cell);
 
 } tsugumi_call;
 

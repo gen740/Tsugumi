@@ -85,6 +85,7 @@ internal unsafe struct NativeCall {
     internal delegate* unmanaged[Cdecl]<void*, byte*> ParamsJson;
     internal delegate* unmanaged[Cdecl]<void*, byte*, byte*, int> EmitJson;
     internal delegate* unmanaged[Cdecl]<void*, byte*, int> DisplayJson;
+    internal delegate* unmanaged[Cdecl]<void*, byte*, byte*, byte*, uint, byte*, void> FailAt;
 }
 
 /// Input/param bytes are managed copies. Native callbacks are valid only while
