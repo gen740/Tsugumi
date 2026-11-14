@@ -136,17 +136,18 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
     from projects import conn, start_run, wait_run
     from Tsugumi.Data.CardState import CardState
     from Tsugumi.Data.FailureKind import FailureKind
-    from tsugumi_client import RpcFailure
 
     source = r'''
 #include <tsugumi/sdk/abi.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <unistd.h>
 int tsugumi_main(const tsugumi_call* c) {
-  char gate[4096], stopped[4096];
+  char gate[4096], stopped[4096], sending[4096];
   snprintf(gate, sizeof gate, "%s/../home/stop", c->working_directory);
   snprintf(stopped, sizeof stopped, "%s/../home/stopped", c->working_directory);
+  snprintf(sending, sizeof sending, "%s/../home/sending", c->working_directory);
   const pid_t worker = getpid();
   pid_t child = fork();
   if (child < 0) return 1;
@@ -154,6 +155,12 @@ int tsugumi_main(const tsugumi_call* c) {
     while (access(gate, F_OK) != 0) usleep(10000);
     if (kill(worker, SIGSTOP) != 0) _exit(2);
     FILE* ready = fopen(stopped, "w");
+    if (ready) fclose(ready);
+    // fd 3 is the inherited WorkerCall socket. Do not drain it: the stopped
+    // worker must leave the oversized frame's sender blocked.
+    struct pollfd data = {3, POLLIN, 0};
+    if (poll(&data, 1, -1) != 1 || !(data.revents & POLLIN)) _exit(3);
+    ready = fopen(sending, "w");
     if (ready) fclose(ready);
     _exit(0);
   }
@@ -194,24 +201,19 @@ int tsugumi_main(const tsugumi_call* c) {
         time.sleep(0.01)
     second = start_run(c, "source")
     until = time.monotonic() + 60
-    while True:
-        try:
-            invocations = c.call("RunInvocationsRequest", runId=second, card=path("resident")).records
-            if invocations and invocations[0].state == CardState.running:
-                break
-        except RpcFailure as error:
-            if error.kind != "not_found":
-                raise
-        assert time.monotonic() < until, "resident did not begin its second call"
+    # `running` is already visible during preparation, before acquiring a
+    # worker. Wait for actual frame bytes without letting the worker read them.
+    while not gate.with_name("sending").exists():
+        assert time.monotonic() < until, "resident did not begin receiving its second frame"
         time.sleep(0.01)
-    if stop == "shutdown":
-        daemon.proc.send_signal(signal.SIGTERM)
-        assert daemon.proc.wait(timeout=10) == 0
-    else:
+    if stop != "shutdown":
         if stop == "cancel":
             c.call("RunCancelRequest", runId=second)
         state = wait_run(c, second, timeout=20).state
         assert state == (RunState.cancelled if stop == "cancel" else RunState.failed)
         inv, = c.call("RunInvocationsRequest", runId=second, card=path("resident")).records
         assert inv.workerReused
+        assert inv.state == (CardState.cancelled if stop == "cancel" else CardState.failed)
         assert inv.failure.kind == (FailureKind.cancelled if stop == "cancel" else FailureKind.timeout)
+    daemon.proc.send_signal(signal.SIGTERM)
+    assert daemon.proc.wait(timeout=10) == 0
