@@ -66,6 +66,7 @@
 "Agent が解決" = "Resolved by the Agent";
 "Agent が開き直しました" = "Reopened by the Agent";
 "Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。" = "The Agent's requests use your ChatGPT plan. You can review and manage usage in ChatGPT settings (Usage).";
+"Agent の作業をアニメーションで表示" = "Animate the Agent’s work";
 "Agent の発言とツールの結果を、数秒ごとに小さなモデル（%@、接続先: %@）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。" = "Every few seconds the Agent's words and tool results are sent to a small model (%@, via %@) to be summarized and shown in the Tsugumi's speech bubble on the canvas. This uses tokens besides the Agent's. When off, the bubble shows only short lines made from tool calls.";
 "Agent の要約" = "Agent summary";
 "Altair（対話型 HTML）" = "Altair (interactive HTML)";
@@ -280,6 +281,7 @@
 "この Mac で仮想マシンを使える" = "This Mac can run virtual machines";
 "この Mac にはありません（実行すると失敗します）" = "Not on this Mac (running fails)";
 "この Mac の共有実行環境（全プロジェクト）" = "This Mac’s shared execution environment (all projects)";
+"この Mac の外観設定と、このホストの agentd の Agent 表示設定" = "Appearance on this Mac; Agent presentation in agentd on this host";
 "この Run ではまだ値が通っていません" = "No value has passed in this Run yet";
 "この Run で準備済みのものを再利用" = "Reused what this Run had prepared";
 "この stream への出力はありません" = "Nothing on this stream";
@@ -387,6 +389,7 @@
 "エミュレーター" = "Emulator";
 "エラー: %@" = "Error: %@";
 "オフ" = "Off";
+"オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの agentd に保存します。" = "When off, saved Cards and wires appear immediately. The work marker, thought summaries and source streaming continue. This setting is stored in agentd on this host.";
 "オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。" = "When the Agent gives a Card a permission that is off here, you are asked before it is saved. Changes you make yourself in Card settings are not asked.";
 "オフ（デフォルト）: preRun・run・postRun のどれからも外へ通信できません。" = "Off (default): nothing in preRun, run or postRun can reach the outside.";
 "オフ（デフォルト）: 読み取り専用" = "Off (default): read only";
@@ -413,7 +416,6 @@
 "キーを保存できませんでした: %@" = "Could not save the key: %@";
 "キーを削除" = "Delete key";
 "キーを押してください…" = "Press a key…";
-"クリックでスキップ" = "Click to skip";
 "クリックで次のヒント" = "Click for the next tip";
 "グラフの描画が終わりませんでした" = "The chart did not finish drawing";
 "グラフの更新" = "Chart updates";
@@ -640,6 +642,7 @@
 "一覧から外すプロジェクトを選ぶ" = "Choose projects to remove from the list";
 "一覧から選択" = "Choose from list";
 "一覧を表示" = "Show list";
+"一覧を読み込めませんでした" = "Could not load the list";
 "上から下" = "Top to bottom";
 "上流から順に Card を書いて、糸でつないでいく" = "Write Cards from upstream on, and tie them together with threads";
 "上流の Card が失敗したので実行していません" = "Not run, because a Card upstream failed";

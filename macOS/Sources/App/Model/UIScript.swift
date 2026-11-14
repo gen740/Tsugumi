@@ -295,7 +295,7 @@ final class UIScript {
         if let s = session {
           let t0 = Date()
           Task { @MainActor [weak self] in
-            var last: [String: String] = [:], lastError = "", lastTidy = ""
+            var last: [String: String] = [:], lastError = ""
             while self?.log != nil {
               let now = Date()
               // The main bird and each helper's (named).
@@ -308,11 +308,6 @@ final class UIScript {
                   self?.say(String(format: "bubble %.1f ", now.timeIntervalSince(t0)) + "[\(who)] " + entry)
                   last[who] = entry
                 }
-              }
-              let t = AppModel.shared.chat(for: s).tidied
-              if "\(t)" != lastTidy {
-                self?.say(String(format: "tidy %.1f ", now.timeIntervalSince(t0)) + "moved \(t)")
-                lastTidy = "\(t)"
               }
               let err = AppModel.shared.chat(for: s).thoughts.lastError ?? ""
               if err != lastError {

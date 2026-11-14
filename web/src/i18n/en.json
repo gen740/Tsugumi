@@ -1371,5 +1371,8 @@
  "Agent の要約": "Agent summary",
  "ノートを読み込んでいます…": "Loading note…",
  "ノートを読み込めませんでした: {0}": "Could not load note: {0}",
- "変更の記録は Card の追加・削除と定義・ソース・パラメータ・接続の変更を無料で記録します。Agent の要約は差分をモデルのプロバイダへ送り、token を使います。この設定は全プロジェクトに適用します。": "The change record lists added and removed Cards and changes to definitions, source, parameters and wiring at no cost. The Agent summary sends the diff to the model provider and uses tokens. This setting applies to all projects."
+ "変更の記録は Card の追加・削除と定義・ソース・パラメータ・接続の変更を無料で記録します。Agent の要約は差分をモデルのプロバイダへ送り、token を使います。この設定は全プロジェクトに適用します。": "The change record lists added and removed Cards and changes to definitions, source, parameters and wiring at no cost. The Agent summary sends the diff to the model provider and uses tokens. This setting applies to all projects.",
+ "Agent の作業をアニメーションで表示": "Animate the Agent’s work",
+ "オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの agentd に保存します。": "When off, saved Cards and wires appear immediately. The work marker, thought summaries and source streaming continue. This setting is stored in agentd on this host.",
+ "このブラウザの外観設定と、このホストの agentd の Agent 表示設定": "Appearance in this browser; Agent presentation in agentd on this host"
 }

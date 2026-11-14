@@ -17,7 +17,7 @@ import Testing
 }
 
 @MainActor @Test func betweenScenesTheBubbleSaysWhatTheAgentDoesNow() {
-  let p = AgentPresence()
+  let p = AgentPresence(animateWork: { true })
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   p.turnStarted(now: t0)
   #expect(p.line(at: t0)?.text == "考えています")
@@ -46,7 +46,7 @@ import Testing
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   for (outcome, words) in [(AgentPresence.Outcome.done, "できました"), (.failed, "うまくいきませんでした"),
                            (.stopped, "止めました"), (.limit, "途中で止まっています")] {
-    let p = AgentPresence()
+    let p = AgentPresence(animateWork: { true })
     p.turnStarted(now: t0)
     p.enqueue(.visit("load"), now: t0)
     p.turnEnded(outcome, now: t0.addingTimeInterval(0.5))
@@ -57,7 +57,7 @@ import Testing
     #expect(p.line(at: end.addingTimeInterval(0.7))?.text == words)
   }
   // A turn without scenes (a question answered) ends with its words too.
-  let q = AgentPresence()
+  let q = AgentPresence(animateWork: { true })
   q.turnStarted(now: t0)
   q.turnEnded(now: t0.addingTimeInterval(2))
   #expect(q.line(at: t0.addingTimeInterval(2.5))?.text == "できました")
@@ -89,7 +89,7 @@ import Testing
 }
 
 @MainActor @Test func scenesPlayOneAfterAnotherWithoutLaggingFarBehind() {
-  let p = AgentPresence()
+  let p = AgentPresence(animateWork: { true })
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   p.turnStarted(now: t0)
   p.enqueue(.visit("load"), now: t0)
@@ -117,7 +117,7 @@ import Testing
 }
 
 @MainActor @Test func aWrittenCardRevealsThenItsColourSettlesAndFades() {
-  let p = AgentPresence()
+  let p = AgentPresence(animateWork: { true })
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   p.enqueue(.visit("start"), now: t0)
   p.enqueue(.write("load", reveal: true), now: t0)
@@ -134,7 +134,7 @@ import Testing
 }
 
 @MainActor @Test func aThreadHangsWhileDrawnAndIsPulledTaut() {
-  let p = AgentPresence()
+  let p = AgentPresence(animateWork: { true })
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   let w = AgentPresence.Wire(from: "a", fromPort: "out", to: "b", toPort: "in")
   p.enqueue(.thread(w), now: t0)
@@ -159,7 +159,7 @@ import Testing
 }
 
 @MainActor @Test func theBirdFadesInAndAwayInsteadOfPopping() {
-  let p = AgentPresence()
+  let p = AgentPresence(animateWork: { true })
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   let T = AgentPresence.Timing.self
   p.turnStarted(now: t0)
@@ -178,45 +178,8 @@ import Testing
   #expect(p.fade(at: end.addingTimeInterval(T.linger)).opacity == 0)
 }
 
-/// A Card and the frame below it are one block; blocks that overlap are
-/// pushed apart along the flow's cross axis, in their order, by just enough.
-@Test func tidyingMakesRoomForWhatCardsShow() {
-  typealias B = LayoutTidy.Box
-  // Two rows of Cards; the first row's blocks (Card and frame) reach into the second row.
-  let boxes = [B(id: "card:a", rect: CGRect(x: 0, y: 0, width: 320, height: 280)),
-               B(id: "card:b", rect: CGRect(x: 400, y: 0, width: 320, height: 280)),
-               B(id: "card:c", rect: CGRect(x: 0, y: 200, width: 200, height: 80)),
-               B(id: "card:d", rect: CGRect(x: 400, y: 200, width: 320, height: 280)),
-               B(id: "note:n", rect: CGRect(x: 900, y: 0, width: 240, height: 120))]
-  #expect(Set(LayoutTidy.overlaps(boxes).map { $0.0 + " " + $0.1 }) == ["card:a card:c", "card:b card:d"])
-  let moves = LayoutTidy.makeRoom(boxes, across: true)
-  // Only the second row moves, straight down, just past the first row.
-  #expect(moves == [LayoutTidy.Move(id: "card:c", by: CGVector(dx: 0, dy: 280 + LayoutTidy.gap - 200)),
-                    LayoutTidy.Move(id: "card:d", by: CGVector(dx: 0, dy: 280 + LayoutTidy.gap - 200))])
-  #expect(LayoutTidy.overlaps(LayoutTidy.applying(moves, to: boxes)).isEmpty)
-  // Nothing moves when nothing overlaps.
-  #expect(LayoutTidy.makeRoom(LayoutTidy.applying(moves, to: boxes), across: true).isEmpty)
-  // A chain: pushing one block down makes room below it too.
-  let chain = [B(id: "card:a", rect: CGRect(x: 0, y: 0, width: 200, height: 300)),
-               B(id: "card:b", rect: CGRect(x: 0, y: 250, width: 200, height: 100)),
-               B(id: "card:c", rect: CGRect(x: 0, y: 380, width: 200, height: 100))]
-  let after = LayoutTidy.applying(LayoutTidy.makeRoom(chain, across: true), to: chain)
-  #expect(LayoutTidy.overlaps(after).isEmpty)
-  #expect(after.map(\.rect.minY) == [0, 324, 448])
-  // Top to bottom: the push goes right instead.
-  let side = [B(id: "card:a", rect: CGRect(x: 0, y: 0, width: 300, height: 100)),
-              B(id: "card:b", rect: CGRect(x: 200, y: 0, width: 100, height: 100))]
-  #expect(LayoutTidy.makeRoom(side, across: false) == [LayoutTidy.Move(id: "card:b", by: CGVector(dx: 124, dy: 0))])
-  // Side by side, however close, is not the same column: nothing moves.
-  let columns = [B(id: "card:a", rect: CGRect(x: 0, y: 0, width: 320, height: 300)),
-                 B(id: "card:b", rect: CGRect(x: 330, y: 0, width: 320, height: 300)),
-                 B(id: "card:c", rect: CGRect(x: 0, y: 250, width: 200, height: 80))]
-  #expect(LayoutTidy.makeRoom(columns, across: true).map(\.id) == ["card:c"])
-}
-
-
 @MainActor @Test func theFileBeingWrittenShowsReceivedTextImmediately() {
-  let p = AgentPresence()
+  let p = AgentPresence(animateWork: { true })
   let start = Date(timeIntervalSinceReferenceDate: 1000)
   p.turnStarted(now: start)
   p.toolInput(index: 0, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/a/main.py","bytes":"import os"#, now: start)
@@ -237,7 +200,7 @@ import Testing
 }
 
 @MainActor @Test func aNewFileKeepsTheScenesOfTheChangeThatWasSaved() {
-  let p = AgentPresence()
+  let p = AgentPresence(animateWork: { true })
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   let at = { (s: Double) in t0.addingTimeInterval(s) }
   let wire = AgentPresence.Wire(from: "a", fromPort: "out", to: "c", toPort: "in")
@@ -259,7 +222,7 @@ import Testing
 }
 
 @MainActor @Test func aNewFileReplacesAnOlderFileAtOnce() {
-  let p = AgentPresence()
+  let p = AgentPresence(animateWork: { true })
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   let at = { (s: Double) in t0.addingTimeInterval(s) }
   let file = { (card: String) in #"{"value":{"path":"definitions/\#(card)/m.py","bytes":"code"}},"# }
@@ -275,7 +238,7 @@ import Testing
 
 @MainActor @Test func aFileTooFarBehindTheBirdShowsWhenItCan() {
   typealias T = AgentPresence.Timing
-  let p = AgentPresence()
+  let p = AgentPresence(animateWork: { true })
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   let at = { (s: Double) in t0.addingTimeInterval(s) }
   p.turnStarted(now: t0)
@@ -294,7 +257,7 @@ import Testing
 }
 
 @MainActor @Test func aRunEndsTheWindowAndKeepsTheScenesOfTheSave() {
-  let p = AgentPresence()
+  let p = AgentPresence(animateWork: { true })
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   let at = { (s: Double) in t0.addingTimeInterval(s) }
   p.turnStarted(now: t0)
@@ -310,7 +273,7 @@ import Testing
 
 @MainActor @Test func aStoppedTurnOrAnUnansweredApprovalLeavesNoUnsavedText() {
   typealias T = AgentPresence.Timing
-  let p = AgentPresence()
+  let p = AgentPresence(animateWork: { true })
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   let at = { (s: Double) in t0.addingTimeInterval(s) }
   // Stopped while the file still arrives.
@@ -333,7 +296,7 @@ import Testing
 @MainActor @Test func helpersWritingTheSameFileEachShowTheirOwnText() {
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   let birds = ["first", "second"].map { (text: String) -> AgentPresence in
-    let p = AgentPresence()
+    let p = AgentPresence(animateWork: { true })
     p.turnStarted(now: t0)
     p.toolInput(index: 0, tool: "project_save", delta: #"{"value":{"path":"definitions/a/m.py","bytes":"\#(text)"#, now: t0)
     return p
@@ -372,7 +335,7 @@ import Testing
 }
 
 @MainActor @Test func whatAFailedOrStoppedCallWroteGoesAtOnce() {
-  let p = AgentPresence()
+  let p = AgentPresence(animateWork: { true })
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   let at = { (s: Double) in t0.addingTimeInterval(s) }
   let file = { (card: String) in #"{"value":{"path":"definitions/\#(card)/m.py","bytes":"code"}},"# }
@@ -438,4 +401,33 @@ import Testing
   #expect(WritingPanel.frame(card: card.offsetBy(dx: 2000, dy: 0), clear: 80, scale: 1, in: view) == nil)
   // Readable at any zoom, and not larger than the view needs.
   #expect(WritingPanel.scale(zoom: 0.5) == 0.8 && WritingPanel.scale(zoom: 1) == 1 && WritingPanel.scale(zoom: 3) == 1.3)
+}
+
+@MainActor @Test func savedCardsAndWiresAppearImmediatelyWhenStagingIsOff() {
+  var animate = true
+  let p = AgentPresence(animateWork: { animate })
+  let t = Date(timeIntervalSinceReferenceDate: 1000)
+  let wire = AgentPresence.Wire(from: "a", fromPort: "out", to: "b", toPort: "in")
+  p.turnStarted(now: t)
+  p.enqueue(.visit("start"), now: t)
+  p.saved(written: [("a", reveal: true)], wires: [wire], now: t)
+  #expect(p.writing("a", at: t)?.reveal == 0)
+  #expect(p.thread(wire, at: t) == .hidden)
+  // Switching off also releases effects that are already queued.
+  animate = false
+  #expect(p.writing("a", at: t) == nil)
+  #expect(p.thread(wire, at: t) == .plain)
+  #expect(p.current(at: t)?.beat.beat.card == "b")
+  #expect(p.current(at: t.addingTimeInterval(0.2))?.beat.start == t)
+  p.saved(written: [("c", reveal: true)], wires: [], now: t)
+  #expect(p.current(at: t)?.beat.beat.card == "c")
+  #expect(p.writing("c", at: t) == nil)
+  #expect(p.visible(at: t))
+  p.think("checking", now: t)
+  #expect(p.line(at: t)?.text == "checking")
+  p.toolInput(index: 0, tool: "project_save", delta: #"{"changes":[{"value":{"path":"definitions/c/main.py","bytes":"print"#, now: t)
+  #expect(p.liveCode(at: t)?.text == "print")
+  p.saved(written: [("c", reveal: true)], wires: [wire], now: t)
+  #expect(p.liveCode(at: t)?.saved == true)
+  #expect(p.thread(wire, at: t) == .plain)
 }

@@ -1,3 +1,4 @@
+import { agentAppearance } from '../model/agentAppearance'
 // App-wide settings; the category on the left switches the content. While a
 // project is open its own settings follow the app's (kept in the project).
 import { useEffect, useState } from 'react'
@@ -23,7 +24,7 @@ import { ExecutionServicesSettings } from './executionServices'
 type Category = 'general' | 'appearance' | 'editor' | 'shortcuts' | 'skills' | 'api' | 'connections' | 'executionServices'
 const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
   { id: 'general', title: L('一般'), icon: 'gearshape', storage: L('このブラウザ（localStorage）') },
-  { id: 'appearance', title: L('外観'), icon: 'paintpalette', storage: L('このブラウザ（localStorage）') },
+  { id: 'appearance', title: L('外観'), icon: 'paintpalette', storage: L('このブラウザの外観設定と、このホストの agentd の Agent 表示設定') },
   { id: 'editor', title: L('エディター'), icon: 'text.cursor', storage: L('このブラウザ（localStorage）') },
   { id: 'shortcuts', title: L('ショートカット'), icon: 'keyboard', storage: L('このブラウザ（localStorage）') },
   { id: 'skills', title: 'Skills', icon: 'wand.and.stars', storage: L('このホスト（Tsugumi web サーバーの設定）') },
@@ -156,6 +157,8 @@ function GeneralSettings() {
 }
 
 function AppearanceSettings() {
+  useObserve(agentAppearance)
+  useEffect(() => { void agentAppearance.reload() }, [])
   return (
     <div className="settings-split">
       <Form style={{ width: 340, flex: 'none' }}>
@@ -169,6 +172,10 @@ function AppearanceSettings() {
             <input type="range" min={10} max={60} step={5} value={prefs.gridSize} onChange={(e) => prefs.set('gridSize', Number(e.target.value))} aria-label={L('グリッド間隔')} />
           </Row>
           <Row label={L('実行中の接続線を動かす')}><Toggle checked={prefs.animateLines} onChange={(v) => prefs.set('animateLines', v)} /></Row>
+          <Row label={L('Agent の作業をアニメーションで表示')} help={L('オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの agentd に保存します。')}>
+            <Toggle checked={agentAppearance.animateWork} onChange={(v) => void agentAppearance.setAnimateWork(v)} />
+          </Row>
+          {agentAppearance.error && <div className="error">{agentAppearance.error}</div>}
         </Section>
       </Form>
       <div className="settings-preview">

@@ -11,6 +11,14 @@ import TsugumiAgentClient
 @MainActor
 @Observable
 final class AgentPresence {
+  /// Presentation only; the saved project is never changed by these scenes.
+  private let animate: @MainActor () -> Bool
+  var animateWork: Bool { animate() }
+
+  init(animateWork: @escaping @MainActor () -> Bool = { @MainActor in CorePreferences.shared.value("agent.animateWork", fallback: true) }) {
+    animate = animateWork
+  }
+
   struct Wire: Hashable, Sendable {
     let from: CardKey
     let fromPort: String
@@ -36,6 +44,7 @@ final class AgentPresence {
   struct Scheduled: Equatable {
     let beat: Beat
     let start: Date
+    let received: Date
     var length: Double
     /// The plain line for the bubble (without the thought summary).
     let line: String
@@ -139,7 +148,7 @@ final class AgentPresence {
     self.outcome = outcome
     working = false
     toolInputEnded(ok: outcome == .done, now: now)
-    endedAt = max(now, beats.last?.end ?? now)
+    endedAt = animateWork ? max(now, beats.last?.end ?? now) : now
     sweep()
   }
 
@@ -244,6 +253,12 @@ final class AgentPresence {
   }
 
   func enqueue(_ beat: Beat, now: Date = Date()) {
+    if !animateWork {
+      // Follow the latest work without waiting for saved-state scenes. Source
+      // streaming keeps its own scene and is still shown as text arrives.
+      beats.removeAll { $0.start > now }
+      if let i = beats.indices.last, beats[i].end > now { beats[i].length = now.timeIntervalSince(beats[i].start) }
+    }
     let start = max(now, beats.last?.end ?? now)
     if !visible(at: start) || appearedAt == nil { appearedAt = start }
     switch beat {
@@ -253,7 +268,7 @@ final class AgentPresence {
       if start.timeIntervalSince(now) > Timing.maxBacklog { return }
     default: break
     }
-    beats.append(Scheduled(beat: beat, start: start, length: length(of: beat), line: line(for: beat)))
+    beats.append(Scheduled(beat: beat, start: start, received: now, length: length(of: beat), line: line(for: beat)))
     // Played and gone beats are kept only as long as their effects last.
     beats.removeAll { $0.end.addingTimeInterval(Timing.settle + 1) < now }
     sweep()
@@ -266,8 +281,14 @@ final class AgentPresence {
     // one on the screen says so for what is left of its hold.
     beats.removeAll { $0.code != nil && $0.start > now }
     for (id, code) in codes where written.contains(where: { $0.0 == code.card }) { codes[id]?.saved = true }
-    for (k, reveal) in written { enqueue(.write(k, reveal: reveal), now: now) }
-    for w in wires { enqueue(.thread(w), now: now) }
+    if animateWork {
+      for (k, reveal) in written { enqueue(.write(k, reveal: reveal), now: now) }
+      for w in wires { enqueue(.thread(w), now: now) }
+    } else if liveCode(at: now) == nil {
+      // Keep the source panel's hold, but put the marker at the saved Card now.
+      if let k = written.last?.0 { enqueue(.write(k, reveal: false), now: now) }
+      else if let w = wires.last { enqueue(.thread(w), now: now) }
+    }
   }
 
   // MARK: - Reading the state at a time
@@ -276,7 +297,7 @@ final class AgentPresence {
   /// a little while after.
   func visible(at now: Date) -> Bool {
     if working { return true }
-    if let last = beats.last, last.end > now { return true }
+    if let last = beats.last, (animateWork ? last.end : last.received.addingTimeInterval(last.length)) > now { return true }
     if let e = endedAt { return now.timeIntervalSince(e) < Timing.linger }
     return false
   }
@@ -293,6 +314,9 @@ final class AgentPresence {
 
   /// The scene playing at `now` (the last one that started), and the one before.
   func current(at now: Date) -> (beat: Scheduled, previous: Scheduled?)? {
+    if !animateWork, let last = beats.last, last.code == nil {
+      return (Scheduled(beat: .visit(last.beat.card), start: last.received, received: last.received, length: last.length, line: last.line), nil)
+    }
     guard let i = beats.lastIndex(where: { $0.start <= now }) else { return nil }
     return (beats[i], i > 0 ? beats[i - 1] : nil)
   }
@@ -323,6 +347,7 @@ final class AgentPresence {
   /// How far a written Card is (reveal 0…1 while it is written out; nil when
   /// it is not being written) and how strongly its colour settles (0…1).
   func writing(_ k: CardKey, at now: Date) -> (reveal: Double?, settle: Double)? {
+    guard animateWork else { return nil }
     guard let s = beats.last(where: { if case .write(let c, _) = $0.beat { return c == k } else { return false } }) else { return nil }
     guard case .write(_, let revealing) = s.beat else { return nil }
     let t = now.timeIntervalSince(s.start)
@@ -344,6 +369,7 @@ final class AgentPresence {
 
   /// Where a wire is in its threading at `now`.
   func thread(_ w: Wire, at now: Date) -> ThreadState {
+    guard animateWork else { return .plain }
     guard let s = beats.last(where: { $0.beat == .thread(w) }) else { return .plain }
     let t = now.timeIntervalSince(s.start)
     if t < Timing.threadStart { return .hidden }
@@ -357,7 +383,8 @@ final class AgentPresence {
 
   /// Something is moving: views animate frame by frame only then.
   func animating(at now: Date) -> Bool {
-    visible(at: now) || beats.contains { $0.end.addingTimeInterval(Timing.settle) > now }
+    let _ = animateWork // Observe setting changes even while only wires are staged.
+    return visible(at: now) || beats.contains { $0.end.addingTimeInterval(Timing.settle) > now }
   }
 
   // MARK: - Helpers

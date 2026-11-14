@@ -58,6 +58,7 @@ interface Settings {
   webSearch: boolean
   /** Agentd chooses how to produce version notes. */
   versionNoteMode: 'mechanical' | 'agent'
+  animateAgentWork: boolean
   /** The UI's language (the desktop app's too, on a Mac): the page's strings, the
    *  server's messages, and what tsugumid writes into a project's git. */
   language: Language
@@ -67,7 +68,7 @@ interface Settings {
 const SHARED_KEYS: Record<string, string> = {
   provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
   effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort', allowedPermissions: 'agent.permissions.allowed',
-  webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
+  animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
 }
 const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }
 const localProfile = () => `web:${ctx.support}`
@@ -461,6 +462,14 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   const projectDir = c.projectDir
   const routes: Record<string, Handler> = {
   'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined),
+  'GET /api/agent/appearance': async () => {
+    await loadSettings()
+    return { animateWork: settings().animateAgentWork }
+  },
+  'POST /api/agent/appearance': async (b) => {
+    await patchSettings({ animateAgentWork: b.animateWork })
+    return { animateWork: settings().animateAgentWork }
+  },
   'GET /api/settings': async () => ({
     ...settings(),
     revision: { ...revisions },

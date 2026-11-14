@@ -185,3 +185,17 @@ assert.equal(leadColor(true), 'rgb(250, 204, 89)')
   assert.ok(!c.team.bird('knn').working)
 }
 console.log('helper birds: passed')
+
+// Presentation off: existing queues release the marker; future work is immediate.
+{
+  let animate = true
+  const team = new HelperTeam(noWriter, () => animate)
+  team.start([{ name: 'helper', cards: ['a'] }], 100)
+  team.bird('helper')!.visit('b', 'saving', 100.1, true)
+  assert.equal(team.bird('helper')!.card(100.1), 'a')
+  animate = false
+  assert.equal(team.bird('helper')!.card(100.1), 'b')
+  team.bird('helper')!.visit('c', 'checking', 100.2, true)
+  assert.equal(team.bird('helper')!.card(100.2), 'c')
+  assert.equal(team.bird('helper')!.line(100.2)?.text, 'checking')
+}

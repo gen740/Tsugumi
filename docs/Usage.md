@@ -111,3 +111,24 @@ Turn on **Draw thoughts** below the chat input for model-written activity summar
 Add Skill folders in settings or keep Skills under the project's `skills/`; call one with **$name**. Use the conversation list to search past chats or compact a conversation. Turn on **Web search** under **API** only when you want the provider to receive search terms. [Search and privacy](security.md#web-search)
 
 An interrupted conversation stays interrupted when opened, refreshed, reconnected or after a service restart. The chat shows the operation recorded by the core at interruption (including the tool call and its arguments, when applicable). Choose **Resume** to continue, or send a new message. Resuming reconciles in-flight tool calls against their durable receipts; it does not blindly run them again. Work still running in the core can be observed from another window without resuming it.
+
+### Canvas presentation
+
+Card, output-frame and note positions change when you move them, choose **Arrange**,
+or ask the Agent to change the layout. Showing the Agent's saves or run outputs
+never rearranges the canvas. A new Card is placed when it is created.
+
+**Settings → Appearance → Animate the Agent’s work** is on by default and is stored
+in agentd with the host's Agent settings (shared by the Mac app and its Web UI).
+On the Mac, it stages saved Cards becoming code and threads their wires in sequence.
+Turn it off to show saved Cards and wires immediately, while the work marker follows
+the latest activity. The Web UI already shows saved Cards and wires immediately;
+this setting also controls whether its helpers' work markers wait for queued scenes.
+The bird's visibility and motion, **Draw thoughts**, and source text streaming as
+it is written have separate controls or behaviour.
+
+The Mac app opens directly to Home. Recent projects, demos and project defaults
+load independently; lists show a loading indicator until their first reply. The
+host setup check runs alongside Home and shows missing prerequisites only when
+confirmed. A failed check shows an error, with a retry, rather than claiming that
+the Mac or VM image is unavailable. VM preparation starts when a project opens.

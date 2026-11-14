@@ -8,11 +8,6 @@ struct TsugumiWordmark: View {
   /// The thread's width at a word 500 units wide (the key visual's 4 pt at
   /// its scale).
   var weight: CGFloat = 4.1
-  /// How much of the line is drawn (0…1), and whether the i's dot is: the
-  /// welcome spins the name out (Home/WelcomeIntro.swift).
-  var progress: Double = 1
-  var dot = true
-
   /// The word's box in its own units: baseline at 0, x-height -70.
   static let bounds = CGRect(x: -44, y: -106, width: 506, height: 172)
   static let iDot = CGPoint(x: 436, y: -92)
@@ -24,12 +19,12 @@ struct TsugumiWordmark: View {
       g.scaleBy(x: k, y: k)
       g.translateBy(x: -Self.bounds.minX, y: -Self.bounds.minY)
       let style = StrokeStyle(lineWidth: weight, lineCap: .round, lineJoin: .round)
-      let path = progress >= 1 ? Self.path : Self.path.trimmedPath(from: 0, to: max(0, progress))
+      let path = Self.path
       var shadow = g
       shadow.addFilter(.blur(radius: 2))
       shadow.stroke(path.offsetBy(dx: 2, dy: 3), with: .color(.black.opacity(0.3)), style: style)
       g.stroke(path, with: .color(TsugumiPalette.thread), style: style)
-      if dot { TsugumiTemari.draw(g, center: Self.iDot, radius: 10.5, spin: 0) }
+      TsugumiTemari.draw(g, center: Self.iDot, radius: 10.5, spin: 0)
     }
     .aspectRatio(Self.bounds.width / Self.bounds.height, contentMode: .fit)
     .accessibilityElement()

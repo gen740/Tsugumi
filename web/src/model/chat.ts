@@ -5,6 +5,7 @@ import { toolSummary } from '../shared/agentShared'
 import { uuid } from '../shared/rpc'
 import type { AppModel } from './app'
 import { guide, GuideAction, type GuideShow, parseShow } from './guide'
+import { agentAppearance } from './agentAppearance'
 import { HelperTeam } from './helperBirds'
 import { LiveCodePlayer, writesSources } from './liveCode'
 import { Observable } from './observable'
@@ -513,7 +514,7 @@ export class ChatController extends Observable {
   readonly writers = new Map<string, LiveCodePlayer>()
 
   /** The helpers of the last delegate call, a bird each. */
-  readonly team = new HelperTeam((who) => this.writers.get(who))
+  readonly team = new HelperTeam((who) => this.writers.get(who), () => agentAppearance.animateWork)
 
   private writer(who = '') {
     let w = this.writers.get(who)
