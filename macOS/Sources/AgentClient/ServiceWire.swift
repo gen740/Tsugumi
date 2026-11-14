@@ -474,6 +474,7 @@ enum ServiceWire {
       out["conversation"] = try view(v.conversation)
       out["busy"] = v.busy
       out["resumable"] = v.resumable
+      out["interrupted_operation"] = v.interruptedOperation
       out["continuable"] = v.continuable
       out["project_id"] = v.projectId
       out["event_seq"] = v.eventSeq

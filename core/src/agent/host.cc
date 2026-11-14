@@ -193,7 +193,7 @@ struct Host::State {
         "INTEGER NOT NULL);"
         "CREATE TABLE IF NOT EXISTS turns(conversation TEXT NOT NULL, id TEXT "
         "NOT NULL, digest TEXT NOT NULL, state TEXT NOT NULL, action INTEGER "
-        "NOT NULL, PRIMARY "
+        "NOT NULL, operation TEXT NOT NULL, PRIMARY "
         "KEY(conversation,id));"
         "CREATE TABLE IF NOT EXISTS receipts(conversation TEXT NOT NULL, id "
         "TEXT NOT NULL, digest TEXT NOT NULL, state TEXT NOT NULL, result TEXT "
@@ -624,14 +624,32 @@ struct Host::State {
         {"helpers", json::Encode(helpers)},
         {"usage", usage_json}});
   }
+  // This is presentation state only. Reconciliation still uses tool receipts.
+  auto RecordOperation(const std::string &id, const std::string &kind,
+                       const std::string &call = {},
+                       const std::string &name = {},
+                       const std::string &arguments = {}) -> void {
+    std::lock_guard lock(mutex);
+    auto q = db.prepare("UPDATE turns SET operation=? WHERE conversation=? "
+                        "AND state='running'");
+    q.bind(1, Scrub(json::Encode(
+                  json::Members{{"kind", json::Quote(kind)},
+                                {"id", json::Quote(call)},
+                                {"name", json::Quote(name)},
+                                {"arguments", json::Quote(arguments)}})))
+        .bind(2, id)
+        .run();
+  }
+
   auto ConversationResult(uint64_t request_id, const Conversation &c)
       -> std::string {
     auto seq = db.prepare(
         "SELECT coalesce(max(seq),0) FROM events WHERE conversation=?");
     seq.bind(1, c.id);
     seq.step();
-    auto latest = db.prepare("SELECT state FROM turns WHERE conversation=? "
-                             "ORDER BY rowid DESC LIMIT 1");
+    auto latest =
+        db.prepare("SELECT state,operation FROM turns WHERE conversation=? "
+                   "ORDER BY rowid DESC LIMIT 1");
     latest.bind(1, c.id);
     const auto state = latest.step() ? latest.text(0) : "";
     const bool busy = running.contains(c.id);
@@ -645,6 +663,16 @@ struct Host::State {
     result.busy = busy;
     result.resumable = resumable;
     result.continuable = continuable;
+    if (resumable) {
+      const auto operation = json::Object(latest.text(1));
+      result.interrupted_operation =
+          std::make_unique<A::InterruptedOperationT>();
+      auto &saved = *result.interrupted_operation;
+      saved.kind = json::Text(operation, "kind");
+      saved.id = json::Text(operation, "id");
+      saved.name = json::Text(operation, "name");
+      saved.arguments_json = json::Text(operation, "arguments");
+    }
     result.project_id = c.project;
     result.event_seq = seq.u64(0);
     return wire::AgentReply(request_id, std::move(result));
@@ -1179,6 +1207,12 @@ struct Host::State {
       }
     };
     hooks.event = [this, id](const RuntimeEvent &e) {
+      if (e.kind == "toolStarted")
+        RecordOperation(id, "tool", e.id, e.name, e.text);
+      else if (e.kind == "compacting")
+        RecordOperation(id, "compact");
+      else if (e.kind == "toolFinished" || e.kind == "compacted")
+        RecordOperation(id, "model");
       if (e.kind == "finished")
         return;
       Event(id,
@@ -1418,7 +1452,7 @@ struct Host::State {
     sql::Transaction tx(db);
     SaveMessages(id, messages);
     if (!turn.empty()) {
-      auto q = db.prepare("INSERT INTO turns VALUES(?,?,?,'running',?)");
+      auto q = db.prepare("INSERT INTO turns VALUES(?,?,?,'running',?,'{}')");
       q.bind(1, id)
           .bind(2, turn)
           .bind(3, digest)
@@ -1435,7 +1469,7 @@ struct Host::State {
       }
     } else if (active_turn.empty()) {
       active_turn = crypto::uuid4();
-      auto q = db.prepare("INSERT INTO turns VALUES(?,?,?,'running',?)");
+      auto q = db.prepare("INSERT INTO turns VALUES(?,?,?,'running',?,'{}')");
       q.bind(1, id)
           .bind(2, active_turn)
           .bind(3, digest)
@@ -1446,6 +1480,9 @@ struct Host::State {
           "UPDATE turns SET state='running' WHERE conversation=? AND id=?");
       q.bind(1, id).bind(2, active_turn).run();
     }
+    RecordOperation(id, !pending_frame.empty()         ? "preparing"
+                        : action == A::Action::Compact ? "compact"
+                                                       : "model");
     if (c.title.empty() && !text.empty()) {
       auto q = db.prepare("UPDATE conversations SET title=? WHERE id=?");
       q.bind(1, Excerpt(text, 0, 160)).bind(2, id).run();
@@ -1489,6 +1526,8 @@ struct Host::State {
               pending.bind(1, id).run();
               tx.commit();
             }
+            RecordOperation(id,
+                            action == A::Action::Compact ? "compact" : "model");
             auto hooks = Hooks(id);
             if (action == A::Action::Compact)
               Runtime().Compact(config, messages, stop, hooks);

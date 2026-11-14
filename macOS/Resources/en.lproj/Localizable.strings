@@ -599,6 +599,7 @@
 "ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。" = "Add this host's public key to the worker's authorized_keys before verifying the connection.";
 "ホーム" = "Home";
 "ポートの並びを元に戻す" = "Reset Port Order";
+"メッセージの準備" = "Preparing the message";
 "メッセージ（%@ で送信）" = "Message (send with %@)";
 "メモ" = "Note";
 "メモリ上限（バイト）" = "Memory limit (bytes)";
@@ -606,6 +607,7 @@
 "モジュール %@" = "Module %@";
 "モデル" = "Model";
 "モデルが文を返しませんでした。" = "The model returned no text.";
+"モデルの応答" = "Model response";
 "モデル一覧を取得" = "List Models";
 "モデル（接続先: %@）" = "Model (provider: %@)";
 "ユーザー名" = "Username";
@@ -659,7 +661,9 @@
 "会話" = "Conversations";
 "会話に戻る" = "Back to the conversation";
 "会話の一覧と検索" = "Conversations and search";
+"会話の圧縮" = "Compacting the conversation";
 "会話はまだありません" = "No conversations yet";
+"会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。" = "Conversation interrupted. Operation at interruption: %@. Resume or send a new message.";
 "会話を圧縮" = "Compact Conversation";
 "会話を圧縮しています…" = "Compacting the conversation…";
 "会話を表示中" = "Conversation open";
@@ -763,6 +767,7 @@
 "再起動して %@ に更新" = "Restart to Update to %@";
 "再起動して更新" = "Restart to Update";
 "再起動すると新しい版になります。あとにした場合は、次に終了したときに更新します。" = "Restart to use the new version. Otherwise it is installed the next time you quit.";
+"再開" = "Resume";
 "冬はさえずらず口を「噤む」から、ツグミという名になったという説もあるよ" = "It keeps quiet all winter, its beak shut (tsugumu). Some say that is where the name comes from.";
 "処理" = "Step";
 "処理 Card の実行環境は default.nix で定義します。" = "A step Card's environment is defined in default.nix.";

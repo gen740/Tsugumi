@@ -31,6 +31,11 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+    '会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。': 'Conversation interrupted. Operation at interruption: %@. Resume or send a new message.',
+    'モデルの応答': 'Model response',
+    'メッセージの準備': 'Preparing the message',
+    '会話の圧縮': 'Compacting the conversation',
+    '再開': 'Resume',
 "実行環境の状態を確認できませんでした": "Could not check the execution environment",
 "実行環境の状態を確認しています…": "Checking the execution environment…",
 "実行環境からの状態の応答が不正です。": "The execution environment returned an invalid status reply.",

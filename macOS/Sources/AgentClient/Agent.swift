@@ -107,7 +107,8 @@ public actor Agent {
   private var opened = false
   private var busy = false
   public private(set) var canContinue = false
-  private var resumable = false
+  public private(set) var resumable = false
+  public private(set) var interruptedOperation: Tsugumi_Agent_InterruptedOperationT?
   private var answeredAccess: [String: Bool] = [:]
   private let client = CoreAgentClient.shared
 
@@ -133,7 +134,6 @@ public actor Agent {
     try adopt(result)
     if !opened { sequence = result["event_seq"] as? UInt64 ?? 0 }
     opened = true
-    try await resumeInterrupted()
   }
 
   private func adopt(_ result: [String: Any]) throws {
@@ -141,22 +141,12 @@ public actor Agent {
     busy = result["busy"] as? Bool ?? false
     resumable = result["resumable"] as? Bool ?? false
     canContinue = result["continuable"] as? Bool ?? false
+    interruptedOperation = result["interrupted_operation"] as? Tsugumi_Agent_InterruptedOperationT
   }
 
   public func refresh() async throws {
     if !opened { return try await open() }
     try adopt(try await client.call("ConversationGetRequest", ["conversation_id": id]))
-    try await resumeInterrupted()
-  }
-
-  private func resumeInterrupted() async throws {
-    if !busy && resumable {
-      do { _ = try await client.call("ConversationActionRequest", ["conversation_id": id, "action": "Resume"]) }
-      catch let error as CoreAgentFailure where error.code == "busy" {}
-      busy = true
-      resumable = false
-      canContinue = false
-    }
   }
 
   /// Leaving a window detaches observation; it does not stop server work.
@@ -215,7 +205,8 @@ public actor Agent {
   public func retry(events: @escaping @Sendable (AgentEvent) -> Void) { action("Retry", events) }
   public func continueAfterLimit(events: @escaping @Sendable (AgentEvent) -> Void) { action("Continue", events) }
   public func compact(events: @escaping @Sendable (AgentEvent) -> Void) { action("Compact", events) }
-  public func resume(events: @escaping @Sendable (AgentEvent) -> Void) { start(events) { try await self.open() } }
+  public func resume(events: @escaping @Sendable (AgentEvent) -> Void) { action("Resume", events) }
+  public func observe(events: @escaping @Sendable (AgentEvent) -> Void) { start(events) { try await self.open() } }
 
   private func action(_ name: String, _ events: @escaping @Sendable (AgentEvent) -> Void) {
     start(events) {
@@ -270,7 +261,12 @@ public actor Agent {
           try await Task.sleep(for: .milliseconds(80))
         }
       } catch is CancellationError {} catch {
-        if !Task.isCancelled { events(.error(String(describing: error))) }
+        if !Task.isCancelled {
+          // A restarted service owns the interrupted snapshot. Reading it
+          // updates the controls without sending an action.
+          try? await refresh()
+          if !Task.isCancelled { events(.error(String(describing: error))) }
+        }
       }
     }
   }

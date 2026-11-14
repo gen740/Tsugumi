@@ -1363,5 +1363,10 @@
  "このホスト（API キーは macOS Keychain または agentd が保管）": "This host (API keys in the macOS Keychain or agentd)",
  "macOS Keychain（このデバイスのみ・ロック解除中に使用）": "macOS Keychain (this device only, used while unlocked)",
  "Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。": "Saved in Keychain. The key is used by the Agent service and is not stored in Cards, projects, settings or logs.",
- "API キーに使えない文字が含まれています。": "The API key contains characters that cannot be used."
+ "API キーに使えない文字が含まれています。": "The API key contains characters that cannot be used.",
+ "再開": "Resume",
+ "会話の圧縮": "Compacting the conversation",
+ "メッセージの準備": "Preparing the message",
+ "モデルの応答": "Model response",
+ "会話は中断しています。中断時の処理: {0}。再開するか、新しいメッセージを送れます。": "Conversation interrupted. Operation at interruption: {0}. Resume or send a new message."
 }
