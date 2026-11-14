@@ -74,7 +74,7 @@ set_target_properties(tsugumi_agent_core PROPERTIES
   IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_agent_core.a"
   INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include/tsugumi-core;${TSUGUMI_CORE_TEST_SUPPORT}/include")
 target_link_libraries(tsugumi_agent_core INTERFACE tsugumi_json flatbuffers::flatbuffers
-  Threads::Threads tsugumi_client CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls PkgConfig::SQLITE3)
+  Threads::Threads tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls PkgConfig::SQLITE3)
 if(APPLE)
   target_link_libraries(tsugumi_agent_core INTERFACE "-framework CoreFoundation")
 else()

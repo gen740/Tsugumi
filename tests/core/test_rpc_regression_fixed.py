@@ -220,7 +220,7 @@ def test_a_renamed_card_keeps_its_display(tmp_path, core_factory):
     rename(t.c, "out", "kept")
     assert t.shown("out") == before
     assert t.shown("kept") is None
-    new_id = text(t.c.call("CardIdRequest", name="kept").id)
+    new_id = text(t.c.call("CardIdRequest", stem="kept").id)
     t.save(["out", new_id], change("PutDefinition", id=new_id, cardJson=json.dumps(SINK), metaJson='{"name":"kept"}'))
     assert t.shown(new_id) is None
 

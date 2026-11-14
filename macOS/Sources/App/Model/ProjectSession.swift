@@ -473,6 +473,7 @@ final class ProjectSession {
 
   // Versions (git): the graph as last read, and whether this project is new
   // (made or copied by the app), so it becomes a repository when it connects.
+  var versionComments: [String: [Tsugumi_Host_VersionCommentT]] = [:]
   var versionGraph: Tsugumi_RPC_VersionGraphT?
   /// A version's Cards and wires (a commit never changes: read once).
   var versionCanvases: [String: Tsugumi_RPC_VersionCanvasT] = [:]

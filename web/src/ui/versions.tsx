@@ -1,3 +1,4 @@
+import { VersionCommentT } from '../gen/tsugumi/host/version-comment'
 // The project's versions as a tree (core/src/versions.cc): each commit with its
 // branches, tags, runs (from its note) and changed Cards; hovering one shows
 // what it changed and a minimap of its Cards. A version can be named, and the
@@ -319,10 +320,10 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
               <div className="caption mono">版 {str(sel.id).slice(0, 12)}</div>
               <div className="caption">{new Date(Number(sel.time ?? 0n)).toLocaleString()}</div>
               {list(sel.changed).length > 0 && <div className="caption">{changedText(list(sel.changed))}</div>}
-              {(sel.comments ?? []).length > 0 && (
+              {(session.versionComments.get(str(sel.id)) ?? []).length > 0 && (
                 <>
                   <div style={{ fontWeight: 600 }}>{L('コメント')}</div>
-                  {(sel.comments ?? []).filter((x): x is R.VersionCommentT => !!x).map((c, i) => (
+                  {(session.versionComments.get(str(sel.id)) ?? []).filter((x): x is VersionCommentT => !!x).map((c, i) => (
                     <div key={i} className="col caption">
                       <div className="secondary">{str(c.card)} · {commentChange(str(c.change), str(c.by) || undefined)}</div>
                       <div className="selectable" style={{ whiteSpace: 'pre-wrap' }}>{str(c.text)}</div>

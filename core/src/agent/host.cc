@@ -28,6 +28,8 @@
 #include "agent/tool_images.hh"
 #include "agent/wire.hh"
 #include "host/environment.hh"
+#include "host/projects.hh"
+#include "host/save.hh"
 #include "host/execution_broker.hh"
 #include "host/guide.hh"
 #include "host/projects.hh"
@@ -220,6 +222,7 @@ struct Host::State {
         "INTEGER NOT NULL);"
         "CREATE TABLE IF NOT EXISTS providers(conversation TEXT PRIMARY KEY, "
         "json TEXT NOT NULL);");
+    db.exec("CREATE TABLE IF NOT EXISTS save_preparations(operation TEXT PRIMARY KEY, arguments TEXT NOT NULL, comments TEXT NOT NULL)");
     db.exec("CREATE TABLE IF NOT EXISTS access_prompt_items(request TEXT NOT NULL, access INTEGER NOT NULL, "
             "PRIMARY KEY(request,access))");
     db.exec("CREATE TABLE IF NOT EXISTS operation_approvals("
@@ -1126,7 +1129,86 @@ struct Host::State {
     }
     return specs;
   }
-  auto ProjectCall(const std::string &project, const std::string &name,
+  auto ProjectCall(const std::string& project, const std::string& name,
+                   const std::string& arguments, std::stop_token stop = {}) -> std::string {
+    auto args = json::Object(arguments);
+    if (name == "card_id") {
+      args["stem"] = json::Quote(host::CardStem(json::Text(args, "name")));
+      args.erase("name");
+    }
+    if (name == "project_save" && json::Text(args, "origin") == "agent") {
+      const auto operation = json::Text(args, "op_id");
+      std::optional<host::AgentSave> prepared;
+      {
+        std::lock_guard lock(mutex);
+        auto saved = db.prepare("SELECT arguments,comments FROM save_preparations WHERE operation=?");
+        saved.bind(1, operation);
+        if (saved.step()) prepared = host::AgentSave{json::Object(saved.text(0)), saved.text(1)};
+      }
+      if (!prepared) {
+        try {
+          prepared = host::PrepareAgentSave(args, [&](const auto& method, const auto& query) {
+            const auto reply = json::Object(RawProjectCall(project, method, json::Encode(query), stop));
+            const auto value = json::Object(json::Get(reply, "value", "{}"));
+            if (json::Text(reply, "reply") == "Failure") throw Failure(json::Text(value, "kind"), json::Text(value, "message"));
+            return value;
+          });
+        } catch (const Failure&) { throw; }
+        catch (const host::SaveRevisionConflict& error) {
+          return json::Encode(json::Members{{"reply", json::Quote("Failure")},
+            {"value", json::Encode(json::Members{{"kind", json::Quote("revision_conflict")}, {"message", json::Quote(error.what())}})}});
+        }
+        catch (const std::exception& error) {
+          return json::Encode(json::Members{{"reply", json::Quote("Failure")},
+            {"value", json::Encode(json::Members{{"kind", json::Quote("validation_failed")}, {"message", json::Quote(error.what())}})}});
+        }
+        std::lock_guard lock(mutex);
+        auto saved = db.prepare("INSERT OR REPLACE INTO save_preparations VALUES(?,?,?)");
+        saved.bind(1, operation).bind(2, json::Encode(prepared->arguments)).bind(3, prepared->comments).run();
+      }
+      if (args.contains("approved_permissions")) prepared->arguments["approved_permissions"] = args.at("approved_permissions");
+      args = std::move(prepared->arguments);
+    }
+    auto result = RawProjectCall(project, name, json::Encode(args), stop);
+    if (name == "version_graph") {
+      auto envelope = json::Object(result);
+      if (json::Text(envelope, "reply") == "VersionGraph") {
+        std::string root;
+        {
+          std::lock_guard lock(mutex);
+          auto path = db.prepare("SELECT path FROM project_paths WHERE id=?");
+          path.bind(1, project);
+          if (path.step()) root = path.text(0);
+        }
+        if (!root.empty()) {
+          auto graph = json::Object(json::Get(envelope, "value", "{}"));
+          auto commits = json::Array(json::Get(graph, "commits", "[]"));
+          for (auto& raw : commits) {
+            auto commit = json::Object(raw);
+            commit["comments"] = host::comments::record_json(host::comments::version(root, json::Text(commit, "id")));
+            raw = json::Encode(commit);
+          }
+          graph["commits"] = json::Encode(commits);
+          envelope["value"] = json::Encode(graph);
+          result = json::Encode(envelope);
+        }
+      }
+    }
+    return result;
+  }
+  auto AnnotateSave(const std::string& operation, const std::string& result) -> std::string {
+    auto envelope = json::Object(result);
+    if (json::Text(envelope, "reply") != "SaveResult") return result;
+    std::lock_guard lock(mutex);
+    auto saved = db.prepare("SELECT comments FROM save_preparations WHERE operation=?");
+    saved.bind(1, operation);
+    if (!saved.step()) return result;
+    auto value = json::Object(json::Get(envelope, "value", "{}"));
+    value["comments"] = saved.text(0);
+    envelope["value"] = json::Encode(value);
+    return json::Encode(envelope);
+  }
+  auto RawProjectCall(const std::string &project, const std::string &name,
                    const std::string &arguments, std::stop_token stop = {})
       -> std::string {
     Project endpoint;
@@ -1784,6 +1866,7 @@ struct Host::State {
         error = json::Text(json::Object(result), "reply") == "Failure";
       }
     }
+    if (call.name == "project_save") result = AnnotateSave(op_id, result);
     if (boundary && boundary->scoped() && call.name == "card_id" && !error) {
       // Keep creation provenance with this helper's existing durable receipt,
       // rather than relying on a tool call remaining in compacted messages.
@@ -2920,6 +3003,24 @@ struct Host::State {
     if (host::Projects::Handles(r->value_type()))
       return host_projects.Handle(*r, request.request_id);
     switch (r->value_type()) {
+    case H::RequestPayload::VersionCommentsRequest: {
+      Human(human);
+      const auto* p = r->value_as_VersionCommentsRequest();
+      ProjectFor(p->project()->str());
+      auto query = db.prepare("SELECT path FROM project_paths WHERE id=?");
+      query.bind(1, p->project()->str());
+      if (!query.step() || query.text(0).empty()) throw Failure("not_found", "Project path is not registered");
+      const auto root = query.text(0), commit = p->commit()->str();
+      lock.unlock();
+      H::VersionCommentsT result;
+      for (const auto& c : host::comments::version(root, commit)) {
+        auto value = std::make_unique<H::VersionCommentT>();
+        value->card = c.card; value->text = c.text; value->change = c.change;
+        value->by = c.by; value->resolution = c.resolution; value->cards = c.cards;
+        result.comments.push_back(std::move(value));
+      }
+      return wire::HostReply(request.request_id, std::move(result));
+    }
     case H::RequestPayload::RegisterProjectRequest: {
       Human(human);
       auto p = r->value_as_RegisterProjectRequest();
