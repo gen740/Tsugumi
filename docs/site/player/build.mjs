@@ -4,9 +4,9 @@
 //   docs/site/player-data/<id>.json, index.json    each demo's real project, with
 //     its recorded run when harvest.py has one (player-data/assets/)
 // Needs web/node_modules and web/src/gen (`nix develop --command npm run gen` in web/).
-//   node docs/site/player/build.mjs [--check]
-// --check writes nothing and fails when a generated file differs from what the sources give
-// (CI runs it with the Web UI: a change to web/src/model/canvasKit.ts and the like needs this rebuilt).
+//   node docs/site/player/build.mjs [--out-dir <directory>]
+// The output directory has the same layout as docs/site, including recorded assets.
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
@@ -19,9 +19,20 @@ const WEB = path.join(ROOT, 'web')
 const DATA = path.join(SITE, 'player-data')
 const ASSETS = path.join(DATA, 'assets')
 const require = createRequire(path.join(WEB, 'package.json'))
-const esbuild = require('esbuild')
-const katex = require('katex')
-const { marked } = require('marked')
+
+// Importing the readers or selecting a shared build does not load Web dependencies.
+let prepared
+export function preparePlayer() {
+  if (prepared) return prepared
+  const directory = process.env.TSUGUMI_SITE_PLAYER_DIR
+  if (!directory) execFileSync(process.execPath, [fileURLToPath(import.meta.url)], { stdio: 'inherit' })
+  const result = directory ? path.resolve(directory) : SITE
+  for (const file of ['js/player.js', 'player.css', 'player-data/index.json']) {
+    if (!fs.existsSync(path.join(result, file))) throw new Error(`Missing player output: ${path.join(result, file)}`)
+  }
+  prepared = result
+  return prepared
+}
 
 /** Characters of one source file and of a Card's description kept in the data. */
 const MAX_SOURCE = 6000
@@ -168,6 +179,8 @@ function flowOf(layout, cards, wires) {
 
 /** Markdown with TeX to HTML at build time: MathML needs neither KaTeX's code nor its fonts on the page. */
 function markdownHtml(text) {
+  const katex = require('katex')
+  const { marked } = require('marked')
   const math = []
   const stash = (tex, displayMode) => {
     math.push(katex.renderToString(tex, { output: 'mathml', displayMode, throwOnError: false }))
@@ -317,13 +330,18 @@ export { readJson, readProject, flowOf, stepsFromRun, finalsFromRun }
 // ---- Main -------------------------------------------------------------------------------------
 
 async function main() {
+  const args = process.argv.slice(2)
+  if (args.length && (args.length !== 2 || args[0] !== '--out-dir')) {
+    throw new Error('usage: node docs/site/player/build.mjs [--out-dir <directory>]')
+  }
+  const destination = args.length ? path.resolve(args[1]) : SITE
+  const esbuild = require('esbuild')
 
   if (!fs.existsSync(path.join(WEB, 'src', 'gen', 'tsugumi'))) {
     console.error('web/src/gen is missing: run `nix develop --command npm run gen` in web/ first')
     process.exit(1)
   }
 
-  // Everything is produced in memory first: `--check` compares it with the files, otherwise it is written.
   /** Path (from the repository root) -> contents of every generated file. */
   const outputs = new Map()
   const rel = (p) => path.relative(ROOT, p).split(path.sep).join('/')
@@ -363,30 +381,19 @@ async function main() {
   }
   outputs.set(rel(path.join(DATA, 'index.json')), JSON.stringify({ demos: index }))
 
-  if (process.argv.includes('--check')) {
-    // Stale: the file differs from what the sources give. Stray: a <id>.json in player-data/ no demo produces any more.
-    const problems = []
-    for (const [file, text] of outputs) {
-      const abs = path.join(ROOT, file)
-      if (!fs.existsSync(abs)) problems.push(`missing: ${file}`)
-      else if (fs.readFileSync(abs, 'utf8') !== text) problems.push(`stale: ${file}`)
-    }
-    for (const f of fs.readdirSync(DATA)) {
-      if (f.endsWith('.json') && !outputs.has(rel(path.join(DATA, f)))) problems.push(`stray: ${rel(path.join(DATA, f))}`)
-    }
-    if (problems.length) {
-      console.error(`${problems.join('\n')}\nrun \`node docs/site/player/build.mjs\` (web/src/ui, web/src/model, web/src/styles, demos/ or this directory changed)`)
-      process.exit(1)
-    }
-    console.log(`up to date: player.js, player.css and ${outputs.size - 2} files of player-data/`)
-    process.exit(0)
+  // Only top-level JSON files are generated. Recorded runs and images in assets/
+  // remain inputs; pruning a removed demo never touches them.
+  const data = path.join(destination, 'player-data')
+  fs.mkdirSync(data, { recursive: true })
+  for (const f of fs.readdirSync(data)) {
+    if (f.endsWith('.json') && !outputs.has(rel(path.join(DATA, f)))) fs.rmSync(path.join(data, f))
   }
-
-  fs.mkdirSync(DATA, { recursive: true })
-  for (const f of fs.readdirSync(DATA)) {
-    if (f.endsWith('.json') && !outputs.has(rel(path.join(DATA, f)))) fs.rmSync(path.join(DATA, f))
+  for (const [file, text] of outputs) {
+    const target = path.join(destination, path.relative(SITE, path.join(ROOT, file)))
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    fs.writeFileSync(target, text)
   }
-  for (const [file, text] of outputs) fs.writeFileSync(path.join(ROOT, file), text)
+  if (destination !== SITE) fs.cpSync(ASSETS, path.join(data, 'assets'), { recursive: true })
 
   const kb = (file) => `${(Buffer.byteLength(outputs.get(file)) / 1024).toFixed(0)} KB`
   console.log(`player.js ${kb('docs/site/js/player.js')}, player.css ${kb('docs/site/player.css')}`)

@@ -24,6 +24,7 @@ in
     {
       packages = {
         inherit ci-core client-wasm web;
+        site-player = web.sitePlayer;
         ci-python = pkgs.callPackage ../ci-python.nix { };
         default = core;
         tsugumid = core;

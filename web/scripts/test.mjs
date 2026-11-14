@@ -1,11 +1,13 @@
 // Run behavioral regression tests without a browser.
 import * as esbuild from 'esbuild'
+import { preparePlayer } from '../../docs/site/player/build.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
 const web = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+process.env.TSUGUMI_SITE_PLAYER_DIR = preparePlayer()
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-behavior-'))
 const out = path.join(dir, 'behavior.mjs')
 try {
