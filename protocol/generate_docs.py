@@ -19,7 +19,7 @@ GROUPS = [
     ("Card SDKs and types", ["CardSDKPrepare", "CardSDKStatus", "OutputTypes", "NixSourceResolve"]),
     ("Running", ["RunPlan", "Run", "RunCancel", "RunStatus"]),
     ("History and artifacts", ["RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "RunHistoryDelete",
-                 "ArtifactList", "ArtifactRead", "LogRange", "RunEnvironments", "RunEnvironmentPaths"]),
+                 "ArtifactList", "ArtifactRead", "LogRange", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses"]),
     ("Views", ["ViewSetVisible", "ViewSave", "ModuleRead", "LayoutArrange", "LayoutUntangle"]),
     ("Versions", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionNote", "VersionNoteStore"]),
 ]

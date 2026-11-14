@@ -173,6 +173,7 @@ class Service : public RequestSink {
   void run_record(RequestIn& req);
   auto run_environments(RequestIn& req) -> void;
   auto run_environment_paths(RequestIn& req) -> void;
+  auto run_environment_uses(RequestIn& req) -> void;
   void run_value_read(RequestIn& req);
   void artifact_list(RequestIn& req);
   void artifact_read(RequestIn& req);
