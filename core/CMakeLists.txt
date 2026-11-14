@@ -89,7 +89,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc
 # Agent state and model execution live in the core, independently of project
 # lifetimes. Frontends use the separate agent.fbs and host.fbs contracts.
 set(_agent_prompts "")
-foreach(prompt system-prompt guide-prompt demo-skill)
+foreach(prompt system-prompt guide-prompt demo-skill review-skill rerun-compare-skill)
   string(REPLACE "-" "_" symbol ${prompt})
   set(output ${CMAKE_CURRENT_BINARY_DIR}/agent_${symbol}.cc)
   add_custom_command(OUTPUT ${output}

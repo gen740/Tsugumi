@@ -45,10 +45,13 @@ _reporting = False
 class Failure(Exception):
     """Fails the invocation with a FailureKind name (e.g. ``output_invalid``)."""
 
-    def __init__(self, kind: str, message: str):
+    def __init__(self, kind: str, message: str, *, source: str | None = None, line: int = 0, cell: str | None = None):
         super().__init__(message)
         self.kind = kind
         self.message = message
+        self.source = source
+        self.line = line
+        self.cell = cell
 
 
 class Run:
@@ -292,7 +295,10 @@ def _guard(body) -> bool:
         sys.stderr.flush()
         return True
     except Failure as f:
-        _host.fail(f.kind, f.message)
+        if f.source is None:
+            _host.fail(f.kind, f.message)
+        else:
+            _host.fail(f.kind, f.message, f.source, f.line, f.cell)
         return False
     except Exception as e:  # noqa: BLE001 - every error becomes a structured failure
         import traceback

@@ -161,7 +161,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'ConversationGetRequest': return new AConversationGetRequest(v.conversation_id)
     case 'ConversationDeleteRequest': return new AConversationDeleteRequest(v.conversation_id)
     case 'ConversationSearchRequest': return new AConversationSearchRequest(v.project_id, v.text)
-    case 'ConversationSendRequest': return new AConversationSendRequest(v.conversation_id, v.turn_id, v.text, v.selected_cards, v.selected_displays, v.skill_names, v.intent, v.attached_resources, v.display)
+    case 'ConversationSendRequest': return new AConversationSendRequest(v.conversation_id, v.turn_id, v.text, v.selected_cards, v.selected_displays, v.skill_names, v.intent, v.attached_resources, v.display, v.scoped_skill)
     case 'ConversationActionRequest': return new AConversationActionRequest(v.conversation_id, enumValue(Action, v.action))
     case 'ConversationCancelRequest': return new AConversationCancelRequest(v.conversation_id)
     case 'EventsRequest': return new AEventsRequest(v.conversation_id, BigInt(v.after_seq ?? 0), v.limit)
@@ -204,7 +204,7 @@ function view(value: any): any {
   if (typeof value !== 'object') return value
   const out: Record<string, any> = {}
   const names: Record<string, string> = { projectId: 'project_id', conversationId: 'conversation_id',
-    eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
+    sourceFolder: 'source_folder', attachmentFolder: 'attachment_folder', eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
     inputJson: 'input', argumentsJson: 'arguments', resultJson: 'result', inputSchemaJson: 'inputSchema',
     contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', attemptId: 'attempt_id', valueJson: 'value_json', capabilityFile: 'capability_file' }
   for (const [key, v] of Object.entries(value)) {
@@ -216,7 +216,7 @@ function view(value: any): any {
     }
     if (key === 'resultJson' && 'callId' in value) { out[name] = JSON.parse(String(v)); continue }
     if (key === 'access') { out[name] = Access[v as number]; continue }
-    if (key === 'scope') { out[name] = GrantScope[v as number]; continue }
+    if (key === 'scope' && typeof v === 'number') { out[name] = GrantScope[v as number]; continue }
     out[name] = ['seq', 'eventSeq', 'nextSeq'].includes(key) ? v : ['contentJson', 'providerContentJson', 'inputSchemaJson'].includes(key) ? JSON.parse(String(v)) : view(v)
   }
   return out

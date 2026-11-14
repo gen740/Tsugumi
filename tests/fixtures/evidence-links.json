@@ -121,5 +121,46 @@
   },
   {
     "href": "artifact:12345678-1234-1234-1234-123456789abc?id=x&path=bad%C0%AF"
+  },
+  {
+    "href": "card:outer/inner?file=src%2Fmain.py&lines=12-18",
+    "kind": "card",
+    "card": [
+      "outer",
+      "inner"
+    ],
+    "file": "src/main.py",
+    "lineStart": 12,
+    "lineEnd": 18
+  },
+  {
+    "href": "card:a?file=../private&lines=1-2"
+  },
+  {
+    "href": "card:a?file=%2Fprivate&lines=1-2"
+  },
+  {
+    "href": "card:a?file=a%5Cb&lines=1-2"
+  },
+  {
+    "href": "card:a?file=a&lines=0-1"
+  },
+  {
+    "href": "card:a?file=a&lines=3-2"
+  },
+  {
+    "href": "card:a?file=a&lines=1-9007199254740992"
+  },
+  {
+    "href": "card:a?file=a&lines=1-2&lines=3-4"
+  },
+  {
+    "href": "card:a?file=a&lines=1-2&host=x"
+  },
+  {
+    "href": "card:a?file=a"
+  },
+  {
+    "href": "card:a?lines=1-2"
   }
 ]

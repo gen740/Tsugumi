@@ -219,7 +219,7 @@ export function CanvasCommentControls({ workspace, session, tab }: { workspace: 
   if (!cards.length) return null
   const chosen = cards.filter((k) => tab.selection.has(k))
   const asked = chosen.length ? chosen : cards
-  const count = asked.reduce((n, k) => n + session.openComments(k).length, 0)
+  const count = asked.reduce((n, k) => n + session.changeRequests(k).length, 0)
   return (
     <div className="capsule material cv-drafts">
       <Button icon="bubble.left" small guide="from_comments" disabled={session.dirty || !session.connected || chat.busy}

@@ -215,7 +215,8 @@ int tsugumi_main(const tsugumi_call* c) { return 0; }
         assert p.stderr.readline() == b"source failed\n"
 
 
-def test_embedded_python_import_is_inside_the_invocation(tmp_path):
+@pytest.mark.parametrize("source_failure", [False, True])
+def test_embedded_python_import_is_inside_the_invocation(tmp_path, source_failure):
     """The real Python adapter imports Card code with its run identity and reports import errors to that call."""
     import json
     import sysconfig
@@ -231,7 +232,9 @@ import os, tsugumi
 print("import run=" + os.environ["TSUGUMI_RUN_ID"], flush=True)
 tsugumi.Report().text(os.environ["TSUGUMI_RUN_ID"])
 raise RuntimeError("import stopped")
-''')
+'''.replace('raise RuntimeError("import stopped")',
+            'raise tsugumi.Failure("worker_failed", "import stopped", source="src/notebook.py", line=8, cell="calculation")'
+            if source_failure else 'raise RuntimeError("import stopped")'))
     defines = {
         "TSUGUMI_PY_HOME": sys.base_prefix,
         "TSUGUMI_PY_PATH": str(ROOT / "sdk/python") + ":" + str(source),
@@ -253,5 +256,31 @@ raise RuntimeError("import stopped")
         assert shown.value.display.value.text == b"recorded-run"
         failed = receive(data)
         assert failed.callId == 1 and failed.valueType == WorkerPayload.WorkerFailure
-        assert b"RuntimeError: import stopped" in failed.value.failure.diagnostic
+        if source_failure:
+            assert failed.value.failure.diagnostic == b"import stopped"
+            assert {a.key: a.value for a in failed.value.failure.args} == {
+                b"card": b"card", b"source": b"src/notebook.py", b"line": b"8", b"cell": b"calculation"}
+        else:
+            assert b"RuntimeError: import stopped" in failed.value.failure.diagnostic
         assert p.stdout.readline() == b"import run=recorded-run\n"
+
+
+def test_source_failure_position_survives_the_worker_reply(tmp_path):
+    from Tsugumi.Data.FailureKind import FailureKind
+    library(tmp_path, r'''
+#include <tsugumi/sdk/abi.h>
+int tsugumi_main(const tsugumi_call* c) {
+  c->fail_at(c->host, "worker_failed", "cell traceback", "src/notebook.py", 8, "calculation");
+  c->fail(c->host, "output_invalid", "must not replace the first failure");
+  return 1;
+}
+''')
+    with worker(tmp_path) as (_, data, _):
+        send_call(data, tmp_path)
+        result = receive(data)
+        assert result.callId == 1 and result.valueType == WorkerPayload.WorkerFailure
+        failure = result.value.failure
+        assert failure.kind == FailureKind.worker_failed
+        assert failure.diagnostic == b"cell traceback"
+        assert {a.key: a.value for a in failure.args} == {
+            b"card": b"card", b"source": b"src/notebook.py", b"line": b"8", b"cell": b"calculation"}

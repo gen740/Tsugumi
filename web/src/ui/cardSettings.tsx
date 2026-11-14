@@ -184,9 +184,19 @@ export class CardEditorModel extends Observable {
     if (any || found.length) this.changed()
   }
 
-  openFile(p: string) {
+  openSource(source: string, line: number) {
+    const prefix = this.session.definitionDir(this.cardKey)
+    if (!prefix || !Number.isSafeInteger(line) || line < 1 || source.startsWith('/') || source.split('/').some((p) => p === '..' || p === '.')) return
+    this.category = 'source'
+    this.openFile(prefix + source, line)
+  }
+
+  sourceLine?: number
+
+  openFile(p: string, line?: number) {
     if (!this.openFiles.includes(p)) this.openFiles = [...this.openFiles, p]
     this.shownFile = p
+    this.sourceLine = line
     this.changed()
   }
 
@@ -194,7 +204,10 @@ export class CardEditorModel extends Observable {
     const i = this.openFiles.indexOf(p)
     if (i < 0) return
     this.openFiles = this.openFiles.filter((f) => f !== p)
-    if (this.shownFile === p) this.shownFile = this.openFiles.length ? this.openFiles[Math.min(i, this.openFiles.length - 1)] : undefined
+    if (this.shownFile === p) {
+      this.shownFile = this.openFiles.length ? this.openFiles[Math.min(i, this.openFiles.length - 1)] : undefined
+      this.sourceLine = undefined
+    }
     this.changed()
   }
 
@@ -447,7 +460,7 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
           {category === 'nix' && <SourceCategory model={model} only="default.nix" />}
           {category === 'source' && <SourceCategory model={model} />}
           {category === 'ports' && (model.kind === 'subgraph' ? <BoundaryCategory model={model} /> : <PortsCategory model={model} />)}
-          {category === 'executions' && <CardExecutionView session={session} cardKey={model.cardKey} />}
+          {category === 'executions' && <CardExecutionView session={session} cardKey={model.cardKey} onOpenSource={(source, line) => model.openSource(source, line)} />}
           {category === 'artifacts' && <CardArtifactsView session={session} cardKey={model.cardKey} />}
           {category === 'context' && <ContextCategory model={model} />}
         </div>
@@ -1386,7 +1399,7 @@ function SourceCategory({ model, only }: { model: CardEditorModel; only?: string
       <>
         {header(shown, false)}
         {text !== undefined ? (
-          <CodeEditor text={text} language={shown.split('.').pop()} markers={markers} documentId={shown} className="src-editor"
+          <CodeEditor text={text} language={shown.split('.').pop()} markers={markers} documentId={shown} revealLine={model.sourceLine} className="src-editor"
             onChange={(t) => {
               model.setText(shown, t)
               if (formatMarkers.length) setFormatMarkers([])

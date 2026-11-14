@@ -8,6 +8,13 @@ enum ProjectAccessLabel {
     return v["needed_now"] as? Bool ?? true
   }
   static func text(_ request: String) -> String {
+    let prefix = "project_access helper_scope\n"
+    if request.hasPrefix(prefix), let data = String(request.dropFirst(prefix.count)).data(using: .utf8),
+       let v = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let task = v["task"] as? [String: Any] {
+      return "$" + (task["name"] as? String ?? "") + "\n" + (task["skill_path"] as? String ?? "") + "\n" + ["read", "write", "run"].map { access in
+        access + ": " + ((task[access + "_cards"] as? [String] ?? []).joined(separator: ", "))
+      }.joined(separator: "\n")
+    }
     guard let data = String(request.dropFirst("project_access ".count)).data(using: .utf8),
           let v = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return request }
     let action: String

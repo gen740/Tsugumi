@@ -563,6 +563,15 @@ struct Host::State {
                 A::Access access) -> bool {
     if (project.empty())
       return true;
+    if (project.starts_with("helper-scope:")) {
+      auto approval =
+          db.prepare("SELECT 1 FROM access_requests WHERE id=? AND "
+                     "conversation=? AND access=? AND state='allowed'");
+      approval.bind(1, project.substr(13))
+          .bind(2, conversation)
+          .bind(3, static_cast<int>(A::Access::HelperScope));
+      return access == A::Access::Read && approval.step();
+    }
     auto q =
         db.prepare("SELECT 1 FROM grants WHERE project=? AND (conversation='' "
                    "OR conversation=?) AND access=? AND active=1 LIMIT 1");
@@ -631,6 +640,7 @@ struct Host::State {
         message->payload.AsRequest()->value.AsConversationSendRequest();
     send->text = Scrub(send->text);
     send->intent = Scrub(send->intent);
+    send->scoped_skill = Scrub(send->scoped_skill);
     for (auto *references : {&send->selected_cards, &send->selected_displays,
                              &send->skill_names, &send->attached_resources})
       for (auto &value : *references)
@@ -656,7 +666,9 @@ struct Host::State {
   }
   auto AccessDescription(const std::string& resource, A::Access access,
                          A::GrantScope scope, const std::string& reason, bool needed = true) -> std::string {
-    if (reason.starts_with("operation_approval\n")) return "project_access " + reason;
+    if (reason.starts_with("operation_approval\n") ||
+        reason.starts_with("helper_scope\n"))
+      return "project_access " + reason;
     auto q = db.prepare("SELECT title,coalesce((SELECT path FROM project_paths WHERE id=projects.id),'') "
                         "FROM projects WHERE id=? UNION ALL SELECT title,path FROM folders WHERE id=?");
     q.bind(1, resource).bind(2, resource);
@@ -692,22 +704,28 @@ struct Host::State {
                      const std::string &conversation, A::Access access,
                      A::GrantScope scope, const std::string &reason, bool per_call = false, bool combine = false)
       -> std::string {
-    if (!per_call && reason.find("operation_approval\n") != std::string::npos)
+    if (!per_call &&
+        (access == A::Access::HelperScope ||
+         reason.find("operation_approval\n") != std::string::npos ||
+         reason.find("helper_scope\n") != std::string::npos))
       throw Failure("invalid_request", "The operation approval marker is reserved for core-generated requests");
     auto folder = db.prepare("SELECT project FROM folders WHERE id=?");
     folder.bind(1, project);
     ProjectFor(folder.step() ? folder.text(0) : project);
     auto old = db.prepare(
         "SELECT id FROM access_requests WHERE project=? AND conversation=? AND "
-        "access=? AND scope=? AND state='pending' AND "
-        "((?=1 AND reason=?) OR (?=0 AND id NOT IN (SELECT request FROM operation_approvals)))");
+        "access=? AND scope=? AND (state='pending' OR (access=? AND "
+        "state='allowed')) AND "
+        "((?=1 AND reason=?) OR (?=0 AND id NOT IN (SELECT request FROM "
+        "operation_approvals)))");
     old.bind(1, project)
         .bind(2, conversation)
         .bind(3, static_cast<int>(access))
         .bind(4, static_cast<int>(scope))
-        .bind(5, per_call ? 1 : 0)
-        .bind(6, reason)
-        .bind(7, per_call ? 1 : 0);
+        .bind(5, static_cast<int>(A::Access::HelperScope))
+        .bind(6, per_call ? 1 : 0)
+        .bind(7, reason)
+        .bind(8, per_call ? 1 : 0);
     if (old.step())
       return old.text(0);
     sql::Transaction tx(db);
@@ -746,8 +764,15 @@ struct Host::State {
   }
   auto Require(const std::string &project, const std::string &conversation,
                A::Access access, bool wait, std::stop_token stop,
-               const std::string &reason) -> void {
+               const std::string &reason, const std::string &authorization = {})
+      -> void {
     std::unique_lock lock(mutex);
+    if (!authorization.empty()) {
+      if (!HasGrant(authorization, conversation, A::Access::Read))
+        throw Failure("permission_denied",
+                      "The helper scope approval is no longer valid");
+      return;
+    }
     if (HasGrant(project, conversation, access))
       return;
     const auto id = RequestAccess(project, conversation, access,
@@ -1451,17 +1476,19 @@ struct Host::State {
   }
 
   auto HelperReader(const std::string &conversation, std::stop_token stop,
-                    const std::string &revision = {}) -> HelperScope::Reader {
+                    const std::string &revision = {},
+                    const std::string &authorization = {})
+      -> HelperScope::Reader {
     std::string project;
     {
       std::lock_guard lock(mutex);
       project = GetConversation(conversation).project;
     }
     auto cache = std::make_shared<std::map<std::string, std::string>>();
-    return [this, project, conversation, stop, revision,
+    return [this, project, conversation, stop, revision, authorization,
             cache](const std::string &path) {
       Require(project, conversation, A::Access::Read, true, stop,
-              "Read helper Card context");
+              "Read helper Card context", authorization);
       if (const auto found = cache->find(path); found != cache->end())
         return found->second;
       json::Members args{{"path", json::Quote(path)},
@@ -1525,13 +1552,7 @@ struct Host::State {
       }
       return result;
     }
-    if (call.name == "card_id") {
-      const auto reply = json::Object(result.text);
-      if (json::Text(reply, "reply") == "CardIdResult")
-        scope.Created(
-            json::Text(json::Object(json::Get(reply, "value", "{}")), "id"),
-            json::Text(json::Object(call.arguments), "project_path"), read);
-    }
+    scope.Completed(call.name, json::Object(call.arguments), result.text, read);
     if (call.name == "project_inspect")
       result.text = scope.Inspect(result.text, read);
     else if (catalog.Find(call.name))
@@ -1541,7 +1562,8 @@ struct Host::State {
 
   auto RunHelper(const std::string &conversation,
                  const std::string &parent_call, size_t index,
-                 const std::string &task, std::stop_token stop) -> std::string {
+                 const std::string &task, std::stop_token stop,
+                 const std::string &authorization = {}) -> std::string {
     const auto profile = HelperProfile(conversation);
     std::shared_ptr<std::mutex> gate;
     {
@@ -1599,9 +1621,12 @@ struct Host::State {
             json::Text(spec, "instruction") + "\nHelper scope: read_cards=" +
             json::Get(spec, "read_cards", "null") +
             "; write_cards=" + json::Get(spec, "write_cards", "null") +
+            "; run_cards=" + json::Get(spec, "run_cards", "null") +
             ". Exact permanent Card paths; no implicit descendants. null means "
             "unscoped.";
-        instruction.resource_ids = Resources(conversation);
+        instruction.resource_ids =
+            authorization.empty() ? Resources(conversation)
+                                  : std::vector<std::string>{authorization};
         messages.push_back(
             {"user", {instruction}, {}, {}, ProviderAPI::AnthropicMessages});
         auto insert =
@@ -1615,8 +1640,8 @@ struct Host::State {
       }
       config = Provider(conversation);
     }
-    auto boundary = std::make_shared<HelperScope>(spec);
-    const auto read = HelperReader(conversation, stop);
+    auto boundary = std::make_shared<HelperScope>(spec, authorization);
+    const auto read = HelperReader(conversation, stop, {}, authorization);
     // Receipt ownership survives both interruption and transcript compaction.
     std::vector<std::string> owned_receipts;
     {
@@ -1630,14 +1655,8 @@ struct Host::State {
       while (receipts.step())
         owned_receipts.push_back(receipts.text(0));
     }
-    for (const auto &raw : owned_receipts) {
-      const auto receipt = json::Object(raw);
-      if (json::Text(receipt, "reply") == "CardIdResult" &&
-          receipt.contains("helper_project_path"))
-        boundary->Created(
-            json::Text(json::Object(json::Get(receipt, "value", "{}")), "id"),
-            json::Text(receipt, "helper_project_path"), read);
-    }
+    for (const auto &raw : owned_receipts)
+      boundary->Restore(raw, read);
     auto hooks = Hooks(conversation, true, boundary);
     const auto execute = hooks.execute_tool;
     hooks.execute_tool = [execute, scope](ToolCall call,
@@ -1782,14 +1801,16 @@ struct Host::State {
     if (project.empty())
       throw Failure("invalid_request",
                     "Select a project before using project tools");
+    const auto authorization =
+        boundary ? boundary->authorization() : std::string{};
     Require(project, conversation, A::Access::Read, wait, stop,
-            "Read project content");
+            "Read project content", authorization);
     if (boundary) {
       if (!boundary->scoped() &&
           !host_settings->HelperPolicy(HelperProfile(conversation)).second)
         throw Failure("permission_denied",
                       "Unscoped helpers are disabled; ask the parent for "
-                      "explicit read_cards and write_cards");
+                      "explicit read_cards, write_cards and run_cards");
       std::string revision = json::Get(args, "base_rev", "");
       if (boundary->scoped() &&
           (call.name == "project_file_list" ||
@@ -1809,7 +1830,8 @@ struct Host::State {
       // Resolve nested file ownership and read the file at one revision. If
       // the parent changes a container link in between, the project rejects
       // the stale at_rev/base_rev instead of reading a different Card.
-      const auto read = HelperReader(conversation, stop, revision);
+      const auto read =
+          HelperReader(conversation, stop, revision, authorization);
       boundary->Check(call.name, args, read);
       if (boundary->scoped() &&
           (call.name == "run" || call.name == "run_plan" ||
@@ -1825,21 +1847,22 @@ struct Host::State {
           plan["at_rev"] = args.at("at_rev");
         const auto result =
             ProjectCall(project, "run_plan", json::Encode(plan), stop);
-        boundary->CheckPlan(result, call.name == "run");
+        boundary->CheckPlan(result, call.name != "run_plan");
         // A run must supply the same base_rev used by this plan. The project
         // rejects a missing or stale revision before executing anything.
       }
     }
-    const bool changes_project = spec->mutating || spec->approval_required ||
+    const bool execution = call.name == "run" || call.name == "run_cancel" ||
+                           call.name == "card_s_d_k_prepare" || call.name == "project_shell";
+    const bool changes_project = (!execution && (spec->mutating || spec->approval_required)) ||
                                  call.name == "card_id";
     if (changes_project)
       Require(project, conversation, A::Access::Write, wait, stop,
-              "Change project content");
-    if (call.name == "run" || call.name == "run_cancel" ||
-        call.name == "card_s_d_k_prepare" || call.name == "project_shell")
+              "Change project content", authorization);
+    if (execution)
       Require(project, conversation, A::Access::Run, wait, stop,
-              "Execute or cancel project work");
-    if (c.role == "guide" && (changes_project || call.name == "run_cancel"))
+              "Execute or cancel project work", authorization);
+    if (c.role == "guide" && (changes_project || execution))
       throw Failure("permission_denied", "The guide cannot change projects");
     if (call.name == "project_shell")
       Require(project, conversation, A::Access::Shell, wait, stop,
@@ -1978,6 +2001,10 @@ struct Host::State {
     if (error) {
       auto failure = json::Object(json::Get(envelope, "value", "{}"));
       if (json::Text(failure, "kind") == "approval_required") {
+        if (!authorization.empty())
+          throw Failure(
+              "permission_denied",
+              "A scoped Skill cannot widen Card permissions at runtime");
         std::vector<std::string> permissions;
         for (const auto &arg : json::Array(json::Get(failure, "args", "[]"))) {
           auto pair = json::Object(arg);
@@ -2015,12 +2042,19 @@ struct Host::State {
           json::Get(args, "project_path", json::Quote(""));
       result = json::Encode(owned);
     }
+    if (boundary && boundary->scoped() && call.name == "run" && !error) {
+      auto owned = json::Object(result);
+      owned["helper_run_card"] = json::Get(args, "card");
+      result = json::Encode(owned);
+    }
     {
       std::lock_guard lock(mutex);
-      if (!HasGrant(project, conversation, A::Access::Read))
+      if (!HasGrant(authorization.empty() ? project : authorization,
+                    conversation, A::Access::Read))
         throw Failure("permission_denied",
                       "Access was revoked while the operation was running");
-      RememberResource(conversation, project);
+      RememberResource(conversation,
+                       authorization.empty() ? project : authorization);
       if (!folder_resource.empty()) {
         if (!HasGrant(folder_resource, conversation, A::Access::Read))
           throw Failure("permission_denied",
@@ -2041,7 +2075,8 @@ struct Host::State {
           {"kind", json::Quote("toolFinished")}, {"id", json::Quote(call.id)},
           {"name", json::Quote(call.name)}, {"text", json::Quote(result)},
           {"ok", error ? "false" : "true"}}));
-    std::vector<std::string> resources{project};
+    std::vector<std::string> resources{authorization.empty() ? project
+                                                             : authorization};
     if (!folder_resource.empty())
       resources.push_back(folder_resource);
     return ToolOutput(result, error, std::move(resources));
@@ -2086,7 +2121,8 @@ struct Host::State {
               json::Object(json::Get(json::Object(result.text), "value", "{}")),
               "rev", "");
         return boundary ? ScopedResult(*boundary, call, std::move(result),
-                                       HelperReader(id, stop, revision))
+                                       HelperReader(id, stop, revision,
+                                                    boundary->authorization()))
                         : result;
       } catch (const Cancelled &) {
         throw;
@@ -2114,7 +2150,8 @@ struct Host::State {
                                        {"index", std::to_string(e.index)}}));
     };
     hooks.reconcile_tool =
-        [this, id](const ToolCall &call) -> std::optional<ToolResult> {
+        [this, id,
+         boundary](const ToolCall &call) -> std::optional<ToolResult> {
       std::lock_guard lock(mutex);
       if (call.name == "delegate") {
         AuthorizeHistory(id);
@@ -2149,10 +2186,17 @@ struct Host::State {
       q.bind(1, id).bind(2, call.id);
       if (!q.step())
         return std::nullopt;
-      if (!HasGrant(q.text(3), id, A::Access::Read))
+      if (!HasGrant(boundary && !boundary->authorization().empty()
+                        ? boundary->authorization()
+                        : q.text(3),
+                    id, A::Access::Read))
         return ToolResult{"Project access has been revoked", true, {}, {}};
       if (q.text(0) == "completed")
-        return ToolOutput(q.text(1), q.i64(2) != 0, Resources(id));
+        return ToolOutput(
+            q.text(1), q.i64(2) != 0,
+            boundary && !boundary->authorization().empty()
+                ? std::vector<std::string>{boundary->authorization()}
+                : Resources(id));
       return ToolResult{
           "Operation outcome is unknown. Query operation_get with op_id=" +
               q.text(4) + " before continuing.",
@@ -2166,7 +2210,8 @@ struct Host::State {
           [this, id, boundary,
            reconcile](const ToolCall &call) -> std::optional<ToolResult> {
         try {
-          const auto read = HelperReader(id, shutdown.get_token());
+          const auto read = HelperReader(id, shutdown.get_token(), {},
+                                         boundary->authorization());
           boundary->Check(call.name, json::Object(call.arguments), read);
           auto result = reconcile(call);
           if (result) {
@@ -2176,9 +2221,9 @@ struct Host::State {
                   json::Get(json::Object(json::Get(json::Object(result->text),
                                                    "value", "{}")),
                             "rev", "");
-            return ScopedResult(
-                *boundary, call, std::move(*result),
-                HelperReader(id, shutdown.get_token(), revision));
+            return ScopedResult(*boundary, call, std::move(*result),
+                                HelperReader(id, shutdown.get_token(), revision,
+                                             boundary->authorization()));
           }
           return std::nullopt;
         } catch (const std::exception &error) {
@@ -2189,7 +2234,8 @@ struct Host::State {
     return hooks;
   }
 
-  auto PrepareSend(const A::ConversationSendRequest *p, std::stop_token stop)
+  auto PrepareSend(const A::ConversationSendRequest *p, std::stop_token stop,
+                   std::string &task, std::string &authorization)
       -> ContentBlock {
     std::unique_lock lock(mutex);
     auto require = [&](const std::string &resource,
@@ -2202,6 +2248,57 @@ struct Host::State {
     };
     const auto c = GetConversation(p->conversation_id()->str());
     std::vector<std::string> resources;
+    if ((p->skill_names() && p->skill_names()->size()) ||
+        !Text(p->scoped_skill()).empty()) {
+      auto root = db.prepare("SELECT path FROM project_paths WHERE id=?");
+      root.bind(1, c.project);
+      const auto project_path = root.step() ? root.text(0) : "";
+      auto sources = db.prepare(
+          "SELECT folders FROM skill_catalogs WHERE conversation=? AND path=?");
+      sources.bind(1, c.id).bind(2, project_path);
+      std::vector<std::string> folders;
+      if (sources.step())
+        for (const auto &item : json::Array(sources.text(0)))
+          folders.push_back(json::String(item));
+      const auto skills = host::ListSkills(project_path, folders);
+      std::vector<std::string> names, cards;
+      if (p->skill_names())
+        for (const auto *name : *p->skill_names())
+          names.push_back(name->str());
+      if (p->selected_cards())
+        for (const auto *card : *p->selected_cards())
+          cards.push_back(card->str());
+      const auto selected = host::SelectScopedSkill(
+          skills, names, Text(p->scoped_skill()), cards, p->text()->str());
+      if (selected) {
+        task = json::Encode(*selected);
+        const auto reason =
+            "helper_scope\n" +
+            json::Encode(json::Members{
+                {"task", task}, {"turn", json::Quote(p->turn_id()->str())}});
+        const auto request =
+            RequestAccess(c.project, c.id, A::Access::HelperScope,
+                          A::GrantScope::Conversation, reason, true);
+        for (;;) {
+          auto state =
+              db.prepare("SELECT state FROM access_requests WHERE id=?");
+          state.bind(1, request);
+          if (!state.step() || state.text(0) == "denied")
+            throw Failure("permission_denied",
+                          "The user declined the helper scope");
+          if (state.text(0) == "allowed")
+            break;
+          if (stop.stop_requested() || stopping)
+            throw Cancelled();
+          changed.wait_for(lock, std::chrono::milliseconds(100));
+        }
+        authorization = "helper-scope:" + request;
+        ContentBlock block;
+        block.text = p->text()->str();
+        block.resource_ids = {authorization};
+        return block;
+      }
+    }
     if ((p->selected_cards() && p->selected_cards()->size()) ||
         (p->selected_displays() && p->selected_displays()->size())) {
       require(c.project, c.id, A::Access::Read, true, stop,
@@ -2421,6 +2518,7 @@ struct Host::State {
          action](std::stop_token stop) mutable {
           std::string final_state = "finished";
           try {
+            std::string task, authorization;
             if (!pending_frame.empty()) {
               flatbuffers::Verifier verifier(
                   reinterpret_cast<const uint8_t *>(pending_frame.data()),
@@ -2434,8 +2532,9 @@ struct Host::State {
               if (!request || !request->value_as_ConversationSendRequest())
                 throw Failure("invalid_request",
                               "The pending message has an invalid operation");
-              auto block = PrepareSend(
-                  request->value_as_ConversationSendRequest(), stop);
+              auto block =
+                  PrepareSend(request->value_as_ConversationSendRequest(), stop,
+                              task, authorization);
               if (stop.stop_requested())
                 throw Cancelled();
               messages[pending_index].content = {std::move(block)};
@@ -2444,13 +2543,51 @@ struct Host::State {
               SaveMessages(id, messages);
               auto pending =
                   ConversationDatabase(id).prepare("DELETE FROM pending_sends WHERE conversation=?");
-              pending.bind(1, id).run();
+              if (task.empty())
+                pending.bind(1, id).run();
               tx.commit();
             }
             RecordOperation(id,
                             action == A::Action::Compact ? "compact" : "model");
             auto hooks = Hooks(id);
-            if (action == A::Action::Compact)
+            if (!task.empty()) {
+              Event(id, json::Encode(json::Members{
+                            {"kind", json::Quote("helperStarted")},
+                            {"text", task}}));
+              RunHelper(id, turn, 0, task, stop, authorization);
+              {
+                std::lock_guard lock(mutex);
+                auto saved = ConversationDatabase(id).prepare(
+                    "SELECT messages FROM helpers WHERE conversation=? AND "
+                    "parent_call=? AND task=0");
+                saved.bind(1, id).bind(2, turn);
+                if (saved.step()) {
+                  const auto trace = ParseMessages(saved.text(0));
+                  for (auto it = trace.rbegin(); it != trace.rend(); ++it) {
+                    if (it->role != "assistant")
+                      continue;
+                    Message answer = *it;
+                    answer.provider_content.clear();
+                    std::erase_if(answer.content, [](const auto &block) {
+                      return block.type != "text";
+                    });
+                    if (answer.content.empty())
+                      continue;
+                    for (auto &block : answer.content)
+                      block.resource_ids = {authorization};
+                    messages.push_back(std::move(answer));
+                    SaveMessages(id, messages);
+                    break;
+                  }
+                }
+              }
+              if (!stop.stop_requested()) {
+                std::lock_guard lock(mutex);
+                auto pending = ConversationDatabase(id).prepare(
+                    "DELETE FROM pending_sends WHERE conversation=?");
+                pending.bind(1, id).run();
+              }
+            } else if (action == A::Action::Compact)
               Runtime().Compact(config, messages, stop, hooks);
             else {
               const auto result =
@@ -2690,6 +2827,8 @@ struct Host::State {
         throw Failure("invalid_request",
                       "A turn needs a nonempty ID of at most 256 bytes");
       OwnConversation(p->conversation_id()->str(), human);
+      if (!human && p->scoped_skill())
+        Human(human);
       Start(p->conversation_id()->str(), p->turn_id()->str(), p->text()->str(),
             A::Action::Resume, {}, *request.frame,
             p->display() ? p->display()->str() : p->text()->str());
@@ -2856,8 +2995,11 @@ struct Host::State {
       sql::Transaction tx(db);
       auto operation = db.prepare("SELECT 1 FROM operation_approvals WHERE request=?");
       operation.bind(1, p->request_id()->str());
-      const bool per_call = operation.step();
-      if (p->allow() && !per_call) {
+      const bool per_call =
+          operation.step() ||
+          static_cast<A::Access>(q.i64(2)) == A::Access::HelperScope;
+      if (p->allow() && !per_call &&
+          static_cast<A::Access>(q.i64(2)) != A::Access::HelperScope) {
         auto grant = db.prepare("INSERT INTO grants VALUES(?,?,?,?,1)");
         grant.bind(1, p->request_id()->str())
             .bind(2, q.text(0))
