@@ -171,11 +171,11 @@ pkgs.stdenv.mkDerivation {
       -DTSUGUMI_DOTNET_ROOT='"${runtime}/share/dotnet"' \
       -DTSUGUMI_ASSEMBLY='"'$out'/lib/managed/Card.dll"' \
       -DTSUGUMI_RUNTIMECONFIG='"'$out'/lib/managed/Card.runtimeconfig.json"' \
-      ${sdkRoot}/csharp/host.cc -o main.so ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-ldl"}
+      ${sdkRoot}/csharp/host.cc -o runtime.so ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-ldl"}
   '';
   installPhase = ''
     mkdir -p $out/lib/managed
-    cp main.so $out/lib/
+    cp runtime.so $out/lib/
     cp -r ${managed}/. $out/lib/managed/
   '';
 }

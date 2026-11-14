@@ -268,13 +268,12 @@ def _adopt_environment() -> None:
             os.environb[name] = value
 
 
-def _guard(body, report: bool = True) -> bool:
+def _guard(body) -> bool:
     global _in_call
-    _in_call = report  # report is False only while loading, outside any call
+    _in_call = True
     done = False
     try:
-        if report:
-            _adopt_environment()
+        _adopt_environment()
         body()
         _close_figures()
         done = True
@@ -282,18 +281,14 @@ def _guard(body, report: bool = True) -> bool:
         sys.stderr.flush()
         return True
     except Failure as f:
-        if report:
-            _host.fail(f.kind, f.message)
-        else:
-            print(f"{f.kind}: {f.message}", file=sys.stderr)
+        _host.fail(f.kind, f.message)
         return False
     except Exception as e:  # noqa: BLE001 - every error becomes a structured failure
         import traceback
 
         traceback.print_exc()
         sys.stderr.flush()
-        if report:  # while loading there is no invocation to fail
-            _host.fail("worker_failed", f"{type(e).__name__}: {e}")
+        _host.fail("worker_failed", f"{type(e).__name__}: {e}")
         return False
     finally:
         if not done:
@@ -311,11 +306,11 @@ def _close_figures() -> None:
 
 
 def _load() -> bool:
-    """Imports card.main when the worker starts (before any invocation)."""
+    """Imports card.main inside the first invocation."""
     def body():
         global _card_module
         _card_module = importlib.import_module("card.main")
-    return _guard(body, report=False)
+    return _guard(body)
 
 
 def _run_start() -> bool:

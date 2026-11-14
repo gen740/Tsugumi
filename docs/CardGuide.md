@@ -473,7 +473,7 @@ See the [Ruby API](#ruby-api) for files, reports, lifecycle and dependency locks
 
 Cards start a fresh worker for each invocation by default. Set `reuseWorker: true` to retain state across invocations and runs, and use the [run-start hook](#presentation-and-hooks) to reset per-run state. Each invocation records whether its worker was reused. Workers end when their build conditions change, on failure, cancellation or deadline, or when the project closes. Idle workers end after ten minutes; resident workers are limited to 2 GiB and 32 workers (least recently used ends first).
 
-Source loading precedes any invocation and any `preRun`. The working directory and environment are set again on each call; `preRun`'s exports and `cd` reach the entry point, including Python's `os.environ`, but cannot affect libraries already loaded. Configure native libraries at the top of `main.py`, before importing them:
+Standby preparation starts the interpreter and SDK only. Card shared-library constructors, imports and source loading belong to the first invocation: they run after `preRun`, with that invocation's identity, logs, deadline and cancellation. Preparing the runtime saves interpreter startup; loading the Card and its imports takes time within the first invocation. A reused worker retains the loaded code. The working directory and environment are set again on each call; `preRun`'s exports and `cd` reach source loading on the first call and the entry point on every call, including Python's `os.environ`, but cannot reconfigure libraries already loaded. Configure native libraries at the top of `main.py`, before importing them:
 
 ```python
 import os

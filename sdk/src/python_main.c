@@ -1,4 +1,4 @@
-/* main.so for Python Cards: embeds the interpreter and exposes the Card ABI as
+/* runtime.so for Python Cards: embeds the interpreter and exposes the Card ABI as
  * the `_tsugumi_host` module; `tsugumi._invoke()` runs `card.main.main(inputs[, report[, run]])`.
  * By default each invocation gets a new worker and interpreter; with
  * reuseWorker: true the interpreter and module state persist between calls. */
@@ -278,7 +278,8 @@ static PyMethodDef host_methods[] = {
     {NULL, NULL, 0, NULL},
 };
 
-static struct PyModuleDef host_module = {PyModuleDef_HEAD_INIT, "_tsugumi_host", NULL, -1, host_methods};
+static struct PyModuleDef host_module = {
+    PyModuleDef_HEAD_INIT, "_tsugumi_host", NULL, -1, host_methods, NULL, NULL, NULL, NULL};
 
 static PyObject* init_host(void) { return PyModule_Create(&host_module); }
 
@@ -286,7 +287,7 @@ static int ensure_python(void) {
   static int ready = 0;
   if (ready) return 1;
 #ifdef TSUGUMI_LIBPYTHON
-  /* The worker loads main.so with RTLD_LOCAL; extension modules need the
+  /* The worker loads runtime.so with RTLD_LOCAL; extension modules need the
    * interpreter's symbols globally visible. */
   if (!dlopen(TSUGUMI_LIBPYTHON, RTLD_NOW | RTLD_GLOBAL)) return 0;
 #endif
@@ -351,8 +352,15 @@ static int call_python(const tsugumi_call* call, const char* fn) {
   return rc;
 }
 
-/* The interpreter starts and card.main is imported when the worker loads us. */
-int tsugumi_load(void) { return call_python(NULL, "_load"); }
+/* Preparation imports only the SDK. Card imports belong to the first call. */
+int tsugumi_prepare(void) {
+  if (!ensure_python()) return 1;
+  PyObject* mod = PyImport_ImportModule("tsugumi");
+  if (!mod) { PyErr_Print(); return 1; }
+  Py_DECREF(mod);
+  return 0;
+}
+int tsugumi_load(const tsugumi_call* call) { return call_python(call, "_load"); }
 
 int tsugumi_run_start(const tsugumi_call* call) { return call_python(call, "_run_start"); }
 
