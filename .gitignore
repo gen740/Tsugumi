@@ -17,3 +17,8 @@ __pycache__/
 /agent/.swiftpm/
 /.cache/
 /.build/
+
+# Demo player build outputs (recorded assets remain tracked).
+/docs/site/js/player.js
+/docs/site/player.css
+/docs/site/player-data/*.json

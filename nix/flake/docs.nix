@@ -1,9 +1,14 @@
 # apps: the documentation site's dev server, build and tests (nix/docs-site.nix).
 {
   perSystem =
-    { pkgs, lib, ... }:
+    {
+      pkgs,
+      lib,
+      config,
+      ...
+    }:
     let
-      site = pkgs.callPackage ../docs-site.nix { };
+      site = pkgs.callPackage ../docs-site.nix { inherit (config.packages) web; };
       describe = {
         dev-doc = "Serve the documentation site from the working tree with live reload";
         build-doc = "Build the documentation site into build/docs";

@@ -120,7 +120,7 @@ assert.equal(valueDifference(v, undefined), 'changed')
 }
 
 // Use the real Cas A retained table and images as the rendering fixture.
-const demo = JSON.parse(fs.readFileSync(path.join(process.argv[2], 'docs/site/player-data/casa.json'), 'utf8'))
+const demo = JSON.parse(fs.readFileSync(path.join(process.env.TSUGUMI_SITE_PLAYER_DIR!, 'player-data/casa.json'), 'utf8'))
 const table = demo.outputs.bands
 const display = (runId: string, valueType: D.DisplayValue, value: D.DisplayTableT | D.DisplayImageT) => Object.assign(new D.DisplayT(), { runId, invocation: 1n, revision: 1n, card: cardPath(['bands']), valueType, value })
 const tableValue = (rows: string[][]) => Object.assign(new D.DisplayTableT(), { columns: table.columns, rows: rows.map(cells => Object.assign(new D.TableRowT(), { cells })) })
@@ -147,7 +147,7 @@ for (const text of ['bands', '1650', '1800', '101187', '104821', 'Photons']) ass
 assert.ok(markup.includes('changed'), 'differences have a visible highlight')
 for (const name of ['rgb', 'spectrum']) {
   const image = demo.outputs[name]
-  const bytes = [...fs.readFileSync(path.join(process.argv[2], 'docs/site/player-data', image.src))]
+  const bytes = [...fs.readFileSync(path.join(process.env.TSUGUMI_SITE_PLAYER_DIR!, 'player-data', image.src))]
   const value = Object.assign(new D.DisplayImageT(), { data: bytes, mediaType: name === 'rgb' ? 'image/jpeg' : 'image/png', alt: name })
   const retained = display('left', D.DisplayValue.DisplayImage, value)
   const other = display('right', D.DisplayValue.DisplayImage, value)

@@ -6,7 +6,7 @@
 #   tests/ci-local.sh agent    only the public Agent RPC fixtures
 #   tests/ci-local.sh mac      the macOS job: Swift tests and Seatbelt isolation
 #   tests/ci-local.sh linux    the Linux job: tsugumid, C++, Web UI, the tsugumi
-#                              command, the docs player and the Python tests
+#                              command and the Python tests
 #
 # On a Mac the Linux job runs in a container (Docker or OrbStack, privileged
 # so that bubblewrap can isolate Cards) on a copy of the tracked files as they
@@ -52,8 +52,6 @@ linux_job() {
   step "Web UI typecheck and behavior contracts"
   system=$(nix --extra-experimental-features 'nix-command flakes' eval --raw --impure --expr builtins.currentSystem)
   nix --extra-experimental-features 'nix-command flakes' build --no-link ".#checks.$system.web"
-  step "Documentation site player is up to date"
-  nix --extra-experimental-features 'nix-command flakes' build --no-link ".#checks.$system.site-player"
   step "Core integration tests with the real host environment"
   core_run python3 -m pytest -q tests/core/integration
   step "Python tests"
