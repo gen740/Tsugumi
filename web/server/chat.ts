@@ -561,6 +561,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const skillNames = Array.isArray(b.skillNames) ? b.skillNames.map(String) : []
     await host.attachSkillFolders(skillNames, a.id)
     await withAccess(host.project, a.id, () => a.send(String(b.text ?? ''), host.events(a.id), turn, {
+      display: String(b.display ?? b.text ?? ''),
       selected_cards: Array.isArray(b.selectedCards) ? b.selectedCards.map(String) : [],
       selected_displays: Array.isArray(b.selectedDisplays) ? b.selectedDisplays.map(String) : [],
       skill_names: [...new Set(skillNames)],

@@ -83,6 +83,10 @@ class Scheduler {
  private:
   auto reconcile_remote_job(RemoteJobRecord& job) -> bool;
   Service& svc_;
+  // Lock order: mu_ -> History::write_sync() only in accept(), with no active_
+  // run. History writer callbacks may take mu_ while active_ is set, so
+  // finished() must not reacquire mu_ after clearing active_: reaper
+  // registration belongs in the same locked section.
   std::mutex mu_;
   std::shared_ptr<RunExec> active_;
   std::vector<std::thread> reapers_;

@@ -272,7 +272,7 @@ No fields.
 | [`RunLatestInvocations`](#runlatestinvocations) | InvocationPage | Each Card's latest invocation of a run, for a client that opens the project after the run: it did not get RunCardChanged for them. |
 | [`RunRecord`](#runrecord) | RecordResult | invocation and follow_latest = true are exclusive. |
 | [`RunValueRead`](#runvalueread) | FileContent | offset = 0, limit_bytes = 1048576. |
-| [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Deletes finished runs (all, or those that ended before ended_before, Unix ms) with their records, values, logs and files, here and in the project's copy. Only while no run is active. |
+| [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Deletes finished runs (all, or those that ended before ended_before, Unix ms) with their records, values, logs and files, here and in the project's copy. Only while no run is active. Approvals must set restrict_to_run_ids and pass the exact run_ids shown to the person (an empty set deletes nothing). Without that flag, run_ids must be empty and the UI's all-runs or date scope applies. The separate flag distinguishes an empty selection from object APIs' default empty vectors. |
 | [`ArtifactList`](#artifactlist) | ArtifactPage | invocation requires card. |
 | [`ArtifactRead`](#artifactread) | FileContent | member only for Directory artifacts. |
 | [`LogRange`](#logrange) | LogSlice | limit_bytes = 65536 (4..256 KiB). tail with offset != 0 is rejected. invocation requires card. |
@@ -330,6 +330,8 @@ No fields.
 | --- | --- | --- | --- |
 | `op_id` | `string` | yes |  |
 | `ended_before` | `int64` |  |  |
+| `run_ids` | `[string]` |  |  |
+| `restrict_to_run_ids` | `bool` |  |  |
 
 ### ArtifactList
 

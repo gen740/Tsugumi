@@ -515,7 +515,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
 
   /** Starts writing a Draft on its Card, at a zoom where the text can be read. */
   writeDraft(k: CardKey) {
-    this.session.startDraftEdit(k)
+    void this.session.startDraftEdit(k)
     const r = this.scene().cardRect(k)
     if (this.camera.zoom < 0.8) this.setZoom(1, this.screen({ x: r.x + r.width / 2, y: r.y + r.height / 2 }))
     this.reveal(k)

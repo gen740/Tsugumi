@@ -1358,8 +1358,6 @@
  "ビルドキャッシュまたは実行の scratch が大きくなっています。内容を確認して、削除するものを選んでください。": "Build cache or run scratch is growing. Review the contents and choose what to delete.",
  "このプロジェクトの過去の scratch": "Past scratch in this project",
  "削除対象の合計": "Total selected for deletion",
- "表示した scratch を削除…": "Delete listed scratch…",
- "表示した過去の scratch を削除しますか？": "Delete the listed past scratch?",
  "削除できず残ったフォルダ": "Folders that could not be deleted",
  "実行履歴はこのマシンに保存します。オンのときは、終わった実行の記録（実行したコードのコミット・値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。": "The run history is kept on this machine. When on, the records of finished runs (code commit, values, types, logs, the list of artifacts) are also written to the project's .tsugumi/runs.sqlite. A project copied or moved to another Mac reads from it, when opened, the runs missing from the VM. When off, new runs are kept only inside the VM.",
  "実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。": "Deletes runs' records, values and logs, and each run's files (artifacts and the like, .tsugumi/runs/<run>), both in the VM and in .tsugumi/runs.sqlite. The last input (to run a Card alone again) stays. Not while a run is going on. Scratch belonging to the selected runs is also deleted.",
@@ -1378,5 +1376,8 @@
  "変更の記録は Card の追加・削除と定義・ソース・パラメータ・接続の変更を無料で記録します。Agent の要約は差分をモデルのプロバイダへ送り、token を使います。この設定は全プロジェクトに適用します。": "The change record lists added and removed Cards and changes to definitions, source, parameters and wiring at no cost. The Agent summary sends the diff to the model provider and uses tokens. This setting applies to all projects.",
  "Agent の作業をアニメーションで表示": "Animate the Agent’s work",
  "オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの agentd に保存します。": "When off, saved Cards and wires appear immediately. The work marker, thought summaries and source streaming continue. This setting is stored in agentd on this host.",
- "このブラウザの外観設定と、このホストの agentd の Agent 表示設定": "Appearance in this browser; Agent presentation in agentd on this host"
+ "このブラウザの外観設定と、このホストの agentd の Agent 表示設定": "Appearance in this browser; Agent presentation in agentd on this host",
+ "選択した scratch を削除…": "Delete selected scratch…",
+ "選択した過去の scratch を削除しますか？": "Delete the selected past scratch?",
+ "合計は容量不明のフォルダを除きます。": "The total excludes folders with unknown sizes."
 }

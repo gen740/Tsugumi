@@ -156,7 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   /// Asks about unsaved edits; nil when there are none (the quit goes on).
   @MainActor private func settleEdits(_ sender: NSApplication) -> NSApplication.TerminateReply? {
-    let dirty = AppModel.shared.sessions.values.filter(\.dirty)
+    let dirty = AppModel.shared.sessions.values.filter(\.hasUnsavedEdits)
     if dirty.isEmpty { return nil }
     let alert = NSAlert()
     alert.messageText = String(localized: "保存されていない変更があります")
@@ -167,8 +167,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     switch alert.runModal() {
     case .alertFirstButtonReturn:
       Task { @MainActor in
-        for s in dirty { await s.save() }
-        if let failed = dirty.first(where: \.dirty) {
+        for s in dirty { _ = await s.finishDraftEdit(); await s.save() }
+        if let failed = dirty.first(where: \.hasUnsavedEdits) {
           let a = NSAlert()
           a.messageText = String(localized: "保存できなかったため終了しませんでした")
           a.informativeText = "\(failed.scopeName([])): \(failed.saveError ?? "")"

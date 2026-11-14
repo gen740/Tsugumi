@@ -1,6 +1,7 @@
 #include "worker_proc.hh"
 
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/wait.h>
@@ -80,17 +81,34 @@ void close_fd(int& fd) {
   fd = -1;
 }
 
-bool write_full(int fd, const char* p, size_t n) {
-  while (n > 0) {
-    ssize_t w = ::write(fd, p, n);
-    if (w < 0) {
-      if (errno == EINTR) continue;
-      return false;
+auto send_frame(int fd, const std::string& frame, const std::atomic<bool>* cancel,
+                std::optional<std::chrono::steady_clock::time_point> deadline) -> void {
+  uint32_t len = static_cast<uint32_t>(frame.size());
+  std::string buf(reinterpret_cast<const char*>(&len), sizeof len);
+  buf += frame;
+  size_t offset = 0;
+  while (offset < buf.size()) {
+    if (cancel && cancel->load())
+      throw Failed(FailureKind::cancelled, "the invocation was cancelled");
+    if (deadline && std::chrono::steady_clock::now() >= *deadline)
+      throw Failed(FailureKind::timeout, "the Card exceeded timeoutSeconds");
+#ifdef MSG_NOSIGNAL
+    constexpr int flags = MSG_NOSIGNAL | MSG_DONTWAIT;
+#else
+    constexpr int flags = MSG_DONTWAIT;  // SO_NOSIGPIPE on macOS
+#endif
+    const auto count = ::send(fd, buf.data() + offset, buf.size() - offset, flags);
+    if (count > 0) {
+      offset += static_cast<size_t>(count);
+      continue;
     }
-    p += w;
-    n -= static_cast<size_t>(w);
+    if (count < 0 && errno == EINTR) continue;
+    if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      pollfd ready{fd, POLLOUT, 0};
+      if (::poll(&ready, 1, 20) >= 0 || errno == EINTR) continue;
+    }
+    throw Failed(FailureKind::worker_failed, "worker connection broken");
   }
-  return true;
 }
 
 #ifdef __APPLE__
@@ -169,6 +187,33 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     throw Failed(FailureKind::worker_failed, "cannot create worker channels");
   // The worker's own folder; the step scripts are written once per worker.
   auto scripts = std::filesystem::path(scratch_) / "scripts";
+#ifdef __APPLE__
+  // O_EVTONLY still needs read permission on Darwin. Repair an unreadable
+  // directory with exactly the Card's identity and sandbox, then open it with
+  // O_NOFOLLOW. Even a surviving child swapping in a hard link cannot enlist
+  // the core's broader authority to chmod a protected host inode.
+  recover_permissions_ = [sp, scripts](int parent, const char* name) {
+    std::filesystem::path target(name);
+    if (parent != AT_FDCWD) {
+      char path[PATH_MAX];
+      if (::fcntl(parent, F_GETPATH, path) != 0)
+        throw std::system_error(errno, std::generic_category(), "cannot locate staging directory");
+      target = std::filesystem::path(path) / name;
+    }
+    proc::Spec repair;
+    repair.cwd = "/";
+    if (sp.sandbox)
+      repair.argv = {"/usr/bin/sandbox-exec", "-p", seatbelt_profile(sp, sp.scratch, scripts.string())};
+    repair.argv.insert(repair.argv.end(), {"/bin/chmod", "-h", "u+rwx", target.string()});
+    repair.uid = sp.uid;
+    repair.gid = sp.gid;
+    const auto result = proc::run(repair, nullptr,
+        std::chrono::steady_clock::now() + std::chrono::seconds(5), {});
+    if (!proc::exited_ok(result.status))
+      throw std::system_error(EACCES, std::generic_category(),
+                              "cannot restore staging directory permissions: " + target.string());
+  };
+#endif
   for (const char* d : {"work", "tmp", "out", "scripts", "home", "inputs"}) std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
   if (::geteuid() == 0 && sp.uid && worker_uid_on_host())
     for (const char* d : {"work", "tmp", "out", "home"}) ::chown((scratch_ + "/" + d).c_str(), *sp.uid, sp.gid.value_or(*sp.uid));
@@ -284,6 +329,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   control_fd_ = control[0];
   out_fd_ = out[0];
   err_fd_ = err[0];
+  ::fcntl(data_fd_, F_SETFL, O_NONBLOCK);
+  ::fcntl(control_fd_, F_SETFL, O_NONBLOCK);
   ::fcntl(out_fd_, F_SETFL, O_NONBLOCK);
   ::fcntl(err_fd_, F_SETFL, O_NONBLOCK);
   for (int fd : {data_fd_, control_fd_, out_fd_, err_fd_}) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
@@ -308,7 +355,7 @@ WorkerProc::~WorkerProc() {
   if (!scratch_.empty()) {
     try {
       // Also covers failed/dead and remote workers, and lifetime home data.
-      fs::clear_staging(scratch_);
+      fs::clear_staging(scratch_, recover_permissions_);
       std::filesystem::remove(scratch_, ec);
       if (ec) log::warn("cannot remove worker scratch " + scratch_ +
                         " (errno " + std::to_string(ec.value()) + "): " + ec.message());
@@ -334,7 +381,7 @@ void WorkerProc::set_logs(LogSink logs) {
 void WorkerProc::clear_scratch() {
   try {
     for (const auto& d : {work_dir(), tmp_dir(), out_dir(), inputs_dir()})
-      fs::clear_staging(d);
+      fs::clear_staging(d, recover_permissions_);
   } catch (const std::system_error& error) {
     throw Failed(FailureKind::worker_failed,
                  "cannot clear the worker's invocation staging: " + std::string(error.what()));
@@ -407,11 +454,9 @@ void WorkerProc::read_logs(bool drain) {
 }
 
 void WorkerProc::send(int fd, const std::string& frame) {
-  uint32_t len = static_cast<uint32_t>(frame.size());
-  std::string buf(reinterpret_cast<const char*>(&len), 4);
-  buf += frame;
-  if (!write_full(fd, buf.data(), buf.size()))
-    throw Failed(FailureKind::worker_failed, "worker connection broken");
+  // A stopped worker may also stop draining control messages. Never let the
+  // cancellation notification delay escalation to killing the process group.
+  send_frame(fd, frame, nullptr, std::chrono::steady_clock::now() + std::chrono::milliseconds(100));
 }
 
 WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id,
@@ -420,10 +465,11 @@ WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id,
                                const DisplaySink& display) {
   WorkerOutcome outcome;
   try {
-    send(data_fd_, frame);
-  } catch (const Failed&) {
+    send_frame(data_fd_, frame, cancel, deadline);
+  } catch (const Failed& error) {
+    // A partially sent call cannot be resumed or reused.
     terminate();
-    outcome.failure = FailureData::make(FailureKind::worker_failed, "the worker exited before the call");
+    outcome.failure = error.failure;
     return outcome;
   }
   std::string rbuf;
@@ -461,6 +507,7 @@ WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id,
     if (!(p.revents & (POLLIN | POLLHUP | POLLERR))) continue;
     char buf[65536];
     ssize_t r = ::read(data_fd_, buf, sizeof buf);
+    if (r < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
     if (r <= 0) {
       terminate();
       if (cancel_sent)
