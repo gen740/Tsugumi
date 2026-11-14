@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstdlib>
+
 #include "execution_service.hh"
 #include "service.hh"
 #include "store.hh"
@@ -39,6 +42,15 @@ TEST_P(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
   ASSERT_TRUE(type) << error;
   node.outputs.push_back({"out", PortKind::File, false, *type});
   CardBuild build;
+  // A build names its own shell and PATH; this one borrows the test's.
+  build.path = std::getenv("PATH") ? std::getenv("PATH") : "/usr/bin:/bin";
+  for (size_t at = 0; build.shell.empty() && at <= build.path.size();) {
+    const auto end = std::min(build.path.find(':', at), build.path.size());
+    const auto candidate = stdfs::path(build.path.substr(at, end - at)) / "bash";
+    if (stdfs::exists(candidate)) build.shell = candidate.string();
+    at = end + 1;
+  }
+  ASSERT_FALSE(build.shell.empty());
   // The same build fails its first transfer and produces a real file next.
   // A worker can complete its ABI call even when its declared file is absent.
   build.bash = "printf 'worker log\\n'\nif [ -f '" + (root / "called").string() + "' ]; then touch \"$TSUGUMI_OUTPUT_DIR/result\"; "
