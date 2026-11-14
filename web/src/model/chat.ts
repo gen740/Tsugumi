@@ -100,6 +100,8 @@ interface Conversation {
   summary?: string
 }
 
+interface InterruptedOperation { kind: string; id?: string; name?: string; arguments?: string }
+
 const COMPACTING = L('会話を圧縮しています…')
 
 export class ChatController extends Observable {
@@ -121,6 +123,8 @@ export class ChatController extends Observable {
   contextFull = false
   /** The last turn stopped at the step limit and can go on. */
   stoppedAtLimit = false
+  interrupted = false
+  interruptedOperation?: InterruptedOperation
   sessions: SessionInfo[] = []
   currentId = ''
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number } = { inputTokens: 0, outputTokens: 0 }
@@ -184,11 +188,11 @@ export class ChatController extends Observable {
   /** Reads the open conversation again (its turn keeps running on the server). */
   private async reread(id: string) {
     try {
-      const r = await api<{ conversation: Conversation; busy: boolean; continuable?: boolean; provider: ProviderInfo; permission: { id: string; asked: string[] } | null }>(
+      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; permission: { id: string; asked: string[] } | null }>(
         '/api/chat/conversation', { ...this.base, folders: this.folders })
       if (this.currentId !== id) return
       this.busy = r.busy
-      this.stoppedAtLimit = r.continuable === true
+      this.adoptInterruption(r)
       this.permission = r.permission ?? undefined
       this.usage = r.conversation.usage
       this.provider = r.provider
@@ -205,20 +209,22 @@ export class ChatController extends Observable {
     this.usageLimited = false
     this.contextFull = false
     this.stoppedAtLimit = false
+    this.interrupted = false
+    this.interruptedOperation = undefined
     if (this.available) this.status = undefined
     this.currentId = id
     this.items = []
     this.changed()
     if (!this.available) return
-    // Resume work left unfinished by a disconnect or restart.
-    void api<{ conversation: Conversation; busy: boolean; continuable?: boolean; provider: ProviderInfo; permission: { id: string; asked: string[] } | null }>('/api/chat/conversation', { ...this.base, resume: true, folders: this.folders })
+    // Opening only reads the core snapshot.
+    void api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; permission: { id: string; asked: string[] } | null }>('/api/chat/conversation', { ...this.base, folders: this.folders })
       .then((r) => {
         if (this.currentId !== id) return
         this.permission = r.permission ?? undefined
         this.usage = r.conversation.usage
         this.provider = r.provider
         this.busy = r.busy
-      this.stoppedAtLimit = r.continuable === true
+        this.adoptInterruption(r)
         this.load(r.conversation)
         this.changed()
       })
@@ -226,6 +232,29 @@ export class ChatController extends Observable {
         this.status = String(e.message ?? e)
         this.changed()
       })
+  }
+
+  private adoptInterruption(r: { resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean }) {
+    const wasInterrupted = this.interrupted
+    this.interrupted = r.resumable === true
+    this.interruptedOperation = r.interruptedOperation
+    this.stoppedAtLimit = !this.interrupted && r.continuable === true
+    if (this.interrupted) {
+      this.failed = false
+      this.usageLimited = false
+      this.contextFull = false
+      const op = r.interruptedOperation
+      const doing = op?.kind === 'tool' ? `${op.name} (${op.id}) ${op.arguments ?? ''}`
+        : op?.kind === 'compact' ? L('会話の圧縮')
+        : op?.kind === 'preparing' ? L('メッセージの準備') : L('モデルの応答')
+      this.status = L('会話は中断しています。中断時の処理: {0}。再開するか、新しいメッセージを送れます。', doing)
+    } else if (wasInterrupted) this.status = undefined
+  }
+
+  resume() {
+    if (!this.available || !this.interrupted || this.busy) return
+    this.begin()
+    void this.request('/api/chat/resume', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
 
   private load(c: Conversation) {
@@ -448,6 +477,8 @@ export class ChatController extends Observable {
     this.offered = []
     guide.chatTurnBegan(this)
     this.busy = true
+    this.interrupted = false
+    this.interruptedOperation = undefined
     this.failed = false
     this.usageLimited = false
     this.contextFull = false
@@ -669,7 +700,7 @@ export class ChatController extends Observable {
 
   private reloadCurrent() {
     const id = this.currentId
-    void api<{ conversation: Conversation }>('/api/chat/conversation', { path: this.session.dir, session: id }).then((r) => {
+    void api<{ conversation: Conversation; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean }>('/api/chat/conversation', { path: this.session.dir, session: id }).then((r) => {
       if (this.currentId !== id) return
       this.load(r.conversation)
       this.changed()
@@ -678,9 +709,10 @@ export class ChatController extends Observable {
 
   private refreshAfterTurn() {
     const id = this.currentId, turn = this.turn
-    void api<{ conversation: Conversation }>('/api/chat/conversation', { path: this.session.dir, session: id }).then((r) => {
+    void api<{ conversation: Conversation; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean }>('/api/chat/conversation', { path: this.session.dir, session: id }).then((r) => {
       if (this.currentId !== id || this.turn !== turn) return
       this.load(r.conversation)
+      this.adoptInterruption(r)
       this.usage = r.conversation.usage
       this.changed()
       void this.refreshSessions()

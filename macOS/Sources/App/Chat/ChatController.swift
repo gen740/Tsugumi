@@ -175,10 +175,12 @@ final class ChatController {
       } catch { status = String(describing: error) }
     }
   }
+  private(set) var interrupted = false
+  private(set) var interruptedOperation: Tsugumi_Agent_InterruptedOperationT?
   private(set) var available = true
   @ObservationIgnored private var agent: Agent?
-  /// Opening a conversation, until its unfinished work (if any) has resumed.
-  @ObservationIgnored private var resuming: Task<Void, Never>?
+  /// Reads a snapshot and attaches to work that is already running.
+  @ObservationIgnored private var opening: Task<Void, Never>?
   @ObservationIgnored private var stopping: Task<Void, Never>?
   @ObservationIgnored private let dir: URL
 
@@ -219,13 +221,16 @@ final class ChatController {
     // Observation moves to this conversation; the previous one stays in core.
     let previous = agent
     if let previous { Task { await previous.detach() } }
-    resuming?.cancel()
-    resuming = nil
+    opening?.cancel()
+    opening = nil
     answer += 1
     busy = false
     failed = false
     usageLimited = false
     status = nil
+    interrupted = false
+    interruptedOperation = nil
+    stoppedAtLimit = false
     demoMode = false
     currentId = id
     thoughts.conversationID = id
@@ -234,34 +239,56 @@ final class ChatController {
     items = []
     // (the approver holds the controller weakly: the Agent outlives no window)
     let approver: Agent.Approver = { [weak self] asked in await self?.approve(asked) ?? [] }
-    resuming = Task {
+    opening = Task {
       await previous?.detach()
       await agent.setApprover(approver)
       do { try await agent.open() } catch { self.status = String(describing: error); return }
       let conv = await agent.conversation
       guard !Task.isCancelled else { return }
       usage = conv.usage
-      stoppedAtLimit = await agent.canContinue
+      await adoptInterruption(agent)
+      guard !Task.isCancelled, self.agent === agent else { return }
       load(conv)
-      await resumeWhenConnected(agent)
+      if await agent.hasUnfinishedWork {
+        guard !Task.isCancelled, self.agent === agent else { return }
+        let events = begin()
+        await agent.observe(events: events)
+      }
     }
   }
 
-  /// Resumes work left unfinished by a disconnect, a restart or leaving the
-  /// project, as any answer goes: the chat shows it working and it can be
-  /// stopped. Its tools need the project, so it starts once that is connected
-  /// (until then nothing can be sent either).
-  private func resumeWhenConnected(_ agent: Agent) async {
-    guard await agent.hasUnfinishedWork else { return }
-    while !session.connected {
-      if session.closed { return }
-      try? await Task.sleep(for: .milliseconds(100))
-      if Task.isCancelled { return }
-    }
-    guard !Task.isCancelled, !busy, await agent.hasUnfinishedWork else { return }
+  private func adoptInterruption(_ agent: Agent) async {
+    let interrupted = await agent.resumable
+    let operation = await agent.interruptedOperation
+    let continuable = await agent.canContinue
+    guard self.agent === agent else { return }
+    let wasInterrupted = self.interrupted
+    self.interrupted = interrupted
+    interruptedOperation = operation
+    stoppedAtLimit = !interrupted && continuable
+    if interrupted {
+      failed = false
+      usageLimited = false
+      contextFull = false
+      let doing: String
+      switch operation?.kind {
+      case "tool": doing = "\(operation?.name ?? "") (\(operation?.id ?? "")) \(operation?.argumentsJson ?? "")"
+      case "compact": doing = String(localized: "会話の圧縮")
+      case "preparing": doing = String(localized: "メッセージの準備")
+      default: doing = String(localized: "モデルの応答")
+      }
+      status = String(format: String(localized: "会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。"), doing)
+    } else if wasInterrupted { status = nil }
+  }
+
+  /// Only the Resume control calls this method.
+  func resume() {
+    guard interrupted, !busy, let agent else { return }
     let events = begin()
-    await agent.setProvider(provider)
-    await agent.resume(events: events)
+    Task {
+      await agent.setProvider(provider)
+      await agent.resume(events: events)
+    }
   }
 
   private func load(_ conv: Conversation) {
@@ -492,8 +519,8 @@ final class ChatController {
 
   /// A window releases its UI subscriptions without cancelling core work.
   func detach() {
-    resuming?.cancel()
-    resuming = nil
+    opening?.cancel()
+    opening = nil
     tidyTask?.cancel()
     answer += 1
     let remote = agent
@@ -514,8 +541,8 @@ final class ChatController {
       permissionPrompt = nil
       p.answer([])
     }
-    resuming?.cancel()
-    resuming = nil
+    opening?.cancel()
+    opening = nil
     answer += 1
     let remote = agent
     stopping = Task { await remote?.cancel() }
@@ -567,6 +594,8 @@ final class ChatController {
     choices = []
     offered = []
     GuideController.shared.chatTurnBegan(self)
+    interrupted = false
+    interruptedOperation = nil
     busy = true
     failed = false
     usageLimited = false
@@ -767,11 +796,10 @@ final class ChatController {
     let number = answer
     Task {
       let conversation = await agent.conversation
-      let continuable = await agent.canContinue
       guard number == answer else { return }
+      await adoptInterruption(agent)
       load(conversation)
       usage = conversation.usage
-      stoppedAtLimit = continuable
       refreshSessions()
     }
   }

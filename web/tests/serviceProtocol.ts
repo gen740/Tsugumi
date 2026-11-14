@@ -130,3 +130,16 @@ const { GuideAdvanceRequest } = await import('../src/gen/tsugumi/host/guide-adva
   assert.equal(hostMethod('GuideGetRequest'), true)
 }
 console.log('Guide Host adapter: events, direct presentation and omitted vectors passed')
+
+// The interrupted operation survives typed packing and HTTP adaptation.
+const { ConversationResultT } = await import('../src/gen/tsugumi/agent/conversation-result')
+const { ConversationT } = await import('../src/gen/tsugumi/agent/conversation')
+const { InterruptedOperationT } = await import('../src/gen/tsugumi/agent/interrupted-operation')
+const interrupted = new ConversationResultT()
+interrupted.conversation = new ConversationT()
+interrupted.conversation.id = 'interrupted'
+interrupted.resumable = true
+interrupted.interruptedOperation = new InterruptedOperationT('tool', 'call-7', 'project_save', '{"changes":[]}')
+const interruptedView = decodeReply(reply(ReplyPayload.ConversationResult, interrupted), false).value
+assert.equal(interruptedView.resumable, true)
+assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call-7', name: 'project_save', arguments: '{"changes":[]}' })

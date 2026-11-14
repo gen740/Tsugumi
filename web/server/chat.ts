@@ -542,7 +542,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const [wait] = [...waitingFor(host.project, a.id), ...waitingFor(host.project, EXTERNAL_SESSION)]
     const access = await core.user.call<{ requests: { id: string; state: string; access: string; scope: string; reason: string; project_id: string }[] }>('AccessListRequest', { conversation_id: a.id })
     const pending = access.requests.find((r) => r.state === 'pending')
-    return { conversation: a.conversation, busy: a.busy, continuable: a.continuable, provider: await providerInfo(),
+    return { conversation: a.conversation, busy: a.busy, resumable: a.resumable, interruptedOperation: a.interruptedOperation, continuable: a.continuable, provider: await providerInfo(),
       permission: pending ? { id: pending.id, asked: [`project_access ${pending.project_id}: ${pending.access} [${pending.scope}] — ${pending.reason}`] } : wait ? { id: wait[0], asked: wait[1].asked } : null }
   },
   'POST /api/chat/send': async (b) => {
@@ -562,6 +562,11 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/chat/thoughts': async (b) => {
     const a = await chatFor(projectDir(b.path)).agent(String(b.session))
     return core.summarize(a.id, await guideProvider())
+  },
+  'POST /api/chat/resume': async (b) => {
+    const { host, a } = await turnAgent(b)
+    await a.action('Resume', host.events(a.id))
+    return { ok: true }
   },
   'POST /api/chat/continue': async (b) => {
     const { host, a } = await turnAgent(b)

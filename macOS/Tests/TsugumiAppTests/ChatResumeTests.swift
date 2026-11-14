@@ -14,7 +14,7 @@ import TsugumiRPC
   @MainActor final class Fixture {
     let directory = URL(fileURLWithPath: "/tmp/tsugumi-chat-\(UUID().uuidString.prefix(8))")
     let conversationID = UUID().uuidString.lowercased()
-    let core = Process()
+    var core = Process()
     let model = Process()
     private let previousState = ProcessInfo.processInfo.environment["TSUGUMI_AGENT_STATE"]
     private let previousSupport = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"]
@@ -71,6 +71,26 @@ import TsugumiRPC
       provider.contextLimit = 6000
       _ = try await CoreAgentClient.shared.call("ProviderSetRequest", ["profile": "desktop", "id": "fixture", "provider": provider])
       try await CoreAgentClient.shared.configure(.fixture, conversationID: conversationID)
+    }
+
+    func restartAgent() async throws {
+      let binary = core.executableURL
+      let arguments = core.arguments
+      kill(core.processIdentifier, SIGKILL)
+      core.waitUntilExit()
+      let ready = directory.appendingPathComponent("state/agent.ready")
+      try? FileManager.default.removeItem(at: ready)
+      core = Process()
+      core.executableURL = binary
+      core.arguments = arguments
+      core.standardOutput = FileHandle.nullDevice
+      core.standardError = FileHandle.nullDevice
+      try core.run()
+      let deadline = Date().addingTimeInterval(15)
+      while !FileManager.default.fileExists(atPath: ready.path), core.isRunning, Date() < deadline {
+        try await Task.sleep(for: .milliseconds(20))
+      }
+      try #require(core.isRunning && FileManager.default.fileExists(atPath: ready.path))
     }
 
     func makeSession() throws -> ProjectSession {
@@ -163,6 +183,67 @@ import TsugumiRPC
 
   func reply(_ chat: ChatController, after n: Int) -> Bool {
     chat.items.dropFirst(n).contains { $0.role == "assistant" }
+  }
+
+  @Test func openingAndRefreshingAnInterruptedConversationOnlyObserve() async throws {
+    try await withFixture(slow: 0.3) { t in
+      try await t.send("hello interrupted")
+      // The core records preparing/model before sending the RPC acknowledgement.
+      try await t.restartAgent()
+      let before = try await t.snapshot()
+      #expect(before["resumable"] as? Bool == true)
+      let chat = t.makeChat()
+      try await until("the interruption is visible") { chat.interrupted }
+      #expect(!chat.busy && !chat.stoppedAtLimit)
+      #expect(chat.status?.contains(String(localized: "会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。").components(separatedBy: "%@")[0]) == true)
+      let agent = Agent(id: t.conversationID, transport: RPCToolTransport(session: t.session), provider: .fixture)
+      try await agent.open()
+      try await agent.refresh()
+      try await Task.sleep(for: .milliseconds(300))
+      let after = try await t.snapshot()
+      #expect(after["busy"] as? Bool == false)
+      #expect(after["resumable"] as? Bool == true)
+      #expect(after["event_seq"] as? UInt64 == before["event_seq"] as? UInt64)
+      #expect((after["conversation"] as? Tsugumi_Agent_ConversationT)?.messages.count == 1)
+      #expect(chat.interruptedOperation?.kind == (before["interrupted_operation"] as? Tsugumi_Agent_InterruptedOperationT)?.kind)
+      t.session.start()
+      try await SyncTests.connected(t.session)
+      chat.resume()
+      try await until("explicit resume finished") { !chat.busy && reply(chat, after: 0) }
+      #expect(!chat.interrupted)
+    }
+  }
+
+  @Test func aRestartWhileObservedShowsInterruptionWithoutResuming() async throws {
+    try await withFixture(slow: 2) { t in
+      t.session.start()
+      try await SyncTests.connected(t.session)
+      try await t.send("hello interrupted")
+      let chat = t.makeChat()
+      try await until("the running conversation is observed") { chat.busy }
+      try await t.restartAgent()
+      try await until("the restarted conversation is interrupted") { chat.interrupted }
+      #expect(!chat.busy && !chat.failed)
+      let snapshot = try await t.snapshot()
+      #expect(snapshot["resumable"] as? Bool == true)
+      try await Task.sleep(for: .milliseconds(300))
+      #expect(try await t.snapshot()["event_seq"] as? UInt64 == snapshot["event_seq"] as? UInt64)
+    }
+  }
+
+  @Test func anInterruptedConversationAcceptsANewMessageWithoutResume() async throws {
+    try await withFixture(slow: 0.3) { t in
+      try await t.send("hello interrupted")
+      try await t.restartAgent()
+      let chat = t.makeChat()
+      try await until("the interruption is visible") { chat.interrupted }
+      t.session.start()
+      try await SyncTests.connected(t.session)
+      chat.send("hello instead")
+      try await until("the new message finished") { !chat.busy && reply(chat, after: 1) }
+      #expect(!chat.interrupted)
+      #expect(chat.items.contains { $0.role == "user" && $0.text == "hello instead" })
+    }
   }
 
   @Test func multipleAttachedFoldersRemainDistinctAndReadableAfterSending() async throws {

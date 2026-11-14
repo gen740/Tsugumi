@@ -109,3 +109,5 @@ Turn on **Draw thoughts** below the chat input for model-written activity summar
 ### Skills and conversations
 
 Add Skill folders in settings or keep Skills under the project's `skills/`; call one with **$name**. Use the conversation list to search past chats or compact a conversation. Turn on **Web search** under **API** only when you want the provider to receive search terms. [Search and privacy](security.md#web-search)
+
+An interrupted conversation stays interrupted when opened, refreshed, reconnected or after a service restart. The chat shows the operation recorded by the core at interruption (including the tool call and its arguments, when applicable). Choose **Resume** to continue, or send a new message. Resuming reconciles in-flight tool calls against their durable receipts; it does not blindly run them again. Work still running in the core can be observed from another window without resuming it.

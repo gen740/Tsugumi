@@ -33,6 +33,11 @@ def specifiers(s: str) -> list[str]:
 EN = {
 "Agent がこの操作の承認を求めています": "The Agent asks you to approve this operation",
 "表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。": "Approval covers only this operation on the displayed targets. Every new operation needs approval again. Declining changes nothing.",
+    '会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。': 'Conversation interrupted. Operation at interruption: %@. Resume or send a new message.',
+    'モデルの応答': 'Model response',
+    'メッセージの準備': 'Preparing the message',
+    '会話の圧縮': 'Compacting the conversation',
+    '再開': 'Resume',
 "実行環境の状態を確認できませんでした": "Could not check the execution environment",
 "実行環境の状態を確認しています…": "Checking the execution environment…",
 "実行環境からの状態の応答が不正です。": "The execution environment returned an invalid status reply.",

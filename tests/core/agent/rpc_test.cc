@@ -1,5 +1,6 @@
 // Scenarios exercise only the public Agent RPC through the shipped client.
 #include "oauth_fixture.hh"
+#include "project_fixture.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 
 namespace tsugumi::test {
@@ -202,6 +203,93 @@ TEST_F(AgentFixture, ConversationContinuesAfterTheClientDisconnects) {
   const auto state = WaitUntilIdle(conversation);
   EXPECT_NE(state.find("The core kept working."), std::string::npos);
   EXPECT_NE(Events(conversation).View().find("finished"), std::string::npos);
+}
+
+TEST_F(AgentFixture, RestartAndObservationLeaveTheTurnInterruptedUntilResume) {
+  ModelServer model;
+  model.Queue(AnthropicText("Unfinished response"), true);
+  model.Queue(AnthropicText("Explicitly resumed"));
+  Configure(model);
+  const auto conversation = Conversation("explicit-resume");
+  ASSERT_TRUE(Send(conversation, "Start a response").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(1));
+  host.reset();
+  external.reset();
+  human.reset();
+  agent.Stop(true);
+  StartAgent();
+  model.Release();
+  EXPECT_FALSE(model.WaitForRequests(2, 150ms));
+  // Create is also the public operation used when opening an existing chat.
+  EXPECT_EQ(Conversation(conversation), conversation);
+  auto observer = Connect(false, true);
+  for (int i = 0; i < 3; ++i) {
+    const auto snapshot = Get(conversation).View();
+    EXPECT_FALSE(JsonBool(snapshot, "/busy"));
+    EXPECT_TRUE(JsonBool(snapshot, "/resumable"));
+    EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/kind"), "model");
+    EXPECT_TRUE(Call(*observer, A::RequestPayload::EventsRequest,
+                     [&](Builder &b) {
+                       return A::CreateEventsRequest(
+                                  b, b.CreateString(conversation))
+                           .Union();
+                     })
+                    .Code()
+                    .empty());
+  }
+  EXPECT_FALSE(model.WaitForRequests(2, 150ms));
+  ASSERT_TRUE(Call(*external, A::RequestPayload::ConversationActionRequest,
+                   [&](Builder &b) {
+                     return A::CreateConversationActionRequest(
+                                b, b.CreateString(conversation),
+                                A::Action::Resume)
+                         .Union();
+                   })
+                  .Code()
+                  .empty());
+  EXPECT_NE(WaitUntilIdle(conversation).find("Explicitly resumed"),
+            std::string::npos);
+  EXPECT_EQ(model.Requests().size(), 2u);
+  EXPECT_FALSE(JsonBool(Get(conversation).View(), "/resumable"));
+}
+
+TEST_F(AgentProjectFixture,
+       InterruptedToolIsRecordedAndANewMessageCanReplaceResume) {
+  ModelServer model;
+  model.Queue(AnthropicTool("pending-read", "project_inspect", "{}"));
+  model.Queue(AnthropicText("Followed the new message"));
+  Configure(model);
+  StartProject();
+  const auto conversation = Conversation("interrupted-operation");
+  ASSERT_TRUE(Send(conversation, "Inspect the project").Code().empty());
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  while (Events(conversation).View().find("permission") == std::string::npos &&
+         std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(10ms);
+  ASSERT_NE(Events(conversation).View().find("permission"), std::string::npos);
+  host.reset();
+  external.reset();
+  human.reset();
+  agent.Stop(true);
+  StartAgent();
+  const auto snapshot = Get(conversation).View();
+  EXPECT_TRUE(JsonBool(snapshot, "/resumable"));
+  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/kind"), "tool");
+  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/name"),
+            "project_inspect");
+  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/id"), "pending-read");
+  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/arguments_json"),
+            "{}");
+  EXPECT_FALSE(model.WaitForRequests(2, 150ms));
+  Grant(conversation);
+  ASSERT_TRUE(Send(conversation, "Do something else instead").Code().empty());
+  EXPECT_NE(WaitUntilIdle(conversation).find("Followed the new message"),
+            std::string::npos);
+  ASSERT_TRUE(model.WaitForRequests(2));
+  EXPECT_NE(model.Requests()[1].find("Do something else instead"),
+            std::string::npos);
+  EXPECT_NE(model.Requests()[1].find("The tool was not replayed"),
+            std::string::npos);
 }
 
 TEST_F(AgentFixture, PublicCancellationStopsAnInFlightModelRequest) {

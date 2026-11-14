@@ -248,6 +248,7 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
             ? <Button small kind="prominent" onClick={() => window.open(USAGE_URL, '_blank', 'noopener,noreferrer')}>Manage usage</Button>
             : chat.contextFull ? <Button small kind="prominent" onClick={() => chat.newSession()}>{L('新しい会話')}</Button>
             : chat.failed && <Button small onClick={() => chat.retry()}>{L('再試行')}</Button>}
+          {chat.interrupted && !chat.busy && <Button small onClick={() => chat.resume()}>{L('再開')}</Button>}
           {chat.stoppedAtLimit && !chat.busy && <Button small onClick={() => chat.continueWork()}>{L('続ける')}</Button>}
         </div>
       )}

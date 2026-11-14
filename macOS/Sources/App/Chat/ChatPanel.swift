@@ -216,6 +216,7 @@ struct ChatPanel: View {
           } else if chat.contextFull {
             Button("新しい会話") { chat.newSession() }.controlSize(.small).buttonStyle(.borderedProminent)
           } else if chat.failed { Button("再試行") { chat.retry() }.controlSize(.small) }
+          if chat.interrupted && !chat.busy { Button("再開") { chat.resume() }.controlSize(.small) }
           if chat.stoppedAtLimit && !chat.busy { Button("続ける") { chat.continueWork() }.controlSize(.small) }
         }
         .padding(.horizontal, 12).padding(.vertical, 5)
