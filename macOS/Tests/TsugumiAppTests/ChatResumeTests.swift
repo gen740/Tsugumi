@@ -63,8 +63,10 @@ import TsugumiRPC
       self.daemon = daemon
       _ = try makeSession()
       let endpoint = daemon.endpoint
+      // Match the host folder registered by EnvironmentManager's Ready state.
       _ = try await CoreAgentClient.shared.call("RegisterProjectRequest", ["project_id": endpoint.projectId,
-        "endpoint": endpoint.url.absoluteString, "token": endpoint.token, "title": "Chat UI fixture"])
+        "endpoint": endpoint.url.absoluteString, "token": endpoint.token, "title": "Chat UI fixture",
+        "path": project.standardizedFileURL.path])
       _ = try await CoreAgentClient.shared.call("ConversationCreateRequest", ["conversation_id": conversationID,
         "project_id": endpoint.projectId, "role": "worker"])
       let provider = Tsugumi_Service_ProviderInputT()

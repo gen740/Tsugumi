@@ -43,8 +43,15 @@ try {
   const encoded = encodeRequest('EnvironmentRequest', { project: fs.realpathSync(root), action: 'Start' }, 1n, true)
   const request = Message.getRootAsMessage(new fb.ByteBuffer(encoded)).unpack().payload as any
   assert.equal(request.value.action, EnvironmentAction.Start)
+  assert.equal(request.value.project, fs.realpathSync(root))
   assert.deepEqual(request.value.folders, [])
   assert.deepEqual(request.value.origins, [])
+  // Direct endpoint registration must also carry the host folder for project conversations.
+  const registration = encodeRequest('RegisterProjectRequest', { project_id: 'project',
+    endpoint: 'ws://localhost:1/rpc', token: 't', title: 'Project', path: fs.realpathSync(root) }, 2n, true)
+  const registered = Message.getRootAsMessage(new fb.ByteBuffer(registration)).unpack().payload as any
+  assert.equal(registered.value.projectId, 'project')
+  assert.equal(registered.value.path, fs.realpathSync(root))
   const state = new EnvironmentStateT(); state.project = root; state.key = 'key'; state.phase = EnvironmentPhase.Ready
   const builder = new fb.Builder()
   Message.finishMessageBuffer(builder, new MessageT(0n, Payload.Event, new EventT(EventPayload.EnvironmentState, state)).pack(builder))

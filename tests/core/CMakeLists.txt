@@ -53,8 +53,8 @@ else()
   set(_test_environment_daemon "$<TARGET_FILE:tsugumi-environment-daemon-double>")
   set(_test_guide_root ${PROJECT_SOURCE_DIR})
 endif()
-add_executable(tsugumi_agent_rpc_tests agent/rpc_test.cc agent/host_rpc_test.cc agent/environment_rpc_test.cc agent/skills_rpc_test.cc agent/models_rpc_test.cc agent/settings_rpc_test.cc agent/guide_rpc_test.cc agent/execution_broker_test.cc agent/project_rpc_test.cc agent/version_note_rpc_test.cc agent_fixture_server.cc)
-target_link_libraries(tsugumi_agent_rpc_tests PRIVATE tsugumi_client tsugumi_worker_protocol tsugumi_peer_tls GTest::gtest_main hosq Threads::Threads)
+add_executable(tsugumi_agent_rpc_tests agent/conversation_store_rpc_test.cc agent/rpc_test.cc agent/host_rpc_test.cc agent/environment_rpc_test.cc agent/skills_rpc_test.cc agent/models_rpc_test.cc agent/settings_rpc_test.cc agent/guide_rpc_test.cc agent/execution_broker_test.cc agent/project_rpc_test.cc agent/version_note_rpc_test.cc agent_fixture_server.cc)
+target_link_libraries(tsugumi_agent_rpc_tests PRIVATE PkgConfig::SQLITE3 tsugumi_client tsugumi_worker_protocol tsugumi_peer_tls GTest::gtest_main hosq Threads::Threads)
 target_compile_options(tsugumi_agent_rpc_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 target_compile_definitions(tsugumi_agent_rpc_tests PRIVATE
   TSUGUMI_GUIDE_TEST_ROOT="${_test_guide_root}"
