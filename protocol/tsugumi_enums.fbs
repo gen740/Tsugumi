@@ -72,7 +72,7 @@ enum StageOutcome : ubyte { unspecified = 0, running = 1, done = 2, cached = 3, 
 
 /// build: what SDK preparation, Nix evaluation and build printed (kept apart
 /// from the Card's own stderr so logs can be shown by stage).
-enum LogStream : ubyte { unspecified = 0, stdout = 1, stderr = 2, journal = 3, build = 4 }
+enum LogStream : ubyte { unspecified = 0, standard_output = 1, standard_error = 2, journal = 3, build = 4 }
 
 enum ValueSide : ubyte { unspecified = 0, input = 1, output = 2 }
 

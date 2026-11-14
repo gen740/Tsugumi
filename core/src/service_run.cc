@@ -822,9 +822,9 @@ void Service::log_range(RequestIn& req) {
     inv = *r->invocation();
   }
   auto stream = r->stream();
-  if (stream != LogStream::stdout && stream != LogStream::stderr && stream != LogStream::journal &&
+  if (stream != LogStream::standard_output && stream != LogStream::standard_error && stream != LogStream::journal &&
       stream != LogStream::build)
-    throw Failed(FailureKind::invalid_request, "stream must be stdout, stderr or journal");
+    throw Failed(FailureKind::invalid_request, "stream must be standard_output, standard_error, build or journal");
   bool tail = r->tail().value_or(false);
   uint64_t offset = r->offset().value_or(0);
   if (tail && offset != 0) throw Failed(FailureKind::invalid_request, "tail and offset cannot be combined");

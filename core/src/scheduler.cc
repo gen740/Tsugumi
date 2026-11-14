@@ -1092,7 +1092,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     s.state = out.failure ? (was_cancel ? CardState::cancelled : CardState::failed) : CardState::succeeded;
     s.failure = out.failure;
     if (out.failure && out.failure->diagnostic)
-      card_log(node.path, w.invocation, LogStream::stderr, "tsugumi: " + std::string(failure_kind_name(out.failure->kind)) +
+      card_log(node.path, w.invocation, LogStream::standard_error, "tsugumi: " + std::string(failure_kind_name(out.failure->kind)) +
                                                               ": " + *out.failure->diagnostic + "\n");
     InvocationRecordData rec;
     rec.summary = s;
@@ -1486,7 +1486,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         const auto* t = flatbuffers::GetAnyRoot(reinterpret_cast<const uint8_t*>(c->bytes.data()));
         bool cond = flatbuffers::GetAnyFieldI(*t, *f) != 0;
         p.outputs.push_back({cond ? "a" : "b", v->kind, v->type, v->bytes, {}});
-        card_log(node.path, s.invocation, LogStream::stdout, std::string("branch -> ") + (cond ? "a" : "b") + "\n");
+        card_log(node.path, s.invocation, LogStream::standard_output, std::string("branch -> ") + (cond ? "a" : "b") + "\n");
         break;
       }
       case Template::Collect:

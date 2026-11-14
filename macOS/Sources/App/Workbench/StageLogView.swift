@@ -21,7 +21,7 @@ struct StageLogView: View {
   @State private var open: Set<String> = []
   /// Groups opened when they started running: each once, so one the reader folds stays folded.
   @State private var openedRunning: Set<String> = []
-  @State private var rawStream: Tsugumi_Data_LogStream = .stdout
+  @State private var rawStream: Tsugumi_Data_LogStream = .standardOutput
   @State private var error: String?
   @State private var loaded = false
   /// The log opens at its end and follows it, as the chat does, until the
@@ -76,8 +76,8 @@ struct StageLogView: View {
             DisclosureGroup(isExpanded: binding("raw")) {
               VStack(alignment: .leading, spacing: 4) {
                 Picker("", selection: $rawStream) {
-                  Text("stdout").tag(Tsugumi_Data_LogStream.stdout)
-                  Text("stderr").tag(Tsugumi_Data_LogStream.stderr)
+                  Text("stdout").tag(Tsugumi_Data_LogStream.standardOutput)
+                  Text("stderr").tag(Tsugumi_Data_LogStream.standardError)
                   Text("build").tag(Tsugumi_Data_LogStream.build)
                   Text("journal").tag(Tsugumi_Data_LogStream.journal)
                 }
@@ -172,9 +172,9 @@ struct StageLogView: View {
           logText(logs[.build] ?? "", empty: String(localized: "準備・評価・build の出力はありません（キャッシュや再利用のときは空です）"))
         case "execute":
           Text("stdout").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-          logText(logs[.stdout] ?? "", empty: String(localized: "stdout への出力はありません"))
+          logText(logs[.standardOutput] ?? "", empty: String(localized: "stdout への出力はありません"))
           Text("stderr").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-          logText(logs[.stderr] ?? "", empty: String(localized: "stderr への出力はありません"))
+          logText(logs[.standardError] ?? "", empty: String(localized: "stderr への出力はありません"))
         default:
           logText(journal(for: ["validate", "save"]), empty: String(localized: "記録された出来事はありません"))
           if let failure, label == String(localized: "失敗") { Text(failure).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
@@ -232,7 +232,7 @@ struct StageLogView: View {
         nextFailure = summary.failure?.diagnostic
       }
       var out: [Tsugumi_Data_LogStream: String] = [:]
-      for stream in [Tsugumi_Data_LogStream.build, .stdout, .stderr, .journal] {
+      for stream in [Tsugumi_Data_LogStream.build, .standardOutput, .standardError, .journal] {
         var text = "", offset: UInt64 = 0
         while true {
           let slice = try await rpc.logRange(runId: runId, card: card, invocation: inv, stream: stream, offset: offset, limit: 256 * 1024)

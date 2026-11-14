@@ -82,7 +82,7 @@ enum Stage: Int, CaseIterable, Identifiable {
   var logStream: Tsugumi_Data_LogStream {
     switch self {
     case .prepare, .evaluate, .build: return .build
-    case .execute: return .stdout
+    case .execute: return .standardOutput
     case .waiting, .validate, .save, .done: return .journal
     }
   }

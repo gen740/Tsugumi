@@ -441,11 +441,11 @@ def test_run_logs_and_display(project, tmp_path, core_factory):
     rec = c.call("RunRecordRequest", runId=run_id, card=shown)
     assert rec.exists and rec.recordingDisabled is True
     # Read the stdout log in small chunks; never split a character.
-    whole = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout, limitBytes=262144)
+    whole = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output, limitBytes=262144)
     assert text(whole.text) == message + "\n"
     pieces, off = [], 0
     while True:
-        s = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout,
+        s = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output,
                    offset=off, limitBytes=7)
         pieces.append(text(s.text))
         if s.nextOffset == off:
@@ -454,14 +454,14 @@ def test_run_logs_and_display(project, tmp_path, core_factory):
         if off >= s.sizeBytes:
             break
     assert "".join(pieces) == text(whole.text)
-    tail = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout, tail=True, limitBytes=10)
+    tail = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output, tail=True, limitBytes=10)
     assert text(whole.text).endswith(text(tail.text)) and tail.truncated
     inside = text(whole.text).encode().index("日".encode()) + 1  # inside a 3-byte character
     with pytest.raises(RpcFailure) as e:
-        c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout, offset=inside)
+        c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output, offset=inside)
     assert e.value.kind == "invalid_range"
     with pytest.raises(RpcFailure):
-        c.call("LogRangeRequest", runId=run_id, stream=LogStream.stdout, tail=True, offset=3)
+        c.call("LogRangeRequest", runId=run_id, stream=LogStream.standard_output, tail=True, offset=3)
     journal = c.call("LogRangeRequest", runId=run_id, stream=LogStream.journal)
     assert text(journal.text)
     history = c.call("RunHistoryRequest")

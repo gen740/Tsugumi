@@ -295,7 +295,7 @@ def test_collected_directories_and_saved_batch_keep_empty_subdirectories(core_fa
     page = invocation_page(client, replay, "work")
     assert len(page.records) == 2
     logs = [client.call("LogRangeRequest", runId=replay, card=path("work"), invocation=row.invocation,
-                        stream=LogStream.stdout) for row in page.records]
+                        stream=LogStream.standard_output) for row in page.records]
     assert [text(log.text) for log in logs] == ["1\n", "2\n"]
 
 

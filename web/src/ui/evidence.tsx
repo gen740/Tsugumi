@@ -14,7 +14,7 @@ import { Button, download } from './controls'
 import { DisplayContent } from './display'
 
 export const EvidenceContext = createContext<{ session: ProjectSession; tab?: WorkflowTab } | undefined>(undefined)
-const streamOf = (t: Evidence) => D.LogStream[t.stream ?? 'stdout']
+const streamOf = (t: Evidence) => ({ stdout: D.LogStream.standard_output, stderr: D.LogStream.standard_error, build: D.LogStream.build, journal: D.LogStream.journal })[t.stream ?? 'stdout']
 export async function resolveEvidence(session: ProjectSession, target: Evidence) {
   if (target.kind === 'card') return session.resolution.has(key(target.card!))
   const rpc = session.rpc

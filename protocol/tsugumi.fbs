@@ -547,8 +547,8 @@ table ProjectShellRequest {
 }
 
 table ProjectShellResult {
-  stdout:[ubyte] (id: 0, required);
-  stderr:[ubyte] (id: 1, required);
+  stdout_bytes:[ubyte] (id: 0, required);
+  stderr_bytes:[ubyte] (id: 1, required);
   exit_code:int32 = -1 (id: 2);
   signal:int32 (id: 3);
   cancelled:bool (id: 4);

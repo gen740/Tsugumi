@@ -137,7 +137,7 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   WorkerProc& worker = *lease.worker;
   s.worker_reused = lease.reused;
   if (!lease.replaced.empty() && request.log)
-    request.log(LogStream::stderr, "Resident worker state started fresh: " + lease.replaced + ".\n");
+    request.log(LogStream::standard_error, "Resident worker state started fresh: " + lease.replaced + ".\n");
 
   auto invocation_log = std::make_shared<workerd::InvocationLog>(
       [sink = request.log](uint64_t stream, const std::string& text) {

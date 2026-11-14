@@ -92,7 +92,7 @@ struct EvidenceTarget: Hashable, Identifiable {
     return target
   }
   var logStream: Tsugumi_Data_LogStream {
-    switch stream { case "stderr": return .stderr; case "build": return .build; case "journal": return .journal; default: return .stdout }
+    switch stream { case "stderr": return .standardError; case "build": return .build; case "journal": return .journal; default: return .standardOutput }
   }
 
   @MainActor func exists(in session: ProjectSession) async -> Bool {
