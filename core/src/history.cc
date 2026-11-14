@@ -1573,7 +1573,8 @@ size_t History::export_runs(const std::filesystem::path& copy) {
   return n;
 }
 
-std::vector<std::string> History::delete_runs(const std::filesystem::path& copy, std::optional<int64_t> ended_before) {
+std::vector<std::string> History::delete_runs(const std::filesystem::path& copy, std::optional<int64_t> ended_before,
+                                             const std::optional<std::vector<std::string>>& run_ids) {
   std::lock_guard<std::mutex> l(copy_mu_);
   std::error_code ec;
   bool has_copy = std::filesystem::exists(copy, ec);
@@ -1588,6 +1589,12 @@ std::vector<std::string> History::delete_runs(const std::filesystem::path& copy,
       auto st = db->prepare("INSERT OR IGNORE INTO temp.moving SELECT run_id FROM " + s + ".runs WHERE state IN (" +
                             finished_states() + ") AND (?1 IS NULL OR ended_at < ?1)");
       st.bind(1, ended_before).run();
+    }
+    if (run_ids) {
+      db->exec("CREATE TEMP TABLE selected_runs(run_id TEXT PRIMARY KEY)");
+      for (const auto& id : *run_ids)
+        db->prepare("INSERT OR IGNORE INTO temp.selected_runs VALUES(?)").bind(1, id).run();
+      db->exec("DELETE FROM temp.moving WHERE run_id NOT IN (SELECT run_id FROM temp.selected_runs)");
     }
     db->exec("DELETE FROM temp.moving WHERE run_id IN (SELECT run_id FROM main.remote_jobs)");
     auto st = db->prepare("SELECT run_id FROM temp.moving");

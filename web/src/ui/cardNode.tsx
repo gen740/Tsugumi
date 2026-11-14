@@ -22,7 +22,7 @@ import { useObserve } from '../model/observable'
 /** "Invocation #3 · Succeeded" and the like; undefined before the first invocation. */
 export function runText(d: CardNodeData): string | undefined {
   if (d.executionList && d.state !== undefined) return cardState(d.state).label + (d.runMark ? ` · ${d.runMark}` : '')
-  if (d.state === undefined || d.invocation <= 0n) return undefined
+  if (d.state === undefined || d.invocation <= 0n) return d.runMark
   let s = L('実行 #{0}', d.invocation)
   const cur = currentStage(d.stage)
   if (cur && (d.state === D.CardState.running || d.state === D.CardState.preparing)) {

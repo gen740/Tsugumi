@@ -92,10 +92,16 @@ TEST(AgentCatalog, ExposesExactlyTheSharedRequestList) {
     EXPECT_TRUE(tool->mutating);
     EXPECT_TRUE(tool->has_origin);
   }
+  const auto history = json::Object(json::Get(
+      json::Object(catalog.Find("run_history_delete")->spec.input_schema),
+      "properties"));
+  EXPECT_FALSE(history.contains("run_ids"));
+  EXPECT_FALSE(history.contains("restrict_to_run_ids"));
 }
 
 TEST(AgentApprovalDescription, HistoryListsEverySelectedRunAcrossPages) {
   int calls = 0;
+  std::vector<std::string> run_ids;
   const auto preview = DescribeOperation(
       "run_history_delete", {{"ended_before", "\"50\""}}, "project",
       [&](const auto &name, const auto &args) {
@@ -111,12 +117,47 @@ TEST(AgentApprovalDescription, HistoryListsEverySelectedRunAcrossPages) {
         EXPECT_EQ(json::Text(args, "cursor"), "page-two");
         return json::Object(
             R"({"runs":[{"status":{"run_id":"old","state":"failed","ended_at":"10"}}]})");
-      });
+      }, &run_ids);
   EXPECT_EQ(calls, 2);
   EXPECT_NE(preview.find("old"), std::string::npos);
   EXPECT_EQ(preview.find("recent"), std::string::npos);
   EXPECT_EQ(preview.find("active"), std::string::npos);
   EXPECT_NE(preview.find("\"run_count\":1"), std::string::npos);
+  EXPECT_EQ(run_ids, std::vector<std::string>{json::Quote("old")});
+  // A run completing after the final description must not enter the RPC's
+  // deletion set. Only IDs collected from that description go over the wire.
+  const auto bytes = EncodeProjectRequest(
+      "run_history_delete",
+      json::Encode(json::Members{{"op_id", json::Quote("operation")},
+                                {"run_ids", json::Encode(run_ids)},
+                                {"restrict_to_run_ids", "true"}}), 9);
+  const auto *request = Tsugumi::RPC::GetMessage(bytes.data())
+                            ->payload_as_Request()
+                            ->value_as_RunHistoryDeleteRequest();
+  EXPECT_TRUE(request->restrict_to_run_ids());
+  ASSERT_NE(request->run_ids(), nullptr);
+  ASSERT_EQ(request->run_ids()->size(), 1u);
+  EXPECT_EQ(request->run_ids()->Get(0)->str(), "old");
+}
+
+TEST(AgentApprovalDescription, EmptyHistoryApprovalSendsAnExplicitEmptySet) {
+  std::vector<std::string> run_ids{json::Quote("stale")};
+  DescribeOperation("run_history_delete", {}, "project",
+                    [](const auto &, const auto &) {
+                      return json::Object(
+                          R"({"runs":[{"status":{"run_id":"active","state":"running"}}]})");
+                    }, &run_ids);
+  EXPECT_TRUE(run_ids.empty());
+  const auto bytes = EncodeProjectRequest(
+      "run_history_delete",
+      json::Encode(json::Members{{"op_id", json::Quote("operation")},
+                                {"run_ids", json::Encode(run_ids)},
+                                {"restrict_to_run_ids", "true"}}), 10);
+  const auto *request = Tsugumi::RPC::GetMessage(bytes.data())
+                            ->payload_as_Request()
+                            ->value_as_RunHistoryDeleteRequest();
+  EXPECT_TRUE(request->restrict_to_run_ids());
+  EXPECT_TRUE(!request->run_ids() || request->run_ids()->size() == 0);
 }
 
 TEST(AgentApprovalDescription,

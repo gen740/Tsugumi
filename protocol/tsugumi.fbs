@@ -412,9 +412,15 @@ table NixSourceResolveRequest { ref:string (id: 0, required); }
 /// -> RunHistoryDeleteResult. Deletes finished runs (all, or those that ended
 /// before ended_before, Unix ms) with their records, values, logs and files,
 /// here and in the project's copy. Only while no run is active.
+/// Approvals must set restrict_to_run_ids and pass the exact run_ids shown to
+/// the person (an empty set deletes nothing). Without that flag, run_ids must
+/// be empty and the UI's all-runs or date scope applies. The separate flag
+/// distinguishes an empty selection from object APIs' default empty vectors.
 table RunHistoryDeleteRequest {
   op_id:string (id: 0, required);
   ended_before:int64 = null (id: 1);
+  run_ids:[string] (id: 2);
+  restrict_to_run_ids:bool = false (id: 3);
 }
 
 /// -> VersionResult. Makes the project a git repository: a first commit of

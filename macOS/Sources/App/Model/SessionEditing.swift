@@ -517,8 +517,16 @@ extension ProjectSession {
   }
 
   /// Starts writing a Draft's name and content on its Card.
-  func startDraftEdit(_ k: CardKey) {
-    inlineDraft = InlineDraft(card: k, name: draftUntitled(k) ? "" : displayName(k), content: cardMeta(k)?["content"]?.string ?? "")
+  func startDraftEdit(_ k: CardKey, revision existing: RevisionEdit? = nil) async {
+    if existing == nil, let current = inlineDraft {
+      guard current.card != k else { return }
+      _ = await finishDraftEdit()
+      guard inlineDraft == nil else { return }
+    }
+    let name = draftUntitled(k) ? "" : displayName(k), content = cardMeta(k)?["content"]?.string ?? ""
+    let revision = existing ?? RevisionEdit()
+    revision.reload(rev)
+    inlineDraft = InlineDraft(card: k, name: name, content: content, initialName: name, initialContent: content, revision: revision)
   }
 
   /// Why the name typed on a Draft's Card cannot be taken (no name is fine).
@@ -528,27 +536,45 @@ extension ProjectSession {
 
   /// Keeps what was written. A name the Card cannot take stays as it was, with
   /// a notice. The Card's permanent key when its name changed.
-  func finishDraftEdit() async -> CardKey? {
+  func finishDraftEdit(overwrite: Bool = false) async -> CardKey? {
+    if let task = draftFinishTask { return await task.value }
+    guard inlineDraft != nil else { return nil }
+    let task = Task { @MainActor in
+      var renamed: CardKey?
+      repeat {
+        let result = await self.finishDraftEditOnce(overwrite: overwrite)
+        renamed = result ?? renamed
+        guard let current = self.inlineDraft else { break }
+        if current.revision.conflictRev != nil || current.revision.error != nil { break }
+      } while true
+      self.draftFinishTask = nil
+      return renamed
+    }
+    draftFinishTask = task
+    return await task.value
+  }
+
+  private func finishDraftEditOnce(overwrite: Bool) async -> CardKey? {
+    // Local canvas edits may still be saving when typing starts. Their deltas
+    // advance this editor's base; another client's deltas never do.
+    await save()
     guard let e = inlineDraft else { return nil }
-    inlineDraft = nil
-    guard instance(e.card) != nil else { return nil }
-    if e.content != cardMeta(e.card)?["content"]?.string ?? "" {
-      edit { s in s.updateMeta(e.card) { $0["content"] = e.content.isEmpty ? nil : .string(e.content) } }
+    let contentChanged = e.content != e.initialContent, nameChanged = e.name != e.initialName
+    guard instance(e.card) != nil, contentChanged || nameChanged else { inlineDraft = nil; return nil }
+    let trimmed = e.name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let name = trimmed.isEmpty ? "draft" : trimmed
+    if nameChanged, let problem = cardNameProblem(e.card, name) { notice = problem; e.revision.error = problem; return nil }
+    let ok = await e.revision.apply(self, overwrite: overwrite) { s in
+      s.updateMeta(e.card) { m in
+        if contentChanged { m["content"] = e.content.isEmpty ? nil : .string(e.content) }
+        if nameChanged { m["name"] = .string(name) }
+      }
     }
-    // An empty name restores the default Draft label; the identifier stays fixed.
-    var name = e.name.trimmingCharacters(in: .whitespaces)
-    if name.isEmpty {
-      if draftUntitled(e.card) { return nil }
-      name = "draft"
+    if ok, inlineDraft?.revision === e.revision {
+      if inlineDraft?.name == e.name && inlineDraft?.content == e.content { inlineDraft = nil }
+      else { inlineDraft?.initialName = e.name; inlineDraft?.initialContent = e.content }
     }
-    guard name != displayName(e.card) else { return nil }
-    do {
-      try await renameCard(e.card, to: name)
-      return e.card
-    } catch {
-      notice = (error as? RPCFailure)?.diagnostic ?? "\(error)"
-      return nil
-    }
+    return ok && nameChanged ? e.card : nil
   }
 
   /// Changes only the human name. History and all exact addresses keep their identifiers.
@@ -980,7 +1006,7 @@ extension ProjectSession {
     edit { $0.changeNote(id, fn) }
   }
 
-  private func changeNote(_ id: String, _ fn: (inout JSONValue) -> Void) {
+  func changeNote(_ id: String, _ fn: (inout JSONValue) -> Void) {
     guard let sc = scopeHolding("notes", id) else { return }
     updateLayout(of: sc) { l in
       guard var notes = l["notes"]?.array, let i = notes.firstIndex(where: { $0["id"]?.string == id }) else { return }

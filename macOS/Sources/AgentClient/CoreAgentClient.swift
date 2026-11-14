@@ -164,6 +164,12 @@ public actor CoreAgentClient {
     for transport in previous.values { transport.close() }
   }
 
+  /// Releases both connections before switching to another service instance.
+  func disconnect() async {
+    _ = try? await opening?.value
+    close()
+  }
+
   private func closed(_ identity: UUID) {
     guard identity == connectionID else { return }
     close()
@@ -176,8 +182,17 @@ public actor CoreAgentClient {
     }
     nextID += 1
     let frame = try ServiceWire.encode(method, fields: fields, id: nextID, host: host)
-    let data: Data = try await withCheckedThrowingContinuation { continuation in
-      transport.call(frame, timeout: .seconds(["EnvironmentRequest", "HostRuntimeRequest"].contains(method) ? 3600 : 120), continuation: continuation)
+    let identity = connectionID
+    let data: Data
+    do {
+      data = try await withCheckedThrowingContinuation { continuation in
+        transport.call(frame, timeout: .seconds(["EnvironmentRequest", "HostRuntimeRequest"].contains(method) ? 3600 : 120), continuation: continuation)
+      }
+    } catch RPCError.disconnected {
+      // The pending reply can fail before the close observer reaches this
+      // actor. A snapshot read after restart must open a fresh connection.
+      closed(identity)
+      throw RPCError.disconnected
     }
     return try ServiceWire.decode(data, host: host)
   }

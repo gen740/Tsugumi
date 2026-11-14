@@ -48,7 +48,8 @@ auto Docs(
 }
 
 const std::set<std::string> kOwnedFields{"origin", "op_id",
-                                         "approved_permissions"};
+                                         "approved_permissions", "run_ids",
+                                         "restrict_to_run_ids"};
 
 auto OwnOperationId(const reflection::Object &object) -> bool {
   const auto name = object.name()->str();
