@@ -100,6 +100,8 @@ TEST(AgentApprovalDescription, HistoryListsEverySelectedRunAcrossPages) {
       "run_history_delete", {{"ended_before", "\"50\""}}, "project",
       [&](const auto &name, const auto &args) {
         EXPECT_EQ(name, "run_history");
+        // The public history RPC accepts at most 500 rows per page.
+        EXPECT_EQ(json::Get(args, "limit"), "500");
         ++calls;
         if (calls == 1) {
           EXPECT_FALSE(args.contains("cursor"));

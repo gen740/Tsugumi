@@ -1231,7 +1231,7 @@ std::vector<RunSummaryData> History::runs_page(sql::Db& db, std::optional<CardPa
   std::vector<RunSummaryData> out;
   while (st.step()) {
     out.push_back(run_row(st));
-    if (seqs) seqs->push_back(st.i64(12));  // after kRunCols
+    if (seqs) seqs->push_back(st.i64(14));  // after kRunCols, including both partial-run flags
   }
   return out;
 }

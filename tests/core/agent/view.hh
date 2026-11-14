@@ -48,6 +48,7 @@ inline auto View(const A::Usage *value) -> std::string;
 inline auto View(const A::ToolRecord *value) -> std::string;
 inline auto View(const A::Helper *value) -> std::string;
 inline auto View(const A::Conversation *value) -> std::string;
+inline auto View(const A::InterruptedOperation *value) -> std::string;
 inline auto View(const A::ConversationResult *value) -> std::string;
 inline auto View(const A::ConversationEntry *value) -> std::string;
 inline auto View(const A::ConversationList *value) -> std::string;
@@ -163,6 +164,14 @@ inline auto View(const A::Conversation *value) -> std::string {
                  {"helpers", View(value->helpers())},
                  {"usage", View(value->usage())}});
 }
+inline auto View(const A::InterruptedOperation *value) -> std::string {
+  if (!value)
+    return "null";
+  return Object({{"kind", View(value->kind())},
+                 {"id", View(value->id())},
+                 {"name", View(value->name())},
+                 {"arguments_json", View(value->arguments_json())}});
+}
 inline auto View(const A::ConversationResult *value) -> std::string {
   if (!value)
     return "null";
@@ -170,6 +179,7 @@ inline auto View(const A::ConversationResult *value) -> std::string {
                  {"busy", View(value->busy())},
                  {"resumable", View(value->resumable())},
                  {"continuable", View(value->continuable())},
+                 {"interrupted_operation", View(value->interrupted_operation())},
                  {"project_id", View(value->project_id())},
                  {"event_seq", View(value->event_seq())}});
 }

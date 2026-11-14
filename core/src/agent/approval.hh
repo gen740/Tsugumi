@@ -21,7 +21,7 @@ inline auto DescribeOperation(
     std::string cursor;
     const auto cutoff = json::Get(args, "ended_before");
     do {
-      json::Members query{{"limit", "1000"}};
+      json::Members query{{"limit", "500"}};
       if (!cursor.empty())
         query["cursor"] = json::Quote(cursor);
       const auto page = read("run_history", query);

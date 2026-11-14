@@ -184,7 +184,9 @@ def test_tools_and_instructions(plugin):
     assert init["capabilities"] == {"tools": {}}
     # Claude Code keeps the first 4096 characters of a server's instructions.
     assert "tsugumi_open" in init["instructions"] and len(init["instructions"]) <= 4096
-    names = [t["name"] for t in mcp.request("tools/list")["result"]["tools"]]
+    tools = mcp.request("tools/list")["result"]["tools"]
+    names = [t["name"] for t in tools]
+    by_name = {t["name"]: t for t in tools}
     assert names[0] == "tsugumi_open"
     assert {"project_inspect", "project_save", "run", "run_record", "demo_read", "agent_access", "agent_access_resolve", "agent_conversation_get"} <= set(names)
     # The plugin sees the same core tool catalog and Agent operations.
@@ -194,8 +196,11 @@ def test_tools_and_instructions(plugin):
         return re.sub(r"(?<!^)([A-Z])", r"_\1", request.removesuffix("Request")).lower()
     project_names = {tool_name(request) for request in shared["requests"]}
     assert project_names <= set(names)
-    assert not {"run_history_delete", "project_cache_clear", "version_checkout", "version_summary",
-                "version_init", "version_mark", "view_save"} & set(names)
+    approval_names = {tool_name(request) for request in shared["approvalRequests"]}
+    assert approval_names <= set(names)
+    for name in approval_names:
+        assert "Requires the person's approval for this call" in by_name[name]["description"], name
+    assert not {"view_save", "session_hello", "project_open", "project_close", "agent_hello"} & set(names)
     text, error = mcp.call("project_inspect", {})
     assert error and "tsugumi_open" in text
 
