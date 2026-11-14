@@ -9,10 +9,29 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   static func request(_ method: String, _ fields: [String: Any], host: Bool) throws -> (UInt8, NativeObject) {
     if host {
       switch method {
+      case "GuideGetRequest":
+        let v = Tsugumi_Host_GuideGetRequestT()
+        v.sessionId = fields["session_id"] as? String ?? "desktop"
+        v.language = fields["language"] as? String
+        return (Tsugumi_Host_RequestPayload.guidegetrequest.rawValue, v)
+      case "GuideAdvanceRequest":
+        let v = Tsugumi_Host_GuideAdvanceRequestT()
+        v.sessionId = fields["session_id"] as? String ?? "desktop"
+        v.language = fields["language"] as? String
+        let f = fields["event"] as? [String: Any] ?? [:]
+        let e = Tsugumi_Host_GuideInputT()
+        e.kind = f["kind"] as? String ?? ""
+        e.text = f["text"] as? String; e.project = f["project"] as? String
+        e.demo = f["demo"] as? String; e.title = f["title"] as? String
+        e.connected = f["connected"] as? Bool ?? false; e.active = f["active"] as? Bool ?? false
+        e.run = f["run"] as? String; e.state = f["state"] as? String
+        e.scripted = f["scripted"] as? Bool ?? true; e.expectedStep = f["expected_step"] as? String
+        v.event = e
+        return (Tsugumi_Host_RequestPayload.guideadvancerequest.rawValue, v)
       case "EnvironmentRequest":
         let v = Tsugumi_Host_EnvironmentRequestT()
         v.project = fields["project"] as? String ?? ""
@@ -384,6 +403,22 @@ enum ServiceWire {
 
   private static func view(_ value: NativeObject) throws -> Any {
     switch value {
+    case let v as Tsugumi_Host_GuideStateT:
+      var out: [String: Any] = ["sessionId": v.sessionId, "revision": v.revision, "answerRevision": v.answerRevision,
+        "setupDone": v.setupDone, "demoAnswered": v.demoAnswered, "step": v.step ?? "",
+        "text": v.text ?? "", "say": v.say ?? "", "highlight": v.highlight ?? "",
+        "choices": v.choices.compactMap { $0 }, "actions": try v.actions.compactMap { try $0.map(view) },
+        "open": v.open_ ?? "", "endTour": v.endTour, "present": v.present,
+        "note": v.note ?? "", "asked": v.asked ?? "", "project": v.project ?? ""]
+      if let tour = v.tour { out["tour"] = try view(tour) }
+      return out
+    case let v as Tsugumi_Host_GuideTourT:
+      return ["demo": v.demo, "title": v.title, "path": v.path, "started": v.started] as [String: Any]
+    case let v as Tsugumi_Host_GuideActionT:
+      var out: [String: Any] = ["kind": v.kind, "label": v.label]
+      if let demo = v.demo { out["demo"] = demo }
+      if let card = v.card { out["card"] = card }
+      return out
     case let v as Tsugumi_Host_EnvironmentStateT:
       return ["project": v.project, "key": v.key, "phase": v.phase, "endpoint": v.endpoint ?? "", "token": v.token ?? "",
         "project_id": v.projectId ?? "", "server_instance_id": v.serverInstanceId ?? "", "control_dir": v.controlDir ?? "",

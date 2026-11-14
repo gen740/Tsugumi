@@ -33,9 +33,14 @@ clangStdenv.mkDerivation {
     root = ../.;
     # Python cases run from the checkout. Editing a scenario does not rebuild
     # the production core or any cached C++ test executable.
-    fileset = lib.fileset.fileFilter (
-      file: file.name == "CMakeLists.txt" || file.hasExt "cmake" || file.hasExt "cc" || file.hasExt "hh"
-    ) ../tests/core;
+    fileset = lib.fileset.unions [
+      ../agent/Shared/guide-script.json
+      ../agent/Shared/guide-script.en.json
+      ../demos
+      (lib.fileset.fileFilter (
+        file: file.name == "CMakeLists.txt" || file.hasExt "cmake" || file.hasExt "cc" || file.hasExt "hh"
+      ) ../tests/core)
+    ];
   };
   cmakeDir = "../tests/core";
   nativeBuildInputs = [

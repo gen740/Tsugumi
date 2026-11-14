@@ -31,6 +31,9 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"実行環境の状態を確認できませんでした": "Could not check the execution environment",
+"実行環境の状態を確認しています…": "Checking the execution environment…",
+"実行環境からの状態の応答が不正です。": "The execution environment returned an invalid status reply.",
 'agentd（このホストの所有者だけが読み書きできます）': 'agentd (readable and writable only by this host’s owner)',
 'agentd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。': 'Saved in agentd. The key is not stored in Cards, projects, settings or logs.',
 '%@ のキーを agentd から削除しました。': 'Deleted the key for %@ from agentd.',
@@ -1294,9 +1297,7 @@ EN = {
 "ツグミに質問": "Ask Tsugumi",
 "ツグミへの質問": "Question for Tsugumi",
 "デモ「%@」の案内は中断中": "Tour of the demo “%@” paused",
-"デモ「%@」の案内を始めます": "Starting the tour of the demo “%@”",
 "デモ「%@」を案内中": "Touring the demo “%@”",
-"デモの案内を続けます": "Continuing the demo tour",
 "デモを見せて": "Show me a demo",
 "デモを見る…": "Show Demos…",
 "プロジェクトを読んでいます": "Reading the project",
@@ -1310,10 +1311,7 @@ EN = {
 "回答を止めました。": "Stopped answering.",
 "回答を止める": "Stop Answering",
 "実行が始まりました": "A run started",
-"実行が終わりました（%@）": "The run ended (%@)",
 "実行の様子を見ています": "Looking at the run",
-"実行環境との接続が切れました": "Lost the connection to the environment",
-"実行環境に再接続しました": "Reconnected to the environment",
 "接続して始める": "Connect and Start",
 "接続を確かめられませんでした（%@）。キーを入れ直すか、ネットワークを確かめて再試行してください。": "Could not confirm the connection (%@). Enter the key again, or check the network and try again.",
 "新しいプロジェクトの作り方は？": "How do I make a new project?",

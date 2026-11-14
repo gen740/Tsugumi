@@ -142,25 +142,33 @@ struct WorkflowWindow: View {
   }
 }
 
-/// Shown when this Mac cannot run the shared VM yet: virtualization or the
-/// VM image is missing. Everything else is set up on the first project start.
+/// Shows a failed host check separately from confirmed missing prerequisites.
+/// Everything else is set up on the first project start.
 struct EnvironmentSetupView: View {
   @Environment(AppModel.self) private var model
 
   var body: some View {
-    let s = model.setup ?? EnvironmentManager.SetupStatus()
     VStack(alignment: .leading, spacing: 18) {
       Label("Tsugumi の実行環境を準備します", systemImage: "shippingbox").font(.largeTitle.bold())
       Text("Card は Tsugumi の Linux VM（Virtualization.framework、アプリ全体で 1 台）の中で、プロジェクトごとに隔離して実行されます。")
         .foregroundStyle(.secondary)
       GroupBox {
         VStack(alignment: .leading, spacing: 12) {
-          step(String(localized: "この Mac で仮想マシンを使える"), ok: s.virtualizationSupported,
-               detail: String(localized: "Apple silicon の Mac と macOS 26 以降が必要です。")) { EmptyView() }
-          step(String(localized: "実行環境の VM イメージがある"), ok: s.imageAvailable,
-               detail: s.imageAvailable ? String(localized: "VM イメージ \(s.imageVersion ?? "")")
-                                        : String(localized: "アプリに VM イメージが含まれていません。開発中は macOS/Container/build-image.sh --vm で作成してください。")) {
-            EmptyView()
+          switch model.setup {
+          case .failed(let error)?:
+            Label("実行環境の状態を確認できませんでした", systemImage: "exclamationmark.triangle")
+              .font(.headline)
+            Text(error).font(.callout).textSelection(.enabled)
+          case .checked(let supported, let image, let version)?:
+            step(String(localized: "この Mac で仮想マシンを使える"), ok: supported,
+                 detail: String(localized: "Apple silicon の Mac と macOS 26 以降が必要です。")) { EmptyView() }
+            step(String(localized: "実行環境の VM イメージがある"), ok: image,
+                 detail: image ? String(localized: "VM イメージ \(version ?? "")")
+                               : String(localized: "アプリに VM イメージが含まれていません。開発中は macOS/Container/build-image.sh --vm で作成してください。")) {
+              EmptyView()
+            }
+          case nil:
+            ProgressView("実行環境の状態を確認しています…")
           }
         }
         .padding(8)

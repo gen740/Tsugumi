@@ -1,6 +1,6 @@
 // The guide bird in the bottom-right corner: one conversation for the whole
 // app, run by the host server with the same model connection as the Agent
-// (without one it answers from a fixed script: guideScript.ts). It explains what is on the screen and leads demo
+// (without one agentd answers from its fixed script). It explains what is on the screen and leads demo
 // tours; it only reads, and what it offers to do (guide_show) is done by the
 // user's own press of a button. The macOS app's GuideController does the same.
 import { api, onServerEvent } from '../api'
@@ -9,10 +9,9 @@ import { D } from '../shared/rpc'
 import { app } from './app'
 import { Observable } from './observable'
 import { get, str } from '../shared/json'
-import { CardKey, cardState, KIND_LABEL, key, ProjectSession, runState } from './session'
+import { CardKey, cardState, KIND_LABEL, key, ProjectSession } from './session'
 import type { ChatController } from './chat'
 import type { WorkflowTab } from './workspace'
-import { homeStep, noConnection, scriptDemoFor, scriptDemos, scriptStart, scriptStep, type ScriptStep } from './guideScript'
 import { L } from '../i18n'
 
 export type GuideActionKind = 'open_demo' | 'show_demos' | 'run' | 'stop' | 'open_card' | 'open_settings' | 'new_project' | 'home'
@@ -136,6 +135,14 @@ const text = (k: Exclude<keyof typeof AGENT.guide, 'tools' | 'showTool' | 'contr
 const stateName = (st: D.RunState | undefined) => (st === undefined ? 'none' : D.RunState[st] ?? String(st))
 const real = (p: string) => p.replace(/\/+$/, '')
 
+interface GuideState extends GuideShow {
+  revision: number; answerRevision: number; setupDone: boolean; demoAnswered: boolean; tour?: GuideTour | null
+  step?: string; project?: string; text: string; present: boolean; note?: string; asked?: string
+}
+interface GuideInput {
+  kind: string; text?: string; project?: string; demo?: string; title?: string; connected?: boolean
+  active?: boolean; run?: string; state?: string; scripted?: boolean; expected_step?: string
+}
 interface Message { role: string; content: { type: string; text?: string; name?: string; input?: string }[]; display?: string }
 
 export class GuideController extends Observable {
@@ -143,7 +150,7 @@ export class GuideController extends Observable {
   available = false
   /** A model connection the guide can use (a key for the chosen provider). */
   connected = false
-  /** No connection: Tsugumi answers from guideScript and calls no model. */
+  /** No connection: Tsugumi answers from agentd and calls no model. */
   get scripted() {
     return this.available && !this.connected
   }
@@ -267,9 +274,7 @@ export class GuideController extends Observable {
   private highlightTimer?: ReturnType<typeof setTimeout>
   private readSession?: ProjectSession
   private tourTab?: WorkflowTab
-  private seen?: string
-  private seenActive = false
-  private resumeAsked = false
+  private observed?: string
 
   constructor() {
     super()
@@ -277,6 +282,7 @@ export class GuideController extends Observable {
       // The guide's conversation is Home's: a tab on a project goes on undisturbed (and reads it on returning).
       if (e.type === 'guide' && !this.contextSession) this.handle(e.event)
       if (e.type === 'agentWork' && e.project === this.contextSession?.dir) this.externalWork(String(e.from ?? 'Claude Code'), e.event)
+      if (e.type === 'guideChanged' && e.origin !== this.origin) void this.syncGuide()
       if (e.type === 'reconnected') void this.refresh()
     })
   }
@@ -316,9 +322,7 @@ export class GuideController extends Observable {
       const wasOffered = this.offersDemo
       this.available = true
       this.connected = r.available
-      this.setupDone = r.setupDone
-      this.demoAnswered = r.demoAnswered
-      this.tour = r.tour
+      this.progress(r as unknown as GuideState)
       this.busy = r.busy
       this.loaded = true
       if (r.conversation && !this.busy) this.load([...r.conversation.archive, ...r.conversation.messages])
@@ -327,10 +331,58 @@ export class GuideController extends Observable {
     this.changed()
   }
 
-  private async saveState(v: { setupDone?: boolean; demoAnswered?: boolean; tour?: GuideTour | null }) {
-    try {
-      await api('/api/guide/state', v)
-    } catch {}
+  private origin = Math.random().toString(36)
+  private revision = 0
+  private answerRevision = 0
+  private step?: string
+  private pendingGuide: Promise<unknown> = Promise.resolve()
+
+  private progress(r: GuideState) {
+    this.revision = r.revision
+    this.answerRevision = r.answerRevision
+    this.setupDone = r.setupDone
+    this.demoAnswered = r.demoAnswered
+    this.tour = r.tour ?? null
+    this.step = r.step
+  }
+
+  private syncGuide() {
+    const operation = this.pendingGuide.then(async () => {
+      try {
+        const r = await api<GuideState>('/api/guide/get', {})
+        if (r.revision <= this.revision) return
+        const freshAnswer = r.answerRevision > this.answerRevision
+        this.progress(r)
+        const chat = this.contextSession && r.project === this.contextSession.dir ? app.chat(this.contextSession) : undefined
+        if (freshAnswer && this.scripted && (chat || !r.project && !this.contextSession)) {
+          this.answer({ text: r.text, show: { ...r, choices: r.choices ?? [], actions: r.actions ?? [] } }, undefined, chat)
+        }
+        this.changed()
+      } catch {}
+    })
+    this.pendingGuide = operation
+    return operation
+  }
+
+  /** Serialize screen facts and user events; the core owns all transitions. */
+  private advance(event: GuideInput, asked?: string, chat?: ChatController) {
+    const operation = this.pendingGuide.then(async () => {
+      const r = await api<GuideState>('/api/guide/advance', { origin: this.origin, event: { ...event, scripted: this.scripted } })
+      this.progress(r)
+      const shown: GuideShow = { ...r, choices: r.choices ?? [], actions: r.actions ?? [] }
+      if (r.present) this.answer({ text: r.text, show: shown }, asked ?? r.asked, chat)
+      if (!this.scripted && r.note && chat) {
+        const t = this.tour
+        const prompt = r.note === 'start' ? text('tourStart', { demo: t?.demo ?? event.demo ?? '', title: t?.title ?? event.title ?? '' })
+          : r.note === 'resume' ? text('tourResume', { demo: t?.demo ?? '' })
+          : text('event', { event: r.note === 'run' ? text('runEnded', { run: event.run ?? '-', state: event.state ?? 'none' })
+            : r.note === 'disconnected' ? text('disconnected') : text('reconnected', { state: event.state ?? 'none' }) })
+        this.tell(prompt, r.asked ?? '', chat.session)
+      }
+      this.changed()
+    }).catch((e) => { this.status = String(e.message ?? e); this.failed = true; this.changed() })
+    this.pendingGuide = operation
+    return operation
   }
 
   /** The user saved a key or signed in (Settings): when that is what makes
@@ -346,7 +398,7 @@ export class GuideController extends Observable {
   async finishSetup(connected = false) {
     this.setupDone = true
     this.changed()
-    await this.saveState({ setupDone: true })
+    await this.advance({ kind: 'setup' })
     await this.refresh()
     this.invite(connected)
   }
@@ -368,7 +420,7 @@ export class GuideController extends Observable {
 
   /** Asks the first start's questions again (Settings). */
   async resetIntroduction() {
-    await this.saveState({ setupDone: false, demoAnswered: false })
+    await this.advance({ kind: 'introduction' })
     this.demoAnswered = false
     this.offerStep = { kind: 'start' }
     await this.refresh()
@@ -378,7 +430,7 @@ export class GuideController extends Observable {
     this.demoAnswered = true
     this.asksAgain = false
     this.changed()
-    void this.saveState({ demoAnswered: true })
+    void this.advance({ kind: 'offered' })
   }
 
   /** A demo picked from the first questions: the bird flies to its card in the
@@ -408,7 +460,7 @@ export class GuideController extends Observable {
     if (!q.trim()) return
     this.answerDemoOffer()
     this.demosRequested = true
-    if (this.scripted) return this.play(scriptDemoFor(q) + '/pick', q.trim())
+    if (this.scripted) return this.advance({ kind: 'interest', text: q.trim() }, q.trim())
     this.ask(q, 'demos', undefined, undefined, "[Interest] The user answered what interests them; pick a demo for it.")
   }
 
@@ -422,14 +474,9 @@ export class GuideController extends Observable {
     void this.send(t, t, session)
   }
 
-  /** Something the app tells the guide (a tour step, a run that ended); one
-   *  that comes while it answers waits for the answer to end. Without a
-   *  connection the chat shows `script`'s step instead (undefined: nothing). */
-  private tell(prompt: string, display: string, session?: ProjectSession, script?: string) {
-    if (this.scripted) {
-      if (script && session) this.play(script, display, app.chat(session))
-      return
-    }
+  /** A core-selected note for the model-backed guide; notes that arrive
+   *  while it answers wait for the answer to end. */
+  private tell(prompt: string, display: string, session?: ProjectSession) {
     // In the demo's copy, Tsugumi of its chat leads the tour.
     if (session) {
       app.chat(session).tell(prompt, display)
@@ -606,7 +653,7 @@ export class GuideController extends Observable {
 
   /** A guide_show of either Tsugumi: where the bird goes, what opens, what it says. */
   private show(shown: GuideShow) {
-    if (shown.endTour) this.endTour()
+    if (shown.endTour && !this.scripted) this.endTour()
     if (shown.open && (shown.open.startsWith('card:') || shown.open === 'versions' || OPEN_PANELS[shown.open])) this.openRequest = shown.open
     this.point(shown.highlight)
     this.bubble = { id: ++this.n, say: shown.say, choices: shown.choices, actions: shown.actions, target: shown.highlight, farewell: shown.endTour }
@@ -690,53 +737,23 @@ export class GuideController extends Observable {
 
   // ---- Without a model connection -------------------------------------------------
 
-  /** The step of the script shown last (its choices are the ones out). */
-  private scriptAt?: string
+  actionFinished(action: string, project?: string) {
+    void this.advance({ kind: 'action_finished', text: action, project })
+  }
 
-  /** A message without a connection: $demo in a project's chat begins the
-   *  tour; a tapped choice leads to its step (in the tour's chat, or on Home
-   *  after Home's steps); anything else gets the one fixed reply (pointing to
-   *  Settings and $demo), with the step's choices still there to go on. */
   answerScripted(t: string, chat?: ChatController) {
-    if (chat && t.split(/\s+/).includes('$demo')) return this.startScriptedTour(t, chat)
-    const here = chat ? this.touring(chat.session) : !!this.scriptAt && homeStep(this.scriptAt)
-    const current = here && this.scriptAt ? scriptStep(this.scriptAt) : undefined
-    const next = current?.next[t]
-    if (next) return this.play(next, t, chat)
-    const reply = noConnection()
-    reply.show = { ...reply.show, highlight: current ? this.highlight : undefined, choices: current?.show.choices ?? [],
-      // In the tour's own chat the tour is already there.
-      actions: chat && current ? reply.show.actions.filter((a) => a.kind !== 'open_demo') : reply.show.actions }
-    this.answer(reply, t, chat)
-  }
-
-  /** $demo without a connection: in a copy of a demo the script has a tour
-   *  of (by its name), the tour begins there (elsewhere the reply says where it can). */
-  private startScriptedTour(asked: string, chat: ChatController) {
-    const s = chat.session
-    const demo = app.status?.demos.find((d) => scriptDemos.includes(d.id) && d.title === s.scopeName([]))
-    if (!demo) return this.play('otherProject', asked, chat)
-    this.answerDemoOffer()
-    this.tour = { demo: demo.id, title: demo.title, path: s.dir, started: true }
-    void this.saveState({ tour: this.tour })
-    this.seen = this.runKey(s)
-    this.seenActive = s.runActive
-    this.play(scriptStart(demo.id, 'start'), asked, chat)
-  }
-
-  private play(id: string, asked?: string, chat?: ChatController) {
-    const step = scriptStep(id)
-    if (!step) return
-    this.scriptAt = id
-    this.answer(step, asked, chat)
+    const session = chat?.session
+    return this.advance({ kind: 'message', text: t, expected_step: this.step,
+      project: session?.dir, title: session?.scopeName([]), connected: session?.connected,
+      active: session?.runActive, run: session?.currentRunId, state: session?.runStatus ? stateName(session.runStatus.state) : 'none' }, t, chat)
   }
 
   /** A step of the script as an answer: in the chat (its bird speaks only in
    *  the tour's copy) or in the panel, and in the bubble. */
-  private answer(step: ScriptStep, asked?: string, chat?: ChatController) {
+  private answer(step: { text: string; show: GuideShow }, asked?: string, chat?: ChatController) {
     if (chat) {
       chat.showScripted(asked, step.text, step.show)
-      if (!this.touring(chat.session)) return
+      if (!this.touring(chat.session) && !step.show.endTour) return
       this.speakingChat = chat
     } else {
       this.speakingChat = undefined
@@ -780,75 +797,37 @@ export class GuideController extends Observable {
 
   /** The user chose a demo: its copy is about to open; the tour starts there. */
   startTour(demo: { id: string; title: string }, copy: string) {
-    this.answerDemoOffer()
-    this.tour = { demo: demo.id, title: demo.title, path: copy, started: false }
-    this.seen = undefined
+    this.observed = undefined
     this.open = false
-    this.changed()
-    void this.saveState({ tour: this.tour })
+    this.asksAgain = false
+    void this.advance({ kind: 'start', demo: demo.id, title: demo.title, project: copy })
   }
 
   endTour() {
-    this.tour = null
-    this.seen = undefined
-    this.changed()
-    void this.saveState({ tour: null })
+    this.observed = undefined
+    void this.advance({ kind: 'end' })
   }
 
-  /** The user asks to go on with a paused tour: its copy opens again. */
+  /** The path is a presentation snapshot; the core handles resume on observation. */
   resumeTour(): string | undefined {
     if (!this.tour) return undefined
-    this.resumeAsked = true
+    this.observed = undefined
+    this.resumeRequested = true
     return this.tour.path
   }
+  private resumeRequested = false
 
-  /** A project on the screen: in the tour's copy the guide begins the tour
-   *  once it is connected, and follows its runs from their real states. */
   observe(s: ProjectSession, tab?: WorkflowTab) {
-    const t = this.tour
-    if (!this.available || !t || !this.same(t.path, s)) return
+    if (!this.available || !this.tour || !this.same(this.tour.path, s)) return
     this.tourTab = tab
-    const now = this.runKey(s)
-    if (!t.started) {
-      if (!s.connected) return
-      t.started = true
-      void this.saveState({ tour: t })
-      this.seen = now
-      this.seenActive = s.runActive
-      this.tell(text('tourStart', { demo: t.demo, title: t.title }), L('デモ「{0}」の案内を始めます', t.title), s, scriptStart(t.demo, 'start'))
-      return
-    }
-    if (this.resumeAsked && s.connected) {
-      this.resumeAsked = false
-      this.seen = now
-      this.seenActive = s.runActive
-      this.tell(text('tourResume', { demo: t.demo }), L('デモの案内を続けます'), s,
-        this.scriptAt?.startsWith(t.demo + '/') ? this.scriptAt : scriptStart(t.demo, 'resume'))
-      return
-    }
-    const before = this.seen
-    const wasActive = this.seenActive
-    this.seen = now
-    if (s.connected) this.seenActive = s.runActive
-    if (before === undefined || before === now) return
-    if (!s.connected) {
-      // Lost while a run was going: its outcome is not known yet.
-      if (wasActive) this.tell(text('event', { event: text('disconnected') }), L('実行環境との接続が切れました'), s)
-      return
-    }
-    const state = s.runStatus ? stateName(s.runStatus.state) : 'none'
-    const run = s.currentRunId ?? '-'
-    if (before === 'offline') {
-      if (wasActive) this.tell(text('event', { event: text('reconnected', { state }) }), L('実行環境に再接続しました'), s)
-      return
-    }
-    if (s.runActive) {
-      // The bird watches the run; Tsugumi is told only how it ended.
-    } else if (s.runStatus && (wasActive || !before.startsWith(run + ':'))) {
-      const ran = this.scriptAt ? scriptStep(this.scriptAt)?.ran : undefined
-      this.tell(text('event', { event: text('runEnded', { run, state }) }), L('実行が終わりました（{0}）', runState(s.runStatus.state).label), s,
-        s.runStatus.state === D.RunState.succeeded ? ran?.ok : ran?.else)
-    }
+    const snapshot = `${s.dir}:${this.runKey(s)}:${s.runActive}:${this.tour.started}`
+    if (snapshot === this.observed && !this.resumeRequested) return
+    this.observed = snapshot
+    const resume = this.resumeRequested && s.connected
+    if (resume) this.resumeRequested = false
+    void this.advance({ kind: resume ? 'resume' : 'observe', project: s.dir, title: this.tour.title,
+      connected: s.connected, active: s.runActive, run: s.currentRunId ?? '-',
+      state: s.runStatus ? stateName(s.runStatus.state) : 'none' }, undefined, app.chat(s))
   }
 
   /** The run as the guide follows it: "offline", or "<run id>:<state>". */

@@ -69,6 +69,10 @@ import { HostDemoCopyRequestT as HHostDemoCopyRequest } from '../src/gen/tsugumi
 import { HostRecentRememberRequestT as HHostRecentRememberRequest } from '../src/gen/tsugumi/host/host-recent-remember-request'
 import { HostRecentForgetRequestT as HHostRecentForgetRequest } from '../src/gen/tsugumi/host/host-recent-forget-request'
 
+import { GuideGetRequestT } from '../src/gen/tsugumi/host/guide-get-request'
+import { GuideAdvanceRequestT } from '../src/gen/tsugumi/host/guide-advance-request'
+import { GuideInputT } from '../src/gen/tsugumi/host/guide-input'
+
 export class CoreAgentError extends Error {
   constructor(readonly code: string, message: string, readonly requestId?: string) { super(message) }
 }
@@ -92,6 +96,12 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
+    case 'GuideGetRequest': return new GuideGetRequestT(v.session_id, v.language)
+    case 'GuideAdvanceRequest': {
+      const e = v.event ?? {}
+      return new GuideAdvanceRequestT(v.session_id, v.language, new GuideInputT(e.kind, e.text, e.project, e.demo, e.title,
+        e.connected, e.active, e.run, e.state, e.scripted ?? true, e.expected_step))
+    }
     case 'EnvironmentRequest': return new EnvironmentRequestT(v.project, enumValue(EnvironmentAction, v.action), v.origins ?? [], v.folders ?? [], v.archive_incompatible_history)
     case 'HostRuntimeRequest': return new HostRuntimeRequestT(enumValue(RuntimeAction, v.action), v.project_id, v.project, v.command)
     case 'HostTerminalRequest': return new HostTerminalRequestT(v.project, enumValue(TerminalAction, v.action), BigInt(v.session ?? 0), v.rows ?? 24, v.cols ?? 80, v.data ?? [])

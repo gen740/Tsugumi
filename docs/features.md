@@ -259,6 +259,12 @@ The host-side `tsugumi-agentd` discovers Skills, parses their metadata and repor
 
 ### The thrush (chat and guide)
 
+The host-side `tsugumi-agentd` embeds and interprets `agent/Shared/guide-script{,.en}.json`. `GuideGetRequest` reads a session in Japanese or English; `GuideAdvanceRequest` reports an interest, a message or choice, a demo opening, a run observation, or a completed client action. The reply contains the step, text, choices, semantic actions, highlight and panel request. Scripted guidance works without a model connection.
+
+Progress belongs to one native app (`desktop`) or one Web host (`web:<support directory>`), shared by its windows or tabs. The core persists the first-start answer, demo-offer answer and tour; the live step and run observations last for the service lifetime. A resumed tour uses that live step, or the script's resume step after a service restart. Stale choices and repeated or superseded run observations do not advance the guide twice.
+
+The clients draw anchors, position and animate the bird, open panels and perform WKWebView or DOM operations. They perform the reply's actions with the user's controls and report observations to the core. The Web host relays Host requests and changes to its tabs. Model-backed guide conversations use the Agent contract.
+
 [Start a guided tour](Usage.md#working-with-the-agent).
 
 ## 10. Demos

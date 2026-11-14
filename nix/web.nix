@@ -28,8 +28,6 @@ buildNpmPackage {
       ../web/src
       ../web/tsconfig.json
       ../agent/Shared/agent.json
-      ../agent/Shared/guide-script.json
-      ../agent/Shared/guide-script.en.json
       ../agent/Shared/demo-skill.md
       ../ui/modules
       ../ui/templates

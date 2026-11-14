@@ -58,19 +58,12 @@ interface Settings {
   /** The chat's Agent may search the web through the provider (its queries
    *  leave for the provider's search service). Off until the user turns it on. */
   webSearch: boolean
-  /** The guide bird: the first start answered, the demo offer answered, the demo being shown. */
-  guide: GuideState
   /** A small model writes what each version changed (off: nothing is sent for it). */
   versionSummaries: boolean
   /** The UI's language (the desktop app's too, on a Mac): the page's strings, the
    *  server's messages, and what tsugumid writes into a project's git. */
   language: Language
 }
-
-/** The demo the guide shows: its id and title, the copy's folder, and
- *  whether the guide began it. */
-interface GuideTour { demo: string; title: string; path: string; started: boolean }
-interface GuideState { setupDone: boolean; demoAnswered: boolean; tour: GuideTour | null }
 
 export const PERMISSION_KINDS = ['network', 'sandbox_off', 'host_folder_read', 'host_folder_write']
 // The host keeps presentation snapshots only; persistence and validation are RPC.
@@ -79,7 +72,7 @@ const SHARED_KEYS: Record<string, string> = {
   effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort', allowedPermissions: 'agent.permissions.allowed',
   webSearch: 'agent.webSearch', versionSummaries: 'versions.summaries', language: 'app.language',
 }
-const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders', guide: 'web.guide' }
+const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }
 const localProfile = () => `web:${ctx.support}`
 const settingsProfile = () => ctx.desktop ? 'desktop' : localProfile()
 const revisions: Record<string, number> = {}
@@ -94,7 +87,7 @@ async function loadSettings() {
     const values = Object.fromEntries(reply.values.map((s) => [s.key, JSON.parse(s.value_json)]))
     for (const [name, key] of Object.entries(keys)) if (values[key] !== undefined) next[name] = values[key]
   }
-  snapshot = { ...next, guide: next.guide ?? { setupDone: false, demoAnswered: false, tour: null } }
+  snapshot = next
   setLanguage(snapshot.language)
 }
 async function patchSettings(change: Partial<Settings>, expected: Record<string, number> = { ...revisions }) {
@@ -108,7 +101,6 @@ async function patchSettings(change: Partial<Settings>, expected: Record<string,
   }
   await loadSettings()
 }
-async function saveSettings(next: Settings) { await patchSettings({ guide: next.guide }) }
 const PROVIDERS = { anthropic: { name: 'Anthropic', env: 'ANTHROPIC_API_KEY' }, openai: { name: 'OpenAI', env: 'OPENAI_API_KEY' } } as const
 type KeyedProvider = keyof typeof PROVIDERS
 function keyedProvider(id: unknown): KeyedProvider {
@@ -198,7 +190,7 @@ function cleanFolders(v: unknown): string[] {
 // ---- The guide -----------------------------------------------------------------
 
 // The guide bird in the bottom-right corner: one conversation for the whole
-// app with the same model connection as the Agent (no key, no guide). It
+// app with the same model connection as the Agent. Scripted guidance uses the Host contract. It
 // reads the project on the page's screen and explains; what it offers to do
 // (guide_show) the user does with a button of the page.
 let guideAgent: RemoteAgent | undefined
@@ -250,21 +242,13 @@ async function guideAvailable(): Promise<boolean> {
   return !!(await keySource(s.provider))
 }
 
-/** The guide's state for the page; a key already there answers the first start. */
+// The relay fixes the guide session to this Web host; tabs never own progress.
+const guideSession = () => `web:${ctx.support}`
 async function guideState() {
   const available = await guideAvailable()
-  let g = settings().guide
-  if (available && !g.setupDone) {
-    g = { ...g, setupDone: true }
-    void saveSettings({ ...settings(), guide: g }).catch(() => {})
-  }
-  return { available, ...g }
-}
-
-function cleanTour(v: unknown): GuideTour | null {
-  const t = v as Partial<GuideTour> | null
-  if (!t || typeof t.demo !== 'string' || typeof t.title !== 'string' || typeof t.path !== 'string') return null
-  return { demo: t.demo, title: t.title, path: t.path, started: t.started === true }
+  const progress = await core.user.call('GuideAdvanceRequest', { session_id: guideSession(), language: settings().language,
+    event: { kind: 'connection', connected: available } })
+  return { available, ...progress }
 }
 
 // ---- Skills ----------------------------------------------------------------------
@@ -652,13 +636,13 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const a = state.available ? await guide() : undefined
     return { ...state, conversation: a?.conversation ?? null, busy: a?.busy ?? false }
   },
-  'POST /api/guide/state': async (b) => {
-    const g = { ...settings().guide }
-    if (typeof b.setupDone === 'boolean') g.setupDone = b.setupDone
-    if (typeof b.demoAnswered === 'boolean') g.demoAnswered = b.demoAnswered
-    if ('tour' in (b ?? {})) g.tour = cleanTour(b.tour)
-    await saveSettings({ ...settings(), guide: g })
-    return guideState()
+  'POST /api/guide/get': () => core.user.call('GuideGetRequest', { session_id: guideSession(), language: settings().language }),
+  'POST /api/guide/advance': async (b) => {
+    const state = await core.user.call('GuideAdvanceRequest', {
+      session_id: guideSession(), language: settings().language, event: b.event,
+    })
+    ctx.broadcast({ type: 'guideChanged', origin: b.origin })
+    return state
   },
   /** A connection check for the first start: the provider lists its models with the key. */
   'POST /api/guide/check': async () => {

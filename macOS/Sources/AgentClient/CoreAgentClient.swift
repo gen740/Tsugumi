@@ -123,13 +123,9 @@ public actor CoreAgentClient {
     daemon.standardInput = FileHandle.nullDevice
     try daemon.run()
     try handle.close()
-    let deadline = Date().addingTimeInterval(15)
-    while Date() < deadline {
-      if let value = read() { return value }
-      if !daemon.isRunning { throw CoreAgentFailure(code: "unavailable", message: "The core Agent exited during startup; see \(log.path)", requestID: nil) }
-      try await Task.sleep(for: .milliseconds(50))
-    }
-    throw CoreAgentFailure(code: "timeout", message: "The core Agent did not become ready", requestID: nil)
+    return try await AgentReadiness.wait(read: read, exitStatus: {
+      daemon.isRunning ? nil : daemon.terminationStatus
+    }, log: log)
   }
 
   private func connect() async throws {
@@ -238,5 +234,23 @@ public actor CoreAgentClient {
   public func models(_ config: ProviderConfig, asking: Bool = false) async throws -> [(id: String, name: String)] {
     let selection = try await provider(config, asking: asking)
     return try await modelList(id: config.connection, refresh: true, keyProfile: selection.keyProfile)
+  }
+}
+
+/// An agentd that loses the state-directory lock exits with status 4. Another
+/// client (Home, environment setup, or another process) is publishing readiness.
+/// Its exit does not mean that the shared service failed to start.
+enum AgentReadiness {
+  static func wait(read: () -> [String: Any]?, exitStatus: () -> Int32?, log: URL,
+                   deadline: Date = Date().addingTimeInterval(15),
+                   pause: () async throws -> Void = { try await Task.sleep(for: .milliseconds(50)) }) async throws -> [String: Any] {
+    while Date() < deadline {
+      if let value = read() { return value }
+      if let status = exitStatus(), status != 4 {
+        throw CoreAgentFailure(code: "unavailable", message: "The core Agent exited during startup; see \(log.path)", requestID: nil)
+      }
+      try await pause()
+    }
+    throw CoreAgentFailure(code: "timeout", message: "The core Agent did not become ready; see \(log.path)", requestID: nil)
   }
 }

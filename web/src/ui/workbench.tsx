@@ -82,7 +82,7 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
   const runKey = guide.runKey(session)
   useEffect(() => {
     if (onSwitchProject) guide.observe(session, tab)
-  }, [runKey, session, tab])
+  }, [runKey, session, tab, guide.tour?.path, guide.tour?.started])
   useEffect(() => {
     if (onSwitchProject) guide.setContext('project', session, tab)
   }, [session, tab])
@@ -100,13 +100,14 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
     if (panel) {
       workspace.set('bottomPanel', panel)
       workspace.set('showBottom', true)
+      guide.actionFinished('open:' + r, session.dir)
       return
     }
-    if (r === 'versions') return app.openWindow(session, { kind: 'versions' })
+    if (r === 'versions') { app.openWindow(session, { kind: 'versions' }); guide.actionFinished('open:' + r, session.dir); return }
     if (!r.startsWith('card:')) return
     const p = r.slice(5)
     const k = session.instance(p) ? p : key([...(tab?.scope ?? []), ...p.split('/')])
-    if (session.instance(k)) app.openWindow(session, { kind: 'card', card: k })
+    if (session.instance(k)) { app.openWindow(session, { kind: 'card', card: k }); guide.actionFinished('open:' + r, session.dir) }
   }, [guide.openRequest])
   useEffect(() => {
     const s = guide.scopeRequest
