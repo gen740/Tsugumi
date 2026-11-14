@@ -228,7 +228,7 @@ No fields.
 | [`RunPlan`](#runplan) | RunPlanResult | propagate = true. |
 | [`Run`](#run) | RunAccepted | propagate = true, max_concurrency = 4 (1..64), nix_jobs = 1, nix_cores = 1. |
 | [`RunCancel`](#runcancel) | RunStatus | Idempotent. Unknown id is not_found. |
-| [`RunStatus`](#runstatus) | RunStatus | Omitted run_id: the active run, else the last one, else idle. |
+| [`RunStatus`](#runstatus) | RunStatus | Omitted run_id: the active run, else the latest locally started run, else idle. partial_run marks debugging with saved inputs; uses_partial_result marks values derived from a partial run, within this run or through saved inputs. Both flags persist in RunSummary.status in history/comparison replies and run events, including runs with recorded values and retained artifacts. |
 
 ### RunPlan
 

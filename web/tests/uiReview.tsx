@@ -136,6 +136,16 @@ for (const allow of [true, false]) {
   assert.equal(s.saveError, undefined)
 }
 assert.equal(runMark(new R.RunStatusT()), undefined)
+{
+  const status = new R.RunStatusT()
+  status.partialRun = true
+  assert.equal(runMark(status), '部分実行')
+  status.partialRun = false; status.usesPartialResult = true
+  assert.equal(runMark(status), '部分実行の結果を使用')
+  status.partialRun = true
+  const summary = new R.RunSummaryT(); summary.status = status
+  assert.equal(runMark(summary), '部分実行 · 部分実行の結果を使用')
+}
 
 // An outside editor may add another widening while approval is on screen.
 // Keep the previously approved items when the core asks for the new one.

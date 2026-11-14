@@ -1433,7 +1433,11 @@ void Service::scratch_delete(RequestIn& req) {
     }
     uint64_t freed = 0;
     std::map<std::string, uint64_t> sizes;
-    for (const auto& entry : measure_run_scratch(run_scratch_)) sizes[entry.path] = entry.bytes;
+    try {
+      for (const auto& entry : measure_run_scratch(run_scratch_)) sizes[entry.path] = entry.bytes.value_or(0);
+    } catch (const std::filesystem::filesystem_error&) {
+      // Measurement is advisory; removal repairs Card-created permissions.
+    }
     std::vector<flatbuffers::Offset<flatbuffers::String>> deleted, retained;
     FBB b;
     for (const auto& path : paths) {

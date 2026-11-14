@@ -33,6 +33,7 @@
 
 #include "journal.hh"
 #include "tsugumi/workerd/log.hh"
+#include "tsugumi/workerd/log_limits.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
 #include "util/peer_tls.hh"
@@ -681,13 +682,13 @@ auto main(int argc, char** argv) -> int {
     if (argc == 2 && std::string_view(argv[1]) == "--check-namespace")
       return ::getpid() == 1 ? 0 : 1;
     if (argc == 6 && std::string_view(argv[1]) == "--invoke") {
-      invoke(argv[2], argv[3], argv[4], parse_log_limit_bytes(argv[5]));
+      invoke(argv[2], argv[3], argv[4], remote::checked_log_limit(parse_log_limit_bytes(argv[5])));
       return 0;
     }
     const auto self = stdfs::canonical("/proc/self/exe").string();
     if (argc == 8 && std::string_view(argv[1]) == "--supervise")
       return supervise(self, argv[2], argv[3], std::stoi(argv[4]), argv[5],
-                       argv[6], parse_log_limit_bytes(argv[7]));
+                       argv[6], remote::checked_log_limit(parse_log_limit_bytes(argv[7])));
     Config c;
     c.root = default_root();
     c.executable = self;
@@ -716,7 +717,7 @@ auto main(int argc, char** argv) -> int {
         if (!n || n > 65536) throw std::runtime_error("invalid max-jobs");
         c.max_jobs = static_cast<uint32_t>(n);
       } else if (option == "--log-limit-bytes")
-        c.log_limit_bytes = parse_log_limit_bytes(value);
+        c.log_limit_bytes = remote::checked_log_limit(parse_log_limit_bytes(value));
       else if (option == "--cgroup-root")
         c.cgroup = value;
       else

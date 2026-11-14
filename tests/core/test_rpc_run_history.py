@@ -68,6 +68,9 @@ def test_project_copy_restores_history_and_merges_new_runs(core_factory, project
     shutil.copytree(copied_project, project, symlinks=True)
     original.start()
     assert set(listed(original.connect())) == set(run_ids + [new_run])
+    # Copy/import order never changes which local scratch is protected.
+    usage = original.connect().call("ProjectCacheUsageRequest")
+    assert text(usage.protectedRun) == run_ids[-1]
 
 
 def test_save_run_history_can_be_disabled_and_enabled(core_factory, project, tmp_path):

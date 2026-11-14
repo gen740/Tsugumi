@@ -1,7 +1,8 @@
 #pragma once
 
-#include <filesystem>
 #include <cstdint>
+#include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,7 +15,7 @@ auto default_run_scratch(const std::filesystem::path& project) -> std::filesyste
 
 struct RunScratchUsage {
   std::string path;
-  uint64_t bytes = 0;
+  std::optional<uint64_t> bytes;
 };
 // Measures without following symbolic links. Errors leave the measurement unknown.
 auto measure_run_scratch(const std::filesystem::path& root) -> std::vector<RunScratchUsage>;

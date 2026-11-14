@@ -1,4 +1,5 @@
 #include "remote_invocation.hh"
+#include "tsugumi/workerd/log_limits.hh"
 
 #include <algorithm>
 #include <cctype>
@@ -309,7 +310,8 @@ auto import_remote_result(const RemoteJobClient& client, const std::string& serv
     }
     if (!crypto::is_sha256_hex(*digest) || *size > kMaxBlobBytes - total || !written.insert(rel).second)
       throw std::runtime_error("invalid remote result member");
-    const auto max_size = base == "files" ? kMaxBlobBytes : kMaxWorkerBytes;
+    const auto max_size = base == "files" ? kMaxBlobBytes :
+        rel == "logs.jsonl" ? remote::kMaxLogResultBytes : kMaxWorkerBytes;
     if (*size > max_size) throw std::runtime_error("remote result member exceeds its size limit");
     const auto path = temp / rel;
     stdfs::create_directories(path.parent_path());

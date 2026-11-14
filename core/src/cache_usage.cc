@@ -93,14 +93,20 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
     if (last && !paths.empty()) project->last_used = last;
     try {
       uint64_t bytes = 0;
+      bool known = true;
+      std::string unknown;
       for (const auto& entry : measure_run_scratch(scratch)) {
         auto item = std::make_unique<R::RunScratchUsageT>();
         item->path = entry.path;
-        item->bytes = entry.bytes;
-        bytes += entry.bytes;
+        item->bytes = entry.bytes.value_or(0);
+        item->size_unknown = !entry.bytes;
+        known &= entry.bytes.has_value();
+        if (!entry.bytes) unknown += (unknown.empty() ? "" : ", ") + entry.path;
+        bytes += entry.bytes.value_or(0);
         project->run_scratch.push_back(std::move(item));
       }
-      project->scratch_bytes = bytes;
+      if (known) project->scratch_bytes = bytes;
+      else project->error = "Unknown scratch folder sizes: " + unknown;
     } catch (const std::exception& e) {
       project->run_scratch.clear();
       project->error = e.what();

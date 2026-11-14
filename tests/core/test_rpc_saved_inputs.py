@@ -23,6 +23,7 @@ def saved_file_subgraph(project, core_factory):
             "copy": {
                 "template": "fork",
                 "trigger": "eachInput",
+                "recordIO": True,
                 "retainArtifact": True,
                 "artifactOutput": "out1",
             },
@@ -67,7 +68,11 @@ def test_each_input_child_preserves_saved_files_across_partial_runs(saved_file_s
     for _ in range(2):
         run_id, status = run_and_wait(client, "child", propagate=False, timeout=10)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        assert status.partialRun
         assert artifact_contents(client, run_id) == CONTENTS
+        record = client.call("RunRecordRequest", runId=run_id, card=path("child", "inner"))
+        assert record.run.status.partialRun
+        assert record.record.outputs  # Explicit Record I/O and Retain artifact are both obeyed.
 
 
 def test_name_changes_preserve_saved_file_inputs_and_evidence(saved_file_subgraph, tmp_path):
@@ -89,4 +94,8 @@ def test_name_changes_preserve_saved_file_inputs_and_evidence(saved_file_subgrap
     for _ in range(2):
         run_id, status = run_and_wait(client, "child", propagate=False, timeout=10)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        assert status.partialRun
         assert artifact_contents(client, run_id) == CONTENTS
+        record = client.call("RunRecordRequest", runId=run_id, card=path("child", "inner"))
+        assert record.run.status.partialRun
+        assert record.record.outputs  # Explicit Record I/O and Retain artifact are both obeyed.

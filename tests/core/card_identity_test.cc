@@ -27,6 +27,7 @@ TEST(CardIdentity, CoreReservesUniqueReadableIdentifiersAcrossRestartsAndScopes)
   } cleanup{root};
   fs::write_atomic(root / "tsugumi.json", R"({"name":"test","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   fs::write_atomic(root / "layout.json", "{}");
+  fs::write_atomic(root / "externals/child/tsugumi.json", R"({"canvas":{"cards":[],"connections":[]}})");
   std::set<std::string> ids;
   std::regex shape("aggregate-[abcdefghjkmnpqrstuvwxyz23456789]{4}");
   {
@@ -48,6 +49,7 @@ TEST(CardIdentity, CoreReservesUniqueReadableIdentifiersAcrossRestartsAndScopes)
   Store store({root, ""});
   store.open();
   EXPECT_TRUE(ids.insert(store.allocate_card_id("Aggregate", "")).second);
+  EXPECT_TRUE(std::regex_match(store.allocate_card_id("Aggregate", "externals/child/"), shape));
   EXPECT_TRUE(std::regex_match(store.allocate_card_id("Aggregate", "externals/child/externals/inner/"), shape));
   auto reservations = fs::read_file(root / ".tsugumi/card-ids").value();
   for (const auto& id : ids) EXPECT_NE(reservations.find(id + '\n'), std::string::npos);

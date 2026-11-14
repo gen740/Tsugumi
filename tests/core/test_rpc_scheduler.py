@@ -211,10 +211,13 @@ def test_run_from_one_branch_meets_the_saved_values_of_the_others(env, tmp_path)
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     assert inputs(c, tmp_path / "decode", first, "yes") == [{"text": "hello"}]
 
+    assert not st.partialRun and not st.usesPartialResult
+
     # Only this branch runs; the join takes its new value and the saved condition.
     set_param(c, "words", "text", "changed")
     run_id, st = run_and_wait(c, "words", timeout=10)
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    assert st.partialRun and st.usesPartialResult  # Its downstream Cards used partial values too.
     assert states(c, run_id, "words") == [CardState.succeeded]
     assert states(c, run_id, "cond") == [] and states(c, run_id, "fan") == []
     assert states(c, run_id, "gate") == [CardState.succeeded]
@@ -229,6 +232,7 @@ def test_run_from_one_branch_meets_the_saved_values_of_the_others(env, tmp_path)
     set_param(c, "cond", "value", False)
     run_id, st = run_and_wait(c, "cond", timeout=10)
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    assert st.partialRun and st.usesPartialResult
     assert states(c, run_id, "words") == []
     assert inputs(c, tmp_path / "decode", run_id, "no") == [{"text": "changed"}]
 
@@ -236,6 +240,17 @@ def test_run_from_one_branch_meets_the_saved_values_of_the_others(env, tmp_path)
     run_id, st = run_and_wait(c, "gate", propagate=False, timeout=10)
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     assert states(c, run_id, "gate") == [CardState.succeeded]
+
+    assert st.partialRun and st.usesPartialResult
+    listed = c.call("RunHistoryRequest").runs
+    summary = next(r for r in listed if text(r.status.runId) == run_id)
+    assert summary.status.partialRun and summary.status.usesPartialResult
+    assert c.call("RunStatusRequest", runId=run_id).usesPartialResult
+    # A complete Workflow run replaces the saved values and clears provenance.
+    _, st = run_and_wait(c, "start", timeout=10)
+    assert not st.partialRun and not st.usesPartialResult
+    _, st = run_and_wait(c, "gate", propagate=False, timeout=10)
+    assert st.partialRun and not st.usesPartialResult
 
 
 def test_run_from_one_branch_without_saved_values_says_so(env):

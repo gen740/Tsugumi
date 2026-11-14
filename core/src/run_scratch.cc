@@ -57,11 +57,17 @@ auto measure_run_scratch(const std::filesystem::path& root) -> std::vector<RunSc
   std::vector<RunScratchUsage> result;
   const auto measure = [&](const fs::path& path) {
     uint64_t bytes = 0;
-    if (fs::is_directory(fs::symlink_status(path)))
-      for (const auto& entry : fs::recursive_directory_iterator(path)) {
-        if (fs::is_regular_file(entry.symlink_status())) bytes += entry.file_size();
-      }
-    result.push_back({path.lexically_relative(root).generic_string(), bytes});
+    RunScratchUsage usage{path.lexically_relative(root).generic_string(), std::nullopt};
+    try {
+      if (fs::is_directory(fs::symlink_status(path)))
+        for (const auto& entry : fs::recursive_directory_iterator(path)) {
+          if (fs::is_regular_file(entry.symlink_status())) bytes += entry.file_size();
+        }
+      usage.bytes = bytes;
+    } catch (const fs::filesystem_error&) {
+      // Keep this folder selectable even when a Card left it unreadable.
+    }
+    result.push_back(std::move(usage));
   };
   if (fs::is_directory(fs::symlink_status(root / "runs")))
     for (const auto& entry : fs::directory_iterator(root / "runs")) measure(entry.path());

@@ -1203,3 +1203,17 @@ extension SyncTests {
     await s.close()
   }
 }
+
+@Suite struct RunMarkTests {
+  @Test func mapsExplicitRunProvenance() {
+    let status = Tsugumi_RPC_RunStatusT()
+    #expect(runMark(status) == nil)
+    status.partialRun = true
+    #expect(runMark(status) == RunMarkLabel.partial)
+    status.partialRun = false
+    status.usesPartialResult = true
+    #expect(runMark(status) == RunMarkLabel.derived)
+    status.partialRun = true
+    #expect(runMark(status) == "\(RunMarkLabel.partial) · \(RunMarkLabel.derived)")
+  }
+}

@@ -249,6 +249,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::vector<Token> members;
     uint64_t seq = 0;
     int64_t arrived_at = now_ms();
+    bool partial_result = false;
+    bool saved_input = false;
+    bool saved_partial_result = false;
   };
   struct BatchCancellation {
     std::atomic<bool> stop{false};
@@ -404,6 +407,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     const auto* port = node.node->input(saved.port);
     if (!port || !port->type) throw Failed(FailureKind::type_mismatch, "saved input no longer matches " + saved.port);
     TokenGroup group{saved.port, saved.execution_list, {}, ++token_seq_};
+    group.partial_result = true;
+    group.saved_input = true;
+    group.saved_partial_result = saved.partial_result;
     for (const auto& value : saved.values) {
       if (value.kind != port->kind || !value.type || !types::compatible(*port->type, *value.type))
         throw Failed(FailureKind::type_mismatch, "saved input no longer matches " + saved.port);
@@ -752,7 +758,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     if (batch.from_saved || (rt.node->kind != Template::Code && batch.groups.empty())) return;
     std::vector<SavedInputGroup> saved;
     for (const auto& group : batch.groups) {
-      SavedInputGroup values{group.port, group.execution_list, {}};
+      SavedInputGroup values{group.port, group.execution_list, {}, group.partial_result};
       for (const auto& member : group.members) values.values.push_back(member.value);
       rt.last_port_inputs[group.port] = std::make_pair(batch.activation, values);
       saved.push_back(std::move(values));
@@ -760,12 +766,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     rt.last_inputs = std::make_pair(batch.activation, std::move(saved));
   }
 
-  auto route_batch(NodeRt& rt, const RunBatchData& batch, const std::vector<Produced>& members, uint64_t first) -> void {
+  auto route_batch(NodeRt& rt, const RunBatchData& batch, const std::vector<Produced>& members,
+                   uint64_t first, bool partial_result) -> void {
     for (const auto& output : batch.outputs) {
       if (!output.execution_list && output.count == 0) continue;
       const auto edge = out_edges_.find({rt.idx, output.port});
       if (edge == out_edges_.end()) continue;
       TokenGroup group{output.port, output.execution_list, {}};
+      group.partial_result = partial_result;
       for (size_t index = 0; index < members.size(); ++index) {
         const auto value = std::ranges::find(members[index].outputs, output.port, &Value::name);
         if (value != members[index].outputs.end())
@@ -784,6 +792,18 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   auto invoke_batch(Work& work, uint32_t lane) -> void {
     auto& rt = nodes_[work.node];
     const auto& node = *rt.node;
+    {
+      std::lock_guard lock(mu_);
+      const bool partial = std::ranges::any_of(work.groups, &TokenGroup::saved_input);
+      const bool derived = std::ranges::any_of(work.groups, [](const TokenGroup& group) {
+        return group.saved_input ? group.saved_partial_result : group.partial_result;
+      });
+      if ((partial && !summary_.status.partial_run) || (derived && !summary_.status.uses_partial_result)) {
+        summary_.status.partial_run |= partial;
+        summary_.status.uses_partial_result |= derived;
+        persist_status_locked();
+      }
+    }
     const auto first = rt.invocations + 1;
     work.invocation = first;
     RunBatchData batch;
@@ -982,7 +1002,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (failure->kind == FailureKind::execution_limit) rt.halted = true;
     } else {
       rt.last = CardState::succeeded;
-      route_batch(rt, batch, members, first);
+      route_batch(rt, batch, members, first, std::ranges::any_of(work.groups, &TokenGroup::partial_result));
     }
   }
 
@@ -1223,7 +1243,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       return with_path(value, destination.string());
     };
     const auto copy_group = [&](const SavedInputGroup& group, const stdfs::path& where) -> SavedInputGroup {
-      SavedInputGroup result{group.port, group.execution_list, {}};
+      SavedInputGroup result{group.port, group.execution_list, {}, group.partial_result};
       for (size_t index = 0; index < group.values.size(); ++index)
         result.values.push_back(copy_into(group.values[index], where / std::to_string(index)));
       return result;

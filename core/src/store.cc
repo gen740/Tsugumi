@@ -105,7 +105,8 @@ auto Store::allocate_card_id(const std::string& name, const std::string& project
   if (project_path.empty()) {
     for (const auto& card : doc->project.canvas->value().cards->value()) canvas_ids.insert(card.id->value());
   } else if (doc->sources.count(project_path + "tsugumi.json")) {
-    auto project = parse_project_json(read_source(*doc, project_path + "tsugumi.json"));
+    auto project = parse_external_project(project_path + "tsugumi.json",
+                                          read_source(*doc, project_path + "tsugumi.json"));
     for (const auto& card : project.canvas->value().cards->value()) canvas_ids.insert(card.id->value());
   }
   constexpr std::string_view alphabet = "abcdefghjkmnpqrstuvwxyz23456789";

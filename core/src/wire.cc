@@ -161,6 +161,8 @@ Off<R::RunStatus> run_status(FBB& b, const RunStatusData& s) {
   if (s.ended_at) rb.add_ended_at(*s.ended_at);
   if (s.failure) rb.add_failure(f);
   if (s.commit) rb.add_commit(commit);
+  rb.add_partial_run(s.partial_run);
+  rb.add_uses_partial_result(s.uses_partial_result);
   return rb.Finish();
 }
 

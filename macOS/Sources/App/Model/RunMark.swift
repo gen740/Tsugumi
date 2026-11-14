@@ -9,6 +9,8 @@ enum RunMarkLabel {
 /// Map the core's run provenance to a localized mark. Do not infer it from
 /// propagation: downstream runs can use saved inputs too.
 func runMark(_ run: Tsugumi_RPC_RunStatusT?) -> String? {
-  // Wire the explicit provenance fields here when the protocol exposes them.
-  return nil
+  guard let run else { return nil }
+  let marks = [run.partialRun ? RunMarkLabel.partial : nil,
+               run.usesPartialResult ? RunMarkLabel.derived : nil].compactMap { $0 }
+  return marks.isEmpty ? nil : marks.joined(separator: " · ")
 }

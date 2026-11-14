@@ -93,6 +93,10 @@ table RunStatus {
   /// The project's version (git commit) the run started from; absent when
   /// the project is not versioned.
   commit:string (id: 8);
+  /// Debugging run that consumed saved inputs, rather than starting the Workflow.
+  partial_run:bool (id: 9);
+  /// Consumed values derived from a partial run, here or through saved inputs. Kept results retain this provenance.
+  uses_partial_result:bool (id: 10);
 }
 
 enum ExecutionServiceKind:ubyte { local, remote_daemon }
@@ -350,12 +354,16 @@ table RunScratchDeleteRequest {
 table RunScratchDeleteResult {
   deleted:[string] (id: 0, required);
   retained:[string] (id: 1, required);
+  /// Sum of successfully measured deleted folders; unknown sizes are excluded.
   freed_bytes:uint64 (id: 2);
 }
 table RunScratchUsage {
   /// Relative scratch folder: runs/<run UUID> or recovery.
   path:string (id: 0, required);
+  /// Measured bytes; use only when size_unknown is false.
   bytes:uint64 (id: 1);
+  /// Measurement failed. The folder remains available for explicit deletion.
+  size_unknown:bool (id: 2);
 }
 
 /// Cached shared-store measurement; never triggers a store traversal on the RPC lane.
@@ -561,7 +569,10 @@ table RunRequest {
 /// -> RunStatus. Idempotent. Unknown id is not_found.
 table RunCancelRequest { run_id:string (id: 0, required); }
 
-/// -> RunStatus. Omitted run_id: the active run, else the last one, else idle.
+/// -> RunStatus. Omitted run_id: the active run, else the latest locally started run, else idle.
+/// partial_run marks debugging with saved inputs; uses_partial_result marks values
+/// derived from a partial run, within this run or through saved inputs. Both flags persist in RunSummary.status in history/comparison replies
+/// and run events, including runs with recorded values and retained artifacts.
 table RunStatusRequest { run_id:string (id: 0); }
 
 /// -> ProjectShellResult. Runs in the project VM as the project user, with the

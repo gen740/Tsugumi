@@ -220,3 +220,31 @@ def test_scratch_deletion_refuses_active_run(core_factory, project, tmp_path):
     finally:
         gate.release()
     assert wait_run(client, run_id).state == RunState.succeeded
+
+
+def test_unreadable_scratch_is_listed_and_explicitly_deletable(core_factory, tmp_path):
+    """One chmod-000 folder neither hides peers nor gates the deletion RPC."""
+    if os.geteuid() == 0:
+        pytest.skip("permission denial requires a non-root user")
+    scratch = tmp_path / "scratch"
+    locked = scratch / "runs" / new_id()
+    other = scratch / "runs" / new_id()
+    (locked / "private").mkdir(parents=True)
+    other.mkdir(parents=True)
+    (locked / "private" / "value").write_bytes(b"unknown")
+    (other / "value").write_bytes(b"known")
+    (locked / "private").chmod(0)
+    try:
+        client = core_factory(mocked_builds=True, args=["--run-scratch-dir", str(scratch)]).connect()
+        usage = usage_when(client, lambda u: len(current(u).runScratch) == 2)
+        folders = {text(p.path): p for p in current(usage).runScratch}
+        assert folders[f"runs/{locked.name}"].sizeUnknown
+        assert not folders[f"runs/{other.name}"].sizeUnknown
+        assert current(usage).scratchBytes is None
+        result = client.call("RunScratchDeleteRequest", opId=new_id(), paths=list(folders))
+        assert set(map(text, result.deleted)) == set(folders)
+        assert not result.retained
+        assert not locked.exists() and not other.exists()
+    finally:
+        if locked.exists():
+            (locked / "private").chmod(0o700)

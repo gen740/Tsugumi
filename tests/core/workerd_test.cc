@@ -11,6 +11,7 @@
 
 #include "journal.hh"
 #include "tsugumi/workerd/log.hh"
+#include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -59,6 +60,19 @@ auto log_test() -> void {
          "log limit setting lost precision");
   for (const auto* value : {"", "0", "-1", "+1", " 1", "23bytes", "18446744073709551616"})
     rejected([&] { parse_log_limit_bytes(value); });
+  expect(remote::checked_log_limit(remote::kMaxLogLimitBytes) == (16u << 20), "maximum log limit rejected");
+  rejected([] { remote::checked_log_limit(remote::kMaxLogLimitBytes + 1); });
+  rejected([] { remote::checked_log_limit(0); });
+  // Fill the budget exactly, then append a notice outside it. The complete
+  // result must still fit the core's shared import limit.
+  std::ostringstream boundary;
+  InvocationLog maximum(boundary, remote::kMaxLogLimitBytes);
+  maximum.append(1, std::string(remote::kMaxLogLimitBytes - 23, 'x'));
+  expect(boundary.str().size() == remote::kMaxLogLimitBytes, "boundary entry did not fill budget");
+  maximum.append(2, "overflow");
+  maximum.finish();
+  expect(boundary.str().size() > remote::kMaxLogLimitBytes &&
+         boundary.str().size() <= remote::kMaxLogResultBytes, "truncation notice exceeds import allowance");
   // 25 encoded bytes: the raw text fits, but JSON escaping and framing do not
   // fit in a 23-byte budget. A dropped entry must not look like a complete log.
   std::ostringstream output;

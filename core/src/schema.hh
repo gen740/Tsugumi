@@ -376,6 +376,7 @@ struct SavedInputGroupJson {
   t::String<"port"> port;
   t::Bool<"execution_list"> execution_list;
   t::Array<"values", Obj<SavedInputJson>> values;
+  t::Bool<"partial_result"> partial_result;
 };
 
 struct SavedInputList {
