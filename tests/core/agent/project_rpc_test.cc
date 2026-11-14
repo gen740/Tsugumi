@@ -23,17 +23,19 @@ TEST_F(AgentProjectFixture, ConversationsCannotMoveBetweenCopiedProjects) {
   const auto pending = Inspect(conversation);
   ASSERT_EQ(pending.Code(), "grant_required");
   // Another registered project, with an identical title, is still distinct.
+  const auto copy = directory.path / "copy-b";
+  std::filesystem::create_directories(copy);
   const auto registered = Call(*host, H::RequestPayload::RegisterProjectRequest, [&](Builder& b) {
     return H::CreateRegisterProjectRequest(b, b.CreateString("copy-b"),
         b.CreateString("unix:/unused-copy-b.sock"), b.CreateString("token"),
-        b.CreateString("Private project"), b.CreateString("/copies/b")).Union();
+        b.CreateString("Private project"), b.CreateString(copy.string())).Union();
   });
   ASSERT_TRUE(registered.Code().empty());
   for (const auto& project : {std::string("copy-b"), std::string{}}) {
     const auto moved = Call(*human, A::RequestPayload::ConversationCreateRequest, [&](Builder& b) {
       return A::CreateConversationCreateRequest(b, b.CreateString(conversation), b.CreateString(project)).Union();
     });
-    EXPECT_EQ(moved.Code(), "project_mismatch");
+    EXPECT_EQ(moved.Code(), "conflict");
     EXPECT_EQ(JsonString(Get(conversation, true).View(), "/project_id"), original);
   }
   const auto list = Call(*human, A::RequestPayload::ConversationListRequest, [&](Builder& b) {
@@ -51,7 +53,7 @@ TEST_F(AgentProjectFixture, ConversationsCannotMoveBetweenCopiedProjects) {
   project_id = "copy-b";
   EXPECT_EQ(Call(*human, A::RequestPayload::ConversationCreateRequest, [&](Builder& b) {
     return A::CreateConversationCreateRequest(b, b.CreateString(conversation), b.CreateString(project_id)).Union();
-  }).Code(), "project_mismatch");
+  }).Code(), "conflict");
 }
 
 TEST_F(AgentProjectFixture, LiveAndRestoredAccessRequestsDescribeTheSameNamedFolder) {

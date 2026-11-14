@@ -394,8 +394,12 @@ class ChatHost {
 
   async externalCall(name: string, args: unknown) {
     const project = await core.project(this.project)
-    const id = `external-${this.key}`
-    await core.external.call('ConversationCreateRequest', { conversation_id: id, project_id: project, role: 'external' })
+    const id = `external-${project}`
+    // A moved transcript needs fresh grants. The tool request asks agentd for
+    // its own access without reading that transcript.
+    await core.external.call('ConversationCreateRequest', { conversation_id: id, project_id: project, role: 'external' }).catch(error => {
+      if (!(error instanceof CoreAgentError) || error.code !== 'permission_denied') throw error
+    })
     const op = randomUUID()
     try {
       return await core.external.call('ToolCallRequest', { conversation_id: id, project_id: project, name,

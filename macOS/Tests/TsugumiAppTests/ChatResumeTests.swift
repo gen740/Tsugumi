@@ -63,8 +63,10 @@ import TsugumiRPC
       self.daemon = daemon
       _ = try makeSession()
       let endpoint = daemon.endpoint
+      // Match the host folder registered by EnvironmentManager's Ready state.
       _ = try await CoreAgentClient.shared.call("RegisterProjectRequest", ["project_id": endpoint.projectId,
-        "endpoint": endpoint.url.absoluteString, "token": endpoint.token, "title": "Chat UI fixture"])
+        "endpoint": endpoint.url.absoluteString, "token": endpoint.token, "title": "Chat UI fixture",
+        "path": project.standardizedFileURL.path])
       _ = try await CoreAgentClient.shared.call("ConversationCreateRequest", ["conversation_id": conversationID,
         "project_id": endpoint.projectId, "role": "worker"])
       let provider = Tsugumi_Service_ProviderInputT()
@@ -457,7 +459,12 @@ import TsugumiRPC
       _ = try await CoreAgentClient.shared.call("AccessRequest", ["project_id": project.projectId,
         "conversation_id": t.conversationID, "access": "Read", "scope": "Conversation", "reason": "Read project content"])
       let copied = t.directory.appendingPathComponent("copy-b")
-      try FileManager.default.copyItem(at: t.session.identity.url, to: copied)
+      // A distinct project copies definitions, without the original project's conversation store.
+      try FileManager.default.createDirectory(at: copied, withIntermediateDirectories: true)
+      for source in try FileManager.default.contentsOfDirectory(at: t.session.identity.url, includingPropertiesForKeys: nil)
+        where source.lastPathComponent != ".tsugumi" {
+        try FileManager.default.copyItem(at: source, to: copied.appendingPathComponent(source.lastPathComponent))
+      }
       let identity = try ProjectIdentity(url: copied)
       #expect(identity.id != t.session.identity.id)
       let second = ProjectSession(identity: identity, environments: t.session.environments)

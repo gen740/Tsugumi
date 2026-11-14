@@ -46,7 +46,7 @@ try {
       if (method === 'ConversationSearchRequest') return [] as T
       if (method === 'ConversationCreateRequest') {
         const project = conversations.get(fields.conversation_id)
-        if (project && project !== fields.project_id) throw new Error('project_mismatch')
+        if (project && project !== fields.project_id) throw new Error('conflict')
         conversations.set(fields.conversation_id, fields.project_id)
         return snapshots(fields.conversation_id) as T
       }
@@ -90,7 +90,7 @@ try {
   busy = true
   model = 'gpt-6.1-sol'
   assert.equal((await call('conversation', { path: folders[1], session: 'b' })).provider.model, 'gpt-6.1-terra')
-  await assert.rejects(call('conversation', { path: folders[1], session: 'a' }), /project_mismatch/)
+  await assert.rejects(call('conversation', { path: folders[1], session: 'a' }), /conflict/)
 } finally {
   for (const folder of folders) cancelChats(folder)
   CoreAgentHost.prototype.getSettings = original.settings
