@@ -18,9 +18,12 @@ nix develop -c ctest --test-dir build -R '^core_rpc$' --output-on-failure
 ```
 
 The socket-free `tsugumi_worker_staging_tests` executable exercises the production
-scratch cleaner with nested read-only Nix-style source trees, links, FIFOs,
-hidden entries, open directories and a concurrent file writer. It checks that
-link targets survive and errors identify the path and errno. CI runs it on
+scratch cleaner and declared-output copier with nested read-only Nix-style source
+trees, links, FIFOs, hidden entries, open directories and a concurrent file writer.
+It checks that link targets survive and errors identify the path and errno.
+Output tests cover internal file/directory links, chains, escaping and absolute
+links, cycles, FIFOs and concurrent link replacement; accepted copies contain no
+symlinks or host bytes. Undeclared staging entries are ignored. CI runs it on
 macOS and Linux; it can also be built without Nix or generated bindings:
 
 ```sh

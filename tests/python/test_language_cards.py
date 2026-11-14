@@ -545,11 +545,86 @@ function main(inputs, report, run)
     return nothing
 end
 '''),
+    "python": ('''{ pkgs, inputs, params }: let
+  sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
+in { run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }
+''', "main.py", '''
+import time
+calls = 0
+def main(inputs, report, run):
+    global calls
+    calls += 1
+    report.text(f"call {calls}")
+    if calls != 2:
+        return
+    if "HOW" == "fail":
+        raise RuntimeError("on purpose")
+    while not run.cancelled():
+        time.sleep(0.01)
+'''),
+    "ruby": ('''{ pkgs, inputs, params }: let
+  sdk = inputs.tsugumi.sdk { languages = [ "ruby" ]; };
+in { run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; }; }
+''', "main.rb", '''
+def main(inputs, report, run)
+  @calls = (@calls || 0) + 1
+  report.text("call #{@calls}")
+  return nil unless @calls == 2
+  raise "on purpose" if "HOW" == "fail"
+  sleep(0.01) until run.cancelled?
+  nil
+end
+'''),
+    "csharp": ('''{ pkgs, inputs, params }: let
+  sdk = inputs.tsugumi.sdk { languages = [ "csharp" ]; };
+in { run = inputs.tsugumi.csharpCard { inherit sdk; src = ./src; }; }
+''', "Card.cs", '''
+using System;
+using System.Threading.Tasks;
+using Tsugumi;
+public sealed class Card : ICard {
+  private int calls;
+  public async ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) {
+    report.Text($"call {++calls}");
+    if (calls == 2) {
+      if ("HOW" == "fail") throw new Exception("on purpose");
+      await Task.Delay(60000, run.CancellationToken);
+    }
+    return new Outputs();
+  }
+}
+'''),
+    "cpp": ('''{ pkgs, inputs, params }: {
+  run = pkgs.runCommandCC "bad-resident-call" {} ''
+    mkdir -p $out/lib
+    $CC -shared -fPIC -I${inputs.tsugumi.runtime}/include ${./src/main.c} -o $out/lib/main.so
+  '';
+}
+''', "main.c", '''
+#include <tsugumi/sdk/abi.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+static int calls;
+int tsugumi_main(const tsugumi_call* c) {
+  char display[80];
+  snprintf(display, sizeof display, "{\\"text\\":\\"call %d\\"}", ++calls);
+  c->display_json(c->host, display);
+  if (calls != 2) return 0;
+  if (!strcmp("HOW", "fail")) {
+    c->fail(c->host, "worker_failed", "on purpose");
+    return 1;
+  }
+  while (!c->cancelled(c->host)) usleep(10000);
+  return 0;
+}
+'''),
 }
 
 
-@pytest.mark.parametrize("language", ["r", "julia"])
-@pytest.mark.parametrize("how", ["fail", "cancel", "exit", "crash"])
+@pytest.mark.parametrize("language,how",
+    [(language, how) for language in ("r", "julia") for how in ("fail", "cancel", "exit", "crash")]
+    + [(language, how) for language in ("python", "ruby", "csharp", "cpp") for how in ("fail", "cancel")])
 def test_a_resident_interpreter_is_not_reused_after_a_bad_call(project, language, how):
     # An error, a cancellation, the interpreter leaving by itself (quit/exit)
     # and the process being killed all end the worker: the next run starts a
@@ -581,6 +656,10 @@ def test_a_resident_interpreter_is_not_reused_after_a_bad_call(project, language
     run_id, status = run_and_wait(c, "start", timeout=1800)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     assert shown_text(c, run_id, "count") == "call 1" and not reused(c, run_id, "count")
+    log = text(c.call("LogRangeRequest", runId=run_id, card=path("count"), stream=2, limitBytes=65536).text)
+    reason = {"fail": "the previous call failed", "cancel": "the previous call was cancelled",
+              "exit": "the resident worker died", "crash": "the resident worker died"}[how]
+    assert f"Resident worker state started fresh: {reason}." in log
 
 
 LIVE = {

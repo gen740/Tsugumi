@@ -41,9 +41,10 @@ class WorkerPool {
   // only when reuse is enabled. Otherwise take a fresh standby or start one.
   // Residents of this Card end when reuse is disabled or the key changes.
   Lease acquire(const std::string& card, const std::string& key, const WorkerSpawn& spawn, bool reuse);
-  // Gives a living resident back even after an ordinary Card failure.
-  // A dead worker is replaced on the next acquisition.
-  void release(const std::string& card, const std::string& key, std::unique_ptr<WorkerProc> worker, bool keep);
+  // Retain only successful living residents; remember why a bad call ended
+  // its worker so the next acquisition can report fresh state.
+  void release(const std::string& card, const std::string& key, std::unique_ptr<WorkerProc> worker, bool keep,
+               const std::string& reason = {});
   // Ends every worker of the project (definitions reloaded, cache cleared).
   void clear(bool residents = true);
 
@@ -64,6 +65,7 @@ class WorkerPool {
   std::condition_variable cv_;
   std::vector<Idle> resident_;
   std::map<std::string, std::string> resident_keys_;  // also remembers workers that died during a call
+  std::map<std::string, std::string> resident_replacements_;
   std::map<std::string, Idle> standby_;  // one per key
   std::map<std::string, bool> refilling_;
   std::deque<std::pair<std::string, WorkerSpawn>> pending_;  // standby workers to start

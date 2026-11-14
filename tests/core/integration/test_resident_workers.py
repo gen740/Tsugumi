@@ -55,8 +55,8 @@ def test_dead_resident_is_reported_in_the_next_invocation(core_factory, tmp_path
     assert "state started fresh: the resident worker died" in log(c, second, "resident", 2)
 
 
-def test_living_resident_keeps_state_after_a_card_failure(core_factory, tmp_path):
-    """An ordinary Card failure does not evict a living resident worker."""
+def test_living_resident_is_discarded_after_a_card_failure(core_factory, tmp_path):
+    """Even a cooperative failure discards state and records why the next worker is fresh."""
     definition = bash('f="${TSUGUMI_WORK_DIR%/*}/home/failed"; '
                       'if test ! -e "$f"; then touch "$f"; exit 19; fi; echo recovered', reuseWorker=True)
     write(tmp_path / "p", {"resident": definition}, [card("resident", "resident")], [])
@@ -64,9 +64,10 @@ def test_living_resident_keeps_state_after_a_card_failure(core_factory, tmp_path
     first, st = run_and_wait(c, "resident")
     assert st.state == RunState.failed
     second, st = run_and_wait(c, "resident")
-    assert st.state == RunState.succeeded, log(c, second, "resident", 2)
+    assert st.state == RunState.failed
     inv, = c.call("RunInvocationsRequest", runId=second, card=path("resident")).records
-    assert inv.workerReused
+    assert not inv.workerReused
+    assert "state started fresh: the previous call failed" in log(c, second, "resident", 2)
 
 
 def test_output_transfer_failure_keeps_living_resident_state(core_factory, tmp_path):
@@ -74,7 +75,7 @@ def test_output_transfer_failure_keeps_living_resident_state(core_factory, tmp_p
     from projects import FILE_FBS
     from Tsugumi.Data.FailureKind import FailureKind
     definition = bash('f="${TSUGUMI_WORK_DIR%/*}/home/called"; '
-                      'if test ! -e "$f"; then touch "$f"; mkfifo "$TSUGUMI_OUTPUT_DIR/partial"; '
+                      'if test ! -e "$f"; then touch "$f"; mkfifo "$TSUGUMI_OUTPUT_DIR/result"; '
                       'else echo recovered > "$TSUGUMI_OUTPUT_DIR/result"; fi; '
                       'printf \'{"doc":{"value":"%s/result"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
                       outputs=FILE_FBS, reuseWorker=True)

@@ -58,10 +58,16 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
   {
     std::lock_guard<std::mutex> l(mu_);
     if (reuse) {
-      if (auto previous = resident_keys_.find(card); previous != resident_keys_.end())
+      if (auto previous = resident_keys_.find(card); previous != resident_keys_.end()) {
         lease.replaced = previous->second == key ? "the resident worker died" : "the Card definition changed";
+        if (auto reason = resident_replacements_.find(card); reason != resident_replacements_.end()) {
+          if (previous->second == key) lease.replaced = reason->second;
+          resident_replacements_.erase(reason);
+        }
+      }
     } else {
       resident_keys_.erase(card);
+      resident_replacements_.erase(card);
     }
     for (auto it = resident_.begin(); it != resident_.end();) {
       if (it->card != card) {
@@ -100,11 +106,18 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
 }
 
 void WorkerPool::release(const std::string& card, const std::string& key, std::unique_ptr<WorkerProc> worker,
-                         bool keep) {
+                         bool keep, const std::string& reason) {
   if (!worker) return;
   worker->set_logs(nullptr);
   keep = keep && worker->alive();
-  if (!keep) return;  // worker ends here
+  if (!keep) {
+    if (!reason.empty()) {
+      std::lock_guard<std::mutex> l(mu_);
+      if (auto previous = resident_keys_.find(card); previous != resident_keys_.end() && previous->second == key)
+        resident_replacements_[card] = reason;
+    }
+    return;  // worker ends here
+  }
   std::vector<std::unique_ptr<WorkerProc>> ended;
   {
     std::lock_guard<std::mutex> l(mu_);
@@ -140,6 +153,7 @@ void WorkerPool::clear(bool residents) {
     for (auto& r : resident_) ended.push_back(std::move(r.worker));
     resident_.clear();
     resident_keys_.clear();
+    resident_replacements_.clear();
   }
   for (auto& [_, s] : standby_) ended.push_back(std::move(s.worker));
   standby_.clear();

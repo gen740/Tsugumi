@@ -1,12 +1,11 @@
 #include "execution_service.hh"
 
-#include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
-#include <array>
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <system_error>
@@ -16,6 +15,7 @@
 #include "service.hh"
 #include "store.hh"
 #include "util/crypto.hh"
+#include "util/staging.hh"
 
 #ifndef TSUGUMI_CARD_PATH
 #define TSUGUMI_CARD_PATH "/usr/bin:/bin"
@@ -46,63 +46,6 @@ class StagingHandle {
  private:
   int fd_;
 };
-
-// Neither a type check on a path nor filesystem::copy pins what gets opened.
-// O_NONBLOCK prevents a FIFO swapped in for a regular file from hanging open.
-auto copy_worker_directory(int source, const std::filesystem::path& destination,
-                           const std::atomic<bool>& cancel) -> void {
-  auto invalid = [] { return Failed(FailureKind::output_invalid, "worker staging contains an unreadable or non-regular entry"); };
-  const int duplicate = ::fcntl(source, F_DUPFD_CLOEXEC, 0);
-  if (duplicate < 0) throw invalid();
-  std::unique_ptr<DIR, decltype(&::closedir)> entries(::fdopendir(duplicate), ::closedir);
-  if (!entries) {
-    ::close(duplicate);
-    throw invalid();
-  }
-  for (;;) {
-    if (cancel.load()) throw Failed(FailureKind::cancelled, "output transfer cancelled");
-    errno = 0;
-    const auto* entry = ::readdir(entries.get());
-    if (!entry) {
-      if (errno) throw invalid();
-      break;
-    }
-    const std::string name = entry->d_name;
-    if (name == "." || name == "..") continue;
-    const int fd = ::openat(source, name.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
-    if (fd < 0) throw invalid();
-    // All subsequent checks and reads use the opened inode, never its name.
-    StagingHandle opened(fd);
-    struct stat st{};
-    if (::fstat(fd, &st) != 0) throw invalid();
-    const auto target = destination / name;
-    if (S_ISDIR(st.st_mode)) {
-      std::filesystem::create_directories(target);
-      copy_worker_directory(fd, target, cancel);
-    } else if (S_ISREG(st.st_mode)) {
-      const int output = ::open(target.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-      if (output < 0) throw invalid();
-      StagingHandle written(output);
-      std::array<char, 65536> buffer{};
-      for (;;) {
-        if (cancel.load()) throw Failed(FailureKind::cancelled, "output transfer cancelled");
-        const ssize_t n = ::read(fd, buffer.data(), buffer.size());
-        if (n < 0 && errno == EINTR) continue;
-        if (n < 0) throw invalid();
-        if (!n) break;
-        ssize_t offset = 0;
-        while (offset < n) {
-          const ssize_t count = ::write(output, buffer.data() + offset, static_cast<size_t>(n - offset));
-          if (count < 0 && errno == EINTR) continue;
-          if (count <= 0) throw invalid();
-          offset += count;
-        }
-      }
-    } else {
-      throw invalid();
-    }
-  }
-}
 
 class PreparedNativeExecution final : public PreparedExecution {
  public:
@@ -204,13 +147,21 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   // If the call itself throws, its protocol state is unknown: end the worker.
   bool between_calls = true;
   auto return_worker = [&] {
+    if (result.outcome.failure) {
+      const auto kind = result.outcome.failure->kind;
+      const std::string reason = kind == FailureKind::cancelled ? "the previous call was cancelled" :
+                                 kind == FailureKind::timeout ? "the previous call exceeded its deadline" :
+                                 worker.alive() ? "the previous call failed" : "the resident worker died";
+      workers_.release(worker_card, key, std::move(lease.worker), false, reason);
+      return;
+    }
     if (worker.alive()) worker.clear_scratch();
     workers_.release(worker_card, key, std::move(lease.worker), reuse);
   };
   try {
     // Folders: without filesystem: true, work/ and tmp/ are the worker's own
-    // (local, emptied between calls); out/ exists only for Cards with File or
-    // Directory outputs and stays (downstream Cards and artifacts use it).
+    // (local, emptied between calls); only declared File/Directory outputs
+    // are copied into the invocation's out/ for downstream Cards/artifacts.
     bool needs_out = false;
     for (const auto& o : node.outputs) needs_out |= o.kind != PortKind::FlatBuffer;
     const std::filesystem::path& dir = request.directory;
@@ -267,15 +218,11 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
     // Logs and displays of this call belong to this run and invocation.
     worker.set_logs(request.log);
     StagingHandle output_directory(worker.out_dir());
-    StagingHandle work_directory(worker.work_dir());
-    StagingHandle temporary_directory(worker.tmp_dir());
     int64_t t0 = now_ms();
     between_calls = false;
     result.outcome = worker.call(frame, call_id, &request.cancel, deadline, request.display);
     between_calls = true;
     request.on_timing(t0, now_ms());
-    if (!result.outcome.failure && !recorded_out.empty())
-      copy_worker_directory(output_directory.get(), recorded_out, request.cancel);
     // Forwarded inputs retain their recorded path, not the worker's temporary
     // staging path. All other output paths go through normal output validation.
     for (auto& [name, bytes] : result.outcome.outputs) {
@@ -289,12 +236,27 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
         }
     }
 
-    if (!result.outcome.failure && node.settings.filesystem) {
-      // Diagnostic scratch uses the same traversal: children are still alive.
-      for (const auto& [from, to] : {std::pair{work_directory.get(), dir / "work"},
-                                    std::pair{temporary_directory.get(), dir / "tmp"}}) {
-        std::filesystem::create_directories(to);
-        copy_worker_directory(from, to, request.cancel);
+    if (!result.outcome.failure && !recorded_out.empty()) {
+      // Only declared outputs cross the worker boundary. Work/tmp and unused
+      // output entries are disposable staging, not implicit output trees.
+      for (const auto& [name, bytes] : result.outcome.outputs) {
+        const auto* port = node.output(name);
+        if (!port || port->kind == PortKind::FlatBuffer || !types::verify(*port->type, bytes)) continue;
+        const auto path = path_value(Value{name, port->kind, port->type, bytes, {}});
+        if (!path) continue;  // normal output validation reports malformed paths
+        const std::filesystem::path produced(*path);
+        // Forwarded inputs are outside out and were mapped above.
+        const auto relative = produced.lexically_relative(worker.out_dir());
+        if (relative.empty() || relative.is_absolute() ||
+            std::ranges::any_of(relative, [](const auto& part) { return part == ".."; })) continue;
+        try {
+          fs::copy_staging_output(output_directory.get(), relative,
+                                  std::filesystem::path(recorded_out) / relative,
+                                  port->kind == PortKind::Directory, request.cancel);
+        } catch (const std::exception& error) {
+          if (request.cancel.load()) throw Failed(FailureKind::cancelled, "output transfer cancelled");
+          throw Failed(FailureKind::output_invalid, error.what());
+        }
       }
     }
     // Dead/cancelled workers are destroyed without inspecting their scratch.
@@ -307,7 +269,10 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
     }
   } catch (...) {
     try {
-      if (between_calls && lease.worker) return_worker();
+      if (lease.worker) {
+        if (between_calls) return_worker();
+        else workers_.release(worker_card, key, std::move(lease.worker), false, "the previous call failed");
+      }
     } catch (...) {
       // Preserve the original failure if clearing staging also fails.
     }

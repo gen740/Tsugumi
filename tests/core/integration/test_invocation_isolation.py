@@ -205,25 +205,29 @@ def main(inputs, report):
 
 
 @pytest.mark.parametrize("entry", ["link", "directory-link", "fifo"])
-def test_successful_call_refuses_non_regular_output_entries(core_factory, tmp_path, entry):
-    """Even unreported nested entries must be regular files or directories; links and FIFOs are rejected."""
-    from Tsugumi.Data.FailureKind import FailureKind
+def test_successful_call_ignores_undeclared_special_entries(core_factory, tmp_path, entry):
+    """Only declared outputs are copied; unrelated links and FIFOs are cleared without failure."""
+    from pathlib import Path
     victim = tmp_path / "private"
     victim.mkdir()
     (victim / "secret").write_text("host-only-secret")
     target = victim if entry == "directory-link" else victim / "secret"
     create = ('mkfifo "$TSUGUMI_OUTPUT_DIR/nested/entry"' if entry == "fifo" else
               'ln -s ' + shlex.quote(str(target)) + ' "$TSUGUMI_OUTPUT_DIR/nested/entry"')
-    definition = bash('mkdir "$TSUGUMI_OUTPUT_DIR/nested"; ' + create + '; '
+    create = create.replace('$TSUGUMI_OUTPUT_DIR', '$stage')
+    definition = bash('for stage in "$TSUGUMI_OUTPUT_DIR" "$TSUGUMI_WORK_DIR" "$TSUGUMI_TMP_DIR"; do '
+                      'mkdir "$stage/nested"; ' + create + '; done; '
                       'echo safe > "$TSUGUMI_OUTPUT_DIR/result"; '
                       'printf \'{"doc":{"value":"%s/result"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-                      outputs=FILE_FBS)
+                      outputs=FILE_FBS, filesystem=True)
     write(tmp_path / "p", {"copy": definition}, [card("copy", "copy")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     run_id, st = run_and_wait(c, "copy")
-    assert st.state == RunState.failed
-    inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("copy")).records
-    assert inv.failure.kind == FailureKind.output_invalid
+    assert st.state == RunState.succeeded, log(c, run_id, "copy", 2)
+    record = c.call("RunRecordRequest", runId=run_id, card=path("copy")).record
+    saved = Path(text(record.outputs[0].filePath))
+    assert saved.read_text() == "safe\n"
+    assert not (saved.parent / "nested").exists()
     assert (victim / "secret").read_text() == "host-only-secret"
 
 

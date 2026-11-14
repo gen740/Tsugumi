@@ -1,4 +1,4 @@
-// Socket/Nix-free harness over the production cleaner.
+// Socket/Nix-free harness over the production cleaner and output copier.
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -130,6 +130,145 @@ auto failure_details(const stdfs::path& root) -> void {
   }
   throw std::runtime_error("followed a replaced staging root");
 }
+auto read_file(const stdfs::path& path) -> std::string {
+  std::ifstream input(path);
+  return {std::istreambuf_iterator<char>(input),
+          std::istreambuf_iterator<char>()};
+}
+
+auto copy_outputs(const stdfs::path& root) -> void {
+  const auto staging = root / "outputs";
+  const auto report = staging / "report";
+  stdfs::create_directories(report / "assets");
+  std::ofstream(report / "assets/data") << "inside";
+  std::ofstream(staging / "secret") << "outside-output";
+  stdfs::create_symlink("assets/data", report / "file-link");
+  stdfs::create_directory_symlink("assets", report / "directory-link");
+  stdfs::create_symlink("file-link", report / "chain");
+  stdfs::create_symlink("../file-link", report / "assets/up-link");
+  // Resolution must use the physical parent of an aliased directory.
+  stdfs::create_directories(report / "nested/inner");
+  std::ofstream(report / "nested/data") << "physical-parent";
+  stdfs::create_symlink("../data", report / "nested/inner/up");
+  stdfs::create_directory_symlink("nested/inner", report / "alias");
+  // These are not declared outputs and must never be walked.
+  stdfs::create_symlink("/etc/passwd", staging / "unused-link");
+  expect(::mkfifo((staging / "unused-fifo").c_str(), 0600) == 0,
+         "mkfifo unused");
+  const int fd = ::open(staging.c_str(), O_RDONLY | O_DIRECTORY);
+  expect(fd >= 0, "open output staging");
+  const std::atomic<bool> cancel = false;
+  const auto destination = root / "saved-report";
+  tsugumi::fs::copy_staging_output(fd, "report", destination, true, cancel);
+  for (const auto& name :
+       {"file-link", "directory-link/data", "chain", "assets/up-link"})
+    expect(read_file(destination / name) == "inside",
+           "internal link lost its contents");
+  expect(read_file(destination / "alias/up") == "physical-parent",
+         "resolved from logical rather than physical parent");
+  for (const auto& entry : stdfs::recursive_directory_iterator(destination))
+    expect(!entry.is_symlink(), "copy retained a source symlink");
+  tsugumi::fs::copy_staging_output(fd, "report/assets/data",
+                                   destination / "direct", false, cancel);
+  expect(read_file(destination / "direct") == "inside", "declared File copy");
+
+  const auto bad = report / "bad";
+  const auto refuse = [&](const std::string& kind) {
+    bool rejected = false;
+    try {
+      tsugumi::fs::copy_staging_output(fd, "report", root / "rejected", true,
+                                       cancel);
+    } catch (const std::exception& error) {
+      const std::string message = error.what();
+      expect(message.find("report/bad") != std::string::npos,
+             "refusal lacks entry path");
+      expect(message.find(kind) != std::string::npos,
+             "refusal lacks entry kind");
+      rejected = true;
+    }
+    expect(rejected, "unsafe output was accepted");
+    stdfs::remove(bad);
+  };
+  stdfs::create_symlink("../secret", bad);
+  refuse("symbolic link");
+  stdfs::create_symlink(staging / "secret", bad);
+  refuse("symbolic link");
+  // An innocent-looking chain must not allow an escape through a later link.
+  stdfs::create_symlink("../../secret", report / "assets/escape");
+  stdfs::create_symlink("assets/escape", bad);
+  try {
+    tsugumi::fs::copy_staging_output(fd, "report", root / "chain-rejected",
+                                     true, cancel);
+    throw std::logic_error("accepted escaping chain");
+  } catch (const std::runtime_error& error) {
+    expect(std::string(error.what()).find("symbolic link") != std::string::npos,
+           "chain rejection kind");
+  }
+  stdfs::remove(bad);
+  stdfs::remove(report / "assets/escape");
+  stdfs::create_symlink("bad", bad);
+  refuse("symbolic link");
+  stdfs::create_directory_symlink(".", bad);
+  refuse("directory symbolic link");
+  expect(::mkfifo(bad.c_str(), 0600) == 0, "mkfifo output");
+  refuse("FIFO");
+  ::close(fd);
+}
+
+auto copy_link_race(const stdfs::path& root) -> void {
+  const auto staging = root / "race";
+  const auto report = staging / "report";
+  stdfs::create_directories(report);
+  std::ofstream(report / "safe") << "inside";
+  const auto secret = root / "host-secret";
+  std::ofstream(secret) << "host-secret";
+  const auto link = report / "link";
+  const auto next = staging / "next";
+  stdfs::create_symlink("safe", link);
+  const int fd = ::open(staging.c_str(), O_RDONLY | O_DIRECTORY);
+  expect(fd >= 0, "open racing output");
+  const std::atomic<bool> cancel = false;
+  std::atomic<bool> started = false;
+  std::atomic<bool> swap_failed = false;
+  {
+    std::jthread swapper([&](std::stop_token stop) {
+      while (!stop.stop_requested()) {
+        for (const auto& target : {secret.string(), std::string("safe")}) {
+          ::unlink(next.c_str());
+          if (::symlink(target.c_str(), next.c_str()) != 0 ||
+              ::rename(next.c_str(), link.c_str()) != 0) {
+            swap_failed = true;
+            started = true;
+            return;
+          }
+          started = true;
+          std::this_thread::yield();
+        }
+      }
+    });
+    while (!started.load()) std::this_thread::yield();
+    for (int i = 0; i < 100; ++i) {
+      const auto destination = root / ("race-copy-" + std::to_string(i));
+      try {
+        tsugumi::fs::copy_staging_output(fd, "report", destination, true,
+                                         cancel);
+      } catch (const std::runtime_error& error) {
+        expect(
+            std::string(error.what()).find("report/link") != std::string::npos,
+            "race error lacks path");
+      }
+      if (stdfs::exists(destination / "link"))
+        expect(read_file(destination / "link") == "inside",
+               "race read a host file");
+      for (const auto& entry : stdfs::recursive_directory_iterator(destination))
+        expect(!entry.is_symlink(), "race created a destination symlink");
+    }
+  }
+  ::close(fd);
+  expect(!swap_failed.load(), "link swapper failed");
+  expect(read_file(secret) == "host-secret", "race changed host file");
+}
+
 }  // namespace
 
 auto main() -> int {
@@ -137,6 +276,8 @@ auto main() -> int {
     Scratch scratch;
     clean_card_entries(scratch.path);
     failure_details(scratch.path);
+    copy_outputs(scratch.path);
+    copy_link_race(scratch.path);
     std::cout << "worker staging tests passed\n";
     return 0;
   } catch (const std::exception& error) {
