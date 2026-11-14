@@ -65,31 +65,40 @@ static VALUE host_output(VALUE self, VALUE port, VALUE json) {
   return Qnil;
 }
 
+static void check_display(int status) {
+  if (status) rb_raise(rb_eArgError, "display was rejected by the worker");
+}
+
+static VALUE host_finish_outputs(VALUE self) {
+  require_call();
+  if (current->finish_outputs(current->host)) rb_raise(rb_eArgError, "required outputs were not emitted");
+  return Qnil;
+}
 static VALUE host_text(VALUE self, VALUE value) {
   require_call();
-  current->display_text(current->host, StringValueCStr(value));
+  check_display(current->display_text(current->host, StringValueCStr(value)));
   return Qnil;
 }
 static VALUE host_markdown(VALUE self, VALUE value) {
   require_call();
-  current->display_markdown(current->host, StringValueCStr(value));
+  check_display(current->display_markdown(current->host, StringValueCStr(value)));
   return Qnil;
 }
 static VALUE host_scalar(VALUE self, VALUE value, VALUE label) {
   require_call();
-  current->display_scalar(current->host, NUM2DBL(value), StringValueCStr(label));
+  check_display(current->display_scalar(current->host, NUM2DBL(value), StringValueCStr(label)));
   return Qnil;
 }
 static VALUE host_module(VALUE self, VALUE name, VALUE json) {
   require_call();
-  current->display_module(current->host, StringValueCStr(name), StringValueCStr(json), NULL, 0);
+  check_display(current->display_module(current->host, StringValueCStr(name), StringValueCStr(json), NULL, 0));
   return Qnil;
 }
 static VALUE host_image(VALUE self, VALUE media, VALUE bytes, VALUE alt) {
   require_call();
   StringValue(bytes);
-  current->display_image(current->host, StringValueCStr(media), (const uint8_t*)RSTRING_PTR(bytes),
-                         (size_t)RSTRING_LEN(bytes), StringValueCStr(alt));
+  check_display(current->display_image(current->host, StringValueCStr(media), (const uint8_t*)RSTRING_PTR(bytes),
+                         (size_t)RSTRING_LEN(bytes), StringValueCStr(alt)));
   return Qnil;
 }
 static VALUE host_table(VALUE self, VALUE columns, VALUE rows) {
@@ -125,9 +134,10 @@ static VALUE host_table(VALUE self, VALUE columns, VALUE rows) {
   for (long j = 0; j < n; ++j) names[j] = RSTRING_PTR(rb_ary_entry(columns, j));
   for (long i = 0; i < count; ++i)
     for (long j = 0; j < n; ++j) cells[i * n + j] = RSTRING_PTR(rb_ary_entry(rb_ary_entry(rows, i), j));
-  current->display_table(current->host, names, (size_t)n, cells, (size_t)count);
+  const int status = current->display_table(current->host, names, (size_t)n, cells, (size_t)count);
   free(names);
   free(cells);
+  check_display(status);
   return Qnil;
 }
 /* rows: [[id, label, x, y], ...] with x and y packed as native doubles. The
@@ -171,9 +181,10 @@ static VALUE host_line_chart(VALUE self, VALUE rows) {
     if (count) memcpy(next, RSTRING_PTR(rb_ary_entry(row, 3)), count * sizeof(double));
     next += count;
   }
-  current->display_line_chart(current->host, series, (size_t)n);
+  const int status = current->display_line_chart(current->host, series, (size_t)n);
   free(series);
   free(numbers);
+  check_display(status);
   return Qnil;
 }
 /* x, y, z packed as native floats; colors packed as uint32, or nil. */
@@ -201,9 +212,10 @@ static VALUE host_points(VALUE self, VALUE x, VALUE y, VALUE z, VALUE colors) {
     memcpy(p + 2 * count, RSTRING_PTR(z), (size_t)bytes);
     if (c) memcpy(c, RSTRING_PTR(colors), (size_t)bytes);
   }
-  current->display_points(current->host, p, p + count, p + 2 * count, c, count);
+  const int status = current->display_points(current->host, p, p + count, p + 2 * count, c, count);
   free(p);
   free(c);
+  check_display(status);
   return Qnil;
 }
 static VALUE host_log(VALUE self, VALUE message) {
@@ -232,6 +244,7 @@ static VALUE initialize(VALUE ignored) {
   METHOD("inputs", host_inputs, 0);
   METHOD("params", host_params, 0);
   METHOD("output", host_output, 2);
+  METHOD("finish_outputs", host_finish_outputs, 0);
   METHOD("display_text", host_text, 1);
   METHOD("display_markdown", host_markdown, 1);
   METHOD("display_scalar", host_scalar, 2);

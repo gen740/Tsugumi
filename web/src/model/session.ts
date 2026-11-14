@@ -231,6 +231,7 @@ export type SyncState =
   | { kind: 'waitingForRun' }
 
 export type DisplayValue =
+  | { kind: 'unavailable' }
   | { kind: 'text'; text: string }
   /** Markdown with TeX math (the SDK's Markdown display). */
   | { kind: 'markdown'; text: string }
@@ -250,6 +251,7 @@ export interface DisplaySnapshot {
 /** Decode a retained display without changing the live canvas. */
 export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
   let value: DisplayValue
+  try {
   switch (d.valueType) {
     case D.DisplayValue.DisplayText: {
       const t = d.value as D.DisplayTextT
@@ -258,7 +260,7 @@ export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
     }
     case D.DisplayValue.DisplayScalar: {
       const v = d.value as D.DisplayScalarT
-      value = { kind: 'scalar', value: v.value ?? 0, label: s(v.label) }
+      value = { kind: 'scalar', value: v.value ?? NaN, label: s(v.label) }
       break
     }
     case D.DisplayValue.DisplayTable: {
@@ -278,18 +280,22 @@ export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
     }
     case D.DisplayValue.DisplayModule: {
       const m = d.value as D.DisplayModuleT
+      if (new Set(m.blobs.map(b => s(b.name))).size !== m.blobs.length) throw new Error('duplicate blobs')
       value = { kind: 'module', name: s(m.module), json: s(m.configJson), blobs: Object.fromEntries(m.blobs.map(b => [s(b.name), Uint8Array.from(b.data)])) }
       break
     }
     default:
-      return
+      value = { kind: 'unavailable' }
   }
+  if (!displayable(value)) value = { kind: 'unavailable' }
+  } catch { value = { kind: 'unavailable' } }
   return { runId: s(d.runId), invocation: d.invocation ?? 0n, revision: d.revision ?? 0n, value }
 }
 
 export function displaySummary(d: DisplaySnapshot): string {
   const v = d.value
   switch (v.kind) {
+    case 'unavailable': return L('この結果は表示できません')
     case 'text': return v.text.split('\n')[0] ?? ''
     case 'markdown': {
       // The first line with text, without Markdown marks.
@@ -301,6 +307,28 @@ export function displaySummary(d: DisplaySnapshot): string {
     case 'image': return v.alt || L('画像')
     case 'points': return L('点群 {0} 点', v.x.length)
     case 'module': return plotTitle(v.name, v.json) ?? L('モジュール {0}', v.name)
+  }
+}
+
+/** A malformed presentation stays attached to its run, with an explicit state. */
+function displayable(v: DisplayValue): boolean {
+  const bytes = (s: string) => new TextEncoder().encode(s).length
+  const id = (s: string) => s !== '.' && s !== '..' && /^[a-zA-Z0-9_.-]{1,128}$/.test(s)
+  switch (v.kind) {
+    case 'unavailable': return false
+    case 'text': case 'markdown': return bytes(v.text) <= 1 << 20
+    case 'scalar': return Number.isFinite(v.value)
+    case 'table': return v.columns.length > 0 && v.columns.length <= 64 && v.rows.length <= 10000 &&
+      v.columns.every(c => bytes(c) <= 4096) && v.rows.every(r => r.length === v.columns.length && r.every(c => bytes(c) <= 4096))
+    case 'image': return v.data.length <= 8 << 20 && (v.mediaType === 'image/png'
+      ? v.data.length > 8 && [137,80,78,71,13,10,26,10].every((b,i) => v.data[i] === b)
+      : v.mediaType === 'image/jpeg' && v.data.length > 3 && v.data[0] === 255 && v.data[1] === 216)
+    case 'points': return v.x.length <= 1000000 && v.x.length === v.y.length && v.x.length === v.z.length &&
+      (!v.colors.length || v.colors.length === v.x.length) && [v.x,v.y,v.z].every(a => a.every(Number.isFinite))
+    case 'module':
+      if (!/^\/nix\/store\/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[a-zA-Z0-9+._?=-]+$/.test(v.name) || bytes(v.json) > 1 << 20 ||
+          Object.keys(v.blobs).length > 64 || !Object.keys(v.blobs).every(id) || Object.values(v.blobs).reduce((n,b) => n+b.length,0) > 8 << 20) return false
+      try { JSON.parse(v.json); return true } catch { return false }
   }
 }
 
@@ -322,7 +350,7 @@ function plotTitle(name: string, json: string): string | undefined {
 
 export type EnvironmentState = EnvPublicState | { state: 'reconnecting' }
 
-/** A file's new content: text, or bytes for a file taken in with another project. */
+/** A file's new content: editor text, or bytes preserved by copy, import and undo. */
 type SourceEdit = string | Uint8Array
 const sourceBytes = (e: SourceEdit) => (typeof e === 'string' ? new TextEncoder().encode(e) : e)
 
@@ -2221,6 +2249,14 @@ export class ProjectSession extends Observable {
     return k
   }
 
+  /** Source bytes as the draft sees them; copying must never decode binary files. */
+  async sourceData(p: string): Promise<Uint8Array> {
+    const e = this.sourceEdits.get(p)
+    if (e !== undefined) return sourceBytes(e)
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
+    return this.client.readFile(p, this.rev)
+  }
+
   /** Source text as the draft sees it. */
   async sourceText(p: string): Promise<string> {
     const e = this.sourceEdits.get(p)
@@ -2403,10 +2439,11 @@ export class ProjectSession extends Observable {
   }
 
   /** Takes in another Tsugumi project as a Card in Card: its folder (read by
-   *  the host server, without hidden folders) goes to externals/<name>/. */
+   *  the Host service, using its project-copy rule) goes to externals/<name>/. */
   async importProject(folder: string, scope: string[], at: { x: number; y: number }): Promise<CardKey> {
-    const { name: folderName, files, binary } = await api<{ name: string; files: Record<string, string>; binary: Record<string, string> }>('/api/import/project', { folder })
-    const json = (rel: string) => (files[rel] !== undefined ? tryParse(files[rel]) : undefined)
+    const { name: folderName, files: encoded } = await api<{ name: string; files: Record<string, string> }>('/api/import/project', { folder })
+    const files = Object.fromEntries(Object.entries(encoded).map(([p, b64]) => [p, Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))]))
+    const json = (rel: string) => (files[rel] !== undefined ? tryParse(new TextDecoder().decode(files[rel])) : undefined)
     // The project and the externals in it, each with its documents.
     const projects = Object.keys(files).filter((rel) => {
       if (!rel.endsWith('tsugumi.json')) return false
@@ -2442,10 +2479,6 @@ export class ProjectSession extends Observable {
         if (projects.some((p) => rel.startsWith(p) && isDocument(rel.slice(p.length)))) continue
         x.sourceRemovals.delete(to + rel)
         x.sourceEdits.set(to + rel, text)
-      }
-      for (const [rel, base64] of Object.entries(binary)) {
-        x.sourceRemovals.delete(to + rel)
-        x.sourceEdits.set(to + rel, Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)))
       }
       for (const [p, e] of [...docs].sort(([a], [b]) => a.localeCompare(b))) x.createExternal(p, e)
       x.setCardDefinition(k, { card: obj(), meta: obj([['name', folderName]]), link: obj([['external', name]]) })

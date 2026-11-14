@@ -96,7 +96,7 @@ class Worker:
         return R.pack(R.JobSpecT(system=self.caps.nativeSystem,
             derivation="/nix/store/00000000000000000000000000000000-test.drv",
             output="/nix/store/00000000000000000000000000000000-test", invocationSha256=digest,
-            inputBlobs=[digest], timeoutSeconds=timeout))
+            inputBlobs=[digest], timeoutSeconds=timeout, logLimitBytes=8 << 20))
 
 
 @pytest.fixture
@@ -112,7 +112,7 @@ def worker(tmp_path):
 
 
 def test_probe_authentication_unix_and_private_state(worker):
-    assert worker.caps.workerContract == 3 and worker.caps.maxJobs == 1
+    assert worker.caps.workerContract == 4 and worker.caps.maxJobs == 1
     assert worker.caps.nativeSystem in (b"aarch64-linux", b"x86_64-linux")
     stranger = TLS.identity(worker.root, "stranger")
     with pytest.raises((ssl.SSLError, OSError, EOFError)):

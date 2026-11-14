@@ -34,6 +34,7 @@ events <- list()
     tsugumi_remaining = -1,
     tsugumi_output = { events[[length(events)+1]] <<- args; TRUE },
     tsugumi_display = TRUE,
+    tsugumi_finish_outputs = TRUE,
     tsugumi_log = NULL,
     tsugumi_fail = stop(args[[1]]),
     stop("unexpected host call: ", name))
@@ -47,6 +48,11 @@ on_run_start <- function(inputs, report, run) {
 main <- function(inputs, report, run) {
   stopifnot(inputs$number$value == 21, !run$cancelled(), run$remaining_ms() == -1)
   stopifnot(inherits(try(inputs$params$factor <- 3, silent=TRUE), "try-error"))
+  if (exists("saved_run", envir=.GlobalEnv)) {
+    stopifnot(inherits(try(saved_run$cancelled(), silent=TRUE), "try-error"))
+    stopifnot(inherits(try(saved_run$remaining_ms(), silent=TRUE), "try-error"))
+  }
+  saved_run <<- run
   report$text("ready")
   n <- 0
   function() {
@@ -55,6 +61,8 @@ main <- function(inputs, report, run) {
   }
 }
 stopifnot(.tsugumi_invoke(TRUE), .tsugumi_invoke(FALSE))
+stopifnot(inherits(try(saved_run$cancelled(), silent=TRUE), "try-error"))
+stopifnot(.tsugumi_invoke(FALSE))
 stopifnot(events[[1]][[1]] == "hook", events[[2]][[1]] == "result")
 stopifnot(jsonlite::fromJSON(events[[2]][[2]])$value == 42)
 ''')
@@ -73,6 +81,7 @@ module TsugumiHost
     def info = {'run_id'=>'test', 'card'=>'step', 'invocation'=>7,
                 'working_directory'=>'.', 'temporary_directory'=>'.', 'output_directory'=>'.'}
     def output(port, value) = @events << [port, JSON.parse(value)]
+    def finish_outputs; end
     def display_text(text); end
     def log(text); end
     def cancelled? = false
@@ -112,6 +121,48 @@ end
     subprocess.run([executable("RUBY"), str(script), str(ROOT / "sdk/ruby/tsugumi.rb")], check=True)
 
 
+def test_ruby_unjoined_threads_fail_before_required_outputs(tmp_path):
+    script = tmp_path / "threads.rb"
+    script.write_text(r'''
+require ARGV[0]
+module TsugumiHost
+  @events = []
+  class << self
+    attr_reader :events
+    def info = {}
+    def params = '{}'
+    def inputs = []
+    def finish_outputs
+      @events << :finish
+      raise ArgumentError, 'required outputs were not emitted'
+    end
+    def fail(kind, message) = @events << [kind, message]
+  end
+end
+class Tsugumi::Card
+  def main(inputs)
+    $leftover = Thread.new { sleep 60 }
+    nil
+  end
+end
+Tsugumi.instance_variable_set(:@card, Tsugumi::Card.new)
+raise if Tsugumi._invoke
+raise unless TsugumiHost.events.length == 1
+kind, message = TsugumiHost.events.first
+raise unless kind == 'worker_failed' && message.include?('join Ruby threads')
+raise if $leftover.alive?
+# With no leftover thread, required-output validation still runs.
+class Tsugumi::Card
+  def main(inputs) = nil
+end
+TsugumiHost.events.clear
+raise if Tsugumi._invoke
+raise unless TsugumiHost.events.first == :finish
+raise unless TsugumiHost.events.last[1].include?('required outputs')
+''')
+    subprocess.run([executable("RUBY"), str(script), str(ROOT / "sdk/ruby/tsugumi.rb")], check=True)
+
+
 def test_julia_roles_hook_and_result_iterator(tmp_path):
     compiler = shutil.which(os.environ.get("CC", "cc"))
     if not compiler:
@@ -125,6 +176,7 @@ const char* tsugumi_native_input(const char* port) { (void)port; return "{\"valu
 const char* tsugumi_native_info(int field) { (void)field; return "."; }
 uint64_t tsugumi_native_invocation(void) { return 7; }
 int tsugumi_native_output(const char* port, const char* json) { printf("%s:%s\n", port, json); return 0; }
+int tsugumi_native_finish_outputs(void) { return 0; }
 int tsugumi_native_display(const char* json) { (void)json; return 0; }
 void tsugumi_native_log(const char* text) { (void)text; }
 int tsugumi_native_cancelled(void) { return 0; }
@@ -145,10 +197,22 @@ function main(inputs, report, run)
     @assert inputs.number["value"] == 21 && !cancelled(run) && remaining_ms(run) == -1
     inputs.number["value"] = 0
     @assert inputs.number["value"] == 21
+    if isdefined(Main, :saved_run)
+        for method in (cancelled, remaining_ms)
+            rejected = try; method(saved_run); false; catch; true; end
+            @assert rejected
+        end
+    end
+    global saved_run = run
     report.text("ready")
     (Dict("result" => Dict("value" => 42)) for _ in 1:1)
 end
 @assert Tsugumi.invoke(true) && Tsugumi.invoke(false)
+for method in (cancelled, remaining_ms)
+    rejected = try; method(saved_run); false; catch; true; end
+    @assert rejected
+end
+@assert Tsugumi.invoke(false)
 ''')
     result = subprocess.run([executable("JULIA"), "--startup-file=no", "--history-file=no", str(script), str(ROOT / "sdk/julia/tsugumi.jl")],
                             env={**os.environ, "TSUGUMI_NATIVE_LIBRARY": str(library), "JULIA_DEPOT_PATH": str(tmp_path / "depot")},

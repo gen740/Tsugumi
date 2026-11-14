@@ -33,7 +33,7 @@ auto rejected(F f) -> void {
   }
   expect(failed, "invalid input was accepted");
 }
-auto spec(const std::string& digest, uint32_t timeout = 60) -> std::string {
+auto spec(const std::string& digest, uint32_t timeout = 60, uint64_t log_limit = 8u << 20) -> std::string {
   R::JobSpecT s;
   s.system = "x86_64-linux";
   s.derivation = "/nix/store/00000000000000000000000000000000-test.drv";
@@ -41,6 +41,7 @@ auto spec(const std::string& digest, uint32_t timeout = 60) -> std::string {
   s.invocation_sha256 = digest;
   s.input_blobs = {digest};
   s.timeout_seconds = timeout;
+  s.log_limit_bytes = log_limit;
   validate_spec(s);
   flatbuffers::FlatBufferBuilder b;
   b.Finish(R::JobSpec::Pack(b, &s));
@@ -54,15 +55,6 @@ auto chunk(const std::string& data) -> R::PutBlobRequestT {
   return p;
 }
 auto log_test() -> void {
-  expect(kDefaultLogLimitBytes == 8 * 1024 * 1024, "default log limit changed");
-  expect(parse_log_limit_bytes("23") == 23, "log limit setting was not parsed");
-  expect(parse_log_limit_bytes("18446744073709551615") == UINT64_MAX,
-         "log limit setting lost precision");
-  for (const auto* value : {"", "0", "-1", "+1", " 1", "23bytes", "18446744073709551616"})
-    rejected([&] { parse_log_limit_bytes(value); });
-  expect(remote::checked_log_limit(remote::kMaxLogLimitBytes) == (16u << 20), "maximum log limit rejected");
-  rejected([] { remote::checked_log_limit(remote::kMaxLogLimitBytes + 1); });
-  rejected([] { remote::checked_log_limit(0); });
   // Fill the budget exactly, then append a notice outside it. The complete
   // result must still fit the core's shared import limit.
   std::ostringstream boundary;
@@ -120,8 +112,28 @@ auto log_test() -> void {
   minimum.finish();
   expect(tiny.str().find("[Log output truncated at the 1-byte limit.]") != std::string::npos,
          "tiny budget suppressed the truncation notice");
+  std::ostringstream local, remote;
+  InvocationLog worker(remote, 80);
+  InvocationLog recording([&](uint64_t stream, const std::string& text) {
+    tsugumi::remote::LogJson entry;
+    *entry.stream = stream;
+    *entry.text = text;
+    local << schema::encode(entry) << '\n';
+  }, 80);
+  for (const auto& text : {std::string("build"), std::string("stdout"), std::string(100, 'x')}) {
+    worker.append(1, text);
+    recording.append(1, text);
+  }
+  worker.finish();
+  recording.finish();
+  expect(local.str() == remote.str(), "local and remote recording budgets differ");
+
 }
 auto protocol_test() -> void {
+  const std::string digest(64, 'a');
+  expect(parse_spec(spec(digest, 60, 17))->log_limit_bytes == 17, "job lost the core log budget");
+  rejected([&] { spec(digest, 60, 0); });
+  rejected([&] { spec(digest, 60, remote::kMaxLogLimitBytes + 1); });
   R::RequestT q;
   q.server_id = std::string(64, 'b');
   q.project_scope = std::string(64, 'c');

@@ -76,6 +76,7 @@ constexpr Field k_layout[] = {
     TSUGUMI_FIELD(tsugumi_call, params_json),
     TSUGUMI_FIELD(tsugumi_call, emit_json),
     TSUGUMI_FIELD(tsugumi_call, display_json),
+    TSUGUMI_FIELD(tsugumi_call, finish_outputs),
 };
 #undef TSUGUMI_FIELD
 #undef TSUGUMI_STRUCT

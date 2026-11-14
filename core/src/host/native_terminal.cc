@@ -2,6 +2,7 @@
 
 #include <fcntl.h>
 #include <poll.h>
+#include <pwd.h>
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/wait.h>
@@ -97,17 +98,26 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
     ::fcntl(slave, F_SETFD, FD_CLOEXEC);
     // Only terminal identity crosses into the shell; no service credentials,
     // provider keys, execution capabilities or arbitrary host environment.
-    const auto env = [](const char* name, const char* fallback) {
-      const auto* value = std::getenv(name);
-      return std::string(name) + "=" + (value ? value : fallback);
-    };
-    std::vector<std::string> values = {env("HOME", "/"),
-                                       env("USER", ""),
-                                       env("LANG", "C.UTF-8"),
-                                       env("PATH", "/usr/bin:/bin"),
-                                       "TERM=xterm-256color",
-                                       "COLORTERM=truecolor",
-                                       "TSUGUMI_PROJECT=" + request.project};
+    passwd user{};
+    passwd* found = nullptr;
+    std::vector<char> buffer(16384);
+    if (::getpwuid_r(::getuid(), &user, buffer.data(), buffer.size(), &found) ||
+        !found)
+      throw std::runtime_error("Cannot determine the terminal account");
+    const std::string home = user.pw_dir;
+    std::vector<std::string> values = {
+        "HOME=" + home,
+        "USER=" + std::string(user.pw_name),
+        "LOGNAME=" + std::string(user.pw_name),
+        "SHELL=" + std::string(user.pw_shell[0] ? user.pw_shell : "/bin/bash"),
+        "TMPDIR=/tmp",
+        "LANG=C.UTF-8",
+        "PATH=" + home +
+            "/.nix-profile/bin:/nix/var/nix/profiles/default/bin:"
+            "/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        "TERM=xterm-256color",
+        "COLORTERM=truecolor",
+        "TSUGUMI_PROJECT=" + request.project};
     std::vector<char*> environment;
     for (auto& value : values) environment.push_back(value.data());
     environment.push_back(nullptr);
