@@ -26,7 +26,7 @@ run "$cmake_path" --fresh -S "$repo" -B "$repo/build-host" -G Ninja \
   -DCURL_LIBRARY="$sdk_path/usr/lib/libcurl.tbd" -DCURL_LIBRARY_RELEASE="$sdk_path/usr/lib/libcurl.tbd" \
   -DCURL_LIBRARY_DEBUG="$sdk_path/usr/lib/libcurl.tbd" -DCURL_INCLUDE_DIR="$sdk_path/usr/include" \
   -DTSUGUMI_AGENT_SQLITE_LIBRARY="$sdk_path/usr/lib/libsqlite3.tbd"
-run "$cmake_path" --build "$repo/build-host" --target tsugumi-agentd tsugumi-rpc
+run "$cmake_path" --build "$repo/build-host" --target tsugumi-agentd
 
 # Bundle the two OpenSSL runtime libraries, keeping the native product usable
 # without a Nix installation. Provider HTTPS still uses the system libcurl.
@@ -49,7 +49,7 @@ for binary in "$frameworks/"*.dylib "$repo/build-host/core/tsugumi-agentd"; do
   /usr/bin/codesign --force --sign - "$binary"
 done
 
-for binary in "$repo/build-host/core/tsugumi-agentd" "$repo/build-host/client/tsugumi-rpc" "$frameworks/"*.dylib; do
+for binary in "$repo/build-host/core/tsugumi-agentd" "$frameworks/"*.dylib; do
   if /usr/bin/otool -L "$binary" | /usr/bin/grep -q '/nix/store/'; then
     echo "The distributable binary still depends on the Nix store: $binary" >&2
     exit 1
