@@ -1,6 +1,5 @@
 """Encode independent value fixtures with the public FlatBuffers compiler."""
 
-import base64
 import json
 import shutil
 import subprocess
@@ -22,11 +21,6 @@ def encode_message(directory, schema, value, *, root_type):
                     "-o", str(directory), str(schema_file), str(value_file)],
                    check=True, capture_output=True, text=True, timeout=10)
     return (directory / "value.bin").read_bytes()
-
-
-def raw_output(payload, port="out"):
-    """A worker action that returns the supplied value bytes unchanged."""
-    return {"op": "raw", "port": port, "base64": base64.b64encode(payload).decode()}
 
 
 def reference_json(directory, schema, payload, *, root_type):
