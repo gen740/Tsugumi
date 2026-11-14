@@ -29,7 +29,7 @@ const restoreSettings = mockHostSettings()
 try {
     const routes = chatRoutes({
     support: root, here: root, envs: { attachFolders: async (_p: string, _k: string, values: string[]) => { shares.push(values) } },
-    readJSON: (_p: string, fallback: unknown) => fallback, projectDir: (p: unknown) => String(p),
+    projectDir: (p: unknown) => String(p),
     httpError: (_status: number, message: string) => new Error(message),
   } as any)
   const attach = routes['POST /api/chat/folders']

@@ -3,12 +3,12 @@
 import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { AGENT, modelChoices } from '../src/shared/agentShared'
-import { type AgentEvent, guideText, type ProviderConfig } from './agent'
+import { modelChoices } from '../src/shared/agentShared'
+import { type AgentEvent, type ProviderConfig } from './agent'
 import { CoreAgentHost, CoreAgentError, RemoteAgent } from './coreAgent'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
 import { Environments, projectKey } from './environment'
-import { L, language, setLanguage, type Language } from './i18n'
+import { L, setLanguage, type Language } from './i18n'
 
 export interface ChatContext {
   support: string
@@ -18,8 +18,6 @@ export interface ChatContext {
   projectDir: (p: unknown) => string
   broadcast: (v: unknown) => void
   httpError: (status: number, message: string) => Error
-  readJSON: <T>(file: string, fallback: T) => T
-  writeJSON: (file: string, v: unknown) => void
   /** Folder of the server bundle (tsugumi.bfbs is next to it). */
   here: string
   /** How many pages are connected (their event streams). */
@@ -65,7 +63,6 @@ interface Settings {
   language: Language
 }
 
-export const PERMISSION_KINDS = ['network', 'sandbox_off', 'host_folder_read', 'host_folder_write']
 // The host keeps presentation snapshots only; persistence and validation are RPC.
 const SHARED_KEYS: Record<string, string> = {
   provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
@@ -604,7 +601,6 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/chat/folder/detach': async (b) => {
     const project = projectDir(b.path)
-    const { key } = projectKey(project)
     const access = await core.user.call<{ grants: { id: string; project_id: string; active: boolean }[] }>('AccessListRequest')
     for (const grant of access.grants.filter((g) => g.active && g.project_id === String(b.resource))) {
       await core.user.call('AccessRevokeRequest', { grant_id: grant.id })

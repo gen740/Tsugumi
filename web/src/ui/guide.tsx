@@ -46,14 +46,14 @@ function GuideRings() {
  *  and a click opens its conversation above it. Shown only with a model connection. */
 export function GuideCorner({ screen }: { screen: GuideScreen }) {
   useObserve(guide, prefs)
-  useEffect(() => guide.setContext(screen), [screen])
+  useEffect(() => guide.setContext(), [])
   if (!guide.available) return null
   const mood = guide.busy ? 'thinking' : guide.failed ? 'worried' : 'idle'
   const perform = makePerform()
   return (
     <div className="guide-corner">
       {guide.open && <GuidePanel screen={screen} perform={perform} />}
-      {!guide.open && !guide.away && (guide.asksDemo ? <OfferBubble screen={screen} perform={perform} />
+      {!guide.open && !guide.away && (guide.asksDemo ? <OfferBubble perform={perform} />
         : guide.bubble && !guide.speakingChat ? <BubbleView bubble={guide.bubble} perform={perform} />
           : guide.failed ? <span className="guide-bubble material">{L('うまく答えられませんでした')}</span> : null)}
       <button type="button" className={`guide-avatar ${mood}${prefs.tsugumiStill ? ' still' : ''}${guide.away ? ' away' : ''}`}
@@ -136,7 +136,7 @@ const shortTitle = (t: string) => t.replace(L('（Draft）'), '').trim()
 /** The first questions, written by the app (no model until a question is
  *  typed or a recommendation asked): what to try, then a field (or the
  *  Drafts), then a demo, which the bird flies to and offers to open. */
-function OfferBubble({ screen, perform }: { screen: GuideScreen; perform: (a: GuideAction) => void }) {
+function OfferBubble({ perform }: { perform: (a: GuideAction) => void }) {
   const demos = app.status?.demos ?? []
   const fields = [...new Set(demos.flatMap((d) => (d.field ? [d.field] : [])))]
   const step = guide.offerStep
@@ -149,7 +149,7 @@ function OfferBubble({ screen, perform }: { screen: GuideScreen; perform: (a: Gu
           {chip(L('既にある Workflow を見る'), () => guide.setOfferStep({ kind: 'fields' }))}
           {chip(L('Draft を AI に実装させる'), () => guide.setOfferStep({ kind: 'drafts' }))}
         </div>
-        <ReplyField placeholder={L('質問を書く')} autoFocus onSend={(t) => { guide.answerDemoOffer(); guide.ask(t, screen) }} />
+        <ReplyField placeholder={L('質問を書く')} autoFocus onSend={(t) => { guide.answerDemoOffer(); guide.ask(t) }} />
         <div className="row gap8"><Button small onClick={() => guide.answerDemoOffer()}>{L('あとで')}</Button></div>
       </>}
       {step.kind === 'fields' && <>
@@ -464,7 +464,7 @@ const HINTS: Record<'project' | 'home', string[]> = {
   home: [L('Tsugumi で何ができる？'), L('デモを見せて'), L('新しいプロジェクトの作り方は？')],
 }
 
-function GuidePanel({ screen, session, tab, perform }: { screen: GuideScreen; session?: ProjectSession; tab?: WorkflowTab; perform: (a: GuideAction) => void }) {
+function GuidePanel({ screen, session, perform }: { screen: GuideScreen; session?: ProjectSession; perform: (a: GuideAction) => void }) {
   const [text, setText] = useState('')
   const end = useRef<HTMLDivElement>(null)
   const field = useRef<HTMLTextAreaElement>(null)
@@ -478,7 +478,7 @@ function GuidePanel({ screen, session, tab, perform }: { screen: GuideScreen; se
   const send = (q: string) => {
     if (guide.busy || !q.trim()) return
     if (guide.offersDemo) guide.answerDemoOffer()
-    guide.ask(q, screen, session, tab)
+    guide.ask(q, session)
     setText('')
   }
   const enabled = (a: GuideAction) => {

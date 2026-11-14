@@ -34,7 +34,6 @@ const tick = () => new Promise((r) => setTimeout(r, 0))
 // The HTTP adapter shows the service's catalog and does not persist a second copy.
 {
   process.env.ANTHROPIC_API_KEY = 'test-a'
-  const files = new Map<string, unknown>()
   const original = CoreAgentHost.prototype.models
   const stored = CoreAgentHost.prototype.storedModels
   CoreAgentHost.prototype.models = async () => [{ id: 'a', name: 'Model A' }]
@@ -44,12 +43,9 @@ const tick = () => new Promise((r) => setTimeout(r, 0))
     const routes = chatRoutes({
       support: '/nonexistent', envs: {} as never, projectDir: (p) => String(p), broadcast: () => {}, here: '/nonexistent',
       httpError: (status, message) => Object.assign(new Error(message), { status }),
-      readJSON: <T>(_file: string, fallback: T) => fallback,
-      writeJSON: (file, value) => void files.set(file, value),
     })
     const result = await routes['POST /api/settings/models']({ provider: 'anthropic' }, new URL('http://x'))
     assert.deepEqual(result, { models: ['a'], modelNames: { g: 'GPT' } })
-    assert.equal(files.size, 0)
     restoreSettings()
   } finally {
     CoreAgentHost.prototype.models = original
