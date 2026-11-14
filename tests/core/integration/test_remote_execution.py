@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from harness import remote_worker as R
 from harness.host import Host
-from harness.observations import read_output
+from harness.observations import read_output, read_pages
 from harness.values import reference_json
 from projects import (
     FILE_FBS,
@@ -282,6 +282,98 @@ def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broke
     with pytest.raises(RpcFailure) as downstream:
         client.call("RunRecordRequest", runId=run_id, card=path("after"))
     assert downstream.value.kind == "not_found"
+
+
+@pytest.mark.parametrize("view", ["line-chart", "own-js", "own-wasm"])
+def test_remote_display_module_matches_local_source(project, core_factory, remote_broker, monkeypatch, view):
+    """Read the recorded remote display before a local build can hide missing module transport."""
+    marker = "remote-module-" + hashlib.sha256(str(project).encode()).hexdigest()[:16]
+    module_name = "line-chart" if view == "line-chart" else "own"
+    config = {"series": [{"id": "one", "label": "One", "offset": 0, "count": 2}]} if view == "line-chart" else {"answer": 42}
+    report = json.dumps({"module": {"module": module_name, "config": config,
+                                   "blobs": {"x": "x.bin", "y": "y.bin"}}})
+    # The same binary input is used on both sides; the source must contain none
+    # of the per-invocation config or blobs.
+    script = """
+      set -e
+      printf '\\000\\000\\000\\000\\000\\000\\360\\077\\000\\000\\000\\000\\000\\000\\000\\100' > x.bin
+      cp x.bin y.bin
+      printf '%s' '__DISPLAY_REPORT__' > "$TSUGUMI_REPORT"
+      printf '%s' '{}' > "$TSUGUMI_OUTPUT"
+    """.replace("__DISPLAY_REPORT__", report)
+    views = ""
+    entry = f'export function initialise(root) {{ root.textContent = "{marker}"; }}\n'
+    if view == "own-js":
+        views = f'views.own = inputs.tsugumi.viewModule {{ src = ./view; name = "{marker}-js"; }};'
+    elif view == "own-wasm":
+        # Exercise the SDK's shared-index.js / Card-owned view.wasm layout
+        # without building the much larger WebGPU template for this RPC test.
+        entry = (f'// {marker}\nexport function initialise(root) {{ '
+                 'root.textContent = new WebAssembly.Instance(new WebAssembly.Module(tsugumiWasm)).exports.answer(); }\n')
+        views = f"""
+          views.own = pkgs.runCommand "{marker}-wasm" {{ nativeBuildInputs = [ pkgs.wabt ]; }} ''
+            mkdir -p $out
+            wat2wasm ${{./view/view.wat}} -o $out/view.wasm
+            ln -s ${{pkgs.runCommand "{marker}-template" {{ }} ''
+              mkdir -p $out
+              cp ${{./view/index.js}} $out/index.js
+            ''}}/index.js $out/index.js
+          '';
+        """
+    entry += 'export function update(){}\nexport function resize(){}\nexport function dispose(){}\n'
+    definition = {"language": "bash", "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS,
+                  "_outputs": "table Outputs {} root_type Outputs;",
+                  "_nix": "{ pkgs, inputs, params }: { " + views + " run = ''" + script + "''; }"}
+    write(project, {"display": definition},
+          [card("remote", "display", executionService="remote-test"), card("local", "display")], [],
+          {"definitions/display/view/index.js": entry,
+           "definitions/display/view/view.wat": '(module (func (export "answer") (result i32) i32.const 42))'})
+    daemon = core_factory()
+    client = daemon.connect()
+
+    def run_display(card_id):
+        run_id, status = run_and_wait(client, card_id, timeout=RUN_LIST_TIMEOUT_SECONDS + 60)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        record = client.call("RunRecordRequest", runId=run_id, card=path(card_id)).record
+        if card_id == "remote":
+            assert record.summary.executionState == RemoteExecutionState.succeeded
+            assert text(record.summary.executionService) == "remote-test"
+        return run_id, record.display.value
+
+    remote_run, remote = run_display("remote")
+    identity = text(remote.module)
+    if view != "line-chart":
+        assert not Path(identity).exists(), "the unique Card-owned output must only exist on the worker"
+    remote_source = read_pages(client, "ModuleReadRequest", module=identity, page_bytes=65536)
+    assert remote_source and b"export" in remote_source
+    if view != "line-chart":
+        assert marker.encode() in remote_source
+    if view == "own-wasm":
+        assert b"const tsugumiWasm=Uint8Array.from(atob(" in remote_source
+    if view == "own-js":
+        cached = project / ".tsugumi/modules" / Path(identity).name / "index.js"
+        before = cached.stat()
+        _, repeated = run_display("remote")
+        assert text(repeated.module) == identity
+        assert cached.read_bytes() == remote_source
+        assert (cached.stat().st_ino, cached.stat().st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+
+    # A restarted project serves the recorded display without contacting the
+    # worker, whose job may already be released. No local build has run yet.
+    with monkeypatch.context() as offline:
+        offline.delenv("TSUGUMI_EXECUTION_BROKER")
+        offline.delenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE")
+        daemon.restart()
+        client = daemon.connect()
+        recorded = client.call("RunRecordRequest", runId=remote_run, card=path("remote")).record.display.value
+        assert text(recorded.module) == identity
+        assert read_pages(client, "ModuleReadRequest", module=identity, page_bytes=65536) == remote_source
+    daemon.restart()
+    client = daemon.connect()
+    _, local = run_display("local")
+    assert json.loads(text(local.configJson)) == json.loads(text(remote.configJson))
+    assert {text(b.name): bytes(b.data) for b in local.blobs} == {text(b.name): bytes(b.data) for b in remote.blobs}
+    assert read_pages(client, "ModuleReadRequest", module=text(local.module), page_bytes=65536) == remote_source
 
 
 @pytest.mark.parametrize("remote_daemon", [("--log-limit-bytes", "1")], indirect=True)

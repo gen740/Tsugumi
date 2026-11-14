@@ -7,6 +7,7 @@
 #include <flatbuffers/reflection.h>
 
 #include "execution_service.hh"
+#include "module_source.hh"
 #include "nix_store.hh"
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/log.hh"
@@ -253,6 +254,20 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs:
         [&](const std::string& line) { log(LogStream::build, line + "\n"); });
     outcome = run_worker(*call, invocation, input, directory, store, environment, log,
         [&](const DisplayData& data) { display = wire::standalone_display(data); });
+    if (auto data = wire::standalone_display(display)) {
+      if (const auto* module = std::get_if<DisplayData::Module>(&data->value)) {
+        if (!valid_module_identity(module->module) ||
+            std::ranges::find(environment.closure, module->module) == environment.closure.end())
+          throw std::runtime_error("display module is outside the built closure");
+        // Assemble only immutable build outputs, while this job still owns its
+        // private store. The same loader serves local ModuleReadRequest calls.
+        const auto store_directory = store / "nix/store";
+        const auto root = store_directory / stdfs::path(module->module).filename();
+        if (stdfs::is_symlink(root) || !stdfs::is_directory(root))
+          throw std::runtime_error("invalid display module output");
+        fs::write_atomic(result_dir / "module.js", module_source(root, store_directory), 0600);
+      }
+    }
   } catch (const Failed& error) {
     outcome.failure = error.failure;
   } catch (const std::exception& error) {
