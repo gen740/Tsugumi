@@ -52,3 +52,6 @@ def test_shared_marimo_template_is_current():
     for path,value in module.outputs().items():assert path.read_text()==value
     definition=json.loads(module.files()['_card.json'])
     assert definition['reuseWorker'] is False and definition['retainArtifact'] is True
+    for language in ('en', 'ja'):
+        main = ROOT / f'demos/{language}/marimo/definitions/notebook/src/main.py'
+        assert main.read_text() == module.files()['src/main.py']

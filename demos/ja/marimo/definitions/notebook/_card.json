@@ -19,7 +19,7 @@
     {
       "name": "bindings",
       "type": "string",
-      "data": "{\"source\":\"input.data.source\",\"result\":\"input.data.result\"}"
+      "data": "{\"source\":\"inputs.data.source\",\"result\":\"inputs.data.result\"}"
     },
     {
       "name": "selected",

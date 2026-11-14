@@ -39,14 +39,11 @@ in
 }
 ''',
         'src/main.py': '''"""Map inputs/params to notebook variables, then commit outputs once."""
-import tsugumi
 import json
 import math
 from pathlib import Path
 from tsugumi import Failure
 from tsugumi.notebook import bindings, run as run_notebook
-import outputs.value.notebook.Number as number
-import outputs.report.notebook.Files as files
 
 
 def main(inputs, report, run):
@@ -57,12 +54,7 @@ def main(inputs, report, run):
     value = values[selected]
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise Failure("output_invalid", "The selected notebook result must be a finite number; edit the output schema/source for another type")
-    b = tsugumi.builder()
-    number.Start(b); number.AddValue(b, value)
-    yield {"value": tsugumi.message(b, number.End(b))}
-    b = tsugumi.builder(); path = b.CreateString(str(folder))
-    files.Start(b); files.AddValue(b, path)
-    yield {"report": tsugumi.message(b, files.End(b))}
+    return {"value": {"value": value}, "report": {"value": str(folder)}}
 ''',
         'src/notebook.py': '''"""A normal marimo notebook; Tsugumi overrides the configuration cell."""
 import marimo
