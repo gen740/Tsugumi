@@ -15,6 +15,9 @@
 extern const unsigned char tsugumi_rpc_bfbs[];
 extern const unsigned long tsugumi_rpc_bfbs_size;
 
+extern const unsigned char tsugumi_agent_settings[];
+extern const unsigned long tsugumi_agent_settings_size;
+
 namespace tsugumi::agent {
 namespace {
 
@@ -246,14 +249,19 @@ auto Parser() -> std::unique_ptr<flatbuffers::Parser> {
 Catalog::Catalog() {
   const auto *requests =
       Schema().enums()->LookupByKey("Tsugumi.RPC.RequestPayload");
-  for (const auto *value : *requests->values()) {
-    if (!value->value())
-      continue;
-    const auto name = value->name()->str();
-    if (name == "SessionHelloRequest" || name == "ProjectOpenRequest" ||
-        name == "ProjectCloseRequest" || name == "ViewSetVisibleRequest")
-      continue;
-    const auto &object = *Schema().objects()->Get(value->union_type()->index());
+  const auto settings = json::Object(std::string_view(
+      reinterpret_cast<const char*>(tsugumi_agent_settings),
+      tsugumi_agent_settings_size));
+  std::set<std::string> seen;
+  for (const auto& entry : json::Array(json::Get(settings, "requests"))) {
+    const auto name = json::String(entry);
+    const auto found = std::find_if(
+        requests->values()->begin(), requests->values()->end(),
+        [&](const auto* value) { return value->name()->str() == name; });
+    if (found == requests->values()->end() || !(*found)->value() ||
+        !seen.insert(name).second)
+      throw std::runtime_error("invalid Agent request allow list entry: " + name);
+    const auto &object = *Schema().objects()->Get((*found)->union_type()->index());
     CatalogTool tool{{Name(name), Docs(object.documentation()),
                       ObjectSchema(object, 0, true)},
                      name,

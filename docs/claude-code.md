@@ -45,3 +45,10 @@ Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* �
 
 - The macOS app is not supported. Projects Claude Code works on are opened in the Web UI.
 - Cards run in the environment of the Web UI server `tsugumi_open` found (inside the shared VM if the `tsugumi` command's server is running on a Mac). If no server is running, a server is started from the repository you built, and `tsugumid` runs directly on this host.
+
+The plugin uses core's project-tool allow list in `agent/Shared/agent.json`,
+shared with the built-in Agent. Run history deletion, cache clearing, version
+checkout and summary replacement remain explicit UI actions. `project_shell`
+requires a separate Shell grant and reads the project without write access;
+use `project_save` for edits and Cards for analysis. External reloads require
+the user's approval for every Card permission widening, regardless of origin.

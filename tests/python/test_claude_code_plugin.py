@@ -189,6 +189,13 @@ def test_tools_and_instructions(plugin):
     assert {"project_inspect", "project_save", "run", "run_record", "demo_read", "agent_access", "agent_access_resolve", "agent_conversation_get"} <= set(names)
     # The plugin sees the same core tool catalog and Agent operations.
     assert {"attached_folder_read", "delegate", "guide_show"} <= set(names)
+    shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
+    def tool_name(request):
+        return re.sub(r"(?<!^)([A-Z])", r"_\1", request.removesuffix("Request")).lower()
+    project_names = {tool_name(request) for request in shared["requests"]}
+    assert project_names <= set(names)
+    assert not {"run_history_delete", "project_cache_clear", "version_checkout", "version_summary",
+                "version_init", "version_mark", "view_save"} & set(names)
     text, error = mcp.call("project_inspect", {})
     assert error and "tsugumi_open" in text
 

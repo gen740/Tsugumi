@@ -191,7 +191,7 @@ Connect a model under **Settings → API**, then ask the chat to make or change 
 
 ### Commands in the project environment
 
-Grant **Shell** access separately from Read, Write and Run to use `project_shell`. It runs inside the isolated project environment and includes its shared folders and network; it is broader than one Card's permissions. [Shell contract and limits](Protocol.md#projectshell) · [Human terminal](Usage.md#project-terminal)
+Grant **Shell** access separately from Read, Write and Run to use `project_shell`. It runs inside the isolated project environment and includes its shared folders and network; it is broader than one Card's permissions. Agent commands are for diagnosis and reads: the project is read-only, edits use `project_save`, and analysis runs in Cards. Both chat and Claude Code tools follow the explicit `requests` allow list in `agent/Shared/agent.json`. Reloading external edits requires approval for every Card permission widening, regardless of origin. [Shell contract and limits](Protocol.md#projectshell) · [Human terminal](Usage.md#project-terminal)
 
 ### Choosing Claude's features by purpose
 
@@ -199,7 +199,7 @@ Tsugumi uses Claude's models and features by choosing the one that fits each job
 
 | Purpose | Feature used | Where to check |
 | --- | --- | --- |
-| Make, fix, run and check Cards | Tool use in the Messages API. The tools are generated from the RPC contract (`protocol/tsugumi.fbs`), so the Agent has exactly the operations of the screen | [Tools and the RPC](#tools-and-the-rpc), `core/src/agent/catalog.cc`, `tests/core/agent/` |
+| Make, fix, run and check Cards | Tool use in the Messages API. The tools are generated from the RPC contract (`protocol/tsugumi.fbs`) for the explicit `requests` allow list in `agent/Shared/agent.json` | [Tools and the RPC](#tools-and-the-rpc), `core/src/agent/catalog.cc`, `tests/core/agent/` |
 | A model sized to the job | Implementing Cards uses the model the user chooses (default `claude-sonnet-5-5`, with effort and, on models that offer it, Fast mode selectable). With an Anthropic API key, the guide's conversation, the summaries of the thinking of the bird on the Canvas and the version summaries use the small `claude-haiku-5-5` (other providers use a small model of their own or the Agent's model) | [Connecting to models](#connecting-to-models), `modelOptions` in `agent/Shared/agent.json`, [Version summaries](Versions.md) |
 | Judging from the figures a run makes (multimodal) | `run_record` passes the images a Card displayed (charts, RGB images and so on) to the model as images. The same in the app, the Web UI and the Claude Code plugin | `core/src/agent/tool_images.cc`, `web/server/mcp.ts`, `tests/core/agent/project_rpc_test.cc` |
 | Implementing independent Drafts at the same time (subagents) | `delegate` takes 1 to 8 tasks, runs up to 4 helpers at a time, and returns their messages and errors | [Splitting the work](#splitting-the-work-delegate), `tests/core/agent/project_rpc_test.cc` |

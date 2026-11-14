@@ -36,9 +36,9 @@ There are 48 requests.
 | [`ProjectClose`](#projectclose) | Ack | Ends only the given subscription. Unknown ids are acknowledged. |
 | [`ProjectInspect`](#projectinspect) | ProjectSnapshot | No subscription, build or reload. |
 | [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. |
-| [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. |
+| [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. Every permission widening requires explicit approval, regardless of origin. |
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
-| [`ProjectShell`](#projectshell) | ProjectShellResult | Runs in the project VM as the project user, with the project directory as cwd. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream is capped at 262144 bytes. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Agent use requires explicit Shell access in addition to Read, Write and Run. After editing project definitions or tsugumi.json with a command, use ProjectReload before inspecting or running the changed project through core. |
+| [`ProjectShell`](#projectshell) | ProjectShellResult | Runs in the project VM as the project user, with the project directory as cwd. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream is capped at 262144 bytes. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Agent use requires explicit Shell access in addition to Read, Write and Run. With origin "agent", project files are read-only, using bubblewrap on Linux and Seatbelt on macOS; only diagnostic temporary files are writable. Isolation unavailable means the request is refused. Shell commands are for diagnosis and reads. Analysis runs in Cards; Agent edits go through ProjectSave. A person's UI terminal is a separate writable path. |
 | [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Only while no run or SDK job is active. |
 | [`ProjectCacheUsage`](#projectcacheusage) |  | Cached shared-store measurement; never triggers a store traversal on the RPC lane. |
 | [`RunScratchDelete`](#runscratchdelete) | RunScratchDeleteResult | Deletes only the listed scratch folders from the usage report. Refuses active runs, pending remote results and the latest run. |
@@ -78,6 +78,7 @@ No fields.
 | `base_rev` | `uint64` |  |  |
 | `op_id` | `string` | yes |  |
 | `origin` | `string` | yes |  |
+| `approved_permissions` | `[string]` |  | The widenings named by approval_required that the user approved. Set by the client after asking the user, never by a model. |
 
 ### ProjectValidate
 
@@ -95,6 +96,7 @@ No fields.
 | `op_id` | `string` | yes |  |
 | `command` | `string` | yes |  |
 | `timeout_ms` | `uint32` |  |  |
+| `origin` | `string` | yes |  |
 
 ### ProjectCacheClear
 

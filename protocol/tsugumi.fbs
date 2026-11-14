@@ -315,10 +315,14 @@ table ProjectSaveRequest {
 }
 
 /// -> SaveResult. Takes external edits of the allowed area into the document.
+/// Every permission widening requires explicit approval, regardless of origin.
 table ProjectReloadRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);
   origin:string (id: 2, required);
+  /// The widenings named by approval_required that the user approved.
+  /// Set by the client after asking the user, never by a model.
+  approved_permissions:[string] (id: 3);
 }
 
 /// -> ProjectValidateResult. targets = [] means everything; mode = executable.
@@ -557,12 +561,16 @@ table RunStatusRequest { run_id:string (id: 0); }
 /// stream is capped at 262144 bytes. Disconnecting cancels the process group.
 /// An operation ID is never executed twice, even after an interrupted daemon.
 /// Agent use requires explicit Shell access in addition to Read, Write and Run.
-/// After editing project definitions or tsugumi.json with a command, use ProjectReload
-/// before inspecting or running the changed project through core.
+/// With origin "agent", project files are read-only, using bubblewrap on Linux
+/// and Seatbelt on macOS; only diagnostic temporary files are writable.
+/// Isolation unavailable means the request is refused.
+/// Shell commands are for diagnosis and reads. Analysis runs in Cards; Agent
+/// edits go through ProjectSave. A person's UI terminal is a separate writable path.
 table ProjectShellRequest {
   op_id:string (id: 0, required);
   command:string (id: 1, required);
   timeout_ms:uint32 = null (id: 2);
+  origin:string (id: 3, required);
 }
 
 table ProjectShellResult {

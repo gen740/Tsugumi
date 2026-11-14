@@ -572,11 +572,12 @@ into `hash`. Builds use a local immutable module cache and never update the
 lock. A Card without `lock` and `hash` cannot fetch external modules.
 Native libraries use `buildInputs`, and build tools use `nativeBuildInputs`.
 
-To make or update the lock on request, use the project shell with Go on PATH:
+To make or update the lock on request, use the human Terminal panel with Go on PATH:
 `python3 <sdk>/go/update-lock.py <card>/src`. The helper runs `go mod tidy` in
 a temporary copy and writes only `go.mod` and `go.sum` to the Card's source
 directory. It accepts `--offline` for a populated module cache. Reload the
-project after generating the files, then obtain the hash as above.
+project after generating the files, then obtain the hash as above. The Agent
+uses `project_save` to write source and lock files; its shell is read-only.
 
 ## C#
 
@@ -601,7 +602,7 @@ SDK includes the Rust runtime source of the same FlatBuffers version as
 `flatc`. A Card without a lock builds offline using the SDK's own crates.
 
 To add crates.io dependencies on request, add them to `src/Cargo.toml`, then
-use the project shell with Cargo on PATH. Build the FlatBuffers source from
+use the human Terminal panel with Cargo on PATH. Build the FlatBuffers source from
 the Card's nixpkgs pin and pass it to the lock helper. For a GitHub nixpkgs
 pin, for example:
 
@@ -611,6 +612,7 @@ python3 <sdk>/rust/update-lock.py <card>/src --flatbuffers-source "$flatbuffers_
 ```
 
 The helper resolves in a temporary copy and writes only `src/Cargo.lock`.
+The Agent writes source and lock files with `project_save`; its shell is read-only.
 Reload the project and name it in `rustCard` with
 `lock = ./src/Cargo.lock; hash = pkgs.lib.fakeHash;`. Run once and copy the
 `got: sha256-…` value from the build log into `hash`. This pins the whole

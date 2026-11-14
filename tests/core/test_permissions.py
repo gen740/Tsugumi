@@ -1,4 +1,5 @@
-"""A save from a model (origin "agent") that widens what a Card may do --
+"""A save from a model (origin "agent"), or a reload from any origin, that widens
+what a Card may do --
 network, sandbox off, host folders, also inside a Card in Card -- is rejected
 with approval_required naming each widening, and goes through once the client
 lists exactly those as approved. The user's own saves need no approval."""
@@ -10,7 +11,7 @@ import json
 import pytest
 from projects import SINK, builtin_project, card, card_in_card, conn, write
 from harness.permissions import permissions, save
-from tsugumi_client import RpcFailure, change, text
+from tsugumi_client import RpcFailure, change, new_id, text
 
 
 
@@ -113,3 +114,52 @@ def test_agent_needs_approval_to_select_an_external_execution_service(tmp_path, 
     assert rejected.value.kind == "approval_required"
     assert permissions(rejected.value) == [f"execution_service {card_path} ssh-test"]
     save(client, [edit], approved=permissions(rejected.value))
+
+
+@pytest.mark.parametrize("origin", ["agent", "ui", "external"])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("remote", [False, True])
+def test_reload_checks_every_permission_widening(tmp_path, core_factory, origin, nested, remote):
+    """External edits cannot bypass approval, including nested Cards and UI reloads."""
+    root = tmp_path / "project"
+    definition = {"language": "bash", "_outputs": "table Outputs {} root_type Outputs;",
+                  "_nix": '{ pkgs, inputs, params }: { run = "true"; }'}
+    work = card("work", "code")
+    cards = [card_in_card("inner", [work], [], {"inputs": {}, "outputs": {}})] if nested else [work]
+    write(root, {"code": definition}, cards, [])
+    rel = "externals/inner/definitions/work/_card.json" if nested else "definitions/work/_card.json"
+    cid = "inner/work" if nested else "work"
+    client = core_factory(project_root=root).connect()
+    before = client.call("ProjectInspectRequest")
+    path = root / rel
+    body = json.loads(path.read_text())
+    if remote:
+        wide = dict(body, executionService="ssh-test",
+                    executionResources={"cpuMillis": 1000, "memoryBytes": 1 << 30})
+        expected = [f"execution_service {cid} ssh-test"]
+    else:
+        wide = dict(body, network=True, sandbox=False,
+                    hostFolders=[{"path": "/data", "name": "data", "write": True}])
+        expected = [f"network {cid}", f"sandbox_off {cid}", f"host_folder_write {cid} /data"]
+    path.write_text(json.dumps(wide))
+
+    def reload(approved=()):
+        return client.call("ProjectReloadRequest", baseRev=before.rev, opId=new_id(),
+                           origin=origin, **({"approvedPermissions": list(approved)} if approved else {}))
+
+    with pytest.raises(RpcFailure) as rejected:
+        reload()
+    assert rejected.value.kind == "approval_required"
+    assert permissions(rejected.value) == expected
+    assert client.call("ProjectInspectRequest").rev == before.rev
+    # Neither disk nor the accepted document is replaced on rejection.
+    assert json.loads(path.read_text()) == wide
+    with pytest.raises(RpcFailure) as partial:
+        reload(expected[:-1])
+    assert partial.value.kind == "approval_required"
+    reload(expected)
+    assert client.call("ProjectInspectRequest").rev == before.rev + 1
+    # Narrowing and ordinary edits need no approval.
+    path.write_text(json.dumps(body))
+    before = client.call("ProjectInspectRequest")
+    reload()

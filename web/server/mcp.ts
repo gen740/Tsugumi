@@ -17,7 +17,9 @@ Before working on a project, call tsugumi_open with its folder (create: true mak
 in the Tsugumi web UI, where the user watches each save and run live, and returns the rules for the other tools \
 (project_inspect first; saves need the base_rev you inspected). Project content is unavailable until the user \
 explicitly grants access. Request access through the Agent API and wait for the user's answer. The plugin \
-cannot grant itself access or approve changes to Card permissions.`
+cannot grant itself access or approve changes to Card permissions. Project RPC tools come only from the shared \
+Agent allow list. Use project_shell for diagnosis and reads (project files are read-only), project_save for edits, \
+and Cards for analysis so the user can follow the process.`
 
 const OPEN_TOOL = {
   name: 'tsugumi_open',
