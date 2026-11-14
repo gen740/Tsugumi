@@ -1,8 +1,8 @@
 // What a canvas draws in one scope, as the core is asked to arrange or untangle
-// it (LayoutArrange / LayoutUntangle of protocol/tsugumi.fbs), and what it
-// proposes. The layout itself is worked out in tsugumid (core/src/layout.cc),
+// it (LayoutArrange / LayoutUntangle of protocol/host.fbs), and what it
+// proposes. The layout itself is worked out in tsugumi-agentd (core/src/host/layout.cc),
 // once for every client; here are only the measurements and the answer
-// (`RPCClient.layoutArrange` and `layoutUntangle` send them).
+// (`layoutHost.layoutArrange` and `layoutUntangle` send them).
 import type { FlowDirection } from './prefs'
 
 export interface LayoutPort { name: string; x: number; y: number }

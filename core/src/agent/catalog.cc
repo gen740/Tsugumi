@@ -9,11 +9,15 @@
 
 #include "agent/json.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
+#include "tsugumi/protocol/host_generated.h"
 #include "util/crypto.hh"
 #include "util/text.hh"
 
 extern const unsigned char tsugumi_rpc_bfbs[];
 extern const unsigned long tsugumi_rpc_bfbs_size;
+
+extern const unsigned char tsugumi_host_bfbs[];
+extern const unsigned long tsugumi_host_bfbs_size;
 
 extern const unsigned char tsugumi_agent_settings[];
 extern const unsigned long tsugumi_agent_settings_size;
@@ -21,8 +25,15 @@ extern const unsigned long tsugumi_agent_settings_size;
 namespace tsugumi::agent {
 namespace {
 
+thread_local bool host_schema = false;
+struct SchemaScope {
+  bool previous = host_schema;
+  explicit SchemaScope(bool host) { host_schema = host; }
+  ~SchemaScope() { host_schema = previous; }
+};
+auto Namespace() -> std::string { return host_schema ? "Tsugumi.Host." : "Tsugumi.RPC."; }
 auto Schema() -> const reflection::Schema & {
-  return *reflection::GetSchema(tsugumi_rpc_bfbs);
+  return *reflection::GetSchema(host_schema ? tsugumi_host_bfbs : tsugumi_rpc_bfbs);
 }
 
 auto Name(std::string name) -> std::string {
@@ -250,7 +261,7 @@ auto Parser() -> std::unique_ptr<flatbuffers::Parser> {
   parser->opts.strict_json = true;
   parser->opts.output_default_scalars_in_json = true;
   parser->opts.indent_step = -1;
-  if (!parser->Deserialize(tsugumi_rpc_bfbs, tsugumi_rpc_bfbs_size))
+  if (!parser->Deserialize(host_schema ? tsugumi_host_bfbs : tsugumi_rpc_bfbs, host_schema ? tsugumi_host_bfbs_size : tsugumi_rpc_bfbs_size))
     throw std::runtime_error("cannot load project RPC schema");
   return parser;
 }
@@ -264,14 +275,14 @@ auto Catalog::shared() const -> json::Members {
 }
 
 Catalog::Catalog() {
-  const auto *requests =
-      Schema().enums()->LookupByKey("Tsugumi.RPC.RequestPayload");
   const auto settings = json::Object(
       std::string_view(reinterpret_cast<const char *>(tsugumi_agent_settings),
                        tsugumi_agent_settings_size));
   std::set<std::string> seen;
-  for (const auto *list : {"requests", "approvalRequests"}) {
-    for (const auto &entry : json::Array(json::Get(settings, list))) {
+  for (const auto *list : {"requests", "approvalRequests", "hostRequests"}) {
+    SchemaScope scope(std::string_view(list) == "hostRequests");
+    const auto* requests = Schema().enums()->LookupByKey((Namespace() + "RequestPayload").c_str());
+    for (const auto &entry : json::Array(json::Get(settings, list, "[]"))) {
       const auto name = json::String(entry);
       const auto found = std::find_if(
           requests->values()->begin(), requests->values()->end(),
@@ -286,6 +297,7 @@ Catalog::Catalog() {
                         ObjectSchema(object, 0, true)},
                        name,
                        false};
+      tool.host = host_schema;
       if (tool.spec.name == "card_id")
         tool.spec.description = "Reserve a permanent Card id from its human name. The host derives a readable stem; core reserves a unique id. Use the id in paths and wires and keep the name in _meta.json.name. project_path selects a nested project.";
       tool.approval_required = std::string_view(list) == "approvalRequests";
@@ -323,13 +335,13 @@ auto Catalog::Request(std::string_view name, std::string_view arguments,
   const auto *tool = Find(name);
   if (!tool)
     throw std::runtime_error("unknown project operation");
-  return EncodeProjectRequest(name, arguments, id);
+  return tool->host ? HostRequest(name, arguments, id) : EncodeProjectRequest(name, arguments, id);
 }
 
 auto EncodeProjectRequest(std::string_view name, std::string_view arguments,
                           uint64_t id) -> std::string {
   const auto *requests =
-      Schema().enums()->LookupByKey("Tsugumi.RPC.RequestPayload");
+      Schema().enums()->LookupByKey((Namespace() + "RequestPayload").c_str());
   const auto found = std::find_if(
       requests->values()->begin(), requests->values()->end(),
       [&](const auto *value) {
@@ -339,7 +351,7 @@ auto EncodeProjectRequest(std::string_view name, std::string_view arguments,
     throw std::runtime_error("unknown project operation");
   const auto request_name = (*found)->name()->str();
   const auto *object = Schema().objects()->LookupByKey(
-      ("Tsugumi.RPC." + request_name).c_str());
+      (Namespace() + request_name).c_str());
   auto body = json::Encode(json::Members{
       {"request_id", std::to_string(id)},
       {"payload_type", json::Quote("Request")},
@@ -353,10 +365,18 @@ auto EncodeProjectRequest(std::string_view name, std::string_view arguments,
           parser->builder_.GetSize()};
 }
 
+auto Catalog::HostRequest(std::string_view name, std::string_view arguments, uint64_t id) const -> std::string {
+  SchemaScope scope(true);
+  return EncodeProjectRequest(name, arguments, id);
+}
+auto Catalog::HostReply(std::string_view bytes) const -> std::string {
+  SchemaScope scope(true);
+  return Reply(bytes);
+}
 auto Catalog::Reply(std::string_view bytes) const -> std::string {
   flatbuffers::Verifier verifier(
       reinterpret_cast<const uint8_t *>(bytes.data()), bytes.size());
-  if (!Tsugumi::RPC::VerifyMessageBuffer(verifier))
+  if (!(host_schema ? Tsugumi::Host::VerifyMessageBuffer(verifier) : Tsugumi::RPC::VerifyMessageBuffer(verifier)))
     throw std::runtime_error("invalid project reply");
   auto parser = Parser();
   std::string raw;

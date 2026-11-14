@@ -145,6 +145,159 @@ table Demo { id:string (required); path:string (required); title:string (require
 table DemoList { demos:[Demo]; }
 table Model { id:string; name:string; }
 table ModelList { models:[Model]; }
+// ---- Layout ----------------------------------------------------------------------
+// Arrange and Untangle Wires are worked out here, once, for every client. A
+// client says what its canvas draws in one scope (a Card's size and where its
+// ports are depend on how the window draws them and on its grid), the answer is
+// a proposal, and the client saves it with ProjectSave as one edit, as it saves
+// any change of layout.json. Nothing is read from or written to the document.
+
+table LayoutPort {
+  name:string (id: 0, required);
+  /// Where the port is on its Card, from the Card's top-left corner.
+  x:double (id: 1);
+  y:double (id: 2);
+}
+
+table LayoutCard {
+  id:string (id: 0, required);
+  /// Where the Card is drawn now (on the grid, when the grid moves it there).
+  x:double (id: 1);
+  y:double (id: 2);
+  width:double (id: 3);
+  height:double (id: 4);
+  /// In the order drawn.
+  inputs:[LayoutPort] (id: 5);
+  outputs:[LayoutPort] (id: 6);
+  /// Its ports may be drawn in another order (not those of a fork, a branch
+  /// and the like, whose places have a meaning).
+  reorderable:bool (id: 7);
+}
+
+table LayoutWire {
+  from:string (id: 0, required);
+  from_port:string (id: 1, required);
+  to:string (id: 2, required);
+  to_port:string (id: 3, required);
+}
+
+/// An output frame (`id` is its Card's) or a note, where it is drawn now.
+table LayoutBox {
+  id:string (id: 0, required);
+  x:double (id: 1);
+  y:double (id: 2);
+  width:double (id: 3);
+  height:double (id: 4);
+}
+
+/// One port of a Card in Card and the inner Card it goes to or comes from.
+table LayoutBarEnd {
+  name:string (id: 0, required);
+  card:string (id: 1, required);
+  port:string (id: 2, required);
+}
+
+/// A bar of a Card in Card's inner canvas ("This Card's input" / "output").
+table LayoutBar {
+  ends:[LayoutBarEnd] (id: 0);
+  /// Where the bar was put by hand; omitted while it follows the Cards.
+  x:double = null (id: 1);
+  y:double = null (id: 2);
+}
+
+/// What a canvas draws in one scope.
+table LayoutScene {
+  /// "topToBottom" or "leftToRight".
+  flow:string (id: 0, required);
+  /// The grid's spacing (frames, notes and layers go on it; 20 when 0).
+  grid:double (id: 1);
+  /// The grid is on: Cards are placed on it.
+  snap:bool (id: 2);
+  cards:[LayoutCard] (id: 3);
+  wires:[LayoutWire] (id: 4);
+  /// The output frames shown.
+  frames:[LayoutBox] (id: 5);
+  notes:[LayoutBox] (id: 6);
+  /// Inside a Card in Card only.
+  inputs:LayoutBar (id: 7);
+  outputs:LayoutBar (id: 8);
+}
+
+/// -> LayoutProposal. Places the scope's Cards, output frames and notes, then
+/// gives ports the order that crosses fewer wires and places the Cards once
+/// more for it. The bars are taken to follow the Cards again. Nothing is saved.
+table LayoutArrangeRequest { scene:LayoutScene (id: 0, required); }
+
+/// -> LayoutProposal (port_orders only). Reorders ports where the wires then
+/// cross less; no Card moves. With `around` (the Cards a drag just moved) only
+/// they and the Cards wired to them may change. Nothing is saved.
+table LayoutUntangleRequest {
+  scene:LayoutScene (id: 0, required);
+  around:[string] (id: 1);
+}
+
+table LayoutPlace {
+  id:string (id: 0, required);
+  x:double (id: 1);
+  y:double (id: 2);
+}
+
+/// The order a Card's ports are drawn in (layout.json's inputOrder / outputOrder).
+table LayoutPortOrder {
+  id:string (id: 0, required);
+  inputs:[string] (id: 1);
+  outputs:[string] (id: 2);
+}
+
+/// What LayoutArrange or LayoutUntangle would change; the client saves it.
+table LayoutProposal {
+  cards:[LayoutPlace] (id: 0);
+  frames:[LayoutPlace] (id: 1);
+  notes:[LayoutPlace] (id: 2);
+  /// Only the Cards whose order changes.
+  port_orders:[LayoutPortOrder] (id: 3);
+}
+
+table VersionCanvasCard {
+  id:string (id: 0, required);
+  x:double (id: 1);
+  y:double (id: 2);
+  /// What it is, which decides its shape: trigger, input, fork, branch, merge,
+  /// draft, subgraph or code.
+  kind:string (id: 3, required);
+  /// The ports a fork or merge fans over, which decide its width; 0 for others.
+  fan:uint32 (id: 4);
+  /// Folded on the canvas: only its header shows.
+  collapsed:bool (id: 5);
+}
+
+table VersionCanvasWire {
+  from:string (id: 0, required);
+  to:string (id: 1, required);
+}
+
+/// A version's own Cards: Card in Card is one Card here. Saved positions, or
+/// columns by depth when a Card has none.
+table VersionCanvas {
+  cards:[VersionCanvasCard] (id: 0);
+  wires:[VersionCanvasWire] (id: 1);
+  /// The way the Cards run: "leftToRight" or "topToBottom". Columns by depth
+  /// are always leftToRight.
+  flow:string (id: 2, required);
+}
+
+/// -> LayoutValidated. Validate before saving; removed_cards cleans deleted
+/// Card references. The caller includes the returned JSON in the same save.
+table LayoutValidateRequest { json:string (required); removed_cards:[string]; }
+table LayoutValidated { json:string (required); }
+/// -> VersionCanvas. Draw the raw definition data and layout returned by the
+/// project's VersionCanvasRequest; no document is changed.
+table VersionCanvasRequest {
+  layout_json:string (required);
+  cards:[VersionCanvasCard];
+  wires:[VersionCanvasWire];
+}
+
 /// A comment on a Card that a version or a save changed.
 table VersionComment {
   card:string (id: 0, required);
@@ -168,14 +321,16 @@ union RequestPayload {
   VersionCommentsRequest,
   GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
-  RegisterProjectRequest, RegisterFolderRequest, SkillsListRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectReadRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
+  RegisterProjectRequest, RegisterFolderRequest, SkillsListRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectReadRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest,
+  LayoutArrangeRequest, LayoutUntangleRequest, LayoutValidateRequest, VersionCanvasRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
   VersionComments,
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   GuideState, EnvironmentState, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectFiles, ProjectInfo, ProjectLocation, RecentProject,
-  RecentList, DemoList, SkillsList, ModelList, Failure:Tsugumi.Service.Failure
+  RecentList, DemoList, SkillsList, ModelList, Failure:Tsugumi.Service.Failure,
+  LayoutProposal, LayoutValidated, VersionCanvas
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }
