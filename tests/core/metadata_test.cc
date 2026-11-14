@@ -35,7 +35,8 @@ TEST_F(OpaqueMetadata,
   auto before = store.current();
   ASSERT_EQ(before->definitions.at("start").meta_json, meta);
   ASSERT_TRUE(before->resolution->nodes.front().diags.empty());
-  ChangeIn put{.kind = ChangeIn::Kind::PutDefinition};
+  ChangeIn put{};
+  put.kind = ChangeIn::Kind::PutDefinition;
   put.id = "start";
   put.json = R"({"template":"trigger","displayMode":{"future":true}})";
   put.meta_json = R"({"comments":[false],"unknown":12})";
@@ -50,14 +51,16 @@ TEST_F(OpaqueMetadata, ProjectNameIsOptionalOpaqueAndDoesNotChangeExecution) {
   Store store({root, ""});
   store.open();
   auto before = store.current();
-  ChangeIn project{.kind = ChangeIn::Kind::SetProject};
+  ChangeIn project{};
+  project.kind = ChangeIn::Kind::SetProject;
   project.json =
       R"({"name":{"future":"anything"},"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"}],"connections":[]}})";
   auto after = commit(store, {project});
   EXPECT_EQ(after->execution_rev, before->execution_rev);
   EXPECT_EQ(after->execution_fingerprint, before->execution_fingerprint);
   EXPECT_EQ(after->project_json, project.json);
-  ChangeIn card{.kind = ChangeIn::Kind::PutDefinition};
+  ChangeIn card{};
+  card.kind = ChangeIn::Kind::PutDefinition;
   card.id = "start";
   card.json = R"({"template":"trigger","maxRuns":2})";
   after = commit(store, {card});
@@ -69,10 +72,12 @@ TEST_F(OpaqueMetadata,
   Store store({root, ""});
   store.open();
   auto before = store.current();
-  ChangeIn project{.kind = ChangeIn::Kind::SetProject};
+  ChangeIn project{};
+  project.kind = ChangeIn::Kind::SetProject;
   project.json =
       R"({ "canvas": { "connections": [ ], "cards": [ { "id": "start" } ] }, "name": "Renamed", "pkgsPath": "tsugumi:default" })";
-  ChangeIn card{.kind = ChangeIn::Kind::PutDefinition};
+  ChangeIn card{};
+  card.kind = ChangeIn::Kind::PutDefinition;
   card.id = "start";
   card.json = R"({"displayMode":false, "template": "trigger"})";
   auto after = commit(store, {project, card});
@@ -104,7 +109,8 @@ TEST_F(OpaqueMetadata, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) {
   store.open();
   const auto before = store.current();
   auto put = [&](const std::string &path, const std::string &bytes) {
-    ChangeIn c{.kind = ChangeIn::Kind::PutSource};
+    ChangeIn c{};
+    c.kind = ChangeIn::Kind::PutSource;
     c.path = path;
     c.bytes = bytes;
     c.base_hash = store.current()->sources.at(path).hash;

@@ -2,6 +2,58 @@
  "_comment": "Swift codec and model-menu cases, plus the shared delegate input schema.",
  "flatjson": [
   {
+   "type": "Tsugumi.RPC.CardIdRequest",
+   "json": {
+    "stem": "aggregate",
+    "project_path": "externals/child/"
+   },
+   "expect": {
+    "stem": "aggregate",
+    "project_path": "externals/child/"
+   }
+  },
+  {
+   "type": "Tsugumi.RPC.CardIdRequest",
+   "json": {
+    "name": "Aggregate"
+   },
+   "error": true
+  },
+  {
+   "type": "Tsugumi.RPC.CardIdResult",
+   "json": {
+    "id": "aggregate-7k2q"
+   },
+   "expect": {
+    "id": "aggregate-7k2q"
+   }
+  },
+  {
+   "type": "Tsugumi.RPC.ResolvedCard",
+   "json": {
+    "card": {
+     "segments": [
+      "aggregate-7k2q"
+     ]
+    },
+    "inputs": [],
+    "outputs": [],
+    "diagnostics": [],
+    "nix_references": []
+   },
+   "expect": {
+    "card": {
+     "segments": [
+      "aggregate-7k2q"
+     ]
+    },
+    "inputs": [],
+    "outputs": [],
+    "diagnostics": [],
+    "nix_references": []
+   }
+  },
+  {
    "type": "Tsugumi.RPC.RunStatus",
    "json": {
     "run_id": "r",

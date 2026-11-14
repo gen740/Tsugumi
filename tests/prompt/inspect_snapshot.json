@@ -47,7 +47,7 @@
           }
         ],
         "diagnostics": [],
-        "name": "initial"
+        "nix_references": []
       }
     ],
     "diagnostics": [],
