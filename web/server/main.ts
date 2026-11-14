@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import type { IPty } from 'node-pty'
 import { AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir } from './paths'
 import { cancelChats, chatRoutes, chatStatus, hostRequest, observeHost } from './chat'
-import { EnvironmentManager, Environments, EnvState, projectKey } from './environment'
+import { EnvironmentManager, EnvState, projectKey } from './environment'
 import type { VMHostOptions, VMTerminal } from './environment'
 import { L, language } from './i18n'
 import { CoreAgentError } from './coreAgent'
@@ -84,21 +84,6 @@ const vm: VMHostOptions | undefined = process.env.TSUGUMI_VMHOST ? {
 const desktop = !!vm
 const envs = new EnvironmentManager(bins, support, () => origins,
   (method, fields) => hostRequest(method, fields), (handler) => observeHost(handler), vm)
-
-// ---- Small JSON stores -----------------------------------------------------------
-
-function readJSON<T>(file: string, fallback: T): T {
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'))
-  } catch {
-    return fallback
-  }
-}
-function writeJSON(file: string, v: unknown) {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file + '.tmp', JSON.stringify(v, null, 2))
-  fs.renameSync(file + '.tmp', file)
-}
 
 /** Regular files of a project folder, without hidden files and folders
  *  (.tsugumi, .git, ...) and without symbolic links (e.g. Nix result links). */
@@ -413,7 +398,7 @@ const routes: Record<string, Handler> = {
     stopTerminal(terminal(b.id))
     return { ok: true }
   },
-  ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), readJSON, writeJSON, here, listeners: () => streams.size, showOnPage, openPage, desktop }),
+  ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), here, listeners: () => streams.size, showOnPage, openPage, desktop }),
 }
 
 // The page is opened through the URL printed at start, which carries this

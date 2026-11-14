@@ -1,5 +1,4 @@
-// A version's hover: the summary is written from its message and what it
-// changed, and the minimap fits its Cards and draws each with its canvas shape.
+// A version's minimap fits its Cards and draws each with its canvas shape.
 import assert from 'node:assert/strict'
 
 const page = globalThis as Record<string, unknown>
@@ -8,7 +7,7 @@ page.window = globalThis
 page.matchMedia = () => ({ matches: false, addEventListener() {} })
 page.EventSource = class { addEventListener() {} close() {} }
 const { miniMapLayout } = await import('../src/ui/versions')
-const { cardKindNamed, versionSummaryInput } = await import('../src/model/session')
+const { cardKindNamed } = await import('../src/model/session')
 const { CardGeometry } = await import('../src/model/canvasKit')
 type CardKind = import('../src/model/session').CardKind
 type CardGeometry = import('../src/model/canvasKit').CardGeometry
@@ -22,11 +21,6 @@ function nodeData(kind: CardKind, fan: number): CardNodeData {
     invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, hasDisplay: false,
   }
 }
-
-assert.equal(
-  versionSummaryInput({ message: '実行: bands\n', changed: ['bands', ''] }, { text: '+x\n', truncated: true }),
-  'Commit message: 実行: bands\nChanged Cards: bands, the Workflow itself\n\nDiff (cut short):\n+x\n',
-)
 
 const card = (id: string, x: number, y: number, kind: CardKind = 'code', fan = 0, collapsed = false) => ({ id, x, y, kind, fan, collapsed })
 const overlap = (a: { x: number; y: number; w: number; h: number }, b: typeof a) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h

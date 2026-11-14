@@ -1,18 +1,16 @@
-// A Card as drawn on every canvas (the main canvas, the appearance preview in
-// Settings and the preview in Card settings), at the screen scale `zoom`:
+// A Card as drawn on the main canvas, in Card settings and in the demo
+// player, at the screen scale `zoom`:
 // fonts and spacing are multiplied by the zoom, so text stays sharp at any
-// zoom and the hit areas are the geometry's. Also the wire layer and a small
-// self-contained canvas (CanvasSurface) for previews.
-import { CSSProperties, useEffect, useLayoutEffect, useRef, useState } from 'react'
+// zoom and the hit areas are the geometry's. Also the wire layer.
+import { CSSProperties, useEffect, useRef, useState } from 'react'
 import {
-  Camera, CardGeometry, CardNodeData, currentStage, fitCamera, isRouting, ParamData, PortData, Pt, Rect, snapToGrid, Stage, STAGE_INFO,
-  NEW_PORT, STAGE_STATUS_LABEL, StageItem, StageProgress, StageStatus, union, WireRouter,
+  Camera, CardGeometry, CardNodeData, currentStage, isRouting, ParamData, PortData, Pt, Rect, Stage, STAGE_INFO,
+  NEW_PORT, STAGE_STATUS_LABEL, StageItem, StageProgress, StageStatus,
 } from '../model/canvasKit'
-import { BoundaryPort, pathToScreen, WireStyle } from '../model/canvas'
+import { BoundaryPort, WireStyle } from '../model/canvas'
 import type { FlowDirection } from '../model/prefs'
 import { cardState, formatDuration, InlineDraft, KIND_ICON, KIND_LABEL } from '../model/session'
 import { D } from '../shared/rpc'
-import { Button } from './controls'
 import { Icon } from './icons'
 import { permissionInfo } from '../model/permissions'
 import { L } from '../i18n'
@@ -576,149 +574,6 @@ export function gridStyle(camera: Camera, show: boolean, size: number): CSSPrope
   }
 }
 
-// ---- A small canvas over local state (previews) ------------------------------------------------
-
-export interface CanvasItem {
-  id: string
-  data: CardNodeData
-  origin: Pt
-}
-
-export interface CanvasWire {
-  from: string
-  fromPort: string
-  to: string
-  toPort: string
-  active?: boolean
-}
-
-/** The main canvas' Card view, wires, selection, drag, collapse and zoom over
- *  local state only (it never edits a project). It frames its Cards once
- *  they are there and again when `fitKey` or its size changes, until the
- *  user moves or zooms it. */
-export function CanvasSurface({ items, onItemsChange, wires, flow, grid = true, gridSize = 20, animateWires = false, fitKey = '', maxZoom = 1, style }: {
-  items: CanvasItem[]; onItemsChange?: (items: CanvasItem[]) => void; wires: CanvasWire[]; flow: FlowDirection; grid?: boolean; gridSize?: number
-  animateWires?: boolean; fitKey?: string; maxZoom?: number; style?: CSSProperties
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState({ width: 0, height: 0 })
-  const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, zoom: 1 })
-  const [selection, setSelection] = useState<Set<string>>(new Set())
-  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number }>()
-  const adjusted = useRef(false)
-
-  useLayoutEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const o = new ResizeObserver(() => setSize({ width: el.clientWidth, height: el.clientHeight }))
-    o.observe(el)
-    setSize({ width: el.clientWidth, height: el.clientHeight })
-    return () => o.disconnect()
-  }, [])
-
-  const dataOf = (it: CanvasItem): CardNodeData => ({ ...it.data, portGrid: grid ? gridSize : undefined })
-  const placed = (it: CanvasItem): Pt => (grid ? { x: snapToGrid(it.origin.x, gridSize), y: snapToGrid(it.origin.y, gridSize) } : it.origin)
-  const origin = (it: CanvasItem): Pt => {
-    const o = placed(it)
-    return drag && selection.has(it.id) ? { x: o.x + drag.dx, y: o.y + drag.dy } : o
-  }
-  const box = items.reduce<Rect | null>((u, it) => {
-    const r = { ...placed(it), ...new CardGeometry(dataOf(it), flow).size }
-    return u ? union(u, r) : r
-  }, null)
-  const fit = () => {
-    if (!box || size.width <= 0) return
-    const c = fitCamera(box, size, { top: 4, left: 4, bottom: 30, right: 4 }, maxZoom, 24)
-    if (c) setCamera(c)
-  }
-  const boxKey = box ? `${box.x},${box.y},${box.width},${box.height}` : ''
-  useEffect(() => {
-    if (!adjusted.current) fit()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boxKey, size.width, size.height])
-  useEffect(() => {
-    adjusted.current = false
-    fit()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fitKey, flow])
-
-  const zoomTo = (z: number) => {
-    adjusted.current = true
-    const p = { x: size.width / 2, y: size.height / 2 }
-    const nz = Math.max(0.2, Math.min(3, z))
-    setCamera((c) => ({ x: p.x - ((p.x - c.x) * nz) / c.zoom, y: p.y - ((p.y - c.y) * nz) / c.zoom, zoom: nz }))
-  }
-
-  const point = (id: string, port: string, output: boolean): Pt => {
-    const it = items.find((x) => x.id === id)
-    if (!it) return { x: 0, y: 0 }
-    const o = origin(it), p = new CardGeometry(dataOf(it), flow).port(port, output)
-    return { x: o.x + p.x, y: o.y + p.y }
-  }
-  const routes = new WireRouter(flow, items.map((it) => ({ ...origin(it), ...new CardGeometry(dataOf(it), flow).size })))
-    .routeAll(wires.map((w) => ({ a: point(w.from, w.fromPort, true), b: point(w.to, w.toPort, false) })))
-  const draws: WireDraw[] = wires.map((w, i) => ({ d: pathToScreen(routes[i].d, camera), style: w.active ? 'active' : 'normal' }))
-
-  return (
-    <div ref={ref} className="cv-surface" style={{ ...gridStyle(camera, grid, gridSize), ...style }}
-      onPointerDown={(e) => {
-        if (e.button !== 0) return
-        setSelection(new Set())
-        const start = { x: e.clientX, y: e.clientY, cx: camera.x, cy: camera.y }
-        drive(e, 2, (ev) => {
-          adjusted.current = true
-          setCamera((c) => ({ ...c, x: start.cx + ev.clientX - start.x, y: start.cy + ev.clientY - start.y }))
-        })
-      }}
-      onWheel={(e) => {
-        if (!e.ctrlKey && !e.metaKey) return
-        zoomTo(camera.zoom * Math.exp(-e.deltaY * 0.01))
-      }}>
-      <WireLayer wires={draws} animate={animateWires} zoom={camera.zoom} width={size.width} height={size.height} />
-      {items.map((it) => {
-        const o = origin(it)
-        return (
-          <CardNodeView key={it.id} data={dataOf(it)} flow={flow} zoom={camera.zoom} selected={selection.has(it.id)}
-            style={{ position: 'absolute', left: Math.round((o.x * camera.zoom + camera.x) * 2) / 2, top: Math.round((o.y * camera.zoom + camera.y) * 2) / 2 }}
-            onToggleCollapse={() => onItemsChange?.(items.map((x) => (x.id === it.id ? { ...x, data: { ...x.data, collapsed: !x.data.collapsed } } : x)))}
-            onPointerDown={(e) => {
-              if (e.button !== 0) return
-              e.stopPropagation()
-              const sel = selection.has(it.id) ? selection : new Set([it.id])
-              const start = { x: e.clientX, y: e.clientY }
-              drive(e, 2, (ev) => {
-                adjusted.current = true
-                setSelection(sel)
-                setDrag({ id: it.id, dx: (ev.clientX - start.x) / camera.zoom, dy: (ev.clientY - start.y) / camera.zoom })
-              }, (ev, didMove) => {
-                setDrag(undefined)
-                if (!didMove) {
-                  setSelection(e.shiftKey ? toggled(selection, it.id) : new Set([it.id]))
-                  return
-                }
-                const dx = (ev.clientX - start.x) / camera.zoom, dy = (ev.clientY - start.y) / camera.zoom
-                onItemsChange?.(items.map((x) => (sel.has(x.id) ? { ...x, origin: { x: x.origin.x + dx, y: x.origin.y + dy } } : x)))
-              })
-            }} />
-        )
-      })}
-      <div className="cv-surface-zoom material" onPointerDown={(e) => e.stopPropagation()}>
-        <Button kind="borderless" small iconOnly icon="minus.magnifyingglass" help={L('縮小')} onClick={() => zoomTo(camera.zoom / 1.2)} />
-        <span className="caption mono-digits" style={{ minWidth: 36, textAlign: 'center' }}>{Math.round(camera.zoom * 100)}%</span>
-        <Button kind="borderless" small iconOnly icon="plus.magnifyingglass" help={L('拡大')} onClick={() => zoomTo(camera.zoom * 1.2)} />
-        <Button kind="borderless" small iconOnly icon="arrow.up.left.and.down.right.magnifyingglass" help={L('全体表示')} onClick={() => { adjusted.current = false; fit() }} />
-      </div>
-    </div>
-  )
-}
-
-const toggled = (s: Set<string>, id: string) => {
-  const n = new Set(s)
-  if (n.has(id)) n.delete(id)
-  else n.add(id)
-  return n
-}
-
 /** Follows a pointer from `e` until it is released: `move` once it moved past
  *  `threshold` pixels, `end` with whether it did. */
 export function drive(e: React.PointerEvent | PointerEvent, threshold: number, move: (ev: PointerEvent) => void, end?: (ev: PointerEvent, moved: boolean) => void) {
@@ -738,39 +593,6 @@ export function drive(e: React.PointerEvent | PointerEvent, threshold: number, m
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
   window.addEventListener('pointercancel', onUp)
-}
-
-/** Sample Cards for previews of appearance settings. */
-export const PreviewSamples = {
-  items(): CanvasItem[] {
-    const port = (n: string): PortData => ({ name: n, typeName: 't.Number' })
-    const base = { errors: [], warnings: [], collapsed: false, hasDisplay: false, runContinues: false, params: [], invocation: 0n }
-    const input: CardNodeData = {
-      ...base, title: L('初期値'), kind: 'input', inputs: [port('start')], outputs: [port('value')],
-      params: [{ name: 'value', type: 'uint64', value: '27' }], state: D.CardState.succeeded, invocation: 1n,
-    }
-    const step: CardNodeData = {
-      ...base, title: 'n / 2', kind: 'code', summary: L('偶数を半分にする'), inputs: [port('number')], outputs: [port('next')],
-      state: D.CardState.running, invocation: 3n, runContinues: true,
-      stage: { items: [{ stage: Stage.build, status: 'reused' }, { stage: Stage.execute, status: 'running' }, { stage: Stage.validate, status: 'pending' }], workerReused: true },
-    }
-    const gate: CardNodeData = { ...base, title: L('偶数？'), kind: 'branch', inputs: [port('value'), port('condition')], outputs: [port('a'), port('b')] }
-    const out: CardNodeData = {
-      ...base, title: L('結果'), kind: 'code', inputs: [port('in')], outputs: [], result: '[27, 82, 41, …]', hasDisplay: true, state: D.CardState.succeeded, invocation: 1n,
-    }
-    return [
-      { id: 'input', data: input, origin: { x: 0, y: 0 } },
-      { id: 'step', data: step, origin: { x: 0, y: 150 } },
-      { id: 'gate', data: gate, origin: { x: 26, y: 300 } },
-      { id: 'out', data: out, origin: { x: 0, y: 460 } },
-    ]
-  },
-  wires: [
-    { from: 'input', fromPort: 'value', to: 'step', toPort: 'number', active: true },
-    { from: 'step', fromPort: 'next', to: 'gate', toPort: 'value' },
-    { from: 'gate', fromPort: 'a', to: 'out', toPort: 'in' },
-    { from: 'gate', fromPort: 'b', to: 'step', toPort: 'number' },
-  ] as CanvasWire[],
 }
 
 // ---- Card in Card boundary -------------------------------------------------------------------

@@ -170,4 +170,3 @@ export function Icon({ name, size = 14, style, className, title }: { name: strin
 }
 
 /** Semantic colors used by state labels (never color alone: icons and text too). */
-export const tint = (c: string) => `var(--${c})`
