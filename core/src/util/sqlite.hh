@@ -68,7 +68,6 @@ class Db {
   sqlite3* get() const { return db_; }
   void exec(std::string_view sql);
   Stmt prepare(std::string_view sql) { return Stmt(db_, sql); }
-  int64_t last_insert_rowid() const { return sqlite3_last_insert_rowid(db_); }
   int changes() const { return sqlite3_changes(db_); }
 
  private:

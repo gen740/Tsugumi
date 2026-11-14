@@ -148,16 +148,6 @@ void WorkerPool::clear() {
   standby_.clear();
 }
 
-size_t WorkerPool::resident_count() {
-  std::lock_guard<std::mutex> l(mu_);
-  return resident_.size();
-}
-
-size_t WorkerPool::standby_count() {
-  std::lock_guard<std::mutex> l(mu_);
-  return standby_.size();
-}
-
 void WorkerPool::reaper() {
   std::unique_lock<std::mutex> l(mu_);
   while (!stopping_) {

@@ -81,10 +81,10 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
   // A demo tour: Tsugumi of this chat leads it, following the real runs.
   const runKey = guide.runKey(session)
   useEffect(() => {
-    if (onSwitchProject) guide.observe(session, tab)
+    if (onSwitchProject) guide.observe(session)
   }, [runKey, session, tab, guide.tour?.path, guide.tour?.started])
   useEffect(() => {
-    if (onSwitchProject) guide.setContext('project', session, tab)
+    if (onSwitchProject) guide.setContext(session, tab)
   }, [session, tab])
   useEffect(() => {
     if (onSwitchProject && guide.touring(session)) workspace.set('showChat', true)

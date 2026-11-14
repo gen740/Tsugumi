@@ -674,10 +674,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     auto& s = *work.prepared;
     auto& execution = svc_.execution_service(node.settings.execution_service);
     BuildRequest request;
-    request.run_id = run_id_;
     request.node = &node;
     request.doc = doc_;
-    request.run_dir = run_dir_;
     request.jobs = p_.nix_jobs;
     request.cores = p_.nix_cores;
     request.timeout_seconds = node.settings.build_timeout_seconds;

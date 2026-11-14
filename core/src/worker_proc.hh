@@ -106,7 +106,6 @@ class WorkerProc {
   void clear_scratch();
   // Resident memory of the worker process, when known.
   std::optional<uint64_t> rss_bytes() const;
-  pid_t pid() const { return pid_; }
 
  private:
   void read_logs(bool drain);

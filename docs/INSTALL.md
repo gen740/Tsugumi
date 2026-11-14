@@ -26,11 +26,11 @@ From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you wan
 
 ### Automatic updates
 
-Releases check GitHub's latest release after starting and every six hours. If there is a new version, it is downloaded, its checksum, signature, bundle id and version number are checked, and it replaces the app **the next time you quit** (the VM is stopped at that point, so a running computation is never interrupted by an update). To update at once, choose "Restart to Update" on the home screen or "Restart to update to …" in the application menu. Under "General" → "Updates" in the settings you can see the current version, check by hand and turn automatic checks on or off.
+Releases check GitHub's latest release after starting and every six hours. If there is a new version, it is downloaded, its checksum, signature, bundle id and version number are checked, and it replaces the app **the next time you quit** (the resident execution environment continues independently of the app). To update at once, choose "Restart to Update" on the home screen or "Restart to update to …" in the application menu. Under "General" → "Updates" in the settings you can see the current version, check by hand and turn automatic checks on or off.
 
 - The folder the app is in (usually `/Applications`) must be writable. An app opened with the quarantine attribute still on (running from elsewhere through App Translocation) cannot update; move it to `/Applications` and remove the quarantine attribute.
 - The ad hoc signature changes with each version, so the first time an updated version uses an API key, macOS asks once for access to the keychain (choose "Always Allow" and that version will not ask again).
-- The stable release starts at v1.0.0. During the current 0.x versions, compatibility of project documents and settings is not kept, and nothing is migrated ([AGENTS.md](../AGENTS.md)).
+- During 0.x, project documents and settings may change without migration ([compatibility policy](../AGENTS.md#compatibility)).
 
 ### Using it in the browser (the `tsugumi` command)
 
@@ -89,7 +89,7 @@ macOS/build-app.sh
 ```
 
 ```bash
-open dist/Tsugumi.app
+open -g dist/Tsugumi.app
 ```
 
 ### Each stage in detail
@@ -112,7 +112,7 @@ macOS/Container/build-image.sh --vm
 
 The builder's resources can be set with the environment variables `TSUGUMI_BUILDER_CPUS` (default `8`), `TSUGUMI_BUILDER_MEMORY` (default `16G`) and `TSUGUMI_BUILDER_VOLUME` (the volume for the Nix cache, default `tsugumi-builder-nix`).
 
-`macOS/build-app.sh` packages the app into `dist/Tsugumi.app`. It bundles the shared module host, the demos, the VM's boot disk and the source the VM assembles Tsugumi from (`macOS/Container/vm-source.txt`), and signs it ad hoc for this machine. If there is no boot disk, run `build-image.sh --vm` first. With `--release` it builds a release (used by the release workflow; [Releasing](../RELEASING.md)).
+`macOS/build-app.sh` packages the app into `dist/Tsugumi.app`. It bundles the shared module host, the demos, the VM's boot disk and the source the VM assembles Tsugumi from (`macOS/Container/vm-source.txt`), and signs it. For development signing and release channels, see [Releasing](../RELEASING.md). If there is no boot disk, run `build-image.sh --vm` first. With `--release` it builds a release (used by the release workflow; [Releasing](../RELEASING.md)).
 
 Starting the VM needs a code signature with the virtualization entitlement, so during development too, use the `dist/Tsugumi.app` that `macOS/build-app.sh` makes (a binary started directly with `swift run` has no signature and cannot start the VM). `tsugumi-vmctl`, which test scripts use to operate the VM, is built with `macOS/tools/build-vmctl.sh`.
 
@@ -137,6 +137,6 @@ tsugumi uninstall --yes
 
 This removes the installed runtime, its Nix result link on Linux, and `~/.local/bin/tsugumi`. It preserves projects and their run history, settings, API credentials, the Mac shared VM, Nix, and the Nix store. Unrelated files alongside the installed version directory are preserved; the installed version directory itself is removed entirely. A launcher or installation directory that has been replaced or redirected is refused rather than deleted. This command applies to installations made by `install.sh`; manage a Nix profile installation with Nix instead.
 
-On Windows, run `tsugumi uninstall --yes` from Windows through the installed `tsugumi.cmd`. The command removes the installation in the default WSL distribution and deletes the Windows launcher only after success. Rerun the Windows installer to refresh the launcher when updating from a version without this command; `tsugumi update` only updates the WSL installation. Running it directly inside WSL leaves the Windows launcher in place; remove `%USERPROFILE%\.local\bin\tsugumi.cmd` separately in that case. WSL and its distributions are preserved.
+On Windows, run `tsugumi uninstall --yes` from Windows through the installed `tsugumi.cmd`. The command removes the installation in the default WSL distribution and deletes the Windows launcher only after success. Running it directly inside WSL leaves the Windows launcher in place; remove `%USERPROFILE%\.local\bin\tsugumi.cmd` separately in that case. WSL and its distributions are preserved.
 
 The native Mac app is separate: move `Tsugumi.app` from Applications to the Trash. Its shared support folder (`~/Library/Application Support/Tsugumi`) is preserved, so reinstalling can reuse the VM and settings. Do not remove that folder if another Tsugumi installation still uses it.

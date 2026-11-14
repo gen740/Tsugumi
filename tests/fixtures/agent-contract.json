@@ -1,5 +1,5 @@
 {
- "_comment": "Cases both Agents (Swift: macOS/CoreTests, web: web/scripts/contract.mjs) must pass: JSON <-> FlatBuffers at the edges of the types (64 bit values beyond JSON's exact range are decimal strings), and the Draft request.",
+ "_comment": "Swift codec and model-menu cases, plus the shared delegate input schema.",
  "flatjson": [
   {
    "type": "Tsugumi.RPC.RunStatus",
@@ -208,130 +208,21 @@
    "error": true
   }
  ],
- "draftRequest": [
-  {
-   "scope": [],
-   "cards": [
-    {
-     "key": "load",
-     "definition": "load",
-     "description": "Loads the events",
-     "content": "reads x.fits",
-     "context": "Asked for in the chat"
-    },
-    {
-     "key": "outer/plot",
-     "definition": "plot",
-     "description": "Plots {content} as is",
-     "content": "a $ sign and {where}",
-     "context": "keeps {list} and $ too"
-    }
-   ],
-   "expect": "Implement these Draft Cards in the root workflow, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: with keep_meta, fill_description if it has none and fill_context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). The rules hold what Python, C++ and bash Cards need, so start writing; read a reference only for what they do not cover.\nWrite and save all of them first, upstream first. Then check them once with project_validate, fix what it reports, run the workflow once from its trigger Card and confirm each Card's result with run_record. Run earlier only when what you write next needs something you can learn only from a run. When three or more of them do not depend on each other (no wire between them), hand those to helpers that work at the same time (delegate, one Draft each), once the Cards they need are implemented. At the end, report what each Card does and what the run produced.\n- load (definition load): Loads the events\n  content: reads x.fits\n  context: Asked for in the chat\n- outer/plot (definition plot): Plots {content} as is\n  content: a $ sign and {where}\n  context: keeps {list} and $ too"
-  },
-  {
-   "scope": [
-    "outer",
-    "inner"
-   ],
-   "cards": [
-    {
-     "key": "load",
-     "definition": "load",
-     "description": "Loads the events",
-     "content": "reads x.fits",
-     "context": ""
-    }
-   ],
-   "expect": "Implement these Draft Cards in the child workflow outer/inner, matching each one's description, content, provisional ports and the existing connections, and keeping the Card ids and wiring. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: with keep_meta, fill_description if it has none and fill_context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). The rules hold what Python, C++ and bash Cards need, so start writing; read a reference only for what they do not cover.\nWrite and save all of them first, upstream first. Then check them once with project_validate, fix what it reports, run the workflow once from its trigger Card and confirm each Card's result with run_record. Run earlier only when what you write next needs something you can learn only from a run. When three or more of them do not depend on each other (no wire between them), hand those to helpers that work at the same time (delegate, one Draft each), once the Cards they need are implemented. At the end, report what each Card does and what the run produced.\n- load (definition load): Loads the events\n  content: reads x.fits\n  context: "
-  }
- ],
- "commentRequest": [
-  {
-   "scope": [],
-   "cards": [
-    {
-     "key": "load",
-     "definition": "load",
-     "comments": [
-      {
-       "id": "c1",
-       "text": "ログスケールにして"
-      },
-      {
-       "id": "c2",
-       "text": "Keep {text} and {list} as written"
-      }
-     ]
-    }
-   ],
-   "expect": "The user left comments on these Cards in the root workflow; do what they ask. By default change the Card a comment is on, keeping its id and wiring. When a comment asks for it, add Cards or split the Card: SetProject for the Cards and connections, SetLayout for their place, in the same save. A Draft among them is implemented as the rules say, following its comments. Read each Card first. The rules hold what Python, C++ and bash Cards need; read a reference only for what they do not cover.\nThe save that does what a comment asks also resolves it: PutDefinition with \"meta_json\" holding the Card's _meta.json, with that comment's \"resolved\": true and a \"resolution\" of one line on what was done, in the user's language (see the rules). Tsugumi records with it which Cards that save changed, so that the user can follow a comment to its Cards. Write and save them all first, check them once with project_validate, then run what changed once and confirm each result with run_record; when a result is not what its comment asks, go on until it is, and correct the resolution. A comment you cannot do stays open: say why in your report. At the end, report what you did for each comment and what the run produced.\n- load (definition load):\n  * c1: ログスケールにして\n  * c2: Keep {text} and {list} as written"
-  },
-  {
-   "scope": [
-    "outer"
-   ],
-   "cards": [
-    {
-     "key": "outer/plot",
-     "definition": "plot",
-     "comments": [
-      {
-       "id": "c3",
-       "text": "後ろに正規化の Card を足して"
-      }
-     ]
-    },
-    {
-     "key": "outer/fit",
-     "definition": "fit",
-     "comments": [
-      {
-       "id": "c4",
-       "text": "two\nlines"
-      }
-     ]
-    }
-   ],
-   "expect": "The user left comments on these Cards in the child workflow outer; do what they ask. By default change the Card a comment is on, keeping its id and wiring. When a comment asks for it, add Cards or split the Card: SetProject for the Cards and connections, SetLayout for their place, in the same save. A Draft among them is implemented as the rules say, following its comments. Read each Card first. The rules hold what Python, C++ and bash Cards need; read a reference only for what they do not cover.\nThe save that does what a comment asks also resolves it: PutDefinition with \"meta_json\" holding the Card's _meta.json, with that comment's \"resolved\": true and a \"resolution\" of one line on what was done, in the user's language (see the rules). Tsugumi records with it which Cards that save changed, so that the user can follow a comment to its Cards. Write and save them all first, check them once with project_validate, then run what changed once and confirm each result with run_record; when a result is not what its comment asks, go on until it is, and correct the resolution. A comment you cannot do stays open: say why in your report. At the end, report what you did for each comment and what the run produced.\n- outer/plot (definition plot):\n  * c3: 後ろに正規化の Card を足して\n- outer/fit (definition fit):\n  * c4: two\nlines"
-  }
- ],
- "approvalRequired": [
-  {
-   "json": "{\"reply\": \"Failure\", \"value\": {\"kind\": \"approval_required\", \"args\": [{\"key\": \"permission\", \"value\": \"network a\"}, {\"key\": \"other\", \"value\": \"x\"}, {\"key\": \"permission\", \"value\": \"host_folder_read inner/b /data/my files\"}]}}",
-   "expect": [
-    "network a",
-    "host_folder_read inner/b /data/my files"
-   ]
-  },
-  {
-   "json": "{\"reply\": \"Failure\", \"value\": {\"kind\": \"revision_conflict\", \"args\": []}}",
-   "expect": null
-  },
-  {
-   "json": "{\"reply\": \"SaveResult\", \"value\": {\"rev\": \"3\"}}",
-   "expect": null
-  }
- ],
 "modelOptions": [
-  {"connection": "anthropic", "model": "claude-sonnet-5-5", "effort": "", "fastModel": "", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "high", "fastPrice": null, "present": {"max_tokens": 32768}, "absent": ["output_config", "speed", "reasoning", "service_tier", "max_output_tokens"]}},
-  {"connection": "anthropic", "model": "claude-opus-5-5", "effort": "", "fastModel": "", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "fastPrice": 2, "present": {"max_tokens": 32768}, "absent": ["output_config", "speed", "reasoning", "service_tier", "max_output_tokens"]}},
-  {"connection": "anthropic", "model": "claude-opus-5-5", "effort": "max", "fastModel": "claude-opus-5-5", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "fastPrice": 2, "present": {"output_config": {"effort": "max"}, "speed": "fast", "max_tokens": 64000}, "absent": ["reasoning", "service_tier", "max_output_tokens"]}},
-  {"connection": "anthropic", "model": "claude-opus-5-5", "effort": "high", "fastModel": "claude-opus-5", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "fastPrice": 2, "present": {"output_config": {"effort": "high"}, "max_tokens": 32768}, "absent": ["speed", "reasoning", "service_tier", "max_output_tokens"]}},
-  {"connection": "anthropic", "model": "claude-sonnet-5-5", "effort": "low", "fastModel": "claude-opus-5-5", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "high", "fastPrice": null, "present": {"output_config": {"effort": "low"}, "max_tokens": 32768}, "absent": ["speed", "reasoning", "service_tier", "max_output_tokens"]}},
-  {"connection": "anthropic", "model": "claude-opus-5", "effort": "low", "fastModel": "claude-opus-5", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "high", "fastPrice": null, "present": {"output_config": {"effort": "low"}}, "absent": ["speed", "reasoning", "service_tier", "max_output_tokens"]}},
-  {"connection": "anthropic", "model": "claude-sonnet-4-6", "effort": "xhigh", "fastModel": "", "expect": {"efforts": ["low", "medium", "high", "max"], "default": "high", "fastPrice": null, "present": {"max_tokens": 32768}, "absent": ["output_config", "speed", "reasoning", "service_tier", "max_output_tokens"]}},
-  {"connection": "anthropic", "model": "claude-opus-4-5-20251101", "effort": "max", "fastModel": "", "expect": {"efforts": ["low", "medium", "high"], "default": "high", "fastPrice": null, "present": {"max_tokens": 32768}, "absent": ["output_config", "speed", "reasoning", "service_tier", "max_output_tokens"]}},
-  {"connection": "anthropic", "model": "claude-haiku-4-5", "effort": "low", "fastModel": "claude-haiku-4-5", "expect": {"efforts": [], "default": null, "fastPrice": null, "present": {"max_tokens": 32768}, "absent": ["output_config", "speed", "reasoning", "service_tier", "max_output_tokens"]}},
-  {"connection": "openai", "model": "gpt-6.1-sol", "effort": "", "fastModel": "", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "fastPrice": 2, "present": {"max_output_tokens": 32768}, "absent": ["reasoning", "service_tier", "output_config", "speed", "max_tokens"]}},
-  {"connection": "openai", "model": "gpt-6.1-sol", "effort": "xhigh", "fastModel": "gpt-6.1-sol", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "fastPrice": 2, "present": {"reasoning": {"effort": "xhigh"}, "service_tier": "fast", "max_output_tokens": 64000}, "absent": ["output_config", "speed", "max_tokens"]}},
-  {"connection": "openai", "model": "gpt-6-astra", "effort": "high", "fastModel": "", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": null, "fastPrice": 2, "present": {"reasoning": {"effort": "high"}, "max_output_tokens": 32768}, "absent": ["service_tier", "output_config", "speed", "max_tokens"]}},
-  {"connection": "openai", "model": "gpt-5.5", "effort": "max", "fastModel": "gpt-5.5", "expect": {"efforts": ["low", "medium", "high", "xhigh"], "default": "medium", "fastPrice": 2.5, "present": {"service_tier": "fast", "max_output_tokens": 32768}, "absent": ["reasoning", "output_config", "speed", "max_tokens"]}},
-  {"connection": "openai", "model": "gpt-4o", "effort": "high", "fastModel": "gpt-4o", "expect": {"efforts": [], "default": null, "fastPrice": null, "present": {"max_output_tokens": 32768}, "absent": ["reasoning", "service_tier", "output_config", "speed", "max_tokens"]}},
-  {"connection": "chatgpt", "model": "gpt-6.1-sol", "effort": "max", "fastModel": "gpt-6.1-sol", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "fastPrice": null, "present": {"reasoning": {"effort": "max"}}, "absent": ["service_tier", "max_output_tokens", "output_config", "speed", "max_tokens"]}},
-  {"connection": "chatgpt", "model": "gpt-6-luna", "effort": "", "fastModel": "", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "fastPrice": null, "present": {}, "absent": ["reasoning", "service_tier", "max_output_tokens", "output_config", "speed", "max_tokens"]}},
-  {"connection": "chatgpt", "model": "gpt-6.1-luna", "effort": "high", "fastModel": "gpt-6.1-luna", "expect": {"efforts": [], "default": null, "fastPrice": null, "present": {}, "absent": ["reasoning", "service_tier", "max_output_tokens", "output_config", "speed", "max_tokens"]}},
-  {"connection": "fixture", "model": "fixture", "effort": "high", "fastModel": "fixture", "expect": {"efforts": [], "default": null, "fastPrice": null, "present": {"max_tokens": 32768}, "absent": ["output_config", "speed", "reasoning", "service_tier", "max_output_tokens"]}}
+  {"connection": "anthropic", "model": "claude-sonnet-5-5", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "high", "fastPrice": null}},
+  {"connection": "anthropic", "model": "claude-opus-5-5", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "fastPrice": 2}},
+  {"connection": "anthropic", "model": "claude-opus-5", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "high", "fastPrice": null}},
+  {"connection": "anthropic", "model": "claude-sonnet-4-6", "expect": {"efforts": ["low", "medium", "high", "max"], "default": "high", "fastPrice": null}},
+  {"connection": "anthropic", "model": "claude-opus-4-5-20251101", "expect": {"efforts": ["low", "medium", "high"], "default": "high", "fastPrice": null}},
+  {"connection": "anthropic", "model": "claude-haiku-4-5", "expect": {"efforts": [], "default": null, "fastPrice": null}},
+  {"connection": "openai", "model": "gpt-6.1-sol", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "fastPrice": 2}},
+  {"connection": "openai", "model": "gpt-6-astra", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": null, "fastPrice": 2}},
+  {"connection": "openai", "model": "gpt-5.5", "expect": {"efforts": ["low", "medium", "high", "xhigh"], "default": "medium", "fastPrice": 2.5}},
+  {"connection": "openai", "model": "gpt-4o", "expect": {"efforts": [], "default": null, "fastPrice": null}},
+  {"connection": "chatgpt", "model": "gpt-6.1-sol", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "fastPrice": null}},
+  {"connection": "chatgpt", "model": "gpt-6-luna", "expect": {"efforts": ["low", "medium", "high", "xhigh", "max"], "default": "medium", "fastPrice": null}},
+  {"connection": "chatgpt", "model": "gpt-6.1-luna", "expect": {"efforts": [], "default": null, "fastPrice": null}},
+  {"connection": "fixture", "model": "fixture", "expect": {"efforts": [], "default": null, "fastPrice": null}}
 ],
  "delegateSchema": {
    "type": "object",

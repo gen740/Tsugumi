@@ -1,6 +1,6 @@
 // Presentation DTOs and schema reflection. Agent execution lives in core.
 import { BaseType, BFBS, Field } from '../src/shared/bfbs'
-import { AGENT, fill } from '../src/shared/agentShared'
+import { AGENT } from '../src/shared/agentShared'
 
 export interface ToolSpec {
   name: string
@@ -194,6 +194,3 @@ export interface ProviderConfig {
   effort?: string
   fast?: boolean
 }
-
-type GuideText = Exclude<keyof typeof AGENT.guide, 'tools' | 'showTool' | 'controls'>
-export const guideText = (key: GuideText, values: Record<string, string> = {}) => fill(AGENT.guide[key], values)

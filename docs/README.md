@@ -29,7 +29,7 @@ Start from the document that fits what you want to read. To read with moving fig
 | [Philosophy.md](Philosophy.md) | "What to build so that we are not used by AI": the concern behind Tsugumi, its name and its author |
 | [Rationale.md](Rationale.md) | Why design, implementation and checking share one Workflow: answers to the three reasons for hesitating to hand research to AI (an invisible process, reproducibility, data), the measures that keep trial and error light |
 | [Vision.md](Vision.md) | Applications: learning research decisions, growing tools, handing work to the next person, and the idea of business automation |
-| [Limitations.md](Limitations.md) | The current scope, plans and the scope of the guarantees |
+| [Limitations.md](Limitations.md) | Checks before relying on a result and links to execution constraints |
 
 ## How it works
 
@@ -37,7 +37,7 @@ Start from the document that fits what you want to read. To read with moving fig
 | --- | --- |
 | [Versions.md](Versions.md) | Versions: the project's git, each run's version and result (git notes), the version tree and "Start from This Version" |
 | [security.md](security.md) | What is and is not protected, the four isolation boundaries (VM, project, Card, RPC), API keys, where data is kept, and known limitations |
-| [Protocol.md](Protocol.md) | The RPC contract: the 48 requests and the notifications (generated from `protocol/tsugumi.fbs`) |
+| [Protocol.md](Protocol.md) | The project RPC requests and notifications (generated from `protocol/tsugumi.fbs`) |
 | [Glossary.md](Glossary.md) | Card, Draft, Run, invocation, version and other terms |
 
 ## Dependencies and distribution

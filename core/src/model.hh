@@ -66,10 +66,6 @@ struct RunStatusData {
   std::optional<int64_t> ended_at;
   std::optional<FailureData> failure;
   std::optional<std::string> commit;  // the project's version the run started from
-  bool active() const {
-    return state == RunState::queued || state == RunState::preparing ||
-           state == RunState::running || state == RunState::cancelling;
-  }
   bool terminal() const {
     return state == RunState::succeeded || state == RunState::failed ||
            state == RunState::cancelled;
@@ -233,10 +229,6 @@ struct ArtifactData {
   PortKind kind = PortKind::File;
   std::string name;
   std::vector<ArtifactMemberData> members;
-};
-
-struct DiagnosticList {
-  std::vector<Diag> items;
 };
 
 }  // namespace tsugumi

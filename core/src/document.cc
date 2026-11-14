@@ -32,8 +32,6 @@ CardPath path_from_key(const std::string& key) {
   return p;
 }
 
-std::string path_display(const CardPath& p) { return p.empty() ? "<root>" : path_key(p); }
-
 bool valid_id(const std::string& id) {
   if (id.empty() || id.size() > 128 || id == "." || id == "..") return false;
   for (char c : id) {

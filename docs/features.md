@@ -2,8 +2,6 @@
 
 Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole graph, change one step, and inspect the recorded conditions and results. Use the macOS app or open the workbench in a browser with the `tsugumi` command. [Installation](INSTALL.md) · [First steps in the workbench](Usage.md#the-first-five-minutes)
 
-This reference follows `main` and covers the 0.7 pre-release series. If you are using the 0.6.2 stable release, see its versioned documentation for the available features. [0.6.2 documentation](https://github.com/gen740/Tsugumi/tree/v0.6.2/docs)
-
 ## Find a feature
 
 ### Build and navigate a Workflow
@@ -106,7 +104,7 @@ in
 }
 ```
 
-- `tsugumi:default` uses the Nixpkgs revision bundled with the installed version of Tsugumi. New projects are created already pinned to the app's revision. To keep using it after an app update, open **Project settings → Name and environment** and choose **Pin to This App's Nixpkgs**. You can also enter a revision and hash in the form `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…`.
+- `tsugumi:default` uses the Nixpkgs revision bundled with the installed version of Tsugumi. New projects are created already pinned to the app's revision. To keep using it after an app update, open **Project settings → Name and Environment** and choose **Pin to This App's Nixpkgs**. You can also enter a revision and hash in the form `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…`.
 - Nix evaluation uses restricted eval and forbids IFD (Import From Derivation), and the URLs it may fetch during evaluation are limited to nixpkgs archives (build-time fetches must be pinned by hash).
 - Builds reuse outputs already in the Nix store. A signed [binary cache](BinaryCaches.md) can supply a missing store path before Nix builds it locally.
 
@@ -121,8 +119,8 @@ in
 
 ### External Nix sources (`inputs.sources`)
 
-- Flakes can be added under "External sources" in "Name and environment" of the project's settings. Enter an address (`github:owner/repo`, or the URL of a GitHub page) and press "Fetch" to see the commit and the list of packages for this environment, then press "Add". "Update" fetches a newer commit.
-- Once added, it is kept in `tsugumi.json`, pinned by commit and hash. The only `type` for now is `flake`.
+- Flakes can be added under "External sources" in "Name and Environment" of the project's settings. Enter an address (`github:owner/repo`, or the URL of a GitHub page) and press "Fetch" to see the commit and the list of packages for this environment, then press "Add". "Update" fetches a newer commit.
+- Once added, it is kept in `tsugumi.json`, pinned by commit and hash. The supported `type` is `flake`.
 
 ```json
 "nixSources": [{ "name": "ciao", "type": "flake", "ref": "github:gen740/ciao/<commit>?narHash=sha256-..." }]
@@ -219,7 +217,7 @@ Besides Anthropic's Messages API, OpenAI's API and the ChatGPT plan are supporte
 The host-side `tsugumi-agentd` owns provider endpoints, revisioned settings and OAuth credentials. The clients keep settings screens, presentation snapshots, browser opening and macOS login Keychain access. Keychain-backed API keys are provisioned to agentd in memory only; non-Mac and Web Keychain-save fallback keys use its owner-only store. Host RPC supplies settings get/update, secret-input provider set/status and sign-in begin/action/status; ordinary model selections contain no endpoint or credential. Desktop settings are shared; the app and Web hosts have separate ChatGPT account profiles. OAuth validation, callback handling, refresh rotation and revocation run in core. See [API keys and sign-in](security.md#7-the-models-api-keys-agent).
 
 - Supports the Anthropic Messages API and the OpenAI Responses API, responding by streaming. OpenAI can be used with an API key or with the user's ChatGPT plan (Sign in with ChatGPT, the procedure for open-source tools) ([Security](security.md#the-chatgpt-plan-sign-in-with-chatgpt)).
-- The chat's model menu chooses effort and Fast mode. The model list comes from the provider; the effort levels and Fast mode offered for a model are only those confirmed in the provider's documentation (`modelOptions` in `agent/Shared/agent.json`). If nothing is chosen, these fields are not sent and the model's defaults apply.
+- The chat's model menu chooses effort and Fast mode. agentd fetches and persists the model list from the provider; the effort levels and Fast mode offered for a model are only those confirmed in the provider's documentation (`modelOptions` in `agent/Shared/agent.json`). If nothing is chosen, these fields are not sent and the model's defaults apply.
 
 ### Tools and the RPC
 

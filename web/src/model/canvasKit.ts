@@ -968,19 +968,6 @@ export function bezier(a: Pt, c1: Pt, c2: Pt, b: Pt, t: number): Pt {
   }
 }
 
-/** Distance from a point to a polyline. */
-export function distToPolyline(p: Pt, pts: Pt[]): number {
-  let best = Infinity
-  for (let i = 1; i < pts.length; i++) {
-    const a = pts[i - 1], b = pts[i]
-    const vx = b.x - a.x, vy = b.y - a.y
-    const l2 = vx * vx + vy * vy
-    const t = l2 ? Math.max(0, Math.min(1, ((p.x - a.x) * vx + (p.y - a.y) * vy) / l2)) : 0
-    best = Math.min(best, Math.hypot(p.x - (a.x + t * vx), p.y - (a.y + t * vy)))
-  }
-  return best
-}
-
 export const union = (a: Rect, b: Rect): Rect => {
   const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y)
   return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y }
