@@ -16,6 +16,175 @@
 namespace tsugumi::test {
 namespace {
 
+TEST_F(AgentProjectFixture, ConversationsCannotMoveBetweenCopiedProjects) {
+  StartProject();
+  const auto original = project_id;
+  const auto conversation = Conversation("copy-a");
+  const auto pending = Inspect(conversation);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  // Another registered project, with an identical title, is still distinct.
+  const auto registered = Call(*host, H::RequestPayload::RegisterProjectRequest, [&](Builder& b) {
+    return H::CreateRegisterProjectRequest(b, b.CreateString("copy-b"),
+        b.CreateString("unix:/unused-copy-b.sock"), b.CreateString("token"),
+        b.CreateString("Private project"), b.CreateString("/copies/b")).Union();
+  });
+  ASSERT_TRUE(registered.Code().empty());
+  for (const auto& project : {std::string("copy-b"), std::string{}}) {
+    const auto moved = Call(*human, A::RequestPayload::ConversationCreateRequest, [&](Builder& b) {
+      return A::CreateConversationCreateRequest(b, b.CreateString(conversation), b.CreateString(project)).Union();
+    });
+    EXPECT_EQ(moved.Code(), "project_mismatch");
+    EXPECT_EQ(JsonString(Get(conversation, true).View(), "/project_id"), original);
+  }
+  const auto list = Call(*human, A::RequestPayload::ConversationListRequest, [&](Builder& b) {
+    return A::CreateConversationListRequest(b, b.CreateString("copy-b")).Union();
+  });
+  EXPECT_EQ(list.View(), "[]");
+  const auto access = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  const auto* request = access.Value()->value_as_AccessList()->requests()->Get(0);
+  EXPECT_EQ(request->project_id()->str(), original);
+  EXPECT_EQ(request->id()->str(), pending.RequestId());
+  // Even after restart, the stopped conversation and its request stay in A.
+  human.reset(); external.reset(); host.reset(); agent.Stop(); StartAgent();
+  project_id = "copy-b";
+  EXPECT_EQ(Call(*human, A::RequestPayload::ConversationCreateRequest, [&](Builder& b) {
+    return A::CreateConversationCreateRequest(b, b.CreateString(conversation), b.CreateString(project_id)).Union();
+  }).Code(), "project_mismatch");
+}
+
+TEST_F(AgentProjectFixture, LiveAndRestoredAccessRequestsDescribeTheSameNamedFolder) {
+  StartProject();
+  const auto conversation = Conversation("named-access");
+  const auto pending = Inspect(conversation);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  const auto access = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  const auto* request = access.Value()->value_as_AccessList()->requests()->Get(0);
+  const auto description = request->asked()->Get(0)->str();
+  const auto fields = description.substr(std::string("project_access ").size());
+  EXPECT_EQ(JsonString(fields, "/title"), "Private project");
+  EXPECT_EQ(JsonString(fields, "/path"), (directory.path / "project").string());
+  EXPECT_EQ(JsonString(fields, "/access"), "Read");
+  EXPECT_EQ(JsonString(fields, "/scope"), "Conversation");
+  const auto events = Events(conversation, true);
+  const auto* event = events.Value()->value_as_EventsPage()->events()->Get(0)->event();
+  ASSERT_EQ(event->kind()->str(), "permission");
+  EXPECT_EQ(event->asked()->Get(0)->str(), description);
+}
+
+TEST_F(AgentProjectFixture, FirstProjectAccessAsksForThreeInOneDurablePrompt) {
+  StartProject();
+  const auto conversation = Conversation("combined-access");
+  const auto pending = Inspect(conversation);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  const auto listed = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  const auto* requests = listed.Value()->value_as_AccessList()->requests();
+  ASSERT_EQ(requests->size(), 1u);
+  const auto* asked = requests->Get(0)->asked();
+  ASSERT_EQ(asked->size(), 3u);
+  for (flatbuffers::uoffset_t i = 0; i < asked->size(); ++i) {
+    const auto fields = asked->Get(i)->str().substr(std::string("project_access ").size());
+    EXPECT_EQ(JsonString(fields, "/access"), i == 0 ? "Read" : i == 1 ? "Write" : "Run");
+    EXPECT_EQ(JsonBool(fields, "/needed_now"), i == 0);
+  }
+  const auto events = Events(conversation, true);
+  ASSERT_EQ(events.Value()->value_as_EventsPage()->events()->size(), 1u);
+  EXPECT_EQ(events.Value()->value_as_EventsPage()->events()->Get(0)->event()->asked()->size(), 3u);
+  // Repeating the operation coalesces with the same pending prompt.
+  EXPECT_EQ(Inspect(conversation).RequestId(), pending.RequestId());
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(pending.RequestId()), true,
+        b.CreateVector(std::vector{A::Access::Write, A::Access::Run})).Union();
+  }).Code().empty());
+  const auto granted = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  ASSERT_EQ(granted.Value()->value_as_AccessList()->grants()->size(), 3u);
+  EXPECT_TRUE(Inspect(conversation).Code().empty());
+  // Revoking one access leaves the other two grants intact.
+  for (const auto* grant : *granted.Value()->value_as_AccessList()->grants())
+    if (grant->access() == A::Access::Run) Revoke(grant->id()->str());
+  EXPECT_EQ(Tool(conversation, "run", "{}").Code(), "grant_required");
+}
+
+TEST_F(AgentProjectFixture, PartialAccessAllowOnlyReasksTheOmittedAccessWhenNeeded) {
+  StartProject();
+  const auto conversation = Conversation("partial-access");
+  const auto pending = Inspect(conversation);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(pending.RequestId()), true,
+        b.CreateVector(std::vector{A::Access::Write})).Union();
+  }).Code().empty());
+  EXPECT_TRUE(Inspect(conversation).Code().empty());
+  const auto before = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  EXPECT_EQ(before.Value()->value_as_AccessList()->requests()->size(), 1u);
+  ASSERT_EQ(before.Value()->value_as_AccessList()->grants()->size(), 2u);
+  // The omitted Run grant is still enforced before project RPC executes.
+  const auto later = Tool(conversation, "run", "{}");
+  ASSERT_EQ(later.Code(), "grant_required");
+  EXPECT_NE(later.RequestId(), pending.RequestId());
+  const auto list = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  const auto* prompt = list.Value()->value_as_AccessList()->requests()->Get(0);
+  ASSERT_EQ(prompt->asked()->size(), 1u);
+  EXPECT_EQ(prompt->access(), A::Access::Run);
+  EXPECT_TRUE(JsonBool(prompt->asked()->Get(0)->str().substr(std::string("project_access ").size()), "/needed_now"));
+  // An unoffered capability cannot be smuggled into the answer.
+  EXPECT_EQ(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(later.RequestId()), true,
+        b.CreateVector(std::vector{A::Access::Shell})).Union();
+  }).Code(), "invalid_request");
+  EXPECT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(later.RequestId()), true).Union();
+  }).Code().empty());
+}
+
+TEST_F(AgentProjectFixture, NeededAccessCanBeLeftOutWhileAnotherIsAllowed) {
+  StartProject();
+  const auto conversation = Conversation("omitted-needed-access");
+  const auto pending = Inspect(conversation);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(pending.RequestId()), false,
+        b.CreateVector(std::vector{A::Access::Write})).Union();
+  }).Code().empty());
+  const auto list = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  ASSERT_EQ(list.Value()->value_as_AccessList()->grants()->size(), 1u);
+  EXPECT_EQ(list.Value()->value_as_AccessList()->grants()->Get(0)->access(), A::Access::Write);
+  EXPECT_EQ(Inspect(conversation).Code(), "grant_required");
+}
+
+TEST_F(AgentProjectFixture, DenyingACombinedPromptCreatesNoGrants) {
+  StartProject();
+  const auto conversation = Conversation("denied-combined-access");
+  const auto pending = Inspect(conversation);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  EXPECT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(pending.RequestId()), false).Union();
+  }).Code().empty());
+  const auto list = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  const auto* value = list.Value()->value_as_AccessList();
+  EXPECT_TRUE(!value->grants() || value->grants()->size() == 0);
+  EXPECT_EQ(value->requests()->Get(0)->state()->str(), "denied");
+  // No access was inferred from displaying the three choices.
+  const auto again = Inspect(conversation);
+  EXPECT_EQ(again.Code(), "grant_required");
+  EXPECT_NE(again.RequestId(), pending.RequestId());
+}
+
 // Re-executed inside project_shell by the isolation regression below. Supplying
 // the real test credential proves that hiding server.ready is not the only
 // thing preventing an unlisted request over a custom Unix socket path.

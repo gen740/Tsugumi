@@ -13,7 +13,15 @@ final class CorePreferences {
   private var editGeneration = 0
   private(set) var error: String?
   @ObservationIgnored private var pending: Task<Void, Never>?
-  init() { Task { await reload() } }
+  init() {
+    Task { [weak self] in
+      _ = await CoreAgentClient.shared.observeHost { [weak self] event in
+        guard event["type"] as? String == "SettingsChanged", event["profile"] as? String == "desktop" else { return }
+        Task { @MainActor [weak self] in await self?.reload() }
+      }
+      await self?.reload()
+    }
+  }
   func reload() async {
     await pending?.value
     await loadSnapshot()

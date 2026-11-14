@@ -282,6 +282,9 @@ enum ServiceWire {
         let v = Tsugumi_Agent_AccessResolveRequestT()
         v.requestId = fields["request_id"] as? String ?? ""
         v.allow = fields["allow"] as? Bool ?? false
+        v.alsoAllow = (fields["also_allow"] as? [String] ?? []).compactMap { name in
+          ["Read": Tsugumi_Agent_Access.read, "Write": .write, "Run": .run][name]
+        }
         return (Tsugumi_Agent_RequestPayload.accessresolverequest.rawValue, v)
       case "AccessRevokeRequest":
         let v = Tsugumi_Agent_AccessRevokeRequestT()
@@ -372,6 +375,7 @@ enum ServiceWire {
     case is Tsugumi_Host_EnvironmentStateT: return ["type": "EnvironmentState", "value": try view(value)]
     case is Tsugumi_Host_HostRuntimeT: return ["type": "HostRuntime", "value": try view(value)]
     case is Tsugumi_Host_HostTerminalDataT: return ["type": "HostTerminalData", "value": try view(value)]
+    case let changed as Tsugumi_Host_SettingsChangedT: return ["type": "SettingsChanged", "profile": changed.profile, "revision": changed.revision]
     default: throw RPCError.disconnected
     }
   }
@@ -479,6 +483,7 @@ enum ServiceWire {
       out["busy"] = v.busy
       out["resumable"] = v.resumable
       out["interrupted_operation"] = v.interruptedOperation
+      out["model_binding"] = v.modelBinding
       out["continuable"] = v.continuable
       out["project_id"] = v.projectId
       out["event_seq"] = v.eventSeq
@@ -551,6 +556,7 @@ enum ServiceWire {
       return out
     case let v as Tsugumi_Agent_AccessEntryT:
       var out: [String: Any] = [:]
+      out["asked"] = v.asked
       out["id"] = v.id
       out["project_id"] = v.projectId
       out["conversation_id"] = v.conversationId
