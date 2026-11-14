@@ -52,24 +52,38 @@ auto Set(const json::Members &task, const std::string &field)
 }
 } // namespace
 
-HelperScope::HelperScope(const json::Members &task)
-    : scoped_(task.contains("read_cards") && task.contains("write_cards")),
-      reads_(Set(task, "read_cards")), writes_(Set(task, "write_cards")) {}
+HelperScope::HelperScope(const json::Members &task, std::string authorization)
+    : scoped_(task.contains("read_cards") && task.contains("write_cards") &&
+              task.contains("run_cards")),
+      reads_(Set(task, "read_cards")), writes_(Set(task, "write_cards")),
+      runs_(Set(task, "run_cards")), authorization_(std::move(authorization)) {}
 
 auto HelperScope::Validate(const json::Members &task, bool allow_unscoped)
     -> void {
-  if (task.contains("read_cards") != task.contains("write_cards"))
-    throw std::runtime_error(
-        "Supply both read_cards and write_cards (empty arrays are allowed)");
+  if ((task.contains("read_cards") || task.contains("write_cards") ||
+       task.contains("run_cards")) &&
+      !(task.contains("read_cards") && task.contains("write_cards") &&
+        task.contains("run_cards")))
+    throw std::runtime_error("Supply read_cards, write_cards and run_cards "
+                             "(empty arrays are allowed)");
   if (!task.contains("read_cards") && !allow_unscoped)
-    throw std::runtime_error(
-        "Unscoped helpers are disabled; supply read_cards and write_cards");
+    throw std::runtime_error("Unscoped helpers are disabled; supply "
+                             "read_cards, write_cards and run_cards");
   HelperScope scope(task);
 }
 auto HelperScope::Require(const std::string &card, bool writing) const -> void {
   if (!(writing ? writes_ : reads_).contains(card))
-    Deny(std::string(writing ? "write or run of " : "read of ") +
+    Deny(std::string(writing ? "write of " : "read of ") +
          (card.empty() ? "the whole project" : card));
+}
+auto HelperScope::Ran(const std::string &run_id, const std::string &card)
+    -> void {
+  if (!run_id.empty())
+    runs_started_[run_id] = card;
+}
+auto HelperScope::RequireRun(const std::string &card) const -> void {
+  if (!runs_.contains(card))
+    Deny("run of " + (card.empty() ? "the whole project" : card));
 }
 auto HelperScope::Root(const std::string &card, const Reader &read,
                        bool writing) const -> std::string {
@@ -175,6 +189,7 @@ auto HelperScope::Created(const std::string &id,
   const auto card = parent + id;
   reads_.insert(card);
   writes_.insert(card);
+  runs_.insert(card);
   created_[card] = project_path + "definitions/" + id;
 }
 auto HelperScope::Check(const std::string &tool, const json::Members &args,
@@ -231,9 +246,15 @@ auto HelperScope::Check(const std::string &tool, const json::Members &args,
       Require(Card(target), false);
     return;
   }
+  if (tool == "run_cancel" || tool == "run_status") {
+    const auto found = runs_started_.find(json::Text(args, "run_id"));
+    if (found == runs_started_.end())
+      Deny("unowned run");
+    RequireRun(found->second);
+    return;
+  }
   if (tool == "run" || tool == "card_s_d_k_prepare") {
-    Require(Card(json::Get(args, "card", "{}")), true);
-    Require(Card(json::Get(args, "card", "{}")), false);
+    RequireRun(Card(json::Get(args, "card", "{}")));
     return;
   }
   if (tool == "run_plan" || tool == "run_history" ||
@@ -247,6 +268,28 @@ auto HelperScope::Check(const std::string &tool, const json::Members &args,
   // cannot establish this boundary. Keep the existing catalog and approvals;
   // refuse only this scoped invocation, including future unclassified tools.
   Deny("tool " + tool + " has no enforceable Card boundary");
+}
+auto HelperScope::Completed(const std::string &tool, const json::Members &args,
+                            const std::string &result, const Reader &read)
+    -> void {
+  if (tool != "card_id" && tool != "run")
+    return;
+  const auto reply = json::Object(result);
+  const auto value = json::Object(json::Get(reply, "value", "{}"));
+  if (tool == "card_id" && json::Text(reply, "reply") == "CardIdResult")
+    Created(json::Text(value, "id"), json::Text(args, "project_path"), read);
+  if (tool == "run" && json::Text(reply, "reply") == "RunAccepted")
+    Ran(json::Text(json::Object(json::Get(value, "run", "{}")), "run_id"),
+        Card(json::Get(args, "card", "{}")));
+}
+auto HelperScope::Restore(const std::string &receipt, const Reader &read)
+    -> void {
+  const auto saved = json::Object(receipt);
+  if (saved.contains("helper_project_path"))
+    Completed("card_id", {{"project_path", saved.at("helper_project_path")}},
+              receipt, read);
+  if (saved.contains("helper_run_card"))
+    Completed("run", {{"card", saved.at("helper_run_card")}}, receipt, read);
 }
 auto HelperScope::CheckResult(const std::string &result,
                               const Reader &read) const -> void {
@@ -270,7 +313,7 @@ auto HelperScope::CheckResult(const std::string &result,
     }
   }
 }
-auto HelperScope::CheckPlan(const std::string &result, bool writing) const
+auto HelperScope::CheckPlan(const std::string &result, bool executing) const
     -> void {
   if (!scoped_)
     return;
@@ -280,9 +323,10 @@ auto HelperScope::CheckPlan(const std::string &result, bool writing) const
   const auto value = json::Object(json::Get(envelope, "value", "{}"));
   for (const auto *field : {"targets", "starts", "build_candidates"})
     for (const auto &raw : json::Array(json::Get(value, field, "[]"))) {
-      Require(Card(raw), false);
-      if (writing)
-        Require(Card(raw), true);
+      if (executing)
+        RequireRun(Card(raw));
+      else
+        Require(Card(raw), false);
     }
 }
 auto HelperScope::Inspect(const std::string &result, const Reader &read) const
@@ -324,14 +368,17 @@ auto HelperScope::Inspect(const std::string &result, const Reader &read) const
     value["nix_references"] = json::Encode(references);
     resolution.push_back(json::Encode(value));
   }
-  std::vector<std::string> readable, writable;
+  std::vector<std::string> readable, writable, runnable;
   for (const auto &card : reads_)
     readable.push_back(json::Quote(card));
   for (const auto &card : writes_)
     writable.push_back(json::Quote(card));
+  for (const auto &card : runs_)
+    runnable.push_back(json::Quote(card));
   filtered["helper_scope"] =
       json::Encode(json::Members{{"read_cards", json::Encode(readable)},
-                                 {"write_cards", json::Encode(writable)}});
+                                 {"write_cards", json::Encode(writable)},
+                                 {"run_cards", json::Encode(runnable)}});
   filtered["definitions"] = json::Encode(definitions);
   filtered["sources"] = json::Encode(sources);
   filtered["resolution"] = json::Encode(resolution);

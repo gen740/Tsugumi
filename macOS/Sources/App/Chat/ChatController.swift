@@ -28,6 +28,8 @@ struct Skill: Identifiable, Hashable {
   let source: String
   let sourceFolder: String
   let attachmentFolder: String
+  var scoped = false
+  var scope: [String] = []
 }
 
 /// Adapts core-owned metadata for the folder list and completion menu.
@@ -37,12 +39,12 @@ func availableSkills(project: URL? = nil, folders: [String], conversationID: Str
   if let conversationID { fields["conversation_id"] = conversationID }
   if let project { fields["project_path"] = project.standardizedFileURL.path }
   let value = try await CoreAgentClient.shared.call("SkillsListRequest", fields)
-  let skills = (value["skills"] as? [[String: String]] ?? []).filter { $0["status"] == "ready" && (project != nil || $0["path"] != "builtin:demo") }.map { s in
-    let path = s["path"] ?? ""
+  let skills = (value["skills"] as? [[String: Any]] ?? []).filter { ($0["status"] as? String) == "ready" && (project != nil || ($0["path"] as? String) != "builtin:demo") }.map { s in
+    let path = s["path"] as? String ?? ""
     if path == "builtin:demo" { return ChatController.demoSkill }
-    let folder = s["source_folder"] ?? ""
-    let source = folder == project?.appendingPathComponent("skills").path ? String(localized: "プロジェクト") : URL(fileURLWithPath: folder).lastPathComponent
-    return Skill(name: s["name"] ?? "", description: s["description"] ?? "", path: path, source: source, sourceFolder: folder, attachmentFolder: s["attachment_folder"] ?? "")
+    let folder = s["source_folder"] as? String ?? ""
+    let source = path.hasPrefix("builtin:") ? "Tsugumi" : folder == project?.appendingPathComponent("skills").path ? String(localized: "プロジェクト") : URL(fileURLWithPath: folder).lastPathComponent
+    return Skill(name: s["name"] as? String ?? "", description: s["description"] as? String ?? "", path: path, source: source, sourceFolder: folder, attachmentFolder: s["attachment_folder"] as? String ?? "", scoped: s["scoped"] as? Bool ?? false, scope: s["scope"] as? [String] ?? [])
   }
   let missing = (value["folders"] as? [[String: String]] ?? []).filter { $0["status"] != "ready" }.compactMap { $0["path"] }
   return (skills, missing)
@@ -63,6 +65,7 @@ final class ChatController {
     /// call (text: the arguments) and how its work ended (nil: working).
     var helper: String?
     var ended: String?
+    var trace: String?
   }
 
   struct SessionInfo: Identifiable, Hashable {
@@ -352,6 +355,17 @@ final class ChatController {
     for record in conv.tools where record.name == "operation_approval" {
       out.append(Item(role: "tool", text: record.result ?? "", tool: (record.name, record.state == .pending ? nil : !record.isError)))
     }
+    for helper in conv.helpers {
+      let trace = helper.messages.flatMap(\.content).map { block -> String in
+        switch block {
+        case .text(let text): return text
+        case .toolUse(_, let name, let args): return name + "\n" + args
+        case .toolResult(_, let text, _, _): return text
+        case .webSearch(let search): return search.summary
+        }
+      }.joined(separator: "\n\n")
+      out.append(Item(role: "helper", text: "", helper: helper.messages.first?.content.compactMap { if case .text(let text) = $0 { return String(text.prefix(80)) }; return nil }.first ?? helper.call, ended: helper.state, trace: trace))
+    }
     return out
   }
 
@@ -416,7 +430,7 @@ final class ChatController {
 
   // MARK: - Conversation
 
-  func send(_ text: String, selection: [CardKey] = []) {
+  func send(_ text: String, selection: [CardKey] = [], scopedSkill: String? = nil) {
     guard !attaching, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
     // No model connection: Tsugumi answers from its script (a connection of this chat's own, as in tests, is used).
     if GuideController.shared.scripted, provider.auth != .none, !busy {
@@ -443,7 +457,7 @@ final class ChatController {
         await agent.send(prompt: text, title: text, display: shown,
                        selectedCards: refs.compactMap { if case .card(let key) = $0 { return key }; return nil },
                        selectedDisplays: refs.compactMap { if case .display(let key) = $0 { return key }; return nil },
-                       skillNames: Array(Set(used.map(\.name))),
+                       skillNames: Array(Set(used.map(\.name))), scopedSkill: scopedSkill,
                        attachedResources: folders.compactMap { folderResources[$0] }, events: events)
       } catch { events(.error(String(describing: error))) }
     }
@@ -512,7 +526,7 @@ final class ChatController {
 
   func generateFromComments(scope: [String], cards: [CardKey]) {
     sendRequest(display: String(localized: "選択した Card のコメントに従って生成します"),
-      prompt: "Resolve the open comments on these Cards in scope \(scope): \(cards). Read their comments after access is granted.")
+      prompt: "Resolve the open comments on these Cards in scope \(scope): \(cards). Read their comments after access is granted. Skip every comment with finding=true; those are observations, not change requests.")
   }
 
   // MARK: - Card permissions
@@ -744,6 +758,8 @@ final class ChatController {
       } else {
         items.append(Item(role: "assistant", text: t))
       }
+    case .helperStarted(let task):
+      startHelpers("{\"tasks\":[" + task + "]}")
     case .helper(let name, let event):
       handleHelper(name, event)
     case .toolInput(let index, let tool, let delta):

@@ -189,6 +189,7 @@
 "Skill がありません（設定 > Skills でフォルダを追加、またはプロジェクトの skills/）" = "No Skills (add a folder in Settings > Skills, or use the project's skills/)";
 "Skill はまだありません" = "No Skills yet";
 "Skill を再読込" = "Reload Skills";
+"Skill を実行" = "Run Skill";
 "Skill を検索" = "Search Skills";
 "TLS 接続先を入力してください（例: tls://worker.example:8765）。" = "Enter a TLS endpoint, such as tls://worker.example:8765.";
 "Tsugumi %@ の準備ができました" = "Tsugumi %@ is ready";
@@ -1096,6 +1097,7 @@
 "拡大" = "Zoom In";
 "拡大して表示" = "Show Enlarged";
 "指定した日時より前に終わった実行" = "Runs that ended before a date";
+"指摘をコメントに残す" = "Keep finding as comment";
 "掃除" = "Clean";
 "掃除できませんでした: " = "Could not clean: ";
 "探す" = "Search";

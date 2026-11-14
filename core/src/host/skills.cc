@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <fstream>
 #include <memory>
+#include <set>
 #include <sstream>
+
+#include "agent/helper_scope.hh"
 
 #include "util/fs.hh"
 
@@ -16,6 +19,11 @@
 #include <unicode/unistr.h>
 #endif
 
+extern const unsigned char tsugumi_agent_review_skill[];
+extern const unsigned long tsugumi_agent_review_skill_size;
+extern const unsigned char tsugumi_agent_rerun_compare_skill[];
+extern const unsigned long tsugumi_agent_rerun_compare_skill_size;
+
 namespace tsugumi::host {
 namespace {
 namespace H = Tsugumi::Host;
@@ -23,12 +31,12 @@ namespace fs = std::filesystem;
 
 #ifdef __APPLE__
 struct Release {
-  auto operator()(const void* p) const -> void { CFRelease(p); }
+  auto operator()(const void *p) const -> void { CFRelease(p); }
 };
 using String = std::unique_ptr<const __CFString, Release>;
 auto Unicode(std::string_view text) -> String {
   return String(CFStringCreateWithBytes(
-      nullptr, reinterpret_cast<const UInt8*>(text.data()), text.size(),
+      nullptr, reinterpret_cast<const UInt8 *>(text.data()), text.size(),
       kCFStringEncodingUTF8, false));
 }
 auto UTF8(CFStringRef s) -> std::string {
@@ -42,7 +50,8 @@ auto UTF8(CFStringRef s) -> std::string {
 }
 auto Normalize(std::string_view s) -> std::string {
   const auto text = Unicode(s);
-  if (!text) return std::string(s);
+  if (!text)
+    return std::string(s);
   auto copy = CFStringCreateMutableCopy(nullptr, 0, text.get());
   CFStringNormalize(copy, kCFStringNormalizationFormC);
   auto result = UTF8(copy);
@@ -51,7 +60,8 @@ auto Normalize(std::string_view s) -> std::string {
 }
 auto CleanName(std::string_view s) -> std::string {
   const auto text = Unicode(s);
-  if (!text) return "";
+  if (!text)
+    return "";
   std::string out;
   for (CFIndex i = 0; i < CFStringGetLength(text.get());) {
     const auto range =
@@ -88,7 +98,7 @@ auto CleanName(std::string_view s) -> std::string {
 #else
 auto Normalize(std::string_view s) -> std::string {
   UErrorCode error = U_ZERO_ERROR;
-  const auto* normalizer = icu::Normalizer2::getNFCInstance(error);
+  const auto *normalizer = icu::Normalizer2::getNFCInstance(error);
   icu::UnicodeString normalized;
   normalizer->normalize(icu::UnicodeString::fromUTF8(s), normalized, error);
   std::string out;
@@ -174,7 +184,7 @@ auto TrimWhitespace(std::string s) -> std::string {
   size_t begin = 0, end = s.size();
   for (bool found = true; found && begin < end;) {
     found = false;
-    for (const auto& space : spaces)
+    for (const auto &space : spaces)
       if (s.compare(begin, space.size(), space) == 0) {
         begin += space.size();
         found = true;
@@ -183,7 +193,7 @@ auto TrimWhitespace(std::string s) -> std::string {
   }
   for (bool found = true; found && begin < end;) {
     found = false;
-    for (const auto& space : spaces)
+    for (const auto &space : spaces)
       if (end - begin >= space.size() &&
           s.compare(end - space.size(), space.size(), space) == 0) {
         end -= space.size();
@@ -201,7 +211,7 @@ auto Trim(std::string s, std::string_view chars) -> std::string {
              : s.substr(begin, s.find_last_not_of(chars) - begin + 1);
 }
 
-auto Scan(const fs::path& folder, H::SkillsListT& out) -> void {
+auto Scan(const fs::path &folder, H::SkillsListT &out) -> void {
   auto source = std::make_unique<H::SkillFolderT>();
   source->path = folder.string();
   source->status = "ready";
@@ -214,17 +224,19 @@ auto Scan(const fs::path& folder, H::SkillsListT& out) -> void {
   }
   std::vector<fs::directory_entry> entries;
   for (const fs::directory_iterator end; it != end; it.increment(error)) {
-    if (error) break;
+    if (error)
+      break;
     entries.push_back(*it);
   }
-  if (error) source->status = "unreadable";
+  if (error)
+    source->status = "unreadable";
   out.folders.push_back(std::move(source));
   std::stable_sort(entries.begin(), entries.end(),
-                   [](const auto& a, const auto& b) {
+                   [](const auto &a, const auto &b) {
                      return Normalize(a.path().filename().string()) <
                             Normalize(b.path().filename().string());
                    });
-  for (const auto& item : entries) {
+  for (const auto &item : entries) {
     auto file = item.path();
     auto name = file.stem().string();
     // URLResourceValues.isDirectory does not follow directory symlinks.
@@ -235,7 +247,8 @@ auto Scan(const fs::path& folder, H::SkillsListT& out) -> void {
       auto extension = file.extension().string();
       std::transform(extension.begin(), extension.end(), extension.begin(),
                      [](unsigned char c) { return std::tolower(c); });
-      if (extension != ".md") continue;
+      if (extension != ".md")
+        continue;
     }
     auto skill = std::make_unique<H::SkillT>();
     skill->name = Normalize(CleanName(RepairUTF8(name)));
@@ -264,6 +277,14 @@ auto Scan(const fs::path& folder, H::SkillsListT& out) -> void {
               line.clear();
             }
           }
+          try {
+            if (const auto scope = SkillScope(text)) {
+              skill->scoped = true;
+              skill->scope = *scope;
+            }
+          } catch (const std::exception &) {
+            skill->status = "invalid_scope";
+          }
           size_t body = 0;
           if (!lines.empty() && lines.front() == "---") {
             const auto end = std::find(lines.begin() + 1, lines.end(), "---");
@@ -291,9 +312,109 @@ auto Scan(const fs::path& folder, H::SkillsListT& out) -> void {
     out.skills.push_back(std::move(skill));
   }
 }
-}  // namespace
+} // namespace
 
-auto ReadSkill(const fs::path& root, const fs::path& file) -> std::string {
+auto SkillScope(std::string_view text)
+    -> std::optional<std::vector<std::string>> {
+  std::istringstream input{std::string(text)};
+  std::string line;
+  auto next = [&] {
+    if (!std::getline(input, line))
+      return false;
+    if (!line.empty() && line.back() == '\r')
+      line.pop_back();
+    return true;
+  };
+  if (!next() || line != "---")
+    return std::nullopt;
+  std::optional<std::vector<std::string>> result;
+  while (next()) {
+    if (line == "---")
+      return result;
+    if (!line.starts_with("scope:"))
+      continue;
+    if (result)
+      throw std::runtime_error("Duplicate Skill scope declaration");
+    auto value = Trim(line.substr(6), " \t");
+    if (value.size() < 2 || value.front() != '[' || value.back() != ']')
+      throw std::runtime_error("Skill scope must be an inline access list");
+    result.emplace();
+    std::set<std::string> seen;
+    std::istringstream values(value.substr(1, value.size() - 2));
+    while (std::getline(values, value, ',')) {
+      value = Trim(value, " \t");
+      if ((value != "read" && value != "write" && value != "run") ||
+          !seen.insert(value).second)
+        throw std::runtime_error("Invalid Skill scope access");
+      result->push_back(value);
+    }
+  }
+  throw std::runtime_error("Unclosed Skill front matter");
+}
+
+auto ScopedSkillTask(std::string_view text, const std::string &name,
+                     const std::vector<std::string> &cards,
+                     const std::string &instruction) -> agent::json::Members {
+  const auto scope = SkillScope(text);
+  if (!scope || cards.empty())
+    throw std::runtime_error(
+        "A scoped helper requires a declared Skill and selected Cards");
+  std::vector<std::string> selected;
+  for (const auto &card : cards)
+    selected.push_back(agent::json::Quote(card));
+  agent::json::Members task{
+      {"name", agent::json::Quote(name)},
+      {"instruction",
+       agent::json::Quote(instruction + "\n" + std::string(text))}};
+  for (const auto *access : {"read", "write", "run"})
+    task[std::string(access) + "_cards"] =
+        std::find(scope->begin(), scope->end(), access) == scope->end()
+            ? "[]"
+            : agent::json::Encode(selected);
+  agent::HelperScope::Validate(task, false);
+  return task;
+}
+
+auto SelectScopedSkill(const H::SkillsListT &catalog,
+                       const std::vector<std::string> &names,
+                       const std::string &explicit_name,
+                       const std::vector<std::string> &cards,
+                       const std::string &instruction)
+    -> std::optional<agent::json::Members> {
+  std::set<std::string> selected;
+  for (const auto &name : names)
+    selected.insert(SkillNameKey(name));
+  std::vector<const H::SkillT *> matches;
+  for (const auto &skill : catalog.skills)
+    if ((!explicit_name.empty() && skill->name == explicit_name) ||
+        (selected.contains(skill->name) && skill->scoped))
+      matches.push_back(skill.get());
+  if (matches.empty() && explicit_name.empty())
+    return std::nullopt;
+  if (matches.size() != 1 || selected.size() > 1 ||
+      matches.front()->status != "ready" || !matches.front()->scoped)
+    throw std::runtime_error(
+        "Select exactly one unambiguous Skill with a valid scope declaration");
+  const auto &skill = *matches.front();
+  const auto bytes = skill.path.starts_with("builtin:")
+                         ? BundledSkill(skill.path)
+                         : ReadSkill(skill.source_folder, skill.path);
+  auto task = ScopedSkillTask(bytes, skill.name, cards, instruction);
+  task["skill_path"] = agent::json::Quote(skill.path);
+  return task;
+}
+
+auto BundledSkill(const std::string &path) -> std::string {
+  if (path == "builtin:review")
+    return {reinterpret_cast<const char *>(tsugumi_agent_review_skill),
+            tsugumi_agent_review_skill_size};
+  if (path == "builtin:rerun-compare")
+    return {reinterpret_cast<const char *>(tsugumi_agent_rerun_compare_skill),
+            tsugumi_agent_rerun_compare_skill_size};
+  return {};
+}
+
+auto ReadSkill(const fs::path &root, const fs::path &file) -> std::string {
   // Resolve permitted symlinks, then open every component beneath the resolved
   // root without following links. A replacement after resolution cannot escape.
   const auto base = fs::canonical(root);
@@ -313,8 +434,8 @@ auto SkillNameKey(std::string_view name) -> std::string {
   return Normalize(RepairUTF8(name));
 }
 
-auto ListSkills(const fs::path& project,
-                const std::vector<std::string>& folders) -> H::SkillsListT {
+auto ListSkills(const fs::path &project,
+                const std::vector<std::string> &folders) -> H::SkillsListT {
   H::SkillsListT out;
   {
     auto demo = std::make_unique<H::SkillT>();
@@ -322,12 +443,24 @@ auto ListSkills(const fs::path& project,
     demo->path = "builtin:demo";
     demo->status = "ready";
     out.skills.push_back(std::move(demo));
-    if (!project.empty()) Scan(project / "skills", out);
+    for (const auto *name : {"review", "rerun-compare"}) {
+      auto skill = std::make_unique<H::SkillT>();
+      skill->name = name;
+      skill->path = std::string("builtin:") + name;
+      skill->status = "ready";
+      skill->scoped = true;
+      skill->scope = *SkillScope(BundledSkill(skill->path));
+      skill->description = name;
+      out.skills.push_back(std::move(skill));
+    }
+    if (!project.empty())
+      Scan(project / "skills", out);
   }
-  for (const auto& folder : folders)
+  for (const auto &folder : folders)
     Scan(fs::path(folder).lexically_normal(), out);
-  for (auto& skill : out.skills) {
-    if (skill->path == "builtin:demo") continue;
+  for (auto &skill : out.skills) {
+    if (skill->path.starts_with("builtin:"))
+      continue;
     if (project.empty() ||
         !tsugumi::fs::valid_relative_path(
             fs::path(skill->path).lexically_relative(project).string()))
@@ -335,4 +468,4 @@ auto ListSkills(const fs::path& project,
   }
   return out;
 }
-}  // namespace tsugumi::host
+} // namespace tsugumi::host

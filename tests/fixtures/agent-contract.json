@@ -311,14 +311,21 @@
              "items": {
                "type": "string"
              },
-             "description": "Exact permanent Card paths this helper may read, including nested paths such as outer/step. No implicit descendants; supply both sets. Empty means none."
+             "description": "Exact permanent Card paths this helper may read, including nested paths such as outer/step. No implicit descendants; supply all three sets. Empty means none."
            },
            "write_cards": {
              "type": "array",
              "items": {
                "type": "string"
              },
-             "description": "Exact permanent Card paths this helper may change or run, including nested paths such as outer/step. No implicit descendants; supply both sets. Empty means none."
+             "description": "Exact permanent Card paths this helper may change, including nested paths such as outer/step. No implicit descendants; supply all three sets. Empty means none."
+           },
+           "run_cards": {
+             "type": "array",
+             "items": {
+               "type": "string"
+             },
+             "description": "Exact permanent Card paths this helper may execute, prepare or cancel. Every Card in a run plan must be assigned; write does not imply run. Supply all three sets; empty means none."
            }
          }
        }

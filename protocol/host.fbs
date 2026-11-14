@@ -84,7 +84,7 @@ table RegisterFolderRequest { project_id:string (required); resource_id:string (
 // Listing metadata never grants permission to put a skill in a prompt.
 // conversation_id records ordered sources for that send; omission only previews.
 table SkillsListRequest { project_path:string; folders:[string]; conversation_id:string; }
-table Skill { name:string (required); description:string; path:string (required); source_folder:string; attachment_folder:string; status:string (required); }
+table Skill { name:string (required); description:string; path:string (required); source_folder:string; attachment_folder:string; status:string (required); scope:[string]; scoped:bool; }
 table SkillFolder { path:string (required); status:string (required); }
 table SkillsList { skills:[Skill]; folders:[SkillFolder]; }
 // provider_id keeps the existing per-connection catalogs. Only refresh needs

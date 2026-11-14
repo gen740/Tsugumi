@@ -1,5 +1,5 @@
 /** Project-local evidence addresses. Never accept hosts, project paths or arbitrary query fields. */
-export type Evidence = { kind: 'card' | 'run' | 'log' | 'artifact'; card?: string[]; run?: string; invocation?: bigint; stream?: 'stdout' | 'stderr' | 'build' | 'journal'; offset?: bigint; artifact?: string; member?: string }
+export type Evidence = { kind: 'card' | 'run' | 'log' | 'artifact'; card?: string[]; run?: string; invocation?: bigint; stream?: 'stdout' | 'stderr' | 'build' | 'journal'; offset?: bigint; artifact?: string; member?: string; file?: string; lineStart?: number; lineEnd?: number }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const uint = (v: string | null): bigint | undefined => v !== null && /^(0|[1-9][0-9]*)$/.test(v) && BigInt(v) <= 18446744073709551615n ? BigInt(v) : undefined
 export const isEvidence = (href: string) => /^(card|run|log|artifact):/i.test(href)
@@ -12,7 +12,16 @@ export function parseEvidence(href: string): Evidence | undefined {
   try { if (query !== undefined) decodeURIComponent(query.replace(/\+/g, ' ')) } catch { return }
   const q = new URLSearchParams(query)
   if ([...q.keys()].some((k, i, all) => all.indexOf(k) !== i)) return
-  if (kind === 'card') return query === undefined && fragment === undefined && card(parts) ? { kind, card: parts } : undefined
+  if (kind === 'card') {
+    if (!card(parts) || fragment !== undefined) return
+    if (query === undefined) return { kind, card: parts }
+    if ([...q.keys()].some(k => !['file', 'lines'].includes(k))) return
+    const file = q.get('file'), lines = /^([1-9][0-9]*)-([1-9][0-9]*)$/.exec(q.get('lines') ?? '')
+    if (!file || /[\\\x00-\x1f]/.test(file) || file.split('/').some(p => !p || p === '.' || p === '..') || !lines) return
+    const lineStart = Number(lines[1]), lineEnd = Number(lines[2])
+    if (!Number.isSafeInteger(lineEnd) || lineStart < 1 || lineEnd < lineStart) return
+    return { kind, card: parts, file, lineStart, lineEnd }
+  }
   const run = parts.shift()!
   if (!uuid.test(run)) return
   if (parts.length && !card(parts)) return
@@ -52,4 +61,13 @@ export async function evidenceExists(target: Evidence, source: EvidenceSource): 
     if (target.kind === 'artifact') return await source.artifactExists(target)
     return true
   } catch { return false }
+}
+
+/** Each source-citing paragraph is an independently selectable finding. */
+export function findings(text: string): { text: string; target: Evidence }[] {
+  return text.split(/\n\s*\n/).flatMap(text => {
+    const links = [...text.matchAll(/\[[^\]]*\]\((card:[^\s)]+)\)/g)]
+    const target = links.map(m => parseEvidence(m[1])).find(t => t?.file)
+    return target ? [{ text, target }] : []
+  })
 }

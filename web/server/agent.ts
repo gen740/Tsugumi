@@ -146,6 +146,7 @@ export interface Conversation {
   /** Messages replaced by the summary when the context was compacted. */
   archive: ChatMessage[]
   tools: ToolRecord[]
+  helpers?: { call_id: string; task: number; messages: ChatMessage[]; state: string }[]
   /** inputTokens: context of the last request (uncached, cache read and cache
    *  written); the cache counts add up over the conversation. */
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }
@@ -172,6 +173,7 @@ export type AgentEvent =
    *  finishing; `unconfirmedRun` is a run it started and never saw end. */
   | { kind: 'stepLimit'; steps: number; unconfirmedRun?: string }
   /** What a helper started by `delegate` does (its own events). */
+  | { kind: 'helperStarted'; text: string }
   | { kind: 'helper'; name: string; event: AgentEvent }
   | { kind: 'permission'; id: string; asked: string[]; from?: string }
   | { kind: 'permissionAnswered'; id: string }

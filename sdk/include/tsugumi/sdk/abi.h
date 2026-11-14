@@ -91,6 +91,11 @@ typedef struct tsugumi_call {
    * before returning to the worker and before postRun observes the result. */
   int (*finish_outputs)(void* host);
 
+  /* ABI 6. Failure at a source position. source is relative to the Card's
+   * definition directory; line is one-based. cell may be NULL. */
+  void (*fail_at)(void* host, const char* kind, const char* message,
+                  const char* source, uint32_t line, const char* cell);
+
 } tsugumi_call;
 
 typedef int (*tsugumi_main_fn)(const tsugumi_call* call);

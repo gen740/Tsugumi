@@ -1432,5 +1432,7 @@
  "版を切替": "Switched versions",
  "版を記録しています": "Recording a version",
  "版を記録": "Recorded a version",
- "Keychain に API キーを保存できませんでした。": "Could not save the API key in the Keychain."
+ "Keychain に API キーを保存できませんでした。": "Could not save the API key in the Keychain.",
+ "Skill を実行": "Run Skill",
+ "指摘をコメントに残す": "Keep finding as comment"
 }

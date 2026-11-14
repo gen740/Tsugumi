@@ -1,6 +1,9 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
+
+#include "agent/json.hh"
 #include <string>
 #include <string_view>
 #include <vector>
@@ -9,13 +12,27 @@
 
 namespace tsugumi::host {
 inline constexpr size_t kSkillLimit = 512 * 1024;
-auto ReadSkill(const std::filesystem::path& root,
-               const std::filesystem::path& file) -> std::string;
+// An absent declaration is distinct from a declared empty scope. Invalid or
+// duplicate declarations fail closed; the body can never change this contract.
+auto SkillScope(std::string_view text)
+    -> std::optional<std::vector<std::string>>;
+auto ScopedSkillTask(std::string_view text, const std::string &name,
+                     const std::vector<std::string> &cards,
+                     const std::string &instruction) -> agent::json::Members;
+auto SelectScopedSkill(const Tsugumi::Host::SkillsListT &catalog,
+                       const std::vector<std::string> &names,
+                       const std::string &explicit_name,
+                       const std::vector<std::string> &cards,
+                       const std::string &instruction)
+    -> std::optional<agent::json::Members>;
+auto BundledSkill(const std::string &path) -> std::string;
+auto ReadSkill(const std::filesystem::path &root,
+               const std::filesystem::path &file) -> std::string;
 auto SkillNameKey(std::string_view name) -> std::string;
 // Swift's catalog order: bundled, project, then enabled folders in settings
 // order. Duplicate names are retained. Metadata does not constitute a read
 // grant.
-auto ListSkills(const std::filesystem::path& project,
-                const std::vector<std::string>& folders)
+auto ListSkills(const std::filesystem::path &project,
+                const std::vector<std::string> &folders)
     -> Tsugumi::Host::SkillsListT;
-}  // namespace tsugumi::host
+} // namespace tsugumi::host
