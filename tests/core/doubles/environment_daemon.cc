@@ -24,10 +24,11 @@ class Daemon final : public tsugumi::RequestSink {
   auto hello(const tsugumi::RequestIn& request)
       -> std::pair<std::string, bool> override {
     const auto* input = request.request()->value_as_SessionHelloRequest();
-    const bool accepted = input && input->token() &&
-                          input->token()->str() == token &&
-                          input->expected_project_id() &&
-                          input->expected_project_id()->str() == project;
+    const bool accepted =
+        input && input->protocol() == 1 && input->client_id() &&
+        tsugumi::crypto::is_uuid(input->client_id()->str()) && input->token() &&
+        input->token()->str() == token && input->expected_project_id() &&
+        input->expected_project_id()->str() == project;
     flatbuffers::FlatBufferBuilder b;
     if (!accepted) return {"", false};
     const auto limits = R::CreateLimits(b);

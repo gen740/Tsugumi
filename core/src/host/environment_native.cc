@@ -15,6 +15,7 @@
 #include "host/vm_process.hh"
 #include "tsugumi/client/client.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
+#include "util/crypto.hh"
 
 extern char** environ;
 
@@ -161,7 +162,7 @@ auto VerifyEnvironmentEndpoint(const Tsugumi::Host::EnvironmentStateT& ready)
                 [&](uint64_t id) {
                   flatbuffers::FlatBufferBuilder b;
                   auto hello = R::CreateSessionHelloRequest(
-                      b, 1, b.CreateString("agentd-environment"),
+                      b, 1, b.CreateString(crypto::uuid4()),
                       b.CreateString(ready.project_id),
                       b.CreateString(ready.token));
                   auto request = R::CreateRequest(

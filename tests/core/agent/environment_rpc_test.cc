@@ -23,10 +23,13 @@ class EnvironmentFixture : public AgentFixture {
   std::condition_variable events_changed;
   std::vector<client::Bytes> events;
 
+  virtual auto DaemonBinary() -> std::string {
+    return TSUGUMI_ENVIRONMENT_DAEMON;
+  }
   auto SetUp() -> void override {
     Write(project / "tsugumi.json", R"({"name":"Environment"})");
     extra_agent_arguments = {
-        "--tsugumid",        TSUGUMI_ENVIRONMENT_DAEMON,
+        "--tsugumid",        DaemonBinary(),
         "--worker",          TSUGUMI_WORKER_BINARY,
         "--sdk-dir",         TSUGUMI_TEST_SDK,
         "--environment-dir", (directory.path / "environments").string()};
@@ -149,6 +152,26 @@ class EnvironmentFixture : public AgentFixture {
     return failure->code;
   }
 };
+
+// This uses the production service and hello validation. Only Nix evaluation
+// is replaced, so the daemon double cannot hide a readiness protocol mismatch.
+class RealEnvironmentFixture : public EnvironmentFixture {
+ protected:
+  auto DaemonBinary() -> std::string override { return TSUGUMI_PROJECT_BINARY; }
+};
+TEST_F(RealEnvironmentFixture, AuthenticatesTheRealProjectServiceBeforeReady) {
+  Write(
+      project / "tsugumi.json",
+      R"({"name":"Environment","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  Write(project / "layout.json", "{}");
+  const auto state = Environment(H::EnvironmentAction::Start);
+  ASSERT_EQ(state.phase, H::EnvironmentPhase::Ready) << state.message;
+  EXPECT_GT(state.pid, 0);
+  EXPECT_FALSE(state.project_id.empty());
+  EXPECT_FALSE(state.token.empty());
+  EXPECT_EQ(Environment(H::EnvironmentAction::Stop).phase,
+            H::EnvironmentPhase::Stopped);
+}
 
 TEST_F(EnvironmentFixture, StartRegistersIdentityAndAuthorizesBeforeReady) {
   const auto state = Environment(H::EnvironmentAction::Start);
