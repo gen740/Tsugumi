@@ -76,6 +76,12 @@ final class ChatController {
     case card(CardKey)
     case display(CardKey)
     var id: String { label }
+    @MainActor func displayLabel(_ session: ProjectSession) -> String {
+      switch self {
+      case .card(let k): return "Card " + session.displayPath(path(k))
+      case .display(let k): return String(localized: "可視化 \(session.displayPath(path(k)))")
+      }
+    }
     var label: String {
       switch self {
       case .card(let k): return "Card \(k)"
@@ -390,7 +396,7 @@ final class ChatController {
     let used = skills(in: text)
     if used.contains(where: { $0.name == "demo" }) { demoMode = true }
     let refs = references + selection.filter { k in !references.contains(.card(k)) }.map { Reference.card($0) }
-    let shown = text + (refs.isEmpty ? "" : "\n📎 " + refs.map(\.label).joined(separator: ", "))
+    let shown = text + (refs.isEmpty ? "" : "\n📎 " + refs.map { $0.displayLabel(session) }.joined(separator: ", "))
     items.append(Item(role: "user", text: shown))
     references = []
     let events = begin()

@@ -931,7 +931,7 @@ struct Host::State {
       throw Failure("unauthenticated", "Project rejected the Agent host");
     auto result = connection
                       .Call([&](uint64_t id) {
-                        auto bytes = catalog.Request(name, arguments, id);
+                        auto bytes = EncodeProjectRequest(name, arguments, id);
                         return client::Bytes(bytes.begin(), bytes.end());
                       })
                       .get();
@@ -2153,7 +2153,14 @@ struct Host::State {
     case A::RequestPayload::VersionNoteRequest: {
       Human(human);
       const auto* p = r->value_as_VersionNoteRequest();
-      const auto project = p->project_id()->str(), commit = p->commit()->str();
+      const auto project = p->project_id()->str();
+      // The project service resolves only full SHA-1 object IDs, not refs or
+      // abbreviations. Canonical hex therefore identifies the resolved object
+      // for both the gate and every subsequent project RPC.
+      const auto commit = FoldAscii(p->commit()->str());
+      if (commit.size() != 40 ||
+          commit.find_first_not_of("0123456789abcdef") != std::string::npos)
+        throw Failure("invalid_request", "Use a full version object ID");
       const auto profile = p->profile()->str();
       const auto anthropic_keys = Text(p->anthropic_key_profile()), openai_keys = Text(p->openai_key_profile());
       const bool english = p->language()->str() == "en";

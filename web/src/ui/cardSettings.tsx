@@ -133,6 +133,7 @@ export class CardEditorModel extends Observable {
 
   /** Takes in what changed elsewhere since the copy was taken. */
   follow() {
+    if (this.applying) return
     const defNow = this.session.cardDefinition(this.cardKey), metaNow = this.session.cardMeta(this.cardKey)
     const clashes = (base: J | undefined, ours: J | undefined, theirs: J | undefined, file: string): string[] => {
       if (jeq(ours, base) || jeq(theirs, base) || jeq(ours, theirs)) return []
@@ -313,6 +314,7 @@ export class CardEditorModel extends Observable {
   /** Copies the working copy into the project as one undoable edit (saved at once). */
   async apply(overwrite = false): Promise<boolean> {
     const session = this.session
+    if (this.applying) return false
     if (!session.isEditable) {
       this.message = L('実行中は Card を変更できません。実行が終わってから適用してください。')
       this.changed()
@@ -321,7 +323,8 @@ export class CardEditorModel extends Observable {
     this.follow()
     this.applying = true
     this.changed()
-    const def = this.definition, m = this.meta, k = this.cardKey, prefix = this.prefix
+    const def = clone(this.definition), m = clone(this.meta), k = this.cardKey, prefix = this.prefix
+    const sentTexts = new Map(this.texts), sentCreated = new Set(this.created)
     const changedTexts = [...this.texts].filter(([p, v]) => this.baseTexts.get(p) !== v || this.created.has(p))
     const gone = [...this.removed]
     const bases = new Map(this.baseHashes)
@@ -347,7 +350,27 @@ export class CardEditorModel extends Observable {
     })
     this.applying = false
     if (!ok) { this.changed(); return false }
-    this.reload(this.revisionEdit.savedRev === session.rev)
+    const laterDef = clone(this.definition), laterMeta = clone(this.meta)
+    const laterTexts = new Map(this.texts), laterRemoved = new Set(this.removed), laterCreated = new Set(this.created)
+    const savedCurrent = this.revisionEdit.savedRev === session.rev
+    // Reload the confirmed base, then put only edits made after Send back on it.
+    this.reload(false)
+    this.definition = clone(merge3(def, laterDef, this.definition))
+    this.meta = clone(merge3(m, laterMeta, this.meta))
+    for (const [p, t] of laterTexts) {
+      const sent = sentTexts.get(p)
+      if (savedCurrent || t !== sent) {
+        this.texts.set(p, t)
+        if (sent !== undefined) this.baseTexts.set(p, sent)
+        this.loads.set(p, { state: 'loaded' })
+        const hash = savedCurrent ? session.sources.get(p)?.hash : bases.get(p)
+        if (hash) this.baseHashes.set(p, hash)
+        if (!savedCurrent && t !== sent) this.revisionEdit.conflict(session.rev)
+      }
+    }
+    this.removed = new Set([...laterRemoved].filter(p => !gone.includes(p)))
+    this.created = new Set([...laterCreated].filter(p => !sentCreated.has(p)))
+    for (const p of sentTexts.keys()) if (!laterTexts.has(p) && !gone.includes(p)) this.removed.add(p)
     this.message = L('適用しました。')
     this.changed()
     return true

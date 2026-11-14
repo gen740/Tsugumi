@@ -98,7 +98,7 @@ inline auto DescribeOperation(
     targets["versioning_enabled"] = json::Get(graph, "enabled");
     targets["project_name"] = json::Get(
         json::Object(json::Text(snapshot, "project_json", "{}")), "name");
-    if (name == "version_checkout" || name == "version_summary") {
+    if (name == "version_checkout") {
       const auto requested = json::Text(args, "commit");
       std::vector<json::Members> matches;
       for (const auto &row : json::Array(json::Get(graph, "commits", "[]"))) {
@@ -121,10 +121,7 @@ inline auto DescribeOperation(
               "the selected version."
         : name == "version_init"
             ? "Start versioning the saved project and keep its first commit."
-        : name == "version_mark" ? "Commit the saved working project and keep "
-                                   "the proposed named version."
-                                 : "Replace the selected version's summary "
-                                   "with the proposed summary.");
+        : "Commit the saved working project and keep the proposed named version.");
   }
   const auto details = "operation_approval\n" + name + "\n" +
                        json::Encode(targets) +

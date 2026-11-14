@@ -35,7 +35,7 @@ final class RevisionEdit {
     defer { applying = false }
     do {
       savedRev = try await session.applyEdit(baseRev: revision, change)
-      reload(session.rev)
+      reload(savedRev ?? session.rev)
       return true
     } catch let failure as RPCFailure where failure.kind == .revisionConflict || failure.kind == .hashConflict {
       conflictRev = session.rev
@@ -73,5 +73,20 @@ struct RevisionEditNotice: View {
         }
       }
     }
+  }
+}
+
+/// The value and revision actually visible when an inline edit starts.
+@MainActor @Observable
+final class InlineParamEdit {
+  let revision = RevisionEdit()
+  private(set) var initial = ""
+  func begin(_ value: String, rev: UInt64) { initial = value; revision.reload(rev) }
+  func commit(_ session: ProjectSession, text: String, overwrite: Bool = false,
+              _ change: (ProjectSession) -> Void) async -> Bool {
+    if text == initial { return true }
+    let ok = await revision.apply(session, overwrite: overwrite, change)
+    if ok { initial = text }
+    return ok
   }
 }

@@ -52,7 +52,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
 
   const q = search.toLowerCase()
   const ids = [...session.definitions.keys()].sort().filter((id) =>
-    !q || id.toLowerCase().includes(q) || (str(get(session.definitionMeta.get(id), 'description')) ?? '').toLowerCase().includes(q))
+    !q || session.displayName(key([id])).toLowerCase().includes(q) || id.toLowerCase().includes(q) || (str(get(session.definitionMeta.get(id), 'description')) ?? '').toLowerCase().includes(q))
   const unplaced = new Set(session.unplacedDefinitions)
 
   const apply = async (id: string, overwrite = false) => {
@@ -69,7 +69,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
       const d = x.cardDefinitionDraft(key([id]))
       x.setCardDefinition(key([id]), { card: d?.link === undefined ? card : d.card, meta, link: d?.link })
     })) return
-    load(id)
+    setBase({ card: cardText, meta: metaText })
     setMessage(L('適用しました（revision {0}）。', session.rev))
   }
 
@@ -81,7 +81,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
     return (
       <div key="detail" className="col fill pad12 gap8">
         <div className="row center">
-          <span className="title2 selectable">{id}</span>
+          <span className="title2 selectable">{session.displayName(key([id]))}</span>
           <span className="spacer" />
           {unapplied && <span className="label" style={{ color: 'var(--orange)' }}><Icon name="pencil.circle.fill" />{L('未適用の変更')}</span>}
         </div>
@@ -105,7 +105,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
             help={isUnplaced ? L('定義とソースを削除') : L('Card を削除すると定義も削除されます')}
             onClick={() => { session.edit((x) => x.removeDefinition(id)); setSelected(undefined) }}>{L('削除')}</Button>
           <span className="spacer" />
-          <Button onClick={() => load()}>{L('再読込')}</Button>
+          <Button disabled={revisionEdit.applying} onClick={() => load()}>{L('再読込')}</Button>
           <Button kind="prominent" disabled={!unapplied || revisionEdit.applying || !session.isEditable} onClick={() => void apply(id)}>{L('適用')}</Button>
         </div>
       </div>
@@ -129,10 +129,10 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
               return (
                 <div key={id} role="option" aria-selected={id === selected} className={`list-row clickable def-row${id === selected ? ' selected' : ''}`}
                   draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', DEFINITION_DRAG + id); e.dataTransfer.effectAllowed = 'copy' }}
-                  onClick={() => setSelected(id)}>
+                  onClick={() => { if (!revisionEdit.applying) setSelected(id) }}>
                   <Icon name={KIND_ICON[kind]} className="secondary" />
                   <div className="col min0">
-                    <span className="ellipsis">{id}</span>
+                    <span className="ellipsis">{session.displayName(key([id]))}</span>
                     <span className="caption secondary">{KIND_LABEL[kind] + (unplaced.has(id) ? L(' · 未配置') : '')}</span>
                   </div>
                 </div>
@@ -291,7 +291,7 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
       setProject(x, 'name', name)
       setProject(x, 'pkgsPath', pkgs || 'tsugumi:default')
     })) return
-    load()
+    setPkgs(current => current === pkgs ? pkgs || 'tsugumi:default' : current)
     setMessage(L('保存しました。'))
   }
   return (

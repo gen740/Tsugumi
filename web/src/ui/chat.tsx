@@ -66,7 +66,7 @@ export function PermissionHost({ session }: { session: ProjectSession }) {
 
 /** Presents core-owned access and operation requests. Operations have no
  *  standing approval option. Return allows and Esc declines. */
-function PermissionPrompt({ asked, from, onAnswer }: { asked: string[]; from?: string; onAnswer: (allow: boolean, always: string[]) => void }) {
+export function PermissionPrompt({ asked, from, reload = false, onAnswer }: { asked: string[]; from?: string; reload?: boolean; onAnswer: (allow: boolean, always: string[]) => void }) {
   const who = from ?? 'Agent'
   const [always, setAlways] = useState<string[]>([])
   useEffect(() => {
@@ -82,12 +82,33 @@ function PermissionPrompt({ asked, from, onAnswer }: { asked: string[]; from?: s
   const requests = asked.map(parsePermission).filter((r) => r !== undefined)
   const operation = asked.find((r) => r.includes('operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
   const access = asked.filter((r) => r.startsWith('project_access '))
-  const kinds = operation ? [] : PERMISSIONS.filter((p) => requests.some((r) => r.kind === p.kind))
+  const kinds = operation || reload ? [] : PERMISSIONS.filter((p) => requests.some((r) => r.kind === p.kind))
   return (
     <Sheet width={460} onClose={() => onAnswer(false, [])} backdropCloses={false}>
       <div className="sheet-body permission-prompt">
-        <div className="title2"><Icon name="hand.raised" /> {operation ? L('{0} がこの操作の承認を求めています', who) : access.length ? L('{0} がアクセスの許可を求めています', who) : L('{0} が Card の権限を広げようとしています', who)}</div>
-        <p className="secondary">{operation ? L('表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。') : access.length ? L('表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。') : L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>
+        <div className="title2"><Icon name="hand.raised" /> {reload ? L('外部の変更が Card の権限を広げます') : operation ? L('{0} がこの操作の承認を求めています', who) : access.length ? L('{0} がアクセスの許可を求めています', who) : L('{0} が Card の権限を広げようとしています', who)}</div>
+        <p className="secondary">{reload ? L('表示された権限を許可して、外部の変更を読み込みますか？') : operation ? L('表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。') : access.length ? L('表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。') : L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>
+        <PermissionRequests asked={asked} />
+        {!!kinds.length && <div className="secondary small">{L('今後は確認しない（設定の「API」でいつでも変えられます）')}</div>}
+        {kinds.map((k) => (
+          <Toggle key={k.kind} kind="checkbox" label={k.label} checked={always.includes(k.kind)}
+            onChange={(on) => setAlways(on ? [...always, k.kind] : always.filter((x) => x !== k.kind))} />
+        ))}
+        <div className="row end gap8">
+          <Button onClick={() => onAnswer(false, [])}>{L('許可しない')}</Button>
+          <Button kind="prominent" onClick={() => onAnswer(true, always)}>{L('許可する')}</Button>
+        </div>
+      </div>
+    </Sheet>
+  )
+}
+
+/** The exact widenings listed before approval, shared by reload and Agent saves. */
+export function PermissionRequests({ asked }: { asked: string[] }) {
+  const requests = asked.map(parsePermission).filter(r => r !== undefined)
+  const operation = asked.find(r => r.includes('operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
+  const access = asked.filter(r => r.startsWith('project_access '))
+  return (
         <ul className="permission-list">
           {operation && <li><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 360, overflow: 'auto' }}>{operation.split('\n').map((line) => {
             try { return JSON.stringify(JSON.parse(line), null, 2) } catch { return line }
@@ -103,17 +124,6 @@ function PermissionPrompt({ asked, from, onAnswer }: { asked: string[]; from?: s
             </li>
           ))}
         </ul>
-        {!!kinds.length && <div className="secondary small">{L('今後は確認しない（設定の「API」でいつでも変えられます）')}</div>}
-        {kinds.map((k) => (
-          <Toggle key={k.kind} kind="checkbox" label={k.label} checked={always.includes(k.kind)}
-            onChange={(on) => setAlways(on ? [...always, k.kind] : always.filter((x) => x !== k.kind))} />
-        ))}
-        <div className="row end gap8">
-          <Button onClick={() => onAnswer(false, [])}>{L('許可しない')}</Button>
-          <Button kind="prominent" onClick={() => onAnswer(true, always)}>{L('許可する')}</Button>
-        </div>
-      </div>
-    </Sheet>
   )
 }
 
@@ -411,7 +421,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
         <div className="chip-row">
           {chat.references.map((r) => (
             <span key={refLabel(r)} className="chip">
-              <Icon name="paperclip" size={10} />{refLabel(r)}
+              <Icon name="paperclip" size={10} />{refLabel(r, k => session.displayPath(path(k)))}
               <button type="button" className="chip-x" title={L('参照を外す')} aria-label={L('参照を外す')} onClick={() => chat.removeReference(r)}><Icon name="xmark.circle.fill" size={11} /></button>
             </span>
           ))}
@@ -542,7 +552,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
 // ---- Tool steps ----------------------------------------------------------------------
 
 /** A tool call in words: what is being done and on which Card or file. */
-export function toolStep(name: string, args: string) {
+export function toolStep(name: string, args: string, display = (k: CardKey) => k) {
   let v: any
   try {
     v = JSON.parse(args.split('\n→ ')[0])
@@ -562,7 +572,7 @@ export function toolStep(name: string, args: string) {
     : n.includes('format') ? [L('整形しています'), L('整形')]
     : n.includes('status') || n.includes('record') || n.includes('history') ? [L('結果を確認しています'), L('結果を確認')]
     : [L('{0} を実行しています', name), name]
-  const t = target ? L('（{0}）', target) : ''
+  const t = target ? L('（{0}）', card ? display(card) : target) : ''
   return { card, running: running + t + '…', done: done + t }
 }
 
@@ -592,7 +602,7 @@ function Linked({ text }: { text: string }) {
 /** A folded tool step: one line saying what was done; details on demand. */
 function ToolRow({ item, session, tab }: { item: ChatItem; session: ProjectSession; tab?: WorkflowTab }) {
   const [open, setOpen] = useState(false)
-  const step = toolStep(item.tool?.name ?? '', item.text)
+  const step = toolStep(item.tool?.name ?? '', item.text, k => session.displayPath(path(k)))
   const ok = item.tool?.ok
   return (
     <div className="chat-tool">
@@ -616,9 +626,9 @@ function ToolRow({ item, session, tab }: { item: ChatItem; session: ProjectSessi
       </div>
       {savedComments(item.text).map((c, i) => (
         <div key={i} className="chat-tool-comment caption secondary selectable">
-          {L('{0} · コメントを{1}: {2}', c.card, commentChange(c.change, c.by), c.text)}
+          {L('{0} · コメントを{1}: {2}', session.displayPath(path(c.card)), commentChange(c.change, c.by), c.text)}
           {c.resolution && ` — ${c.resolution}`}
-          {!!c.cards?.length && L('（変更した Card: {0}）', c.cards.join('、'))}
+          {!!c.cards?.length && L('（変更した Card: {0}）', c.cards.map(k => session.displayPath(path(k))).join('、'))}
         </div>
       ))}
       {open && <pre className="tool-detail selectable">{item.tool?.name === 'web_search' ? <Linked text={item.text} /> : item.text.split('\n').slice(0, 40).join('\n')}</pre>}

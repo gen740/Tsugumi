@@ -1,3 +1,4 @@
+import { runMark } from '../model/runMark'
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react'
 import { L } from '../i18n'
 import { app } from '../model/app'
@@ -100,6 +101,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
         const summary = record?.summary ?? r.status
         const display = record?.display ? recordedDisplay(record.display) : undefined
         return <>
+          {runMark(r.run) && <p>{runMark(r.run)}</p>}
           <h3>{session.displayPath(t.card)} · #{String(record?.summary?.invocation ?? t.invocation ?? '')}</h3>
           {summary && <><p>{cardState(summary.state).label}</p><Markdown text={s(summary.failure?.diagnostic)} /></>}
           {display && <div style={{ height: 360, display: 'flex' }}><DisplayContent display={display} large /></div>}
@@ -111,7 +113,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
       }
       const status = await rpc.call<R.RunStatusT>(R.RequestPayload.RunStatusRequest, Object.assign(new R.RunStatusRequestT(), { runId: t.run }))
       const page = await rpc.call<R.InvocationPageT>(R.RequestPayload.RunLatestInvocationsRequest, Object.assign(new R.RunLatestInvocationsRequestT(), { runId: t.run }))
-      return <><p>{runState(status.state).label}</p>{page.records.map((r, i) => <p key={i}><EvidenceContext.Provider value={{ session }}><EvidenceLink href={`run:${t.run}/${segs(r.card).join('/')}#${r.invocation}`}>{session.displayPath(segs(r.card))} · #{String(r.invocation)} · {cardState(r.state).label}</EvidenceLink></EvidenceContext.Provider></p>)}</>
+      return <><p>{runState(status.state).label}</p>{runMark(status) && <p>{runMark(status)}</p>}{page.records.map((r, i) => <p key={i}><EvidenceContext.Provider value={{ session }}><EvidenceLink href={`run:${t.run}/${segs(r.card).join('/')}#${r.invocation}`}>{session.displayPath(segs(r.card))} · #{String(r.invocation)} · {cardState(r.state).label}</EvidenceLink></EvidenceContext.Provider></p>)}</>
     }
     void load().then(v => { if (alive) setBody(v) }).catch(e => { if (alive) setBody(String(e.message ?? e)) })
     return () => { alive = false }

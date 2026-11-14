@@ -50,11 +50,12 @@ public extension RPCClient {
     return try await call(.layoutuntanglerequest, r)
   }
 
-  func reload(baseRev: UInt64, opId: UUID, origin: String) async throws -> Tsugumi_RPC_SaveResultT {
+  func reload(baseRev: UInt64, opId: UUID, origin: String, approvedPermissions: [String] = []) async throws -> Tsugumi_RPC_SaveResultT {
     let r = Tsugumi_RPC_ProjectReloadRequestT()
     r.baseRev = baseRev
     r.opId = opId.uuidString.lowercased()
     r.origin = origin
+    r.approvedPermissions = approvedPermissions
     return try await call(.projectreloadrequest, r)
   }
 

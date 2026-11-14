@@ -229,9 +229,8 @@ extension ProjectSession {
     let diags = resolution[k]?.diagnostics ?? []
     let ports = portData(k, definition: definition, meta: meta)
     let def = definition ?? cardDefinition(k)
-    // The name is the Card's id.
-    let title = path(k).last ?? k
     let m = meta ?? cardMeta(k)
+    let title = m?["name"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? path(k).last ?? k
     var summary = m?["description"]?.string
     // What a Draft shows on its Card is what it says it will do.
     if kind == .draft, let content = m?["content"]?.string, !content.isEmpty { summary = content }
@@ -246,7 +245,7 @@ extension ProjectSession {
       result: state?.executionState?.pendingLabel ?? displays[k].map { (executionList ? "#\($0.invocation) · " : "") + $0.summary } ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
       resultFailed: false,
       state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),
-      invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive,
+      invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive, runMark: runMark(runStatus),
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
       errors: diags.filter(\.error).map(\.message), warnings: diags.filter { !$0.error }.map(\.message),
       collapsed: !editing && (collapsed ?? self.collapsed(k)), hasDisplay: display, permissions: CardPermission.of(def),

@@ -276,7 +276,7 @@ struct ChatPanel: View {
             ForEach(chat.references) { r in
               HStack(spacing: 3) {
                 Image(systemName: "paperclip").font(.caption2)
-                Text(r.label).font(.caption)
+                Text(r.displayLabel(session)).font(.caption)
                 Button { chat.references.removeAll { $0 == r } } label: { Image(systemName: "xmark.circle.fill") }
                   .buttonStyle(.borderless).font(.caption)
                   .help("参照を外す")
@@ -633,8 +633,10 @@ struct ChatPanel: View {
 struct ToolStep {
   let name: String
   let args: String
+  var display: (CardKey) -> String = { $0 }
 
   private var target: String? {
+    if let card { return display(card) }
     guard let v = try? JSONValue.parse(args.components(separatedBy: "\n→ ").first ?? args) else { return nil }
     if let c = v["card"]?.array?.compactMap(\.string), !c.isEmpty { return c.joined(separator: "/") }
     if let c = v["card"]?["segments"]?.array?.compactMap(\.string), !c.isEmpty { return c.joined(separator: "/") }
@@ -655,10 +657,10 @@ struct ToolStep {
     guard let from = args.range(of: "\n→ comments: "), let end = args[from.upperBound...].firstIndex(of: "\n"),
           let list = (try? JSONValue.parse(String(args[from.upperBound..<end])))?.array else { return [] }
     return list.map { c in
-      var line = String(localized: "\(c["card"]?.string ?? "") · コメントを\(CardComment.change(c["change"]?.string ?? "", by: c["by"]?.string)): \(c["text"]?.string ?? "")")
+      var line = String(localized: "\(display(c["card"]?.string ?? "")) · コメントを\(CardComment.change(c["change"]?.string ?? "", by: c["by"]?.string)): \(c["text"]?.string ?? "")")
       if let r = c["resolution"]?.string, !r.isEmpty { line += " — " + r }
       let cards = c["cards"]?.array?.compactMap(\.string) ?? []
-      if !cards.isEmpty { line += String(localized: "（変更した Card: \(cards.joined(separator: "、"))）") }
+      if !cards.isEmpty { line += String(localized: "（変更した Card: \(cards.map(display).joined(separator: "、"))）") }
       return line
     }
   }
@@ -729,7 +731,7 @@ struct ToolRow: View {
   }
 
   var body: some View {
-    let step = ToolStep(name: item.tool?.name ?? "", args: item.text)
+    let step = ToolStep(name: item.tool?.name ?? "", args: item.text, display: { session.displayPath(path($0)) })
     VStack(alignment: .leading, spacing: 4) {
       HStack(spacing: 5) {
         Group {

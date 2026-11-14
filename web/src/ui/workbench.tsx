@@ -12,7 +12,7 @@ import { canvasFor } from '../model/canvas'
 import { BOTTOM_ICONS, BOTTOM_PANELS, BOTTOM_TITLES, BottomPanel, Workspace, WorkflowTab } from '../model/workspace'
 import { D, s as text } from '../shared/rpc'
 import { CanvasWorkspace } from './canvasWorkspace'
-import { ChatPanel, PermissionHost } from './chat'
+import { ChatPanel, PermissionHost, PermissionPrompt } from './chat'
 import { guide, OPEN_PANELS } from '../model/guide'
 import { Button, Confirm, copyText, Empty, Popover, Spinner, Value } from './controls'
 import { LoadingContent, TsugumiLoadingCard } from './home'
@@ -423,6 +423,8 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
             <Icon name="point.3.connected.trianglepath.dotted" /><span className="mono-digits">rev {String(session.rev)}</span>
           </StatusButton>
         </span>
+        {session.reloadApproval && <PermissionPrompt reload asked={session.reloadApproval.permissions}
+          onAnswer={allow => void session.answerReloadApproval(allow)} />}
         <Popover open={showSync} onClose={() => setShowSync(false)} anchor={syncRef} width={440}>
           <div className="popover-body">
             <div className="headline">{L('保存・同期')}</div>
@@ -437,7 +439,7 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
                   <Button kind="destructive" onClick={() => setConfirmDiscard(true)}>{L('変更を破棄…')}</Button>
                 </>
               )}
-              <Button disabled={!session.connected} help={L('Tsugumi の外で編集されたファイルを取り込みます')} onClick={() => void session.reloadExternal()}>{L('外部の変更を再読込')}</Button>
+              <Button disabled={!session.connected || session.reloadingExternal || !!session.reloadApproval} help={L('Tsugumi の外で編集されたファイルを取り込みます')} onClick={() => void session.reloadExternal()}>{L('外部の変更を再読込')}</Button>
               <Button icon="point.3.connected.trianglepath.dotted" help={L('実行ごとに残った版（git）を枝・タグ・実行結果と一緒に見ます')}
                 onClick={() => { setShowSync(false); app.openWindow(session, { kind: 'versions' }) }}>{L('版の履歴…')}</Button>
             </div>

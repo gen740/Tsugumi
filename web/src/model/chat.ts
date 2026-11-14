@@ -10,7 +10,7 @@ import { HelperTeam } from './helperBirds'
 import { LiveCodePlayer, writesSources } from './liveCode'
 import { Observable } from './observable'
 import { Thoughts, type ThoughtReply } from './thoughts'
-import { CardKey, ProjectSession } from './session'
+import { CardKey, ProjectSession, path } from './session'
 import { L } from '../i18n'
 
 export interface ChatItem {
@@ -39,7 +39,7 @@ export interface SearchHit {
 }
 
 export type Reference = { kind: 'card' | 'display'; card: CardKey }
-export const refLabel = (r: Reference) => (r.kind === 'card' ? `Card ${r.card}` : L('可視化 {0}', r.card))
+export const refLabel = (r: Reference, display = (k: CardKey) => k) => (r.kind === 'card' ? `Card ${display(r.card)}` : L('可視化 {0}', display(r.card)))
 const refEq = (a: Reference, b: Reference) => a.kind === b.kind && a.card === b.card
 
 export interface Skill {
@@ -368,7 +368,7 @@ export class ChatController extends Observable {
     if (guide.scripted && !this.busy) return guide.answerScripted(text.trim(), this)
     if (this.skillsIn(text).some((s) => s.name === 'demo')) this.demoMode = true
     const refs = [...this.references, ...selection.filter((k) => !this.references.some((r) => r.kind === 'card' && r.card === k)).map((card) => ({ kind: 'card' as const, card }))]
-    const shown = text + (refs.length ? '\n📎 ' + refs.map(refLabel).join(', ') : '')
+    const shown = text + (refs.length ? '\n📎 ' + refs.map(r => refLabel(r, k => this.session.displayPath(path(k)))).join(', ') : '')
     this.items = [...this.items, { id: uuid(), role: 'user', text: shown }]
     this.references = []
     this.begin()

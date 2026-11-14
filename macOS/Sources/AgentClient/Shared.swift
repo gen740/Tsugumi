@@ -350,8 +350,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
     "RunScratchDeleteRequest",
     "VersionCheckoutRequest",
     "VersionInitRequest",
-    "VersionMarkRequest",
-    "VersionSummaryRequest"
+    "VersionMarkRequest"
   ],
   "agentFields": ["op_id", "origin", "approved_permissions"],
   "notForModels": { "ProjectValidateRequest": ["changes"] },

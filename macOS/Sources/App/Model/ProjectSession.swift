@@ -1494,10 +1494,30 @@ final class ProjectSession {
     }
   }
 
-  func reloadExternal() async {
-    guard let client else { return }
+  struct ReloadApproval: Identifiable {
+    let id = UUID()
+    let baseRev: UInt64
+    let permissions: [String]
+  }
+  var reloadApproval: ReloadApproval?
+  private(set) var reloadingExternal = false
+
+  func answerReloadApproval(_ allow: Bool) async {
+    let request = reloadApproval
+    reloadApproval = nil
+    if allow, let request { await reloadExternal(approved: request.permissions, baseRev: request.baseRev) }
+  }
+
+  func reloadExternal(approved: [String] = [], baseRev: UInt64? = nil) async {
+    guard let client, !reloadingExternal else { return }
+    let base = baseRev ?? rev
+    reloadingExternal = true
+    defer { reloadingExternal = false }
     do {
-      _ = try await client.reload(baseRev: rev, opId: UUID(), origin: "ui")
+      _ = try await client.reload(baseRev: base, opId: UUID(), origin: "ui", approvedPermissions: approved)
+      saveError = nil
+    } catch let failure as RPCFailure where failure.kind == .approvalRequired && !failure.permissions.isEmpty {
+      reloadApproval = ReloadApproval(baseRev: base, permissions: Array(Set(approved + failure.permissions)).sorted())
       saveError = nil
     } catch {
       saveError = "\(error)"

@@ -5,6 +5,8 @@ File paths and commands on this page are relative to the root of the repository.
 
 The browser and Agent use the [project RPC](Protocol.md); review the [execution and data boundaries](security.md) for the chosen host.
 
+Card names appear throughout the UI; exact identifiers remain in tool arguments and file paths. Editors retain text typed while a save is pending. Inline values use the revision from the start of the edit, and an unchanged value is not saved. **Reload External Changes** asks for approval when outside edits widen Card permissions; declining leaves the loaded project unchanged.
+
 ## The tsugumi command
 
 Install the command using the [installation guide](INSTALL.md#using-it-in-the-browser-the-tsugumi-command). Run `tsugumi` to start the Web host and open a browser, or `tsugumi <project folder>` to open that project. Ctrl-C stops the Web host; project environments and core conversations remain resident. Stop a project's environment explicitly when its execution should end.

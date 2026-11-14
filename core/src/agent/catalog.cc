@@ -304,13 +304,28 @@ auto Catalog::Request(std::string_view name, std::string_view arguments,
   const auto *tool = Find(name);
   if (!tool)
     throw std::runtime_error("unknown project operation");
+  return EncodeProjectRequest(name, arguments, id);
+}
+
+auto EncodeProjectRequest(std::string_view name, std::string_view arguments,
+                          uint64_t id) -> std::string {
+  const auto *requests =
+      Schema().enums()->LookupByKey("Tsugumi.RPC.RequestPayload");
+  const auto found = std::find_if(
+      requests->values()->begin(), requests->values()->end(),
+      [&](const auto *value) {
+        return value->value() && Name(value->name()->str()) == name;
+      });
+  if (found == requests->values()->end())
+    throw std::runtime_error("unknown project operation");
+  const auto request_name = (*found)->name()->str();
   const auto *object = Schema().objects()->LookupByKey(
-      ("Tsugumi.RPC." + tool->request_name).c_str());
+      ("Tsugumi.RPC." + request_name).c_str());
   auto body = json::Encode(json::Members{
       {"request_id", std::to_string(id)},
       {"payload_type", json::Quote("Request")},
       {"payload", json::Encode(json::Members{
-                      {"value_type", json::Quote(tool->request_name)},
+                      {"value_type", json::Quote(request_name)},
                       {"value", Normalize(*object, arguments)}})}});
   auto parser = Parser();
   if (!parser->ParseJson(body.c_str()))

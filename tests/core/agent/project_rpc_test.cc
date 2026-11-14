@@ -2,9 +2,50 @@
 #include "project_fixture.hh"
 
 #include <unistd.h>
+#include <cstdlib>
+#include <iostream>
+
+#include "tsugumi/protocol/tsugumi_generated.h"
 
 namespace tsugumi::test {
 namespace {
+
+// Re-executed inside project_shell by the isolation regression below. Supplying
+// the real test credential proves that hiding server.ready is not the only
+// thing preventing an unlisted request over a custom Unix socket path.
+TEST(AgentShellProbe, DirectProjectRequest) {
+  const char* endpoint = std::getenv("TSUGUMI_SHELL_PROBE_ENDPOINT");
+  if (!endpoint) GTEST_SKIP() << "Only used by the shell isolation scenario";
+  namespace R = Tsugumi::RPC;
+  client::Options options;
+  options.endpoint = endpoint;
+  client::Connection connection(options);
+  if (connection.Start().get()) {
+    std::cout << "DIRECT_RPC_BLOCKED\n";
+    return;
+  }
+  const auto send = [&](bool hello) {
+    return connection.Call([&](uint64_t id) {
+      Builder b;
+      const auto payload = hello
+          ? R::CreateSessionHelloRequest(
+                b, 1, b.CreateString("00000000-0000-4000-8000-000000000001"),
+                b.CreateString(std::getenv("TSUGUMI_SHELL_PROBE_PROJECT")),
+                b.CreateString(std::getenv("TSUGUMI_SHELL_PROBE_TOKEN")), 1).Union()
+          : R::CreateRunHistoryDeleteRequest(
+                b, b.CreateString("00000000-0000-4000-8000-000000000002"),
+                1).Union();
+      const auto request = R::CreateRequest(
+          b, hello ? R::RequestPayload::SessionHelloRequest
+                   : R::RequestPayload::RunHistoryDeleteRequest, payload);
+      R::FinishMessageBuffer(b, R::CreateMessage(b, id, R::Payload::Request, request.Union()));
+      return client::Bytes(b.GetBufferPointer(), b.GetBufferPointer() + b.GetSize());
+    }).get();
+  };
+  send(true);
+  send(false);
+  FAIL() << "The Agent shell connected directly to the project service";
+}
 
 TEST_F(AgentProjectFixture, ReadingAProjectRequiresAnExplicitUserGrant) {
   StartProject();
@@ -514,15 +555,16 @@ TEST_F(AgentProjectFixture, CancellingTheConversationStopsItsShellCommand) {
   ModelServer model;
   model.Queue(AnthropicTool(
       "shell", "project_shell",
-      R"({"command":"printf ready > ../shell-ready; sleep 2; printf escaped > ../shell-escaped","timeout_ms":10000})"));
+      R"({"command":"sleep 20","timeout_ms":30000})"));
   Configure(model);
   ASSERT_TRUE(Send(conversation, "Start a command, then wait.").Code().empty());
-  // Synchronize in diagnostic scratch, outside the read-only project.
+  // Scratch is private. Wait for the recorded call rather than writing a
+  // marker into a shared host temporary directory.
   const auto deadline = std::chrono::steady_clock::now() + 3s;
-  while (!std::filesystem::exists(directory.path / "shell-ready") &&
+  while (Events(conversation).View().find("toolStarted") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)
     std::this_thread::sleep_for(10ms);
-  ASSERT_TRUE(std::filesystem::exists(directory.path / "shell-ready"));
+  ASSERT_NE(Events(conversation).View().find("toolStarted"), std::string::npos);
   ASSERT_TRUE(Call(*external, A::RequestPayload::ConversationCancelRequest,
                    [&](Builder& b) {
                      return A::CreateConversationCancelRequest(
@@ -532,9 +574,6 @@ TEST_F(AgentProjectFixture, CancellingTheConversationStopsItsShellCommand) {
                   .Code()
                   .empty());
   WaitUntilIdle(conversation);
-  std::this_thread::sleep_for(2100ms);
-  EXPECT_FALSE(
-      std::filesystem::exists(directory.path / "shell-escaped"));
   EXPECT_NE(Events(conversation).View().find("cancelled"), std::string::npos);
 }
 
@@ -549,14 +588,13 @@ TEST_F(AgentProjectFixture,
   auto pending = std::async(std::launch::async, [&] {
     return Tool(
         conversation, "project_shell",
-        R"({"command":"printf ready > ../external-ready; sleep 1; printf escaped > ../external-escaped"})");
+        R"({"command":"sleep 20","timeout_ms":30000})");
   });
   const auto deadline = std::chrono::steady_clock::now() + 3s;
-  while (!std::filesystem::exists(directory.path / "external-ready") &&
+  while (Events(conversation).View().find("toolStarted") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)
     std::this_thread::sleep_for(10ms);
-  ASSERT_TRUE(
-      std::filesystem::exists(directory.path / "external-ready"));
+  ASSERT_NE(Events(conversation).View().find("toolStarted"), std::string::npos);
   ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationCancelRequest,
                    [&](Builder& b) {
                      return A::CreateConversationCancelRequest(
@@ -567,13 +605,10 @@ TEST_F(AgentProjectFixture,
                   .empty());
   ASSERT_EQ(pending.wait_for(3s), std::future_status::ready);
   EXPECT_EQ(pending.get().Code(), "cancelled");
-  std::this_thread::sleep_for(1100ms);
-  EXPECT_FALSE(
-      std::filesystem::exists(directory.path / "external-escaped"));
   const auto events = Events(conversation).View();
   EXPECT_NE(events.find("toolStarted"), std::string::npos);
   EXPECT_NE(events.find("toolFinished"), std::string::npos);
-  EXPECT_NE(events.find("printf ready > ../external-ready"), std::string::npos);
+  EXPECT_NE(events.find("sleep 20"), std::string::npos);
 }
 
 TEST_F(AgentProjectFixture, RevokingShellAccessStopsAnExternalCommand) {
@@ -587,19 +622,16 @@ TEST_F(AgentProjectFixture, RevokingShellAccessStopsAnExternalCommand) {
   auto pending = std::async(std::launch::async, [&] {
     return Tool(
         conversation, "project_shell",
-        R"({"command":"printf ready > ../revoke-ready; sleep 1; printf escaped > ../revoke-escaped"})");
+        R"({"command":"sleep 20","timeout_ms":30000})");
   });
   const auto deadline = std::chrono::steady_clock::now() + 3s;
-  while (!std::filesystem::exists(directory.path / "revoke-ready") &&
+  while (Events(conversation).View().find("toolStarted") == std::string::npos &&
          std::chrono::steady_clock::now() < deadline)
     std::this_thread::sleep_for(10ms);
-  ASSERT_TRUE(std::filesystem::exists(directory.path / "revoke-ready"));
+  ASSERT_NE(Events(conversation).View().find("toolStarted"), std::string::npos);
   Revoke(grant);
   ASSERT_EQ(pending.wait_for(3s), std::future_status::ready);
   EXPECT_EQ(pending.get().Code(), "cancelled");
-  std::this_thread::sleep_for(1100ms);
-  EXPECT_FALSE(
-      std::filesystem::exists(directory.path / "revoke-escaped"));
   EXPECT_EQ(Tool(conversation, "project_shell", R"({"command":"true"})").Code(),
             "grant_required");
 }
@@ -620,6 +652,60 @@ TEST_F(AgentProjectFixture, ShellOriginAndApprovalsCannotBeSuppliedByTheModel) {
   EXPECT_EQ(JsonString(text, "/reply"), "ProjectShellResult");
   EXPECT_EQ(text.find("\"exit_code\":0"), std::string::npos);
   EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), before);
+}
+
+TEST_F(AgentProjectFixture, ShellHidesControlCredentialsAndCannotSendDirectRPC) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
+  StartProject(true);
+  const auto conversation = Conversation("shell-isolation");
+  for (auto access : {A::Access::Read, A::Access::Write, A::Access::Run, A::Access::Shell})
+    Grant(conversation, A::GrantScope::Conversation, access);
+  const auto quote = [](const std::string& value) {
+    std::string result = "'";
+    for (const auto c : value) result += c == '\'' ? "'\\''" : std::string(1, c);
+    return result + "'";
+  };
+  const auto probe = directory.path / "project/rpc-probe";
+  std::filesystem::copy_file(
+      std::filesystem::absolute(::testing::internal::GetArgvs().front()), probe);
+  auto socket = JsonString(project_ready, "/unix_socket");
+#ifndef __APPLE__
+  // A filesystem alias in the readable project defeats path hiding alone.
+  // The syscall filter must still prevent connecting to this socket inode.
+  const auto alias = directory.path / "project/rpc-alias";
+  std::filesystem::create_hard_link(socket, alias);
+  socket = alias.string();
+#endif
+  client::Options direct_options;
+  direct_options.endpoint = "unix:" + socket;
+  client::Connection direct(direct_options);
+  const auto direct_error = direct.Start().get();
+  ASSERT_FALSE(direct_error) << direct_error.message;
+  direct.Close();
+  std::filesystem::create_symlink(directory.path / "project-control/server.ready",
+                                  directory.path / "project/control-alias");
+  const auto marker = directory.path / "shared-temporary";
+  Write(marker, "HOST_TEMP_SECRET");
+  auto run = [&](const std::string& command) {
+    const auto result = Tool(conversation, "project_shell", "{\"command\":" + Quote(command) + "}");
+    if (!result.Code().empty()) throw std::runtime_error(result.Code());
+    return JsonString(result.View(), "/text");
+  };
+  const auto private_tmp = run(
+      "test ! -r ../project-control/server.ready && test ! -r control-alias && "
+      "test ! -r " + quote(marker.string()) +
+      " && printf private > \"$TMPDIR/diagnostic\" && cat \"$TMPDIR/diagnostic\"");
+  EXPECT_NE(private_tmp.find("\"exit_code\":0"), std::string::npos) << private_tmp;
+  EXPECT_EQ(JsonString(private_tmp, "/value/stdout"), "private");
+  const auto next = run("test ! -e \"$TMPDIR/diagnostic\"");
+  EXPECT_NE(next.find("\"exit_code\":0"), std::string::npos) << next;
+  const auto result = run(
+      "TSUGUMI_SHELL_PROBE_ENDPOINT=" + quote("unix:" + socket) +
+      " TSUGUMI_SHELL_PROBE_PROJECT=" + quote(project_id) +
+      " TSUGUMI_SHELL_PROBE_TOKEN=" + quote(JsonString(project_ready, "/token")) +
+      " ./rpc-probe --gtest_filter=AgentShellProbe.DirectProjectRequest");
+  EXPECT_NE(result.find("\"exit_code\":0"), std::string::npos) << result;
+  EXPECT_NE(JsonString(result, "/value/stdout").find("DIRECT_RPC_BLOCKED"), std::string::npos);
 }
 
 TEST_F(AgentProjectFixture,
@@ -661,8 +747,6 @@ TEST_F(AgentProjectFixture,
       {"version_init", "{}"},
       {"version_mark",
        R"({"name":"approved-version","message":"Kept by an approved call"})"},
-      {"version_summary",
-       "{\"commit\":" + Quote(commit) + ",\"summary\":\"Approved summary\"}"},
   };
   for (const auto &[name, arguments] : operations) {
     SCOPED_TRACE(name);

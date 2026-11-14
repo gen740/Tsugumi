@@ -40,7 +40,7 @@ struct CardDatabaseView: View {
           HStack {
             Image(systemName: definitionKind(def).symbol).foregroundStyle(.secondary).frame(width: 16)
             VStack(alignment: .leading) {
-              Text(id)
+              Text(session.displayName(key([id])))
               Text(definitionKind(def).label + (session.unplacedDefinitions.contains(id) ? String(localized: " · 未配置") : ""))
                 .font(.caption).foregroundStyle(.secondary)
             }
@@ -49,6 +49,7 @@ struct CardDatabaseView: View {
           .draggable(DefinitionDrag.prefix + id)
         }
       }
+      .disabled(revisionEdit.applying)
       .frame(minWidth: 240, idealWidth: 280)
       detail.frame(minWidth: 420)
     }
@@ -59,7 +60,7 @@ struct CardDatabaseView: View {
 
   private var ids: [String] {
     session.definitions.keys.sorted().filter { id in
-      search.isEmpty || id.localizedCaseInsensitiveContains(search) ||
+      search.isEmpty || session.displayName(key([id])).localizedCaseInsensitiveContains(search) || id.localizedCaseInsensitiveContains(search) ||
         (session.definitionMeta[id]?["description"]?.string ?? "").localizedCaseInsensitiveContains(search)
     }
   }
@@ -69,7 +70,7 @@ struct CardDatabaseView: View {
       let unapplied = cardText != baseCard || metaText != baseMeta
       VStack(alignment: .leading, spacing: 8) {
         HStack {
-          Text(id).font(.title2.bold())
+          Text(session.displayName(key([id]))).font(.title2.bold())
           Spacer()
           if unapplied { Label("未適用の変更", systemImage: "pencil.circle.fill").foregroundStyle(.orange) }
         }
@@ -93,7 +94,7 @@ struct CardDatabaseView: View {
             .disabled(!session.unplacedDefinitions.contains(id) || !session.isEditable)
             .help(session.unplacedDefinitions.contains(id) ? "定義とソースを削除" : "Card を削除すると定義も削除されます")
           Spacer()
-          Button("再読込") { load() }
+          Button("再読込") { load() }.disabled(revisionEdit.applying)
           Button("適用") { Task { await apply(id) } }.disabled(!unapplied || revisionEdit.applying || !session.isEditable)
         }
       }
@@ -120,9 +121,10 @@ struct CardDatabaseView: View {
   }
 
   private func apply(_ id: String, overwrite: Bool = false) async {
+    let sentCard = cardText, sentMeta = metaText
     do {
-      let card = try JSONValue.parse(cardText)
-      let meta = metaText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : try JSONValue.parse(metaText)
+      let card = try JSONValue.parse(sentCard)
+      let meta = sentMeta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : try JSONValue.parse(sentMeta)
       parseError = nil
       guard await revisionEdit.apply(session, overwrite: overwrite, { s in
         var d = s.cardDefinitionDraft(key([id])) ?? DefinitionDraft(card: card, meta: meta)
@@ -130,7 +132,9 @@ struct CardDatabaseView: View {
         d.meta = meta
         s.setCardDefinition(key([id]), d)
       }) else { return }
-      load()
+      guard selected == id else { return }
+      baseCard = sentCard
+      baseMeta = sentMeta
       message = String(localized: "適用しました（revision \(session.rev)）。")
     } catch {
       parseError = String(localized: "JSON として読めません: \(String(describing: error))")
@@ -320,10 +324,14 @@ private struct GeneralProjectSettings: View {
   }
 
   private func save(overwrite: Bool = false) async {
+    let sentName = name, sentPkgs = pkgs
     if await revisionEdit.apply(session, overwrite: overwrite, { s in
-      s.project["name"] = .string(name)
-      s.project["pkgsPath"] = .string(pkgs.isEmpty ? "tsugumi:default" : pkgs)
-    }) { load(); message = String(localized: "保存しました。") }
+      s.project["name"] = .string(sentName)
+      s.project["pkgsPath"] = .string(sentPkgs.isEmpty ? "tsugumi:default" : sentPkgs)
+    }) {
+      if pkgs == sentPkgs { pkgs = sentPkgs.isEmpty ? "tsugumi:default" : sentPkgs }
+      message = String(localized: "保存しました。")
+    }
   }
 }
 

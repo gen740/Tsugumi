@@ -271,7 +271,7 @@ struct RunComparisonView: View {
   private func runPicker(_ label: LocalizedStringKey, selection: Binding<String>) -> some View {
     Picker(label, selection: selection) {
       ForEach(runs, id: \.status.runId) { r in
-        Text("\(formatMillis(r.status.acceptedAt)) · \(r.status.state.label) · \(String((r.status.runId ?? "").prefix(8)))").tag(r.status.runId ?? "")
+        Text("\(formatMillis(r.status.acceptedAt)) · \(r.status.state.label) · \(String((r.status.runId ?? "").prefix(8)))" + (runMark(r.status).map { " · " + $0 } ?? "")).tag(r.status.runId ?? "")
       }
     }.frame(maxWidth: .infinity)
   }
@@ -374,6 +374,7 @@ private struct ComparedRunCardView: View {
       let v = side.record?.record?.summary ?? side.summary
       VStack(alignment: .leading, spacing: 4) {
         Text("\(v.state.label) · #\(v.invocation ?? 0) · \(v.durationMs.map { formatDuration(Double($0) / 1000) } ?? "—")").bold()
+        if let mark = runMark(side.record?.run.status) { Text(mark).font(.caption) }
         if let aggregate = side.record?.aggregate { Text("呼び出し \(aggregate.calls ?? 0) · 成功 \(aggregate.succeeded ?? 0) · 失敗 \(aggregate.failed ?? 0)").font(.caption) }
         if let error = side.error ?? v.failure?.diagnostic { Text(error).foregroundStyle(.red) }
         if side.record?.record?.recordIo == false { Text("入出力は記録されていません").foregroundStyle(.secondary) }

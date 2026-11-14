@@ -22,6 +22,7 @@ import { Observable } from './observable'
 import { VisualizationTemplate, visualizationFiles, visualizationTemplates } from './visualizationTemplates'
 import marimoFiles from '../../../ui/templates/marimo.json'
 import { FlowDirection, prefs } from './prefs'
+import { runMark } from './runMark'
 import { cardPermissions } from './permissions'
 import { L, language } from '../i18n'
 
@@ -1681,14 +1682,29 @@ export class ProjectSession extends Observable {
     }
   }
 
-  async reloadExternal() {
-    if (!this.client) return
+  reloadApproval?: { baseRev: bigint; permissions: string[] }
+  reloadingExternal = false
+
+  async answerReloadApproval(allow: boolean) {
+    const request = this.reloadApproval
+    this.reloadApproval = undefined
+    this.changed()
+    if (allow && request) await this.reloadExternal(request.permissions, request.baseRev)
+  }
+
+  async reloadExternal(approved: string[] = [], baseRev = this.rev) {
+    if (!this.client || this.reloadingExternal) return
+    this.reloadingExternal = true
+    this.changed()
     try {
-      await this.client.reload(this.rev, uuid(), 'ui')
+      await this.client.reload(baseRev, uuid(), 'ui', approved)
       this.saveError = undefined
     } catch (e) {
-      this.saveError = errorText(e)
-    }
+      if (e instanceof RPCFailure && e.kind === D.FailureKind.approval_required && e.permissions.length) {
+        this.reloadApproval = { baseRev, permissions: [...new Set([...approved, ...e.permissions])] }
+        this.saveError = undefined
+      } else this.saveError = errorText(e)
+    } finally { this.reloadingExternal = false }
     this.changed()
   }
 
@@ -2121,7 +2137,7 @@ export class ProjectSession extends Observable {
 
   /** The editable human name; the identifier remains the exact address. */
   displayName(k: CardKey): string {
-    return str(get(this.cardMeta(k), 'name')) ?? path(k).pop() ?? k
+    return str(get(this.cardMeta(k), 'name')) || path(k).pop() || k
   }
 
   /** A human-readable path. Pass the original segments to tools and links. */
@@ -2540,6 +2556,14 @@ export class ProjectSession extends Observable {
     const next = existing.length === 1 ? str(get(existing[0], 'to', 'card')) : undefined
     const forkId = existing.length && this.kind(from[0]) !== 'fork' && (!next || this.kind(key([...scope, next])) !== 'fork')
       ? await this.newCardId('fork', scope) : undefined
+    const valid = (end: [CardKey, string], output: boolean) => {
+      if (!this.instance(end[0]) || key(path(end[0]).slice(0, -1)) !== key(scope)) return false
+      if (forkId === undefined) return true // No suspension: the caller's visible ports are still current.
+      if (end[1] === NEW_PORT) return this.kind(end[0]) === 'draft'
+      const ports = this.portData(end[0])
+      return (output ? ports.outputs : ports.inputs).some(p => p.name === end[1])
+    }
+    if (!this.isEditable || !valid(from, true) || !valid(to, false)) return
     this.edit((x) => {
       // An end at NEW_PORT makes the Draft's port now.
       const fromPort = x.draftPort(from, true, to[1], scope)
@@ -2712,16 +2736,19 @@ export class ProjectSession extends Observable {
 
   /** Sets a param's value (the `data` of the param in the Card's _card.json). */
   setParam(k: CardKey, name: string, value: J | undefined) {
-    this.edit((x) => {
-      x.updateCard(k, (c) => {
-        const params = (arr(c.get('params')) ?? []).map((p) => clone(p))
-        const p = params.find((p) => str(get(p, 'name')) === name)
-        if (isObj(p)) p.set('data', value)
-        else if (str(c.get('template')) === 'switch' && name === 'value' && typeof value === 'boolean') {
-          params.push(obj([['name', 'value'], ['type', 'bool'], ['data', value]]))
-        }
-        c.set('params', params)
-      })
+    this.edit(x => x.updateParam(k, name, value))
+  }
+
+  /** Mutates the value inside the caller's transaction, without an autosave. */
+  updateParam(k: CardKey, name: string, value: J | undefined) {
+    this.updateCard(k, (c) => {
+      const params = (arr(c.get('params')) ?? []).map((p) => clone(p))
+      const p = params.find((p) => str(get(p, 'name')) === name)
+      if (isObj(p)) p.set('data', value)
+      else if (str(c.get('template')) === 'switch' && name === 'value' && typeof value === 'boolean') {
+        params.push(obj([['name', 'value'], ['type', 'bool'], ['data', value]]))
+      }
+      c.set('params', params)
     })
   }
 
@@ -3625,7 +3652,7 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
     const pending = state?.executionState === D.RemoteExecutionState.queued || state?.executionState === D.RemoteExecutionState.disconnected ||
       state?.executionState === D.RemoteExecutionState.cancelling ? remoteExecutionLabel(state.executionState) : undefined
     return {
-      title: path(k).pop() ?? k, kind, symbol: sym || undefined, summary: summary || undefined,
+      title: str(get(m, 'name')) || path(k).pop() || k, kind, runMark: runMark(this.runStatus), symbol: sym || undefined, summary: summary || undefined,
       inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
       result: pending ?? (d ? (executionList ? `#${d.invocation} · ` : '') + displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,

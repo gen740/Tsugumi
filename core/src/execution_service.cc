@@ -1,12 +1,18 @@
 #include "execution_service.hh"
 
+#include <dirent.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <array>
+#include <cerrno>
 #include <chrono>
 #include <system_error>
 
 #include "history.hh"
+#include "run_scratch.hh"
 #include "service.hh"
 #include "store.hh"
 #include "util/crypto.hh"
@@ -25,6 +31,79 @@ namespace {
 // The unprivileged identity for Card processes.
 constexpr uid_t kCardUid = 65534;
 
+// Open before calling the worker, then traverse relative to this trusted
+// handle. A live Card child may rename entries at any point in the copy.
+class StagingHandle {
+ public:
+  explicit StagingHandle(const std::filesystem::path& path)
+      : StagingHandle(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)) {}
+  explicit StagingHandle(int fd) : fd_(fd) {
+    if (fd_ < 0) throw Failed(FailureKind::output_invalid, "cannot open worker staging directory");
+  }
+  ~StagingHandle() { ::close(fd_); }
+  StagingHandle(const StagingHandle&) = delete;
+  auto get() const -> int { return fd_; }
+ private:
+  int fd_;
+};
+
+// Neither a type check on a path nor filesystem::copy pins what gets opened.
+// O_NONBLOCK prevents a FIFO swapped in for a regular file from hanging open.
+auto copy_worker_directory(int source, const std::filesystem::path& destination,
+                           const std::atomic<bool>& cancel) -> void {
+  auto invalid = [] { return Failed(FailureKind::output_invalid, "worker staging contains an unreadable or non-regular entry"); };
+  const int duplicate = ::dup(source);
+  if (duplicate < 0) throw invalid();
+  std::unique_ptr<DIR, decltype(&::closedir)> entries(::fdopendir(duplicate), ::closedir);
+  if (!entries) {
+    ::close(duplicate);
+    throw invalid();
+  }
+  for (;;) {
+    if (cancel.load()) throw Failed(FailureKind::cancelled, "output transfer cancelled");
+    errno = 0;
+    const auto* entry = ::readdir(entries.get());
+    if (!entry) {
+      if (errno) throw invalid();
+      break;
+    }
+    const std::string name = entry->d_name;
+    if (name == "." || name == "..") continue;
+    const int fd = ::openat(source, name.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) throw invalid();
+    // All subsequent checks and reads use the opened inode, never its name.
+    StagingHandle opened(fd);
+    struct stat st{};
+    if (::fstat(fd, &st) != 0) throw invalid();
+    const auto target = destination / name;
+    if (S_ISDIR(st.st_mode)) {
+      std::filesystem::create_directories(target);
+      copy_worker_directory(fd, target, cancel);
+    } else if (S_ISREG(st.st_mode)) {
+      const int output = ::open(target.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+      if (output < 0) throw invalid();
+      StagingHandle written(output);
+      std::array<char, 65536> buffer{};
+      for (;;) {
+        if (cancel.load()) throw Failed(FailureKind::cancelled, "output transfer cancelled");
+        const ssize_t n = ::read(fd, buffer.data(), buffer.size());
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0) throw invalid();
+        if (!n) break;
+        ssize_t offset = 0;
+        while (offset < n) {
+          const ssize_t count = ::write(output, buffer.data() + offset, static_cast<size_t>(n - offset));
+          if (count < 0 && errno == EINTR) continue;
+          if (count <= 0) throw invalid();
+          offset += count;
+        }
+      }
+    } else {
+      throw invalid();
+    }
+  }
+}
+
 class PreparedNativeExecution final : public PreparedExecution {
  public:
   explicit PreparedNativeExecution(NativeExecutionService& service) : service_(service) {}
@@ -36,10 +115,10 @@ class PreparedNativeExecution final : public PreparedExecution {
 
 }  // namespace
 
-NativeExecutionService::NativeExecutionService(Service& service, std::filesystem::path scratch_root)
-    : service_(service), workers_(std::move(scratch_root)) {}
+NativeExecutionService::NativeExecutionService(Service& service, std::filesystem::path /*scratch_root*/)
+    : service_(service), workers_(private_disk_scratch(service.run_scratch() / "workers")) {}
 
-auto NativeExecutionService::clear() -> void { workers_.clear(); }
+auto NativeExecutionService::clear() -> void { workers_.clear(false); }
 
 auto NativeExecutionService::prepare(const Node& node, const std::filesystem::path& /*directory*/,
                                     BuildRequest& build) -> std::unique_ptr<PreparedExecution> {
@@ -118,6 +197,8 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   auto lease = workers_.acquire(worker_card, key, sp, reuse);
   WorkerProc& worker = *lease.worker;
   s.worker_reused = lease.reused;
+  if (!lease.replaced.empty() && request.log)
+    request.log(LogStream::stderr, "Resident worker state started fresh: " + lease.replaced + ".\n");
 
   // Folders: without filesystem: true, work/ and tmp/ are the worker's own
   // (local, emptied between calls); out/ exists only for Cards with File or
@@ -177,12 +258,14 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
                                         deadline_ms);
   // Logs and displays of this call belong to this run and invocation.
   worker.set_logs(request.log);
+  StagingHandle output_directory(worker.out_dir());
+  StagingHandle work_directory(worker.work_dir());
+  StagingHandle temporary_directory(worker.tmp_dir());
   int64_t t0 = now_ms();
   result.outcome = worker.call(frame, call_id, &request.cancel, deadline, request.display);
   request.on_timing(t0, now_ms());
-  if (!recorded_out.empty())
-    std::filesystem::copy(worker.out_dir(), recorded_out,
-                          std::filesystem::copy_options::recursive | std::filesystem::copy_options::copy_symlinks);
+  if (!result.outcome.failure && !recorded_out.empty())
+    copy_worker_directory(output_directory.get(), recorded_out, request.cancel);
   // Forwarded inputs retain their recorded path, not the worker's temporary
   // staging path. All other output paths go through normal output validation.
   for (auto& [name, bytes] : result.outcome.outputs) {
@@ -196,21 +279,23 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
       }
   }
 
-  if (node.settings.filesystem) {
-    // Scratch for inspection until the next run starts.
-    std::error_code ec;
-    for (const auto& [from, to] : {std::pair{worker.work_dir(), dir / "work"}, std::pair{worker.tmp_dir(), dir / "tmp"}}) {
-      std::filesystem::create_directories(to, ec);
-      std::filesystem::copy(from, to,
-                            std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing |
-                                std::filesystem::copy_options::copy_symlinks,
-                            ec);
+  if (!result.outcome.failure && node.settings.filesystem) {
+    // Diagnostic scratch uses the same traversal: children are still alive.
+    for (const auto& [from, to] : {std::pair{work_directory.get(), dir / "work"},
+                                  std::pair{temporary_directory.get(), dir / "tmp"}}) {
+      std::filesystem::create_directories(to);
+      copy_worker_directory(from, to, request.cancel);
     }
   }
-  worker.clear_scratch();
-  // Kept only after a clean call: a failed, cancelled or timed out worker
-  // (and anything it started) ends.
-  workers_.release(worker_card, key, std::move(lease.worker), reuse && !result.outcome.failure);
+  // Dead/cancelled workers are destroyed without inspecting their scratch.
+  // A cleanup error must not replace the failure the Card already reported.
+  try {
+    if (worker.alive()) worker.clear_scratch();
+  } catch (...) {
+    if (!result.outcome.failure) throw;
+    return result;
+  }
+  workers_.release(worker_card, key, std::move(lease.worker), reuse);
   return result;
 }
 

@@ -545,6 +545,9 @@ import Testing
     #expect(run != nil)
     try await s.renameCard(b, to: "同じ名前")
     #expect(s.displayName(b) == "同じ名前")
+    #expect(s.nodeData(b).title == "同じ名前")
+    #expect(s.nodeData(b, meta: .object([("name", .string("Preview"))])).title == "Preview")
+    #expect(s.nodeData(b, meta: .object([("name", .string(""))])).title == b)
     #expect(s.displays[b]?.runId == run && s.displayFrame(b)?["width"]?.double == 300)
     let first = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 400), name: "同じ名前")
     let second = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 800), name: "同じ名前")
@@ -1089,5 +1092,114 @@ import Testing
     s.undo()
     await s.save()
     #expect(s.confirmedDefinitions["c-2"] == nil && s.instance("c-2") == nil)
+  }
+}
+
+extension SyncTests {
+  @Test func deletingAWireEndWhileAllocatingAForkDoesNotAddTheWire() async throws {
+    let dir = try Self.project()
+    let daemon = try Daemon(project: dir)
+    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = daemon.endpoint
+    s.start()
+    try await Self.connected(s)
+    try await s.connect(from: ("start", "out"), to: ("a", "in"), in: [])
+    await s.save()
+    var allocation: CheckedContinuation<String, Never>?
+    s.cardIdProvider = { _, _ in await withCheckedContinuation { allocation = $0 } }
+    let connecting = Task { try await s.connect(from: ("start", "out"), to: ("b", "in"), in: []) }
+    while allocation == nil { await Task.yield() }
+    s.deleteCards(["b"], in: [])
+    allocation?.resume(returning: "fork-delayed")
+    try await connecting.value
+    #expect(s.instance("fork-delayed") == nil)
+    #expect(!s.connections(in: []).contains { $0["to"]?["card"]?.string == "b" })
+    await s.close()
+  }
+
+  @Test func cardEditorKeepsTypingAfterSendingSettingsAndSources() async throws {
+    let dir = try Self.project()
+    let p = "definitions/a/later.txt"
+    try "base".write(to: dir.appendingPathComponent(p), atomically: true, encoding: .utf8)
+    let daemon = try Daemon(project: dir)
+    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = daemon.endpoint
+    s.start()
+    try await Self.connected(s)
+    let model = CardEditorModel(session: s, cardKey: "a")
+    _ = try await model.text(p)
+    model.texts[p] = "sent"
+    model.definition?["symbol"] = .string("sent")
+    var finished = false
+    let saving = Task { let ok = await model.apply(); finished = true; return ok }
+    while !model.applying && !finished { await Task.yield() }
+    #expect(model.applying)
+    model.texts[p] = "later"
+    model.definition?["symbol"] = .string("later")
+    model.createFile("new.txt", text: "new")
+    #expect(await saving.value)
+    #expect(model.loadedText(p) == "later" && model.isEdited(p) && model.unapplied)
+    #expect(model.definition?["symbol"]?.string == "later")
+    #expect(model.created.contains("definitions/a/new.txt"))
+    #expect(try String(contentsOf: dir.appendingPathComponent(p), encoding: .utf8) == "sent")
+    #expect(s.cardDefinition("a")?["symbol"]?.string == "sent")
+    #expect(await model.apply())
+    #expect(!model.unapplied)
+    #expect(try String(contentsOf: dir.appendingPathComponent(p), encoding: .utf8) == "later")
+    await s.close()
+  }
+
+  @Test func inlineValueKeepsItsOpeningRevisionAndSkipsAnUnchangedBlur() async throws {
+    let dir = try Self.project()
+    let daemon = try Daemon(project: dir)
+    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = daemon.endpoint
+    s.start()
+    try await Self.connected(s)
+    let edit = InlineParamEdit()
+    edit.begin("1", rev: s.rev)
+    let other = RPCClient(endpoint: daemon.endpoint.url)
+    _ = try await other.connect(token: daemon.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    var project = s.project
+    project["name"] = .string("newer")
+    _ = try await other.save(baseRev: s.rev, opId: UUID(), origin: "ui", changes: [Change.setProject(project.serialized())])
+    for _ in 0..<100 where s.rev == edit.revision.baseRev { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(s.rev > edit.revision.baseRev)
+    var wrote = false
+    #expect(await edit.commit(s, text: "1") { _ in wrote = true })
+    #expect(!wrote)
+    #expect(!(await edit.commit(s, text: "3") { $0.project["name"] = .string("stale") }))
+    #expect(edit.revision.conflictRev == s.rev && !s.dirty)
+    #expect(s.project["name"]?.string == "newer")
+    await other.close()
+    await s.close()
+  }
+
+  @Test func reloadingExternalPermissionWideningCanBeDeclinedOrApproved() async throws {
+    let dir = try Self.project()
+    let daemon = try Daemon(project: dir)
+    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = daemon.endpoint
+    s.start()
+    try await Self.connected(s)
+    var definition = try #require(s.cardDefinition("a"))
+    definition["network"] = .bool(true)
+    try definition.serialized().write(to: dir.appendingPathComponent("definitions/a/_card.json"), atomically: true, encoding: .utf8)
+    let base = s.rev
+    await s.reloadExternal()
+    #expect(s.reloadApproval?.permissions.contains("network a") == true)
+    await s.answerReloadApproval(false)
+    #expect(s.rev == base && s.reloadApproval == nil)
+    await s.reloadExternal()
+    #expect(s.reloadApproval != nil)
+    await s.answerReloadApproval(true)
+    #expect(s.saveError == nil && s.reloadApproval == nil)
+    for _ in 0..<100 where s.rev == base { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(s.cardDefinition("a")?["network"]?.bool == true)
+    await s.close()
   }
 }

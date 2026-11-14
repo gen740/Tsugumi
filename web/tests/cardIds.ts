@@ -3,6 +3,7 @@
 import type { ProjectSession } from '../src/model/session'
 import { get, str } from '../src/shared/json'
 export function cardIds<T extends ProjectSession>(s: T): T {
+  s.connected = true // This boundary stands in for the connected core.
   const issued = new Set<string>()
   s.cardIdProvider = async (name, prefix) => {
     const stem = name.toLowerCase().replace(/[^a-z0-9_-]/g, '-') || 'card'

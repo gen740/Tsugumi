@@ -1,17 +1,59 @@
 // The allow list is the sole source of project tools, including external MCP.
 #include <gtest/gtest.h>
+#include <flatbuffers/reflection_generated.h>
 
 #include <set>
 
 #include "agent/approval.hh"
 #include "agent/catalog.hh"
 #include "agent/json.hh"
+#include "tsugumi/protocol/tsugumi_generated.h"
 
 extern const unsigned char tsugumi_agent_settings[];
 extern const unsigned long tsugumi_agent_settings_size;
+extern const unsigned char tsugumi_rpc_bfbs[];
 
 namespace tsugumi::agent {
 namespace {
+
+TEST(AgentCatalog, EveryEntryInBothListsExistsInTheProjectRequestUnion) {
+  const auto settings = json::Object(
+      std::string_view(reinterpret_cast<const char *>(tsugumi_agent_settings),
+                       tsugumi_agent_settings_size));
+  const auto *requests = reflection::GetSchema(tsugumi_rpc_bfbs)
+                             ->enums()->LookupByKey("Tsugumi.RPC.RequestPayload");
+  ASSERT_NE(requests, nullptr);
+  for (const auto *list : {"requests", "approvalRequests"}) {
+    SCOPED_TRACE(list);
+    for (const auto &entry : json::Array(json::Get(settings, list))) {
+      const auto name = json::String(entry);
+      SCOPED_TRACE(name);
+      bool found = false;
+      for (const auto *value : *requests->values())
+        if (value->name()->str() == name && value->value()) found = true;
+      EXPECT_TRUE(found) << "invalid Agent request allow list entry: " << name;
+    }
+  }
+}
+
+TEST(AgentCatalog, InternalVersionNoteRequestsAreNotTools) {
+  const Catalog catalog;
+  for (const auto *name : {"version_note", "version_note_store", "version_summary"}) {
+    EXPECT_EQ(catalog.Find(name), nullptr);
+    EXPECT_THROW(catalog.Request(name, "{}", 1), std::runtime_error);
+  }
+  const auto read = EncodeProjectRequest(
+      "version_note", R"({"commit":"abc","language":"en"})", 7);
+  EXPECT_EQ(Tsugumi::RPC::GetMessage(read.data())->request_id(), 7u);
+  EXPECT_NE(Tsugumi::RPC::GetMessage(read.data())->payload_as_Request()
+                ->value_as_VersionNoteRequest(), nullptr);
+  const auto write = EncodeProjectRequest(
+      "version_note_store",
+      R"({"op_id":"operation","origin":"agent","commit":"abc","summary":"Note"})", 8);
+  EXPECT_NE(Tsugumi::RPC::GetMessage(write.data())->payload_as_Request()
+                ->value_as_VersionNoteStoreRequest(), nullptr);
+  EXPECT_THROW(EncodeProjectRequest("version_summary", "{}", 1), std::runtime_error);
+}
 
 TEST(AgentCatalog, ExposesExactlyTheSharedRequestList) {
   const auto settings = json::Object(
@@ -109,12 +151,6 @@ TEST(AgentApprovalDescription,
   EXPECT_THROW(DescribeOperation("version_checkout", {{"commit", "\"HEAD\""}},
                                  "project", read),
                std::runtime_error);
-  const auto summary = DescribeOperation(
-      "version_summary",
-      {{"commit", "\"full-id\""}, {"summary", "\"Proposed text\""}}, "project",
-      read);
-  EXPECT_NE(summary.find("Actual version"), std::string::npos);
-  EXPECT_NE(summary.find("Proposed text"), std::string::npos);
 }
 
 } // namespace

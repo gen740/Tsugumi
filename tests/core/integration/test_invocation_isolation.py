@@ -85,3 +85,118 @@ def main(inputs, report):
     invocation, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
     assert invocation.failure.kind == FailureKind.timeout
     assert "source run=" + run_id in log(c, run_id, "show")
+
+
+def test_reused_worker_clears_previous_input_and_output_slots(core_factory, tmp_path):
+    """Only the first call has first.txt and first-output; neither survives in the reused worker's fixed slots."""
+    make = bash('n="${TSUGUMI_WORK_DIR%/*}/home/count"; i=0; test ! -f "$n" || read -r i < "$n"; '
+                'i=$((i+1)); echo "$i" > "$n"; '
+                'if test "$i" = 1; then name=first.txt; else name=second.txt; fi; '
+                'echo "$name" > "$TSUGUMI_OUTPUT_DIR/$name"; '
+                'printf \'{"doc":{"value":"%s/%s"}}\' "$TSUGUMI_OUTPUT_DIR" "$name" > "$TSUGUMI_OUTPUT"',
+                outputs=FILE_FBS, reuseWorker=True)
+    reader = bash('slot="${FILE_DOC%/*}"; '
+                  'if test -f "$FILE_DOC" && test "${FILE_DOC##*/}" = first.txt; then '
+                  'echo first > "$TSUGUMI_OUTPUT_DIR/first-output"; '
+                  'else test "${FILE_DOC##*/}" = second.txt || exit 11; '
+                  'test ! -e "$slot/first.txt" || exit 12; '
+                  'test ! -e "$TSUGUMI_OUTPUT_DIR/first-output" || exit 13; fi; '
+                  'echo current > "$TSUGUMI_OUTPUT_DIR/current"; '
+                  'printf \'{"doc":{"value":"%s/current"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
+                  inputs=["doc"], outputs=FILE_FBS, reuseWorker=True)
+    root = tmp_path / "p"
+    write(root, {"make": make, "read": reader}, [card("make", "make"), card("read", "read")],
+          [conn("make", "doc", "read", "doc")])
+    c = core_factory(project_root=root).connect()
+    for reused in (False, True):
+        run_id, st = run_and_wait(c, "make")
+        assert st.state == RunState.succeeded, log(c, run_id, "read", 2)
+        inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("read")).records
+        assert inv.workerReused == reused
+
+
+def test_failed_call_with_fifo_preserves_its_failure(core_factory, tmp_path):
+    """A partial FIFO output cannot replace the Card's exit failure with a transfer error."""
+    from Tsugumi.Data.FailureKind import FailureKind
+    failed = bash('mkfifo "$TSUGUMI_OUTPUT_DIR/partial"; exit 19', outputs=FILE_FBS)
+    write(tmp_path / "p", {"fail": failed}, [card("fail", "fail")], [])
+    c = core_factory(project_root=tmp_path / "p").connect()
+    run_id, st = run_and_wait(c, "fail")
+    assert st.state == RunState.failed
+    inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("fail")).records
+    assert inv.failure.kind == FailureKind.worker_failed
+    assert "exit status 19" in text(inv.failure.diagnostic)
+
+
+def test_cancelled_call_with_fifo_preserves_cancellation(core_factory, tmp_path):
+    """Cancellation skips partial output transfer, even when the worker left a FIFO."""
+    from projects import start_run, wait_run
+    from Tsugumi.Data.FailureKind import FailureKind
+    import time
+    waiting = bash('mkfifo "$TSUGUMI_OUTPUT_DIR/partial"; echo ready; sleep 60', outputs=FILE_FBS)
+    write(tmp_path / "p", {"wait": waiting}, [card("wait", "wait")], [])
+    c = core_factory(project_root=tmp_path / "p").connect()
+    run_id = start_run(c, "wait")
+    until = time.monotonic() + 600
+    while "ready" not in log(c, run_id, "wait"):
+        assert time.monotonic() < until, "worker did not reach cancellation point"
+        time.sleep(0.02)
+    c.call("RunCancelRequest", runId=run_id)
+    assert wait_run(c, run_id, timeout=30).state == RunState.cancelled
+    inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("wait")).records
+    assert inv.failure.kind == FailureKind.cancelled
+
+
+def test_worker_staging_uses_disk_scratch_and_releases_call_bytes(core_factory, tmp_path):
+    """Input/output staging is below disk run scratch; only lifetime home survives a call."""
+    from pathlib import Path
+    # The output path reveals the configured disk scratch without depending on
+    # whether the daemon is running on Linux or macOS.
+    make = bash('echo wired > "$TSUGUMI_OUTPUT_DIR/data"; '
+                'printf \'{"doc":{"value":"%s/data"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
+                outputs=FILE_FBS)
+    read = bash('printf \'{"text":"%s|%s"}\' "$FILE_DOC" "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_REPORT"; '
+                'cat "$FILE_DOC" > "$TSUGUMI_OUTPUT_DIR/copied"; '
+                'printf \'{"doc":{"value":"%s/copied"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
+                inputs=["doc"], outputs=FILE_FBS, reuseWorker=True)
+    root = tmp_path / "p"
+    write(root, {"make": make, "read": read}, [card("make", "make"), card("read", "read")],
+          [conn("make", "doc", "read", "doc")])
+    c = core_factory(project_root=root).connect()
+    run_id, st = run_and_wait(c, "make")
+    assert st.state == RunState.succeeded, log(c, run_id, "read", 2)
+    record = c.call("RunRecordRequest", runId=run_id, card=path("read")).record
+    recorded = Path(text(record.outputs[0].filePath))
+    # <scratch>/runs/<run>/<card>/<invocation>/out/copied
+    scratch = next(parent.parent for parent in recorded.parents if parent.name == "runs")
+    staged_input, staged_out = text(record.display.value.text).split("|")
+    worker_root = Path(staged_out).parent
+    assert worker_root.parent == scratch / "workers"
+    assert Path(staged_input).is_relative_to(worker_root / "inputs")
+    assert recorded.read_text() == "wired\n"
+    assert not list((worker_root / "inputs").iterdir())
+    assert not list((worker_root / "out").iterdir())
+
+
+def test_python_source_environment_removals_survive_reuse(core_factory, tmp_path):
+    """Removing an SDK default during import stays removed in Python and libc on both calls."""
+    from harness.real_cards import python_probe_project, shown_by_probe
+    source = '''
+import ctypes, os
+assert os.environ.pop("MPLBACKEND", None) is not None
+libc = ctypes.CDLL(None)
+libc.getenv.argtypes = [ctypes.c_char_p]
+libc.getenv.restype = ctypes.c_char_p
+def main(inputs, report):
+    assert "MPLBACKEND" not in os.environ
+    assert libc.getenv(b"MPLBACKEND") is None
+    report.text("removed")
+'''
+    definitions, cards, wires, files = python_probe_project(source)
+    write(tmp_path / "p", definitions, cards, wires, files)
+    c = core_factory(project_root=tmp_path / "p").connect()
+    for reused in (False, True):
+        run_id, shown = shown_by_probe(c)
+        assert shown == "removed"
+        inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
+        assert inv.workerReused == reused

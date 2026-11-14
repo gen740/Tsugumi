@@ -8,6 +8,11 @@
 
 namespace tsugumi::agent {
 
+// Internal project RPC encoding is independent of the model/plugin allow list.
+// Callers exposing tools must authorize through Catalog before reaching this.
+auto EncodeProjectRequest(std::string_view name, std::string_view arguments,
+                          uint64_t id) -> std::string;
+
 struct CatalogTool {
   ToolSpec spec;
   std::string request_name;

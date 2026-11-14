@@ -31,6 +31,10 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"外部の変更が Card の権限を広げます": "External changes widen Card permissions",
+"表示された権限を許可して、外部の変更を読み込みますか？": "Allow the listed permissions and reload the external changes?",
+"部分実行": "Partial run",
+"部分実行の結果を使用": "Uses a partial run's result",
 "Agent がこの操作の承認を求めています": "The Agent asks you to approve this operation",
 "表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。": "Approval covers only this operation on the displayed targets. Every new operation needs approval again. Declining changes nothing.",
     '会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。': 'Conversation interrupted. Operation at interruption: %@. Resume or send a new message.',

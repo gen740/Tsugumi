@@ -1,4 +1,8 @@
 {
+  "外部の変更が Card の権限を広げます": "External changes widen Card permissions",
+  "表示された権限を許可して、外部の変更を読み込みますか？": "Allow the listed permissions and reload the external changes?",
+  "部分実行": "Partial run",
+  "部分実行の結果を使用": "Uses a partial run's result",
   "{0} がこの操作の承認を求めています": "{0} asks you to approve this operation",
   "表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。": "Approval covers only this operation on the displayed targets. Every new operation needs approval again. Declining changes nothing.",
  "名前を入力してください（4096 バイトまで）。": "Enter a name (up to 4096 bytes).",

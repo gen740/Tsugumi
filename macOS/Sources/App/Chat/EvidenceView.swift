@@ -102,7 +102,7 @@ struct EvidenceView: View {
           if let preview { Image(nsImage: preview).resizable().scaledToFit() }
           Text(bodyText).font(.system(.body, design: target.kind == "log" ? .monospaced : .default)).textSelection(.enabled)
           ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-            Button("\(row.card.path.joined(separator: "/")) · #\(row.invocation ?? 0) · \(row.state.label)") {
+            Button("\(session.displayPath(row.card.path)) · #\(row.invocation ?? 0) · \(row.state.label)") {
               selected = EvidenceTarget.parse("run:\(target.run!)/\(row.card.path.joined(separator: "/"))#\(row.invocation ?? 0)")
             }.buttonStyle(.link).disabled((row.invocation ?? 0) == 0)
           }
@@ -148,7 +148,7 @@ struct EvidenceView: View {
         let summary = r.record?.summary
         let state = summary?.state ?? r.status.state
         let diagnostic = summary.map { $0.failure?.diagnostic ?? "" } ?? (r.status.failure?.diagnostic ?? "")
-        bodyText = "\(session.displayPath(card)) · #\(summary?.invocation ?? 0)\n\(state.label)\n\(diagnostic)"
+        bodyText = (runMark(r.run.status).map { $0 + "\n" } ?? "") + "\(session.displayPath(card)) · #\(summary?.invocation ?? 0)\n\(state.label)\n\(diagnostic)"
       } else {
         let status = try await rpc.runStatus(runId: run)
         bodyText = status.state.label

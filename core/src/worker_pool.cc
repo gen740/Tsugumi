@@ -57,6 +57,13 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
   std::vector<std::unique_ptr<WorkerProc>> ended;
   {
     std::lock_guard<std::mutex> l(mu_);
+    if (reuse) {
+      if (auto previous = resident_keys_.find(card); previous != resident_keys_.end())
+        lease.replaced = previous->second == key ? "the resident worker died" : "the Card definition changed";
+      resident_keys_[card] = key;
+    } else {
+      resident_keys_.erase(card);
+    }
     for (auto it = resident_.begin(); it != resident_.end();) {
       if (it->card != card) {
         ++it;
@@ -65,6 +72,7 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
       if (reuse && it->key == key && it->worker->alive() && !lease.worker) {
         lease.worker = std::move(it->worker);
         lease.reused = true;
+        lease.replaced.clear();
       } else if (!reuse || it->key != key || !it->worker->alive()) {
         // Reuse was disabled, the build changed, or the worker died idle.
         ended.push_back(std::move(it->worker));
@@ -92,20 +100,12 @@ void WorkerPool::release(const std::string& card, const std::string& key, std::u
                          bool keep) {
   if (!worker) return;
   worker->set_logs(nullptr);
-  if (keep && worker->alive()) {
-    if (auto rss = worker->rss_bytes(); rss && *rss > limits_.max_rss_bytes) {
-      log::info("ending a resident worker of " + card + " above the memory limit (" + std::to_string(*rss >> 20) + " MiB)");
-      keep = false;
-    }
-  } else {
-    keep = false;
-  }
+  keep = keep && worker->alive();
   if (!keep) return;  // worker ends here
   std::vector<std::unique_ptr<WorkerProc>> ended;
   {
     std::lock_guard<std::mutex> l(mu_);
-    // One idle worker per Card and key; the least recently used ones beyond
-    // the limit end.
+    // One idle resident per Card and key, with no count, age or RSS eviction.
     for (auto it = resident_.begin(); it != resident_.end();)
       if (it->card == card && it->key == key) {
         ended.push_back(std::move(it->worker));
@@ -114,12 +114,7 @@ void WorkerPool::release(const std::string& card, const std::string& key, std::u
         ++it;
       }
     resident_.push_back({card, key, std::move(worker), std::chrono::steady_clock::now()});
-    while (resident_.size() > limits_.max_resident) {
-      auto oldest = std::min_element(resident_.begin(), resident_.end(),
-                                     [](const Idle& a, const Idle& b) { return a.since < b.since; });
-      ended.push_back(std::move(oldest->worker));
-      resident_.erase(oldest);
-    }
+
   }
 }
 
@@ -135,12 +130,15 @@ void WorkerPool::refill(const std::string& key, WorkerSpawn sp) {
   cv_.notify_all();
 }
 
-void WorkerPool::clear() {
+void WorkerPool::clear(bool residents) {
   std::vector<std::unique_ptr<WorkerProc>> ended;
   std::lock_guard<std::mutex> l(mu_);
-  for (auto& r : resident_) ended.push_back(std::move(r.worker));
+  if (residents) {
+    for (auto& r : resident_) ended.push_back(std::move(r.worker));
+    resident_.clear();
+    resident_keys_.clear();
+  }
   for (auto& [_, s] : standby_) ended.push_back(std::move(s.worker));
-  resident_.clear();
   standby_.clear();
 }
 
@@ -180,15 +178,10 @@ void WorkerPool::reaper() {
     // Idle workers past the limit end.
     std::vector<std::unique_ptr<WorkerProc>> ended;
     auto now = std::chrono::steady_clock::now();
-    for (auto it = resident_.begin(); it != resident_.end();)
-      if (now - it->since > limits_.idle) {
-        ended.push_back(std::move(it->worker));
-        it = resident_.erase(it);
-      } else {
-        ++it;
-      }
     for (auto it = standby_.begin(); it != standby_.end();)
-      if (now - it->second.since > limits_.idle) {
+      if (auto rss = it->second.worker->rss_bytes();
+          !it->second.worker->alive() || now - it->second.since > limits_.idle ||
+          (rss && *rss > limits_.max_rss_bytes)) {
         ended.push_back(std::move(it->second.worker));
         it = standby_.erase(it);
       } else {

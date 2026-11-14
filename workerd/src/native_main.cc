@@ -15,7 +15,7 @@
 // The environment of a package body, weakest first: what the worker was
 // started with, the call's, what the package set while loading (the top of a
 // Python Card's main.py), preRun's exports. The first preRun also controls
-// source loading. Only the SDK runtime is prepared before an invocation.
+// source loading. Package libraries and runtime initialization are invocation work.
 //
 // A bash body gets, per input port P:
 //   JSON_P          path of a JSON file with the message (any size)
@@ -527,9 +527,9 @@ auto emit_json_impl(void*, const char* name, const char* json) -> int {
 
 auto display_json_impl(void*, const char* json) -> int;
 
-// runtime.so contains only the SDK adapter, never Card code. Its required
-// tsugumi_prepare starts the interpreter and SDK; tsugumi_load loads the Card
-// inside its first invocation. Native main.so is opened only in that call.
+// Package filenames do not establish provenance. Even runtime.so is opened
+// only inside an invocation; its tsugumi_prepare initializes the interpreter
+// and tsugumi_load loads the Card after preRun.
 using prepare_fn = int (*)();
 void* g_lib = nullptr;
 tsugumi_main_fn g_main = nullptr;
@@ -539,12 +539,41 @@ tsugumi_main_fn g_run_start = nullptr;
 std::string g_load_error;
 std::string g_last_run;
 std::vector<std::string> g_loaded_env;  // the process environment once the package was loaded
-std::vector<std::string> g_set_by_load;  // the part of it that loading set or changed
+std::vector<std::string> g_set_by_load;  // NAME=value for sets; NAME for removals
 
 std::vector<std::string> process_env() {
   std::vector<std::string> out;
   for (char** e = environ; *e; ++e) out.emplace_back(*e);
   return out;
+}
+
+auto env_value(const std::vector<std::string>& env, const std::string& name) -> std::optional<std::string> {
+  for (const auto& e : env)
+    if (e.starts_with(name + "=")) return e.substr(name.size() + 1);
+  return std::nullopt;
+}
+
+auto remove_env(std::vector<std::string>& env, const std::string& name) -> void {
+  std::erase_if(env, [&](const auto& e) { return e.starts_with(name + "="); });
+}
+
+// Save only loading's changes, including unset variables. Invocation identity
+// and preRun's transient environment must not become the resident baseline.
+auto remember_loaded_env(const std::vector<std::string>& before) -> void {
+  const auto loaded = process_env();
+  for (const auto& e : before) {
+    const auto name = e.substr(0, e.find('='));
+    if (!env_value(loaded, name)) {
+      g_set_by_load.push_back(name);
+      remove_env(g_loaded_env, name);
+    }
+  }
+  for (const auto& e : loaded)
+    if (std::find(before.begin(), before.end(), e) == before.end()) {
+      g_set_by_load.push_back(e);
+      const auto eq = e.find('=');
+      set_env(g_loaded_env, e.substr(0, eq), e.substr(eq + 1));
+    }
 }
 
 void open_package(const std::string& lib) {
@@ -603,6 +632,10 @@ tsugumi_call make_call(const Call& call, std::vector<tsugumi_value>& values, con
 // `step` is the call's environment with preRun's exports, `call` without them.
 std::vector<std::string> body_env(const std::vector<std::string>& call, const std::vector<std::string>& step) {
   auto out = g_loaded_env;
+  for (const auto& e : call) {
+    const auto name = e.substr(0, e.find('='));
+    if (!env_value(step, name)) remove_env(out, name);
+  }
   for (const auto& e : step) {
     auto eq = e.find('=');
     set_env(out, e.substr(0, eq), e.substr(eq + 1));
@@ -610,7 +643,10 @@ std::vector<std::string> body_env(const std::vector<std::string>& call, const st
   for (const auto& e : g_set_by_load) {
     auto eq = e.find('=');
     std::string name = e.substr(0, eq);
-    if (get_env(step, name) == get_env(call, name)) set_env(out, name, e.substr(eq + 1));
+    if (env_value(step, name) == env_value(call, name)) {
+      if (eq == std::string::npos) remove_env(out, name);
+      else set_env(out, name, e.substr(eq + 1));
+    }
   }
   return out;
 }
@@ -835,19 +871,30 @@ void execute(const Options& opt, Call& call) {
     if (::chdir(cwd.c_str()) != 0) record_failure(D::FailureKind::worker_failed, "cannot enter working directory " + cwd);
     tsugumi_call c = make_call(call, values, work, tmp, out_dir);
     if (!call.failure && !g_card_loaded && g_load_error.empty() && may_start("source loading")) {
+      if (!g_lib) {
+        const auto runtime = opt.package + "/lib/runtime.so";
+        const bool adapter = ::access(runtime.c_str(), F_OK) == 0;
+        // Runtime initialization is invocation work too: a package filename
+        // does not prove SDK provenance. Preserve lifetime HOME for R/Julia
+        // session caches while the Card itself gets this call's HOME.
+        if (adapter) {
+          auto initialization_env = process_env();
+          if (auto home = env_value(g_loaded_env, "HOME")) set_env(initialization_env, "HOME", *home);
+          apply_env(initialization_env);
+        }
+        const auto before = process_env();
+        open_package(adapter ? runtime : opt.package + "/lib/main.so");
+        if (adapter && g_load_error.empty()) {
+          auto prepare = reinterpret_cast<prepare_fn>(::dlsym(g_lib, "tsugumi_prepare"));
+          if (!prepare || prepare() != 0) g_load_error = "cannot initialize the language runtime (see stderr)";
+        }
+        remember_loaded_env(before);
+        apply_env(body_env(call_env, env));
+      }
       const auto before = process_env();
-      if (!g_lib) open_package(opt.package + "/lib/main.so");
       if (g_load_error.empty() && g_load && g_load(&c) != 0)
         g_load_error = "tsugumi_load failed (see stderr)";
-      const auto loaded = process_env();
-      // Preserve only source-loading changes, never this call's or preRun's
-      // transient environment as the baseline of later invocations.
-      for (const auto& e : loaded)
-        if (std::find(before.begin(), before.end(), e) == before.end()) {
-          g_set_by_load.push_back(e);
-          const auto eq = e.find('=');
-          set_env(g_loaded_env, e.substr(0, eq), e.substr(eq + 1));
-        }
+      remember_loaded_env(before);
       g_card_loaded = true;
       std::fflush(stdout);
       std::fflush(stderr);
@@ -973,20 +1020,9 @@ int main(int argc, char** argv) {
     else if (k == "--post") opt.post = argv[i + 1];
     else if (k == "--views") g_views = argv[i + 1];
   }
-  if (!opt.package.empty()) {
-    auto before = process_env();
-    const auto runtime = opt.package + "/lib/runtime.so";
-    if (::access(runtime.c_str(), F_OK) == 0) {
-      open_package(runtime);
-      if (g_load_error.empty()) {
-        auto prepare = reinterpret_cast<prepare_fn>(::dlsym(g_lib, "tsugumi_prepare"));
-        if (!prepare || prepare() != 0) g_load_error = "cannot prepare the language runtime (see stderr)";
-      }
-    }
-    g_loaded_env = process_env();
-    for (const auto& e : g_loaded_env)
-      if (std::find(before.begin(), before.end(), e) == before.end()) g_set_by_load.push_back(e);
-  }
+  // Standby starts only the worker executable. No package-controlled code,
+  // including constructors or an alleged SDK adapter, runs before a call.
+  g_loaded_env = process_env();
   std::thread(control_loop).detach();
   uint64_t last_call = 0;
   while (true) {

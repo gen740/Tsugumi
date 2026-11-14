@@ -95,6 +95,7 @@ final class CardEditorModel {
 
   /// Takes in what changed elsewhere since the copy was taken.
   func follow() {
+    guard !applying else { return }
     let defNow = session.cardDefinition(cardKey), metaNow = session.cardMeta(cardKey)
     func clashes(_ base: JSONValue?, _ ours: JSONValue?, _ theirs: JSONValue?, _ file: String) -> [String] {
       guard ours != base, theirs != base, ours != theirs else { return [] }
@@ -245,6 +246,7 @@ final class CardEditorModel {
 
   /// Copies the working copy into the project as one undoable edit (saved at once).
   func apply(overwrite: Bool = false) async -> Bool {
+    guard !applying else { return false }
     guard session.isEditable else {
       message = String(localized: "実行中は Card を変更できません。実行が終わってから適用してください。")
       return false
@@ -253,6 +255,7 @@ final class CardEditorModel {
     applying = true
     defer { applying = false }
     let def = definition, m = meta, k = cardKey
+    let sentTexts = texts, sentCreated = created
     let changedTexts = texts.filter { baseTexts[$0.key] != $0.value || created.contains($0.key) }
     let gone = removed
     let bases = baseHashes
@@ -280,7 +283,25 @@ final class CardEditorModel {
     }
     guard ok else { return false }
     message = String(localized: "適用しました。")
-    reload(keepingSources: revisionEdit.savedRev == session.rev)
+    let laterDef = definition, laterMeta = meta
+    let laterTexts = texts, laterRemoved = removed, laterCreated = created
+    let savedCurrent = revisionEdit.savedRev == session.rev
+    reload()
+    definition = merge3(base: def, ours: laterDef, theirs: definition)
+    meta = merge3(base: m, ours: laterMeta, theirs: meta)
+    for (p, t) in laterTexts {
+      let sent = sentTexts[p]
+      if savedCurrent || t != sent {
+        texts[p] = t
+        baseTexts[p] = sent
+        loads[p] = .loaded
+        baseHashes[p] = savedCurrent ? session.sources[p]?.hash : bases[p]
+        if !savedCurrent && t != sent { revisionEdit.conflict(session.rev) }
+      }
+    }
+    removed = laterRemoved.subtracting(gone)
+    created = laterCreated.subtracting(sentCreated)
+    for p in sentTexts.keys where laterTexts[p] == nil && !gone.contains(p) { removed.insert(p) }
     return true
   }
 }

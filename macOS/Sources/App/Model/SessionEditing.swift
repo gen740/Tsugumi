@@ -110,7 +110,7 @@ extension ProjectSession {
   }
 
   /// The human name; exact addresses keep the permanent identifier.
-  func displayName(_ k: CardKey) -> String { cardMeta(k)?["name"]?.string ?? path(k).last ?? k }
+  func displayName(_ k: CardKey) -> String { cardMeta(k)?["name"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? path(k).last ?? k }
 
   /// A human-readable path. Tools and evidence links use the original segments.
   func displayPath(_ segments: [String]) -> String {
@@ -592,6 +592,14 @@ extension ProjectSession {
     let next = existing.count == 1 ? existing[0]["to"]?["card"]?.string.map { key(scope + [$0]) } : nil
     let needsFork = !existing.isEmpty && kind(from.0) != .fork && (next.map { kind($0) != .fork } ?? true)
     let forkId = needsFork ? try await newCardId("fork", in: scope) : nil
+    func valid(_ end: (CardKey, String), output: Bool) -> Bool {
+      guard instance(end.0) != nil, Array(path(end.0).dropLast()) == scope else { return false }
+      if forkId == nil { return true } // No suspension: the caller's visible ports are still current.
+      if end.1 == CardGeometry.newPort { return kind(end.0) == .draft }
+      let ports = portData(end.0)
+      return (output ? ports.outputs : ports.inputs).contains { $0.name == end.1 }
+    }
+    guard isEditable, valid(from, output: true), valid(to, output: false) else { return }
     edit { s in
       // An end at CardGeometry.newPort makes the Draft's port now.
       let fromPort = s.draftPort(from, output: true, other: to.1, in: scope)
@@ -778,16 +786,19 @@ extension ProjectSession {
   }
 
   func setParam(_ k: CardKey, _ name: String, _ value: JSONValue?) {
-    edit { s in
-      s.updateCard(k) { c in
-        var params = c["params"]?.array ?? []
-        if let i = params.firstIndex(where: { $0["name"]?.string == name }) {
-          params[i]["data"] = value
-        } else if c["template"]?.string == CardKind.switchCard.rawValue, name == "value", let value {
-          params.append(.object([("name", .string(name)), ("type", .string("bool")), ("data", value)]))
-        }
-        c["params"] = .array(params)
+    edit { $0.updateParam(k, name, value) }
+  }
+
+  /// Mutates the value inside the caller's transaction, without an autosave.
+  func updateParam(_ k: CardKey, _ name: String, _ value: JSONValue?) {
+    updateCard(k) { c in
+      var params = c["params"]?.array ?? []
+      if let i = params.firstIndex(where: { $0["name"]?.string == name }) {
+        params[i]["data"] = value
+      } else if c["template"]?.string == CardKind.switchCard.rawValue, name == "value", let value {
+        params.append(.object([("name", .string(name)), ("type", .string("bool")), ("data", value)]))
       }
+      c["params"] = .array(params)
     }
   }
 

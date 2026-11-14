@@ -91,6 +91,7 @@ struct CardExecutionView: View {
         content
       }
     }
+    .navigationTitle(session.displayName(cardKey))
     .task(id: ExecutionHistoryRefresh(session: session, card: cardKey)) {
       await loadRuns()
     }
@@ -130,6 +131,7 @@ struct CardExecutionView: View {
               Image(systemName: r.status.state.symbol).foregroundStyle(r.status.state.color)
               VStack(alignment: .leading) {
                 Text(formatMillis(r.status.acceptedAt)).font(.callout)
+                if let mark = runMark(r.status) { Text(mark).font(.caption) }
                 Text("\(r.status.state.label) · 対象 \(session.displayPath(r.target.path))").font(.caption).foregroundStyle(.secondary)
               }
             }
@@ -144,6 +146,7 @@ struct CardExecutionView: View {
         }
         .frame(minWidth: 220, idealWidth: 260)
         VStack(spacing: 0) {
+          if let mark = runMark(record?.run.status ?? runs.first { $0.status.runId == runId }?.status) { Text(mark).font(.caption).padding(6) }
           if runId == nil {
             ContentUnavailableView("実行を選んでください", systemImage: "list.bullet.rectangle")
           } else {
@@ -229,6 +232,7 @@ struct CardExecutionView: View {
             Label("この Card は入出力を記録していません（設定 > 入出力 > 入出力を記録）。", systemImage: "info.circle")
               .foregroundStyle(.secondary)
           }
+          if let mark = runMark(record?.run.status) { Text(mark).font(.caption) }
           Text("入力").font(.headline)
           if rec.inputs.isEmpty { Text("なし").foregroundStyle(.secondary) }
           ForEach(Array(rec.inputs.compactMap { $0 }.enumerated()), id: \.offset) { _, v in valueBox(v) }
@@ -400,6 +404,7 @@ struct CardArtifactsView: View {
         content
       }
     }
+    .navigationTitle(session.displayName(cardKey))
     .task(id: session.lastFinished) { await loadRuns() }
   }
 
@@ -409,10 +414,11 @@ struct CardArtifactsView: View {
         Picker("実行", selection: $runId) {
           if runs.isEmpty { Text("成果物のある実行はありません").tag(String?.none) }
           ForEach(runs, id: \.status.runId) { r in
-            Text("\(formatMillis(r.status.acceptedAt)) · \(r.status.state.label)").tag(Optional(r.status.runId))
+            Text("\(formatMillis(r.status.acceptedAt)) · \(r.status.state.label)" + (runMark(r.status).map { " · " + $0 } ?? "")).tag(Optional(r.status.runId))
           }
         }
         .frame(maxWidth: 360)
+        if let mark = runMark(runs.first { $0.status.runId == runId }?.status) { Text(mark).font(.caption) }
         Spacer()
         if let a = selectedArtifact, let m = member {
           Button("書き出す…") { Task { await export(a, m) } }
@@ -540,6 +546,7 @@ struct VisualizationWindow: View {
       DisplayContent(display: session.displays[cardKey], large: true)
     }
     .padding(16)
+    .navigationTitle(session.displayName(cardKey))
     .task { await session.refreshVisibleDisplays() }
   }
 }

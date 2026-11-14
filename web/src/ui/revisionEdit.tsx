@@ -35,7 +35,7 @@ export class RevisionEdit extends Observable {
     this.changed()
     try {
       this.savedRev = await session.applyEdit(revision, change)
-      this.reload(session.rev)
+      this.reload(this.savedRev ?? session.rev)
       return true
     } catch (e) {
       if (e instanceof RPCFailure && (e.kind === D.FailureKind.revision_conflict || e.kind === D.FailureKind.hash_conflict)) {
@@ -63,4 +63,16 @@ export function RevisionEditNotice({ edit, text, overwrite, reload }: { edit: Re
     {edit.error && <span className="callout selectable" style={{ color: 'var(--red)' }}>{edit.error}</span>}
     {edit.keptText !== undefined && <details><summary>{L('再適用のために保持した編集内容')}</summary><pre className="selectable" style={{ maxHeight: 140, overflow: 'auto' }}>{edit.keptText}</pre></details>}
   </div>
+}
+
+/** The value and revision actually visible when an inline edit starts. */
+export class InlineParamEdit extends RevisionEdit {
+  initial = ''
+  begin(value: string, rev: bigint) { this.initial = value; this.reload(rev) }
+  async commit(session: ProjectSession, text: string, overwrite: boolean, change: (s: ProjectSession) => void) {
+    if (text === this.initial) return true
+    const ok = await this.apply(session, overwrite, change)
+    if (ok) this.initial = text
+    return ok
+  }
 }

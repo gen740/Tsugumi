@@ -23,6 +23,7 @@ export const sOpt = (v: string | Uint8Array | null | undefined): string | undefi
 export class RPCFailure extends Error {
   readonly kind: D.FailureKind
   readonly args: Record<string, string>
+  readonly permissions: string[]
   readonly diagnostic?: string
   readonly currentRev?: bigint
   readonly retryAfterMs?: number
@@ -30,6 +31,7 @@ export class RPCFailure extends Error {
   constructor(f: { kind: D.FailureKind; args?: D.KeyValueT[]; diagnostic?: string | Uint8Array | null; currentRev?: bigint | null; retryAfterMs?: number | null }) {
     super(`${D.FailureKind[f.kind] ?? f.kind}: ${s(f.diagnostic)}`)
     this.kind = f.kind
+    this.permissions = (f.args ?? []).filter(kv => s(kv.key) === 'permission').map(kv => s(kv.value))
     this.args = {}
     for (const kv of f.args ?? []) this.args[s(kv.key)] = s(kv.value)
     this.diagnostic = sOpt(f.diagnostic)
@@ -211,8 +213,8 @@ export class RPCClient {
     return this.call<R.ProjectValidateResultT>(RequestPayload.ProjectValidateRequest,
       Object.assign(new R.ProjectValidateRequestT(), { mode: D.ValidateMode.executable, changes: changes ?? [] }))
   }
-  reload(baseRev: bigint, opId: string, origin: string) {
-    return this.call<R.SaveResultT>(RequestPayload.ProjectReloadRequest, Object.assign(new R.ProjectReloadRequestT(), { baseRev, opId, origin }))
+  reload(baseRev: bigint, opId: string, origin: string, approvedPermissions: string[] = []) {
+    return this.call<R.SaveResultT>(RequestPayload.ProjectReloadRequest, Object.assign(new R.ProjectReloadRequestT(), { baseRev, opId, origin, approvedPermissions }))
   }
   operation(opId: string) {
     return this.call<R.OperationResultT>(RequestPayload.OperationGetRequest, Object.assign(new R.OperationGetRequestT(), { opId }))

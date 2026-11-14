@@ -898,6 +898,7 @@
 "変更を確かめています" = "Checking the changes";
 "外観" = "Appearance";
 "外部の Nix ソースを読む" = "Read a Nix source from outside";
+"外部の変更が Card の権限を広げます" = "External changes widen Card permissions";
 "外部の変更を再読込" = "Reload External Changes";
 "外部の実行サービスでは worker の状態を残せません。" = "External execution services do not reuse workers.";
 "外部の実行サービスにはファイルアクセスの制限が必要です。" = "Remote execution requires restricted file access.";
@@ -1241,6 +1242,7 @@
 "表示" = "Show";
 "表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。" = "Approval covers only this operation on the displayed targets. Every new operation needs approval again. Declining changes nothing.";
 "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。" = "Allow access to the listed resource and scope. Content read may be sent to the connected model.";
+"表示された権限を許可して、外部の変更を読み込みますか？" = "Allow the listed permissions and reload the external changes?";
 "表示した scratch を削除…" = "Delete listed scratch…";
 "表示した過去の scratch を削除しますか？" = "Delete the listed past scratch?";
 "表示しない" = "Don't show";
@@ -1323,6 +1325,8 @@
 "選択をグループ化" = "Group Selection";
 "選択対象を削除" = "Delete Selection";
 "選択済み" = "Selected";
+"部分実行" = "Partial run";
+"部分実行の結果を使用" = "Uses a partial run's result";
 "配線の交差を減らす" = "Untangle Wires";
 "配線の交差を減らす（Card の位置は保持）" = "Untangle wires (keep Card positions)";
 "配置されていない定義" = "Definitions not placed";
