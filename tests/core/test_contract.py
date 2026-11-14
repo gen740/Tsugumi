@@ -459,28 +459,6 @@ def test_sdk_prepare_status_and_read(builtin_client):
     assert c.call("ProjectInspectRequest").rev == rev + 1
 
 
-def test_import_through_launcher_grant(builtin_daemon, tmp_path):
-    """Import accepts a launcher grant and rejects unknown grants."""
-    d = builtin_daemon
-    other = tmp_path / "other"
-    builtin_project(other)
-    grant = new_id()
-    (d.control / "grants.json").write_text(json.dumps({"grants": {grant: str(other)}}))
-    c = d.connect()
-    rev = c.call("ProjectInspectRequest").rev
-    res = c.call("ProjectImportRequest", baseRev=rev, opId=new_id(), origin="t", sourceGrant=grant,
-                 definitions=["src"])
-    mapping = {text(m.from_): text(m.to) for m in res.idMap} if hasattr(res.idMap[0], "from_") else \
-              {text(getattr(m, "from")): text(m.to) for m in res.idMap}
-    assert mapping == {"src": "src-2"}
-    snap = c.call("ProjectInspectRequest")
-    assert any(text(dd.id) == "src-2" for dd in snap.definitions)
-    assert any(text(s.path) == "definitions/src-2/_outputs.fbs" for s in snap.sources)
-    with pytest.raises(RpcFailure) as e:
-        c.call("ProjectImportRequest", baseRev=snap.rev, opId=new_id(), origin="t", sourceGrant=new_id())
-    assert e.value.kind == "permission_denied"
-
-
 def test_run_logs_and_display(project, tmp_path, core_factory):
     """A worker run publishes its display, paged UTF-8 log and completed history."""
     message = "日本語のログ" * 50

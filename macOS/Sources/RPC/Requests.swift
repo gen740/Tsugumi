@@ -218,17 +218,6 @@ public extension RPCClient {
     return try await call(.viewsaverequest, r)
   }
 
-  /// Copies definitions (and their sources) from a granted project snapshot.
-  func importDefinitions(baseRev: UInt64, opId: UUID, origin: String, grant: String, definitions: [String]) async throws -> Tsugumi_RPC_ProjectImportResultT {
-    let r = Tsugumi_RPC_ProjectImportRequestT()
-    r.baseRev = baseRev
-    r.opId = opId.uuidString.lowercased()
-    r.origin = origin
-    r.sourceGrant = grant
-    r.definitions = definitions
-    return try await call(.projectimportrequest, r)
-  }
-
   /// Generates the Card's contracts (_inputs.fbs, _outputs.fbs, _params.fbs)
   /// for one revision and returns the file list when ready.
   func generatedContracts(card: [String], atRev: UInt64) async throws -> [Tsugumi_RPC_SDKFileT] {

@@ -364,34 +364,3 @@ export function FolderPicker({ initial, message, onPick, onPickMultiple, onClose
     </Sheet>
   )
 }
-
-/** Takes in another Tsugumi project as a Card in Card in a scope (externals
- *  get a copy; the original folder is not linked). */
-export function ImportDefinitionsSheet({ session, onClose, scope = [], at = { x: 240, y: 160 } }: {
-  session: ProjectSession; onClose: () => void; scope?: string[]; at?: { x: number; y: number }
-}) {
-  const [error, setError] = useState<string>()
-  if (error) {
-    return (
-      <Sheet onClose={onClose} width={420}>
-        <div className="confirm">
-          <div className="confirm-title">{L('取り込めませんでした')}</div>
-          <div className="secondary selectable">{error}</div>
-          <div className="row end"><Button kind="prominent" onClick={onClose}>OK</Button></div>
-        </div>
-      </Sheet>
-    )
-  }
-  return (
-    <FolderPicker message={L('取り込む Tsugumi のプロジェクト（tsugumi.json のあるフォルダ）を選んでください。externals にコピーされ、元のフォルダとは連動しません。')}
-      requireProject confirmLabel={L('取り込む')} onClose={onClose}
-      onPick={async (folder) => {
-        try {
-          await session.importProject(folder, scope, at)
-          onClose()
-        } catch (e) {
-          setError(errorText(e))
-        }
-      }} />
-  )
-}

@@ -1,5 +1,5 @@
 // Presentation adapter for core-owned project environments.
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { L } from './i18n'
@@ -53,29 +53,7 @@ export interface Environments {
   stopAll(): Promise<void[]>
   /** The folders a project's chats may read now. */
   attachFolders(dir: string, key: string, folders: string[]): void | Promise<void>
-  grantImport(dir: string, source: string): string
   list(): { key: string; project: string; state: EnvState }[]
-}
-
-/** Copies what ProjectImport reads of a project into the control folder and
- *  lists it in grants.json, under the path tsugumid will read it from. */
-export function writeGrant(control: string, source: string, seenAs: (grant: string, dest: string) => string): string {
-  const grant = randomUUID()
-  const dest = path.join(control, 'grants', grant)
-  fs.mkdirSync(dest, { recursive: true })
-  for (const item of ['tsugumi.json', 'layout.json', 'definitions']) {
-    const src = path.join(source, item)
-    if (fs.existsSync(src)) fs.cpSync(src, path.join(dest, item), { recursive: true })
-  }
-  const grantsFile = path.join(control, 'grants.json')
-  let grants: { grants: Record<string, string> } = { grants: {} }
-  try {
-    grants = JSON.parse(fs.readFileSync(grantsFile, 'utf8'))
-  } catch {}
-  grants.grants[grant] = seenAs(grant, dest)
-  fs.writeFileSync(grantsFile + '.tmp', JSON.stringify(grants))
-  fs.renameSync(grantsFile + '.tmp', grantsFile)
-  return grant
 }
 
 /** Stable identity of a project folder. Aliases and renames share its inode. */
@@ -178,10 +156,6 @@ export class EnvironmentManager implements Environments {
     await this.call(dir, 'Folders')
   }
   controlDir(key: string) { return this.envs.get(key)?.control ?? path.join(this.vm?.support ?? this.support, this.vm ? 'environments' : 'env', key, 'control') }
-  grantImport(dir: string, source: string) {
-    const entry = this.env(dir)
-    return writeGrant(this.controlDir(entry.key), source, (grant, dest) => this.vm ? `/control/grants/${grant}` : dest)
-  }
   async terminal(dir: string, cols: number, rows: number): Promise<VMTerminal> {
     const ready = await this.start(dir)
     if (ready.state !== 'ready') throw new Error(ready.state === 'failed' ? ready.message : L('実行環境が起動していません'))

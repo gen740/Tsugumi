@@ -304,13 +304,6 @@ export class RPCClient {
   saveView(viewId: string, baseViewRev: bigint, view: R.ViewStateT) {
     return this.call<R.ViewSaveResultT>(RequestPayload.ViewSaveRequest, Object.assign(new R.ViewSaveRequestT(), { viewId, baseViewRev, view }))
   }
-  /** Copies definitions (and their sources) from a granted project snapshot. */
-  importDefinitions(baseRev: bigint, opId: string, origin: string, sourceGrant: string, definitions: string[]) {
-    return this.call<R.ProjectImportResultT>(
-      RequestPayload.ProjectImportRequest,
-      Object.assign(new R.ProjectImportRequestT(), { baseRev, opId, origin, sourceGrant, definitions }),
-    )
-  }
   /** Each Card's latest invocation of a run. */
   latestInvocations(runId: string) {
     return this.call<R.InvocationPageT>(RequestPayload.RunLatestInvocationsRequest, Object.assign(new R.RunLatestInvocationsRequestT(), { runId }))

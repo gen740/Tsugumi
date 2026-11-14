@@ -32,7 +32,7 @@ Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* �
 ## Using it
 
 - Use `/tsugumi:open <project folder>`, or ask "in this Tsugumi project, do …". Claude Code opens the project with `tsugumi_open` before working.
-- `tsugumi_open` looks for a running Web UI server (`server.json` in the data folder) and starts one if there is none (it keeps running after Claude Code closes; stop it by stopping that process). If a page is showing that project, or a Home page is open, the project is shown there (a page showing another project is not switched); otherwise the server opens it in a browser (because the key in `server.json` is not the page's key; [Security §8](security.md#the-agents-permission-boundary)).
+- `tsugumi_open` looks for a running Web UI server (`server.json` in the data folder) and starts one if there is none (it keeps running after Claude Code closes; stop it by stopping that process). If a page is showing that project, or a Home page is open, the project is shown there (a page showing another project is not switched); otherwise the server opens it in a browser (because the key in `server.json` is not the page's key; [Security §7](security.md#the-agents-permission-boundary)).
 - A new project can be made with `create: true` on `tsugumi_open` (only for a folder that does not exist yet).
 - The first `tsugumi_open` returns the MCP instructions defined by `INSTRUCTIONS` in `web/server/mcp.ts`.
 
