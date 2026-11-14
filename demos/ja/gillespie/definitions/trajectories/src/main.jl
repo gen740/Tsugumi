@@ -22,7 +22,7 @@ end
 
 # Several single runs over the rate equation dn/dt = kV - gamma n, n(0) = 0.
 function main(inputs, report)
-    m = Tsugumi.input(inputs, "settings")
+    m = inputs.settings
     k, gamma, volume, runs = m["synthesis"], m["degradation"], m["volume"], Int(m["runs"])
     shown = Int(inputs.params["shown_runs"])
     birth = k * volume

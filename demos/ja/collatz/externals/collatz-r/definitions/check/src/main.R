@@ -7,8 +7,8 @@ exact <- function(x, what = "a value") {
 
 # The loop delivers a merge union tagged with the arrival port: `init` carries a Number, `half` and `triple`
 # a Walk (the value and every value before it, so that no Card has to remember anything between calls).
-arrival <- function(inputs, report) {
-  m <- inputs$input("arrival")
+arrival <- function(inputs) {
+  m <- inputs$arrival
   n <- exact(m$value$value, "n")
   list(n = n, path = if (m$value_type == "init") n else exact(m$value$path, "the sequence"))
 }
@@ -17,9 +17,9 @@ arrival <- function(inputs, report) {
 # A ulong field takes digits: a double such as 27 would be written as 27.0, which the type rejects.
 whole <- function(x) sprintf("%.0f", x)
 
-main <- function(inputs, report) {
+main <- function(inputs) {
   outputs <- list()
-  a <- arrival(inputs, report)
+  a <- arrival(inputs)
   if (a$n == 0) stop("Collatz is defined for positive integers")
   if (a$n == 1) return(invisible())
   outputs[["value"]] <- list(value = whole(a$n), path = I(whole(a$path)))

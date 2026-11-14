@@ -1,5 +1,4 @@
 """Logistic regression: one weight per pixel for each digit, the largest weighted sum wins."""
-import tsugumi
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -10,8 +9,6 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.linear_model import LogisticRegression
-
-from inputs.data.mnist.SubsetFile import SubsetFile
 
 
 def confusions(ax, y, pred):
@@ -26,28 +23,23 @@ def confusions(ax, y, pred):
     ax.tick_params(length=0, labelsize=8)
 
 
-def send(inputs, name, settings, digest, y, pred, fit, predict):
-    result_ports = {}
+def result(name, settings, digest, y, pred, fit, predict):
     model = name
-    settings = settings
-    digest = digest
     predictions = pred.astype(np.uint8)
-    _out_value = {}
-    _out_value['model'] = model
-    _out_value['settings'] = settings
-    _out_value['digest'] = digest
-    _out_value['accuracy'] = float(np.mean(pred == y))
-    _out_value['fit_seconds'] = fit
-    _out_value['predict_seconds'] = predict
-    _out_value['predictions'] = predictions
-    result_ports.update({'result': _out_value})
-    return result_ports
+    return {'result': {
+        'model': model,
+        'settings': settings,
+        'digest': digest,
+        'accuracy': float(np.mean(pred == y)),
+        'fit_seconds': fit,
+        'predict_seconds': predict,
+        'predictions': predictions,
+    }}
 
 
 def main(inputs, report):
-    result_ports = {}
     c, max_iter = inputs.params.c, inputs.params.maxIter
-    data = np.load(inputs.input("data", SubsetFile).Value().decode())
+    data = np.load(inputs.data.value.decode())
     train_x, train_y, test_x, test_y = data["train_images"], data["train_labels"], data["test_images"], data["test_labels"]
 
     model = LogisticRegression(C=c, max_iter=max_iter)
@@ -58,7 +50,7 @@ def main(inputs, report):
     pred = model.predict(test_x)
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    report.log(str(f"logistic C={c}: accuracy {accuracy:.4f}, {model.n_iter_[0]} iterations, fit {fit:.3f} s, predict {predict:.3f} s"))
+    report.log(f"logistic C={c}: accuracy {accuracy:.4f}, {model.n_iter_[0]} iterations, fit {fit:.3f} s, predict {predict:.3f} s")
 
     weights = model.coef_.reshape(10, 28, 28)
     mosaic = np.vstack([np.hstack(weights[:5]), np.hstack(weights[5:])])
@@ -73,5 +65,4 @@ def main(inputs, report):
     fig.suptitle(f"ロジスティック回帰 C={c:g}: 正解率 {accuracy:.4f}、学習 {fit:.2f} 秒、予測 {predict:.3f} 秒", fontsize=11)
     report.figure()
 
-    result_ports.update(send(inputs, 'logistic', f'C={c:g}', str(data['digest']), test_y, pred, fit, predict))
-    return result_ports
+    return result('logistic', f'C={c:g}', str(data['digest']), test_y, pred, fit, predict)

@@ -12,5 +12,5 @@
       "description": "Integer value"
     }
   ],
-  "content": "Implement in Rust. Multiply number.value by the uint64 parameter factor (default 3), display the product, and emit out. Copy the pinned Cargo scaffold from demos/rust-pipeline/definitions/scale. Use namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;"
+  "content": "Implement in Rust. Multiply number.value by the uint64 parameter factor (default 3), display the product, and return out. Copy the pinned Cargo scaffold from demos/en/rust-pipeline/definitions/scale. Use namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;"
 }

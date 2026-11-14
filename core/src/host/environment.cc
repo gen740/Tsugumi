@@ -398,8 +398,6 @@ struct Environments::Impl {
       for (const auto* file : {"server.ready", "server.startup-error.json"})
         std::filesystem::remove(control / file);
       std::filesystem::remove(sockets / "s");
-      if (!std::filesystem::exists(control / "grants.json"))
-        fs::write_atomic(control / "grants.json", R"({"grants":{}})", 0600);
       const auto roots = options.directory.parent_path() / "build-roots";
       // Disk-backed, and without a symbolic link on the way: the project
       // service refuses a scratch path that passes through one.

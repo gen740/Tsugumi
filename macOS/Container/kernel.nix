@@ -11,7 +11,7 @@
 # and with unprivileged BPF off by default (BPF_UNPRIV_DEFAULT_OFF) and Yama
 # (ptrace of descendants only). BPF JIT and userfaultfd are not built in. The
 # rest of the hardening is sysctls set by the VM's /init (vm-boot.nix).
-{ lib, stdenv, fetchurl, flex, bison, bc, perl, openssl, elfutils, python3 }:
+{ stdenv, fetchurl, flex, bison, bc, perl, openssl, elfutils, python3 }:
 stdenv.mkDerivation rec {
   pname = "tsugumi-guest-kernel";
   version = "6.12.115";

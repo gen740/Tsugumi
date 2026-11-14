@@ -2,8 +2,8 @@ using Printf
 
 # All the scores side by side: fit, penalized fit and forecast.
 function main(inputs, report)
-    f = Tsugumi.input(inputs, "fits")
-    h = Tsugumi.input(inputs, "forecast")
+    f = inputs.fits
+    h = inputs.forecast
     models = f["models"]
     best_aicc = minimum(m["aicc"] for m in models)
     best_bic = minimum(m["bic"] for m in models)

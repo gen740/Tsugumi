@@ -26,7 +26,7 @@ function brute_force(net_load, price, export_ratio; capacity, power, efficiency,
 end
 
 function main(inputs, report)
-    m = Tsugumi.input(inputs, "scenario")
+    m = inputs.scenario
     hours = Int(inputs.params["brute_hours"])
     first_hour = Int(inputs.params["brute_from_hour"]) + 1
     window = first_hour:first_hour+hours-1

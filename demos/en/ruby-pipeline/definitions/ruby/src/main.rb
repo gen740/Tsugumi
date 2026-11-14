@@ -5,7 +5,7 @@ end
 
 def main(inputs, report)
   outputs = {}
-  received = inputs.input('number').fetch('value')
+  received = inputs.number.fetch('value')
   result = received * inputs.params.fetch('factor')
   outputs['out'] = {value: result}
   report.log("Ruby run #{@runs}: #{received} -> #{result}")

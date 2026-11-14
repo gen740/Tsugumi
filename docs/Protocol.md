@@ -9,7 +9,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 - **Requests that change something**: carry an `op_id`, and a resend with the same `op_id` is applied only once. If a response is lost, check with `OperationGet`.
 - **The Agent's tools**: made from the same schema (`tsugumi.bfbs`) ([Features](features.md#9-agent)).
 
-There are 48 requests.
+There are 47 requests.
 
 ## Connection
 
@@ -38,7 +38,6 @@ There are 48 requests.
 | [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. |
 | [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. |
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
-| [`ProjectImport`](#projectimport) | ProjectImportResult | definitions = [] imports every definition of the grant. |
 | [`ProjectShell`](#projectshell) | ProjectShellResult | Runs in the project VM as the project user, with the project directory as cwd. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream is capped at 262144 bytes. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Agent use requires explicit Shell access in addition to Read, Write and Run. After editing project definitions or tsugumi.json with a command, use ProjectReload before inspecting or running the changed project through core. |
 | [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Only while no run or SDK job is active. |
 | [`ProjectCacheUsage`](#projectcacheusage) |  | Cached shared-store measurement; never triggers a store traversal on the RPC lane. |
@@ -87,16 +86,6 @@ No fields.
 | `targets` | `[CardPath]` |  |  |
 | `mode` | `ValidateMode` |  |  |
 | `changes` | `[DocumentChange]` |  | Proposed changes (as in project_save): the document as it would be after them is checked and nothing is saved. For the apps' editors; the model is not offered this field (it saves, then checks). |
-
-### ProjectImport
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `base_rev` | `uint64` |  |  |
-| `op_id` | `string` | yes |  |
-| `origin` | `string` | yes |  |
-| `source_grant` | `string` | yes |  |
-| `definitions` | `[string]` |  |  |
 
 ### ProjectShell
 

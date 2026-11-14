@@ -5,7 +5,7 @@ include("ecology.jl")
 # simulation with the years it has not seen.
 function main(inputs, report)
     outputs = Dict{String,Any}()
-    m = Tsugumi.input(inputs, "pelts")
+    m = inputs.pelts
     years = Int.(m["years"])
     hare, lynx = Float64.(m["hare"]), Float64.(m["lynx"])
     until = Int(inputs.params["fit_until"])

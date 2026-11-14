@@ -1,6 +1,5 @@
 """Otsu threshold, connected components, then a distance-transform watershed that
 splits what the threshold left joined."""
-import tsugumi
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import ndimage as ndi
@@ -11,14 +10,12 @@ from skimage.measure import label
 from skimage.morphology import remove_small_objects
 from skimage.segmentation import watershed
 
-from inputs.cleaned.cells.Cleaned import Cleaned
-
 
 def main(inputs, report):
-    cleaned = inputs.input("cleaned", Cleaned)
+    cleaned = inputs.cleaned
     p = inputs.params
-    size = cleaned.Size()
-    image = cleaned.ImageAsNumpy().reshape(size, size)
+    size = cleaned.size
+    image = cleaned.image.reshape(size, size)
 
     level = threshold_otsu(image)
     mask = remove_small_objects(ndi.binary_fill_holes(image > level), max_size=p.minArea)
@@ -28,7 +25,7 @@ def main(inputs, report):
     markers = np.zeros(image.shape, dtype=np.int32)
     markers[tuple(peaks.T)] = np.arange(1, len(peaks) + 1)
     split = watershed(-distance, markers, mask=mask)
-    report.log(str(f"Otsu level {level:.4f}; threshold only {plain.max()} objects; watershed {split.max()} objects"))
+    report.log(f"Otsu level {level:.4f}; threshold only {plain.max()} objects; watershed {split.max()} objects")
 
     fig, axes = plt.subplots(1, 3, figsize=(11, 4))
     rng = np.random.default_rng(0)
@@ -46,8 +43,8 @@ def main(inputs, report):
     report.figure()
     plain_v = plain.astype(np.int32).ravel()
     split_v = split.astype(np.int32).ravel()
-    _out_value = {}
-    _out_value['size'] = size
-    _out_value['plain'] = plain_v
-    _out_value['split'] = split_v
-    return {'labels': _out_value}
+    return {'labels': {
+        'size': size,
+        'plain': plain_v,
+        'split': split_v,
+    }}

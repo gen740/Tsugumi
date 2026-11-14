@@ -2,15 +2,13 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-from inputs.comparison.mnist.Comparison import Comparison
-
 
 def main(inputs, report):
-    c = inputs.input("comparison", Comparison)
-    models = [c.Models(i).decode() for i in range(c.ModelsLength())]
-    accuracy = c.AccuracyAsNumpy()
-    labels = c.TestLabelsAsNumpy()
-    predictions = c.PredictionsAsNumpy().reshape(len(models), len(labels))
+    c = inputs.comparison
+    models = [c.models[i].decode() for i in range(len(c.models))]
+    accuracy = c.accuracy
+    labels = c.testLabels
+    predictions = c.predictions.reshape(len(models), len(labels))
 
     order = np.argsort(-accuracy, kind="stable")
     recall = np.array([[np.mean(predictions[m][labels == d] == d) for d in range(10)] for m in order])

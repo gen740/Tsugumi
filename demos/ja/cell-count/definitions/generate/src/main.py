@@ -1,6 +1,5 @@
 """A synthetic fluorescence-like image with known cell centres: blobs with soft
 edges, touching pairs, uneven illumination and noise."""
-import tsugumi
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -64,7 +63,7 @@ def main(inputs, report):
     rng = np.random.default_rng(p.seed)
     centres = place(rng, size, cells, pairs, p.radius)
     image = render(rng, size, centres, p.radius, p.noise, p.unevenness)
-    report.log(str(f"seed {p.seed}: {len(centres)} cells, {pairs} touching pairs, noise {p.noise}, unevenness {p.unevenness}"))
+    report.log(f"seed {p.seed}: {len(centres)} cells, {pairs} touching pairs, noise {p.noise}, unevenness {p.unevenness}")
 
     fig, axes = plt.subplots(1, 2, figsize=(9, 4.8))
     high = np.percentile(image, 99.5)
@@ -81,14 +80,14 @@ def main(inputs, report):
     image_v = image.astype(np.float32).ravel()
     x_v = centres[:, 0].astype(np.float32)
     y_v = centres[:, 1].astype(np.float32)
-    _out_value = {}
-    _out_value['size'] = size
-    _out_value['image'] = image_v
-    _out_value['true_x'] = x_v
-    _out_value['true_y'] = y_v
-    _out_value['radius'] = p.radius
-    _out_value['pairs'] = pairs
-    _out_value['seed'] = p.seed
-    _out_value['noise'] = p.noise
-    _out_value['unevenness'] = p.unevenness
-    return {'scene': _out_value}
+    return {'scene': {
+        'size': size,
+        'image': image_v,
+        'true_x': x_v,
+        'true_y': y_v,
+        'radius': p.radius,
+        'pairs': pairs,
+        'seed': p.seed,
+        'noise': p.noise,
+        'unevenness': p.unevenness,
+    }}

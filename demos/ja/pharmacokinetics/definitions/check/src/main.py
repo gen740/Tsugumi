@@ -5,7 +5,6 @@ import math
 
 import numpy as np
 
-from inputs.curves.pk.Curves import Curves
 from tsugumi import Failure
 
 
@@ -20,15 +19,15 @@ def superposition(t, dose, tau, ke, ka, volume, fraction):
 
 
 def main(inputs, report):
-    c = inputs.input("curves", Curves)
-    doses, intervals = c.DosesMgAsNumpy(), c.IntervalsHAsNumpy()
-    ke = math.log(2) / c.HalfLifeH()
-    ka, volume, fraction = c.KaPerH(), c.VolumeL(), c.Bioavailability()
+    c = inputs.curves
+    doses, intervals = c.dosesMg, c.intervalsH
+    ke = math.log(2) / c.halfLifeH
+    ka, volume, fraction = c.kaPerH, c.volumeL, c.bioavailability
     if abs(ka - ke) < 1e-9:
         raise Failure("output_invalid", "ka equals ke: the closed form here divides by ka - ke")
-    t = c.THAsNumpy()
-    conc = c.ConcAsNumpy().reshape(len(doses), len(t))
-    first, last, last_dose = c.FirstTroughAsNumpy(), c.LastTroughAsNumpy(), c.LastDoseHAsNumpy()
+    t = c.tH
+    conc = c.conc.reshape(len(doses), len(t))
+    first, last, last_dose = c.firstTrough, c.lastTrough, c.lastDoseH
 
     lines = [
         "**数値解（solve_ivp）と閉じた式の照合**（架空の薬物、教育用のモデル）",
@@ -61,4 +60,4 @@ def main(inputs, report):
                      "ratio_simple": ratio_simple, "mean_numeric": mean_numeric, "mean_exact": mean_exact, "reached": reached})
     lines += ["", "$R$ は最初の谷に対する最後の谷の比です。到達が 99.9% に満たないときは、$R$ の差で失敗にはしません（`days` を延ばすと近づきます）。"]
     report.markdown("\n".join(lines))
-    report.log(str("result: " + json.dumps(rows)))
+    report.log("result: " + json.dumps(rows))

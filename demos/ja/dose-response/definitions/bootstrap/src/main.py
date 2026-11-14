@@ -1,11 +1,7 @@
 """Residual bootstrap: refit on the fitted curve plus resampled residuals, then
 take percentile intervals. Says so when an interval leaves the measured range."""
-import tsugumi
 import numpy as np
 from scipy.optimize import curve_fit
-
-from inputs.fit.dose.Fit import Fit
-from inputs.plate.dose.Plate import Plate
 
 
 BLOWN_UP = 30  # an interval this many times wide, leaving the range, does not fix the EC50
@@ -13,14 +9,6 @@ BLOWN_UP = 30  # an interval this many times wide, leaving the range, does not f
 
 def hill4(x, bottom, top, log_ec50, hill):
     return bottom + (top - bottom) / (1 + 10 ** ((log_ec50 - np.log10(x)) * hill))
-
-
-def strings(items):
-    offsets = [s for s in items]
-    _b_items = []
-    for o in reversed(offsets):
-        _b_items.append(o)
-    return list(reversed(_b_items))
 
 
 def resample(x, y, est, n_boot, bounds, rng):
@@ -43,16 +31,16 @@ def yes(inside):
 
 
 def main(inputs, report):
-    plate = inputs.input("plate", Plate)
-    fit = inputs.input("fit", Fit)
+    plate = inputs.plate
+    fit = inputs.fit
     p = inputs.params
     n_boot = p.nBoot
-    conc = plate.ConcAsNumpy()
-    reps = plate.Replicates()
-    n = plate.NamesLength()
-    names = [plate.Names(i).decode() for i in range(n)]
-    response = plate.ResponseAsNumpy().reshape(n, len(conc), reps)
-    estimates = fit.ParamsAsNumpy().reshape(n, 4)
+    conc = plate.conc
+    reps = plate.replicates
+    n = len(plate.names)
+    names = [plate.names[i].decode() for i in range(n)]
+    response = plate.response.reshape(n, len(conc), reps)
+    estimates = fit.params.reshape(n, 4)
     x = np.repeat(conc, reps)
     bounds = ([-50, -50, np.log10(conc[0]) - 3, 0.1], [150, 400, np.log10(conc[-1]) + 3, 8])
     rng = np.random.default_rng(p.seed)
@@ -73,7 +61,7 @@ def main(inputs, report):
         log_samples.append(samples[:, 2])
         hill_samples.append(samples[:, 3])
 
-        true_ec50, true_hill = plate.Ec50(i), plate.Hill(i)
+        true_ec50, true_hill = plate.ec50[i], plate.hill[i]
         ec50_ok = ec50[i, 1] <= true_ec50 <= ec50[i, 2]
         hill_ok = hill_low <= true_hill <= hill_high
         missed += (not ec50_ok) + (not hill_ok)
@@ -81,8 +69,8 @@ def main(inputs, report):
                     f"{ec50[i, 2] / ec50[i, 1]:.1f} 倍 | {yes(ec50_ok)} |")
         rows.append(f"| {name} | Hill 勾配 | {true_hill:.3g} | {hill[i, 0]:.3g} | {hill_low:.3g} – {hill_high:.3g} | "
                     f"差 {hill_high - hill_low:.2f} | {yes(hill_ok)} |")
-        report.log(str(f"{name}: EC50 {ec50[i, 0]:.4g} [{ec50[i, 1]:.4g}, {ec50[i, 2]:.4g}] true {true_ec50:g}; "
-              f"hill {hill[i, 0]:.3f} [{hill_low:.3f}, {hill_high:.3f}] true {true_hill:g}; failed refits {failed}"))
+        report.log(f"{name}: EC50 {ec50[i, 0]:.4g} [{ec50[i, 1]:.4g}, {ec50[i, 2]:.4g}] true {true_ec50:g}; "
+              f"hill {hill[i, 0]:.3f} [{hill_low:.3f}, {hill_high:.3f}] true {true_hill:g}; failed refits {failed}")
         if ec50[i, 1] < conc[0] or ec50[i, 2] > conc[-1]:
             where = f"上限 {ec50[i, 2]:.3g} µM" if ec50[i, 2] > conc[-1] else f"下限 {ec50[i, 1]:.3g} µM"
             width = ec50[i, 2] / ec50[i, 1]
@@ -104,21 +92,21 @@ def main(inputs, report):
     else:
         lines += ["", f"どちらの区間も測定範囲 {conc[0]:.3g} – {conc[-1]:.3g} µM の中にあります。"]
     report.markdown("\n".join(lines))
-    names_v = strings(names)
-    vectors = [v for v in (ec50[:, 0], ec50[:, 1], ec50[:, 2], np.array([plate.Ec50(i) for i in range(n)]), hill[:, 0], hill[:, 1], hill[:, 2], np.array([plate.Hill(i) for i in range(n)]), np.concatenate(log_samples), np.concatenate(hill_samples))]
-    _out_value = {}
-    _out_value['names'] = names_v
-    _out_value['ec50'] = vectors[0]
-    _out_value['ec50_low'] = vectors[1]
-    _out_value['ec50_high'] = vectors[2]
-    _out_value['ec50_true'] = vectors[3]
-    _out_value['hill'] = vectors[4]
-    _out_value['hill_low'] = vectors[5]
-    _out_value['hill_high'] = vectors[6]
-    _out_value['hill_true'] = vectors[7]
-    _out_value['n_boot'] = n_boot
-    _out_value['log_ec50_samples'] = vectors[8]
-    _out_value['hill_samples'] = vectors[9]
-    _out_value['conc_low'] = conc[0]
-    _out_value['conc_high'] = conc[-1]
-    return {'intervals': _out_value}
+    names_v = list(names)
+    vectors = [v for v in (ec50[:, 0], ec50[:, 1], ec50[:, 2], np.array([plate.ec50[i] for i in range(n)]), hill[:, 0], hill[:, 1], hill[:, 2], np.array([plate.hill[i] for i in range(n)]), np.concatenate(log_samples), np.concatenate(hill_samples))]
+    return {'intervals': {
+        'names': names_v,
+        'ec50': vectors[0],
+        'ec50_low': vectors[1],
+        'ec50_high': vectors[2],
+        'ec50_true': vectors[3],
+        'hill': vectors[4],
+        'hill_low': vectors[5],
+        'hill_high': vectors[6],
+        'hill_true': vectors[7],
+        'n_boot': n_boot,
+        'log_ec50_samples': vectors[8],
+        'hill_samples': vectors[9],
+        'conc_low': conc[0],
+        'conc_high': conc[-1],
+    }}

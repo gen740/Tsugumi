@@ -1,12 +1,10 @@
 """Fetches the public data files into the output folder and hands the folder on."""
-import tsugumi
 import hashlib
 import os
 import ssl
 import urllib.request
 
 import certifi
-
 
 
 def main(inputs, report, run):
@@ -22,13 +20,11 @@ def main(inputs, report, run):
             f.write(r.read())
         data = open(path, "rb").read()
         digest = hashlib.sha256(data).hexdigest()
-        report.log(str(f"{name}: {len(data)} bytes sha256 {digest} from {url}"))
+        report.log(f"{name}: {len(data)} bytes sha256 {digest} from {url}")
         rows.append(f"| `{name}` | {len(data):,} | `{digest[:16]}…` |")
     report.markdown(
         "**Fetch the 3D structure**\n\n| File | bytes | SHA-256 |\n| --- | ---: | --- |\n" + "\n".join(rows)
         + "\n\nSource: RCSB PDB 6LU7 (SARS-CoV-2 main protease with inhibitor N3)"
     )
-    s = '.'
-    _out_value = {}
-    _out_value['value'] = s
-    return {'data': _out_value}
+    s = run.output_directory
+    return {'data': {'value': s}}

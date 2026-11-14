@@ -1,5 +1,4 @@
 """A multilayer perceptron: two fully connected hidden layers, trained on the CPU with a fixed seed."""
-import tsugumi
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -12,7 +11,6 @@ import numpy as np
 import torch
 from torch import nn
 
-from inputs.data.mnist.SubsetFile import SubsetFile
 
 BATCH = 64
 
@@ -29,29 +27,24 @@ def confusions(ax, y, pred):
     ax.tick_params(length=0, labelsize=8)
 
 
-def send(inputs, name, settings, digest, y, pred, fit, predict):
-    result_ports = {}
+def result(name, settings, digest, y, pred, fit, predict):
     model = name
-    settings = settings
-    digest = digest
     predictions = pred.astype(np.uint8)
-    _out_value = {}
-    _out_value['model'] = model
-    _out_value['settings'] = settings
-    _out_value['digest'] = digest
-    _out_value['accuracy'] = float(np.mean(pred == y))
-    _out_value['fit_seconds'] = fit
-    _out_value['predict_seconds'] = predict
-    _out_value['predictions'] = predictions
-    result_ports.update({'result': _out_value})
-    return result_ports
+    return {'result': {
+        'model': model,
+        'settings': settings,
+        'digest': digest,
+        'accuracy': float(np.mean(pred == y)),
+        'fit_seconds': fit,
+        'predict_seconds': predict,
+        'predictions': predictions,
+    }}
 
 
 def main(inputs, report):
-    result_ports = {}
     params = inputs.params
     hidden, epochs, seed = params.hidden, params.epochs, params.seed
-    data = np.load(inputs.input("data", SubsetFile).Value().decode())
+    data = np.load(inputs.data.value.decode())
     test_y = data["test_labels"]
     train_x = torch.from_numpy(data["train_images"])
     train_y = torch.from_numpy(data["train_labels"]).long()
@@ -77,7 +70,7 @@ def main(inputs, report):
             optimizer.step()
             total += loss.item() * len(batch)
         losses.append(total / len(order))
-        report.log(str(f"epoch {epoch + 1}: train loss {losses[-1]:.4f}"))
+        report.log(f"epoch {epoch + 1}: train loss {losses[-1]:.4f}")
     fit = time.process_time() - start
 
     start = time.process_time()
@@ -85,7 +78,7 @@ def main(inputs, report):
         pred = model(test_x).argmax(dim=1).numpy()
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    report.log(str(f"mlp hidden={hidden} epochs={epochs}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s"))
+    report.log(f"mlp hidden={hidden} epochs={epochs}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
 
     fig, (left, right) = plt.subplots(1, 2, figsize=(9, 4.2), layout="constrained")
     confusions(left, test_y, pred)
@@ -95,5 +88,4 @@ def main(inputs, report):
     fig.suptitle(f"MLP, width {hidden} × 2 layers, {epochs} epochs: accuracy {accuracy:.4f}, training {fit:.2f} s, prediction {predict:.3f} s", fontsize=11)
     report.figure()
 
-    result_ports.update(send(inputs, 'mlp', f'hidden={hidden}, epochs={epochs}', str(data['digest']), test_y, pred, fit, predict))
-    return result_ports
+    return result('mlp', f'hidden={hidden}, epochs={epochs}', str(data['digest']), test_y, pred, fit, predict)

@@ -22,7 +22,6 @@
   gzip,
   jq,
   bubblewrap,
-  self,
   cardNixpkgs,
   hosq,
 }:

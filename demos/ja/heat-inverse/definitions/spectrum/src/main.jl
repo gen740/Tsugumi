@@ -14,7 +14,7 @@ end
 # Why it is ill-posed: the singular values fall steeply, and all modes whose
 # signal is under the noise are lost to any inversion.
 function main(inputs, report)
-    m = Tsugumi.input(inputs, "measurement")
+    m = inputs.measurement
     x, truth, measured = Float64.(m["x"]), Float64.(m["truth"]), Float64.(m["measured"])
     alpha, T, noise = m["alpha"], m["final_time"], m["noise"]
     n = length(x)

@@ -2,17 +2,16 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-from inputs.comparison.mnist.Comparison import Comparison
 
 SHOWN = 32
 
 
 def main(inputs, report):
-    c = inputs.input("comparison", Comparison)
-    n_models = c.ModelsLength()
-    labels = c.TestLabelsAsNumpy()
-    predictions = c.PredictionsAsNumpy().reshape(n_models, len(labels))
-    images = c.TestImagesAsNumpy().reshape(len(labels), 28, 28)
+    c = inputs.comparison
+    n_models = len(c.models)
+    labels = c.testLabels
+    predictions = c.predictions.reshape(n_models, len(labels))
+    images = c.testImages.reshape(len(labels), 28, 28)
 
     wrong = (predictions != labels).sum(axis=0)
     order = np.argsort(-wrong, kind="stable")[:SHOWN]

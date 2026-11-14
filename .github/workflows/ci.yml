@@ -15,7 +15,6 @@ jobs:
     name: What changed
     runs-on: ubuntu-24.04
     outputs:
-      app: ${{ steps.diff.outputs.app }}
       matrix: ${{ steps.diff.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
@@ -37,7 +36,6 @@ jobs:
           ] + (if $app then [
             {system: "aarch64-darwin", runner: "macos-26"}
           ] else [] end))}')
-          echo "app=$app" >> "$GITHUB_OUTPUT"
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   static:

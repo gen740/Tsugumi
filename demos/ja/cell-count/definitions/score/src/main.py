@@ -7,9 +7,6 @@ from scipy.optimize import linear_sum_assignment
 from skimage.measure import regionprops
 from skimage.segmentation import find_boundaries
 
-from inputs.labels.cells.Labels import Labels
-from inputs.scene.cells.Scene import Scene
-
 
 def match(found, truth, gate):
     """One-to-one pairs within `gate`, as many as possible, then as close as possible."""
@@ -20,17 +17,17 @@ def match(found, truth, gate):
 
 
 def main(inputs, report):
-    scene = inputs.input("scene", Scene)
-    labels = inputs.input("labels", Labels)
-    size = scene.Size()
-    image = scene.ImageAsNumpy().reshape(size, size)
-    truth = np.column_stack([scene.TrueXAsNumpy(), scene.TrueYAsNumpy()])
-    gate = scene.Radius()
+    scene = inputs.scene
+    labels = inputs.labels
+    size = scene.size
+    image = scene.image.reshape(size, size)
+    truth = np.column_stack([scene.trueX, scene.trueY])
+    gate = scene.radius
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 5.8))
     high = np.percentile(image, 99.5)
     document = {"cells": len(truth), "gate": gate, "true_x": truth[:, 0].round(2).tolist(), "true_y": truth[:, 1].round(2).tolist()}
-    methods = (("plain", "閾値のみ", labels.PlainAsNumpy()), ("split", "watershed", labels.SplitAsNumpy()))
+    methods = (("plain", "閾値のみ", labels.plain), ("split", "watershed", labels.split))
     for ax, (key, title, flat) in zip(axes, methods):
         lab = flat.reshape(size, size)
         found = np.array([r.centroid[::-1] for r in regionprops(lab)]).reshape(-1, 2)
@@ -58,4 +55,4 @@ def main(inputs, report):
     fig.suptitle(f"合成データの真の個数 {len(truth)} 個に対する採点（距離 {gate:g} px 以内で対応づけ）", fontsize=11)
     fig.tight_layout()
     report.figure()
-    report.log(str("scores " + json.dumps(document)))
+    report.log("scores " + json.dumps(document))

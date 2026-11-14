@@ -1,11 +1,9 @@
 """Draws a stratified subset, scales the pixels to 0..1 and writes it for every classifier."""
-import tsugumi
 import hashlib
 import os
 
 import numpy as np
 
-from inputs.dataset.mnist.Dataset import Dataset
 from tsugumi import Failure
 
 
@@ -25,13 +23,13 @@ def stratified(labels, size, rng):
 
 
 def main(inputs, report, run):
-    dataset = inputs.input("dataset", Dataset)
-    directory = dataset.Directory().decode()
+    dataset = inputs.dataset
+    directory = dataset.directory.decode()
     params = inputs.params
     seed, train_size, test_size = params.seed, params.trainSize, params.testSize
-    if not 10 <= train_size <= dataset.TrainCount() or not 10 <= test_size <= dataset.TestCount():
-        raise Failure("output_invalid", f"train_size must be 10..{dataset.TrainCount()}, "
-                                        f"test_size 10..{dataset.TestCount()}")
+    if not 10 <= train_size <= dataset.trainCount or not 10 <= test_size <= dataset.testCount:
+        raise Failure("output_invalid", f"train_size must be 10..{dataset.trainCount}, "
+                                        f"test_size 10..{dataset.testCount}")
 
     all_train_x = read(f'{directory}/train-images-idx3-ubyte', 16, (-1, 784))
     all_train_y = read(f'{directory}/train-labels-idx1-ubyte', 8)
@@ -49,7 +47,7 @@ def main(inputs, report, run):
     path = os.path.join(run.output_directory, "subset.npz")
     np.savez_compressed(path, train_images=train_x, train_labels=train_y,
                         test_images=test_x, test_labels=test_y, digest=digest)
-    report.log(str(f"wrote {path}: {os.path.getsize(path)} bytes, test digest {digest}"))
+    report.log(f"wrote {path}: {os.path.getsize(path)} bytes, test digest {digest}")
 
     rows = [f"| {d} | {np.sum(all_train_y == d)} | {np.sum(train_y == d)} | "
             f"{np.sum(all_test_y == d)} | {np.sum(test_y == d)} |" for d in range(10)]
@@ -60,6 +58,4 @@ def main(inputs, report, run):
         + "\n".join(rows)
     )
     value = path
-    _out_value = {}
-    _out_value['value'] = value
-    return {'subset': _out_value}
+    return {'subset': {'value': value}}

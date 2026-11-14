@@ -1,11 +1,9 @@
 """Reads the molecules and computes their properties with RDKit. A SMILES that
 cannot be read is reported with the reason and skipped."""
-import tsugumi
 import numpy as np
 from rdkit import Chem, RDLogger
 from rdkit.Chem import Crippen, Descriptors, Lipinski, rdMolDescriptors
 
-from inputs.pasted.mol.Pasted import Pasted
 from tsugumi import Failure
 
 RDLogger.DisableLog("rdApp.*")  # reasons are shown on the Card instead
@@ -30,19 +28,11 @@ def entries(inputs):
     for i in range(len(p.molecules)):
         name, _, smiles = p.molecules[i].decode().partition(":")
         pairs.append((name.strip(), smiles.strip()) if smiles else (f"#{i + 1}", name.strip()))
-    pasted = inputs.input("pasted", Pasted)
-    smiles = (pasted.Smiles() or b"").decode().strip()
+    pasted = inputs.pasted
+    smiles = (pasted.smiles or b"").decode().strip()
     if smiles:
-        pairs.append(((pasted.Name() or b"pasted").decode().strip() or "pasted", smiles))
+        pairs.append(((pasted.name or b"pasted").decode().strip() or "pasted", smiles))
     return pairs
-
-
-def strings(items):
-    offsets = [s for s in items]
-    _b_items = []
-    for o in reversed(offsets):
-        _b_items.append(o)
-    return list(reversed(_b_items))
 
 
 def main(inputs, report):
@@ -51,7 +41,7 @@ def main(inputs, report):
         mol, why = read(smiles)
         if mol is None:
             errors.append(f"**{name}** の SMILES `{smiles}` は計算から外しました: {why}。")
-            report.log(str(f"skipped {name}: {smiles}: {why}"))
+            report.log(f"skipped {name}: {smiles}: {why}")
             continue
         rows.append(dict(
             name=name, smiles=smiles, formula=rdMolDescriptors.CalcMolFormula(mol),
@@ -70,19 +60,19 @@ def main(inputs, report):
     lines += [f"| {r['name']} | {r['formula']} | {r['mw']:.2f} | {r['logp']:.2f} | {r['tpsa']:.2f} | "
               f"{r['hbd']} | {r['hba']} | {r['rotatable']} |" for r in rows]
     report.markdown("\n".join(lines))
-    (names, smiles, formula) = (strings([r[k] for r in rows]) for k in ('name', 'smiles', 'formula'))
+    (names, smiles, formula) = (list([r[k] for r in rows]) for k in ('name', 'smiles', 'formula'))
     doubles = [np.array([r[k] for r in rows], dtype=np.float64) for k in ('mw', 'logp', 'tpsa')]
     ints = [np.array([r[k] for r in rows], dtype=np.int32) for k in ('hbd', 'hba', 'rotatable', 'nh_oh', 'n_o')]
-    _out_value = {}
-    _out_value['names'] = names
-    _out_value['smiles'] = smiles
-    _out_value['formula'] = formula
-    _out_value['mw'] = doubles[0]
-    _out_value['logp'] = doubles[1]
-    _out_value['tpsa'] = doubles[2]
-    _out_value['hbd'] = ints[0]
-    _out_value['hba'] = ints[1]
-    _out_value['rotatable'] = ints[2]
-    _out_value['nh_oh'] = ints[3]
-    _out_value['n_o'] = ints[4]
-    return {'molecules': _out_value}
+    return {'molecules': {
+        'names': names,
+        'smiles': smiles,
+        'formula': formula,
+        'mw': doubles[0],
+        'logp': doubles[1],
+        'tpsa': doubles[2],
+        'hbd': ints[0],
+        'hba': ints[1],
+        'rotatable': ints[2],
+        'nh_oh': ints[3],
+        'n_o': ints[4],
+    }}

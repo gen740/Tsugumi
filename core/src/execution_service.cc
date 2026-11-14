@@ -94,8 +94,8 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   // was registered; Rosetta also reads its own folder while it runs.
   if (const auto& e = build.emulator; !e.empty() && !e.starts_with("/nix/store/"))
     sp.ro_paths.push_back(std::filesystem::path(e).parent_path().string());
-  if (!service_.options().grants_file.empty())
-    sp.hidden_paths.push_back(service_.options().grants_file.parent_path().string());
+  if (!service_.options().control_dir.empty())
+    sp.hidden_paths.push_back(service_.options().control_dir.string());
   sp.hidden_paths.push_back(state_dir.string());
   sp.network = node.settings.network;
   const std::string card_key = path_key(node.path);

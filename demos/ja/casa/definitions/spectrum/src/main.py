@@ -3,6 +3,7 @@
 Same events and sky grid as bands; its three bands are shaded in
 their colours and the emission lines of the ejecta are marked.
 Plain matplotlib: report.figure() puts the figure in the Card's display."""
+from tsugumi import contract
 import json
 from pathlib import Path
 
@@ -10,7 +11,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.io import fits
 
-from inputs.input.casa.BandDir import BandDir
 
 # Helium-like lines (Fe: the K-shell blend), in eV.
 LINES = [
@@ -21,7 +21,7 @@ SHADE = {"red": "#e5484d", "green": "#30a46c", "blue": "#3e7bfa"}
 
 
 def main(inputs, report):
-    source = Path(inputs.input("input", BandDir).Value().decode())
+    source = Path(contract.input_object(inputs, "input").value.decode())
     manifest = json.loads((source / "provenance.json").read_text())
     p = inputs.params
     lo, hi, width = p.minEv, p.maxEv, p.binEv
@@ -64,4 +64,4 @@ def main(inputs, report):
                   fontsize=11, title_fontsize=11)
         fig.tight_layout()
         report.figure()
-    report.log(str(json.dumps({"photons": int(counts.sum()), "bin_ev": width})))
+    report.log(json.dumps({"photons": int(counts.sum()), "bin_ev": width}))

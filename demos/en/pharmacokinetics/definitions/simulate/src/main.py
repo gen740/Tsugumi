@@ -1,6 +1,5 @@
 """A one-compartment oral model of a fictional drug, solved numerically dose by
 dose. Teaching model only: not medical advice or dosing guidance."""
-import tsugumi
 import math
 
 import numpy as np
@@ -8,7 +7,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from scipy.integrate import solve_ivp
 
-from inputs.settings.pk.Settings import Settings
 from tsugumi import Failure
 
 STEP_H = 0.1
@@ -44,16 +42,16 @@ def simulate(dose, tau, ke, ka, volume, fraction, t_grid):
 
 
 def main(inputs, report):
-    s = inputs.input("settings", Settings)
-    doses = s.DosesMgAsNumpy()
-    intervals = s.IntervalsHAsNumpy()
+    s = inputs.settings
+    doses = s.dosesMg
+    intervals = s.intervalsH
     if len(doses) != len(intervals) or len(doses) == 0:
         raise Failure("output_invalid", "doses_mg and intervals_h must have the same length, at least 1")
-    if np.any(intervals <= 0) or s.HalfLifeH() <= 0:
+    if np.any(intervals <= 0) or s.halfLifeH <= 0:
         raise Failure("output_invalid", "intervals and the half-life must be positive")
-    ke = math.log(2) / s.HalfLifeH()
-    ka, volume, fraction = s.KaPerH(), s.VolumeL(), s.Bioavailability()
-    end = s.Days() * 24
+    ke = math.log(2) / s.halfLifeH
+    ka, volume, fraction = s.kaPerH, s.volumeL, s.bioavailability
+    end = s.days * 24
     if end < 2 * intervals.max():
         raise Failure("output_invalid", f"days must cover two of the longest interval ({intervals.max()} h)")
 
@@ -65,7 +63,7 @@ def main(inputs, report):
         first.append(a)
         last.append(b)
         last_dose.append(d)
-        report.log(str(f"dose={dose} tau={tau} doses_given={int(d / tau) + 1} first_trough={a:.5f} last_trough={b:.5f} peak={c.max():.5f}"))
+        report.log(f"dose={dose} tau={tau} doses_given={int(d / tau) + 1} first_trough={a:.5f} last_trough={b:.5f} peak={c.max():.5f}")
     curves = np.array(curves)
 
     rows = (len(doses) + 1) // 2
@@ -78,28 +76,28 @@ def main(inputs, report):
                                  hovertemplate="%{x:.1f} hours: %{y:.2f} mg/L<extra></extra>"),
                       row=k // 2 + 1, col=k % 2 + 1)
     # After the traces: Plotly skips the subplots that are still empty.
-    fig.add_hrect(y0=s.LowMgL(), y1=s.HighMgL(), row="all", col="all", fillcolor="#3a9a4a", opacity=0.14, line_width=0)
+    fig.add_hrect(y0=s.lowMgL, y1=s.highMgL, row="all", col="all", fillcolor="#3a9a4a", opacity=0.14, line_width=0)
     fig.update_xaxes(title_text="Time (h)", row=rows)
-    fig.update_yaxes(range=[0, 1.05 * max(curves.max(), s.HighMgL())])  # the same scale in every panel
+    fig.update_yaxes(range=[0, 1.05 * max(curves.max(), s.highMgL)])  # the same scale in every panel
     fig.update_yaxes(title_text="Concentration (mg/L)", col=1)
     fig.update_layout(
-        title=dict(text=f"Concentration of Tsugumicin, a made-up drug (half-life {s.HalfLifeH():g} hours; green is an invented therapeutic range {s.LowMgL():g}–{s.HighMgL():g} mg/L)", font=dict(size=14)),
+        title=dict(text=f"Concentration of Tsugumicin, a made-up drug (half-life {s.halfLifeH:g} hours; green is an invented therapeutic range {s.lowMgL:g}–{s.highMgL:g} mg/L)", font=dict(size=14)),
         template="plotly_white", margin=dict(l=60, r=20, t=70, b=50))
     report.figure(fig)
     vec = {'doses': np.asarray(doses, dtype=np.float64), 'intervals': np.asarray(intervals, dtype=np.float64), 't': t, 'conc': curves.ravel(), 'first': np.array(first), 'last': np.array(last), 'last_dose': np.array(last_dose)}
-    _out_value = {}
-    _out_value['doses_mg'] = vec['doses']
-    _out_value['intervals_h'] = vec['intervals']
-    _out_value['half_life_h'] = s.HalfLifeH()
-    _out_value['ka_per_h'] = ka
-    _out_value['volume_l'] = volume
-    _out_value['bioavailability'] = fraction
-    _out_value['low_mg_l'] = s.LowMgL()
-    _out_value['high_mg_l'] = s.HighMgL()
-    _out_value['days'] = s.Days()
-    _out_value['t_h'] = vec['t']
-    _out_value['conc'] = vec['conc']
-    _out_value['first_trough'] = vec['first']
-    _out_value['last_trough'] = vec['last']
-    _out_value['last_dose_h'] = vec['last_dose']
-    return {'curves': _out_value}
+    return {'curves': {
+        'doses_mg': vec['doses'],
+        'intervals_h': vec['intervals'],
+        'half_life_h': s.halfLifeH,
+        'ka_per_h': ka,
+        'volume_l': volume,
+        'bioavailability': fraction,
+        'low_mg_l': s.lowMgL,
+        'high_mg_l': s.highMgL,
+        'days': s.days,
+        't_h': vec['t'],
+        'conc': vec['conc'],
+        'first_trough': vec['first'],
+        'last_trough': vec['last'],
+        'last_dose_h': vec['last_dose'],
+    }}

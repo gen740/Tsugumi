@@ -1,6 +1,6 @@
 # packages: tsugumid, the Web UI, the test packages CI runs, and on Linux the
 # `tsugumi` command and the shared VM's boot disk.
-{ self, inputs, ... }:
+{ inputs, ... }:
 let
   inherit (inputs) nixpkgs hosq;
   # The nixpkgs revision Cards build against unless a project pins another.
@@ -14,7 +14,7 @@ in
   perSystem =
     { pkgs, lib, ... }:
     let
-      core = pkgs.callPackage ../core.nix { inherit self cardNixpkgs hosq; };
+      core = pkgs.callPackage ../core.nix { inherit cardNixpkgs hosq; };
       ci-core = pkgs.callPackage ../core-tests.nix { inherit core hosq; };
       client-wasm = pkgs.callPackage ../client-wasm.nix { };
       web = pkgs.callPackage ../web.nix { inherit client-wasm; };

@@ -8,9 +8,9 @@ exact <- function(x, what = "a value") {
 # A ulong field takes digits: a double such as 27 would be written as 27.0, which the type rejects.
 whole <- function(x) sprintf("%.0f", x)
 
-main <- function(inputs, report) {
+main <- function(inputs) {
   outputs <- list()
-  walk <- inputs$input("number")
+  walk <- inputs$number
   n <- exact(walk$value, "n")
   if (n > floor((2^53 - 2) / 3)) stop("integer overflow: 3*", format(n, scientific = FALSE), "+1 is not below 2^53, which R's doubles cannot hold exactly")
   triple <- 3 * n + 1
