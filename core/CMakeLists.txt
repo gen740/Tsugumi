@@ -67,14 +67,13 @@ endif()
 set(TSUGUMI_CARD_NIXPKGS_REV "$ENV{TSUGUMI_CARD_NIXPKGS_REV}" CACHE STRING "nixpkgs revision for Cards")
 set(TSUGUMI_CARD_NIXPKGS_NARHASH "$ENV{TSUGUMI_CARD_NIXPKGS_NARHASH}" CACHE STRING "nixpkgs NAR hash for Cards")
 set(TSUGUMI_BWRAP "" CACHE FILEPATH "bubblewrap used for sandbox: true Cards")
-set(TSUGUMI_BASH "/bin/bash" CACHE FILEPATH "bash used for Card shell steps")
-set(TSUGUMI_CARD_PATH "/usr/bin:/bin" CACHE STRING "PATH given to Card shell steps")
+# Not a Card's shell: that one, and its PATH, come from the Card's own manifest.
+set(TSUGUMI_BASH "/bin/bash" CACHE FILEPATH "bash of the project shell commands (the Shell RPC)")
 target_compile_definitions(tsugumi_core PRIVATE
   TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV}"
   TSUGUMI_CARD_NIXPKGS_NARHASH="${TSUGUMI_CARD_NIXPKGS_NARHASH}"
   TSUGUMI_BWRAP="${TSUGUMI_BWRAP}"
-  TSUGUMI_BASH="${TSUGUMI_BASH}"
-  TSUGUMI_CARD_PATH="${TSUGUMI_CARD_PATH}")
+  TSUGUMI_BASH="${TSUGUMI_BASH}")
 
 add_executable(tsugumid src/main.cc)
 target_include_directories(tsugumid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

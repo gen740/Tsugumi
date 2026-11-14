@@ -19,6 +19,8 @@ import { L, language } from './i18n'
 import { CoreAgentError } from './coreAgent'
 import { hostProjectErrorText } from './hostProjects'
 import { uninstall } from './uninstall'
+import { terminalEnvironment } from './terminalEnvironment'
+import { importProject } from './projectImport'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..', '..')
@@ -90,47 +92,6 @@ const vm: VMHostOptions | undefined = process.env.TSUGUMI_VMHOST ? {
 const desktop = !!vm
 const envs = new EnvironmentManager(bins, support, () => origins,
   (method, fields) => hostRequest(method, fields), (handler) => observeHost(handler), vm)
-
-/** Regular files of a project folder, without hidden files and folders
- *  (.tsugumi, .git, ...) and without symbolic links (e.g. Nix result links). */
-function projectFiles(root: string, limit: number): Map<string, Buffer> {
-  const out = new Map<string, Buffer>()
-  let total = 0
-  const walk = (dir: string, rel: string) => {
-    for (const e of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      if (e.name.startsWith('.') || e.isSymbolicLink()) continue
-      const abs = path.join(dir, e.name), r = rel ? `${rel}/${e.name}` : e.name
-      if (e.isDirectory()) walk(abs, r)
-      else if (e.isFile()) {
-        const d = fs.readFileSync(abs)
-        total += d.length
-        if (total > limit) throw new HttpError(413, L('プロジェクトが大きすぎます（64 MB まで）。'))
-        out.set(r, d)
-      }
-    }
-  }
-  walk(root, '')
-  return out
-}
-
-/** Reads another Tsugumi project to take in as a Card in Card. The page puts
- *  it under externals/<name>/ as a copy; the original folder is not linked.
- *  Files that are not UTF-8 text come as base64, unchanged. */
-function importProject(folder: unknown) {
-  if (typeof folder !== 'string' || !fs.existsSync(path.join(folder, 'tsugumi.json'))) throw new HttpError(400, L('tsugumi.json のあるフォルダを選んでください。'))
-  const root = fs.realpathSync(folder)
-  const files: Record<string, string> = {}
-  const binary: Record<string, string> = {}
-  const utf8 = new TextDecoder('utf-8', { fatal: true })
-  for (const [rel, d] of projectFiles(root, 64 << 20)) {
-    try {
-      files[rel] = utf8.decode(d)
-    } catch {
-      binary[rel] = Buffer.from(d).toString('base64')
-    }
-  }
-  return { name: path.basename(root), files, binary }
-}
 
 function listDir(dir: string) {
   const real = fs.realpathSync(dir)
@@ -206,12 +167,13 @@ async function startTerminal(project: string, cols: unknown, rows: unknown) {
   if (terminals.size >= MAX_TERMINALS) throw new HttpError(429, L('ターミナルは同時に {0} 個までです', MAX_TERMINALS))
   const id = randomUUID()
   // In the VM the project's own shell, as in the app's terminal (no node-pty there).
-  const shell = vm ? '/bin/bash' : [process.env.SHELL, '/bin/bash', '/bin/sh'].find((s) => s && fs.existsSync(s))!
+  const env = terminalEnvironment(project)
+  const shell = vm ? '/bin/bash' : [env.SHELL, '/bin/bash', '/bin/sh'].find((s) => s && fs.existsSync(s))!
   const proc: IPty | VMTerminal = vm
     ? await envs.terminal(project, terminalSize(cols, 80), terminalSize(rows, 24))
     : (await loadPty()).spawn(shell, ['-l'], {
         name: 'xterm-256color', cwd: project, cols: terminalSize(cols, 80), rows: terminalSize(rows, 24),
-        env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TSUGUMI_PROJECT: project } as Record<string, string>,
+        env,
       })
   const t: Terminal = { id, project, proc }
   terminals.set(id, t)
@@ -394,7 +356,10 @@ const routes: Record<string, Handler> = {
     fs.mkdirSync(dir)
     return listDir(dir)
   },
-  'POST /api/import/project': (b) => importProject(b.folder),
+  'POST /api/import/project': (b) => {
+    if (typeof b.folder !== 'string') throw new HttpError(400, L('tsugumi.json のあるフォルダを選んでください。'))
+    return importProject(b.folder, hostRequest)
+  },
   'POST /api/terminal/start': (b) => startTerminal(projectDir(b.path), b.cols, b.rows),
   'POST /api/terminal/input': (b) => {
     terminal(b.id).proc.write(String(b.data ?? ''))
