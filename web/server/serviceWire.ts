@@ -1,3 +1,4 @@
+import { ModelSelectionRequestT } from '../src/gen/tsugumi/host/model-selection-request'
 import { VersionCommentsRequestT } from '../src/gen/tsugumi/host/version-comments-request'
 import { RuntimeAction } from '../src/gen/tsugumi/host/runtime-action'
 import { TerminalAction } from '../src/gen/tsugumi/host/terminal-action'
@@ -86,7 +87,7 @@ function enumValue(e: any, value: unknown): number {
 }
 function provider(v: any): ProviderSelectionT | null {
   if (!v) return null
-  return new ProviderSelectionT(v.profile, v.provider_id, v.account_profile, v.key_profile, v.model, v.use_choices)
+  return new ProviderSelectionT(v.profile, v.provider_id, v.account_profile, v.key_profile, v.model, v.use_choices, v.purpose)
 }
 function providerInput(v: any): ProviderInputT | null {
   return v ? new ProviderInputT(v.endpoint, v.api_key, v.model, v.max_tokens, v.context_limit) : null
@@ -97,6 +98,7 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
+    case 'ModelSelectionRequest': return new ModelSelectionRequestT(v.profile, v.purpose)
     case 'VersionCommentsRequest': return new VersionCommentsRequestT(v.project, v.commit)
     case 'GuideGetRequest': return new GuideGetRequestT(v.session_id, v.language)
     case 'GuideAdvanceRequest': {
@@ -109,8 +111,8 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'HostTerminalRequest': return new HostTerminalRequestT(v.project, enumValue(TerminalAction, v.action), BigInt(v.session ?? 0), v.rows ?? 24, v.cols ?? 80, v.data ?? [])
     case 'SettingsGetRequest': return new HSettingsGetRequest(v.profile)
     case 'SettingsUpdateRequest': return new HSettingsUpdateRequest(v.profile, BigInt(v.revision ?? 0), (v.changes ?? []).map((s: any) => new SettingT(s.key, s.value_json)), v.client)
-    case 'ProviderSetRequest': return new HProviderSetRequest(v.profile, v.id, providerInput(v.provider), v.remove, v.ephemeral)
-    case 'ProviderStatusRequest': return new HProviderStatusRequest(v.profile, v.id)
+    case 'ProviderSetRequest': return new HProviderSetRequest(v.profile, v.id, providerInput(v.provider), v.remove, v.ephemeral, v.source)
+    case 'ProviderStatusRequest': return new HProviderStatusRequest(v.profile, v.id, v.key_profile)
     case 'SignInBeginRequest': return new HSignInBeginRequest(v.profile, v.client_id, v.consent, v.issuer, v.resource)
     case 'SignInActionRequest': return new HSignInActionRequest(v.profile, v.attempt_id, v.action, v.client_id)
     case 'SignInStatusRequest': return new HSignInStatusRequest(v.profile, v.attempt_id)

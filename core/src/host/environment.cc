@@ -129,6 +129,7 @@ struct Environments::Impl {
         } catch (const std::exception&) {
         }
       }
+      entry->state.folders = entry->folders;
       // A State query may rediscover a resident daemon after agentd restarts.
     }
     return entry;
@@ -298,6 +299,7 @@ struct Environments::Impl {
         std::filesystem::path(entry.state.control_dir) / "attached.json",
         json::Encode(json::Members{{"folders", Strings(folders)}}), 0600);
     entry.folders = folders;
+    entry.state.folders = folders;
   }
   auto Plan(const Entry& entry) -> EnvironmentLaunch {
     EnvironmentLaunch launch;
@@ -371,7 +373,7 @@ struct Environments::Impl {
     fs::write_atomic(
         std::filesystem::path(entry.state.control_dir) / "origins.json",
         json::Encode(json::Members{{"origins", Strings(entry.origins)}}), 0600);
-    WriteFolders(entry, request.folders);
+    WriteFolders(entry, entry.folders);
     CheckDeath(entry);
     if (ReadReady(entry)) {
       Authorize(entry);
@@ -578,7 +580,7 @@ auto Environments::Terminal(const H::HostTerminalRequestT& request)
     const auto ready = Handle(state);
     if (ready.phase != H::EnvironmentPhase::Ready)
       throw std::runtime_error("The project's environment is not running");
-    input.project = ready.key;
+    input.project = impl_->options.process->Guest() ? ready.key : ready.project;
   }
   return impl_->options.process->Terminal(input);
 }
@@ -605,7 +607,8 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
     case H::EnvironmentAction::Stop:
       impl_->Stop(*entry);
       break;
-    case H::EnvironmentAction::Folders: {
+    case H::EnvironmentAction::AddFolders:
+    case H::EnvironmentAction::RemoveFolders: {
       PrivateDirectory(
           std::filesystem::path(entry->state.control_dir).parent_path());
       PrivateDirectory(entry->state.control_dir);
@@ -615,10 +618,18 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
             return std::find(entry->folders.begin(), entry->folders.end(),
                              folder) == entry->folders.end();
           });
-      impl_->WriteFolders(*entry, request.folders);
+      auto folders = entry->folders;
+      for (const auto& folder : request.folders) {
+        const auto found = std::find(folders.begin(), folders.end(), folder);
+        if (request.action == H::EnvironmentAction::RemoveFolders) {
+          if (found != folders.end()) folders.erase(found);
+        } else if (found == folders.end())
+          folders.push_back(folder);
+      }
+      impl_->WriteFolders(*entry, folders);
       if (impl_->options.process->Guest() &&
           entry->state.phase == H::EnvironmentPhase::Ready) {
-        if (added) {
+        if (added && request.action == H::EnvironmentAction::AddFolders) {
           impl_->Stop(*entry);
           H::EnvironmentRequestT restart = request;
           restart.origins = entry->origins;
@@ -626,6 +637,7 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
         } else
           impl_->options.process->Shares(impl_->Plan(*entry));
       }
+      impl_->Notify(*entry);
       break;
     }
     case H::EnvironmentAction::State:
@@ -647,6 +659,7 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
     default:
       throw std::runtime_error("Unknown environment action");
   }
+  entry->state.folders = entry->folders;
   return entry->state;
 }
 }  // namespace tsugumi::host

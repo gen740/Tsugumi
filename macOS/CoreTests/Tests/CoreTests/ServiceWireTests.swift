@@ -5,6 +5,20 @@ import XCTest
 @testable import TsugumiAgentClient
 
 final class ServiceWireTests: XCTestCase {
+  func testHostOwnsPurposeAndKeyPolicyWire() throws {
+    let input = Tsugumi_Service_ProviderInputT(); input.apiKey = "memory-key"
+    let bytes = try ServiceWire.encode("ProviderSetRequest", fields: ["profile": "client", "id": "anthropic",
+      "provider": input, "ephemeral": true, "source": "keychain"], id: 1, host: true)
+    var buffer = ByteBuffer(data: bytes)
+    let message: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
+    let value = try XCTUnwrap((Tsugumi_Host_MessageT(message).payload?.value as? Tsugumi_Host_RequestT)?.value?.value as? Tsugumi_Host_ProviderSetRequestT)
+    XCTAssertTrue(value.ephemeral)
+    XCTAssertEqual(value.source, "keychain")
+    XCTAssertTrue(ServiceWire.hostMethod("ModelSelectionRequest", [:]))
+    let selection = try ServiceWire.encode("ModelSelectionRequest", fields: ["profile": "desktop", "purpose": "summary"], id: 2, host: true)
+    XCTAssertFalse(selection.isEmpty)
+  }
+
   func testSendCarriesTheOptimisticDisplaySeparatelyFromModelInput() throws {
     let bytes = try ServiceWire.encode("ConversationSendRequest", fields: [
       "conversation_id": "c", "turn_id": "t", "text": "Model instructions",

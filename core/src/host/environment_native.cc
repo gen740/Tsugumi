@@ -12,6 +12,7 @@
 #include <stdexcept>
 
 #include "host/environment.hh"
+#include "host/native_terminal.hh"
 #include "host/vm_process.hh"
 #include "tsugumi/client/client.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
@@ -23,7 +24,16 @@ namespace tsugumi::host {
 namespace {
 using namespace std::chrono_literals;
 class NativeProcess final : public EnvironmentProcess {
+  NativeTerminals terminals_;
+
  public:
+  explicit NativeProcess(NativeTerminals::Output output)
+      : terminals_(std::move(output)) {}
+  auto Shutdown() -> void override { terminals_.Shutdown(); }
+  auto Terminal(const Tsugumi::Host::HostTerminalRequestT& request)
+      -> Tsugumi::Host::HostTerminalT override {
+    return terminals_.Handle(request);
+  }
   auto Launch(const EnvironmentLaunch& launch) -> int64_t override {
     std::vector<char*> arguments;
     for (const auto& argument : launch.arguments)
@@ -185,7 +195,9 @@ auto VerifyEnvironmentEndpoint(const Tsugumi::Host::EnvironmentStateT& ready)
     return false;
   }
 }
-auto NativeEnvironmentProcess() -> std::shared_ptr<EnvironmentProcess> {
-  return std::make_shared<NativeProcess>();
+auto NativeEnvironmentProcess(
+    std::function<void(const Tsugumi::Host::HostTerminalDataT&)> terminal)
+    -> std::shared_ptr<EnvironmentProcess> {
+  return std::make_shared<NativeProcess>(std::move(terminal));
 }
 }  // namespace tsugumi::host

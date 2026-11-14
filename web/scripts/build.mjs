@@ -51,7 +51,6 @@ const server = {
   outdir: out,
   bundle: true, platform: 'node', format: 'esm', target: 'node22', sourcemap: true, loader: { '.md': 'text' },
   // A native module: loaded from node_modules when a terminal opens.
-  external: ['node-pty'],
   logLevel: 'info',
 }
 const client = {

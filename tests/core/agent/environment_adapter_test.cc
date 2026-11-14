@@ -197,8 +197,11 @@ TEST(EnvironmentAdapterTest, CorePlansMountsAndRestartsOnlyForFolderAdditions) {
       options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
   H::EnvironmentRequestT input;
   input.project = project.string();
-  input.action = H::EnvironmentAction::Start;
+  input.action = H::EnvironmentAction::AddFolders;
   input.folders = {chat.string()};
+  service.Handle(input);
+  input.action = H::EnvironmentAction::Start;
+  input.folders.clear();
   ASSERT_EQ(service.Handle(input).phase, H::EnvironmentPhase::Ready);
   EXPECT_FALSE(helper->received.archive);
   const auto& mounts = helper->received.mounts;
@@ -207,11 +210,12 @@ TEST(EnvironmentAdapterTest, CorePlansMountsAndRestartsOnlyForFolderAdditions) {
   EXPECT_FALSE(mounts[2].read_only);
   EXPECT_EQ(mounts[3].path, chat.string());
   EXPECT_TRUE(mounts[3].read_only);
-  input.action = H::EnvironmentAction::Folders;
-  input.folders.clear();
+  input.action = H::EnvironmentAction::RemoveFolders;
+  input.folders = {chat.string()};
   service.Handle(input);
   EXPECT_EQ(helper->shares.mounts.size(), 3u);
   EXPECT_EQ(helper->launches, 1);
+  input.action = H::EnvironmentAction::AddFolders;
   input.folders = {chat.string()};
   service.Handle(input);
   EXPECT_EQ(helper->launches, 2);
@@ -220,4 +224,50 @@ TEST(EnvironmentAdapterTest, CorePlansMountsAndRestartsOnlyForFolderAdditions) {
   service.Handle(input);
 }
 }  // namespace
+}  // namespace tsugumi::test
+
+namespace tsugumi::test {
+TEST(EnvironmentAdapterTest, FolderMutationsSurviveStartsAndServiceRecreation) {
+  TemporaryDirectory directory;
+  const auto project = directory.path / "project";
+  Write(project / "tsugumi.json", "{}");
+  const auto a = (directory.path / "a").string(),
+             b = (directory.path / "b").string();
+  std::filesystem::create_directory(a);
+  std::filesystem::create_directory(b);
+  host::EnvironmentOptions options;
+  options.directory = directory.path / "environments";
+  options.socket_directory = directory.path / "sockets";
+  auto helper = std::make_shared<HelperDouble>();
+  options.process = helper;
+  AuthorizationDouble authorization;
+  const auto make = [&] {
+    return std::make_unique<host::Environments>(
+        options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
+  };
+  auto service = make();
+  H::EnvironmentRequestT request;
+  request.project = project.string();
+  request.action = H::EnvironmentAction::AddFolders;
+  request.folders = {a, a};
+  EXPECT_EQ(service->Handle(request).folders, std::vector<std::string>{a});
+  request.folders = {b};
+  EXPECT_EQ(service->Handle(request).folders, (std::vector<std::string>{a, b}));
+  // An empty/new client starting the environment cannot replace either folder.
+  request.action = H::EnvironmentAction::Start;
+  request.folders.clear();
+  EXPECT_EQ(service->Handle(request).folders, (std::vector<std::string>{a, b}));
+  EXPECT_EQ(helper->received.folders, (std::vector<std::string>{a, b}));
+  service.reset();
+  service = make();
+  request.action = H::EnvironmentAction::State;
+  EXPECT_EQ(service->Handle(request).folders, (std::vector<std::string>{a, b}));
+  request.action = H::EnvironmentAction::RemoveFolders;
+  request.folders = {a};
+  EXPECT_EQ(service->Handle(request).folders, std::vector<std::string>{b});
+  request.folders = {a};
+  EXPECT_EQ(service->Handle(request).folders, std::vector<std::string>{b});
+  request.action = H::EnvironmentAction::Stop;
+  service->Handle(request);
+}
 }  // namespace tsugumi::test

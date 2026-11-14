@@ -215,7 +215,7 @@ export class CoreAgentHost {
     const keyProfile = config.auth === 'apiKey'
       ? await this.keys.provision(config.api === 'openAIResponses' ? 'openai' : 'anthropic') : undefined
     return { profile: config.profile ?? 'desktop', account_profile: config.accountProfile, key_profile: keyProfile,
-      provider_id: config.auth === 'chatgpt' ? 'chatgpt' : config.auth === 'none' ? 'fixture' : config.api === 'openAIResponses' ? 'openai' : 'anthropic', model: config.model, use_choices: !!config.usesChoices }
+      provider_id: config.auth === 'chatgpt' ? 'chatgpt' : config.auth === 'none' ? 'fixture' : config.api === 'openAIResponses' ? 'openai' : 'anthropic', model: config.model, purpose: config.purpose, use_choices: !!config.usesChoices }
   }
 
   async configure(config: ProviderConfig, conversationId: string) {

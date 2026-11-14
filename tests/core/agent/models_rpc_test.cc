@@ -11,7 +11,6 @@ class ModelsFixture : public AgentFixture {
           Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
             Tsugumi::Service::ProviderInputT config;
             config.endpoint = server->URL();
-            config.api_key = "MODEL_KEY_SENTINEL";
             return H::CreateProviderSetRequest(
                        b, b.CreateString("desktop"), b.CreateString(id),
                        Tsugumi::Service::ProviderInput::Pack(b, &config))
@@ -19,6 +18,20 @@ class ModelsFixture : public AgentFixture {
           });
       if (!configured.Code().empty())
         throw std::runtime_error("cannot configure model catalog");
+    }
+    if (server) {
+      const auto provisioned =
+          Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
+            Tsugumi::Service::ProviderInputT key;
+            key.api_key = "MODEL_KEY_SENTINEL";
+            return H::CreateProviderSetRequest(
+                       b, b.CreateString("desktop"), b.CreateString(id),
+                       Tsugumi::Service::ProviderInput::Pack(b, &key), false,
+                       true)
+                .Union();
+          });
+      if (!provisioned.Code().empty())
+        throw std::runtime_error("cannot provision model catalog key");
     }
     auto connection = websocket ? ConnectHost(true) : nullptr;
     return Call(connection ? *connection : *host,

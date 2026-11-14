@@ -248,7 +248,18 @@ struct Host::State {
         [this](const std::string& id, std::string_view stale) {
           return AccessToken(id, stale);
         },
-        [this](const std::string& id) { return ForgetCredential(id); });
+        [this](const std::string& id) { return ForgetCredential(id); }, nullptr,
+        host::Settings::kKeyStorage,
+        [this] {
+          std::vector<std::string> models;
+          sql::Db model_db((options.state_dir / "agent.sqlite").string(), true);
+          auto q = model_db.prepare(
+              "SELECT models FROM model_lists WHERE id='chatgpt'");
+          if (q.step())
+            for (const auto& row : json::Array(q.text(0)))
+              models.push_back(json::Text(json::Object(row), "id"));
+          return models;
+        });
     CreateConversationTables(db);
     db.exec("UPDATE turns SET state='interrupted' WHERE state='running'");
     if (!options.broker_socket.empty())
@@ -264,6 +275,12 @@ struct Host::State {
       options.vm.terminal = [this](const H::HostTerminalDataT& value) { std::lock_guard lock(mutex); HostEvent(wire::HostEvent(value)); };
       options.environment.process = host::VMEnvironmentProcess(options.vm);
     }
+    if (!options.environment.process)
+      options.environment.process = host::NativeEnvironmentProcess(
+          [this](const H::HostTerminalDataT& value) {
+            std::lock_guard lock(mutex);
+            HostEvent(wire::HostEvent(value));
+          });
     if (execution_broker)
       environments = std::make_unique<host::Environments>(options.environment,
           host::EnvironmentAuthorization{
@@ -2368,8 +2385,11 @@ struct Host::State {
     case A::RequestPayload::ConfigureRequest: {
       Human(human);
       const auto *p = r->value_as_ConfigureRequest();
-      GetConversation(p->conversation_id()->str());
-      const auto raw = wire::SelectionJson(*p->provider());
+      const auto conversation = GetConversation(p->conversation_id()->str());
+      auto selection = json::Object(wire::SelectionJson(*p->provider()));
+      if (conversation.role == "guide")
+        selection["purpose"] = json::Quote("guide");
+      const auto raw = json::Encode(selection);
       auto q = db.prepare("INSERT OR REPLACE INTO providers VALUES(?,?)");
       q.bind(1, p->conversation_id()->str()).bind(2, raw).run();
       return wire::AgentReply(request.request_id, S::AcknowledgementT{});
@@ -2916,9 +2936,17 @@ struct Host::State {
       auto p = r->value_as_ConversationSummarizeRequest();
       const auto id = p->conversation_id()->str();
       auto c = GetConversation(id);
-      auto config = p->provider()
-                        ? ModelConfig(wire::SelectionJson(*p->provider()))
-                        : Provider(id);
+      auto selection = p->provider()
+                           ? json::Object(wire::SelectionJson(*p->provider()))
+                           : json::Members{};
+      if (!p->provider()) {
+        auto stored =
+            db.prepare("SELECT json FROM providers WHERE conversation=?");
+        stored.bind(1, id);
+        if (stored.step()) selection = json::Object(stored.text(0));
+      }
+      selection["purpose"] = json::Quote("summary");
+      auto config = host_settings->Resolve(selection);
       auto messages = ParseMessages(c.messages);
       const auto thought = ThoughtsFor(id);
       if (config.auth == ProviderAuth::None ||

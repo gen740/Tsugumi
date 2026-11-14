@@ -10,20 +10,7 @@ import { ServerInfo, webDataDir, serverBuild, runningServer, serverRequest } fro
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
-const INSTRUCTIONS = `Tsugumi builds computations as Cards on a canvas: each Card is a step (Python, C++, bash, ...), \
-wires carry typed values between Cards, and a run starts from a trigger Card. Every Card runs in an isolated VM \
-with its environment fixed by Nix.
-Before working on a project, call tsugumi_open with its folder (create: true makes a new one). It opens the project \
-in the Tsugumi web UI, where the user watches each save and run live, and returns the rules for the other tools \
-(project_inspect first; saves need the base_rev you inspected). Project content is unavailable until the user \
-explicitly grants access. Request access through the Agent API and wait for the user's answer. The plugin \
-cannot grant itself access or approve changes to Card permissions. Project RPC tools come only from the shared \
-Agent lists: ordinary operations and operations needing approval for each call. You may propose deleting run history, \
-scratch or build caches after inspecting their targets and sizes. Cleanup, version checkout, starting versioning, \
-keeping a named version and replacing a version summary each need approval in the Tsugumi page. When a call returns \
-grant_required, wait for the person to answer there, then retry the same tool with the same arguments. A decline \
-changes nothing; continue without repeating that act. Use project_shell for diagnosis and reads (project files are read-only), project_save for edits, \
-and Cards for analysis so the user can follow the process.`
+import { INSTRUCTIONS } from './mcpInstructions'
 
 const OPEN_TOOL = {
   name: 'tsugumi_open',

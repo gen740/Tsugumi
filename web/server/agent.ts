@@ -179,6 +179,7 @@ export type AgentEvent =
 // ---- Provider ------------------------------------------------------------------
 
 export interface ProviderConfig {
+  purpose?: string
   name: string
   model: string
   /** Wire protocol of the endpoint. */

@@ -143,6 +143,7 @@ add_library(tsugumi_agent_core STATIC
   src/host/projects.cc
   src/host/execution_broker.cc
   src/host/environment.cc
+  src/host/native_terminal.cc
   src/host/environment_native.cc
   src/host/vm_process.cc)
 if(APPLE)
@@ -195,4 +196,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_include_directories(tsugumi-vmd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   target_link_libraries(tsugumi-vmd PRIVATE tsugumi_core)
   install(TARGETS tsugumi-vmd RUNTIME DESTINATION bin)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_link_libraries(tsugumi_agent_core PUBLIC util)
 endif()

@@ -146,8 +146,7 @@ final class ChatController {
           throw CocoaError(.fileReadNoSuchFile, userInfo: [NSFilePathErrorKey: path])
         }
       }
-      let shared = folders + paths.filter { !folders.contains($0) }
-      try await session.environments.setExtraFolders(session.identity, shared)
+      try await session.environments.addFolders(session.identity, paths)
       guard session.connected, let project = try await RPCToolTransport(session: session).project() else {
         throw RPCError.disconnected
       }
@@ -168,7 +167,6 @@ final class ChatController {
     guard !attaching else { return }
     folders.removeAll { $0 == path }
     let resource = folderResources.removeValue(forKey: path)
-    let folders = self.folders
     Task {
       do {
         if let resource {
@@ -177,7 +175,7 @@ final class ChatController {
             if let id = grant["id"] as? String { _ = try await CoreAgentClient.shared.call("AccessRevokeRequest", ["grant_id": id]) }
           }
         }
-        try await session.environments.setExtraFolders(session.identity, folders)
+        try await session.environments.removeFolders(session.identity, [path])
       } catch { status = String(describing: error) }
     }
   }
@@ -858,35 +856,20 @@ final class ChatController {
 
 @MainActor
 enum AgentSettings {
-  /// The small model Tsugumi speaks with on the ChatGPT plan (the Home guide,
-  /// the canvas bird's thoughts): gpt-6.1-luna when the account offers it,
-  /// else its newest luna ("agent.speechModel.chatgpt" overrides it).
-  static var chatGPTSpeechModel: String {
-    let d = CorePreferences.shared
-    if let m = d.string(forKey: "agent.speechModel.chatgpt"), !m.isEmpty { return m }
-    return speechModel(offered: ModelCatalogSnapshot.shared.models("chatgpt").map(\.id), fallback: config(for: "chatgpt").model)
+  static func selected(_ value: Tsugumi_Service_ProviderSelectionT) -> ProviderConfig {
+    var config = config(for: value.providerId ?? "anthropic")
+    config.model = value.model ?? ""
+    config.purpose = value.purpose
+    return config
   }
 
-  /// gpt-6.1-luna if offered, else the newest luna offered, else `fallback`
-  /// (the chat's model, which the plan takes, when nothing is listed yet).
-  nonisolated static func speechModel(offered: [String], fallback: String) -> String {
-    let preferred = "gpt-6.1-luna"
-    if offered.contains(preferred) { return preferred }
-    let version = { (m: String) -> [Int] in m.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) } }
-    return offered.filter { $0.contains("luna") }.max { version($0).lexicographicallyPrecedes(version($1)) } ?? fallback
-  }
-
-  /// The connection of the Home guide: the Agent's, with a small model, as for
-  /// the canvas bird's thoughts: claude-haiku-5-5 on Anthropic, the speech model
-  /// on the ChatGPT plan (OpenAI keeps the Agent's). Demo tours are led by the
-  /// chat, with the chat's model.
   static func guide() async -> ProviderConfig {
-    await CorePreferences.shared.reload()
-    _ = try? await CoreAgentClient.shared.storedModels("chatgpt")
-    var c = current()
-    if c.auth == .chatGPT { c.model = chatGPTSpeechModel }
-    else if c.auth == .apiKey, c.api == .anthropicMessages { c.model = "claude-haiku-5-5" }
-    return c
+    do { return selected(try await CoreAgentClient.shared.modelSelection("guide")) }
+    catch {
+      var config = current()
+      config.purpose = "guide"
+      return config
+    }
   }
 
   /// The connection chosen in Settings > API ("anthropic", "openai", "chatgpt" or "fixture").

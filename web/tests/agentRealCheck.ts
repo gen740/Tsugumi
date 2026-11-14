@@ -41,6 +41,7 @@ try {
     this.user.call = async <T>(method: string, fields: any = {}): Promise<T> => {
       calls.push({ method, fields })
       if (method === 'AccessResolveRequest') return {} as T
+      if (method === 'ModelSelectionRequest') return { provider: { providerId: 'chatgpt', model: 'gpt-6.1-luna' } } as T
       if (method === 'ModelsListRequest') return [] as T
       if (method === 'ConversationListRequest') return (fields.project_id === 'project-a' ? [{ id: 'a', title: 'Only A' }] : []) as T
       if (method === 'ConversationSearchRequest') return [] as T

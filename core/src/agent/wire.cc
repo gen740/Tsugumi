@@ -42,6 +42,7 @@ auto SelectionJson(const Tsugumi::Service::ProviderSelection& p)
                     {"account_profile", json::Quote(Text(p.account_profile()))},
                     {"key_profile", json::Quote(Text(p.key_profile()))},
                     {"model", json::Quote(Text(p.model()))},
+                    {"purpose", json::Quote(Text(p.purpose()))},
                     {"use_choices", p.use_choices() ? "true" : "false"}});
 }
 auto Usage(std::string_view stored) -> A::UsageT {

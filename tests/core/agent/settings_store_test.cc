@@ -83,7 +83,7 @@ TEST(HostSettingsStore,
   host::Settings service(
       directory.path, [](const auto&, const auto&) {},
       [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-      std::move(memory));
+      std::move(memory), host::Settings::KeyStorage::Host);
   const auto put = [&](const std::string& secret) {
     flatbuffers::FlatBufferBuilder b;
     Tsugumi::Service::ProviderInputT value;
@@ -138,10 +138,11 @@ TEST(HostSettingsStore,
                 .credential,
             "SECOND_ENV_SENTINEL");
   EXPECT_EQ(service.Resolve({}).credential, "STORE_SECRET_SENTINEL");
-  EXPECT_THROW(
-      service.Resolve({{"profile", Quote("desktop")},
-                       {"key_profile", Quote("macos:keychain:missing")}}),
-      std::runtime_error);
+  EXPECT_EQ(service
+                .Resolve({{"profile", Quote("desktop")},
+                          {"key_profile", Quote("missing")}})
+                .credential,
+            "STORE_SECRET_SENTINEL");
   observed->fail = true;
   const auto failed = put("SECOND_SECRET_SENTINEL");
   EXPECT_NE(
@@ -156,7 +157,8 @@ TEST(HostSettingsStore,
   const auto make = [&] {
     return std::make_unique<host::Settings>(
         directory.path, [](const auto&, const auto&) {},
-        [](const auto&, auto) { return ""; }, [](const auto&) { return true; });
+        [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+        nullptr, host::Settings::KeyStorage::Keychain);
   };
   auto service = make();
   flatbuffers::FlatBufferBuilder b;
@@ -200,9 +202,10 @@ TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
   auto* secrets = memory.get();
   secrets->values["desktop:anthropic"] = "ANTHROPIC_NOTE_KEY";
   secrets->values["desktop:openai"] = "OPENAI_NOTE_KEY";
-  host::Settings service(directory.path, [](const auto&, const auto&) {},
+  host::Settings service(
+      directory.path, [](const auto&, const auto&) {},
       [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-      std::move(memory));
+      std::move(memory), host::Settings::KeyStorage::Host);
   EXPECT_EQ(service.VersionNoteMode("desktop"), "mechanical");
   const auto update = [&](const std::string& mode, uint64_t revision, const std::string& key = "versions.noteMode") {
     flatbuffers::FlatBufferBuilder b;
@@ -226,7 +229,9 @@ TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
   EXPECT_EQ(service.VersionNoteMode("desktop"), "mechanical");
   EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").credential, "ANTHROPIC_NOTE_KEY");
   EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model, "claude-haiku-5-5");
-  EXPECT_THROW(service.VersionNoteProvider("desktop", "missing-platform-keys", ""), std::exception);
+  EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-platform-keys", "")
+                .credential,
+            "ANTHROPIC_NOTE_KEY");
   reply = update("\"openai\"", 2, "agent.provider");
   ASSERT_TRUE(H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
   EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-anthropic-keys", "").credential, "OPENAI_NOTE_KEY");
@@ -234,4 +239,163 @@ TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
   ASSERT_TRUE(H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
   EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model, "custom-small-model");
 }
+}  // namespace tsugumi::test
+
+namespace tsugumi::test {
+namespace {
+class HostPolicyTest : public ::testing::Test {
+ protected:
+  TemporaryDirectory directory;
+  std::unique_ptr<host::Settings> service;
+  MemorySecrets* secrets = nullptr;
+  std::vector<std::string> models;
+  uint64_t revision = 0;
+  auto Open(host::Settings::KeyStorage storage) -> void {
+    auto store = std::make_unique<MemorySecrets>();
+    secrets = store.get();
+    service = std::make_unique<host::Settings>(
+        directory.path, [](const auto&, const auto&) {},
+        [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+        std::move(store), storage, [this] { return models; });
+  }
+  template <typename T>
+  auto Call(T value) -> std::unique_ptr<H::ReplyT> {
+    H::RequestT request;
+    request.value.Set(std::move(value));
+    flatbuffers::FlatBufferBuilder builder;
+    const auto packed = H::Request::Pack(builder, &request);
+    builder.Finish(packed);
+    const auto bytes = service->Handle(
+        *flatbuffers::GetRoot<H::Request>(builder.GetBufferPointer()), 1);
+    return std::unique_ptr<H::ReplyT>(
+        H::GetMessage(bytes.data())->payload_as_Reply()->UnPack());
+  }
+  auto Set(const std::string& key, const std::string& value) -> void {
+    H::SettingsUpdateRequestT request;
+    request.profile = "desktop";
+    request.revision = revision;
+    auto change = std::make_unique<H::SettingT>();
+    change->key = key;
+    change->value_json = Quote(value);
+    request.changes.push_back(std::move(change));
+    const auto reply = Call(std::move(request));
+    ASSERT_NE(reply->value.AsSettings(), nullptr);
+    revision = reply->value.AsSettings()->revision;
+  }
+  auto Provision(const std::string& source, const std::string& secret = "")
+      -> void {
+    H::ProviderSetRequestT request;
+    request.profile = "client";
+    request.id = "anthropic";
+    request.source = source;
+    request.ephemeral = true;
+    request.remove = secret.empty();
+    if (!secret.empty()) {
+      request.provider = std::make_unique<Tsugumi::Service::ProviderInputT>();
+      request.provider->api_key = secret;
+    }
+    ASSERT_NE(Call(std::move(request))->value.AsProviderStatus(), nullptr);
+  }
+  auto Status() -> H::ProviderStatusT {
+    H::ProviderStatusRequestT request;
+    request.profile = "desktop";
+    request.id = "anthropic";
+    request.key_profile = "client";
+    return *Call(std::move(request))->value.AsProviderStatus();
+  }
+  auto Resolve() -> agent::ProviderConfig {
+    return service->Resolve(
+        {{"profile", Quote("desktop")}, {"key_profile", Quote("client")}});
+  }
+};
+TEST_F(HostPolicyTest, MacRejectsDiskKeysAndStatusAgreesWithResolution) {
+  Open(host::Settings::KeyStorage::Keychain);
+  secrets->values["desktop:anthropic"] = "DISK_MUST_NOT_BE_USED";
+  EXPECT_FALSE(Status().configured);
+  EXPECT_EQ(Status().storage, "keychain");
+  EXPECT_THROW(Resolve(), std::runtime_error);
+  H::ProviderSetRequestT request;
+  request.profile = "desktop";
+  request.id = "anthropic";
+  request.provider = std::make_unique<Tsugumi::Service::ProviderInputT>();
+  request.provider->api_key = "REJECTED_DISK_KEY";
+  const auto reply = Call(std::move(request));
+  ASSERT_NE(reply->value.AsFailure(), nullptr);
+  EXPECT_EQ(secrets->values["desktop:anthropic"], "DISK_MUST_NOT_BE_USED");
+  Provision("keychain", "KEYCHAIN_KEY");
+  EXPECT_TRUE(Status().configured);
+  EXPECT_EQ(Status().source, "keychain");
+  EXPECT_EQ(Resolve().credential, "KEYCHAIN_KEY");
+  Provision("env", "ENV_KEY");
+  EXPECT_EQ(Status().source, "env");
+  EXPECT_EQ(Resolve().credential, "ENV_KEY");
+  Provision("env");
+  EXPECT_EQ(Resolve().credential, "KEYCHAIN_KEY");
+  Provision("keychain");
+  EXPECT_FALSE(Status().configured);
+  try {
+    Resolve();
+    FAIL();
+  } catch (const std::runtime_error& error) {
+    EXPECT_EQ(error.what(), Status().message);
+  }
+}
+TEST_F(HostPolicyTest, LinuxEnvironmentOverridesStoredKeyWithoutReplacingIt) {
+  Open(host::Settings::KeyStorage::Host);
+  secrets->values["desktop:anthropic"] = "STORED_KEY";
+  EXPECT_TRUE(Status().configured);
+  EXPECT_EQ(Status().storage, "agentd");
+  EXPECT_EQ(Resolve().credential, "STORED_KEY");
+  Provision("env", "ENV_KEY");
+  EXPECT_EQ(Status().source, "env");
+  EXPECT_EQ(Resolve().credential, "ENV_KEY");
+  EXPECT_EQ(secrets->values["desktop:anthropic"], "STORED_KEY");
+  Provision("env");
+  EXPECT_EQ(Status().source, "agentd");
+  EXPECT_EQ(Resolve().credential, "STORED_KEY");
+}
+TEST_F(HostPolicyTest, GuideAndSummaryUseSettingsAndHostCatalog) {
+  Open(host::Settings::KeyStorage::Host);
+  EXPECT_EQ(service->ModelSelection("desktop", "guide").model,
+            "claude-haiku-5-5");
+  Set("agent.thoughtModel", "custom-thought");
+  EXPECT_EQ(service->ModelSelection("desktop", "summary").model,
+            "custom-thought");
+  EXPECT_EQ(service->ModelSelection("desktop", "guide").model,
+            "claude-haiku-5-5");
+  Provision("env", "ENV_KEY");
+  auto config = service->Resolve({{"profile", Quote("desktop")},
+                                  {"purpose", Quote("summary")},
+                                  {"model", Quote("ignored-client-model")},
+                                  {"key_profile", Quote("client")}});
+  EXPECT_EQ(config.model, "custom-thought");
+  Set("agent.provider", "openai");
+  Set("agent.thoughtModel.openai", "small-openai");
+  EXPECT_EQ(service->ModelSelection("desktop", "summary").model,
+            "small-openai");
+  EXPECT_NE(service->ModelSelection("desktop", "guide").model, "small-openai");
+  Set("agent.provider", "chatgpt");
+  const auto fallback = service->ModelSelection("desktop", "guide").model;
+  EXPECT_FALSE(fallback.empty());
+  models = {"gpt-6-luna", "gpt-5.6-luna", "gpt-6.10-luna"};
+  EXPECT_EQ(service->ModelSelection("desktop", "guide").model, "gpt-6.10-luna");
+  models.push_back("gpt-6.1-luna");
+  EXPECT_EQ(service->ModelSelection("desktop", "summary").model,
+            "gpt-6.1-luna");
+  Set("agent.speechModel.chatgpt", "speech-override");
+  H::ModelSelectionRequestT request;
+  request.profile = "desktop";
+  request.purpose = "guide";
+  const auto reply = Call(std::move(request));
+  ASSERT_NE(reply->value.AsModelSelection(), nullptr);
+  EXPECT_EQ(reply->value.AsModelSelection()->provider->model,
+            "speech-override");
+  EXPECT_EQ(service->ModelSelection("desktop", "summary").model,
+            "speech-override");
+  EXPECT_THROW(service->ModelSelection("desktop", "unknown"),
+               std::runtime_error);
+  Set("agent.provider", "fixture");
+  EXPECT_EQ(service->ModelSelection("desktop", "summary").model, "fixture");
+}
+}  // namespace
 }  // namespace tsugumi::test

@@ -4,12 +4,10 @@ import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
-import { createRequire } from 'node:module'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { IPty } from 'node-pty'
 import { AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir, serverBuild, runningServer, serverRequest } from './paths'
 import { startupLock } from './startup'
 import { cancelChats, chatRoutes, chatStatus, hostRequest, observeHost } from './chat'
@@ -182,37 +180,15 @@ function publicState(s: EnvState) {
 /** A shell in a project's folder on this host, on a pseudo terminal: the page
  *  sends keys and draws what it prints. Only the same-origin UI can start one
  *  (the API header), and they end with the server. */
-interface Terminal { id: string; project: string; proc: IPty | VMTerminal }
+interface Terminal { id: string; project: string; proc: VMTerminal }
 const terminals = new Map<string, Terminal>()
-const MAX_TERMINALS = 8
-
-/** The native module is loaded when a terminal opens: the server runs without it. */
-async function loadPty() {
-  try {
-    const pty = await import('node-pty')
-    // npm drops the helper's executable bit from the package.
-    const require = createRequire(import.meta.url)
-    const helper = path.join(path.dirname(require.resolve('node-pty/package.json')), 'prebuilds', `${process.platform}-${process.arch}`, 'spawn-helper')
-    if (fs.existsSync(helper) && (fs.statSync(helper).mode & 0o111) === 0) fs.chmodSync(helper, 0o755)
-    return pty
-  } catch (e) {
-    throw new HttpError(500, L('ターミナルの部品（node-pty）を読み込めません。web で npm install を実行してください: {0}', (e as Error).message))
-  }
-}
 
 const terminalSize = (v: unknown, fallback: number) => (Number.isInteger(v) && (v as number) > 0 && (v as number) < 1000 ? (v as number) : fallback)
 
 async function startTerminal(project: string, cols: unknown, rows: unknown) {
-  if (terminals.size >= MAX_TERMINALS) throw new HttpError(429, L('ターミナルは同時に {0} 個までです', MAX_TERMINALS))
   const id = randomUUID()
-  // In the VM the project's own shell, as in the app's terminal (no node-pty there).
-  const shell = vm ? '/bin/bash' : [process.env.SHELL, '/bin/bash', '/bin/sh'].find((s) => s && fs.existsSync(s))!
-  const proc: IPty | VMTerminal = vm
-    ? await envs.terminal(project, terminalSize(cols, 80), terminalSize(rows, 24))
-    : (await loadPty()).spawn(shell, ['-l'], {
-        name: 'xterm-256color', cwd: project, cols: terminalSize(cols, 80), rows: terminalSize(rows, 24),
-        env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TSUGUMI_PROJECT: project } as Record<string, string>,
-      })
+  const shell = '/bin/bash'
+  const proc = await envs.terminal(project, terminalSize(cols, 80), terminalSize(rows, 24))
   const t: Terminal = { id, project, proc }
   terminals.set(id, t)
   proc.onData((data) => broadcast({ type: 'terminal', id, data }))
@@ -229,9 +205,9 @@ function terminal(id: unknown): Terminal {
   return t
 }
 
-function stopTerminal(t: Terminal, signal: NodeJS.Signals = 'SIGHUP') {
+function stopTerminal(t: Terminal) {
   try {
-    t.proc.kill(signal)
+    t.proc.kill()
   } catch {}
 }
 
@@ -593,7 +569,7 @@ async function shutdown() {
     if (JSON.parse(fs.readFileSync(serverFile, 'utf8')).pid === process.pid) fs.rmSync(serverFile, { force: true })
   } catch {}
   for (const s of streams.keys()) s.end()
-  for (const t of terminals.values()) stopTerminal(t, 'SIGKILL')
+  for (const t of terminals.values()) stopTerminal(t)
   server.close()
   // Core and the resident VM host outlive browser and launcher sessions.
   process.exit(0)

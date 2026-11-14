@@ -455,8 +455,6 @@
  "タブを閉じる（内容は保持されます）": "Close the tab (its contents are kept)",
  "ターミナル": "Terminal",
  "ターミナルの表示切替": "Toggle Terminal",
- "ターミナルの部品（node-pty）を読み込めません。web で npm install を実行してください: {0}": "Cannot load the terminal's component (node-pty). Run npm install in web: {0}",
- "ターミナルは同時に {0} 個までです": "At most {0} terminals at a time",
  "ターミナルは終了しました": "The terminal ended",
  "ターミナルを開き直します（実行中のコマンドは終了します）": "Opens the terminal again (a running command ends)",
  "ターミナルを開けませんでした: {0}\r\n": "Could not open the terminal: {0}\r\n",
@@ -1432,5 +1430,6 @@
  "版を切り替えています": "Switching versions",
  "版を切替": "Switched versions",
  "版を記録しています": "Recording a version",
- "版を記録": "Recorded a version"
+ "版を記録": "Recorded a version",
+ "Keychain に API キーを保存できませんでした。": "Could not save the API key in the Keychain."
 }

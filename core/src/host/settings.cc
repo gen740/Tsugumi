@@ -279,13 +279,18 @@ struct Settings::State {
   };
   std::map<std::string, std::shared_ptr<Attempt>> attempts;
   std::map<std::string, std::string> latest;
+  KeyStorage storage;
+  Models models;
   State(const std::filesystem::path& dir, Import i, Token t, Forget f,
-        std::unique_ptr<SecretStore> store)
+        std::unique_ptr<SecretStore> store, KeyStorage key_storage,
+        Models model_list)
       : db((dir / "host-settings.sqlite").string()),
         secrets(std::move(store)),
         import(std::move(i)),
         token(std::move(t)),
-        forget(std::move(f)) {
+        forget(std::move(f)),
+        storage(key_storage),
+        models(std::move(model_list)) {
     ::chmod((dir / "host-settings.sqlite").c_str(), 0600);
     db.exec(
         "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS settings(profile "
@@ -339,10 +344,20 @@ struct Settings::State {
     auto q = db.prepare("INSERT OR REPLACE INTO accounts VALUES(?,?,?)");
     q.bind(1, profile).bind(2, id).bind(3, j::Encode(value)).run();
   }
-  auto ProviderStatus(const std::string& profile, const std::string& id)
+  auto MemoryKey(const std::string& profile, const std::string& id)
+      -> std::pair<std::string, std::string> {
+    for (const auto* source : {"env", "keychain", "memory"}) {
+      const auto key = profile + ":" + id + ":" + source;
+      if (ephemeral.contains(key)) return {key, source};
+    }
+    return {};
+  }
+  auto ProviderStatus(const std::string& profile, const std::string& id,
+                      const std::string& key_profile = "")
       -> H::ProviderStatusT {
     H::ProviderStatusT out;
     out.id = id;
+    out.storage = storage == KeyStorage::Keychain ? "keychain" : "agentd";
     if (id == "chatgpt") {
       auto q = db.prepare("SELECT json FROM accounts WHERE profile=?");
       q.bind(1, profile);
@@ -353,16 +368,23 @@ struct Settings::State {
                           j::Bool(j::Get(v, "plan_enabled"));
       }
       if (out.configured) out.source = "oauth";
+      else out.message = "Sign in to ChatGPT first";
       return out;
     }
-    const auto key = profile + ":" + id;
-    if (ephemeral.contains(key)) {
+    const auto [key, source] =
+        MemoryKey(key_profile.empty() ? profile : key_profile, id);
+    if (!key.empty()) {
       out.configured = true;
-      out.source = "memory";
-    } else {
-      out.configured = id == "fixture" || !secrets->Get(key).empty();
+      out.source = source;
+    } else if (storage == KeyStorage::Host) {
+      out.configured = !secrets->Get(profile + ":" + id).empty();
       if (out.configured) out.source = "agentd";
     }
+    if (id == "fixture") out.configured = true;
+    if (!out.configured)
+      out.message = storage == KeyStorage::Keychain
+                        ? "No API key available from the login Keychain"
+                        : "No API key configured";
     return out;
   }
   auto Status(const std::string& profile, const std::string& attempt)
@@ -608,12 +630,15 @@ struct Settings::State {
   }
 };
 Settings::Settings(const std::filesystem::path& d, Import i, Token t, Forget f,
-                   std::unique_ptr<SecretStore> store)
+                   std::unique_ptr<SecretStore> store, KeyStorage storage,
+                   Models models)
     : state_(std::make_unique<State>(d, std::move(i), std::move(t),
-                                     std::move(f), std::move(store))) {}
+                                     std::move(f), std::move(store), storage,
+                                     std::move(models))) {}
 Settings::~Settings() = default;
 auto Settings::Handles(H::RequestPayload type) -> bool {
   switch (type) {
+    case H::RequestPayload::ModelSelectionRequest:
     case H::RequestPayload::SettingsGetRequest:
     case H::RequestPayload::SettingsUpdateRequest:
     case H::RequestPayload::ProviderSetRequest:
@@ -631,6 +656,14 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
   std::unique_lock lock(s.mutex);
   try {
     switch (request.value_type()) {
+      case H::RequestPayload::ModelSelectionRequest: {
+        const auto& p = *request.value_as_ModelSelectionRequest();
+        lock.unlock();
+        H::ModelSelectionT result;
+        result.provider = std::make_unique<S::ProviderSelectionT>(
+            ModelSelection(p.profile()->str(), p.purpose()->str()));
+        return agent::wire::HostReply(id, std::move(result));
+      }
       case H::RequestPayload::SettingsGetRequest:
         return agent::wire::HostReply(
             id, s.Get(request.value_as_SettingsGetRequest()->profile()->str()));
@@ -748,14 +781,19 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
             provider != "fixture")
           throw std::runtime_error("Unknown keyed provider");
         if (p.ephemeral()) {
-          if (p.remove())
-            s.ephemeral.erase(key);
-          else {
+          auto source = Text(p.source());
+          if (source.empty()) source = "memory";
+          if (source != "env" && source != "keychain" && source != "memory")
+            throw std::runtime_error("Unknown platform key source");
+          const auto memory_key = key + ":" + source;
+          if (p.remove()) {
+            s.ephemeral.erase(memory_key);
+          } else {
             if (!p.provider() || Text(p.provider()->api_key()).empty() ||
                 p.provider()->endpoint() || p.provider()->model())
               throw std::runtime_error(
                   "Ephemeral provisioning accepts only a key");
-            s.ephemeral[key] = p.provider()->api_key()->str();
+            s.ephemeral[memory_key] = p.provider()->api_key()->str();
           }
           return agent::wire::HostReply(id,
                                         s.ProviderStatus(profile, provider));
@@ -766,6 +804,11 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
               s.db.prepare("DELETE FROM providers WHERE profile=? AND id=?");
           q.bind(1, profile).bind(2, provider).run();
         } else if (p.provider()) {
+          if (s.storage == KeyStorage::Keychain &&
+              !Text(p.provider()->api_key()).empty())
+            throw std::runtime_error(
+                "Save API keys in the login Keychain; host provisioning is "
+                "memory-only");
           auto value = j::Object(agent::wire::ProviderJson(*p.provider()));
           const auto endpoint = j::Text(value, "baseURL");
           if (endpoint.empty() && j::Text(value, "model").empty()) {
@@ -790,7 +833,8 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
       case H::RequestPayload::ProviderStatusRequest: {
         const auto& p = *request.value_as_ProviderStatusRequest();
         return agent::wire::HostReply(
-            id, s.ProviderStatus(p.profile()->str(), p.id()->str()));
+            id, s.ProviderStatus(p.profile()->str(), p.id()->str(),
+                                 Text(p.key_profile())));
       }
       case H::RequestPayload::SignInBeginRequest:
         return agent::wire::HostReply(
@@ -885,25 +929,89 @@ auto Settings::VersionNoteMode(const std::string& profile) -> std::string {
   return j::Text(state_->Values(profile).second, "versions.noteMode", "mechanical");
 }
 
+auto Settings::ModelSelection(const std::string& profile,
+                              const std::string& purpose)
+    -> S::ProviderSelectionT {
+  if (purpose != "guide" && purpose != "summary")
+    throw std::runtime_error("Unknown model purpose");
+  auto& s = *state_;
+  std::lock_guard lock(s.mutex);
+  const auto values = s.Values(profile).second;
+  S::ProviderSelectionT out;
+  out.profile = profile;
+  out.purpose = purpose;
+  out.provider_id = j::Text(values, "agent.provider", "anthropic");
+  const auto& id = out.provider_id;
+  out.model = j::Text(values, id == "chatgpt"  ? "agent.model.chatgpt"
+                              : id == "openai" ? "agent.model.openai"
+                                               : "agent.model");
+  if (id == "fixture")
+    out.model = "fixture";
+  else if (id == "chatgpt") {
+    const auto override = j::Text(values, "agent.speechModel.chatgpt");
+    if (!override.empty())
+      out.model = override;
+    else {
+      const auto offered = s.models ? s.models() : std::vector<std::string>{};
+      const auto version = [](const std::string& model) {
+        std::vector<int> parts;
+        int n = -1;
+        for (const auto c : model) {
+          if (c >= '0' && c <= '9')
+            n = (n < 0 ? 0 : n) * 10 + c - '0';
+          else if (n >= 0) {
+            parts.push_back(n);
+            n = -1;
+          }
+        }
+        if (n >= 0) parts.push_back(n);
+        return parts;
+      };
+      std::string newest;
+      for (const auto& model : offered)
+        if (model.find("luna") != model.npos &&
+            (newest.empty() || version(newest) < version(model)))
+          newest = model;
+      if (std::find(offered.begin(), offered.end(), "gpt-6.1-luna") !=
+          offered.end())
+        out.model = "gpt-6.1-luna";
+      else if (!newest.empty())
+        out.model = newest;
+    }
+  } else {
+    if (id == "anthropic") out.model = "claude-haiku-5-5";
+    if (purpose == "summary") {
+      const auto model =
+          j::Text(values, id == "openai" ? "agent.thoughtModel.openai"
+                                         : "agent.thoughtModel");
+      if (!model.empty()) out.model = model;
+    }
+  }
+  return out;
+}
+
 auto Settings::VersionNoteProvider(const std::string& profile, const std::string& anthropic_keys,
                                    const std::string& openai_keys) -> agent::ProviderConfig {
-  std::string provider, model;
-  {
-    std::lock_guard lock(state_->mutex);
-    const auto values = state_->Values(profile).second;
-    provider = j::Text(values, "agent.provider", "anthropic");
-    model = j::Text(values, provider == "openai" ? "agent.thoughtModel.openai" : "agent.thoughtModel");
-  }
-  auto config = Resolve({{"profile", j::Quote(profile)}, {"provider_id", j::Quote(provider)},
-      {"key_profile", j::Quote(provider == "openai" ? openai_keys : anthropic_keys)}});
-  if (config.auth != agent::ProviderAuth::None) {
-    if (!model.empty()) config.model = model;
-    else if (config.api == agent::ProviderAPI::AnthropicMessages) config.model = "claude-haiku-5-5";
-  }
-  return config;
+  const auto selected = ModelSelection(profile, "summary");
+  return Resolve({{"profile", j::Quote(profile)},
+                  {"purpose", j::Quote("summary")},
+                  {"key_profile", j::Quote(selected.provider_id == "openai"
+                                               ? openai_keys
+                                               : anthropic_keys)}});
 }
 
 auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
+  const auto purpose = j::Text(selection, "purpose");
+  if (!purpose.empty()) {
+    const auto selected =
+        ModelSelection(j::Text(selection, "profile", "desktop"), purpose);
+    auto resolved = selection;
+    resolved.erase("purpose");
+    resolved["provider_id"] = j::Quote(selected.provider_id);
+    resolved["model"] = j::Quote(selected.model);
+    resolved["use_choices"] = "false";
+    return Resolve(resolved);
+  }
   auto& s = *state_;
   std::lock_guard lock(s.mutex);
   auto profile = j::Text(selection, "profile");
@@ -977,13 +1085,14 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
   }
   if (c.auth == agent::ProviderAuth::ApiKey) {
     auto key_profile = j::Text(selection, "key_profile");
-    if (key_profile.empty()) {
+    const auto status = s.ProviderStatus(profile, id, key_profile);
+    if (!status.configured) throw std::runtime_error(status.message);
+    const auto key =
+        s.MemoryKey(key_profile.empty() ? profile : key_profile, id).first;
+    if (!key.empty())
+      c.credential = s.ephemeral.at(key);
+    else
       c.credential = s.secrets->Get(profile + ":" + id);
-    } else {
-      const auto key = key_profile + ":" + id;
-      if (s.ephemeral.contains(key)) c.credential = s.ephemeral.at(key);
-    }
-    if (c.credential.empty()) throw std::runtime_error("No API key configured");
   }
   if (c.auth == agent::ProviderAuth::ChatGPT) {
     auto account_profile = j::Text(selection, "account_profile");
