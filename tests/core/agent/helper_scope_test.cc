@@ -13,7 +13,7 @@ const HelperScope::Reader kRead = [](const std::string &path) -> std::string {
 };
 TEST(HelperScope, ReadsAndWritesAreSeparateExactSetsWithNestedIdentifiers) {
   HelperScope scope(json::Object(
-      R"({"read_cards":["reader","outer/child"],"write_cards":["writer"]})"));
+      R"({"read_cards":["reader","outer/child"],"write_cards":["writer"],"run_cards":[]})"));
   EXPECT_NO_THROW(scope.Check(
       "project_file_read",
       {{"path", json::Quote("definitions/reader/src/a.py")}}, kRead));
@@ -70,17 +70,17 @@ TEST(HelperScope, SharedNestedDefinitionsRequireEveryAliasInTheScope) {
   };
   const auto args = json::Object(
       R"({"path":"externals/storage/definitions/child/_card.json"})");
-  HelperScope one(
-      json::Object(R"({"read_cards":["outer/child"],"write_cards":[]})"));
+  HelperScope one(json::Object(
+      R"({"read_cards":["outer/child"],"write_cards":[],"run_cards":[]})"));
   EXPECT_THROW(one.Check("project_file_read", args, read), std::runtime_error);
   HelperScope both(json::Object(
-      R"({"read_cards":["outer/child","alias/child"],"write_cards":[]})"));
+      R"({"read_cards":["outer/child","alias/child"],"write_cards":[],"run_cards":[]})"));
   EXPECT_NO_THROW(both.Check("project_file_read", args, read));
 }
 TEST(HelperScope,
      ContainerChangesAndFailedOwnershipChecksCannotCrossTheBoundary) {
-  HelperScope scope(
-      json::Object(R"({"read_cards":["outer"],"write_cards":["outer"]})"));
+  HelperScope scope(json::Object(
+      R"({"read_cards":["outer"],"write_cards":["outer"],"run_cards":[]})"));
   const auto definition = json::Object(
       R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"outer"}}]})");
   EXPECT_THROW(scope.Check("project_save", definition, kRead),
@@ -96,7 +96,8 @@ TEST(HelperScope,
                std::runtime_error);
 }
 TEST(HelperScope, NewCardsAreOwnedByTheirCreatorOnly) {
-  const auto task = json::Object(R"({"read_cards":[],"write_cards":[]})");
+  const auto task =
+      json::Object(R"({"read_cards":[],"write_cards":[],"run_cards":[]})");
   HelperScope owner(task), sibling(task);
   owner.Created("new-card", "", kRead);
   const auto args = json::Object(R"({"path":"definitions/new-card/src/a.py"})");
@@ -109,9 +110,9 @@ TEST(HelperScope, NewCardsAreOwnedByTheirCreatorOnly) {
           R"({"changes":[{"value_type":"PutSource","value":{"path":"definitions/new-card/src/a.py","bytes":[]}}]})"),
       kRead));
 }
-TEST(HelperScope, AllRunPlanCardsMustBeInBothSetsBeforeExecution) {
+TEST(HelperScope, ExecutionPlanRequiresRunForEveryCard) {
   HelperScope scope(json::Object(
-      R"({"read_cards":["start","downstream"],"write_cards":["start"]})"));
+      R"({"read_cards":["start","downstream"],"write_cards":["start"],"run_cards":[]})"));
   const auto plan =
       R"({"reply":"RunPlanResult","value":{"targets":[{"segments":["start"]},{"segments":["downstream"]}],"starts":[{"segments":["start"]}],"build_candidates":[]}})";
   EXPECT_NO_THROW(scope.CheckPlan(plan, false));
@@ -123,8 +124,8 @@ TEST(HelperScope, AllRunPlanCardsMustBeInBothSetsBeforeExecution) {
       std::runtime_error);
 }
 TEST(HelperScope, InspectionDoesNotLeakOtherCardsOrProjectWideState) {
-  HelperScope scope(
-      json::Object(R"({"read_cards":["visible"],"write_cards":[]})"));
+  HelperScope scope(json::Object(
+      R"({"read_cards":["visible"],"write_cards":[],"run_cards":[]})"));
   const auto project = json::Encode(json::Members{
       {"name", json::Quote("Project")},
       {"canvas",
@@ -155,11 +156,77 @@ TEST(HelperScope,
       std::runtime_error);
   EXPECT_THROW(
       HelperScope::Validate(
-          json::Object(R"({"read_cards":["../other"],"write_cards":[]})"),
+          json::Object(
+              R"({"read_cards":["../other"],"write_cards":[],"run_cards":[]})"),
           false),
       std::runtime_error);
   EXPECT_NO_THROW(HelperScope::Validate(
-      json::Object(R"({"read_cards":["card.v2"],"write_cards":[]})"), false));
+      json::Object(
+          R"({"read_cards":["card.v2"],"write_cards":[],"run_cards":[]})"),
+      false));
+}
+TEST(HelperScope, RunOwnershipComesFromReceiptsEvenAfterTranscriptCompaction) {
+  const auto task = json::Object(
+      R"({"read_cards":["a"],"write_cards":[],"run_cards":["a"]})");
+  HelperScope restored(task), sibling(task);
+  restored.Restore(
+      R"({"reply":"RunAccepted","value":{"run":{"run_id":"owned"}},"helper_run_card":{"segments":["a"]}})",
+      kRead);
+  EXPECT_NO_THROW(
+      restored.Check("run_cancel", {{"run_id", json::Quote("owned")}}, kRead));
+  EXPECT_THROW(
+      sibling.Check("run_cancel", {{"run_id", json::Quote("owned")}}, kRead),
+      std::runtime_error);
+  restored.Completed(
+      "run", json::Object(R"({"card":{"segments":["a"]}})"),
+      R"({"reply":"RunAccepted","value":{"run":{"run_id":"live"}}})", kRead);
+  EXPECT_NO_THROW(
+      restored.Check("run_status", {{"run_id", json::Quote("live")}}, kRead));
+}
+TEST(HelperScope, WriteDoesNotGrantRunAndReadRunDoesNotGrantWrite) {
+  HelperScope writer(json::Object(
+      R"({"read_cards":["a"],"write_cards":["a"],"run_cards":[]})"));
+  HelperScope runner(json::Object(
+      R"({"read_cards":["a"],"write_cards":[],"run_cards":["a"]})"));
+  const auto card = json::Object(R"({"card":{"segments":["a"]}})");
+  for (const auto *tool : {"run", "card_s_d_k_prepare"}) {
+    EXPECT_THROW(writer.Check(tool, card, kRead), std::runtime_error);
+    EXPECT_NO_THROW(runner.Check(tool, card, kRead));
+  }
+  EXPECT_THROW(
+      runner.Check(
+          "project_save",
+          json::Object(
+              R"({"changes":[{"value_type":"RemoveDefinition","value":{"id":"a"}}]})"),
+          kRead),
+      std::runtime_error);
+  EXPECT_THROW(runner.Check("run",
+                            json::Object(R"({"card":{"segments":["b"]}})"),
+                            kRead),
+               std::runtime_error);
+  const auto plan =
+      R"({"reply":"RunPlanResult","value":{"targets":[{"segments":["a"]}],"starts":[],"build_candidates":[]}})";
+  EXPECT_NO_THROW(runner.CheckPlan(plan, true));
+  EXPECT_THROW(writer.CheckPlan(plan, true), std::runtime_error);
+  const auto downstream =
+      R"({"reply":"RunPlanResult","value":{"targets":[{"segments":["a"]},{"segments":["b"]}],"starts":[],"build_candidates":[]}})";
+  EXPECT_THROW(runner.CheckPlan(downstream, true), std::runtime_error);
+  runner.Ran("owned", "a");
+  EXPECT_NO_THROW(
+      runner.Check("run_cancel", {{"run_id", json::Quote("owned")}}, kRead));
+  EXPECT_THROW(
+      runner.Check("run_cancel", {{"run_id", json::Quote("other")}}, kRead),
+      std::runtime_error);
+  writer.Ran("unassigned", "a");
+  EXPECT_THROW(writer.Check("run_cancel",
+                            {{"run_id", json::Quote("unassigned")}}, kRead),
+               std::runtime_error);
+  runner.Created("new", "", kRead);
+  EXPECT_NO_THROW(runner.Check(
+      "run", json::Object(R"({"card":{"segments":["new"]}})"), kRead));
+  EXPECT_THROW(HelperScope::Validate(
+                   json::Object(R"({"read_cards":[],"write_cards":[]})"), true),
+               std::runtime_error);
 }
 } // namespace
 } // namespace tsugumi::agent

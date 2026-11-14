@@ -1,4 +1,4 @@
-"""Visualize a measurement and the value computed by the upstream Card."""
+"""Bind an upstream measurement and a Card parameter, calculate and visualize."""
 import marimo
 
 app = marimo.App()
@@ -7,8 +7,14 @@ app = marimo.App()
 @app.cell
 def configuration():
     source = 4.0
-    result = 8.0
-    return source, result
+    factor = 2.0
+    return source, factor
+
+
+@app.cell
+def calculation(source, factor):
+    result = source * factor
+    return result,
 
 
 @app.cell

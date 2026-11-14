@@ -443,7 +443,7 @@ TEST_F(AgentProjectFixture,
   ModelServer model;
   model.Queue(AnthropicTool(
       "delegate-review", "delegate",
-      R"({"tasks":[{"name":"review","instruction":"Inspect the project and report its name.","read_cards":[],"write_cards":[]}]})"));
+      R"({"tasks":[{"name":"review","instruction":"Inspect the project and report its name.","read_cards":[],"write_cards":[],"run_cards":[]}]})"));
   model.Queue(AnthropicTool("helper-inspect", "project_inspect", "{}"));
   model.Queue(
       AnthropicText("The authorized name is PRIVATE_PROJECT_SENTINEL."));
@@ -710,7 +710,7 @@ TEST_F(AgentProjectFixture, ConcurrentPluginToolsDoNotBlockTheUsersApproval) {
     tools.push_back(std::async(std::launch::async, [&, i] {
       return Tool(
           conversation, "delegate",
-          R"({"tasks":[{"name":"inspect","instruction":"Inspect the selected project.","read_cards":[],"write_cards":[]}]})",
+          R"({"tasks":[{"name":"inspect","instruction":"Inspect the selected project.","read_cards":[],"write_cards":[],"run_cards":[]}]})",
           "parallel-tool-" + std::to_string(i));
     }));
   }
@@ -1274,7 +1274,7 @@ TEST_F(AgentProjectFixture,
   Configure(model);
   const auto delegated = Tool(
       conversation, "delegate",
-      R"({"tasks":[{"name":"scoped","instruction":"Exercise only the supplied tool calls.","read_cards":["allowed","outer/child"],"write_cards":["writer"]}]})",
+      R"({"tasks":[{"name":"scoped","instruction":"Exercise only the supplied tool calls.","read_cards":["allowed","outer/child"],"write_cards":["writer"],"run_cards":[]}]})",
       "scoped-delegate");
   ASSERT_TRUE(delegated.Code().empty()) << delegated.View();
   const auto requests = model.Requests();
@@ -1313,7 +1313,7 @@ TEST_F(AgentProjectFixture, HelperOwnsTheCardItReservesFromEmptySets) {
   auto delegated = std::async(std::launch::async, [&] {
     return Tool(
         conversation, "delegate",
-        R"({"tasks":[{"name":"creator","instruction":"Reserve and implement a new Card.","read_cards":[],"write_cards":[]}]})",
+        R"({"tasks":[{"name":"creator","instruction":"Reserve and implement a new Card.","read_cards":[],"write_cards":[],"run_cards":[]}]})",
         "creator-delegate");
   });
   const std::shared_ptr<void> ensure_response(&model, [&model](void *) {

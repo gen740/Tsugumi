@@ -18,6 +18,7 @@ console.log('merge behavior: passed')
 await import("./clientViewState")
 await import("./serviceProtocol")
 await import('./chatModelRefresh')
+await import('./scopedSkills')
 await import("./guideRpc")
 await import("./environmentHost")
 await import("./chatStopped")
@@ -113,3 +114,5 @@ await import('./terminalEnvironment')
 await import('./projectImport')
 
 await import("./cardFileEdits")
+
+await import('./marimo')

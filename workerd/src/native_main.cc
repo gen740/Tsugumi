@@ -146,6 +146,7 @@ void write_text(const std::string& path, const std::string& data) {
 struct Failure {
   D::FailureKind kind;
   std::string message;
+  std::vector<std::pair<std::string, std::string>> args = {};
 };
 
 std::optional<D::FailureKind> kind_from_name(const std::string& n) {
@@ -456,6 +457,16 @@ void log_impl(void*, const char* message) {
 
 int cancelled_impl(void*) { return g_cancel.load() ? 1 : 0; }
 
+auto fail_at_impl(void*, const char* kind, const char* message,
+                  const char* source, uint32_t line, const char* cell) -> void {
+  if (!g_call || g_call->failure) return;
+  record_failure(kind_from_name(kind).value_or(D::FailureKind::worker_failed), message ? message : "");
+  if (source && *source && line > 0) {
+    g_call->failure->args = {{"card", g_call->card}, {"source", source}, {"line", std::to_string(line)}};
+    if (cell && *cell) g_call->failure->args.emplace_back("cell", cell);
+  }
+}
+
 void fail_impl(void*, const char* kind, const char* message) {
   auto k = kind_from_name(kind).value_or(D::FailureKind::worker_failed);
   record_failure(k, message ? message : "");
@@ -683,6 +694,7 @@ tsugumi_call make_call(const Call& call, std::vector<tsugumi_value>& values, con
   c.cancelled = cancelled_impl;
   c.remaining_ms = remaining_ms_impl;
   c.fail = fail_impl;
+  c.fail_at = fail_at_impl;
   c.display_table = display_table_impl;
   c.display_image = display_image_impl;
   c.display_points = display_points_impl;
@@ -1037,7 +1049,10 @@ void reply(const Call& call) {
   }
   flatbuffers::FlatBufferBuilder b;
   auto diag = b.CreateString(call.failure->message);
-  auto args = b.CreateVector(std::vector<flatbuffers::Offset<D::KeyValue>>{});
+  std::vector<flatbuffers::Offset<D::KeyValue>> entries;
+  for (const auto& [key, value] : call.failure->args)
+    entries.push_back(D::CreateKeyValue(b, b.CreateString(key), b.CreateString(value)));
+  auto args = b.CreateVector(entries);
   auto failure = D::CreateFailure(b, call.failure->kind, args, diag);
   auto value = W::CreateWorkerFailure(b, failure);
   W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(b, call.call_id, W::WorkerPayload::WorkerFailure, value.Union()));

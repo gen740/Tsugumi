@@ -604,7 +604,7 @@ TEST_F(AgentFixture,
   ModelServer model;
   model.Queue(AnthropicTool(
       "cancelled-delegation", "delegate",
-      R"({"tasks":[{"name":"review","instruction":"Prepare a bounded review.","read_cards":[],"write_cards":[]}]})"));
+      R"({"tasks":[{"name":"review","instruction":"Prepare a bounded review.","read_cards":[],"write_cards":[],"run_cards":[]}]})"));
   model.Queue(AnthropicText("This cancelled helper answer must not be saved."),
               true);
   model.Queue(AnthropicText("The parent acknowledged the interrupted helper."));
@@ -698,7 +698,7 @@ TEST_F(AgentFixture, HelpersShareTheParallelLimitAcrossDelegateCalls) {
     for (int i = 0; i < 3; ++i)
       model.Queue(AnthropicText("Another helper completed."));
     const std::string tasks =
-        R"({"tasks":[{"name":"one","instruction":"First task.","read_cards":[],"write_cards":[]},{"name":"two","instruction":"Second task.","read_cards":[],"write_cards":[]}]})";
+        R"({"tasks":[{"name":"one","instruction":"First task.","read_cards":[],"write_cards":[],"run_cards":[]},{"name":"two","instruction":"Second task.","read_cards":[],"write_cards":[],"run_cards":[]}]})";
     auto first = std::async(std::launch::async, [&] {
       return Tool(conversation, "delegate", tasks, "batch-one");
     });
@@ -746,7 +746,7 @@ TEST_F(AgentFixture, ShortenedHelperResultsPointToFullTraceAndSumUsageOnce) {
   ModelServer model;
   model.Queue(AnthropicTool(
       "long-helper", "delegate",
-      R"({"tasks":[{"name":"long","instruction":"Produce a long result.","read_cards":[],"write_cards":[]}]})"));
+      R"({"tasks":[{"name":"long","instruction":"Produce a long result.","read_cards":[],"write_cards":[],"run_cards":[]}]})"));
   const auto long_text = std::string(70000, 'x') + "FULL_HELPER_TRACE_END";
   auto helper_stream = AnthropicText(long_text);
   const auto at = helper_stream.find("\"input_tokens\":12");
@@ -792,7 +792,7 @@ TEST_F(AgentFixture, ShortenedHelperResultsPointToFullTraceAndSumUsageOnce) {
   ASSERT_TRUE(
       Tool(
           conversation, "delegate",
-          R"({"tasks":[{"name":"long","instruction":"Produce a long result.","read_cards":[],"write_cards":[]}]})",
+          R"({"tasks":[{"name":"long","instruction":"Produce a long result.","read_cards":[],"write_cards":[],"run_cards":[]}]})",
           "long-helper")
           .Code()
           .empty());
