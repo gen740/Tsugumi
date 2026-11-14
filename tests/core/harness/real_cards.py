@@ -131,3 +131,55 @@ def check_python_card_environment(c) -> None:
             # What the worker was started with and the SDK's own setting stay.
             assert values["XDG_CACHE_HOME"].endswith("/home/.cache"), seen
             assert values["MPLBACKEND"] == "module://tsugumi.mpl", seen
+
+
+# Discard context only in the assertions: otherwise this fixture would add the
+# tools to the closure itself and conceal a missing manifest dependency.
+DEFINITION_TOOLS_NIX = r'''{ pkgs, inputs, params }:
+let
+  tools = with pkgs; [ bash coreutils findutils gnugrep gnused gawk gnutar gzip jq ];
+  path = builtins.unsafeDiscardStringContext (pkgs.lib.makeBinPath tools);
+  shell = builtins.unsafeDiscardStringContext "${pkgs.bash}/bin/bash";
+  # Not named `jq`: a let binding would take the place of pkgs.jq in `tools`.
+  jqProgram = builtins.unsafeDiscardStringContext "${pkgs.lib.getBin pkgs.jq}/bin/jq";
+  check = ''
+    set -eu
+    test "$BASH" = "${shell}"
+    test "$PATH" = "${path}"
+    test "$(command -v jq)" = "${jqProgram}"
+    jq --version >&2
+  '';
+in {
+  preRun = check + "echo pre-definition-tools";
+  run = check + ''
+    jq -nc --arg value "$PATH;$BASH" '{out:{value:$value}}' > "$TSUGUMI_OUTPUT"
+  '';
+  postRun = check + "echo post-definition-tools";
+}
+'''
+
+
+def check_definition_tools(client, run_id, name="work"):
+    """The body and both hooks use the definition's tools, all in its recorded closure."""
+    from harness.observations import decode_scalar, read_output
+
+    environment = next(e for e in client.call("RunEnvironmentsRequest", runId=run_id).environments
+                       if text(e.id) == text(client.call("RunRecordRequest", runId=run_id,
+                                                        card=path(name)).record.summary.environmentId))
+    paths, offset = [], 0
+    while True:
+        page = client.call("RunEnvironmentPathsRequest", runId=run_id,
+                           environmentId=text(environment.id), offset=offset, limit=3)
+        paths.extend(text(value) for value in page.paths)
+        if page.nextOffset is None:
+            break
+        offset = page.nextOffset
+    search, shell = decode_scalar(read_output(client, run_id, card=name)).split(";")
+    assert shell.startswith("/nix/store/") and shell.endswith("/bin/bash")
+    assert shell.removesuffix("/bin/bash") in paths
+    for directory in search.split(":"):
+        assert directory.startswith("/nix/store/") and directory.endswith("/bin")
+        assert directory.removesuffix("/bin") in paths
+    logs = text(client.call("LogRangeRequest", runId=run_id, card=path(name), stream=1).text)
+    assert logs == "pre-definition-tools\npost-definition-tools\n"
+    return text(environment.id), paths, search, shell

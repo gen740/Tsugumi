@@ -61,6 +61,7 @@ int main() {
   call.working_directory = "."; call.temporary_directory = "."; call.output_directory = ".";
   call.inputs = &value; call.input_count = 1;
   call.params = params.GetBufferPointer(); call.params_size = params.GetSize();
+  call.finish_outputs = [](void*) { return 0; };
   call.cancelled = [](void*) { return 0; };
   call.display_text = [](void*, const char*) { ++reports; return 0; };
   call.emit_output = [](void*, const char*, const uint8_t* bytes, size_t) {

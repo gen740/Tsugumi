@@ -28,6 +28,10 @@ struct CardBuild {
   std::optional<std::string> bash;
   std::string pre_run;
   std::string post_run;
+  // The shell of the bash steps and the PATH of the Card's processes, both
+  // from the Card's own nixpkgs (the manifest), never from this build of the core.
+  std::string shell;
+  std::string path;
   std::string views;  // JSON mapping of the view module names the worker may show
   // The program the kernel runs the Card's binaries with (binfmt_misc), for a
   // Card built for another system; "" when it runs natively.

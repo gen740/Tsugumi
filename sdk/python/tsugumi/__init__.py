@@ -21,6 +21,7 @@ from __future__ import annotations
 import importlib
 import os
 import sys
+import threading
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 import _tsugumi_host as _host
@@ -34,6 +35,7 @@ __all__ = ["Inputs", "Report", "Run", "Failure", "builder", "message"]
 os.environ.setdefault("MPLBACKEND", "module://tsugumi.mpl")
 
 _in_call = False
+_active_scope = None
 """Inside an invocation or a run-start hook (the host's functions can be called)."""
 
 from tsugumi import plots as _plots  # noqa: E402 - after the module's state, which plots does not read
@@ -52,6 +54,12 @@ class Failure(Exception):
 class Run:
     def __init__(self):
         self._info = _host.info()
+        self._scope = _active_scope
+        self._owner = threading.get_ident()
+
+    def _check(self):
+        if self._scope is None or self._scope is not _active_scope or self._owner != threading.get_ident():
+            raise Failure("worker_failed", "Card call has expired or belongs to another thread")
 
     # -- identity and directories --
     @property
@@ -79,9 +87,11 @@ class Run:
         return self._info["output_directory"]
 
     def cancelled(self) -> bool:
+        self._check()
         return bool(_host.cancelled())
 
     def remaining_ms(self) -> int:
+        self._check()
         return int(_host.remaining_ms())
 
 
@@ -269,7 +279,8 @@ def _adopt_environment() -> None:
 
 
 def _guard(body) -> bool:
-    global _in_call
+    global _in_call, _active_scope
+    _active_scope = object()
     _in_call = True
     done = False
     try:
@@ -293,6 +304,7 @@ def _guard(body) -> bool:
     finally:
         if not done:
             _close_figures()
+        _active_scope = None
         _in_call = False
 
 
@@ -320,4 +332,8 @@ def _run_start() -> bool:
 
 
 def _invoke() -> bool:
-    return _guard(lambda: _outputs(_call(_card_module.main)))
+    def body():
+        _outputs(_call(_card_module.main))
+        if not _host.finish_outputs():
+            raise Failure("output_invalid", "required outputs were not emitted")
+    return _guard(body)

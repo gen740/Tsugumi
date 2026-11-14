@@ -64,6 +64,8 @@ import Testing
     let image = DisplaySnapshot(runId: "left", invocation: 1, revision: 1, value: .image(mediaType: "image/png", data: Data([1, 2]), alt: "rgb"))
     let other = DisplaySnapshot(runId: "right", invocation: 1, revision: 1, value: .image(mediaType: "image/png", data: Data([1, 3]), alt: "rgb"))
     #expect(!RunComparison.sameDisplay(image, other))
+    let sameImage = DisplaySnapshot(runId: "right", invocation: 2, revision: 9, value: image.content)
+    #expect(RunComparison.sameDisplay(image, sameImage))
   }
 
   @Test func recordedDisplayDoesNotNeedALiveSession() {

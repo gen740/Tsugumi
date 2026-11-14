@@ -96,7 +96,7 @@ class Gateway(socketserver.UnixStreamServer):
     def operation(self, q):
         kind, body = q.bodyType, q.body
         caps = R.CapabilitiesT(serverId=self.registered_server, nativeSystem=self.system, systems=[self.system],
-                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=3)
+                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=4)
         if kind == R.RequestBody.CatalogRequest:
             caps.nativeSystem = self.catalog_system
             caps.systems = [self.catalog_system]

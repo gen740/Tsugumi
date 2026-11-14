@@ -266,6 +266,7 @@ struct HostProjectError: Error, CustomStringConvertible {
     case "project_defaults_unavailable": return String(localized: "このビルドには既定の Nixpkgs が設定されていません。")
     case "invalid_flow": return String(localized: "フローの方向が正しくありません。")
     case "folder_not_empty": return String(localized: "作成先は空ではありません。空のフォルダか新しい名前を選んでください。")
+    case "project_too_large": return String(localized: "プロジェクトが大きすぎます（64 MB まで）。")
     case "invalid_project": return String(localized: "有効なプロジェクトのフォルダを指定してください。複製先は元のフォルダの外にしてください。")
     case "demo_not_found": return String(localized: "デモが見つかりません。")
     case "invalid_language": return String(localized: "デモの言語が正しくありません。")

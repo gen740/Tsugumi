@@ -416,6 +416,13 @@ func Invoke(raw unsafe.Pointer, body func(*callScope) error) (result int) {
 	return 1
 }
 
+func (scope *callScope) finishOutputs() error {
+  return scope.host(func(call *C.tsugumi_call) error {
+    if C.tsugumi_go_finish_outputs(call) != 0 { return Fail("output_invalid", "required outputs were not emitted") }
+    return nil
+  })
+}
+
 // Report publishes presentation and log side effects during the call.
 type Report struct{ scope *callScope }
 

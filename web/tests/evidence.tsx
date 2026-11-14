@@ -59,7 +59,7 @@ assert.equal(snapshot.runId, run)
 assert.equal(snapshot.invocation, 2n)
 assert.equal(snapshot.revision, 7n)
 assert.match(renderToStaticMarkup(<DisplayContent display={snapshot} large />), /157471/)
-assert.equal(recordedDisplay(new D.DisplayT()), undefined)
+assert.equal(recordedDisplay(new D.DisplayT())?.value.kind, 'unavailable')
 
 const report = 'Read only: [source](card:outer/inner?file=src%2Fmain.py&lines=12-18) uses a clock.\n\nUnrelated prose.\n\nRun and observed: [other](card:b?file=main.cc&lines=1-3) differs.'
 assert.equal(findings(report).length, 2)

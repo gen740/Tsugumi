@@ -82,6 +82,8 @@ const uint8_t* Call::input(std::string_view port) const {
   return nullptr;
 }
 
+auto Call::finish_outputs() const -> void { check(c_->finish_outputs(c_->host), "required outputs"); }
+
 void Call::emit(std::string_view port, const flatbuffers::FlatBufferBuilder& b) const {
   std::string p(port);
   if (c_->emit_output(c_->host, p.c_str(), b.GetBufferPointer(), b.GetSize()) != 0)
