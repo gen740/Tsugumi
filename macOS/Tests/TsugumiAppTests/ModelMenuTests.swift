@@ -7,6 +7,23 @@ import Testing
 /// Stored-versus-refreshed catalog behavior is covered by models_rpc_test.cc.
 @MainActor
 struct ModelMenuTests {
+  @Test func openingRefreshesSettingsBeforePresentingTheMenu() async {
+    let menu = ModelMenu()
+    let models = ["gpt-6.1-sol", "gpt-6.1-terra"]
+    let connections = [ChatPanel.Connection(id: "chatgpt", name: "ChatGPT", models: models)]
+    menu.setContents(connections: connections, provider: "chatgpt", model: models[0], names: [:])
+    await withCheckedContinuation { continuation in
+      menu.beforeOpen = {
+        menu.setContents(connections: connections, provider: "chatgpt", model: models[1], names: [:])
+        continuation.resume()
+      }
+      // No anchor: exercise the opening path without showing a window or menu.
+      menu.show()
+    }
+    #expect(menu.menu.items.filter { $0.state == .on && models.contains($0.title) }.map(\.title) == [models[1]])
+    menu.beforeOpen = nil
+  }
+
   /// Counts the fetches of each connection.
   final class Stub: @unchecked Sendable {
     private let lock = NSLock()

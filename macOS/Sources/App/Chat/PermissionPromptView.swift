@@ -1,11 +1,44 @@
 import SwiftUI
 
+/// Core supplies the same structured description for live and restored requests.
+enum ProjectAccessLabel {
+  static func neededNow(_ request: String) -> Bool {
+    guard let data = String(request.dropFirst("project_access ".count)).data(using: .utf8),
+          let v = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return true }
+    return v["needed_now"] as? Bool ?? true
+  }
+  static func text(_ request: String) -> String {
+    guard let data = String(request.dropFirst("project_access ".count)).data(using: .utf8),
+          let v = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return request }
+    let action: String
+    switch v["access"] as? String {
+    case "Read": action = String(localized: "内容の読み取り")
+    case "Write": action = String(localized: "内容の変更")
+    case "Run": action = String(localized: "Card の実行")
+    case "CardPermissions": action = String(localized: "Card の権限の変更")
+    case "Shell": action = String(localized: "シェルコマンドの実行")
+    default: action = String(localized: "アクセス")
+    }
+    let duration = (v["scope"] as? String) == "Server" ? String(localized: "取り消すまで") : String(localized: "この会話の間")
+    return String(format: String(localized: "%@\n%@\n許可する操作: %@\n有効期間: %@"), v["title"] as? String ?? "", v["path"] as? String ?? "", action, duration)
+  }
+}
+
 /// Shows core-owned access requests and approvals for a single operation.
 struct PermissionPromptView: View {
   let prompt: ChatController.PermissionPrompt
-  let answer: (_ allow: Bool, _ always: Set<CardPermission>) -> Void
+  let answer: (_ allow: Bool, _ always: Set<CardPermission>, _ selected: Set<String>) -> Void
   var reload = false
   @State private var always: Set<CardPermission> = []
+  @State private var selected: Set<String>
+
+  init(prompt: ChatController.PermissionPrompt,
+       answer: @escaping (Bool, Set<CardPermission>, Set<String>) -> Void, reload: Bool = false) {
+    self.prompt = prompt
+    self.answer = answer
+    self.reload = reload
+    _selected = State(initialValue: prompt.defaultSelection)
+  }
 
   private var kinds: [CardPermission] { (prompt.operation != nil || reload) ? [] : CardPermission.allCases.filter { k in prompt.requests.contains { $0.kind == k } } }
 
@@ -23,7 +56,16 @@ struct PermissionPromptView: View {
           }.frame(maxHeight: 360)
         }
         ForEach(prompt.operation == nil ? prompt.access : [], id: \.self) { request in
-          Text(String(request.dropFirst("project_access ".count))).textSelection(.enabled)
+          Toggle(isOn: Binding(get: { selected.contains(request) }, set: { on in
+            if on { selected.insert(request) } else { selected.remove(request) }
+          })) {
+            VStack(alignment: .leading) {
+              Text(ProjectAccessLabel.text(request)).textSelection(.enabled)
+              if ProjectAccessLabel.neededNow(request) {
+                Text("今の操作に必要").font(.caption).foregroundStyle(.secondary)
+              }
+            }
+          }.toggleStyle(.checkbox)
         }
         ForEach(prompt.requests) { r in
           HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -49,8 +91,8 @@ struct PermissionPromptView: View {
       }
       HStack {
         Spacer()
-        Button("許可しない") { answer(false, []) }.keyboardShortcut(.cancelAction)
-        Button("許可する") { answer(true, always) }.keyboardShortcut(.defaultAction)
+        Button("許可しない") { answer(false, [], []) }.keyboardShortcut(.cancelAction)
+        Button("許可する") { answer(true, always, selected) }.keyboardShortcut(.defaultAction)
       }
     }
     .padding(20)

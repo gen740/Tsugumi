@@ -14,6 +14,7 @@ console.log('merge behavior: passed')
 // protocol/agent.fbs in tests/core/agent_rpc_test.cc. These are UI behaviors.
 
 await import("./serviceProtocol")
+await import('./chatModelRefresh')
 await import("./guideRpc")
 await import("./environmentHost")
 await import("./chatStopped")
@@ -40,6 +41,7 @@ await import("./wires")
 await import("./wireDemos")
 
 await import("./modelMenu")
+await import('./agentRealCheck')
 await import("./settings")
 await import("./providerKeys")
 await import('./thoughts')

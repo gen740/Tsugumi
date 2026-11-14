@@ -286,11 +286,22 @@ interface PermissionWait {
 const permissionWaits = new Map<string, PermissionWait>()
 const EXTERNAL_SESSION = 'external'
 
-async function answerPermission(id: string, allow: boolean) {
-  await core.user.call('AccessResolveRequest', { request_id: id, allow })
+async function answerPermission(id: string, allow: boolean, selected?: string[]) {
+  const access = await core.user.call<{ requests: { id: string; asked: string[] }[] }>('AccessListRequest')
+  const asked = access.requests.find(r => r.id === id)?.asked ?? []
+  let neededAllowed = allow
+  const additional: string[] = []
+  for (const request of asked) {
+    if (!request.startsWith('project_access ') || request.includes('operation_approval\n')) continue
+    const item = JSON.parse(request.slice('project_access '.length))
+    const checked = allow && (selected ? selected.includes(request) : item.needed_now === true)
+    if (item.needed_now === true) neededAllowed = checked
+    else if (checked) additional.push(item.access)
+  }
+  await core.user.call('AccessResolveRequest', { request_id: id, allow: neededAllowed, also_allow: additional })
   const waiting = permissionWaits.get(id)
   permissionWaits.delete(id)
-  waiting?.resolve(allow)
+  waiting?.resolve(neededAllowed)
   if (waiting) ctx.broadcast({ type: 'chat', project: waiting.project, session: waiting.session,
     event: { kind: 'permissionAnswered', id } })
 }
@@ -303,8 +314,11 @@ async function withAccess<T>(project: string, session: string, run: () => Promis
     try { return await run() } catch (error) {
       if (!(error instanceof CoreAgentError) || error.code !== 'grant_required' || !error.requestId) throw error
       const id = error.requestId
+      const access = await core.user.call<{ requests: { id: string; asked: string[] }[] }>('AccessListRequest')
+      const request = access.requests.find(r => r.id === id)
+      if (!request) throw error
       const allowed = new Promise<boolean>((resolve) => {
-        const asked = [`project_access ${project}: ${error.message}`]
+        const asked = request.asked
         permissionWaits.set(id, { project, session, asked, resolve })
         ctx.broadcast({ type: 'chat', project, session, event: { kind: 'permission', id, asked, from } })
       })
@@ -395,10 +409,7 @@ class ChatHost {
         arguments_json: typeof args === 'string' ? args : JSON.stringify(args ?? {}), op_id: op })
     } catch (error) {
       if (error instanceof CoreAgentError && error.code === 'grant_required' && error.requestId) {
-        const asked = [`project_access ${this.project}: ${error.message}`]
-        permissionWaits.set(error.requestId, { project: this.project, session: EXTERNAL_SESSION, asked, resolve: () => {} })
-        ctx.broadcast({ type: 'chat', project: this.project, session: EXTERNAL_SESSION,
-          event: { kind: 'permission', id: error.requestId, asked, from: 'Claude Code' } })
+        await showExternalAccess(error.requestId, this.project)
         return { text: JSON.stringify({ code: error.code, message: error.message, request_id: error.requestId }), isError: true }
       }
       throw error
@@ -418,12 +429,12 @@ function chatFor(dir: string): ChatHost {
 export function cancelChats(dir: string) { chats.get(projectKey(dir).key)?.detach() }
 
 async function showExternalAccess(requestId: string, fallback?: string) {
-  const access = await core.user.call<{ requests: { id: string; project_id: string; access: string; scope: string; reason: string; state: string }[] }>('AccessListRequest')
+  const access = await core.user.call<{ requests: { id: string; project_id: string; asked: string[]; state: string }[] }>('AccessListRequest')
   const request = access.requests.find((r) => r.id === requestId && r.state === 'pending')
   if (!request) return
   const project = core.projectFolder(request.project_id) ?? fallback
   if (!project) return
-  const asked = [`project_access ${request.access} [${request.scope}] ${request.project_id}: ${request.reason}`]
+  const asked = request.asked
   permissionWaits.set(requestId, { project, session: EXTERNAL_SESSION, asked, resolve: () => {} })
   ctx.broadcast({ type: 'chat', project, session: EXTERNAL_SESSION,
     event: { kind: 'permission', id: requestId, asked, from: 'Claude Code' } })
@@ -466,6 +477,9 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   ctx = c
   // The language for the server's own messages, from the start (the app's, once read).
   core = new CoreAgentHost(c.support, c.here, c.envs)
+  core.observeHost((event) => {
+    if (event.type === 'SettingsChanged' && event.value.profile === settingsProfile()) c.broadcast({ type: 'settingsChanged' })
+  })
   const projectDir = c.projectDir
   const routes: Record<string, Handler> = {
   'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined),
@@ -486,7 +500,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   }),
   'POST /api/settings': async (b) => {
     await patchSettings(b ?? {}, b?.revision ?? { ...revisions })
-    return { ...settings(), revision: { ...revisions }, ...await modelCatalogs() }
+    return { ...settings(), revision: { ...revisions }, ...await modelCatalogs(), chatProvider: await providerInfo() }
   },
   'POST /api/versions/note': async (b) => {
     const project = await core.project(projectDir(b.path))
@@ -553,10 +567,17 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const host = chatFor(projectDir(b.path))
     const a = await host.agent(String(b.session))
     const [wait] = [...waitingFor(host.project, a.id), ...waitingFor(host.project, EXTERNAL_SESSION)]
-    const access = await core.user.call<{ requests: { id: string; state: string; access: string; scope: string; reason: string; project_id: string }[] }>('AccessListRequest', { conversation_id: a.id })
+    const access = await core.user.call<{ requests: { id: string; state: string; asked: string[] }[] }>('AccessListRequest', { conversation_id: a.id })
     const pending = access.requests.find((r) => r.state === 'pending')
-    return { conversation: a.conversation, busy: a.busy, resumable: a.resumable, interruptedOperation: a.interruptedOperation, continuable: a.continuable, provider: await providerInfo(),
-      permission: pending ? { id: pending.id, asked: [`project_access ${pending.project_id}: ${pending.access} [${pending.scope}] — ${pending.reason}`] } : wait ? { id: wait[0], asked: wait[1].asked } : null }
+    let info = await providerInfo()
+    if (a.busy && a.modelBinding) {
+      const p = a.modelBinding
+      info = { ...info, name: p.providerId === 'chatgpt' ? 'ChatGPT' : p.providerId === 'openai' ? 'OpenAI' : p.providerId === 'fixture' ? 'Local fixture' : 'Anthropic',
+        model: p.model, effort: p.effort, fast: p.fast, plan: p.providerId === 'chatgpt', remote: p.providerId !== 'fixture',
+        api: p.providerId === 'chatgpt' || p.providerId === 'openai' ? 'openAIResponses' : 'anthropicMessages' }
+    }
+    return { conversation: a.conversation, busy: a.busy, resumable: a.resumable, interruptedOperation: a.interruptedOperation, continuable: a.continuable, provider: info,
+      permission: pending ? { id: pending.id, asked: pending.asked } : wait ? { id: wait[0], asked: wait[1].asked } : null }
   },
   'POST /api/chat/send': async (b) => {
     const { host, a } = await turnAgent(b)
@@ -598,7 +619,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { ok: true }
   },
   'POST /api/chat/permission': async (b) => {
-    await answerPermission(String(b.id), b.allow === true)
+    await answerPermission(String(b.id), b.allow === true, Array.isArray(b.selected) ? b.selected : undefined)
     return { ok: true }
   },
   'POST /api/chat/cancel': async (b) => {
@@ -644,7 +665,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     ? externalAPI(String(b.name), b.arguments, b.path ? projectDir(b.path) : undefined)
     : chatFor(projectDir(b.path)).externalCall(String(b.name), b.arguments),
   'POST /api/agent/access': () => core.user.call('AccessListRequest'),
-  'POST /api/agent/access/resolve': async (b) => { await answerPermission(String(b.id), b.allow === true); return { ok: true } },
+  'POST /api/agent/access/resolve': async (b) => { await answerPermission(String(b.id), b.allow === true, Array.isArray(b.selected) ? b.selected : undefined); return { ok: true } },
   'POST /api/agent/access/revoke': (b) => core.user.call('AccessRevokeRequest', { grant_id: String(b.id) }),
   'POST /api/guide': async () => {
     const state = await guideState()

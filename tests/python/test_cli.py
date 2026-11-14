@@ -487,14 +487,20 @@ def core_settings(root: Path, changes: dict | None = None):
             builder.Finish(envelope.Pack(builder), file_identifier=b"TSH1")
             data = builder.Output()
             peer.sendall(struct.pack("<I", len(data)) + data)
-            size, = struct.unpack("<I", read_exact(4))
-            assert 0 < size <= 16 << 20
-            data = read_exact(size)
-            assert Message.MessageBufferHasIdentifier(data, 0)
-            reply = MessageT.InitFromPackedBuf(data)
-            assert reply.requestId == i and reply.payloadType == Payload.Reply
-            assert reply.payload.valueType == expected, vars(reply.payload.value)
-            return reply.payload.value
+            while True:
+                size, = struct.unpack("<I", read_exact(4))
+                assert 0 < size <= 16 << 20
+                data = read_exact(size)
+                assert Message.MessageBufferHasIdentifier(data, 0)
+                reply = MessageT.InitFromPackedBuf(data)
+                # Host events (including SettingsChanged from this update)
+                # share the stream with correlated replies.
+                if reply.payloadType == Payload.Event:
+                    assert reply.requestId == 0
+                    continue
+                assert reply.requestId == i and reply.payloadType == Payload.Reply
+                assert reply.payload.valueType == expected, vars(reply.payload.value)
+                return reply.payload.value
 
         call(1, RequestPayload.HelloRequest,
              HelloRequestT(token=ready["user_token"], clientId="cli-app-settings-test", protocol=1), ReplyPayload.HelloResult)
@@ -506,6 +512,73 @@ def core_settings(root: Path, changes: dict | None = None):
                                 changes=[SettingT(key=k, valueJson=json.dumps(v)) for k, v in changes.items()]),
                             ReplyPayload.Settings)
         return settings.revision, {s.key.decode(): json.loads(s.valueJson) for s in settings.values or []}
+
+
+def test_core_settings_reads_past_settings_changed_without_a_socket(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(os.environ.get("TSUGUMI_PY_BINDINGS", BUILD / "generated/python"))))
+    import flatbuffers
+    from Tsugumi.Host.Event import EventT
+    from Tsugumi.Host.EventPayload import EventPayload
+    from Tsugumi.Host.Message import MessageT
+    from Tsugumi.Host.Payload import Payload
+    from Tsugumi.Host.Reply import ReplyT
+    from Tsugumi.Host.ReplyPayload import ReplyPayload
+    from Tsugumi.Host.RequestPayload import RequestPayload
+    from Tsugumi.Host.Setting import SettingT
+    from Tsugumi.Host.Settings import SettingsT
+    from Tsugumi.Host.SettingsChanged import SettingsChangedT
+    from Tsugumi.Service.HelloResult import HelloResultT
+
+    def frame(message):
+        builder = flatbuffers.Builder()
+        builder.Finish(message.Pack(builder), file_identifier=b"TSH1")
+        data = builder.Output()
+        return struct.pack("<I", len(data)) + data
+
+    class Peer:
+        def __init__(self, *_):
+            self.pending = bytearray()
+            self.updated = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def settimeout(self, _):
+            pass
+
+        def connect(self, address):
+            assert address == "unused-host-socket"
+
+        def sendall(self, data):
+            request = MessageT.InitFromPackedBuf(data[4:])
+            if request.payload.valueType == RequestPayload.HelloRequest:
+                kind, value = ReplyPayload.HelloResult, HelloResultT(serverId="fixture", principal="user")
+            else:
+                self.updated = request.payload.valueType == RequestPayload.SettingsUpdateRequest
+                kind, value = ReplyPayload.Settings, SettingsT(revision=8 if self.updated else 7,
+                    values=[SettingT(key="agent.model", valueJson='"changed"' if self.updated else '"before"')])
+            if self.updated:
+                self.pending += frame(MessageT(requestId=0, payloadType=Payload.Event,
+                    payload=EventT(valueType=EventPayload.SettingsChanged,
+                                   value=SettingsChangedT(profile="desktop", revision=8))))
+            self.pending += frame(MessageT(requestId=request.requestId, payloadType=Payload.Reply,
+                                          payload=ReplyT(valueType=kind, value=value)))
+
+        def recv(self, count):
+            # Also exercise partial frame reads, with no operating-system socket.
+            count = min(count, 7)
+            data = bytes(self.pending[:count])
+            del self.pending[:count]
+            return data
+
+    state = tmp_path / "agent-core"
+    state.mkdir()
+    (state / "agent.ready").write_text(json.dumps({"host_socket": "unused-host-socket", "user_token": "fixture"}))
+    monkeypatch.setattr(socket, "socket", Peer)
+    assert core_settings(tmp_path, {"agent.model": "changed"}) == (8, {"agent.model": "changed"})
 
 
 @needs_server
