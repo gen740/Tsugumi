@@ -1,4 +1,5 @@
 {
+ "名前を入力してください（4096 バイトまで）。": "Enter a name (up to 4096 bytes).",
  "思考の過程を描きますか？": "Draw the Agent's thoughts?",
  "描く": "Draw",
  "思考の過程を描く: オン（使った token: 入力 {0}、出力 {1}）": "Draw thoughts: on (tokens used: input {0}, output {1})",
@@ -244,7 +245,6 @@
  "「{0}」と重複しています": "Conflicts with “{0}”",
  "「{0}」のおすすめは？": "Which demo of “{0}” do you recommend?",
  "「{0}」のデモです。どれを見ますか？": "These are the demos in “{0}”. Which would you like to see?",
- "「{0}」はすでに使われています。": "“{0}” is already used.",
  "「{0}」を読み取り専用で Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（{1}）に送られます。": "Lets the Agent read “{0}”, read-only. The contents of the files the Agent reads are sent to the provider ({1}).",
  "あとで": "Later",
  "あなた": "You",
@@ -762,8 +762,7 @@
  "名前": "Name",
  "名前と内容を書く": "Write name and content",
  "名前と実行環境": "Name and Environment",
- "名前に使えるのは英数字と - _ . だけです（128 文字まで）。": "A name may contain only letters, digits and - _ . (up to 128 characters).",
- "名前は Card の ID で、定義のフォルダ名（definitions/<名前>/）です。変えると接続・配置・実行履歴も追従します（すぐに保存します）。": "The name is the Card's ID and its definition folder name (definitions/<name>/). Changing it carries over connections, layout and run history (saved at once).",
+ "表示する名前です。同じ名前を複数の Card に使えます。変えても ID・接続・実行履歴は変わりません（すぐに保存します）。": "The display name may be shared by several Cards. Changing it keeps the ID, connections and run history unchanged (saved at once).",
  "名前を変更": "Rename",
  "名前を変更…": "Rename…",
  "名前（例: thin-bands）": "Name (e.g. thin-bands)",

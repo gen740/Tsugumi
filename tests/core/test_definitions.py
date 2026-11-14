@@ -42,40 +42,80 @@ def external(root: Path, name: str, text_value: str) -> None:
         {"name": "branches", "type": "string[]", "data": ["out1"]}]}))
 
 
-def test_rename_moves_the_definition_and_its_history(tmp_path, core_factory):
-    """Renaming a card preserves its sources and makes its history available under the new name."""
+def rename(c, card_id, name, prefix=""):
+    """Change a human name through the same metadata used by both UIs."""
+    snap = c.call("ProjectInspectRequest")
+    if not prefix:
+        d = next(d for d in snap.definitions if text(d.id) == card_id)
+        meta = json.loads(text(d.metaJson) or "{}")
+        meta["name"] = name
+        changes = [change("PutDefinition", id=card_id, cardJson=text(d.cardJson),
+                          linkJson=text(d.linkJson), metaJson=json.dumps(meta))]
+    else:
+        filename = prefix + "definitions/" + card_id + "/_meta.json"
+        hashes = {text(s.path): text(s.hash) for s in snap.sources}
+        old = json.loads(bytes(c.call("ProjectFileReadRequest", path=filename).bytes)) if filename in hashes else {}
+        old["name"] = name
+        changes = [change("PutSource", path=filename, bytes=json.dumps(old).encode(), baseHash=hashes.get(filename))]
+    return c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="agent", changes=changes)
+
+
+def database_records(filename):
+    """Every stored record, including JSON input sources and absolute file paths."""
+    import sqlite3
+    with sqlite3.connect(filename) as db:
+        return "\n".join(db.iterdump()).encode()
+
+
+def test_rename_preserves_every_past_record_and_saved_input(tmp_path, core_factory):
+    """A name edit leaves all recorded bytes and exact addresses untouched."""
     root = tmp_path / "p"
     builtin_project(root, text="hi")
     put(root / "definitions" / "src" / "notes.txt", "kept")
-    d = core_factory(project_root=root)
-    c = d.connect()
+    c = core_factory(project_root=root).connect()
     run_id, st = run_and_wait(c, "src")
     assert st.state == RunState.succeeded
-    rev, doc = project_json(c)
-    for card in doc["canvas"]["cards"]:
-        if card["id"] == "src":
-            card["id"] = "source"
-    for e in doc["canvas"]["connections"]:
-        for side in ("from", "to"):
-            if e[side]["card"] == "src":
-                e[side]["card"] = "source"
-    with pytest.raises(RpcFailure) as err:
-        c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t",
-               changes=[change("SetProject", json=json.dumps(doc)), change("RenameDefinition", id="src", to="out")])
-    assert err.value.kind == "invalid_request"  # the name is taken
-    res = c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t",
-                 changes=[change("SetProject", json=json.dumps(doc)), change("RenameDefinition", id="src", to="source")])
-    assert "src" in [text(x) for x in res.delta.definitionsRemoved]
-    assert bytes(c.call("ProjectFileReadRequest", path="definitions/source/notes.txt").bytes) == b"kept"
-    with pytest.raises(RpcFailure) as missing:
-        c.call("ProjectFileReadRequest", path="definitions/src/notes.txt")
-    assert missing.value.kind == "not_found"
-    # The run's records follow the new name.
-    rec = c.call("RunRecordRequest", runId=run_id, card=path("source"))
-    assert text(rec.record.summary.card.segments[0]) == "source"
-    assert c.call("RunInvocationsRequest", runId=run_id, card=path("source")).records
-    run2, st2 = run_and_wait(c, "source")
+    snap = c.call("ProjectInspectRequest")
+    before = database_records(root / ".tsugumi/history.sqlite")
+    result = rename(c, "src", "日本語 / source")
+    assert result.executionRev == snap.executionRev
+    assert database_records(root / ".tsugumi/history.sqlite") == before
+    assert text(c.call("ProjectInspectRequest").projectJson) == text(snap.projectJson)
+    assert bytes(c.call("ProjectFileReadRequest", path="definitions/src/notes.txt").bytes) == b"kept"
+    assert c.call("RunRecordRequest", runId=run_id, card=path("src")).record
+    assert c.call("RunInvocationsRequest", runId=run_id, card=path("src")).records
+    run2, st2 = run_and_wait(c, "out", propagate=False)
     assert st2.state == RunState.succeeded
+    assert recorded_input_json(c, tmp_path / "decode", run2, "out")["text"] == "hi"
+
+
+def test_new_ids_are_unique_and_names_may_be_shared(tmp_path, core_factory):
+    """The core reserves salted ids, including before any definitions are saved."""
+    import re
+    root = tmp_path / "p"
+    builtin_project(root)
+    d = core_factory(project_root=root)
+    c = d.connect()
+    ids = [text(c.call("CardIdRequest", name="Aggregate").id) for _ in range(80)]
+    assert len(set(ids)) == len(ids)
+    assert all(re.fullmatch(r"aggregate-[abcdefghjkmnpqrstuvwxyz23456789]{4}", x) for x in ids)
+    snap = c.call("ProjectInspectRequest")
+    doc = json.loads(text(snap.projectJson))
+    doc["canvas"]["cards"] += [{"id": x} for x in ids[:2]]
+    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="ui:test", changes=[
+        change("SetProject", json=json.dumps(doc)), *[
+            change("PutDefinition", id=x, cardJson='{"template":"draft"}', metaJson='{"name":"Aggregate"}') for x in ids[:2]]])
+    snap = c.call("ProjectInspectRequest")
+    assert sum(text(x.name) == "Aggregate" for x in snap.resolution) == 2
+    assert "src" in [text(x.id) for x in snap.definitions]  # existing ids are unchanged
+    d.restart()
+    c = d.connect()
+    assert text(c.call("CardIdRequest", name="Aggregate").id) not in ids
+    nested = text(c.call("CardIdRequest", name="Aggregate", projectPath="externals/new/").id)
+    assert re.fullmatch(r"aggregate-[abcdefghjkmnpqrstuvwxyz23456789]{4}", nested)
+    for bad in ("../", "externals/../", "definitions/a/", "externals/new"):
+        with pytest.raises(RpcFailure):
+            c.call("CardIdRequest", name="Aggregate", projectPath=bad)
 
 
 def pretty(doc: dict) -> str:
@@ -105,77 +145,23 @@ def laid_out_project(root: Path, layout: dict = LAID_OUT) -> None:
     (root / "layout.json").write_text(spelled(layout), encoding="utf-8")
 
 
-def renamed_project(doc: dict, old: str, new: str) -> dict:
-    for c in doc["canvas"]["cards"]:
-        if c["id"] == old:
-            c["id"] = new
-    for e in doc["canvas"]["connections"]:
-        for side in ("from", "to"):
-            if e[side]["card"] == old:
-                e[side]["card"] = new
-    return doc
-
-
 def without_card(doc: dict, id: str) -> dict:
     doc["canvas"]["cards"] = [c for c in doc["canvas"]["cards"] if c["id"] != id]
     doc["canvas"]["connections"] = [e for e in doc["canvas"]["connections"] if id not in (e["from"]["card"], e["to"]["card"])]
     return doc
 
 
-def test_an_agent_rename_keeps_the_cards_place_frame_and_group(tmp_path, core_factory):
-    """Renaming a card preserves its position, display frame and group membership.
-
-    Unrelated card names and the original layout formatting remain unchanged,
-    and the same layout is visible after restarting the daemon.
-    """
+def test_an_agent_name_change_preserves_layout_verbatim(tmp_path, core_factory):
+    """Names do not affect positions, frames, groups or any formatting."""
     root = tmp_path / "p"
     laid_out_project(root)
     d = core_factory(project_root=root)
     c = d.connect()
-    rev, doc = project_json(c)
-    res = c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
-        change("SetProject", json=json.dumps(renamed_project(doc, "src", "source"))),
-        change("RenameDefinition", id="src", to="source")])
-    moved = json.loads(json.dumps(LAID_OUT))
-    moved["cards"] = {{"src": "source", "src/inner": "source/inner"}.get(k, k): v for k, v in moved["cards"].items()}
-    moved["displays"] = {{"src": "source"}.get(k, k): v for k, v in moved["displays"].items()}
-    moved["groups"][0]["cards"] = ["source", "out"]
-    moved["groups"][0]["outputs"][0]["card"] = "source"
-    expected = spelled(moved)
-    assert text(c.call("ProjectInspectRequest").layoutJson) == expected
-    assert text(res.delta.layoutJson) == expected  # the clients learn it from the save
-    # It is what the next start reads too.
+    result = rename(c, "src", "source")
+    assert text(c.call("ProjectInspectRequest").layoutJson) == spelled(LAID_OUT)
+    assert result.delta.layoutJson is None
     d.restart()
-    c = d.connect()
-    assert text(c.call("ProjectInspectRequest").layoutJson) == expected
-
-
-def test_a_rename_with_the_clients_own_layout_is_not_moved_twice(tmp_path, core_factory):
-    """A rename accepts the client's updated layout without moving it twice.
-
-    Any remaining old-name entry follows the card and replaces a stale entry
-    under the new name.
-    """
-    root = tmp_path / "p"
-    laid_out_project(root)
-    d = core_factory(project_root=root)
-    c = d.connect()
-    rev, doc = project_json(c)
-    sent = json.dumps({"cards": {"source": {"x": 1, "y": 2}}, "displays": {"source": {"x": 1, "y": 2, "width": 3, "height": 4}}},
-                      separators=(",", ":"))
-    c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="ui:x", changes=[
-        change("SetProject", json=json.dumps(renamed_project(doc, "src", "source"))),
-        change("RenameDefinition", id="src", to="source"),
-        change("SetLayout", json=sent)])
-    assert text(c.call("ProjectInspectRequest").layoutJson) == sent
-
-    rev, doc = project_json(c)
-    stale = {"cards": {"named": {"x": 9, "y": 9}, "source": {"x": 1, "y": 2}, "out": {"x": 3, "y": 4}}}
-    c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
-        change("SetProject", json=json.dumps(renamed_project(doc, "source", "named"))),
-        change("RenameDefinition", id="source", to="named"),
-        change("SetLayout", json=json.dumps(stale))])
-    assert json.loads(text(c.call("ProjectInspectRequest").layoutJson))["cards"] == {"named": {"x": 1, "y": 2}, "out": {"x": 3, "y": 4}}
+    assert text(d.connect().call("ProjectInspectRequest").layoutJson) == spelled(LAID_OUT)
 
 
 def test_a_card_that_leaves_the_canvas_takes_its_layout_with_it(tmp_path, core_factory):
@@ -388,42 +374,28 @@ def test_attached_folder_is_read_only_inside_it(tmp_path, core_factory):
         assert err.value.kind in ("invalid_path", "permission_denied"), bad
 
 
-def test_rename_inside_a_card_in_card_keeps_the_history(tmp_path, core_factory):
-    """Renaming a nested card makes its saved history available under the new name."""
+def test_name_changes_inside_a_card_in_card_preserve_history(tmp_path, core_factory):
+    """Both container and inner names change without touching a past record."""
     root = tmp_path / "p"
     builtin_project(root)
     external(root, "greeting", "hello")
-    put(root / "definitions" / "greet" / "_link.json", json.dumps({"external": "greeting"}))
-    project = json.loads((root / "tsugumi.json").read_text())
-    project["canvas"]["cards"].append({"id": "greet"})
-    put(root / "tsugumi.json", json.dumps(project))
-    d = core_factory(project_root=root)
-    c = d.connect()
+    put(root / "definitions/greet/_link.json", '{"external":"greeting"}')
+    doc = json.loads((root / "tsugumi.json").read_text())
+    doc["canvas"]["cards"].append({"id": "greet"})
+    put(root / "tsugumi.json", json.dumps(doc))
+    c = core_factory(project_root=root).connect()
     run_id, st = run_and_wait(c, "greet")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    assert c.call("RunInvocationsRequest", runId=run_id, card=path("greet", "say")).records
+    assert st.state == RunState.succeeded
     snap = c.call("ProjectInspectRequest")
-    hashes = {text(s.path): text(s.hash) for s in snap.sources}
-    ext = "externals/greeting/"
-    doc = json.loads(bytes(c.call("ProjectFileReadRequest", path=ext + "tsugumi.json").bytes))
-    doc["canvas"]["cards"] = [{"id": "talk" if x["id"] == "say" else x["id"]} for x in doc["canvas"]["cards"]]
-    for e in doc["canvas"]["connections"]:
-        for side in ("from", "to"):
-            if e[side]["card"] == "say":
-                e[side]["card"] = "talk"
-    changes = [change("PutSource", path=ext + "tsugumi.json", bytes=list(json.dumps(doc).encode()), baseHash=hashes[ext + "tsugumi.json"])]
-    for f in ("_card.json", "_outputs.fbs"):
-        old = ext + "definitions/say/" + f
-        changes.append(change("PutSource", path=ext + "definitions/talk/" + f, bytes=bytes(c.call("ProjectFileReadRequest", path=old).bytes)))
-        changes.append(change("RemoveSource", path=old, baseHash=hashes[old]))
-    from Tsugumi.RPC.CardRename import CardRenameT
-    r = CardRenameT()
-    r.from_ = path("greet", "say")
-    r.to = path("greet", "talk")
-    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=changes, renamedCards=[r])
-    assert c.call("RunInvocationsRequest", runId=run_id, card=path("greet", "talk")).records
-    with pytest.raises(RpcFailure):
-        c.call("RunInvocationsRequest", runId=run_id, card=path("greet", "say"))
+    before = database_records(root / ".tsugumi/history.sqlite")
+    rename(c, "say", "Greeting", "externals/greeting/")
+    rename(c, "greet", "Greeting")
+    assert database_records(root / ".tsugumi/history.sqlite") == before
+    assert c.call("RunInvocationsRequest", runId=run_id, card=path("greet", "say")).records
+    after = c.call("ProjectInspectRequest")
+    assert after.executionRev == snap.executionRev
+    names = {tuple(text(s) for s in r.card.segments): text(r.name) for r in after.resolution}
+    assert names[("greet",)] == names[("greet", "say")] == "Greeting"
 
 
 def test_an_output_feeds_one_wire(tmp_path, core_factory):

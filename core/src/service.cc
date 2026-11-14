@@ -498,6 +498,7 @@ void Service::dispatch(RequestIn req) {
   Lane& r = *read_pool_;
   switch (req.request()->value_type()) {
     case P::ProjectOpenRequest: return on_lane(m, std::move(req), &Service::open_project);
+    case P::CardIdRequest: return on_lane(m, std::move(req), &Service::card_id);
     case P::ProjectSaveRequest: return on_lane(m, std::move(req), &Service::save);
     case P::ProjectReloadRequest: return on_lane(m, std::move(req), &Service::reload);
     case P::ProjectCacheClearRequest: return on_lane(m, std::move(req), &Service::cache_clear);
@@ -976,11 +977,6 @@ std::vector<ChangeIn> decode_changes(const flatbuffers::Vector<flatbuffers::Offs
         ch.kind = ChangeIn::Kind::RemoveDefinition;
         ch.id = c->value_as_RemoveDefinition()->id()->str();
         break;
-      case R::DocumentChangeValue::RenameDefinition:
-        ch.kind = ChangeIn::Kind::RenameDefinition;
-        ch.id = c->value_as_RenameDefinition()->id()->str();
-        ch.to = c->value_as_RenameDefinition()->to()->str();
-        break;
       case R::DocumentChangeValue::PutSource: {
         const auto* p = c->value_as_PutSource();
         ch.kind = ChangeIn::Kind::PutSource;
@@ -1041,6 +1037,14 @@ auto RequireApprovedPermissions(
 
 }  // namespace
 
+auto Service::card_id(RequestIn& req) -> void {
+  const auto* r = req.request()->value_as_CardIdRequest();
+  auto id = store_->allocate_card_id(r->name()->str(), r->project_path() ? r->project_path()->str() : "");
+  FBB b;
+  auto result = R::CreateCardIdResult(b, b.CreateString(id), b.CreateString(r->name()->str()));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::CardIdResult, result.Union()));
+}
+
 void Service::save(RequestIn& req) {
   const auto* r = req.request()->value_as_ProjectSaveRequest();
   std::string op_id = r->op_id()->str();
@@ -1098,27 +1102,7 @@ void Service::save(RequestIn& req) {
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
     });
-    // Renamed Cards keep their run history and saved inputs (RenameDefinition,
-    // and renames inside Cards in Card the client names).
-    auto renamed = staged.delta.renamed;
-    if (r->renamed_cards())
-      for (const auto* c : *r->renamed_cards()) {
-        auto from = wire::card_arg(c->from(), "from");
-        auto to = wire::card_arg(c->to(), "to");
-        if (staged.doc->resolution->find(to) && !staged.doc->resolution->find(from))
-          renamed.emplace_back(path_key(from), path_key(to));
-      }
-    for (const auto& [from, to] : renamed) {
-      try {
-        history_->rename_card(runs_copy(), from, to);
-        std::error_code ec;
-        auto inputs = store_->state_dir() / "inputs";
-        if (stdfs::exists(inputs / from, ec)) stdfs::rename(inputs / from, inputs / to, ec);
-      } catch (const std::exception& e) {
-        log::error("history: renaming " + from + " to " + to + " failed: " + e.what());
-      }
-    }
-    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc, renamed);
+    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc);
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
@@ -1161,7 +1145,7 @@ void Service::reload(RequestIn& req) {
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
     });
-    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc, {});
+    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc);
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);
@@ -1277,7 +1261,7 @@ void Service::version_checkout(RequestIn& req) {
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
     });
-    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc, {});
+    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc);
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);
     finish_op(op_id, receipt);

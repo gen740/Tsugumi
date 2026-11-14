@@ -123,7 +123,7 @@ struct ComparedRunField: Identifiable {
 
   /// What a Card ran under besides its parameters and code: the recorded Nix
   /// environment, the system it ran as, and where each input came from.
-  static func conditions(_ left: ComparedRunCard?, _ right: ComparedRunCard?) -> [ComparedRunField] {
+  static func conditions(_ left: ComparedRunCard?, _ right: ComparedRunCard?, displayPath: ([String]) -> String = { $0.joined(separator: "/") }) -> [ComparedRunField] {
     func summary(_ c: ComparedRunCard?) -> Tsugumi_RPC_InvocationSummaryT? { c.map { $0.record?.record?.summary ?? $0.summary } }
     let a = summary(left), b = summary(right)
     func field(_ name: String, _ x: String?, _ y: String?, known: Bool) -> ComparedRunField {
@@ -167,7 +167,12 @@ struct ComparedRunField: Identifiable {
     let ports = names(x.origins, y.origins)
     for port in ports {
       let known = (x.origins[port] != nil || x.missing == nil) && (y.origins[port] != nil || y.missing == nil)
-      fields.append(field(String(localized: "入力元 \(port)"), text(x, left, port), text(y, right, port), known: known))
+      let value = field(String(localized: "入力元 \(port)"), text(x, left, port), text(y, right, port), known: known)
+      func label(_ value: String?) -> String? {
+        guard let value, let separator = value.range(of: " #", options: .backwards) else { return value }
+        return displayPath(String(value[..<separator.lowerBound]).split(separator: "/").map(String.init)) + value[separator.lowerBound...]
+      }
+      fields.append(ComparedRunField(name: value.name, left: label(value.left), right: label(value.right), difference: value.difference))
     }
     // Neither side named a port, but one side's record is missing: that is not "no inputs".
     if ports.isEmpty, x.missing != nil || y.missing != nil {
@@ -183,16 +188,16 @@ struct ComparedRunField: Identifiable {
 
   /// A run starts at one Card and either goes on downstream or runs that Card alone
   /// with its saved inputs (`propagate` is true unless recorded false).
-  static func runScope(_ run: Tsugumi_RPC_RunSummaryT?) -> String? {
+  static func runScope(_ run: Tsugumi_RPC_RunSummaryT?, displayPath: ([String]) -> String = { $0.joined(separator: "/") }) -> String? {
     guard let run else { return nil }
-    let target = run.target.path.isEmpty ? "—" : run.target.path.joined(separator: "/")
+    let target = run.target.path.isEmpty ? "—" : displayPath(run.target.path)
     return run.propagate == false ? String(localized: "\(target) だけ（保存した入力）") : String(localized: "\(target) から下流")
   }
 
-  static func scope(_ left: Tsugumi_RPC_RunSummaryT?, _ right: Tsugumi_RPC_RunSummaryT?) -> ComparedRunField {
-    let a = runScope(left), b = runScope(right)
+  static func scope(_ left: Tsugumi_RPC_RunSummaryT?, _ right: Tsugumi_RPC_RunSummaryT?, displayPath: ([String]) -> String = { $0.joined(separator: "/") }) -> ComparedRunField {
+    let a = runScope(left, displayPath: displayPath), b = runScope(right, displayPath: displayPath)
     return ComparedRunField(name: String(localized: "開始した Card"), left: a, right: b,
-                            difference: a == nil || b == nil ? .unknown : a == b ? .same : .changed)
+                            difference: a == nil || b == nil ? .unknown : left?.target.path == right?.target.path && (left?.propagate != false) == (right?.propagate != false) ? .same : .changed)
   }
 
   static func sameDisplay(_ a: DisplaySnapshot?, _ b: DisplaySnapshot?) -> Bool {
@@ -251,10 +256,10 @@ struct RunComparisonView: View {
             Button("再試行") { attempt += 1 }
           } else if let rows {
             // Where each run started and how far it went: a partial run reuses saved inputs.
-            ComparedFieldsView(title: "実行の範囲", values: [RunComparison.scope(run(left), run(right))])
+            ComparedFieldsView(title: "実行の範囲", values: [RunComparison.scope(run(left), run(right), displayPath: session.displayPath)])
             versionDifference
             if rows.isEmpty { ContentUnavailableView("記録がありません", systemImage: "tray") }
-            ForEach(rows) { ComparedRunCardView(row: $0) }
+            ForEach(rows) { ComparedRunCardView(session: session, row: $0) }
           } else { ProgressView() }
         }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
       }
@@ -309,6 +314,7 @@ struct RunComparisonView: View {
 }
 
 private struct ComparedRunCardView: View {
+  let session: ProjectSession
   let row: ComparedRunRow
   @State private var expanded = true
   private var a: Tsugumi_RPC_RecordResultT? { row.left?.record }
@@ -325,7 +331,7 @@ private struct ComparedRunCardView: View {
             status(row.left).frame(maxWidth: .infinity, alignment: .leading)
             status(row.right).frame(maxWidth: .infinity, alignment: .leading)
           }.padding(6).background(row.left?.summary.state != row.right?.summary.state || row.left?.summary.durationMs != row.right?.summary.durationMs ? changed : .clear)
-          ComparedFieldsView(title: "実行条件", values: RunComparison.conditions(row.left, row.right))
+          ComparedFieldsView(title: "実行条件", values: RunComparison.conditions(row.left, row.right, displayPath: session.displayPath))
           ComparedFieldsView(title: "パラメータ", values: RunComparison.params(row.left, row.right),
                              unavailable: RunComparison.paramsUnavailable(row.left) || RunComparison.paramsUnavailable(row.right))
           ComparedFieldsView(title: "入力", values: RunComparison.values(false, row.left, row.right),
@@ -340,7 +346,7 @@ private struct ComparedRunCardView: View {
             }.background(RunComparison.sameDisplay(leftDisplay, rightDisplay) ? .clear : changed)
           }
         }.padding(.top, 8)
-      } label: { Text(row.card).font(.headline) }
+      } label: { Text(session.displayPath(path(row.card))).font(.headline) }
     }
   }
 

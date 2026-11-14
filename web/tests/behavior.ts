@@ -94,3 +94,4 @@ await import('./ruby')
 await import("./lineChart")
 
 await import("./runScratch")
+await import('./cardIdentity')

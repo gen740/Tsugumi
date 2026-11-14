@@ -212,17 +212,17 @@ class FreedNames:
                     changes=[change("SetProject", json=json.dumps(project)), *changes])
 
 
-def test_a_renamed_card_keeps_its_display_and_leaves_none_behind(tmp_path, core_factory):
-    """Renaming a card moves its display without leaving one at the old name."""
+def test_a_renamed_card_keeps_its_display(tmp_path, core_factory):
+    """Renaming preserves a display at its permanent identifier."""
+    from test_definitions import rename
     t = FreedNames(tmp_path / "p", core_factory)
-    assert "the old result" in t.shown("out")[0]
-    t.save(["kept"], change("RenameDefinition", id="out", to="kept"))
-    moved = t.shown("kept")
-    assert moved and "the old result" in moved[0] and moved[1] == "kept"
-    assert t.shown("out") is None
-    # The old name taken by another Card: it starts without a display.
-    t.save(["kept", "out"], change("PutDefinition", id="out", cardJson=json.dumps(SINK)))
-    assert t.shown("out") is None
+    before = t.shown("out")
+    rename(t.c, "out", "kept")
+    assert t.shown("out") == before
+    assert t.shown("kept") is None
+    new_id = text(t.c.call("CardIdRequest", name="kept").id)
+    t.save(["out", new_id], change("PutDefinition", id=new_id, cardJson=json.dumps(SINK), metaJson='{"name":"kept"}'))
+    assert t.shown(new_id) is None
 
 
 def test_a_card_under_a_deleted_cards_name_does_not_get_its_display(tmp_path, core_factory):
@@ -237,22 +237,14 @@ def test_a_card_under_a_deleted_cards_name_does_not_get_its_display(tmp_path, co
     assert t.shown("out") is None
 
 
-def test_a_card_that_comes_to_a_deleted_cards_name_or_leaves_it_gets_nothing(tmp_path, core_factory):
-    """Renaming a replacement card cannot revive another card's deleted display."""
+def test_renaming_another_card_cannot_revive_a_deleted_display(tmp_path, core_factory):
+    """Matching a human name does not match a past Card's identity."""
+    from test_definitions import rename
     t = FreedNames(tmp_path / "p", core_factory)
-    assert "the old result" in t.shown("out")[0]
     t.save([], change("RemoveDefinition", id="out"))
-    # A new Draft takes the name, and is named by the user: the old display stays behind.
-    draft = '{"template": "draft"}'
-    t.save(["out"], change("PutDefinition", id="out", cardJson=draft))
-    t.save(["named"], change("RenameDefinition", id="out", to="named"))
-    t.save(["named"], change("PutDefinition", id="named", cardJson=json.dumps(SINK)))
-    assert t.shown("named") is None
-    # Another Card renamed onto the old name: nothing either.
-    t.save(["named", "other"], change("PutDefinition", id="other", cardJson=draft))
-    t.save(["named", "out"], change("RenameDefinition", id="other", to="out"))
-    t.save(["named", "out"], change("PutDefinition", id="out", cardJson=json.dumps(SINK)))
-    assert t.shown("out") is None
+    t.save(["other"], change("PutDefinition", id="other", cardJson=json.dumps(SINK)))
+    rename(t.c, "other", "out")
+    assert t.shown("other") is None
 
 
 def test_a_card_put_back_as_it_was_has_its_display_again(tmp_path, core_factory):

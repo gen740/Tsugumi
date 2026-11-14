@@ -68,3 +68,25 @@ def test_each_input_child_preserves_saved_files_across_partial_runs(saved_file_s
         run_id, status = run_and_wait(client, "child", propagate=False, timeout=10)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         assert artifact_contents(client, run_id) == CONTENTS
+
+
+def test_name_changes_preserve_saved_file_inputs_and_evidence(saved_file_subgraph, tmp_path):
+    """Container, child and producer names leave saved paths and source JSON intact."""
+    from test_definitions import rename
+    client, first_run = saved_file_subgraph
+    record = client.call("RunRecordRequest", runId=first_run, card=path("child", "inner"))
+    import flatbuffers
+    def packed(value):
+        builder = flatbuffers.Builder(1024)
+        builder.Finish(value.Pack(builder))
+        return bytes(builder.Output())
+    before = packed(record)
+    rename(client, "source", "Same name")
+    rename(client, "child", "Same name")
+    rename(client, "inner", "Same name", "externals/child/")
+    assert packed(client.call("RunRecordRequest", runId=first_run, card=path("child", "inner"))) == before
+    assert artifact_contents(client, first_run) == CONTENTS
+    for _ in range(2):
+        run_id, status = run_and_wait(client, "child", propagate=False, timeout=10)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        assert artifact_contents(client, run_id) == CONTENTS

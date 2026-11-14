@@ -112,7 +112,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
             <TextField value={search} onChange={setSearch} placeholder={L('検索')} style={{ flex: 1 }} />
             <MenuButton icon="plus" help={L('Card を追加')} disabled={!session.isEditable} items={() => TEMPLATES.map((t) => ({
               label: t.label,
-              action: () => setSelected(path(session.addCard(t.id, [], { x: 40, y: 40 }))[0]),
+              action: () => { void session.addCard(t.id, [], { x: 40, y: 40 }).then((k) => setSelected(path(k)[0])).catch((e) => { session.notice = String(e); session.changed() }) },
             }))} />
           </div>
           <div className="list flex1" role="listbox" aria-label={L('定義')}>

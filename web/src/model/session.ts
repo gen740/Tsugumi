@@ -437,8 +437,6 @@ export class ProjectSession extends Observable {
   redoStack: UndoEntry[] = []
   saveError?: string
   saving = false
-  /** Cards renamed inside Cards in Card by edits not saved yet. */
-  pendingCardRenames: { from: string[]; to: string[] }[] = []
   /** Edits wait for the run to end (the core keeps Card changes back while it runs). */
   savingAfterRun = false
   /** Last user-facing problem of an action (run refused, import failed, ...). */
@@ -1364,7 +1362,6 @@ export class ProjectSession extends Observable {
     this.sourceBases = new Map()
     this.draftBase = undefined
     this.externalBases = new Map()
-    this.pendingCardRenames = []
     this.saveAgain = false
     this.conflictRetries = 0
     this.saveError = undefined
@@ -1520,9 +1517,7 @@ export class ProjectSession extends Observable {
       }
       const op = uuid()
       try {
-        const renames = layoutOnly ? [] : [...this.pendingCardRenames]
-        const result = await client.save(base.rev, op, this.origin, changes, renames)
-        if (renames.length) this.pendingCardRenames.splice(0, renames.length)
+        const result = await client.save(base.rev, op, this.origin, changes)
         this.saveError = undefined
         this.conflictRetries = 0
         if (result.delta) this.applyDeltaFromSave(result.delta)
@@ -2070,9 +2065,14 @@ export class ProjectSession extends Observable {
     return definitionKind(def)
   }
 
-  /** A Card's name is its id (and its definition folder). */
+  /** The editable human name; the identifier remains the exact address. */
   displayName(k: CardKey): string {
-    return path(k).pop() ?? k
+    return str(get(this.cardMeta(k), 'name')) ?? path(k).pop() ?? k
+  }
+
+  /** A human-readable path. Pass the original segments to tools and links. */
+  displayPath(segments: string[]): string {
+    return segments.map((_, i) => this.displayName(key(segments.slice(0, i + 1)))).join('/')
   }
 
   scopeName(scope: string[]): string {
@@ -2123,23 +2123,20 @@ export class ProjectSession extends Observable {
 
   // ---- Cards and connections ---------------------------------------------------------
 
-  /** A free Card name in a scope's project: not a Card, a definition folder or an external there. */
-  uniqueId(base: string, scope: string[] = []): string {
-    const prefix = this.projectPrefix(scope) ?? ''
-    const existing = new Set(this.cards(scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x))
-    if (prefix === '') {
-      for (const id of [...this.definitions.keys(), ...this.links.keys(), ...this.confirmedDefinitions.keys(), ...this.confirmedLinks.keys()]) existing.add(id)
-    } else {
-      for (const id of this.external(prefix)?.definitions.keys() ?? []) existing.add(id)
+  /** A replaceable RPC boundary for clients that embed the session. */
+  cardIdProvider?: (name: string, projectPath: string) => Promise<string>
+
+  /** All new identifiers come from the core, including unsaved nested projects. */
+  async newCardId(name: string, scope: string[] = []): Promise<string> {
+    const prefix = this.projectPrefix(scope)
+    if (prefix === undefined) throw new Error('unknown Card scope')
+    let id: string
+    if (this.cardIdProvider) id = await this.cardIdProvider(name, prefix)
+    else {
+      if (!this.client) throw new RPCError('disconnected', L('接続していません'))
+      id = (await this.client.cardId(name, prefix)).id as string
     }
-    const ext = prefix + 'externals/'
-    for (const p of [...this.sourcePaths, ...this.effectiveExternals.keys()]) {
-      if (p.startsWith(ext)) existing.add(p.slice(ext.length).split('/')[0])
-    }
-    let stem = base.toLowerCase().replace(/[^\p{L}\p{N}_-]/gu, '-').replace(/^-+|-+$/g, '')
-    if (!stem) stem = 'card'
-    let id = stem
-    for (let n = 2; existing.has(id); n++) id = `${stem}-${n}`
+    if (this.projectPrefix(scope) !== prefix) throw new Error('Card scope changed')
     return id
   }
 
@@ -2150,7 +2147,7 @@ export class ProjectSession extends Observable {
   }
 
   /** A new Card's name can be one a Card had: nothing of that Card stays with it.
-   *  The core keeps this project's layout up with renames and deletes, but a Card
+   *  The core removes this project's layout entries on deletion, but a Card
    *  in Card's layout or a file written by hand can still hold a frame. */
   private startClean(k: CardKey) {
     this.displays.delete(k)
@@ -2169,12 +2166,13 @@ export class ProjectSession extends Observable {
 
   /** A new Card from a template, with its own definition folder. `place` says
    *  where instead of `at`, once the Card's size is known. */
-  addCard(t: DefinitionTemplate, scope: string[], at: { x: number; y: number }, name?: string, place?: (k: CardKey) => { x: number; y: number }): CardKey {
-    const id = this.uniqueId(name ?? templateBaseName(t), scope)
+  async addCard(t: DefinitionTemplate, scope: string[], at: { x: number; y: number }, name?: string, place?: (k: CardKey) => { x: number; y: number }): Promise<CardKey> {
+    const id = await this.newCardId(name ?? templateBaseName(t), scope)
     const k = key([...scope, id])
     this.edit((x) => {
       x.appendCard(id, scope)
       x.writeTemplate(t, k)
+      x.updateMeta(k, (m) => m.set('name', name ?? templateBaseName(t)))
       x.setPosition(k, place ? place(k) : at)
     })
     return k
@@ -2187,7 +2185,7 @@ export class ProjectSession extends Observable {
     const d = prefix === '' ? this.definitionDrafts.get(id) : this.external(prefix)?.definitions.get(id)
     if (!d) return undefined
     const dir = `${prefix}definitions/${id}/`
-    const newId = this.uniqueId(name ?? id, scope)
+    const newId = await this.newCardId(name ?? str(get(d.meta, 'name')) ?? id, scope)
     const toPrefix = this.projectPrefix(scope) ?? ''
     const files = new Map<string, string>()
     for (const p of this.sourcePaths) {
@@ -2202,12 +2200,13 @@ export class ProjectSession extends Observable {
     let copy: ExternalCopy | undefined
     const extName = str(get(link, 'external'))
     if (extName) {
-      const n = this.uniqueId(extName, scope)
+      const n = await this.newCardId(extName, scope)
       copy = await this.copyExternal(`${prefix}externals/${extName}/`, `${toPrefix}externals/${n}/`)
       link = obj([['external', n]])
     }
     // The copy's comments are comments of its own.
-    const meta = clone(d.meta)
+    const meta = clone(d.meta) ?? obj()
+    if (isObj(meta)) meta.set('name', name ?? str(get(d.meta, 'name')) ?? id)
     if (isObj(meta)) {
       const comments = arr(meta.get('comments'))
       if (comments) meta.set('comments', comments.map((c) => {
@@ -2250,13 +2249,13 @@ export class ProjectSession extends Observable {
   async placeExternalCopy(from: string, scope: string[], at: { x: number; y: number }): Promise<CardKey | undefined> {
     if (!this.external(from)) return undefined
     const base = from.split('/').filter(Boolean).pop() ?? 'sub'
-    const name = this.uniqueId(base, scope)
+    const name = await this.newCardId(base, scope)
     const toPrefix = this.projectPrefix(scope) ?? ''
     const copy = await this.copyExternal(from, `${toPrefix}externals/${name}/`)
     const k = key([...scope, name])
     this.edit((x) => {
       copy.apply(x)
-      x.setCardDefinition(k, { card: obj(), link: obj([['external', name]]) })
+      x.setCardDefinition(k, { card: obj(), meta: obj([['name', base]]), link: obj([['external', name]]) })
       x.appendCard(name, scope)
       x.setPosition(k, at)
     })
@@ -2287,7 +2286,7 @@ export class ProjectSession extends Observable {
       const parts = rel.split('/').slice(0, -1)
       return parts.length % 2 === 0 && parts.every((p, i) => i % 2 === 1 || p === 'externals')
     }).map((rel) => rel.slice(0, -'tsugumi.json'.length))
-    const name = this.uniqueId(folderName, scope)
+    const name = await this.newCardId(folderName, scope)
     const to = `${this.projectPrefix(scope) ?? ''}externals/${name}/`
     const docs = new Map<string, ExternalProject>()
     for (const p of projects) {
@@ -2322,7 +2321,7 @@ export class ProjectSession extends Observable {
         x.sourceEdits.set(to + rel, Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)))
       }
       for (const [p, e] of [...docs].sort(([a], [b]) => a.localeCompare(b))) x.createExternal(p, e)
-      x.setCardDefinition(k, { card: obj(), link: obj([['external', name]]) })
+      x.setCardDefinition(k, { card: obj(), meta: obj([['name', folderName]]), link: obj([['external', name]]) })
       x.appendCard(name, scope)
       x.setPosition(k, at)
     })
@@ -2339,9 +2338,7 @@ export class ProjectSession extends Observable {
     for (const k of [...keys].sort()) {
       const id = path(k).pop()
       if (!id) continue
-      let want = id
-      for (let n = 2; taken.has(this.uniqueId(want, scope)); n++) want = `${id}-${n}`
-      const c = await this.copyDefinition(prefix, id, scope, this.uniqueId(want, scope))
+      const c = await this.copyDefinition(prefix, id, scope)
       if (!c) continue
       taken.add(c.id)
       map.set(id, c.id)
@@ -2376,14 +2373,9 @@ export class ProjectSession extends Observable {
     return made
   }
 
-  /** Renames a Card (its id, its definition folder): saved at once, with its
-   *  connections and positions following (and its run history). */
-  /** Why a Card cannot take a name (undefined: it can). */
-  cardNameProblem(k: CardKey, raw: string): string | undefined {
-    const nw = raw.trim()
-    if (nw === path(k).pop()) return undefined
-    if (!nw || nw.length > 128 || nw === '.' || nw === '..' || !/^[A-Za-z0-9._-]+$/.test(nw)) return L('名前に使えるのは英数字と - _ . だけです（128 文字まで）。')
-    if (this.uniqueId(nw, path(k).slice(0, -1)) !== nw) return L('「{0}」はすでに使われています。', nw)
+  /** Names are independent of identifiers and may be shared by several Cards. */
+  cardNameProblem(_k: CardKey, raw: string): string | undefined {
+    if (!raw.trim() || new TextEncoder().encode(raw.trim()).length > 4096) return L('名前を入力してください（4096 バイトまで）。')
     return undefined
   }
 
@@ -2391,7 +2383,7 @@ export class ProjectSession extends Observable {
 
   /** Whether a Draft has no name of its own: its id is one made for it. */
   draftUntitled(k: CardKey): boolean {
-    return this.kind(k) === 'draft' && /^draft(-[0-9]+)?$/.test(this.displayName(k))
+    return this.kind(k) === 'draft' && this.displayName(k) === 'draft'
   }
 
   /** Starts writing a Draft's name and content on its Card. */
@@ -2412,7 +2404,7 @@ export class ProjectSession extends Observable {
   }
 
   /** Keeps what was written. A name the Card cannot take stays as it was, with
-   *  a notice. The Card's key when it was renamed. */
+   *  a notice. The Card's permanent key when its name changed. */
   async finishDraftEdit(): Promise<CardKey | undefined> {
     const e = this.inlineDraft
     if (!e) return undefined
@@ -2422,13 +2414,13 @@ export class ProjectSession extends Observable {
     if (e.content !== (str(get(this.cardMeta(e.card), 'content')) ?? '')) {
       this.edit((x) => x.updateMeta(e.card, (m) => m.set('content', e.content || undefined)))
     }
-    // No name: an id is made for it (a Draft that has none keeps the one it has).
+    // An empty name restores the default Draft label; the identifier stays fixed.
     if (!e.name.trim() && this.draftUntitled(e.card)) return undefined
-    const name = e.name.trim() || this.uniqueId('draft', path(e.card).slice(0, -1))
+    const name = e.name.trim() || 'draft'
     if (name === this.displayName(e.card)) return undefined
     try {
       await this.renameCard(e.card, name)
-      return key([...path(e.card).slice(0, -1), name])
+      return e.card
     } catch (err) {
       this.notice = err instanceof RPCFailure ? err.diagnostic ?? errorText(err) : errorText(err)
       this.changed()
@@ -2437,102 +2429,13 @@ export class ProjectSession extends Observable {
   }
 
   async renameCard(k: CardKey, raw: string): Promise<void> {
-    const old = path(k).pop()
-    if (!old) return
-    const scope = path(k).slice(0, -1)
-    const nw = raw.trim()
-    if (nw === old) return
-    const problem = this.cardNameProblem(k, nw)
-    if (problem) throw new RPCFailure({ kind: D.FailureKind.invalid_request, diagnostic: problem })
-    if (this.dirty) await this.save()
-    if (this.dirty) throw new RPCFailure({ kind: D.FailureKind.validation_failed, diagnostic: this.saveError ?? L('変更を保存できませんでした。') })
-    const rpc = this.client
-    if (!rpc) throw new RPCError('disconnected', L('接続していません'))
-    const renamedGraph = (g: J) => {
-      const out = clone(isObj(g) ? g : obj()) as JObj
-      out.set('cards', (arr(out.get('cards')) ?? []).map((c) => (str(get(c, 'id')) === old ? obj([['id', nw]]) : c)))
-      out.set('connections', (arr(out.get('connections')) ?? []).map((c) => {
-        const cc = clone(c) as JObj
-        for (const side of ['from', 'to']) {
-          const e = cc.get(side)
-          if (isObj(e) && str(e.get('card')) === old) e.set('card', nw)
-        }
-        return cc
-      }))
-      return out
-    }
-    const renamedLayout = (l: J) => {
-      const lay = clone(isObj(l) ? l : obj()) as JObj
-      const rk = (x: string) => (x === old ? nw : x.startsWith(old + '/') ? nw + x.slice(old.length) : x)
-      for (const field of ['cards', 'displays']) {
-        const o = lay.get(field)
-        if (isObj(o)) lay.set(field, new JObj(o.entries().map(([kk, v]) => [rk(kk), v])))
-      }
-      for (const field of ['notes', 'groups']) {
-        const a = arr(lay.get(field))
-        if (!a) continue
-        lay.set(field, a.map((item) => {
-          const it = clone(item)
-          if (!isObj(it)) return it
-          const cs = arr(it.get('cards'))
-          if (cs) it.set('cards', cs.map((c) => (str(c) === old ? nw : c)))
-          const outs = arr(it.get('outputs'))
-          if (outs) {
-            it.set('outputs', outs.map((o) => {
-              const oo = clone(o)
-              if (isObj(oo) && str(oo.get('card')) === old) oo.set('card', nw)
-              return oo
-            }))
-          }
-          return it
-        }))
-      }
-      return lay
-    }
-    const prefix = this.projectPrefix(scope)
-    if (prefix === undefined) return
-    if (prefix === '') {
-      const proj = clone(this.confirmedProject) as JObj
-      proj.set('canvas', renamedGraph(proj.get('canvas') ?? obj()))
-      const lay = renamedLayout(this.confirmedLayout)
-      const changes = [Change.setProject(serialize(proj)), Change.renameDefinition(old, nw)]
-      if (!jeq(lay, this.confirmedLayout)) changes.push(Change.setLayout(serialize(lay)))
-      await rpc.save(this.rev, uuid(), this.origin, changes)
-      return
-    }
-    // Inside a Card in Card: the external's documents and files are rewritten.
-    const from = `${prefix}definitions/${old}/`, to = `${prefix}definitions/${nw}/`
-    const files = new Map<string, string>()
-    for (const p of this.sourcePaths) {
-      if (p.startsWith(from) && !isDocument(p.slice(prefix.length))) files.set(to + p.slice(from.length), await this.sourceText(p))
-    }
-    this.edit((x) => {
-      x.updateExternal(prefix, (e) => {
-        if (isObj(e.project)) {
-          e.project.set('canvas', renamedGraph(e.project.get('canvas') ?? obj()))
-          const b = e.project.get('boundary')
-          if (isObj(b)) {
-            for (const side of ['inputs', 'outputs']) {
-              const o = b.get(side)
-              if (!isObj(o)) continue
-              for (const [, v] of o.entries()) if (isObj(v) && str(v.get('card')) === old) v.set('card', nw)
-            }
-          }
-        }
-        e.layout = renamedLayout(e.layout)
-        const d = e.definitions.get(old)
-        if (d) e.definitions.set(nw, d)
-        e.definitions.delete(old)
-      })
-      for (const p of x.sourcePaths) if (p.startsWith(from) && !isDocument(p.slice(prefix.length))) x.removeSource(p)
-      for (const [p, t] of files) {
-        x.sourceRemovals.delete(p)
-        x.sourceEdits.set(p, t)
-      }
-    })
-    // The run history of the Card (and of anything inside it) follows the name.
-    this.pendingCardRenames.push({ from: [...scope, old], to: [...scope, nw] })
+    const name = raw.trim()
+    const problem = this.cardNameProblem(k, name)
+    if (problem) throw new Error(problem)
+    if (name === this.displayName(k)) return
+    this.edit((s) => s.updateMeta(k, (m) => m.set('name', name)))
     await this.save()
+    if (this.dirty) throw new Error(this.saveError ?? L('変更を保存できませんでした。'))
   }
 
   deleteCards(keys: Set<CardKey>, scope: string[]) {
@@ -2576,9 +2479,13 @@ export class ProjectSession extends Observable {
     })
   }
 
-  connect(from: [CardKey, string], to: [CardKey, string], scope: string[]) {
+  async connect(from: [CardKey, string], to: [CardKey, string], scope: string[]) {
     const fromId = path(from[0]).pop(), toId = path(to[0]).pop()
     if (!fromId || !toId) return
+    const existing = this.connections(scope).filter((c) => str(get(c, 'from', 'card')) === fromId && str(get(c, 'from', 'port')) === from[1])
+    const next = existing.length === 1 ? str(get(existing[0], 'to', 'card')) : undefined
+    const forkId = existing.length && this.kind(from[0]) !== 'fork' && (!next || this.kind(key([...scope, next])) !== 'fork')
+      ? await this.newCardId('fork', scope) : undefined
     this.edit((x) => {
       // An end at NEW_PORT makes the Draft's port now.
       const fromPort = x.draftPort(from, true, to[1], scope)
@@ -2595,7 +2502,7 @@ export class ProjectSession extends Observable {
         if (x.kind(from[0]) === 'fork') source = [fromId, x.addForkBranch(from[0], toId)]
         else if (next && nextId && x.kind(next) === 'fork') source = [nextId, x.addForkBranch(next, toId)]  // one more branch of it
         else {
-          const fork = x.insertFork([fromId, fromPort], taken, scope)
+          const fork = x.insertFork([fromId, fromPort], taken, scope, forkId!)
           source = [fork, x.addForkBranch(key([...scope, fork]), toId)]
         }
       }
@@ -2662,11 +2569,11 @@ export class ProjectSession extends Observable {
 
   /** A fork Card after an output: the output's wires (`wires`) now leave the
    *  fork, a branch each, and the output feeds the fork. Its id. */
-  insertFork(from: [string, string], wires: J[], scope: string[]): string {
-    const id = this.uniqueId('fork', scope)
+  insertFork(from: [string, string], wires: J[], scope: string[], id: string): string {
     const k = key([...scope, id])
     this.appendCard(id, scope)
     this.writeTemplate('fork', k)
+    this.updateMeta(k, (m) => m.set('name', 'fork'))
     this.updateCard(k, (c) => c.set('params', [obj([['name', 'branches'], ['type', 'string[]'], ['data', []]])]))
     // Between the output's Card and the first Card it fed.
     const a = this.position(key([...scope, from[0]]))
@@ -2771,7 +2678,7 @@ export class ProjectSession extends Observable {
     const ids = new Set([...keys].map((k) => path(k).pop()!).filter(Boolean))
     const scopePrefix = this.projectPrefix(scope)
     if (!ids.size || scopePrefix === undefined) return undefined
-    const newId = this.uniqueId(name, scope)
+    const newId = await this.newCardId(name, scope)
     const newKey = key([...scope, newId])
     const ext = `${scopePrefix}externals/${newId}/`
     // Files of the Cards' definition folders, and of their own externals.
@@ -2871,7 +2778,7 @@ export class ProjectSession extends Observable {
       }
       for (const [to, inn] of moved) x.createExternal(to, inn)
       x.createExternal(ext, e)
-      x.setCardDefinition(newKey, { card: obj(), link: obj([['external', newId]]) })
+      x.setCardDefinition(newKey, { card: obj(), meta: obj([['name', name]]), link: obj([['external', newId]]) })
       x.updateLayout(scope, (l) => {
         const cards = l.get('cards')
         if (isObj(cards)) for (const kk of cards.keys()) if ([...ids].some((id) => kk === id || kk.startsWith(id + '/'))) cards.set(kk, undefined)
@@ -3816,7 +3723,7 @@ export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'branch', label: L('分岐') }, { id: 'merge', label: L('合流') }, { id: 'collect', label: L('収集') },
 ]
 export const templateIcon = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'chart.xyaxis.line' : KIND_ICON[t.startsWith('report_') || t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' || t === 'marimo' ? 'code' : (t as CardKind)]
-/** A name for the new Card (its id; made unique). */
+/** The human name used when creating a Card; the core generates its identifier. */
 export const templateBaseName = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'visualization' : (t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' ? 'card' : t)
 
 export const NOTE_COLORS: { id: string; label: string }[] = [

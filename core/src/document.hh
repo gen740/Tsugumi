@@ -69,6 +69,7 @@ struct Document {
   // resolutions (a layout-only change keeps the previous one).
   std::string resolution_key;
 
+  static auto is_card_meta_file(const std::string& rel) -> bool;
   static bool is_document_file(const std::string& rel);
   static bool is_source_area(const std::string& rel);
 
@@ -92,12 +93,9 @@ class DocumentError : public std::runtime_error {
 // DocumentError(invalid_document) with the byte offset on errors.
 schema::Project parse_project_json(const std::string& text);
 schema::Layout parse_layout_json(const std::string& text);
-// layout.json after the root canvas changed: what is under a `moved` Card (old
-// id -> new id) is under its new id, replacing anything already there, and what
-// is under a `gone` Card is dropped, from the positions, the frames and the
-// groups. `text` comes back as it is when it names none of them. `text` is valid.
-std::string layout_following_cards(const std::string& text, const std::map<std::string, std::string>& moved,
-                                   const std::set<std::string>& gone);
+// Drops positions, frames and group entries for Cards removed from the root canvas.
+// Returns the original text unchanged when none of those Cards is named.
+std::string layout_without_cards(const std::string& text, const std::set<std::string>& gone);
 schema::CardDefinition parse_card_json(const std::string& id, const std::string& text);
 schema::CardMeta parse_meta_json(const std::string& text);
 // _meta.json with its empty description and context filled; what has text stays as it is.

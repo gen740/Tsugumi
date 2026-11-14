@@ -238,6 +238,8 @@ struct DisplaySnapshot {
 @MainActor
 @Observable
 final class ProjectSession {
+  /// Replaceable RPC boundary for embedded sessions and tests.
+  var cardIdProvider: ((String, String) async throws -> String)?
   let identity: ProjectIdentity
   let environments: EnvironmentManager
   let viewId: UUID
@@ -299,9 +301,6 @@ final class ProjectSession {
   private(set) var redoStack: [UndoEntry] = []
   private(set) var saveError: String?
   private(set) var saving = false
-  /// Cards renamed inside Cards in Card by edits not saved yet: the save
-  /// names them so their run history follows.
-  var pendingCardRenames: [(from: [String], to: [String])] = []
   /// Edits wait for the run to end (the core keeps Card changes back while it runs).
   private(set) var savingAfterRun = false
   /// Last user-facing problem of an action (run refused, import failed, ...).
@@ -1243,7 +1242,6 @@ final class ProjectSession {
     sourceBases = [:]
     draftBase = nil
     externalBases = [:]
-    pendingCardRenames = []
     saveAgain = false
     conflictRetries = 0
     saveError = nil
@@ -1352,10 +1350,7 @@ final class ProjectSession {
     }
     let op = UUID()
     do {
-      let renames = layoutOnly ? [] : pendingCardRenames
-      let result = try await client.save(baseRev: base.rev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())", changes: changes,
-                                         renamed: renames)
-      if !renames.isEmpty { pendingCardRenames.removeFirst(min(renames.count, pendingCardRenames.count)) }
+      let result = try await client.save(baseRev: base.rev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())", changes: changes)
       saveError = nil
       conflictRetries = 0
       if let d = result.delta { applyDeltaFromSave(d) }

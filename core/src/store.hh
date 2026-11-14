@@ -25,10 +25,9 @@ struct SourcePatchIn {
 };
 
 struct ChangeIn {
-  enum class Kind { SetProject, SetLayout, PutDefinition, RemoveDefinition, RenameDefinition, PutSource, PatchSource, RemoveSource };
+  enum class Kind { SetProject, SetLayout, PutDefinition, RemoveDefinition, PutSource, PatchSource, RemoveSource };
   Kind kind;
   std::string id;    // definitions
-  std::string to;    // RenameDefinition
   std::optional<std::string> link_json;
   std::string json;  // SetProject / SetLayout / card_json
   std::optional<std::string> meta_json;
@@ -55,7 +54,6 @@ struct Delta {
   std::vector<std::string> definitions_removed;
   std::vector<std::string> sources_upsert;
   std::vector<std::string> sources_removed;
-  std::vector<std::pair<std::string, std::string>> renamed;  // definition id: from -> to
   DocumentPtr doc;
 };
 
@@ -80,6 +78,7 @@ class Store {
   void open();
 
   DocumentPtr current() const;
+  auto allocate_card_id(const std::string& name, const std::string& project_path) -> std::string;
   const std::filesystem::path& root() const { return opts_.root; }
   std::string project_id() const { return project_id_; }
 

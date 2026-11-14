@@ -135,14 +135,10 @@ def test_with_nothing_to_go_on_the_context_may_stay_empty_but_the_description_ma
 def test_a_renamed_draft_is_still_a_draft_to_implement(draft):
     """Renaming a draft cannot bypass its implementation requirements."""
     c = draft()
-    doc = json.loads(text(c.call("ProjectInspectRequest").projectJson))
-    doc["canvas"]["cards"] = [{"id": "count"} if x["id"] == "plan" else x for x in doc["canvas"]["cards"]]
-    save(c, [change("RenameDefinition", id="plan", to="count"), change("SetProject", json=json.dumps(doc))])
-    assert "count: context is empty" in refused(c, [implement(cid="count")], "context")[0]
-    # Renaming and changing a definition in one save is not possible, so no save skips the check that way.
-    with pytest.raises(RpcFailure) as e:
-        save(c, [change("RenameDefinition", id="count", to="other"), implement(cid="other")])
-    assert e.value.kind == "invalid_request"
+    from test_definitions import rename
+    rename(c, "plan", "count")
+    assert "plan: context is empty" in refused(c, [implement(cid="plan")], "context")[0]
+    refused(c, [implement({"name": "other"}, cid="plan")], "context")
 
 
 def test_only_a_model_implementing_a_draft_is_asked(draft):

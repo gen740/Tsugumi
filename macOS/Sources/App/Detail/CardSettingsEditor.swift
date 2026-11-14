@@ -300,15 +300,6 @@ struct CardSettingsEditor: View {
         UIScript.shared.editors[ref.card] = m
       }
     }
-    // Renamed here (or elsewhere): the window follows the Card.
-    .onReceive(NotificationCenter.default.publisher(for: .cardRenamed)) { n in
-      guard let from = n.userInfo?["from"] as? String, let to = n.userInfo?["to"] as? String,
-            n.userInfo?["project"] as? String == session.identity.url.path, from == model?.cardKey else { return }
-      let m = CardEditorModel(session: session, cardKey: to)
-      m.category = model?.category ?? .general
-      model = m
-      UIScript.shared.editors[to] = m
-    }
     // The Card's name is the title, the project the subtitle (DetailHost);
     // toolbar, sidebar, preview and form share the window background.
     .navigationTitle(session.displayName(model?.cardKey ?? ref.card))
@@ -499,7 +490,7 @@ private struct GeneralCategory: View {
           }
           if renaming { ProgressView().controlSize(.small) }
         }
-        .help("名前は Card の ID で、定義のフォルダ名（definitions/<名前>/）です。変えると接続・配置・実行履歴も追従します（すぐに保存します）。")
+        .help("表示する名前です。同じ名前を複数の Card に使えます。変えても ID・接続・実行履歴は変わりません（すぐに保存します）。")
         if let renameError { Text(renameError).font(.caption).foregroundStyle(.red) }
         LabeledContent("種類", value: model.kind.label)
         if model.kind != .switchCard {
@@ -582,6 +573,9 @@ private struct GeneralCategory: View {
     .formStyle(.grouped)
     .onAppear { name = model.session.displayName(model.cardKey) }
     .onChange(of: model.cardKey) { name = model.session.displayName(model.cardKey) }
+    .onChange(of: model.session.displayName(model.cardKey)) { before, current in
+      if name == before { name = current }
+    }
   }
 
   @ViewBuilder private var executionSettings: some View {
@@ -675,10 +669,6 @@ private struct GeneralCategory: View {
       do {
         if model.unapplied { guard await model.apply() else { renaming = false; return } }
         try await model.session.renameCard(model.cardKey, to: new)
-        // The editor follows the Card under its new name.
-        NotificationCenter.default.post(name: .cardRenamed, object: nil,
-                                        userInfo: ["from": model.cardKey, "to": key(Array(path(model.cardKey).dropLast()) + [new]),
-                                                   "project": model.session.identity.url.path])
       } catch {
         renameError = "\(error)"
         name = model.session.displayName(model.cardKey)

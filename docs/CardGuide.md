@@ -827,12 +827,16 @@ of preview identity. Coordinates and display retention are independent of theme.
 
 ### A Card's folder
 
-`definitions/<id>/` belongs to one Card (its id is its name):
+`definitions/<id>/` belongs to one Card. Its identifier is permanent; its editable human name is `_meta.json.name`, with the identifier shown when the name is omitted. Names may be shared by several Cards. New identifiers come from the core `card_id` RPC: the slug of the creation name plus four random characters from `abcdefghjkmnpqrstuvwxyz23456789`, checked for uniqueness in the owning project (including reserved unsaved Cards). Pass `project_path` for a Card in Card, then save the definition and canvas using the returned identifier. The slug uses lowercase ASCII letters and digits separated by hyphens; a name without those characters uses `card`. Identifiers already present, including unsuffixed ones, stay as written.
+
+Renaming changes only `_meta.json.name`. Definition folders, canvas keys, connections, saved inputs, run records and evidence links retain their identifiers. The same rule holds inside a Card in Card.
+
+Definition files:
 
 | File | What it is |
 | --- | --- |
 | `_card.json` | All settings: `language` or `template`, `inputs`, `params`, run settings |
-| `_meta.json` | The intent, for every kind of Card: `description` (its summary, shown on the Canvas and in Card settings; `_card.json` has none), `content`, `context`, port descriptions. When implementing a Draft, preserve its intent and fill an empty `description` and `context` from the user and Draft |
+| `_meta.json` | The human `name` and intent, for every kind of Card: `description` (its summary, shown on the Canvas and in Card settings; `_card.json` has none), `content`, `context`, port descriptions. When implementing a Draft, preserve its intent and fill an empty `description` and `context` from the user and Draft |
 | `_outputs.fbs` | One table per output port, root table `Outputs` |
 | `default.nix` | Code Cards only: a function `{ pkgs, inputs, params }:` returning `{ run = ...; }` with one implementation or an ordered list |
 | `src/` | Code Cards only: the sources |

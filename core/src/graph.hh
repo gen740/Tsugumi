@@ -97,6 +97,7 @@ struct CardNixReference {
 
 struct Node {
   CardPath path;
+  std::string name;  // human name, independent of the permanent path
   Template kind = Template::Code;
   // The Card's definition folder, project relative ("definitions/<id>/", or
   // "externals/<p>/definitions/<id>/" inside a Card in Card).

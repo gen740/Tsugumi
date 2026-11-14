@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ComparedCard, ComparedField, ComparedRow, Difference, comparedConditions, comparedParams, comparedValues, loadRunComparison, runScope, sameDisplay } from '../model/runComparison'
 import { ProjectSession, cardState, errorText, formatDuration, formatMillis, recordedDisplay, runState } from '../model/session'
-import { R, s } from '../shared/rpc'
+import { R, s, segs } from '../shared/rpc'
 import { Button, Empty, Select, Spinner } from './controls'
 import { DisplayContent } from './display'
 import { L } from '../i18n'
@@ -44,10 +44,10 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
       {left === right || !left || !right ? <Empty title={L('異なる 2 つの実行を選んでください')} icon="arrow.triangle.swap" />
         : error ? <div role="alert">{error}<Button onClick={() => setAttempt(attempt + 1)}>{L('再試行')}</Button></div>
         : !rows ? <Spinner /> : <>
-          <RunScopes left={a} right={b} />
+          <RunScopes left={a} right={b} displayPath={(p) => session.displayPath(p)} />
           <VersionDifference from={from} to={to} diff={diff} error={diffError} />
           {!rows.length && <Empty title={L('記録がありません')} icon="tray" />}
-          {rows.map(row => <ComparedCardView key={row.card} row={row} />)}
+          {rows.map(row => <ComparedCardView key={row.card} row={row} displayPath={(p) => session.displayPath(p)} />)}
         </>}
     </div>
   </div>
@@ -70,9 +70,10 @@ function DifferenceMark({ difference }: { difference: Difference }) {
 }
 
 /** Where each run started and how far it went: a partial run reuses saved inputs. */
-export function RunScopes({ left, right }: { left?: R.RunSummaryT; right?: R.RunSummaryT }) {
-  const a = runScope(left), b = runScope(right)
-  return <ComparedFields title={L('実行の範囲')} fields={[{ name: L('開始した Card'), left: a, right: b, difference: a === b ? 'same' : 'changed' }]} />
+export function RunScopes({ left, right, displayPath }: { left?: R.RunSummaryT; right?: R.RunSummaryT; displayPath?: (p: string[]) => string }) {
+  const a = runScope(left, displayPath), b = runScope(right, displayPath)
+  const same = segs(left?.target).join('/') === segs(right?.target).join('/') && (left?.propagate !== false) === (right?.propagate !== false)
+  return <ComparedFields title={L('実行の範囲')} fields={[{ name: L('開始した Card'), left: a, right: b, difference: same ? 'same' : 'changed' }]} />
 }
 
 function ComparedFields({ title, fields }: { title: string; fields: ComparedField[] }) {
@@ -96,15 +97,15 @@ function SideStatus({ side }: { side?: ComparedCard }) {
   </div>
 }
 
-export function ComparedCardView({ row }: { row: ComparedRow }) {
+export function ComparedCardView({ row, displayPath = p => p.join('/') }: { row: ComparedRow; displayPath?: (p: string[]) => string }) {
   const a = row.left?.record, b = row.right?.record
   const leftDisplay = a?.record?.display ? recordedDisplay(a.record.display) : undefined, rightDisplay = b?.record?.display ? recordedDisplay(b.record.display) : undefined
   const statusChanged = row.left?.summary.state !== row.right?.summary.state || row.left?.summary.durationMs !== row.right?.summary.durationMs
   const displayChanged = !sameDisplay(leftDisplay, rightDisplay)
   return <details className="comparison-card" open>
-    <summary>{row.card}</summary>
+    <summary>{displayPath(row.card.split('/'))}</summary>
     <div className={`comparison-pair pad8${statusChanged ? ' changed' : ''}`}><SideStatus side={row.left} /><SideStatus side={row.right} /></div>
-    <ComparedFields title={L('実行条件')} fields={comparedConditions(row.left, row.right)} />
+    <ComparedFields title={L('実行条件')} fields={comparedConditions(row.left, row.right, displayPath)} />
     <ComparedFields title={L('パラメータ')} fields={comparedParams(a, b)} />
     <ComparedFields title={L('入力')} fields={comparedValues('inputs', a, b)} />
     <ComparedFields title={L('出力')} fields={comparedValues('outputs', a, b)} />

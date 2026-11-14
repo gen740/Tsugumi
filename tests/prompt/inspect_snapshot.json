@@ -6,24 +6,53 @@
     "execution_rev": 0,
     "project_json": "{\"name\": \"probe\", \"pkgsPath\": \"tsugumi:default\", \"canvas\": {\"cards\": [{\"id\": \"initial\"}], \"connections\": []}}",
     "layout_json": "{}",
-    "definitions": [{
-      "id": "initial",
-      "card_json": "{\"template\": \"input\", \"params\": [{\"name\": \"value\", \"type\": \"uint64\", \"data\": 43}]}"
-    }],
-    "sources": [{
-      "path": "definitions/initial/_outputs.fbs", "kind": "file", "exists": true,
-      "hash": "7ff875a1dcc50b7acf4350766f2e81f4115a83d16f02edc939d35a1205354603", "size_bytes": 111
-    }],
-    "resolution": [{
-      "card": {"segments": ["initial"]},
-      "inputs": [{"name": "start", "kind": "FlatBuffer", "optional": true}],
-      "outputs": [{
-        "name": "value", "kind": "FlatBuffer", "optional": false,
-        "schema_bfbs": {"binary_schema_bytes": 364}, "root_type": "collatz.Number"
-      }],
-      "diagnostics": []
-    }],
+    "definitions": [
+      {
+        "id": "initial",
+        "card_json": "{\"template\": \"input\", \"params\": [{\"name\": \"value\", \"type\": \"uint64\", \"data\": 43}]}"
+      }
+    ],
+    "sources": [
+      {
+        "path": "definitions/initial/_outputs.fbs",
+        "kind": "file",
+        "exists": true,
+        "hash": "7ff875a1dcc50b7acf4350766f2e81f4115a83d16f02edc939d35a1205354603",
+        "size_bytes": 111
+      }
+    ],
+    "resolution": [
+      {
+        "card": {
+          "segments": [
+            "initial"
+          ]
+        },
+        "inputs": [
+          {
+            "name": "start",
+            "kind": "FlatBuffer",
+            "optional": true
+          }
+        ],
+        "outputs": [
+          {
+            "name": "value",
+            "kind": "FlatBuffer",
+            "optional": false,
+            "schema_bfbs": {
+              "binary_schema_bytes": 364
+            },
+            "root_type": "collatz.Number"
+          }
+        ],
+        "diagnostics": [],
+        "name": "initial"
+      }
+    ],
     "diagnostics": [],
-    "run": {"state": "idle"}
+    "run": {
+      "state": "idle"
+    }
   }
 }

@@ -166,6 +166,10 @@ export class RPCClient {
     return { type: reply.valueType(), bb, table: t.bb_pos }
   }
 
+  cardId(name: string, projectPath = '') {
+    return this.call<R.CardIdResultT>(RequestPayload.CardIdRequest, Object.assign(new R.CardIdRequestT(), { name, projectPath }))
+  }
+
   // ---- Typed wrappers ---------------------------------------------------------
 
   open(viewId: string | null) {
@@ -177,9 +181,8 @@ export class RPCClient {
   inspect() {
     return this.call<R.ProjectSnapshotT>(RequestPayload.ProjectInspectRequest, new R.ProjectInspectRequestT())
   }
-  save(baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[], renamed: { from: string[]; to: string[] }[] = []) {
-    const renamedCards = renamed.map((x) => new R.CardRenameT(cardPath(x.from), cardPath(x.to)))
-    return this.call<R.SaveResultT>(RequestPayload.ProjectSaveRequest, Object.assign(new R.ProjectSaveRequestT(), { baseRev, opId, origin, changes, renamedCards }))
+  save(baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[]) {
+    return this.call<R.SaveResultT>(RequestPayload.ProjectSaveRequest, Object.assign(new R.ProjectSaveRequestT(), { baseRev, opId, origin, changes }))
   }
   /** Generates the Card's contracts (_inputs.fbs, _outputs.fbs, _params.fbs)
    *  for one revision and returns the file list when ready. */
@@ -387,7 +390,6 @@ export const Change = {
   setLayout: (json: string) => new R.DocumentChangeT(R.DocumentChangeValue.SetLayout, new R.SetLayoutT(json)),
   putDefinition: (id: string, cardJson: string, metaJson: string | null, linkJson: string | null = null) =>
     new R.DocumentChangeT(R.DocumentChangeValue.PutDefinition, new R.PutDefinitionT(id, linkJson === null ? cardJson : '', metaJson, linkJson)),
-  renameDefinition: (id: string, to: string) => new R.DocumentChangeT(R.DocumentChangeValue.RenameDefinition, new R.RenameDefinitionT(id, to)),
   removeDefinition: (id: string) => new R.DocumentChangeT(R.DocumentChangeValue.RemoveDefinition, new R.RemoveDefinitionT(id)),
   putSource: (path: string, bytes: Uint8Array, baseHash: string | null) =>
     new R.DocumentChangeT(R.DocumentChangeValue.PutSource, new R.PutSourceT(path, Array.from(bytes), baseHash)),

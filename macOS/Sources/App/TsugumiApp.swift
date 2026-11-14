@@ -400,7 +400,6 @@ extension Notification.Name {
   /// Moves a canvas (object: tab id) to a Card (userInfo "card").
   static let canvasReveal = Notification.Name("tsugumi.canvas.reveal")
   /// A Card was renamed (userInfo: from, to, project): views showing it follow.
-  static let cardRenamed = Notification.Name("tsugumi.card.renamed")
   /// Zooms a canvas (object: tab id): userInfo "zoom" factor, 0 = 100 %.
   static let canvasZoom = Notification.Name("tsugumi.canvas.zoom")
   /// Opens the Card search of a canvas (object: tab id).

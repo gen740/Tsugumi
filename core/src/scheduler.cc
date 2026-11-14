@@ -1815,8 +1815,7 @@ auto Scheduler::reconcile_remote_job(RemoteJobRecord& job) -> bool {
   std::map<LogStream, std::vector<LogEnd>> log_ends;
   std::optional<CardPath> completed_card;
   h.write_sync([&](sql::Db& db) {
-    // A Card may be renamed while its remote result is downloading. Resolve
-    // the current history key in the same transaction as its completion.
+    // Resolve the recorded Card key in the same transaction as completion.
     completed_card = History::remote_job_card(db, inv.execution_job_id);
     if (!completed_card) return;
     result.summary.card = *completed_card;
@@ -2109,42 +2108,13 @@ std::string card_content(const Document& doc, const Node& n) {
 
 }  // namespace
 
-void Scheduler::document_changed(const Document& before, const Document& after,
-                                 const std::vector<std::pair<std::string, std::string>>& renamed) {
+void Scheduler::document_changed(const Document& before, const Document& after) {
   if (!before.resolution || !after.resolution) return;
-  if (before.resolution == after.resolution && renamed.empty()) return;
-  auto inside = [](const std::string& k, const std::string& card) { return k == card || k.starts_with(card + "/"); };
+  if (before.resolution == after.resolution) return;
   std::lock_guard<std::mutex> l(mu_);
-  for (const auto& [from, to] : renamed) {
-    auto moved = [&, &from = from, &to = to](const std::string& k) { return to + k.substr(from.size()); };
-    // What a Card that left had is not this Card's. The history has just given
-    // it the new name, so that is not asked either.
-    std::vector<std::string> left, blocked;
-    for (const auto& [k, content] : gone_)
-      if (inside(k, from)) left.push_back(k);
-    for (const auto& k : no_display_)
-      if (inside(k, from)) blocked.push_back(k);
-    for (const auto& k : left) no_display_.insert(moved(k));
-    for (const auto& k : blocked) {
-      no_display_.erase(k);
-      no_display_.insert(moved(k));
-    }
-    std::vector<std::string> keys;
-    for (const auto& [k, d] : displays_)
-      if (inside(k, from) && !gone_.count(k)) keys.push_back(k);
-    for (const auto& k : keys) {
-      auto n = displays_.extract(k);
-      auto t = moved(k);
-      n.mapped().card = path_from_key(t);
-      displays_[t] = std::move(n.mapped());
-      gone_.erase(t);
-      no_display_.erase(t);
-    }
-  }
   for (const auto& n : before.resolution->nodes) {
     if (after.resolution->find(n.path)) continue;
     auto k = path_key(n.path);
-    if (std::any_of(renamed.begin(), renamed.end(), [&](const auto& r) { return inside(k, r.first); })) continue;
     // The first Card that left: an undo goes back through the ones that followed it.
     gone_.try_emplace(k, card_content(before, n));
   }

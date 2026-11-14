@@ -130,7 +130,7 @@ struct CardExecutionView: View {
               Image(systemName: r.status.state.symbol).foregroundStyle(r.status.state.color)
               VStack(alignment: .leading) {
                 Text(formatMillis(r.status.acceptedAt)).font(.callout)
-                Text("\(r.status.state.label) · 対象 \(r.target.path.joined(separator: "/"))").font(.caption).foregroundStyle(.secondary)
+                Text("\(r.status.state.label) · 対象 \(session.displayPath(r.target.path))").font(.caption).foregroundStyle(.secondary)
               }
             }
             // The selection is optional: the tag must be too, or a click selects nothing.
@@ -303,7 +303,7 @@ struct CardExecutionView: View {
         if let srcs = r.record?.inputSources, !srcs.isEmpty {
           Section("入力元") {
             ForEach(Array(srcs.compactMap { $0 }.enumerated()), id: \.offset) { _, s in
-              LabeledContent(s.port, value: "\(s.card.path.joined(separator: "/")) #\(s.invocation ?? 0)")
+              LabeledContent(s.port, value: "\(session.displayPath(s.card.path)) #\(s.invocation ?? 0)")
             }
           }
         }

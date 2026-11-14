@@ -555,23 +555,23 @@ export class CanvasController extends Observable implements CanvasOverlay {
   }
 
   /** A built-in Card in the middle of the view (or at `at`); returns it. */
-  addBuiltin(t: DefinitionTemplate, at?: Pt): CardKey | undefined {
+  async addBuiltin(t: DefinitionTemplate, at?: Pt): Promise<CardKey | undefined> {
     if (!this.session.isEditable) return undefined
-    const k = this.addClear(t, at ?? this.middle())
+    const k = await this.addClear(t, at ?? this.middle())
     this.tab.setSelection([k])
     return k
   }
 
   /** E: a new Draft Card in the middle of the canvas. */
-  addDraft(): CardKey | undefined {
+  async addDraft(): Promise<CardKey | undefined> {
     if (!this.session.isEditable) return undefined
-    const k = this.addClear('draft', this.world(this.center))
+    const k = await this.addClear('draft', this.world(this.center))
     this.tab.setSelection([k])
     return k
   }
 
   /** A Card put on the canvas without being aimed at this very spot: where it covers nothing. */
-  private addClear(t: DefinitionTemplate, at: Pt): CardKey {
+  private addClear(t: DefinitionTemplate, at: Pt): Promise<CardKey> {
     const scope = this.tab.scope
     return this.session.addCard(t, scope, at, undefined, (k) => new Scene(this.session, scope).freeSpot(at, k))
   }

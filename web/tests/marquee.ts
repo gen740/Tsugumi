@@ -1,3 +1,4 @@
+import { cardIds } from './cardIds'
 // A marquee catches Cards, sticky notes and output frames. They move together in
 // one edit, and go together: a frame alone is closed, its Card stays.
 import assert from 'node:assert/strict'
@@ -14,12 +15,12 @@ const { snapToGrid } = await import('../src/model/canvasKit')
 const { ProjectSession } = await import('../src/model/session')
 const { WorkflowTab } = await import('../src/model/workspace')
 
-const setup = () => {
-  const s = new ProjectSession('/p', 'k', 'p')
+const setup = async () => {
+  const s = cardIds(new ProjectSession('/p', 'k', 'p'))
   s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   s.layout = parse('{}')
   s.scheduleSave = () => {} // no tsugumid here
-  const near = s.addCard('draft', [], { x: 0, y: 0 }), far = s.addCard('draft', [], { x: 5000, y: 0 })
+  const near = await s.addCard('draft', [], { x: 0, y: 0 }), far = await s.addCard('draft', [], { x: 5000, y: 0 })
   const note = s.addNote([], { x: 100, y: 300 }), farNote = s.addNote([], { x: 5000, y: 3000 })
   // A frame with a place of its own, and one drawn beside its Card.
   s.updateDisplayFrame(far, (f) => f.set('hidden', false))
@@ -32,8 +33,8 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
 
 {
   // What the marquee touches, and nothing else.
-  const { s, near, far, note, tab } = setup()
-  const placed = s.addCard('draft', [], { x: 2000, y: 0 })
+  const { s, near, far, note, tab } = await setup()
+  const placed = await s.addCard('draft', [], { x: 2000, y: 0 })
   s.updateDisplayFrame(placed, (f) => {
     f.set('x', parse('400'))
     f.set('y', parse('400'))
@@ -57,8 +58,8 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
 
 {
   // All together, as one edit.
-  const { s, near, far, note, cv } = setup()
-  const placed = s.addCard('draft', [], { x: 2000, y: 0 })
+  const { s, near, far, note, cv } = await setup()
+  const placed = await s.addCard('draft', [], { x: 2000, y: 0 })
   s.updateDisplayFrame(placed, (f) => {
     f.set('x', parse('400'))
     f.set('y', parse('400'))
@@ -88,7 +89,7 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
 
 {
   // A frame beside its Card goes with the Card: moved twice it would leave it.
-  const { s, near, cv } = setup()
+  const { s, near, cv } = await setup()
   s.updateDisplayFrame(near, (f) => f.set('hidden', false))
   const offset = (scene: InstanceType<typeof Scene>) => scene.frameRect(near).x - scene.origin(near).x
   const was = offset(new Scene(s, []))
@@ -106,7 +107,7 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
 
 {
   // Deleting: a frame alone is closed and its Card stays; notes go; one undo.
-  const { s, near, note, tab, cv } = setup()
+  const { s, near, note, tab, cv } = await setup()
   s.updateDisplayFrame(near, (f) => f.set('hidden', false))
   s.connected = true
   const undos = s.undoStack.length
@@ -132,9 +133,9 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
 {
   // With the grid, all go by the same whole grids, so the arrangement stays:
   // the Card goes from where it is drawn, what moves with it by the same step.
-  const { s, note, cv } = setup()
-  const offGrid = s.addCard('draft', [], { x: 3010, y: 950 })
-  const framed = s.addCard('draft', [], { x: 2000, y: 0 })
+  const { s, note, cv } = await setup()
+  const offGrid = await s.addCard('draft', [], { x: 3010, y: 950 })
+  const framed = await s.addCard('draft', [], { x: 2000, y: 0 })
   s.updateDisplayFrame(framed, (f) => {
     for (const [name, v] of [['x', '400'], ['y', '400'], ['width', '300'], ['height', '200']]) f.set(name, parse(v))
   })

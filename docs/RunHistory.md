@@ -1,5 +1,7 @@
 # Run history and artifacts
 
+A Card's name may change; its identifier does not. Renaming changes only the name shown in the app and to the Agent. Every past run record, target, input-source JSON, saved-file path and evidence link retains its original identifiers and bytes. Saved inputs remain usable for a partial run after a name change, including inside a Card in Card. Two Cards with the same name have distinct identifiers and distinct histories.
+
 Open a run to see what its Cards received, produced and kept. A run can contain more than one invocation of a Card. The run record describes the execution, and the [version history](Versions.md) holds the saved project code and settings.
 
 ## Inspect an invocation

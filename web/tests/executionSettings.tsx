@@ -1,3 +1,4 @@
+import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { parse } from '../src/shared/json'
@@ -11,12 +12,12 @@ page.EventSource = class { addEventListener() {} close() {} }
 const { ProjectSession } = await import('../src/model/session')
 const { CardSettingsEditor } = await import('../src/ui/cardSettings')
 
-const session = new ProjectSession('/p', 'k', 'p')
+const session = cardIds(new ProjectSession('/p', 'k', 'p'))
 session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
 session.layout = parse('{}')
 session.scheduleSave = () => {}
 session.connected = true
-const card = session.addCard('python', [], { x: 0, y: 0 })
+const card = await session.addCard('python', [], { x: 0, y: 0 })
 const show = (nativeSystem: string, systems: string[]) => {
   session.executionServices = [Object.assign(new R.ExecutionServiceT(), { id: 'local', nativeSystem, systems })]
   return renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)

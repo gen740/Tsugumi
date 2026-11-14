@@ -212,7 +212,7 @@ struct IssueList: View {
     }
     for d in session.diagnostics {
       out.append(Issue(error: d.error, title: d.message,
-                       detail: [d.card.map { $0.joined(separator: "/") }, d.path, d.code].compactMap { $0 }.joined(separator: " · "),
+                       detail: [d.card.map { session.displayPath($0) }, d.path, d.code].compactMap { $0 }.joined(separator: " · "),
                        card: d.card, isRunFailure: false))
     }
     return out

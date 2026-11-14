@@ -228,7 +228,7 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
       <div className="panel-bar">
         <Segmented<D.LogStream> small value={stream} onChange={setStream} width={240}
           options={[{ value: D.LogStream.stdout, label: 'stdout' }, { value: D.LogStream.stderr, label: 'stderr' }, { value: D.LogStream.journal, label: 'journal' }]} />
-        <span className="caption secondary">{card ? `Card ${card.join('/')}${invocation !== undefined ? ` #${invocation}` : ''}` : L('実行全体')}</span>
+        <span className="caption secondary">{card ? `Card ${session.displayPath(card)}${invocation !== undefined ? ` #${invocation}` : ''}` : L('実行全体')}</span>
         <span className="spacer" />
         <Toggle kind="checkbox" small checked={follow} onChange={setFollow} label={L('末尾を追う')} />
         <Button small disabled={!log} onClick={() => void copyText(log)}>{L('コピー')}</Button>

@@ -247,7 +247,6 @@
 "「%@」のおすすめは？" = "Which demo of “%@” do you recommend?";
 "「%@」のデモです。どれを見ますか？" = "Demos in “%@”. Which one would you like to see?";
 "「%@」のビルドキャッシュを削除しますか？" = "Delete the build cache for “%@”?";
-"「%@」はすでに使われています。" = "“%@” is already used.";
 "「%@」を読み取り専用で実行環境に共有し、Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（%@）に送られます。共有のため実行環境を再起動します（実行中の Run は止まります）。" = "“%@” is shared read-only with the environment so that the Agent can read it. What the Agent reads is sent to the model provider (%@). Sharing restarts the environment (a running Run stops).";
 "「デモを見る」から、Collatz などの例をすぐに開けるよ" = "Open an example such as Collatz from Browse Demos.";
 "「再試行」で接続し直します。未保存の変更は保持しています。" = "“Retry” connects again. Unsaved changes are kept.";
@@ -838,9 +837,8 @@
 "名前" = "Name";
 "名前と内容を書く" = "Write name and content";
 "名前と実行環境" = "Name and Environment";
-"名前に使えるのは英数字と - _ . だけです（128 文字まで）。" = "A name may contain only letters, digits and - _ . (up to 128 characters).";
-"名前は Card の ID で、定義のフォルダ名（definitions/<名前>/）です。変えると接続・配置・実行履歴も追従します（すぐに保存します）。" = "The name is the Card's ID and its definition folder name (definitions/<name>/). Changing it carries over connections, layout and run history (saved at once).";
 "名前は「継ぐ・積む・組む」から。処理を継ぎ、試行を積み、実験を組むよ" = "My name echoes tsugu, tsumu, kumu: join steps, stack up trials, build experiments.";
+"名前を入力してください（4096 バイトまで）。" = "Enter a name (up to 4096 bytes).";
 "名前を変更" = "Rename";
 "名前を変更…" = "Rename…";
 "名前（例: thin-bands）" = "Name (e.g. thin-bands)";
@@ -1231,6 +1229,7 @@
 "表示した scratch を削除…" = "Delete listed scratch…";
 "表示した過去の scratch を削除しますか？" = "Delete the listed past scratch?";
 "表示しない" = "Don't show";
+"表示する名前です。同じ名前を複数の Card に使えます。変えても ID・接続・実行履歴は変わりません（すぐに保存します）。" = "The display name may be shared by several Cards. Changing it keeps the ID, connections and run history unchanged (saved at once).";
 "表示のみ（開いているプロジェクトの接続先）" = "Display only (the open projects' endpoints)";
 "表示の記録がありません" = "No recorded display";
 "表示中" = "Shown";

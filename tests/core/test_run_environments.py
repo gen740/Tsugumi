@@ -242,18 +242,14 @@ def test_renamed_card_keeps_its_recorded_environment(core_factory, project, tmp_
     run_id = run(client)
     assert wait_run(client, run_id).state == RunState.succeeded
     expected = inventory(client, run_id)
-    snapshot = client.call("ProjectInspectRequest")
-    document = json.loads(text(snapshot.projectJson))
-    document["canvas"]["cards"][0]["id"] = "renamed"
-    client.call("ProjectSaveRequest", baseRev=snapshot.rev, opId=new_id(), origin="ui:test",
-                changes=[change("SetProject", json=json.dumps(document)),
-                         change("RenameDefinition", id="work", to="renamed")])
-    assert inventory(client, run_id, "renamed") == expected
+    from test_definitions import rename
+    rename(client, "work", "renamed")
+    assert inventory(client, run_id, "work") == expected
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
     restored = core_factory(project_root=copied_project, history_dir=tmp_path / "restored-history")
-    assert inventory(restored.connect(), run_id, "renamed") == expected
+    assert inventory(restored.connect(), run_id, "work") == expected
 
 
 def test_shipped_cli_can_inspect_the_environment_inventory(core_factory, project, tmp_path):

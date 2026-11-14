@@ -181,8 +181,8 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
       <Divider vertical />
       <MenuButton icon="plus" disabled={!session.isEditable} help={L('Card を追加')}
         items={() => builtinCardItems((t) => {
-          const k = canvasFor(session, tab).addBuiltin(t)
-          if (k && t === 'draft') canvasFor(session, tab).writeDraft(k)
+          void canvasFor(session, tab).addBuiltin(t).then((k) => { if (k && t === 'draft') canvasFor(session, tab).writeDraft(k) })
+            .catch((e) => { session.notice = String(e); session.changed() })
         })} />
     </div>
   )
