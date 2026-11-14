@@ -1,5 +1,6 @@
 // Scenarios exercise only the public Agent RPC through the shipped client.
 #include "oauth_fixture.hh"
+#include "project_fixture.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 
 namespace tsugumi::test {
@@ -202,6 +203,153 @@ TEST_F(AgentFixture, ConversationContinuesAfterTheClientDisconnects) {
   const auto state = WaitUntilIdle(conversation);
   EXPECT_NE(state.find("The core kept working."), std::string::npos);
   EXPECT_NE(Events(conversation).View().find("finished"), std::string::npos);
+}
+
+TEST_F(AgentFixture, RestartAndObservationLeaveTheTurnInterruptedUntilResume) {
+  ModelServer model;
+  model.Queue(AnthropicText("Unfinished response"), true);
+  model.Queue(AnthropicText("Explicitly resumed"));
+  Configure(model);
+  const auto conversation = Conversation("explicit-resume");
+  ASSERT_TRUE(Send(conversation, "Start a response").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(1));
+  host.reset();
+  external.reset();
+  human.reset();
+  agent.Stop(true);
+  StartAgent();
+  model.Release();
+  EXPECT_FALSE(model.WaitForRequests(2, 150ms));
+  // Create is also the public operation used when opening an existing chat.
+  EXPECT_EQ(Conversation(conversation), conversation);
+  auto observer = Connect(false, true);
+  for (int i = 0; i < 3; ++i) {
+    const auto snapshot = Get(conversation).View();
+    EXPECT_FALSE(JsonBool(snapshot, "/busy"));
+    EXPECT_TRUE(JsonBool(snapshot, "/resumable"));
+    EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/kind"), "model");
+    EXPECT_TRUE(Call(*observer, A::RequestPayload::EventsRequest,
+                     [&](Builder &b) {
+                       return A::CreateEventsRequest(
+                                  b, b.CreateString(conversation))
+                           .Union();
+                     })
+                    .Code()
+                    .empty());
+  }
+  EXPECT_FALSE(model.WaitForRequests(2, 150ms));
+  ASSERT_TRUE(Call(*external, A::RequestPayload::ConversationActionRequest,
+                   [&](Builder &b) {
+                     return A::CreateConversationActionRequest(
+                                b, b.CreateString(conversation),
+                                A::Action::Resume)
+                         .Union();
+                   })
+                  .Code()
+                  .empty());
+  EXPECT_NE(WaitUntilIdle(conversation).find("Explicitly resumed"),
+            std::string::npos);
+  EXPECT_EQ(model.Requests().size(), 2u);
+  EXPECT_FALSE(JsonBool(Get(conversation).View(), "/resumable"));
+}
+
+TEST_F(AgentProjectFixture,
+       InterruptedToolIsRecordedAndANewMessageCanReplaceResume) {
+  ModelServer model;
+  model.Queue(AnthropicTool("pending-read", "project_inspect", "{}"));
+  model.Queue(AnthropicText("Followed the new message"));
+  Configure(model);
+  StartProject();
+  const auto conversation = Conversation("interrupted-operation");
+  ASSERT_TRUE(Send(conversation, "Inspect the project").Code().empty());
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  while (Events(conversation).View().find("permission") == std::string::npos &&
+         std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(10ms);
+  ASSERT_NE(Events(conversation).View().find("permission"), std::string::npos);
+  host.reset();
+  external.reset();
+  human.reset();
+  agent.Stop(true);
+  StartAgent();
+  const auto snapshot = Get(conversation).View();
+  EXPECT_TRUE(JsonBool(snapshot, "/resumable"));
+  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/kind"), "tool");
+  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/name"),
+            "project_inspect");
+  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/id"), "pending-read");
+  EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/arguments_json"),
+            "{}");
+  EXPECT_FALSE(model.WaitForRequests(2, 150ms));
+  Grant(conversation);
+  EXPECT_FALSE(model.WaitForRequests(2, 150ms));
+  // A new message needs a new idempotency key; the fixture defaults to turn-1.
+  // Both UIs encode empty selection vectors, rather than omitting them.
+  const auto sent = Call(
+      *external, A::RequestPayload::ConversationSendRequest, [&](Builder &b) {
+        const auto empty = b.CreateVector(
+            std::vector<flatbuffers::Offset<flatbuffers::String>>{});
+        return A::CreateConversationSendRequest(
+                   b, b.CreateString(conversation), b.CreateString("turn-2"),
+                   b.CreateString("Do something else instead"), empty, empty)
+            .Union();
+      });
+  ASSERT_TRUE(sent.Code().empty()) << sent.Code();
+  EXPECT_NE(WaitUntilIdle(conversation).find("Followed the new message"),
+            std::string::npos);
+  ASSERT_TRUE(model.WaitForRequests(2));
+  ASSERT_EQ(model.Requests().size(), 2u);
+  EXPECT_EQ(JsonString(model.Requests()[1], "/messages/2/content/0/type"),
+            "tool_result");
+  EXPECT_EQ(JsonString(model.Requests()[1], "/messages/2/content/0/tool_use_id"),
+            "pending-read");
+  EXPECT_TRUE(JsonBool(model.Requests()[1], "/messages/2/content/0/is_error"));
+  EXPECT_EQ(JsonString(model.Requests()[1], "/messages/3/content/0/text"),
+            "Do something else instead");
+  EXPECT_NE(model.Requests()[1].find("Do something else instead"),
+            std::string::npos);
+  EXPECT_NE(model.Requests()[1].find("The tool was not replayed"),
+            std::string::npos);
+  const auto recorded = Get(conversation).View();
+  EXPECT_EQ(JsonString(recorded, "/conversation/messages/3/display"),
+            "Do something else instead");
+  EXPECT_EQ(JsonString(recorded, "/conversation/messages/3/content/0/text"),
+            "Do something else instead");
+}
+
+TEST_F(AgentFixture, DisplaySurvivesPreparationAndTheCompletedSnapshot) {
+  ModelServer model;
+  model.Queue(AnthropicText("Finished"), true);
+  Configure(model);
+  const auto conversation = Conversation("display-preserved");
+  ASSERT_TRUE(
+      Call(*external, A::RequestPayload::ConversationSendRequest,
+           [&](Builder &b) {
+             A::ConversationSendRequestT request;
+             request.conversation_id = conversation;
+             request.turn_id = "display-turn";
+             request.text = "Use the demo skill";
+             request.display = "A short request";
+             request.skill_names = {"demo"};
+             return A::ConversationSendRequest::Pack(b, &request).Union();
+           })
+          .Code()
+          .empty());
+  ASSERT_TRUE(model.WaitForRequests(1));
+  const auto preparing = Get(conversation).View();
+  EXPECT_TRUE(JsonBool(preparing, "/busy"));
+  EXPECT_EQ(JsonString(preparing, "/conversation/messages/0/display"),
+            "A short request");
+  EXPECT_NE(JsonString(preparing, "/conversation/messages/0/content/0/text")
+                .find("[User-selected bundled demo skill]"),
+            std::string::npos);
+  EXPECT_EQ(model.Requests()[0].find("A short request"), std::string::npos);
+  model.Release();
+  const auto completed = WaitUntilIdle(conversation);
+  EXPECT_EQ(JsonString(completed, "/conversation/messages/0/display"),
+            "A short request");
+  EXPECT_EQ(JsonString(completed, "/conversation/messages/1/content/0/text"),
+            "Finished");
 }
 
 TEST_F(AgentFixture, PublicCancellationStopsAnInFlightModelRequest) {

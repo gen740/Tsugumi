@@ -42,6 +42,16 @@ bool valid_id(const std::string& id) {
   return true;
 }
 
+auto Document::is_card_meta_file(const std::string& path) -> bool {
+  auto rel = path;
+  while (rel.starts_with("externals/")) {
+    auto slash = rel.find('/', 10);
+    if (slash == std::string::npos) return false;
+    rel.erase(0, slash + 1);
+  }
+  return rel.ends_with("/_meta.json") && is_document_file(rel);
+}
+
 bool Document::is_document_file(const std::string& rel) {
   if (rel == "tsugumi.json" || rel == "layout.json") return true;
   if (!rel.starts_with("definitions/")) return false;
@@ -183,8 +193,7 @@ schema::Layout parse_layout_json(const std::string& text) {
   return l;
 }
 
-std::string layout_following_cards(const std::string& text, const std::map<std::string, std::string>& moved,
-                                   const std::set<std::string>& gone) {
+std::string layout_without_cards(const std::string& text, const std::set<std::string>& gone) {
   using Object = schema::v::Mapping<schema::v::String, schema::Json>;
   using hosq::json::GenericDom;
   auto as = []<class S>(const GenericDom<>& value, S& out) {
@@ -198,23 +207,13 @@ std::string layout_following_cards(const std::string& text, const std::map<std::
       changed = true;
       return std::nullopt;
     }
-    auto it = moved.find(card);
-    if (it == moved.end()) return key;
-    changed = true;
-    return it->second + key.substr(card.size());
+    return key;
   };
   auto cards_by_key = [&](const GenericDom<>& value) {
     Object in, out;
     as(value, in);
-    std::set<std::string> arrived;
-    for (const auto& [key, _] : in.value())
-      if (auto to = follow(key); to && *to != key) arrived.insert(*to);
-    for (const auto& [key, entry] : in.value()) {
-      auto to = follow(key);
-      if (!to) continue;
-      if (*to == key && arrived.count(key)) continue;  // what the moved Card had wins
-      out.value().emplace_back(*to, entry);
-    }
+    for (const auto& [key, entry] : in.value())
+      if (follow(key)) out.value().emplace_back(key, entry);
     return schema::capture(schema::encode(out));
   };
   auto group_ids = [&](const GenericDom<>& value) {
@@ -326,7 +325,7 @@ std::string execution_fingerprint(const Document& doc) {
     if (def.link_json) h.update(*def.link_json);
   }
   for (const auto& [path, src] : doc.sources) {
-    if (path.starts_with("skills/")) continue;
+    if (path.starts_with("skills/") || Document::is_card_meta_file(path)) continue;
     h.update("\0src\0", 5);
     h.update(path);
     h.update(src.hash);

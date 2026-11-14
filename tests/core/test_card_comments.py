@@ -106,13 +106,9 @@ def test_two_comments_with_one_id_are_kept_apart(comment_client):
 
 def test_comments_follow_a_renamed_card(comment_client):
     """Comments follow a renamed card."""
-    snap = comment_client.call("ProjectInspectRequest")
-    doc = json.loads(text(snap.projectJson))
-    for k in doc["canvas"]["cards"]:
-        if k["id"] == "plan":
-            k["id"] = "plot"
-    result = save(comment_client, [change("RenameDefinition", id="plan", to="plot"), change("SetProject", json=json.dumps(doc))])
-    assert comments_of(comment_client, "plot") == [ASK, OTHER]
+    from test_definitions import rename
+    result = rename(comment_client, "plan", "plot")
+    assert comments_of(comment_client, "plan") == [ASK, OTHER]
     assert not result.comments, "the same comments: nothing happened to them"
 
 

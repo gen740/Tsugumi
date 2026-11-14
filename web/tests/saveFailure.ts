@@ -109,12 +109,14 @@ for (const outcome of ['refused', 'saved']) {
   assert.equal(s.syncState.kind, 'saved', outcome)
 }
 
-// Discard Changes takes a rename waiting to be sent with it.
+// Discard Changes drops a name edit without changing the Card identifier.
 {
   const s = session()
-  s.pendingCardRenames.push({ from: ['a'], to: ['c'] })
+  s.edit((x) => x.updateMeta('a', (m) => m.set('name', 'c')))
+  assert.equal(s.displayName('a'), 'c')
   s.discardDraft()
-  assert.equal(s.pendingCardRenames.length, 0)
+  assert.equal(s.displayName('a'), 'a')
+  assert.ok(s.instance('a'))
 }
 
 // Home with what cannot be saved: the user is told why and may give it up.

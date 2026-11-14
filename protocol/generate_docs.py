@@ -13,15 +13,15 @@ OUT = ROOT / "docs" / "Protocol.md"
 
 GROUPS = [
     ("Connection", ["SessionHello"]),
-    ("Projects and saving", ["ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave", "ProjectReload",
-                       "ProjectValidate", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "OperationGet"]),
+    ("Projects and saving", ["ProjectOpen", "ProjectClose", "ProjectInspect", "CardId", "ProjectSave", "ProjectReload",
+                       "ProjectValidate", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "OperationGet"]),
     ("Files", ["ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "AttachedFolderRead"]),
     ("Card SDKs and types", ["CardSDKPrepare", "CardSDKStatus", "OutputTypes", "NixSourceResolve"]),
     ("Running", ["RunPlan", "Run", "RunCancel", "RunStatus"]),
     ("History and artifacts", ["RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "RunHistoryDelete",
                  "ArtifactList", "ArtifactRead", "LogRange", "RunEnvironments", "RunEnvironmentPaths"]),
     ("Views", ["ViewSetVisible", "ViewSave", "ModuleRead", "LayoutArrange", "LayoutUntangle"]),
-    ("Versions", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionSummary"]),
+    ("Versions", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionNote", "VersionNoteStore"]),
 ]
 
 

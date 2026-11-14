@@ -1,6 +1,7 @@
 #include "worker_proc.hh"
 
 #include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <sys/wait.h>
@@ -10,6 +11,7 @@
 #include <cerrno>
 #include <cstring>
 #include <fstream>
+#include <system_error>
 #ifdef __APPLE__
 #include <libproc.h>
 #endif
@@ -17,6 +19,7 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "store.hh"
 #include "util/fs.hh"
+#include "util/staging.hh"
 #include "util/text.hh"
 #include "util/log.hh"
 #include "util/process.hh"
@@ -78,27 +81,44 @@ void close_fd(int& fd) {
   fd = -1;
 }
 
-bool write_full(int fd, const char* p, size_t n) {
-  while (n > 0) {
-    ssize_t w = ::write(fd, p, n);
-    if (w < 0) {
-      if (errno == EINTR) continue;
-      return false;
+auto send_frame(int fd, const std::string& frame, const std::atomic<bool>* cancel,
+                std::optional<std::chrono::steady_clock::time_point> deadline) -> void {
+  uint32_t len = static_cast<uint32_t>(frame.size());
+  std::string buf(reinterpret_cast<const char*>(&len), sizeof len);
+  buf += frame;
+  size_t offset = 0;
+  while (offset < buf.size()) {
+    if (cancel && cancel->load())
+      throw Failed(FailureKind::cancelled, "the invocation was cancelled");
+    if (deadline && std::chrono::steady_clock::now() >= *deadline)
+      throw Failed(FailureKind::timeout, "the Card exceeded timeoutSeconds");
+#ifdef MSG_NOSIGNAL
+    constexpr int flags = MSG_NOSIGNAL | MSG_DONTWAIT;
+#else
+    constexpr int flags = MSG_DONTWAIT;  // SO_NOSIGPIPE on macOS
+#endif
+    const auto count = ::send(fd, buf.data() + offset, buf.size() - offset, flags);
+    if (count > 0) {
+      offset += static_cast<size_t>(count);
+      continue;
     }
-    p += w;
-    n -= static_cast<size_t>(w);
+    if (count < 0 && errno == EINTR) continue;
+    if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      pollfd ready{fd, POLLOUT, 0};
+      if (::poll(&ready, 1, 20) >= 0 || errno == EINTR) continue;
+    }
+    throw Failed(FailureKind::worker_failed, "worker connection broken");
   }
-  return true;
 }
 
 #ifdef __APPLE__
 // Seatbelt profile for sandbox: true Cards when tsugumid runs directly on a
 // macOS host (sandbox-exec is deprecated but still the system's process
 // sandbox). As under bubblewrap: no network unless the Card allows it,
-// /nix/store, the run/input trees and the system libraries read-only, writes
+// /nix/store, staged invocation inputs and system libraries read-only, writes
 // only to the worker's own folder (scripts excepted) and to the output
-// folders of runs (a call's out/ is passed by path here, not as a
-// descriptor). Paths are matched after symlink resolution (/tmp -> /private/tmp).
+// staging folder of the current call (copied to the run afterwards). Paths
+// are matched after symlink resolution (/tmp -> /private/tmp).
 std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, const std::string& scripts) {
   auto real = [](const std::string& p) {
     std::error_code ec;
@@ -113,15 +133,6 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, 
     }
     return out + "\"";
   };
-  auto regex_text = [](const std::string& t) {
-    std::string out;
-    for (char ch : t) {
-      if (std::strchr("\\.^$|?*+()[]{}\"", ch)) out += '\\';
-      out += ch;
-    }
-    return out;
-  };
-  auto regex_quote = [&](const std::string& p) { return regex_text(real(p)); };
   std::string read = "(literal \"/\") (subpath \"/nix/store\") (subpath \"/usr/lib\") (subpath \"/usr/share\")"
                      " (subpath \"/System\") (subpath \"/bin\") (subpath \"/usr/bin\") (subpath \"/private/etc\")"
                      " (subpath \"/private/var/db/timezone\") (subpath \"/dev\")";
@@ -131,13 +142,11 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch, 
   for (const auto& p : sp.ro_paths) {
     read += " (subpath " + quote(p) + ")";
   }
-  if (!sp.outputs_root.empty())
-    write += " (regex #\"^" + regex_quote(sp.outputs_root) + "/[^/]+/work/" + regex_text(sp.card) + "/[0-9]+/out(/|$)\")";
   return "(version 1)\n(deny default)\n"
          "(allow process-fork)\n(allow process-exec)\n(allow signal (target same-sandbox))\n"
          "(allow sysctl-read)\n(allow ipc-posix-shm)\n(allow file-read-metadata)\n"
          "(allow file-read* " + read + ")\n(allow file-write* " + write + ")\n"
-         "(deny file-write* (subpath " + quote(scripts) + "))\n"
+         "(deny file-write* (subpath " + quote(scripts) + ") (subpath " + quote(scratch + "/inputs") + "))\n"
          "(allow file-ioctl (subpath \"/dev\"))\n" +
          // With the network allowed, still nothing on this host: tsugumid's
          // own ports and sockets, the web server, other local services. For
@@ -178,9 +187,36 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     throw Failed(FailureKind::worker_failed, "cannot create worker channels");
   // The worker's own folder; the step scripts are written once per worker.
   auto scripts = std::filesystem::path(scratch_) / "scripts";
-  for (const char* d : {"work", "tmp", "scripts", "home"}) std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
+#ifdef __APPLE__
+  // O_EVTONLY still needs read permission on Darwin. Repair an unreadable
+  // directory with exactly the Card's identity and sandbox, then open it with
+  // O_NOFOLLOW. Even a surviving child swapping in a hard link cannot enlist
+  // the core's broader authority to chmod a protected host inode.
+  recover_permissions_ = [sp, scripts](int parent, const char* name) {
+    std::filesystem::path target(name);
+    if (parent != AT_FDCWD) {
+      char path[PATH_MAX];
+      if (::fcntl(parent, F_GETPATH, path) != 0)
+        throw std::system_error(errno, std::generic_category(), "cannot locate staging directory");
+      target = std::filesystem::path(path) / name;
+    }
+    proc::Spec repair;
+    repair.cwd = "/";
+    if (sp.sandbox)
+      repair.argv = {"/usr/bin/sandbox-exec", "-p", seatbelt_profile(sp, sp.scratch, scripts.string())};
+    repair.argv.insert(repair.argv.end(), {"/bin/chmod", "-h", "u+rwx", target.string()});
+    repair.uid = sp.uid;
+    repair.gid = sp.gid;
+    const auto result = proc::run(repair, nullptr,
+        std::chrono::steady_clock::now() + std::chrono::seconds(5), {});
+    if (!proc::exited_ok(result.status))
+      throw std::system_error(EACCES, std::generic_category(),
+                              "cannot restore staging directory permissions: " + target.string());
+  };
+#endif
+  for (const char* d : {"work", "tmp", "out", "scripts", "home", "inputs"}) std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
   if (::geteuid() == 0 && sp.uid && worker_uid_on_host())
-    for (const char* d : {"work", "tmp", "home"}) ::chown((scratch_ + "/" + d).c_str(), *sp.uid, sp.gid.value_or(*sp.uid));
+    for (const char* d : {"work", "tmp", "out", "home"}) ::chown((scratch_ + "/" + d).c_str(), *sp.uid, sp.gid.value_or(*sp.uid));
   std::vector<std::string> args;
   auto script = [&](const char* flag, const std::string& text, const char* name) {
     if (text.empty()) return;
@@ -203,7 +239,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   proc::Spec spec;
   auto own = [&](std::vector<std::string>& argv) {
     for (const auto& p : sp.ro_paths) argv.insert(argv.end(), {"--ro-bind", p, p});
-    argv.insert(argv.end(), {"--bind", scratch_, scratch_, "--ro-bind", scripts.string(), scripts.string()});
+    argv.insert(argv.end(), {"--bind", scratch_, scratch_, "--ro-bind", scripts.string(), scripts.string(),
+                                           "--ro-bind", inputs_dir(), inputs_dir()});
     for (const auto& b : sp.binds) argv.insert(argv.end(), {b.write ? "--bind" : "--ro-bind", b.source, b.target});
     if (sp.network && sp.sandbox)
       // Name resolution and the CA bundle of the environment (a sandbox
@@ -241,7 +278,6 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     }
     own(spec.argv);
     spec.argv.insert(spec.argv.end(), {"--", sp.worker_binary});
-    passes_dirs_ = true;
 #endif
   } else if (std::string bwrap = TSUGUMI_BWRAP; !bwrap.empty() && ::access(bwrap.c_str(), X_OK) == 0) {
     // sandbox: false lifts the file access limits only. The worker still gets
@@ -257,7 +293,6 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     for (const auto& p : sp.hidden_paths) spec.argv.insert(spec.argv.end(), {"--tmpfs", p});
     own(spec.argv);
     spec.argv.insert(spec.argv.end(), {"--", sp.worker_binary});
-    passes_dirs_ = true;
   } else {
     // Development hosts without bubblewrap (never the VM): paths as they are.
     spec.argv = {sp.worker_binary};
@@ -266,8 +301,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   }
   spec.argv.insert(spec.argv.end(), args.begin(), args.end());
   // A home of the worker's own (for its life): libraries that keep settings
-  // or caches there (astropy, matplotlib, ...) work already while the Card's
-  // code is loaded, before any call sets the call's environment.
+  // or caches there (astropy, matplotlib, ...) work during runtime preparation
+  // and during invocations.
   std::string home = scratch_ + "/home";
   spec.env = {"PATH=/var/empty", "LANG=C.UTF-8", "HOME=" + home, "XDG_CONFIG_HOME=" + home + "/.config",
               "XDG_CACHE_HOME=" + home + "/.cache", "MPLCONFIGDIR=" + home + "/.matplotlib"};
@@ -294,6 +329,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   control_fd_ = control[0];
   out_fd_ = out[0];
   err_fd_ = err[0];
+  ::fcntl(data_fd_, F_SETFL, O_NONBLOCK);
+  ::fcntl(control_fd_, F_SETFL, O_NONBLOCK);
   ::fcntl(out_fd_, F_SETFL, O_NONBLOCK);
   ::fcntl(err_fd_, F_SETFL, O_NONBLOCK);
   for (int fd : {data_fd_, control_fd_, out_fd_, err_fd_}) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
@@ -315,7 +352,17 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
 WorkerProc::~WorkerProc() {
   terminate();
   std::error_code ec;
-  if (!scratch_.empty()) std::filesystem::remove_all(scratch_, ec);
+  if (!scratch_.empty()) {
+    try {
+      // Also covers failed/dead and remote workers, and lifetime home data.
+      fs::clear_staging(scratch_, recover_permissions_);
+      std::filesystem::remove(scratch_, ec);
+      if (ec) log::warn("cannot remove worker scratch " + scratch_ +
+                        " (errno " + std::to_string(ec.value()) + "): " + ec.message());
+    } catch (const std::system_error& error) {
+      log::warn("cannot clear worker scratch: " + std::string(error.what()));
+    }
+  }
 }
 
 bool WorkerProc::alive() const {
@@ -332,10 +379,13 @@ void WorkerProc::set_logs(LogSink logs) {
 }
 
 void WorkerProc::clear_scratch() {
-  std::error_code ec;
-  for (const auto& d : {work_dir(), tmp_dir()})
-    for (auto it = std::filesystem::directory_iterator(d, ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec))
-      std::filesystem::remove_all(it->path(), ec);
+  try {
+    for (const auto& d : {work_dir(), tmp_dir(), out_dir(), inputs_dir()})
+      fs::clear_staging(d, recover_permissions_);
+  } catch (const std::system_error& error) {
+    throw Failed(FailureKind::worker_failed,
+                 "cannot clear the worker's invocation staging: " + std::string(error.what()));
+  }
 }
 
 std::optional<uint64_t> WorkerProc::rss_bytes() const {
@@ -403,45 +453,23 @@ void WorkerProc::read_logs(bool drain) {
   }
 }
 
-void WorkerProc::send(int fd, const std::string& frame, const std::vector<int>& fds) {
-  uint32_t len = static_cast<uint32_t>(frame.size());
-  std::string buf(reinterpret_cast<const char*>(&len), 4);
-  buf += frame;
-  size_t off = 0;
-  if (!fds.empty()) {
-    // The descriptors travel with the frame's first bytes.
-    iovec iov{buf.data(), buf.size()};
-    std::vector<char> ctrl(CMSG_SPACE(sizeof(int) * fds.size()));
-    msghdr msg{};
-    msg.msg_iov = &iov;
-    msg.msg_iovlen = 1;
-    msg.msg_control = ctrl.data();
-    msg.msg_controllen = static_cast<socklen_t>(ctrl.size());
-    cmsghdr* c = CMSG_FIRSTHDR(&msg);
-    c->cmsg_level = SOL_SOCKET;
-    c->cmsg_type = SCM_RIGHTS;
-    c->cmsg_len = CMSG_LEN(sizeof(int) * fds.size());
-    std::memcpy(CMSG_DATA(c), fds.data(), sizeof(int) * fds.size());
-    ssize_t n;
-    do n = ::sendmsg(fd, &msg, 0);
-    while (n < 0 && errno == EINTR);
-    if (n <= 0) throw Failed(FailureKind::worker_failed, "worker connection broken");
-    off = static_cast<size_t>(n);
-  }
-  if (!write_full(fd, buf.data() + off, buf.size() - off))
-    throw Failed(FailureKind::worker_failed, "worker connection broken");
+void WorkerProc::send(int fd, const std::string& frame) {
+  // A stopped worker may also stop draining control messages. Never let the
+  // cancellation notification delay escalation to killing the process group.
+  send_frame(fd, frame, nullptr, std::chrono::steady_clock::now() + std::chrono::milliseconds(100));
 }
 
-WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id, const std::vector<int>& fds,
+WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id,
                                const std::atomic<bool>* cancel,
                                std::optional<std::chrono::steady_clock::time_point> deadline,
                                const DisplaySink& display) {
   WorkerOutcome outcome;
   try {
-    send(data_fd_, frame, fds);
-  } catch (const Failed&) {
+    send_frame(data_fd_, frame, cancel, deadline);
+  } catch (const Failed& error) {
+    // A partially sent call cannot be resumed or reused.
     terminate();
-    outcome.failure = FailureData::make(FailureKind::worker_failed, "the worker exited before the call");
+    outcome.failure = error.failure;
     return outcome;
   }
   std::string rbuf;
@@ -479,6 +507,7 @@ WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id, const
     if (!(p.revents & (POLLIN | POLLHUP | POLLERR))) continue;
     char buf[65536];
     ssize_t r = ::read(data_fd_, buf, sizeof buf);
+    if (r < 0 && (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)) continue;
     if (r <= 0) {
       terminate();
       if (cancel_sent)
@@ -563,7 +592,7 @@ std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const
                               const std::string& params, const std::vector<types::PortType>& outputs,
                               const std::string& work, const std::string& tmp, const std::string& out,
                               const std::vector<std::pair<std::string, std::string>>& env,
-                              std::optional<uint64_t> deadline_ms, const std::vector<int32_t>& passed_fds) {
+                              std::optional<uint64_t> deadline_ms) {
   flatbuffers::FlatBufferBuilder b(64 * 1024);
   auto bytes = [&](const std::string& s) { return b.CreateVector(reinterpret_cast<const uint8_t*>(s.data()), s.size()); };
   std::vector<flatbuffers::Offset<W::WorkerInput>> ins;
@@ -585,8 +614,6 @@ std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const
   auto t = b.CreateString(tmp);
   flatbuffers::Offset<flatbuffers::String> o;
   if (!out.empty()) o = b.CreateString(out);
-  flatbuffers::Offset<flatbuffers::Vector<int32_t>> pf;
-  if (!passed_fds.empty()) pf = b.CreateVector(passed_fds);
   W::WorkerCallBuilder cb(b);
   cb.add_run_id(run);
   cb.add_card(cp);
@@ -597,7 +624,6 @@ std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const
   cb.add_working_directory(w);
   cb.add_temporary_directory(t);
   if (!out.empty()) cb.add_output_directory(o);
-  if (!passed_fds.empty()) cb.add_passed_fds(pf);
   cb.add_environment(evv);
   if (deadline_ms) cb.add_deadline_ms(*deadline_ms);
   auto call = cb.Finish();

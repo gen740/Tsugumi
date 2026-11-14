@@ -121,8 +121,9 @@ extension AppModel {
       return
     }
     Task {
+      _ = await s.finishDraftEdit()
       if s.dirty { await s.save() }
-      if s.dirty {
+      if s.hasUnsavedEdits {
         w.unsavedReason = s.saveError ?? s.connectionMessage ?? String(localized: "変更を保存できませんでした。")
         return
       }
@@ -146,6 +147,7 @@ extension AppModel {
     guard let s = w.session else { return }
     w.close()
     Task {
+      _ = await s.finishDraftEdit()
       if s.dirty { await s.save() }
       await release(s)
     }

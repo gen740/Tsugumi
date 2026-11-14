@@ -1,3 +1,4 @@
+import { InlineParamEdit, RevisionEditNotice } from './revisionEdit'
 import { activeNixLinks, nixCurve, nixLinks as linksIn, nixReferences } from '../model/nixReferences'
 // The canvas of one scope: grid, groups, connections, Cards, sticky notes
 // and output frames, with pan/zoom, selection, wiring and drag & drop.
@@ -22,7 +23,6 @@ import {
 } from './actions'
 import { BoundaryBarView, CardNodeView, drive, gridStyle, idleText, runText, WireLayer } from './cardNode'
 import { BatchInvocations } from './batchInvocations'
-import { retargetWindows } from './cardSettings'
 import { Button, MenuItem, Segmented, Sheet, showMenu, Stepper, TextField, Toggle } from './controls'
 import { DisplayContent } from './display'
 import { Icon } from './icons'
@@ -242,26 +242,19 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     return k ? [k, NEW_PORT] : undefined
   }
 
-  /** Keeps what was written on a Draft's Card; a new name moves what points at the Card. */
-  const finishDraftEdit = () => {
-    const from = session.inlineDraft?.card
-    void session.finishDraftEdit().then((to) => {
-      if (!from || !to) return
-      retargetWindows(session, from, to)
-      if (tab.selection.has(from)) tab.setSelection([...tab.selection].map((x) => (x === from ? to : x)))
-    })
-  }
+  /** Keeps the Draft's name and content under its permanent key. */
+  const finishDraftEdit = () => { void session.finishDraftEdit() }
 
-  const commitParam = (k: CardKey, name: string, text: string) => {
-    if (!session.isEditable) return
+  const commitParam = async (k: CardKey, name: string, text: string, edit = new InlineParamEdit(), overwrite = false) => {
+    if (!session.isEditable) return false
     const type = session.kind(k) === 'switch' && name === 'value' ? 'bool'
       : str(get((arr(get(session.cardDefinition(k), 'params')) ?? []).find((p) => str(get(p, 'name')) === name), 'type'))
-    if (type) session.setParam(k, name, parseParam(text, type))
+    if (!type) return false
+    return edit.commit(session, text, overwrite, x => x.updateParam(k, name, parseParam(text, type)))
   }
 
   const addBuiltin = (t: DefinitionTemplate, at?: Pt) => {
-    const k = cv.addBuiltin(t, at)
-    if (k && t === 'draft') cv.writeDraft(k)
+    void cv.addBuiltin(t, at).then((k) => { if (k && t === 'draft') cv.writeDraft(k) }).catch((e) => { session.notice = String(e); session.changed() })
   }
 
   const single = () => (tab.selection.size === 1 ? [...tab.selection][0] : undefined)
@@ -273,8 +266,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       case 'openArtifacts': if (k) app.openWindow(session, { kind: 'artifacts', card: k }); break
       case 'openLog': if (k) showLog(workspace, k); break
       case 'addDraft': {
-        const d = cv.addDraft()
-        if (d) cv.writeDraft(d)
+        void cv.addDraft().then((d) => { if (d) cv.writeDraft(d) }).catch((e) => { session.notice = String(e); session.changed() })
         break
       }
       case 'generateDrafts': {
@@ -423,8 +415,8 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       if (!other) return
       // Another wire from a Draft's port is another port.
       const own: [CardKey, string] = [k, session.kind(k) === 'draft' && session.portWired(k, port, output, scope) ? NEW_PORT : port]
-      if (output) session.connect(own, other, scope)
-      else session.connect(other, own, scope)
+      void (output ? session.connect(own, other, scope) : session.connect(other, own, scope))
+        .catch((e) => { session.notice = String(e); session.changed() })
     })
   }
 
@@ -457,7 +449,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     const at = cv.world(local(e))
     if (item.startsWith(TEMPLATE_DRAG)) {
       const t = item.slice(TEMPLATE_DRAG.length) as DefinitionTemplate
-      if (TEMPLATES.some((x) => x.id === t)) tab.setSelection([session.addCard(t, scope, at)])
+      if (TEMPLATES.some((x) => x.id === t)) void session.addCard(t, scope, at).then((k) => tab.setSelection([k])).catch((e) => { session.notice = String(e); session.changed() })
     } else if (item.startsWith(EXTERNAL_DEFINITION_DRAG)) {
       const parts = item.slice(EXTERNAL_DEFINITION_DRAG.length).split('\n')
       if (parts.length === 2) void session.placeDefinitionCopy(parts[0], parts[1], scope, at).then((k) => k && tab.setSelection([k]))
@@ -516,6 +508,10 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         }
       }}
       onDrop={onDrop}>
+      {session.inlineDraft && <div style={{ position: 'absolute', top: 12, left: 12, maxWidth: 520, zIndex: 20 }} onPointerDown={e => e.stopPropagation()}>
+        <RevisionEditNotice edit={session.inlineDraft.revision} text={() => session.inlineDraft!.name + '\n' + session.inlineDraft!.content}
+          overwrite={() => void session.finishDraftEdit(true)} reload={() => void session.startDraftEdit(session.inlineDraft!.card, session.inlineDraft!.revision)} />
+      </div>}
       <div className="cv-bg" style={gridStyle(cam, prefs.showGrid, prefs.gridSize)}
         onPointerDown={onBackgroundDown} onDoubleClick={() => cv.fitAll()} onContextMenu={backgroundMenu} />
 
@@ -599,14 +595,19 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
           <Fragment key={k}>
           <CardNodeView data={data} flow={flow} zoom={z} selected={sel.has(k)} guide={'card:' + k}
             style={placed(origin, g.size.width * z, g.size.height * z, data.draftEditing ? { zIndex: 1 } : undefined)}
-            onParamCommit={data.kind === 'input' || data.kind === 'switch' ? (name, text) => commitParam(k, name, text) : undefined}
+            onParamBegin={() => session.rev}
+            onParamCommit={data.kind === 'input' || data.kind === 'switch' ? (name, text, edit, overwrite) => {
+              if (!edit) { edit = new InlineParamEdit(); edit.begin(data.params.find(p => p.name === name)?.value ?? '', session.rev) }
+              return commitParam(k, name, text, edit, overwrite)
+            } : undefined}
             paramsEditable={session.isEditable}
             onPortDown={session.isEditable ? (port, output, e) => onPortDown(k, port, output, e) : undefined}
             draftEdit={session.inlineDraft?.card === k ? {
               draft: session.inlineDraft,
               nameProblem: session.draftNameProblem(k, session.inlineDraft.name),
-              onChange: (change) => session.setDraftEdit(change),
+              onChange: (change) => { if (session.inlineDraft?.card === k) session.setDraftEdit(change) },
               onDone: (byKey) => {
+                if (session.inlineDraft?.card !== k) return
                 finishDraftEdit()
                 if (byKey) focus()
               },
@@ -1003,6 +1004,7 @@ function OutputFrameView({ session, cardKey, zoom: z, selected, onExpand, onClos
       <div className="cv-frame-header secondary" style={{ gap: 6 * z }}>
         <Icon name="chart.xyaxis.line" size={10 * z} style={{ color: 'var(--purple)' }} />
         <span className="cv-ellipsis" style={{ fontSize: 10 * z, fontWeight: 700, color: 'var(--label)' }}>{session.displayName(cardKey)}</span>
+        {d && session.markForRun(d.runId) && <span style={{ fontSize: 9 * z }}>{session.markForRun(d.runId)}</span>}
         {d && (
           <span className="mono-digits nowrap" style={{ fontSize: 9 * z }} title={L('Run {0} の中で、この Card の {1} 回目の実行の結果', d.runId, d.invocation)}>
             {L('Run {0} · 実行 #{1}', d.runId.slice(0, 6), d.invocation)}
@@ -1144,15 +1146,14 @@ function EditorButtons({ remove, removeLabel, onClose }: { remove: () => void; r
   )
 }
 
-function EditorSheet({ title, width, onClose, onApply, children }: { title: string; width: number; onClose: () => void; onApply: () => void; children: ReactNode }) {
+function EditorSheet({ title, width, onClose, onApply, children }: { title: string; width: number; onClose: () => void; onApply: () => Promise<boolean>; children: ReactNode }) {
   return (
     <Sheet onClose={onClose} width={width}>
-      <form className="sheet-body" onSubmit={(e) => { e.preventDefault(); onApply(); onClose() }}
+      <form className="sheet-body" onSubmit={(e) => { e.preventDefault(); void onApply().then(ok => { if (ok) onClose() }) }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault()
-            onApply()
-            onClose()
+            void onApply().then(ok => { if (ok) onClose() })
           }
         }}>
         <div className="title2">{title}</div>
@@ -1170,15 +1171,24 @@ function NoteEditor({ session, noteId, onClose }: { session: ProjectSession; not
   const [width, setWidth] = useState(dbl(get(init, 'width')) ?? 240)
   const [height, setHeight] = useState(dbl(get(init, 'height')) ?? 120)
   const [fontSize, setFontSize] = useState(dbl(get(init, 'fontSize')) ?? 13)
-  const apply = () => session.updateNote(noteId, (n) => {
+  const value = () => JSON.stringify([text, color, width, height, fontSize])
+  const [edit] = useState(() => { const e = new InlineParamEdit(); e.begin(value(), session.rev); return e })
+  const reload = () => {
+    const n = session.note(noteId)
+    const t = str(get(n, 'text')) ?? '', c = str(get(n, 'color')) ?? 'yellow', w = dbl(get(n, 'width')) ?? 240, h = dbl(get(n, 'height')) ?? 120, f = dbl(get(n, 'fontSize')) ?? 13
+    setText(t); setColor(c); setWidth(w); setHeight(h); setFontSize(f)
+    edit.begin(JSON.stringify([t, c, w, h, f]), session.rev)
+  }
+  const apply = (overwrite = false) => edit.commit(session, value(), overwrite, x => x.changeNote(noteId, (n) => {
     n.set('text', text)
     n.set('color', color)
     n.set('width', real(width))
     n.set('height', real(height))
     n.set('fontSize', fontSize === 13 ? undefined : real(fontSize))
-  })
+  }))
   return (
-    <EditorSheet title={L('付箋を編集')} width={560} onClose={onClose} onApply={apply}>
+    <EditorSheet title={L('付箋を編集')} width={560} onClose={onClose} onApply={() => apply()}>
+      <RevisionEditNotice edit={edit} text={value} overwrite={() => void apply(true).then(ok => { if (ok) onClose() })} reload={reload} />
       <div className="row gap8" style={{ height: 220 }}>
         <TextField multiline mono value={text} onChange={setText} autoFocus style={{ flex: 1, minWidth: 220, height: '100%', resize: 'none', fontSize: 13 }} />
         <div className="cv-note-preview" style={{ background: tint(noteColor(color), 0.2), fontSize: fontSize }}><Markdown text={text} /></div>
@@ -1212,7 +1222,21 @@ function GroupEditor({ session, scope, groupId, onClose }: { session: ProjectSes
     else n.delete(v)
     return n
   }
-  const apply = () => session.updateGroup(groupId, (g) => {
+  const value = () => JSON.stringify([name, color, [...members].sort(), [...outputs].sort()])
+  const [edit] = useState(() => { const e = new InlineParamEdit(); e.begin(value(), session.rev); return e })
+  const reload = () => {
+    const g = session.groups(scope).find(g => str(g.get('id')) === groupId)
+    const n = str(g?.get('name')) ?? '', c = str(g?.get('color')) ?? 'blue'
+    const m = new Set((arr(g?.get('cards')) ?? []).flatMap(c => str(c) ? [str(c)!] : []))
+    const o = new Set((arr(g?.get('outputs')) ?? []).flatMap(o => {
+      const c = str(get(o, 'card')), p = str(get(o, 'port')); return c && p ? [`${c}\t${p}`] : []
+    }))
+    setName(n); setColor(c); setMembers(m); setOutputs(o)
+    edit.begin(JSON.stringify([n, c, [...m].sort(), [...o].sort()]), session.rev)
+  }
+  const apply = (overwrite = false) => edit.commit(session, value(), overwrite, x => x.updateGroups(scope, groups => {
+    const g = groups.find(g => str(get(g, 'id')) === groupId)
+    if (!(g instanceof JObj)) return
     g.set('name', name)
     g.set('color', color)
     g.set('cards', [...members].sort())
@@ -1221,9 +1245,10 @@ function GroupEditor({ session, scope, groupId, onClose }: { session: ProjectSes
       return c && p && members.has(c) ? [obj([['card', c], ['port', p]])] : []
     })
     g.set('outputs', outs.length ? outs : undefined)
-  })
+  }))
   return (
-    <EditorSheet title={L('グループを編集')} width={600} onClose={onClose} onApply={apply}>
+    <EditorSheet title={L('グループを編集')} width={600} onClose={onClose} onApply={() => apply()}>
+      <RevisionEditNotice edit={edit} text={value} overwrite={() => void apply(true).then(ok => { if (ok) onClose() })} reload={reload} />
       <TextField value={name} onChange={setName} placeholder={L('名前')} autoFocus />
       <ColorPicker value={color} onChange={setColor} />
       <div className="row gap12" style={{ height: 240 }}>

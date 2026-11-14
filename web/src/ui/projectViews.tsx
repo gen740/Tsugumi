@@ -12,6 +12,7 @@ import { Button, Confirm, Empty, Form, HSplit, MenuButton, Row, Section, Select,
 import { CodeEditor } from './editor'
 import { Icon } from './icons'
 import { L } from '../i18n'
+import { RevisionEdit, RevisionEditNotice } from './revisionEdit'
 
 // ---- Card database -----------------------------------------------------------------
 
@@ -24,6 +25,8 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
   const [cardText, setCardText] = useState('')
   const [metaText, setMetaText] = useState('')
   const [base, setBase] = useState({ card: '', meta: '' })
+  const [revisionEdit] = useState(() => new RevisionEdit())
+  useObserve(revisionEdit)
   const [parseError, setParseError] = useState<string>()
   const [message, setMessage] = useState<string>()
 
@@ -36,6 +39,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
     setCardText(ct)
     setMetaText(mtt)
     setBase({ card: ct, meta: mtt })
+    revisionEdit.reload(session.rev)
     setParseError(undefined)
     setMessage(undefined)
   }
@@ -48,10 +52,10 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
 
   const q = search.toLowerCase()
   const ids = [...session.definitions.keys()].sort().filter((id) =>
-    !q || id.toLowerCase().includes(q) || (str(get(session.definitionMeta.get(id), 'description')) ?? '').toLowerCase().includes(q))
+    !q || session.displayName(key([id])).toLowerCase().includes(q) || id.toLowerCase().includes(q) || (str(get(session.definitionMeta.get(id), 'description')) ?? '').toLowerCase().includes(q))
   const unplaced = new Set(session.unplacedDefinitions)
 
-  const apply = async (id: string) => {
+  const apply = async (id: string, overwrite = false) => {
     let card: J, meta: J | undefined
     try {
       card = parse(cardText)
@@ -61,21 +65,23 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
       return
     }
     setParseError(undefined)
-    session.edit((x) => x.setEffectiveDefinition(id, { card, meta }))
-    await session.save()
-    setMessage(session.saveError ? L('保存できませんでした: {0}', session.saveError) : L('適用しました（revision {0}）。', session.rev))
-    load(id)
+    if (!await revisionEdit.apply(session, overwrite, (x) => {
+      const d = x.cardDefinitionDraft(key([id]))
+      x.setCardDefinition(key([id]), { card: d?.link === undefined ? card : d.card, meta, link: d?.link })
+    })) return
+    setBase({ card: cardText, meta: metaText })
+    setMessage(L('適用しました（revision {0}）。', session.rev))
   }
 
   const detail = (() => {
     const id = selected
-    if (!id || !session.definitions.has(id)) return <Empty key="none" title={L('定義を選んでください')} icon="square.stack" description={L('ドラッグして Canvas に配置できます。')} />
+    if (!id) return <Empty key="none" title={L('定義を選んでください')} icon="square.stack" description={L('ドラッグして Canvas に配置できます。')} />
     const unapplied = cardText !== base.card || metaText !== base.meta
     const isUnplaced = unplaced.has(id)
     return (
       <div key="detail" className="col fill pad12 gap8">
         <div className="row center">
-          <span className="title2 selectable">{id}</span>
+          <span className="title2 selectable">{session.displayName(key([id]))}</span>
           <span className="spacer" />
           {unapplied && <span className="label" style={{ color: 'var(--orange)' }}><Icon name="pencil.circle.fill" />{L('未適用の変更')}</span>}
         </div>
@@ -84,6 +90,8 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
         <CodeEditor text={cardText} onChange={setCardText} language="json" documentId={`db:${id}/_card.json`} style={{ flex: 2, minHeight: 180 }} />
         <div className="headline">{L('_meta.json（説明・計画・追加コンテキスト、任意）')}</div>
         <CodeEditor text={metaText} onChange={setMetaText} language="json" documentId={`db:${id}/_meta.json`} style={{ flex: 1, minHeight: 80, maxHeight: 140 }} />
+        <RevisionEditNotice edit={revisionEdit} text={() => `_card.json\n${cardText}\n_meta.json\n${metaText}`}
+          overwrite={() => void apply(id, true)} reload={() => load(id)} />
         {parseError && <span className="label selectable" style={{ color: 'var(--red)' }}><Icon name="xmark.octagon" />{parseError}</span>}
         {message && <div className="callout secondary selectable">{message}</div>}
         <div className="row gap8 center">
@@ -97,8 +105,8 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
             help={isUnplaced ? L('定義とソースを削除') : L('Card を削除すると定義も削除されます')}
             onClick={() => { session.edit((x) => x.removeDefinition(id)); setSelected(undefined) }}>{L('削除')}</Button>
           <span className="spacer" />
-          <Button onClick={() => load()}>{L('再読込')}</Button>
-          <Button kind="prominent" disabled={!unapplied || !session.isEditable} onClick={() => void apply(id)}>{L('適用')}</Button>
+          <Button disabled={revisionEdit.applying} onClick={() => load()}>{L('再読込')}</Button>
+          <Button kind="prominent" disabled={!unapplied || revisionEdit.applying || !session.isEditable} onClick={() => void apply(id)}>{L('適用')}</Button>
         </div>
       </div>
     )
@@ -112,7 +120,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
             <TextField value={search} onChange={setSearch} placeholder={L('検索')} style={{ flex: 1 }} />
             <MenuButton icon="plus" help={L('Card を追加')} disabled={!session.isEditable} items={() => TEMPLATES.map((t) => ({
               label: t.label,
-              action: () => setSelected(path(session.addCard(t.id, [], { x: 40, y: 40 }))[0]),
+              action: () => { void session.addCard(t.id, [], { x: 40, y: 40 }).then((k) => setSelected(path(k)[0])).catch((e) => { session.notice = String(e); session.changed() }) },
             }))} />
           </div>
           <div className="list flex1" role="listbox" aria-label={L('定義')}>
@@ -121,10 +129,10 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
               return (
                 <div key={id} role="option" aria-selected={id === selected} className={`list-row clickable def-row${id === selected ? ' selected' : ''}`}
                   draggable onDragStart={(e) => { e.dataTransfer.setData('text/plain', DEFINITION_DRAG + id); e.dataTransfer.effectAllowed = 'copy' }}
-                  onClick={() => setSelected(id)}>
+                  onClick={() => { if (!revisionEdit.applying) setSelected(id) }}>
                   <Icon name={KIND_ICON[kind]} className="secondary" />
                   <div className="col min0">
-                    <span className="ellipsis">{id}</span>
+                    <span className="ellipsis">{session.displayName(key([id]))}</span>
                     <span className="caption secondary">{KIND_LABEL[kind] + (unplaced.has(id) ? L(' · 未配置') : '')}</span>
                   </div>
                 </div>
@@ -184,12 +192,17 @@ const setProject = (x: ProjectSession, k: string, v: J) => {
 /** Flakes this project opts in to: an address gives its commit, hash and packages, which Cards read as inputs. */
 function NixSourceSettings({ session }: { session: ProjectSession }) {
   useObserve(session)
+  const baseRev = session.rev
   const sources = arr(get(session.project, 'nixSources')) ?? []
   const [address, setAddress] = useState('')
   const [found, setFound] = useState<{ name: string; ref: string; packages: string[] }>()
   const [working, setWorking] = useState(false)
   const [message, setMessage] = useState<string>()
+  const [revisionEdit] = useState(() => new RevisionEdit())
+  const [pending, setPending] = useState<J[]>()
+  useObserve(revisionEdit)
   const resolve = async (ref: string) => {
+    revisionEdit.reload(baseRev)
     setWorking(true)
     setMessage(undefined)
     try {
@@ -202,10 +215,9 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
       setWorking(false)
     }
   }
-  const save = async (list: J[]) => {
-    session.edit((x) => setProject(x, 'nixSources', list))
-    await session.save()
-    setMessage(session.saveError ? L('保存できませんでした: {0}', session.saveError) : undefined)
+  const save = async (list: J[], overwrite = false) => {
+    setPending(list)
+    if (await revisionEdit.apply(session, overwrite, (x) => setProject(x, 'nixSources', list))) setPending(undefined)
   }
   const entry = (name: string, ref: string) => obj([['name', name], ['type', 'flake'], ['ref', ref]])
   const look = async () => {
@@ -237,7 +249,7 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
           <Row key={name} label={name}>
             <code className="secondary" title={ref}>{unlockedRef(ref)} {shortCommit(ref)}</code>
             <Button disabled={working || !session.isEditable} onClick={() => void update(name, ref)}>{L('更新')}</Button>
-            <Button kind="destructive" disabled={working || !session.isEditable} onClick={() => void save(sources.filter((x) => x !== s))}>{L('削除')}</Button>
+            <Button kind="destructive" disabled={working || !session.isEditable} onClick={() => { revisionEdit.reload(baseRev); void save(sources.filter((x) => x !== s)) }}>{L('削除')}</Button>
           </Row>
         )
       })}
@@ -254,6 +266,8 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
           <Row><Button disabled={taken || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(found.name)} onClick={() => void add()}>{L('追加')}</Button>{taken && <span className="secondary caption">{L('同じ名前があります')}</span>}</Row>
         </>
       )}
+      <RevisionEditNotice edit={revisionEdit} text={() => serialize(pending ?? [])}
+        overwrite={() => { if (pending) void save(pending, true) }} reload={() => { setPending(undefined); revisionEdit.reload(baseRev) }} />
       {message && <Row><span className="label caption" style={{ color: 'var(--orange)', whiteSpace: 'normal' }}>{message}</span></Row>}
     </Section>
   )
@@ -263,15 +277,22 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   const [name, setName] = useState(str(get(session.project, 'name')) ?? '')
   const [pkgs, setPkgs] = useState(str(get(session.project, 'pkgsPath')) ?? '')
   const [message, setMessage] = useState<string>()
+  const [revisionEdit] = useState(() => { const e = new RevisionEdit(); e.reload(session.rev); return e })
+  useObserve(revisionEdit)
   const pin = app.status?.nixpkgsPin ?? undefined
   const changed = name !== (str(get(session.project, 'name')) ?? '') || pkgs !== (str(get(session.project, 'pkgsPath')) ?? '')
-  const save = async () => {
-    session.edit((x) => {
+  const load = () => {
+    setName(str(get(session.project, 'name')) ?? '')
+    setPkgs(str(get(session.project, 'pkgsPath')) ?? '')
+    revisionEdit.reload(session.rev)
+  }
+  const save = async (overwrite = false) => {
+    if (!await revisionEdit.apply(session, overwrite, (x) => {
       setProject(x, 'name', name)
       setProject(x, 'pkgsPath', pkgs || 'tsugumi:default')
-    })
-    await session.save()
-    setMessage(session.saveError ?? L('保存しました。'))
+    })) return
+    setPkgs(current => current === pkgs ? pkgs || 'tsugumi:default' : current)
+    setMessage(L('保存しました。'))
   }
   return (
     <div className="col fill" onKeyDown={(e) => {
@@ -296,10 +317,12 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           </Section>
         </Form>
       </div>
+      <RevisionEditNotice edit={revisionEdit} text={() => `name: ${name}\npkgsPath: ${pkgs}`}
+        overwrite={() => void save(true)} reload={load} />
       <div className="detail-foot">
         {message && <span className="callout secondary selectable">{message}</span>}
         <span className="spacer" />
-        <Button kind="prominent" disabled={!changed || !session.isEditable} onClick={() => void save()}>{L('保存')}</Button>
+        <Button kind="prominent" disabled={!changed || revisionEdit.applying || !session.isEditable} onClick={() => void save()}>{L('保存')}</Button>
       </div>
     </div>
   )
@@ -334,12 +357,15 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
   const [message, setMessage] = useState<string>()
   const [failed, setFailed] = useState(false)
   const [confirm, setConfirm] = useState(false)
+  const [revisionEdit] = useState(() => new RevisionEdit())
+  const [pendingSaving, setPendingSaving] = useState(true)
+  useObserve(revisionEdit)
+  const baseRev = session.rev
   const saving = bool(get(session.project, 'saveRunHistory')) ?? true
-  const setSaving = async (on: boolean) => {
-    session.edit((x) => setProject(x, 'saveRunHistory', on))
-    await session.save()
-    setFailed(!!session.saveError)
-    setMessage(session.saveError ? L('保存できませんでした: {0}', session.saveError) : undefined)
+  const setSaving = async (on: boolean, overwrite = false) => {
+    if (!overwrite) revisionEdit.reload(baseRev)
+    setPendingSaving(on)
+    await revisionEdit.apply(session, overwrite, (x) => setProject(x, 'saveRunHistory', on))
   }
   const del = async () => {
     setWorking(true)
@@ -358,12 +384,12 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
     <div className="col fill">
       <div className="scroll flex1">
         <Form>
-          <Section footer={L('実行履歴はこのマシンに保存します。オンのときは、終わった実行の記録（値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。')}>
+          <Section footer={L('実行履歴はこのマシンに保存します。オンのときは、終わった実行の記録（実行したコードのコミット・値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。')}>
             <Row label={L('実行履歴をプロジェクトに保存する')}>
               <Toggle checked={saving} disabled={!session.isEditable} onChange={(v) => void setSaving(v)} />
             </Row>
           </Section>
-          <Section title={L('削除')} footer={L('実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。')}>
+          <Section title={L('削除')} footer={L('実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。')}>
             <Row label={L('対象')}>
               <Select<'before' | 'all'> value={scope} onChange={setScope}
                 options={[{ value: 'before', label: L('指定した日時より前に終わった実行') }, { value: 'all', label: L('すべての実行') }]} />
@@ -376,6 +402,8 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
           </Section>
         </Form>
       </div>
+      <RevisionEditNotice edit={revisionEdit} text={() => `saveRunHistory: ${pendingSaving}`}
+        overwrite={() => void setSaving(pendingSaving, true)} reload={() => revisionEdit.reload(session.rev)} />
       <div className="detail-foot">
         {message && <span className="callout selectable" style={{ color: failed ? 'var(--red)' : 'var(--secondary)' }}>{message}</span>}
         <span className="spacer" />
@@ -388,8 +416,36 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
   )
 }
 
+/** The same row controls and selected total used by the cache pane. */
+export function ScratchRows({ candidates, selected, onSelect, disabled = false, onDelete }: { candidates: R.RunScratchUsageT[]; selected: Set<string>; onSelect: (path: string, on: boolean) => void; disabled?: boolean; onDelete: (paths: string[]) => void }) {
+  const selection = candidates.filter(p => selected.has(s(p.path)))
+  return <>
+    {candidates.map(p => <div className="row gap8" key={s(p.path)}>
+      <Toggle kind="checkbox" label={s(p.path)} checked={selected.has(s(p.path))} onChange={on => onSelect(s(p.path), on)} />
+      <span>{p.sizeUnknown ? L('不明') : formatBytes(p.bytes)}</span>
+    </div>)}
+    <Value label={L('削除対象の合計')} value={formatBytes(selection.filter(p => !p.sizeUnknown).reduce((n, p) => n + p.bytes, 0n))} />
+    {selection.some(p => p.sizeUnknown) && <div className="caption secondary">{L('合計は容量不明のフォルダを除きます。')}</div>}
+    <Button kind="destructive" disabled={disabled || !selection.length} onClick={() => onDelete(selection.map(p => s(p.path)))}>{L('選択した scratch を削除…')}</Button>
+  </>
+}
+
 function CacheSettings({ session }: { session: ProjectSession }) {
   useObserve(session)
+  const [selectedScratch, setSelectedScratch] = useState<Set<string>>(() => new Set())
+  const [scratchSelection, setScratchSelection] = useState<string[]>()
+  const [scratchResult, setScratchResult] = useState<R.RunScratchDeleteResultT>()
+  const scratch = session.cacheUsage?.projects.find(p => s(p.project) === s(session.cacheUsage?.currentProject))?.runScratch ?? []
+  const candidates = scratch.filter(p => s(p.path) !== `runs/${s(session.cacheUsage?.protectedRun)}`)
+  const deleteScratch = async () => {
+    setWorking(true)
+    setMessage(undefined)
+    const paths = scratchSelection ?? []
+    setScratchSelection(undefined)
+    try { setScratchResult(await session.deleteRunScratch(paths)); setSelectedScratch(new Set()) }
+    catch (e) { setMessage(L('削除できませんでした: {0}', errorText(e))) }
+    setWorking(false)
+  }
   const [clearTarget, setClearTarget] = useState(session)
   const [result, setResult] = useState<R.ProjectCacheClearResultT>()
   const [working, setWorking] = useState(false)
@@ -414,8 +470,8 @@ function CacheSettings({ session }: { session: ProjectSession }) {
         <div className="headline">{L('キャッシュ使用量')}</div>
         <Value label={L('合計（共有パスは一度だけ計上）')} value={session.cacheUsage?.buildBytes != null ? formatBytes(session.cacheUsage.buildBytes) : L('計測中または取得できません')} />
         {session.cacheUsage?.storeAvailableBytes != null && <Value label={L('store ディスクの空き')} value={formatBytes(session.cacheUsage.storeAvailableBytes)} />}
-        {session.cacheUsage?.large && <div className="callout">{L('キャッシュの使用量が大きくなっています。必要なビルド結果を確認して、削除するものを選んでください。')}</div>}
-        <div className="caption secondary">{L('NAR サイズによる概算です。共有する依存関係は各プロジェクトにも含まれるため、内訳の和と合計は異なります。最大 1 分ごとに再計測します。')}</div>
+        {session.cacheUsage?.large && <div className="callout">{L('ビルドキャッシュまたは実行の scratch が大きくなっています。内容を確認して、削除するものを選んでください。')}</div>}
+        <div className="caption secondary">{L('ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。最大 1 分ごとに再計測します。')}</div>
         {session.cacheUsage?.measuredAt != null && <Value label={L('計測日時')} value={new Date(Number(session.cacheUsage.measuredAt)).toLocaleString()} />}
         {session.cacheUsage?.error && <div className="caption selectable">{s(session.cacheUsage.error)}</div>}
         {session.cacheUsage?.projects.map(p => {
@@ -424,14 +480,24 @@ function CacheSettings({ session }: { session: ProjectSession }) {
             <div className="row gap8"><span className="headline flex1">{s(p.name)}</span><Button kind="destructive" disabled={!target?.connected || working || !!target?.runActive}
               onClick={() => { if (target) { setClearTarget(target); setConfirm(true) } }}>{L('削除')}</Button></div>
             <Value label={L('ビルドキャッシュ')} value={p.buildBytes !== null ? formatBytes(p.buildBytes) : L('取得できません')} />
-            <Value label={L('直近の実行の scratch')} value={p.scratchBytes !== null ? formatBytes(p.scratchBytes) : L('取得できません')} />
+            <Value label={L('実行の scratch（合計）')} value={p.scratchBytes !== null ? formatBytes(p.scratchBytes) : L('取得できません')} />
             <Value label={L('root の最終使用')} value={p.lastUsed !== null ? new Date(Number(p.lastUsed)).toLocaleString() : L('不明')} />
             {!target && <div className="caption secondary">{L('削除するにはこのプロジェクトを開いてください。')}</div>}
             {p.error && <div className="caption selectable">{s(p.error)}</div>}
           </div>
         })}
       </div>
-      <div className="caption secondary">{L('scratch は次の実行を始めると削除します。保持した記録・成果物・最後の入力は残ります。ビルドキャッシュは自動では削除しません。')}</div>
+      <div className="caption secondary">{L('過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。')}</div>
+      <div className="groupbox col gap4">
+        <div className="headline">{L('このプロジェクトの過去の scratch')}</div>
+        <ScratchRows candidates={candidates} selected={selectedScratch} disabled={working || session.runActive || !session.connected} onDelete={setScratchSelection} onSelect={(path, on) => setSelectedScratch(before => {
+          const next = new Set(before); if (on) next.add(path); else next.delete(path); return next
+        })} />
+        {scratchResult && <Value label={L('解放')} value={formatBytes(scratchResult.freedBytes)} />}
+        {!!scratchResult?.retained.length && <div>{L('削除できず残ったフォルダ')}: {scratchResult.retained.map(s).join(', ')}</div>}
+      </div>
+      {scratchSelection && <Confirm title={L('選択した過去の scratch を削除しますか？')} confirm={L('削除')}
+        onConfirm={() => void deleteScratch()} onCancel={() => setScratchSelection(undefined)} />}
       {result && (
         <div className="groupbox col gap4">
           <div className="headline">{L('結果')}</div>

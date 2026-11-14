@@ -8,6 +8,7 @@
 #include <set>
 
 #include "nix_eval.hh"
+#include "run_scratch.hh"
 #include "util/fs.hh"
 #include "util/log.hh"
 
@@ -90,23 +91,24 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
         paths.push_back(target.lexically_normal().string());
       }
     if (last && !paths.empty()) project->last_used = last;
-    // Counts bytes without following symlinks, including an active run.
     try {
       uint64_t bytes = 0;
-      if (stdfs::exists(scratch))
-        for (auto it = stdfs::recursive_directory_iterator(scratch);
-             it != stdfs::recursive_directory_iterator(); ++it) {
-          const auto status = it->symlink_status(error);
-          if (error) throw stdfs::filesystem_error("scratch status", it->path(), error);
-          if (!stdfs::is_regular_file(status)) continue;
-          const auto size = it->file_size(error);
-          if (!error)
-            bytes += size;  // an active run may remove a file meanwhile
-          else if (error != std::errc::no_such_file_or_directory)
-            throw stdfs::filesystem_error("scratch size", it->path(), error);
-        }
-      project->scratch_bytes = bytes;
+      bool known = true;
+      std::string unknown;
+      for (const auto& entry : measure_run_scratch(scratch)) {
+        auto item = std::make_unique<R::RunScratchUsageT>();
+        item->path = entry.path;
+        item->bytes = entry.bytes.value_or(0);
+        item->size_unknown = !entry.bytes;
+        known &= entry.bytes.has_value();
+        if (!entry.bytes) unknown += (unknown.empty() ? "" : ", ") + entry.path;
+        bytes += entry.bytes.value_or(0);
+        project->run_scratch.push_back(std::move(item));
+      }
+      if (known) project->scratch_bytes = bytes;
+      else project->error = "Unknown scratch folder sizes: " + unknown;
     } catch (const std::exception& e) {
+      project->run_scratch.clear();
       project->error = e.what();
     }
     result.projects.push_back(std::move(project));
@@ -136,6 +138,11 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
     result.large = result.build_bytes && cache_is_large(*result.build_bytes, disk.capacity);
   } else if (result.error.empty())
     result.error = "Store disk usage unavailable: " + error.message();
+  uint64_t scratch_bytes = 0;
+  for (const auto& project : result.projects)
+    scratch_bytes += project->scratch_bytes.value_or(0);
+  const auto scratch_disk = stdfs::space(single_id_.empty() ? scratch_ : single_scratch_, error);
+  if (!error) result.large = result.large || cache_is_large(scratch_bytes, scratch_disk.capacity);
   result.measured_at = std::chrono::duration_cast<std::chrono::milliseconds>(
                            std::chrono::system_clock::now().time_since_epoch())
                            .count();

@@ -1,4 +1,5 @@
 #include "remote_invocation.hh"
+#include "tsugumi/workerd/log_limits.hh"
 
 #include <algorithm>
 #include <cctype>
@@ -238,7 +239,7 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
       {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(request.node, false)},
   };
   auto call = worker_call_frame(1, request.summary.run_id, request.node.path, request.summary.invocation, inputs,
-      ptype->bfbs, ptype->root_type, params, request.node.outputs, "", "", "", env, {}, {});
+      ptype->bfbs, ptype->root_type, params, request.node.outputs, "", "", "", env, {});
   *invocation.call_sha256 = upload(client, service, server_id, instance, job_id, call, request.cancel);
   blobs.insert(*invocation.call_sha256);
   *invocation.archive_sha256 = archive_digest;
@@ -309,7 +310,8 @@ auto import_remote_result(const RemoteJobClient& client, const std::string& serv
     }
     if (!crypto::is_sha256_hex(*digest) || *size > kMaxBlobBytes - total || !written.insert(rel).second)
       throw std::runtime_error("invalid remote result member");
-    const auto max_size = base == "files" ? kMaxBlobBytes : kMaxWorkerBytes;
+    const auto max_size = base == "files" ? kMaxBlobBytes :
+        rel == "logs.jsonl" ? remote::kMaxLogResultBytes : kMaxWorkerBytes;
     if (*size > max_size) throw std::runtime_error("remote result member exceeds its size limit");
     const auto path = temp / rel;
     stdfs::create_directories(path.parent_path());

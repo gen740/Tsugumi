@@ -11,7 +11,7 @@ static int check_exception(void) {
           jl_typeof_str(jl_exception_occurred()));
   return 1;
 }
-int tsugumi_load(void) {
+int tsugumi_prepare(void) {
   if (!dlopen(TSUGUMI_LIBJULIA, RTLD_NOW | RTLD_GLOBAL)) {
     fprintf(stderr, "%s\n", dlerror());
     return 1;
@@ -47,9 +47,16 @@ int tsugumi_load(void) {
   jl_init();
   if (check_exception()) return 1;
   jl_eval_string("try; include(\"" TSUGUMI_JULIA_SDK
-                 "\"); using .Tsugumi; include(\"" TSUGUMI_JULIA_SOURCE
-                 "/main.jl\"); catch error; showerror(stderr, error, catch_backtrace()); println(stderr); rethrow(); end");
+                 "\"); using .Tsugumi; catch error; showerror(stderr, error, catch_backtrace()); println(stderr); rethrow(); end");
   return check_exception();
+}
+int tsugumi_load(const tsugumi_call* call) {
+  current_call = call;
+  jl_eval_string("try; include(\"" TSUGUMI_JULIA_SOURCE
+                 "/main.jl\"); catch error; showerror(stderr, error, catch_backtrace()); println(stderr); rethrow(); end");
+  int error = check_exception();
+  current_call = NULL;
+  return error;
 }
 static int invoke(const tsugumi_call* call, int hook) {
   if (call->abi_version != TSUGUMI_ABI_VERSION) return 1;

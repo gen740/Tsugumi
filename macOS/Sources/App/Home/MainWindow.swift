@@ -57,7 +57,6 @@ struct MainWindow: View {
     }
     .task {
       model.register(workspace)
-      if model.setup == nil { await model.refreshSetup() }
       guard workspace.session == nil else { return }
       switch model.takeWindowIntent() {
       case .open(let url)?: model.show(url, in: workspace)
@@ -66,6 +65,10 @@ struct MainWindow: View {
         // `Tsugumi <project folder>` opens that project in the first window.
         if let url = model.takeLaunchProject() { model.show(url, in: workspace) }
       }
+    }
+    .task { if model.setup == nil { await model.refreshSetup() } }
+    .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+      Task { await CorePreferences.shared.reload() }
     }
     // Right after the user's first key (or sign-in): Tsugumi asks once, in one window, whether to show the demo.
     .sheet(isPresented: Binding(get: { GuideController.shared.demoInvite == workspace.id },

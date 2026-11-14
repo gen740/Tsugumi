@@ -1,7 +1,7 @@
 """Workers in the real environment (TSUGUMI_TEST_CONTAINER=1, the shared VM):
 a resident worker serves later runs (onRunStart starts each run), a Card
 with File inputs keeps its worker, inputs stay read-only while the call's
-output folder arrives as a descriptor, reuseWorker = false gets a fresh
+output folder is staged inside the worker, reuseWorker = false gets a fresh
 worker per call, and nothing of a call's descriptors is left over."""
 
 from __future__ import annotations
@@ -150,9 +150,9 @@ def test_resident_worker_serves_later_runs(env):
 
 
 def test_file_inputs_keep_the_worker_and_stay_read_only(env):
-    # The bash run writes its File output through the passed folder
-    # descriptor; nothing else of the call's descriptors is there.
-    make = bash('test -d /proc/self/fd/900 && test ! -e /proc/self/fd/901 && '
+    # The bash run writes its File output in the worker staging area.
+    # No directory descriptor from outside the sandbox is passed in.
+    make = bash('test -d "$TSUGUMI_OUTPUT_DIR" && test ! -e /proc/self/fd/900 && '
                 'echo "line $TSUGUMI_INVOCATION-$RANDOM" > "$TSUGUMI_OUTPUT_DIR/a.txt" && '
                 'printf \'{"doc":{"value":"%s"}}\' "$TSUGUMI_OUTPUT_DIR/a.txt" > "$TSUGUMI_OUTPUT"', outputs=DOC)
     c = load(env, {"trigger": {"template": "trigger"}, "make": make,

@@ -164,6 +164,12 @@ public actor CoreAgentClient {
     for transport in previous.values { transport.close() }
   }
 
+  /// Releases both connections before switching to another service instance.
+  func disconnect() async {
+    _ = try? await opening?.value
+    close()
+  }
+
   private func closed(_ identity: UUID) {
     guard identity == connectionID else { return }
     close()
@@ -176,8 +182,17 @@ public actor CoreAgentClient {
     }
     nextID += 1
     let frame = try ServiceWire.encode(method, fields: fields, id: nextID, host: host)
-    let data: Data = try await withCheckedThrowingContinuation { continuation in
-      transport.call(frame, timeout: .seconds(["EnvironmentRequest", "HostRuntimeRequest"].contains(method) ? 3600 : 120), continuation: continuation)
+    let identity = connectionID
+    let data: Data
+    do {
+      data = try await withCheckedThrowingContinuation { continuation in
+        transport.call(frame, timeout: .seconds(["EnvironmentRequest", "HostRuntimeRequest"].contains(method) ? 3600 : 120), continuation: continuation)
+      }
+    } catch RPCError.disconnected {
+      // The pending reply can fail before the close observer reaches this
+      // actor. A snapshot read after restart must open a fresh connection.
+      closed(identity)
+      throw RPCError.disconnected
     }
     return try ServiceWire.decode(data, host: host)
   }
@@ -206,6 +221,17 @@ public actor CoreAgentClient {
       value.keyProfile = keyProfile
     }
     return value
+  }
+
+  /// Platform credential transport only; agentd chooses the note mode and model.
+  public func versionNote(project: String, commit: String, language: String) async throws -> String {
+    for (id, account) in [("anthropic", "Anthropic"), ("openai", "OpenAI")] {
+      try await provisionKey(Keychain.loadWithoutAsking(account: account), id: id)
+    }
+    let reply = try await call("VersionNoteRequest", ["project_id": project, "commit": commit,
+      "profile": "desktop", "language": language,
+      "anthropic_key_profile": keyProfile, "openai_key_profile": keyProfile])
+    return reply["text"] as? String ?? ""
   }
 
   public func provisionKey(_ key: String?, id: String) async throws {

@@ -26,6 +26,10 @@ struct StatusBar: View {
         panelPicker(icons: true)
       }
     }
+    .sheet(item: Binding(get: { session.reloadApproval }, set: { session.reloadApproval = $0 })) { request in
+      PermissionPromptView(prompt: ChatController.PermissionPrompt(raw: request.permissions, answer: { _ in }),
+                           answer: { allow, _ in Task { await session.answerReloadApproval(allow) } }, reload: true)
+    }
     .font(.callout)
     .padding(.horizontal, 12).padding(.vertical, 5)
     .background(.regularMaterial, in: Capsule())
@@ -155,7 +159,7 @@ struct StatusBar: View {
           Button("変更を破棄…", role: .destructive) { confirmDiscard = true }
         }
         Button("外部の変更を再読込") { Task { await session.reloadExternal() } }
-          .disabled(!session.connected)
+          .disabled(!session.connected || session.reloadingExternal || session.reloadApproval != nil)
           .help("Tsugumi の外で編集されたファイルを取り込みます")
         Button("版の履歴…") {
           showSync = false
@@ -212,7 +216,7 @@ struct IssueList: View {
     }
     for d in session.diagnostics {
       out.append(Issue(error: d.error, title: d.message,
-                       detail: [d.card.map { $0.joined(separator: "/") }, d.path, d.code].compactMap { $0 }.joined(separator: " · "),
+                       detail: [d.card.map { session.displayPath($0) }, d.path, d.code].compactMap { $0 }.joined(separator: " · "),
                        card: d.card, isRunFailure: false))
     }
     return out

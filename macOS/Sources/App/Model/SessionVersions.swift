@@ -2,41 +2,6 @@ import Foundation
 import TsugumiAgentClient
 import TsugumiRPC
 
-/// "Version summaries": a small model writes what a version changed from its diff, only
-/// while switched on (the version tree asks first): code and settings go to
-/// the model's provider, never data files. It costs tokens of its own and is
-/// not made on the ChatGPT plan, whose allowance is for the Agent.
-@MainActor
-enum VersionSummarizer {
-  static let defaultsKey = "versions.summaries"
-  static var enabled: Bool { CorePreferences.shared.bool(forKey: defaultsKey) }
-
-  /// The small model of the Agent's provider (none for the local fixture or the plan).
-  static func config() -> ProviderConfig? {
-    guard let c = ThoughtSummarizer.config(), c.auth != .chatGPT else { return nil }
-    return c
-  }
-
-  /// What a summary is written from: the version's message and what it changed.
-  nonisolated static func input(message: String, changed: [String], diff: String, truncated: Bool) -> String {
-    let cards = changed.map { $0.isEmpty ? "the Workflow itself" : $0 }.joined(separator: ", ")
-    return "Commit message: \(message.trimmingCharacters(in: .whitespacesAndNewlines))\nChanged Cards: \(cards)\n\n"
-      + "Diff\(truncated ? " (cut short)" : ""):\n\(diff)"
-  }
-
-  /// One line, however the model answers.
-  nonisolated static func clean(_ text: String) -> String {
-    String(text.split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(300))
-  }
-
-  static func summarize(project: AgentProject, commit: String, config: ProviderConfig) async throws -> String {
-    let client = CoreAgentClient.shared
-    let result = try await client.call("VersionSummarizeRequest", ["project_id": project.id, "commit": commit, "provider": try await client.provider(config)])
-    return clean(result["text"] as? String ?? "")
-  }
-
-}
-
 /// The project's versions (core/src/versions.cc): a git repository whose
 /// commits are what runs ran, with their results in notes and named
 /// versions as tags.
@@ -51,33 +16,27 @@ extension ProjectSession {
     if let canvas = try? await rpc.versionCanvas(commit: commit) { versionCanvases[commit] = canvas }
   }
 
-  /// Has a small model write what `commit` changed, once, while switched on:
-  /// as a run of it ends and when it is hovered without a summary.
-  func summarizeVersion(_ commit: String) async {
-    guard VersionSummarizer.enabled, let rpc, !versionSummaryTried.contains(commit) else { return }
-    versionSummaryTried.insert(commit)
-    versionSummaryBusy.insert(commit)
-    defer { versionSummaryBusy.remove(commit) }
-    guard let config = VersionSummarizer.config() else {
-      versionSummaryErrors[commit] = String(localized: "この接続では版の要約を作りません。")
-      return
+  /// Ask agentd for the note to display. It owns policy, generation and storage.
+  func loadVersionNote(_ commit: String) async {
+    guard rpc != nil else { return }
+    let request = UUID()
+    versionNoteRequests[commit] = request
+    versionNoteBusy.insert(commit)
+    versionNoteErrors[commit] = nil
+    defer {
+      if versionNoteRequests[commit] == request {
+        versionNoteBusy.remove(commit)
+        versionNoteRequests[commit] = nil
+      }
     }
     do {
-      await refreshVersions()
-      guard let c = versionGraph?.commitList.first(where: { $0.id == commit }), (c.changeSummary ?? "").isEmpty else { return }
-      let diff = try await rpc.versionDiff(commit: commit)
-      // Nothing a summary may read changed (the layout, data files).
-      guard !diff.text.isEmpty else { return }
+      await CorePreferences.shared.reload()
       guard let project = try await RPCToolTransport(session: self).project() else { return }
-      let text = try await VersionSummarizer.summarize(project: project, commit: commit, config: config)
-      if text.isEmpty {
-        versionSummaryErrors[commit] = String(localized: "モデルが文を返しませんでした。")
-      } else {
-        _ = try await rpc.versionSummary(opId: UUID(), origin: "ui", commit: commit, summary: text)
-        await refreshVersions()
-      }
+      let note = try await CoreAgentClient.shared.versionNote(project: project.id, commit: commit,
+        language: AppPreferences.Language.running.rawValue)
+      if versionNoteRequests[commit] == request { versionNotes[commit] = note }
     } catch {
-      versionSummaryErrors[commit] = error.localizedDescription
+      if versionNoteRequests[commit] == request { versionNoteErrors[commit] = error.localizedDescription }
     }
   }
 

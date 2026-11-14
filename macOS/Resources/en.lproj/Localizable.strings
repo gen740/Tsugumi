@@ -56,6 +56,7 @@
 "API キーが未設定のため、決まったデモの案内だけをしています" = "No API key is set: it only gives the fixed demo tour";
 "API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。" = "API keys and the ChatGPT sign-in can all be set up below at the same time. You can also switch from the chat's model menu.";
 "Agent が Card の権限を広げようとしています" = "The Agent wants to give Cards more permissions";
+"Agent がこの操作の承認を求めています" = "The Agent asks you to approve this operation";
 "Agent がアクセスの許可を求めています" = "The Agent is requesting access";
 "Agent が作業している間、Canvas の上でその様子を見せる姿です。表示しなくても、Card や接続の変化は見えます。" = "How the Agent shows itself on the canvas while it works. Even when hidden, changes to Cards and connections are visible.";
 "Agent が書きました" = "Written by the Agent";
@@ -65,7 +66,9 @@
 "Agent が解決" = "Resolved by the Agent";
 "Agent が開き直しました" = "Reopened by the Agent";
 "Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。" = "The Agent's requests use your ChatGPT plan. You can review and manage usage in ChatGPT settings (Usage).";
+"Agent の作業をアニメーションで表示" = "Animate the Agent’s work";
 "Agent の発言とツールの結果を、数秒ごとに小さなモデル（%@、接続先: %@）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。" = "Every few seconds the Agent's words and tool results are sent to a small model (%@, via %@) to be summarized and shown in the Tsugumi's speech bubble on the canvas. This uses tokens besides the Agent's. When off, the bubble shows only short lines made from tool calls.";
+"Agent の要約" = "Agent summary";
 "Altair（対話型 HTML）" = "Altair (interactive HTML)";
 "Anthropic API キー" = "Anthropic API Key";
 "Anthropic API（API キー）" = "Anthropic API (API key)";
@@ -140,7 +143,6 @@
 "Manage usage" = "Manage usage";
 "Markdown（見出し・太字・リスト・表・コード）と数式（$…$、$$…$$）を使えます。付箋は実行には参加しません。" = "Markdown (headings, bold, lists, tables, code) and math ($…$, $$…$$) can be used. Notes take no part in runs.";
 "Matplotlib（PNG / SVG / PDF）" = "Matplotlib (PNG / SVG / PDF)";
-"NAR サイズによる概算です。共有する依存関係は各プロジェクトにも含まれるため、内訳の和と合計は異なります。最大 1 分ごとに再計測します。" = "Estimated from NAR sizes. Shared dependencies count in each project, so project sizes do not add up to the total. Measurements refresh once per minute.";
 "Nix store の保存領域を作っています" = "Making the Nix store's space";
 "Nix store の保存領域を開いています（初回は初期化）" = "Opening the Nix store's space (formatted the first time)";
 "Nix を準備しています" = "Preparing Nix";
@@ -226,7 +228,6 @@
 "root の最終使用" = "Roots last used";
 "root_type がありません" = "There is no root_type";
 "root_type の table %@ が見つかりません" = "The root_type table %@ is not found";
-"scratch は次の実行を始めると削除します。保持した記録・成果物・最後の入力は残ります。ビルドキャッシュは自動では削除しません。" = "Scratch is removed when the next run starts. Kept records, artifacts and last inputs remain. Build caches are never deleted automatically.";
 "stderr への出力はありません" = "Nothing on stderr";
 "stderr への出力はありません（Nix 評価・build のログもここに出ます）。" = "Nothing on stderr (Nix evaluation and build logs appear here too).";
 "stdout への出力はありません" = "Nothing on stdout";
@@ -249,7 +250,6 @@
 "「%@」のおすすめは？" = "Which demo of “%@” do you recommend?";
 "「%@」のデモです。どれを見ますか？" = "Demos in “%@”. Which one would you like to see?";
 "「%@」のビルドキャッシュを削除しますか？" = "Delete the build cache for “%@”?";
-"「%@」はすでに使われています。" = "“%@” is already used.";
 "「%@」を読み取り専用で実行環境に共有し、Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（%@）に送られます。共有のため実行環境を再起動します（実行中の Run は止まります）。" = "“%@” is shared read-only with the environment so that the Agent can read it. What the Agent reads is sent to the model provider (%@). Sharing restarts the environment (a running Run stops).";
 "「デモを見る」から、Collatz などの例をすぐに開けるよ" = "Open an example such as Collatz from Browse Demos.";
 "「再試行」で接続し直します。未保存の変更は保持しています。" = "“Retry” connects again. Unsaved changes are kept.";
@@ -281,6 +281,7 @@
 "この Mac で仮想マシンを使える" = "This Mac can run virtual machines";
 "この Mac にはありません（実行すると失敗します）" = "Not on this Mac (running fails)";
 "この Mac の共有実行環境（全プロジェクト）" = "This Mac’s shared execution environment (all projects)";
+"この Mac の外観設定と、このホストの agentd の Agent 表示設定" = "Appearance on this Mac; Agent presentation in agentd on this host";
 "この Run ではまだ値が通っていません" = "No value has passed in this Run yet";
 "この Run で準備済みのものを再利用" = "Reused what this Run had prepared";
 "この stream への出力はありません" = "Nothing on this stream";
@@ -308,6 +309,7 @@
 "このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。" = "This project's environment (tsugumid) is not running. Start it to edit and run.";
 "このプロジェクトの実行環境（書き出しは %@/.tsugumi/runs.sqlite）" = "This project's environment (exported to %@/.tsugumi/runs.sqlite)";
 "このプロジェクトの設定（設定ウインドウの「このプロジェクト」）" = "This project's settings (“This project” in the settings window)";
+"このプロジェクトの過去の scratch" = "Past scratch in this project";
 "このプロジェクトを git のリポジトリにすると、実行するたびにその版が残り、いつでも前の版から始め直せます。" = "Make this project a git repository: every run keeps its version, and you can start again from any earlier one.";
 "このプロジェクト全体のコピーを Card in Card として置きます" = "Places a copy of this whole project as a Card in Card";
 "このプロジェクト（%@/layout.json）" = "This project (%@/layout.json)";
@@ -330,7 +332,6 @@
 "この実行環境の既定" = "Execution environment default";
 "この実行環境の既定（%@）" = "Execution environment default (%@)";
 "この形式の整形には対応していません" = "Formatting is not available for this file type";
-"この接続では版の要約を作りません。" = "This connection does not make version summaries.";
 "この操作にはユーザーの権限が必要です。" = "This operation requires user authorization.";
 "この操作はできません" = "This cannot be done";
 "この日時より前に終わった実行を削除しますか？" = "Delete the runs that ended before this date?";
@@ -388,13 +389,13 @@
 "エミュレーター" = "Emulator";
 "エラー: %@" = "Error: %@";
 "オフ" = "Off";
+"オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの agentd に保存します。" = "When off, saved Cards and wires appear immediately. The work marker, thought summaries and source streaming continue. This setting is stored in agentd on this host.";
 "オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。" = "When the Agent gives a Card a permission that is off here, you are asked before it is saved. Changes you make yourself in Card settings are not asked.";
 "オフ（デフォルト）: preRun・run・postRun のどれからも外へ通信できません。" = "Off (default): nothing in preRun, run or postRun can reach the outside.";
 "オフ（デフォルト）: 読み取り専用" = "Off (default): read only";
 "オン" = "On";
 "オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。" = "On: the loaded worker is used for later calls and runs too, keeping its state (static variables and the like). Off: a new worker for every call.";
 "オンにする" = "Turn On";
-"オンにすると、小さなモデルが各版の変更を短い文にします（コードと設定を送ります）" = "When on, a small model writes each version's change in a short sentence (code and settings are sent)";
 "オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。" = "When on, search queries go through the connected provider to its search service. The Agent is told to keep unpublished data out of them, but this cannot be guaranteed. Queries and sources stay in the chat. Searches may be charged.";
 "ガイドのツグミ" = "Tsugumi the Guide";
 "ガイドのツグミとの会話" = "Conversation with Tsugumi the Guide";
@@ -403,7 +404,6 @@
 "ガイドのツグミを呼ぶ準備" = "Getting Tsugumi the Guide Ready";
 "ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection in use. With a working connection (a key, the ChatGPT sign-in) it answers questions; without one it only gives a fixed demo tour (nothing is sent). Answering questions never changes your project.";
 "キャッシュ URL" = "Cache URL";
-"キャッシュの使用量が大きくなっています。必要なビルド結果を確認して、削除するものを選んでください。" = "The cache is using substantial space. Review the build results and choose which ones to delete.";
 "キャッシュを利用" = "Cache used";
 "キャッシュを利用（処理なし）" = "Cache used (no work)";
 "キャッシュ使用量" = "Cache usage";
@@ -416,7 +416,6 @@
 "キーを保存できませんでした: %@" = "Could not save the key: %@";
 "キーを削除" = "Delete key";
 "キーを押してください…" = "Press a key…";
-"クリックでスキップ" = "Click to skip";
 "クリックで次のヒント" = "Click for the next tip";
 "グラフの描画が終わりませんでした" = "The chart did not finish drawing";
 "グラフの更新" = "Chart updates";
@@ -536,6 +535,8 @@
 "ネットワークへのアクセス" = "Network access";
 "ネットワークへのアクセスを許可する" = "Allow network access";
 "ネットワークを設定しています" = "Setting up the network";
+"ノートを読み込めませんでした: %@" = "Could not load note: %@";
+"ノートを読み込んでいます…" = "Loading note…";
 "バイナリ %lld bytes。書き出して確認してください。" = "Binary, %lld bytes. Export it to inspect.";
 "バイナリの成果物です" = "This artifact contains binary data";
 "バイナリキャッシュ" = "Binary Caches";
@@ -548,7 +549,9 @@
 "パラメータの記録がありません" = "Parameters were not recorded";
 "ビルドの期限（秒）" = "Build timeout (s)";
 "ビルドキャッシュ" = "Build Cache";
-"ビルドキャッシュが %@ を使用しています。設定の「ビルドキャッシュ」でプロジェクト別の容量を確認できます。" = "Build caches use %@. Review per-project usage in Settings → Build Cache.";
+"ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。最大 1 分ごとに再計測します。" = "Build cache uses estimated NAR sizes; scratch sums file sizes without following links. Shared dependencies count in each project, so build sizes do not add up to the total. Measurements refresh once per minute.";
+"ビルドキャッシュまたは実行の scratch が大きくなっています。内容を確認して、削除するものを選んでください。" = "Build cache or run scratch is growing. Review the contents and choose what to delete.";
+"ビルドキャッシュまたは実行の scratch が大きくなっています。設定の「ビルドキャッシュ」で容量と削除対象を確認できます。" = "Build cache or run scratch is growing. Review sizes and deletion candidates in Settings → Build Cache.";
 "ビルドキャッシュを削除しますか？" = "Delete the build cache?";
 "ファイル" = "File";
 "ファイルを作成" = "Create File";
@@ -599,6 +602,7 @@
 "ホストの公開鍵を実行デーモンの authorized_keys に追加してから、接続を確認してください。" = "Add this host's public key to the worker's authorized_keys before verifying the connection.";
 "ホーム" = "Home";
 "ポートの並びを元に戻す" = "Reset Port Order";
+"メッセージの準備" = "Preparing the message";
 "メッセージ（%@ で送信）" = "Message (send with %@)";
 "メモ" = "Note";
 "メモリ上限（バイト）" = "Memory limit (bytes)";
@@ -606,6 +610,7 @@
 "モジュール %@" = "Module %@";
 "モデル" = "Model";
 "モデルが文を返しませんでした。" = "The model returned no text.";
+"モデルの応答" = "Model response";
 "モデル一覧を取得" = "List Models";
 "モデル（接続先: %@）" = "Model (provider: %@)";
 "ユーザー名" = "Username";
@@ -637,7 +642,9 @@
 "一覧から外すプロジェクトを選ぶ" = "Choose projects to remove from the list";
 "一覧から選択" = "Choose from list";
 "一覧を表示" = "Show list";
+"一覧を読み込めませんでした" = "Could not load the list";
 "上から下" = "Top to bottom";
+"上書き" = "Overwrite";
 "上流から順に Card を書いて、糸でつないでいく" = "Write Cards from upstream on, and tie them together with threads";
 "上流の Card が失敗したので実行していません" = "Not run, because a Card upstream failed";
 "下の原因とログを確かめてください。直したら再試行します。文書と実行履歴は消えません。" = "Check the cause and the log below, fix it and retry; your documents and history are kept.";
@@ -659,7 +666,9 @@
 "会話" = "Conversations";
 "会話に戻る" = "Back to the conversation";
 "会話の一覧と検索" = "Conversations and search";
+"会話の圧縮" = "Compacting the conversation";
 "会話はまだありません" = "No conversations yet";
+"会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。" = "Conversation interrupted. Operation at interruption: %@. Resume or send a new message.";
 "会話を圧縮" = "Compact Conversation";
 "会話を圧縮しています…" = "Compacting the conversation…";
 "会話を表示中" = "Conversation open";
@@ -763,6 +772,8 @@
 "再起動して %@ に更新" = "Restart to Update to %@";
 "再起動して更新" = "Restart to Update";
 "再起動すると新しい版になります。あとにした場合は、次に終了したときに更新します。" = "Restart to use the new version. Otherwise it is installed the next time you quit.";
+"再適用のために保持した編集内容" = "Edits kept to reapply";
+"再開" = "Resume";
 "冬はさえずらず口を「噤む」から、ツグミという名になったという説もあるよ" = "It keeps quiet all winter, its beak shut (tsugumu). Some say that is where the name comes from.";
 "処理" = "Step";
 "処理 Card の実行環境は default.nix で定義します。" = "A step Card's environment is defined in default.nix.";
@@ -798,8 +809,10 @@
 "削除" = "Delete";
 "削除…" = "Delete…";
 "削除するにはこのプロジェクトを開いてください。" = "Open this project to delete its build cache.";
+"削除できず残ったフォルダ" = "Folders that could not be deleted";
 "削除できませんでした: " = "Could not delete: ";
 "削除できませんでした: %@" = "Could not delete: %@";
+"削除対象の合計" = "Total selected for deletion";
 "前へ" = "Previous";
 "前回の worker を再利用して実行しました" = "Ran in the previous worker again";
 "動かさない" = "Don't animate";
@@ -829,6 +842,7 @@
 "右下のツグミが、使い方の質問に答えたりデモを案内したりします。" = "Tsugumi at the bottom right answers your questions and gives demo tours.";
 "各 Card の最後の呼び出しを比較します。記録や現在の Workflow は変更しません。" = "Compare the last invocation of each Card. Records and the current Workflow stay unchanged.";
 "合流" = "Merge";
+"合計は容量不明のフォルダを除きます。" = "The total excludes folders with unknown sizes.";
 "合計（共有パスは一度だけ計上）" = "Total (shared paths counted once)";
 "同じ名前があります" = "That name is taken";
 "同じ版です" = "Same version";
@@ -836,9 +850,8 @@
 "名前" = "Name";
 "名前と内容を書く" = "Write name and content";
 "名前と実行環境" = "Name and Environment";
-"名前に使えるのは英数字と - _ . だけです（128 文字まで）。" = "A name may contain only letters, digits and - _ . (up to 128 characters).";
-"名前は Card の ID で、定義のフォルダ名（definitions/<名前>/）です。変えると接続・配置・実行履歴も追従します（すぐに保存します）。" = "The name is the Card's ID and its definition folder name (definitions/<name>/). Changing it carries over connections, layout and run history (saved at once).";
 "名前は「継ぐ・積む・組む」から。処理を継ぎ、試行を積み、実験を組むよ" = "My name echoes tsugu, tsumu, kumu: join steps, stack up trials, build experiments.";
+"名前を入力してください（4096 バイトまで）。" = "Enter a name (up to 4096 bytes).";
 "名前を変更" = "Rename";
 "名前を変更…" = "Rename…";
 "名前（例: thin-bands）" = "Name (e.g. thin-bands)";
@@ -871,6 +884,8 @@
 "変更: %@" = "Changed: %@";
 "変更した Card: %@" = "Changed Cards: %@";
 "変更できませんでした" = "Could not change";
+"変更の記録" = "Change record";
+"変更の記録は Card の追加・削除と定義・ソース・パラメータ・接続の変更を無料で記録します。Agent の要約は差分をモデルのプロバイダへ送り、token を使います。この設定は全プロジェクトに適用します。" = "The change record lists added and removed Cards and changes to definitions, source, parameters and wiring at no cost. The Agent summary sends the diff to the model provider and uses tokens. This setting applies to all projects.";
 "変更はありません" = "No changes";
 "変更はメニューに反映されます（反映されない場合はウインドウを開き直してください）。" = "Changes apply to the menus (reopen the window if they do not).";
 "変更は操作するたびに保存されます。チャットや別のウインドウでの変更もすぐに反映されます。" = "Changes are saved as you make them. Changes from the chat or other windows show up at once.";
@@ -884,6 +899,7 @@
 "変更を確かめています" = "Checking the changes";
 "外観" = "Appearance";
 "外部の Nix ソースを読む" = "Read a Nix source from outside";
+"外部の変更が Card の権限を広げます" = "External changes widen Card permissions";
 "外部の変更を再読込" = "Reload External Changes";
 "外部の実行サービスでは worker の状態を残せません。" = "External execution services do not reuse workers.";
 "外部の実行サービスにはファイルアクセスの制限が必要です。" = "Remote execution requires restricted file access.";
@@ -917,13 +933,14 @@
 "実行しています" = "Running";
 "実行するとここにログが表示されます。" = "Logs appear here after a run.";
 "実行すると表示されます。" = "Appears after a run.";
+"実行の scratch（合計）" = "Run scratch (total)";
 "実行の期限（秒）" = "Run timeout (s)";
 "実行の様子を見ています" = "Looking at the run";
 "実行の範囲" = "Run scope";
 "実行の終わりを待っています" = "Waiting for the run to end";
 "実行の結果" = "Run Results";
 "実行の記録を見ています" = "Reading the run's record";
-"実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。" = "Deletes runs' records, values and logs, and each run's files (artifacts and the like, .tsugumi/runs/<run>), both in the VM and in .tsugumi/runs.sqlite. The last input (to run a Card alone again) stays. Not while a run is going on.";
+"実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。" = "Deletes runs' records, values and logs, and each run's files (artifacts and the like, .tsugumi/runs/<run>), both in the VM and in .tsugumi/runs.sqlite. The last input (to run a Card alone again) stays. Scratch belonging to the selected runs is also deleted. Not while a run is going on.";
 "実行を停止" = "Stop Run";
 "実行を止めています" = "Stopping the run";
 "実行を比較" = "Compare Runs";
@@ -956,7 +973,7 @@
 "実行履歴なし" = "No runs";
 "実行履歴の形式が異なります" = "Incompatible Run History";
 "実行履歴の形式は %@ です。このバージョンの Tsugumi には %@ が必要です。" = "This run history uses format %@. This version of Tsugumi requires %@.";
-"実行履歴は VM の中に保存します。オンのときは、終わった実行の記録（値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。" = "The run history is kept in the VM. When on, finished runs (values, types, logs, the list of artifacts) are also written to the project's .tsugumi/runs.sqlite. A project copied or moved to another Mac reads the runs the VM lacks from there when it opens. When off, new runs are kept in the VM only.";
+"実行履歴は VM の中に保存します。オンのときは、終わった実行の記録（実行したコードのコミット・値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。" = "The run history is kept in the VM. When on, finished runs (code commit, values, types, logs, the list of artifacts) are also written to the project's .tsugumi/runs.sqlite. A project copied or moved to another Mac reads the runs the VM lacks from there when it opens. When off, new runs are kept in the VM only.";
 "実行履歴はありません" = "No run history";
 "実行履歴はプロジェクトごとに VM のディスクに保存します。自動では削除しません。フォルダが見つからないプロジェクトの分も、ここから削除できます（そのプロジェクトのビルドの登録も外します）。" = "Each project's run history is kept on the VM's disk and never deleted automatically. Histories of projects whose folder is gone can be deleted here too (their build registrations are removed as well).";
 "実行履歴をプロジェクトに保存する" = "Save the run history in the project";
@@ -1078,7 +1095,6 @@
 "新しいプロジェクトの作り方は？" = "How do I make a new project?";
 "新しいプロジェクトの流れの向き" = "Flow direction of new projects";
 "新しい会話" = "New Conversation";
-"新しい版ができたときと、要約のない版にポインタを乗せたときに、その版で変わったコードと設定を接続中のモデルのプロバイダへ送り、小さなモデル（Anthropic なら claude-haiku-5-5）が短い文にします。データのファイルは送りません。Agent とは別に token を使います。ChatGPT プランでは作りません。" = "When a new version is made, and when you point at a version with no summary, the code and settings it changed go to the connected model provider, and a small model (claude-haiku-5-5 on Anthropic) writes a short sentence. Data files are not sent. This uses tokens apart from the Agent's. Summaries are not made on the ChatGPT plan.";
 "新しく作るプロジェクトの Card を並べる向きです。開いているプロジェクトの向きは、設定の「このプロジェクト」→「Canvas」で変えます。" = "The direction new projects lay out their Cards in. For an open project, change it in Settings → This project → Canvas.";
 "新規" = "New";
 "新規プロジェクト" = "New Project";
@@ -1160,12 +1176,11 @@
 "版が記録されていないため差分を表示できません。" = "A version was not recorded, so its changes are unavailable.";
 "版として残す" = "Keep as Version";
 "版として残す…" = "Keep as Version…";
+"版のノート" = "Version note";
 "版の履歴" = "Version History";
 "版の履歴…" = "Version History…";
 "版の履歴を開く（確定 revision %llu、⌥⌘Y）" = "Open the version history (saved revision %llu, ⌥⌘Y)";
 "版の履歴（git、⌥⌘Y）" = "Version history (git, ⌥⌘Y)";
-"版の要約" = "Version summaries";
-"版の要約をオンにしますか？" = "Turn on version summaries?";
 "版を操作できませんでした" = "The version could not be changed";
 "版を選ぶと、その実行の結果と変わった Card を表示します。" = "Select a version to see its runs and the Cards it changed.";
 "版管理されていません" = "Not versioned";
@@ -1188,7 +1203,6 @@
 "直接実行" = "Direct execution";
 "直近の入力トークン数（上限に近づくと自動で圧縮）" = "Recent input tokens (compacted automatically near the limit)";
 "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";
-"直近の実行の scratch" = "Latest run scratch";
 "相違あり" = "Changed";
 "省略可" = "Optional";
 "破棄した変更は取り消せません。" = "Discarded changes cannot be undone.";
@@ -1215,7 +1229,9 @@
 "緑" = "Green";
 "編集" = "Edit";
 "編集…" = "Edit…";
+"編集中に別の変更が保存されました。上書きするか、編集内容を保持して最新版を読み込んでください。" = "Other changes were saved while you were editing. Overwrite, or keep your edits and reload the latest content.";
 "編集中の _outputs.fbs（未適用・型は適用後に解決）" = "_outputs.fbs being edited (not applied; types resolve after applying)";
+"編集内容を保持して再読込" = "Keep edits and reload";
 "縮小" = "Zoom Out";
 "置換テキスト" = "Replacement text";
 "署名の公開鍵" = "Signing Public Key";
@@ -1225,8 +1241,11 @@
 "色" = "Color";
 "表 %lld 列 × %lld 行" = "Table %lld columns × %lld rows";
 "表示" = "Show";
+"表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。" = "Approval covers only this operation on the displayed targets. Every new operation needs approval again. Declining changes nothing.";
 "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。" = "Allow access to the listed resource and scope. Content read may be sent to the connected model.";
+"表示された権限を許可して、外部の変更を読み込みますか？" = "Allow the listed permissions and reload the external changes?";
 "表示しない" = "Don't show";
+"表示する名前です。同じ名前を複数の Card に使えます。変えても ID・接続・実行履歴は変わりません（すぐに保存します）。" = "The display name may be shared by several Cards. Changing it keeps the ID, connections and run history unchanged (saved at once).";
 "表示のみ（開いているプロジェクトの接続先）" = "Display only (the open projects' endpoints)";
 "表示の記録がありません" = "No recorded display";
 "表示中" = "Shown";
@@ -1235,8 +1254,6 @@
 "複製" = "Duplicate";
 "複製できませんでした: " = "Could not duplicate: ";
 "複製を作る場所を選んでください（保存済みの内容を複製します）" = "Choose where to make the copy (the saved contents are copied)";
-"要約しています…" = "Summarizing…";
-"要約を作れませんでした: %@" = "Could not write a summary: %@";
 "見つからないフォルダ: " = "Missing folders: ";
 "見つかりません" = "Not found";
 "見る" = "Show Me";
@@ -1292,6 +1309,7 @@
 "進行中" = "In progress";
 "進行中の実行を表示" = "Show Active Run";
 "進行中の実行を表示しています" = "Showing the active run";
+"過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。" = "Past scratch is never deleted automatically. Review the folders and sizes before deleting. The latest run’s scratch stays available for reruns. Kept records, artifacts and last inputs have separate copies.";
 "過去の実行を表示しています。別の実行が進行中です。" = "Showing a previous run. Another run is active.";
 "適用" = "Apply";
 "適用しました。" = "Applied.";
@@ -1301,11 +1319,15 @@
 "選択した Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。" = "Rewrites the selected Cards in the chat as their open comments ask (adding Cards when a comment asks for it). Progress appears in the chat.";
 "選択した Card の詳細" = "Details of the selected Card";
 "選択した Card を参照に追加" = "Add selected Cards as references";
+"選択した scratch を削除…" = "Delete selected scratch…";
 "選択した実行サービスで利用できる CPU アーキテクチャを選びます。" = "Choose a CPU architecture supported by this execution service.";
 "選択した実行サービスに接続できません。" = "The selected execution service is unavailable.";
+"選択した過去の scratch を削除しますか？" = "Delete the selected past scratch?";
 "選択をグループ化" = "Group Selection";
 "選択対象を削除" = "Delete Selection";
 "選択済み" = "Selected";
+"部分実行" = "Partial run";
+"部分実行の結果を使用" = "Uses a partial run's result";
 "配線の交差を減らす" = "Untangle Wires";
 "配線の交差を減らす（Card の位置は保持）" = "Untangle wires (keep Card positions)";
 "配置されていない定義" = "Definitions not placed";

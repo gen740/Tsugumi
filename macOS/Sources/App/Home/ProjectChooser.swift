@@ -17,20 +17,10 @@ struct ProjectChooser: View {
   @State private var search = ""
   /// Choosing recent projects to take off the list (nil: not choosing).
   @State private var picking: Set<String>?
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  /// The welcome (WelcomeIntro.swift): when it started (nil: not playing),
-  /// how far home has come up (0…1), and whether the name and the bird have
-  /// reached their places here.
-  @State private var welcomeStart: Date?
-  @State private var reveal: Double = 1
-  @State private var arrived = true
-  @State private var homeWord: CGRect = .zero
-  @State private var homeScene: CGRect = .zero
 
   var body: some View {
     HStack(spacing: 0) {
-      HomeSidebar(showDemos: $showDemos, onNew: { showNew = true }, onOpen: openPanel,
-                  reveal: reveal, arrived: arrived, wordFrame: $homeWord, sceneFrame: $homeScene)
+      HomeSidebar(showDemos: $showDemos, onNew: { showNew = true }, onOpen: openPanel)
         .frame(width: 250)
       VStack(spacing: 0) {
         if showDemos { demos } else { recents }
@@ -55,53 +45,21 @@ struct ProjectChooser: View {
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
       .background(HomeBackground())
-      // comes in from the right as the welcome gives way
-      .offset(x: 420 * (1 - reveal))
-      .opacity(reveal)
-    }
-    .overlay {
-      if let start = welcomeStart {
-        TimelineView(.animation) { ctx in
-          WelcomeOverlay(t: ctx.date.timeIntervalSince(start), homeWord: homeWord, homeScene: homeScene) {
-            welcomeStart = Date().addingTimeInterval(-WelcomeBeat.toHome.lowerBound)
-          }
-        }
-      }
     }
     .overlay(alignment: .bottomTrailing) {
-      if arrived { GuideCorner(screen: showDemos ? .demos : .home).padding(16) }
-    }
-    .coordinateSpace(.named("home"))
-    .onAppear {
-      guard WelcomeIntro.take(reduceMotion: reduceMotion) else { return }
-      reveal = 0
-      arrived = false
-      welcomeStart = Date()
-    }
-    .task(id: welcomeStart) {
-      // home comes up during the move, then takes over from the welcome
-      guard let start = welcomeStart else { return }
-      let elapsed = Date().timeIntervalSince(start)
-      try? await Task.sleep(for: .seconds(max(0, WelcomeBeat.toHome.lowerBound - elapsed)))
-      guard !Task.isCancelled else { return }
-      let move = WelcomeBeat.toHome.upperBound - WelcomeBeat.toHome.lowerBound
-      withAnimation(.easeInOut(duration: move)) { reveal = 1 }
-      try? await Task.sleep(for: .seconds(move))
-      guard !Task.isCancelled else { return }
-      arrived = true
-      welcomeStart = nil
+      GuideCorner(screen: showDemos ? .demos : .home).padding(16)
     }
     .tint(TsugumiPalette.rufous)
     .onReceive(NotificationCenter.default.publisher(for: .appShowDemos)) { _ in showDemos = true }
-    .task { await model.refreshHome() }
+    .task { await model.showHome() }
     .onChange(of: GuideController.shared.demosRequested, initial: true) { _, asked in
       if asked {
         showDemos = true
         GuideController.shared.demosRequested = false
       }
     }
-    // The first start asks for a model key (or a skip) once the welcome is over.
-    .sheet(isPresented: Binding(get: { arrived && GuideController.shared.needsSetup && !model.smokeMode },
+    // The first start asks for a model key (or a skip) once its state is known.
+    .sheet(isPresented: Binding(get: { GuideController.shared.needsSetup && !model.smokeMode },
                                 set: { if !$0 && GuideController.shared.needsSetup { GuideController.shared.finishSetup() } })) {
       GuideSetupView {}
     }
@@ -139,7 +97,11 @@ struct ProjectChooser: View {
         }
       }
       .padding(.top, 44)
-      if model.recents.isEmpty {
+      if let error = model.recentsError {
+        loadFailure(error).frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if !model.homeLoaded {
+        ProgressView("読み込み中…").frame(maxWidth: .infinity, maxHeight: .infinity)
+      } else if model.recents.isEmpty {
         ContentUnavailableView("最近開いたプロジェクトはありません", systemImage: "clock",
                                description: Text("新規作成するか、既存のフォルダを開いてください。"))
           .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -223,7 +185,9 @@ struct ProjectChooser: View {
       }
       ScrollViewReader { proxy in
       ScrollView {
-        if shownDemos.isEmpty {
+        if let error = model.demosError { loadFailure(error).padding(.top, 40) }
+        else if !model.demosLoaded { ProgressView("読み込み中…").padding(.top, 40) }
+        else if shownDemos.isEmpty {
           ContentUnavailableView(model.demos.isEmpty ? "デモが見つかりません" : "条件に合うデモはありません", systemImage: "questionmark.folder")
             .padding(.top, 40)
         }
@@ -247,6 +211,14 @@ struct ProjectChooser: View {
     }
     .padding(.horizontal, 24)
     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+  }
+
+  private func loadFailure(_ error: String) -> some View {
+    VStack(spacing: 12) {
+      Label("一覧を読み込めませんでした", systemImage: "exclamationmark.triangle")
+      Text(error).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+      Button("再確認") { Task { await model.refreshHome() } }
+    }
   }
 
   private var newProjectSheet: some View {
@@ -312,34 +284,22 @@ struct HomeBackground: View {
 
 /// The left column of home: the bird on its branch with the temari, telling
 /// tips, the name, and the ways in; together a little above the middle.
-/// During the welcome, `reveal` brings up what it does not carry over, and
-/// the name and the bird show here once they have `arrived`; the frames of
-/// both are reported for the welcome to fly them to.
 private struct HomeSidebar: View {
   @Binding var showDemos: Bool
   let onNew: () -> Void
   let onOpen: () -> Void
-  var reveal: Double = 1
-  var arrived = true
-  @Binding var wordFrame: CGRect
-  @Binding var sceneFrame: CGRect
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
       Spacer(minLength: 0)
       HomeTipBubble()
         .padding(.horizontal, 18)
-        .opacity(reveal).offset(y: 8 * (1 - reveal))
-      TsugumiTemariScene(birdScale: 0.19, showsBird: arrived)
-        .opacity(arrived ? 1 : max(0, reveal * 1.4 - 0.4))
+      TsugumiTemariScene(birdScale: 0.19)
         .frame(height: 150)
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("home")) } action: { sceneFrame = $0 }
         .padding(.top, -6)
       // small here: a thicker thread than the key visual's, to read as well
       TsugumiWordmark(weight: 6.5)
-        .opacity(arrived ? 1 : 0)
         .frame(width: 190, alignment: .leading)
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named("home")) } action: { wordFrame = $0 }
         .padding(.horizontal, 18)
       VStack(alignment: .leading, spacing: 8) {
         Button(action: onNew) { Label("新規プロジェクト…", systemImage: "plus.square").frame(maxWidth: .infinity, alignment: .leading) }
@@ -356,7 +316,6 @@ private struct HomeSidebar: View {
         OpenExplainerLink()
       }
       .padding(.horizontal, 18)
-      .opacity(reveal).offset(y: 10 * (1 - reveal))
       Spacer(minLength: 0)
       Spacer(minLength: 0)   // twice: the block sits a little above the middle
     }

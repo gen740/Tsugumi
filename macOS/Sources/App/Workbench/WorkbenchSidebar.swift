@@ -90,7 +90,7 @@ struct WorkbenchSidebar: View {
         }
         ForEach(ids, id: \.self) { id in
           let d = session.external(prefix)?.definitions[id]
-          row(symbol: d?.link != nil ? CardKind.subgraph.symbol : definitionKind(d?.card).symbol, title: id,
+          row(symbol: d?.link != nil ? CardKind.subgraph.symbol : definitionKind(d?.card).symbol, title: session.displayName(key([id])),
               drag: DefinitionDrag.externalDefinitionPrefix + prefix + "\n" + id,
               help: String(localized: "定義をこのプロジェクトの definitions にコピーして Card を置きます")) {
             Task { await placeCopy(prefix, id) }
@@ -102,12 +102,12 @@ struct WorkbenchSidebar: View {
       .selectionDisabled()
     }
     // Definition folders without a Card (left over).
-    let unplaced = session.unplacedDefinitions.filter { defSearch.isEmpty || $0.localizedCaseInsensitiveContains(defSearch) }
+    let unplaced = session.unplacedDefinitions.filter { defSearch.isEmpty || (session.displayName(key([$0])).localizedCaseInsensitiveContains(defSearch) || $0.localizedCaseInsensitiveContains(defSearch)) }
     if !unplaced.isEmpty {
       DisclosureGroup(isExpanded: Binding(get: { expanded.contains("unplaced") || !defSearch.isEmpty },
                                           set: { if $0 { expanded.insert("unplaced") } else { expanded.remove("unplaced") } })) {
         ForEach(unplaced, id: \.self) { id in
-          row(symbol: definitionKind(session.definitions[id]).symbol, title: id, drag: DefinitionDrag.prefix + id,
+          row(symbol: definitionKind(session.definitions[id]).symbol, title: session.displayName(key([id])), drag: DefinitionDrag.prefix + id,
               help: String(localized: "ダブルクリックまたは Canvas へドラッグして配置")) { place(id) }
             .contextMenu {
               Button("Canvas に配置") { place(id) }.disabled(!session.isEditable)
@@ -161,10 +161,9 @@ struct WorkbenchSidebar: View {
     p.prompt = String(localized: "取り込む")
     p.message = String(localized: "取り込む Tsugumi のプロジェクト（tsugumi.json のあるフォルダ）を選んでください。externals にコピーされ、元のフォルダとは連動しません。")
     guard p.runModal() == .OK, let url = p.url else { return }
-    do {
-      tab.selection = [try session.importProject(from: url, in: tab.scope, at: dropPoint)]
-    } catch {
-      importError = (error as? RPCFailure)?.diagnostic ?? "\(error)"
+    Task {
+      do { tab.selection = [try await session.importProject(from: url, in: tab.scope, at: dropPoint)] }
+      catch { importError = (error as? RPCFailure)?.diagnostic ?? "\(error)" }
     }
   }
 }

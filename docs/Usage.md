@@ -1,6 +1,6 @@
 # Usage
 
-You do not need to read this first. Open a demo and **follow the thrush's guide, and you will mostly learn how the screen works**.
+You do not need to read this first. Open a demo and **let the thrush point out where to run it, view its results and try a parameter change**.
 If something is unclear, ask in the chat on the right. The Agent knows the open project and the operations on screen.
 
 ## The first five minutes
@@ -76,13 +76,17 @@ On Mac, the app and the installed browser command use the project's environment 
 
 ## Manage build and scratch space
 
-Open **Settings → project → Build Cache** in Mac or Web. Review the shared total, per-project build cache, last root use and each project's latest-run scratch. **Delete** beside an open project removes its build registrations; open a closed project first to use that action. **Clean shared store** in the Mac app's External Connections settings then removes unrooted store paths. Shared dependencies can stay because another project still keeps them.
+Open **Settings → project → Build Cache** in Mac or Web. Review the shared total, per-project build cache, last root use and each project's total run scratch. **Delete** beside an open project removes its build registrations; open a closed project first to use that action. **Clean shared store** in the Mac app's External Connections settings then removes unrooted store paths. Shared dependencies can stay because another project still keeps them. For this project, select individual past scratch folders and review the selected total, then choose **Delete selected scratch…**. A folder whose size cannot be measured shows **Unknown**; the selected total excludes unknown sizes. The latest run stays available for reruns; older scratch remains until a person deletes it, including after restarting.
 
-The core suggests reviewing this pane when build caches occupy at least 20% of the store disk and at least 1 GiB. The notice never deletes anything. Sizes are cached NAR estimates and can take up to a minute to refresh; errors and unknown measurements are shown explicitly. For scratch lifetime and retained copies, see [Run history](RunHistory.md#copy-or-delete-history).
+The core suggests reviewing this pane when build caches or run scratch occupy at least 20% of their disk and at least 1 GiB. The notice never deletes anything. Build sizes are cached NAR estimates; scratch sizes sum file lengths without following links. Measurements can take up to a minute to refresh; errors and unknown sizes are shown explicitly. For scratch lifetime and retained copies, see [Run history](RunHistory.md#copy-or-delete-history).
 
 ## Card settings and app settings
 
-Open a Card's settings to edit its working copy, then choose **Apply**. Tabs include Source, Ports, Comments, Nix Definition, Run History and Artifacts; the available tabs depend on the Card's kind. Run history and artifacts remain readable while running, but changes to Cards and closing a running project are blocked.
+Card names appear on the Canvas and in lists, history, comparisons and chat references. Renaming changes the name only; tools, file paths and connections keep the permanent identifier. A Card without a name shows its identifier.
+
+Open a Card's settings to edit its working copy, then choose **Apply**. Settings JSON, Card settings and project settings use the same revision check. Inline value edits use the revision at which editing began; leaving an unchanged value does not save it. Text entered while Apply or Save is pending stays unapplied after the submitted text is saved. If another save conflicts, choose **Overwrite** or **Keep edits and reload**; the latter keeps your previous text available to reapply. Tabs include Source, Ports, Comments, Nix Definition, Run History and Artifacts; the available tabs depend on the Card's kind. Run history and artifacts remain readable while running, but changes to Cards and closing a running project are blocked.
+
+Use **Reload External Changes** under save/sync to import edits made outside Tsugumi. If those edits widen Card permissions, review the listed permissions and choose **Allow** to finish reloading or **Decline** to leave the loaded project unchanged.
 
 Use the app settings for language, appearance, model connections, Skills and shortcuts; use project settings for its environment, Canvas, history and Build Cache. Choose Japanese or English under **General** (Japanese by default); restart the Mac app to apply it, while the Web UI reloads itself. Signed [binary caches](BinaryCaches.md) apply at the next Mac VM start.
 
@@ -98,7 +102,7 @@ To implement a plan, describe Drafts, connect their wires and choose **Generate 
 
 To request a change, open **Comments…** on a Card (or its badge), write the request and choose **Generate from comments**. Selected Cards with open comments take precedence; otherwise the button uses all open comments at the current level. Resolved comments are folded and can be reopened. The save row and [version history](Versions.md#comments) show who changed them.
 
-Send **$demo** in a project's chat for a tour. The thrush points at controls and offers replies and action buttons; an action runs only when you press its button. **⌥⌘J** opens or closes the chat. Outside a tour, ask a question in the ordinary chat.
+Send **$demo** in a project's chat for a short tour: run, open the result, and optionally change a parameter, Apply and run again. You can also rerun with unchanged settings to explore reproducibility. The thrush points at controls and result locations; you read and judge the results, without a checklist to confirm. An action runs only when you press its button. **⌥⌘J** opens or closes the chat. Ask for more detail in the ordinary chat.
 
 ### Agent activity
 
@@ -109,3 +113,26 @@ Turn on **Draw thoughts** below the chat input for model-written activity summar
 ### Skills and conversations
 
 Add Skill folders in settings or keep Skills under the project's `skills/`; call one with **$name**. Use the conversation list to search past chats or compact a conversation. Turn on **Web search** under **API** only when you want the provider to receive search terms. [Search and privacy](security.md#web-search)
+
+An interrupted conversation stays interrupted when opened, refreshed, reconnected or after a service restart. The chat shows the operation recorded by the core at interruption (including the tool call and its arguments, when applicable). Choose **Resume** to continue, or send a new message. Resuming reconciles in-flight tool calls against their durable receipts; it does not blindly run them again. Work still running in the core can be observed from another window without resuming it.
+
+### Canvas presentation
+
+Card, output-frame and note positions change when you move them, choose **Arrange**,
+or ask the Agent to change the layout. Showing the Agent's saves or run outputs
+never rearranges the canvas. A new Card is placed when it is created.
+
+**Settings → Appearance → Animate the Agent’s work** is on by default and is stored
+in agentd with the host's Agent settings (shared by the Mac app and its Web UI).
+On the Mac, it stages saved Cards becoming code and threads their wires in sequence.
+Turn it off to show saved Cards and wires immediately, while the work marker follows
+the latest activity. The Web UI already shows saved Cards and wires immediately;
+this setting also controls whether its helpers' work markers wait for queued scenes.
+The bird's visibility and motion, **Draw thoughts**, and source text streaming as
+it is written have separate controls or behaviour.
+
+The Mac app opens directly to Home. Recent projects, demos and project defaults
+load independently; lists show a loading indicator until their first reply. The
+host setup check runs alongside Home and shows missing prerequisites only when
+confirmed. A failed check shows an error, with a retry, rather than claiming that
+the Mac or VM image is unavailable. VM preparation starts when a project opens.

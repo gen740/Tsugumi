@@ -5,17 +5,17 @@
 // stdout/stderr: captured by the core as the invocation's logs.
 //
 // Steps per call: preRun -> the body (`run`) -> postRun. The body is either a
-// package (--package: lib/main.so, loaded once when the worker starts and
-// called in memory) or a bash script (--run). preRun / postRun (--pre /
-// --post) are bash and get no Card inputs; the environment and working
+// package (--package: native lib/main.so or lib/tsugumi-runtime naming an SDK
+// adapter; Card code loads inside its first invocation) or a bash script (--run).
+// preRun / postRun (--pre / --post) are bash and get no Card inputs; the environment and working
 // directory produced by preRun carry over. An earlier failure is never
 // cleared by a later step's success. One deadline covers all steps, and
 // cancel/deadline are checked before each step starts.
 //
 // The environment of a package body, weakest first: what the worker was
 // started with, the call's, what the package set while loading (the top of a
-// Python Card's main.py), preRun's exports. A package is loaded before any
-// preRun, so preRun cannot reach what a library reads as it is loaded.
+// Python Card's main.py), preRun's exports. The first preRun also controls
+// source loading. Package libraries and runtime initialization are invocation work.
 //
 // A bash body gets, per input port P:
 //   JSON_P          path of a JSON file with the message (any size)
@@ -26,7 +26,6 @@
 
 #include <cmath>
 #include <dlfcn.h>
-#include <fcntl.h>
 #include <flatbuffers/idl.h>
 #include <poll.h>
 #include <signal.h>
@@ -100,45 +99,13 @@ bool write_full(int fd, const void* p, size_t n) {
   return true;
 }
 
-// Descriptors received with data frames (SCM_RIGHTS), in arrival order.
-std::vector<int> g_received;
-
-bool recv_full(int fd, void* p, size_t n) {
-  auto* c = static_cast<char*>(p);
-  while (n > 0) {
-    iovec iov{c, n};
-    alignas(cmsghdr) char ctrl[CMSG_SPACE(sizeof(int) * 8)];
-    msghdr msg{};
-    msg.msg_iov = &iov;
-    msg.msg_iovlen = 1;
-    msg.msg_control = ctrl;
-    msg.msg_controllen = sizeof ctrl;
-    ssize_t r = ::recvmsg(fd, &msg, 0);
-    if (r == 0) return false;
-    if (r < 0) {
-      if (errno == EINTR) continue;
-      return false;
-    }
-    for (cmsghdr* h = CMSG_FIRSTHDR(&msg); h; h = CMSG_NXTHDR(&msg, h))
-      if (h->cmsg_level == SOL_SOCKET && h->cmsg_type == SCM_RIGHTS) {
-        size_t k = (h->cmsg_len - CMSG_LEN(0)) / sizeof(int);
-        const int* fds = reinterpret_cast<const int*>(CMSG_DATA(h));
-        g_received.insert(g_received.end(), fds, fds + k);
-      }
-    c += r;
-    n -= static_cast<size_t>(r);
-  }
-  return true;
-}
-
 std::optional<std::string> read_frame(int fd) {
   std::array<char, 4> prefix{};
-  auto rd = fd == kData ? recv_full : read_full;
-  if (!rd(fd, prefix.data(), prefix.size())) return std::nullopt;
+  if (!read_full(fd, prefix.data(), prefix.size())) return std::nullopt;
   const auto len = tsugumi::workerd::decode_length(prefix.data());
   if (len == 0 || len > kMaxFrame) return std::nullopt;
   std::string buf(len, '\0');
-  if (!rd(fd, buf.data(), len)) return std::nullopt;
+  if (!read_full(fd, buf.data(), len)) return std::nullopt;
   return buf;
 }
 
@@ -186,7 +153,7 @@ std::optional<D::FailureKind> kind_from_name(const std::string& n) {
 
 struct Options {
   std::string bash;
-  std::string package;  // a package body: <package>/lib/main.so
+  std::string package;  // native main.so or lib/tsugumi-runtime naming the SDK artifact
   std::string pre;      // a file with bash text
   std::string run;      // a file with bash text (a bash body)
   std::string post;     // a file with bash text
@@ -560,16 +527,19 @@ auto emit_json_impl(void*, const char* name, const char* json) -> int {
 
 auto display_json_impl(void*, const char* json) -> int;
 
-// The package body, loaded when the worker starts (a standby worker is ready
-// before its first call). tsugumi_load / tsugumi_run_start are optional.
-using load_fn = int (*)();
+// Package metadata does not establish provenance. Libraries are opened
+// only inside an invocation; tsugumi_prepare initializes the interpreter
+// and tsugumi_load loads the Card after preRun.
+using prepare_fn = int (*)();
 void* g_lib = nullptr;
 tsugumi_main_fn g_main = nullptr;
+tsugumi_main_fn g_load = nullptr;
+bool g_card_loaded = false;
 tsugumi_main_fn g_run_start = nullptr;
 std::string g_load_error;
 std::string g_last_run;
 std::vector<std::string> g_loaded_env;  // the process environment once the package was loaded
-std::vector<std::string> g_set_by_load;  // the part of it that loading set or changed
+std::vector<std::string> g_set_by_load;  // NAME=value for sets; NAME for removals
 
 std::vector<std::string> process_env() {
   std::vector<std::string> out;
@@ -577,8 +547,36 @@ std::vector<std::string> process_env() {
   return out;
 }
 
-void load_package(const Options& opt) {
-  std::string lib = opt.package + "/lib/main.so";
+auto env_value(const std::vector<std::string>& env, const std::string& name) -> std::optional<std::string> {
+  for (const auto& e : env)
+    if (e.starts_with(name + "=")) return e.substr(name.size() + 1);
+  return std::nullopt;
+}
+
+auto remove_env(std::vector<std::string>& env, const std::string& name) -> void {
+  std::erase_if(env, [&](const auto& e) { return e.starts_with(name + "="); });
+}
+
+// Save only loading's changes, including unset variables. Invocation identity
+// and preRun's transient environment must not become the resident baseline.
+auto remember_loaded_env(const std::vector<std::string>& before) -> void {
+  const auto loaded = process_env();
+  for (const auto& e : before) {
+    const auto name = e.substr(0, e.find('='));
+    if (!env_value(loaded, name)) {
+      g_set_by_load.push_back(name);
+      remove_env(g_loaded_env, name);
+    }
+  }
+  for (const auto& e : loaded)
+    if (std::find(before.begin(), before.end(), e) == before.end()) {
+      g_set_by_load.push_back(e);
+      const auto eq = e.find('=');
+      set_env(g_loaded_env, e.substr(0, eq), e.substr(eq + 1));
+    }
+}
+
+void open_package(const std::string& lib) {
   g_lib = ::dlopen(lib.c_str(), RTLD_NOW | RTLD_LOCAL);
   if (!g_lib) {
     g_load_error = std::string("cannot load ") + lib + ": " + ::dlerror();
@@ -590,8 +588,7 @@ void load_package(const Options& opt) {
     return;
   }
   g_run_start = reinterpret_cast<tsugumi_main_fn>(::dlsym(g_lib, "tsugumi_run_start"));
-  if (auto load = reinterpret_cast<load_fn>(::dlsym(g_lib, "tsugumi_load")); load && load() != 0)
-    g_load_error = lib + ": tsugumi_load failed (see stderr)";
+  g_load = reinterpret_cast<tsugumi_main_fn>(::dlsym(g_lib, "tsugumi_load"));
   std::fflush(stdout);
   std::fflush(stderr);
 }
@@ -635,6 +632,10 @@ tsugumi_call make_call(const Call& call, std::vector<tsugumi_value>& values, con
 // `step` is the call's environment with preRun's exports, `call` without them.
 std::vector<std::string> body_env(const std::vector<std::string>& call, const std::vector<std::string>& step) {
   auto out = g_loaded_env;
+  for (const auto& e : call) {
+    const auto name = e.substr(0, e.find('='));
+    if (!env_value(step, name)) remove_env(out, name);
+  }
   for (const auto& e : step) {
     auto eq = e.find('=');
     set_env(out, e.substr(0, eq), e.substr(eq + 1));
@@ -642,7 +643,10 @@ std::vector<std::string> body_env(const std::vector<std::string>& call, const st
   for (const auto& e : g_set_by_load) {
     auto eq = e.find('=');
     std::string name = e.substr(0, eq);
-    if (get_env(step, name) == get_env(call, name)) set_env(out, name, e.substr(eq + 1));
+    if (env_value(step, name) == env_value(call, name)) {
+      if (eq == std::string::npos) remove_env(out, name);
+      else set_env(out, name, e.substr(eq + 1));
+    }
   }
   return out;
 }
@@ -859,29 +863,61 @@ void execute(const Options& opt, Call& call) {
     }
   }
   if (!call.failure && !opt.package.empty() && may_start("run")) {
-    if (!g_load_error.empty()) {
-      record_failure(D::FailureKind::worker_failed, g_load_error);
-    } else {
-      std::vector<tsugumi_value> values;
-      for (const auto* in : *m->inputs())
-        values.push_back({in->name()->c_str(), static_cast<uint32_t>(in->kind()), in->value()->bytes()->data(),
-                          in->value()->bytes()->size()});
-      apply_env(body_env(call_env, env));
-      if (::chdir(cwd.c_str()) != 0) record_failure(D::FailureKind::worker_failed, "cannot enter working directory " + cwd);
-      tsugumi_call c = make_call(call, values, work, tmp, out_dir);
-      // The first invocation of each run starts it (onRunStart / on_run_start).
-      if (!call.failure && g_run_start && call.run_id != g_last_run) {
-        g_last_run = call.run_id;
-        if (g_run_start(&c) != 0) record_failure(D::FailureKind::worker_failed, "onRunStart failed");
+    std::vector<tsugumi_value> values;
+    for (const auto* in : *m->inputs())
+      values.push_back({in->name()->c_str(), static_cast<uint32_t>(in->kind()), in->value()->bytes()->data(),
+                        in->value()->bytes()->size()});
+    apply_env(body_env(call_env, env));
+    if (::chdir(cwd.c_str()) != 0) record_failure(D::FailureKind::worker_failed, "cannot enter working directory " + cwd);
+    tsugumi_call c = make_call(call, values, work, tmp, out_dir);
+    if (!call.failure && !g_card_loaded && g_load_error.empty() && may_start("source loading")) {
+      if (!g_lib) {
+        const auto descriptor = opt.package + "/lib/tsugumi-runtime";
+        const bool adapter = ::access(descriptor.c_str(), F_OK) == 0;
+        auto runtime = adapter ? read_text(descriptor) : std::string{};
+        if (!runtime.empty() && runtime.back() == '\n') runtime.pop_back();
+        // Runtime initialization is invocation work too: a package filename
+        // does not prove SDK provenance. Preserve lifetime HOME for R/Julia
+        // session caches while the Card itself gets this call's HOME.
+        if (adapter) {
+          auto initialization_env = process_env();
+          if (auto home = env_value(g_loaded_env, "HOME")) set_env(initialization_env, "HOME", *home);
+          apply_env(initialization_env);
+        }
+        const auto before = process_env();
+        if (adapter && (runtime.empty() || runtime.front() != '/'))
+          g_load_error = "the SDK runtime descriptor must name an absolute library path";
+        else
+          open_package(adapter ? runtime : opt.package + "/lib/main.so");
+        if (adapter && g_load_error.empty()) {
+          auto prepare = reinterpret_cast<prepare_fn>(::dlsym(g_lib, "tsugumi_prepare"));
+          if (!prepare || prepare() != 0) g_load_error = "cannot initialize the language runtime (see stderr)";
+        }
+        remember_loaded_env(before);
+        apply_env(body_env(call_env, env));
       }
+      const auto before = process_env();
+      if (g_load_error.empty() && g_load && g_load(&c) != 0)
+        g_load_error = "tsugumi_load failed (see stderr)";
+      remember_loaded_env(before);
+      g_card_loaded = true;
+      std::fflush(stdout);
+      std::fflush(stderr);
+    }
+    if (g_card_loaded) apply_env(body_env(call_env, env));
+    if (!g_load_error.empty()) record_failure(D::FailureKind::worker_failed, g_load_error);
+    // The first invocation of each run starts it (onRunStart / on_run_start).
+    if (!call.failure && may_start("run-start hook") && g_run_start && call.run_id != g_last_run) {
       g_last_run = call.run_id;
-      if (!call.failure) {
-        int rc = g_main(&c);
-        std::fflush(stdout);
-        std::fflush(stderr);
-        if (rc != 0) record_failure(g_cancel.load() ? D::FailureKind::cancelled : D::FailureKind::worker_failed,
-                                    "main.so returned " + std::to_string(rc));
-      }
+      if (g_run_start(&c) != 0) record_failure(D::FailureKind::worker_failed, "onRunStart failed");
+    }
+    g_last_run = call.run_id;
+    if (!call.failure && may_start("main")) {
+      int rc = g_main(&c);
+      std::fflush(stdout);
+      std::fflush(stderr);
+      if (rc != 0) record_failure(g_cancel.load() ? D::FailureKind::cancelled : D::FailureKind::worker_failed,
+                                  "main.so returned " + std::to_string(rc));
     }
   }
   if (!call.failure && !opt.run.empty() && may_start("run")) {
@@ -989,13 +1025,9 @@ int main(int argc, char** argv) {
     else if (k == "--post") opt.post = argv[i + 1];
     else if (k == "--views") g_views = argv[i + 1];
   }
-  if (!opt.package.empty()) {
-    auto before = process_env();
-    load_package(opt);
-    g_loaded_env = process_env();
-    for (const auto& e : g_loaded_env)
-      if (std::find(before.begin(), before.end(), e) == before.end()) g_set_by_load.push_back(e);
-  }
+  // Standby starts only the worker executable. No package-controlled code,
+  // including constructors or an alleged SDK adapter, runs before a call.
+  g_loaded_env = process_env();
   std::thread(control_loop).detach();
   uint64_t last_call = 0;
   while (true) {
@@ -1018,26 +1050,7 @@ int main(int argc, char** argv) {
     }
     g_cancel = false;
     g_call = &call;
-    // Folders passed as descriptors are installed where the call says (the
-    // directories then read /proc/self/fd/<n>); they are closed afterwards.
-    std::vector<int> installed;
-    size_t want = wc->passed_fds() ? wc->passed_fds()->size() : 0;
-    if (want != g_received.size()) {
-      record_failure(D::FailureKind::worker_failed, "the call's folder descriptors did not arrive");
-    } else {
-      for (size_t i = 0; i < want; ++i) {
-        int slot = wc->passed_fds()->Get(i);
-        if (::fcntl(slot, F_GETFD) != -1 || ::dup2(g_received[i], slot) != slot) {
-          record_failure(D::FailureKind::worker_failed, "descriptor " + std::to_string(slot) + " is not free");
-          break;
-        }
-        installed.push_back(slot);
-      }
-    }
-    for (int f : g_received) ::close(f);
-    g_received.clear();
-    if (!call.failure) execute(opt, call);
-    for (int f : installed) ::close(f);
+    execute(opt, call);
     std::fflush(stdout);
     std::fflush(stderr);
     reply(call);

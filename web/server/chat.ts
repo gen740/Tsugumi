@@ -56,8 +56,9 @@ interface Settings {
   /** The chat's Agent may search the web through the provider (its queries
    *  leave for the provider's search service). Off until the user turns it on. */
   webSearch: boolean
-  /** A small model writes what each version changed (off: nothing is sent for it). */
-  versionSummaries: boolean
+  /** Agentd chooses how to produce version notes. */
+  versionNoteMode: 'mechanical' | 'agent'
+  animateAgentWork: boolean
   /** The UI's language (the desktop app's too, on a Mac): the page's strings, the
    *  server's messages, and what tsugumid writes into a project's git. */
   language: Language
@@ -67,7 +68,7 @@ interface Settings {
 const SHARED_KEYS: Record<string, string> = {
   provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
   effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort', allowedPermissions: 'agent.permissions.allowed',
-  webSearch: 'agent.webSearch', versionSummaries: 'versions.summaries', language: 'app.language',
+  animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
 }
 const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }
 const localProfile = () => `web:${ctx.support}`
@@ -461,6 +462,14 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   const projectDir = c.projectDir
   const routes: Record<string, Handler> = {
   'POST /api/skills': (b) => skillsFor(b.path ? projectDir(b.path) : undefined),
+  'GET /api/agent/appearance': async () => {
+    await loadSettings()
+    return { animateWork: settings().animateAgentWork }
+  },
+  'POST /api/agent/appearance': async (b) => {
+    await patchSettings({ animateAgentWork: b.animateWork })
+    return { animateWork: settings().animateAgentWork }
+  },
   'GET /api/settings': async () => ({
     ...settings(),
     revision: { ...revisions },
@@ -472,13 +481,10 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     await patchSettings(b ?? {}, b?.revision ?? { ...revisions })
     return { ...settings(), revision: { ...revisions }, ...await modelCatalogs() }
   },
-  // Only while switched on, and not on the ChatGPT plan (its allowance is for the Agent).
-  'POST /api/versions/summarize': async (b) => {
-    const s = settings()
-    if (!s.versionSummaries) throw ctx.httpError(400, L('版の要約はオフです。'))
-    if (s.provider === 'chatgpt') throw ctx.httpError(400, L('ChatGPT プランでは版の要約を作りません。'))
+  'POST /api/versions/note': async (b) => {
     const project = await core.project(projectDir(b.path))
-    return core.user.call('VersionSummarizeRequest', { project_id: project, commit: String(b.commit), provider: await core.provider(await guideProvider()) })
+    const [anthropic_key_profile, openai_key_profile] = await Promise.all([core.keys.provision('anthropic'), core.keys.provision('openai')])
+    return core.user.call('VersionNoteRequest', { project_id: project, commit: String(b.commit), profile: settingsProfile(), language: settings().language, anthropic_key_profile, openai_key_profile })
   },
   'POST /api/settings/key': async (b) => ({ message: await saveKey(keyedProvider(b.provider), String(b.key ?? '')) }),
   'POST /api/settings/key/delete': async (b) => ({ message: await deleteKey(keyedProvider(b.provider)) }),
@@ -542,7 +548,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const [wait] = [...waitingFor(host.project, a.id), ...waitingFor(host.project, EXTERNAL_SESSION)]
     const access = await core.user.call<{ requests: { id: string; state: string; access: string; scope: string; reason: string; project_id: string }[] }>('AccessListRequest', { conversation_id: a.id })
     const pending = access.requests.find((r) => r.state === 'pending')
-    return { conversation: a.conversation, busy: a.busy, continuable: a.continuable, provider: await providerInfo(),
+    return { conversation: a.conversation, busy: a.busy, resumable: a.resumable, interruptedOperation: a.interruptedOperation, continuable: a.continuable, provider: await providerInfo(),
       permission: pending ? { id: pending.id, asked: [`project_access ${pending.project_id}: ${pending.access} [${pending.scope}] — ${pending.reason}`] } : wait ? { id: wait[0], asked: wait[1].asked } : null }
   },
   'POST /api/chat/send': async (b) => {
@@ -551,6 +557,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const skillNames = Array.isArray(b.skillNames) ? b.skillNames.map(String) : []
     await host.attachSkillFolders(skillNames, a.id)
     await withAccess(host.project, a.id, () => a.send(String(b.text ?? ''), host.events(a.id), turn, {
+      display: String(b.display ?? b.text ?? ''),
       selected_cards: Array.isArray(b.selectedCards) ? b.selectedCards.map(String) : [],
       selected_displays: Array.isArray(b.selectedDisplays) ? b.selectedDisplays.map(String) : [],
       skill_names: [...new Set(skillNames)],
@@ -562,6 +569,11 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/chat/thoughts': async (b) => {
     const a = await chatFor(projectDir(b.path)).agent(String(b.session))
     return core.summarize(a.id, await guideProvider())
+  },
+  'POST /api/chat/resume': async (b) => {
+    const { host, a } = await turnAgent(b)
+    await a.action('Resume', host.events(a.id))
+    return { ok: true }
   },
   'POST /api/chat/continue': async (b) => {
     const { host, a } = await turnAgent(b)

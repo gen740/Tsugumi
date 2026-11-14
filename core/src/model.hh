@@ -66,6 +66,8 @@ struct RunStatusData {
   std::optional<int64_t> ended_at;
   std::optional<FailureData> failure;
   std::optional<std::string> commit;  // the project's version the run started from
+  bool partial_run = false;
+  bool uses_partial_result = false;
   bool terminal() const {
     return state == RunState::succeeded || state == RunState::failed ||
            state == RunState::cancelled;
@@ -166,6 +168,7 @@ struct SavedInputGroup {
   std::string port;
   bool execution_list = false;
   std::vector<Value> values;
+  bool partial_result = false;
 };
 
 auto with_path(const Value& value, const std::string& path) -> Value;

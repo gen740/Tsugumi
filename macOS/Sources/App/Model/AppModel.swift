@@ -31,6 +31,12 @@ final class AppModel {
   let environments: EnvironmentManager
   private(set) var demos: [DemoEntry] = []
   private(set) var recents: [RecentProject] = []
+  private(set) var homeLoaded = false
+  private(set) var demosLoaded = false
+  private(set) var recentsError: String?
+  private(set) var demosError: String?
+  @ObservationIgnored private let requestHome: ((String, [String: Any]) async throws -> [String: Any])?
+  @ObservationIgnored private var homeRefresh: Task<Void, Never>?
   private(set) var sessions: [String: ProjectSession] = [:]
   var error: String?
   /// The main windows there are, each with its project or Home (MainWindowRouting.swift).
@@ -90,13 +96,14 @@ final class AppModel {
   /// The open session for a window value, opening the project if needed.
   func session(ref: ProjectRef) -> ProjectSession? { try? session(for: ref.url) }
 
-  init() {
+  init(refreshOnInit: Bool = true, requestHome: ((String, [String: Any]) async throws -> [String: Any])? = nil) {
+    self.requestHome = requestHome
     let bundle = Bundle.main
     // TSUGUMI_SUPPORT_DIR: another support folder (VM, store), for checks
     // that must not touch the user's own environment.
     let support = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"].map { URL(fileURLWithPath: $0) }
     environments = EnvironmentManager(support: support, image: VMImage.find(bundle: bundle))
-    initialRefresh = Task { await refreshHome() }
+    if refreshOnInit { initialRefresh = Task { await refreshHome() } }
   }
 
   /// The refresh started by `init`. A caller that sets the core's state directory
@@ -104,23 +111,57 @@ final class AppModel {
   private(set) var initialRefresh: Task<Void, Never>?
 
   private func hostRequest(_ method: String, _ fields: [String: Any] = [:]) async throws -> [String: Any] {
-    do { return try await CoreAgentClient.shared.call(method, fields) }
+    do {
+      if let requestHome { return try await requestHome(method, fields) }
+      return try await CoreAgentClient.shared.call(method, fields)
+    }
     catch let failure as CoreAgentFailure { throw HostProjectError(code: failure.code) }
   }
 
-  /// Refreshes presentation values from the host-side core; no local registry.
+  /// Home's first appearance joins the initial read instead of requesting it twice.
+  func showHome() async {
+    if let initialRefresh {
+      await initialRefresh.value
+      self.initialRefresh = nil
+    } else { await refreshHome() }
+  }
+
+  /// Independent host reads update their own parts as soon as each arrives.
   func refreshHome() async {
+    if let homeRefresh { await homeRefresh.value; return }
+    let task = Task {
+      async let recent: Void = refreshRecents()
+      async let catalog: Void = refreshDemos()
+      async let defaults: Void = refreshDefaults()
+      _ = await (recent, catalog, defaults)
+    }
+    homeRefresh = task
+    await task.value
+    homeRefresh = nil
+  }
+
+  private func refreshRecents() async {
+    recentsError = nil
+    do { try await loadRecents(); homeLoaded = true }
+    catch { recentsError = "\(error)" }
+  }
+
+  private func refreshDefaults() async {
+    do { nixpkgsPin = try await hostRequest("HostProjectDefaultsRequest")["nixpkgsPin"] as? String }
+    catch { self.error = "\(error)" }
+  }
+
+  private func refreshDemos() async {
+    demosError = nil
     do {
-      let defaults = try await hostRequest("HostProjectDefaultsRequest")
-      nixpkgsPin = defaults["nixpkgsPin"] as? String
       let catalog = try await hostRequest("HostDemoListRequest", ["language": AppPreferences.Language.running.rawValue])
       demos = (catalog["value"] as? [[String: Any]] ?? []).compactMap { d in
         guard let id = d["id"] as? String, let title = d["title"] as? String, let path = d["path"] as? String else { return nil }
         return DemoEntry(id: id, title: title, description: d["description"] as? String ?? "", url: URL(fileURLWithPath: path),
                          tags: d["tags"] as? [String] ?? [], field: d["field"] as? String)
       }
-      try await loadRecents()
-    } catch { self.error = "\(error)" }
+      demosLoaded = true
+    } catch { demosError = "\(error)" }
   }
 
   static func decodeRecents(_ value: Any) throws -> [RecentProject] {
@@ -165,7 +206,7 @@ final class AppModel {
     guard holders[id] ?? 0 <= 0 else { return }
     holders[id] = nil
     // Edits that could not be saved stay open: opening it again finds them, quitting asks.
-    guard !s.dirty else { return }
+    guard !s.hasUnsavedEdits else { return }
     if let c = chats[id] { GuideController.shared.chatClosed(c) }
     chats[id]?.detach()
     chats[id] = nil

@@ -7,6 +7,8 @@
 
 #include <cstring>
 #include <set>
+#include <random>
+#include <sstream>
 
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -68,6 +70,63 @@ std::string journal_payload(const char* type, uint64_t rev, uint64_t exec_rev, c
 }  // namespace
 
 Store::Store(StoreOptions opts) : opts_(std::move(opts)) {}
+
+auto Store::allocate_card_id(const std::string& name, const std::string& project_path) -> std::string {
+  if (name.empty() || name.size() > 4096 || !text::valid_utf8(name))
+    throw Failed(FailureKind::invalid_request, "Card name must be nonempty UTF-8 (at most 4096 bytes)");
+  // A scope can still be a local draft, so validate its path rather than requiring it on disk.
+  auto rest = project_path;
+  while (!rest.empty()) {
+    if (!rest.starts_with("externals/")) throw Failed(FailureKind::invalid_path, "invalid project_path");
+    rest.erase(0, 10);
+    auto slash = rest.find('/');
+    if (slash == std::string::npos || !valid_id(rest.substr(0, slash)))
+      throw Failed(FailureKind::invalid_path, "invalid project_path");
+    rest.erase(0, slash + 1);
+  }
+  if (!fs::resolves_inside(opts_.root, opts_.root / project_path))
+    throw Failed(FailureKind::invalid_path, "project_path leaves the project");
+  std::string stem;
+  for (unsigned char c : name) {
+    if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) stem += static_cast<char>(c);
+    else if (!stem.empty() && stem.back() != '-') stem += '-';
+    if (stem.size() == 123) break;  // valid_id allows 128 bytes including the salt
+  }
+  while (!stem.empty() && stem.back() == '-') stem.pop_back();
+  if (stem.empty()) stem = "card";
+  // Reservations survive reconnects and restarts, including abandoned drafts.
+  auto reservations = fs::read_file(state_dir() / "card-ids").value_or("");
+  std::set<std::string> issued;
+  std::istringstream lines(reservations);
+  for (std::string line; std::getline(lines, line);) issued.insert(line);
+  auto doc = current();
+  std::set<std::string> canvas_ids;
+  if (project_path.empty()) {
+    for (const auto& card : doc->project.canvas->value().cards->value()) canvas_ids.insert(card.id->value());
+  } else if (doc->sources.count(project_path + "tsugumi.json")) {
+    auto project = parse_external_project(project_path + "tsugumi.json",
+                                          read_source(*doc, project_path + "tsugumi.json"));
+    for (const auto& card : project.canvas->value().cards->value()) canvas_ids.insert(card.id->value());
+  }
+  constexpr std::string_view alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
+  std::random_device random;
+  std::uniform_int_distribution<size_t> pick(0, alphabet.size() - 1);
+  for (size_t attempt = 0; attempt < 10000; ++attempt) {
+    std::string id = stem + '-';
+    for (int i = 0; i < 4; ++i) id += alphabet[pick(random)];
+    auto key = project_path + id;
+    auto dir = project_path + def_dir(id);
+    bool exists = issued.count(key) || canvas_ids.count(id) || (project_path.empty() && doc->definitions.count(id)) ||
+                  stdfs::exists(opts_.root / dir) || stdfs::exists(opts_.root / project_path / "externals" / id);
+    auto source = doc->sources.lower_bound(dir);
+    exists = exists || (source != doc->sources.end() && source->first.starts_with(dir));
+    if (exists) continue;
+    fs::write_atomic(state_dir() / "card-ids", reservations + key + "\n", 0600);
+    return id;
+  }
+  throw Failed(FailureKind::resource_limit, "cannot allocate a unique Card identifier");
+}
 
 void Store::fault(const char* point) const {
   if (opts_.fault == point) {
@@ -134,6 +193,8 @@ std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc, const s
     key.update(id);
     if (def.meta_json) key.update(*def.meta_json);
   }
+  for (const auto& [path, src] : doc->sources)
+    if (Document::is_card_meta_file(path)) { key.update(path); key.update(src.hash); }
   auto resolution_key = key.finish_hex();
   if (doc->resolution && doc->resolution_key == resolution_key) return doc;  // resolved before commit
   doc->resolution_key = resolution_key;
@@ -402,13 +463,12 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
       case K::SetLayout: keys = {"layout"}; break;
       case K::PutDefinition:
       case K::RemoveDefinition: keys = {"def:" + c.id}; break;
-      case K::RenameDefinition: keys = {"def:" + c.id, "def:" + c.to}; break;
       default: keys = {"src:" + c.path}; break;
     }
     for (const auto& key : keys)
       if (!targets.insert(key).second)
         throw Failed(FailureKind::invalid_request, "multiple changes target " + key.substr(key.find(':') + 1));
-    if (c.kind == K::RemoveDefinition || c.kind == K::RenameDefinition) removed_defs.insert(c.id);
+    if (c.kind == K::RemoveDefinition) removed_defs.insert(c.id);
   }
   for (const auto& c : changes) {
     if (c.kind == K::PutSource || c.kind == K::PatchSource || c.kind == K::RemoveSource) {
@@ -498,40 +558,6 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
         }
         break;
       }
-      case K::RenameDefinition: {
-        if (!valid_id(c.to)) throw Failed(FailureKind::invalid_request, "invalid definition id " + c.to);
-        auto it = doc->definitions.find(c.id);
-        if (it == doc->definitions.end())
-          throw Failed(FailureKind::not_found, "definition " + c.id + " does not exist", {{"definition", c.id}});
-        if (doc->definitions.count(c.to))
-          throw Failed(FailureKind::invalid_request, "a Card named " + c.to + " already exists", {{"definition", c.to}});
-        {
-          std::error_code ec;
-          if (stdfs::exists(opts_.root / def_dir(c.to), ec))
-            throw Failed(FailureKind::external_change, def_dir(c.to) + " exists on disk but not in the document; Reload first",
-                         {{"path", def_dir(c.to)}});
-        }
-        doc->definitions[c.to] = std::move(it->second);
-        doc->definitions.erase(c.id);
-        // The sources move with the folder (written anew, removed at the old place).
-        std::vector<std::pair<std::string, SourceEntry>> moved;
-        for (auto s = doc->sources.begin(); s != doc->sources.end();) {
-          if (s->first.starts_with(def_dir(c.id))) {
-            moved.emplace_back(s->first, s->second);
-            s = doc->sources.erase(s);
-          } else {
-            ++s;
-          }
-        }
-        for (const auto& [path, entry] : moved) {
-          std::string to = def_dir(c.to) + path.substr(def_dir(c.id).size());
-          files[path] = std::nullopt;
-          files[to] = read_source(*base, path);
-          doc->sources[to] = entry;
-        }
-        st.delta.renamed.emplace_back(c.id, c.to);
-        break;
-      }
       case K::PutSource:
       case K::PatchSource:
       case K::RemoveSource: {
@@ -607,23 +633,18 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
   }
   wrap([&] { check_structure(*doc); });
 
-  // layout.json is keyed by Card id: it follows a Card renamed or taken off the
-  // canvas. A client that already moved it in this save has left nothing to do,
-  // and its bytes stay as sent.
+  // Removing a Card also removes its layout entries.
   {
     std::set<std::string> on_canvas;
     for (const auto& card : doc->project.canvas->value().cards->value()) on_canvas.insert(card.id->value());
-    std::map<std::string, std::string> moved;
-    for (const auto& [from, to] : st.delta.renamed)
-      if (on_canvas.count(to)) moved[from] = to;
     std::set<std::string> gone;
     for (const auto& card : base->project.canvas->value().cards->value()) {
       const auto& id = card.id->value();
-      if (!on_canvas.count(id) && !moved.count(id)) gone.insert(id);
+      if (!on_canvas.count(id)) gone.insert(id);
     }
-    if (!moved.empty() || !gone.empty())
+    if (!gone.empty())
       wrap([&] {
-        auto followed = layout_following_cards(doc->layout_json, moved, gone);
+        auto followed = layout_without_cards(doc->layout_json, gone);
         if (followed != doc->layout_json) {
           doc->layout = parse_layout_json(followed);
           doc->layout_json = std::move(followed);

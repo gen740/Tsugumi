@@ -79,7 +79,7 @@ def machine(tmp_path):
                   shift
                 done
                 mkdir -p "$out/bin"
-                printf '#!/bin/sh\\necho built %s\\n' "$(cat "$src/VERSION")" > "$out/bin/tsugumi"
+                printf '#!/bin/sh\\necho %s\\n' "$(cat "$src/VERSION")" > "$out/bin/tsugumi"
                 chmod +x "$out/bin/tsugumi"
                 '''))
         tools = {t: shutil.which(t) for t in ("curl", "shasum", "sha256sum", "tar", "gzip", "mktemp", "cut", "rm", "mkdir", "mv", "ln", "cat", "chmod", "dirname", "readlink", "printf")}
@@ -88,12 +88,15 @@ def machine(tmp_path):
         for name, found in tools.items():
             if found and not (bin_dir / name).exists():
                 (bin_dir / name).symlink_to(found)
+        # Keep the real tools: the simulated OS need not match the userland on
+        # PATH (notably GNU coreutils from Nix on macOS).
         path = f"{stubs}:{bin_dir}" + (f":{path_extra}" if path_extra else "")
         env = {"HOME": str(home), "PATH": path, "TSUGUMI_INSTALL_BASE": release.as_uri()}
         return subprocess.run(command or ["/bin/sh", str(SCRIPT)], capture_output=True, text=True, env=env)
 
     install.home = home
     install.release = release
+    install.stubs = stubs
     return install
 
 
@@ -106,7 +109,8 @@ def test_a_mac_gets_the_command_in_local_bin_and_nothing_else(machine):
     # Says where it is and that PATH lacks it, and leaves the shell's configuration alone.
     assert "PATH に入っていません" in r.stdout
     assert [p.name for p in machine.home.iterdir()] == [".local"]
-    assert sorted(p.name for p in (machine.home / ".local" / "share" / "tsugumi").iterdir()) == ["1.2.3", "current"]
+    data = machine.home / ".local/share/tsugumi"
+    assert sorted(p.name for p in data.iterdir()) == sorted([(data / "current").resolve().name, "current"])
 
 
 def test_a_folder_on_path_is_not_reported(machine):
@@ -130,8 +134,85 @@ def test_a_new_version_replaces_the_old_one(machine):
     assert machine("Darwin", "arm64").returncode == 0
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.4")
     assert machine("Darwin", "arm64").returncode == 0
-    assert sorted(p.name for p in (machine.home / ".local" / "share" / "tsugumi").iterdir()) == ["1.2.4", "current"]
+    data = machine.home / ".local/share/tsugumi"
+    assert len(list(data.iterdir())) == 3  # Both immutable generations and current.
+    assert (data / "current").resolve().name.startswith("1.2.4.")
     assert subprocess.run([machine.home / ".local" / "bin" / "tsugumi"], capture_output=True, text=True).stdout.strip() == "1.2.4"
+
+
+def test_failed_same_version_build_keeps_the_current_command(machine):
+    artifact(machine.release, "tsugumi-linux.tar.gz", "1.2.3")
+    assert machine("Linux", "x86_64", nix=True).returncode == 0
+    command = machine.home / ".local/bin/tsugumi"
+    before = subprocess.check_output([command], text=True)
+    executable(machine.stubs / "nix", "#!/bin/sh\nexit 1\n")
+    result = machine("Linux", "x86_64")
+    assert result.returncode != 0
+    assert subprocess.check_output([command], text=True) == before
+
+
+def test_update_preserves_foreign_directories_and_old_runtime_files(machine):
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
+    assert machine("Darwin", "arm64").returncode == 0
+    data = machine.home / ".local/share/tsugumi"
+    old = (data / "current").resolve()
+    foreign = data / "research"
+    foreign.mkdir()
+    (foreign / "notes").write_text("keep")
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.4")
+    assert machine("Darwin", "arm64").returncode == 0
+    assert (foreign / "notes").read_text() == "keep"
+    assert (old / "tsugumi").exists()
+
+
+def test_reinstalling_the_same_version_keeps_the_previous_generation(machine):
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
+    assert machine("Darwin", "arm64").returncode == 0
+    data = machine.home / ".local/share/tsugumi"
+    previous = (data / "current").resolve()
+    assert machine("Darwin", "arm64").returncode == 0
+    assert (data / "current").resolve() != previous
+    assert subprocess.check_output([previous / "tsugumi"], text=True).strip() == "1.2.3"
+    assert subprocess.check_output([machine.home / ".local/bin/tsugumi"], text=True).strip() == "1.2.3"
+
+
+def test_failed_version_check_keeps_the_current_command(machine):
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
+    assert machine("Darwin", "arm64").returncode == 0
+    # A checksum-valid release whose executable reports a different version.
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.4")
+    tree = machine.release / "build/1.2.4/tsugumi"
+    executable(tree / "tsugumi", "#!/bin/sh\necho wrong\n")
+    name = "tsugumi-macos-arm64.tar.gz"
+    with tarfile.open(machine.release / name, "w:gz") as archive:
+        archive.add(tree, "tsugumi")
+    (machine.release / f"{name}.sha256").write_text(hashlib.sha256((machine.release / name).read_bytes()).hexdigest())
+    result = machine("Darwin", "arm64")
+    assert result.returncode != 0
+    assert "Version check failed" in result.stderr
+    assert subprocess.check_output([machine.home / ".local/bin/tsugumi"], text=True).strip() == "1.2.3"
+    assert len(list((machine.home / ".local/share/tsugumi").iterdir())) == 2
+
+
+@pytest.mark.parametrize("target", [".local/bin/tsugumi", ".local/share/tsugumi/current"])
+def test_failed_link_switch_keeps_the_current_command(machine, target):
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
+    assert machine("Darwin", "arm64").returncode == 0
+    data = machine.home / ".local/share/tsugumi"
+    previous = (data / "current").readlink()
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.4")
+    # Fail only the final rename, after the real utility's capability probe.
+    executable(machine.stubs / "mv", f'''#!/bin/sh
+for destination do :; done
+[ "$destination" != "$HOME/{target}" ] || exit 1
+exec "{shutil.which("mv")}" "$@"
+''')
+    result = machine("Darwin", "arm64")
+    assert result.returncode != 0
+    assert (data / "current").readlink() == previous
+    assert subprocess.check_output([machine.home / ".local/bin/tsugumi"], text=True).strip() == "1.2.3"
+    assert sorted(p.name for p in data.iterdir()) == sorted([str(previous), "current"])
+    assert [p.name for p in (machine.home / ".local/bin").iterdir()] == ["tsugumi"]
 
 
 @needs_server
@@ -162,7 +243,7 @@ def test_linux_builds_the_source_with_nix(machine, arch):
     artifact(machine.release, "tsugumi-linux.tar.gz", "1.2.3")
     r = machine("Linux", arch, nix=True)
     assert r.returncode == 0, r.stderr
-    assert subprocess.run([machine.home / ".local" / "bin" / "tsugumi"], capture_output=True, text=True).stdout.strip() == "built 1.2.3"
+    assert subprocess.run([machine.home / ".local" / "bin" / "tsugumi"], capture_output=True, text=True).stdout.strip() == "1.2.3"
 
 
 def test_what_is_not_supported_says_so(machine):
@@ -208,6 +289,7 @@ def test_uninstall_previews_then_removes_only_the_installed_command(machine, sys
     assert machine(system, arch, nix=nix).returncode == 0
     data = machine.home / ".local/share/tsugumi"
     command = machine.home / ".local/bin/tsugumi"
+    release = (data / "current").resolve()
     kept = [machine.home / "Documents/Tsugumi/project/tsugumi.json",
             machine.home / "Library/Application Support/Tsugumi/vm.img",
             machine.home / ".config/tsugumi/settings.json", data / "my-notes.txt"]
@@ -217,20 +299,38 @@ def test_uninstall_previews_then_removes_only_the_installed_command(machine, sys
     store = machine.home / "nix-store-fixture"
     store.mkdir()
     (store / "package").write_text("keep store output")
-    (data / "1.2.3/store-output").symlink_to(store, target_is_directory=True)
+    (release / "store-output").symlink_to(store, target_is_directory=True)
     args = [shutil.which("node"), str(SERVER), "--open", "--reuse", "uninstall"]
     preview = machine(system, arch, nix=nix, command=args)
     assert preview.returncode == 0, preview.stderr
     assert "uninstall --yes" in preview.stdout
-    assert command.exists() and (data / "1.2.3").exists()
+    assert command.exists() and release.exists()
     removed = machine(system, arch, nix=nix, command=args + ["--yes"])
     assert removed.returncode == 0, removed.stderr
     assert not command.is_symlink() and not (data / "current").is_symlink()
-    assert not (data / "1.2.3").exists()
+    assert not release.exists()
     assert all(f.read_text() == "keep me" for f in kept)
     assert (store / "package").read_text() == "keep store output"
     again = machine(system, arch, nix=nix, command=args + ["--yes"])
     assert again.returncode == 0 and "No installer-managed" in again.stdout
+
+
+@needs_server
+def test_uninstall_removes_marked_generations_and_preserves_foreign_directories(machine):
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
+    assert machine("Darwin", "arm64").returncode == 0
+    data = machine.home / ".local/share/tsugumi"
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.4")
+    assert machine("Darwin", "arm64").returncode == 0
+    foreign = data / "research"
+    foreign.mkdir()
+    (foreign / "notes").write_text("keep")
+    # A copied marker for another directory is not proof of ownership.
+    (foreign / ".installed-by-tsugumi").write_text("another-directory")
+    result = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "uninstall", "--yes"])
+    assert result.returncode == 0, result.stderr
+    assert list(data.iterdir()) == [foreign]
+    assert (foreign / "notes").read_text() == "keep"
 
 
 @needs_server
@@ -249,6 +349,7 @@ def test_uninstall_refuses_replaced_or_redirected_installations(machine, change)
     assert machine("Darwin", "arm64").returncode == 0
     data = machine.home / ".local/share/tsugumi"
     command = machine.home / ".local/bin/tsugumi"
+    release = (data / "current").resolve()
     external = machine.home / "external"
     external.mkdir()
     (external / "keep").write_text("keep")
@@ -256,14 +357,14 @@ def test_uninstall_refuses_replaced_or_redirected_installations(machine, change)
         command.unlink()
         command.write_text("other command")
     elif change in ("data", "bin", "version"):
-        target = {"data": data, "bin": command.parent, "version": data / "1.2.3"}[change]
+        target = {"data": data, "bin": command.parent, "version": release}[change]
         target.rename(external / "original")
         target.symlink_to(external / "original", target_is_directory=True)
     elif change == "current":
         (data / "current").unlink()
         (data / "current").symlink_to(external, target_is_directory=True)
     else:
-        (data / "1.2.3/.installed-by-tsugumi").unlink()
+        (release / ".installed-by-tsugumi").unlink()
     r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "uninstall", "--yes"])
     assert r.returncode != 0
     assert (external / "keep").read_text() == "keep"
@@ -491,6 +592,8 @@ def test_a_second_run_opens_a_page_on_the_running_server(tmp_path):
     opened = tmp_path / "opened"
     for name in ("open", "xdg-open"):
         executable(stubs / name, f'#!/bin/sh\necho "$1" >> {opened}\n')
+    project = tmp_path / "project with spaces"
+    write_project(project)
     env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(data), PATH=f"{stubs}:{os.environ['PATH']}")
     first = subprocess.Popen(["node", str(SERVER), "--port", "0", "--reuse"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
     try:
@@ -498,15 +601,65 @@ def test_a_second_run_opens_a_page_on_the_running_server(tmp_path):
         deadline = time.monotonic() + 10
         while not (data / "server.json").exists() and time.monotonic() < deadline:
             time.sleep(0.05)
-        r = subprocess.run(["node", str(SERVER), "--open", "--reuse"], capture_output=True, text=True, env=env, timeout=30)
+        r = subprocess.run(["node", str(SERVER), "--open", "--reuse", str(project)], capture_output=True, text=True, env=env, timeout=30)
         assert r.returncode == 0, r.stderr
         assert "動いています" in r.stdout
         while not opened.exists() and time.monotonic() < deadline:
             time.sleep(0.05)
-        assert re.fullmatch(rf"http://127\.0\.0\.1:{port}/\?key=[0-9a-f]+\n", opened.read_text())
+        from urllib.parse import parse_qs, urlparse
+        shown = urlparse(opened.read_text().strip())
+        assert shown.port == port
+        assert parse_qs(shown.query)["project"] == [str(project.resolve())]
     finally:
         first.terminate()
         first.wait(10)
+        stop_resident_services(tmp_path)
+
+
+@needs_server
+def test_another_build_is_refused_even_with_the_same_release_version(tmp_path):
+    data = tmp_path / "data"
+    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(data))
+    first = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    try:
+        assert "Tsugumi web UI:" in first.stdout.readline()
+        deadline = time.monotonic() + 10
+        while not (data / "server.json").exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        info = json.loads((data / "server.json").read_text())
+        other = tmp_path / "other/web/dist/server.js"
+        other.parent.mkdir(parents=True)
+        shutil.copy(SERVER, other)
+        result = subprocess.run(["node", str(other), "--reuse"], capture_output=True, text=True, env=env, timeout=10)
+        assert result.returncode != 0
+        assert "different Tsugumi build" in result.stderr and "Stop that host" in result.stderr
+        assert json.loads((data / "server.json").read_text()) == info
+        assert first.poll() is None
+    finally:
+        first.terminate()
+        first.wait(10)
+        stop_resident_services(tmp_path)
+
+
+@needs_server
+def test_simultaneous_commands_end_with_one_host(tmp_path):
+    data = tmp_path / "data"
+    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(data))
+    processes = [subprocess.Popen(["node", str(SERVER), "--reuse", "--port", "0"],
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env) for _ in range(2)]
+    try:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline and all(p.poll() is None for p in processes):
+            time.sleep(0.05)
+        hosts = [p for p in processes if p.poll() is None]
+        assert len(hosts) == 1
+        assert sorted(p.returncode for p in processes if p.poll() is not None) == [0]
+        assert json.loads((data / "server.json").read_text())["pid"] == hosts[0].pid
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.terminate()
+            process.wait(10)
         stop_resident_services(tmp_path)
 
 

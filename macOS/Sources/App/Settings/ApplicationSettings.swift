@@ -37,6 +37,7 @@ struct ApplicationSettings: View {
     /// Where each pane's values are kept, said on the pane.
     var storage: String {
       switch self {
+      case .appearance: return String(localized: "この Mac の外観設定と、このホストの agentd の Agent 表示設定")
       case .api: return String(localized: "このホスト（設定は agentd、API キーは macOS Keychain）")
       case .connections: return String(localized: "表示のみ（開いているプロジェクトの接続先）")
       case .binaryCaches: return String(localized: "この Mac の共有実行環境（全プロジェクト）")
@@ -255,6 +256,7 @@ private struct UpdateSettings: View {
 }
 
 private struct AppearanceSettings: View {
+  @HostStorage("agent.animateWork") private var animateWork = true
   @Environment(AppPreferences.self) private var prefs
   @State private var items = PreviewSamples.items()
 
@@ -272,10 +274,13 @@ private struct AppearanceSettings: View {
         Toggle("グリッドを表示（移動時に吸着）", isOn: $prefs.showGrid)
         Slider(value: $prefs.gridSize, in: 10...60, step: 5) { Text("グリッド間隔 \(Int(prefs.gridSize))") }
         Toggle("実行中の接続線を動かす", isOn: $prefs.animateLines)
+        Toggle("Agent の作業をアニメーションで表示", isOn: $animateWork)
+          .help("オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの agentd に保存します。")
         Picker("作業中の Agent", selection: $prefs.agentAvatar) {
           ForEach(AgentAvatar.allCases) { Text($0.label).tag($0) }
         }
         .help("Agent が作業している間、Canvas の上でその様子を見せる姿です。表示しなくても、Card や接続の変化は見えます。")
+        if let error = CorePreferences.shared.error { Text(error).foregroundStyle(.red) }
       }
       .formStyle(.grouped)
       .frame(width: 300)
@@ -289,6 +294,7 @@ private struct AppearanceSettings: View {
       }
       .padding(12)
     }
+    .task { await CorePreferences.shared.reload() }
   }
 }
 

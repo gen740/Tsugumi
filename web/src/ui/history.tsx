@@ -16,6 +16,7 @@ import { InvocationPackages } from './environments'
 import { Icon } from './icons'
 import { RunLogView } from './logs'
 import { L } from '../i18n'
+import { runMark } from '../model/runMark'
 
 type Filter = 'all' | 'succeeded' | 'failed'
 type Detail = 'io' | 'log' | 'packages' | 'info'
@@ -142,7 +143,8 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                   <Icon name={rs.icon} style={{ color: id === runId ? undefined : `var(--${rs.color})` }} />
                   <div className="flex1 min0">
                     <div className="callout">{formatMillis(r.status!.acceptedAt)}</div>
-                    <div className="caption secondary ellipsis">{rs.label} · 対象 {segs(r.target).join('/')}</div>
+                    {runMark(r) && <div className="caption">{runMark(r)}</div>}
+                    <div className="caption secondary ellipsis">{rs.label} · 対象 {session.displayPath(segs(r.target))}</div>
                   </div>
                 </div>
               )
@@ -150,6 +152,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
           </div>
         </div>,
         <div key="detail" className="col fill">
+          {runMark(record?.run ?? runs.find(r => s(r.status?.runId) === runId)) && <div className="caption pad6">{runMark(record?.run ?? runs.find(r => s(r.status?.runId) === runId))}</div>}
           {!runId ? <Empty title={L('実行を選んでください')} icon="list.bullet.rectangle" /> : (
             <>
               <div className="row gap8 center pad6 border-bottom">
@@ -173,6 +176,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                 {detail === 'io' && (rec ? (
                   <div className="scroll pad10 col gap8">
                     {(rec.recordIo === false || record?.recordingDisabled) && <span className="label secondary"><Icon name="info.circle" />{L('この Card は入出力を記録していません（設定 > 入出力 > 入出力を記録）。')}</span>}
+                    {runMark(record?.run) && <span className="caption">{runMark(record?.run)}</span>}
                     <div className="headline">{L('入力')}</div>
                     {!rec.inputs.length && <span className="secondary">{L('なし')}</span>}
                     {rec.inputs.map((v, i) => <ValueBox key={i} v={v} />)}
@@ -222,7 +226,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                       </Section>
                       {rec && rec.inputSources.length > 0 && (
                         <Section title={L('入力元')}>
-                          {rec.inputSources.map((x, i) => <Value key={i} label={s(x.port)} value={`${segs(x.card).join('/')} #${x.invocation ?? 0n}`} />)}
+                          {rec.inputSources.map((x, i) => <Value key={i} label={s(x.port)} value={`${session.displayPath(segs(x.card))} #${x.invocation ?? 0n}`} />)}
                         </Section>
                       )}
                       {record.orphaned && <div className="secondary pad10">{L('この Card は文書から削除されています。')}</div>}
@@ -350,13 +354,15 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
   }
 
   const q = search.toLowerCase()
+  const mark = runMark(runs.find(r => s(r.status?.runId) === runId))
   const members = (selected?.members ?? []).filter((m) => !q || s(m.path).toLowerCase().includes(q))
   return (
     <div className="col fill">
       <div className="row gap8 center pad6 border-bottom">
         <Select label={L('実行')} style={{ maxWidth: 360 }} value={runId ?? ''} onChange={(v) => setRunId(v || undefined)}
-          options={runs.map((r) => ({ value: s(r.status!.runId), label: `${formatMillis(r.status!.acceptedAt)} · ${runState(r.status!.state).label}` }))} />
+          options={runs.map((r) => ({ value: s(r.status!.runId), label: `${formatMillis(r.status!.acceptedAt)} · ${runState(r.status!.state).label}${runMark(r) ? ` · ${runMark(r)}` : ''}` }))} />
         <span className="spacer" />
+        {mark && <span className="caption">{mark}</span>}
         {selected && member && (
           <Button onClick={() => void read(selected, member).then((d) => download(member.split('/').pop() ?? 'artifact', d)).catch((e) => setError(errorText(e)))}>{L('書き出す…')}</Button>
         )}

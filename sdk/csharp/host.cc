@@ -12,6 +12,7 @@
 
 namespace {
 using Entry = int (*)(const tsugumi_call *);
+load_assembly_and_get_function_pointer_fn g_load = nullptr;
 Entry g_main = nullptr;
 Entry g_run_start = nullptr;
 void *g_host = nullptr;
@@ -91,7 +92,7 @@ auto load_entry(load_assembly_and_get_function_pointer_fn load,
 }
 } // namespace
 
-extern "C" auto tsugumi_load() -> int {
+extern "C" auto tsugumi_prepare() -> int {
   // A Card is not a debugging endpoint. No diagnostic socket is needed in its
   // filesystem/network sandbox; this does not change its application logging.
   ::setenv("DOTNET_EnableDiagnostics", "0", 1);
@@ -126,8 +127,12 @@ extern "C" auto tsugumi_load() -> int {
   close(handle); // Closes configuration only, not the process-owned runtime.
   if (delegate_status != 0 || !pointer)
     return 1;
-  const auto load =
-      reinterpret_cast<load_assembly_and_get_function_pointer_fn>(pointer);
+  g_load = reinterpret_cast<load_assembly_and_get_function_pointer_fn>(pointer);
+  return 0;
+}
+
+extern "C" auto tsugumi_load(const tsugumi_call*) -> int {
+  const auto load = g_load;
   void *check = nullptr;
   if (!load_entry(load, "CheckLayout", &check) ||
       reinterpret_cast<CheckLayout>(check)(

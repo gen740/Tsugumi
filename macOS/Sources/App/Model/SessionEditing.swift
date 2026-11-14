@@ -81,7 +81,7 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     }
   }
   var symbol: String { isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (rawValue.hasPrefix("report_") || [.python, .cpp, .go, .rust, .ruby, .csharp, .marimo].contains(self) ? .code : .draft)).symbol }
-  /// A name for the new Card (its id; made unique).
+  /// The human name used when creating a Card; the core generates its identifier.
   var baseName: String {
     switch self {
     case .matplotlib, .plotly, .altair: return "visualization"
@@ -109,8 +109,13 @@ extension ProjectSession {
     return def["language"] == nil ? .draft : .code
   }
 
-  /// A Card's name is its id (and its definition folder).
-  func displayName(_ k: CardKey) -> String { path(k).last ?? k }
+  /// The human name; exact addresses keep the permanent identifier.
+  func displayName(_ k: CardKey) -> String { cardMeta(k)?["name"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? path(k).last ?? k }
+
+  /// A human-readable path. Tools and evidence links use the original segments.
+  func displayPath(_ segments: [String]) -> String {
+    segments.indices.map { displayName(key(Array(segments.prefix($0 + 1)))) }.joined(separator: "/")
+  }
 
   func scopeName(_ scope: [String]) -> String {
     scope.isEmpty ? (project["name"]?.string ?? identity.url.lastPathComponent) : displayName(key(scope))
@@ -165,28 +170,21 @@ extension ProjectSession {
 
   // MARK: - Cards and connections
 
-  /// A free Card name in a scope's project: not a Card, a definition folder
-  /// or an external there.
-  func uniqueId(_ base: String, in scope: [String] = []) -> String {
-    let prefix = projectPrefix(scope) ?? ""
-    var existing = Set(cards(in: scope).compactMap { $0["id"]?.string })
-    if prefix.isEmpty {
-      existing.formUnion(definitions.keys)
-      existing.formUnion(links.keys)
-      existing.formUnion(confirmedDefinitions.keys)
-      existing.formUnion(confirmedLinks.keys)
-    } else {
-      existing.formUnion(external(prefix).map { Array($0.definitions.keys) } ?? [])
+  /// Runs an asynchronous canvas edit and presents any failure in the workbench.
+  func performCardEdit(_ operation: @escaping @MainActor () async throws -> Void) {
+    Task { do { try await operation() } catch { notice = "\(error)" } }
+  }
+
+  /// All new identifiers come from the core, including unsaved nested projects.
+  func newCardId(_ name: String, in scope: [String] = []) async throws -> String {
+    guard let prefix = projectPrefix(scope) else { throw RPCFailure(kind: .invalidPath, diagnostic: "unknown Card scope") }
+    let id: String
+    if let cardIdProvider { id = try await cardIdProvider(name, prefix) }
+    else {
+      guard let rpc else { throw RPCError.disconnected }
+      id = try await rpc.cardId(name: name, projectPath: prefix).id
     }
-    let ext = prefix + "externals/"
-    existing.formUnion(sourcePaths.filter { $0.hasPrefix(ext) }.compactMap { $0.dropFirst(ext.count).split(separator: "/").first.map(String.init) })
-    existing.formUnion(effectiveExternals.keys.filter { $0.hasPrefix(ext) }.compactMap { $0.dropFirst(ext.count).split(separator: "/").first.map(String.init) })
-    let clean = base.lowercased().map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "-" }
-    var stem = String(clean).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-    if stem.isEmpty { stem = "card" }
-    var id = stem
-    var n = 2
-    while existing.contains(id) { id = "\(stem)-\(n)"; n += 1 }
+    guard projectPrefix(scope) == prefix else { throw RPCFailure(kind: .invalidPath, diagnostic: "Card scope changed") }
     return id
   }
 
@@ -201,7 +199,7 @@ extension ProjectSession {
   }
 
   /// A new Card's name can be one a Card had: nothing of that Card stays with it.
-  /// The core keeps this project's layout up with renames and deletes, but a Card
+  /// The core removes this project's layout entries on deletion, but a Card
   /// in Card's layout or a file written by hand can still hold a frame.
   private func startClean(_ k: CardKey) {
     forgetResult(k)
@@ -223,12 +221,13 @@ extension ProjectSession {
   /// `clearOfOthers`: at the nearest place where it covers nothing (a Card put
   /// on the canvas without the user aiming it at this very spot).
   func addCard(template t: DefinitionTemplate, in scope: [String], at point: CGPoint, name: String? = nil,
-               clearOfOthers: Bool = false) -> CardKey {
-    let id = uniqueId(name ?? t.baseName, in: scope)
+               clearOfOthers: Bool = false) async throws -> CardKey {
+    let id = try await newCardId(name ?? t.baseName, in: scope)
     let k = key(scope + [id])
     edit { s in
       s.appendCard(id, in: scope)
       s.writeTemplate(t, card: k)
+      s.updateMeta(k) { $0["name"] = .string(name ?? t.baseName) }
       s.setPosition(k, clearOfOthers ? s.freeSpot(near: point, for: k, in: scope) : point)
     }
     return k
@@ -282,7 +281,7 @@ extension ProjectSession {
     -> (id: String, apply: (ProjectSession) -> Void)? {
     guard let d = prefix.isEmpty ? definitionDrafts[id] : external(prefix)?.definitions[id] else { return nil }
     let dir = prefix + "definitions/\(id)/"
-    let newId = uniqueId(name ?? id, in: scope)
+    guard let newId = try? await newCardId(name ?? d.meta?["name"]?.string ?? id, in: scope) else { return nil }
     let toPrefix = projectPrefix(scope) ?? ""
     var files: [String: Data] = [:]
     for p in sourcePaths where p.hasPrefix(dir) {
@@ -294,14 +293,15 @@ extension ProjectSession {
     var link = d.link
     var ext: ExternalCopy?
     if let name = link?["external"]?.string {
-      let extName = uniqueId(name, in: scope)
+      guard let extName = try? await newCardId(name, in: scope) else { return nil }
       ext = await copyExternal(from: prefix + "externals/\(name)/", to: toPrefix + "externals/\(extName)/")
       link = .object([("external", .string(extName))])
     }
     // The copy's comments are comments of its own.
-    var meta = d.meta
-    if let comments = meta?["comments"]?.array {
-      meta?["comments"] = .array(comments.map { c in
+    var meta = d.meta ?? .object([])
+    meta["name"] = .string(name ?? d.meta?["name"]?.string ?? id)
+    if let comments = meta["comments"]?.array {
+      meta["comments"] = .array(comments.map { c in
         var n = c
         n["id"] = .string(UUID().uuidString.lowercased())
         return n
@@ -359,13 +359,13 @@ extension ProjectSession {
   func placeExternalCopy(from: String, in scope: [String], at point: CGPoint) async -> CardKey? {
     guard external(from) != nil else { return nil }
     let base = from.split(separator: "/").last.map(String.init) ?? "sub"
-    let name = uniqueId(base, in: scope)
+    guard let name = try? await newCardId(base, in: scope) else { return nil }
     let toPrefix = projectPrefix(scope) ?? ""
     let copy = await copyExternal(from: from, to: toPrefix + "externals/\(name)/")
     let k = key(scope + [name])
     edit { s in
       copy.apply(s)
-      s.setCardDefinition(k, DefinitionDraft(card: .object([]), meta: nil, link: .object([("external", .string(name))])))
+      s.setCardDefinition(k, DefinitionDraft(card: .object([]), meta: .object([("name", .string(base))]), link: .object([("external", .string(name))])))
       s.appendCard(name, in: scope)
       s.setPosition(k, point)
     }
@@ -389,7 +389,7 @@ extension ProjectSession {
   /// copied to externals/<name>/ (without .tsugumi, .git and other hidden
   /// folders) and placed in the scope.
   @discardableResult
-  func importProject(from folder: URL, in scope: [String], at point: CGPoint) throws -> CardKey {
+  func importProject(from folder: URL, in scope: [String], at point: CGPoint) async throws -> CardKey {
     let fm = FileManager.default
     guard fm.fileExists(atPath: folder.appendingPathComponent("tsugumi.json").path) else {
       throw RPCFailure(kind: .invalidRequest, diagnostic: String(localized: "tsugumi.json のあるフォルダを選んでください。"))
@@ -418,7 +418,7 @@ extension ProjectSession {
       let parts = rel.split(separator: "/").dropLast()
       return parts.count % 2 == 0 && stride(from: 0, to: parts.count, by: 2).allSatisfy { parts[parts.startIndex + $0] == "externals" }
     }.map { String($0.dropLast("tsugumi.json".count)) }
-    let name = uniqueId(folder.lastPathComponent, in: scope)
+    let name = try await newCardId(folder.lastPathComponent, in: scope)
     let to = (projectPrefix(scope) ?? "") + "externals/\(name)/"
     var docs: [String: ExternalProject] = [:]
     for p in projects {
@@ -440,7 +440,7 @@ extension ProjectSession {
         s.sourceEdits[to + rel] = d
       }
       for (p, e) in docs.sorted(by: { $0.key < $1.key }) { s.createExternal(p, e) }
-      s.setCardDefinition(k, DefinitionDraft(card: .object([]), meta: nil, link: .object([("external", .string(name))])))
+      s.setCardDefinition(k, DefinitionDraft(card: .object([]), meta: .object([("name", .string(folder.lastPathComponent))]), link: .object([("external", .string(name))])))
       s.appendCard(name, in: scope)
       s.setPosition(k, point)
     }
@@ -452,14 +452,9 @@ extension ProjectSession {
   func duplicate(_ keys: Set<CardKey>, in scope: [String]) async -> Set<CardKey> {
     var map: [String: String] = [:]
     var applies: [(ProjectSession) -> Void] = []
-    var taken: Set<String> = []
     for k in keys.sorted() {
       guard let id = path(k).last else { continue }
-      var n = 1
-      var want = id
-      while taken.contains(uniqueId(want, in: scope)) { n += 1; want = "\(id)-\(n)" }
-      guard let c = await copyDefinition(from: k, to: scope, name: uniqueId(want, in: scope)) else { continue }
-      taken.insert(c.id)
+      guard let c = await copyDefinition(from: k, to: scope) else { continue }
       map[id] = c.id
       applies.append(c.apply)
     }
@@ -491,28 +486,30 @@ extension ProjectSession {
     return made
   }
 
-  /// Why a Card cannot take a name (nil: it can).
+  /// Names are independent of identifiers and may be shared by several Cards.
   func cardNameProblem(_ k: CardKey, _ raw: String) -> String? {
-    let new = raw.trimmingCharacters(in: .whitespaces)
-    guard new != path(k).last else { return nil }
-    guard !new.isEmpty, new.count <= 128, new != ".", new != "..",
-          new.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }) else {
-      return String(localized: "名前に使えるのは英数字と - _ . だけです（128 文字まで）。")
-    }
-    if uniqueId(new, in: Array(path(k).dropLast())) != new { return String(localized: "「\(new)」はすでに使われています。") }
-    return nil
+    let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    return name.isEmpty || name.utf8.count > 4096 ? String(localized: "名前を入力してください（4096 バイトまで）。") : nil
   }
 
   // MARK: - A Draft written on the canvas
 
   /// Whether a Draft has no name of its own: its id is one made for it.
   func draftUntitled(_ k: CardKey) -> Bool {
-    kind(k) == .draft && displayName(k).range(of: #"^draft(-[0-9]+)?$"#, options: .regularExpression) != nil
+    kind(k) == .draft && displayName(k) == "draft"
   }
 
   /// Starts writing a Draft's name and content on its Card.
-  func startDraftEdit(_ k: CardKey) {
-    inlineDraft = InlineDraft(card: k, name: draftUntitled(k) ? "" : displayName(k), content: cardMeta(k)?["content"]?.string ?? "")
+  func startDraftEdit(_ k: CardKey, revision existing: RevisionEdit? = nil) async {
+    if existing == nil, let current = inlineDraft {
+      guard current.card != k else { return }
+      _ = await finishDraftEdit()
+      guard inlineDraft == nil else { return }
+    }
+    let name = draftUntitled(k) ? "" : displayName(k), content = cardMeta(k)?["content"]?.string ?? ""
+    let revision = existing ?? RevisionEdit()
+    revision.reload(rev)
+    inlineDraft = InlineDraft(card: k, name: name, content: content, initialName: name, initialContent: content, revision: revision)
   }
 
   /// Why the name typed on a Draft's Card cannot be taken (no name is fine).
@@ -521,113 +518,56 @@ extension ProjectSession {
   }
 
   /// Keeps what was written. A name the Card cannot take stays as it was, with
-  /// a notice. The Card's key when it was renamed.
-  func finishDraftEdit() async -> CardKey? {
-    guard let e = inlineDraft else { return nil }
-    inlineDraft = nil
-    guard instance(e.card) != nil else { return nil }
-    if e.content != cardMeta(e.card)?["content"]?.string ?? "" {
-      edit { s in s.updateMeta(e.card) { $0["content"] = e.content.isEmpty ? nil : .string(e.content) } }
+  /// a notice. The Card's permanent key when its name changed.
+  func finishDraftEdit(overwrite: Bool = false) async -> CardKey? {
+    if let task = draftFinishTask { return await task.value }
+    guard inlineDraft != nil else { return nil }
+    let task = Task { @MainActor in
+      var renamed: CardKey?
+      repeat {
+        let result = await self.finishDraftEditOnce(overwrite: overwrite)
+        renamed = result ?? renamed
+        guard let current = self.inlineDraft else { break }
+        if current.revision.conflictRev != nil || current.revision.error != nil { break }
+      } while true
+      self.draftFinishTask = nil
+      return renamed
     }
-    // No name: an id is made for it (a Draft that has none keeps the one it has).
-    var name = e.name.trimmingCharacters(in: .whitespaces)
-    if name.isEmpty {
-      if draftUntitled(e.card) { return nil }
-      name = uniqueId("draft", in: Array(path(e.card).dropLast()))
-    }
-    guard name != displayName(e.card) else { return nil }
-    do {
-      try await renameCard(e.card, to: name)
-      return key(Array(path(e.card).dropLast()) + [name])
-    } catch {
-      notice = (error as? RPCFailure)?.diagnostic ?? "\(error)"
-      return nil
-    }
+    draftFinishTask = task
+    return await task.value
   }
 
-  /// Renames a Card (its id, its definition folder): saved at once, with its
-  /// connections and positions following (and, for this project's Cards, its
-  /// run history).
-  func renameCard(_ k: CardKey, to raw: String) async throws {
-    guard let old = path(k).last else { return }
-    let scope = Array(path(k).dropLast())
-    let new = raw.trimmingCharacters(in: .whitespaces)
-    guard new != old else { return }
-    if let problem = cardNameProblem(k, new) { throw RPCFailure(kind: .invalidRequest, diagnostic: problem) }
-    if dirty { await save() }
-    if dirty { throw RPCFailure(kind: .validationFailed, diagnostic: saveError ?? String(localized: "変更を保存できませんでした。")) }
-    guard let rpc else { throw RPCError.disconnected }
-    func renamedGraph(_ g: JSONValue) -> JSONValue {
-      var g = g
-      g["cards"] = .array((g["cards"]?.array ?? []).map { $0["id"]?.string == old ? .object([("id", .string(new))]) : $0 })
-      g["connections"] = .array((g["connections"]?.array ?? []).map { c in
-        var c = c
-        for side in ["from", "to"] where c[side]?["card"]?.string == old { c[side]?["card"] = .string(new) }
-        return c
-      })
-      return g
-    }
-    func renamedLayout(_ l: JSONValue) -> JSONValue {
-      var lay = l
-      func rk(_ s: String) -> String { s == old ? new : s.hasPrefix(old + "/") ? new + s.dropFirst(old.count) : s }
-      for field in ["cards", "displays"] {
-        if let o = lay[field]?.object { lay[field] = .object(o.map { (rk($0.0), $0.1) }) }
-      }
-      for field in ["notes", "groups"] {
-        if let arr = lay[field]?.array {
-          lay[field] = .array(arr.map { item in
-            var item = item
-            if let cs = item["cards"]?.array { item["cards"] = .array(cs.map { $0.string == old ? .string(new) : $0 }) }
-            if let outs = item["outputs"]?.array {
-              item["outputs"] = .array(outs.map { o in var o = o; if o["card"]?.string == old { o["card"] = .string(new) }; return o })
-            }
-            return item
-          })
-        }
-      }
-      return lay
-    }
-    guard let prefix = projectPrefix(scope) else { return }
-    if prefix.isEmpty {
-      var proj = confirmedProject
-      proj["canvas"] = renamedGraph(proj["canvas"] ?? .object([]))
-      let lay = renamedLayout(confirmedLayout)
-      var changes = [Change.setProject(proj.serialized()), Change.renameDefinition(id: old, to: new)]
-      if lay != confirmedLayout { changes.append(Change.setLayout(lay.serialized())) }
-      _ = try await rpc.save(baseRev: rev, opId: UUID(), origin: "ui:\(viewId.uuidString.lowercased())", changes: changes)
-      return
-    }
-    // Inside a Card in Card: the external's documents and files are rewritten.
-    let from = prefix + "definitions/\(old)/", to = prefix + "definitions/\(new)/"
-    var files: [String: Data] = [:]
-    for p in sourcePaths where p.hasPrefix(from) && !ExternalProject.isDocument(String(p.dropFirst(prefix.count))) {
-      files[to + p.dropFirst(from.count)] = try await rpcBytes(p)
-    }
-    edit { s in
-      s.updateExternal(prefix) { e in
-        e.project["canvas"] = renamedGraph(e.project["canvas"] ?? .object([]))
-        e.project["boundary"] = e.project["boundary"].map { b in
-          var b = b
-          for side in ["inputs", "outputs"] {
-            if let o = b[side]?.object {
-              b[side] = .object(o.map { n, v in var v = v; if v["card"]?.string == old { v["card"] = .string(new) }; return (n, v) })
-            }
-          }
-          return b
-        }
-        e.layout = renamedLayout(e.layout)
-        e.definitions[new] = e.definitions[old]
-        e.definitions[old] = nil
-      }
-      for p in s.sourcePaths where p.hasPrefix(from) && !ExternalProject.isDocument(String(p.dropFirst(prefix.count))) { s.removeSource(p) }
-      for (p, d) in files {
-        s.sourceRemovals.remove(p)
-        s.sourceEdits[p] = d
-      }
-    }
-    // The run history of the Card (and of anything inside it) follows the name.
-    pendingCardRenames.append((from: scope + [old], to: scope + [new]))
+  private func finishDraftEditOnce(overwrite: Bool) async -> CardKey? {
+    // Local canvas edits may still be saving when typing starts. Their deltas
+    // advance this editor's base; another client's deltas never do.
     await save()
+    guard let e = inlineDraft else { return nil }
+    let contentChanged = e.content != e.initialContent, nameChanged = e.name != e.initialName
+    guard instance(e.card) != nil, contentChanged || nameChanged else { inlineDraft = nil; return nil }
+    let trimmed = e.name.trimmingCharacters(in: .whitespacesAndNewlines)
+    let name = trimmed.isEmpty ? "draft" : trimmed
+    if nameChanged, let problem = cardNameProblem(e.card, name) { notice = problem; e.revision.error = problem; return nil }
+    let ok = await e.revision.apply(self, overwrite: overwrite) { s in
+      s.updateMeta(e.card) { m in
+        if contentChanged { m["content"] = e.content.isEmpty ? nil : .string(e.content) }
+        if nameChanged { m["name"] = .string(name) }
+      }
+    }
+    if ok, inlineDraft?.revision === e.revision {
+      if inlineDraft?.name == e.name && inlineDraft?.content == e.content { inlineDraft = nil }
+      else { inlineDraft?.initialName = e.name; inlineDraft?.initialContent = e.content }
+    }
+    return ok && nameChanged ? e.card : nil
+  }
+
+  /// Changes only the human name. History and all exact addresses keep their identifiers.
+  func renameCard(_ k: CardKey, to raw: String) async throws {
+    let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let problem = cardNameProblem(k, name) { throw RPCFailure(kind: .invalidRequest, diagnostic: problem) }
+    guard name != displayName(k) else { return }
+    edit { s in s.updateMeta(k) { $0["name"] = .string(name) } }
+    await save()
+    if dirty { throw RPCFailure(kind: .validationFailed, diagnostic: saveError ?? String(localized: "変更を保存できませんでした。")) }
   }
 
   func deleteCards(_ keys: Set<CardKey>, in scope: [String]) {
@@ -672,8 +612,20 @@ extension ProjectSession {
     }
   }
 
-  func connect(from: (CardKey, String), to: (CardKey, String), in scope: [String]) {
+  func connect(from: (CardKey, String), to: (CardKey, String), in scope: [String]) async throws {
     guard let fromId = path(from.0).last, let toId = path(to.0).last else { return }
+    let existing = connections(in: scope).filter { $0["from"]?["card"]?.string == fromId && $0["from"]?["port"]?.string == from.1 }
+    let next = existing.count == 1 ? existing[0]["to"]?["card"]?.string.map { key(scope + [$0]) } : nil
+    let needsFork = !existing.isEmpty && kind(from.0) != .fork && (next.map { kind($0) != .fork } ?? true)
+    let forkId = needsFork ? try await newCardId("fork", in: scope) : nil
+    func valid(_ end: (CardKey, String), output: Bool) -> Bool {
+      guard instance(end.0) != nil, Array(path(end.0).dropLast()) == scope else { return false }
+      if forkId == nil { return true } // No suspension: the caller's visible ports are still current.
+      if end.1 == CardGeometry.newPort { return kind(end.0) == .draft }
+      let ports = portData(end.0)
+      return (output ? ports.outputs : ports.inputs).contains { $0.name == end.1 }
+    }
+    guard isEditable, valid(from, output: true), valid(to, output: false) else { return }
     edit { s in
       // An end at CardGeometry.newPort makes the Draft's port now.
       let fromPort = s.draftPort(from, output: true, other: to.1, in: scope)
@@ -693,7 +645,7 @@ extension ProjectSession {
           // The output already feeds a fork: one more branch of it.
           source = (forkId, s.addForkBranch(next, for: toId))
         } else {
-          let fork = s.insertFork(after: (fromId, fromPort), wires: taken, in: scope)
+          let fork = s.insertFork(after: (fromId, fromPort), wires: taken, in: scope, id: forkId!)
           source = (fork, s.addForkBranch(key(scope + [fork]), for: toId))
         }
       }
@@ -768,11 +720,11 @@ extension ProjectSession {
 
   /// A fork Card after an output: the output's wires (`wires`) now leave the
   /// fork, a branch each, and the output feeds the fork. Its id.
-  func insertFork(after from: (card: String, port: String), wires: [JSONValue], in scope: [String]) -> String {
-    let id = uniqueId("fork", in: scope)
+  func insertFork(after from: (card: String, port: String), wires: [JSONValue], in scope: [String], id: String) -> String {
     let k = key(scope + [id])
     appendCard(id, in: scope)
     writeTemplate(.fork, card: k)
+    updateMeta(k) { $0["name"] = .string("fork") }
     updateCard(k) { c in c["params"] = .array([.object([("name", .string("branches")), ("type", .string("string[]")), ("data", .array([]))])]) }
     // Between the output's Card and the first Card it fed.
     let a = position(key(scope + [from.card]))
@@ -860,16 +812,19 @@ extension ProjectSession {
   }
 
   func setParam(_ k: CardKey, _ name: String, _ value: JSONValue?) {
-    edit { s in
-      s.updateCard(k) { c in
-        var params = c["params"]?.array ?? []
-        if let i = params.firstIndex(where: { $0["name"]?.string == name }) {
-          params[i]["data"] = value
-        } else if c["template"]?.string == CardKind.switchCard.rawValue, name == "value", let value {
-          params.append(.object([("name", .string(name)), ("type", .string("bool")), ("data", value)]))
-        }
-        c["params"] = .array(params)
+    edit { $0.updateParam(k, name, value) }
+  }
+
+  /// Mutates the value inside the caller's transaction, without an autosave.
+  func updateParam(_ k: CardKey, _ name: String, _ value: JSONValue?) {
+    updateCard(k) { c in
+      var params = c["params"]?.array ?? []
+      if let i = params.firstIndex(where: { $0["name"]?.string == name }) {
+        params[i]["data"] = value
+      } else if c["template"]?.string == CardKind.switchCard.rawValue, name == "value", let value {
+        params.append(.object([("name", .string(name)), ("type", .string("bool")), ("data", value)]))
       }
+      c["params"] = .array(params)
     }
   }
 
@@ -881,7 +836,7 @@ extension ProjectSession {
   func makeSubgraph(_ keys: Set<CardKey>, in scope: [String], name: String = "sub") async -> CardKey? {
     let ids = Set(keys.compactMap { path($0).last })
     guard !ids.isEmpty, let scopePrefix = projectPrefix(scope) else { return nil }
-    let newId = uniqueId(name, in: scope)
+    guard let newId = try? await newCardId(name, in: scope) else { return nil }
     let newKey = key(scope + [newId])
     let ext = scopePrefix + "externals/\(newId)/"
     // Files of the Cards' definition folders, and of their own externals.
@@ -971,7 +926,7 @@ extension ProjectSession {
       }
       for (to, inner) in moved { s.createExternal(to, inner) }
       s.createExternal(ext, e)
-      s.setCardDefinition(newKey, DefinitionDraft(card: .object([]), meta: nil, link: .object([("external", .string(newId))])))
+      s.setCardDefinition(newKey, DefinitionDraft(card: .object([]), meta: .object([("name", .string(name))]), link: .object([("external", .string(newId))])))
       s.updateLayout(of: scope) { l in
         if var cards = l["cards"]?.object {
           cards.removeAll { k, _ in ids.contains(where: { k == $0 || k.hasPrefix($0 + "/") }) }
@@ -1031,7 +986,7 @@ extension ProjectSession {
     edit { $0.changeNote(id, fn) }
   }
 
-  private func changeNote(_ id: String, _ fn: (inout JSONValue) -> Void) {
+  func changeNote(_ id: String, _ fn: (inout JSONValue) -> Void) {
     guard let sc = scopeHolding("notes", id) else { return }
     updateLayout(of: sc) { l in
       guard var notes = l["notes"]?.array, let i = notes.firstIndex(where: { $0["id"]?.string == id }) else { return }
@@ -1396,10 +1351,6 @@ extension ProjectSession {
 
   // MARK: - Definitions
 
-  func setDefinition(_ id: String, card: JSONValue, meta: JSONValue?) {
-    definitionEdits[id] = DefinitionDraft(card: card, meta: meta)
-  }
-
   func removeDefinition(_ id: String) { removeCardDefinition(key([id])) }
 
   /// Removes a Card's definition folder (its documents and every file in it).
@@ -1519,6 +1470,13 @@ extension ProjectSession {
   func clearBuildCache() async throws -> Tsugumi_RPC_ProjectCacheClearResultT {
     guard let rpc else { throw RPCError.disconnected }
     return try await rpc.clearCache(opId: UUID())
+  }
+
+  func deleteRunScratch(paths: [String]) async throws -> Tsugumi_RPC_RunScratchDeleteResultT {
+    guard let rpc else { throw RPCError.disconnected }
+    let result = try await rpc.deleteRunScratch(opId: UUID(), paths: paths)
+    await refreshCacheUsage()
+    return result
   }
 
   func deleteRunHistory(endedBefore: Date?) async throws -> Tsugumi_RPC_RunHistoryDeleteResultT {

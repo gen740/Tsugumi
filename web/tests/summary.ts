@@ -1,3 +1,4 @@
+import { cardIds } from './cardIds'
 // A Card's summary is in its _meta.json, whatever its kind, and only there.
 import assert from 'node:assert/strict'
 import { get, parse, str } from '../src/shared/json'
@@ -13,18 +14,19 @@ const { ProjectSession } = await import('../src/model/session')
 const { CardEditorModel } = await import('../src/ui/cardSettings')
 
 const session = () => {
-  const s = new ProjectSession('/p', 'k', 'p')
+  const s = cardIds(new ProjectSession('/p', 'k', 'p'))
   s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   s.layout = parse('{}')
   s.scheduleSave = () => {} // no tsugumid here
   s.save = async () => {}
+  s.applyEdit = async (_rev, change) => { change(s); return s.rev }
   s.connected = true
   return s
 }
 
 {
   const s = session()
-  const code = s.addCard('python', [], { x: 0, y: 0 })
+  const code = await s.addCard('python', [], { x: 0, y: 0 })
   s.updateCard(code, (c) => c.set('description', 'in the settings'))
   assert.equal(s.nodeData(code).summary, undefined, 'the settings hold no summary')
   assert.equal(s.cardDescription(code), undefined)
@@ -43,7 +45,7 @@ const session = () => {
   // The small Cards keep their shape: the summary is on hover.
   const s = session()
   for (const kind of ['trigger', 'fork', 'merge', 'branch'] as const) {
-    const k = s.addCard(kind, [], { x: 0, y: 0 })
+    const k = await s.addCard(kind, [], { x: 0, y: 0 })
     s.updateMeta(k, (m) => m.set('description', 'what it does'))
     assert.ok(!new CardGeometry(s.nodeData(k), 'topToBottom').summary, kind)
     assert.deepEqual(s.cardDetails(k), ['what it does'], kind)

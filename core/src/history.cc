@@ -173,12 +173,15 @@ RunSummaryData run_row(const sql::Stmt& st) {
   s.target = unkey(st.text(9));
   s.propagate = st.i64(10) != 0;
   if (!st.is_null(11)) s.status.commit = st.text(11);
+  s.status.partial_run = st.i64(12) != 0;
+  s.status.uses_partial_result = st.i64(13) != 0;
   return s;
 }
 
 constexpr const char* kRunCols =
     "run_id, state, rev, execution_rev, accepted_at, started_at, ended_at, failure, source_hash, "
-    "target, propagate, (SELECT commit_id FROM run_commits c WHERE c.run_id = runs.run_id)";
+    "target, propagate, (SELECT commit_id FROM run_commits c WHERE c.run_id = runs.run_id), "
+    "partial_run, uses_partial_result";
 
 InvocationSummaryData inv_row(const sql::Stmt& st, const std::string& run_id, int cached_col = -1,
                               int detail_col = -1, int service_col = -1) {
@@ -211,7 +214,9 @@ std::string run_tables(const std::string& p) {
   state INTEGER NOT NULL, rev INTEGER, execution_rev INTEGER,
   accepted_at INTEGER, started_at INTEGER, ended_at INTEGER, failure BLOB,
   source_hash TEXT NOT NULL, target TEXT NOT NULL, propagate INTEGER NOT NULL,
-  has_artifacts INTEGER NOT NULL DEFAULT 0);
+  has_artifacts INTEGER NOT NULL DEFAULT 0,
+  local_run INTEGER NOT NULL DEFAULT 0,
+  partial_run INTEGER NOT NULL DEFAULT 0, uses_partial_result INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(build_environments(
   run_id TEXT NOT NULL, id TEXT NOT NULL, derivation TEXT NOT NULL, manifest TEXT NOT NULL,
   system TEXT NOT NULL, path_count INTEGER NOT NULL, PRIMARY KEY(run_id, id));
@@ -256,9 +261,9 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-constexpr int kHistoryVersion = 5;
+constexpr int kHistoryVersion = 6;
 constexpr const char* kCopyFormat = "tsugumi-runs";
-constexpr const char* kCopyVersion = "4";
+constexpr const char* kCopyVersion = "6";
 
 namespace stdfs = std::filesystem;
 
@@ -589,12 +594,14 @@ auto History::put_substituters(sql::Db& db, const std::string& run_id, const std
 
 void History::insert_run(sql::Db& db, const RunSummaryData& s, const std::string& op_id) {
   db.prepare("INSERT INTO runs(run_id, op_id, state, rev, execution_rev, accepted_at, started_at, "
-             "ended_at, failure, source_hash, target, propagate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)")
+             "ended_at, failure, source_hash, target, propagate, local_run, partial_run, uses_partial_result) "
+             "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,1,?,?)")
       .bind(1, *s.status.run_id).bind(2, op_id).bind(3, static_cast<int>(s.status.state))
       .bind(4, s.status.rev).bind(5, s.status.execution_rev).bind(6, s.status.accepted_at)
       .bind(7, s.status.started_at).bind(8, s.status.ended_at)
       .bind_null(9)
       .bind(10, s.source_hash).bind(11, key(s.target)).bind(12, s.propagate)
+      .bind(13, s.status.partial_run).bind(14, s.status.uses_partial_result)
       .run();
   if (s.status.commit)
     db.prepare("INSERT OR REPLACE INTO run_commits(run_id, commit_id) VALUES(?,?)").bind(1, *s.status.run_id).bind(2, *s.status.commit).run();
@@ -602,10 +609,11 @@ void History::insert_run(sql::Db& db, const RunSummaryData& s, const std::string
 }
 
 void History::update_run(sql::Db& db, const RunStatusData& s) {
-  auto st = db.prepare("UPDATE runs SET state=?, started_at=?, ended_at=?, failure=? WHERE run_id=?");
+  auto st = db.prepare("UPDATE runs SET state=?, started_at=?, ended_at=?, failure=?, "
+                       "partial_run=?, uses_partial_result=? WHERE run_id=?");
   st.bind(1, static_cast<int>(s.state)).bind(2, s.started_at).bind(3, s.ended_at);
   bind_failure(st, 4, s.failure);
-  st.bind(5, *s.run_id).run();
+  st.bind(5, s.partial_run).bind(6, s.uses_partial_result).bind(7, *s.run_id).run();
 }
 
 void History::put_status(sql::Db& db, const InvocationSummaryData& s) {
@@ -762,6 +770,7 @@ auto History::put_last_input(sql::Db& db, const CardPath& card, const std::strin
     schema::SavedInputGroupJson entry;
     *entry.port = group.port;
     *entry.execution_list = group.execution_list;
+    *entry.partial_result = group.partial_result;
     for (const auto& v : group.values) {
       schema::SavedInputJson j;
       *j.kind = static_cast<int>(v.kind);
@@ -868,7 +877,8 @@ std::optional<RunSummaryData> History::run(sql::Db& db, const std::string& run_i
 }
 
 std::optional<RunSummaryData> History::latest_run(sql::Db& db) {
-  auto st = db.prepare(std::string("SELECT ") + kRunCols + " FROM runs ORDER BY seq DESC LIMIT 1");
+  // Import sequence and clocks on other machines do not describe local scratch.
+  auto st = db.prepare(std::string("SELECT ") + kRunCols + " FROM runs WHERE local_run=1 ORDER BY seq DESC LIMIT 1");
   if (!st.step()) return std::nullopt;
   return run_row(st);
 }
@@ -1125,7 +1135,7 @@ std::optional<History::LastInput> History::last_input(sql::Db& db, const CardPat
   if (schema::decode(st.text(2), list)) return std::nullopt;
   std::map<std::pair<std::string, std::string>, types::TypeRef> loaded_types;
   for (const auto& entry : *list.groups) {
-    SavedInputGroup group{*entry.port, *entry.execution_list, {}};
+    SavedInputGroup group{*entry.port, *entry.execution_list, {}, *entry.partial_result};
     for (const auto& value : *entry.values) {
       Value v;
       v.name = group.port;
@@ -1221,7 +1231,7 @@ std::vector<RunSummaryData> History::runs_page(sql::Db& db, std::optional<CardPa
   std::vector<RunSummaryData> out;
   while (st.step()) {
     out.push_back(run_row(st));
-    if (seqs) seqs->push_back(st.i64(12));  // after kRunCols
+    if (seqs) seqs->push_back(st.i64(14));  // after kRunCols, including both partial-run flags
   }
   return out;
 }
@@ -1348,14 +1358,18 @@ struct Copied {
   bool has_card = true;
 };
 // Parents first: a run is complete in the other database once it commits.
+// `schemas` is copied by hash below. The other local tables (active_environments,
+// statuses, remote_jobs, remote_releases, last_inputs, receipts) describe local
+// progress, recovery, rerun inputs or operations, rather than finished records.
 constexpr Copied kCopied[] = {
     {"runs",
      "run_id, op_id, state, rev, execution_rev, accepted_at, started_at, ended_at, failure, source_hash, "
-     "target, propagate, has_artifacts",
+     "target, propagate, has_artifacts, partial_run, uses_partial_result",
      "seq", false},
     {"build_environments", "run_id, id, derivation, manifest, system, path_count", "rowid", false},
     {"environment_paths", "run_id, environment_id, position, path", "rowid", false},
     {"run_substituters", "run_id, position, url", "rowid", false},
+    {"run_commits", "run_id, commit_id", "rowid", false},
     {"run_cards", "run_id, card", "rowid"},
     {"run_batches", "run_id, card, activation, invocation_count, execution_list, complete, failed, outputs", "rowid"},
     {"invocations",
@@ -1549,7 +1563,8 @@ size_t History::export_runs(const std::filesystem::path& copy) {
   return n;
 }
 
-std::vector<std::string> History::delete_runs(const std::filesystem::path& copy, std::optional<int64_t> ended_before) {
+std::vector<std::string> History::delete_runs(const std::filesystem::path& copy, std::optional<int64_t> ended_before,
+                                             const std::optional<std::vector<std::string>>& run_ids) {
   std::lock_guard<std::mutex> l(copy_mu_);
   std::error_code ec;
   bool has_copy = std::filesystem::exists(copy, ec);
@@ -1564,6 +1579,12 @@ std::vector<std::string> History::delete_runs(const std::filesystem::path& copy,
       auto st = db->prepare("INSERT OR IGNORE INTO temp.moving SELECT run_id FROM " + s + ".runs WHERE state IN (" +
                             finished_states() + ") AND (?1 IS NULL OR ended_at < ?1)");
       st.bind(1, ended_before).run();
+    }
+    if (run_ids) {
+      db->exec("CREATE TEMP TABLE selected_runs(run_id TEXT PRIMARY KEY)");
+      for (const auto& id : *run_ids)
+        db->prepare("INSERT OR IGNORE INTO temp.selected_runs VALUES(?)").bind(1, id).run();
+      db->exec("DELETE FROM temp.moving WHERE run_id NOT IN (SELECT run_id FROM temp.selected_runs)");
     }
     db->exec("DELETE FROM temp.moving WHERE run_id IN (SELECT run_id FROM main.remote_jobs)");
     auto st = db->prepare("SELECT run_id FROM temp.moving");
@@ -1598,33 +1619,5 @@ std::vector<std::string> History::delete_runs(const std::filesystem::path& copy,
   return ids;
 }
 
-void History::rename_card(const std::filesystem::path& copy, const std::string& from, const std::string& to) {
-  std::lock_guard<std::mutex> l(copy_mu_);
-  std::error_code ec;
-  bool has_copy = std::filesystem::exists(copy, ec);
-  auto db = has_copy ? with_copy(path_, copy) : std::make_unique<sql::Db>(path_.string());
-  std::vector<std::string> schemas = {"main"};
-  if (has_copy) schemas.push_back("ex");
-  // "<card>", "<card>/<inner>" and the saved inputs' "<card>#<port>".
-  auto rewrite = [&](const std::string& s, const std::string& table, const std::string& col) {
-    db->prepare("UPDATE " + s + "." + table + " SET " + col + " = ?2 || substr(" + col + ", length(?1) + 1) WHERE " +
-                col + " = ?1 OR substr(" + col + ", 1, length(?1) + 1) IN (?1 || '/', ?1 || '#')")
-        .bind(1, from).bind(2, to).run();
-  };
-  Txn t(*db);
-  for (const auto& s : schemas) {
-    for (const auto& c : kCopied)
-      if (c.has_card) rewrite(s, c.table, "card");
-    rewrite(s, "runs", "target");
-    if (s == "main") {
-      rewrite(s, "statuses", "card");
-      rewrite(s, "active_environments", "card");
-      rewrite(s, "remote_jobs", "card");
-      rewrite(s, "last_inputs", "card");
-    }
-  }
-  t.commit();
-  if (has_copy) put_copy(*db, copy);
-}
 
 }  // namespace tsugumi

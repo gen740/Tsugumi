@@ -76,6 +76,12 @@ final class ChatController {
     case card(CardKey)
     case display(CardKey)
     var id: String { label }
+    @MainActor func displayLabel(_ session: ProjectSession) -> String {
+      switch self {
+      case .card(let k): return "Card " + session.displayPath(path(k))
+      case .display(let k): return String(localized: "可視化 \(session.displayPath(path(k)))")
+      }
+    }
     var label: String {
       switch self {
       case .card(let k): return "Card \(k)"
@@ -175,10 +181,12 @@ final class ChatController {
       } catch { status = String(describing: error) }
     }
   }
+  private(set) var interrupted = false
+  private(set) var interruptedOperation: Tsugumi_Agent_InterruptedOperationT?
   private(set) var available = true
   @ObservationIgnored private var agent: Agent?
-  /// Opening a conversation, until its unfinished work (if any) has resumed.
-  @ObservationIgnored private var resuming: Task<Void, Never>?
+  /// Reads a snapshot and attaches to work that is already running.
+  @ObservationIgnored private var opening: Task<Void, Never>?
   @ObservationIgnored private var stopping: Task<Void, Never>?
   @ObservationIgnored private let dir: URL
 
@@ -219,13 +227,16 @@ final class ChatController {
     // Observation moves to this conversation; the previous one stays in core.
     let previous = agent
     if let previous { Task { await previous.detach() } }
-    resuming?.cancel()
-    resuming = nil
+    opening?.cancel()
+    opening = nil
     answer += 1
     busy = false
     failed = false
     usageLimited = false
     status = nil
+    interrupted = false
+    interruptedOperation = nil
+    stoppedAtLimit = false
     demoMode = false
     currentId = id
     thoughts.conversationID = id
@@ -234,38 +245,63 @@ final class ChatController {
     items = []
     // (the approver holds the controller weakly: the Agent outlives no window)
     let approver: Agent.Approver = { [weak self] asked in await self?.approve(asked) ?? [] }
-    resuming = Task {
+    opening = Task {
       await previous?.detach()
       await agent.setApprover(approver)
       do { try await agent.open() } catch { self.status = String(describing: error); return }
       let conv = await agent.conversation
       guard !Task.isCancelled else { return }
       usage = conv.usage
-      stoppedAtLimit = await agent.canContinue
+      await adoptInterruption(agent)
+      guard !Task.isCancelled, self.agent === agent else { return }
       load(conv)
-      await resumeWhenConnected(agent)
+      if await agent.hasUnfinishedWork {
+        guard !Task.isCancelled, self.agent === agent else { return }
+        let events = begin()
+        await agent.observe(events: events)
+      }
     }
   }
 
-  /// Resumes work left unfinished by a disconnect, a restart or leaving the
-  /// project, as any answer goes: the chat shows it working and it can be
-  /// stopped. Its tools need the project, so it starts once that is connected
-  /// (until then nothing can be sent either).
-  private func resumeWhenConnected(_ agent: Agent) async {
-    guard await agent.hasUnfinishedWork else { return }
-    while !session.connected {
-      if session.closed { return }
-      try? await Task.sleep(for: .milliseconds(100))
-      if Task.isCancelled { return }
-    }
-    guard !Task.isCancelled, !busy, await agent.hasUnfinishedWork else { return }
+  private func adoptInterruption(_ agent: Agent) async {
+    let interrupted = await agent.resumable
+    let operation = await agent.interruptedOperation
+    let continuable = await agent.canContinue
+    guard self.agent === agent else { return }
+    let wasInterrupted = self.interrupted
+    self.interrupted = interrupted
+    interruptedOperation = operation
+    stoppedAtLimit = !interrupted && continuable
+    if interrupted {
+      failed = false
+      usageLimited = false
+      contextFull = false
+      let doing: String
+      switch operation?.kind {
+      case "tool": doing = "\(operation?.name ?? "") (\(operation?.id ?? "")) \(operation?.argumentsJson ?? "")"
+      case "compact": doing = String(localized: "会話の圧縮")
+      case "preparing": doing = String(localized: "メッセージの準備")
+      default: doing = String(localized: "モデルの応答")
+      }
+      status = String(format: String(localized: "会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。"), doing)
+    } else if wasInterrupted { status = nil }
+  }
+
+  /// Only the Resume control calls this method.
+  func resume() {
+    guard interrupted, !busy, let agent else { return }
     let events = begin()
-    await agent.setProvider(provider)
-    await agent.resume(events: events)
+    Task {
+      await agent.setProvider(provider)
+      await agent.resume(events: events)
+    }
   }
 
-  private func load(_ conv: Conversation) {
+  private func load(_ conv: Conversation) { items = Self.restoredItems(conv) }
+
+  static func restoredItems(_ conv: Conversation) -> [Item] {
     var out: [Item] = []
+    var tools: [String: Int] = [:]
     for (i, m) in conv.fullHistory.enumerated() {
       let archived = i < conv.archive.count
       if let d = m.display {
@@ -275,9 +311,11 @@ final class ChatController {
       for b in m.content {
         switch b {
         case .text(let t): out.append(Item(role: m.role, text: t, archived: archived))
-        case .toolUse(_, let n, let a): out.append(Item(role: "tool", text: a, tool: (n, nil), archived: archived))
-        case .toolResult(_, let c, let e, _):
-          if let j = out.lastIndex(where: { $0.role == "tool" && $0.tool?.ok == nil }) {
+        case .toolUse(let id, let n, let a):
+          tools[id] = out.count
+          out.append(Item(role: "tool", text: a, tool: (n, nil), archived: archived))
+        case .toolResult(let id, let c, let e, _):
+          if let j = tools[id] {
             out[j].tool?.ok = !e
             out[j].text += "\n→ " + Agent.toolSummary(c)
           }
@@ -286,7 +324,10 @@ final class ChatController {
         }
       }
     }
-    items = out
+    for record in conv.tools where record.name == "operation_approval" {
+      out.append(Item(role: "tool", text: record.result ?? "", tool: (record.name, record.state == .pending ? nil : !record.isError)))
+    }
+    return out
   }
 
   func newSession() {
@@ -360,7 +401,7 @@ final class ChatController {
     let used = skills(in: text)
     if used.contains(where: { $0.name == "demo" }) { demoMode = true }
     let refs = references + selection.filter { k in !references.contains(.card(k)) }.map { Reference.card($0) }
-    let shown = text + (refs.isEmpty ? "" : "\n📎 " + refs.map(\.label).joined(separator: ", "))
+    let shown = text + (refs.isEmpty ? "" : "\n📎 " + refs.map { $0.displayLabel(session) }.joined(separator: ", "))
     items.append(Item(role: "user", text: shown))
     references = []
     let events = begin()
@@ -454,33 +495,54 @@ final class ChatController {
     let id = UUID()
     let raw: [String]
     var requests: [CardPermission.Request] { raw.compactMap(CardPermission.Request.init) }
+    var operation: String? {
+      guard let request = raw.first(where: { $0.contains("operation_approval\n") }),
+            let marker = request.range(of: "operation_approval\n") else { return nil }
+      return request[marker.upperBound...].components(separatedBy: "\n").map { line in
+        guard let data = line.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data),
+              let formatted = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: formatted, encoding: .utf8) else { return line }
+        return text
+      }.joined(separator: "\n")
+    }
     var access: [String] { raw.filter { $0.hasPrefix("project_access ") } }
     let answer: (Set<String>) -> Void
   }
-  var permissionPrompt: PermissionPrompt?
+  struct PermissionQueue {
+    private var pending: [PermissionPrompt] = []
+    var first: PermissionPrompt? { pending.first }
+    mutating func append(_ prompt: PermissionPrompt) { pending.append(prompt) }
+    @discardableResult mutating func answer(_ id: UUID, allow: Bool) -> PermissionPrompt? {
+      guard first?.id == id else { return nil }
+      let prompt = pending.removeFirst()
+      prompt.answer(allow ? Set(prompt.raw) : [])
+      return prompt
+    }
+    mutating func release() { while let id = first?.id { answer(id, allow: false) } }
+  }
+  private var permissionQueue = PermissionQueue()
+  var permissionPrompt: PermissionPrompt? { permissionQueue.first }
 
   /// The widenings the user approves: those of the kinds allowed without
   /// asking at once, the others when asked (nothing when declined).
   func approve(_ asked: [String]) async -> Set<String> {
-    permissionPrompt?.answer([])
     return await withCheckedContinuation { continuation in
-      permissionPrompt = PermissionPrompt(raw: asked) { continuation.resume(returning: $0) }
+      permissionQueue.append(PermissionPrompt(raw: asked) { continuation.resume(returning: $0) })
     }
   }
 
   /// The user's answer; `always` are kinds allowed without asking from now on.
-  func answerPermissions(allow: Bool, always: Set<CardPermission>) {
-    guard let p = permissionPrompt else { return }
-    permissionPrompt = nil
-    if allow { AppPreferences.shared.allowedPermissions.formUnion(always.map(\.rawValue)) }
-    p.answer(allow ? Set(p.raw) : [])
+  func answerPermissions(id: UUID, allow: Bool, always: Set<CardPermission>) {
+    guard let p = permissionPrompt, p.id == id else { return }
+    if allow && p.operation == nil { AppPreferences.shared.allowedPermissions.formUnion(always.map(\.rawValue)) }
+    permissionQueue.answer(id, allow: allow)
   }
 
   /// A window releases its UI subscriptions without cancelling core work.
   func detach() {
-    resuming?.cancel()
-    resuming = nil
-    tidyTask?.cancel()
+    opening?.cancel()
+    opening = nil
     answer += 1
     let remote = agent
     agent = nil
@@ -489,19 +551,18 @@ final class ChatController {
       await remote?.detach()
       // Both observers are cancelled before releasing a pending UI answer.
       // Their cancellation check prevents this from denying the core request.
-      let prompt = permissionPrompt
-      permissionPrompt = nil
-      prompt?.answer([])
+      releasePermissions()
     }
   }
 
+  private func releasePermissions() {
+    permissionQueue.release()
+  }
+
   func cancel() {
-    if let p = permissionPrompt {
-      permissionPrompt = nil
-      p.answer([])
-    }
-    resuming?.cancel()
-    resuming = nil
+    releasePermissions()
+    opening?.cancel()
+    opening = nil
     answer += 1
     let remote = agent
     stopping = Task { await remote?.cancel() }
@@ -553,6 +614,8 @@ final class ChatController {
     choices = []
     offered = []
     GuideController.shared.chatTurnBegan(self)
+    interrupted = false
+    interruptedOperation = nil
     busy = true
     failed = false
     usageLimited = false
@@ -575,23 +638,6 @@ final class ChatController {
     case .visit(let p)?: if session.instance(key(p)) != nil { bird.enqueue(.visit(key(p))) }
     case .run(let p)?: if session.instance(key(p)) != nil { bird.enqueue(.run(key(p))) }
     case nil: break
-    }
-  }
-
-  /// Blocks moved by tidying in this session (for checks).
-  private(set) var tidied = 0
-  private var tidyTask: Task<Void, Never>?
-
-  /// While the Agent works, what its Cards show must not cover other Cards:
-  /// a moment after each step (when new output frames have come), room is
-  /// made where blocks overlap (LayoutTidy).
-  private func tidySoon() {
-    guard session.isEditable else { return }
-    tidyTask?.cancel()
-    tidyTask = Task { @MainActor [weak self] in
-      try? await Task.sleep(for: .milliseconds(900))
-      guard let self, !Task.isCancelled else { return }
-      withAnimation(.easeInOut(duration: 0.6)) { self.tidied += self.session.tidy() }
     }
   }
 
@@ -621,7 +667,6 @@ final class ChatController {
       if let row { items[row].tool = (tool, nil); items[row].text = args }
     case .toolFinished(_, let tool, let ok, _):
       if PresenceEvents.writesSources(tool: tool) { bird.toolInputEnded(ok: ok) }
-      tidySoon()
       if let row, items[row].tool?.name == tool { items[row].tool?.ok = ok }
     case .finished:
       bird.turnEnded(.done)
@@ -645,7 +690,7 @@ final class ChatController {
   private func handle(_ e: AgentEvent, of number: Int) {
     if number != answer {
       switch e {
-      case .text, .discardText, .retrying, .compacting, .compacted, .error, .finished, .stepLimit: return
+      case .text, .discardText, .retrying, .compacting, .compacted, .error, .finished, .interrupted, .stepLimit: return
       default: break
       }
     }
@@ -679,7 +724,6 @@ final class ChatController {
       showOnCanvas(tool: name, arguments: args)
     case .toolFinished(_, let name, let ok, let summary):
       if PresenceEvents.writesSources(tool: name) { session.presence.toolInputEnded(ok: ok) }
-      tidySoon()
       if let i = items.lastIndex(where: { $0.role == "tool" && $0.tool?.name == name && $0.tool?.ok == nil }) {
         items[i].tool = (name, ok)
         items[i].text += "\n→ " + summary
@@ -713,6 +757,10 @@ final class ChatController {
         : contextFull ? String(localized: "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。")
         : String(localized: "エラー: \(s)")
       refreshAfterTurn()
+    case .interrupted:
+      busy = false
+      session.presence.turnEnded(.stopped)
+      refreshAfterTurn()
     case .finished:
       if failed || stoppedAtLimit {
         refreshAfterTurn()
@@ -724,7 +772,6 @@ final class ChatController {
       status = nil
       session.presence.turnEnded()
       refreshAfterTurn()
-      tidySoon()
       flushNotes()
     case .stepLimit(let steps, let run):
       GuideController.shared.chatTurnEnded(self, reply: lastReply)
@@ -753,11 +800,10 @@ final class ChatController {
     let number = answer
     Task {
       let conversation = await agent.conversation
-      let continuable = await agent.canContinue
       guard number == answer else { return }
+      await adoptInterruption(agent)
       load(conversation)
       usage = conversation.usage
-      stoppedAtLimit = continuable
       refreshSessions()
     }
   }

@@ -105,6 +105,7 @@ export interface ParamData {
 export const NEW_PORT = '+'
 
 export interface CardNodeData {
+  runMark?: string
   title: string
   kind: CardKind
   symbol?: string

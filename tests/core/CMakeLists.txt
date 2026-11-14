@@ -53,7 +53,7 @@ else()
   set(_test_environment_daemon "$<TARGET_FILE:tsugumi-environment-daemon-double>")
   set(_test_guide_root ${PROJECT_SOURCE_DIR})
 endif()
-add_executable(tsugumi_agent_rpc_tests agent/rpc_test.cc agent/host_rpc_test.cc agent/environment_rpc_test.cc agent/skills_rpc_test.cc agent/models_rpc_test.cc agent/settings_rpc_test.cc agent/guide_rpc_test.cc agent/execution_broker_test.cc agent/project_rpc_test.cc agent_fixture_server.cc)
+add_executable(tsugumi_agent_rpc_tests agent/rpc_test.cc agent/host_rpc_test.cc agent/environment_rpc_test.cc agent/skills_rpc_test.cc agent/models_rpc_test.cc agent/settings_rpc_test.cc agent/guide_rpc_test.cc agent/execution_broker_test.cc agent/project_rpc_test.cc agent/version_note_rpc_test.cc agent_fixture_server.cc)
 target_link_libraries(tsugumi_agent_rpc_tests PRIVATE tsugumi_client tsugumi_worker_protocol tsugumi_peer_tls GTest::gtest_main hosq Threads::Threads)
 target_compile_options(tsugumi_agent_rpc_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 target_compile_definitions(tsugumi_agent_rpc_tests PRIVATE
@@ -84,7 +84,7 @@ add_dependencies(tsugumi_rpc_cli_tests tsugumi-rpc tsugumid-mock)
 gtest_discover_tests(tsugumi_rpc_cli_tests TEST_PREFIX "core_rpc_cli." DISCOVERY_MODE PRE_TEST
   PROPERTIES TIMEOUT 30)
 
-add_executable(tsugumi_remote_result_tests remote_result_test.cc collect_value_test.cc display_module_test.cc cache_usage_test.cc module_source_test.cc layout_test.cc)
+add_executable(tsugumi_remote_result_tests remote_result_test.cc collect_value_test.cc display_module_test.cc version_note_test.cc cache_usage_test.cc history_copy_test.cc module_source_test.cc layout_test.cc card_identity_test.cc)
 target_include_directories(tsugumi_remote_result_tests PRIVATE ${_core_headers})
 target_link_libraries(tsugumi_remote_result_tests PRIVATE tsugumi_core GTest::gtest_main)
 target_compile_options(tsugumi_remote_result_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
@@ -104,8 +104,15 @@ target_include_directories(tsugumi_workerd_tests PRIVATE ${_core_headers} ${_wor
 target_link_libraries(tsugumi_workerd_tests PRIVATE tsugumi_workerd_support)
 target_compile_options(tsugumi_workerd_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 add_test(NAME workerd_protocol_journal COMMAND tsugumi_workerd_tests)
+
+add_executable(tsugumi_worker_staging_tests worker_staging_test.cc)
+target_include_directories(tsugumi_worker_staging_tests PRIVATE ${_core_headers})
+target_link_libraries(tsugumi_worker_staging_tests PRIVATE tsugumi_workerd_support Threads::Threads)
+target_compile_options(tsugumi_worker_staging_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
+add_test(NAME worker_staging COMMAND tsugumi_worker_staging_tests)
+set_tests_properties(worker_staging PROPERTIES TIMEOUT 15)
 if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi_workerd_tests RUNTIME DESTINATION libexec/tsugumi-tests)
+  install(TARGETS tsugumi_workerd_tests tsugumi_worker_staging_tests RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()
 
 add_executable(tsugumi_peer_tls_tests peer_tls_test.cc agent_fixture_server.cc)
@@ -117,7 +124,7 @@ if(TSUGUMI_INSTALLED_CORE)
 endif()
 
 # Storage, Skill reads, environment adapters and thought timing need no sockets.
-add_executable(tsugumi_host_settings_tests agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc agent_fixture_server.cc)
+add_executable(tsugumi_host_settings_tests agent/catalog_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc agent_fixture_server.cc)
 target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
 target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_agent_core GTest::gtest_main)
 target_compile_options(tsugumi_host_settings_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)

@@ -240,6 +240,7 @@ enum ServiceWire {
         v.conversationId = fields["conversation_id"] as? String ?? ""
         v.turnId = fields["turn_id"] as? String ?? ""
         v.text = fields["text"] as? String ?? ""
+        v.display = fields["display"] as? String
         v.selectedCards = fields["selected_cards"] as? [String] ?? []
         v.selectedDisplays = fields["selected_displays"] as? [String] ?? []
         v.skillNames = fields["skill_names"] as? [String] ?? []
@@ -294,12 +295,15 @@ enum ServiceWire {
         let v = Tsugumi_Agent_DemoReadRequestT()
         v.path = fields["path"] as? String ?? ""
         return (Tsugumi_Agent_RequestPayload.demoreadrequest.rawValue, v)
-      case "VersionSummarizeRequest":
-        let v = Tsugumi_Agent_VersionSummarizeRequestT()
+      case "VersionNoteRequest":
+        let v = Tsugumi_Agent_VersionNoteRequestT()
         v.projectId = fields["project_id"] as? String ?? ""
         v.commit = fields["commit"] as? String ?? ""
-        v.provider = fields["provider"] as? Tsugumi_Service_ProviderSelectionT
-        return (Tsugumi_Agent_RequestPayload.versionsummarizerequest.rawValue, v)
+        v.profile = fields["profile"] as? String ?? "desktop"
+        v.language = fields["language"] as? String ?? "ja"
+        v.anthropicKeyProfile = fields["anthropic_key_profile"] as? String
+        v.openaiKeyProfile = fields["openai_key_profile"] as? String
+        return (Tsugumi_Agent_RequestPayload.versionnoterequest.rawValue, v)
       case "ConversationSummarizeRequest":
         let v = Tsugumi_Agent_ConversationSummarizeRequestT()
         v.conversationId = fields["conversation_id"] as? String ?? ""
@@ -474,6 +478,7 @@ enum ServiceWire {
       out["conversation"] = try view(v.conversation)
       out["busy"] = v.busy
       out["resumable"] = v.resumable
+      out["interrupted_operation"] = v.interruptedOperation
       out["continuable"] = v.continuable
       out["project_id"] = v.projectId
       out["event_seq"] = v.eventSeq

@@ -250,9 +250,10 @@ auto Defaults() -> j::Members {
           {"agent.effort", j::Quote("")},
           {"agent.fastModel", j::Quote("")},
           {"agent.webSearch", "false"},
+          {"agent.animateWork", "true"},
           {"agent.permissions.allowed", "[]"},
           {"agent.skillFolders", "[]"},
-          {"versions.summaries", "false"},
+          {"versions.noteMode", j::Quote("mechanical")},
           {"app.language", j::Quote("ja")}};
 }
 }  // namespace
@@ -664,7 +665,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
               value = j::Encode(merged);
             }
             if (value.size() > 65536 || key == "agent.oauthHostID" ||
-                !(key.starts_with("agent.") || key == "versions.summaries" ||
+                !(key.starts_with("agent.") || key == "versions.noteMode" ||
                   key == "app.language"))
               throw std::runtime_error("Invalid setting");
             j::Object("{\"value\":" + value + "}");
@@ -691,9 +692,12 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
               for (const auto& kind : j::Array(value))
                 if (j::String(kind).empty())
                   throw std::runtime_error("Invalid permission kind");
-            if ((key == "versions.summaries" || key == "agent.webSearch" ||
+            if (key == "versions.noteMode" && j::String(value) != "mechanical" && j::String(value) != "agent")
+              throw std::runtime_error("Unknown version note mode");
+            if ((key == "agent.webSearch" ||
                  key == "agent.drawThoughts" ||
-                 key == "agent.drawThoughtsAsked") &&
+                 key == "agent.drawThoughtsAsked" ||
+                 key == "agent.animateWork") &&
                 value != "true" && value != "false")
               throw std::runtime_error("Expected a boolean setting");
             if ((key == "agent.provider" || key.starts_with("agent.model") ||
@@ -861,6 +865,29 @@ auto Settings::Redact(std::string text) -> std::string {
   for (const auto& [_, secret] : s.ephemeral) remove(secret);
   return text;
 }
+auto Settings::VersionNoteMode(const std::string& profile) -> std::string {
+  std::lock_guard lock(state_->mutex);
+  return j::Text(state_->Values(profile).second, "versions.noteMode", "mechanical");
+}
+
+auto Settings::VersionNoteProvider(const std::string& profile, const std::string& anthropic_keys,
+                                   const std::string& openai_keys) -> agent::ProviderConfig {
+  std::string provider, model;
+  {
+    std::lock_guard lock(state_->mutex);
+    const auto values = state_->Values(profile).second;
+    provider = j::Text(values, "agent.provider", "anthropic");
+    model = j::Text(values, provider == "openai" ? "agent.thoughtModel.openai" : "agent.thoughtModel");
+  }
+  auto config = Resolve({{"profile", j::Quote(profile)}, {"provider_id", j::Quote(provider)},
+      {"key_profile", j::Quote(provider == "openai" ? openai_keys : anthropic_keys)}});
+  if (config.auth != agent::ProviderAuth::None) {
+    if (!model.empty()) config.model = model;
+    else if (config.api == agent::ProviderAPI::AnthropicMessages) config.model = "claude-haiku-5-5";
+  }
+  return config;
+}
+
 auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
   auto& s = *state_;
   std::lock_guard lock(s.mutex);

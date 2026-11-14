@@ -15,6 +15,7 @@ extension Tsugumi_Data_FailureKind: @unchecked Sendable {}
 public struct RPCFailure: Error, CustomStringConvertible, Sendable {
   public let kind: FailureKind
   public let args: [String: String]
+  public let permissions: [String]
   public let diagnostic: String?
   public let currentRev: UInt64?
   public let retryAfterMs: UInt32?
@@ -24,6 +25,7 @@ public struct RPCFailure: Error, CustomStringConvertible, Sendable {
     var a: [String: String] = [:]
     for kv in f.args { if let kv { a[kv.key] = kv.value } }
     args = a
+    permissions = f.args.compactMap { $0 }.filter { $0.key == "permission" }.map(\.value)
     diagnostic = f.diagnostic
     currentRev = f.currentRev
     retryAfterMs = f.retryAfterMs
@@ -32,6 +34,7 @@ public struct RPCFailure: Error, CustomStringConvertible, Sendable {
   public init(kind: FailureKind, diagnostic: String) {
     self.kind = kind
     args = [:]
+    permissions = []
     self.diagnostic = diagnostic
     currentRev = nil
     retryAfterMs = nil

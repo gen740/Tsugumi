@@ -11,7 +11,7 @@ from Tsugumi.Data.RunState import RunState
 from tsugumi_client import RpcFailure, change, new_id, path, text
 
 
-@pytest.mark.parametrize("version", [4, 6], ids=["older", "newer"])
+@pytest.mark.parametrize("version", [5, 7], ids=["older", "newer"])
 def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
     """The daemon refuses an incompatible local history database and leaves its contents intact."""
     history_dir = tmp_path / "history"
@@ -27,7 +27,7 @@ def test_incompatible_history_database_is_kept(core_factory, tmp_path, version):
         connection.close()
     original = database.read_bytes()
 
-    with pytest.raises(RuntimeError, match=rf"has schema version {version}, but this Tsugumi requires 5"):
+    with pytest.raises(RuntimeError, match=rf"has schema version {version}, but this Tsugumi requires 6"):
         core_factory(history_dir=history_dir)
 
     assert database.read_bytes() == original
@@ -242,18 +242,14 @@ def test_renamed_card_keeps_its_recorded_environment(core_factory, project, tmp_
     run_id = run(client)
     assert wait_run(client, run_id).state == RunState.succeeded
     expected = inventory(client, run_id)
-    snapshot = client.call("ProjectInspectRequest")
-    document = json.loads(text(snapshot.projectJson))
-    document["canvas"]["cards"][0]["id"] = "renamed"
-    client.call("ProjectSaveRequest", baseRev=snapshot.rev, opId=new_id(), origin="ui:test",
-                changes=[change("SetProject", json=json.dumps(document)),
-                         change("RenameDefinition", id="work", to="renamed")])
-    assert inventory(client, run_id, "renamed") == expected
+    from test_definitions import rename
+    rename(client, "work", "renamed")
+    assert inventory(client, run_id, "work") == expected
     daemon.stop()
     copied_project = tmp_path / "copy"
     shutil.copytree(project, copied_project, symlinks=True)
     restored = core_factory(project_root=copied_project, history_dir=tmp_path / "restored-history")
-    assert inventory(restored.connect(), run_id, "renamed") == expected
+    assert inventory(restored.connect(), run_id, "work") == expected
 
 
 def test_shipped_cli_can_inspect_the_environment_inventory(core_factory, project, tmp_path):

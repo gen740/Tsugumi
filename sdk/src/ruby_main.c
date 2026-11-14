@@ -250,10 +250,9 @@ static VALUE initialize(VALUE ignored) {
   rb_gc_register_address(&sdk);
   rb_ary_unshift(rb_gv_get("$LOAD_PATH"), string(TSUGUMI_RUBY_SDK));
   rb_require("rubygems");
-  if (TSUGUMI_RUBY_BUNDLE[0]) rb_require("bundler/setup");
   rb_require("tsugumi");
   sdk = rb_const_get(rb_cObject, rb_intern("Tsugumi"));
-  return rb_funcall(sdk, rb_intern("_load"), 1, string(TSUGUMI_RUBY_CARD));
+  return Qtrue;
 }
 
 static VALUE print_error(VALUE error) {
@@ -335,6 +334,22 @@ static int call_ruby(const tsugumi_call* call, const char* method) {
   return state || result == Qfalse;
 }
 
-int tsugumi_load(void) { return call_ruby(NULL, NULL); }
+int tsugumi_prepare(void) { return call_ruby(NULL, NULL); }
+static VALUE load_card(VALUE ignored) {
+  if (TSUGUMI_RUBY_BUNDLE[0]) rb_require("bundler/setup");
+  return rb_funcall(sdk, rb_intern("_load"), 1, string(TSUGUMI_RUBY_CARD));
+}
+int tsugumi_load(const tsugumi_call* call) {
+  current = call;
+  int state = 0;
+  VALUE result = rb_protect(load_card, Qnil, &state);
+  if (state) {
+    int ignored = 0;
+    rb_protect(print_error, rb_errinfo(), &ignored);
+    rb_set_errinfo(Qnil);
+  }
+  current = NULL;
+  return state || result == Qfalse;
+}
 int tsugumi_main(const tsugumi_call* call) { return call_ruby(call, "_invoke"); }
 int tsugumi_run_start(const tsugumi_call* call) { return call_ruby(call, "_run_start"); }

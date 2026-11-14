@@ -84,12 +84,12 @@ enum SmokeTest {
         ok = ok && s.saveError == nil && s.confirmedLayout["groups"] != nil
 
         // A Draft's declared outputs can be wired before it is implemented.
-        let dk = s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 600), name: "smoke-draft")
+        let dk = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 600), name: "smoke-draft")
         let draft = path(dk)[0]
         s.edit { s in
           var meta = s.definitionMeta[draft] ?? .object([])
           meta["outputs"] = .array([.object([("name", .string("summary")), ("description", .string("the result in words"))])])
-          s.setDefinition(draft, card: s.definitions[draft] ?? .object([]), meta: meta)
+          s.setCardDefinition(key([draft]), DefinitionDraft(card: s.definitions[draft] ?? .object([]), meta: meta))
         }
         await s.save()
         report["draft_outputs"] = s.resolution[dk]?.outputs.map(\.name) ?? []

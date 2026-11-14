@@ -14,13 +14,15 @@ import { D } from '../shared/rpc'
 import { Icon } from './icons'
 import { permissionInfo } from '../model/permissions'
 import { L } from '../i18n'
+import { InlineParamEdit, RevisionEditNotice } from './revisionEdit'
+import { useObserve } from '../model/observable'
 
 // ---- Texts ------------------------------------------------------------------------
 
 /** "Invocation #3 · Succeeded" and the like; undefined before the first invocation. */
 export function runText(d: CardNodeData): string | undefined {
-  if (d.executionList && d.state !== undefined) return cardState(d.state).label
-  if (d.state === undefined || d.invocation <= 0n) return undefined
+  if (d.executionList && d.state !== undefined) return cardState(d.state).label + (d.runMark ? ` · ${d.runMark}` : '')
+  if (d.state === undefined || d.invocation <= 0n) return d.runMark
   let s = L('実行 #{0}', d.invocation)
   const cur = currentStage(d.stage)
   if (cur && (d.state === D.CardState.running || d.state === D.CardState.preparing)) {
@@ -29,7 +31,7 @@ export function runText(d: CardNodeData): string | undefined {
     s += ' · ' + cardState(d.state).label
     if (d.state === D.CardState.succeeded && d.runContinues) s += L('（次の入力を待てます）')
   }
-  return s
+  return s + (d.runMark ? ` · ${d.runMark}` : '')
 }
 
 /** Plain status for a Card that did not run in this run. */
@@ -62,7 +64,8 @@ export interface CardNodeProps {
   /** What the guide calls this Card when it points at it ("card:<id>"). */
   guide?: string
   /** Committing an input or Switch Card's param (undefined: read-only). */
-  onParamCommit?: (name: string, text: string) => void
+  onParamBegin?: () => bigint
+  onParamCommit?: (name: string, text: string, edit?: InlineParamEdit, overwrite?: boolean) => Promise<boolean> | void
   paramsEditable?: boolean
   /** Pointer down on a port: start drawing a wire (from an output, or back from an input). */
   onPortDown?: (port: string, output: boolean, e: React.PointerEvent) => void
@@ -166,9 +169,13 @@ function SwitchBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
   const on = p.data.params.find(param => param.name === 'value')?.value === 'true'
   const moved = useRef(false)
   const pointerStarted = useRef(false)
-  return (
+  const [edit] = useState(() => new InlineParamEdit())
+  const [pending, setPending] = useState('')
+  useObserve(edit)
+  const save = (value: string, overwrite = false) => p.onParamCommit?.('value', value, edit, overwrite)
+  return (<>
     <button type="button" role="switch" className="cv-switch-card-control" aria-label={p.data.title} aria-checked={on}
-      disabled={!p.paramsEditable || !p.onParamCommit} title={`${p.data.title} · value:bool = ${on}`}
+      disabled={!p.paramsEditable || !p.onParamCommit || edit.applying} title={`${p.data.title} · value:bool = ${on}`}
       style={{ width: g.size.width * z, height: g.size.height * z, borderRadius: g.size.height * z / 2, color: on ? '#fff' : 'var(--label)' }}
       onPointerDown={event => {
         moved.current = false
@@ -185,12 +192,19 @@ function SwitchBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
         const activate = event.detail === 0 || (pointerStarted.current && !moved.current)
         pointerStarted.current = false
         if (!activate || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) return
-        p.onParamCommit?.('value', on ? 'false' : 'true')
+        const value = on ? 'false' : 'true'
+        edit.begin(on ? 'true' : 'false', p.onParamBegin?.() ?? 0n)
+        setPending(value)
+        void save(value)
       }}>
       <span className="cv-switch-card-knob" aria-hidden style={{ left: 6 * z, top: (g.size.height - 26) * z / 2, width: 26 * z, height: 26 * z, transform: `translateX(${on ? (g.size.width - 38) * z : 0}px)` }} />
       <span className="cv-switch-card-title cv-title" style={{ left: 6 * z, width: (g.size.width - 42) * z, fontSize: Math.max(6, 12 * z), transform: `translateX(${on ? 0 : 30 * z}px)` }}>{p.data.title}</span>
     </button>
-  )
+    {(edit.conflictRev !== undefined || edit.error) && <div className="pad10" style={{ position: 'absolute', zIndex: 100, top: '100%', width: 320, background: 'var(--window-bg)' }} onPointerDown={e => e.stopPropagation()}>
+      <RevisionEditNotice edit={edit} text={() => pending} overwrite={() => void save(pending, true)}
+        reload={() => { edit.begin(on ? 'true' : 'false', p.onParamBegin?.() ?? 0n); setPending('') }} />
+    </div>}
+  </>)
 }
 
 /** A Draft's name in its header and its content below, written on the Card. */
@@ -284,7 +298,7 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
           {data.params.map((param) => (
             <div key={param.name} className="cv-param-row" style={{ height: s(CardGeometry.paramRow), padding: `0 ${s(10)}px` }}>
               <ParamFieldView param={param} editable={!!p.onParamCommit && p.paramsEditable !== false} zoom={z}
-                commit={(t) => p.onParamCommit?.(param.name, t)} />
+                revision={p.onParamBegin} commit={(t, edit, overwrite) => p.onParamCommit?.(param.name, t, edit, overwrite)} />
             </div>
           ))}
           {g.result && (
@@ -461,18 +475,25 @@ export function StageStrip({ progress, zoom = 1, onTap, caption = '' }: { progre
 // ---- Param field --------------------------------------------------------------------------
 
 /** A param shown on an input Card; committed on Return or focus loss. */
-export function ParamFieldView({ param, editable, zoom = 1, commit }: { param: ParamData; editable: boolean; zoom?: number; commit: (text: string) => void }) {
+export function ParamFieldView({ param, editable, zoom = 1, revision, commit }: { param: ParamData; editable: boolean; zoom?: number; revision?: () => bigint; commit: (text: string, edit: InlineParamEdit, overwrite: boolean) => Promise<boolean> | void }) {
   const z = zoom
   const [text, setText] = useState(param.value)
   const [editing, setEditing] = useState(false)
+  const [edit] = useState(() => new InlineParamEdit())
+  useObserve(edit)
+  const liveText = useRef(text)
+  liveText.current = text
   useEffect(() => {
     if (!editing) setText(param.value)
   }, [param.value, editing])
-  const finish = (cancel = false) => {
-    if (!editing) return
-    setEditing(false)
-    if (cancel) setText(param.value)
-    else if (text !== param.value) commit(text)
+  const begin = () => { edit.begin(param.value, revision?.() ?? 0n); setText(param.value); setEditing(true) }
+  const finish = async (cancel = false, overwrite = false) => {
+    if (!editing || edit.applying) return
+    if (cancel) { setEditing(false); setText(param.value); return }
+    const sent = text
+    if (text === edit.initial || await commit(sent, edit, overwrite) !== false) {
+      if (liveText.current === sent) setEditing(false)
+    }
   }
   return (
     <div className="cv-param" style={{ gap: 6 * z }}>
@@ -480,7 +501,11 @@ export function ParamFieldView({ param, editable, zoom = 1, commit }: { param: P
       {param.type === 'bool' ? (
         <label className="cv-param-bool" title={editable ? undefined : L('実行中は変更できません')}
           onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
-          <input type="checkbox" checked={param.value === 'true'} disabled={!editable} onChange={(e) => commit(e.target.checked ? 'true' : 'false')} />
+          <input type="checkbox" checked={param.value === 'true'} disabled={!editable || edit.applying} onChange={(e) => {
+            const value = e.target.checked ? 'true' : 'false'
+            edit.begin(param.value, revision?.() ?? 0n); setText(value); setEditing(true)
+            void Promise.resolve(commit(value, edit, false)).then(ok => { if (ok !== false) setEditing(false) })
+          }} />
           <span className="cv-switch" style={{ width: 22 * z, height: 13 * z }} />
         </label>
       ) : (
@@ -491,7 +516,7 @@ export function ParamFieldView({ param, editable, zoom = 1, commit }: { param: P
           onClick={(e) => {
             if (!editable || editing) return
             e.stopPropagation()
-            setEditing(true)
+            begin()
           }}
           onDoubleClick={(e) => e.stopPropagation()}>
           {editing ? (
@@ -507,6 +532,10 @@ export function ParamFieldView({ param, editable, zoom = 1, commit }: { param: P
           ) : <span className="mono cv-ellipsis">{text || ' '}</span>}
         </div>
       )}
+      {(edit.conflictRev !== undefined || edit.error) && <div className="pad10" style={{ position: 'absolute', zIndex: 100, top: '100%', width: 320, background: 'var(--window-bg)' }} onPointerDown={e => e.stopPropagation()}>
+        <RevisionEditNotice edit={edit} text={() => text} overwrite={() => void finish(false, true)}
+          reload={() => { edit.begin(param.value, revision?.() ?? 0n); setText(param.value); setEditing(false) }} />
+      </div>}
     </div>
   )
 }

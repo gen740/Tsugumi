@@ -471,9 +471,9 @@ See the [Ruby API](#ruby-api) for files, reports, lifecycle and dependency locks
 
 ## Worker state
 
-Cards start a fresh worker for each invocation by default. Set `reuseWorker: true` to retain state across invocations and runs, and use the [run-start hook](#presentation-and-hooks) to reset per-run state. Each invocation records whether its worker was reused. Workers end when their build conditions change, on failure, cancellation or deadline, or when the project closes. Idle workers end after ten minutes; resident workers are limited to 2 GiB and 32 workers (least recently used ends first).
+Cards start a fresh worker for each invocation by default. Set `reuseWorker: true` to retain state across invocations and runs, and use the [run-start hook](#presentation-and-hooks) to reset per-run state. Resident workers have no count, idle-time or memory eviction limit, including workers used for monitoring. They live until the project's environment stops or the Card's definition or execution conditions change. A failed, cancelled or timed-out call always discards its resident worker in every language; the next invocation starts fresh and logs the reason, as it does after a crash or definition change. Each invocation records whether its worker already held state (`worker_reused`). Ordinary fresh workers prepared for speed remain limited to 32, ten minutes idle and 2 GiB each.
 
-Source loading precedes any invocation and any `preRun`. The working directory and environment are set again on each call; `preRun`'s exports and `cd` reach the entry point, including Python's `os.environ`, but cannot affect libraries already loaded. Configure native libraries at the top of `main.py`, before importing them:
+Standby preparation starts only the worker executable. The SDK builds language adapters separately from Card source or assemblies and names the runtime artifact explicitly. The worker opens package libraries and initializes interpreters inside the first invocation, after `preRun`, with that invocation's identity, logs, deadline and cancellation. A filename such as `runtime.so` never authorizes execution before a call. A reused worker retains the loaded code. The working directory and environment are set again on each call; `preRun`'s exports and `cd` reach source loading on the first call and the entry point on every call, including Python's `os.environ`. Source-loading environment changes, including removals, survive reuse; later calls cannot reconfigure libraries already loaded. Configure native libraries at the top of `main.py`, before importing them:
 
 ```python
 import os
@@ -572,11 +572,12 @@ into `hash`. Builds use a local immutable module cache and never update the
 lock. A Card without `lock` and `hash` cannot fetch external modules.
 Native libraries use `buildInputs`, and build tools use `nativeBuildInputs`.
 
-To make or update the lock on request, use the project shell with Go on PATH:
+To make or update the lock on request, use the human Terminal panel with Go on PATH:
 `python3 <sdk>/go/update-lock.py <card>/src`. The helper runs `go mod tidy` in
 a temporary copy and writes only `go.mod` and `go.sum` to the Card's source
 directory. It accepts `--offline` for a populated module cache. Reload the
-project after generating the files, then obtain the hash as above.
+project after generating the files, then obtain the hash as above. The Agent
+uses `project_save` to write source and lock files; its shell is read-only.
 
 ## C#
 
@@ -601,7 +602,7 @@ SDK includes the Rust runtime source of the same FlatBuffers version as
 `flatc`. A Card without a lock builds offline using the SDK's own crates.
 
 To add crates.io dependencies on request, add them to `src/Cargo.toml`, then
-use the project shell with Cargo on PATH. Build the FlatBuffers source from
+use the human Terminal panel with Cargo on PATH. Build the FlatBuffers source from
 the Card's nixpkgs pin and pass it to the lock helper. For a GitHub nixpkgs
 pin, for example:
 
@@ -611,6 +612,7 @@ python3 <sdk>/rust/update-lock.py <card>/src --flatbuffers-source "$flatbuffers_
 ```
 
 The helper resolves in a temporary copy and writes only `src/Cargo.lock`.
+The Agent writes source and lock files with `project_save`; its shell is read-only.
 Reload the project and name it in `rustCard` with
 `lock = ./src/Cargo.lock; hash = pkgs.lib.fakeHash;`. Run once and copy the
 `got: sha256-…` value from the build log into `hash`. This pins the whole
@@ -825,12 +827,16 @@ of preview identity. Coordinates and display retention are independent of theme.
 
 ### A Card's folder
 
-`definitions/<id>/` belongs to one Card (its id is its name):
+`definitions/<id>/` belongs to one Card. Its identifier is permanent; its editable human name is `_meta.json.name`, with the identifier shown when the name is omitted. Names may be shared by several Cards. New identifiers come from the core `card_id` RPC: the slug of the creation name plus four random characters from `abcdefghjkmnpqrstuvwxyz23456789`, checked for uniqueness in the owning project (including reserved unsaved Cards). Pass `project_path` for a Card in Card, then save the definition and canvas using the returned identifier. The slug uses lowercase ASCII letters and digits separated by hyphens; a name without those characters uses `card`. Identifiers already present, including unsuffixed ones, stay as written.
+
+Renaming changes only `_meta.json.name`. Definition folders, canvas keys, connections, saved inputs, run records and evidence links retain their identifiers. The same rule holds inside a Card in Card.
+
+Definition files:
 
 | File | What it is |
 | --- | --- |
 | `_card.json` | All settings: `language` or `template`, `inputs`, `params`, run settings |
-| `_meta.json` | The intent, for every kind of Card: `description` (its summary, shown on the Canvas and in Card settings; `_card.json` has none), `content`, `context`, port descriptions. When implementing a Draft, preserve its intent and fill an empty `description` and `context` from the user and Draft |
+| `_meta.json` | The human `name` and intent, for every kind of Card: `description` (its summary, shown on the Canvas and in Card settings; `_card.json` has none), `content`, `context`, port descriptions. When implementing a Draft, preserve its intent and fill an empty `description` and `context` from the user and Draft |
 | `_outputs.fbs` | One table per output port, root table `Outputs` |
 | `default.nix` | Code Cards only: a function `{ pkgs, inputs, params }:` returning `{ run = ...; }` with one implementation or an ordered list |
 | `src/` | Code Cards only: the sources |

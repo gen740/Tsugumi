@@ -84,7 +84,7 @@ extension ProjectSession {
   }
 }
 
-/// Tidying the canvas while the Agent works (LayoutTidy).
+/// The output frame beside a Card, used by explicit layout requests.
 extension ProjectSession {
   /// Output frame of a Card (world units): saved place, or beside the Card.
   func displayRect(_ k: CardKey, origin: CGPoint? = nil) -> CGRect {
@@ -97,61 +97,4 @@ extension ProjectSession {
     return CGRect(origin: at, size: sz)
   }
 
-  /// The top level's blocks: each Card with the frame drawn at its default
-  /// place after it, frames placed on their own, notes.
-  func tidyBoxes() -> [LayoutTidy.Box] {
-    var out: [LayoutTidy.Box] = []
-    for id in cards(in: []).compactMap({ $0["id"]?.string }) {
-      let k = key([id])
-      let o = position(k)
-      var block = geometry(k).outlineRect.offsetBy(dx: o.x, dy: o.y)
-      if (displays[k] != nil || displayFrame(k) != nil) && displayFrame(k)?["hidden"]?.bool != true {
-        let saved = displayFrame(k)?["x"]?.double != nil && displayFrame(k)?["y"]?.double != nil
-        if saved { out.append(.init(id: "frame:" + id, rect: displayRect(k))) } else { block = block.union(displayRect(k)) }
-      }
-      out.append(.init(id: "card:" + id, rect: block))
-    }
-    for n in notes(in: []) {
-      guard let id = n["id"]?.string else { continue }
-      out.append(.init(id: "note:" + id, rect: CGRect(x: n["x"]?.double ?? 0, y: n["y"]?.double ?? 0,
-                                                       width: n["width"]?.double ?? 240, height: n["height"]?.double ?? 120)))
-    }
-    return out
-  }
-
-  /// Makes room where blocks overlap (LayoutTidy), as one edit: saved like a
-  /// drag, and undoable. Returns how many blocks moved.
-  @discardableResult
-  func tidy() -> Int {
-    let moves = LayoutTidy.makeRoom(tidyBoxes(), across: flow == .leftToRight)
-    guard !moves.isEmpty else { return 0 }
-    func shift(_ v: JSONValue, _ by: CGVector) -> JSONValue {
-      var v = v
-      v["x"] = .real((((v["x"]?.double ?? 0) + by.dx) * 10).rounded() / 10)
-      v["y"] = .real((((v["y"]?.double ?? 0) + by.dy) * 10).rounded() / 10)
-      return v
-    }
-    edit { s in
-      for m in moves {
-        if m.id.hasPrefix("card:") {
-          let k = key([String(m.id.dropFirst(5))])
-          let p = s.position(k)
-          s.setPosition(k, CGPoint(x: p.x + m.by.dx, y: p.y + m.by.dy))
-        } else if m.id.hasPrefix("frame:") {
-          let lk = s.layoutKey(key([String(m.id.dropFirst(6))]))
-          s.updateLayout(of: []) { l in
-            if let d = l["displays"]?[lk] { var all = l["displays"]!; all[lk] = shift(d, m.by); l["displays"] = all }
-          }
-        } else if m.id.hasPrefix("note:") {
-          let id = String(m.id.dropFirst(5))
-          s.updateLayout(of: []) { l in
-            guard var notes = l["notes"]?.array, let i = notes.firstIndex(where: { $0["id"]?.string == id }) else { return }
-            notes[i] = shift(notes[i], m.by)
-            l["notes"] = .array(notes)
-          }
-        }
-      }
-    }
-    return moves.count
-  }
 }

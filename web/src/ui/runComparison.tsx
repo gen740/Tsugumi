@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { ComparedCard, ComparedField, ComparedRow, Difference, comparedConditions, comparedParams, comparedValues, loadRunComparison, runScope, sameDisplay } from '../model/runComparison'
 import { ProjectSession, cardState, errorText, formatDuration, formatMillis, recordedDisplay, runState } from '../model/session'
-import { R, s } from '../shared/rpc'
+import { R, s, segs } from '../shared/rpc'
 import { Button, Empty, Select, Spinner } from './controls'
 import { DisplayContent } from './display'
 import { L } from '../i18n'
+import { runMark } from '../model/runMark'
 
 export function RunComparisonView({ session, runs, initial, onClose }: { session: ProjectSession; runs: R.RunSummaryT[]; initial?: string; onClose: () => void }) {
   const [left, setLeft] = useState(initial ?? s(runs[0]?.status?.runId))
@@ -32,7 +33,7 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
     void session.rpc.versionDiff(to, from).then(v => alive && setDiff(v)).catch(e => alive && setDiffError(errorText(e)))
     return () => { alive = false }
   }, [session.rpc, from, to, attempt])
-  const options = runs.map(r => ({ value: s(r.status?.runId), label: `${formatMillis(r.status?.acceptedAt)} · ${runState(r.status!.state).label} · ${s(r.status?.runId).slice(0, 8)}` }))
+  const options = runs.map(r => ({ value: s(r.status?.runId), label: `${formatMillis(r.status?.acceptedAt)} · ${runState(r.status!.state).label} · ${s(r.status?.runId).slice(0, 8)}${runMark(r) ? ` · ${runMark(r)}` : ''}` }))
   return <div className="run-comparison col">
     <div className="row center gap8 pad10 border-bottom"><b>{L('実行を比較')}</b><span className="spacer" /><Button onClick={onClose}>{L('閉じる')}</Button></div>
     <div className="comparison-pair pad10 border-bottom">
@@ -44,10 +45,10 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
       {left === right || !left || !right ? <Empty title={L('異なる 2 つの実行を選んでください')} icon="arrow.triangle.swap" />
         : error ? <div role="alert">{error}<Button onClick={() => setAttempt(attempt + 1)}>{L('再試行')}</Button></div>
         : !rows ? <Spinner /> : <>
-          <RunScopes left={a} right={b} />
+          <RunScopes left={a} right={b} displayPath={(p) => session.displayPath(p)} />
           <VersionDifference from={from} to={to} diff={diff} error={diffError} />
           {!rows.length && <Empty title={L('記録がありません')} icon="tray" />}
-          {rows.map(row => <ComparedCardView key={row.card} row={row} />)}
+          {rows.map(row => <ComparedCardView key={row.card} row={row} displayPath={(p) => session.displayPath(p)} />)}
         </>}
     </div>
   </div>
@@ -70,9 +71,10 @@ function DifferenceMark({ difference }: { difference: Difference }) {
 }
 
 /** Where each run started and how far it went: a partial run reuses saved inputs. */
-export function RunScopes({ left, right }: { left?: R.RunSummaryT; right?: R.RunSummaryT }) {
-  const a = runScope(left), b = runScope(right)
-  return <ComparedFields title={L('実行の範囲')} fields={[{ name: L('開始した Card'), left: a, right: b, difference: a === b ? 'same' : 'changed' }]} />
+export function RunScopes({ left, right, displayPath }: { left?: R.RunSummaryT; right?: R.RunSummaryT; displayPath?: (p: string[]) => string }) {
+  const a = runScope(left, displayPath), b = runScope(right, displayPath)
+  const same = segs(left?.target).join('/') === segs(right?.target).join('/') && (left?.propagate !== false) === (right?.propagate !== false)
+  return <ComparedFields title={L('実行の範囲')} fields={[{ name: L('開始した Card'), left: a, right: b, difference: same ? 'same' : 'changed' }]} />
 }
 
 function ComparedFields({ title, fields }: { title: string; fields: ComparedField[] }) {
@@ -87,6 +89,7 @@ function SideStatus({ side }: { side?: ComparedCard }) {
   const v = side.record?.record?.summary ?? side.summary, state = cardState(side.record?.status?.state ?? v.state)
   const calls = side.record?.aggregate?.calls ?? v.invocation ?? 0n
   return <div><b style={{ color: `var(--${state.color})` }}>{state.label}</b> · #{String(v.invocation ?? 0n)} · {v.durationMs === null ? '—' : formatDuration(Number(v.durationMs) / 1000)}
+    {runMark(side.record?.run) && <p className="caption">{runMark(side.record?.run)}</p>}
     {calls > 1n && <p className="caption">{L('{0} 回の呼び出しのうち最後の 1 回', calls)}</p>}
     {side.record?.aggregate && <p className="caption secondary">{L('呼び出し {0} · 成功 {1} · 失敗 {2}', side.record.aggregate.calls ?? 0n, side.record.aggregate.succeeded ?? 0n, side.record.aggregate.failed ?? 0n)}</p>}
     {(side.error || s(v.failure?.diagnostic)) && <p role="alert">{side.error || s(v.failure?.diagnostic)}</p>}
@@ -96,15 +99,15 @@ function SideStatus({ side }: { side?: ComparedCard }) {
   </div>
 }
 
-export function ComparedCardView({ row }: { row: ComparedRow }) {
+export function ComparedCardView({ row, displayPath = p => p.join('/') }: { row: ComparedRow; displayPath?: (p: string[]) => string }) {
   const a = row.left?.record, b = row.right?.record
   const leftDisplay = a?.record?.display ? recordedDisplay(a.record.display) : undefined, rightDisplay = b?.record?.display ? recordedDisplay(b.record.display) : undefined
   const statusChanged = row.left?.summary.state !== row.right?.summary.state || row.left?.summary.durationMs !== row.right?.summary.durationMs
   const displayChanged = !sameDisplay(leftDisplay, rightDisplay)
   return <details className="comparison-card" open>
-    <summary>{row.card}</summary>
+    <summary>{displayPath(row.card.split('/'))}</summary>
     <div className={`comparison-pair pad8${statusChanged ? ' changed' : ''}`}><SideStatus side={row.left} /><SideStatus side={row.right} /></div>
-    <ComparedFields title={L('実行条件')} fields={comparedConditions(row.left, row.right)} />
+    <ComparedFields title={L('実行条件')} fields={comparedConditions(row.left, row.right, displayPath)} />
     <ComparedFields title={L('パラメータ')} fields={comparedParams(a, b)} />
     <ComparedFields title={L('入力')} fields={comparedValues('inputs', a, b)} />
     <ComparedFields title={L('出力')} fields={comparedValues('outputs', a, b)} />

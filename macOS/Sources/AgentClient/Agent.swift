@@ -82,6 +82,8 @@ public enum AgentEvent: Sendable {
   case discardText
   case error(String)
   case finished
+  /// Observation found a core-owned interruption; work stays stopped.
+  case interrupted
   /// The turn used its steps (model replies with tool calls) without
   /// finishing; `unconfirmedRun` is a run it started and never saw end.
   case stepLimit(steps: Int, unconfirmedRun: String?)
@@ -107,7 +109,8 @@ public actor Agent {
   private var opened = false
   private var busy = false
   public private(set) var canContinue = false
-  private var resumable = false
+  public private(set) var resumable = false
+  public private(set) var interruptedOperation: Tsugumi_Agent_InterruptedOperationT?
   private var answeredAccess: [String: Bool] = [:]
   private let client = CoreAgentClient.shared
 
@@ -133,7 +136,6 @@ public actor Agent {
     try adopt(result)
     if !opened { sequence = result["event_seq"] as? UInt64 ?? 0 }
     opened = true
-    try await resumeInterrupted()
   }
 
   private func adopt(_ result: [String: Any]) throws {
@@ -141,22 +143,12 @@ public actor Agent {
     busy = result["busy"] as? Bool ?? false
     resumable = result["resumable"] as? Bool ?? false
     canContinue = result["continuable"] as? Bool ?? false
+    interruptedOperation = result["interrupted_operation"] as? Tsugumi_Agent_InterruptedOperationT
   }
 
   public func refresh() async throws {
     if !opened { return try await open() }
     try adopt(try await client.call("ConversationGetRequest", ["conversation_id": id]))
-    try await resumeInterrupted()
-  }
-
-  private func resumeInterrupted() async throws {
-    if !busy && resumable {
-      do { _ = try await client.call("ConversationActionRequest", ["conversation_id": id, "action": "Resume"]) }
-      catch let error as CoreAgentFailure where error.code == "busy" {}
-      busy = true
-      resumable = false
-      canContinue = false
-    }
   }
 
   /// Leaving a window detaches observation; it does not stop server work.
@@ -207,7 +199,7 @@ public actor Agent {
       try await self.client.configure(self.provider, conversationID: self.id)
       try await self.beginTurn()
       _ = try await self.client.call("ConversationSendRequest", ["conversation_id": self.id,
-        "turn_id": turn, "text": prompt, "selected_cards": selectedCards,
+        "turn_id": turn, "text": prompt, "display": display ?? prompt, "selected_cards": selectedCards,
         "selected_displays": selectedDisplays, "skill_names": skillNames, "attached_resources": attachedResources])
     }
   }
@@ -215,7 +207,8 @@ public actor Agent {
   public func retry(events: @escaping @Sendable (AgentEvent) -> Void) { action("Retry", events) }
   public func continueAfterLimit(events: @escaping @Sendable (AgentEvent) -> Void) { action("Continue", events) }
   public func compact(events: @escaping @Sendable (AgentEvent) -> Void) { action("Compact", events) }
-  public func resume(events: @escaping @Sendable (AgentEvent) -> Void) { start(events) { try await self.open() } }
+  public func resume(events: @escaping @Sendable (AgentEvent) -> Void) { action("Resume", events) }
+  public func observe(events: @escaping @Sendable (AgentEvent) -> Void) { start(events) { try await self.open() } }
 
   private func action(_ name: String, _ events: @escaping @Sendable (AgentEvent) -> Void) {
     start(events) {
@@ -261,16 +254,29 @@ public actor Agent {
             } else if let event = Self.event(event) {
               if case .finished = event { try await refresh() }
               try Task.checkCancellation()
-              events(event)
+              if case .finished = event, resumable { events(.interrupted) }
+              else { events(event) }
             }
           }
           sequence = max(sequence, result["next_seq"] as? UInt64 ?? sequence)
           busy = result["busy"] as? Bool ?? false
-          if !busy { try await refresh(); break }
+          if !busy {
+            try await refresh()
+            try Task.checkCancellation()
+            if resumable { events(.interrupted) }
+            break
+          }
           try await Task.sleep(for: .milliseconds(80))
         }
       } catch is CancellationError {} catch {
-        if !Task.isCancelled { events(.error(String(describing: error))) }
+        if !Task.isCancelled {
+          // A restarted service owns the interrupted snapshot. Reading it
+          // updates the controls without sending an action.
+          try? await refresh()
+          if !Task.isCancelled {
+            events(resumable ? .interrupted : .error(String(describing: error)))
+          }
+        }
       }
     }
   }

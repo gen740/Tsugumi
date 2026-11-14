@@ -111,7 +111,6 @@ class Service : public RequestSink {
   auto file_roots() const -> std::vector<std::filesystem::path>;
   auto keep_file_value(const Value& value, const std::filesystem::path& directory,
                        const std::atomic<bool>& stop) -> Value;
-  auto clean_run_scratch(const std::optional<std::string>& keep = std::nullopt) -> void;
   // The backend that runs the Cards naming execution service `id`.
   auto execution_service(const std::string& id) -> ExecutionService&;
   // The daemon backend also recovers its jobs.
@@ -133,9 +132,11 @@ class Service : public RequestSink {
   // Mutation lane handlers.
   void open_project(RequestIn& req);
   void save(RequestIn& req);
+  auto card_id(RequestIn& req) -> void;
   void reload(RequestIn& req);
   void cache_clear(RequestIn& req);
   void cache_usage(RequestIn& req);
+  void scratch_delete(RequestIn& req);
   void history_delete(RequestIn& req);
   void run(RequestIn& req);
   void sdk_prepare(RequestIn& req);
@@ -146,7 +147,8 @@ class Service : public RequestSink {
   void version_graph(RequestIn& req);
   void version_canvas(RequestIn& req);
   void version_diff(RequestIn& req);
-  void version_summary(RequestIn& req);
+  void version_note(RequestIn& req);
+  void version_note_store(RequestIn& req);
   void close_project(RequestIn& req);
   void inspect(RequestIn& req);
   void validate(RequestIn& req);

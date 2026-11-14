@@ -10,8 +10,7 @@ import TsugumiRPC
 ///
 /// The copy follows what changes elsewhere while it is open (the Agent,
 /// the canvas): settings and files not touched here take the new content;
-/// those changed on both sides are listed as conflicts, and applying keeps
-/// what was edited here.
+/// those changed on both sides require an explicit overwrite or reload choice.
 @MainActor
 @Observable
 final class CardEditorModel {
@@ -24,6 +23,7 @@ final class CardEditorModel {
   var created: Set<String> = []
   var message: String?
   var applying = false
+  let revisionEdit = RevisionEdit()
   /// Settings and files changed both here and elsewhere since the copy was taken.
   var conflicts: [String] = []
   /// Category shown in the window (kept with the model, so edits and the
@@ -62,7 +62,7 @@ final class CardEditorModel {
   /// files' hashes).
   var followToken: String {
     let files = session.sourcePaths.filter { $0.hasPrefix(prefix) }.map { "\($0)=\(session.sources[$0]?.hash ?? "-")" }
-    return [session.cardDefinition(cardKey)?.serialized() ?? "", session.cardMeta(cardKey)?.serialized() ?? ""]
+    return [String(session.rev), session.cardDefinition(cardKey)?.serialized() ?? "", session.cardMeta(cardKey)?.serialized() ?? ""]
       .joined(separator: "\u{1}") + files.joined(separator: ";")
   }
 
@@ -90,10 +90,12 @@ final class CardEditorModel {
     created = []
     message = nil
     conflicts = []
+    revisionEdit.reload(session.rev)
   }
 
   /// Takes in what changed elsewhere since the copy was taken.
   func follow() {
+    guard !applying else { return }
     let defNow = session.cardDefinition(cardKey), metaNow = session.cardMeta(cardKey)
     func clashes(_ base: JSONValue?, _ ours: JSONValue?, _ theirs: JSONValue?, _ file: String) -> [String] {
       guard ours != base, theirs != base, ours != theirs else { return [] }
@@ -127,7 +129,14 @@ final class CardEditorModel {
         generation += 1
       }
     }
-    if !found.isEmpty { conflicts = Array(Set(conflicts + found)).sorted() }
+    for p in removed.union(created) where baseHashes[p] != session.sources[p]?.hash {
+      found.append(String(p.dropFirst(prefix.count)))
+    }
+    if !found.isEmpty {
+      conflicts = Array(Set(conflicts + found)).sorted()
+      revisionEdit.conflict(session.rev)
+    }
+    revisionEdit.baseRev = session.rev
   }
 
   /// Whether a source file's content is known. A file that could not be read
@@ -201,6 +210,7 @@ final class CardEditorModel {
     let p = prefix + rel
     removed.remove(p)
     created.insert(p)
+    if let hash = session.sources[p]?.hash { baseHashes[p] = hash }
     texts[p] = text
     loads[p] = .loaded
   }
@@ -222,13 +232,21 @@ final class CardEditorModel {
   }
 
   func removeFile(_ p: String) {
+    if baseHashes[p] == nil, let hash = session.sources[p]?.hash { baseHashes[p] = hash }
     if created.contains(p) { created.remove(p) } else { removed.insert(p) }
     texts[p] = nil
     loads[p] = nil
   }
 
+  var recoveryText: String {
+    "_card.json\n" + (definition?.serialized() ?? "") + "\n_meta.json\n" + (meta?.serialized() ?? "") +
+      texts.sorted(by: { $0.key < $1.key }).map { "\n\($0.key)\n\($0.value)" }.joined() +
+      removed.sorted().map { "\n- \($0)" }.joined()
+  }
+
   /// Copies the working copy into the project as one undoable edit (saved at once).
-  func apply() async -> Bool {
+  func apply(overwrite: Bool = false) async -> Bool {
+    guard !applying else { return false }
     guard session.isEditable else {
       message = String(localized: "実行中は Card を変更できません。実行が終わってから適用してください。")
       return false
@@ -237,19 +255,20 @@ final class CardEditorModel {
     applying = true
     defer { applying = false }
     let def = definition, m = meta, k = cardKey
+    let sentTexts = texts, sentCreated = created
     let changedTexts = texts.filter { baseTexts[$0.key] != $0.value || created.contains($0.key) }
     let gone = removed
     let bases = baseHashes
     let clashing = Set(conflicts)
-    session.edit { s in
+    let ok = await revisionEdit.apply(session, overwrite: overwrite) { s in
       // A Card in Card has no settings of its own, but a _meta.json like any other.
-      if var d = s.cardDefinitionDraft(k) {
-        let card = d.link == nil ? def ?? d.card : d.card
-        if card != d.card || m != d.meta {
-          d.card = card
-          d.meta = m
-          s.setCardDefinition(k, d)
-        }
+      let current = s.cardDefinitionDraft(k)
+      var d = current ?? DefinitionDraft(card: def ?? .object([]), meta: m)
+      let card = d.link == nil ? def ?? d.card : d.card
+      if current == nil || card != d.card || m != d.meta {
+        d.card = card
+        d.meta = m
+        s.setCardDefinition(k, d)
       }
       for (p, t) in changedTexts {
         s.putSource(p, t)
@@ -259,16 +278,30 @@ final class CardEditorModel {
       }
       for p in gone {
         s.removeSource(p)
-        if let h = bases[p] { s.sourceBases[p] = h }
+        if let h = bases[p], !clashing.contains(String(p.dropFirst(prefix.count))) { s.sourceBases[p] = h }
       }
     }
-    await session.save()
-    if let e = session.saveError {
-      message = String(localized: "保存できませんでした: ") + e
-      return false
-    }
+    guard ok else { return false }
     message = String(localized: "適用しました。")
-    reload(keepingSources: true)
+    let laterDef = definition, laterMeta = meta
+    let laterTexts = texts, laterRemoved = removed, laterCreated = created
+    let savedCurrent = revisionEdit.savedRev == session.rev
+    reload()
+    definition = merge3(base: def, ours: laterDef, theirs: definition)
+    meta = merge3(base: m, ours: laterMeta, theirs: meta)
+    for (p, t) in laterTexts {
+      let sent = sentTexts[p]
+      if savedCurrent || t != sent {
+        texts[p] = t
+        baseTexts[p] = sent
+        loads[p] = .loaded
+        baseHashes[p] = savedCurrent ? session.sources[p]?.hash : bases[p]
+        if !savedCurrent && t != sent { revisionEdit.conflict(session.rev) }
+      }
+    }
+    removed = laterRemoved.subtracting(gone)
+    created = laterCreated.subtracting(sentCreated)
+    for p in sentTexts.keys where laterTexts[p] == nil && !gone.contains(p) { removed.insert(p) }
     return true
   }
 }
@@ -283,7 +316,7 @@ struct CardSettingsEditor: View {
 
   var body: some View {
     Group {
-      if let model, model.exists {
+      if let model, model.exists || model.unapplied {
         content(model)
       } else if model != nil {
         ContentUnavailableView("Card が見つかりません", systemImage: "questionmark.square.dashed",
@@ -299,15 +332,6 @@ struct CardSettingsEditor: View {
         model = m
         UIScript.shared.editors[ref.card] = m
       }
-    }
-    // Renamed here (or elsewhere): the window follows the Card.
-    .onReceive(NotificationCenter.default.publisher(for: .cardRenamed)) { n in
-      guard let from = n.userInfo?["from"] as? String, let to = n.userInfo?["to"] as? String,
-            n.userInfo?["project"] as? String == session.identity.url.path, from == model?.cardKey else { return }
-      let m = CardEditorModel(session: session, cardKey: to)
-      m.category = model?.category ?? .general
-      model = m
-      UIScript.shared.editors[to] = m
     }
     // The Card's name is the title, the project the subtitle (DetailHost);
     // toolbar, sidebar, preview and form share the window background.
@@ -351,17 +375,9 @@ struct CardSettingsEditor: View {
           }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        if !m.conflicts.isEmpty {
-          HStack(alignment: .top) {
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-            Text("別の場所でも変更されました: \(m.conflicts.joined(separator: ", "))。適用するとここでの編集が残ります。")
-              .font(.callout).fixedSize(horizontal: false, vertical: true)
-            Spacer()
-            Button("最新を読み込む") { confirmReload = true }
-          }
-          .padding(8)
-          .background(Color.orange.opacity(0.1))
-        }
+        RevisionEditNotice(edit: m.revisionEdit, text: { m.recoveryText },
+                           overwrite: { Task { _ = await m.apply(overwrite: true) } }, reload: { m.reload() })
+          .padding(.horizontal, 8)
         Divider()
         footer(m)
       }
@@ -481,6 +497,7 @@ struct CardPreview: View {
 private struct GeneralCategory: View {
   @Bindable var model: CardEditorModel
   @State private var name = ""
+  @State private var nameEdit = InlineParamEdit()
   @State private var renaming = false
   @State private var renameError: String?
 
@@ -493,13 +510,17 @@ private struct GeneralCategory: View {
       Section {
         HStack {
           TextField("名前", text: $name)
-            .onSubmit(rename)
+            .onSubmit { rename() }
           if name != model.session.displayName(model.cardKey) {
             Button("名前を変更") { rename() }.disabled(renaming || !model.session.isEditable)
           }
           if renaming { ProgressView().controlSize(.small) }
         }
-        .help("名前は Card の ID で、定義のフォルダ名（definitions/<名前>/）です。変えると接続・配置・実行履歴も追従します（すぐに保存します）。")
+        .help("表示する名前です。同じ名前を複数の Card に使えます。変えても ID・接続・実行履歴は変わりません（すぐに保存します）。")
+        RevisionEditNotice(edit: nameEdit.revision, text: { name }, overwrite: { rename(overwrite: true) }, reload: {
+          name = model.session.displayName(model.cardKey)
+          nameEdit.begin(name, rev: model.session.rev)
+        })
         if let renameError { Text(renameError).font(.caption).foregroundStyle(.red) }
         LabeledContent("種類", value: model.kind.label)
         if model.kind != .switchCard {
@@ -580,8 +601,11 @@ private struct GeneralCategory: View {
       }
     }
     .formStyle(.grouped)
-    .onAppear { name = model.session.displayName(model.cardKey) }
-    .onChange(of: model.cardKey) { name = model.session.displayName(model.cardKey) }
+    .onAppear { name = model.session.displayName(model.cardKey); nameEdit.begin(name, rev: model.session.rev) }
+    .onChange(of: model.cardKey) { name = model.session.displayName(model.cardKey); nameEdit.begin(name, rev: model.session.rev) }
+    .onChange(of: model.session.displayName(model.cardKey)) { before, current in
+      if name == before { name = current; nameEdit.begin(name, rev: model.session.rev) }
+    }
   }
 
   @ViewBuilder private var executionSettings: some View {
@@ -666,22 +690,19 @@ private struct GeneralCategory: View {
       }), prompt: Text(example))
   }
 
-  private func rename() {
+  private func rename(overwrite: Bool = false) {
     let new = name.trimmingCharacters(in: .whitespaces)
     guard new != model.session.displayName(model.cardKey) else { return }
     renaming = true
     renameError = nil
     Task {
       do {
-        if model.unapplied { guard await model.apply() else { renaming = false; return } }
-        try await model.session.renameCard(model.cardKey, to: new)
-        // The editor follows the Card under its new name.
-        NotificationCenter.default.post(name: .cardRenamed, object: nil,
-                                        userInfo: ["from": model.cardKey, "to": key(Array(path(model.cardKey).dropLast()) + [new]),
-                                                   "project": model.session.identity.url.path])
+        if let problem = model.session.cardNameProblem(model.cardKey, new) { throw RPCFailure(kind: .invalidRequest, diagnostic: problem) }
+        _ = await nameEdit.commit(model.session, text: new, overwrite: overwrite) { s in
+          s.updateMeta(model.cardKey) { $0["name"] = .string(new) }
+        }
       } catch {
         renameError = "\(error)"
-        name = model.session.displayName(model.cardKey)
       }
       renaming = false
     }
@@ -1061,6 +1082,7 @@ private struct CommentsCategory: View {
   let card: CardKey
   @State private var text = ""
   @State private var editing: CardComment?
+  @State private var revisionEdit = InlineParamEdit()
   @State private var showResolved = false
 
   var body: some View {
@@ -1078,6 +1100,12 @@ private struct CommentsCategory: View {
             .keyboardShortcut(.return, modifiers: .command)
             .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.connected)
         }
+        RevisionEditNotice(edit: revisionEdit.revision, text: { editing?.text ?? "" },
+                           overwrite: { Task { await saveEdit(overwrite: true) } }, reload: {
+                             editing = comments.first { $0.id == editing?.id }
+                             revisionEdit.begin(editing?.text ?? "", rev: session.rev)
+                           })
+        if let editing, !comments.contains(where: { $0.id == editing.id }) { row(editing) }
         ForEach(comments.filter { !$0.resolved }) { row($0) }
         if !resolved.isEmpty {
           DisclosureGroup("解決済み（\(resolved.count)）", isExpanded: $showResolved) {
@@ -1088,6 +1116,13 @@ private struct CommentsCategory: View {
       }
       .padding(12)
       .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  private func saveEdit(overwrite: Bool = false) async {
+    guard let copy = editing else { return }
+    if await revisionEdit.commit(session, text: copy.text, overwrite: overwrite, { $0.setCommentText(card, id: copy.id, text: copy.text) }) {
+      editing = nil
     }
   }
 
@@ -1122,6 +1157,7 @@ private struct CommentsCategory: View {
   }
 
   @ViewBuilder private func row(_ c: CardComment) -> some View {
+    let baseRev = session.rev
     VStack(alignment: .leading, spacing: 6) {
       if editing?.id == c.id {
         TextField("", text: Binding(get: { editing?.text ?? "" }, set: { editing?.text = $0 }), axis: .vertical)
@@ -1129,10 +1165,7 @@ private struct CommentsCategory: View {
         HStack {
           Spacer()
           Button("キャンセル") { editing = nil }
-          Button("保存") {
-            session.editComment(card, id: c.id, text: editing?.text ?? "")
-            editing = nil
-          }
+          Button("保存") { Task { await saveEdit() } }
           .disabled((editing?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !session.connected)
         }
       } else {
@@ -1144,7 +1177,7 @@ private struct CommentsCategory: View {
         }
         HStack {
           Spacer()
-          Button("編集") { editing = c }
+          Button("編集") { revisionEdit.begin(c.text, rev: baseRev); editing = c }
           if c.resolved {
             Button("開き直す") { session.setCommentResolved(card, id: c.id, false) }
           } else {

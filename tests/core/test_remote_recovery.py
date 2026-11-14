@@ -61,7 +61,7 @@ class Gateway(socketserver.UnixStreamServer):
         self.stalled = threading.Event()
         self.resume = threading.Event()
 
-    def finish(self, job, *, result_fault=None):
+    def finish(self, job, *, result_fault=None, logs=None):
         def blob(data):
             digest = hashlib.sha256(data).hexdigest()
             self.results[digest] = data
@@ -82,11 +82,13 @@ class Gateway(socketserver.UnixStreamServer):
             "environment.json": b'{"paths":["/nix/store/00000000000000000000000000000000-mock"],"directories":["out"],"built":true}',
             "logs.jsonl": b'{"stream":1,"text":"one recovered message\\n"}\n',
         }
+        if logs is not None:
+            files["logs.jsonl"] = logs
         entries = [{"size": len(data), "sha256": blob(data), "path": path} for path, data in files.items()]
         if result_fault == "escape":
             entries[0]["path"] = "files/out/../../escape"
         if result_fault == "oversize":
-            next(entry for entry in entries if entry["path"] == "logs.jsonl")["size"] = (16 << 20) + 1
+            next(entry for entry in entries if entry["path"] == "logs.jsonl")["size"] = (16 << 20) + 129
         manifest = R.pack(R.ResultManifestT(outputs=[R.ResultFileT(**entry) for entry in entries],
             invocationResultSha256=blob(bytes(buffer.Output()))))
         self.receipts[job] = {**self.receipts[job], "state": "succeeded", "result_sha256": blob(manifest)}
@@ -425,3 +427,17 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
         assert gateway.submit_count == 1
     else:
         assert_cancelled(client, gateway, run_id, job_id)
+
+
+def test_maximum_log_budget_including_truncation_notice_imports(running_job):
+    """The core accepts a full 16 MiB budget plus its out-of-budget notice."""
+    gateway, _, client, run_id, job_id = running_job
+    limit = 16 << 20
+    entry = b'{"stream":1,"text":"' + b'x' * (limit - 23) + b'"}\n'
+    assert len(entry) == limit
+    notice = json.dumps({"stream": 3, "text": f"\n[Log output truncated at the {limit}-byte limit.]\n"},
+                        separators=(",", ":")).encode() + b"\n"
+    gateway.finish(job_id, logs=entry + notice)
+    assert wait_run(client, run_id, timeout=30).state == RunState.succeeded
+    journal = text(client.call("LogRangeRequest", runId=run_id, stream=LogStream.journal).text)
+    assert f"truncated at the {limit}-byte limit" in journal

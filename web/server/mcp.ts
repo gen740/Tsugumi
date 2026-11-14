@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
-import { AGENT_KEY_HEADER, ServerInfo, webDataDir } from './paths'
+import { ServerInfo, webDataDir, serverBuild, runningServer, serverRequest } from './paths'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -17,7 +17,13 @@ Before working on a project, call tsugumi_open with its folder (create: true mak
 in the Tsugumi web UI, where the user watches each save and run live, and returns the rules for the other tools \
 (project_inspect first; saves need the base_rev you inspected). Project content is unavailable until the user \
 explicitly grants access. Request access through the Agent API and wait for the user's answer. The plugin \
-cannot grant itself access or approve changes to Card permissions.`
+cannot grant itself access or approve changes to Card permissions. Project RPC tools come only from the shared \
+Agent lists: ordinary operations and operations needing approval for each call. You may propose deleting run history, \
+scratch or build caches after inspecting their targets and sizes. Cleanup, version checkout, starting versioning, \
+keeping a named version and replacing a version summary each need approval in the Tsugumi page. When a call returns \
+grant_required, wait for the person to answer there, then retry the same tool with the same arguments. A decline \
+changes nothing; continue without repeating that act. Use project_shell for diagnosis and reads (project files are read-only), project_save for edits, \
+and Cards for analysis so the user can follow the process.`
 
 const OPEN_TOOL = {
   name: 'tsugumi_open',
@@ -40,53 +46,32 @@ let rulesSent = false
 
 // ---- The web UI host -------------------------------------------------------------
 
-const serverFile = () => path.join(webDataDir(), 'server.json')
-
-function readServer(): ServerInfo | undefined {
-  try {
-    return JSON.parse(fs.readFileSync(serverFile(), 'utf8'))
-  } catch {
-    return undefined
-  }
-}
-
-async function request(s: ServerInfo, route: string, body: unknown): Promise<Response> {
-  return fetch(`http://127.0.0.1:${s.port}${route}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-tsugumi': '1', [AGENT_KEY_HEADER]: s.agentKey },
-    body: JSON.stringify(body ?? {}),
-  })
-}
-
-async function alive(s: ServerInfo | undefined): Promise<boolean> {
-  if (!s) return false
-  try {
-    return (await request(s, '/api/agent/tools', {})).ok
-  } catch {
-    return false
-  }
-}
+const buildIdentity = serverBuild(path.join(here, 'server.js'))
+const request = serverRequest
 
 let starting: Promise<ServerInfo> | undefined
 
 /** The running host, or one started now (it keeps running after Claude Code ends, like one started by hand). */
 async function host(): Promise<ServerInfo> {
-  const s = readServer()
-  if (await alive(s)) return s!
+  const s = await runningServer(webDataDir(), buildIdentity)
+  if (s) return s
   starting ??= (async () => {
     const data = webDataDir()
     fs.mkdirSync(data, { recursive: true })
     const log = fs.openSync(path.join(data, 'server.log'), 'a')
-    const child = spawn(process.execPath, [path.join(here, 'server.js'), '--port', process.env.TSUGUMI_WEB_PORT ?? '0'],
+    const child = spawn(process.execPath, [path.join(here, 'server.js'), '--reuse', '--port', process.env.TSUGUMI_WEB_PORT ?? '0'],
       { detached: true, stdio: ['ignore', log, log] })
+    let startError: Error | undefined
+    child.on('error', e => { startError = e })
     child.unref()
     fs.closeSync(log)
     const deadline = Date.now() + 30_000
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 200))
-      if (child.exitCode !== null) break
-      const next = readServer()
-      if (next && next.pid === child.pid && (await alive(next))) return next
+      const next = await runningServer(data, buildIdentity)
+      // A concurrent command or MCP process may win the shared startup lock.
+      if (next) return next
+      if (child.exitCode !== null || startError) break
     }
     throw new Error(`the Tsugumi web UI host did not start; see ${path.join(data, 'server.log')}`)
   })().finally(() => { starting = undefined })

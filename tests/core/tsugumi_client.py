@@ -269,7 +269,7 @@ class Client:
             raise RpcFailure(reply.value)
         return reply.value
 
-    def call(self, name: str, timeout: float = 30.0, **fields: Any) -> Any:
+    def call(self, name: str, /, timeout: float = 30.0, **fields: Any) -> Any:
         deadline = time.monotonic() + timeout
         rid = self._send_request(name, make(name, **fields), None, deadline)
         return self._wait_reply(rid, deadline)

@@ -238,6 +238,8 @@ struct DisplaySnapshot {
 @MainActor
 @Observable
 final class ProjectSession {
+  /// Replaceable RPC boundary for embedded sessions and tests.
+  var cardIdProvider: ((String, String) async throws -> String)?
   let identity: ProjectIdentity
   let environments: EnvironmentManager
   let viewId: UUID
@@ -299,9 +301,6 @@ final class ProjectSession {
   private(set) var redoStack: [UndoEntry] = []
   private(set) var saveError: String?
   private(set) var saving = false
-  /// Cards renamed inside Cards in Card by edits not saved yet: the save
-  /// names them so their run history follows.
-  var pendingCardRenames: [(from: [String], to: [String])] = []
   /// Edits wait for the run to end (the core keeps Card changes back while it runs).
   private(set) var savingAfterRun = false
   /// Last user-facing problem of an action (run refused, import failed, ...).
@@ -311,12 +310,19 @@ final class ProjectSession {
   var notice: String?
   /// The Draft being written on the canvas (geometry opens its Card up).
   var inlineDraft: InlineDraft?
+  @ObservationIgnored var draftFinishTask: Task<CardKey?, Never>?
+  var hasUnsavedEdits: Bool {
+    dirty || draftFinishTask != nil || inlineDraft.map { $0.name != $0.initialName || $0.content != $0.initialContent } == true
+  }
 
   /// A Draft being written on its Card: its name and content as typed so far.
-  struct InlineDraft: Equatable {
+  struct InlineDraft {
     var card: CardKey
     var name: String
     var content: String
+    var initialName: String
+    var initialContent: String
+    let revision: RevisionEdit
   }
 
   struct Snapshot: Equatable {
@@ -374,6 +380,7 @@ final class ProjectSession {
   /// Hashes of the externals' documents as they were read into `externals`.
   @ObservationIgnored private var externalHashes: [String: String] = [:]
   @ObservationIgnored private var saveTask: Task<Void, Never>?
+  @ObservationIgnored private var canvasSaveOp: String?
   @ObservationIgnored private var saveAgain = false
   /// Revision the draft is based on (equals `rev` while clean).
   var draftBaseRev: UInt64 { draftBase?.rev ?? rev }
@@ -436,13 +443,19 @@ final class ProjectSession {
   var versionGraph: Tsugumi_RPC_VersionGraphT?
   /// A version's Cards and wires (a commit never changes: read once).
   var versionCanvases: [String: Tsugumi_RPC_VersionCanvasT] = [:]
-  var versionSummaryBusy: Set<String> = []
-  var versionSummaryErrors: [String: String] = [:]
-  var versionSummaryTried: Set<String> = []
+  var versionNoteBusy: Set<String> = []
+  var versionNoteErrors: [String: String] = [:]
+  var versionNotes: [String: String] = [:]
+  var versionNoteRequests: [String: UUID] = [:]
   @ObservationIgnored var makeRepositoryOnConnect = false
 
   // Runs
-  private(set) var runStatus: Tsugumi_RPC_RunStatusT?
+  private var runProvenance: [String: Tsugumi_RPC_RunStatusT] = [:]
+  private var loadingProvenance: Set<String> = []
+  private(set) var runStatus: Tsugumi_RPC_RunStatusT? {
+    didSet { if let status = runStatus, let id = status.runId { runProvenance[id] = status } }
+  }
+  func markForRun(_ runId: String) -> String? { runMark(runProvenance[runId]) }
   private(set) var cardStates: [CardKey: CardRunState] = [:]
   private(set) var displays: [CardKey: DisplaySnapshot] = [:]
   private(set) var lastFinished: Date?
@@ -511,8 +524,7 @@ final class ProjectSession {
       let usage = try await rpc.cacheUsage()
       cacheUsage = usage
       if usage.large && !cacheNoticeShown && notice == nil {
-        let size = ByteCountFormatter.string(fromByteCount: Int64(clamping: usage.buildBytes ?? 0), countStyle: .file)
-        notice = String(localized: "ビルドキャッシュが \(size) を使用しています。設定の「ビルドキャッシュ」でプロジェクト別の容量を確認できます。")
+        notice = String(localized: "ビルドキャッシュまたは実行の scratch が大きくなっています。設定の「ビルドキャッシュ」で容量と削除対象を確認できます。")
         cacheNoticeShown = true
       } else if !usage.large && usage.buildBytes != nil { cacheNoticeShown = false }
     } catch { /* A failed measurement never interrupts execution. */ }
@@ -892,6 +904,13 @@ final class ProjectSession {
     let shown = displayedCards
     // What the Agent's save changed, seen against the document before it.
     let presenceBefore = d.origin == "agent" ? presenceSnapshot() : nil
+    // A canvas autosave can still be in flight when typing starts. Other
+    // editors, including those in this session, keep the original conflict base.
+    if let edit = inlineDraft?.revision, edit.baseRev == d.baseRev,
+       edit.conflictRev == nil, let op = canvasSaveOp, d.opId == op,
+       d.origin == "ui:\(viewId.uuidString.lowercased())" {
+      edit.baseRev = d.rev ?? rev
+    }
     rev = d.rev ?? rev
     executionRev = d.executionRev ?? executionRev
     if let pj = d.projectJson, let v = try? JSONValue.parse(pj) { confirmedProject = v }
@@ -930,7 +949,7 @@ final class ProjectSession {
     }
   }
 
-  private func applyRunEvent(_ e: Tsugumi_RPC_RunEventT) {
+  func applyRunEvent(_ e: Tsugumi_RPC_RunEventT) {
     guard let v = e.value else { return }
     switch v.type {
     case .runacceptedevent:
@@ -971,18 +990,29 @@ final class ProjectSession {
     case .runfinished:
       if let s = (v.value as? Tsugumi_RPC_RunFinishedT)?.summary.status { runStatus = s }
       lastFinished = Date()
-      if let commit = runStatus?.commit { Task { await summarizeVersion(commit) } }
       if dirty { scheduleSave() }
     default:
       break
     }
   }
 
-  private func applyDisplay(_ d: Tsugumi_Data_DisplayT) {
+  func applyDisplay(_ d: Tsugumi_Data_DisplayT) {
     let k = key(d.card.path)
     let rev = d.revision ?? 0
     if let old = displays[k], old.runId == d.runId, old.revision >= rev { return }  // stale frame
-    if let display = recordedDisplay(d) { displays[k] = display }
+    if let display = recordedDisplay(d) {
+      displays[k] = display
+      // A reconnected canvas may receive a display from an older run.
+      if let client, runProvenance[display.runId] == nil, !loadingProvenance.contains(display.runId) {
+        loadingProvenance.insert(display.runId)
+        Task {
+          defer { loadingProvenance.remove(display.runId) }
+          if let record = try? await client.record(runId: display.runId, card: path(k), invocation: display.invocation) {
+            runProvenance[display.runId] = record.run.status
+          }
+        }
+      }
+    }
   }
 
   private func recordTimeline(_ k: CardKey, _ inv: Tsugumi_RPC_InvocationSummaryT) {
@@ -1224,6 +1254,7 @@ final class ProjectSession {
   /// Drops every unsaved edit and follows the latest confirmed document
   /// (only for edits that cannot be saved).
   func discardDraft() {
+    inlineDraft = nil
     dropDraft()
     // A save on its way answers about the draft that went: nothing of it stays.
     if let saving = saveTask {
@@ -1244,7 +1275,6 @@ final class ProjectSession {
     sourceBases = [:]
     draftBase = nil
     externalBases = [:]
-    pendingCardRenames = []
     saveAgain = false
     conflictRetries = 0
     saveError = nil
@@ -1297,9 +1327,59 @@ final class ProjectSession {
     saving = true
     defer { saving = false }
     let base = draftBase ?? makeBase()
-    // While a run is active the core takes layout changes only.
     let layoutOnly = runActive && computationDirty
     savingAfterRun = layoutOnly
+    let (changes, sent, merged) = prepareSave(layoutOnly: layoutOnly, base: base)
+    guard !changes.isEmpty else {
+      if !layoutOnly { forgetSaved(sent, layoutOnly: false, merged: [:]) }
+      return
+    }
+    let op = UUID()
+    do {
+      try await commitChanges(baseRev: base.rev, op: op, changes: changes)
+      saveError = nil
+      conflictRetries = 0
+      forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
+    } catch let f as RPCFailure {
+      switch f.kind {
+      case .revisionConflict, .hashConflict:
+        if f.kind == .hashConflict, let p = f.args["path"], !isExternalDocument(p) {
+          // A file this window edited was changed elsewhere too: kept, not merged.
+          saveError = String(localized: "\(p) は別の場所でも変更されたため保存していません。変更は保持しています。")
+          return
+        }
+        guard conflictRetries < 8 else {
+          conflictRetries = 0
+          saveError = String(localized: "他の変更と重なり保存できませんでした。変更は保持しています。")
+          return
+        }
+        // Newer changes are on their way (DocPatched): merge them in and try again.
+        conflictRetries += 1
+        let want = f.currentRev ?? rev + 1
+        for _ in 0..<40 where rev < want { try? await Task.sleep(for: .milliseconds(50)) }
+        try? await Task.sleep(for: .milliseconds(30 * conflictRetries))
+        saveAgain = true
+      case .busy:
+        savingAfterRun = true
+      case .externalChange:
+        saveError = String(localized: "\(f.args["path"] ?? "ファイル") が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。")
+      default:
+        saveError = f.description
+      }
+    } catch {
+      // The reply may have been lost after the save committed: ask the core.
+      if let r = try? await client.operation(op), r.state == .completed {
+        saveError = nil
+        forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
+      } else {
+        saveError = String(localized: "保存できませんでした: \(String(describing: error))。変更は保持しています。")
+      }
+    }
+  }
+
+  /// Builds every document edit through the same transaction encoder.
+  private func prepareSave(layoutOnly: Bool, base: DraftBase) -> (changes: [Tsugumi_RPC_DocumentChangeT], sent: Snapshot, merged: [String: ExternalProject]) {
+    // While a run is active the core takes layout changes only.
     var changes: [Tsugumi_RPC_DocumentChangeT] = []
     let sent = snapshot()
     if layout != confirmedLayout { changes.append(Change.setLayout(layout.serialized())) }
@@ -1347,55 +1427,54 @@ final class ProjectSession {
         if let h = sourceBases[p] ?? base.hashes[p] ?? sources[p]?.hash { changes.append(Change.removeSource(path: p, baseHash: h)) }
       }
     }
-    guard !changes.isEmpty else {
-      if !layoutOnly { forgetSaved(sent, layoutOnly: false, merged: [:]) }
-      return
+    return (changes, sent, merged)
+  }
+
+  /// The shared settings/canvas entry to ProjectSave. The caller supplies the revision
+  /// it actually edited; this function never advances it or retries.
+  @discardableResult
+  private func commitChanges(baseRev: UInt64, op: UUID, changes: [Tsugumi_RPC_DocumentChangeT],
+                             editor: Bool = false) async throws -> Tsugumi_RPC_SaveResultT {
+    guard let client else { throw RPCError.disconnected }
+    if !editor { canvasSaveOp = op.uuidString.lowercased() }
+    defer { if !editor { canvasSaveOp = nil } }
+    let result = try await client.save(baseRev: baseRev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())",
+                                       changes: changes)
+    if let d = result.delta {
+      if editor { applyDelta(d) } else { applyDeltaFromSave(d) }
     }
-    let op = UUID()
-    do {
-      let renames = layoutOnly ? [] : pendingCardRenames
-      let result = try await client.save(baseRev: base.rev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())", changes: changes,
-                                         renamed: renames)
-      if !renames.isEmpty { pendingCardRenames.removeFirst(min(renames.count, pendingCardRenames.count)) }
-      saveError = nil
-      conflictRetries = 0
-      if let d = result.delta { applyDeltaFromSave(d) }
-      forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
-    } catch let f as RPCFailure {
-      switch f.kind {
-      case .revisionConflict, .hashConflict:
-        if f.kind == .hashConflict, let p = f.args["path"], !isExternalDocument(p) {
-          // A file this window edited was changed elsewhere too: kept, not merged.
-          saveError = String(localized: "\(p) は別の場所でも変更されたため保存していません。変更は保持しています。")
-          return
-        }
-        guard conflictRetries < 8 else {
-          conflictRetries = 0
-          saveError = String(localized: "他の変更と重なり保存できませんでした。変更は保持しています。")
-          return
-        }
-        // Newer changes are on their way (DocPatched): merge them in and try again.
-        conflictRetries += 1
-        let want = f.currentRev ?? rev + 1
-        for _ in 0..<40 where rev < want { try? await Task.sleep(for: .milliseconds(50)) }
-        try? await Task.sleep(for: .milliseconds(30 * conflictRetries))
-        saveAgain = true
-      case .busy:
-        savingAfterRun = true
-      case .externalChange:
-        saveError = String(localized: "\(f.args["path"] ?? "ファイル") が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。")
-      default:
-        saveError = f.description
-      }
-    } catch {
-      // The reply may have been lost after the save committed: ask the core.
-      if let r = try? await client.operation(op), r.state == .completed {
-        saveError = nil
-        forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
-      } else {
-        saveError = String(localized: "保存できませんでした: \(String(describing: error))。変更は保持しています。")
+    return result
+  }
+
+  /// Applies an editor's working copy without putting a rejected edit into
+  /// the autosaved session draft. Both settings editors and the canvas use
+  /// prepareSave/commitChanges; only the canvas rebases and retries its draft.
+  func applyEdit(baseRev: UInt64, _ change: (ProjectSession) -> Void) async throws -> UInt64 {
+    if dirty || saveTask != nil { await save() }
+    guard connected, client != nil else { throw RPCError.disconnected }
+    guard baseRev == rev else { throw RPCFailure(kind: .revisionConflict, diagnostic: "Editor revision changed") }
+    guard !dirty else { throw RPCFailure(kind: .busy, diagnostic: String(localized: "変更を保存できませんでした。")) }
+    let before = docState(), beforeSnap = snapshot(), base = makeBase()
+    change(self)
+    normalizeExternalEdits()
+    let prepared = prepareSave(layoutOnly: false, base: base)
+    let after = docState()
+    dropDraft()
+    guard !prepared.changes.isEmpty else { return baseRev }
+    let step = record(before: before, beforeSnap: beforeSnap, after: after, afterSnap: prepared.sent)
+    await fillUndoSources()
+    // Reading undo sources can yield to another client. Keep baseRev fixed.
+    let result = try await commitChanges(baseRev: baseRev, op: UUID(), changes: prepared.changes, editor: true)
+    if rev == result.rev {
+      for (prefix, ext) in prepared.merged {
+        externals[prefix] = ext
+        for rel in ext.files.keys { externalHashes[prefix + rel] = sources[prefix + rel]?.hash }
       }
     }
+    undoStack.append(step)
+    if undoStack.count > 500 { undoStack.removeFirst() }
+    redoStack.removeAll()
+    return result.rev ?? baseRev
   }
 
   /// Whether a path is one of an external's documents (merged, not compared by hash).
@@ -1450,10 +1529,30 @@ final class ProjectSession {
     }
   }
 
-  func reloadExternal() async {
-    guard let client else { return }
+  struct ReloadApproval: Identifiable {
+    let id = UUID()
+    let baseRev: UInt64
+    let permissions: [String]
+  }
+  var reloadApproval: ReloadApproval?
+  private(set) var reloadingExternal = false
+
+  func answerReloadApproval(_ allow: Bool) async {
+    let request = reloadApproval
+    reloadApproval = nil
+    if allow, let request { await reloadExternal(approved: request.permissions, baseRev: request.baseRev) }
+  }
+
+  func reloadExternal(approved: [String] = [], baseRev: UInt64? = nil) async {
+    guard let client, !reloadingExternal else { return }
+    let base = baseRev ?? rev
+    reloadingExternal = true
+    defer { reloadingExternal = false }
     do {
-      _ = try await client.reload(baseRev: rev, opId: UUID(), origin: "ui")
+      _ = try await client.reload(baseRev: base, opId: UUID(), origin: "ui", approvedPermissions: approved)
+      saveError = nil
+    } catch let failure as RPCFailure where failure.kind == .approvalRequired && !failure.permissions.isEmpty {
+      reloadApproval = ReloadApproval(baseRev: base, permissions: Array(Set(approved + failure.permissions)).sorted())
       saveError = nil
     } catch {
       saveError = "\(error)"
@@ -1520,6 +1619,10 @@ final class ProjectSession {
   // MARK: - Runs
 
   func run(card: [String], propagate: Bool) async throws {
+    _ = await finishDraftEdit()
+    guard inlineDraft == nil else {
+      throw RPCFailure(kind: .validationFailed, diagnostic: String(localized: "変更を保存できないため実行できません。"))
+    }
     guard let client else { throw RPCError.disconnected }
     if computationDirty { await save() }
     if computationDirty {
@@ -1704,16 +1807,19 @@ final class ProjectSession {
     cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }.filter { !openComments($0).isEmpty }
   }
 
-  /// Saved at once; a Card in Card has a _meta.json too. One call is one step of undo.
+  /// Changes comments in the draft, through the same definition setter.
+  private func changeComments(_ k: CardKey, _ fn: ([JSONValue]) -> [JSONValue]) {
+    guard var d = cardDefinitionDraft(k) else { return }
+    var meta = d.meta ?? .object([])
+    let list = fn(meta["comments"]?.array ?? [])
+    meta["comments"] = list.isEmpty ? nil : .array(list)
+    d.meta = meta.object?.isEmpty ?? true ? nil : meta
+    setCardDefinition(k, d)
+  }
+
+  /// Immediate comment actions have no open working copy.
   private func editComments(_ k: CardKey, _ fn: ([JSONValue]) -> [JSONValue]) {
-    edit { x in
-      guard var d = x.cardDefinitionDraft(k) else { return }
-      var meta = d.meta ?? .object([])
-      let list = fn(meta["comments"]?.array ?? [])
-      meta["comments"] = list.isEmpty ? nil : .array(list)
-      d.meta = meta.object?.isEmpty ?? true ? nil : meta
-      x.setCardDefinition(k, d)
-    }
+    edit { $0.changeComments(k, fn) }
   }
 
   func addComment(_ k: CardKey, _ text: String) {
@@ -1722,11 +1828,14 @@ final class ProjectSession {
     editComments(k) { $0 + [.object([("id", .string(UUID().uuidString.lowercased())), ("text", .string(t)), ("author", .string("user"))])] }
   }
 
-  func editComment(_ k: CardKey, id: String, text: String) {
+  func setCommentText(_ k: CardKey, id: String, text: String) {
     let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !t.isEmpty else { return }
-    editComments(k) { list in
-      list.map { c in
+    changeComments(k) { list in
+      if !list.contains(where: { $0["id"]?.string == id }) {
+        return list + [.object([("id", .string(id)), ("text", .string(t)), ("author", .string("user"))])]
+      }
+      return list.map { c in
         guard c["id"]?.string == id else { return c }
         var n = c
         n["text"] = .string(t)

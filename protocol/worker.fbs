@@ -34,10 +34,6 @@ table WorkerCall {
   environment:[EnvVar] (id: 9, required);
   // Remaining time in milliseconds. Omitted means no deadline.
   deadline_ms:uint64 = null (id: 10);
-  // Directory descriptors sent with this frame (SCM_RIGHTS), in order: the
-  // worker installs the i-th one as descriptor passed_fds[i] for the call.
-  // The directories above then read /proc/self/fd/<n>.
-  passed_fds:[int32] (id: 11);
 }
 
 table WorkerOutput {

@@ -95,7 +95,7 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
     setExpanded(n)
   }
   const exts = [...session.effectiveExternals.keys()].filter((p) => p.split('/').filter(Boolean).length === 2).sort()
-  const unplaced = session.unplacedDefinitions.filter((id) => !search || has(id))
+  const unplaced = session.unplacedDefinitions.filter((id) => !search || has(session.displayName(key([id]))) || has(id))
   const at = () => dropPoint(session, tab)
   const placeCopy = async (prefix: string, id: string) => {
     const k = await session.placeDefinitionCopy(prefix, id, tab.scope, at())
@@ -120,7 +120,7 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
       {exts.map((prefix) => {
         const name = prefix.split('/').filter(Boolean).pop() ?? prefix
         const e = session.external(prefix)
-        const ids = [...(e?.definitions.keys() ?? [])].sort().filter((id) => !search || has(id) || has(name))
+        const ids = [...(e?.definitions.keys() ?? [])].sort().filter((id) => !search || has(id) || has(str(get(e?.definitions.get(id)?.meta, 'name')) ?? id) || has(name))
         return (
           <div key={prefix}>
             <TreeHead open={isOpen(prefix)} onToggle={() => toggle(prefix)} icon="shippingbox" label={name} />
@@ -131,7 +131,7 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
                 {ids.map((id) => {
                   const d = e?.definitions.get(id)
                   return (
-                    <DefinitionRow key={id} session={session} icon={d?.link !== undefined ? KIND_ICON.subgraph : kindIcon(definitionKind(d?.card))} title={id}
+                    <DefinitionRow key={id} session={session} icon={d?.link !== undefined ? KIND_ICON.subgraph : kindIcon(definitionKind(d?.card))} title={str(get(d?.meta, 'name')) ?? id}
                       drag={EXTERNAL_DEFINITION_DRAG + prefix + '\n' + id} help={L('定義をこのプロジェクトの definitions にコピーして Card を置きます')}
                       onAdd={() => void placeCopy(prefix, id)} />
                   )
@@ -145,7 +145,7 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
         <div>
           <TreeHead open={isOpen('unplaced')} onToggle={() => toggle('unplaced')} icon="tray" label={L('配置されていない定義')} secondary />
           {isOpen('unplaced') && unplaced.map((id) => (
-            <DefinitionRow key={id} session={session} icon={kindIcon(definitionKind(session.definitions.get(id)))} title={id} drag={DEFINITION_DRAG + id}
+            <DefinitionRow key={id} session={session} icon={kindIcon(definitionKind(session.definitions.get(id)))} title={session.displayName(key([id]))} drag={DEFINITION_DRAG + id}
               help={L('ダブルクリックまたは Canvas へドラッグして配置')} onAdd={() => place(id)}
               menu={[
                 { label: L('Canvas に配置'), action: () => place(id), disabled: !session.isEditable },

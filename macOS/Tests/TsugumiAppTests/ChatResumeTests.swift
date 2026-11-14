@@ -2,7 +2,7 @@ import CryptoKit
 import Darwin
 import Foundation
 import Testing
-import TsugumiAgentClient
+@testable import TsugumiAgentClient
 import TsugumiRPC
 @testable import TsugumiApp
 @testable import TsugumiLauncher
@@ -14,7 +14,7 @@ import TsugumiRPC
   @MainActor final class Fixture {
     let directory = URL(fileURLWithPath: "/tmp/tsugumi-chat-\(UUID().uuidString.prefix(8))")
     let conversationID = UUID().uuidString.lowercased()
-    let core = Process()
+    var core = Process()
     let model = Process()
     private let previousState = ProcessInfo.processInfo.environment["TSUGUMI_AGENT_STATE"]
     private let previousSupport = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"]
@@ -23,6 +23,7 @@ import TsugumiRPC
     private var sessions: [ProjectSession] = []
     private var chats: [ChatController] = []
     private var port = 0
+    private var servicePID: Int32?
 
     var session: ProjectSession { sessions[0] }
 
@@ -40,10 +41,11 @@ import TsugumiRPC
       core.standardOutput = FileHandle.nullDevice
       core.standardError = FileHandle.nullDevice
       try core.run()
-      let deadline = Date().addingTimeInterval(15)
-      while !FileManager.default.fileExists(atPath: state.appendingPathComponent("agent.ready").path),
-            core.isRunning, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
-      try #require(core.isRunning && FileManager.default.fileExists(atPath: state.appendingPathComponent("agent.ready").path))
+      try await waitForAgent()
+      // Other UI tests can initialize the shared client before this fixture.
+      // Join Home's startup and release its sockets before using our service.
+      await AppModel.shared.initialRefresh?.value
+      await CoreAgentClient.shared.disconnect()
 
       model.executableURL = URL(fileURLWithPath: "/usr/bin/env")
       model.arguments = ["python3", SyncTests.root.appendingPathComponent("tests/fixtures/model_fixture.py").path,
@@ -73,6 +75,46 @@ import TsugumiRPC
       try await CoreAgentClient.shared.configure(.fixture, conversationID: conversationID)
     }
 
+    func restartAgent() async throws {
+      let binary = core.executableURL
+      let arguments = core.arguments
+      let oldPID = servicePID ?? core.processIdentifier
+      kill(oldPID, SIGKILL)
+      if oldPID == core.processIdentifier { core.waitUntilExit() }
+      else {
+        let deadline = Date().addingTimeInterval(5)
+        while kill(oldPID, 0) == 0, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        try #require(kill(oldPID, 0) != 0, "The previous fixture service did not exit")
+      }
+      // Leave stale readiness in place: the observer may already have replaced
+      // it with the winner's file. Validate the new PID instead of unlinking it.
+      core = Process()
+      core.executableURL = binary
+      core.arguments = arguments
+      core.standardOutput = FileHandle.nullDevice
+      core.standardError = FileHandle.nullDevice
+      try core.run()
+      try await waitForAgent(replacing: oldPID)
+      kill(model.processIdentifier, SIGCONT)
+    }
+
+    private func waitForAgent(replacing oldPID: Int32? = nil) async throws {
+      let ready = directory.appendingPathComponent("state/agent.ready")
+      // An observing client can win the startup lock. Status 4 means wait for
+      // that service, not that the replacement service failed to start.
+      let replacement = core
+      let value = try await AgentReadiness.wait(read: {
+        guard let bytes = try? Data(contentsOf: ready),
+              let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+              let pid = value["pid"] as? Int32, pid != oldPID, kill(pid, 0) == 0,
+              value["protocol"] as? Int == 1, value["unix_socket"] is String,
+              value["host_socket"] is String, value["user_token"] is String else { return nil }
+        return value
+      }, exitStatus: { replacement.isRunning ? nil : replacement.terminationStatus },
+      log: directory.appendingPathComponent("state/agent.log"))
+      servicePID = try #require(value["pid"] as? Int32)
+    }
+
     func makeSession() throws -> ProjectSession {
       let project = try #require(project)
       let daemon = try #require(daemon)
@@ -100,7 +142,9 @@ import TsugumiRPC
 
     func keep(_ chat: ChatController) { chats.append(chat) }
 
-    func send(_ text: String = "hello") async throws {
+    func send(_ text: String = "hello", holdingModel: Bool = false) async throws {
+      // Keep the response pending until restart, regardless of CI scheduling.
+      if holdingModel { try #require(kill(model.processIdentifier, SIGSTOP) == 0) }
       _ = try await CoreAgentClient.shared.call("ConversationSendRequest", ["conversation_id": conversationID,
         "turn_id": UUID().uuidString, "text": text])
     }
@@ -126,6 +170,14 @@ import TsugumiRPC
       // Let the UI's detach tasks release their socket observations before
       // terminating the isolated daemon and restoring the environment.
       try? await Task.sleep(for: .milliseconds(100))
+      if model.isRunning { kill(model.processIdentifier, SIGCONT) }
+      if let pid = servicePID, pid != core.processIdentifier {
+        // The lock winner belongs to this fixture even when the client launched it.
+        kill(pid, SIGTERM)
+        let deadline = Date().addingTimeInterval(5)
+        while kill(pid, 0) == 0, Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+        if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+      }
       for process in [core, model] where process.isRunning {
         process.terminate()
         let deadline = Date().addingTimeInterval(5)
@@ -135,6 +187,7 @@ import TsugumiRPC
       }
       daemon?.stop()
       try? await Task.sleep(for: .milliseconds(100))
+      await CoreAgentClient.shared.disconnect()
       if let previousState { setenv("TSUGUMI_AGENT_STATE", previousState, 1) } else { unsetenv("TSUGUMI_AGENT_STATE") }
       if let previousSupport { setenv("TSUGUMI_SUPPORT_DIR", previousSupport, 1) } else { unsetenv("TSUGUMI_SUPPORT_DIR") }
       if let project { try? FileManager.default.removeItem(at: project) }
@@ -163,6 +216,69 @@ import TsugumiRPC
 
   func reply(_ chat: ChatController, after n: Int) -> Bool {
     chat.items.dropFirst(n).contains { $0.role == "assistant" }
+  }
+
+  @Test func openingAndRefreshingAnInterruptedConversationOnlyObserve() async throws {
+    try await withFixture(slow: 0.3) { t in
+      try await t.send("hello interrupted", holdingModel: true)
+      // The core records preparing/model before sending the RPC acknowledgement.
+      try await t.restartAgent()
+      let before = try await t.snapshot()
+      try #require(before["resumable"] as? Bool == true)
+      let operation = try #require(before["interrupted_operation"] as? Tsugumi_Agent_InterruptedOperationT)
+      #expect(["preparing", "model"].contains(operation.kind))
+      let chat = t.makeChat()
+      try await until("the interruption is visible") { chat.interrupted }
+      #expect(!chat.busy && !chat.stoppedAtLimit)
+      #expect(chat.status?.contains(String(localized: "会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。").components(separatedBy: "%@")[0]) == true)
+      let agent = Agent(id: t.conversationID, transport: RPCToolTransport(session: t.session), provider: .fixture)
+      try await agent.open()
+      try await agent.refresh()
+      try await Task.sleep(for: .milliseconds(300))
+      let after = try await t.snapshot()
+      #expect(after["busy"] as? Bool == false)
+      #expect(after["resumable"] as? Bool == true)
+      #expect(after["event_seq"] as? UInt64 == before["event_seq"] as? UInt64)
+      #expect((after["conversation"] as? Tsugumi_Agent_ConversationT)?.messages.count == 1)
+      #expect(chat.interruptedOperation?.kind == operation.kind)
+      t.session.start()
+      try await SyncTests.connected(t.session)
+      chat.resume()
+      try await until("explicit resume finished") { !chat.busy && reply(chat, after: 0) }
+      #expect(!chat.interrupted)
+    }
+  }
+
+  @Test func aRestartWhileObservedShowsInterruptionWithoutResuming() async throws {
+    try await withFixture(slow: 2) { t in
+      t.session.start()
+      try await SyncTests.connected(t.session)
+      try await t.send("hello interrupted", holdingModel: true)
+      let chat = t.makeChat()
+      try await until("the running conversation is observed") { chat.busy }
+      try await t.restartAgent()
+      try await until("the restarted conversation is interrupted") { chat.interrupted }
+      #expect(!chat.busy && !chat.failed)
+      let snapshot = try await t.snapshot()
+      #expect(snapshot["resumable"] as? Bool == true)
+      try await Task.sleep(for: .milliseconds(300))
+      #expect(try await t.snapshot()["event_seq"] as? UInt64 == snapshot["event_seq"] as? UInt64)
+    }
+  }
+
+  @Test func anInterruptedConversationAcceptsANewMessageWithoutResume() async throws {
+    try await withFixture(slow: 0.3) { t in
+      try await t.send("hello interrupted", holdingModel: true)
+      try await t.restartAgent()
+      let chat = t.makeChat()
+      try await until("the interruption is visible") { chat.interrupted }
+      t.session.start()
+      try await SyncTests.connected(t.session)
+      chat.send("hello instead")
+      try await until("the new message finished") { !chat.busy && reply(chat, after: 1) }
+      #expect(!chat.interrupted)
+      #expect(chat.items.contains { $0.role == "user" && $0.text == "hello instead" })
+    }
   }
 
   @Test func multipleAttachedFoldersRemainDistinctAndReadableAfterSending() async throws {
@@ -242,8 +358,10 @@ import TsugumiRPC
     try await withFixture(slow: 0.1) { t in
       try await t.send()
       let chat = t.makeChat()
-      try await until("the persisted request is visible") { chat.currentId == t.conversationID && !chat.items.isEmpty }
-      #expect(!chat.busy, "The UI waits for its project connection; core keeps working.")
+      try await until("the running answer is observed before the project connects") {
+        chat.currentId == t.conversationID && !chat.items.isEmpty && chat.busy
+      }
+      #expect(!t.session.connected, "Observing core work does not need a project connection")
       t.session.start()
       try await SyncTests.connected(t.session)
       try await until("the running answer is observed") { chat.busy }

@@ -64,7 +64,7 @@ The SDK provides `Log`, `Text`, `Markdown`, `Scalar`, `Table`, `Image`, `LineCha
 
 ## The native boundary
 
-`sdk/csharp/InvocationScope.cs` declares the Card ABI's structs (`tsugumi_call`, `tsugumi_value`, `tsugumi_series` in `sdk/include/tsugumi/sdk/abi.h`) by hand. Before the first call, the C++ host passes the compiler's `offsetof`/`sizeof` of every field to the managed SDK, which compares them with its own layout; any field missing, moved or resized on either side fails `tsugumi_load` with the field named in the Card's log. `tests/static/test_csharp_abi.py` checks field order and callback signatures from the sources without .NET. Extending the ABI (a new callback at the end of `tsugumi_call`) means adding the field to `abi.h`, `host.cc`'s layout table, `NativeCall` and `Layout.cs`.
+`sdk/csharp/InvocationScope.cs` declares the Card ABI's structs (`tsugumi_call`, `tsugumi_value`, `tsugumi_series` in `sdk/include/tsugumi/sdk/abi.h`) by hand. During source loading in the first invocation, the C++ host passes the compiler's `offsetof`/`sizeof` of every field to the managed SDK, which compares them with its own layout; any field missing, moved or resized on either side fails `tsugumi_load` with the field named in the Card's log. `tests/static/test_csharp_abi.py` checks field order and callback signatures from the sources without .NET. Extending the ABI (a new callback at the end of `tsugumi_call`) means adding the field to `abi.h`, `host.cc`'s layout table, `NativeCall` and `Layout.cs`.
 
 ## NuGet packages
 
@@ -110,6 +110,6 @@ Nothing makes the lock for you. To add or update packages, deliberately:
 
 ## Why runtime hosting
 
-The Card exports the existing `tsugumi_load`, `tsugumi_main` and `tsugumi_run_start` ABI. A small C++ library loads `hostfxr`, initializes the pinned runtime and calls managed `[UnmanagedCallersOnly]` entry points. It adds no separate RPC or subprocess protocol. CLR diagnostics sockets are disabled; ordinary logs and structured failures remain available.
+The package's `lib/tsugumi-runtime` names a separately built SDK adapter, which exports `tsugumi_prepare`, `tsugumi_load`, `tsugumi_main` and `tsugumi_run_start`. Inside the first invocation, preparation loads `hostfxr` and initializes the pinned runtime, then `tsugumi_load` loads the separate managed assembly and its `[UnmanagedCallersOnly]` entry points. `tsugumi_load` receives the current `tsugumi_call`. It adds no separate RPC or subprocess protocol. CLR diagnostics sockets are disabled; ordinary logs and structured failures remain available.
 
 The documented platform constraints are in Microsoft's [runtime hosting tutorial](https://learn.microsoft.com/en-us/dotnet/core/tutorials/netcore-hosting). FlatBuffers' [language support matrix](https://flatbuffers.dev/support/) describes the generated C# object API.

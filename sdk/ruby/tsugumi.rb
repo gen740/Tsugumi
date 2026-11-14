@@ -1,6 +1,5 @@
 # Ruby Cards use ordinary Hashes, Arrays and value objects with #to_h. The
 # native adapter validates JSON against each port's FlatBuffers contract.
-require 'json'
 
 module Tsugumi
   class Failure < StandardError
@@ -223,9 +222,10 @@ module Tsugumi
 
   class Card; end
 
-  def self.guard(report: true)
+  def self.guard
+    require 'json'
     before = Thread.list
-    scope = report ? CallScope.new : nil
+    scope = CallScope.new
     begin
       yield scope
       if (Thread.list - before).any?(&:alive?)
@@ -234,10 +234,8 @@ module Tsugumi
       true
     rescue Exception => error # SystemExit and syntax errors also fail the invocation.
       warn error.full_message
-      if report
-        kind = error.is_a?(Failure) ? error.kind : 'worker_failed'
-        TsugumiHost.fail(kind, "#{error.class}: #{error.message}")
-      end
+      kind = error.is_a?(Failure) ? error.kind : 'worker_failed'
+      TsugumiHost.fail(kind, "#{error.class}: #{error.message}")
       false
     ensure
       scope&.close
@@ -250,7 +248,7 @@ module Tsugumi
   def self._load(directory)
     $stdout.sync = true
     $stderr.sync = true
-    guard(report: false) do
+    guard do
       file = File.join(directory, 'main.rb')
       Card.class_eval(File.read(file, encoding: Encoding::UTF_8), file, 1)
       @card = Card.new

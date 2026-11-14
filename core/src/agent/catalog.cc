@@ -15,6 +15,9 @@
 extern const unsigned char tsugumi_rpc_bfbs[];
 extern const unsigned long tsugumi_rpc_bfbs_size;
 
+extern const unsigned char tsugumi_agent_settings[];
+extern const unsigned long tsugumi_agent_settings_size;
+
 namespace tsugumi::agent {
 namespace {
 
@@ -45,7 +48,8 @@ auto Docs(
 }
 
 const std::set<std::string> kOwnedFields{"origin", "op_id",
-                                         "approved_permissions"};
+                                         "approved_permissions", "run_ids",
+                                         "restrict_to_run_ids"};
 
 auto OwnOperationId(const reflection::Object &object) -> bool {
   const auto name = object.name()->str();
@@ -246,21 +250,35 @@ auto Parser() -> std::unique_ptr<flatbuffers::Parser> {
 Catalog::Catalog() {
   const auto *requests =
       Schema().enums()->LookupByKey("Tsugumi.RPC.RequestPayload");
-  for (const auto *value : *requests->values()) {
-    if (!value->value())
-      continue;
-    const auto name = value->name()->str();
-    if (name == "SessionHelloRequest" || name == "ProjectOpenRequest" ||
-        name == "ProjectCloseRequest" || name == "ViewSetVisibleRequest")
-      continue;
-    const auto &object = *Schema().objects()->Get(value->union_type()->index());
-    CatalogTool tool{{Name(name), Docs(object.documentation()),
-                      ObjectSchema(object, 0, true)},
-                     name,
-                     false};
-    tool.mutating = OwnOperationId(object);
-    tool.has_origin = object.fields()->LookupByKey("origin") != nullptr;
-    tools_.push_back(std::move(tool));
+  const auto settings = json::Object(
+      std::string_view(reinterpret_cast<const char *>(tsugumi_agent_settings),
+                       tsugumi_agent_settings_size));
+  std::set<std::string> seen;
+  for (const auto *list : {"requests", "approvalRequests"}) {
+    for (const auto &entry : json::Array(json::Get(settings, list))) {
+      const auto name = json::String(entry);
+      const auto found = std::find_if(
+          requests->values()->begin(), requests->values()->end(),
+          [&](const auto *value) { return value->name()->str() == name; });
+      if (found == requests->values()->end() || !(*found)->value() ||
+          !seen.insert(name).second)
+        throw std::runtime_error("invalid Agent request allow list entry: " +
+                                 name);
+      const auto &object =
+          *Schema().objects()->Get((*found)->union_type()->index());
+      CatalogTool tool{{Name(name), Docs(object.documentation()),
+                        ObjectSchema(object, 0, true)},
+                       name,
+                       false};
+      tool.approval_required = std::string_view(list) == "approvalRequests";
+      if (tool.approval_required)
+        tool.spec.description +=
+            " Requires the person's approval for this call and its exact "
+            "targets; a declined call changes nothing.";
+      tool.mutating = OwnOperationId(object);
+      tool.has_origin = object.fields()->LookupByKey("origin") != nullptr;
+      tools_.push_back(std::move(tool));
+    }
   }
 }
 
@@ -287,13 +305,28 @@ auto Catalog::Request(std::string_view name, std::string_view arguments,
   const auto *tool = Find(name);
   if (!tool)
     throw std::runtime_error("unknown project operation");
+  return EncodeProjectRequest(name, arguments, id);
+}
+
+auto EncodeProjectRequest(std::string_view name, std::string_view arguments,
+                          uint64_t id) -> std::string {
+  const auto *requests =
+      Schema().enums()->LookupByKey("Tsugumi.RPC.RequestPayload");
+  const auto found = std::find_if(
+      requests->values()->begin(), requests->values()->end(),
+      [&](const auto *value) {
+        return value->value() && Name(value->name()->str()) == name;
+      });
+  if (found == requests->values()->end())
+    throw std::runtime_error("unknown project operation");
+  const auto request_name = (*found)->name()->str();
   const auto *object = Schema().objects()->LookupByKey(
-      ("Tsugumi.RPC." + tool->request_name).c_str());
+      ("Tsugumi.RPC." + request_name).c_str());
   auto body = json::Encode(json::Members{
       {"request_id", std::to_string(id)},
       {"payload_type", json::Quote("Request")},
       {"payload", json::Encode(json::Members{
-                      {"value_type", json::Quote(tool->request_name)},
+                      {"value_type", json::Quote(request_name)},
                       {"value", Normalize(*object, arguments)}})}});
   auto parser = Parser();
   if (!parser->ParseJson(body.c_str()))

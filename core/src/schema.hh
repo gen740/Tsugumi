@@ -188,6 +188,7 @@ struct CardComment {
 // _meta.json: the intent of a definition, for every kind of Card (a Card in
 // Card too); kept when a Draft is implemented. The summary is only here.
 struct CardMeta {
+  Opt<"name", v::String> name;  // display name; absent means the identifier
   Opt<"description", v::String> description;  // short summary
   Opt<"content", v::String> content;          // a Draft's plan: inputs, outputs, processing (free text)
   Opt<"context", v::String> context;          // extra intent/notes for the Agent and readers
@@ -375,6 +376,7 @@ struct SavedInputGroupJson {
   t::String<"port"> port;
   t::Bool<"execution_list"> execution_list;
   t::Array<"values", Obj<SavedInputJson>> values;
+  t::Bool<"partial_result"> partial_result;
 };
 
 struct SavedInputList {
@@ -424,7 +426,7 @@ struct BuildCache {
 };
 
 // The manifest written by the SDK's tsugumi.manifest (read only). `run` is the
-// Card body: a package (store path; the worker loads lib/main.so in it) or a
+// Card body: a package (store path; lib/main.so or lib/tsugumi-runtime naming an SDK artifact) or a
 // bash script, never both.
 struct ManifestRun {
   Opt<"package", v::String> package;

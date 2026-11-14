@@ -8,6 +8,21 @@ namespace tsugumi::test {
 // project.
 class AgentProjectFixture : public AgentFixture {
  protected:
+  auto ApprovedTool(const std::string& conversation, const std::string& name,
+                    const std::string& arguments) -> Reply {
+    const auto id = "approved-" + name;
+    const auto pending = Tool(conversation, name, arguments, id);
+    if (pending.Code() != "grant_required" || pending.RequestId().empty())
+      throw std::runtime_error("expected a per-call approval for " + name);
+    const auto resolved = Call(*human, A::RequestPayload::AccessResolveRequest,
+                              [&](Builder& b) {
+      return A::CreateAccessResolveRequest(
+                 b, b.CreateString(pending.RequestId()), true).Union();
+    });
+    if (!resolved.Code().empty()) throw std::runtime_error(resolved.Code());
+    return Tool(conversation, name, arguments, id);
+  }
+
   auto TearDown() -> void override {
     AgentFixture::TearDown();
     project.Stop();

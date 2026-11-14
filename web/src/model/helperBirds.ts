@@ -62,7 +62,7 @@ export const leadColor = (dark: boolean) => (dark ? 'rgb(250, 204, 89)' : 'rgb(1
 export type BirdOutcome = 'done' | 'failed' | 'stopped' | 'limit'
 const OUTCOME_LINE: Record<BirdOutcome, string> = { done: L('できました'), failed: L('うまくいきませんでした'), stopped: L('止めました'), limit: L('途中で止まっています') }
 
-interface Scene { card: string; line: string; start: number }
+interface Scene { card: string; line: string; start: number; received: number }
 export interface BirdPlace extends Pt { flying: boolean; facing: 1 | -1 }
 
 /** What the bird looks at while its writer plays a file: that file's Card. */
@@ -77,7 +77,7 @@ export class HelperBird {
   private outcome: BirdOutcome = 'done'
   private flight?: { card: string; from?: Pt; at: number }
 
-  constructor(readonly name: string, readonly tint: number, private readonly writer: () => BirdWriter | undefined, now: number) {
+  constructor(readonly name: string, readonly tint: number, private readonly writer: () => BirdWriter | undefined, now: number, private readonly animateWork: () => boolean = () => true) {
     this.appearedAt = now
   }
 
@@ -85,10 +85,10 @@ export class HelperBird {
   visit(card: string, line: string, now: number, keep = false) {
     const last = this.scenes[this.scenes.length - 1]
     const lastEnd = last ? last.start + BIRD_TIMING.scene : now
-    const start = Math.max(now, lastEnd)
+    const start = this.animateWork() ? Math.max(now, lastEnd) : now
     if (!keep && last?.card === card && lastEnd > now - 0.5) return // already there
     if (!keep && start - now > BIRD_TIMING.maxBacklog) return
-    this.scenes.push({ card, line, start })
+    this.scenes.push({ card, line, start, received: now })
   }
 
   /** What it does between scenes (looking things up, checking, waiting). */
@@ -101,10 +101,14 @@ export class HelperBird {
     this.working = false
     this.outcome = outcome
     const last = this.scenes[this.scenes.length - 1]
-    this.endedAt = Math.max(now, last ? last.start + BIRD_TIMING.scene : now)
+    this.endedAt = this.animateWork() ? Math.max(now, last ? last.start + BIRD_TIMING.scene : now) : now
   }
 
   private scene(now: number): Scene | undefined {
+    if (!this.animateWork()) {
+      const last = this.scenes.at(-1)
+      return last && { ...last, start: last.received }
+    }
     for (let i = this.scenes.length - 1; i >= 0; i--) if (this.scenes[i].start <= now) return this.scenes[i]
     return undefined
   }
@@ -186,12 +190,12 @@ export class HelperBird {
 export class HelperTeam {
   birds: HelperBird[] = []
 
-  constructor(private readonly writerOf: (name: string) => BirdWriter | undefined) {}
+  constructor(private readonly writerOf: (name: string) => BirdWriter | undefined, private readonly animateWork: () => boolean = () => true) {}
 
   /** A delegate call started: each helper's bird comes to its first Card. */
   start(tasks: { name: string; cards: string[] }[], now: number) {
     this.birds = tasks.map((t, i) => {
-      const b = new HelperBird(t.name, i + 1, () => this.writerOf(t.name), now)
+      const b = new HelperBird(t.name, i + 1, () => this.writerOf(t.name), now, this.animateWork)
       if (t.cards[0]) b.visit(t.cards[0], L('{0} を読んでいます', t.cards[0]), now)
       return b
     })

@@ -5,6 +5,8 @@ File paths and commands on this page are relative to the root of the repository.
 
 The browser and Agent use the [project RPC](Protocol.md); review the [execution and data boundaries](security.md) for the chosen host.
 
+Card names appear throughout the UI; exact identifiers remain in tool arguments and file paths. Editors retain text typed while a save is pending. Inline values use the revision from the start of the edit, and an unchanged value is not saved. **Reload External Changes** asks for approval when outside edits widen Card permissions; declining leaves the loaded project unchanged.
+
 ## The tsugumi command
 
 Install the command using the [installation guide](INSTALL.md#using-it-in-the-browser-the-tsugumi-command). Run `tsugumi` to start the Web host and open a browser, or `tsugumi <project folder>` to open that project. Ctrl-C stops the Web host; project environments and core conversations remain resident. Stop a project's environment explicitly when its execution should end.
@@ -31,7 +33,7 @@ The installed Mac command uses the release app's support directory by default:
 | VM, store, project control folders | `~/Library/Application Support/Tsugumi/`; override with `TSUGUMI_SUPPORT_DIR` |
 | Recent projects | `recent-projects.json` under agentd's state directory; shared by clients of that service |
 | Default project destination | `~/Documents/Tsugumi` |
-| Language, provider, model, effort, Fast, web search, permission preferences, version summaries | agentd's `desktop` settings profile, shared with the app |
+| Language, provider, model, effort, Fast, web search, permission preferences, version note mode | agentd's `desktop` settings profile, shared with the app |
 | Skill folders and ChatGPT accounts | Separate `web:<Web data folder>` profile in agentd |
 | Scripted guide progress | Separate desktop and Web sessions in agentd; shared across that client's windows or tabs |
 
@@ -77,7 +79,7 @@ Open the `http://127.0.0.1:8780/?key=…` shown at startup (`--open` opens it au
 
 `key` is a key made at each start. It is replaced by a cookie only this page sends (HttpOnly, SameSite=Strict) and disappears from the address bar. Browser requests to `/api/` (GET and event subscriptions included) require this cookie. Selected external-agent routes also accept the separate key described below. Calls that change something require a dedicated header as well. Responses carry a CSP (`frame-ancestors 'none'`) and `nosniff`.
 
-The [Claude Code plugin](claude-code.md) finds a running server through the `server.json` it puts in the data folder (how far that key reaches: [Security §7](security.md#the-agents-permission-boundary)).
+The command and the [Claude Code plugin](claude-code.md) discover the host through `server.json` in the data folder. It contains the port, PID, build fingerprint and agent key (how far that key reaches: [Security §7](security.md#the-agents-permission-boundary)). The fingerprint covers the server bundle, its runtime location and native executables, including builds sharing a release version. Discovery and publication use one startup lock, so concurrent starts reuse the same host. An existing host from a different build is refused; stop it before starting the new build. A project argument is forwarded to the existing host when one is reused. A `server.json` without the current fields is rejected; there is no older-format fallback.
 
 | Environment variable | Meaning |
 | --- | --- |

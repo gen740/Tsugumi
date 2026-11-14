@@ -1,3 +1,4 @@
+import { cardIds } from './cardIds'
 // The Agent's bird beside a Card goes with the canvas's zoom, as the helpers' birds
 // do: at 39% a bird of 90 points stood over the Cards it was working on.
 import assert from 'node:assert/strict'
@@ -36,11 +37,11 @@ assert.equal(perchScale(undefined), 1)
 
 // The canvas around a Card says its zoom, where the guide looks for it from the Card.
 {
-  const s = new ProjectSession('/p', 'k', 'p')
+  const s = cardIds(new ProjectSession('/p', 'k', 'p'))
   s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   s.layout = parse('{}')
   s.scheduleSave = () => {} // no tsugumid here
-  const k = s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
+  const k = await s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
   const tab = new WorkflowTab([])
   canvasFor(s, tab).setCamera({ x: 0, y: 0, zoom: 0.39 })
   // React warns that the canvas's layout effects do not run here: they need not.

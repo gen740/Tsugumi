@@ -4,14 +4,12 @@ The launcher supplies Python's dependencies and generated protocol bindings.
 ``--package`` names a folder containing scenario.json. Its ``startup`` and
 ``actions`` arrays describe external behavior; this process never calls core
 functions or reads core storage. Startup actions run before either channel is
-read, allowing tests to model a package that gets stuck while loading.
+read, allowing tests to model a runtime that gets stuck during preparation.
 """
 
 from __future__ import annotations
 
 import argparse
-import array
-import errno
 import json
 import os
 from pathlib import Path
@@ -48,19 +46,10 @@ class Channel:
     def __init__(self, fd):
         self.socket = socket.socket(fileno=fd)
 
-    def _read(self, count, descriptors):
+    def _read(self, count):
         data = bytearray()
         while len(data) < count:
-            chunk, ancillary, flags, _ = self.socket.recvmsg(
-                count - len(data), socket.CMSG_SPACE(16 * array.array("i").itemsize)
-            )
-            for level, kind, value in ancillary:
-                if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
-                    fds = array.array("i")
-                    fds.frombytes(value[:len(value) - len(value) % fds.itemsize])
-                    descriptors.extend(fds)
-            if flags & socket.MSG_CTRUNC:
-                raise ValueError("truncated descriptor message")
+            chunk = self.socket.recv(count - len(data))
             if not chunk:
                 if data:
                     raise EOFError("worker channel closed inside a frame")
@@ -69,25 +58,16 @@ class Channel:
         return bytes(data)
 
     def receive(self):
-        descriptors = []
-        try:
-            header = self._read(4, descriptors)
-            if header is None:
-                for fd in descriptors:
-                    os.close(fd)
-                return None
-            (size,) = struct.unpack("<I", header)
-            if not 0 < size <= MAX_FRAME:
-                raise ValueError(f"invalid worker frame size: {size}")
-            frame = self._read(size, descriptors)
-            if frame is None or frame[4:8] != b"TSW1":
-                raise ValueError("invalid worker message")
-            message = WorkerMessageT.InitFromObj(WorkerMessage.GetRootAs(frame))
-            return message, descriptors
-        except BaseException:
-            for fd in descriptors:
-                os.close(fd)
-            raise
+        header = self._read(4)
+        if header is None:
+            return None
+        (size,) = struct.unpack("<I", header)
+        if not 0 < size <= MAX_FRAME:
+            raise ValueError(f"invalid worker frame size: {size}")
+        frame = self._read(size)
+        if frame is None or frame[4:8] != b"TSW1":
+            raise ValueError("invalid worker message")
+        return WorkerMessageT.InitFromObj(WorkerMessage.GetRootAs(frame))
 
     def send(self, call_id, kind, value):
         message = WorkerMessageT(callId=call_id, valueType=kind, value=value)
@@ -134,10 +114,7 @@ class Worker:
 
     def control_loop(self):
         try:
-            while packet := self.control.receive():
-                message, fds = packet
-                for fd in fds:
-                    os.close(fd)
+            while message := self.control.receive():
                 if message.valueType == WorkerPayload.WorkerCancel:
                     with self.condition:
                         self.cancelled.add(message.callId)
@@ -256,33 +233,13 @@ class Worker:
         if not self.actions(self.scenario.get("startup", []), {}):
             return
         threading.Thread(target=self.control_loop, daemon=True).start()
-        while packet := self.data.receive():
-            message, received = packet
-            installed = []
+        while message := self.data.receive():
             try:
                 if message.valueType != WorkerPayload.WorkerCall or not message.callId or message.callId <= self.call_id:
                     raise ValueError("expected an ordered worker call")
                 self.call_id = message.callId
                 self.call = message.value
                 self.calls += 1
-                slots = [] if self.call.passedFds is None else list(self.call.passedFds)
-                if len(slots) != len(received):
-                    raise ValueError("worker directory descriptors missing")
-                for descriptor, slot in zip(received, slots):
-                    if slot < 5:
-                        raise ValueError("worker directory descriptor would replace a channel")
-                    try:
-                        os.fstat(slot)
-                    except OSError as error:
-                        if error.errno != errno.EBADF:
-                            raise
-                    else:
-                        raise ValueError("worker directory descriptor is already occupied")
-                    os.dup2(descriptor, slot)
-                    installed.append(slot)
-                for descriptor in received:
-                    os.close(descriptor)
-                received.clear()
                 outputs = {}
                 if self.actions(self.scenario.get("actions", []), outputs):
                     self.check_cancel()
@@ -291,8 +248,6 @@ class Worker:
             except Cancelled:
                 self.failure("cancelled", "scripted worker observed cancellation")
             finally:
-                for descriptor in received + installed:
-                    os.close(descriptor)
                 with self.condition:
                     self.cancelled.discard(self.call_id)
 

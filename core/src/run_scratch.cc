@@ -7,6 +7,7 @@
 #include <sys/vfs.h>
 #endif
 
+#include <algorithm>
 #include <cerrno>
 #include <stdexcept>
 
@@ -49,6 +50,51 @@ auto default_run_scratch(const std::filesystem::path& project) -> std::filesyste
 #endif
   auto user = private_disk_scratch(temporary / ("tsugumi-scratch-" + std::to_string(::geteuid())));
   return user / crypto::sha256_hex(project.string()).substr(0, 16);
+}
+
+auto measure_run_scratch(const std::filesystem::path& root) -> std::vector<RunScratchUsage> {
+  namespace fs = std::filesystem;
+  std::vector<RunScratchUsage> result;
+  const auto measure = [&](const fs::path& path) {
+    uint64_t bytes = 0;
+    RunScratchUsage usage{path.lexically_relative(root).generic_string(), std::nullopt};
+    try {
+      if (fs::is_directory(fs::symlink_status(path)))
+        for (const auto& entry : fs::recursive_directory_iterator(path)) {
+          if (fs::is_regular_file(entry.symlink_status())) bytes += entry.file_size();
+        }
+      usage.bytes = bytes;
+    } catch (const fs::filesystem_error&) {
+      // Keep this folder selectable even when a Card left it unreadable.
+    }
+    result.push_back(std::move(usage));
+  };
+  if (fs::is_directory(fs::symlink_status(root / "runs")))
+    for (const auto& entry : fs::directory_iterator(root / "runs")) measure(entry.path());
+  if (fs::exists(fs::symlink_status(root / "recovery"))) measure(root / "recovery");
+  std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
+  return result;
+}
+
+auto remove_run_scratch(const std::filesystem::path& path) -> bool {
+  namespace fs = std::filesystem;
+  std::error_code error;
+  const auto status = fs::symlink_status(path, error);
+  if (error == std::errc::no_such_file_or_directory) return true;
+  if (error) return false;
+  if (!fs::exists(status)) return true;
+  if (fs::is_directory(status)) {
+    fs::permissions(path, fs::perms::owner_all, fs::perm_options::add, error);
+    if (error) return false;
+    std::vector<fs::path> children;
+    for (fs::directory_iterator it(path, error), end; !error && it != end; it.increment(error))
+      children.push_back(it->path());
+    if (error) return false;
+    for (const auto& child : children)
+      if (!remove_run_scratch(child)) return false;
+  }
+  fs::remove(path, error);
+  return !error;
 }
 
 }  // namespace tsugumi

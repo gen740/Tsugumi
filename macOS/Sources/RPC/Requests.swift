@@ -20,19 +20,19 @@ public extension RPCClient {
     try await call(.projectinspectrequest, Tsugumi_RPC_ProjectInspectRequestT())
   }
 
-  func save(baseRev: UInt64, opId: UUID, origin: String, changes: [Tsugumi_RPC_DocumentChangeT],
-            renamed: [(from: [String], to: [String])] = []) async throws -> Tsugumi_RPC_SaveResultT {
+  func cardId(name: String, projectPath: String = "") async throws -> Tsugumi_RPC_CardIdResultT {
+    let r = Tsugumi_RPC_CardIdRequestT()
+    r.name = name
+    r.projectPath = projectPath
+    return try await call(.cardidrequest, r)
+  }
+
+  func save(baseRev: UInt64, opId: UUID, origin: String, changes: [Tsugumi_RPC_DocumentChangeT]) async throws -> Tsugumi_RPC_SaveResultT {
     let r = Tsugumi_RPC_ProjectSaveRequestT()
     r.baseRev = baseRev
     r.opId = opId.uuidString.lowercased()
     r.origin = origin
     r.changes = changes
-    r.renamedCards = renamed.map { x in
-      let c = Tsugumi_RPC_CardRenameT()
-      c.from = cardPath(x.from)
-      c.to = cardPath(x.to)
-      return c
-    }
     return try await call(.projectsaverequest, r)
   }
 
@@ -50,11 +50,12 @@ public extension RPCClient {
     return try await call(.layoutuntanglerequest, r)
   }
 
-  func reload(baseRev: UInt64, opId: UUID, origin: String) async throws -> Tsugumi_RPC_SaveResultT {
+  func reload(baseRev: UInt64, opId: UUID, origin: String, approvedPermissions: [String] = []) async throws -> Tsugumi_RPC_SaveResultT {
     let r = Tsugumi_RPC_ProjectReloadRequestT()
     r.baseRev = baseRev
     r.opId = opId.uuidString.lowercased()
     r.origin = origin
+    r.approvedPermissions = approvedPermissions
     return try await call(.projectreloadrequest, r)
   }
 
@@ -245,6 +246,13 @@ public extension RPCClient {
     return try await call(.projectcacheclearrequest, r, timeout: .seconds(300))
   }
 
+  func deleteRunScratch(opId: UUID, paths: [String]) async throws -> Tsugumi_RPC_RunScratchDeleteResultT {
+    let r = Tsugumi_RPC_RunScratchDeleteRequestT()
+    r.opId = opId.uuidString.lowercased()
+    r.paths = paths
+    return try await call(.runscratchdeleterequest, r, timeout: .seconds(300))
+  }
+
   func cacheUsage() async throws -> Tsugumi_RPC_ProjectCacheUsageResultT {
     return try await call(.projectcacheusagerequest, Tsugumi_RPC_ProjectCacheUsageRequestT())
   }
@@ -283,14 +291,7 @@ public extension RPCClient {
   }
 
   /// Keeps a summary of a version in its own note.
-  func versionSummary(opId: UUID, origin: String, commit: String, summary: String) async throws -> Tsugumi_RPC_VersionResultT {
-    let r = Tsugumi_RPC_VersionSummaryRequestT()
-    r.opId = opId.uuidString.lowercased()
-    r.origin = origin
-    r.commit = commit
-    r.summary = summary
-    return try await call(.versionsummaryrequest, r)
-  }
+
 
   /// Makes the project a git repository (a demo's history becomes its versions).
   func versionInit(opId: UUID, origin: String) async throws -> Tsugumi_RPC_VersionResultT {
@@ -363,12 +364,7 @@ public enum Change {
     return wrap(v, .putdefinition)
   }
 
-  public static func renameDefinition(id: String, to: String) -> Tsugumi_RPC_DocumentChangeT {
-    let v = Tsugumi_RPC_RenameDefinitionT()
-    v.id = id
-    v.to = to
-    return wrap(v, .renamedefinition)
-  }
+
 
   public static func removeDefinition(id: String) -> Tsugumi_RPC_DocumentChangeT {
     let v = Tsugumi_RPC_RemoveDefinitionT()

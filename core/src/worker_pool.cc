@@ -53,14 +53,22 @@ std::unique_ptr<WorkerProc> WorkerPool::spawn(WorkerSpawn sp) {
 WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string& key, const WorkerSpawn& sp,
                                       bool reuse) {
   std::string standby_key = key;
-#ifdef __APPLE__
-  // Seatbelt grants each worker write access to this Card's outputs.
-  if (sp.sandbox) standby_key += "|" + card;
-#endif
   Lease lease;
   std::vector<std::unique_ptr<WorkerProc>> ended;
   {
     std::lock_guard<std::mutex> l(mu_);
+    if (reuse) {
+      if (auto previous = resident_keys_.find(card); previous != resident_keys_.end()) {
+        lease.replaced = previous->second == key ? "the resident worker died" : "the Card definition changed";
+        if (auto reason = resident_replacements_.find(card); reason != resident_replacements_.end()) {
+          if (previous->second == key) lease.replaced = reason->second;
+          resident_replacements_.erase(reason);
+        }
+      }
+    } else {
+      resident_keys_.erase(card);
+      resident_replacements_.erase(card);
+    }
     for (auto it = resident_.begin(); it != resident_.end();) {
       if (it->card != card) {
         ++it;
@@ -69,6 +77,7 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
       if (reuse && it->key == key && it->worker->alive() && !lease.worker) {
         lease.worker = std::move(it->worker);
         lease.reused = true;
+        lease.replaced.clear();
       } else if (!reuse || it->key != key || !it->worker->alive()) {
         // Reuse was disabled, the build changed, or the worker died idle.
         ended.push_back(std::move(it->worker));
@@ -88,28 +97,31 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
   }
   ended.clear();  // outside the lock: ending a worker waits for it
   if (!lease.worker) lease.worker = spawn(sp);
+  if (reuse) {
+    std::lock_guard<std::mutex> l(mu_);
+    resident_keys_[card] = key;
+  }
   if (!reuse) refill(standby_key, sp);
   return lease;
 }
 
 void WorkerPool::release(const std::string& card, const std::string& key, std::unique_ptr<WorkerProc> worker,
-                         bool keep) {
+                         bool keep, const std::string& reason) {
   if (!worker) return;
   worker->set_logs(nullptr);
-  if (keep && worker->alive()) {
-    if (auto rss = worker->rss_bytes(); rss && *rss > limits_.max_rss_bytes) {
-      log::info("ending a resident worker of " + card + " above the memory limit (" + std::to_string(*rss >> 20) + " MiB)");
-      keep = false;
+  keep = keep && worker->alive();
+  if (!keep) {
+    if (!reason.empty()) {
+      std::lock_guard<std::mutex> l(mu_);
+      if (auto previous = resident_keys_.find(card); previous != resident_keys_.end() && previous->second == key)
+        resident_replacements_[card] = reason;
     }
-  } else {
-    keep = false;
+    return;  // worker ends here
   }
-  if (!keep) return;  // worker ends here
   std::vector<std::unique_ptr<WorkerProc>> ended;
   {
     std::lock_guard<std::mutex> l(mu_);
-    // One idle worker per Card and key; the least recently used ones beyond
-    // the limit end.
+    // One idle resident per Card and key, with no count, age or RSS eviction.
     for (auto it = resident_.begin(); it != resident_.end();)
       if (it->card == card && it->key == key) {
         ended.push_back(std::move(it->worker));
@@ -118,12 +130,7 @@ void WorkerPool::release(const std::string& card, const std::string& key, std::u
         ++it;
       }
     resident_.push_back({card, key, std::move(worker), std::chrono::steady_clock::now()});
-    while (resident_.size() > limits_.max_resident) {
-      auto oldest = std::min_element(resident_.begin(), resident_.end(),
-                                     [](const Idle& a, const Idle& b) { return a.since < b.since; });
-      ended.push_back(std::move(oldest->worker));
-      resident_.erase(oldest);
-    }
+
   }
 }
 
@@ -139,12 +146,16 @@ void WorkerPool::refill(const std::string& key, WorkerSpawn sp) {
   cv_.notify_all();
 }
 
-void WorkerPool::clear() {
+void WorkerPool::clear(bool residents) {
   std::vector<std::unique_ptr<WorkerProc>> ended;
   std::lock_guard<std::mutex> l(mu_);
-  for (auto& r : resident_) ended.push_back(std::move(r.worker));
+  if (residents) {
+    for (auto& r : resident_) ended.push_back(std::move(r.worker));
+    resident_.clear();
+    resident_keys_.clear();
+    resident_replacements_.clear();
+  }
   for (auto& [_, s] : standby_) ended.push_back(std::move(s.worker));
-  resident_.clear();
   standby_.clear();
 }
 
@@ -184,15 +195,10 @@ void WorkerPool::reaper() {
     // Idle workers past the limit end.
     std::vector<std::unique_ptr<WorkerProc>> ended;
     auto now = std::chrono::steady_clock::now();
-    for (auto it = resident_.begin(); it != resident_.end();)
-      if (now - it->since > limits_.idle) {
-        ended.push_back(std::move(it->worker));
-        it = resident_.erase(it);
-      } else {
-        ++it;
-      }
     for (auto it = standby_.begin(); it != standby_.end();)
-      if (now - it->second.since > limits_.idle) {
+      if (auto rss = it->second.worker->rss_bytes();
+          !it->second.worker->alive() || now - it->second.since > limits_.idle ||
+          (rss && *rss > limits_.max_rss_bytes)) {
         ended.push_back(std::move(it->second.worker));
         it = standby_.erase(it);
       } else {

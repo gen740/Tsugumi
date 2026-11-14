@@ -10,7 +10,7 @@ from tsugumi_client import RpcFailure, new_id
 
 
 def shell(client, command, **fields):
-    return client.call("ProjectShellRequest", opId=fields.pop("opId", new_id()), command=command, **fields)
+    return client.call("ProjectShellRequest", opId=fields.pop("opId", new_id()), command=command, origin=fields.pop("origin", "ui"), **fields)
 
 
 def test_shell_is_disabled_without_the_isolated_launchers_opt_in(client):
@@ -145,3 +145,27 @@ def test_running_shell_receipts_are_pending_and_duplicate_calls_join(shell_daemo
         assert bytes(running.result(timeout=3).stdout) == b"finished"
         assert bytes(joined.result(timeout=3).stdout) == b"finished"
     assert (project / "joined-executions").read_text() == "x"
+
+
+@pytest.mark.parametrize("origin,writable", [("agent", False), ("ui", True)])
+def test_agent_shell_reads_but_cannot_edit_project(shell_daemon, project, origin, writable):
+    """Shell access never substitutes for project_save; a person's path stays writable."""
+    import shlex
+    client = shell_daemon.connect()
+    target = project / "diagnostic.txt"
+    target.write_text("original")
+    (project / "alias").symlink_to(target)
+    read = shell(client, "cat diagnostic.txt", origin=origin)
+    assert read.exitCode == 0 and bytes(read.stdout) == b"original"
+    for command in ["printf changed > diagnostic.txt", "printf changed > alias",
+                    "rm diagnostic.txt", "mv diagnostic.txt moved.txt",
+                    "mkdir new-directory", "printf changed > " + shlex.quote(str(target))]:
+        result = shell(client, command, origin=origin)
+        assert (result.exitCode == 0) == writable, bytes(result.stderr)
+        if writable:
+            if (project / "moved.txt").exists():
+                (project / "moved.txt").unlink()
+            target.write_text("original")
+        else:
+            assert target.read_text() == "original"
+    assert (project / "new-directory").exists() == writable

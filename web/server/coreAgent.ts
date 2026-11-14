@@ -29,6 +29,8 @@ class Connection {
   private nextId = 0n
   private waiting = new Map<bigint, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>()
   private opening?: Promise<void>
+  // A plugin retry after the page answers must resume the approved call ID.
+  private approvals = new Map<string, string>()
 
   constructor(private host: CoreAgentHost, private external: boolean, private hostContract = false) {}
 
@@ -100,7 +102,20 @@ class Connection {
 
   async call<T>(method: string, value: unknown = {}): Promise<T> {
     await this.open()
-    return this.write(method, value)
+    if (!this.external || method !== 'ToolCallRequest') return this.write(method, value)
+    const call = { ...(value as Record<string, unknown>) }
+    const key = JSON.stringify([call.conversation_id, call.project_id, call.name, call.arguments_json])
+    call.op_id = this.approvals.get(key) ?? call.op_id
+    try {
+      const result = await this.write(method, call)
+      this.approvals.delete(key)
+      return result
+    } catch (error) {
+      if (error instanceof CoreAgentError && error.code === 'grant_required' && error.message.includes('operation_approval\n'))
+        this.approvals.set(key, String(call.op_id))
+      else if (error instanceof CoreAgentError && (error.code === 'permission_denied' || error.code === 'conflict')) this.approvals.delete(key)
+      throw error
+    }
   }
 }
 
@@ -248,13 +263,16 @@ export class CoreAgentHost {
   }
 }
 
-export interface RemoteConversation { conversation: Conversation; busy: boolean; resumable?: boolean; continuable?: boolean; project_id?: string; event_seq?: bigint }
+export interface InterruptedOperation { kind: string; id?: string; name?: string; arguments?: string }
+
+export interface RemoteConversation { interruptedOperation?: InterruptedOperation; conversation: Conversation; busy: boolean; resumable?: boolean; continuable?: boolean; project_id?: string; event_seq?: bigint }
 
 export class RemoteAgent {
   conversation: Conversation
   busy = false
   continuable = false
-  private resumable = false
+  resumable = false
+  interruptedOperation?: InterruptedOperation
   private seq = 0n
   private observing = false
   private observationID = 0
@@ -273,7 +291,6 @@ export class RemoteAgent {
     })
     this.adopt(result)
     this.seq = result.event_seq ?? 0n
-    await this.resumeInterrupted()
     return this
   }
 
@@ -282,21 +299,11 @@ export class RemoteAgent {
     this.busy = result.busy
     this.resumable = result.resumable === true
     this.continuable = result.continuable === true
-  }
-
-  private async resumeInterrupted() {
-    if (!this.busy && this.resumable) {
-      try { await this.host.user.call('ConversationActionRequest', { conversation_id: this.id, action: 'Resume' }) }
-      catch (error) { if (!(error instanceof CoreAgentError) || error.code !== 'busy') throw error }
-      this.busy = true
-      this.resumable = false
-      this.continuable = false
-    }
+    this.interruptedOperation = result.interruptedOperation
   }
 
   async refresh() {
     this.adopt(await this.host.user.call<RemoteConversation>('ConversationGetRequest', { conversation_id: this.id }))
-    await this.resumeInterrupted()
   }
 
   observe(listener: (e: AgentEvent) => void) {

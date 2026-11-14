@@ -20,9 +20,8 @@
 namespace tsugumi {
 
 struct WorkerLimits {
-  std::chrono::seconds idle{600};            // a resident or standby worker unused this long ends
-  uint64_t max_rss_bytes = 2ull << 30;       // larger workers end instead of staying
-  size_t max_resident = 32;                  // the least recently used idle ones end first
+  std::chrono::seconds idle{600};            // a standby worker unused this long ends
+  uint64_t max_rss_bytes = 2ull << 30;       // larger standby workers end
   size_t max_standby = 32;                   // idle and pending fresh workers
 };
 
@@ -34,6 +33,7 @@ class WorkerPool {
   struct Lease {
     std::unique_ptr<WorkerProc> worker;
     bool reused = false;  // a resident worker that served an earlier call
+    std::string replaced;  // why previously held state was lost
   };
 
   // A worker for `card` running `key` (build and execution conditions; the
@@ -41,11 +41,12 @@ class WorkerPool {
   // only when reuse is enabled. Otherwise take a fresh standby or start one.
   // Residents of this Card end when reuse is disabled or the key changes.
   Lease acquire(const std::string& card, const std::string& key, const WorkerSpawn& spawn, bool reuse);
-  // Gives the worker back after a call. A clean call of a reusing Card keeps
-  // it resident; anything else ends it.
-  void release(const std::string& card, const std::string& key, std::unique_ptr<WorkerProc> worker, bool keep);
+  // Retain only successful living residents; remember why a bad call ended
+  // its worker so the next acquisition can report fresh state.
+  void release(const std::string& card, const std::string& key, std::unique_ptr<WorkerProc> worker, bool keep,
+               const std::string& reason = {});
   // Ends every worker of the project (definitions reloaded, cache cleared).
-  void clear();
+  void clear(bool residents = true);
 
  private:
   struct Idle {
@@ -63,6 +64,8 @@ class WorkerPool {
   std::mutex mu_;
   std::condition_variable cv_;
   std::vector<Idle> resident_;
+  std::map<std::string, std::string> resident_keys_;  // also remembers workers that died during a call
+  std::map<std::string, std::string> resident_replacements_;
   std::map<std::string, Idle> standby_;  // one per key
   std::map<std::string, bool> refilling_;
   std::deque<std::pair<std::string, WorkerSpawn>> pending_;  // standby workers to start

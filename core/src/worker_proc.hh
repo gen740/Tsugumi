@@ -38,14 +38,10 @@ struct WorkerSpawn {
   // and removed when it ends, so it lives as long as the worker.
   std::string scratch;
   bool sandbox = true;
-  // Read-only binds, fixed for the worker's life: the project's run and saved
-  // input trees (where every File / Directory input lives), so that a worker
-  // serves any input. Output folders arrive as descriptors per call.
+  // Fixed read-only runtime paths and, remotely, the job's staged inputs;
+  // never project data roots. Local inputs use inputs_dir().
   std::vector<std::string> ro_paths;
-  // On macOS, only this scratch tree may contain writable invocation outputs.
-  std::string outputs_root;
-  // The Card's key ("a/b"): on a Mac (Seatbelt) only its own invocations'
-  // output folders under outputs_root are writable.
+  // The Card's key, used by the remote invocation launcher.
   std::string card;
   // Covered with an empty tmpfs for sandbox: false Cards (the control folder
   // with the RPC token, tsugumid's state); ro paths and the scratch folder
@@ -84,10 +80,9 @@ class WorkerProc {
   ~WorkerProc();
   WorkerProc(const WorkerProc&) = delete;
 
-  // Sends one call (with `fds` attached; the caller keeps and closes them) and
-  // waits for its result. `cancel` is polled; on cancel or deadline the worker
+  // Sends one call and waits for its result. On cancel or deadline the worker
   // gets WorkerCancel, then the process group is killed after one second.
-  WorkerOutcome call(const std::string& frame, uint64_t call_id, const std::vector<int>& fds,
+  WorkerOutcome call(const std::string& frame, uint64_t call_id,
                      const std::atomic<bool>* cancel,
                      std::optional<std::chrono::steady_clock::time_point> deadline,
                      const DisplaySink& display);
@@ -97,19 +92,18 @@ class WorkerProc {
   // The process still runs (checked without reaping it).
   bool alive() const;
   void terminate();
-  // Under bubblewrap the Card sees only its binds: project folders of a call
-  // are passed as descriptors (/proc/self/fd/<n>), not by path.
-  bool passes_directories() const { return passes_dirs_; }
   std::string work_dir() const { return scratch_ + "/work"; }
   std::string tmp_dir() const { return scratch_ + "/tmp"; }
-  // Empties work/ and tmp/ (only what a call left there).
+  std::string out_dir() const { return scratch_ + "/out"; }
+  std::string inputs_dir() const { return scratch_ + "/inputs"; }
+  // Empties work/, tmp/ and the invocation input/output staging areas.
   void clear_scratch();
   // Resident memory of the worker process, when known.
   std::optional<uint64_t> rss_bytes() const;
 
  private:
   void read_logs(bool drain);
-  void send(int fd, const std::string& frame, const std::vector<int>& fds = {});
+  void send(int fd, const std::string& frame);
 
   pid_t pid_ = -1;
   int data_fd_ = -1;
@@ -117,8 +111,9 @@ class WorkerProc {
   int out_fd_ = -1;
   int err_fd_ = -1;
   bool alive_ = false;
-  bool passes_dirs_ = false;
   std::string scratch_;
+  // Darwin's permission repair runs with the same authority as the Card.
+  std::function<void(int, const char*)> recover_permissions_;
   uint64_t call_id_ = 0;
   LogSink logs_;
   std::mutex log_mu_;
@@ -135,6 +130,6 @@ std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const
                               const std::string& params, const std::vector<types::PortType>& outputs,
                               const std::string& work, const std::string& tmp, const std::string& out,
                               const std::vector<std::pair<std::string, std::string>>& env,
-                              std::optional<uint64_t> deadline_ms, const std::vector<int32_t>& passed_fds = {});
+                              std::optional<uint64_t> deadline_ms);
 
 }  // namespace tsugumi

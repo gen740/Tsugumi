@@ -10,7 +10,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { IPty } from 'node-pty'
-import { AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir } from './paths'
+import { AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir, serverBuild, runningServer, serverRequest } from './paths'
+import { startupLock } from './startup'
 import { cancelChats, chatRoutes, chatStatus, hostRequest, observeHost } from './chat'
 import { EnvironmentManager, EnvState, projectKey } from './environment'
 import type { VMHostOptions, VMTerminal } from './environment'
@@ -21,6 +22,7 @@ import { uninstall } from './uninstall'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const repo = path.resolve(here, '..', '..')
+const buildIdentity = serverBuild(fileURLToPath(import.meta.url))
 
 // ---- Options -------------------------------------------------------------------
 
@@ -34,6 +36,10 @@ const opt = (name: string) => {
 const commandIndex = argv.findIndex((a, i) => !a.startsWith('--') && argv[i - 1] !== '--port')
 if (argv[commandIndex] === 'update') process.exit(update())
 if (argv[commandIndex] === 'uninstall') process.exit(uninstall(argv.slice(commandIndex + 1)))
+if (argv.includes('--version')) {
+  console.log(fs.readFileSync(path.join(repo, 'VERSION'), 'utf8').trim())
+  process.exit(0)
+}
 
 function update(): number {
   // TSUGUMI_INSTALL_BASE (checks, or another place) and TSUGUMI_VERSION go on to install.sh as they are.
@@ -373,8 +379,9 @@ const routes: Record<string, Handler> = {
   'GET /api/env/list': () => Promise.all(envs.list().map(async (e) => ({ key: e.key, project: e.project,
     name: (await hostRequest('HostProjectInfoRequest', { path: e.project })).name, state: publicState(e.state) }))),
   // Another run of the tsugumi command: a page opens (its key goes to `open` alone).
-  'POST /api/page/open': () => {
-    openPage(undefined)
+  'POST /api/host/identify': () => ({ build: buildIdentity }),
+  'POST /api/page/open': (b) => {
+    openPage(b.path ? projectDir(b.path) : undefined)
     return { ok: true }
   },
   'GET /api/fs': (_b, url) => listDir(url.searchParams.get('path') || os.homedir()),
@@ -531,21 +538,27 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
 
 /** Asks a server of this user that runs already to open a page. */
 async function openOnRunningServer(): Promise<boolean> {
-  try {
-    const info = JSON.parse(fs.readFileSync(serverFile, 'utf8')) as ServerInfo
-    process.kill(info.pid, 0)
-    const r = await fetch(`http://127.0.0.1:${info.port}/api/page/open`, {
-      method: 'POST', headers: { 'x-tsugumi': '1', [AGENT_KEY_HEADER]: info.agentKey }, signal: AbortSignal.timeout(5000),
-    })
-    if (!r.ok) return false
+  const info = await runningServer(support, buildIdentity)
+  if (!info) return false
+  if (openBrowser || launchProject) {
+    const r = await serverRequest(info, '/api/page/open', { path: launchProject })
+    if (!r.ok) throw new Error(`Could not open the project on the running Tsugumi host: HTTP ${r.status}`)
     console.log(L('Tsugumi は動いています（http://127.0.0.1:{0}/）。ブラウザでページを開きました。', info.port))
-    return true
-  } catch {
-    return false
   }
+  return true
 }
 
-if (reuseServer && await openOnRunningServer()) process.exit(0)
+const releaseStartup = await startupLock(support)
+try {
+  if (await openOnRunningServer()) {
+    releaseStartup()
+    process.exit(0)
+  }
+} catch (e) {
+  releaseStartup()
+  console.error((e as Error).message)
+  process.exit(1)
+}
 
 // The usual port keeps the page's own settings (localStorage) across runs; when
 // something else has it, any free port (unless one was asked for).
@@ -564,8 +577,9 @@ server.on('listening', () => {
   // For local clients of this user (the Claude Code plugin's MCP server): how
   // to reach this server, with the agent key (not the page's). Readable by this user alone.
   fs.rmSync(serverFile + '.tmp', { force: true })
-  fs.writeFileSync(serverFile + '.tmp', JSON.stringify({ port: p, pid: process.pid, agentKey } satisfies ServerInfo), { mode: 0o600 })
+  fs.writeFileSync(serverFile + '.tmp', JSON.stringify({ build: buildIdentity, port: p, pid: process.pid, agentKey } satisfies ServerInfo), { mode: 0o600 })
   fs.renameSync(serverFile + '.tmp', serverFile)
+  releaseStartup()
   if (reuseServer) console.log(L('終了するには Ctrl-C を押します。'))
   if (openBrowser) openPage(launchProject)
 })

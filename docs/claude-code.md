@@ -31,7 +31,8 @@ Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* �
 ## Using it
 
 - Use `/tsugumi:open <project folder>`, or ask "in this Tsugumi project, do …". Claude Code opens the project with `tsugumi_open` before working.
-- `tsugumi_open` looks for a running Web UI server (`server.json` in the data folder) and starts one if there is none (it keeps running after Claude Code closes; stop it by stopping that process). If a page is showing that project, or a Home page is open, the project is shown there (a page showing another project is not switched); otherwise the server opens it in a browser (because the key in `server.json` is not the page's key; [Security §7](security.md#the-agents-permission-boundary)).
+- `tsugumi_open` uses the command's host discovery and startup lock (`server.json` in the data folder), checks the build fingerprint, and starts one if there is none (it keeps running after Claude Code closes; stop it by stopping that process). If a page is showing that project, or a Home page is open, the project is shown there (a page showing another project is not switched); otherwise the server opens it in a browser (because the key in `server.json` is not the page's key; [Security §7](security.md#the-agents-permission-boundary)).
+- A running host from another build is refused with its PID and URL; stop that host and retry with the intended build. Concurrent command and plugin starts use one host per data folder.
 - A new project can be made with `create: true` on `tsugumi_open` (only for a folder that does not exist yet).
 - The first `tsugumi_open` returns the MCP instructions defined by `INSTRUCTIONS` in `web/server/mcp.ts`.
 
@@ -44,3 +45,10 @@ Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* �
 
 - The macOS app is not supported. Projects Claude Code works on are opened in the Web UI.
 - Cards run in the environment of the Web UI server `tsugumi_open` found (inside the shared VM if the `tsugumi` command's server is running on a Mac). If no server is running, a server is started from the repository you built, and `tsugumid` runs directly on this host.
+
+The plugin uses core's project-tool allow list in `agent/Shared/agent.json`,
+shared with the built-in Agent. Run history deletion, cache clearing, version
+checkout and summary replacement remain explicit UI actions. `project_shell`
+requires a separate Shell grant and reads the project without write access;
+use `project_save` for edits and Cards for analysis. External reloads require
+the user's approval for every Card permission widening, regardless of origin.

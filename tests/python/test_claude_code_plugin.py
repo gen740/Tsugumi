@@ -16,6 +16,7 @@ import stat
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -183,13 +184,74 @@ def test_tools_and_instructions(plugin):
     assert init["capabilities"] == {"tools": {}}
     # Claude Code keeps the first 4096 characters of a server's instructions.
     assert "tsugumi_open" in init["instructions"] and len(init["instructions"]) <= 4096
-    names = [t["name"] for t in mcp.request("tools/list")["result"]["tools"]]
+    tools = mcp.request("tools/list")["result"]["tools"]
+    names = [t["name"] for t in tools]
+    by_name = {t["name"]: t for t in tools}
     assert names[0] == "tsugumi_open"
     assert {"project_inspect", "project_save", "run", "run_record", "demo_read", "agent_access", "agent_access_resolve", "agent_conversation_get"} <= set(names)
     # The plugin sees the same core tool catalog and Agent operations.
     assert {"attached_folder_read", "delegate", "guide_show"} <= set(names)
+    shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
+    def tool_name(request):
+        return re.sub(r"(?<!^)([A-Z])", r"_\1", request.removesuffix("Request")).lower()
+    project_names = {tool_name(request) for request in shared["requests"]}
+    assert project_names <= set(names)
+    approval_names = {tool_name(request) for request in shared["approvalRequests"]}
+    assert approval_names <= set(names)
+    for name in approval_names:
+        assert "Requires the person's approval for this call" in by_name[name]["description"], name
+    assert not {"view_save", "session_hello", "project_open", "project_close", "agent_hello"} & set(names)
     text, error = mcp.call("project_inspect", {})
     assert error and "tsugumi_open" in text
+
+
+def test_concurrent_plugin_and_command_starts_share_one_host(plugin):
+    first, root, data = plugin
+    write_project(root / "proj")
+    second = MCPServer(data, root)
+    env = isolated_environment(root, TSUGUMI_WEB_DATA=str(data))
+    command = None
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            calls = [pool.submit(client.call, "tsugumi_open", {"folder": "proj", "browser": False}) for client in (first, second)]
+            command = subprocess.Popen(["node", str(WEB_DIST / "server.js"), "--reuse", "--port", "0"],
+                                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+            results = [call.result(timeout=40) for call in calls]
+        assert all(not error for _, error in results), results
+        info = json.loads((data / "server.json").read_text())
+        assert all(f":{info['port']}/" in text for text, _ in results)
+        if command.pid != info["pid"]:
+            assert command.wait(10) == 0
+        else:
+            assert command.poll() is None
+        # Only a winning detached child publishes a startup URL in server.log.
+        log_file = data / "server.log"
+        log = log_file.read_text() if log_file.exists() else ""
+        assert log.count("Tsugumi web UI:") == (0 if command.pid == info["pid"] else 1)
+    finally:
+        second.close()
+        if command is not None:
+            if command.poll() is None:
+                command.terminate()
+            command.wait(10)
+
+
+def test_plugin_refuses_a_different_running_build(plugin):
+    mcp, root, data = plugin
+    write_project(root / "proj")
+    text, error = mcp.call("tsugumi_open", {"folder": "proj", "browser": False})
+    assert not error, text
+    file = data / "server.json"
+    original = file.read_text()
+    info = json.loads(original)
+    info["build"] = "0" * 64
+    file.write_text(json.dumps(info))
+    try:
+        text, error = mcp.call("tsugumi_open", {"folder": "proj", "browser": False})
+        assert error and "different Tsugumi build" in text and "Stop that host" in text
+        os.kill(info["pid"], 0)
+    finally:
+        file.write_text(original)
 
 
 def test_open_starts_the_host_and_runs_core_tools_seen_by_the_page(plugin):
@@ -206,7 +268,8 @@ def test_open_starts_the_host_and_runs_core_tools_seen_by_the_page(plugin):
     assert stat.S_IMODE(info_file.stat().st_mode) == 0o600
     info = json.loads(info_file.read_text())
     # server.json holds the agent key alone, never the page's (which answers approvals).
-    assert set(info) == {"port", "pid", "agentKey"}
+    assert set(info) == {"port", "pid", "agentKey", "build"}
+    assert re.fullmatch(r"[a-f0-9]{64}", info["build"])
     page_key = page_cookie(data, info["port"])
     assert info["agentKey"] not in page_key
     page = Events(info["port"], page_key)

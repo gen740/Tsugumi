@@ -1,3 +1,4 @@
+import { cardIds } from './cardIds'
 // A name a Card has had can be taken again: the new Card (the next Draft)
 // starts without that Card's result and frame.
 import assert from 'node:assert/strict'
@@ -14,7 +15,7 @@ const { Scene } = await import('../src/model/canvas')
 const { ProjectSession } = await import('../src/model/session')
 
 const session = (cards: string[]) => {
-  const s = new ProjectSession('/p', 'k', 'p')
+  const s = cardIds(new ProjectSession('/p', 'k', 'p'))
   s.project = parse(JSON.stringify({ name: 't', canvas: { cards: cards.map((id) => ({ id })), connections: [] } }))
   s.layout = parse('{}')
   s.scheduleSave = () => {} // no tsugumid here
@@ -58,7 +59,7 @@ const clean = (s: Session, k: string) => {
   resolved(s, ['b'])
   framed(s, 'b')
   resolved(s, ['renamed'])
-  const k = s.addCard('draft', [], { x: 0, y: 0 }, 'b')
+  const k = await s.addCard('draft', [], { x: 0, y: 0 }, 'b')
   assert.equal(k, 'b')
   clean(s, k)
   // Undone: what the layout had is back, the Card gone.
@@ -72,7 +73,7 @@ const clean = (s: Session, k: string) => {
   const s = session([])
   resolved(s, ['draft'])
   framed(s, 'draft')
-  const k = s.addCard('draft', [], { x: 0, y: 0 })
+  const k = await s.addCard('draft', [], { x: 0, y: 0 })
   assert.equal(k, 'draft')
   clean(s, k)
   assert.equal(s.nodeData(k).result, undefined)
@@ -83,7 +84,7 @@ const clean = (s: Session, k: string) => {
   const s = session(['a'])
   resolved(s, ['a'])
   framed(s, 'a')
-  const k = s.addCard('draft', [], { x: 0, y: 0 })
+  const k = await s.addCard('draft', [], { x: 0, y: 0 })
   assert.equal(k, 'draft')
   clean(s, k)
   assert.equal(s.displays.has('a'), true)
@@ -93,7 +94,7 @@ const clean = (s: Session, k: string) => {
 {
   // Copies of Cards start clean too.
   const s = session([])
-  const a = s.addCard('python', [], { x: 0, y: 0 }, 'a')
+  const a = await s.addCard('python', [], { x: 0, y: 0 }, 'a')
   framed(s, 'a-2')
   const made = await s.duplicate(new Set([a]), [])
   assert.deepEqual([...made], ['a-2'])
@@ -103,10 +104,10 @@ const clean = (s: Session, k: string) => {
   // Put where another Card is, as E does: it goes to a free place, without the old frame.
   const s = session([])
   const here = { x: 4000, y: 4000 }
-  const occupied = s.addCard('draft', [], here, 'occupied')
+  const occupied = await s.addCard('draft', [], here, 'occupied')
   resolved(s, ['b', 'occupied'])
   framed(s, 'b')
-  const k = s.addCard('draft', [], here, 'b', (c) => new Scene(s, []).freeSpot(here, c))
+  const k = await s.addCard('draft', [], here, 'b', (c) => new Scene(s, []).freeSpot(here, c))
   assert.equal(k, 'b')
   clean(s, k)
   const scene = new Scene(s, [])

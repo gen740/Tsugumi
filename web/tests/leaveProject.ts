@@ -1,3 +1,4 @@
+import { cardIds } from './cardIds'
 // What the Mac app does and the page must too: leaving a project closes what
 // belongs to it, a project taken in keeps its binary files, the failure of a
 // read of the versions is said.
@@ -21,7 +22,7 @@ globalThis.fetch = (async (url: string) => {
 }) as typeof fetch
 
 const session = (dir = '/p', key = 'k') => {
-  const s = new ProjectSession(dir, key, 'p')
+  const s = cardIds(new ProjectSession(dir, key, 'p'))
   s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   s.confirmedProject = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   s.layout = parse('{}')

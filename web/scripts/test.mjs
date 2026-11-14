@@ -7,6 +7,7 @@ import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
 const web = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+await import('../tests/startup.mjs')
 process.env.TSUGUMI_SITE_PLAYER_DIR = preparePlayer()
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-behavior-'))
 const out = path.join(dir, 'behavior.mjs')

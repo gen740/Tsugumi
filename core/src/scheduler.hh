@@ -71,10 +71,9 @@ class Scheduler {
   std::optional<RunStatusData> active_status();
   RunStatusData cancel(const std::string& run_id);
   std::optional<Note> latest_display_note(const std::string& card_key);
-  // A committed change of the document. A renamed Card keeps its display; the
-  // display of a Card that left the document is its own: see gone_.
-  void document_changed(const Document& before, const Document& after,
-                        const std::vector<std::pair<std::string, std::string>>& renamed);
+  // A committed change of the document. The display of a Card that left
+  // the document is its own: see gone_.
+  void document_changed(const Document& before, const Document& after);
   void shutdown();
 
   // Called by RunExec.
@@ -84,6 +83,10 @@ class Scheduler {
  private:
   auto reconcile_remote_job(RemoteJobRecord& job) -> bool;
   Service& svc_;
+  // Lock order: mu_ -> History::write_sync() only in accept(), with no active_
+  // run. History writer callbacks may take mu_ while active_ is set, so
+  // finished() must not reacquire mu_ after clearing active_: reaper
+  // registration belongs in the same locked section.
   std::mutex mu_;
   std::shared_ptr<RunExec> active_;
   std::vector<std::thread> reapers_;

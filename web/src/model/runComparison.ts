@@ -79,7 +79,7 @@ function inputSources(card: ComparedCard): Map<string, string> {
 
 /** What a Card ran under besides its parameters and code: the recorded Nix
  *  environment, the system it ran as, and where each input came from. */
-export function comparedConditions(left?: ComparedCard, right?: ComparedCard): ComparedField[] {
+export function comparedConditions(left?: ComparedCard, right?: ComparedCard, displayPath = (segments: string[]) => segments.join('/')): ComparedField[] {
   const summary = (c?: ComparedCard) => c && (c.record?.record?.summary ?? c.summary)
   const a = summary(left), b = summary(right)
   const field = (name: string, x: string | undefined, y: string | undefined, known: boolean): ComparedField =>
@@ -104,15 +104,17 @@ export function comparedConditions(left?: ComparedCard, right?: ComparedCard): C
   const other = (c?: ComparedCard) => c?.record?.record ? L('この実行の Card からは届いていません') : undefined
   for (const port of names(x.keys(), y.keys())) {
     const source = x.get(port), target = y.get(port)
-    fields.push(field(L('入力元 {0}', port), source ?? other(left), target ?? other(right), available(left, source) && available(right, target)))
+    const value = field(L('入力元 {0}', port), source ?? other(left), target ?? other(right), available(left, source) && available(right, target))
+    const label = (v?: string) => v?.replace(/^([A-Za-z0-9_./-]+) (#\d+)$/, (_, id: string, invocation: string) => `${displayPath(id.split('/'))} ${invocation}`)
+    fields.push({ ...value, left: label(value.left), right: label(value.right) })
   }
   return fields
 }
 
 /** A run starts at one Card and either goes on downstream or runs that Card alone. */
-export function runScope(run?: R.RunSummaryT): string | undefined {
+export function runScope(run?: R.RunSummaryT, displayPath = (segments: string[]) => segments.join('/')): string | undefined {
   if (!run) return
-  const target = segs(run.target).join('/')
+  const target = displayPath(segs(run.target))
   return run.propagate === false ? L('{0} だけ（保存した入力）', target) : L('{0} から下流', target)
 }
 

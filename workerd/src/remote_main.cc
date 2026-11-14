@@ -32,6 +32,8 @@
 #include <vector>
 
 #include "journal.hh"
+#include "tsugumi/workerd/log.hh"
+#include "tsugumi/workerd/log_limits.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
 #include "util/peer_tls.hh"
@@ -39,7 +41,7 @@
 extern char** environ;
 namespace tsugumi::workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
-            const stdfs::path& store) -> void;
+            const stdfs::path& store, uint64_t log_limit_bytes) -> void;
 namespace {
 using namespace std::chrono_literals;
 constexpr size_t kConnections = 64;
@@ -152,6 +154,7 @@ struct Config {
   std::string host = "127.0.0.1";
   uint16_t port = 8765;
   uint32_t max_jobs = 8;
+  uint64_t log_limit_bytes = kDefaultLogLimitBytes;
   std::string executable;
 };
 auto default_root() -> stdfs::path {
@@ -412,7 +415,8 @@ class Daemon {
                                   job,
                                   "5",
                                   (config_.root / "store").string(),
-                                  config_.cgroup.string()};
+                                  config_.cgroup.string(),
+                                  std::to_string(config_.log_limit_bytes)};
     std::vector<char*> argv;
     for (auto& arg : args) argv.push_back(arg.data());
     argv.push_back(nullptr);
@@ -440,7 +444,7 @@ class Daemon {
 
 auto supervise(const std::string& self, const stdfs::path& root,
                const std::string& job, int lockfd, const stdfs::path& store,
-               const stdfs::path& cgroup_root) -> int {
+               const stdfs::path& cgroup_root, uint64_t log_limit_bytes) -> int {
   Journal journal(root);
   Fd expected(supervisor_lock(journal, job));
   struct stat held{}, named{};
@@ -490,9 +494,10 @@ auto supervise(const std::string& self, const stdfs::path& root,
         ::close(fd);
       }
       const auto blobs = directory / "blobs";
+      const auto log_limit = std::to_string(log_limit_bytes);
       ::execlp("unshare", "unshare", "--map-current-user", "--pid", "--fork",
                "--kill-child=SIGKILL", "--mount-proc", "--", self.c_str(),
-               "--invoke", work.c_str(), blobs.c_str(), store.c_str(), nullptr);
+               "--invoke", work.c_str(), blobs.c_str(), store.c_str(), log_limit.c_str(), nullptr);
       ::_exit(127);
     }
     int status = 0;
@@ -676,14 +681,14 @@ auto main(int argc, char** argv) -> int {
   try {
     if (argc == 2 && std::string_view(argv[1]) == "--check-namespace")
       return ::getpid() == 1 ? 0 : 1;
-    if (argc == 5 && std::string_view(argv[1]) == "--invoke") {
-      invoke(argv[2], argv[3], argv[4]);
+    if (argc == 6 && std::string_view(argv[1]) == "--invoke") {
+      invoke(argv[2], argv[3], argv[4], tsugumi::remote::checked_log_limit(parse_log_limit_bytes(argv[5])));
       return 0;
     }
     const auto self = stdfs::canonical("/proc/self/exe").string();
-    if (argc == 7 && std::string_view(argv[1]) == "--supervise")
+    if (argc == 8 && std::string_view(argv[1]) == "--supervise")
       return supervise(self, argv[2], argv[3], std::stoi(argv[4]), argv[5],
-                       argv[6]);
+                       argv[6], tsugumi::remote::checked_log_limit(parse_log_limit_bytes(argv[7])));
     Config c;
     c.root = default_root();
     c.executable = self;
@@ -711,7 +716,9 @@ auto main(int argc, char** argv) -> int {
         const auto n = std::stoul(value);
         if (!n || n > 65536) throw std::runtime_error("invalid max-jobs");
         c.max_jobs = static_cast<uint32_t>(n);
-      } else if (option == "--cgroup-root")
+      } else if (option == "--log-limit-bytes")
+        c.log_limit_bytes = tsugumi::remote::checked_log_limit(parse_log_limit_bytes(value));
+      else if (option == "--cgroup-root")
         c.cgroup = value;
       else
         throw std::runtime_error("unknown remote worker option");

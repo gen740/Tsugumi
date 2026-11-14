@@ -14,6 +14,7 @@ table ConfigureRequest { provider:Tsugumi.Service.ProviderSelection (required); 
 
 table ConversationCreateRequest { conversation_id:string; project_id:string; role:string; }
 table ConversationListRequest { project_id:string; }
+// Reading or observing a conversation never starts or resumes a turn.
 table ConversationGetRequest { conversation_id:string (required); }
 table ConversationDeleteRequest { conversation_id:string (required); }
 table ConversationSearchRequest { project_id:string; text:string (required); }
@@ -23,7 +24,10 @@ table ConversationSendRequest {
   conversation_id:string (required); turn_id:string (required); text:string (required);
   selected_cards:[string]; selected_displays:[string]; skill_names:[string]; intent:string;
   attached_resources:[string];
+  // Human-visible text, before core attaches references and skill contents.
+  display:string;
 }
+// Resume is an explicit user request; restart/reconnect never sends it.
 table ConversationActionRequest { conversation_id:string (required); action:Action; }
 table ConversationCancelRequest { conversation_id:string (required); }
 // Durable sequence numbers allow another connection to resume observation.
@@ -38,12 +42,13 @@ table AccessListRequest { conversation_id:string; }
 table DemoListRequest {}
 table DemoReadRequest { path:string (required); }
 
-table VersionSummarizeRequest { project_id:string (required); commit:string (required); provider:Tsugumi.Service.ProviderSelection; }
+// Human UI requests a note; policy, provider, deduplication and storage belong to agentd.
+table VersionNoteRequest { project_id:string (required); commit:string (required); profile:string (required); language:string (required); anthropic_key_profile:string; openai_key_profile:string; }
 table ConversationSummarizeRequest { conversation_id:string (required); provider:Tsugumi.Service.ProviderSelection; }
 
 union RequestPayload {
   HelloRequest:Tsugumi.Service.HelloRequest,
-  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, DemoListRequest, DemoReadRequest, VersionSummarizeRequest, ConversationSummarizeRequest
+  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, DemoListRequest, DemoReadRequest, VersionNoteRequest, ConversationSummarizeRequest
 }
 table Request { value:RequestPayload; }
 
@@ -57,7 +62,10 @@ table Conversation {
   messages:[ModelMessage]; archive:[ModelMessage]; summary:string;
   tools:[ToolRecord]; helpers:[Helper]; usage:Usage;
 }
-table ConversationResult { conversation:Conversation (required); busy:bool; resumable:bool; continuable:bool; project_id:string; event_seq:ulong; }
+// Core-recorded operation at interruption, not inferred from transcript by clients.
+// kind: preparing, model, tool, compact. Tool details identify the in-flight call.
+table InterruptedOperation { kind:string (required); id:string; name:string; arguments_json:string; }
+table ConversationResult { conversation:Conversation (required); busy:bool; resumable:bool; continuable:bool; project_id:string; event_seq:ulong; interrupted_operation:InterruptedOperation; }
 table ConversationEntry { id:string; project_id:string; title:string; updated_at:long; busy:bool; }
 table ConversationList { conversations:[ConversationEntry]; }
 table SearchMatch { session:string; title:string; snippet:string; updated_at:long; }

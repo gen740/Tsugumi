@@ -9,7 +9,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 - **Requests that change something**: carry an `op_id`, and a resend with the same `op_id` is applied only once. If a response is lost, check with `OperationGet`.
 - **The Agent's tools**: made from the same schema (`tsugumi.bfbs`) ([Features](features.md#9-agent)).
 
-There are 47 requests.
+There are 50 requests.
 
 ## Connection
 
@@ -35,12 +35,14 @@ There are 47 requests.
 | [`ProjectOpen`](#projectopen) | OpenResult | Creates (or replaces) the connection's subscription. |
 | [`ProjectClose`](#projectclose) | Ack | Ends only the given subscription. Unknown ids are acknowledged. |
 | [`ProjectInspect`](#projectinspect) | ProjectSnapshot | No subscription, build or reload. |
+| [`CardId`](#cardid) | CardIdResult | Reserves a permanent identifier for a new Card without changing the document revision. Supply its human name; use the returned id in the canvas, definition paths and wires, and name in _meta.json.name. Each call reserves a fresh id; save the definition and canvas with project_save. |
 | [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. |
-| [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. |
+| [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. Every permission widening requires explicit approval, regardless of origin. |
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
-| [`ProjectShell`](#projectshell) | ProjectShellResult | Runs in the project VM as the project user, with the project directory as cwd. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream is capped at 262144 bytes. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Agent use requires explicit Shell access in addition to Read, Write and Run. After editing project definitions or tsugumi.json with a command, use ProjectReload before inspecting or running the changed project through core. |
+| [`ProjectShell`](#projectshell) | ProjectShellResult | Runs in the project VM as the project user, with the project directory as cwd. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream is capped at 262144 bytes. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Agent use requires explicit Shell access in addition to Read, Write and Run. With origin "agent", project files are read-only, using bubblewrap on Linux and Seatbelt on macOS; only diagnostic temporary files are writable. Isolation unavailable means the request is refused. Shell commands are for diagnosis and reads. Analysis runs in Cards; Agent edits go through ProjectSave. A person's UI terminal is a separate writable path. |
 | [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Only while no run or SDK job is active. |
 | [`ProjectCacheUsage`](#projectcacheusage) |  | Cached shared-store measurement; never triggers a store traversal on the RPC lane. |
+| [`RunScratchDelete`](#runscratchdelete) | RunScratchDeleteResult | Deletes only the listed scratch folders from the usage report. Refuses active runs, pending remote results and the latest run. |
 | [`OperationGet`](#operationget) | OperationResult |  |
 
 ### ProjectOpen
@@ -59,6 +61,13 @@ There are 47 requests.
 
 No fields.
 
+### CardId
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | yes |  |
+| `project_path` | `string` |  | Project-relative directory: empty for the root, or externals/<id>/, repeated for nesting. May name a project being created in the same draft. |
+
 ### ProjectSave
 
 | Field | Type | Required | Description |
@@ -67,7 +76,6 @@ No fields.
 | `op_id` | `string` | yes |  |
 | `origin` | `string` | yes |  |
 | `changes` | `[DocumentChange]` | yes |  |
-| `renamed_cards` | `[CardRename]` |  |  |
 | `approved_permissions` | `[string]` |  | The Card permissions this save widens that the user approved, each as an `approval_required` failure names it. Set by the client after asking the user, never by a model; a save from a model (origin "agent") is rejected unless every widening is listed. |
 
 ### ProjectReload
@@ -77,6 +85,7 @@ No fields.
 | `base_rev` | `uint64` |  |  |
 | `op_id` | `string` | yes |  |
 | `origin` | `string` | yes |  |
+| `approved_permissions` | `[string]` |  | The widenings named by approval_required that the user approved. Set by the client after asking the user, never by a model. |
 
 ### ProjectValidate
 
@@ -94,6 +103,7 @@ No fields.
 | `op_id` | `string` | yes |  |
 | `command` | `string` | yes |  |
 | `timeout_ms` | `uint32` |  |  |
+| `origin` | `string` | yes |  |
 
 ### ProjectCacheClear
 
@@ -104,6 +114,13 @@ No fields.
 ### ProjectCacheUsage
 
 No fields.
+
+### RunScratchDelete
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `op_id` | `string` | yes |  |
+| `paths` | `[string]` | yes |  |
 
 ### OperationGet
 
@@ -211,7 +228,7 @@ No fields.
 | [`RunPlan`](#runplan) | RunPlanResult | propagate = true. |
 | [`Run`](#run) | RunAccepted | propagate = true, max_concurrency = 4 (1..64), nix_jobs = 1, nix_cores = 1. |
 | [`RunCancel`](#runcancel) | RunStatus | Idempotent. Unknown id is not_found. |
-| [`RunStatus`](#runstatus) | RunStatus | Omitted run_id: the active run, else the last one, else idle. |
+| [`RunStatus`](#runstatus) | RunStatus | Omitted run_id: the active run, else the latest locally started run, else idle. partial_run marks debugging with saved inputs; uses_partial_result marks values derived from a partial run, within this run or through saved inputs. Both flags persist in RunSummary.status in history/comparison replies and run events, including runs with recorded values and retained artifacts. |
 
 ### RunPlan
 
@@ -255,7 +272,7 @@ No fields.
 | [`RunLatestInvocations`](#runlatestinvocations) | InvocationPage | Each Card's latest invocation of a run, for a client that opens the project after the run: it did not get RunCardChanged for them. |
 | [`RunRecord`](#runrecord) | RecordResult | invocation and follow_latest = true are exclusive. |
 | [`RunValueRead`](#runvalueread) | FileContent | offset = 0, limit_bytes = 1048576. |
-| [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Deletes finished runs (all, or those that ended before ended_before, Unix ms) with their records, values, logs and files, here and in the project's copy. Only while no run is active. |
+| [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Deletes finished runs (all, or those that ended before ended_before, Unix ms) with their records, values, logs and files, here and in the project's copy. Only while no run is active. Approvals must set restrict_to_run_ids and pass the exact run_ids shown to the person (an empty set deletes nothing). Without that flag, run_ids must be empty and the UI's all-runs or date scope applies. The separate flag distinguishes an empty selection from object APIs' default empty vectors. |
 | [`ArtifactList`](#artifactlist) | ArtifactPage | invocation requires card. |
 | [`ArtifactRead`](#artifactread) | FileContent | member only for Directory artifacts. |
 | [`LogRange`](#logrange) | LogSlice | limit_bytes = 65536 (4..256 KiB). tail with offset != 0 is rejected. invocation requires card. |
@@ -313,6 +330,8 @@ No fields.
 | --- | --- | --- | --- |
 | `op_id` | `string` | yes |  |
 | `ended_before` | `int64` |  |  |
+| `run_ids` | `[string]` |  |  |
+| `restrict_to_run_ids` | `bool` |  |  |
 
 ### ArtifactList
 
@@ -420,7 +439,8 @@ No fields.
 | [`VersionGraph`](#versiongraph) | VersionGraph, newest first |  |
 | [`VersionCanvas`](#versioncanvas) | VersionCanvas: the Cards of a version and how they connect (a minimap) |  |
 | [`VersionDiff`](#versiondiff) | VersionDiff: what a version changed from another version (its first parent by default), in the text a summary is written from | Only code and settings: never data files. |
-| [`VersionSummary`](#versionsummary) | VersionResult | Keeps a client's summary of a version in the commit's own note (refs/notes/tsugumi-summary), replacing the one there. |
+| [`VersionNote`](#versionnote) | VersionNote | Core-generated mechanical record and the saved Agent note. The host Agent service chooses which to return to the UI. Mechanical records are kept in refs/notes/tsugumi-record-{ja,en}. |
+| [`VersionNoteStore`](#versionnotestore) | VersionResult | The host Agent service stores the generated note in refs/notes/tsugumi-summary. Clients request notes from agentd. |
 
 ### VersionInit
 
@@ -466,7 +486,14 @@ No fields.
 | `commit` | `string` | yes |  |
 | `from_commit` | `string` |  | Compare from this version; absent means the first parent of commit. |
 
-### VersionSummary
+### VersionNote
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `commit` | `string` | yes |  |
+| `language` | `string` | yes |  |
+
+### VersionNoteStore
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |

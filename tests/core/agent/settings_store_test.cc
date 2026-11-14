@@ -19,6 +19,62 @@ class MemorySecrets final : public host::SecretStore {
   }
   auto Erase(const std::string& id) -> void override { values.erase(id); }
 };
+TEST(HostSettingsStore, AgentAnimationIsValidatedAndSurvivesReopening) {
+  TemporaryDirectory directory;
+  const auto make = [&] {
+    return std::make_unique<host::Settings>(
+        directory.path, [](const auto&, const auto&) {},
+        [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+        std::make_unique<MemorySecrets>());
+  };
+  auto service = make();
+  auto call = [&](H::RequestT request) {
+    flatbuffers::FlatBufferBuilder b;
+    H::MessageT message;
+    message.request_id = 1;
+    message.payload.Set(std::move(request));
+    H::FinishMessageBuffer(b, H::Message::Pack(b, &message));
+    return service->Handle(
+        *H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 1);
+  };
+  auto get = [&] {
+    H::RequestT request;
+    H::SettingsGetRequestT value;
+    value.profile = "desktop";
+    request.value.Set(std::move(value));
+    return call(std::move(request));
+  };
+  auto animation = [](const std::string& reply) {
+    for (const auto* item : *H::GetMessage(reply.data())
+                                ->payload_as_Reply()->value_as_Settings()->values())
+      if (item->key()->str() == "agent.animateWork")
+        return item->value_json()->str();
+    return std::string{};
+  };
+  auto update = [&](const std::string& raw) {
+    const auto before = get();
+    H::SettingsUpdateRequestT value;
+    value.profile = "desktop";
+    value.revision = H::GetMessage(before.data())
+                         ->payload_as_Reply()->value_as_Settings()->revision();
+    auto item = std::make_unique<H::SettingT>();
+    item->key = "agent.animateWork";
+    item->value_json = raw;
+    value.changes.push_back(std::move(item));
+    H::RequestT request;
+    request.value.Set(std::move(value));
+    return call(std::move(request));
+  };
+  EXPECT_EQ(animation(get()), "true");
+  const auto invalid = update(Quote("false"));
+  EXPECT_NE(H::GetMessage(invalid.data())->payload_as_Reply()->value_as_Failure(),
+            nullptr);
+  EXPECT_EQ(animation(get()), "true");
+  EXPECT_EQ(animation(update("false")), "false");
+  service.reset();
+  service = make();
+  EXPECT_EQ(animation(get()), "false");
+}
 TEST(HostSettingsStore,
      ProviderInputsStayInTheSecretStoreAndFailuresAreSanitized) {
   TemporaryDirectory directory;
@@ -135,4 +191,47 @@ TEST(HostSettingsStore,
       EXPECT_EQ(Read(file.path()).find(key), std::string::npos);
 }
 }  // namespace
+}  // namespace tsugumi::test
+
+namespace tsugumi::test {
+TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
+  TemporaryDirectory directory;
+  auto memory = std::make_unique<MemorySecrets>();
+  auto* secrets = memory.get();
+  secrets->values["desktop:anthropic"] = "ANTHROPIC_NOTE_KEY";
+  secrets->values["desktop:openai"] = "OPENAI_NOTE_KEY";
+  host::Settings service(directory.path, [](const auto&, const auto&) {},
+      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      std::move(memory));
+  EXPECT_EQ(service.VersionNoteMode("desktop"), "mechanical");
+  const auto update = [&](const std::string& mode, uint64_t revision, const std::string& key = "versions.noteMode") {
+    flatbuffers::FlatBufferBuilder b;
+    const auto change = H::CreateSetting(b, b.CreateString(key), b.CreateString(mode));
+    const auto p = H::CreateSettingsUpdateRequest(b, b.CreateString("desktop"), revision,
+        b.CreateVector(std::vector{change}));
+    const auto request = H::CreateRequest(b, H::RequestPayload::SettingsUpdateRequest, p.Union());
+    H::FinishMessageBuffer(b, H::CreateMessage(b, 1, H::Payload::Request, request.Union()));
+    return service.Handle(*H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 1);
+  };
+  for (const auto& invalid : {"true", "\"unknown\""}) {
+    const auto failure = update(invalid, 0);
+    ASSERT_TRUE(H::GetMessage(failure.data())->payload_as_Reply()->value_as_Failure());
+  }
+  auto reply = update("\"agent\"", 0);
+  ASSERT_TRUE(H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
+  EXPECT_EQ(service.VersionNoteMode("desktop"), "agent");
+  EXPECT_EQ(service.VersionNoteMode("web:other"), "mechanical");
+  reply = update("\"mechanical\"", 1);
+  ASSERT_TRUE(H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
+  EXPECT_EQ(service.VersionNoteMode("desktop"), "mechanical");
+  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").credential, "ANTHROPIC_NOTE_KEY");
+  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model, "claude-haiku-5-5");
+  EXPECT_THROW(service.VersionNoteProvider("desktop", "missing-platform-keys", ""), std::exception);
+  reply = update("\"openai\"", 2, "agent.provider");
+  ASSERT_TRUE(H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
+  EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-anthropic-keys", "").credential, "OPENAI_NOTE_KEY");
+  reply = update("\"custom-small-model\"", 3, "agent.thoughtModel.openai");
+  ASSERT_TRUE(H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
+  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model, "custom-small-model");
+}
 }  // namespace tsugumi::test

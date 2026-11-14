@@ -17,7 +17,11 @@
 # every package against the lock's contentHash. Without `lock` the Card has no
 # external packages. Nothing is locked for you: a new lock starts with
 # `hash = pkgs.lib.fakeHash`, and the Card's build log shows the hash to keep.
-{ pkgs, sdkRoot, foreign }:
+{
+  pkgs,
+  sdkRoot,
+  foreign,
+}:
 {
   src,
   sdk,
@@ -37,15 +41,18 @@ let
   rid = "${system}-${arch}";
   xml = text: builtins.replaceStrings [ "&" "\"" "<" ">" ] [ "&amp;" "&quot;" "&lt;" "&gt;" ] text;
 
-  sections = if lock == null then { } else (builtins.fromJSON (builtins.readFile lock)).dependencies or { };
+  sections =
+    if lock == null then { } else (builtins.fromJSON (builtins.readFile lock)).dependencies or { };
   entries = section: lib.mapAttrsToList (id: p: p // { inherit id; }) section;
   # What the project asks for, exactly as the lock recorded it.
   direct = builtins.filter (p: p.type == "Direct") (entries (sections.${framework} or { }));
   # Every package the lock resolves to, in any of its sections, by the
   # lowercase id and version nuget.org publishes it under.
   resolved = lib.unique (
-    map (p: { id = lib.toLower p.id; version = lib.toLower p.resolved; })
-      (builtins.filter (p: p.type != "Project") (lib.concatMap entries (builtins.attrValues sections)))
+    map (p: {
+      id = lib.toLower p.id;
+      version = lib.toLower p.resolved;
+    }) (builtins.filter (p: p.type != "Project") (lib.concatMap entries (builtins.attrValues sections)))
   );
   file = p: "${p.id}.${p.version}.nupkg";
   plain = s: builtins.match "[a-z0-9][a-z0-9._+-]*" s != null;
@@ -57,21 +64,22 @@ let
   packagesName = "${name}-nuget-lock-${builtins.substring 0 16 (builtins.hashFile "sha256" lock)}";
   # The .nupkg files of the lock, as published, side by side (a NuGet local
   # feed). `hash` is the NAR hash of this folder.
-  nupkgs = pkgs.runCommand packagesName
-    {
-      nativeBuildInputs = [ pkgs.curl ];
-      SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
-      impureEnvVars = lib.fetchers.proxyImpureEnvVars;
-      outputHashMode = "recursive";
-      outputHash = hash; # SRI, "sha256-..."
-    }
-    ''
-      mkdir -p $out
-      ${lib.concatMapStrings (p: ''
-        curl --fail --silent --show-error --location --retry 3 \
-          -o $out/${file p} https://api.nuget.org/v3-flatcontainer/${p.id}/${p.version}/${file p}
-      '') resolved}
-    '';
+  nupkgs =
+    pkgs.runCommand packagesName
+      {
+        nativeBuildInputs = [ pkgs.curl ];
+        SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+        impureEnvVars = lib.fetchers.proxyImpureEnvVars;
+        outputHashMode = "recursive";
+        outputHash = hash; # SRI, "sha256-..."
+      }
+      ''
+        mkdir -p $out
+        ${lib.concatMapStrings (p: ''
+          curl --fail --silent --show-error --location --retry 3 \
+            -o $out/${file p} https://api.nuget.org/v3-flatcontainer/${p.id}/${p.version}/${file p}
+        '') resolved}
+      '';
 
   # The only package source is the lock's folder. Given with --configfile, it
   # is the only NuGet setting read: no user, machine, source-tree or fallback
@@ -132,7 +140,9 @@ let
       export HOME=$TMPDIR/home DOTNET_CLI_HOME=$TMPDIR/home
       export NUGET_PACKAGES=$TMPDIR/packages NUGET_HTTP_CACHE_PATH=$TMPDIR/http-cache
       unset NUGET_FALLBACK_PACKAGES
-      dotnet restore Card.csproj --configfile ${nugetConfig} ${lib.optionalString (lock != null) "--locked-mode"}
+      dotnet restore Card.csproj --configfile ${nugetConfig} ${
+        lib.optionalString (lock != null) "--locked-mode"
+      }
       runHook postConfigure
     '';
     buildPhase = ''
@@ -143,6 +153,25 @@ let
     '';
     dontInstall = true;
     dontFixup = true;
+  };
+  adapter = pkgs.stdenv.mkDerivation {
+    name = "${name}-runtime";
+    dontUnpack = true;
+    dontConfigure = true;
+    buildPhase = ''
+      $CXX -std=c++20 -O2 -fPIC -shared -Wall -Wextra -Werror \
+        -I${sdkRoot}/include \
+        -I${dotnet}/share/dotnet/packs/Microsoft.NETCore.App.Host.${rid}/${runtime.version}/runtimes/${rid}/native \
+        -DTSUGUMI_HOSTFXR='"${runtime}/share/dotnet/host/fxr/${runtime.version}/libhostfxr${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
+        -DTSUGUMI_DOTNET_ROOT='"${runtime}/share/dotnet"' \
+        -DTSUGUMI_ASSEMBLY='"${managed}/Card.dll"' \
+        -DTSUGUMI_RUNTIMECONFIG='"${managed}/Card.runtimeconfig.json"' \
+        ${sdkRoot}/csharp/host.cc -o runtime.so ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-ldl"}
+    '';
+    installPhase = ''
+      mkdir -p $out/lib
+      cp runtime.so $out/lib/
+    '';
   };
   hashTarget = "the NAR hash (sha256) of the .nupkg files that lock names, built as ${packagesName}";
 in
@@ -157,25 +186,8 @@ assert lib.assertMsg (lock == null || sections ? ${framework})
   "csharpCard: ${toString lock} has no ${framework} section; make the lock with this Card's .NET (${framework})";
 assert lib.assertMsg (unsafe == [ ])
   "csharpCard: ${toString lock} names packages that are not plain NuGet ids and versions: ${toString (map file unsafe)}";
-pkgs.stdenv.mkDerivation {
-  inherit name;
-  # The folder `hash` covers, for `nix build` / `nix hash path` by hand.
-  passthru = lib.optionalAttrs (lock != null) { nugetPackages = nupkgs; };
-  dontUnpack = true;
-  dontConfigure = true;
-  buildPhase = ''
-    $CXX -std=c++20 -O2 -fPIC -shared -Wall -Wextra -Werror \
-      -I${sdkRoot}/include \
-      -I${dotnet}/share/dotnet/packs/Microsoft.NETCore.App.Host.${rid}/${runtime.version}/runtimes/${rid}/native \
-      -DTSUGUMI_HOSTFXR='"${runtime}/share/dotnet/host/fxr/${runtime.version}/libhostfxr${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
-      -DTSUGUMI_DOTNET_ROOT='"${runtime}/share/dotnet"' \
-      -DTSUGUMI_ASSEMBLY='"'$out'/lib/managed/Card.dll"' \
-      -DTSUGUMI_RUNTIMECONFIG='"'$out'/lib/managed/Card.runtimeconfig.json"' \
-      ${sdkRoot}/csharp/host.cc -o main.so ${lib.optionalString pkgs.stdenv.hostPlatform.isLinux "-ldl"}
-  '';
-  installPhase = ''
-    mkdir -p $out/lib/managed
-    cp main.so $out/lib/
-    cp -r ${managed}/. $out/lib/managed/
-  '';
-}
+# The folder `hash` covers is still available to `nix build` by hand.
+pkgs.runCommand name { passthru = lib.optionalAttrs (lock != null) { nugetPackages = nupkgs; }; } ''
+  mkdir -p $out/lib
+  printf '%s\n' '${adapter}/lib/runtime.so' > $out/lib/tsugumi-runtime
+''

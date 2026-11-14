@@ -28,6 +28,8 @@ namespace sql {
 class Db;
 }
 
+struct ExecutionResult;
+
 // One invocation handed to a backend.
 struct ExecutionRequest {
   const Node& node;
@@ -37,8 +39,7 @@ struct ExecutionRequest {
   // The invocation's live summary (run, Card, invocation number). A backend
   // fills its execution fields before start() and as they change.
   InvocationSummaryData& summary;
-  // The invocation's scratch folder (out/, and work/ and tmp/ copies for
-  // filesystem: true).
+  // The invocation's scratch folder; out/ contains only declared outputs.
   std::filesystem::path directory;
   // Set when the run is cancelled or interrupted.
   const std::atomic<bool>& cancel;
@@ -58,6 +59,9 @@ struct ExecutionRequest {
   std::function<void(const std::function<void(sql::Db&)>& records)> start;
   // Publishes a change of the summary after start().
   std::function<void()> publish;
+  // Native residents are reusable only after the scheduler accepts all
+  // required outputs, their types and their paths. Throws Failed on rejection.
+  std::function<void(const ExecutionResult&)> validate = {};
 };
 
 struct ExecutionResult {

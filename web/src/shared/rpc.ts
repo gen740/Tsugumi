@@ -23,6 +23,7 @@ export const sOpt = (v: string | Uint8Array | null | undefined): string | undefi
 export class RPCFailure extends Error {
   readonly kind: D.FailureKind
   readonly args: Record<string, string>
+  readonly permissions: string[]
   readonly diagnostic?: string
   readonly currentRev?: bigint
   readonly retryAfterMs?: number
@@ -30,6 +31,7 @@ export class RPCFailure extends Error {
   constructor(f: { kind: D.FailureKind; args?: D.KeyValueT[]; diagnostic?: string | Uint8Array | null; currentRev?: bigint | null; retryAfterMs?: number | null }) {
     super(`${D.FailureKind[f.kind] ?? f.kind}: ${s(f.diagnostic)}`)
     this.kind = f.kind
+    this.permissions = (f.args ?? []).filter(kv => s(kv.key) === 'permission').map(kv => s(kv.value))
     this.args = {}
     for (const kv of f.args ?? []) this.args[s(kv.key)] = s(kv.value)
     this.diagnostic = sOpt(f.diagnostic)
@@ -166,6 +168,10 @@ export class RPCClient {
     return { type: reply.valueType(), bb, table: t.bb_pos }
   }
 
+  cardId(name: string, projectPath = '') {
+    return this.call<R.CardIdResultT>(RequestPayload.CardIdRequest, Object.assign(new R.CardIdRequestT(), { name, projectPath }))
+  }
+
   // ---- Typed wrappers ---------------------------------------------------------
 
   open(viewId: string | null) {
@@ -177,9 +183,8 @@ export class RPCClient {
   inspect() {
     return this.call<R.ProjectSnapshotT>(RequestPayload.ProjectInspectRequest, new R.ProjectInspectRequestT())
   }
-  save(baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[], renamed: { from: string[]; to: string[] }[] = []) {
-    const renamedCards = renamed.map((x) => new R.CardRenameT(cardPath(x.from), cardPath(x.to)))
-    return this.call<R.SaveResultT>(RequestPayload.ProjectSaveRequest, Object.assign(new R.ProjectSaveRequestT(), { baseRev, opId, origin, changes, renamedCards }))
+  save(baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[]) {
+    return this.call<R.SaveResultT>(RequestPayload.ProjectSaveRequest, Object.assign(new R.ProjectSaveRequestT(), { baseRev, opId, origin, changes }))
   }
   /** Generates the Card's contracts (_inputs.fbs, _outputs.fbs, _params.fbs)
    *  for one revision and returns the file list when ready. */
@@ -208,8 +213,8 @@ export class RPCClient {
     return this.call<R.ProjectValidateResultT>(RequestPayload.ProjectValidateRequest,
       Object.assign(new R.ProjectValidateRequestT(), { mode: D.ValidateMode.executable, changes: changes ?? [] }))
   }
-  reload(baseRev: bigint, opId: string, origin: string) {
-    return this.call<R.SaveResultT>(RequestPayload.ProjectReloadRequest, Object.assign(new R.ProjectReloadRequestT(), { baseRev, opId, origin }))
+  reload(baseRev: bigint, opId: string, origin: string, approvedPermissions: string[] = []) {
+    return this.call<R.SaveResultT>(RequestPayload.ProjectReloadRequest, Object.assign(new R.ProjectReloadRequestT(), { baseRev, opId, origin, approvedPermissions }))
   }
   operation(opId: string) {
     return this.call<R.OperationResultT>(RequestPayload.OperationGetRequest, Object.assign(new R.OperationGetRequestT(), { opId }))
@@ -324,6 +329,9 @@ export class RPCClient {
   clearCache(opId: string) {
     return this.call<R.ProjectCacheClearResultT>(RequestPayload.ProjectCacheClearRequest, Object.assign(new R.ProjectCacheClearRequestT(), { opId }), 300_000)
   }
+  deleteRunScratch(opId: string, paths: string[]) {
+    return this.call<R.RunScratchDeleteResultT>(RequestPayload.RunScratchDeleteRequest, new R.RunScratchDeleteRequestT(opId, paths), 300_000)
+  }
   cacheUsage() {
     return this.call<R.ProjectCacheUsageResultT>(RequestPayload.ProjectCacheUsageRequest, new R.ProjectCacheUsageRequestT())
   }
@@ -337,9 +345,7 @@ export class RPCClient {
   versionDiff(commit: string, fromCommit: string | null = null) {
     return this.call<R.VersionDiffT>(RequestPayload.VersionDiffRequest, Object.assign(new R.VersionDiffRequestT(), { commit, fromCommit }))
   }
-  versionSummary(opId: string, origin: string, commit: string, summary: string) {
-    return this.call<R.VersionResultT>(RequestPayload.VersionSummaryRequest, Object.assign(new R.VersionSummaryRequestT(), { opId, origin, commit, summary }))
-  }
+
   versionInit(opId: string, origin: string) {
     return this.call<R.VersionResultT>(RequestPayload.VersionInitRequest, Object.assign(new R.VersionInitRequestT(), { opId, origin }))
   }
@@ -384,7 +390,6 @@ export const Change = {
   setLayout: (json: string) => new R.DocumentChangeT(R.DocumentChangeValue.SetLayout, new R.SetLayoutT(json)),
   putDefinition: (id: string, cardJson: string, metaJson: string | null, linkJson: string | null = null) =>
     new R.DocumentChangeT(R.DocumentChangeValue.PutDefinition, new R.PutDefinitionT(id, linkJson === null ? cardJson : '', metaJson, linkJson)),
-  renameDefinition: (id: string, to: string) => new R.DocumentChangeT(R.DocumentChangeValue.RenameDefinition, new R.RenameDefinitionT(id, to)),
   removeDefinition: (id: string) => new R.DocumentChangeT(R.DocumentChangeValue.RemoveDefinition, new R.RemoveDefinitionT(id)),
   putSource: (path: string, bytes: Uint8Array, baseHash: string | null) =>
     new R.DocumentChangeT(R.DocumentChangeValue.PutSource, new R.PutSourceT(path, Array.from(bytes), baseHash)),
