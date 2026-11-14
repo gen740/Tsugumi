@@ -856,6 +856,10 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
     { label: L('実行履歴…'), action: () => app.openWindow(session, { kind: 'executions', card: k }) },
     { label: L('成果物…'), action: () => app.openWindow(session, { kind: 'artifacts', card: k }) },
     { label: L('ログを表示'), action: () => showLog(workspace, k) },
+    { label: L('Skill を実行'), submenu: app.chat(session).skills.filter(s => s.scoped).map(s => ({ label: `$${s.name} (${s.scope?.join(', ') ?? ''})`, disabled: app.chat(session).busy, action: () => {
+      workspace.set('showChat', true)
+      app.chat(session).send(`$${s.name}`, [...targets], s.name)
+    } })) },
     {
       label: L('チャットに参照を追加'), action: () => {
         for (const t of [...targets].sort()) app.chat(session).addReference({ kind: 'card', card: t })

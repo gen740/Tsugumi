@@ -23,6 +23,7 @@ export interface ChatItem {
    *  tool call (text: the arguments) and how its work ended. */
   helper?: string
   ended?: string
+  trace?: string
 }
 
 export interface SessionInfo {
@@ -48,6 +49,8 @@ export interface Skill {
   path: string
   content: string
   source: string
+  scoped?: boolean
+  scope?: string[]
 }
 
 /** The model connection as the host server reports it (never the key). */
@@ -96,6 +99,7 @@ interface Message {
 }
 
 interface Conversation {
+  helpers?: { call_id: string; task: number; messages: Message[]; state: string }[]
   tools?: { id: string; name: string; result?: string; isError: boolean; state: string }[]
   messages: Message[]
   archive: Message[]
@@ -312,6 +316,10 @@ export class ChatController extends Observable {
     for (const record of c.tools ?? []) if (record.name === 'operation_approval') {
       out.push({ id: record.id, role: 'tool', text: record.result ?? '', tool: { name: record.name, ok: record.state === 'pending' ? undefined : !record.isError } })
     }
+    for (const helper of c.helpers ?? []) {
+      const text = helper.messages.map(m => m.content.map(b => b.type === 'text' ? b.text : JSON.stringify(b)).join('\n')).join('\n\n')
+      out.push({ id: `helper:${helper.call_id}:${helper.task}`, role: 'helper', helper: helper.messages[0]?.content.find(b => b.type === 'text')?.type === 'text' ? text.split('\n')[0].slice(0, 80) : helper.call_id, text: '', trace: text, ended: helper.state })
+    }
     this.items = out
   }
 
@@ -404,7 +412,7 @@ export class ChatController extends Observable {
 
   // ---- Conversation --------------------------------------------------------------
 
-  send(text: string, selection: CardKey[] = []) {
+  send(text: string, selection: CardKey[] = [], scopedSkill?: string) {
     if (!text.trim() || !this.available) return
     // No model connection: Tsugumi answers from its script.
     if (guide.scripted && !this.busy) return guide.answerScripted(text.trim(), this)
@@ -415,7 +423,7 @@ export class ChatController extends Observable {
     this.references = []
     this.begin()
     // The chat shows what was typed, not the skills and references attached to it.
-    void this.request('/api/chat/send', { ...this.base, text, display: shown, selectedCards: refs.filter((r) => r.kind === 'card').map((r) => r.card), selectedDisplays: refs.filter((r) => r.kind === 'display').map((r) => r.card), skillNames: this.skillsIn(text).map((s) => s.name), attachedResources: [...this.folderResources.values()] }).catch((e) => this.fail(e))
+    void this.request('/api/chat/send', { ...this.base, text, display: shown, scopedSkill, selectedCards: refs.filter((r) => r.kind === 'card').map((r) => r.card), selectedDisplays: refs.filter((r) => r.kind === 'display').map((r) => r.card), skillNames: this.skillsIn(text).map((s) => s.name), attachedResources: [...this.folderResources.values()] }).catch((e) => this.fail(e))
   }
 
   /** Sends a request the app wrote for the model; the chat shows `display`. */
@@ -435,7 +443,7 @@ export class ChatController extends Observable {
   /** The identifiers are explicit user selections; core reads their comments after authorization. */
   generateFromComments(scope: string[], cards: CardKey[]) {
     this.sendRequest(L('選択した Card のコメントに従って生成します'),
-      `Resolve the open comments on these Cards in scope ${JSON.stringify(scope)}: ${JSON.stringify(cards)}. Read the comments after access is granted.`)
+      `Resolve the open comments on these Cards in scope ${JSON.stringify(scope)}: ${JSON.stringify(cards)}. Read the comments after access is granted. Skip every comment with finding=true; those are observations, not change requests.`)
   }
 
   cancel() {
@@ -642,6 +650,9 @@ export class ChatController extends Observable {
         // The bird flies to the Card the Agent works on (in demo mode guide_show moves it instead).
         if (!this.demoMode) guide.chatWork(e.name, e.arguments)
         if (e.name === 'delegate') this.startHelpers(e.arguments)
+        break
+      case 'helperStarted':
+        this.startHelpers(JSON.stringify({ tasks: [JSON.parse(e.text)] }))
         break
       case 'helper':
         this.handleHelper(e.name, e.event)

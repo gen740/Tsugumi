@@ -189,6 +189,7 @@ struct CardComment: Equatable, Identifiable {
   var id: String
   var text: String
   var resolved = false
+  var finding = false
   /// One line on what was done about it.
   var resolution: String?
   var author: String?
@@ -201,7 +202,7 @@ struct CardComment: Equatable, Identifiable {
     (meta?["comments"]?.array ?? []).compactMap { c in
       guard let id = c["id"]?.string, let text = c["text"]?.string, !id.isEmpty else { return nil }
       let line = c["resolution"]?.string ?? ""
-      return CardComment(id: id, text: text, resolved: c["resolved"]?.bool ?? false, resolution: line.isEmpty ? nil : line,
+      return CardComment(id: id, text: text, resolved: c["resolved"]?.bool ?? false, finding: c["finding"]?.bool ?? false, resolution: line.isEmpty ? nil : line,
                          author: c["author"]?.string, editedBy: c["editedBy"]?.string, stateBy: c["stateBy"]?.string,
                          cards: c["cards"]?.array?.compactMap(\.string) ?? [])
     }

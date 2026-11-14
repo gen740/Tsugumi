@@ -59,7 +59,7 @@
   },
   "delegateTool": {
     "name": "delegate",
-    "description": "Starts 1 to 8 independent helper tasks. The application setting limits concurrent helpers (default 4; 1 runs them sequentially). Each gets at most 15 model steps and the same tools except delegate. Supply read_cards and write_cards as separate exact sets of permanent Card paths, e.g. [\"outer/step\"], with no implicit descendants. Empty sets are allowed. The core enforces both sets, including inspection, files, saves, execution plans, records and logs. Newly reserved card_id Cards belong to their creator for reading and writing. Project-wide operations, canvas/layout edits, container-link changes and tools without a Card boundary go to the parent. Omitting both sets works only when the user enables unscoped helpers (off by default). Returns messages and errors; a shortened result identifies the full helper trace in the conversation. Helper usage counts toward the conversation.",
+    "description": "Starts 1 to 8 independent helper tasks. The application setting limits concurrent helpers (default 4; 1 runs them sequentially). Each gets at most 15 model steps and the same tools except delegate. Supply read_cards, write_cards and run_cards as separate exact sets of permanent Card paths, e.g. [\"outer/step\"], with no implicit descendants. Empty sets are allowed. The host enforces all three sets, including inspection, files, saves, execution plans, records and logs. Newly reserved card_id Cards belong to their creator for reading, writing and running. Project-wide operations, canvas/layout edits, container-link changes and tools without a Card boundary go to the parent. Omitting all three sets works only when the user enables unscoped helpers (off by default). Returns messages and errors; a shortened result identifies the full helper trace in the conversation. Helper usage counts toward the conversation.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -95,14 +95,18 @@
                 "items": {
                   "type": "string"
                 },
-                "description": "Exact permanent Card paths this helper may read, including nested paths such as outer/step. No implicit descendants; supply both sets. Empty means none."
+                "description": "Exact permanent Card paths this helper may read, including nested paths such as outer/step. No implicit descendants; supply all three sets. Empty means none."
               },
               "write_cards": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 },
-                "description": "Exact permanent Card paths this helper may change or run, including nested paths such as outer/step. No implicit descendants; supply both sets. Empty means none."
+                "description": "Exact permanent Card paths this helper may change, including nested paths such as outer/step. No implicit descendants; supply all three sets. Empty means none."
+              },
+              "run_cards": {
+                "type": "array", "items": { "type": "string" },
+                "description": "Exact permanent Card paths this helper may execute, prepare or cancel. Every Card in a run plan must be assigned; write does not imply run. Supply all three sets; empty means none."
               }
             }
           }

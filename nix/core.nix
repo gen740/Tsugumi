@@ -45,6 +45,8 @@ clangStdenv.mkDerivation {
       ../agent/Shared/system-prompt.md
       ../agent/Shared/guide-prompt.md
       ../agent/Shared/demo-skill.md
+      ../agent/Shared/review-skill.md
+      ../agent/Shared/rerun-compare-skill.md
       ../agent/Shared/agent.json
       ../agent/Shared/guide-script.json
       ../agent/Shared/guide-script.en.json

@@ -216,7 +216,7 @@ const lineOf = (text: string, index: number): number => {
 /** Selection and scroll of each document seen (kept across switches). */
 const places = new Map<string, { start: number; end: number; top: number; left: number }>()
 
-export function CodeEditor({ text, onChange, language = '', editable = true, markers = [], documentId = '', style, className }: {
+export function CodeEditor({ text, onChange, language = '', editable = true, markers = [], documentId = '', revealLine, style, className }: {
   text: string
   onChange?: (t: string) => void
   /** File extension or language name. */
@@ -225,6 +225,7 @@ export function CodeEditor({ text, onChange, language = '', editable = true, mar
   markers?: EditorMarker[]
   /** Which document is shown (a file path). */
   documentId?: string
+  revealLine?: number
   style?: CSSProperties
   className?: string
 }) {
@@ -268,6 +269,15 @@ export function CodeEditor({ text, onChange, language = '', editable = true, mar
     setCursorLine(lineOf(el.value, el.selectionStart))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId])
+
+  useLayoutEffect(() => {
+    const el = ta.current, sc = scroll.current
+    if (!el || !sc || revealLine === undefined) return
+    const start = text.split('\n').slice(0, Math.max(0, revealLine - 1)).reduce((n, line) => n + line.length + 1, 0)
+    el.setSelectionRange(Math.min(start, text.length), Math.min(start, text.length))
+    sc.scrollTop = Math.max(0, (revealLine - 3) * lh)
+    setCursorLine(revealLine)
+  }, [documentId, revealLine])
 
   // Text replaced from outside (formatting, a reload): the selection stays where it was.
   useLayoutEffect(() => {

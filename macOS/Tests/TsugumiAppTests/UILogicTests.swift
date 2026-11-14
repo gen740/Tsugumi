@@ -666,3 +666,27 @@ func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
   #expect(session.kind("plan") == .draft)
   #expect(session.connections(in: []) == document["canvas"]?["connections"]?.array)
 }
+
+
+@MainActor @Test func notebookFailureNavigationKeepsUnsavedSource() throws {
+  let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  defer { try? FileManager.default.removeItem(at: dir) }
+  try "{}".write(to: dir.appendingPathComponent("tsugumi.json"), atomically: true, encoding: .utf8)
+  let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+  let model = CardEditorModel(session: session, cardKey: "notebook")
+  let source = "definitions/notebook/src/notebook.py"
+  model.texts[source] = "unsaved notebook changes"
+  model.openSource("src/notebook.py", line: 8)
+  #expect(model.category == .source)
+  #expect(model.shownFile == source && model.sourceLine == 8)
+  #expect(model.texts[source] == "unsaved notebook changes")
+  model.openSource("../notebook.py", line: 10)
+  model.openSource("/tmp/notebook.py", line: 10)
+  #expect(model.shownFile == source && model.sourceLine == 8)
+  model.openFile("definitions/notebook/src/main.py")
+  #expect(model.sourceLine == nil)
+  model.openSource("src/notebook.py", line: 8)
+  model.closeFile(source)
+  #expect(model.sourceLine == nil)
+}

@@ -35,6 +35,8 @@ table Diagnostic {
 
 table Failure {
   kind:FailureKind (id: 0);
+  /// Optional source position: source (Card-definition-relative path), line
+  /// (one-based decimal), cell (notebook cell name). Carried opaquely by core.
   args:[KeyValue] (id: 1);
   diagnostic:string (id: 2);
   current_rev:uint64 = null (id: 3);
