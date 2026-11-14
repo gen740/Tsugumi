@@ -11,7 +11,7 @@ The steps are in the README's [First steps](../README.md#first-steps). The first
 
 Choose **New Project** on Home and select a destination. A new folder is created if it does not exist; an existing folder must be completely empty, including hidden files. A non-empty folder is refused without overwriting its contents. Folder names cannot be empty, `.` or `..`, contain separators, control characters or `< > : " | ? *`, start or end with a space, or end with a dot.
 
-**Open a Copy** on a bundled demo and **Duplicate Project** make writable copies of saved files. Copies omit `.tsugumi` run history and state, `.git` repository identity and symbolic links; they start as independent projects.
+**Open a Copy** on a bundled demo and **Duplicate Project** make writable copies of saved files. Copies omit `.tsugumi` run history, Agent conversations and state, `.git` repository identity and symbolic links; they start as independent projects.
 
 ## The screen
 
@@ -113,6 +113,8 @@ Turn on **Draw thoughts** below the chat input for model-written activity summar
 ### Skills and conversations
 
 Add Skill folders in settings or keep Skills under the project's `skills/`; call one with **$name**. Use the conversation list to search past chats or compact a conversation. Turn on **Web search** under **API** only when you want the provider to receive search terms. [Search and privacy](security.md#web-search)
+
+Project conversations are saved in `.tsugumi/agent.sqlite`, outside git, alongside the project's run records. Copy the whole project folder, including `.tsugumi/`, to keep what the Agent said and did and the records linked in its replies. Stop the Agent service before copying. Home conversations stay on the host. API keys, provider settings and access grants stay on the host too: approve project and attached-folder access again on another machine. The Mac app, Web UI and plugin use the same Agent service. Open a copied project to see its saved chats in the conversation list and search. Deleting a conversation removes it from its project; resetting host state keeps project conversations. Another Agent host cannot write the same project's conversations until the first service stops. [Storage and deletion](security.md#8-where-data-is-kept-and-how-to-delete-it)
 
 An interrupted conversation stays interrupted when opened, refreshed, reconnected or after a service restart. The chat shows the operation recorded by the core at interruption (including the tool call and its arguments, when applicable). Choose **Resume** to continue, or send a new message. Resuming reconciles in-flight tool calls against their durable receipts; it does not blindly run them again. Work still running in the core can be observed from another window without resuming it.
 

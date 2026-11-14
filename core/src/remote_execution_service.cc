@@ -177,6 +177,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
       output.logs.clear();
       try {
         auto result = import_remote_result(client_, target_, server_id_, instance_, s.execution_job_id, reply->result_sha256, job.spec, request.directory,
+            service_.store().state_dir() / "modules",
             node.outputs, [&](LogStream stream, const std::string& line) { output.logs.emplace_back(stream, line); },
             request.display, request.detach);
         if (!result.environment.id.empty()) {
@@ -269,7 +270,7 @@ auto RemoteExecutionService::recover(RemoteJobRecord& job, const RemoteJobState&
       ~RemoveStaging() { std::error_code ec; stdfs::remove_all(path, ec); }
     } remove{staging};
     auto imported = import_remote_result(client_, inv.execution_service, job.server_id, job.instance, inv.execution_job_id, reply.result_sha256,
-        job.spec, directory, contract.outputs,
+        job.spec, directory, service_.store().state_dir() / "modules", contract.outputs,
         [&](LogStream stream, const std::string& line) { recovered.logs.emplace_back(stream, line); },
         [&](DisplayData display) {
           if (display.run_id == inv.run_id && display.invocation == inv.invocation && !display.validate()) {

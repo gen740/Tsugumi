@@ -146,6 +146,7 @@ export class ChatController extends Observable {
   provider: ProviderInfo = { name: 'Anthropic', model: 'claude-sonnet-5-5', api: 'anthropicMessages', remote: true, plan: false, modelNames: {} }
 
   private readonly offEvents: () => void
+  private providerRefresh = 0
   readonly thoughts: Thoughts
 
   constructor(readonly session: ProjectSession, app: AppModel) {
@@ -162,12 +163,22 @@ export class ChatController extends Observable {
       else if (e.type === 'chat' && e.project === session.dir && e.session === 'external' && (e.event.kind === 'permission' || e.event.kind === 'permissionAnswered')) this.handle(e.event)
       // Progress sent while the stream was down: the conversation is read again.
       if (e.type === 'reconnected' && this.currentId) void this.reread(this.currentId)
+      if (e.type === 'settingsChanged' && this.currentId) {
+        // A local write already returned the next turn's connection. During a
+        // turn the conversation snapshot remains authoritative.
+        if (e.provider && !this.busy) {
+          this.providerRefresh++
+          this.provider = e.provider
+          this.changed()
+        } else void this.refreshProvider()
+      }
     })
     void this.init()
   }
 
   /** The project was left: this chat hears nothing more. */
   close() {
+    this.providerRefresh++
     this.thoughts.close()
     this.offEvents()
     this.permissions = []
@@ -322,11 +333,28 @@ export class ChatController extends Observable {
 
   /** Re-reads the connection (after Settings > API changed it). */
   async refreshProvider() {
+    if (!this.currentId) return
+    const refresh = ++this.providerRefresh, turn = this.turn
     try {
+      const id = this.currentId
       const r = await api<{ provider: ProviderInfo }>('/api/chat/conversation', { ...this.base })
+      if (this.currentId !== id || this.turn !== turn || refresh !== this.providerRefresh) return
       this.provider = r.provider
       this.changed()
     } catch {}
+  }
+
+  /** Only visible presentation moments ask the host; leaving the panel removes the listeners. */
+  observePresentation(page: Pick<Document, 'visibilityState' | 'addEventListener' | 'removeEventListener'> = document,
+    viewport: Pick<Window, 'addEventListener' | 'removeEventListener'> = window) {
+    const refresh = () => { if (page.visibilityState !== 'hidden') void this.refreshProvider() }
+    page.addEventListener('visibilitychange', refresh)
+    viewport.addEventListener('focus', refresh)
+    refresh()
+    return () => {
+      page.removeEventListener('visibilitychange', refresh)
+      viewport.removeEventListener('focus', refresh)
+    }
   }
 
   // ---- Skills, references and folders ------------------------------------------
@@ -412,8 +440,11 @@ export class ChatController extends Observable {
 
   cancel() {
     this.turn++
+    const turn = this.turn
     guide.chatThought(this)
-    void this.request('/api/chat/cancel', this.base).catch(() => {})
+    void this.request('/api/chat/cancel', this.base).then(() => {
+      if (this.turn === turn) void this.refreshProvider()
+    }).catch(() => {})
     this.stopping = true
     this.stoppedAtLimit = true
     this.busy = false
@@ -513,15 +544,16 @@ export class ChatController extends Observable {
     this.failed = true
     this.status = L('エラー: {0}', (e as Error).message ?? e)
     this.changed()
+    void this.refreshProvider()
   }
 
   /** The user's answer; `always` are kinds allowed without asking from now on. */
-  answerPermission(allow: boolean, always: string[], id = this.permission?.id) {
+  answerPermission(allow: boolean, always: string[], id = this.permission?.id, selected?: string[]) {
     const p = this.permission
     if (!p || p.id !== id) return
     this.removePermission(p.id)
     this.changed()
-    void api('/api/chat/permission', { id: p.id, allow, always }).catch((e) => this.fail(e))
+    void api('/api/chat/permission', { id: p.id, allow, always, selected }).catch((e) => this.fail(e))
   }
 
   /** The files being written, by who writes them ('': the Agent, or a helper's name). */
@@ -570,6 +602,9 @@ export class ChatController extends Observable {
     if (this.noteWriting('', e)) return
     if (e.kind === 'helper' && this.noteWriting(e.name, e.event)) return
     switch (e.kind) {
+      case 'modelAccepted':
+        void this.refreshProvider()
+        break
       case 'discardText': {
         // The reply is asked again: what it had streamed goes.
         const last = this.items[this.items.length - 1]
@@ -724,11 +759,13 @@ export class ChatController extends Observable {
 
   private refreshAfterTurn() {
     const id = this.currentId, turn = this.turn
-    void api<{ conversation: Conversation; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean }>('/api/chat/conversation', { path: this.session.dir, session: id }).then((r) => {
+    const refresh = ++this.providerRefresh
+    void api<{ conversation: Conversation; provider: ProviderInfo; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean }>('/api/chat/conversation', { path: this.session.dir, session: id }).then((r) => {
       if (this.currentId !== id || this.turn !== turn) return
       this.load(r.conversation)
       this.adoptInterruption(r)
       this.usage = r.conversation.usage
+      if (refresh === this.providerRefresh) this.provider = r.provider
       this.changed()
       void this.refreshSessions()
     }).catch(() => {})

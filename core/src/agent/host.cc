@@ -18,17 +18,19 @@
 #include <set>
 #include <sstream>
 #include <thread>
+#include <tuple>
 
 #include "agent/catalog.hh"
+#include "agent/helper_scope.hh"
 #include "agent/json.hh"
 #include "agent/runtime.hh"
 #include "agent/thought_schedule.hh"
 #include "agent/tool_images.hh"
 #include "agent/wire.hh"
-#include "host/execution_broker.hh"
 #include "host/environment.hh"
-#include "host/projects.hh"
+#include "host/execution_broker.hh"
 #include "host/guide.hh"
+#include "host/projects.hh"
 #include "host/settings.hh"
 #include "host/skills.hh"
 #include "lanes.hh"
@@ -144,6 +146,41 @@ auto FoldAscii(std::string text) -> std::string {
   return text;
 }
 
+// Conversation records contain no provisioning, host capabilities or settings.
+auto CreateConversationTables(sql::Db &db) -> void {
+  db.exec(
+      "CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY, project "
+      "TEXT NOT NULL, role TEXT NOT NULL, title TEXT NOT NULL, messages TEXT "
+      "NOT NULL, updated INTEGER NOT NULL, owner TEXT NOT NULL);"
+      "CREATE TABLE IF NOT EXISTS conversation_resources(conversation TEXT "
+      "NOT NULL, project TEXT NOT NULL, PRIMARY KEY(conversation,project));"
+      "CREATE TABLE IF NOT EXISTS archives(conversation TEXT NOT NULL, "
+      "messages TEXT NOT NULL);"
+      "CREATE TABLE IF NOT EXISTS usage(conversation TEXT PRIMARY KEY, json "
+      "TEXT NOT NULL);"
+      "CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY "
+      "AUTOINCREMENT, conversation TEXT NOT NULL, json TEXT NOT NULL);"
+      "CREATE INDEX IF NOT EXISTS events_conversation ON "
+      "events(conversation,seq);"
+      "CREATE TABLE IF NOT EXISTS turns(conversation TEXT NOT NULL, id TEXT "
+      "NOT NULL, digest TEXT NOT NULL, state TEXT NOT NULL, action INTEGER "
+      "NOT NULL, operation TEXT NOT NULL, PRIMARY "
+      "KEY(conversation,id));"
+      "CREATE TABLE IF NOT EXISTS receipts(conversation TEXT NOT NULL, id "
+      "TEXT NOT NULL, digest TEXT NOT NULL, state TEXT NOT NULL, result TEXT "
+      "NOT NULL, error INTEGER NOT NULL, project TEXT NOT NULL, operation "
+      "TEXT NOT NULL, PRIMARY KEY(conversation,id));");
+  db.exec("CREATE TABLE IF NOT EXISTS model_bindings(conversation TEXT PRIMARY KEY, "
+          "provider TEXT NOT NULL, model TEXT NOT NULL, effort TEXT NOT NULL, fast INTEGER NOT NULL)");
+  db.exec("CREATE TABLE IF NOT EXISTS helpers(conversation TEXT NOT NULL, "
+          "parent_call TEXT NOT NULL, task INTEGER NOT NULL, digest TEXT NOT "
+          "NULL, messages TEXT NOT NULL, result TEXT NOT NULL, state TEXT "
+          "NOT NULL, PRIMARY KEY(conversation,parent_call,task))");
+  db.exec("CREATE TABLE IF NOT EXISTS pending_sends(conversation TEXT "
+          "PRIMARY KEY, turn TEXT NOT NULL, frame BLOB NOT NULL, "
+          "message_index INTEGER NOT NULL)");
+}
+
 } // namespace
 
 struct Host::State {
@@ -174,19 +211,6 @@ struct Host::State {
         "CREATE TABLE IF NOT EXISTS folders(id TEXT PRIMARY KEY, project TEXT "
         "NOT NULL, path TEXT NOT NULL, title TEXT NOT NULL, "
         "UNIQUE(project,path));"
-        "CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY, project "
-        "TEXT NOT NULL, role TEXT NOT NULL, title TEXT NOT NULL, messages TEXT "
-        "NOT NULL, updated INTEGER NOT NULL, owner TEXT NOT NULL);"
-        "CREATE TABLE IF NOT EXISTS conversation_resources(conversation TEXT "
-        "NOT NULL, project TEXT NOT NULL, PRIMARY KEY(conversation,project));"
-        "CREATE TABLE IF NOT EXISTS archives(conversation TEXT NOT NULL, "
-        "messages TEXT NOT NULL);"
-        "CREATE TABLE IF NOT EXISTS usage(conversation TEXT PRIMARY KEY, json "
-        "TEXT NOT NULL);"
-        "CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY "
-        "AUTOINCREMENT, conversation TEXT NOT NULL, json TEXT NOT NULL);"
-        "CREATE INDEX IF NOT EXISTS events_conversation ON "
-        "events(conversation,seq);"
         "CREATE TABLE IF NOT EXISTS access_requests(id TEXT PRIMARY KEY, "
         "project TEXT NOT NULL, conversation TEXT NOT NULL, access INTEGER NOT "
         "NULL, scope INTEGER NOT NULL, reason TEXT NOT NULL, state TEXT NOT "
@@ -194,29 +218,16 @@ struct Host::State {
         "CREATE TABLE IF NOT EXISTS grants(id TEXT PRIMARY KEY, project TEXT "
         "NOT NULL, conversation TEXT NOT NULL, access INTEGER NOT NULL, active "
         "INTEGER NOT NULL);"
-        "CREATE TABLE IF NOT EXISTS turns(conversation TEXT NOT NULL, id TEXT "
-        "NOT NULL, digest TEXT NOT NULL, state TEXT NOT NULL, action INTEGER "
-        "NOT NULL, operation TEXT NOT NULL, PRIMARY "
-        "KEY(conversation,id));"
-        "CREATE TABLE IF NOT EXISTS receipts(conversation TEXT NOT NULL, id "
-        "TEXT NOT NULL, digest TEXT NOT NULL, state TEXT NOT NULL, result TEXT "
-        "NOT NULL, error INTEGER NOT NULL, project TEXT NOT NULL, operation "
-        "TEXT NOT NULL, PRIMARY KEY(conversation,id));"
         "CREATE TABLE IF NOT EXISTS providers(conversation TEXT PRIMARY KEY, "
         "json TEXT NOT NULL);");
+    db.exec("CREATE TABLE IF NOT EXISTS access_prompt_items(request TEXT NOT NULL, access INTEGER NOT NULL, "
+            "PRIMARY KEY(request,access))");
     db.exec("CREATE TABLE IF NOT EXISTS operation_approvals("
             "conversation TEXT NOT NULL, call TEXT NOT NULL, digest TEXT NOT NULL, "
             "request TEXT NOT NULL UNIQUE, preview TEXT NOT NULL, "
             "PRIMARY KEY(conversation,call))");
-    db.exec("CREATE TABLE IF NOT EXISTS helpers(conversation TEXT NOT NULL, "
-            "parent_call TEXT NOT NULL, task INTEGER NOT NULL, digest TEXT NOT "
-            "NULL, messages TEXT NOT NULL, result TEXT NOT NULL, state TEXT "
-            "NOT NULL, PRIMARY KEY(conversation,parent_call,task))");
     db.exec("CREATE TABLE IF NOT EXISTS credentials(id TEXT PRIMARY KEY, json "
             "TEXT NOT NULL)");
-    db.exec("CREATE TABLE IF NOT EXISTS pending_sends(conversation TEXT "
-            "PRIMARY KEY, turn TEXT NOT NULL, frame BLOB NOT NULL, "
-            "message_index INTEGER NOT NULL)");
     db.exec(
         "CREATE TABLE IF NOT EXISTS environment_projects(key TEXT PRIMARY KEY, project TEXT NOT NULL);"
         "CREATE TABLE IF NOT EXISTS project_paths(id TEXT PRIMARY KEY, path "
@@ -235,6 +246,7 @@ struct Host::State {
           return AccessToken(id, stale);
         },
         [this](const std::string& id) { return ForgetCredential(id); });
+    CreateConversationTables(db);
     db.exec("UPDATE turns SET state='interrupted' WHERE state='running'");
     if (!options.broker_socket.empty())
       execution_broker = std::make_unique<host::ExecutionBroker>(options.state_dir, options.broker_socket);
@@ -289,6 +301,22 @@ struct Host::State {
 
   HostOptions options;
   sql::Db db;
+  struct ProjectStore {
+    std::filesystem::path path;
+    fs::FileLock lock;
+    sql::Db db;
+    ProjectStore(std::filesystem::path p, fs::FileLock l)
+        : path(std::move(p)), lock(std::move(l)),
+          db((path / "agent.sqlite").string()) {
+      ::chmod((path / "agent.sqlite").c_str(), 0600);
+      // agentd writes the original host folder, never the VM's virtiofs mount.
+      // DELETE keeps a quiescent project copy self-contained (no WAL sidecar).
+      db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;");
+      CreateConversationTables(db);
+      db.exec("UPDATE turns SET state='interrupted' WHERE state='running'");
+    }
+  };
+  std::map<std::string, std::unique_ptr<ProjectStore>> project_stores;
   host::Projects host_projects;
   host::Guide guide;
   std::unique_ptr<host::Settings> host_settings;
@@ -301,6 +329,11 @@ struct Host::State {
   Server *host_server = nullptr;
   std::recursive_mutex mutex;
   std::mutex credential_mutex;
+  std::map<std::string, size_t> active_helpers;
+  std::map<std::tuple<std::string, std::string, size_t>,
+           std::weak_ptr<std::mutex>>
+      helper_gates;
+  std::condition_variable_any helpers_changed;
   std::map<std::pair<std::string, std::string>, std::weak_ptr<std::mutex>> version_notes;
   std::condition_variable_any changed;
   std::map<ConnId, bool> principals;
@@ -322,16 +355,29 @@ struct Host::State {
     if (host_server)
       for (const auto connection : host_connections) host_server->reply(connection, bytes);
   }
+  auto ValidateProjectLocation(const std::string& project,
+                               const std::filesystem::path& folder) -> void {
+    const auto path = std::filesystem::canonical(folder);
+    if (auto found = project_stores.find(project); found != project_stores.end() &&
+        found->second->path != path / ".tsugumi")
+      throw Failure("conflict", "This project identity has conversations open in another folder");
+    auto old = db.prepare("SELECT path FROM project_paths WHERE id=?");
+    old.bind(1, project);
+    if (old.step() && std::filesystem::is_directory(old.text(0)) &&
+        std::filesystem::canonical(old.text(0)) != path)
+      throw Failure("conflict", "This project identity is registered in another folder");
+  }
   auto EnvironmentChanged(const H::EnvironmentStateT& state) -> void {
     std::lock_guard lock(mutex);
     if (state.phase == H::EnvironmentPhase::Ready) {
+      ValidateProjectLocation(state.project_id, state.project);
       sql::Transaction transaction(db);
       auto environment = db.prepare("INSERT OR REPLACE INTO environment_projects VALUES(?,?)");
       environment.bind(1, state.key).bind(2, state.project_id).run();
       const auto endpoint = state.unix_socket.empty() ? state.endpoint : "unix:" + state.unix_socket;
       auto q = db.prepare("INSERT OR REPLACE INTO projects VALUES(?,?,?,?)");
       q.bind(1, state.project_id).bind(2, endpoint).bind(3, state.token)
-          .bind(4, std::filesystem::path(state.project).filename().string()).run();
+          .bind(4, host::ProjectDisplayName(state.project)).run();
       auto path = db.prepare("INSERT OR REPLACE INTO project_paths VALUES(?,?)");
       path.bind(1, state.project_id).bind(2, state.project).run();
       transaction.commit();
@@ -351,8 +397,107 @@ struct Host::State {
       throw Failure("permission_denied",
                     "This operation requires the authenticated user");
   }
+  // All store access is serialized by mutex, including from runtime hooks.
+  auto ProjectDatabase(const std::string &project, bool create = false)
+      -> sql::Db * {
+    if (project.empty())
+      return &db;
+    auto q = db.prepare("SELECT path FROM project_paths WHERE id=?");
+    q.bind(1, project);
+    if (!q.step()) {
+      if (create)
+        throw Failure("unavailable", "The project has no host folder");
+      return nullptr;
+    }
+    const std::filesystem::path root = q.text(0);
+    if (!std::filesystem::is_directory(root)) {
+      if (create)
+        throw Failure("unavailable", "The project folder is unavailable");
+      return nullptr;
+    }
+    const auto path = std::filesystem::canonical(root) / ".tsugumi";
+    if (auto found = project_stores.find(project);
+        found != project_stores.end()) {
+      if (found->second->path != path)
+        throw Failure(
+            "conflict",
+            "This project identity is already open in another folder");
+      return &found->second->db;
+    }
+    if (!create && !std::filesystem::exists(path / "agent.sqlite"))
+      return nullptr;
+    std::filesystem::create_directories(path);
+    // Do not follow project-supplied links out of its state folder.
+    for (const auto &entry :
+         {path, path / "agent.sqlite", path / "agent.lock",
+          path / "agent.sqlite-journal", path / "agent.sqlite-wal",
+          path / "agent.sqlite-shm"})
+      if (std::filesystem::is_symlink(std::filesystem::symlink_status(entry)))
+        throw Failure("invalid_request",
+                      "Agent state must not be a symbolic link");
+    auto lock = fs::FileLock::try_acquire(path / "agent.lock");
+    if (!lock)
+      throw Failure("busy",
+                    "Another Agent host has this project's conversations open");
+    auto store = std::make_unique<ProjectStore>(path, std::move(*lock));
+    auto identity = store->db.prepare(
+        "SELECT 1 FROM conversations WHERE project<>? LIMIT 1");
+    identity.bind(1, project);
+    if (identity.step())
+      throw Failure("conflict",
+                    "Conversation records belong to another project identity");
+    auto *result = &store->db;
+    project_stores.emplace(project, std::move(store));
+    return result;
+  }
+  auto Databases(const std::string &project = {}) -> std::vector<sql::Db *> {
+    if (!project.empty()) {
+      if (auto *store = ProjectDatabase(project))
+        return {store};
+      return {};
+    }
+    std::vector<sql::Db *> result{&db};
+    auto q = db.prepare("SELECT id FROM project_paths ORDER BY id");
+    while (q.step())
+      if (auto *store = ProjectDatabase(q.text(0)))
+        result.push_back(store);
+    return result;
+  }
+  auto FindConversationDatabase(const std::string &id) -> sql::Db * {
+    auto contains = [&](sql::Db &store) {
+      auto q = store.prepare("SELECT 1 FROM conversations WHERE id=?");
+      q.bind(1, id);
+      return q.step();
+    };
+    // Known conversations remain usable when an unrelated project is offline
+    // or locked by another host. No conversation contents are cached here.
+    sql::Db *result = contains(db) ? &db : nullptr;
+    for (const auto &[_, store] : project_stores)
+      if (contains(store->db)) {
+        if (result)
+          throw Failure("conflict",
+                        "Conversation ID exists in multiple projects");
+        result = &store->db;
+      }
+    if (result)
+      return result;
+    for (auto *store : Databases())
+      if (contains(*store)) {
+        if (result)
+          throw Failure("conflict",
+                        "Conversation ID exists in multiple projects");
+        result = store;
+      }
+    return result;
+  }
+  auto ConversationDatabase(const std::string &id) -> sql::Db & {
+    auto *store = FindConversationDatabase(id);
+    if (!store)
+      throw Failure("not_found", "Conversation not found");
+    return *store;
+  }
   auto GetConversation(const std::string &id) -> Conversation {
-    auto q = db.prepare("SELECT id,project,role,title,messages,updated FROM "
+    auto q = ConversationDatabase(id).prepare("SELECT id,project,role,title,messages,updated FROM "
                         "conversations WHERE id=?");
     q.bind(1, id);
     if (!q.step())
@@ -370,14 +515,14 @@ struct Host::State {
   auto OwnConversation(const std::string &id, bool human) -> void {
     if (human)
       return;
-    auto q = db.prepare("SELECT owner FROM conversations WHERE id=?");
+    auto q = ConversationDatabase(id).prepare("SELECT owner FROM conversations WHERE id=?");
     q.bind(1, id);
     if (!q.step() || q.text(0) != "external")
       throw Failure("permission_denied",
                     "This conversation belongs to the user");
   }
   auto Resources(const std::string &id) -> std::vector<std::string> {
-    auto q = db.prepare(
+    auto q = ConversationDatabase(id).prepare(
         "SELECT project FROM conversation_resources WHERE conversation=?");
     q.bind(1, id);
     std::vector<std::string> out;
@@ -390,7 +535,7 @@ struct Host::State {
     if (project.empty())
       return;
     auto q =
-        db.prepare("INSERT OR IGNORE INTO conversation_resources VALUES(?,?)");
+        ConversationDatabase(id).prepare("INSERT OR IGNORE INTO conversation_resources VALUES(?,?)");
     q.bind(1, id).bind(2, project).run();
   }
   auto AuthorizeHistory(const std::string &id) -> void {
@@ -418,7 +563,9 @@ struct Host::State {
   }
   auto Scrub(std::string raw) -> std::string {
     std::lock_guard guard(mutex);
-    std::vector<std::string> secrets;
+    std::vector<std::string> secrets{options.user_token, options.external_token};
+    auto endpoints = db.prepare("SELECT token FROM projects");
+    while (endpoints.step()) secrets.push_back(endpoints.text(0));
     auto q = db.prepare("SELECT json FROM credentials");
     while (q.step()) {
       const auto record = json::Object(q.text(0));
@@ -430,7 +577,7 @@ struct Host::State {
     auto plain = [&](std::string text) {
       if (host_settings) text = host_settings->Redact(std::move(text));
       for (const auto& secret : secrets)
-        for (size_t i = 0; (i = text.find(secret, i)) != text.npos;) {
+        if (!secret.empty()) for (size_t i = 0; (i = text.find(secret, i)) != text.npos;) {
           text.replace(i, secret.size(), "[redacted]");
           i += 10;
         }
@@ -463,6 +610,22 @@ struct Host::State {
     }
     return plain(std::move(raw));
   }
+  auto ScrubSend(const std::string &frame) -> std::string {
+    auto message =
+        std::unique_ptr<A::MessageT>(A::GetMessage(frame.data())->UnPack());
+    auto *send =
+        message->payload.AsRequest()->value.AsConversationSendRequest();
+    send->text = Scrub(send->text);
+    send->intent = Scrub(send->intent);
+    for (auto *references : {&send->selected_cards, &send->selected_displays,
+                             &send->skill_names, &send->attached_resources})
+      for (auto &value : *references)
+        value = Scrub(value);
+    flatbuffers::FlatBufferBuilder builder;
+    A::FinishMessageBuffer(builder, A::Message::Pack(builder, message.get()));
+    return {reinterpret_cast<const char *>(builder.GetBufferPointer()),
+            builder.GetSize()};
+  }
   auto Event(const std::string& id, const std::string& input) -> void {
     const auto raw = Scrub(input);
     std::lock_guard lock(mutex);
@@ -474,12 +637,46 @@ struct Host::State {
               ? json::Text(json::Object(json::Get(event, "event")), "kind")
               : kind);
     }
-    auto q = db.prepare("INSERT INTO events(conversation,json) VALUES(?,?)");
+    auto q = (id.empty() ? db : ConversationDatabase(id)).prepare("INSERT INTO events(conversation,json) VALUES(?,?)");
     q.bind(1, id).bind(2, raw).run();
+  }
+  auto AccessDescription(const std::string& resource, A::Access access,
+                         A::GrantScope scope, const std::string& reason, bool needed = true) -> std::string {
+    if (reason.starts_with("operation_approval\n")) return "project_access " + reason;
+    auto q = db.prepare("SELECT title,coalesce((SELECT path FROM project_paths WHERE id=projects.id),'') "
+                        "FROM projects WHERE id=? UNION ALL SELECT title,path FROM folders WHERE id=?");
+    q.bind(1, resource).bind(2, resource);
+    const bool found = q.step();
+    auto title = found ? q.text(0) : std::string{};
+    auto path = found ? q.text(1) : std::string{};
+    if (!found) {
+      auto stored = db.prepare("SELECT path FROM project_paths WHERE id=?");
+      stored.bind(1, resource);
+      if (stored.step()) path = stored.text(0);
+    }
+    if (title.empty() && !path.empty()) title = host::ProjectDisplayName(path);
+    return "project_access " + json::Encode(json::Members{
+        {"title", json::Quote(title)},
+        {"path", json::Quote(path)},
+        {"access", json::Quote(A::EnumNameAccess(access))},
+        {"scope", json::Quote(A::EnumNameGrantScope(scope))},
+        {"reason", json::Quote(reason)}, {"needed_now", needed ? "true" : "false"}});
+  }
+  auto AccessDescriptions(const std::string& id, const std::string& project,
+                          A::Access needed, A::GrantScope scope,
+                          const std::string& reason) -> std::vector<std::string> {
+    std::vector<std::string> asked{AccessDescription(project, needed, scope, reason)};
+    auto items = db.prepare("SELECT access FROM access_prompt_items WHERE request=? ORDER BY access");
+    items.bind(1, id);
+    while (items.step()) {
+      const auto access = static_cast<A::Access>(items.i64(0));
+      if (access != needed) asked.push_back(AccessDescription(project, access, scope, reason, false));
+    }
+    return asked;
   }
   auto RequestAccess(const std::string &project,
                      const std::string &conversation, A::Access access,
-                     A::GrantScope scope, const std::string &reason, bool per_call = false)
+                     A::GrantScope scope, const std::string &reason, bool per_call = false, bool combine = false)
       -> std::string {
     if (!per_call && reason.find("operation_approval\n") != std::string::npos)
       throw Failure("invalid_request", "The operation approval marker is reserved for core-generated requests");
@@ -499,6 +696,7 @@ struct Host::State {
         .bind(7, per_call ? 1 : 0);
     if (old.step())
       return old.text(0);
+    sql::Transaction tx(db);
     const auto id = crypto::uuid4();
     auto q = db.prepare(
         "INSERT INTO access_requests VALUES(?,?,?,?,?,?, 'pending')");
@@ -509,15 +707,27 @@ struct Host::State {
         .bind(5, static_cast<int>(scope))
         .bind(6, reason)
         .run();
-    Event(conversation,
-          json::Encode(json::Members{
-              {"kind", json::Quote("permission")},
-              {"id", json::Quote(id)},
-              {"asked",
-               json::Encode(std::vector<std::string>{json::Quote(
-                   "project_access " + std::string(A::EnumNameAccess(access)) +
-                   " [" + A::EnumNameGrantScope(scope) + "] " + project + ": " +
-                   reason)})}}));
+    // Only ordinary project access is bundled. Folder access, shell access and
+    // per-operation approvals retain their own, narrower questions.
+    if (combine && access <= A::Access::Run && !conversation.empty() &&
+        GetConversation(conversation).project == project) {
+      for (const auto candidate : {A::Access::Read, A::Access::Write, A::Access::Run}) {
+        auto asked = db.prepare("SELECT 1 FROM access_requests r JOIN access_prompt_items i ON i.request=r.id "
+                                "WHERE r.project=? AND r.conversation=? AND i.access=? "
+                                "UNION ALL SELECT 1 FROM access_requests WHERE project=? AND conversation=? AND access=?");
+        asked.bind(1, project).bind(2, conversation).bind(3, static_cast<int>(candidate))
+            .bind(4, project).bind(5, conversation).bind(6, static_cast<int>(candidate));
+        if (candidate != access && (HasGrant(project, conversation, candidate) || asked.step())) continue;
+        auto item = db.prepare("INSERT INTO access_prompt_items VALUES(?,?)");
+        item.bind(1, id).bind(2, static_cast<int>(candidate)).run();
+      }
+    }
+    std::vector<std::string> asked;
+    for (const auto& description : AccessDescriptions(id, project, access, scope, reason))
+      asked.push_back(json::Quote(description));
+    tx.commit();
+    Event(conversation, json::Encode(json::Members{
+        {"kind", json::Quote("permission")}, {"id", json::Quote(id)}, {"asked", json::Encode(asked)}}));
     return id;
   }
   auto Require(const std::string &project, const std::string &conversation,
@@ -527,7 +737,7 @@ struct Host::State {
     if (HasGrant(project, conversation, access))
       return;
     const auto id = RequestAccess(project, conversation, access,
-                                  A::GrantScope::Conversation, reason);
+                                  A::GrantScope::Conversation, reason, false, true);
     if (!wait)
       throw Failure("grant_required", "Explicit user permission is required",
                     id);
@@ -652,15 +862,15 @@ struct Host::State {
         ++retained;
       const std::vector<Message> removed(previous.begin(),
                                          previous.end() - retained);
-      auto archive = db.prepare("INSERT INTO archives VALUES(?,?)");
-      archive.bind(1, id).bind(2, SerializeMessages(removed)).run();
+      auto archive = ConversationDatabase(id).prepare("INSERT INTO archives VALUES(?,?)");
+      archive.bind(1, id).bind(2, Scrub(SerializeMessages(removed))).run();
     }
     for (const auto &message : messages)
       for (const auto &block : message.content)
         for (const auto &resource : block.resource_ids)
           RememberResource(id, resource);
     auto q =
-        db.prepare("UPDATE conversations SET messages=?,updated=? WHERE id=?");
+        ConversationDatabase(id).prepare("UPDATE conversations SET messages=?,updated=? WHERE id=?");
     q.bind(1, Scrub(SerializeMessages(messages)))
         .bind(2, Now())
         .bind(3, id)
@@ -679,20 +889,20 @@ struct Host::State {
       }
     }
     std::vector<Message> archive;
-    auto archived = db.prepare(
+    auto archived = ConversationDatabase(c.id).prepare(
         "SELECT messages FROM archives WHERE conversation=? ORDER BY rowid");
     archived.bind(1, c.id);
     while (archived.step())
       for (auto &message : ParseMessages(archived.text(0)))
         if (!message.context_summary)
           archive.push_back(std::move(message));
-    auto stats = db.prepare("SELECT json FROM usage WHERE conversation=?");
+    auto stats = ConversationDatabase(c.id).prepare("SELECT json FROM usage WHERE conversation=?");
     stats.bind(1, c.id);
     const auto usage_json =
         stats.step() ? stats.text(0) : R"({"inputTokens":0,"outputTokens":0})";
     std::vector<std::string> helpers;
     auto helper =
-        db.prepare("SELECT parent_call,task,messages,result,state FROM helpers "
+        ConversationDatabase(c.id).prepare("SELECT parent_call,task,messages,result,state FROM helpers "
                    "WHERE conversation=? ORDER BY rowid");
     helper.bind(1, c.id);
     while (helper.step())
@@ -703,7 +913,7 @@ struct Host::State {
           {"result", helper.text(3).empty() ? "null" : helper.text(3)},
           {"state", json::Quote(helper.text(4))}}));
     std::vector<std::string> tools;
-    auto q = db.prepare("SELECT id,result,error,state FROM receipts WHERE "
+    auto q = ConversationDatabase(c.id).prepare("SELECT id,result,error,state FROM receipts WHERE "
                         "conversation=? ORDER BY rowid");
     q.bind(1, c.id);
     while (q.step())
@@ -715,22 +925,27 @@ struct Host::State {
                                      {"isError", q.i64(2) ? "true" : "false"},
                                      {"state", json::Quote(q.text(3))}}));
     auto approvals = db.prepare(
-        "SELECT o.call,o.preview,a.state,r.result,r.error FROM operation_approvals o "
-        "JOIN access_requests a ON a.id=o.request LEFT JOIN receipts r "
-        "ON r.conversation=o.conversation AND r.id=o.call WHERE o.conversation=? ORDER BY o.rowid");
+        "SELECT o.call,o.preview,a.state FROM operation_approvals o "
+        "JOIN access_requests a ON a.id=o.request WHERE o.conversation=? ORDER BY o.rowid");
     approvals.bind(1, c.id);
     while (approvals.step()) {
+      auto receipt = ConversationDatabase(c.id).prepare(
+          "SELECT result,error FROM receipts WHERE conversation=? AND id=?");
+      receipt.bind(1, c.id).bind(2, approvals.text(0));
+      const bool recorded = receipt.step();
+      const auto output = recorded ? receipt.text(0) : "";
+      const bool error = recorded && receipt.i64(1);
       const auto outcome = approvals.text(2) == "denied" ? "Declined; nothing changed" :
           approvals.text(2) == "pending" ? "Awaiting approval" :
           approvals.text(2) == "stale" ? "Targets changed; nothing executed. A new approval is required" :
-          approvals.text(3).empty() ? "Approved; execution outcome not yet recorded" :
-          "Approved; outcome: " + approvals.text(3);
+          output.empty() ? "Approved; execution outcome not yet recorded" :
+          "Approved; outcome: " + output;
       tools.push_back(json::Encode(json::Members{
           {"id", json::Quote("approval:" + approvals.text(0))},
           {"name", json::Quote("operation_approval")},
           {"arguments", json::Quote("{}")},
           {"result", json::Quote(Scrub(approvals.text(1) + "\n" + outcome))},
-          {"isError", approvals.text(2) == "denied" || approvals.text(2) == "stale" || approvals.i64(4) ? "true" : "false"},
+          {"isError", approvals.text(2) == "denied" || approvals.text(2) == "stale" || error ? "true" : "false"},
           {"state", json::Quote(approvals.text(2) == "pending" ? "pending" : "completed")}}));
     }
     return json::Encode(json::Members{
@@ -750,7 +965,7 @@ struct Host::State {
                        const std::string &name = {},
                        const std::string &arguments = {}) -> void {
     std::lock_guard lock(mutex);
-    auto q = db.prepare("UPDATE turns SET operation=? WHERE conversation=? "
+    auto q = ConversationDatabase(id).prepare("UPDATE turns SET operation=? WHERE conversation=? "
                         "AND state='running'");
     q.bind(1, Scrub(json::Encode(
                   json::Members{{"kind", json::Quote(kind)},
@@ -763,12 +978,12 @@ struct Host::State {
 
   auto ConversationResult(uint64_t request_id, const Conversation &c)
       -> std::string {
-    auto seq = db.prepare(
+    auto seq = ConversationDatabase(c.id).prepare(
         "SELECT coalesce(max(seq),0) FROM events WHERE conversation=?");
     seq.bind(1, c.id);
     seq.step();
     auto latest =
-        db.prepare("SELECT state,operation FROM turns WHERE conversation=? "
+        ConversationDatabase(c.id).prepare("SELECT state,operation FROM turns WHERE conversation=? "
                    "ORDER BY rowid DESC LIMIT 1");
     latest.bind(1, c.id);
     const auto state = latest.step() ? latest.text(0) : "";
@@ -795,6 +1010,15 @@ struct Host::State {
     }
     result.project_id = c.project;
     result.event_seq = seq.u64(0);
+    auto binding = ConversationDatabase(c.id).prepare("SELECT provider,model,effort,fast FROM model_bindings WHERE conversation=?");
+    binding.bind(1, c.id);
+    if (binding.step()) {
+      result.model_binding = std::make_unique<A::ModelBindingT>();
+      result.model_binding->provider_id = binding.text(0);
+      result.model_binding->model = binding.text(1);
+      result.model_binding->effort = binding.text(2);
+      result.model_binding->fast = binding.i64(3) != 0;
+    }
     return wire::AgentReply(request_id, std::move(result));
   }
 
@@ -894,12 +1118,12 @@ struct Host::State {
     specs.push_back(
         {"guide_show", "Show guidance in connected user interfaces",
          R"({"type":"object","properties":{"say":{"type":"string"},"highlight":{"type":"string"},"open":{"type":"string"},"actions":{"type":"array"},"choices":{"type":"array","items":{"type":"string"}}}})"});
-    if (!guide)
-      specs.push_back(
-          {"delegate",
-           "Run bounded helper tasks inside the core, sharing only authorized "
-           "context",
-           R"({"type":"object","properties":{"tasks":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"instruction":{"type":"string"}},"required":["name","instruction"]}}},"required":["tasks"]})"});
+    if (!guide) {
+      const auto definition =
+          json::Object(json::Get(catalog.shared(), "delegateTool", "{}"));
+      specs.push_back({"delegate", json::Text(definition, "description"),
+                       json::Get(definition, "inputSchema", "{}")});
+    }
     return specs;
   }
   auto ProjectCall(const std::string &project, const std::string &name,
@@ -954,10 +1178,187 @@ struct Host::State {
                           result.bytes.size()});
   }
 
+  auto HelperProfile(const std::string &conversation) -> std::string {
+    std::lock_guard lock(mutex);
+    auto q = db.prepare("SELECT json FROM providers WHERE conversation=?");
+    q.bind(1, conversation);
+    const auto profile =
+        q.step() ? json::Text(json::Object(q.text(0)), "profile") : "";
+    return profile.empty() ? "desktop" : profile;
+  }
+  auto AddUsage(const std::string &conversation, const Usage &usage) -> void {
+    std::lock_guard lock(mutex);
+    auto old = ConversationDatabase(conversation).prepare("SELECT json FROM usage WHERE conversation=?");
+    old.bind(1, conversation);
+    auto values = old.step() ? json::Object(old.text(0)) : json::Members{};
+    for (const auto &[key, count] :
+         std::vector<std::pair<std::string, uint64_t>>{
+             {"inputTokens", usage.input_tokens},
+             {"outputTokens", usage.output_tokens},
+             {"cacheReadTokens", usage.cache_read_tokens},
+             {"cacheWriteTokens", usage.cache_write_tokens}})
+      values[key] = std::to_string(json::UInt(json::Get(values, key)) + count);
+    auto save = ConversationDatabase(conversation).prepare("INSERT OR REPLACE INTO usage VALUES(?,?)");
+    save.bind(1, conversation).bind(2, json::Encode(values)).run();
+  }
+  auto HelperResult(const std::string &output, const std::string &conversation,
+                    const std::string &call, size_t task) -> std::string {
+    // Eight results fit below Runtime's 60,000-byte tool-result bound. The
+    // original transcript and full result stay in the existing helper record.
+    if (output.size() <= 7000)
+      return output;
+    const auto value = json::Object(output);
+    std::string excerpt;
+    const auto messages = ParseMessages(json::Get(value, "messages", "[]"));
+    for (auto message = messages.rbegin();
+         message != messages.rend() && excerpt.empty(); ++message)
+      if (message->role == "assistant")
+        for (const auto &block : message->content)
+          if (block.type == "text") {
+            excerpt = Excerpt(block.text);
+            break;
+          }
+    json::Members shortened{
+        {"name", json::Get(value, "name")},
+        {"shortened", "true"},
+        {"notice",
+         json::Quote("Helper result shortened. Open this helper in the "
+                     "conversation for the full messages and result.")},
+        {"conversation_id", json::Quote(conversation)},
+        {"call_id", json::Quote(call)},
+        {"task", std::to_string(task)},
+        {"error", json::Quote(Excerpt(json::Text(value, "error")))},
+        {"excerpt", json::Quote(excerpt)}};
+    auto result = json::Encode(shortened);
+    if (result.size() > 7000) {
+      shortened.erase("excerpt");
+      shortened.erase("error");
+      result = json::Encode(shortened);
+    }
+    return result;
+  }
+
+  auto HelperReader(const std::string &conversation, std::stop_token stop,
+                    const std::string &revision = {}) -> HelperScope::Reader {
+    std::string project;
+    {
+      std::lock_guard lock(mutex);
+      project = GetConversation(conversation).project;
+    }
+    auto cache = std::make_shared<std::map<std::string, std::string>>();
+    return [this, project, conversation, stop, revision,
+            cache](const std::string &path) {
+      Require(project, conversation, A::Access::Read, true, stop,
+              "Read helper Card context");
+      if (const auto found = cache->find(path); found != cache->end())
+        return found->second;
+      json::Members args{{"path", json::Quote(path)},
+                         {"limit_bytes", "1048576"}};
+      if (!revision.empty())
+        args["at_rev"] = revision;
+      std::string bytes;
+      for (;;) {
+        args["offset"] = std::to_string(bytes.size());
+        const auto reply = json::Object(ProjectCall(
+            project, "project_file_read", json::Encode(args), stop));
+        if (json::Text(reply, "reply") != "FileContent") {
+          const auto failure = json::Object(json::Get(reply, "value", "{}"));
+          if (json::Text(reply, "reply") == "Failure" &&
+              json::Text(failure, "kind") == "not_found") {
+            cache->emplace(path, "");
+            return std::string{};
+          }
+          throw Failure("permission_denied",
+                        "Helper scope cannot resolve Card file " + path);
+        }
+        const auto value = json::Object(json::Get(reply, "value", "{}"));
+        // Catalog replies expose byte vectors as UTF-8 text or base64 objects.
+        const auto raw = json::Get(value, "bytes");
+        std::string page;
+        if (raw.starts_with('"'))
+          page = json::String(raw);
+        else if (!crypto::base64_decode(
+                     json::Text(json::Object(raw), "base64"), page))
+          throw Failure("unavailable", "Invalid helper Card metadata encoding");
+        bytes += page;
+        if (json::Bool(json::Get(value, "eof")))
+          break;
+        if (page.empty())
+          throw Failure("unavailable",
+                        "Helper scope metadata read made no progress");
+      }
+      cache->emplace(path, bytes);
+      return bytes;
+    };
+  }
+
+  auto ScopedResult(HelperScope &scope, const ToolCall &call, ToolResult result,
+                    const HelperScope::Reader &read) -> ToolResult {
+    if (!scope.scoped())
+      return result;
+    if (result.is_error) {
+      if (catalog.Find(call.name)) {
+        const auto envelope = json::Object(result.text);
+        const auto failure = json::Object(json::Get(envelope, "value", "{}"));
+        json::Members safe;
+        for (const auto *key : {"kind", "current_rev", "retry_after_ms"})
+          if (failure.contains(key))
+            safe[key] = failure.at(key);
+        safe["diagnostic"] = json::Quote(
+            "Card-scoped operation failed. Reinspect on revision_conflict; "
+            "otherwise ask the parent to inspect the full failure in this "
+            "tool's saved receipt.");
+        result.text = json::Encode(json::Members{
+            {"reply", json::Quote("Failure")}, {"value", json::Encode(safe)}});
+      }
+      return result;
+    }
+    if (call.name == "card_id") {
+      const auto reply = json::Object(result.text);
+      if (json::Text(reply, "reply") == "CardIdResult")
+        scope.Created(
+            json::Text(json::Object(json::Get(reply, "value", "{}")), "id"),
+            json::Text(json::Object(call.arguments), "project_path"), read);
+    }
+    if (call.name == "project_inspect")
+      result.text = scope.Inspect(result.text, read);
+    else if (catalog.Find(call.name))
+      scope.CheckResult(result.text, read);
+    return result;
+  }
+
   auto RunHelper(const std::string &conversation,
                  const std::string &parent_call, size_t index,
                  const std::string &task, std::stop_token stop) -> std::string {
+    const auto profile = HelperProfile(conversation);
+    std::shared_ptr<std::mutex> gate;
+    {
+      std::lock_guard lock(mutex);
+      auto &weak = helper_gates[{conversation, parent_call, index}];
+      gate = weak.lock();
+      if (!gate) {
+        gate = std::make_shared<std::mutex>();
+        weak = gate;
+      }
+    }
+    std::lock_guard helper_lock(*gate);
+    {
+      std::unique_lock lock(mutex);
+      if (!helpers_changed.wait(lock, stop, [&] {
+            return active_helpers[profile] <
+                   host_settings->HelperPolicy(profile).first;
+          }))
+        throw Cancelled();
+      ++active_helpers[profile];
+    }
+    const auto release = [this, profile](void *) {
+      std::lock_guard lock(mutex);
+      --active_helpers[profile];
+      helpers_changed.notify_all();
+    };
+    std::unique_ptr<void, decltype(release)> slot(this, release);
     const auto spec = json::Object(task);
+    HelperScope::Validate(spec, host_settings->HelperPolicy(profile).second);
     const auto name = json::Text(spec, "name");
     const auto digest = crypto::sha256_hex(task);
     const auto scope =
@@ -967,7 +1368,7 @@ struct Host::State {
     {
       std::lock_guard lock(mutex);
       auto old =
-          db.prepare("SELECT digest,messages,result,state FROM helpers WHERE "
+          ConversationDatabase(conversation).prepare("SELECT digest,messages,result,state FROM helpers WHERE "
                      "conversation=? AND parent_call=? AND task=?");
       old.bind(1, conversation)
           .bind(2, parent_call)
@@ -979,15 +1380,20 @@ struct Host::State {
         messages = ParseMessages(old.text(1));
         AuthorizeContext(conversation, messages);
         if (old.text(3) == "completed")
-          return old.text(2);
+          return HelperResult(old.text(2), conversation, parent_call, index);
       } else {
         ContentBlock instruction;
-        instruction.text = json::Text(spec, "instruction");
+        instruction.text =
+            json::Text(spec, "instruction") + "\nHelper scope: read_cards=" +
+            json::Get(spec, "read_cards", "null") +
+            "; write_cards=" + json::Get(spec, "write_cards", "null") +
+            ". Exact permanent Card paths; no implicit descendants. null means "
+            "unscoped.";
         instruction.resource_ids = Resources(conversation);
         messages.push_back(
             {"user", {instruction}, {}, {}, ProviderAPI::AnthropicMessages});
         auto insert =
-            db.prepare("INSERT INTO helpers VALUES(?,?,?,?,?,'','running')");
+            ConversationDatabase(conversation).prepare("INSERT INTO helpers VALUES(?,?,?,?,?,'','running')");
         insert.bind(1, conversation)
             .bind(2, parent_call)
             .bind(3, static_cast<int>(index))
@@ -997,7 +1403,30 @@ struct Host::State {
       }
       config = Provider(conversation);
     }
-    auto hooks = Hooks(conversation, true);
+    auto boundary = std::make_shared<HelperScope>(spec);
+    const auto read = HelperReader(conversation, stop);
+    // Receipt ownership survives both interruption and transcript compaction.
+    std::vector<std::string> owned_receipts;
+    {
+      std::lock_guard lock(mutex);
+      auto receipts =
+          ConversationDatabase(conversation).prepare("SELECT result FROM receipts WHERE conversation=? AND "
+                     "substr(id,1,?)=? AND state='completed' ORDER BY rowid");
+      receipts.bind(1, conversation)
+          .bind(2, static_cast<int>(scope.size()))
+          .bind(3, scope);
+      while (receipts.step())
+        owned_receipts.push_back(receipts.text(0));
+    }
+    for (const auto &raw : owned_receipts) {
+      const auto receipt = json::Object(raw);
+      if (json::Text(receipt, "reply") == "CardIdResult" &&
+          receipt.contains("helper_project_path"))
+        boundary->Created(
+            json::Text(json::Object(json::Get(receipt, "value", "{}")), "id"),
+            json::Text(receipt, "helper_project_path"), read);
+    }
+    auto hooks = Hooks(conversation, true, boundary);
     const auto execute = hooks.execute_tool;
     hooks.execute_tool = [execute, scope](ToolCall call,
                                           std::stop_token token) {
@@ -1027,14 +1456,14 @@ struct Host::State {
     hooks.checkpoint = [this, conversation, parent_call,
                         index](const auto &saved) {
       std::lock_guard lock(mutex);
-      sql::Transaction tx(db);
+      sql::Transaction tx(ConversationDatabase(conversation));
       for (const auto &message : saved)
         for (const auto &block : message.content)
           for (const auto &resource : block.resource_ids)
             RememberResource(conversation, resource);
-      auto update = db.prepare("UPDATE helpers SET messages=? WHERE "
+      auto update = ConversationDatabase(conversation).prepare("UPDATE helpers SET messages=? WHERE "
                                "conversation=? AND parent_call=? AND task=?");
-      update.bind(1, SerializeMessages(saved))
+      update.bind(1, Scrub(SerializeMessages(saved)))
           .bind(2, conversation)
           .bind(3, parent_call)
           .bind(4, static_cast<int>(index))
@@ -1053,7 +1482,9 @@ struct Host::State {
                       {"error", json::Quote(result.error)}});
     {
       std::lock_guard lock(mutex);
-      auto update = db.prepare("UPDATE helpers SET result=?,state=? WHERE "
+      sql::Transaction transaction(ConversationDatabase(conversation));
+      AddUsage(conversation, result.usage);
+      auto update = ConversationDatabase(conversation).prepare("UPDATE helpers SET result=?,state=? WHERE "
                                "conversation=? AND parent_call=? AND task=?");
       update.bind(1, output)
           .bind(2, result.outcome == RunOutcome::Cancelled ? "interrupted"
@@ -1062,14 +1493,15 @@ struct Host::State {
           .bind(4, parent_call)
           .bind(5, static_cast<int>(index))
           .run();
+      transaction.commit();
     }
-    return output;
+    return HelperResult(output, conversation, parent_call, index);
   }
 
   auto ExecuteTool(const std::string &conversation,
                    const std::string &requested_project, const ToolCall &call,
-                   bool wait, std::stop_token stop, bool helper = false)
-      -> ToolResult {
+                   bool wait, std::stop_token stop, bool helper = false,
+                   HelperScope *boundary = nullptr) -> ToolResult {
     Conversation c;
     {
       std::lock_guard lock(mutex);
@@ -1096,10 +1528,18 @@ struct Host::State {
       auto tasks = json::Array(json::Get(args, "tasks", "[]"));
       if (tasks.empty() || tasks.size() > 8)
         return {"Provide between one and eight tasks", true, {}, {}};
+      const auto policy =
+          host_settings->HelperPolicy(HelperProfile(conversation));
       std::set<std::string> names;
       for (const auto &task : tasks) {
         const auto spec = json::Object(task);
-        if (json::Text(spec, "instruction").empty() ||
+        try {
+          HelperScope::Validate(spec, policy.second);
+        } catch (const std::exception &error) {
+          throw Failure("invalid_request", error.what());
+        }
+        if (json::Text(spec, "name").size() > 128 ||
+            json::Text(spec, "instruction").empty() ||
             json::Text(spec, "name").empty() ||
             !names.insert(json::Text(spec, "name")).second)
           throw Failure(
@@ -1107,11 +1547,12 @@ struct Host::State {
               "Each helper needs a unique name and a nonempty instruction");
       }
       std::vector<std::string> results(tasks.size());
-      for (size_t offset = 0; offset < tasks.size(); offset += 4) {
+      for (size_t offset = 0; offset < tasks.size(); offset += policy.first) {
         if (stop.stop_requested())
           throw Cancelled();
         std::vector<std::future<std::string>> pending;
-        for (size_t i = offset; i < std::min(tasks.size(), offset + 4); ++i)
+        for (size_t i = offset;
+             i < std::min(tasks.size(), offset + policy.first); ++i)
           pending.push_back(
               std::async(std::launch::async, [this, conversation, id = call.id,
                                               i, task = tasks[i], stop] {
@@ -1131,6 +1572,52 @@ struct Host::State {
                     "Select a project before using project tools");
     Require(project, conversation, A::Access::Read, wait, stop,
             "Read project content");
+    if (boundary) {
+      if (!boundary->scoped() &&
+          !host_settings->HelperPolicy(HelperProfile(conversation)).second)
+        throw Failure("permission_denied",
+                      "Unscoped helpers are disabled; ask the parent for "
+                      "explicit read_cards and write_cards");
+      std::string revision = json::Get(args, "base_rev", "");
+      if (boundary->scoped() &&
+          (call.name == "project_file_list" ||
+           call.name == "project_file_read" ||
+           call.name == "project_file_stat" ||
+           call.name == "project_validate" || call.name == "run_plan" ||
+           call.name == "card_s_d_k_prepare")) {
+        revision = json::Get(args, "at_rev", "");
+        if (revision.empty()) {
+          const auto snapshot =
+              json::Object(ProjectCall(project, "project_inspect", "{}", stop));
+          revision = json::Get(json::Object(json::Get(snapshot, "value", "{}")),
+                               "rev");
+        }
+        args["at_rev"] = revision;
+      }
+      // Resolve nested file ownership and read the file at one revision. If
+      // the parent changes a container link in between, the project rejects
+      // the stale at_rev/base_rev instead of reading a different Card.
+      const auto read = HelperReader(conversation, stop, revision);
+      boundary->Check(call.name, args, read);
+      if (boundary->scoped() &&
+          (call.name == "run" || call.name == "run_plan" ||
+           call.name == "card_s_d_k_prepare")) {
+        json::Members plan{{"card", json::Get(args, "card")}};
+        if (call.name == "card_s_d_k_prepare")
+          plan["propagate"] = "false";
+        else if (args.contains("propagate"))
+          plan["propagate"] = args.at("propagate");
+        if (args.contains("base_rev"))
+          plan["at_rev"] = args.at("base_rev");
+        else if (args.contains("at_rev"))
+          plan["at_rev"] = args.at("at_rev");
+        const auto result =
+            ProjectCall(project, "run_plan", json::Encode(plan), stop);
+        boundary->CheckPlan(result, call.name == "run");
+        // A run must supply the same base_rev used by this plan. The project
+        // rejects a missing or stale revision before executing anything.
+      }
+    }
     const bool changes_project = spec->mutating || spec->approval_required ||
                                  call.name == "card_id";
     if (changes_project)
@@ -1184,7 +1671,7 @@ struct Host::State {
     bool interrupted = false;
     {
       std::lock_guard lock(mutex);
-      auto old = db.prepare("SELECT digest,state,result,error,operation FROM "
+      auto old = ConversationDatabase(conversation).prepare("SELECT digest,state,result,error,operation FROM "
                             "receipts WHERE conversation=? AND id=?");
       old.bind(1, conversation).bind(2, call.id);
       if (old.step()) {
@@ -1220,7 +1707,7 @@ struct Host::State {
           }
         }
       } else if (!spec->approval_required) {
-        auto q = db.prepare("INSERT INTO receipts VALUES(?,?,?,'sent','',0,?,?)");
+        auto q = ConversationDatabase(conversation).prepare("INSERT INTO receipts VALUES(?,?,?,'sent','',0,?,?)");
         q.bind(1, conversation).bind(2, call.id).bind(3, digest)
             .bind(4, project).bind(5, op_id).run();
       }
@@ -1236,7 +1723,7 @@ struct Host::State {
     if (spec->approval_required && !interrupted) {
       std::lock_guard lock(mutex);
         auto q =
-            db.prepare("INSERT INTO receipts VALUES(?,?,?,'sent','',0,?,?)");
+            ConversationDatabase(conversation).prepare("INSERT INTO receipts VALUES(?,?,?,'sent','',0,?,?)");
         q.bind(1, conversation)
             .bind(2, call.id)
             .bind(3, digest)
@@ -1287,8 +1774,8 @@ struct Host::State {
         args["op_id"] = json::Quote(op_id);
         {
           std::lock_guard lock(mutex);
-          sql::Transaction tx(db);
-          auto receipt = db.prepare(
+          sql::Transaction tx(ConversationDatabase(conversation));
+          auto receipt = ConversationDatabase(conversation).prepare(
               "UPDATE receipts SET operation=? WHERE conversation=? AND id=?");
           receipt.bind(1, op_id).bind(2, conversation).bind(3, call.id).run();
           tx.commit();
@@ -1296,6 +1783,14 @@ struct Host::State {
         result = ProjectCall(project, call.name, json::Encode(args), stop);
         error = json::Text(json::Object(result), "reply") == "Failure";
       }
+    }
+    if (boundary && boundary->scoped() && call.name == "card_id" && !error) {
+      // Keep creation provenance with this helper's existing durable receipt,
+      // rather than relying on a tool call remaining in compacted messages.
+      auto owned = json::Object(result);
+      owned["helper_project_path"] =
+          json::Get(args, "project_path", json::Quote(""));
+      result = json::Encode(owned);
     }
     {
       std::lock_guard lock(mutex);
@@ -1310,9 +1805,9 @@ struct Host::State {
         RememberResource(conversation, folder_resource);
       }
       auto q =
-          db.prepare("UPDATE receipts SET state='completed',result=?,error=? "
+          ConversationDatabase(conversation).prepare("UPDATE receipts SET state='completed',result=?,error=? "
                      "WHERE conversation=? AND id=?");
-      q.bind(1, result)
+      q.bind(1, Scrub(result))
           .bind(2, error)
           .bind(3, conversation)
           .bind(4, call.id)
@@ -1348,7 +1843,8 @@ struct Host::State {
              {"outputTokens", std::to_string(result.usage.output_tokens)}})}});
   }
 
-  auto Hooks(const std::string &id, bool helper = false) -> RuntimeHooks {
+  auto Hooks(const std::string &id, bool helper = false,
+             std::shared_ptr<HelperScope> boundary = {}) -> RuntimeHooks {
     RuntimeHooks hooks;
     hooks.authorize_context = [this, id](const auto &messages) {
       AuthorizeContext(id, messages);
@@ -1356,10 +1852,19 @@ struct Host::State {
     hooks.checkpoint = [this, id](const auto &messages) {
       SaveMessages(id, messages);
     };
-    hooks.execute_tool = [this, id, helper](const ToolCall &call,
-                                            std::stop_token stop) {
+    hooks.execute_tool = [this, id, helper, boundary](const ToolCall &call,
+                                                      std::stop_token stop) {
       try {
-        return ExecuteTool(id, {}, call, true, stop, helper);
+        auto result =
+            ExecuteTool(id, {}, call, true, stop, helper, boundary.get());
+        std::string revision;
+        if (boundary && call.name == "project_inspect" && !result.is_error)
+          revision = json::Get(
+              json::Object(json::Get(json::Object(result.text), "value", "{}")),
+              "rev", "");
+        return boundary ? ScopedResult(*boundary, call, std::move(result),
+                                       HelperReader(id, stop, revision))
+                        : result;
       } catch (const Cancelled &) {
         throw;
       } catch (const std::exception &error) {
@@ -1390,16 +1895,17 @@ struct Host::State {
       std::lock_guard lock(mutex);
       if (call.name == "delegate") {
         AuthorizeHistory(id);
-        auto helpers =
-            db.prepare("SELECT result,state FROM helpers WHERE conversation=? "
-                       "AND parent_call=? ORDER BY task");
+        auto helpers = ConversationDatabase(id).prepare(
+            "SELECT result,state,task FROM helpers WHERE conversation=? "
+            "AND parent_call=? ORDER BY task");
         helpers.bind(1, id).bind(2, call.id);
         std::vector<std::string> results;
         bool incomplete = false;
         while (helpers.step()) {
           incomplete |= helpers.text(1) != "completed";
           if (!helpers.text(0).empty())
-            results.push_back(helpers.text(0));
+            results.push_back(
+                HelperResult(helpers.text(0), id, call.id, helpers.i64(2)));
         }
         const auto tasks =
             json::Array(json::Get(json::Object(call.arguments), "tasks", "[]"));
@@ -1415,7 +1921,7 @@ struct Host::State {
             {},
             Resources(id)};
       }
-      auto q = db.prepare("SELECT state,result,error,project,operation FROM "
+      auto q = ConversationDatabase(id).prepare("SELECT state,result,error,project,operation FROM "
                           "receipts WHERE conversation=? AND id=?");
       q.bind(1, id).bind(2, call.id);
       if (!q.step())
@@ -1431,6 +1937,32 @@ struct Host::State {
           {},
           {q.text(3)}};
     };
+    if (boundary) {
+      const auto reconcile = hooks.reconcile_tool;
+      hooks.reconcile_tool =
+          [this, id, boundary,
+           reconcile](const ToolCall &call) -> std::optional<ToolResult> {
+        try {
+          const auto read = HelperReader(id, shutdown.get_token());
+          boundary->Check(call.name, json::Object(call.arguments), read);
+          auto result = reconcile(call);
+          if (result) {
+            std::string revision;
+            if (call.name == "project_inspect" && !result->is_error)
+              revision =
+                  json::Get(json::Object(json::Get(json::Object(result->text),
+                                                   "value", "{}")),
+                            "rev", "");
+            return ScopedResult(
+                *boundary, call, std::move(*result),
+                HelperReader(id, shutdown.get_token(), revision));
+          }
+          return std::nullopt;
+        } catch (const std::exception &error) {
+          return ToolResult{error.what(), true, {}, {}};
+        }
+      };
+    }
     return hooks;
   }
 
@@ -1563,7 +2095,7 @@ struct Host::State {
         crypto::sha256_hex(digest_frame.empty() ? text : digest_frame);
     if (!turn.empty()) {
       auto old =
-          db.prepare("SELECT digest FROM turns WHERE conversation=? AND id=?");
+          ConversationDatabase(id).prepare("SELECT digest FROM turns WHERE conversation=? AND id=?");
       old.bind(1, id).bind(2, turn);
       if (old.step()) {
         if (old.text(0) != digest)
@@ -1589,7 +2121,7 @@ struct Host::State {
     size_t pending_index = messages.size() - 1;
     auto active_turn = turn;
     if (pending_frame.empty()) {
-      auto pending = db.prepare("SELECT turn,frame,message_index FROM "
+      auto pending = ConversationDatabase(id).prepare("SELECT turn,frame,message_index FROM "
                                 "pending_sends WHERE conversation=?");
       pending.bind(1, id);
       if (pending.step()) {
@@ -1602,7 +2134,7 @@ struct Host::State {
       }
     }
     if (active_turn.empty() && action == A::Action::Resume) {
-      auto previous = db.prepare("SELECT id,state,action FROM turns WHERE "
+      auto previous = ConversationDatabase(id).prepare("SELECT id,state,action FROM turns WHERE "
                                  "conversation=? ORDER BY rowid DESC LIMIT 1");
       previous.bind(1, id);
       if (previous.step() && previous.text(1) == "interrupted") {
@@ -1610,10 +2142,15 @@ struct Host::State {
         action = static_cast<A::Action>(previous.i64(2));
       }
     }
-    sql::Transaction tx(db);
+    sql::Transaction tx(ConversationDatabase(id));
+    auto binding = ConversationDatabase(id).prepare("INSERT OR REPLACE INTO model_bindings VALUES(?,?,?,?,?)");
+    binding.bind(1, id)
+        .bind(2, config.auth == ProviderAuth::ChatGPT ? "chatgpt" : config.auth == ProviderAuth::None ? "fixture" :
+                 config.api == ProviderAPI::OpenAIResponses ? "openai" : "anthropic")
+        .bind(3, config.model).bind(4, config.effort).bind(5, config.fast ? 1 : 0).run();
     SaveMessages(id, messages);
     if (!turn.empty()) {
-      auto q = db.prepare("INSERT INTO turns VALUES(?,?,?,'running',?,'{}')");
+      auto q = ConversationDatabase(id).prepare("INSERT INTO turns VALUES(?,?,?,'running',?,'{}')");
       q.bind(1, id)
           .bind(2, turn)
           .bind(3, digest)
@@ -1621,23 +2158,23 @@ struct Host::State {
           .run();
       if (!pending_frame.empty()) {
         auto pending =
-            db.prepare("INSERT OR REPLACE INTO pending_sends VALUES(?,?,?,?)");
+            ConversationDatabase(id).prepare("INSERT OR REPLACE INTO pending_sends VALUES(?,?,?,?)");
         pending.bind(1, id)
             .bind(2, turn)
-            .bind_blob(3, pending_frame)
+            .bind_blob(3, ScrubSend(pending_frame))
             .bind(4, static_cast<uint64_t>(pending_index))
             .run();
       }
     } else if (active_turn.empty()) {
       active_turn = crypto::uuid4();
-      auto q = db.prepare("INSERT INTO turns VALUES(?,?,?,'running',?,'{}')");
+      auto q = ConversationDatabase(id).prepare("INSERT INTO turns VALUES(?,?,?,'running',?,'{}')");
       q.bind(1, id)
           .bind(2, active_turn)
           .bind(3, digest)
           .bind(4, static_cast<int>(action))
           .run();
     } else {
-      auto q = db.prepare(
+      auto q = ConversationDatabase(id).prepare(
           "UPDATE turns SET state='running' WHERE conversation=? AND id=?");
       q.bind(1, id).bind(2, active_turn).run();
     }
@@ -1645,8 +2182,8 @@ struct Host::State {
                         : action == A::Action::Compact ? "compact"
                                                        : "model");
     if (c.title.empty() && !text.empty()) {
-      auto q = db.prepare("UPDATE conversations SET title=? WHERE id=?");
-      q.bind(1, Excerpt(text, 0, 160)).bind(2, id).run();
+      auto q = ConversationDatabase(id).prepare("UPDATE conversations SET title=? WHERE id=?");
+      q.bind(1, Excerpt(Scrub(text), 0, 160)).bind(2, id).run();
     }
     tx.commit();
     // Finished jobs never need the mutex again. Join before replacing one.
@@ -1680,10 +2217,10 @@ struct Host::State {
                 throw Cancelled();
               messages[pending_index].content = {std::move(block)};
               std::lock_guard lock(mutex);
-              sql::Transaction tx(db);
+              sql::Transaction tx(ConversationDatabase(id));
               SaveMessages(id, messages);
               auto pending =
-                  db.prepare("DELETE FROM pending_sends WHERE conversation=?");
+                  ConversationDatabase(id).prepare("DELETE FROM pending_sends WHERE conversation=?");
               pending.bind(1, id).run();
               tx.commit();
             }
@@ -1702,20 +2239,7 @@ struct Host::State {
                 final_state = "cancelled";
               else if (result.outcome == RunOutcome::Failed)
                 final_state = "failed";
-              std::lock_guard lock(mutex);
-              auto q = db.prepare("INSERT OR REPLACE INTO usage VALUES(?,?)");
-              q.bind(1, id)
-                  .bind(2,
-                        json::Encode(json::Members{
-                            {"inputTokens",
-                             std::to_string(result.usage.input_tokens)},
-                            {"outputTokens",
-                             std::to_string(result.usage.output_tokens)},
-                            {"cacheReadTokens",
-                             std::to_string(result.usage.cache_read_tokens)},
-                            {"cacheWriteTokens",
-                             std::to_string(result.usage.cache_write_tokens)}}))
-                  .run();
+              AddUsage(id, result.usage);
             }
           } catch (const std::exception &error) {
             final_state = "failed";
@@ -1725,7 +2249,7 @@ struct Host::State {
           }
           std::lock_guard lock(mutex);
           if (stop.stop_requested()) {
-            auto previous = db.prepare(
+            auto previous = ConversationDatabase(id).prepare(
                 "SELECT state FROM turns WHERE conversation=? AND id=?");
             previous.bind(1, id).bind(2, turn);
             const bool explicitly_cancelled =
@@ -1734,7 +2258,7 @@ struct Host::State {
                 stopping && !explicitly_cancelled ? "interrupted" : "cancelled";
           }
           if (!turn.empty()) {
-            auto q = db.prepare(
+            auto q = ConversationDatabase(id).prepare(
                 "UPDATE turns SET state=? WHERE conversation=? AND id=?");
             q.bind(1, final_state).bind(2, id).bind(3, turn).run();
           }
@@ -1778,31 +2302,19 @@ struct Host::State {
       if (!project.empty())
         ProjectFor(project);
       const auto role = Text(p->role()) == "guide" ? "guide" : "worker";
-      auto existing = db.prepare("SELECT id FROM conversations WHERE id=?");
-      existing.bind(1, id);
-      if (existing.step()) {
+      if (FindConversationDatabase(id)) {
         OwnConversation(id, human);
         if (!human)
           AuthorizeHistory(id);
-        if (GetConversation(id).project != project) {
-          auto pending =
-              db.prepare("SELECT 1 FROM pending_sends WHERE conversation=?");
-          pending.bind(1, id);
-          if (pending.step())
-            throw Failure(
-                "busy",
-                "Resume or clear the pending message before changing projects");
-        }
-      }
-      if (running.contains(id)) {
         const auto current = GetConversation(id);
-        if (current.project == project)
-          return ConversationResult(request.request_id, current);
-        throw Failure("busy", "Cannot change a running conversation's project");
+        if (current.project != project)
+          throw Failure("conflict",
+                        "A conversation belongs to its original project");
+        return ConversationResult(request.request_id, current);
       }
+      auto *store = ProjectDatabase(project, true);
       auto q =
-          db.prepare("INSERT INTO conversations VALUES(?,?,?,'','[]',?,?) ON "
-                     "CONFLICT(id) DO UPDATE SET project=excluded.project");
+          store->prepare("INSERT INTO conversations VALUES(?,?,?,'','[]',?,?)");
       q.bind(1, id)
           .bind(2, project)
           .bind(3, role)
@@ -1822,28 +2334,35 @@ struct Host::State {
     case A::RequestPayload::ConversationListRequest: {
       const auto project =
           Text(r->value_as_ConversationListRequest()->project_id());
-      auto q = db.prepare(
-          "SELECT id,project,role,title,messages,updated FROM conversations "
-          "WHERE (?='' OR project=?) ORDER BY updated DESC LIMIT 500");
-      q.bind(1, project).bind(2, project);
       A::ConversationListT result;
-      while (q.step()) {
-        if (!human) {
-          try {
-            OwnConversation(q.text(0), false);
-            AuthorizeHistory(q.text(0));
-          } catch (const Failure &) {
-            continue;
+      for (auto *store : Databases(project)) {
+        auto q =
+            store->prepare("SELECT id,project,title,updated FROM conversations "
+                           "ORDER BY updated DESC LIMIT 500");
+        while (q.step()) {
+          if (!human) {
+            try {
+              OwnConversation(q.text(0), false);
+              AuthorizeHistory(q.text(0));
+            } catch (const Failure &) {
+              continue;
+            }
           }
+          auto row = std::make_unique<A::ConversationEntryT>();
+          row->id = q.text(0);
+          row->project_id = q.text(1);
+          row->title = q.text(2);
+          row->updated_at = q.i64(3);
+          row->busy = running.contains(q.text(0));
+          result.conversations.push_back(std::move(row));
         }
-        auto row = std::make_unique<A::ConversationEntryT>();
-        row->id = q.text(0);
-        row->project_id = q.text(1);
-        row->title = q.text(3);
-        row->updated_at = q.i64(5);
-        row->busy = running.contains(q.text(0));
-        result.conversations.push_back(std::move(row));
       }
+      std::stable_sort(result.conversations.begin(), result.conversations.end(),
+                       [](const auto &a, const auto &b) {
+                         return a->updated_at > b->updated_at;
+                       });
+      if (result.conversations.size() > 500)
+        result.conversations.resize(500);
       return wire::AgentReply(request.request_id, std::move(result));
     }
     case A::RequestPayload::ConversationDeleteRequest: {
@@ -1852,71 +2371,94 @@ struct Host::State {
           r->value_as_ConversationDeleteRequest()->conversation_id()->str();
       if (running.contains(id))
         throw Failure("busy", "Cancel the conversation before deleting it");
-      sql::Transaction tx(db);
-      for (const auto* table : {"events", "receipts", "turns", "providers",
-                                "archives", "usage", "conversation_resources",
-                                "helpers", "pending_sends", "skill_catalogs", "operation_approvals", "access_requests"}) {
-        auto q = db.prepare(std::string("DELETE FROM ") + table +
-                            " WHERE conversation=?");
-        q.bind(1, id).run();
+      auto &store = ConversationDatabase(id);
+      // Revoke host capabilities first: interruption must never leave grants
+      // for a deleted ID that a new conversation could reuse.
+      {
+        sql::Transaction tx(db);
+        auto prompts = db.prepare("DELETE FROM access_prompt_items WHERE request IN "
+                                  "(SELECT id FROM access_requests WHERE conversation=?)");
+        prompts.bind(1, id).run();
+        for (const auto *table :
+             {"providers", "skill_catalogs", "operation_approvals",
+              "access_requests", "grants"}) {
+          auto q = db.prepare(std::string("DELETE FROM ") + table +
+                              " WHERE conversation=?");
+          q.bind(1, id).run();
+        }
+        tx.commit();
       }
-      auto q = db.prepare("DELETE FROM conversations WHERE id=?");
-      q.bind(1, id).run();
-      auto revoke =
-          db.prepare("UPDATE grants SET active=0 WHERE conversation=?");
-      revoke.bind(1, id).run();
-      tx.commit();
+      {
+        sql::Transaction tx(store);
+        for (const auto *table :
+             {"events", "receipts", "turns", "model_bindings", "archives", "usage",
+              "conversation_resources", "helpers", "pending_sends"}) {
+          auto q = store.prepare(std::string("DELETE FROM ") + table +
+                                 " WHERE conversation=?");
+          q.bind(1, id).run();
+        }
+        auto q = store.prepare("DELETE FROM conversations WHERE id=?");
+        q.bind(1, id).run();
+        tx.commit();
+      }
       thoughts.erase(id);
       return wire::AgentReply(request.request_id, S::AcknowledgementT{});
     }
     case A::RequestPayload::ConversationSearchRequest: {
       auto p = r->value_as_ConversationSearchRequest();
-      auto q = db.prepare("SELECT id,project,messages,title,updated FROM "
-                          "conversations c WHERE (?='' OR project=?) AND "
-                          "(instr(lower(messages),lower(?))>0 OR EXISTS(SELECT "
-                          "1 FROM archives a WHERE a.conversation=c.id AND "
-                          "instr(lower(a.messages),lower(?))>0)) ORDER BY "
-                          "updated DESC LIMIT 100");
-      q.bind(1, Text(p->project_id()))
-          .bind(2, Text(p->project_id()))
-          .bind(3, p->text()->str())
-          .bind(4, p->text()->str());
       A::SearchResultT result;
-      while (q.step()) {
-        if (!human) {
-          try {
-            OwnConversation(q.text(0), false);
-            AuthorizeHistory(q.text(0));
-          } catch (const Failure &) {
-            continue;
-          }
-        }
-        std::string history;
-        auto append = [&](const std::string &raw) {
-          for (const auto &message : ParseMessages(raw)) {
-            if (message.context_summary)
+      for (auto *store : Databases(Text(p->project_id()))) {
+        auto q = store->prepare(
+            "SELECT id,project,messages,title,updated FROM "
+            "conversations c WHERE "
+            "(instr(lower(messages),lower(?))>0 OR EXISTS(SELECT "
+            "1 FROM archives a WHERE a.conversation=c.id AND "
+            "instr(lower(a.messages),lower(?))>0)) ORDER BY "
+            "updated DESC LIMIT 100");
+        q.bind(1, p->text()->str()).bind(2, p->text()->str());
+        while (q.step()) {
+          if (!human) {
+            try {
+              OwnConversation(q.text(0), false);
+              AuthorizeHistory(q.text(0));
+            } catch (const Failure &) {
               continue;
-            for (const auto &block : message.content)
-              if (!block.text.empty())
-                history += block.text + '\n';
+            }
           }
-        };
-        auto archive = db.prepare("SELECT messages FROM archives WHERE "
-                                  "conversation=? ORDER BY rowid");
-        archive.bind(1, q.text(0));
-        while (archive.step())
-          append(archive.text(0));
-        append(q.text(2));
-        const auto found = FoldAscii(history).find(FoldAscii(p->text()->str()));
-        if (found == std::string::npos)
-          continue;
-        auto row = std::make_unique<A::SearchMatchT>();
-        row->session = q.text(0);
-        row->title = q.text(3);
-        row->snippet = Excerpt(history, found);
-        row->updated_at = q.i64(4);
-        result.matches.push_back(std::move(row));
+          std::string history;
+          auto append = [&](const std::string &raw) {
+            for (const auto &message : ParseMessages(raw)) {
+              if (message.context_summary)
+                continue;
+              for (const auto &block : message.content)
+                if (!block.text.empty())
+                  history += block.text + '\n';
+            }
+          };
+          auto archive = store->prepare("SELECT messages FROM archives WHERE "
+                                        "conversation=? ORDER BY rowid");
+          archive.bind(1, q.text(0));
+          while (archive.step())
+            append(archive.text(0));
+          append(q.text(2));
+          const auto found =
+              FoldAscii(history).find(FoldAscii(p->text()->str()));
+          if (found == std::string::npos)
+            continue;
+          auto row = std::make_unique<A::SearchMatchT>();
+          row->session = q.text(0);
+          row->title = q.text(3);
+          row->snippet = Excerpt(history, found);
+          row->updated_at = q.i64(4);
+          result.matches.push_back(std::move(row));
+        }
       }
+      std::stable_sort(result.matches.begin(), result.matches.end(),
+                       [](const auto &a, const auto &b) {
+                         return a->updated_at > b->updated_at;
+                       });
+      if (result.matches.size() > 100)
+        result.matches.resize(100);
       return wire::AgentReply(request.request_id, std::move(result));
     }
     case A::RequestPayload::ConversationSendRequest: {
@@ -1944,9 +2486,9 @@ struct Host::State {
           throw Failure("busy", "Cancel before clearing the conversation");
         SaveMessages(id, {});
         auto pending =
-            db.prepare("DELETE FROM pending_sends WHERE conversation=?");
+            ConversationDatabase(id).prepare("DELETE FROM pending_sends WHERE conversation=?");
         pending.bind(1, id).run();
-        auto turns = db.prepare(
+        auto turns = ConversationDatabase(id).prepare(
             "UPDATE turns SET state='finished' WHERE conversation=?");
         turns.bind(1, id).run();
       } else
@@ -1957,7 +2499,7 @@ struct Host::State {
       const auto id =
           r->value_as_ConversationCancelRequest()->conversation_id()->str();
       OwnConversation(id, human);
-      auto cancelled = db.prepare("UPDATE turns SET state='cancelled' WHERE "
+      auto cancelled = ConversationDatabase(id).prepare("UPDATE turns SET state='cancelled' WHERE "
                                   "conversation=? AND state='running'");
       cancelled.bind(1, id).run();
       if (auto found = jobs.find(id); found != jobs.end())
@@ -1974,7 +2516,7 @@ struct Host::State {
       OwnConversation(id, human);
       if (!human)
         AuthorizeHistory(id);
-      auto q = db.prepare("SELECT seq,json FROM events WHERE conversation=? "
+      auto q = ConversationDatabase(id).prepare("SELECT seq,json FROM events WHERE conversation=? "
                           "AND seq>? ORDER BY seq LIMIT ?");
       q.bind(1, id)
           .bind(2, p->after_seq())
@@ -2100,16 +2642,32 @@ struct Host::State {
             .bind(4, q.i64(2))
             .run();
       }
+      std::set<A::Access> offered;
+      auto items = db.prepare("SELECT access FROM access_prompt_items WHERE request=?");
+      items.bind(1, p->request_id()->str());
+      while (items.step()) offered.insert(static_cast<A::Access>(items.i64(0)));
+      if (p->also_allow()) {
+        for (const auto access : *p->also_allow()) {
+          if (per_call || access == static_cast<A::Access>(q.i64(2)) || !offered.contains(access))
+            throw Failure("invalid_request", "Only other accesses listed in this prompt can be allowed");
+        }
+        std::set<A::Access> allowed(p->also_allow()->begin(), p->also_allow()->end());
+        for (const auto access : allowed) {
+          auto grant = db.prepare("INSERT INTO grants VALUES(?,?,?,?,1)");
+          grant.bind(1, crypto::uuid4()).bind(2, q.text(0))
+              .bind(3, q.i64(3) == 1 ? "" : q.text(1)).bind(4, static_cast<int>(access)).run();
+        }
+      }
       auto update = db.prepare("UPDATE access_requests SET state=? WHERE id=?");
       update.bind(1, p->allow() ? "allowed" : "denied")
           .bind(2, p->request_id()->str())
           .run();
+      tx.commit();
       Event(q.text(1), json::Encode(json::Members{
                            {"kind", json::Quote("permissionAnswered")},
                            {"id", json::Quote(p->request_id()->str())},
                            {"ok", p->allow() ? "true" : "false"},
                            {"text", json::Quote(p->allow() ? "Approved this request" : "Declined; nothing changed")}}));
-      tx.commit();
       changed.notify_all();
       return wire::AgentReply(request.request_id, S::AcknowledgementT{});
     }
@@ -2161,6 +2719,7 @@ struct Host::State {
         entry->scope = static_cast<A::GrantScope>(q.i64(4));
         entry->reason = q.text(5);
         entry->state = q.text(6);
+        entry->asked = AccessDescriptions(entry->id, entry->project_id, entry->access, entry->scope, entry->reason);
         result.requests.push_back(std::move(entry));
       }
       auto g =
@@ -2341,7 +2900,20 @@ struct Host::State {
     if (host::Settings::Handles(r->value_type())) {
       Human(human);
       lock.unlock();
-      return host_settings->Handle(*r, request.request_id);
+      auto reply = host_settings->Handle(*r, request.request_id);
+      if (r->value_type() == H::RequestPayload::SettingsUpdateRequest) {
+        const auto* result = H::GetMessage(reply.data())->payload_as_Reply();
+        const auto* snapshot = result ? result->value_as_Settings() : nullptr;
+        lock.lock();
+        helpers_changed.notify_all();
+        if (snapshot) {
+          H::SettingsChangedT changed;
+          changed.profile = r->value_as_SettingsUpdateRequest()->profile()->str();
+          changed.revision = snapshot->revision();
+          HostEvent(wire::HostEvent(std::move(changed)));
+        }
+      }
+      return reply;
     }
     if (host::Guide::Handles(r->value_type()))
       return guide.Handle(*r, request.request_id);
@@ -2355,6 +2927,8 @@ struct Host::State {
       if (!endpoint.starts_with("unix:") && !endpoint.starts_with("ws://") &&
           !endpoint.starts_with("wss://"))
         throw Failure("invalid_request", "Unsupported project transport");
+      if (p->path() && !p->path()->str().empty())
+        ValidateProjectLocation(p->project_id()->str(), p->path()->str());
       auto q = db.prepare("INSERT OR REPLACE INTO projects VALUES(?,?,?,?)");
       q.bind(1, p->project_id()->str())
           .bind(2, endpoint)

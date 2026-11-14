@@ -192,6 +192,29 @@ final class ChatController {
 
   @ObservationIgnored private let connection: @MainActor () -> ProviderConfig
   var provider: ProviderConfig { connection() }
+  private(set) var modelBinding: Tsugumi_Agent_ModelBindingT?
+  /// Idle controls describe the next turn; running controls describe the accepted turn.
+  var displayedProvider: ProviderConfig {
+    guard busy, let b = modelBinding else { return provider }
+    var c = b.providerId == "chatgpt" ? ProviderConfig.chatGPT : b.providerId == "openai" ? .openAI : b.providerId == "fixture" ? .fixture : .anthropic
+    c.model = b.model ?? c.model
+    c.effort = b.effort.flatMap { $0.isEmpty ? nil : $0 }
+    c.fast = b.fast
+    return c
+  }
+  func refreshModelBinding() async {
+    guard let agent else { return }
+    let number = answer
+    try? await agent.refresh()
+    let binding = await agent.modelBinding
+    guard self.agent === agent, number == answer else { return }
+    modelBinding = binding
+  }
+  /// Appearance, menu opening and window activation read the host once.
+  func refreshModelSettings() async {
+    await CorePreferences.shared.reload()
+    await refreshModelBinding()
+  }
 
   /// `directory` and `connection`: where its conversations are and what it
   /// answers with, instead of the app's (tests).
@@ -212,7 +235,8 @@ final class ChatController {
   func refreshSessions() {
     Task {
       do {
-        let value = try await CoreAgentClient.shared.call("ConversationListRequest")
+        guard let project = try await RPCToolTransport(session: session).project() else { return }
+        let value = try await CoreAgentClient.shared.call("ConversationListRequest", ["project_id": project.id])
         sessions = (value["value"] as? [[String: Any]] ?? []).compactMap { item in
           guard let id = item["id"] as? String else { return nil }
           return SessionInfo(id: id, title: item["title"] as? String ?? String(localized: "新しい会話"),
@@ -243,6 +267,7 @@ final class ChatController {
     let agent = Agent(id: id, transport: RPCToolTransport(session: session), provider: provider)
     self.agent = agent
     items = []
+    modelBinding = nil
     // (the approver holds the controller weakly: the Agent outlives no window)
     let approver: Agent.Approver = { [weak self] asked in await self?.approve(asked) ?? [] }
     opening = Task {
@@ -252,6 +277,7 @@ final class ChatController {
       let conv = await agent.conversation
       guard !Task.isCancelled else { return }
       usage = conv.usage
+      modelBinding = await agent.modelBinding
       await adoptInterruption(agent)
       guard !Task.isCancelled, self.agent === agent else { return }
       load(conv)
@@ -292,6 +318,7 @@ final class ChatController {
     guard interrupted, !busy, let agent else { return }
     let events = begin()
     Task {
+      await CorePreferences.shared.reload()
       await agent.setProvider(provider)
       await agent.resume(events: events)
     }
@@ -347,7 +374,8 @@ final class ChatController {
 
   func search(_ text: String) async -> [SearchHit] {
     guard !text.isEmpty else { return [] }
-    guard let result = try? await CoreAgentClient.shared.call("ConversationSearchRequest", ["text": text]) else { return [] }
+    guard let project = try? await RPCToolTransport(session: session).project(),
+      let result = try? await CoreAgentClient.shared.call("ConversationSearchRequest", ["text": text, "project_id": project.id]) else { return [] }
     return (result["value"] as? [[String: Any]] ?? []).compactMap { item in
       guard let session = item["session"] as? String else { return nil }
       return SearchHit(session: session, title: item["title"] as? String ?? "", snippet: item["snippet"] as? String ?? "")
@@ -472,6 +500,7 @@ final class ChatController {
     let stopping = self.stopping
     Task {
       await stopping?.value
+      await CorePreferences.shared.reload()
       await agent.setProvider(provider)
       await agent.send(prompt: prompt, title: display.components(separatedBy: "\n")[0], display: display, skillNames: demoMode ? ["demo"] : [], events: events)
     }
@@ -507,16 +536,17 @@ final class ChatController {
       }.joined(separator: "\n")
     }
     var access: [String] { raw.filter { $0.hasPrefix("project_access ") } }
+    var defaultSelection: Set<String> { Set(raw.filter { !$0.hasPrefix("project_access ") || ProjectAccessLabel.neededNow($0) }) }
     let answer: (Set<String>) -> Void
   }
   struct PermissionQueue {
     private var pending: [PermissionPrompt] = []
     var first: PermissionPrompt? { pending.first }
     mutating func append(_ prompt: PermissionPrompt) { pending.append(prompt) }
-    @discardableResult mutating func answer(_ id: UUID, allow: Bool) -> PermissionPrompt? {
+    @discardableResult mutating func answer(_ id: UUID, allow: Bool, selected: Set<String>? = nil) -> PermissionPrompt? {
       guard first?.id == id else { return nil }
       let prompt = pending.removeFirst()
-      prompt.answer(allow ? Set(prompt.raw) : [])
+      prompt.answer(allow ? (selected ?? prompt.defaultSelection).intersection(prompt.raw) : [])
       return prompt
     }
     mutating func release() { while let id = first?.id { answer(id, allow: false) } }
@@ -533,10 +563,10 @@ final class ChatController {
   }
 
   /// The user's answer; `always` are kinds allowed without asking from now on.
-  func answerPermissions(id: UUID, allow: Bool, always: Set<CardPermission>) {
+  func answerPermissions(id: UUID, allow: Bool, always: Set<CardPermission>, selected: Set<String>? = nil) {
     guard let p = permissionPrompt, p.id == id else { return }
     if allow && p.operation == nil { AppPreferences.shared.allowedPermissions.formUnion(always.map(\.rawValue)) }
-    permissionQueue.answer(id, allow: allow)
+    permissionQueue.answer(id, allow: allow, selected: selected)
   }
 
   /// A window releases its UI subscriptions without cancelling core work.
@@ -565,7 +595,10 @@ final class ChatController {
     opening = nil
     answer += 1
     let remote = agent
-    stopping = Task { await remote?.cancel() }
+    stopping = Task {
+      await remote?.cancel()
+      await CorePreferences.shared.reload()
+    }
     busy = false
     stoppedAtLimit = true
     session.presence.turnEnded(.stopped)
@@ -580,6 +613,7 @@ final class ChatController {
     let stopping = self.stopping
     Task {
       await stopping?.value
+      await CorePreferences.shared.reload()
       await agent.setProvider(provider)
       await agent.continueAfterLimit(events: events)
     }
@@ -591,6 +625,7 @@ final class ChatController {
     let stopping = self.stopping
     Task {
       await stopping?.value
+      await CorePreferences.shared.reload()
       await agent.setProvider(provider)
       await agent.retry(events: events)
     }
@@ -603,6 +638,7 @@ final class ChatController {
     let stopping = self.stopping
     Task {
       await stopping?.value
+      await CorePreferences.shared.reload()
       await agent.setProvider(provider)
       await agent.compact(events: events)
     }
@@ -611,6 +647,7 @@ final class ChatController {
   /// An answer begins; what it reports goes to the returned closure.
   private func begin() -> @Sendable (AgentEvent) -> Void {
     answer += 1
+    modelBinding = nil
     choices = []
     offered = []
     GuideController.shared.chatTurnBegan(self)
@@ -690,11 +727,18 @@ final class ChatController {
   private func handle(_ e: AgentEvent, of number: Int) {
     if number != answer {
       switch e {
-      case .text, .discardText, .retrying, .compacting, .compacted, .error, .finished, .interrupted, .stepLimit: return
+      case .modelAccepted, .text, .discardText, .retrying, .compacting, .compacted, .error, .finished, .interrupted, .stepLimit: return
       default: break
       }
     }
     switch e {
+    case .modelAccepted:
+      guard let agent else { return }
+      Task {
+        let binding = await agent.modelBinding
+        guard number == answer, self.agent === agent else { return }
+        modelBinding = binding
+      }
     case .text(let t):
       session.presence.doing(String(localized: "考えています"))
       if let last = items.last, last.role == "assistant", last.tool == nil {
@@ -792,6 +836,7 @@ final class ChatController {
       guard number == answer else { return }
       load(conversation)
       usage = conversation.usage
+      modelBinding = await agent.modelBinding
     }
   }
 
@@ -799,11 +844,13 @@ final class ChatController {
     guard let agent else { return }
     let number = answer
     Task {
+      await CorePreferences.shared.reload()
       let conversation = await agent.conversation
       guard number == answer else { return }
       await adoptInterruption(agent)
       load(conversation)
       usage = conversation.usage
+      modelBinding = await agent.modelBinding
       refreshSessions()
     }
   }

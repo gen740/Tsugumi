@@ -9,6 +9,7 @@
 #include <sstream>
 #include <flatbuffers/reflection.h>
 
+#include "module_source.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -265,7 +266,7 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
 
 auto import_remote_result(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
                           const std::string& instance, const std::string& job_id, const std::string& result_digest,
-                          const std::string& spec, const stdfs::path& directory,
+                          const std::string& spec, const stdfs::path& directory, const stdfs::path& module_cache,
                           const std::vector<types::PortType>& outputs, const WorkerProc::LogSink& log,
                           const WorkerProc::DisplaySink& display, const std::atomic<bool>& stop) -> RemoteInvocationResult {
   const auto job = workerd::parse_spec(spec);
@@ -292,6 +293,7 @@ auto import_remote_result(const RemoteJobClient& client, const std::string& serv
   } remove{temp};
   std::set<stdfs::path> written;
   uint64_t total = 0;
+  const R::ResultFile* module_file = nullptr;
   for (const auto* file : *files) {
     const auto name_value = file->path()->str();
     const auto digest_value = file->sha256()->str();
@@ -301,7 +303,7 @@ auto import_remote_result(const RemoteJobClient& client, const std::string& serv
     const auto* size = &size_value;
     const auto rel = remote::relative_path(*name);
     const auto base = *rel.begin();
-    if (base != "files" && rel != "environment.json" && rel != "logs.jsonl" && rel != "display.fb")
+    if (base != "files" && rel != "environment.json" && rel != "logs.jsonl" && rel != "display.fb" && rel != "module.js")
       throw std::runtime_error("unexpected remote result member");
     if (base == "files") {
       auto part = std::next(rel.begin());
@@ -310,9 +312,14 @@ auto import_remote_result(const RemoteJobClient& client, const std::string& serv
     }
     if (!crypto::is_sha256_hex(*digest) || *size > kMaxBlobBytes - total || !written.insert(rel).second)
       throw std::runtime_error("invalid remote result member");
-    const auto max_size = base == "files" ? kMaxBlobBytes :
+    const auto max_size = rel == "module.js" ? kModuleSourceLimit : base == "files" ? kMaxBlobBytes :
         rel == "logs.jsonl" ? remote::kMaxLogResultBytes : kMaxWorkerBytes;
     if (*size > max_size) throw std::runtime_error("remote result member exceeds its size limit");
+    total += *size;
+    if (rel == "module.js") {
+      module_file = file;
+      continue;  // Fetch once below, after validating the display's identity.
+    }
     const auto path = temp / rel;
     stdfs::create_directories(path.parent_path());
     std::ofstream destination(path, std::ios::binary | std::ios::trunc);
@@ -320,7 +327,6 @@ auto import_remote_result(const RemoteJobClient& client, const std::string& serv
     client.get_blob(service, server_id, instance, job_id, *digest, destination, *size, &stop);
     destination.close();
     if (!destination || stdfs::file_size(path) != *size) throw std::runtime_error("remote result size mismatch");
-    total += *size;
   }
   remote::EnvironmentJson environment;
   const auto info = fs::read_file(temp / "environment.json");
@@ -328,6 +334,27 @@ auto import_remote_result(const RemoteJobClient& client, const std::string& serv
     throw std::runtime_error("invalid remote build environment");
   result.built = *environment.built;
   result.environment.paths = *environment.paths;
+  std::optional<DisplayData> decoded_display;
+  if (auto blob = fs::read_file(temp / "display.fb")) decoded_display = wire::standalone_display(*blob);
+  const auto* module = decoded_display ? std::get_if<DisplayData::Module>(&decoded_display->value) : nullptr;
+  if (module_file && !module) throw std::runtime_error("remote module source has no display identity");
+  if (module) {
+    if (decoded_display->validate() || !valid_module_identity(module->module) ||
+        std::ranges::find(result.environment.paths, module->module) == result.environment.paths.end())
+      throw std::runtime_error("remote display module is outside the built closure");
+    const stdfs::path root(module->module);
+    if (stdfs::is_symlink(root)) throw std::runtime_error("invalid module output");
+    if (!stdfs::is_directory(root) && !cached_module_source(module_cache, module->module)) {
+      if (!module_file) throw std::runtime_error("remote display module source is missing");
+      const auto source = download(client, service, server_id, instance, job_id, module_file->sha256()->str(),
+                                   kModuleSourceLimit, stop);
+      if (source.size() != module_file->size()) throw std::runtime_error("remote module size mismatch");
+      // GetBlob verifies SHA-256 and pinned worker routing. The display and
+      // closure bind the source to this identity, but a Nix store path hash is
+      // NOT a content hash: this still trusts the builder's identity claim.
+      save_module_source(module_cache, module->module, source);
+    }
+  }
   if (!result.environment.paths.empty())
     result.environment.id = crypto::sha256_hex(result.environment.derivation + "\n" + result.environment.manifest + "\n" +
                                               result.environment.system);
@@ -377,9 +404,7 @@ auto import_remote_result(const RemoteJobClient& client, const std::string& serv
     throw std::runtime_error("remote worker did not send a result or failure");
   }
   log_result(temp / "logs.jsonl", log);
-  if (display)
-    if (auto blob = fs::read_file(temp / "display.fb"))
-      if (auto decoded = wire::standalone_display(*blob)) display(*decoded);
+  if (display && decoded_display) display(*decoded_display);
   return result;
 }
 

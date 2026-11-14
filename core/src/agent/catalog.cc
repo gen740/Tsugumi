@@ -247,6 +247,12 @@ auto Parser() -> std::unique_ptr<flatbuffers::Parser> {
 
 } // namespace
 
+auto Catalog::shared() const -> json::Members {
+  return json::Object(
+      std::string_view(reinterpret_cast<const char *>(tsugumi_agent_settings),
+                       tsugumi_agent_settings_size));
+}
+
 Catalog::Catalog() {
   const auto *requests =
       Schema().enums()->LookupByKey("Tsugumi.RPC.RequestPayload");

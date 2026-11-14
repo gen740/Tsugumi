@@ -154,6 +154,7 @@ export interface Conversation {
 
 
 export type AgentEvent =
+  | { kind: 'modelAccepted' }
   | { kind: 'text'; text: string }
   | { kind: 'toolStarted'; id: string; name: string; arguments: string }
   | { kind: 'toolFinished'; id: string; name: string; ok: boolean; summary: string }
