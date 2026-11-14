@@ -140,7 +140,6 @@
 "Manage usage" = "Manage usage";
 "Markdown（見出し・太字・リスト・表・コード）と数式（$…$、$$…$$）を使えます。付箋は実行には参加しません。" = "Markdown (headings, bold, lists, tables, code) and math ($…$, $$…$$) can be used. Notes take no part in runs.";
 "Matplotlib（PNG / SVG / PDF）" = "Matplotlib (PNG / SVG / PDF)";
-"NAR サイズによる概算です。共有する依存関係は各プロジェクトにも含まれるため、内訳の和と合計は異なります。最大 1 分ごとに再計測します。" = "Estimated from NAR sizes. Shared dependencies count in each project, so project sizes do not add up to the total. Measurements refresh once per minute.";
 "Nix store の保存領域を作っています" = "Making the Nix store's space";
 "Nix store の保存領域を開いています（初回は初期化）" = "Opening the Nix store's space (formatted the first time)";
 "Nix を準備しています" = "Preparing Nix";
@@ -226,7 +225,6 @@
 "root の最終使用" = "Roots last used";
 "root_type がありません" = "There is no root_type";
 "root_type の table %@ が見つかりません" = "The root_type table %@ is not found";
-"scratch は次の実行を始めると削除します。保持した記録・成果物・最後の入力は残ります。ビルドキャッシュは自動では削除しません。" = "Scratch is removed when the next run starts. Kept records, artifacts and last inputs remain. Build caches are never deleted automatically.";
 "stderr への出力はありません" = "Nothing on stderr";
 "stderr への出力はありません（Nix 評価・build のログもここに出ます）。" = "Nothing on stderr (Nix evaluation and build logs appear here too).";
 "stdout への出力はありません" = "Nothing on stdout";
@@ -308,6 +306,7 @@
 "このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。" = "This project's environment (tsugumid) is not running. Start it to edit and run.";
 "このプロジェクトの実行環境（書き出しは %@/.tsugumi/runs.sqlite）" = "This project's environment (exported to %@/.tsugumi/runs.sqlite)";
 "このプロジェクトの設定（設定ウインドウの「このプロジェクト」）" = "This project's settings (“This project” in the settings window)";
+"このプロジェクトの過去の scratch" = "Past scratch in this project";
 "このプロジェクトを git のリポジトリにすると、実行するたびにその版が残り、いつでも前の版から始め直せます。" = "Make this project a git repository: every run keeps its version, and you can start again from any earlier one.";
 "このプロジェクト全体のコピーを Card in Card として置きます" = "Places a copy of this whole project as a Card in Card";
 "このプロジェクト（%@/layout.json）" = "This project (%@/layout.json)";
@@ -403,7 +402,6 @@
 "ガイドのツグミを呼ぶ準備" = "Getting Tsugumi the Guide Ready";
 "ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection in use. With a working connection (a key, the ChatGPT sign-in) it answers questions; without one it only gives a fixed demo tour (nothing is sent). Answering questions never changes your project.";
 "キャッシュ URL" = "Cache URL";
-"キャッシュの使用量が大きくなっています。必要なビルド結果を確認して、削除するものを選んでください。" = "The cache is using substantial space. Review the build results and choose which ones to delete.";
 "キャッシュを利用" = "Cache used";
 "キャッシュを利用（処理なし）" = "Cache used (no work)";
 "キャッシュ使用量" = "Cache usage";
@@ -548,7 +546,9 @@
 "パラメータの記録がありません" = "Parameters were not recorded";
 "ビルドの期限（秒）" = "Build timeout (s)";
 "ビルドキャッシュ" = "Build Cache";
-"ビルドキャッシュが %@ を使用しています。設定の「ビルドキャッシュ」でプロジェクト別の容量を確認できます。" = "Build caches use %@. Review per-project usage in Settings → Build Cache.";
+"ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。最大 1 分ごとに再計測します。" = "Build cache uses estimated NAR sizes; scratch sums file sizes without following links. Shared dependencies count in each project, so build sizes do not add up to the total. Measurements refresh once per minute.";
+"ビルドキャッシュまたは実行の scratch が大きくなっています。内容を確認して、削除するものを選んでください。" = "Build cache or run scratch is growing. Review the contents and choose what to delete.";
+"ビルドキャッシュまたは実行の scratch が大きくなっています。設定の「ビルドキャッシュ」で容量と削除対象を確認できます。" = "Build cache or run scratch is growing. Review sizes and deletion candidates in Settings → Build Cache.";
 "ビルドキャッシュを削除しますか？" = "Delete the build cache?";
 "ファイル" = "File";
 "ファイルを作成" = "Create File";
@@ -798,8 +798,10 @@
 "削除" = "Delete";
 "削除…" = "Delete…";
 "削除するにはこのプロジェクトを開いてください。" = "Open this project to delete its build cache.";
+"削除できず残ったフォルダ" = "Folders that could not be deleted";
 "削除できませんでした: " = "Could not delete: ";
 "削除できませんでした: %@" = "Could not delete: %@";
+"削除対象の合計" = "Total selected for deletion";
 "前へ" = "Previous";
 "前回の worker を再利用して実行しました" = "Ran in the previous worker again";
 "動かさない" = "Don't animate";
@@ -917,13 +919,14 @@
 "実行しています" = "Running";
 "実行するとここにログが表示されます。" = "Logs appear here after a run.";
 "実行すると表示されます。" = "Appears after a run.";
+"実行の scratch（合計）" = "Run scratch (total)";
 "実行の期限（秒）" = "Run timeout (s)";
 "実行の様子を見ています" = "Looking at the run";
 "実行の範囲" = "Run scope";
 "実行の終わりを待っています" = "Waiting for the run to end";
 "実行の結果" = "Run Results";
 "実行の記録を見ています" = "Reading the run's record";
-"実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。" = "Deletes runs' records, values and logs, and each run's files (artifacts and the like, .tsugumi/runs/<run>), both in the VM and in .tsugumi/runs.sqlite. The last input (to run a Card alone again) stays. Not while a run is going on.";
+"実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。" = "Deletes runs' records, values and logs, and each run's files (artifacts and the like, .tsugumi/runs/<run>), both in the VM and in .tsugumi/runs.sqlite. The last input (to run a Card alone again) stays. Scratch belonging to the selected runs is also deleted. Not while a run is going on.";
 "実行を停止" = "Stop Run";
 "実行を止めています" = "Stopping the run";
 "実行を比較" = "Compare Runs";
@@ -956,7 +959,7 @@
 "実行履歴なし" = "No runs";
 "実行履歴の形式が異なります" = "Incompatible Run History";
 "実行履歴の形式は %@ です。このバージョンの Tsugumi には %@ が必要です。" = "This run history uses format %@. This version of Tsugumi requires %@.";
-"実行履歴は VM の中に保存します。オンのときは、終わった実行の記録（値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。" = "The run history is kept in the VM. When on, finished runs (values, types, logs, the list of artifacts) are also written to the project's .tsugumi/runs.sqlite. A project copied or moved to another Mac reads the runs the VM lacks from there when it opens. When off, new runs are kept in the VM only.";
+"実行履歴は VM の中に保存します。オンのときは、終わった実行の記録（実行したコードのコミット・値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。" = "The run history is kept in the VM. When on, finished runs (code commit, values, types, logs, the list of artifacts) are also written to the project's .tsugumi/runs.sqlite. A project copied or moved to another Mac reads the runs the VM lacks from there when it opens. When off, new runs are kept in the VM only.";
 "実行履歴はありません" = "No run history";
 "実行履歴はプロジェクトごとに VM のディスクに保存します。自動では削除しません。フォルダが見つからないプロジェクトの分も、ここから削除できます（そのプロジェクトのビルドの登録も外します）。" = "Each project's run history is kept on the VM's disk and never deleted automatically. Histories of projects whose folder is gone can be deleted here too (their build registrations are removed as well).";
 "実行履歴をプロジェクトに保存する" = "Save the run history in the project";
@@ -1188,7 +1191,6 @@
 "直接実行" = "Direct execution";
 "直近の入力トークン数（上限に近づくと自動で圧縮）" = "Recent input tokens (compacted automatically near the limit)";
 "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";
-"直近の実行の scratch" = "Latest run scratch";
 "相違あり" = "Changed";
 "省略可" = "Optional";
 "破棄した変更は取り消せません。" = "Discarded changes cannot be undone.";
@@ -1226,6 +1228,8 @@
 "表 %lld 列 × %lld 行" = "Table %lld columns × %lld rows";
 "表示" = "Show";
 "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。" = "Allow access to the listed resource and scope. Content read may be sent to the connected model.";
+"表示した scratch を削除…" = "Delete listed scratch…";
+"表示した過去の scratch を削除しますか？" = "Delete the listed past scratch?";
 "表示しない" = "Don't show";
 "表示のみ（開いているプロジェクトの接続先）" = "Display only (the open projects' endpoints)";
 "表示の記録がありません" = "No recorded display";
@@ -1292,6 +1296,7 @@
 "進行中" = "In progress";
 "進行中の実行を表示" = "Show Active Run";
 "進行中の実行を表示しています" = "Showing the active run";
+"過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。" = "Past scratch is never deleted automatically. Review the folders and sizes before deleting. The latest run’s scratch stays available for reruns. Kept records, artifacts and last inputs have separate copies.";
 "過去の実行を表示しています。別の実行が進行中です。" = "Showing a previous run. Another run is active.";
 "適用" = "Apply";
 "適用しました。" = "Applied.";

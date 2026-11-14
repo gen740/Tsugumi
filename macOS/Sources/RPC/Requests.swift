@@ -245,6 +245,13 @@ public extension RPCClient {
     return try await call(.projectcacheclearrequest, r, timeout: .seconds(300))
   }
 
+  func deleteRunScratch(opId: UUID, paths: [String]) async throws -> Tsugumi_RPC_RunScratchDeleteResultT {
+    let r = Tsugumi_RPC_RunScratchDeleteRequestT()
+    r.opId = opId.uuidString.lowercased()
+    r.paths = paths
+    return try await call(.runscratchdeleterequest, r, timeout: .seconds(300))
+  }
+
   func cacheUsage() async throws -> Tsugumi_RPC_ProjectCacheUsageResultT {
     return try await call(.projectcacheusagerequest, Tsugumi_RPC_ProjectCacheUsageRequestT())
   }

@@ -5,7 +5,9 @@
 #include <flatbuffers/reflection.h>
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
+#include <set>
 
 #include "comments.hh"
 #include "execution_service.hh"
@@ -211,26 +213,6 @@ Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
   shell_lane_ = std::make_unique<Lane>(2, 8, std::chrono::milliseconds(opts_.limits.queue_wait_ms));
 }
 
-// Scratch may hold what a Card left read-only (a copy out of the Nix store, a
-// snapshot it protected): directories are made writable on the way down, or
-// their contents could not be removed. Best effort: a leftover is reported and
-// never fails the run that is starting.
-namespace {
-void remove_scratch_tree(const stdfs::path& path) {
-  std::error_code ec;
-  const auto status = stdfs::symlink_status(path, ec);
-  if (ec || !stdfs::exists(status)) return;
-  if (stdfs::is_directory(status)) {
-    stdfs::permissions(path, stdfs::perms::owner_all, stdfs::perm_options::add, ec);
-    std::vector<stdfs::path> children;
-    for (const auto& entry : stdfs::directory_iterator(path, ec)) children.push_back(entry.path());
-    for (const auto& child : children) remove_scratch_tree(child);
-  }
-  stdfs::remove(path, ec);
-  if (ec) log::warn("run scratch: cannot remove " + path.string() + ": " + ec.message());
-}
-}  // namespace
-
 Service::~Service() { shutdown(); }
 
 void Service::open() {
@@ -256,9 +238,7 @@ void Service::open() {
   for (const char* d : {"runs", "inputs"}) stdfs::create_directories(store_->state_dir() / d);
   run_scratch_ = private_disk_scratch(opts_.run_scratch_dir.empty() ? default_run_scratch(opts_.root)
                                                                  : opts_.run_scratch_dir);
-  stdfs::create_directories(run_scratch_ / "runs");
-  clean_run_scratch();
-  remove_scratch_tree(run_scratch_ / "recovery");
+  private_disk_scratch(run_scratch_ / "runs");
   stdfs::create_directories(run_scratch_ / "recovery");
   execution_service_ = std::make_unique<NativeExecutionService>(*this, scratch / "workers");
   remote_execution_ = std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
@@ -311,14 +291,6 @@ auto Service::keep_file_value(const Value& value, const stdfs::path& directory,
     return with_path(value, destination.string());
   }
   throw Failed(FailureKind::output_invalid, "file value is outside the run's folders: " + *source);
-}
-
-auto Service::clean_run_scratch(const std::optional<std::string>& keep) -> void {
-  for (const auto& entry : stdfs::directory_iterator(run_scratch_ / "runs")) {
-    const auto id = entry.path().filename().string();
-    const bool exists = crypto::is_uuid(id) && history_->read([&](sql::Db& db) { return History::run(db, id).has_value(); });
-    if (keep ? id != *keep : !exists) remove_scratch_tree(entry.path());
-  }
 }
 
 auto Service::execution_service(const std::string& id) -> ExecutionService& {
@@ -430,7 +402,7 @@ void Service::export_now() {
 std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {
       "SessionHello", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
-      "ProjectReload", "ProjectValidate", "ProjectCacheClear", "ProjectCacheUsage", "RunHistoryDelete", "OperationGet",
+      "ProjectReload", "ProjectValidate", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "RunHistoryDelete", "OperationGet",
       "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "LayoutArrange", "LayoutUntangle", "AttachedFolderRead",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
@@ -530,6 +502,7 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectReloadRequest: return on_lane(m, std::move(req), &Service::reload);
     case P::ProjectCacheClearRequest: return on_lane(m, std::move(req), &Service::cache_clear);
     case P::ProjectCacheUsageRequest: return on_lane(r, std::move(req), &Service::cache_usage);
+    case P::RunScratchDeleteRequest: return on_lane(m, std::move(req), &Service::scratch_delete);
     case P::RunHistoryDeleteRequest: return on_lane(m, std::move(req), &Service::history_delete);
     case P::RunRequest: return on_lane(m, std::move(req), &Service::run);
     case P::CardSDKPrepareRequest: return on_lane(m, std::move(req), &Service::sdk_prepare);
@@ -590,6 +563,7 @@ std::string Service::receipt_reply(uint64_t request_id, const std::string& recei
     case R::ReceiptValue::RunAccepted: type = R::ReplyPayload::RunAccepted; tname = "Tsugumi.RPC.RunAccepted"; break;
     case R::ReceiptValue::ProjectCacheClearResult: type = R::ReplyPayload::ProjectCacheClearResult; tname = "Tsugumi.RPC.ProjectCacheClearResult"; break;
     case R::ReceiptValue::CardSDKPrepareResult: type = R::ReplyPayload::CardSDKPrepareResult; tname = "Tsugumi.RPC.CardSDKPrepareResult"; break;
+    case R::ReceiptValue::RunScratchDeleteResult: type = R::ReplyPayload::RunScratchDeleteResult; tname = "Tsugumi.RPC.RunScratchDeleteResult"; break;
     case R::ReceiptValue::RunHistoryDeleteResult: type = R::ReplyPayload::RunHistoryDeleteResult; tname = "Tsugumi.RPC.RunHistoryDeleteResult"; break;
     case R::ReceiptValue::ProjectShellResult: type = R::ReplyPayload::ProjectShellResult; tname = "Tsugumi.RPC.ProjectShellResult"; break;
     case R::ReceiptValue::VersionResult: type = R::ReplyPayload::VersionResult; tname = "Tsugumi.RPC.VersionResult"; break;
@@ -1418,9 +1392,61 @@ void Service::cache_usage(RequestIn& req) {
   } else result.error = "Measuring cache usage";
   result.current_project = opts_.gcroots_dir.empty() || (opts_.usage_roots_dir.empty() && opts_.usage_file.empty())
                                ? project_id() : opts_.gcroots_dir.filename().string();
+  if (auto latest = history_->read(History::latest_run)) result.protected_run = *latest->status.run_id;
   FBB builder;
   auto value = R::ProjectCacheUsageResult::Pack(builder, &result);
   reply(req, wire::reply(builder, req.request_id, R::ReplyPayload::ProjectCacheUsageResult, value.Union()));
+}
+
+void Service::scratch_delete(RequestIn& req) {
+  const auto* r = req.request()->value_as_RunScratchDeleteRequest();
+  const auto op_id = r->op_id()->str();
+  const auto digest = request_digest(req.request());
+  if (replay_or_join(req, op_id, "scratch_delete", digest)) return;
+  try {
+    if (scheduler_->active_status() || history_->read(History::has_remote_jobs))
+      throw Failed(FailureKind::busy, "scratch cannot be deleted while a run or external results are pending");
+    const auto latest = history_->read(History::latest_run);
+    const auto protected_path = latest ? "runs/" + *latest->status.run_id : "";
+    std::set<std::string> paths;
+    // Validate the complete selection before deleting any part of it.
+    for (const auto* item : *r->paths()) {
+      if (!item) throw Failed(FailureKind::invalid_request, "scratch folder is missing");
+      const auto path = item->str();
+      if (path != "recovery" && !(path.starts_with("runs/") && crypto::is_uuid(path.substr(5))))
+        throw Failed(FailureKind::invalid_request, "invalid scratch folder");
+      // A case-insensitive host filesystem must protect UUID case variants too.
+      if (std::ranges::equal(path, protected_path, [](unsigned char a, unsigned char b) {
+            return std::tolower(a) == std::tolower(b);
+          }))
+        throw Failed(FailureKind::busy, "the latest run's scratch is kept for reruns");
+      paths.insert(path);
+    }
+    uint64_t freed = 0;
+    std::map<std::string, uint64_t> sizes;
+    for (const auto& entry : measure_run_scratch(run_scratch_)) sizes[entry.path] = entry.bytes;
+    std::vector<flatbuffers::Offset<flatbuffers::String>> deleted, retained;
+    FBB b;
+    for (const auto& path : paths) {
+      if (remove_run_scratch(run_scratch_ / path)) {
+        deleted.push_back(b.CreateString(path));
+        freed += sizes[path];
+      } else retained.push_back(b.CreateString(path));
+    }
+    auto result = R::CreateRunScratchDeleteResult(b, b.CreateVector(deleted), b.CreateVector(retained), freed);
+    auto receipt = finish_receipt(b, op_id, R::ReceiptValue::RunScratchDeleteResult, result.Union());
+    history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "scratch_delete", digest, receipt); });
+    refresh_cache_usage();
+    reply(req, receipt_reply(req.request_id, receipt, false));
+    finish_op(op_id, receipt);
+  } catch (const Failed& f) {
+    store_failure_receipt(op_id, "scratch_delete", digest, f.failure);
+    throw;
+  } catch (const std::exception& e) {
+    auto failure = FailureData::make(FailureKind::persistence_failed, e.what());
+    store_failure_receipt(op_id, "scratch_delete", digest, failure);
+    throw Failed(failure);
+  }
 }
 
 void Service::history_delete(RequestIn& req) {
@@ -1443,7 +1469,8 @@ void Service::history_delete(RequestIn& req) {
     const auto scratch_before = fs::directory_size(run_scratch_ / "runs");
     uint64_t files = 0;
     auto ids = history_->delete_runs(runs_copy(), r->ended_before());
-    clean_run_scratch();
+    for (const auto& id : ids)
+      if (crypto::is_uuid(id)) remove_run_scratch(run_scratch_ / "runs" / id);
     const auto scratch_after = fs::directory_size(run_scratch_ / "runs");
     files += scratch_before > scratch_after ? scratch_before - scratch_after : 0;
     refresh_cache_usage();

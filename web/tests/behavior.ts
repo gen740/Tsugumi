@@ -92,3 +92,5 @@ await import('./nixReferenceOverlay')
 await import('./ruby')
 
 await import("./lineChart")
+
+await import("./runScratch")

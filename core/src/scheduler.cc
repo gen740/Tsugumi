@@ -2037,12 +2037,10 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
   auto rc = R::CreateOperationReceipt(b, b.CreateString(p.op_id), R::ReceiptValue::RunAccepted, ra.Union());
   b.Finish(rc);
   std::string receipt(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
-  // All previous completions and saved last inputs have committed before active_ clears.
-  svc_.clean_run_scratch(*s.status.run_id);
-  stdfs::create_directories(svc_.run_scratch() / "runs" / *s.status.run_id);
   // The run id and the receipt are durable before any processing starts.
   svc_.history().write_sync([&](sql::Db& db) {
     History::insert_run(db, s, p.op_id);
+    if (svc_.options().fault == "run_acceptance") throw sql::Error("injected: run acceptance write failed");
     History::put_substituters(db, *s.status.run_id, svc_.substituters());
     History::put_receipt(db, p.op_id, "run", p.digest, receipt);
   });

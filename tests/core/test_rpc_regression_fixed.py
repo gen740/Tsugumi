@@ -66,12 +66,13 @@ def test_saved_file_inputs_survive_cache_clear_and_restart(tmp_path, core_factor
     file_fork_project(root)
     d = core_factory(project_root=root)
     c = d.connect()
-    _, st = run_and_wait(c, "src", timeout=10)
+    first, st = run_and_wait(c, "src", timeout=10)
     assert st.state == RunState.succeeded
-    # The next partial run removes earlier scratch; saved inputs have their own copy.
+    # Saved inputs have independent copies of the earlier run’s scratch.
     c.call("ProjectCacheClearRequest", opId=new_id())
     _, st2 = run_and_wait(c, "split", propagate=False, timeout=10)
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
+    c.call("RunScratchDeleteRequest", opId=new_id(), paths=[f"runs/{first}"])
     d.stop()
     d.start()
     c = d.connect()

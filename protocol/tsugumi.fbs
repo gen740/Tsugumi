@@ -257,6 +257,7 @@ union ReceiptValue {
   RunHistoryDeleteResult = 7,
   VersionResult = 8,
   ProjectShellResult = 9,
+  RunScratchDeleteResult = 10,
 }
 
 table OperationReceipt {
@@ -335,6 +336,23 @@ table ProjectValidateRequest {
 /// -> ProjectCacheClearResult. Only while no run or SDK job is active.
 table ProjectCacheClearRequest { op_id:string (id: 0, required); }
 
+/// -> RunScratchDeleteResult. Deletes only the listed scratch folders from the
+/// usage report. Refuses active runs, pending remote results and the latest run.
+table RunScratchDeleteRequest {
+  op_id:string (id: 0, required);
+  paths:[string] (id: 1, required);
+}
+table RunScratchDeleteResult {
+  deleted:[string] (id: 0, required);
+  retained:[string] (id: 1, required);
+  freed_bytes:uint64 (id: 2);
+}
+table RunScratchUsage {
+  /// Relative scratch folder: runs/<run UUID> or recovery.
+  path:string (id: 0, required);
+  bytes:uint64 (id: 1);
+}
+
 /// Cached shared-store measurement; never triggers a store traversal on the RPC lane.
 table ProjectCacheUsageRequest {}
 
@@ -348,6 +366,7 @@ table ProjectCacheUsage {
   /// Latest project start or root use; absent when there are no roots.
   last_used:int64 = null (id: 4);
   error:string (id: 5);
+  run_scratch:[RunScratchUsage] (id: 6);
 }
 
 table ProjectCacheUsageResult {
@@ -356,11 +375,14 @@ table ProjectCacheUsageResult {
   store_capacity_bytes:uint64 = null (id: 2);
   store_available_bytes:uint64 = null (id: 3);
   measured_at:int64 = null (id: 4);
-  /// Suggest reviewing Build Cache settings at >= max(1 GiB, 20% of disk capacity).
+  /// Suggest reviewing Build Cache settings when build cache or scratch reaches
+  /// max(1 GiB, 20% of the capacity of its disk).
   large:bool (id: 5);
   threshold_bytes:uint64 = null (id: 6);
   current_project:string (id: 7);
   error:string (id: 8);
+  /// This project's latest run remains usable; its scratch cannot be deleted here.
+  protected_run:string (id: 9);
 }
 
 /// -> NixSourceResolved. Looks a flake up for nixSources (nothing is saved):
@@ -827,6 +849,7 @@ union RequestPayload {
   LayoutArrangeRequest = 46,
   LayoutUntangleRequest = 47,
   ProjectCacheUsageRequest = 48,
+  RunScratchDeleteRequest = 49,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1223,6 +1246,7 @@ union ReplyPayload {
   ProjectShellResult = 34,
   LayoutProposal = 35,
   ProjectCacheUsageResult = 36,
+  RunScratchDeleteResult = 37,
 }
 
 // ---- Notifications -----------------------------------------------------------

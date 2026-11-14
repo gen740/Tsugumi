@@ -3317,7 +3317,7 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
       const usage = await this.client.cacheUsage()
       this.cacheUsage = usage
       if (usage.large && !this.cacheNoticeShown && !this.notice) {
-        this.notice = L('ビルドキャッシュが {0} を使用しています。設定の「ビルドキャッシュ」でプロジェクト別の容量を確認できます。', formatBytes(usage.buildBytes ?? 0n))
+        this.notice = L('ビルドキャッシュまたは実行の scratch が大きくなっています。設定の「ビルドキャッシュ」で容量と削除対象を確認できます。')
         this.cacheNoticeShown = true
       } else if (!usage.large && usage.buildBytes !== null) this.cacheNoticeShown = false
       this.changed()
@@ -3433,6 +3433,13 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
     if (this.dirty) throw new Error(L('未保存の変更があります。保存してから選んでください。'))
     await this.client.versionCheckout(this.rev, uuid(), 'ui', commit)
     await this.refreshVersions()
+  }
+
+  async deleteRunScratch(paths: string[]): Promise<R.RunScratchDeleteResultT> {
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
+    const result = await this.client.deleteRunScratch(uuid(), paths)
+    await this.refreshCacheUsage()
+    return result
   }
 
   async deleteRunHistory(endedBefore: Date | null): Promise<R.RunHistoryDeleteResultT> {

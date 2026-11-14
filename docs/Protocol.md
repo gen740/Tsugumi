@@ -9,7 +9,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 - **Requests that change something**: carry an `op_id`, and a resend with the same `op_id` is applied only once. If a response is lost, check with `OperationGet`.
 - **The Agent's tools**: made from the same schema (`tsugumi.bfbs`) ([Features](features.md#9-agent)).
 
-There are 47 requests.
+There are 48 requests.
 
 ## Connection
 
@@ -41,6 +41,7 @@ There are 47 requests.
 | [`ProjectShell`](#projectshell) | ProjectShellResult | Runs in the project VM as the project user, with the project directory as cwd. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream is capped at 262144 bytes. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Agent use requires explicit Shell access in addition to Read, Write and Run. After editing project definitions or tsugumi.json with a command, use ProjectReload before inspecting or running the changed project through core. |
 | [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Only while no run or SDK job is active. |
 | [`ProjectCacheUsage`](#projectcacheusage) |  | Cached shared-store measurement; never triggers a store traversal on the RPC lane. |
+| [`RunScratchDelete`](#runscratchdelete) | RunScratchDeleteResult | Deletes only the listed scratch folders from the usage report. Refuses active runs, pending remote results and the latest run. |
 | [`OperationGet`](#operationget) | OperationResult |  |
 
 ### ProjectOpen
@@ -104,6 +105,13 @@ No fields.
 ### ProjectCacheUsage
 
 No fields.
+
+### RunScratchDelete
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `op_id` | `string` | yes |  |
+| `paths` | `[string]` | yes |  |
 
 ### OperationGet
 

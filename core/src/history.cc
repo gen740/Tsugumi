@@ -258,7 +258,7 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
 // Version of the local history's tables (PRAGMA user_version).
 constexpr int kHistoryVersion = 5;
 constexpr const char* kCopyFormat = "tsugumi-runs";
-constexpr const char* kCopyVersion = "4";
+constexpr const char* kCopyVersion = "5";
 
 namespace stdfs = std::filesystem;
 
@@ -1348,6 +1348,9 @@ struct Copied {
   bool has_card = true;
 };
 // Parents first: a run is complete in the other database once it commits.
+// `schemas` is copied by hash below. The other local tables (active_environments,
+// statuses, remote_jobs, remote_releases, last_inputs, receipts) describe local
+// progress, recovery, rerun inputs or operations, rather than finished records.
 constexpr Copied kCopied[] = {
     {"runs",
      "run_id, op_id, state, rev, execution_rev, accepted_at, started_at, ended_at, failure, source_hash, "
@@ -1356,6 +1359,7 @@ constexpr Copied kCopied[] = {
     {"build_environments", "run_id, id, derivation, manifest, system, path_count", "rowid", false},
     {"environment_paths", "run_id, environment_id, position, path", "rowid", false},
     {"run_substituters", "run_id, position, url", "rowid", false},
+    {"run_commits", "run_id, commit_id", "rowid", false},
     {"run_cards", "run_id, card", "rowid"},
     {"run_batches", "run_id, card, activation, invocation_count, execution_list, complete, failed, outputs", "rowid"},
     {"invocations",

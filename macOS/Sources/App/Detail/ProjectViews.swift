@@ -347,7 +347,7 @@ private struct RunHistorySettings: View {
       Form {
         Section {
           Toggle("実行履歴をプロジェクトに保存する", isOn: saving).disabled(!session.isEditable)
-          Text("実行履歴は VM の中に保存します。オンのときは、終わった実行の記録（値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。")
+          Text("実行履歴は VM の中に保存します。オンのときは、終わった実行の記録（実行したコードのコミット・値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。")
             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
         Section("削除") {
@@ -356,7 +356,7 @@ private struct RunHistorySettings: View {
             Text("すべての実行").tag(Scope.all)
           }
           if scope == .before { DatePicker("日時", selection: $before) }
-          Text("実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。")
+          Text("実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。")
             .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         }
       }
@@ -397,6 +397,16 @@ private struct RunHistorySettings: View {
 private struct CacheSettings: View {
   let session: ProjectSession
   @Environment(AppModel.self) private var model
+  @State private var scratchSelection: [String] = []
+  @State private var confirmScratch = false
+  @State private var scratchResult: Tsugumi_RPC_RunScratchDeleteResultT?
+  private var scratchCandidates: [Tsugumi_RPC_RunScratchUsageT] {
+    (session.cacheUsage?.projects.compactMap { $0 }.first {
+      $0.project == session.cacheUsage?.currentProject
+    }?.runScratch.compactMap { $0 } ?? []).filter {
+      $0.path != "runs/" + (session.cacheUsage?.protectedRun ?? "")
+    }
+  }
   @State private var clearTarget: ProjectSession?
   @State private var result: Tsugumi_RPC_ProjectCacheClearResultT?
   @State private var working = false
@@ -416,9 +426,9 @@ private struct CacheSettings: View {
               LabeledContent("store ディスクの空き", value: bytes(available))
             }
             if session.cacheUsage?.large == true {
-              Text("キャッシュの使用量が大きくなっています。必要なビルド結果を確認して、削除するものを選んでください。")
+              Text("ビルドキャッシュまたは実行の scratch が大きくなっています。内容を確認して、削除するものを選んでください。")
             }
-            Text("NAR サイズによる概算です。共有する依存関係は各プロジェクトにも含まれるため、内訳の和と合計は異なります。最大 1 分ごとに再計測します。")
+            Text("ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。最大 1 分ごとに再計測します。")
               .font(.caption).foregroundStyle(.secondary)
             if let measured = session.cacheUsage?.measuredAt {
               LabeledContent("計測日時", value: Date(timeIntervalSince1970: Double(measured) / 1000).formatted())
@@ -434,7 +444,7 @@ private struct CacheSettings: View {
                   .disabled(target == nil || target?.connected != true || target?.runActive == true || working)
               }
               LabeledContent("ビルドキャッシュ", value: bytes(project.buildBytes))
-              LabeledContent("直近の実行の scratch", value: bytes(project.scratchBytes))
+              LabeledContent("実行の scratch（合計）", value: bytes(project.scratchBytes))
               LabeledContent("root の最終使用", value: project.lastUsed.map { Date(timeIntervalSince1970: Double($0) / 1000).formatted() } ?? String(localized: "不明"))
               if target == nil { Text("削除するにはこのプロジェクトを開いてください。").font(.caption).foregroundStyle(.secondary) }
               if let error = project.error { Text(error).font(.caption).textSelection(.enabled) }
@@ -443,8 +453,26 @@ private struct CacheSettings: View {
           .frame(maxWidth: .infinity, alignment: .leading)
         }
       }
-      Text("scratch は次の実行を始めると削除します。保持した記録・成果物・最後の入力は残ります。ビルドキャッシュは自動では削除しません。")
+      Text("過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。")
         .font(.caption).foregroundStyle(.secondary)
+      GroupBox("このプロジェクトの過去の scratch") {
+        VStack(alignment: .leading, spacing: 4) {
+          ForEach(scratchCandidates, id: \.path) { item in
+            LabeledContent(item.path, value: bytes(item.bytes))
+          }
+          LabeledContent("削除対象の合計", value: bytes(scratchCandidates.reduce(UInt64(0)) { $0 + $1.bytes }))
+          Button("表示した scratch を削除…", role: .destructive) {
+            scratchSelection = scratchCandidates.map(\.path)
+            confirmScratch = true
+          }.disabled(working || session.runActive || !session.connected || scratchCandidates.isEmpty)
+          if let r = scratchResult {
+            LabeledContent("解放", value: bytes(r.freedBytes))
+            if !r.retained.isEmpty {
+              Text(String(localized: "削除できず残ったフォルダ") + ": " + r.retained.compactMap { $0 }.joined(separator: ", "))
+            }
+          }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+      }
       if let r = result {
         GroupBox("結果") {
           VStack(alignment: .leading, spacing: 4) {
@@ -465,6 +493,18 @@ private struct CacheSettings: View {
       }
     }
     .padding(16)
+    .confirmationDialog("表示した過去の scratch を削除しますか？", isPresented: $confirmScratch) {
+      Button("削除", role: .destructive) {
+        working = true
+        message = nil
+        Task {
+          do { scratchResult = try await session.deleteRunScratch(paths: scratchSelection) }
+          catch { message = String(localized: "削除できませんでした: \(String(describing: error))") }
+          working = false
+        }
+      }
+      Button("キャンセル", role: .cancel) {}
+    }
     .confirmationDialog("「\((clearTarget ?? session).scopeName([]))」のビルドキャッシュを削除しますか？", isPresented: $confirm) {
       Button("削除", role: .destructive) { clear() }
       Button("キャンセル", role: .cancel) {}

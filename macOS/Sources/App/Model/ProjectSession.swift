@@ -511,8 +511,7 @@ final class ProjectSession {
       let usage = try await rpc.cacheUsage()
       cacheUsage = usage
       if usage.large && !cacheNoticeShown && notice == nil {
-        let size = ByteCountFormatter.string(fromByteCount: Int64(clamping: usage.buildBytes ?? 0), countStyle: .file)
-        notice = String(localized: "ビルドキャッシュが \(size) を使用しています。設定の「ビルドキャッシュ」でプロジェクト別の容量を確認できます。")
+        notice = String(localized: "ビルドキャッシュまたは実行の scratch が大きくなっています。設定の「ビルドキャッシュ」で容量と削除対象を確認できます。")
         cacheNoticeShown = true
       } else if !usage.large && usage.buildBytes != nil { cacheNoticeShown = false }
     } catch { /* A failed measurement never interrupts execution. */ }
