@@ -212,7 +212,8 @@ final class ChatController {
   func refreshSessions() {
     Task {
       do {
-        let value = try await CoreAgentClient.shared.call("ConversationListRequest")
+        guard let project = try await RPCToolTransport(session: session).project() else { return }
+        let value = try await CoreAgentClient.shared.call("ConversationListRequest", ["project_id": project.id])
         sessions = (value["value"] as? [[String: Any]] ?? []).compactMap { item in
           guard let id = item["id"] as? String else { return nil }
           return SessionInfo(id: id, title: item["title"] as? String ?? String(localized: "新しい会話"),
@@ -342,7 +343,8 @@ final class ChatController {
 
   func search(_ text: String) async -> [SearchHit] {
     guard !text.isEmpty else { return [] }
-    guard let result = try? await CoreAgentClient.shared.call("ConversationSearchRequest", ["text": text]) else { return [] }
+    guard let project = try? await RPCToolTransport(session: session).project(),
+      let result = try? await CoreAgentClient.shared.call("ConversationSearchRequest", ["text": text, "project_id": project.id]) else { return [] }
     return (result["value"] as? [[String: Any]] ?? []).compactMap { item in
       guard let session = item["session"] as? String else { return nil }
       return SearchHit(session: session, title: item["title"] as? String ?? "", snippet: item["snippet"] as? String ?? "")
