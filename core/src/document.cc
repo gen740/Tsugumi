@@ -79,6 +79,17 @@ bool Document::is_source_area(const std::string& rel) {
   return rel.starts_with("skills/");
 }
 
+auto Document::valid_version_path(const std::string& rel) -> bool {
+  if (!fs::valid_relative_path(rel)) return false;
+  for (const auto& part : stdfs::path(rel)) {
+    auto name = part.string();
+    for (auto& c : name)
+      if (c >= 'A' && c <= 'Z') c += 'a' - 'A';
+    if (name == ".git" || name == ".tsugumi") return false;
+  }
+  return true;
+}
+
 namespace {
 
 [[noreturn]] void invalid(const std::string& message, std::map<std::string, std::string> args = {}) {
@@ -147,6 +158,13 @@ auto check_nix_sources(const schema::Project& p) -> void {
   }
 }
 
+auto check_version_paths(const schema::Project& p) -> void {
+  if (const auto* paths = schema::get(p.version_paths))
+    for (const auto& path : *paths)
+      if (!Document::valid_version_path(path))
+        invalid("versionPaths: expected a relative file or folder outside .git and .tsugumi", {{"path", path}});
+}
+
 }  // namespace
 
 schema::Project parse_project_json(const std::string& text) {
@@ -155,6 +173,7 @@ schema::Project parse_project_json(const std::string& text) {
   if (!p.pkgs_path->has_value()) invalid("tsugumi.json: \"pkgsPath\" is required");
   if (!p.canvas->has_value()) invalid("tsugumi.json: \"canvas\" is required");
   check_nix_sources(p);
+  check_version_paths(p);
   check_graph_shape(p.canvas->value(), "tsugumi.json canvas");
   check_boundary(p, "tsugumi.json");
   return p;
@@ -163,6 +182,7 @@ schema::Project parse_project_json(const std::string& text) {
 schema::Project parse_external_project(const std::string& rel, const std::string& text) {
   auto p = decode_doc<schema::Project>(rel, text);
   check_nix_sources(p);
+  check_version_paths(p);
   if (!p.canvas->has_value()) invalid(rel + ": \"canvas\" is required", {{"path", rel}});
   check_graph_shape(p.canvas->value(), rel + " canvas");
   check_boundary(p, rel);

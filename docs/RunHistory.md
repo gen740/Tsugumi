@@ -18,7 +18,7 @@ For example, open **Visualization → report**, run it, and inspect a figure Car
 
 When a Card runs a batch, its history keeps each invocation separately, including which implementation and batch position it used. A failed batch retains the individual results and diagnostics in the history. The next Card receives a batch only after all its invocations succeed. [Run lists and Collect](features.md#run-lists-and-collect)
 
-The **Info** tab shows the execution service recorded for a Code Card. For a remote job, it also shows the job ID, architecture, any requested CPU and memory limits, and the last reported state. The **Packages** tab shows the recorded Nix system. [Run a Card on a remote worker](RemoteExecution.md)
+The **Info** tab shows the execution service recorded for a Code Card. For a remote job, it also shows the job ID, architecture, any requested CPU and memory limits, and the last reported state. The **Packages** tab shows the recorded Nix environments shared by the run’s Cards. [Run a Card on a remote worker](RemoteExecution.md)
 
 ## Compare two runs
 
@@ -30,7 +30,13 @@ Mac and Web show each Card's last invocation from each run in this view. For ano
 
 ## Find the runtime packages
 
-Open **Card settings → Run History**, select the run and invocation, then open **Packages**. Search for part of a package name, such as `python`, and expand a matching entry to inspect its full Nix store path. The record shows the system and the runtime paths associated with that invocation. For an invocation without a recorded environment, **Packages** reports that the record is unavailable.
+Open **Card settings → Run History**, select the run and invocation, then open **Packages**. The run lists each recorded environment once; the invocation’s environment is selected initially. Choose an environment to see its target system, manifest output store path, derivation, and the Cards and invocation numbers sharing it. Environment entries and their users are paged.
+
+Search for part of a package name, such as `python`, and expand a matching entry to select and copy its full Nix store path. The runtime closure is not a complete inventory of build-time dependencies. Search runs in the history database; **Previous** and **Next** display 100 matching paths at a time. For an invocation without a recorded environment, **Packages** reports that the record is unavailable.
+
+**Compare Runs** marks Cards whose last invocation’s environment changed and lists **Removed runtime dependencies** on the left and **Added runtime dependencies** on the right. Both lists support search and paging. The core computes the exact difference between the two recorded closures in SQLite, so clients do not download every path. A missing environment reports that the comparison is unavailable rather than treating it as an empty closure.
+
+Both UIs use `RunEnvironments`, `RunEnvironmentUses`, and `RunEnvironmentPaths`. These requests read recorded history only and never evaluate or build Nix. The records remain available after restarting, editing definitions, and importing history from another machine; they do not require the original store paths to exist locally.
 
 The list uses the original history record. Configured cache endpoints, where recorded, describe which caches were available for builds. A path can come from a cache, the local store or a local build. [Binary cache provenance](BinaryCaches.md#storage-and-application)
 
