@@ -104,8 +104,15 @@ target_include_directories(tsugumi_workerd_tests PRIVATE ${_core_headers} ${_wor
 target_link_libraries(tsugumi_workerd_tests PRIVATE tsugumi_workerd_support)
 target_compile_options(tsugumi_workerd_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 add_test(NAME workerd_protocol_journal COMMAND tsugumi_workerd_tests)
+
+add_executable(tsugumi_worker_staging_tests worker_staging_test.cc)
+target_include_directories(tsugumi_worker_staging_tests PRIVATE ${_core_headers})
+target_link_libraries(tsugumi_worker_staging_tests PRIVATE tsugumi_workerd_support Threads::Threads)
+target_compile_options(tsugumi_worker_staging_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
+add_test(NAME worker_staging COMMAND tsugumi_worker_staging_tests)
+set_tests_properties(worker_staging PROPERTIES TIMEOUT 15)
 if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi_workerd_tests RUNTIME DESTINATION libexec/tsugumi-tests)
+  install(TARGETS tsugumi_workerd_tests tsugumi_worker_staging_tests RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()
 
 add_executable(tsugumi_peer_tls_tests peer_tls_test.cc agent_fixture_server.cc)

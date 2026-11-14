@@ -17,6 +17,24 @@ CTest also runs this suite as `core_rpc`:
 nix develop -c ctest --test-dir build -R '^core_rpc$' --output-on-failure
 ```
 
+The socket-free `tsugumi_worker_staging_tests` executable exercises the production
+scratch cleaner with nested read-only Nix-style source trees, links, FIFOs,
+hidden entries, open directories and a concurrent file writer. It checks that
+link targets survive and errors identify the path and errno. CI runs it on
+macOS and Linux; it can also be built without Nix or generated bindings:
+
+```sh
+c++ -std=c++20 -Wall -Wextra -Werror -pthread -I core/src \
+  core/src/util/staging.cc tests/core/worker_staging_test.cc -o /tmp/worker-staging-tests
+/tmp/worker-staging-tests
+```
+
+`tests/python/test_demo_marimo.py::test_notebook_passes_typed_result_and_keeps_snapshot`
+additionally exercises the real Nix source modes, notebook subprocess, staged
+Directory transfer, typed downstream result, retained HTML/images and snapshot
+stability across a later run and daemon restart. The cleaner harness alone does
+not cover those boundaries.
+
 ## A scenario
 
 ```python

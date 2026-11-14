@@ -282,10 +282,21 @@ TEST_F(AgentProjectFixture,
             "{}");
   EXPECT_FALSE(model.WaitForRequests(2, 150ms));
   Grant(conversation);
-  ASSERT_TRUE(Send(conversation, "Do something else instead").Code().empty());
+  EXPECT_FALSE(model.WaitForRequests(2, 150ms));
+  // A new message needs a new idempotency key; the fixture defaults to turn-1.
+  const auto sent = Send(conversation, "Do something else instead", "turn-2");
+  ASSERT_TRUE(sent.Code().empty()) << sent.Code();
   EXPECT_NE(WaitUntilIdle(conversation).find("Followed the new message"),
             std::string::npos);
   ASSERT_TRUE(model.WaitForRequests(2));
+  ASSERT_EQ(model.Requests().size(), 2u);
+  EXPECT_EQ(JsonString(model.Requests()[1], "/messages/2/content/0/type"),
+            "tool_result");
+  EXPECT_EQ(JsonString(model.Requests()[1], "/messages/2/content/0/tool_use_id"),
+            "pending-read");
+  EXPECT_TRUE(JsonBool(model.Requests()[1], "/messages/2/content/0/is_error"));
+  EXPECT_EQ(JsonString(model.Requests()[1], "/messages/3/content/0/text"),
+            "Do something else instead");
   EXPECT_NE(model.Requests()[1].find("Do something else instead"),
             std::string::npos);
   EXPECT_NE(model.Requests()[1].find("The tool was not replayed"),

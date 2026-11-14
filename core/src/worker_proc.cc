@@ -1,6 +1,5 @@
 #include "worker_proc.hh"
 
-#include <dirent.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -11,6 +10,7 @@
 #include <cerrno>
 #include <cstring>
 #include <fstream>
+#include <system_error>
 #ifdef __APPLE__
 #include <libproc.h>
 #endif
@@ -18,6 +18,7 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "store.hh"
 #include "util/fs.hh"
+#include "util/staging.hh"
 #include "util/text.hh"
 #include "util/log.hh"
 #include "util/process.hh"
@@ -90,46 +91,6 @@ bool write_full(int fd, const char* p, size_t n) {
     n -= static_cast<size_t>(w);
   }
   return true;
-}
-
-// A Card child can still rename entries during cleanup. Walk from open
-// directory handles and unlink names there, never through a symlink's target.
-auto clear_staging(int source) -> void {
-  auto failed = [] { return Failed(FailureKind::worker_failed, "cannot clear the worker's invocation staging"); };
-  const int duplicate = ::fcntl(source, F_DUPFD_CLOEXEC, 0);
-  if (duplicate < 0) throw failed();
-  std::unique_ptr<DIR, decltype(&::closedir)> entries(::fdopendir(duplicate), ::closedir);
-  if (!entries) {
-    ::close(duplicate);
-    throw failed();
-  }
-  for (;;) {
-    errno = 0;
-    const auto* entry = ::readdir(entries.get());
-    if (!entry) {
-      if (errno) throw failed();
-      break;
-    }
-    const std::string name = entry->d_name;
-    if (name == "." || name == "..") continue;
-    const int child = ::openat(source, name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    int flags = 0;
-    if (child >= 0) {
-      try {
-        clear_staging(child);
-      } catch (...) {
-        ::close(child);
-        throw;
-      }
-      ::close(child);
-      flags = AT_REMOVEDIR;
-    } else if (errno == ENOENT) {
-      continue;
-    } else if (errno != ENOTDIR && errno != ELOOP) {
-      throw failed();
-    }
-    if (::unlinkat(source, name.c_str(), flags) != 0 && errno != ENOENT) throw failed();
-  }
 }
 
 #ifdef __APPLE__
@@ -344,7 +305,17 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
 WorkerProc::~WorkerProc() {
   terminate();
   std::error_code ec;
-  if (!scratch_.empty()) std::filesystem::remove_all(scratch_, ec);
+  if (!scratch_.empty()) {
+    try {
+      // Also covers failed/dead and remote workers, and lifetime home data.
+      fs::clear_staging(scratch_);
+      std::filesystem::remove(scratch_, ec);
+      if (ec) log::warn("cannot remove worker scratch " + scratch_ +
+                        " (errno " + std::to_string(ec.value()) + "): " + ec.message());
+    } catch (const std::system_error& error) {
+      log::warn("cannot clear worker scratch: " + std::string(error.what()));
+    }
+  }
 }
 
 bool WorkerProc::alive() const {
@@ -361,16 +332,12 @@ void WorkerProc::set_logs(LogSink logs) {
 }
 
 void WorkerProc::clear_scratch() {
-  for (const auto& d : {work_dir(), tmp_dir(), out_dir(), inputs_dir()}) {
-    const int directory = ::open(d.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-    if (directory < 0) throw Failed(FailureKind::worker_failed, "cannot open the worker's invocation staging directory");
-    try {
-      clear_staging(directory);
-    } catch (...) {
-      ::close(directory);
-      throw;
-    }
-    ::close(directory);
+  try {
+    for (const auto& d : {work_dir(), tmp_dir(), out_dir(), inputs_dir()})
+      fs::clear_staging(d);
+  } catch (const std::system_error& error) {
+    throw Failed(FailureKind::worker_failed,
+                 "cannot clear the worker's invocation staging: " + std::string(error.what()));
   }
 }
 
