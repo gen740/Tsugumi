@@ -16,6 +16,177 @@
 namespace tsugumi::test {
 namespace {
 
+TEST_F(AgentProjectFixture, ConversationsCannotMoveBetweenCopiedProjects) {
+  StartProject();
+  const auto original = project_id;
+  const auto conversation = Conversation("copy-a");
+  const auto pending = Inspect(conversation);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  // Another registered project, with an identical title, is still distinct.
+  const auto copy = directory.path / "copy-b";
+  std::filesystem::create_directories(copy);
+  const auto registered = Call(*host, H::RequestPayload::RegisterProjectRequest, [&](Builder& b) {
+    return H::CreateRegisterProjectRequest(b, b.CreateString("copy-b"),
+        b.CreateString("unix:/unused-copy-b.sock"), b.CreateString("token"),
+        b.CreateString("Private project"), b.CreateString(copy.string())).Union();
+  });
+  ASSERT_TRUE(registered.Code().empty());
+  for (const auto& project : {std::string("copy-b"), std::string{}}) {
+    const auto moved = Call(*human, A::RequestPayload::ConversationCreateRequest, [&](Builder& b) {
+      return A::CreateConversationCreateRequest(b, b.CreateString(conversation), b.CreateString(project)).Union();
+    });
+    EXPECT_EQ(moved.Code(), "conflict");
+    EXPECT_EQ(JsonString(Get(conversation, true).View(), "/project_id"), original);
+  }
+  const auto list = Call(*human, A::RequestPayload::ConversationListRequest, [&](Builder& b) {
+    return A::CreateConversationListRequest(b, b.CreateString("copy-b")).Union();
+  });
+  EXPECT_EQ(list.View(), "[]");
+  const auto access = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  const auto* request = access.Value()->value_as_AccessList()->requests()->Get(0);
+  EXPECT_EQ(request->project_id()->str(), original);
+  EXPECT_EQ(request->id()->str(), pending.RequestId());
+  // Even after restart, the stopped conversation and its request stay in A.
+  human.reset(); external.reset(); host.reset(); agent.Stop(); StartAgent();
+  project_id = "copy-b";
+  EXPECT_EQ(Call(*human, A::RequestPayload::ConversationCreateRequest, [&](Builder& b) {
+    return A::CreateConversationCreateRequest(b, b.CreateString(conversation), b.CreateString(project_id)).Union();
+  }).Code(), "conflict");
+}
+
+TEST_F(AgentProjectFixture, LiveAndRestoredAccessRequestsDescribeTheSameNamedFolder) {
+  StartProject();
+  const auto conversation = Conversation("named-access");
+  const auto pending = Inspect(conversation);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  const auto access = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  const auto* request = access.Value()->value_as_AccessList()->requests()->Get(0);
+  const auto description = request->asked()->Get(0)->str();
+  const auto fields = description.substr(std::string("project_access ").size());
+  EXPECT_EQ(JsonString(fields, "/title"), "Private project");
+  EXPECT_EQ(JsonString(fields, "/path"), (directory.path / "project").string());
+  EXPECT_EQ(JsonString(fields, "/access"), "Read");
+  EXPECT_EQ(JsonString(fields, "/scope"), "Conversation");
+  const auto events = Events(conversation, true);
+  const auto* event = events.Value()->value_as_EventsPage()->events()->Get(0)->event();
+  ASSERT_EQ(event->kind()->str(), "permission");
+  EXPECT_EQ(event->asked()->Get(0)->str(), description);
+}
+
+TEST_F(AgentProjectFixture, FirstProjectAccessAsksForThreeInOneDurablePrompt) {
+  StartProject();
+  const auto conversation = Conversation("combined-access");
+  const auto pending = Inspect(conversation);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  const auto listed = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  const auto* requests = listed.Value()->value_as_AccessList()->requests();
+  ASSERT_EQ(requests->size(), 1u);
+  const auto* asked = requests->Get(0)->asked();
+  ASSERT_EQ(asked->size(), 3u);
+  for (flatbuffers::uoffset_t i = 0; i < asked->size(); ++i) {
+    const auto fields = asked->Get(i)->str().substr(std::string("project_access ").size());
+    EXPECT_EQ(JsonString(fields, "/access"), i == 0 ? "Read" : i == 1 ? "Write" : "Run");
+    EXPECT_EQ(JsonBool(fields, "/needed_now"), i == 0);
+  }
+  const auto events = Events(conversation, true);
+  ASSERT_EQ(events.Value()->value_as_EventsPage()->events()->size(), 1u);
+  EXPECT_EQ(events.Value()->value_as_EventsPage()->events()->Get(0)->event()->asked()->size(), 3u);
+  // Repeating the operation coalesces with the same pending prompt.
+  EXPECT_EQ(Inspect(conversation).RequestId(), pending.RequestId());
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(pending.RequestId()), true,
+        b.CreateVector(std::vector{A::Access::Write, A::Access::Run})).Union();
+  }).Code().empty());
+  const auto granted = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  ASSERT_EQ(granted.Value()->value_as_AccessList()->grants()->size(), 3u);
+  EXPECT_TRUE(Inspect(conversation).Code().empty());
+  // Revoking one access leaves the other two grants intact.
+  for (const auto* grant : *granted.Value()->value_as_AccessList()->grants())
+    if (grant->access() == A::Access::Run) Revoke(grant->id()->str());
+  EXPECT_EQ(Tool(conversation, "run", "{}").Code(), "grant_required");
+}
+
+TEST_F(AgentProjectFixture, PartialAccessAllowOnlyReasksTheOmittedAccessWhenNeeded) {
+  StartProject();
+  const auto conversation = Conversation("partial-access");
+  const auto pending = Inspect(conversation);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(pending.RequestId()), true,
+        b.CreateVector(std::vector{A::Access::Write})).Union();
+  }).Code().empty());
+  EXPECT_TRUE(Inspect(conversation).Code().empty());
+  const auto before = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  EXPECT_EQ(before.Value()->value_as_AccessList()->requests()->size(), 1u);
+  ASSERT_EQ(before.Value()->value_as_AccessList()->grants()->size(), 2u);
+  // The omitted Run grant is still enforced before project RPC executes.
+  const auto later = Tool(conversation, "run", "{}");
+  ASSERT_EQ(later.Code(), "grant_required");
+  EXPECT_NE(later.RequestId(), pending.RequestId());
+  const auto list = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  const auto* prompt = list.Value()->value_as_AccessList()->requests()->Get(0);
+  ASSERT_EQ(prompt->asked()->size(), 1u);
+  EXPECT_EQ(prompt->access(), A::Access::Run);
+  EXPECT_TRUE(JsonBool(prompt->asked()->Get(0)->str().substr(std::string("project_access ").size()), "/needed_now"));
+  // An unoffered capability cannot be smuggled into the answer.
+  EXPECT_EQ(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(later.RequestId()), true,
+        b.CreateVector(std::vector{A::Access::Shell})).Union();
+  }).Code(), "invalid_request");
+  EXPECT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(later.RequestId()), true).Union();
+  }).Code().empty());
+}
+
+TEST_F(AgentProjectFixture, NeededAccessCanBeLeftOutWhileAnotherIsAllowed) {
+  StartProject();
+  const auto conversation = Conversation("omitted-needed-access");
+  const auto pending = Inspect(conversation);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(pending.RequestId()), false,
+        b.CreateVector(std::vector{A::Access::Write})).Union();
+  }).Code().empty());
+  const auto list = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  ASSERT_EQ(list.Value()->value_as_AccessList()->grants()->size(), 1u);
+  EXPECT_EQ(list.Value()->value_as_AccessList()->grants()->Get(0)->access(), A::Access::Write);
+  EXPECT_EQ(Inspect(conversation).Code(), "grant_required");
+}
+
+TEST_F(AgentProjectFixture, DenyingACombinedPromptCreatesNoGrants) {
+  StartProject();
+  const auto conversation = Conversation("denied-combined-access");
+  const auto pending = Inspect(conversation);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  EXPECT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(pending.RequestId()), false).Union();
+  }).Code().empty());
+  const auto list = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  const auto* value = list.Value()->value_as_AccessList();
+  EXPECT_TRUE(!value->grants() || value->grants()->size() == 0);
+  EXPECT_EQ(value->requests()->Get(0)->state()->str(), "denied");
+  // No access was inferred from displaying the three choices.
+  const auto again = Inspect(conversation);
+  EXPECT_EQ(again.Code(), "grant_required");
+  EXPECT_NE(again.RequestId(), pending.RequestId());
+}
+
 // Re-executed inside project_shell by the isolation regression below. Supplying
 // the real test credential proves that hiding server.ready is not the only
 // thing preventing an unlisted request over a custom Unix socket path.
@@ -244,7 +415,7 @@ TEST_F(AgentProjectFixture,
   ModelServer model;
   model.Queue(AnthropicTool(
       "delegate-review", "delegate",
-      R"({"tasks":[{"name":"review","instruction":"Inspect the project and report its name.","cards":[]}]})"));
+      R"({"tasks":[{"name":"review","instruction":"Inspect the project and report its name.","read_cards":[],"write_cards":[]}]})"));
   model.Queue(AnthropicTool("helper-inspect", "project_inspect", "{}"));
   model.Queue(
       AnthropicText("The authorized name is PRIVATE_PROJECT_SENTINEL."));
@@ -511,7 +682,7 @@ TEST_F(AgentProjectFixture, ConcurrentPluginToolsDoNotBlockTheUsersApproval) {
     tools.push_back(std::async(std::launch::async, [&, i] {
       return Tool(
           conversation, "delegate",
-          R"({"tasks":[{"name":"inspect","instruction":"Inspect the selected project."}]})",
+          R"({"tasks":[{"name":"inspect","instruction":"Inspect the selected project.","read_cards":[],"write_cards":[]}]})",
           "parallel-tool-" + std::to_string(i));
     }));
   }
@@ -1014,6 +1185,159 @@ TEST_F(AgentProjectFixture, UnlistedProjectToolsCannotBeCalledExternally) {
   for (const auto *name : {"view_save", "view_set_visible", "project_open",
                            "project_close", "session_hello"})
     EXPECT_EQ(Tool(conversation, name, "{}").Code(), "not_found");
+}
+
+TEST_F(AgentProjectFixture,
+       HelperScopesGuardInspectionFilesSavesRunsRecordsAndLogs) {
+  Write(directory.path / "project/definitions/allowed/_card.json",
+        R"({"template":"draft"})");
+  Write(directory.path / "project/definitions/allowed/_meta.json",
+        R"({"description":"VISIBLE_CARD_SENTINEL"})");
+  Write(directory.path / "project/definitions/secret/_card.json",
+        R"({"template":"draft"})");
+  Write(directory.path / "project/definitions/writer/_card.json",
+        R"({"template":"draft"})");
+  Write(directory.path / "project/definitions/secret/_meta.json",
+        R"({"description":"HIDDEN_CARD_SENTINEL"})");
+  Write(directory.path / "project/definitions/outer/_link.json",
+        R"({"external":"different-directory"})");
+  Write(directory.path / "project/externals/different-directory/tsugumi.json",
+        R"({"name":"Nested","canvas":{"cards":[],"connections":[]}})");
+  Write(
+      directory.path /
+          "project/externals/different-directory/definitions/child/_card.json",
+      R"({"template":"draft"})");
+  Write(
+      directory.path /
+          "project/externals/different-directory/definitions/other/_card.json",
+      R"({"template":"draft"})");
+  StartProject();
+  const auto conversation = Conversation("helper-card-scope");
+  Grant(conversation);
+  Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
+  const auto before =
+      Read(directory.path / "project/definitions/secret/_card.json");
+  ModelServer model;
+  const std::vector<std::pair<std::string, std::string>> calls{
+      {"project_inspect", "{}"},
+      {"project_file_read", R"({"path":"definitions/secret/_card.json"})"},
+      {"project_file_read", R"({"path":"definitions/allowed/_card.json"})"},
+      {"project_file_read",
+       R"({"path":"externals/different-directory/definitions/child/_card.json"})"},
+      {"project_file_read",
+       R"({"path":"externals/different-directory/definitions/other/_card.json"})"},
+      {"project_save",
+       R"({"base_rev":0,"changes":[{"value_type":"RemoveDefinition","value":{"id":"secret"}}]})"},
+      {"run",
+       R"({"base_rev":0,"card":{"segments":["secret"]},"propagate":false})"},
+      {"run_record",
+       R"({"run_id":"not-a-run","card":{"segments":["secret"]}})"},
+      {"log_range", R"({"run_id":"not-a-run","card":{"segments":["secret"]}})"},
+      {"project_shell", R"({"command":"cat definitions/secret/_card.json"})"},
+      {"project_save",
+       R"({"base_rev":0,"changes":[{"value_type":"SetProject","value":{"json":"{}"}}]})"},
+      {"project_file_read", R"({"path":"definitions/writer/_card.json"})"},
+      {"project_save",
+       R"({"base_rev":0,"changes":[{"value_type":"RemoveDefinition","value":{"id":"allowed"}}]})"}};
+  for (size_t i = 0; i < calls.size(); ++i)
+    model.Queue(AnthropicTool("scope-call-" + std::to_string(i), calls[i].first,
+                              calls[i].second));
+  model.Queue(AnthropicText("Scope checks complete."));
+  Configure(model);
+  const auto delegated = Tool(
+      conversation, "delegate",
+      R"({"tasks":[{"name":"scoped","instruction":"Exercise only the supplied tool calls.","read_cards":["allowed","outer/child"],"write_cards":["writer"]}]})",
+      "scoped-delegate");
+  ASSERT_TRUE(delegated.Code().empty()) << delegated.View();
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), calls.size() + 1);
+  for (size_t i = 0; i < calls.size(); ++i) {
+    const auto pointer =
+        "/messages/" + std::to_string(2 * (i + 1)) + "/content/0";
+    const bool denied = i != 0 && i != 2 && i != 3;
+    EXPECT_EQ(JsonString(requests[i + 1], pointer + "/type"), "tool_result");
+    EXPECT_EQ(JsonString(requests[i + 1], pointer + "/tool_use_id"),
+              "scope-call-" + std::to_string(i));
+    EXPECT_EQ(JsonBool(requests[i + 1], pointer + "/is_error"), denied)
+        << calls[i].first << ' ' << calls[i].second << '\n'
+        << JsonString(requests[i + 1], pointer + "/content");
+    if (denied)
+      EXPECT_NE(JsonString(requests[i + 1], pointer + "/content")
+                    .find("Helper scope denied"),
+                std::string::npos);
+    EXPECT_EQ(requests[i + 1].find("HIDDEN_CARD_SENTINEL"), std::string::npos);
+  }
+  EXPECT_NE(requests[1].find("VISIBLE_CARD_SENTINEL"), std::string::npos);
+  EXPECT_EQ(Read(directory.path / "project/definitions/secret/_card.json"),
+            before);
+}
+
+TEST_F(AgentProjectFixture, HelperOwnsTheCardItReservesFromEmptySets) {
+  StartProject();
+  const auto conversation = Conversation("helper-created-card");
+  Grant(conversation);
+  Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
+  const auto rev = JsonString(JsonString(Inspect(conversation).View(), "/text"),
+                              "/value/rev");
+  ModelServer model;
+  model.Queue(AnthropicTool("reserve", "card_id", R"({"name":"Helper card"})"));
+  Configure(model);
+  auto delegated = std::async(std::launch::async, [&] {
+    return Tool(
+        conversation, "delegate",
+        R"({"tasks":[{"name":"creator","instruction":"Reserve and implement a new Card.","read_cards":[],"write_cards":[]}]})",
+        "creator-delegate");
+  });
+  const std::shared_ptr<void> ensure_response(&model, [&model](void *) {
+    model.Queue(AnthropicText("Stop the reservation scenario."));
+  });
+  if (!model.WaitForRequests(2)) {
+    model.Queue(AnthropicText("Stop the failed reservation scenario."));
+    (void)delegated.get();
+    FAIL() << "The helper did not report its reservation";
+    return;
+  }
+  const auto reservation_request = model.Requests()[1];
+  EXPECT_EQ(JsonString(reservation_request, "/messages/2/content/0/type"),
+            "tool_result");
+  EXPECT_EQ(JsonString(reservation_request, "/messages/2/content/0/tool_use_id"),
+            "reserve");
+  EXPECT_FALSE(JsonBool(reservation_request, "/messages/2/content/0/is_error"));
+  const auto reserved =
+      JsonString(reservation_request, "/messages/2/content/0/content");
+  EXPECT_EQ(JsonString(reserved, "/reply"), "CardIdResult");
+  const auto id = JsonString(reserved, "/value/id");
+  ASSERT_FALSE(id.empty());
+  const auto path = "definitions/" + id + "/src/own.txt";
+  model.Queue(AnthropicTool(
+      "save-own", "project_save",
+      "{\"base_rev\":" + Quote(rev) +
+          ",\"changes\":[{\"value_type\":\"PutDefinition\",\"value\":{\"id\":" +
+          Quote(id) + ",\"card_json\":" + Quote(R"({"template":"draft"})") +
+          "}},{\"value_type\":\"PutSource\",\"value\":{\"path\":" +
+          Quote(path) + ",\"bytes\":[111,119,110]}}]}"));
+  model.Queue(AnthropicTool("read-own", "project_file_read",
+                            "{\"path\":" + Quote(path) + "}"));
+  model.Queue(AnthropicText("The new Card is readable and writable."));
+  const auto result = delegated.get();
+  ASSERT_TRUE(result.Code().empty()) << result.View();
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 4u);
+  EXPECT_EQ(JsonString(requests[2], "/messages/4/content/0/type"),
+            "tool_result");
+  EXPECT_EQ(JsonString(requests[2], "/messages/4/content/0/tool_use_id"),
+            "save-own");
+  EXPECT_FALSE(JsonBool(requests[2], "/messages/4/content/0/is_error"));
+  EXPECT_EQ(JsonString(requests[3], "/messages/6/content/0/type"),
+            "tool_result");
+  EXPECT_EQ(JsonString(requests[3], "/messages/6/content/0/tool_use_id"),
+            "read-own");
+  EXPECT_FALSE(JsonBool(requests[3], "/messages/6/content/0/is_error"));
+  const auto content = JsonString(requests[3], "/messages/6/content/0/content");
+  EXPECT_EQ(JsonString(content, "/reply"), "FileContent");
+  EXPECT_EQ(JsonString(content, "/value/bytes"), "own");
+  EXPECT_TRUE(JsonBool(content, "/value/eof"));
+  EXPECT_EQ(Read(directory.path / "project" / path), "own");
 }
 
 } // namespace

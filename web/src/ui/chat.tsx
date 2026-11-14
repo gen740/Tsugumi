@@ -12,7 +12,7 @@ import { useObserve } from '../model/observable'
 import { PERMISSIONS, parsePermission, permissionInfo } from '../model/permissions'
 import { isMac, prefs } from '../model/prefs'
 import { CardKey, commentChange, errorText, key, path, ProjectSession } from '../model/session'
-import { AGENT, modelOptions, savedComments } from '../shared/agentShared'
+import { AGENT, modelOptions, savedComments, projectAccessLabel, projectAccessNeededNow } from '../shared/agentShared'
 import { WorkflowTab } from '../model/workspace'
 import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner, TextField, Toggle } from './controls'
 import { Icon } from './icons'
@@ -61,24 +61,25 @@ export function PermissionHost({ session }: { session: ProjectSession }) {
   const chat = app.chat(session)
   useObserve(chat)
   const p = chat.permission
-  return p ? <PermissionPrompt key={p.id} asked={p.asked} from={p.from} onAnswer={(allow, always) => chat.answerPermission(allow, always, p.id)} /> : null
+  return p ? <PermissionPrompt key={p.id} asked={p.asked} from={p.from} onAnswer={(allow, always, selected) => chat.answerPermission(allow, always, p.id, selected)} /> : null
 }
 
 /** Presents core-owned access and operation requests. Operations have no
  *  standing approval option. Return allows and Esc declines. */
-export function PermissionPrompt({ asked, from, reload = false, onAnswer }: { asked: string[]; from?: string; reload?: boolean; onAnswer: (allow: boolean, always: string[]) => void }) {
+export function PermissionPrompt({ asked, from, reload = false, onAnswer }: { asked: string[]; from?: string; reload?: boolean; onAnswer: (allow: boolean, always: string[], selected?: string[]) => void }) {
   const who = from ?? 'Agent'
   const [always, setAlways] = useState<string[]>([])
+  const [selected, setSelected] = useState(() => asked.filter(r => !r.startsWith('project_access ') || projectAccessNeededNow(r)))
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       // A button with the focus answers for itself.
       if (e.key !== 'Enter' || e.isComposing || (e.target as HTMLElement | null)?.tagName === 'BUTTON') return
       e.preventDefault()
-      onAnswer(true, always)
+      onAnswer(true, always, selected)
     }
     window.addEventListener('keydown', key, true)
     return () => window.removeEventListener('keydown', key, true)
-  }, [onAnswer, always])
+  }, [onAnswer, always, selected])
   const requests = asked.map(parsePermission).filter((r) => r !== undefined)
   const operation = asked.find((r) => r.includes('operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
   const access = asked.filter((r) => r.startsWith('project_access '))
@@ -88,7 +89,7 @@ export function PermissionPrompt({ asked, from, reload = false, onAnswer }: { as
       <div className="sheet-body permission-prompt">
         <div className="title2"><Icon name="hand.raised" /> {reload ? L('外部の変更が Card の権限を広げます') : operation ? L('{0} がこの操作の承認を求めています', who) : access.length ? L('{0} がアクセスの許可を求めています', who) : L('{0} が Card の権限を広げようとしています', who)}</div>
         <p className="secondary">{reload ? L('表示された権限を許可して、外部の変更を読み込みますか？') : operation ? L('表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。') : access.length ? L('表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。') : L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>
-        <PermissionRequests asked={asked} />
+        <PermissionRequests asked={asked} selected={selected} onSelect={(request, on) => setSelected(on ? [...selected, request] : selected.filter(r => r !== request))} />
         {!!kinds.length && <div className="secondary small">{L('今後は確認しない（設定の「API」でいつでも変えられます）')}</div>}
         {kinds.map((k) => (
           <Toggle key={k.kind} kind="checkbox" label={k.label} checked={always.includes(k.kind)}
@@ -96,7 +97,7 @@ export function PermissionPrompt({ asked, from, reload = false, onAnswer }: { as
         ))}
         <div className="row end gap8">
           <Button onClick={() => onAnswer(false, [])}>{L('許可しない')}</Button>
-          <Button kind="prominent" onClick={() => onAnswer(true, always)}>{L('許可する')}</Button>
+          <Button kind="prominent" onClick={() => onAnswer(true, always, selected)}>{L('許可する')}</Button>
         </div>
       </div>
     </Sheet>
@@ -104,7 +105,7 @@ export function PermissionPrompt({ asked, from, reload = false, onAnswer }: { as
 }
 
 /** The exact widenings listed before approval, shared by reload and Agent saves. */
-export function PermissionRequests({ asked }: { asked: string[] }) {
+export function PermissionRequests({ asked, selected, onSelect }: { asked: string[]; selected?: string[]; onSelect?: (request: string, on: boolean) => void }) {
   const requests = asked.map(parsePermission).filter(r => r !== undefined)
   const operation = asked.find(r => r.includes('operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
   const access = asked.filter(r => r.startsWith('project_access '))
@@ -113,7 +114,12 @@ export function PermissionRequests({ asked }: { asked: string[] }) {
           {operation && <li><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 360, overflow: 'auto' }}>{operation.split('\n').map((line) => {
             try { return JSON.stringify(JSON.parse(line), null, 2) } catch { return line }
           }).join('\n')}</pre></li>}
-          {!operation && access.map((r) => <li key={r}><Icon name="hand.raised" /><div>{r.slice('project_access '.length)}</div></li>)}
+          {!operation && access.map((r) => <li key={r}>
+            {onSelect ? <label style={{ whiteSpace: 'pre-wrap' }}><input type="checkbox" checked={selected?.includes(r) ?? false}
+              onChange={e => onSelect(r, e.target.checked)} /> {projectAccessLabel(r)}
+              {projectAccessNeededNow(r) && <div className="secondary small">{L('今の操作に必要')}</div>}
+            </label> : <div style={{ whiteSpace: 'pre-wrap' }}>{projectAccessLabel(r)}</div>}
+          </li>)}
           {requests.map((r) => (
             <li key={r.raw}>
               <Icon name={permissionInfo(r.kind).icon} />
@@ -295,6 +301,7 @@ function Row({ item, streaming, session, tab }: { item: ChatItem; streaming: boo
 // ---- Composer ----------------------------------------------------------------------
 
 function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatController; tab?: WorkflowTab }) {
+  useEffect(() => chat.observePresentation(), [chat])
   const [input, setInput] = useState('')
   const [focused, setFocused] = useState(false)
   const [skillQuery, setSkillQuery] = useState<string | null>(null)
@@ -370,12 +377,12 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
   /** A model of a connection chosen in the menu: that connection is used from now on. */
   const choose = (provider: string, m: string) => {
     const key = provider === 'chatgpt' ? 'chatGPTModel' : provider === 'openai' ? 'openAIModel' : 'model'
-    void api('/api/settings', { provider, [key]: m }).then(() => { void chat.refreshProvider(); void guide.refresh() })
+    void api('/api/settings', { provider, [key]: m }).then(() => { void guide.refresh() })
   }
 
   /** The model menu's effort or Fast mode (from the next request on). */
   const chooseOption = (setting: { effort: string } | { fastModel: string }) => {
-    void api('/api/settings', setting).then(() => { void chat.refreshProvider() })
+    void api('/api/settings', setting)
   }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -461,6 +468,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
               // Every connection set up, with its models: choosing one switches to it.
               const items = (list: typeof connections) => {
                 const current = chat.provider.plan ? 'chatgpt' : chat.provider.api === 'openAIResponses' ? 'openai' : 'anthropic'
+                const model = chat.provider.model
                 const options = modelOptions(current, model)
                 const { effort, fast } = chat.provider
                 return [
@@ -486,7 +494,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
                 menu.update(items(list))
                 return list
               })
-              void show().catch(() => connections).then((list) => modelLists.current.refresh(list.map((c) => c.id), (id, ok) => {
+              void chat.refreshProvider().then(show).catch(() => connections).then((list) => modelLists.current.refresh(list.map((c) => c.id), (id, ok) => {
                 if (ok) void (id === 'chatgpt' ? chat.refreshProvider() : Promise.resolve()).then(show).catch(() => {})
               }))
             }}>
@@ -562,8 +570,22 @@ export function toolStep(name: string, args: string, display = (k: CardKey) => k
   const target: string | undefined = card ?? (typeof v?.path === 'string' ? v.path : typeof v?.definition === 'string' ? v.definition : typeof v?.query === 'string' ? v.query : undefined)
   const n = name.toLowerCase()
   const [running, done] =
-    n === 'delegate' ? [L('手分けして進めています'), L('手分けして進めました')]
+    n === 'project_reload' ? [L('プロジェクトを再読込しています'), L('プロジェクトを再読込')]
+    : n === 'project_shell' ? [L('シェルコマンドを実行しています'), L('シェルコマンドを実行')]
+    : n === 'card_s_d_k_prepare' ? [L('Card SDK を準備しています'), L('Card SDK を準備')]
+    : n === 'layout_arrange' || n === 'layout_untangle' ? [L('配置を整えています'), L('配置を整理')]
+    : n === 'project_cache_clear' ? [L('ビルドキャッシュを削除しています'), L('ビルドキャッシュを削除')]
+    : n === 'version_checkout' ? [L('版を切り替えています'), L('版を切替')]
+    : n === 'version_init' || n === 'version_mark' ? [L('版を記録しています'), L('版を記録')]
+    : n === 'card_id' ? [L('Card の識別子を予約しています'), L('Card の識別子を予約')]
+    : n === 'artifact_list' ? [L('出力を一覧しています'), L('出力を一覧')]
+    : n === 'project_file_list' ? [L('ファイルを一覧しています'), L('ファイルを一覧')]
+    : n === 'demo_list' ? [L('デモを一覧しています'), L('デモを一覧')]
+    : n === 'operation_approval' ? [L('操作の承認を待っています'), L('操作の承認')]
+    : n === 'guide_show' ? [L('案内を表示しています'), L('案内を表示')]
+    : n === 'delegate' ? [L('手分けして進めています'), L('手分けして進めました')]
     : n === 'web_search' ? [L('Web を検索しています'), L('Web を検索')]
+    : ['project_file_stat', 'output_types', 'version_graph', 'version_canvas', 'version_diff', 'nix_source_resolve', 'project_cache_usage'].includes(n) ? [L('確認しています'), L('確認')]
     : n.includes('save') || n.includes('put') || n.includes('write') ? [L('変更を保存しています'), L('変更を保存')]
     : n.includes('run') && !n.includes('status') ? [L('実行しています'), L('実行')]
     : n.includes('read') || n.includes('inspect') || n.includes('get') ? [L('確認しています'), L('確認')]
