@@ -8,7 +8,7 @@ import type { CardKind, CardNodeData, FlowDirection } from '../src/model/canvasK
 
 const { CardGeometry } = await import('../src/model/canvasKit')
 const root = process.argv[2]
-const data = path.join(root, 'docs', 'site', 'player-data')
+const data = path.join(process.env.TSUGUMI_SITE_PLAYER_DIR!, 'player-data')
 const ids = JSON.parse(fs.readFileSync(path.join(root, 'demos', 'ja', 'index.json'), 'utf8')).demos.map((d: { id: string }) => d.id) as string[]
 assert.ok(ids.length > 0)
 

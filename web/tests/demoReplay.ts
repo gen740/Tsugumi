@@ -4,7 +4,7 @@ import path from 'node:path'
 import type { DemoData } from '../src/ui/demoPlayer'
 
 const { framesOf, recordedTime, IDLE, DONE } = await import('../src/ui/demoPlayer')
-const dataDir = path.join(process.argv[2], 'docs/site/player-data')
+const dataDir = path.join(process.env.TSUGUMI_SITE_PLAYER_DIR!, 'player-data')
 
 // Recorded runs include instantaneous steps, parallel Cards, and repeated loop invocations.
 // The clock must advance between frames without overshooting or changing the recorded duration.

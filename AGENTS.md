@@ -50,7 +50,7 @@ Someone is doing other work on the same Mac. Do not take the foreground, and do 
 
 CI runs on GitHub Actions (the Linux and macOS jobs of [.github/workflows/ci.yml](.github/workflows/ci.yml)). To run the same checks locally, use [tests/ci-local.sh](tests/ci-local.sh). On a Mac it runs the macOS job as it is, and the Linux job in a Docker (OrbStack) container.
 
-Run [tests/check-fast.sh](tests/check-fast.sh) before every push: it runs the static tests (`tests/static`, which CI runs first, in about a minute) and builds the Web UI and site player checks.
+Run [tests/check-fast.sh](tests/check-fast.sh) before every push: it runs the static tests (`tests/static`, which CI runs first, in about a minute) and builds the Web UI checks, including the demo player.
 Use `--no-nix` for only the static tests (seconds). See [tests/README.md](tests/README.md) for suite details and manual tools.
 
 ### Compatibility
