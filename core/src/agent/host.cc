@@ -996,7 +996,7 @@ struct Host::State {
     if (call.name == "project_shell")
       Require(project, conversation, A::Access::Shell, wait, stop,
               "Execute shell commands as the project user inside its VM. "
-              "Commands can read and change the project and its shared folders. Command: " +
+              "Commands diagnose and read; project files are read-only. Command: " +
                   json::Text(args, "command"));
     std::string folder_resource;
     if (call.name == "attached_folder_read") {

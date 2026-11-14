@@ -8,7 +8,6 @@
 #include <array>
 #include <cerrno>
 #include <cstdlib>
-#include <cstdlib>
 #include <stdexcept>
 
 #include "service.hh"
@@ -55,12 +54,51 @@ struct ShellOutput {
 };
 
 auto Execute(const std::string& command, const std::string& cwd,
-             uint32_t timeout, const std::atomic<bool>& cancelled)
+             uint32_t timeout, const std::atomic<bool>& cancelled, bool agent)
     -> ShellOutput {
   Pipe out;
   Pipe err;
   proc::Spec spec;
   spec.argv = {TSUGUMI_BASH, "--noprofile", "--norc", "-c", command};
+  if (agent) {
+    // Reuse the platform's Card isolation mechanism. The shell has no writable
+    // project or result trees; temporary files are only for diagnosis.
+#ifdef __APPLE__
+    if (::access("/usr/bin/sandbox-exec", X_OK) != 0)
+      throw Failed(FailureKind::permission_denied,
+                   "Agent shell reads require Seatbelt");
+    auto quote = [](const std::string& path) {
+      std::string out = "\"";
+      for (const char c : path) {
+        if (c == '\\' || c == '"') out += '\\';
+        out += c;
+      }
+      return out + "\"";
+    };
+    const auto root = std::filesystem::canonical(cwd).string();
+    const auto temporary = std::filesystem::canonical(
+        std::filesystem::temp_directory_path()).string();
+    const auto profile =
+        "(version 1)(allow default)(deny file-write*)"
+        "(allow file-write* (subpath " + quote(temporary) +
+        ") (subpath \"/private/tmp\") (literal \"/dev/null\"))"
+        "(deny file-write* (subpath " + quote(root) + "))"
+        "(deny signal)(allow signal (target same-sandbox))";
+    spec.argv.insert(spec.argv.begin(), {"/usr/bin/sandbox-exec", "-p", profile});
+#else
+    const std::string bwrap = TSUGUMI_BWRAP;
+    if (bwrap.empty() || ::access(bwrap.c_str(), X_OK) != 0)
+      throw Failed(FailureKind::permission_denied,
+                   "Agent shell reads require bubblewrap");
+    const auto root = std::filesystem::canonical(cwd).string();
+    spec.argv.insert(spec.argv.begin(),
+                     {bwrap, "--unshare-user", "--unshare-pid", "--unshare-ipc",
+                      "--die-with-parent", "--new-session", "--cap-drop", "ALL",
+                      "--ro-bind", "/", "/", "--bind", "/tmp", "/tmp",
+                      "--ro-bind", root, root, "--proc", "/proc", "--dev", "/dev",
+                      "--"});
+#endif
+  }
   spec.cwd = cwd;
   spec.stdout_fd = out.write;
   spec.stderr_fd = err.write;
@@ -233,7 +271,8 @@ auto Service::project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
     });
     recorded = true;
     const auto output =
-        Execute(command, opts_.root.string(), timeout, cancelled);
+        Execute(command, opts_.root.string(), timeout, cancelled,
+                request->origin()->str() == "agent");
     FBB builder;
     const auto out = builder.CreateVector(
         reinterpret_cast<const uint8_t*>(output.streams[0].data()),

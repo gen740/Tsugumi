@@ -1047,6 +1047,24 @@ void require_mutation(std::optional<uint64_t> base_rev, const flatbuffers::Strin
   if (!crypto::is_uuid(op_id->str())) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
 }
 
+auto RequireApprovedPermissions(
+    const Resolution* before, const Resolution& after,
+    const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>* approvals)
+    -> void {
+  std::set<std::string> approved;
+  if (approvals)
+    for (const auto* permission : *approvals)
+      approved.insert(permission->str());
+  std::vector<std::pair<std::string, std::string>> missing;
+  for (const auto& widening : permissions::widenings(before, after))
+    if (!approved.contains(widening))
+      missing.emplace_back("permission", widening);
+  if (!missing.empty())
+    throw Failed(FailureKind::approval_required,
+                 "this change widens what Cards may do; the user approves it first",
+                 std::move(missing));
+}
+
 }  // namespace
 
 void Service::save(RequestIn& req) {
@@ -1086,15 +1104,8 @@ void Service::save(RequestIn& req) {
         }
         throw Failed(FailureKind::validation_failed, why, std::move(args));
       }
-      std::set<std::string> approved;
-      if (r->approved_permissions())
-        for (const auto* p : *r->approved_permissions()) approved.insert(p->str());
-      std::vector<std::pair<std::string, std::string>> missing;
-      for (const auto& w : permissions::widenings(base->resolution.get(), *staged.doc->resolution))
-        if (!approved.count(w)) missing.emplace_back("permission", w);
-      if (!missing.empty())
-        throw Failed(FailureKind::approval_required,
-                     "this save widens what Cards may do; the user approves it first", std::move(missing));
+      RequireApprovedPermissions(base->resolution.get(), *staged.doc->resolution,
+                                 r->approved_permissions());
     }
     if (staged.effective && staged.doc->execution_fingerprint != base->execution_fingerprint) {
       if (auto active = scheduler_->active_status())
@@ -1164,6 +1175,11 @@ void Service::reload(RequestIn& req) {
     if (auto active = scheduler_->active_status())
       throw Failed(FailureKind::busy, "a run is in progress", {{"run_id", *active->run_id}});
     auto staged = store_->stage_reload(op_id, r->origin()->str());
+    if (staged.effective) {
+      store_->resolve_staged(staged);
+      RequireApprovedPermissions(base->resolution.get(), *staged.doc->resolution,
+                                 r->approved_permissions());
+    }
     std::string receipt;
     store_->commit(staged, "reload", digest, [&](const Delta* d) {
       FBB b(1 << 14);
