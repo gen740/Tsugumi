@@ -1,6 +1,6 @@
 # Usage
 
-You do not need to read this first. Open a demo and **follow the thrush's guide, and you will mostly learn how the screen works**.
+You do not need to read this first. Open a demo and **let the thrush point out where to run it, view its results and try a parameter change**.
 If something is unclear, ask in the chat on the right. The Agent knows the open project and the operations on screen.
 
 ## The first five minutes
@@ -98,7 +98,7 @@ To implement a plan, describe Drafts, connect their wires and choose **Generate 
 
 To request a change, open **Comments…** on a Card (or its badge), write the request and choose **Generate from comments**. Selected Cards with open comments take precedence; otherwise the button uses all open comments at the current level. Resolved comments are folded and can be reopened. The save row and [version history](Versions.md#comments) show who changed them.
 
-Send **$demo** in a project's chat for a tour. The thrush points at controls and offers replies and action buttons; an action runs only when you press its button. **⌥⌘J** opens or closes the chat. Outside a tour, ask a question in the ordinary chat.
+Send **$demo** in a project's chat for a short tour: run, open the result, and optionally change a parameter, Apply and run again. You can also rerun with unchanged settings to explore reproducibility. The thrush points at controls and result locations; you read and judge the results, without a checklist to confirm. An action runs only when you press its button. **⌥⌘J** opens or closes the chat. Ask for more detail in the ordinary chat.
 
 ### Agent activity
 
