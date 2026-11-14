@@ -17,15 +17,23 @@ add_library(tsugumi_nix_eval STATIC src/nix_eval.cc src/derivation_transport.cc)
 target_compile_features(tsugumi_nix_eval PRIVATE cxx_std_23)
 target_link_libraries(tsugumi_nix_eval PRIVATE PkgConfig::NIX Threads::Threads)
 
+# Document loading and resolution are also used by the host before a project
+# daemon exists. Keep evaluation, execution and project storage out of that link.
+add_library(tsugumi_document STATIC
+  src/types.cc
+  src/document.cc
+  src/graph.cc
+  src/nix_refs.cc
+  src/collect_type.cc
+  src/host_requirements.cc)
+target_include_directories(tsugumi_document PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(tsugumi_document PUBLIC tsugumi_protocol tsugumi_json
+  flatbuffers::flatbuffers Threads::Threads tsugumi_workerd_support)
+
 add_library(tsugumi_core STATIC
   src/util/log.cc
   src/util/process.cc
   src/util/sqlite.cc
-  src/types.cc
-  src/host_requirements.cc
-  src/document.cc
-  src/graph.cc
-  src/nix_refs.cc
   src/permissions.cc
   src/versions.cc
   src/model.cc
@@ -62,7 +70,7 @@ set_source_files_properties(src/layout.cc src/layout_place.cc src/layout_wires.c
 target_include_directories(tsugumi_core
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/sdk/include)
-target_link_libraries(tsugumi_core PUBLIC tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
+target_link_libraries(tsugumi_core PUBLIC tsugumi_document tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
   PkgConfig::SQLITE3 PkgConfig::LIBGIT2 Threads::Threads tsugumi_nix_eval tsugumi_workerd_support)
 if(NOT APPLE)
   target_link_libraries(tsugumi_core PRIVATE PkgConfig::CRYPTO)
@@ -158,7 +166,7 @@ target_include_directories(tsugumi_agent_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_options(tsugumi_agent_core PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 set(TSUGUMI_AGENT_SQLITE_LIBRARY "" CACHE FILEPATH "SQLite library used by the native Agent service")
 target_link_libraries(tsugumi_agent_core PUBLIC tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
-  Threads::Threads tsugumi_core tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls)
+  Threads::Threads tsugumi_document tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls)
 if(TSUGUMI_AGENT_SQLITE_LIBRARY)
   target_link_libraries(tsugumi_agent_core PRIVATE ${TSUGUMI_AGENT_SQLITE_LIBRARY})
 else()
@@ -177,7 +185,7 @@ install(FILES ${TSUGUMI_GEN_DIR}/bfbs/agent.bfbs ${TSUGUMI_GEN_DIR}/bfbs/host.bf
 # against these existing archives. The normal runtime contains no test code.
 set(TSUGUMI_TEST_SUPPORT_DIR "" CACHE PATH "Install reusable core test build inputs")
 if(TSUGUMI_TEST_SUPPORT_DIR)
-  install(TARGETS tsugumi_core tsugumi_agent_core tsugumi_json tsugumi_workerd_support tsugumi_worker_protocol tsugumi_peer_tls
+  install(TARGETS tsugumi_core tsugumi_document tsugumi_nix_eval tsugumi_agent_core tsugumi_json tsugumi_workerd_support tsugumi_worker_protocol tsugumi_peer_tls
     ARCHIVE DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/lib)
   install(DIRECTORY include/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
   install(DIRECTORY ${PROJECT_SOURCE_DIR}/workerd/include/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)

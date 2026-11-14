@@ -16,14 +16,11 @@
 #include <span>
 #include <string>
 
+#include "collect_type.hh"
 #include "model.hh"
 #include "types.hh"
 
 namespace tsugumi {
-
-// The output message type of a Collect Card whose input port is `source`.
-// Returns null with `error` set when the source type cannot be collected.
-auto collect_output_type(const types::PortType& source, std::string& error) -> types::TypeRef;
 
 // Collects `members` (values of the `source` port, in order) into one value of
 // the `output` port. File / Directory members must live below
