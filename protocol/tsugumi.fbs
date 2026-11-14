@@ -297,6 +297,12 @@ table CardIdResult {
 }
 
 /// -> SaveResult. Apply all changes in one transaction at base_rev.
+/// Drafts have no ports: use {"card":"<id>","port":""} for each Draft wire end,
+/// with any number in or out. Implementing one requires SetProject in this same
+/// save rebinding every incoming end to a real input and every outgoing end to a
+/// real output (and boundary endpoints in its project's tsugumi.json). Even a
+/// single possible port must be stated. Ends on remaining Drafts stay empty.
+/// A non-existent port on a non-Draft Card is validation_failed, naming the wire.
 table ProjectSaveRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);

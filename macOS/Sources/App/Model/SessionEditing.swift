@@ -611,7 +611,6 @@ extension ProjectSession {
       g["cards"] = .array((g["cards"]?.array ?? []).filter { !ids.contains($0["id"]?.string ?? "") })
       g["connections"] = .array((g["connections"]?.array ?? []).filter { !cut.contains($0) })
     }
-    s.dropDraftPorts(cut, in: scope)
     if !prefix.isEmpty {
       // Boundary ports of removed Cards go too.
       s.updateExternal(prefix) { e in
@@ -636,20 +635,19 @@ extension ProjectSession {
     guard let fromId = path(from.0).last, let toId = path(to.0).last else { return }
     let existing = connections(in: scope).filter { $0["from"]?["card"]?.string == fromId && $0["from"]?["port"]?.string == from.1 }
     let next = existing.count == 1 ? existing[0]["to"]?["card"]?.string.map { key(scope + [$0]) } : nil
-    let needsFork = !existing.isEmpty && kind(from.0) != .fork && (next.map { kind($0) != .fork } ?? true)
+    let needsFork = !existing.isEmpty && kind(from.0) != .draft && kind(from.0) != .fork && (next.map { kind($0) != .fork } ?? true)
     let forkId = needsFork ? try await newCardId("fork", in: scope) : nil
     func valid(_ end: (CardKey, String), output: Bool) -> Bool {
       guard instance(end.0) != nil, Array(path(end.0).dropLast()) == scope else { return false }
       if forkId == nil { return true } // No suspension: the caller's visible ports are still current.
-      if end.1 == CardGeometry.newPort { return kind(end.0) == .draft }
+      if kind(end.0) == .draft { return end.1 == CardGeometry.newPort }
       let ports = portData(end.0)
       return (output ? ports.outputs : ports.inputs).contains { $0.name == end.1 }
     }
     guard isEditable, valid(from, output: true), valid(to, output: false) else { return }
     edit { s in
-      // An end at CardGeometry.newPort makes the Draft's port now.
-      let fromPort = s.draftPort(from, output: true, other: to.1, in: scope)
-      let toPort = s.draftPort(to, output: false, other: fromPort, in: scope)
+      let fromPort = s.kind(from.0) == .draft ? "" : from.1
+      let toPort = s.kind(to.0) == .draft ? "" : to.1
       // One wire per output: a value goes to several Cards through a fork Card.
       // A second wire from an output inserts one (or, from a fork, adds a branch).
       let taken = s.connections(in: scope).filter {
@@ -657,7 +655,7 @@ extension ProjectSession {
           && !($0["to"]?["card"]?.string == toId && $0["to"]?["port"]?.string == toPort)
       }
       var source = (card: fromId, port: fromPort)
-      if !taken.isEmpty {
+      if !taken.isEmpty && s.kind(from.0) != .draft {
         let next = taken.count == 1 ? taken[0]["to"]?["card"]?.string.map { key(scope + [$0]) } : nil
         if s.kind(from.0) == .fork {
           source = (fromId, s.addForkBranch(from.0, for: toId))
@@ -670,7 +668,7 @@ extension ProjectSession {
         }
       }
       // One connection per input port: a new wire replaces the old one.
-      let replaced = s.connections(in: scope).filter { $0["to"]?["card"]?.string == toId && $0["to"]?["port"]?.string == toPort }
+      let replaced = s.kind(to.0) == .draft ? [] : s.connections(in: scope).filter { $0["to"]?["card"]?.string == toId && $0["to"]?["port"]?.string == toPort }
       s.updateGraph(scope) { g in
         var conns = (g["connections"]?.array ?? []).filter { !replaced.contains($0) }
         conns.append(.object([
@@ -678,62 +676,6 @@ extension ProjectSession {
           ("to", .object([("card", .string(toId)), ("port", .string(toPort))])),
         ]))
         g["connections"] = .array(conns)
-      }
-      s.dropDraftPorts(replaced, in: scope)
-    }
-  }
-
-  /// Whether a wire of the scope ends at this port.
-  func portWired(_ k: CardKey, _ port: String, output: Bool, in scope: [String]) -> Bool {
-    let id = path(k).last
-    let side = output ? "from" : "to"
-    return connections(in: scope).contains { $0[side]?["card"]?.string == id && $0[side]?["port"]?.string == port }
-  }
-
-  /// The port a wire's end names. At CardGeometry.newPort: a Draft's port
-  /// without a wire or a new one, named after the port at the wire's other end
-  /// when that says more than "in" or "out". A Draft's ports are declared by
-  /// its wires.
-  private func draftPort(_ end: (CardKey, String), output: Bool, other: String, in scope: [String]) -> String {
-    guard end.1 == CardGeometry.newPort else { return end.1 }
-    let ports = portData(end.0)
-    let names = (output ? ports.outputs : ports.inputs).map(\.name)
-    if let free = names.first(where: { !portWired(end.0, $0, output: output, in: scope) }) { return free }
-    let says = other.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil
-      && other.range(of: #"^(in|out)[0-9]*$"#, options: .regularExpression) == nil
-    let base = says ? other : output ? "out" : "in"
-    var name = base
-    var n = 2
-    while names.contains(name) { name = "\(base)\(n)"; n += 1 }
-    let note: JSONValue = .object([("name", .string(name))])
-    if output {
-      updateMeta(end.0) { $0["outputs"] = .array(($0["outputs"]?.array ?? []) + [note]) }
-    } else {
-      updateCard(end.0) { $0["inputs"] = .array(($0["inputs"]?.array ?? []) + [note]) }
-    }
-    return name
-  }
-
-  /// After wires are gone: a Draft's port goes with its last wire.
-  private func dropDraftPorts(_ removed: [JSONValue], in scope: [String]) {
-    func held(_ k: CardKey, _ port: String, output: Bool) -> Bool {
-      if portWired(k, port, output: output, in: scope) { return true }
-      // Inside a Card in Card, the outer Card's boundary may name it.
-      guard !scope.isEmpty, let side = boundary(key(scope))?[output ? "outputs" : "inputs"]?.object else { return false }
-      return side.contains { $0.1["card"]?.string == path(k).last && $0.1["port"]?.string == port }
-    }
-    func without(_ list: JSONValue?, _ port: String) -> JSONValue? {
-      let rest = (list?.array ?? []).filter { $0["name"]?.string != port }
-      return rest.isEmpty ? nil : .array(rest)
-    }
-    for c in removed {
-      for (side, output) in [("from", true), ("to", false)] {
-        guard let id = c[side]?["card"]?.string, let port = c[side]?["port"]?.string else { continue }
-        let k = key(scope + [id])
-        guard instance(k) != nil, kind(k) == .draft, !held(k, port, output: output) else { continue }
-        if !output { updateCard(k) { $0["inputs"] = without($0["inputs"], port) } }
-        let list = output ? "outputs" : "inputs"
-        updateMeta(k) { $0[list] = without($0[list], port) }
       }
     }
   }
@@ -788,9 +730,8 @@ extension ProjectSession {
     edit { s in
       var conns = s.connections(in: scope)
       guard index < conns.count else { return }
-      let removed = conns.remove(at: index)
+      conns.remove(at: index)
       s.updateGraph(scope) { g in g["connections"] = .array(conns) }
-      s.dropDraftPorts([removed], in: scope)
     }
   }
 
@@ -801,7 +742,6 @@ extension ProjectSession {
       s.updateGraph(scope) { g in
         g["connections"] = .array((g["connections"]?.array ?? []).filter { !list.contains($0) })
       }
-      s.dropDraftPorts(list, in: scope)
     }
   }
 
@@ -812,7 +752,6 @@ extension ProjectSession {
       s.updateGraph(scope) { g in
         g["connections"] = .array((g["connections"]?.array ?? []).filter { !removed.contains($0) })
       }
-      s.dropDraftPorts(removed, in: scope)
     }
   }
 
@@ -1219,8 +1158,10 @@ extension ProjectSession {
       }
       let c = Tsugumi_RPC_LayoutCardT()
       c.id = id; c.x = at.x; c.y = at.y; c.width = g.size.width; c.height = g.size.height
-      c.inputs = ports(g.inputs, output: false); c.outputs = ports(g.outputs, output: true)
-      c.reorderable = [.code, .draft, .input, .subgraph].contains(kind(k))
+      // Unnamed visual anchors locate Draft wires without declaring Card ports.
+      c.inputs = ports(kind(k) == .draft ? [""] : g.inputs, output: false)
+      c.outputs = ports(kind(k) == .draft ? [""] : g.outputs, output: true)
+      c.reorderable = [.code, .input, .subgraph].contains(kind(k))
       return c
     }
     scene.wires = connections(in: scope).compactMap { c in

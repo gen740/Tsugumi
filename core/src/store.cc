@@ -177,16 +177,7 @@ std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc, const s
                                           const Document* base) const {
   // Staged documents carry their fingerprint already; a loaded one does not.
   if (doc->execution_fingerprint.empty()) doc->execution_fingerprint = execution_fingerprint(*doc, reader(*doc, pending));
-  crypto::Sha256 key;
-  key.update(doc->execution_fingerprint);
-  for (const auto& [id, def] : doc->definitions) {
-    key.update("\0meta\0", 6);
-    key.update(id);
-    if (def.meta_json) key.update(*def.meta_json);
-  }
-  for (const auto& [path, src] : doc->sources)
-    if (Document::is_card_meta_file(path)) { key.update(path); key.update(src.hash); }
-  auto resolution_key = key.finish_hex();
+  auto resolution_key = doc->execution_fingerprint;
   if (doc->resolution && doc->resolution_key == resolution_key) return doc;  // resolved before commit
   doc->resolution_key = resolution_key;
   if (base && base->resolution && base->resolution_key == doc->resolution_key) {
@@ -791,6 +782,11 @@ void Store::commit(Staged& st, const std::string& kind, const std::string& diges
   auto doc = st.doc;
   doc->rev = base->rev + 1;
   finalize(doc, &st.ops, base.get());
+  // Endpoint validity is a document invariant, including when a Draft becomes
+  // implemented. Never infer a port, even if there is only one candidate.
+  for (const auto& diagnostic : doc->resolution->all_diagnostics(false))
+    if (diagnostic.code == "unknown_port")
+      throw Failed(FailureKind::validation_failed, diagnostic.message);
   doc->execution_rev =
       doc->execution_fingerprint != base->execution_fingerprint ? base->execution_rev + 1 : base->execution_rev;
   st.delta.rev = doc->rev;

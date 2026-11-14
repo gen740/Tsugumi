@@ -24,27 +24,27 @@
         },
         "to": {
           "card": "load",
-          "port": "start"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "load",
-          "port": "data"
+          "port": ""
         },
         "to": {
           "card": "section",
-          "port": "data"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "section",
-          "port": "section"
+          "port": ""
         },
         "to": {
           "card": "b_value",
-          "port": "section"
+          "port": ""
         }
       }
     ]

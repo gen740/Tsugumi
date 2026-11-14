@@ -80,15 +80,15 @@ function readCard(root, id, ports, wires) {
   const note = (list, name) => (meta[list] ?? []).find((x) => x.name === name)?.description
   const description = meta.description
   const allParams = (def.params ?? []).filter((p) => p.name && p.type).map((p) => ({ name: p.name, type: p.type, value: paramText(p.data) }))
-  // Resolved ports are the core's; a Draft's are its declared ones and its wires (as portData in session.ts).
+  // Resolved ports are the core's; Drafts have no ports.
   const resolved = kind === 'draft' ? undefined : ports?.[id]
   if (kind !== 'draft' && !resolved) throw new Error(`no resolved ports for ${id}: run harvest.py --ports`)
   const inputs = resolved
     ? resolved.inputs.map((p) => ({ name: p.name, typeName: p.rootType || undefined, optional: p.optional || undefined, note: note('inputs', p.name) }))
-    : [...new Set([...(def.inputs ?? []).map((i) => i.name), ...wires.filter((w) => w.to === id).map((w) => w.toPort)])].map((name) => ({ name, note: note('inputs', name) }))
+    : []
   const outputs = resolved
     ? resolved.outputs.map((p) => ({ name: p.name, typeName: p.rootType || undefined, optional: p.optional || undefined, note: note('outputs', p.name) }))
-    : [...new Set([...(meta.outputs ?? []).map((o) => o.name), ...wires.filter((w) => w.from === id).map((w) => w.fromPort)])].map((name) => ({ name, note: note('outputs', name) }))
+    : []
   const summary = kind === 'draft' ? meta.content || description : description
   const details = [description, kind === 'draft' ? meta.content : undefined].filter(Boolean)
   const permissions = []

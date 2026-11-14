@@ -228,11 +228,10 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     return best
   }
 
-  /** Where a dropped wire ends. A Draft takes it anywhere on the Card: a port
-   *  of its own that has no wire, or a new one (never replacing another wire). */
+  /** A dropped wire attaches anywhere on a Draft Card. */
   const wireTarget = (p: Pt, output: boolean, except: CardKey): [CardKey, string] | undefined => {
     const near = nearestPort(p, output, except)
-    if (near) return session.kind(near[0]) === 'draft' && session.portWired(near[0], near[1], output, scope) ? [near[0], NEW_PORT] : near
+    if (near) return near
     const w = cv.world(p), m = 18 / z + 6
     const k = [...scene.cardKeys].reverse().find((x) => {
       if (x === except || session.kind(x) !== 'draft') return false
@@ -413,8 +412,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       if (!session.isEditable) return
       const other = wireTarget(local(ev), !output, k)
       if (!other) return
-      // Another wire from a Draft's port is another port.
-      const own: [CardKey, string] = [k, session.kind(k) === 'draft' && session.portWired(k, port, output, scope) ? NEW_PORT : port]
+      const own: [CardKey, string] = [k, port]
       void (output ? session.connect(own, other, scope) : session.connect(other, own, scope))
         .catch((e) => { session.notice = String(e); session.changed() })
     })
@@ -1053,13 +1051,13 @@ function hoverContent(session: ProjectSession, scope: string[], t: HoverTarget):
   const symbol = 'point.topleft.down.to.point.bottomright.curvepath'
   const c = session.connections(scope)[t.i]
   const fc = str(get(c, 'from', 'card')), fp = str(get(c, 'from', 'port')), tc = str(get(c, 'to', 'card')), tp = str(get(c, 'to', 'port'))
-  if (!fc || !fp || !tc || !tp) return { title: L('接続'), subtitle: '', symbol }
+  if (!fc || fp === undefined || !tc || tp === undefined) return { title: L('接続'), subtitle: '', symbol }
   const fk = key([...scope, fc]), tk = key([...scope, tc])
   const out = session.resolution.get(fk)?.outputs.find((p) => p.name === fp)
   const inp = session.resolution.get(tk)?.inputs.find((p) => p.name === tp)
   const lines = [`${session.displayName(fk)}.${fp}  →  ${session.displayName(tk)}.${tp}`]
   lines.push(L('型: ') + (out?.rootType ?? inp?.rootType ?? L('未解決')))
-  lines.push(inp?.optional ? L('受け側の入力: 省略可') : L('受け側の入力: 必須'))
+  if (session.kind(tk) !== 'draft') lines.push(inp?.optional ? L('受け側の入力: 省略可') : L('受け側の入力: 必須'))
   let status = L('この Run ではまだ値が通っていません')
   const st = session.cardStates.get(fk)
   const id = session.currentRunId

@@ -332,8 +332,8 @@ struct CardGeometry {
   static let draftEditRow: CGFloat = 120
   /// What is left of the header over the content of a Draft without a name.
   static let untitledTop: CGFloat = 8
-  /// What a wire names to end at a Draft's next port (`connect` makes the port).
-  static let newPort = "+"
+  /// What a wire names to end at a Draft Card itself.
+  static let newPort = ""
   /// Labels narrower than this are hidden (shown on hover instead).
   static let minLabel: CGFloat = 26
   /// Share of a triangle's wide edge taken by its narrow end (its apex).
@@ -360,8 +360,8 @@ struct CardGeometry {
   let grid: CGFloat?
 
   init(_ d: CardNodeData, flow: FlowDirection) {
-    inputs = d.inputs.map(\.name)
-    outputs = d.outputs.map(\.name)
+    inputs = d.isDraft ? [] : d.inputs.map(\.name)
+    outputs = d.isDraft ? [] : d.outputs.map(\.name)
     collapsed = d.collapsed
     draft = d.isDraft
     draftEditing = d.isDraft && d.draftEditing
@@ -619,7 +619,7 @@ struct CardGeometry {
   func showLabels(input: Bool) -> Bool {
     let list = input ? inputs : outputs
     guard !list.isEmpty else { return false }
-    // A Draft's ports come from its wires: their names say nothing yet (shown on hover).
+    // Draft attachment points have no labels.
     if draft { return false }
     if shape == .card && collapsed { return false }
     if shape == .start || shape == .toggle { return false }
@@ -629,8 +629,7 @@ struct CardGeometry {
     return spacing(input: input) >= Self.minLabel
   }
 
-  /// Where a wire starts from a side of a Draft that has no port yet (the
-  /// middle of the side, where the port will be). A side with ports starts from them.
+  /// Where wires attach directly to a Draft: the middle of either side.
   func newPortPoint(output: Bool) -> CGPoint? {
     guard draft, !collapsed, (output ? outputs : inputs).isEmpty else { return nil }
     let r = outlineRect
@@ -638,20 +637,8 @@ struct CardGeometry {
                                 : CGPoint(x: output ? cardWidth : 0, y: grid.map { snapToGrid(r.midY, Self.rowPitch($0)) } ?? r.midY)
   }
 
-  /// A Draft's ports are around the middle of its side, closer together when there are many.
-  private func draftPortY(_ index: Int, of count: Int) -> CGFloat {
-    let r = outlineRect
-    if let grid {
-      // The height is not on the grid: the nearest lines to the middle.
-      let p = Self.rowPitch(grid)
-      return snapToGrid(r.midY - CGFloat(count - 1) * p / 2, p) + CGFloat(index) * p
-    }
-    let pitch = min(Self.portRow, (r.height - 8) / CGFloat(count + 1))
-    return r.midY + (CGFloat(index) - CGFloat(count - 1) / 2) * pitch
-  }
-
   func port(_ name: String, output: Bool) -> CGPoint {
-    if name == Self.newPort, let p = newPortPoint(output: output) { return p }
+    if draft, let p = newPortPoint(output: output) { return p }
     let list = output ? outputs : inputs
     let index = list.firstIndex(of: name) ?? 0
     let i = CGFloat(index)
@@ -684,7 +671,6 @@ struct CardGeometry {
       }
       let x = output ? cardWidth : 0
       if collapsed { return CGPoint(x: x, y: grid.map { snapToGrid(Self.header / 2, Self.rowPitch($0)) } ?? Self.header / 2) }
-      if draft { return CGPoint(x: x, y: draftPortY(index, of: list.count)) }
       if let grid {
         let p = Self.rowPitch(grid)
         return CGPoint(x: x, y: firstRow(p) + i * p)
@@ -1383,7 +1369,7 @@ struct CardNodeView: View {
     }
   }
 
-  /// Dragging from here draws a wire that makes a Draft's first port on this
+  /// Dragging from here draws a wire attached directly to the Draft on this
   /// side (nothing is drawn until the pointer is over it).
   @ViewBuilder private func newPortMark(_ g: CardGeometry, output: Bool) -> some View {
     if let pt = g.newPortPoint(output: output) {

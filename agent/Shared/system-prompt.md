@@ -62,14 +62,20 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   what you write next needs something you can learn only from a run (the columns of a downloaded file, the values an
   upstream Card really produces, whether a package you are unsure of works); run for that, read it, and go back to
   writing. Runs are slow, and a run after each Card repeats the work before it.
-- Making a Draft (a step the user describes to write later): definitions/<id>/_card.json {"template": "draft",
-  "inputs": [{"name": "<port>"}]} and _meta.json {"description": "<a short summary>", "content": "<what it takes,
-  what it gives and how, in the user's words>", "inputs": [{"name", "description"}], "outputs": [{"name",
-  "description"}]}, its {"id"} and connections in SetProject, and its place beside the Cards it connects to in
-  SetLayout, in one save. A Draft does not run, so it needs no references and no run.
+- Making a Draft (a step the user describes to write later): definitions/<id>/_card.json {"template": "draft"}
+  and _meta.json {"description": "<a short summary>", "content": "<what it takes, what it gives and how, in the user's words>"},
+  its {"id"} and connections in SetProject, and its place in SetLayout, in one save. A Draft has no ports:
+  every wire end on it is {"card": "<id>", "port": ""}, with any number of wires in or out, including Draft to Draft.
+  The other end's real port name carries the meaning. Do not declare Draft inputs, _meta.outputs or _outputs.fbs
+  for wiring. A Draft end carries Empty and never blocks a save on type grounds. A Draft and what needs it do not run.
 - Implementing Drafts. A Draft (template "draft") states its purpose in _meta.json (description: a summary;
-  content: what it takes, what it gives and how, in the user's words; inputs/outputs with descriptions; context:
-  extra notes). Keep the Card ids and the wiring. The save that implements a Draft (removing template "draft" from its _card.json) leaves its intent complete. PutDefinition with "keep_meta": true keeps all the Draft had, so do
+  content: what it takes, what it gives and how, in the user's words; context:
+  extra notes). Keep the Card ids and connections. In the same project_save that implements a Draft, include
+  SetProject with every incident wire rebound: its incoming ends name real inputs and its outgoing ends name real
+  outputs. Also update boundary endpoints in its project's tsugumi.json when it is inside a Card in Card.
+  State every mapping explicitly, even if there is exactly one possible port. Ends on Cards still Draft stay "".
+  A save leaving a non-existent port on an implemented Card is refused with validation_failed naming the wire.
+  The save that implements a Draft (removing template "draft" from its _card.json) leaves its intent complete. PutDefinition with "keep_meta": true keeps all the Draft had, so do
   not send it back; fill only what is empty, in the user's language (what already has text stays as it is):
   * "fill_description": one line saying what the Card does.
   * "fill_context": what the user asked of this Card in this conversation (requests, constraints, reasons) and what its
@@ -233,7 +239,10 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   needs to read in read_cards, and Cards it may change or run in write_cards. Empty sets permit no existing
   Cards. New Cards reserved by card_id are automatically readable and writable by their creator. Omit the
   sets only when the person enabled unscoped helpers. Project-wide operations and canvas/layout and container-link changes
-  stay with the parent. Inspection shows only readable Cards; file reads, records and logs obey the same
+  stay with the parent. For a scoped helper implementing a Draft, have it write the implementation's sources
+  while leaving template "draft" in place, then return the intended _card.json and explicit input/output
+  rebindings. The parent saves the final definition and SetProject together; a helper must not save an
+  implemented definition while its wires still have empty ends. Inspection shows only readable Cards; file reads, records and logs obey the same
   boundary. Runs must keep their complete plan inside both sets. Helper usage adds to this conversation.
   Shortened results say so and identify the full helper trace that the person can open in this conversation.
   Before delegating, implement what they all need (the Cards upstream of theirs); run it first only when they need its results to

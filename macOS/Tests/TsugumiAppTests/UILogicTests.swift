@@ -197,7 +197,7 @@ import Testing
   #expect(scene.wires.map(\.dotted) == [false, true, true])
 }
 
-@Test func aDraftOffersItsNextPortAndOpensWhileWritten() {
+@Test func aDraftOffersCardAttachmentsAndOpensWhileWritten() {
   var data = CardNodeData(title: "x", kind: .draft, summary: "plan", inputs: [], outputs: [])
   let empty = CardGeometry(data, flow: .topToBottom)
   #expect(empty.newPortPoint(output: true) == CGPoint(x: CardGeometry.width / 2, y: empty.height))
@@ -206,7 +206,7 @@ import Testing
   let wired = CardGeometry(data, flow: .topToBottom)
   // The port is where the wire started; wires do not change the size of a Draft.
   #expect(wired.port("out", output: true) == CGPoint(x: CardGeometry.width / 2, y: wired.height))
-  #expect(wired.newPortPoint(output: true) == nil, "a side with a port starts its wires from it")
+  #expect(wired.newPortPoint(output: true) == empty.newPortPoint(output: true), "attachment remains available for more wires")
   #expect(wired.height == empty.height)
   // Across a left-to-right flow: the middle of the side; several around it.
   let right = CardGeometry(data, flow: .leftToRight)
@@ -638,4 +638,26 @@ func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
   #expect(try await session.sourceText("definitions/\(card)/\(source)").contains(entry))
   session.undo()
   #expect(session.definitionDrafts[card] == nil)
+}
+
+
+@MainActor @Test func draftImplementationListsWiresWithoutInventingPorts() throws {
+  let dir = try SyncTests.project()
+  defer { try? FileManager.default.removeItem(at: dir) }
+  let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+  let document = try JSONValue.parse(#"{"canvas":{"cards":[{"id":"plan"},{"id":"start"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}}"#)
+  session.project = document
+  session.definitionEdits["plan"] = DefinitionDraft(card: try JSONValue.parse(#"{"template":"draft"}"#))
+  session.definitionEdits["next"] = DefinitionDraft(card: try JSONValue.parse(#"{"template":"draft"}"#))
+  let editor = CardEditorModel(session: session, cardKey: "plan")
+  #expect(session.portData("plan").inputs.isEmpty && session.portData("plan").outputs.isEmpty)
+  #expect(editor.draftEnds.isEmpty)
+  editor.implementAs("fork")
+  #expect(editor.kind == .fork && editor.draftEnds.count == 2)
+  #expect(editor.draftEnds.map(\.side) == ["to", "from"])
+  #expect(editor.rebindings.isEmpty)
+  editor.rebindings[editor.draftEnds[0].id] = "in"
+  #expect(editor.rebindings[editor.draftEnds[1].id] == nil, "The output still needs an explicit choice")
+  #expect(session.kind("plan") == .draft)
+  #expect(session.connections(in: []) == document["canvas"]?["connections"]?.array)
 }

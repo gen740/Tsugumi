@@ -24,27 +24,27 @@
         },
         "to": {
           "card": "load",
-          "port": "start"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "load",
-          "port": "data"
+          "port": ""
         },
         "to": {
           "card": "structure",
-          "port": "data"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "structure",
-          "port": "atoms"
+          "port": ""
         },
         "to": {
           "card": "pocket",
-          "port": "atoms"
+          "port": ""
         }
       }
     ]

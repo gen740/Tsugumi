@@ -733,22 +733,22 @@ import Testing
     #expect(ports(a) == [[], []])
 
     try await s.connect(from: (a, CardGeometry.newPort), to: (b, CardGeometry.newPort), in: [])
-    #expect(wires() == ["p.out>q.in"])
-    #expect(ports(a) == [[], ["out"]] && ports(b) == [["in"], []])
+    #expect(wires() == ["p.>q."])
+    #expect(ports(a) == [[], []] && ports(b) == [[], []])
     let c = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 600, y: 0), name: "r")
     try await s.connect(from: (a, CardGeometry.newPort), to: (c, CardGeometry.newPort), in: [])
     try await s.connect(from: (c, CardGeometry.newPort), to: (b, CardGeometry.newPort), in: [])
-    #expect(ports(a) == [[], ["out", "out2"]] && ports(b) == [["in", "in2"], []])
+    #expect(ports(a) == [[], []] && ports(b) == [[], []])
     #expect(s.connections(in: []).count == 3, "no fork, nothing replaced")
 
-    // The core agrees (no unknown_port), and takes the ports away with the wires.
+    // The core agrees: no ports are created, even with many wires.
     await s.save()
     #expect(!s.dirty, "\(s.saveError ?? "")")
     for k in [a, b, c] {
       #expect(!(s.resolution[k]?.diagnostics ?? []).contains { $0.message.contains("port") }, "\(k)")
     }
     s.removeConnection(at: 0, in: [])
-    #expect(ports(a) == [[], ["out2"]] && ports(b) == [["in2"], []])
+    #expect(ports(a) == [[], []] && ports(b) == [[], []])
     s.disconnect(c, inputs: false, in: [])
     #expect(ports(b) == [[], []])
 
@@ -780,7 +780,7 @@ import Testing
     #expect(kept == b && s.displayName(b) == "日本語" && s.instance(b) != nil)
     try await s.renameCard(c, to: "日本語")
     #expect(s.displayName(c) == s.displayName(b) && b != c)
-    #expect(wires() == ["p.out2>r.in"])
+    #expect(wires() == ["p.>r."])
     #expect(s.cardNameProblem(b, " \n ") != nil)
     // An overlong name is still refused without changing the Card.
     let overlong = String(repeating: "あ", count: 1366)

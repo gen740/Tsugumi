@@ -24,27 +24,27 @@
         },
         "to": {
           "card": "load",
-          "port": "start"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "load",
-          "port": "data"
+          "port": ""
         },
         "to": {
           "card": "detrend",
-          "port": "data"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "detrend",
-          "port": "detrended"
+          "port": ""
         },
         "to": {
           "card": "fold",
-          "port": "detrended"
+          "port": ""
         }
       }
     ]

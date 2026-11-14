@@ -102,7 +102,7 @@ export interface ParamData {
 
 /** Everything a Card view needs, with no dependency on a session. */
 /** What a wire names to end at a Draft's next port (`session.connect` makes the port). */
-export const NEW_PORT = '+'
+export const NEW_PORT = ''
 
 export interface CardNodeData {
   runMark?: string
@@ -203,8 +203,8 @@ export class CardGeometry {
   readonly grid?: number
 
   constructor(d: CardNodeData, readonly flow: FlowDirection) {
-    this.inputs = d.inputs.map((p) => p.name)
-    this.outputs = d.outputs.map((p) => p.name)
+    this.inputs = d.kind === 'draft' ? [] : d.inputs.map((p) => p.name)
+    this.outputs = d.kind === 'draft' ? [] : d.outputs.map((p) => p.name)
     this.collapsed = d.collapsed
     this.draft = d.kind === 'draft'
     this.draftEditing = this.draft && !!d.draftEditing
@@ -450,7 +450,7 @@ export class CardGeometry {
   showLabels(input: boolean): boolean {
     const list = input ? this.inputs : this.outputs
     if (!list.length) return false
-    // A Draft's ports come from its wires: their names say nothing yet (shown on hover).
+    // Draft attachment points have no labels.
     if (this.draft) return false
     if (this.shape === 'card' && this.collapsed) return false
     if (this.shape === 'start' || this.shape === 'switch') return false
@@ -459,8 +459,7 @@ export class CardGeometry {
     return this.spacing(input) >= CardGeometry.minLabel
   }
 
-  /** Where a wire starts from a side of a Draft that has no port yet (the middle
-   *  of the side, where the port will be). A side with ports starts from them. */
+  /** Where wires attach directly to a Draft: the middle of either side. */
   newPort(output: boolean): Pt | undefined {
     if (!this.draft || this.collapsed || (output ? this.outputs : this.inputs).length) return undefined
     const r = this.outlineRect
@@ -469,20 +468,8 @@ export class CardGeometry {
       : { x: output ? this.cardWidth : 0, y: this.grid ? snapToGrid(r.y + r.height / 2, CardGeometry.rowPitch(this.grid)) : r.y + r.height / 2 }
   }
 
-  /** A Draft's ports are around the middle of its side, closer together when there are many. */
-  private draftPortY(index: number, count: number) {
-    const r = this.outlineRect
-    if (this.grid) {
-      // The height is not on the grid: the nearest lines to the middle.
-      const p = CardGeometry.rowPitch(this.grid)
-      return snapToGrid(r.y + r.height / 2 - ((count - 1) * p) / 2, p) + index * p
-    }
-    const pitch = Math.min(CardGeometry.portRow, (r.height - 8) / (count + 1))
-    return r.y + r.height / 2 + (index - (count - 1) / 2) * pitch
-  }
-
   port(name: string, output: boolean): Pt {
-    if (name === NEW_PORT) {
+    if (this.draft) {
       const p = this.newPort(output)
       if (p) return p
     }
@@ -515,7 +502,6 @@ export class CardGeometry {
     }
     const x = output ? this.cardWidth : 0
     if (this.collapsed) return { x, y: this.grid ? snapToGrid(CardGeometry.header / 2, CardGeometry.rowPitch(this.grid)) : CardGeometry.header / 2 }
-    if (this.draft) return { x, y: this.draftPortY(index, list.length) }
     if (this.grid) {
       const p = CardGeometry.rowPitch(this.grid)
       return { x, y: this.firstRow(p) + index * p }

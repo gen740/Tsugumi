@@ -1,16 +1,4 @@
 {
   "description": "Create an exact integer in Python",
-  "inputs": [
-    {
-      "name": "start",
-      "description": "Start signal"
-    }
-  ],
-  "outputs": [
-    {
-      "name": "out",
-      "description": "Integer value"
-    }
-  ],
-  "content": "Implement in Python. Return the integer 7 on out. Use namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;"
+  "content": "Implement in Python. Return the integer 7 on out. Use namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;\n\nPlanned inputs:\n- start: Start signal\n\nPlanned outputs:\n- out: Integer value"
 }

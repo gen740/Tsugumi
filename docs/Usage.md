@@ -29,7 +29,7 @@ Choose **New Project** on Home and select a destination. A new folder is created
 | Run or stop | The buttons at the top of the Canvas |
 | Place a Draft | Press `E` and write its content on the card (a name is optional) |
 | Place a Card | Right-click the Canvas and choose "Add Card" |
-| Connect | Drag from an output port (dropped anywhere on a Draft, it connects) |
+| Connect | Drag from an output port or a Draft’s outgoing edge; drop on an input port or anywhere on a Draft |
 | See or fix what is inside a Card | `s`, or "Settings" in the context menu (source, ports, Nix definition, run history) |
 | Run only this Card | "Run Only This Card (Last Inputs)" in the context menu |
 | Run from this Card downstream | "Run from Here Downstream" in the context menu |
@@ -97,6 +97,8 @@ The Mac app shows one project or Home per window. **⌘⇧N** adds a Home window
 Closing a project window leaves its execution environment resident. Stop it explicitly through the environment controls when it should end. Workflows, history, chats and selections are separate; API keys, app settings and the shared VM/store are shared. The Web UI uses [one project per browser tab](WebUI.md#several-projects).
 
 ## Working with the Agent
+
+Drafts have no ports; any number of wires can attach to the Card itself. To implement one by hand, choose **Implement Draft by hand** in Card settings → General, then specify every real endpoint under **Ports → Rebind wires** and Apply. Even a single candidate must be stated. The definition and all endpoint choices are saved together.
 
 To implement a plan, describe Drafts, connect their wires and choose **Generate Cards**. Review the saved source and each Card's run record. On failure or cancellation, completed saves remain; the save in progress is not applied. Saves widening permissions require [approval](security.md#the-agents-permission-boundary).
 

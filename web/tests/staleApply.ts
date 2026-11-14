@@ -359,3 +359,52 @@ console.log('note and group edits retain their opening revision: passed')
   assert.equal(s.inlineDraft!.revision.keptText, 'keep this text')
   assert.equal(s.inlineDraft!.content, '')
 }
+
+// A hand implementation is one transaction with explicit choices for every end.
+{
+  const { s, requests } = session()
+  const document = '{"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"c"}],"connections":[{"from":{"card":"b","port":"out"},"to":{"card":"a","port":""}},{"from":{"card":"a","port":""},"to":{"card":"c","port":""}}]}}'
+  s.project = parse(document)
+  s.confirmedProject = parse(document)
+  s.confirmedDefinitions.set('b', parse('{"template":"trigger"}'))
+  s.confirmedDefinitions.set('c', parse('{"template":"draft"}'))
+  const m = new CardEditorModel(s, 'a')
+  m.implementAs('fork')
+  assert.equal(m.kind, 'fork', 'the working copy exposes implemented settings before Apply')
+  assert.equal(s.nodeData('a', { definition: m.definition }).kind, 'fork', 'preview shows the implementation before it is saved')
+  assert.equal(m.draftEnds.length, 2)
+  assert.equal(await m.apply(), false, 'the only input is still an explicit choice')
+  assert.deepEqual(requests, [])
+  m.rebindings.set(m.draftEnds[0].id, 'in')
+  assert.equal(await m.apply(), false, 'each outgoing end also needs a port')
+  m.rebindings.set(m.draftEnds[1].id, 'out1')
+  const save = s.client!.save.bind(s.client)
+  let sent: R.DocumentChangeT[] = []
+  s.client!.save = async (base, op, origin, changes) => { sent = changes; return save(base, op, origin, changes) }
+  assert.equal(await m.apply(), true)
+  assert.ok(sent.some(c => c.valueType === R.DocumentChangeValue.PutDefinition))
+  assert.ok(sent.some(c => c.valueType === R.DocumentChangeValue.SetProject))
+  assert.equal(str(get(s.connections([])[0], 'to', 'port')), 'in')
+  assert.equal(str(get(s.connections([])[1], 'from', 'port')), 'out1')
+  assert.equal(str(get(s.connections([])[1], 'to', 'port')), '', 'the other Draft stays portless')
+  assert.equal(s.dirty, false)
+}
+
+// Rejected rebindings stay in the editor and cannot leak into autosave.
+{
+  const { s } = session()
+  const document = '{"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[{"from":{"card":"a","port":""},"to":{"card":"b","port":""}}]}}'
+  s.project = parse(document); s.confirmedProject = parse(document)
+  s.confirmedDefinitions.set('b', parse('{"template":"draft"}'))
+  const m = new CardEditorModel(s, 'a')
+  m.implementAs('trigger')
+  m.rebindings.set(m.draftEnds[0].id, 'wrong')
+  s.client!.save = async () => { throw new RPCFailure({ kind: D.FailureKind.validation_failed, diagnostic: 'wire a.wrong -> b.: no output port wrong' }) }
+  assert.equal(await m.apply(), false)
+  assert.equal(m.kind, 'trigger')
+  assert.equal(m.rebindings.get(m.draftEnds[0].id), 'wrong')
+  assert.equal(s.kind('a'), 'draft')
+  assert.equal(str(get(s.connections([])[0], 'from', 'port')), '')
+  assert.equal(s.dirty, false)
+}
+console.log('Draft implementation: explicit atomic rebindings passed')

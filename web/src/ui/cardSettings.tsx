@@ -10,7 +10,7 @@ import { cloneDef, merge3 } from '../model/merge'
 import { Observable, useObserve } from '../model/observable'
 import { OutputCatalogResult, parseOutputCatalog } from '../model/outputCatalog'
 import { prefs } from '../model/prefs'
-import { CardComment, CardKey, commentDone, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
+import { CardComment, CardKey, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../shared/bfbs'
 import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, serialize, str } from '../shared/json'
@@ -70,7 +70,7 @@ export class CardEditorModel extends Observable {
     return path(this.cardKey).pop()
   }
   get kind() {
-    return this.session.kind(this.cardKey)
+    return this.session.kind(this.cardKey) === 'subgraph' ? 'subgraph' : definitionKind(this.definition)
   }
   get exists() {
     return this.session.instance(this.cardKey) !== undefined
@@ -82,6 +82,41 @@ export class CardEditorModel extends Observable {
   get unapplied(): boolean {
     return !jeq(this.definition, this.baseDefinition) || !jeq(this.meta, this.baseMeta) || this.removed.size > 0 || this.created.size > 0 ||
       [...this.texts].some(([k, v]) => this.baseTexts.get(k) !== v)
+  }
+
+  rebindings = new Map<string, string>()
+
+  /** Incident wires and boundary ends; every choice starts empty. */
+  get draftEnds() {
+    if (this.session.kind(this.cardKey) !== 'draft' || this.kind === 'draft') return []
+    const scope = path(this.cardKey).slice(0, -1), id = path(this.cardKey).pop()
+    const ends: { id: string; label: string; side: string; index?: number; boundary?: string }[] = []
+    this.session.connections(scope).forEach((c, index) => {
+      for (const side of ['from', 'to']) if (str(get(c, side, 'card')) === id) {
+        const label = `${str(get(c, 'from', 'card'))}.${str(get(c, 'from', 'port'))} → ${str(get(c, 'to', 'card'))}.${str(get(c, 'to', 'port'))}`
+        ends.push({ id: `${index}:${side}:${serialize(c, false)}`, label, side, index })
+      }
+    })
+    const boundary = scope.length ? this.session.boundary(key(scope)) : undefined
+    for (const side of ['inputs', 'outputs']) {
+      const ports = get(boundary, side)
+      if (isObj(ports)) for (const [name, ep] of ports.entries()) if (str(get(ep, 'card')) === id)
+        ends.push({ id: `${side}:${name}:${serialize(ep, false)}`, label: `${side}.${name} → ${id}`, side, boundary: name })
+    }
+    return ends
+  }
+
+  implementAs(value: string) {
+    if (value === 'draft') this.definition = obj([['template', 'draft']])
+    else if (['python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia'].includes(value)) this.definition = obj([['language', value]])
+    else this.definition = obj([['template', value]])
+    if (value === 'input' || value === 'switch') {
+      this.setSetting('params', [obj([['name', 'value'], ['type', value === 'input' ? 'double' : 'bool'], ['data', value === 'input' ? new JNum('0') : false]])])
+      if (value === 'input' && this.outputsPath && !this.files.includes(this.outputsPath))
+        this.createFile('_outputs.fbs', 'namespace card;\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n')
+    }
+    if (value === 'merge') this.setSetting('inputs', [obj([['name', 'a']]), obj([['name', 'b']])])
+    this.changed()
   }
 
   /** Source files of the definition (documents excluded), with local changes. */
@@ -125,6 +160,7 @@ export class CardEditorModel extends Observable {
     this.generation++
     this.removed = new Set()
     this.created = new Set()
+    this.rebindings.clear()
     this.message = undefined
     this.conflicts = []
     this.revisionEdit.reload(this.session.rev)
@@ -321,6 +357,13 @@ export class CardEditorModel extends Observable {
       return false
     }
     this.follow()
+    const ends = this.draftEnds
+    if (ends.some(e => !this.rebindings.get(e.id)?.trim())) {
+      this.message = L('各 wire の実ポート名を指定してください（ポート欄）。')
+      this.changed()
+      return false
+    }
+    const bindings = new Map(this.rebindings)
     this.applying = true
     this.changed()
     const def = clone(this.definition), m = clone(this.meta), k = this.cardKey, prefix = this.prefix
@@ -335,6 +378,20 @@ export class CardEditorModel extends Observable {
       // A Card in Card has no settings of its own, but a _meta.json like any other.
       const card = d.link === undefined && def !== undefined ? def : d.card
       if (!current || !jeq(card, d.card) || !jeq(m, d.meta)) x.setCardDefinition(k, { ...cloneDef(d), card: clone(card), meta: clone(m) })
+      const scope = path(k).slice(0, -1)
+      if (ends.some(e => e.index !== undefined)) x.updateGraph(scope, g => {
+        const conns = arr(g.get('connections')) ?? []
+        for (const e of ends) if (e.index !== undefined) {
+          const ep = get(conns[e.index], e.side)
+          if (isObj(ep)) ep.set('port', bindings.get(e.id)!.trim())
+        }
+      })
+      if (ends.some(e => e.boundary !== undefined)) x.updateExternal(x.projectPrefix(scope)!, ext => {
+        for (const e of ends) if (e.boundary !== undefined) {
+          const ep = get(ext.project, 'boundary', e.side, e.boundary)
+          if (isObj(ep)) ep.set('port', bindings.get(e.id)!.trim())
+        }
+      })
       for (const [p, t] of changedTexts) {
         x.putSource(p, t)
         // Saved against the version this editor read (a file changed on both
@@ -381,7 +438,7 @@ function categories(m: CardEditorModel): CardEditorCategory[] {
   switch (m.kind) {
     case 'code': return ['general', 'comments', 'nix', 'source', 'ports', 'executions', 'artifacts', 'context']
     case 'input': return ['general', 'comments', 'source', 'ports', 'executions', 'artifacts', 'context']
-    case 'draft': return ['general', 'comments', 'ports', 'context']
+    case 'draft': return ['general', 'comments', 'context']
     case 'subgraph': return ['general', 'comments', 'ports', 'executions']
     default: return ['general', 'comments', 'ports', 'executions', 'artifacts', 'context']
   }
@@ -652,6 +709,11 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
           </Row>
         )}
       </Section>
+      {model.session.kind(model.cardKey) === 'draft' && <Section title={L('Draft を手動で実装')} footer={L('定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。')}>
+        <Row label={L('種類')}><Select value={str(get(def, 'template')) ?? str(get(def, 'language')) ?? 'draft'} onChange={v => model.implementAs(v)} options={
+          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'switch', 'trigger', 'fork', 'branch', 'merge', 'collect'].map(value => ({ value, label: value }))
+        } /></Row>
+      </Section>}
       {kind !== 'switch' && params.length > 0 && (
         <Section title={L('パラメータ')}>
           {params.map((_, i) => <ParamRow key={i} model={model} index={i} />)}
@@ -880,7 +942,7 @@ function portNote(model: CardEditorModel, list: string, name: string): { value: 
 function PortsCategory({ model }: { model: CardEditorModel }) {
   const r = model.session.resolution.get(model.cardKey)
   const def = model.definition
-  const editable = def !== undefined && ['code', 'draft', 'merge'].includes(model.kind)
+  const editable = def !== undefined && ['code', 'merge'].includes(model.kind)
   const inputs = arr(get(def, 'inputs')) ?? []
   const editInputs = (fn: (a: J[]) => void) => {
     const a = inputs.map((x) => clone(x))
@@ -890,6 +952,11 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
   const keepable = (r?.outputs ?? []).filter((p) => p.kind === D.PortKind.File || p.kind === D.PortKind.Directory)
   return (
     <Form>
+      {model.draftEnds.length > 0 && <Section title={L('wire の再接続')} footer={L('入力 wire には実入力ポート、出力 wire には実出力ポートを指定します。候補が一つでも指定が必要です。')}>
+        {model.draftEnds.map(e => <Row key={e.id} label={`${e.side === 'from' || e.side === 'outputs' ? L('出力ポート') : L('入力ポート')}: ${e.label}`}>
+          <TextField value={model.rebindings.get(e.id) ?? ''} placeholder={L('実ポート名')} onChange={v => { model.rebindings.set(e.id, v); model.changed() }} />
+        </Row>)}
+      </Section>}
       <Section title={L('入力ポート')} footer={L('入力の型は接続元の出力から決まります（_inputs.fbs は生成され、手で書きません）。')}>
         {editable ? (
           <>
