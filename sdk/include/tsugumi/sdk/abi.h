@@ -86,6 +86,10 @@ typedef struct tsugumi_call {
   const char* (*params_json)(void* host);
   int (*emit_json)(void* host, const char* port, const char* json);
   int (*display_json)(void* host, const char* json);
+  /* End the main function's output stream (not the run-start hook).
+   * Returns non-zero when a required output is absent. SDKs raise here,
+   * before returning to the worker and before postRun observes the result. */
+  int (*finish_outputs)(void* host);
 
   /* ABI 6. Failure at a source position. source is relative to the Card's
    * definition directory; line is one-based. cell may be NULL. */

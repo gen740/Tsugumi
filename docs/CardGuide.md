@@ -231,7 +231,11 @@ C++, Go and Rust keep their generated owned `Output` object. Set an optional fie
 
 R lists, Julia Dicts and Ruby Hashes carry messages checked by the JSON face against each port's FlatBuffers schema. C# returns generated `Outputs` properties, or uses its byte dictionary for finished buffers: `new Outputs { ["result"] = builder.SizedByteArray() }`. The adapter packs each typed property after awaiting the function.
 
-File and Directory outputs use the same result forms as other messages. Their `value` / `Value` field is an absolute path beneath `run.output_directory` (Go `run.OutputDirectory()`, C# `run.OutputDirectory`, Bash `$TSUGUMI_OUTPUT_DIR`). Write the files there, then return the path message. A Directory result includes its files and nested directories; [Run history](RunHistory.md#keep-and-open-artifacts) describes retention. The run object also exposes working and temporary directories, run and Card IDs, invocation number, cancellation and remaining time.
+Numeric messages retain IEEE NaN, positive and negative infinity, and signed zero across SDKs; these values never become an absent optional scalar. The interpreter JSON face uses `NaN`, `Infinity` and `-Infinity`, with conversion in the common SDK boundary. R's `NA` is rejected: use `NaN` for a numeric NaN or `NULL` for an absent optional scalar.
+
+Output bytes are checked against their declared type and the combined 16 MiB result-frame limit when emitted. The SDK checks required ports when the main function's result stream ends; a missing required result fails before `postRun` sees `TSUGUMI_FAILED`. Report calls validate presentation in the worker and return an error at the call; a client that receives malformed presentation shows it as unavailable without changing the invocation's result.
+
+File and Directory outputs use the same result forms as other messages. Their `value` / `Value` field is an absolute path beneath `run.output_directory` (Go `run.OutputDirectory()`, C# `run.OutputDirectory`, Bash `$TSUGUMI_OUTPUT_DIR`). Write the files there, then return the path message. A Directory result includes its files and nested directories; [Run history](RunHistory.md#keep-and-open-artifacts) describes retention. The run object also exposes working and temporary directories, run and Card IDs, invocation number, cancellation and remaining time. Python, R and Julia cancellation/deadline callbacks expire with their invocation; retaining a Run does not give it access to a later invocation.
 
 ### Results during a long invocation
 

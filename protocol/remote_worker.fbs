@@ -15,6 +15,8 @@ table JobSpec {
   system:string (required); derivation:string (required); output:string (required);
   invocation_sha256:string (required); input_blobs:[string] (required);
   cpu_millis:ulong; memory_bytes:ulong; timeout_seconds:uint;
+  // Core recording policy for combined build/stdout/stderr JSONL bytes.
+  log_limit_bytes:ulong;
 }
 // Spec bytes are a FlatBuffer rooted at JobSpec. Keeping the exact buffer
 // makes the fingerprint independent of packing and supports uncertain submits.
@@ -36,7 +38,7 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  worker_contract:uint = 3;
+  worker_contract:uint = 4;
 }
 table Target { id:string (required); available:bool; capabilities:Capabilities (required); }
 table Catalog { services:[Target] (required); }

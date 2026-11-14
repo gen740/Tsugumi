@@ -85,6 +85,7 @@ internal unsafe struct NativeCall {
     internal delegate* unmanaged[Cdecl]<void*, byte*> ParamsJson;
     internal delegate* unmanaged[Cdecl]<void*, byte*, byte*, int> EmitJson;
     internal delegate* unmanaged[Cdecl]<void*, byte*, int> DisplayJson;
+    internal delegate* unmanaged[Cdecl]<void*, int> FinishOutputs;
     internal delegate* unmanaged[Cdecl]<void*, byte*, byte*, byte*, uint, byte*, void> FailAt;
 }
 
@@ -154,6 +155,12 @@ internal sealed class InvocationScope {
             CheckActive();
             fixed (byte* name = Utf8(port), bytes = data)
                 if (call.Emit(call.Host, name, bytes, (nuint)data.Length) != 0) throw new Failure("output_invalid", $"Output {port} was rejected");
+        }
+    }
+    public unsafe void FinishOutputs() {
+        lock (gate) {
+            CheckActive();
+            if (call.FinishOutputs(call.Host) != 0) throw new Failure("output_invalid", "Required outputs were not emitted");
         }
     }
     public unsafe void Log(string message) { lock (gate) { CheckActive(); fixed (byte* text = Utf8(message)) call.Log(call.Host, text); } }

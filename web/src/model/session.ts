@@ -231,6 +231,7 @@ export type SyncState =
   | { kind: 'waitingForRun' }
 
 export type DisplayValue =
+  | { kind: 'unavailable' }
   | { kind: 'text'; text: string }
   /** Markdown with TeX math (the SDK's Markdown display). */
   | { kind: 'markdown'; text: string }
@@ -250,6 +251,7 @@ export interface DisplaySnapshot {
 /** Decode a retained display without changing the live canvas. */
 export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
   let value: DisplayValue
+  try {
   switch (d.valueType) {
     case D.DisplayValue.DisplayText: {
       const t = d.value as D.DisplayTextT
@@ -258,7 +260,7 @@ export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
     }
     case D.DisplayValue.DisplayScalar: {
       const v = d.value as D.DisplayScalarT
-      value = { kind: 'scalar', value: v.value ?? 0, label: s(v.label) }
+      value = { kind: 'scalar', value: v.value ?? NaN, label: s(v.label) }
       break
     }
     case D.DisplayValue.DisplayTable: {
@@ -278,18 +280,22 @@ export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
     }
     case D.DisplayValue.DisplayModule: {
       const m = d.value as D.DisplayModuleT
+      if (new Set(m.blobs.map(b => s(b.name))).size !== m.blobs.length) throw new Error('duplicate blobs')
       value = { kind: 'module', name: s(m.module), json: s(m.configJson), blobs: Object.fromEntries(m.blobs.map(b => [s(b.name), Uint8Array.from(b.data)])) }
       break
     }
     default:
-      return
+      value = { kind: 'unavailable' }
   }
+  if (!displayable(value)) value = { kind: 'unavailable' }
+  } catch { value = { kind: 'unavailable' } }
   return { runId: s(d.runId), invocation: d.invocation ?? 0n, revision: d.revision ?? 0n, value }
 }
 
 export function displaySummary(d: DisplaySnapshot): string {
   const v = d.value
   switch (v.kind) {
+    case 'unavailable': return L('この結果は表示できません')
     case 'text': return v.text.split('\n')[0] ?? ''
     case 'markdown': {
       // The first line with text, without Markdown marks.
@@ -301,6 +307,28 @@ export function displaySummary(d: DisplaySnapshot): string {
     case 'image': return v.alt || L('画像')
     case 'points': return L('点群 {0} 点', v.x.length)
     case 'module': return plotTitle(v.name, v.json) ?? L('モジュール {0}', v.name)
+  }
+}
+
+/** A malformed presentation stays attached to its run, with an explicit state. */
+function displayable(v: DisplayValue): boolean {
+  const bytes = (s: string) => new TextEncoder().encode(s).length
+  const id = (s: string) => s !== '.' && s !== '..' && /^[a-zA-Z0-9_.-]{1,128}$/.test(s)
+  switch (v.kind) {
+    case 'unavailable': return false
+    case 'text': case 'markdown': return bytes(v.text) <= 1 << 20
+    case 'scalar': return Number.isFinite(v.value)
+    case 'table': return v.columns.length > 0 && v.columns.length <= 64 && v.rows.length <= 10000 &&
+      v.columns.every(c => bytes(c) <= 4096) && v.rows.every(r => r.length === v.columns.length && r.every(c => bytes(c) <= 4096))
+    case 'image': return v.data.length <= 8 << 20 && (v.mediaType === 'image/png'
+      ? v.data.length > 8 && [137,80,78,71,13,10,26,10].every((b,i) => v.data[i] === b)
+      : v.mediaType === 'image/jpeg' && v.data.length > 3 && v.data[0] === 255 && v.data[1] === 216)
+    case 'points': return v.x.length <= 1000000 && v.x.length === v.y.length && v.x.length === v.z.length &&
+      (!v.colors.length || v.colors.length === v.x.length) && [v.x,v.y,v.z].every(a => a.every(Number.isFinite))
+    case 'module':
+      if (!/^\/nix\/store\/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[a-zA-Z0-9+._?=-]+$/.test(v.name) || bytes(v.json) > 1 << 20 ||
+          Object.keys(v.blobs).length > 64 || !Object.keys(v.blobs).every(id) || Object.values(v.blobs).reduce((n,b) => n+b.length,0) > 8 << 20) return false
+      try { JSON.parse(v.json); return true } catch { return false }
   }
 }
 
