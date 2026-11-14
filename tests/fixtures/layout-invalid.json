@@ -1,0 +1,66 @@
+[
+  {
+    "name": "truncated-boundary",
+    "json": "{\"boundar\":{}}"
+  },
+  {
+    "name": "extended-boundary",
+    "json": "{\"boundaryX\":{}}"
+  },
+  {
+    "name": "extended-boundaries",
+    "json": "{\"boundariesX\":{}}"
+  },
+  {
+    "name": "uppercase-boundary",
+    "json": "{\"Boundary\":{}}"
+  },
+  {
+    "name": "near-boundaries",
+    "json": "{\"boundarie\":{}}"
+  },
+  {
+    "name": "nul-suffix",
+    "json": "{\"boundary\\u0000\":{}}"
+  },
+  {
+    "name": "empty-key",
+    "json": "{\"\":{}}"
+  },
+  {
+    "name": "truncated-flow",
+    "json": "{\"flo\":\"leftToRight\"}"
+  },
+  {
+    "name": "plural-flow",
+    "json": "{\"flows\":\"leftToRight\"}"
+  },
+  {
+    "name": "uppercase-flow",
+    "json": "{\"Flow\":\"leftToRight\"}"
+  },
+  {
+    "name": "leading-space",
+    "json": "{\" flow\":\"leftToRight\"}"
+  },
+  {
+    "name": "trailing-space",
+    "json": "{\"flow \":\"leftToRight\"}"
+  },
+  {
+    "name": "accented-flow",
+    "json": "{\"flöw\":\"leftToRight\"}"
+  },
+  {
+    "name": "translated-flow",
+    "json": "{\"フロー\":\"leftToRight\"}"
+  },
+  {
+    "name": "escaped-flow",
+    "json": "{\"fl\\u006fw\":\"leftToRight\"}"
+  },
+  {
+    "name": "overflowing-coordinate",
+    "json": "{\"boundary\":{\"inputs\":{\"x\":1e999,\"y\":0}}}"
+  }
+]

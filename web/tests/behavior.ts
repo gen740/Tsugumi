@@ -1,3 +1,5 @@
+import { layoutHost } from '../src/shared/hostLayout'
+layoutHost.validate = async (json) => json
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -13,6 +15,7 @@ console.log('merge behavior: passed')
 // Agent recovery, images, references, approvals and compaction run through
 // protocol/agent.fbs in tests/core/agent_rpc_test.cc. These are UI behaviors.
 
+await import("./clientViewState")
 await import("./serviceProtocol")
 await import('./chatModelRefresh')
 await import("./guideRpc")
@@ -63,7 +66,7 @@ await import("./portGrid")
 
 await import("./marquee")
 
-await import("./layoutScenarios")
+await import("./hostLayoutScenarios")
 
 await import("./freeSpot")
 

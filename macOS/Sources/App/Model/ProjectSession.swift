@@ -1,3 +1,4 @@
+import TsugumiAgentClient
 import FlatBuffers
 import Foundation
 import Observation
@@ -443,7 +444,7 @@ final class ProjectSession {
   var versionComments: [String: [Tsugumi_Host_VersionCommentT]] = [:]
   var versionGraph: Tsugumi_RPC_VersionGraphT?
   /// A version's Cards and wires (a commit never changes: read once).
-  var versionCanvases: [String: Tsugumi_RPC_VersionCanvasT] = [:]
+  var versionCanvases: [String: Tsugumi_Host_VersionCanvasT] = [:]
   var versionNoteBusy: Set<String> = []
   var versionNoteErrors: [String: String] = [:]
   var versionNotes: [String: String] = [:]
@@ -772,15 +773,11 @@ final class ProjectSession {
     applyResolution(s.resolution.compactMap { $0 }, s.diagnostics.compactMap { $0 })
     if currentRunId != s.run.runId { runBatches = [:] }
     runStatus = s.run
-    if let v = s.view {
-      viewRev = s.viewRev ?? 0
-      initialScope = v.scope.path
-      for cam in v.cameras.compactMap({ $0 }) {
-        cameras[key(cam.scope.path)] = (cam.x ?? 0, cam.y ?? 0, cam.zoom ?? 1)
-      }
-      initialSelection = Set(v.selectedCards.compactMap { $0.map { key($0.path) } })
-    } else {
-      viewRev = s.viewRev ?? 0
+    viewRev = s.viewRev ?? 0
+    if let json = s.viewJson, let v = try? JSONDecoder().decode(ClientViewState.self, from: Data(json.utf8)) {
+      initialScope = v.scope
+      for cam in v.cameras where cam.valid { cameras[key(cam.scope)] = (cam.x, cam.y, cam.zoom) }
+      initialSelection = Set(v.selected_cards.map { key($0) })
     }
     if resetDraft {
       project = confirmedProject
@@ -1439,6 +1436,25 @@ final class ProjectSession {
     guard let client else { throw RPCError.disconnected }
     if !editor { canvasSaveOp = op.uuidString.lowercased() }
     defer { if !editor { canvasSaveOp = nil } }
+    var changes = changes
+    let projectChange = changes.compactMap { $0.value?.value as? Tsugumi_RPC_SetProjectT }.first
+    let layoutChange = changes.compactMap { $0.value?.value as? Tsugumi_RPC_SetLayoutT }.first
+    if let projectChange, let next = try? JSONValue.parse(projectChange.json) {
+      func ids(_ value: JSONValue) -> Set<String> { Set((value["canvas"]?["cards"]?.array ?? []).compactMap { $0["id"]?.string }) }
+      let removed = ids(confirmedProject).subtracting(ids(next))
+      if !removed.isEmpty {
+        let original = layoutChange?.json ?? confirmedLayout.serialized()
+        let cleaned = try await CoreAgentClient.shared.validateLayout(original, removedCards: removed.sorted())
+        if let layoutChange { layoutChange.json = cleaned } else { changes.append(Change.setLayout(cleaned)) }
+      }
+    }
+    for change in changes {
+      if let value = change.value?.value as? Tsugumi_RPC_SetLayoutT {
+        _ = try await CoreAgentClient.shared.validateLayout(value.json)
+      } else if let value = change.value?.value as? Tsugumi_RPC_PutSourceT, value.path.range(of: #"^(?:externals/[^/]+/)+layout\.json$"#, options: .regularExpression) != nil {
+        _ = try await CoreAgentClient.shared.validateLayout(String(decoding: value.bytes, as: UTF8.self))
+      }
+    }
     let result = try await client.save(baseRev: baseRev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())",
                                        changes: changes)
     if let d = result.delta {
@@ -1567,19 +1583,11 @@ final class ProjectSession {
     viewSaveTask = Task {
       try? await Task.sleep(for: .milliseconds(600))
       guard !Task.isCancelled, let client else { return }
-      let v = Tsugumi_RPC_ViewStateT()
-      v.scope = cardPath(scope)
-      v.cameras = cameras.map { k, c in
-        let cam = Tsugumi_RPC_CameraT()
-        cam.scope = cardPath(path(k))
-        cam.x = c.x
-        cam.y = c.y
-        cam.zoom = c.zoom
-        return cam
-      }
-      v.selectedCards = selection.sorted().map { cardPath(path($0)) }
+      let v = ClientViewState(scope: scope, cameras: cameras.map { k, c in
+        ClientViewState.Camera(scope: path(k), x: c.x, y: c.y, zoom: c.zoom)
+      }, selectedCards: selection.sorted().map { path($0) })
       do {
-        let r = try await client.saveView(viewId: viewId, baseRev: viewRev, view: v)
+        let r = try await client.saveView(viewId: viewId, baseRev: viewRev, view: try v.json())
         viewRev = r.viewRev ?? viewRev
       } catch let f as RPCFailure where f.kind == .revisionConflict {
         viewRev = f.currentRev ?? viewRev

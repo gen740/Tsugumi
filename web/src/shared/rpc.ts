@@ -11,7 +11,6 @@ import { RequestPayload } from '../gen/tsugumi/rpc/request-payload'
 import { RequestT } from '../gen/tsugumi/rpc/request'
 import { NotificationT } from '../gen/tsugumi/rpc/notification'
 import { L } from '../i18n'
-import type { LayoutBar, LayoutBox, LayoutPort, LayoutProposal, LayoutScene } from '../model/layoutScene'
 
 export { D, R, RequestPayload }
 
@@ -306,8 +305,8 @@ export class RPCClient {
       Object.assign(new R.ViewSetVisibleRequestT(), { subscriptionId, cards: cards.map(cardPath), enabled }),
     )
   }
-  saveView(viewId: string, baseViewRev: bigint, view: R.ViewStateT) {
-    return this.call<R.ViewSaveResultT>(RequestPayload.ViewSaveRequest, Object.assign(new R.ViewSaveRequestT(), { viewId, baseViewRev, view }))
+  saveView(viewId: string, baseViewRev: bigint, view: string) {
+    return this.call<R.ViewSaveResultT>(RequestPayload.ViewSaveRequest, Object.assign(new R.ViewSaveRequestT(), { viewId, baseViewRev, viewJson: view }))
   }
   /** Each Card's latest invocation of a run. */
   latestInvocations(runId: string) {
@@ -316,14 +315,6 @@ export class RPCClient {
   /** Looks a flake up for nixSources (nothing is saved). */
   resolveNixSource(ref: string) {
     return this.call<R.NixSourceResolvedT>(RequestPayload.NixSourceResolveRequest, Object.assign(new R.NixSourceResolveRequestT(), { ref }), 300_000)
-  }
-  /** Where tsugumid would put a scope's Cards, frames and notes, and the port orders that go with it (nothing is saved). */
-  async layoutArrange(scene: LayoutScene): Promise<LayoutProposal> {
-    return proposalOf(await this.call<R.LayoutProposalT>(RequestPayload.LayoutArrangeRequest, new R.LayoutArrangeRequestT(sceneRequest(scene))))
-  }
-  /** The port orders that cross fewer wires with every Card where it is; `around`: only near the Cards just moved. */
-  async layoutUntangle(scene: LayoutScene, around: string[]): Promise<LayoutProposal> {
-    return proposalOf(await this.call<R.LayoutProposalT>(RequestPayload.LayoutUntangleRequest, new R.LayoutUntangleRequestT(sceneRequest(scene), around)))
   }
   /** Deletes the project's build caches; documents and history are kept. */
   clearCache(opId: string) {
@@ -358,26 +349,6 @@ export class RPCClient {
   }
   format(path: string, text: string) {
     return this.call<R.ProjectFileFormatResultT>(RequestPayload.ProjectFileFormatRequest, Object.assign(new R.ProjectFileFormatRequestT(), { path, text }))
-  }
-}
-
-function sceneRequest(scene: LayoutScene): R.LayoutSceneT {
-  const ports = (list: LayoutPort[]) => list.map((p) => new R.LayoutPortT(p.name, p.x, p.y))
-  const boxes = (list: LayoutBox[]) => list.map((b) => new R.LayoutBoxT(b.id, b.x, b.y, b.width, b.height))
-  const bar = (b: LayoutBar | undefined) => b && new R.LayoutBarT(b.ends.map((e) => new R.LayoutBarEndT(e.name, e.card, e.port)), b.at?.x ?? null, b.at?.y ?? null)
-  return new R.LayoutSceneT(
-    scene.flow, scene.grid, scene.snap,
-    scene.cards.map((c) => new R.LayoutCardT(c.id, c.x, c.y, c.width, c.height, ports(c.inputs), ports(c.outputs), c.reorderable)),
-    scene.wires.map((w) => new R.LayoutWireT(w.from, w.fromPort, w.to, w.toPort)),
-    boxes(scene.frames), boxes(scene.notes), bar(scene.inputs) ?? null, bar(scene.outputs) ?? null,
-  )
-}
-
-function proposalOf(reply: R.LayoutProposalT): LayoutProposal {
-  const places = (list: R.LayoutPlaceT[]) => list.map((p) => ({ id: s(p.id), x: p.x, y: p.y }))
-  return {
-    cards: places(reply.cards), frames: places(reply.frames), notes: places(reply.notes),
-    portOrders: reply.portOrders.map((o) => ({ id: s(o.id), inputs: o.inputs.map((n) => s(n)), outputs: o.outputs.map((n) => s(n)) })),
   }
 }
 

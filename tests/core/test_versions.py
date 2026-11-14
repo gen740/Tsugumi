@@ -346,23 +346,9 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
     assert {k: text(v.kind) for k, v in cards.items()} == {
         "start": "trigger", "src": "input", "out": "fork", "f": "fork", "wide": "fork", "b": "branch", "m": "merge"}
     assert (cards["f"].fan, cards["wide"].fan, cards["m"].fan, cards["b"].fan, cards["out"].fan) == (2, 3, 2, 0, 0)
-    # Columns by depth run left to right, whatever the layout says.
-    assert text(canvas.flow) == "leftToRight" and not any(k.collapsed for k in canvas.cards)
-
-    at = {k: {"x": 0, "y": i * 100} for i, k in enumerate(cards)}
-    at["out"]["collapsed"] = True
-    layouts = [
-        # The saved direction, and without one, from where the wired Cards sit.
-        ({"flow": "topToBottom", "cards": {k: {**v, "x": i * 100, "y": 0} for i, (k, v) in enumerate(at.items())}}, "topToBottom"),
-        ({"flow": "leftToRight", "cards": at}, "leftToRight"),
-        ({"cards": at}, "topToBottom"),
-        ({"cards": {k: {**v, "x": i * 100, "y": 0} for i, (k, v) in enumerate(at.items())}}, "leftToRight"),
-    ]
-    for layout, flow in layouts:
-        (root / "layout.json").write_text(json.dumps(layout))
-        placed = c.call("VersionCanvasRequest", commit=commit_all(root))
-        assert text(placed.flow) == flow, layout
-        assert {text(k.id) for k in placed.cards if k.collapsed} == {"out"}
+    raw_layout = '{"cards":{"out":{"x":3,"y":7,"collapsed":true}},"future":1}'
+    (root / "layout.json").write_text(raw_layout)
+    assert text(c.call("VersionCanvasRequest", commit=commit_all(root)).layoutJson) == raw_layout
     # An older version keeps what its Cards were.
     wide.write_text(json.dumps({"template": "merge", "inputs": [{"name": "a"}]}))
     now = {text(k.id): k for k in c.call("VersionCanvasRequest", commit=commit_all(root)).cards}
@@ -391,10 +377,9 @@ def test_a_version_has_its_canvas_diff_and_summary(tmp_path, core_factory):
     assert "patient" not in whole and "secret" not in whole and "values.csv" not in whole
     # No saved positions: columns by depth, and only real wires.
     canvas = c.call("VersionCanvasRequest", commit=first)
-    at = {text(k.id): (k.x, k.y) for k in canvas.cards}
+    at = {text(k.id): None for k in canvas.cards}
     assert set(at) == {"start", "src", "out", "later"}
     assert [(text(w.from_), text(w.to)) for w in canvas.wires] == [("src", "out")]
-    assert at["src"][0] < at["out"][0]
     # A later version: its diff is what it changed, and the older version
     # keeps its own Cards.
     set_text(c, "second")
@@ -406,8 +391,8 @@ def test_a_version_has_its_canvas_diff_and_summary(tmp_path, core_factory):
     change = c.call("VersionDiffRequest", commit=second)
     assert '"second"' in text(change.text) and "first" in text(change.text) and "patient" not in text(change.text)
     assert "layout.json" not in text(change.text) and not change.truncated
-    placed = {text(k.id): (k.x, k.y) for k in c.call("VersionCanvasRequest", commit=second).cards}
-    assert placed["src"][1] == 7 and placed["out"][0] == 200
+    placed = json.loads(text(c.call("VersionCanvasRequest", commit=second).layoutJson))["cards"]
+    assert placed["src"]["y"] == 7 and placed["out"]["x"] == 200
     # The summary: on the commit, in its own note, and replaced when written again.
     factual = c.call("VersionNoteRequest", commit=second, language="ja")
     assert text(factual.text) == "変更: src (パラメータ)"

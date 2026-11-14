@@ -48,20 +48,6 @@ public extension RPCClient {
     return try await call(.projectsaverequest, r)
   }
 
-  /// Returns a layout proposal; saving it is a separate ProjectSave edit.
-  func layoutArrange(_ scene: Tsugumi_RPC_LayoutSceneT) async throws -> Tsugumi_RPC_LayoutProposalT {
-    let r = Tsugumi_RPC_LayoutArrangeRequestT()
-    r.scene = scene
-    return try await call(.layoutarrangerequest, r)
-  }
-
-  func layoutUntangle(_ scene: Tsugumi_RPC_LayoutSceneT, around: [String] = []) async throws -> Tsugumi_RPC_LayoutProposalT {
-    let r = Tsugumi_RPC_LayoutUntangleRequestT()
-    r.scene = scene
-    r.around = around
-    return try await call(.layoutuntanglerequest, r)
-  }
-
   func reload(baseRev: UInt64, opId: UUID, origin: String, approvedPermissions: [String] = []) async throws -> Tsugumi_RPC_SaveResultT {
     let r = Tsugumi_RPC_ProjectReloadRequestT()
     r.baseRev = baseRev
@@ -214,11 +200,11 @@ public extension RPCClient {
     let _: Tsugumi_RPC_AckT = try await call(.viewsetvisiblerequest, r)
   }
 
-  func saveView(viewId: UUID, baseRev: UInt64, view: Tsugumi_RPC_ViewStateT) async throws -> Tsugumi_RPC_ViewSaveResultT {
+  func saveView(viewId: UUID, baseRev: UInt64, view: String) async throws -> Tsugumi_RPC_ViewSaveResultT {
     let r = Tsugumi_RPC_ViewSaveRequestT()
     r.viewId = viewId.uuidString.lowercased()
     r.baseViewRev = baseRev
-    r.view = view
+    r.viewJson = view
     return try await call(.viewsaverequest, r)
   }
 

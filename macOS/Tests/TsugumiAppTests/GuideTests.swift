@@ -58,7 +58,7 @@ import TsugumiRPC
 }
 
 /// "card:<id>" also points at that Card inside the Card in Card on the screen.
-@MainActor @Test func aCardIsFoundInsideACardInCard() {
+@MainActor @Test(.hostService) func aCardIsFoundInsideACardInCard() {
   let g = GuideController.shared
   #expect(!g.points(at: "card:archive/copy"))
 }
@@ -89,7 +89,7 @@ import TsugumiRPC
 
 /// A Card on the real canvas tells the stage the canvas's zoom: without it the
 /// bird would stand at its full size whatever the zoom.
-@MainActor @Test func aCardOnTheCanvasTellsTheBirdItsZoom() async throws {
+@MainActor @Test(.hostService) func aCardOnTheCanvasTellsTheBirdItsZoom() async throws {
   let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("guide-zoom-\(UUID().uuidString.prefix(8))")
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   defer { try? FileManager.default.removeItem(at: dir) }

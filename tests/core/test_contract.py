@@ -261,23 +261,16 @@ def test_external_change_and_reload(daemon, client):
 
 def test_view_save_cas(client):
     """View state persists and rejects edits based on an old view revision."""
-    from Tsugumi.RPC.ViewState import ViewStateT
-    from Tsugumi.RPC.Camera import CameraT
     view_id = new_id()
-    v = ViewStateT()
-    v.scope = path()
-    cam = CameraT()
-    cam.scope, cam.x, cam.y, cam.zoom = path(), 1.5, -2.0, 1.25
-    v.cameras = [cam]
-    v.selectedCards = [path("a")]
-    r1 = client.call("ViewSaveRequest", viewId=view_id, baseViewRev=0, view=v)
+    v = '{ "scope":[], "cameras":[{"zoom":-1}], "client_extension":true }'
+    r1 = client.call("ViewSaveRequest", viewId=view_id, baseViewRev=0, viewJson=v)
     assert r1.viewRev == 1
     with pytest.raises(RpcFailure) as e:
-        client.call("ViewSaveRequest", viewId=view_id, baseViewRev=0, view=v)
+        client.call("ViewSaveRequest", viewId=view_id, baseViewRev=0, viewJson=v)
     assert e.value.kind == "revision_conflict" and e.value.failure.currentRev == 1
     opened = client.open(view_id=view_id)
     assert opened.snapshot.viewRev == 1
-    assert opened.snapshot.view.cameras[0].zoom == 1.25
+    assert text(opened.snapshot.viewJson) == v
 
 
 def test_validate_and_unsupported_format(client):
@@ -335,10 +328,6 @@ def test_ui_layout_fields_and_draft_outputs(client):
     assert json.loads(text(res.delta.layoutJson))["groups"][0]["name"] == "G"
     assert res.executionRev == snap.executionRev  # layout never re-resolves computation
     assert json.loads(text(res.delta.layoutJson))["cards"]["src"]["inputOrder"] == ["b", "a"]
-    with pytest.raises(RpcFailure) as e:
-        client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
-                    changes=[change("SetLayout", json=json.dumps({"groups": [{"id": "g", "typo": 1}]}))])
-    assert e.value.kind == "invalid_document"
 
     doc = project_json(client.call("ProjectInspectRequest"))
     doc["canvas"]["cards"].append({"id": "plan"})

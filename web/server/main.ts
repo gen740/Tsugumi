@@ -278,6 +278,10 @@ async function updateExecutionServices(method: string, body: unknown) {
 
 type Handler = (b: any, url: URL) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
+  'POST /api/layout/arrange': (b) => hostRequest('LayoutArrangeRequest', b),
+  'POST /api/layout/untangle': (b) => hostRequest('LayoutUntangleRequest', b),
+  'POST /api/layout/validate': (b) => hostRequest('LayoutValidateRequest', b),
+  'POST /api/layout/version-canvas': (b) => hostRequest('VersionCanvasRequest', b),
   'GET /api/execution-services': () => hostRequest('ExecutionServicesRequest'),
   'POST /api/execution-services/register': (body) => updateExecutionServices('ExecutionServicePutRequest', body),
   'POST /api/execution-services/remove': (body) => updateExecutionServices('ExecutionServiceRemoveRequest', body),

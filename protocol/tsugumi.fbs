@@ -63,19 +63,6 @@ table ResolvedCard {
   nix_references:[CardNixReference] (id: 4, required);
 }
 
-table Camera {
-  scope:Tsugumi.Data.CardPath (id: 0, required);
-  x:double = null (id: 1);
-  y:double = null (id: 2);
-  zoom:double = null (id: 3);
-}
-
-table ViewState {
-  scope:Tsugumi.Data.CardPath (id: 0, required);
-  cameras:[Camera] (id: 1, required);
-  selected_cards:[Tsugumi.Data.CardPath] (id: 2, required);
-}
-
 /// state: idle -> queued -> preparing -> running -> succeeded|failed|cancelled,
 /// cancelling while a cancel is in progress. Anything but idle carries run_id,
 /// rev, execution_rev and accepted_at; terminal states carry ended_at.
@@ -130,7 +117,8 @@ table ProjectSnapshot {
   resolution:[ResolvedCard] (id: 7, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 8, required);
   run:RunStatus (id: 9, required);
-  view:ViewState (id: 10);
+  /// Opaque client-owned JSON; the core never interprets camera or selection.
+  view_json:string (id: 10);
   view_id:string (id: 11);
   view_rev:uint64 = null (id: 12);
   execution_services:[ExecutionService] (id: 13);
@@ -443,7 +431,8 @@ table VersionCheckoutRequest {
 /// -> VersionGraph, newest first.
 table VersionGraphRequest { limit:uint32 = null (id: 0); }
 
-/// -> VersionCanvas: the Cards of a version and how they connect (a minimap).
+/// -> VersionCanvas: raw layout, definition kinds and connections of a version.
+/// The host service interprets these for a minimap.
 table VersionCanvasRequest { commit:string (id: 0, required); }
 
 /// -> VersionDiff: what a version changed from another version (its first parent
@@ -742,7 +731,7 @@ table ViewSetVisibleRequest {
 table ViewSaveRequest {
   view_id:string (id: 0, required);
   base_view_rev:uint64 = null (id: 1);
-  view:ViewState (id: 2, required);
+  view_json:string (id: 2, required);
 }
 
 /// -> FileContent. Reads immutable module source in bounded pages. For a Wasm
@@ -752,97 +741,6 @@ table ModuleReadRequest {
   module:string (id: 0, required);
   offset:uint64 = null (id: 1);
   limit_bytes:uint32 = null (id: 2);
-}
-
-// ---- Layout ----------------------------------------------------------------------
-// Arrange and Untangle Wires are worked out here, once, for every client. A
-// client says what its canvas draws in one scope (a Card's size and where its
-// ports are depend on how the window draws them and on its grid), the answer is
-// a proposal, and the client saves it with ProjectSave as one edit, as it saves
-// any change of layout.json. Nothing is read from or written to the document.
-
-table LayoutPort {
-  name:string (id: 0, required);
-  /// Where the port is on its Card, from the Card's top-left corner.
-  x:double (id: 1);
-  y:double (id: 2);
-}
-
-table LayoutCard {
-  id:string (id: 0, required);
-  /// Where the Card is drawn now (on the grid, when the grid moves it there).
-  x:double (id: 1);
-  y:double (id: 2);
-  width:double (id: 3);
-  height:double (id: 4);
-  /// In the order drawn.
-  inputs:[LayoutPort] (id: 5, required);
-  outputs:[LayoutPort] (id: 6, required);
-  /// Its ports may be drawn in another order (not those of a fork, a branch
-  /// and the like, whose places have a meaning).
-  reorderable:bool (id: 7);
-}
-
-table LayoutWire {
-  from:string (id: 0, required);
-  from_port:string (id: 1, required);
-  to:string (id: 2, required);
-  to_port:string (id: 3, required);
-}
-
-/// An output frame (`id` is its Card's) or a note, where it is drawn now.
-table LayoutBox {
-  id:string (id: 0, required);
-  x:double (id: 1);
-  y:double (id: 2);
-  width:double (id: 3);
-  height:double (id: 4);
-}
-
-/// One port of a Card in Card and the inner Card it goes to or comes from.
-table LayoutBarEnd {
-  name:string (id: 0, required);
-  card:string (id: 1, required);
-  port:string (id: 2, required);
-}
-
-/// A bar of a Card in Card's inner canvas ("This Card's input" / "output").
-table LayoutBar {
-  ends:[LayoutBarEnd] (id: 0, required);
-  /// Where the bar was put by hand; omitted while it follows the Cards.
-  x:double = null (id: 1);
-  y:double = null (id: 2);
-}
-
-/// What a canvas draws in one scope.
-table LayoutScene {
-  /// "topToBottom" or "leftToRight".
-  flow:string (id: 0, required);
-  /// The grid's spacing (frames, notes and layers go on it; 20 when 0).
-  grid:double (id: 1);
-  /// The grid is on: Cards are placed on it.
-  snap:bool (id: 2);
-  cards:[LayoutCard] (id: 3, required);
-  wires:[LayoutWire] (id: 4, required);
-  /// The output frames shown.
-  frames:[LayoutBox] (id: 5, required);
-  notes:[LayoutBox] (id: 6, required);
-  /// Inside a Card in Card only.
-  inputs:LayoutBar (id: 7);
-  outputs:LayoutBar (id: 8);
-}
-
-/// -> LayoutProposal. Places the scope's Cards, output frames and notes, then
-/// gives ports the order that crosses fewer wires and places the Cards once
-/// more for it. The bars are taken to follow the Cards again. Nothing is saved.
-table LayoutArrangeRequest { scene:LayoutScene (id: 0, required); }
-
-/// -> LayoutProposal (port_orders only). Reorders ports where the wires then
-/// cross less; no Card moves. With `around` (the Cards a drag just moved) only
-/// they and the Cards wired to them may change. Nothing is saved.
-table LayoutUntangleRequest {
-  scene:LayoutScene (id: 0, required);
-  around:[string] (id: 1);
 }
 
 union RequestPayload {
@@ -890,8 +788,6 @@ union RequestPayload {
   RunEnvironmentPathsRequest = 43,
   ProjectShellRequest = 44,
   ModuleReadRequest = 45,
-  LayoutArrangeRequest = 46,
-  LayoutUntangleRequest = 47,
   ProjectCacheUsageRequest = 48,
   RunScratchDeleteRequest = 49,
   CardIdRequest = 50,
@@ -932,32 +828,20 @@ table VersionCommit {
   changed:[string] (id: 9);
 }
 
+// Raw version definition data. Presentation is interpreted by the host.
 table VersionCanvasCard {
   id:string (id: 0, required);
-  x:double (id: 1);
-  y:double (id: 2);
-  /// What it is, which decides its shape: trigger, input, fork, branch, merge,
-  /// draft, subgraph or code.
-  kind:string (id: 3, required);
-  /// The ports a fork or merge fans over, which decide its width; 0 for others.
-  fan:uint32 (id: 4);
-  /// Folded on the canvas: only its header shows.
-  collapsed:bool (id: 5);
+  kind:string (id: 1, required);
+  fan:uint32 (id: 2);
 }
-
 table VersionCanvasWire {
   from:string (id: 0, required);
   to:string (id: 1, required);
 }
-
-/// A version's own Cards: Card in Card is one Card here. Saved positions, or
-/// columns by depth when a Card has none.
 table VersionCanvas {
   cards:[VersionCanvasCard] (id: 0, required);
   wires:[VersionCanvasWire] (id: 1, required);
-  /// The way the Cards run: "leftToRight" or "topToBottom". Columns by depth
-  /// are always leftToRight.
-  flow:string (id: 2, required);
+  layout_json:string (id: 2, required);
 }
 
 table VersionNote {
@@ -1220,28 +1104,6 @@ table ViewSaveResult {
   view_rev:uint64 = null (id: 1);
 }
 
-table LayoutPlace {
-  id:string (id: 0, required);
-  x:double (id: 1);
-  y:double (id: 2);
-}
-
-/// The order a Card's ports are drawn in (layout.json's inputOrder / outputOrder).
-table LayoutPortOrder {
-  id:string (id: 0, required);
-  inputs:[string] (id: 1, required);
-  outputs:[string] (id: 2, required);
-}
-
-/// What LayoutArrange or LayoutUntangle would change; the client saves it.
-table LayoutProposal {
-  cards:[LayoutPlace] (id: 0, required);
-  frames:[LayoutPlace] (id: 1, required);
-  notes:[LayoutPlace] (id: 2, required);
-  /// Only the Cards whose order changes.
-  port_orders:[LayoutPortOrder] (id: 3, required);
-}
-
 union ReplyPayload {
   HelloResult = 1,
   OpenResult = 2,
@@ -1276,7 +1138,6 @@ union ReplyPayload {
   BuildEnvironmentPage = 32,
   EnvironmentPathPage = 33,
   ProjectShellResult = 34,
-  LayoutProposal = 35,
   ProjectCacheUsageResult = 36,
   RunScratchDeleteResult = 37,
   CardIdResult = 38,
