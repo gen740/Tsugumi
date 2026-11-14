@@ -23,7 +23,7 @@ class Service;
 class NixEvaluator;
 
 struct CardBuild {
-  // The body (`run`): a package whose lib/main.so or the SDK-only lib/runtime.so the worker loads, or a bash script.
+  // The body (`run`): a package with lib/main.so or lib/tsugumi-runtime naming an SDK artifact, or a bash script.
   std::optional<std::string> package;
   std::optional<std::string> bash;
   std::string pre_run;

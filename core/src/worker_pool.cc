@@ -60,7 +60,6 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
     if (reuse) {
       if (auto previous = resident_keys_.find(card); previous != resident_keys_.end())
         lease.replaced = previous->second == key ? "the resident worker died" : "the Card definition changed";
-      resident_keys_[card] = key;
     } else {
       resident_keys_.erase(card);
     }
@@ -92,6 +91,10 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
   }
   ended.clear();  // outside the lock: ending a worker waits for it
   if (!lease.worker) lease.worker = spawn(sp);
+  if (reuse) {
+    std::lock_guard<std::mutex> l(mu_);
+    resident_keys_[card] = key;
+  }
   if (!reuse) refill(standby_key, sp);
   return lease;
 }

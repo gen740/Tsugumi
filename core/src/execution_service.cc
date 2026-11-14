@@ -52,7 +52,7 @@ class StagingHandle {
 auto copy_worker_directory(int source, const std::filesystem::path& destination,
                            const std::atomic<bool>& cancel) -> void {
   auto invalid = [] { return Failed(FailureKind::output_invalid, "worker staging contains an unreadable or non-regular entry"); };
-  const int duplicate = ::dup(source);
+  const int duplicate = ::fcntl(source, F_DUPFD_CLOEXEC, 0);
   if (duplicate < 0) throw invalid();
   std::unique_ptr<DIR, decltype(&::closedir)> entries(::fdopendir(duplicate), ::closedir);
   if (!entries) {
@@ -200,102 +200,120 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   if (!lease.replaced.empty() && request.log)
     request.log(LogStream::stderr, "Resident worker state started fresh: " + lease.replaced + ".\n");
 
-  // Folders: without filesystem: true, work/ and tmp/ are the worker's own
-  // (local, emptied between calls); out/ exists only for Cards with File or
-  // Directory outputs and stays (downstream Cards and artifacts use it).
-  bool needs_out = false;
-  for (const auto& o : node.outputs) needs_out |= o.kind != PortKind::FlatBuffer;
-  const std::filesystem::path& dir = request.directory;
-  const std::string work = worker.work_dir();
-  const std::string tmp = worker.tmp_dir();
-  std::string out;
-  if (needs_out) {
-    std::filesystem::path d = dir / "out";
-    std::filesystem::create_directories(d);
-    if (::geteuid() == 0 && worker_uid_on_host()) ::chown(d.c_str(), kCardUid, kCardUid);
-    out = d.string();
-  }
-
-  // One fixed read-only mount per worker preserves reuse across input paths.
-  // Copy through the core's no-symlink traversal, not through Card-controlled
-  // links or hard links. Only this invocation's File / Directory bytes enter it.
-  auto inputs = request.inputs;
-  for (size_t i = 0; i < inputs.size(); ++i) {
-    if (request.cancel.load()) throw Failed(FailureKind::cancelled, "staging inputs cancelled");
-    if (inputs[i].kind == PortKind::FlatBuffer) continue;
-    const auto destination = std::filesystem::path(worker.inputs_dir()) / std::to_string(i);
-    std::filesystem::create_directories(destination);
-    inputs[i] = service_.keep_file_value(inputs[i], destination, request.cancel);
-  }
-
-  const std::string recorded_out = out;
-  if (!out.empty()) {
-    result.out_alias = std::make_pair(worker.out_dir(), out);
-    out = worker.out_dir();
-  }
-
-  auto ptype = NixRunner::params_type(node);
-  std::string params = NixRunner::params_buffer(node);
-  std::vector<std::pair<std::string, std::string>> env = {
-      {"PATH", TSUGUMI_CARD_PATH},
-      {"HOME", work},
-      {"LANG", "C.UTF-8"},
-      {"TSUGUMI_RUN_ID", s.run_id},
-      {"TSUGUMI_CARD", card_key},
-      {"TSUGUMI_INVOCATION", std::to_string(s.invocation)},
-      {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(node, false)},
-      {"TSUGUMI_WORKER", sp.worker_binary},
-  };
-  std::optional<uint64_t> deadline_ms;
-  std::optional<std::chrono::steady_clock::time_point> deadline;
-  if (node.settings.timeout_seconds) {
-    deadline_ms = *node.settings.timeout_seconds * 1000;
-    deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(*deadline_ms + 500);
-  }
-  uint64_t call_id = worker.next_call_id();
-  std::string frame = worker_call_frame(call_id, s.run_id, node.path, s.invocation, inputs,
-                                        ptype->bfbs, ptype->root_type, params, node.outputs, work, tmp, out, env,
-                                        deadline_ms);
-  // Logs and displays of this call belong to this run and invocation.
-  worker.set_logs(request.log);
-  StagingHandle output_directory(worker.out_dir());
-  StagingHandle work_directory(worker.work_dir());
-  StagingHandle temporary_directory(worker.tmp_dir());
-  int64_t t0 = now_ms();
-  result.outcome = worker.call(frame, call_id, &request.cancel, deadline, request.display);
-  request.on_timing(t0, now_ms());
-  if (!result.outcome.failure && !recorded_out.empty())
-    copy_worker_directory(output_directory.get(), recorded_out, request.cancel);
-  // Forwarded inputs retain their recorded path, not the worker's temporary
-  // staging path. All other output paths go through normal output validation.
-  for (auto& [name, bytes] : result.outcome.outputs) {
-    const auto* port = node.output(name);
-    if (!port || port->kind == PortKind::FlatBuffer || !types::verify(*port->type, bytes)) continue;
-    Value value{name, port->kind, port->type, bytes, {}};
-    for (size_t i = 0; i < inputs.size(); ++i)
-      if (inputs[i].kind == value.kind && path_value(inputs[i]) == path_value(value)) {
-        bytes = with_path(value, *path_value(request.inputs[i])).bytes;
-        break;
-      }
-  }
-
-  if (!result.outcome.failure && node.settings.filesystem) {
-    // Diagnostic scratch uses the same traversal: children are still alive.
-    for (const auto& [from, to] : {std::pair{work_directory.get(), dir / "work"},
-                                  std::pair{temporary_directory.get(), dir / "tmp"}}) {
-      std::filesystem::create_directories(to);
-      copy_worker_directory(from, to, request.cancel);
-    }
-  }
-  // Dead/cancelled workers are destroyed without inspecting their scratch.
-  // A cleanup error must not replace the failure the Card already reported.
-  try {
+  // A transfer/staging error does not discard a living resident's state.
+  // If the call itself throws, its protocol state is unknown: end the worker.
+  bool between_calls = true;
+  auto return_worker = [&] {
     if (worker.alive()) worker.clear_scratch();
+    workers_.release(worker_card, key, std::move(lease.worker), reuse);
+  };
+  try {
+    // Folders: without filesystem: true, work/ and tmp/ are the worker's own
+    // (local, emptied between calls); out/ exists only for Cards with File or
+    // Directory outputs and stays (downstream Cards and artifacts use it).
+    bool needs_out = false;
+    for (const auto& o : node.outputs) needs_out |= o.kind != PortKind::FlatBuffer;
+    const std::filesystem::path& dir = request.directory;
+    const std::string work = worker.work_dir();
+    const std::string tmp = worker.tmp_dir();
+    std::string out;
+    if (needs_out) {
+      std::filesystem::path d = dir / "out";
+      std::filesystem::create_directories(d);
+      if (::geteuid() == 0 && worker_uid_on_host()) ::chown(d.c_str(), kCardUid, kCardUid);
+      out = d.string();
+    }
+
+    // One fixed read-only mount per worker preserves reuse across input paths.
+    // Copy through the core's no-symlink traversal, not through Card-controlled
+    // links or hard links. Only this invocation's File / Directory bytes enter it.
+    auto inputs = request.inputs;
+    for (size_t i = 0; i < inputs.size(); ++i) {
+      if (request.cancel.load()) throw Failed(FailureKind::cancelled, "staging inputs cancelled");
+      if (inputs[i].kind == PortKind::FlatBuffer) continue;
+      const auto destination = std::filesystem::path(worker.inputs_dir()) / std::to_string(i);
+      std::filesystem::create_directories(destination);
+      inputs[i] = service_.keep_file_value(inputs[i], destination, request.cancel);
+    }
+
+    const std::string recorded_out = out;
+    if (!out.empty()) {
+      result.out_alias = std::make_pair(worker.out_dir(), out);
+      out = worker.out_dir();
+    }
+
+    auto ptype = NixRunner::params_type(node);
+    std::string params = NixRunner::params_buffer(node);
+    std::vector<std::pair<std::string, std::string>> env = {
+        {"PATH", TSUGUMI_CARD_PATH},
+        {"HOME", work},
+        {"LANG", "C.UTF-8"},
+        {"TSUGUMI_RUN_ID", s.run_id},
+        {"TSUGUMI_CARD", card_key},
+        {"TSUGUMI_INVOCATION", std::to_string(s.invocation)},
+        {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(node, false)},
+        {"TSUGUMI_WORKER", sp.worker_binary},
+    };
+    std::optional<uint64_t> deadline_ms;
+    std::optional<std::chrono::steady_clock::time_point> deadline;
+    if (node.settings.timeout_seconds) {
+      deadline_ms = *node.settings.timeout_seconds * 1000;
+      deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(*deadline_ms + 500);
+    }
+    uint64_t call_id = worker.next_call_id();
+    std::string frame = worker_call_frame(call_id, s.run_id, node.path, s.invocation, inputs,
+                                          ptype->bfbs, ptype->root_type, params, node.outputs, work, tmp, out, env,
+                                          deadline_ms);
+    // Logs and displays of this call belong to this run and invocation.
+    worker.set_logs(request.log);
+    StagingHandle output_directory(worker.out_dir());
+    StagingHandle work_directory(worker.work_dir());
+    StagingHandle temporary_directory(worker.tmp_dir());
+    int64_t t0 = now_ms();
+    between_calls = false;
+    result.outcome = worker.call(frame, call_id, &request.cancel, deadline, request.display);
+    between_calls = true;
+    request.on_timing(t0, now_ms());
+    if (!result.outcome.failure && !recorded_out.empty())
+      copy_worker_directory(output_directory.get(), recorded_out, request.cancel);
+    // Forwarded inputs retain their recorded path, not the worker's temporary
+    // staging path. All other output paths go through normal output validation.
+    for (auto& [name, bytes] : result.outcome.outputs) {
+      const auto* port = node.output(name);
+      if (!port || port->kind == PortKind::FlatBuffer || !types::verify(*port->type, bytes)) continue;
+      Value value{name, port->kind, port->type, bytes, {}};
+      for (size_t i = 0; i < inputs.size(); ++i)
+        if (inputs[i].kind == value.kind && path_value(inputs[i]) == path_value(value)) {
+          bytes = with_path(value, *path_value(request.inputs[i])).bytes;
+          break;
+        }
+    }
+
+    if (!result.outcome.failure && node.settings.filesystem) {
+      // Diagnostic scratch uses the same traversal: children are still alive.
+      for (const auto& [from, to] : {std::pair{work_directory.get(), dir / "work"},
+                                    std::pair{temporary_directory.get(), dir / "tmp"}}) {
+        std::filesystem::create_directories(to);
+        copy_worker_directory(from, to, request.cancel);
+      }
+    }
+    // Dead/cancelled workers are destroyed without inspecting their scratch.
+    // A cleanup error must not replace the failure the Card already reported.
+    try {
+      return_worker();
+    } catch (...) {
+      if (!result.outcome.failure) throw;
+      return result;
+    }
   } catch (...) {
-    if (!result.outcome.failure) throw;
-    return result;
+    try {
+      if (between_calls && lease.worker) return_worker();
+    } catch (...) {
+      // Preserve the original failure if clearing staging also fails.
+    }
+    throw;
   }
-  workers_.release(worker_card, key, std::move(lease.worker), reuse);
+
   return result;
 }
 

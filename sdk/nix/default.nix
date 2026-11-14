@@ -60,6 +60,22 @@ let
     '';
   };
 
+  # A package names its SDK-built adapter explicitly. This is data, not a
+  # preload permission: the worker reads it only after an invocation starts.
+  runtimePackage =
+    name: adapter:
+    pkgs.runCommand name { } ''
+      mkdir -p $out/lib
+      printf '%s\n' '${adapter}/lib/runtime.so' > $out/lib/tsugumi-runtime
+    '';
+
+  cardSource =
+    name: src:
+    pkgs.runCommand "${name}-source" { } ''
+      mkdir -p $out
+      cp -r --no-preserve=mode ${src}/. $out/
+    '';
+
   # The contract files under their fixed names (flatc names its output after them).
   contractDir =
     {
@@ -554,7 +570,7 @@ rec {
     };
 
   # A Python Card: `src/main.py` defines `main(inputs, report)`. The package contains the
-  # interpreter, the requested packages and an SDK-only runtime.so.
+  # interpreter and packages through a separately built SDK runtime artifact.
   # `packages` picks from the pinned nixpkgs. `lock` (the Card's own uv.lock,
   # with pyproject.toml beside it) and `hash` together add exactly the PyPI
   # packages the lock names; nothing is resolved when the Card is built, so a
@@ -605,36 +621,41 @@ rec {
       bindings = sdk.python;
       usesMatplotlib = lib.any (p: (p.pname or "") == "matplotlib") (packages python.pkgs);
       fallbackFonts = if fonts != null then fonts else lib.optional usesMatplotlib pkgs.ipaexfont;
+      source = pkgs.runCommand "${name}-source" { } ''
+        mkdir -p $out/card
+        cp -r --no-preserve=mode ${src}/. $out/card/
+        touch $out/card/__init__.py
+      '';
+      adapter = pkgs.stdenv.mkDerivation {
+        name = "${name}-runtime";
+        dontUnpack = true;
+        dontConfigure = true;
+        buildPhase = ''
+          runHook preBuild
+          $CC -O2 -fPIC -shared ${sdkRoot}/src/python_main.c -o $NIX_BUILD_TOP/runtime.so \
+            -I${sdkRoot}/include -I${python}/include/python${python.pythonVersion} \
+            -L${python}/lib -lpython${python.pythonVersion} \
+            -Wl,-rpath,${python}/lib \
+            -DTSUGUMI_PY_HOME='"${python}"' \
+            -DTSUGUMI_LIBPYTHON='"${python}/lib/libpython${python.pythonVersion}${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
+            -DTSUGUMI_PY_PATH='"'$out'/lib/python:${source}:${locked}${env}/${python.sitePackages}"'
+          runHook postBuild
+        '';
+        installPhase = ''
+          mkdir -p $out/lib/python
+          cp -r --no-preserve=mode ${bindings}/. $out/lib/python/
+          cp -r --no-preserve=mode ${sdkRoot}/python/tsugumi $out/lib/python/
+          # The fallback fonts' files, one per line, for tsugumi.mpl (they stay in the closure).
+          for f in ${lib.concatStringsSep " " (map toString fallbackFonts)}; do
+            find "$f/share/fonts" -type f \( -name '*.ttf' -o -name '*.otf' \) | sort
+          done > $out/lib/python/tsugumi/_fonts.txt
+          cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
+        '';
+      };
     in
-    pkgs.stdenv.mkDerivation {
-      inherit name src;
-      dontConfigure = true;
-      buildPhase = ''
-        runHook preBuild
-        $CC -O2 -fPIC -shared ${sdkRoot}/src/python_main.c -o $NIX_BUILD_TOP/runtime.so \
-          -I${sdkRoot}/include -I${python}/include/python${python.pythonVersion} \
-          -L${python}/lib -lpython${python.pythonVersion} \
-          -Wl,-rpath,${python}/lib \
-          -DTSUGUMI_PY_HOME='"${python}"' \
-          -DTSUGUMI_LIBPYTHON='"${python}/lib/libpython${python.pythonVersion}${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
-          -DTSUGUMI_PY_PATH='"'$out'/lib/python:${locked}${env}/${python.sitePackages}"'
-        runHook postBuild
-      '';
-      installPhase = ''
-        mkdir -p $out/lib/python/card
-        cp -r --no-preserve=mode ./. $out/lib/python/card/
-        touch $out/lib/python/card/__init__.py
-        cp -r --no-preserve=mode ${bindings}/. $out/lib/python/
-        cp -r --no-preserve=mode ${sdkRoot}/python/tsugumi $out/lib/python/
-        # The fallback fonts' files, one per line, for tsugumi.mpl (they stay in the closure).
-        for f in ${lib.concatStringsSep " " (map toString fallbackFonts)}; do
-          find "$f/share/fonts" -type f \( -name '*.ttf' -o -name '*.otf' \) | sort
-        done > $out/lib/python/tsugumi/_fonts.txt
-        cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
-      '';
-    };
+    runtimePackage name adapter;
 
-  # A Ruby Card: MRI embedded in `lib/runtime.so`, on the JSON face.
+  # A Ruby Card: a separately built MRI adapter, on the JSON face.
   #
   # Gems are used only when the Card names its own lock: `lock` is the Card's
   # Gemfile.lock (its Gemfile beside it) and `hash` the hash of the .gem files
@@ -720,40 +741,42 @@ rec {
         '';
         dontInstall = true;
       };
+      source = cardSource name src;
+      adapter = pkgs.stdenv.mkDerivation {
+        name = "${name}-runtime";
+        dontUnpack = true;
+        nativeBuildInputs = [ pkgs.pkg-config ];
+        buildInputs = [
+          ruby
+          pkgs.flatbuffers
+        ]
+        ++ buildInputs;
+        dontConfigure = true;
+        buildPhase = ''
+          runHook preBuild
+          ruby_config=${ruby}/bin/ruby
+          libruby=$($ruby_config -rrbconfig -e 'print File.join(RbConfig::CONFIG.fetch("libdir"), RbConfig::CONFIG.fetch("LIBRUBY_SO"))')
+          $CC -O2 -fPIC -c ${sdkRoot}/src/ruby_main.c -o $NIX_BUILD_TOP/ruby_main.o \
+            -I${sdkRoot}/include $(pkg-config --cflags ruby-${ruby.version.majMin}) \
+            -DTSUGUMI_LIBRUBY='"'"$libruby"'"' \
+            -DTSUGUMI_RUBY_SDK='"${sdkRoot}/ruby"' \
+            -DTSUGUMI_RUBY_CARD='"${source}"' \
+            -DTSUGUMI_RUBY_GEMS='"${ruby}/${ruby.gemPath}"' \
+            -DTSUGUMI_RUBY_BUNDLE='"${if lock == null then "" else "${gems}"}"'
+          $CXX -std=c++20 -O2 -fPIC -c ${sdkRoot}/src/json_face.cc -o $NIX_BUILD_TOP/json_face.o \
+            -I${sdkRoot}/include -I${sdk.ruby} -DTSUGUMI_JSON_CONTRACT='"${sdk.ruby}"'
+          $CXX -shared $NIX_BUILD_TOP/ruby_main.o $NIX_BUILD_TOP/json_face.o -o $NIX_BUILD_TOP/runtime.so \
+            $(pkg-config --libs ruby-${ruby.version.majMin}) -L${ruby}/lib -lflatbuffers \
+            -Wl,-rpath,${ruby}/lib
+          runHook postBuild
+        '';
+        installPhase = ''
+          mkdir -p $out/lib
+          cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
+        '';
+      };
     in
-    pkgs.stdenv.mkDerivation {
-      inherit name src;
-      nativeBuildInputs = [ pkgs.pkg-config ];
-      buildInputs = [
-        ruby
-        pkgs.flatbuffers
-      ]
-      ++ buildInputs;
-      dontConfigure = true;
-      buildPhase = ''
-        runHook preBuild
-        ruby_config=${ruby}/bin/ruby
-        libruby=$($ruby_config -rrbconfig -e 'print File.join(RbConfig::CONFIG.fetch("libdir"), RbConfig::CONFIG.fetch("LIBRUBY_SO"))')
-        $CC -O2 -fPIC -c ${sdkRoot}/src/ruby_main.c -o $NIX_BUILD_TOP/ruby_main.o \
-          -I${sdkRoot}/include $(pkg-config --cflags ruby-${ruby.version.majMin}) \
-          -DTSUGUMI_LIBRUBY='"'"$libruby"'"' \
-          -DTSUGUMI_RUBY_SDK='"${sdkRoot}/ruby"' \
-          -DTSUGUMI_RUBY_CARD='"'$out'/lib/card"' \
-          -DTSUGUMI_RUBY_GEMS='"${ruby}/${ruby.gemPath}"' \
-          -DTSUGUMI_RUBY_BUNDLE='"${if lock == null then "" else "${gems}"}"'
-        $CXX -std=c++20 -O2 -fPIC -c ${sdkRoot}/src/json_face.cc -o $NIX_BUILD_TOP/json_face.o \
-          -I${sdkRoot}/include -I${sdk.ruby} -DTSUGUMI_JSON_CONTRACT='"${sdk.ruby}"'
-        $CXX -shared $NIX_BUILD_TOP/ruby_main.o $NIX_BUILD_TOP/json_face.o -o $NIX_BUILD_TOP/runtime.so \
-          $(pkg-config --libs ruby-${ruby.version.majMin}) -L${ruby}/lib -lflatbuffers \
-          -Wl,-rpath,${ruby}/lib
-        runHook postBuild
-      '';
-      installPhase = ''
-        mkdir -p $out/lib/card
-        cp -r --no-preserve=mode ./. $out/lib/card/
-        cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
-      '';
-    };
+    runtimePackage name adapter;
 
   # R and Julia Cards embed one interpreter in the resident ABI worker.
   # Their list/Dict API uses the worker's in-memory FlatBuffers JSON adapter.
@@ -767,33 +790,37 @@ rec {
         pkgs.ipaexfont
       ],
     }:
-    pkgs.stdenv.mkDerivation {
-      inherit name src;
-      buildInputs = [
-        pkgs.R
-        pkgs.rPackages.jsonlite
-      ]
-      ++ pkgs.rWrapper.recommendedPackages
-      ++ packages pkgs.rPackages;
-      dontConfigure = true;
-      buildPhase = ''
-        runHook preBuild
-        $CC -O2 -fPIC -shared -Wall -Wextra -Werror ${sdkRoot}/src/r_main.c -o $NIX_BUILD_TOP/runtime.so \
-          -I${sdkRoot}/include -I${pkgs.R}/lib/R/include -L${pkgs.R}/lib/R/lib -lR \
-          -Wl,-rpath,${pkgs.R}/lib/R/lib \
-          -DTSUGUMI_LIBR='"${pkgs.R}/lib/R/lib/libR${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
-          -DTSUGUMI_R_HOME='"${pkgs.R}/lib/R"' -DTSUGUMI_R_LIBS='"'"$R_LIBS_SITE"'"' \
-          -DTSUGUMI_R_FONTS='"${pkgs.makeFontsConf { fontDirectories = fonts; }}"' \
-          -DTSUGUMI_R_SDK='"'$out'/lib/tsugumi.R"' -DTSUGUMI_R_SOURCE='"'$out'/lib/card"'
-        runHook postBuild
-      '';
-      installPhase = ''
-        mkdir -p $out/lib/card
-        cp -r --no-preserve=mode ./. $out/lib/card/
-        cp ${sdkRoot}/r/tsugumi.R $out/lib/tsugumi.R
-        cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
-      '';
-    };
+    let
+      source = cardSource name src;
+      adapter = pkgs.stdenv.mkDerivation {
+        name = "${name}-runtime";
+        dontUnpack = true;
+        buildInputs = [
+          pkgs.R
+          pkgs.rPackages.jsonlite
+        ]
+        ++ pkgs.rWrapper.recommendedPackages
+        ++ packages pkgs.rPackages;
+        dontConfigure = true;
+        buildPhase = ''
+          runHook preBuild
+          $CC -O2 -fPIC -shared -Wall -Wextra -Werror ${sdkRoot}/src/r_main.c -o $NIX_BUILD_TOP/runtime.so \
+            -I${sdkRoot}/include -I${pkgs.R}/lib/R/include -L${pkgs.R}/lib/R/lib -lR \
+            -Wl,-rpath,${pkgs.R}/lib/R/lib \
+            -DTSUGUMI_LIBR='"${pkgs.R}/lib/R/lib/libR${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
+            -DTSUGUMI_R_HOME='"${pkgs.R}/lib/R"' -DTSUGUMI_R_LIBS='"'"$R_LIBS_SITE"'"' \
+            -DTSUGUMI_R_FONTS='"${pkgs.makeFontsConf { fontDirectories = fonts; }}"' \
+            -DTSUGUMI_R_SDK='"'$out'/lib/tsugumi.R"' -DTSUGUMI_R_SOURCE='"${source}"'
+          runHook postBuild
+        '';
+        installPhase = ''
+          mkdir -p $out/lib
+          cp ${sdkRoot}/r/tsugumi.R $out/lib/tsugumi.R
+          cp $NIX_BUILD_TOP/runtime.so $out/lib/runtime.so
+        '';
+      };
+    in
+    runtimePackage name adapter;
 
   # Static R Markdown / Quarto reports use a separate process per invocation.
   # HTML embeds its resources so history previews do not depend on live paths.
@@ -851,38 +878,41 @@ rec {
         else
           pkgs.julia-bin;
       julia = if packages == [ ] then base else base.withPackages packages;
+      source = cardSource name src;
+      adapter = pkgs.stdenv.mkDerivation {
+        name = "${name}-runtime";
+        dontUnpack = true;
+        dontConfigure = true;
+        # Runtime headers are external; keep warnings fatal for our shim.
+        buildPhase = ''
+          runHook preBuild
+          $CC -O2 -fPIC -shared -Wall -Wextra -Werror ${sdkRoot}/src/julia_main.c -o $NIX_BUILD_TOP/runtime.so \
+            -I${sdkRoot}/include -isystem ${base}/include/julia -L${base}/lib -ljulia \
+            -Wl,-rpath,${base}/lib \
+            -DTSUGUMI_LIBJULIA='"${base}/lib/libjulia${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
+            -DTSUGUMI_JULIA_ENV='"'$out'/lib/julia-env"' -DTSUGUMI_SHIM='"'$out'/lib/runtime.so"' \
+            -DTSUGUMI_JULIA_SDK='"'$out'/lib/tsugumi.jl"' -DTSUGUMI_JULIA_SOURCE='"${source}"'
+          # Keep only wrapper settings, never a builder's HOME or temporary depot.
+          JULIA_DEPOT_PATH= ${julia}/bin/julia --startup-file=no --history-file=no -e '
+            for key in ["JULIA_DEPOT_PATH", "JULIA_PROJECT", "JULIA_LOAD_PATH", "LD_LIBRARY_PATH", "FONTCONFIG_FILE", "PYTHONHOME", "PYTHONPATH", "PYTHON", "JULIA_PYTHONCALL_EXE", "JULIA_CONDAPKG_OFFLINE", "JULIA_CONDAPKG_BACKEND"]
+              haskey(ENV, key) && println(key, "=", ENV[key])
+            end' > $NIX_BUILD_TOP/julia-env
+          runHook postBuild
+        '';
+        installPhase = ''
+          mkdir -p $out/lib
+          cp ${sdkRoot}/julia/tsugumi.jl $out/lib/tsugumi.jl
+          cp $NIX_BUILD_TOP/runtime.so $NIX_BUILD_TOP/julia-env $out/lib/
+        '';
+      };
     in
-    pkgs.stdenv.mkDerivation {
-      inherit name src;
-      dontConfigure = true;
-      # Runtime headers are external; keep warnings fatal for our shim.
-      buildPhase = ''
-        runHook preBuild
-        $CC -O2 -fPIC -shared -Wall -Wextra -Werror ${sdkRoot}/src/julia_main.c -o $NIX_BUILD_TOP/runtime.so \
-          -I${sdkRoot}/include -isystem ${base}/include/julia -L${base}/lib -ljulia \
-          -Wl,-rpath,${base}/lib \
-          -DTSUGUMI_LIBJULIA='"${base}/lib/libjulia${pkgs.stdenv.hostPlatform.extensions.sharedLibrary}"' \
-          -DTSUGUMI_JULIA_ENV='"'$out'/lib/julia-env"' -DTSUGUMI_SHIM='"'$out'/lib/runtime.so"' \
-          -DTSUGUMI_JULIA_SDK='"'$out'/lib/tsugumi.jl"' -DTSUGUMI_JULIA_SOURCE='"'$out'/lib/card"'
-        # Keep only wrapper settings, never a builder's HOME or temporary depot.
-        JULIA_DEPOT_PATH= ${julia}/bin/julia --startup-file=no --history-file=no -e '
-          for key in ["JULIA_DEPOT_PATH", "JULIA_PROJECT", "JULIA_LOAD_PATH", "LD_LIBRARY_PATH", "FONTCONFIG_FILE", "PYTHONHOME", "PYTHONPATH", "PYTHON", "JULIA_PYTHONCALL_EXE", "JULIA_CONDAPKG_OFFLINE", "JULIA_CONDAPKG_BACKEND"]
-            haskey(ENV, key) && println(key, "=", ENV[key])
-          end' > $NIX_BUILD_TOP/julia-env
-        runHook postBuild
-      '';
-      installPhase = ''
-        mkdir -p $out/lib/card
-        cp -r --no-preserve=mode ./. $out/lib/card/
-        cp ${sdkRoot}/julia/tsugumi.jl $out/lib/tsugumi.jl
-        cp $NIX_BUILD_TOP/runtime.so $NIX_BUILD_TOP/julia-env $out/lib/
-      '';
-    };
+    runtimePackage name adapter;
 
   # Serializes the Card attribute set for tsugumid. Store paths in the
   # strings keep their closures alive through string context.
   #   run      the body: a package (derivation; the worker loads its
-  #            lib/main.so (native) or lib/runtime.so (SDK adapter); for another system,
+  #            lib/main.so (native) or the SDK artifact named by lib/tsugumi-runtime;
+  #            for another system,
   #            run.worker names the worker built for it) or a bash script (string;
   #            inputs as $JSON_<PORT> files and $FILE_<PORT> / $DIR_<PORT>
   #            paths, outputs as JSON written to $TSUGUMI_OUTPUT), or an ordered

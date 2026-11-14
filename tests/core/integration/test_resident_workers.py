@@ -67,3 +67,24 @@ def test_living_resident_keeps_state_after_a_card_failure(core_factory, tmp_path
     assert st.state == RunState.succeeded, log(c, second, "resident", 2)
     inv, = c.call("RunInvocationsRequest", runId=second, card=path("resident")).records
     assert inv.workerReused
+
+
+def test_output_transfer_failure_keeps_living_resident_state(core_factory, tmp_path):
+    """Rejecting a partial special file does not discard the resident's independent state."""
+    from projects import FILE_FBS
+    from Tsugumi.Data.FailureKind import FailureKind
+    definition = bash('f="${TSUGUMI_WORK_DIR%/*}/home/called"; '
+                      'if test ! -e "$f"; then touch "$f"; mkfifo "$TSUGUMI_OUTPUT_DIR/partial"; '
+                      'else echo recovered > "$TSUGUMI_OUTPUT_DIR/result"; fi; '
+                      'printf \'{"doc":{"value":"%s/result"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
+                      outputs=FILE_FBS, reuseWorker=True)
+    write(tmp_path / "p", {"resident": definition}, [card("resident", "resident")], [])
+    c = core_factory(project_root=tmp_path / "p").connect()
+    first, st = run_and_wait(c, "resident")
+    assert st.state == RunState.failed
+    inv, = c.call("RunInvocationsRequest", runId=first, card=path("resident")).records
+    assert inv.failure.kind == FailureKind.output_invalid
+    second, st = run_and_wait(c, "resident")
+    assert st.state == RunState.succeeded, log(c, second, "resident", 2)
+    inv, = c.call("RunInvocationsRequest", runId=second, card=path("resident")).records
+    assert inv.workerReused

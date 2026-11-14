@@ -2,6 +2,8 @@
 
 import shlex
 
+import pytest
+
 from harness.real_cards import bash, log
 from projects import FILE_FBS, card, conn, run_and_wait, write
 from tsugumi_client import new_id, path, text
@@ -200,3 +202,100 @@ def main(inputs, report):
         assert shown == "removed"
         inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
         assert inv.workerReused == reused
+
+
+@pytest.mark.parametrize("entry", ["link", "directory-link", "fifo"])
+def test_successful_call_refuses_non_regular_output_entries(core_factory, tmp_path, entry):
+    """Even unreported nested entries must be regular files or directories; links and FIFOs are rejected."""
+    from Tsugumi.Data.FailureKind import FailureKind
+    victim = tmp_path / "private"
+    victim.mkdir()
+    (victim / "secret").write_text("host-only-secret")
+    target = victim if entry == "directory-link" else victim / "secret"
+    create = ('mkfifo "$TSUGUMI_OUTPUT_DIR/nested/entry"' if entry == "fifo" else
+              'ln -s ' + shlex.quote(str(target)) + ' "$TSUGUMI_OUTPUT_DIR/nested/entry"')
+    definition = bash('mkdir "$TSUGUMI_OUTPUT_DIR/nested"; ' + create + '; '
+                      'echo safe > "$TSUGUMI_OUTPUT_DIR/result"; '
+                      'printf \'{"doc":{"value":"%s/result"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
+                      outputs=FILE_FBS)
+    write(tmp_path / "p", {"copy": definition}, [card("copy", "copy")], [])
+    c = core_factory(project_root=tmp_path / "p").connect()
+    run_id, st = run_and_wait(c, "copy")
+    assert st.state == RunState.failed
+    inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("copy")).records
+    assert inv.failure.kind == FailureKind.output_invalid
+    assert (victim / "secret").read_text() == "host-only-secret"
+
+
+def test_live_child_cannot_copy_a_host_file_by_swapping_output_links(core_factory, tmp_path):
+    """A live child races regular-file/symlink replacements; successful snapshots never contain host bytes."""
+    import json
+    from pathlib import Path
+    from Tsugumi.Data.FailureKind import FailureKind
+    victim = tmp_path / "host-secret"
+    victim.write_text("private-host-content-that-the-card-cannot-read")
+    source = r'''
+#include <tsugumi/sdk/abi.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+int tsugumi_main(const tsugumi_call* c) {
+  char data[4096], next[4096], padding[4096], json[8192];
+  snprintf(data, sizeof data, "%s/data", c->output_directory);
+  snprintf(next, sizeof next, "%s/next", c->working_directory);
+  snprintf(padding, sizeof padding, "%s/padding", c->output_directory);
+  /* Slow the snapshot so replacements continue while the core reads it. */
+  FILE* f = fopen(padding, "w");
+  if (!f || ftruncate(fileno(f), 8 * 1024 * 1024)) return 1;
+  fclose(f);
+  f = fopen(data, "w"); if (!f) return 2;
+  fputs("safe", f); fclose(f);
+  /* The sandbox must prevent the Card itself from reading the target. */
+  int secret = open(HOST_SECRET, O_RDONLY);
+  if (secret >= 0) { close(secret); return 3; }
+  pid_t child = fork();
+  if (child < 0) return 4;
+  if (!child) {
+    for (int i = 0; i < 10000; ++i) {
+      unlink(next);
+      if (symlink(HOST_SECRET, next) || rename(next, data)) _exit(0);
+      usleep(20);
+      f = fopen(next, "w"); if (!f) _exit(0);
+      fputs("safe", f); fclose(f);
+      if (rename(next, data)) _exit(0);
+      usleep(20);
+    }
+    _exit(0);
+  }
+  snprintf(json, sizeof json, "{\"value\":\"%s\"}", c->output_directory);
+  return c->emit_json(c->host, "doc", json);
+}
+'''.replace("HOST_SECRET", json.dumps(str(victim)))
+    definition = {
+        "language": "cpp",
+        "_outputs": FILE_FBS.replace('tsugumi: "file"', 'tsugumi: "directory"'),
+        "_nix": '''{ pkgs, inputs, params }: {
+  run = pkgs.runCommandCC "racing-output" {} ''
+    mkdir -p $out/lib
+    $CC -shared -fPIC -I${inputs.tsugumi.runtime}/include ${./src/main.c} -o $out/lib/main.so
+  '';
+}
+''',
+    }
+    write(tmp_path / "p", {"race": definition}, [card("race", "race")], [],
+          {"definitions/race/src/main.c": source})
+    c = core_factory(project_root=tmp_path / "p").connect()
+    for _ in range(12):
+        run_id, st = run_and_wait(c, "race")
+        if st.state == RunState.failed:
+            inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("race")).records
+            assert inv.failure.kind == FailureKind.output_invalid, log(c, run_id, "race", 2)
+        else:
+            assert st.state == RunState.succeeded
+            record = c.call("RunRecordRequest", runId=run_id, card=path("race")).record
+            snapshot = Path(text(record.outputs[0].filePath))
+            assert (snapshot / "data").read_text() == "safe"
+            assert all(not p.is_symlink() for p in snapshot.rglob("*"))
+    assert victim.read_text() == "private-host-content-that-the-card-cannot-read"

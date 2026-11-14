@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKER = Path(os.environ.get("TSUGUMI_WORKER", ROOT / "build/workerd/tsugumi-worker"))
 
 
-def library(tmp_path, source, name="main"):
+def library(tmp_path, source, name="main", *, adapter=False):
     if not shutil.which("cc"):
         pytest.skip("needs a C compiler")
     lib = tmp_path / "lib"
@@ -33,6 +33,8 @@ def library(tmp_path, source, name="main"):
     c.write_text(source)
     subprocess.run(["cc", "-shared", "-fPIC", "-I", str(ROOT / "sdk/include"),
                     str(c), "-o", str(lib / (name + ".so"))], check=True)
+    if adapter:
+        (lib / "tsugumi-runtime").write_text(str(lib / (name + ".so")) + "\n")
 
 
 @contextlib.contextmanager
@@ -136,18 +138,18 @@ int tsugumi_main(const tsugumi_call* call) {
         assert not select.select([p.stdout], [], [], 0.1)[0]
 
 
-def test_runtime_is_prepared_but_card_loading_is_recorded(tmp_path):
-    """Only SDK preparation runs in standby; source loading can publish to its invocation."""
+def test_explicit_runtime_and_card_loading_wait_for_the_invocation(tmp_path):
+    """Even an explicit runtime descriptor cannot authorize package code in standby."""
     library(tmp_path, r'''
 #include <tsugumi/sdk/abi.h>
 #include <stdio.h>
+__attribute__((constructor)) static void constructor(void) { puts("runtime opened"); fflush(stdout); }
 int tsugumi_prepare(void) { puts("runtime ready"); fflush(stdout); return 0; }
 int tsugumi_load(const tsugumi_call* c) { return c->display_text(c->host, c->run_id); }
 int tsugumi_main(const tsugumi_call* c) { return 0; }
-''', "runtime")
+''', "runtime", adapter=True)
     with worker(tmp_path) as (p, data, _):
-        assert select.select([p.stdout], [], [], 3)[0]
-        assert p.stdout.readline() == b"runtime ready\n"
+        assert not select.select([p.stdout], [], [], 0.3)[0], "package code ran in standby"
         assert not select.select([data], [], [], 0.1)[0]
         send_call(data, tmp_path)
         display = receive(data)
@@ -156,6 +158,11 @@ int tsugumi_main(const tsugumi_call* c) { return 0; }
         assert display.value.display.invocation == 1
         assert display.value.display.value.text == b"recorded-run"
         assert receive(data).valueType == WorkerPayload.WorkerResult
+        assert p.stdout.readline() == b"runtime opened\n"
+        assert p.stdout.readline() == b"runtime ready\n"
+        send_call(data, tmp_path, 2)
+        assert receive(data).valueType == WorkerPayload.WorkerResult
+        assert not select.select([p.stdout], [], [], 0.1)[0], "runtime was initialized twice"
 
 
 @pytest.mark.parametrize("stop", ["deadline", "cancel"])
@@ -175,7 +182,7 @@ int tsugumi_load(const tsugumi_call* c) {
   return 0;
 }
 int tsugumi_main(const tsugumi_call* c) { puts("main ran"); return 0; }
-''', "runtime")
+''', "runtime", adapter=True)
     with worker(tmp_path) as (p, data, control):
         send_call(data, tmp_path, deadline=50 if stop == "deadline" else None)
         assert select.select([p.stdout], [], [], 3)[0]
@@ -235,6 +242,7 @@ raise RuntimeError("import stopped")
                     str(ROOT / "sdk/src/python_main.c"), "-L", str(libdir),
                     "-lpython" + sysconfig.get_config_var("LDVERSION"), "-Wl,-rpath," + str(libdir),
                     "-o", str(tmp_path / "lib/runtime.so")], check=True)
+    (tmp_path / "lib/tsugumi-runtime").write_text(str(tmp_path / "lib/runtime.so") + "\n")
     with worker(tmp_path) as (p, data, _):
         assert not select.select([p.stdout], [], [], 0.3)[0], "Python Card ran in standby"
         send_call(data, tmp_path)

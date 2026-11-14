@@ -110,6 +110,6 @@ Nothing makes the lock for you. To add or update packages, deliberately:
 
 ## Why runtime hosting
 
-The SDK adapter `lib/runtime.so` exports `tsugumi_prepare`, `tsugumi_load`, `tsugumi_main` and `tsugumi_run_start`. Preparation loads `hostfxr` and initializes the pinned runtime; the first invocation loads the managed assembly and its `[UnmanagedCallersOnly]` entry points. `tsugumi_load` receives the current `tsugumi_call`. It adds no separate RPC or subprocess protocol. CLR diagnostics sockets are disabled; ordinary logs and structured failures remain available.
+The package's `lib/tsugumi-runtime` names a separately built SDK adapter, which exports `tsugumi_prepare`, `tsugumi_load`, `tsugumi_main` and `tsugumi_run_start`. Inside the first invocation, preparation loads `hostfxr` and initializes the pinned runtime, then `tsugumi_load` loads the separate managed assembly and its `[UnmanagedCallersOnly]` entry points. `tsugumi_load` receives the current `tsugumi_call`. It adds no separate RPC or subprocess protocol. CLR diagnostics sockets are disabled; ordinary logs and structured failures remain available.
 
 The documented platform constraints are in Microsoft's [runtime hosting tutorial](https://learn.microsoft.com/en-us/dotnet/core/tutorials/netcore-hosting). FlatBuffers' [language support matrix](https://flatbuffers.dev/support/) describes the generated C# object API.

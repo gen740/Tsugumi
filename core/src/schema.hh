@@ -426,7 +426,7 @@ struct BuildCache {
 };
 
 // The manifest written by the SDK's tsugumi.manifest (read only). `run` is the
-// Card body: a package (store path; the worker loads lib/main.so or the SDK-only lib/runtime.so in it) or a
+// Card body: a package (store path; lib/main.so or lib/tsugumi-runtime naming an SDK artifact) or a
 // bash script, never both.
 struct ManifestRun {
   Opt<"package", v::String> package;

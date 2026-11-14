@@ -5,9 +5,9 @@
 // stdout/stderr: captured by the core as the invocation's logs.
 //
 // Steps per call: preRun -> the body (`run`) -> postRun. The body is either a
-// package (--package: native lib/main.so or an SDK-only lib/runtime.so
-// adapter; Card code loads inside its first invocation) or a bash script (--run). preRun / postRun (--pre /
-// --post) are bash and get no Card inputs; the environment and working
+// package (--package: native lib/main.so or lib/tsugumi-runtime naming an SDK
+// adapter; Card code loads inside its first invocation) or a bash script (--run).
+// preRun / postRun (--pre / --post) are bash and get no Card inputs; the environment and working
 // directory produced by preRun carry over. An earlier failure is never
 // cleared by a later step's success. One deadline covers all steps, and
 // cancel/deadline are checked before each step starts.
@@ -153,7 +153,7 @@ std::optional<D::FailureKind> kind_from_name(const std::string& n) {
 
 struct Options {
   std::string bash;
-  std::string package;  // native main.so or an SDK-only runtime.so adapter
+  std::string package;  // native main.so or lib/tsugumi-runtime naming the SDK artifact
   std::string pre;      // a file with bash text
   std::string run;      // a file with bash text (a bash body)
   std::string post;     // a file with bash text
@@ -527,8 +527,8 @@ auto emit_json_impl(void*, const char* name, const char* json) -> int {
 
 auto display_json_impl(void*, const char* json) -> int;
 
-// Package filenames do not establish provenance. Even runtime.so is opened
-// only inside an invocation; its tsugumi_prepare initializes the interpreter
+// Package metadata does not establish provenance. Libraries are opened
+// only inside an invocation; tsugumi_prepare initializes the interpreter
 // and tsugumi_load loads the Card after preRun.
 using prepare_fn = int (*)();
 void* g_lib = nullptr;
@@ -872,8 +872,10 @@ void execute(const Options& opt, Call& call) {
     tsugumi_call c = make_call(call, values, work, tmp, out_dir);
     if (!call.failure && !g_card_loaded && g_load_error.empty() && may_start("source loading")) {
       if (!g_lib) {
-        const auto runtime = opt.package + "/lib/runtime.so";
-        const bool adapter = ::access(runtime.c_str(), F_OK) == 0;
+        const auto descriptor = opt.package + "/lib/tsugumi-runtime";
+        const bool adapter = ::access(descriptor.c_str(), F_OK) == 0;
+        auto runtime = adapter ? read_text(descriptor) : std::string{};
+        if (!runtime.empty() && runtime.back() == '\n') runtime.pop_back();
         // Runtime initialization is invocation work too: a package filename
         // does not prove SDK provenance. Preserve lifetime HOME for R/Julia
         // session caches while the Card itself gets this call's HOME.
@@ -883,7 +885,10 @@ void execute(const Options& opt, Call& call) {
           apply_env(initialization_env);
         }
         const auto before = process_env();
-        open_package(adapter ? runtime : opt.package + "/lib/main.so");
+        if (adapter && (runtime.empty() || runtime.front() != '/'))
+          g_load_error = "the SDK runtime descriptor must name an absolute library path";
+        else
+          open_package(adapter ? runtime : opt.package + "/lib/main.so");
         if (adapter && g_load_error.empty()) {
           auto prepare = reinterpret_cast<prepare_fn>(::dlsym(g_lib, "tsugumi_prepare"));
           if (!prepare || prepare() != 0) g_load_error = "cannot initialize the language runtime (see stderr)";

@@ -1,5 +1,6 @@
 #include "worker_proc.hh"
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -89,6 +90,46 @@ bool write_full(int fd, const char* p, size_t n) {
     n -= static_cast<size_t>(w);
   }
   return true;
+}
+
+// A Card child can still rename entries during cleanup. Walk from open
+// directory handles and unlink names there, never through a symlink's target.
+auto clear_staging(int source) -> void {
+  auto failed = [] { return Failed(FailureKind::worker_failed, "cannot clear the worker's invocation staging"); };
+  const int duplicate = ::fcntl(source, F_DUPFD_CLOEXEC, 0);
+  if (duplicate < 0) throw failed();
+  std::unique_ptr<DIR, decltype(&::closedir)> entries(::fdopendir(duplicate), ::closedir);
+  if (!entries) {
+    ::close(duplicate);
+    throw failed();
+  }
+  for (;;) {
+    errno = 0;
+    const auto* entry = ::readdir(entries.get());
+    if (!entry) {
+      if (errno) throw failed();
+      break;
+    }
+    const std::string name = entry->d_name;
+    if (name == "." || name == "..") continue;
+    const int child = ::openat(source, name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    int flags = 0;
+    if (child >= 0) {
+      try {
+        clear_staging(child);
+      } catch (...) {
+        ::close(child);
+        throw;
+      }
+      ::close(child);
+      flags = AT_REMOVEDIR;
+    } else if (errno == ENOENT) {
+      continue;
+    } else if (errno != ENOTDIR && errno != ELOOP) {
+      throw failed();
+    }
+    if (::unlinkat(source, name.c_str(), flags) != 0 && errno != ENOENT) throw failed();
+  }
 }
 
 #ifdef __APPLE__
@@ -320,16 +361,16 @@ void WorkerProc::set_logs(LogSink logs) {
 }
 
 void WorkerProc::clear_scratch() {
-  std::error_code ec;
   for (const auto& d : {work_dir(), tmp_dir(), out_dir(), inputs_dir()}) {
-    if (std::filesystem::is_symlink(std::filesystem::symlink_status(d, ec)))
-      throw Failed(FailureKind::worker_failed, "the worker replaced an invocation staging directory with a symlink");
-    if (ec) throw Failed(FailureKind::worker_failed, "cannot inspect the worker's invocation staging: " + ec.message());
-    for (auto it = std::filesystem::directory_iterator(d, ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
-      std::filesystem::remove_all(it->path(), ec);
-      if (ec) throw Failed(FailureKind::worker_failed, "cannot clear the worker's invocation staging: " + ec.message());
+    const int directory = ::open(d.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (directory < 0) throw Failed(FailureKind::worker_failed, "cannot open the worker's invocation staging directory");
+    try {
+      clear_staging(directory);
+    } catch (...) {
+      ::close(directory);
+      throw;
     }
-    if (ec) throw Failed(FailureKind::worker_failed, "cannot clear the worker's invocation staging: " + ec.message());
+    ::close(directory);
   }
 }
 
