@@ -752,7 +752,8 @@ import Testing
     s.disconnect(c, inputs: false, in: [])
     #expect(ports(b) == [[], []])
 
-    s.startDraftEdit(a)
+    #expect(s.dirty, "The wire removals are still awaiting autosave when typing starts")
+    await s.startDraftEdit(a)
     s.inlineDraft?.content = "count words"
     s.inlineDraft?.name = "renamed"
     #expect(CardGeometry(s.nodeData(a), flow: .topToBottom).draftRow == CardGeometry.draftEditRow)
@@ -766,13 +767,13 @@ import Testing
     // No name is fine: the Card shows its content only, and keeps the id made for it.
     let plain = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 300))
     #expect(s.draftUntitled(plain) && s.nodeData(plain).untitled)
-    s.startDraftEdit(plain)
+    await s.startDraftEdit(plain)
     #expect(s.inlineDraft?.name == "" && s.draftNameProblem(plain, "") == nil)
     let same = await s.finishDraftEdit()
     #expect(same == nil && s.instance(plain) != nil)
 
     // Names are free text and need not be unique; exact addresses stay fixed.
-    s.startDraftEdit(b)
+    await s.startDraftEdit(b)
     s.inlineDraft?.name = "日本語"
     #expect(s.cardNameProblem(b, "日本語") == nil)
     let kept = await s.finishDraftEdit()
@@ -783,12 +784,54 @@ import Testing
     #expect(s.cardNameProblem(b, " \n ") != nil)
     // An overlong name is still refused without changing the Card.
     let overlong = String(repeating: "あ", count: 1366)
-    s.startDraftEdit(b)
+    await s.startDraftEdit(b)
     s.inlineDraft?.name = overlong
     #expect(s.cardNameProblem(b, overlong) != nil)
     let refused = await s.finishDraftEdit()
     #expect(refused == nil && s.notice != nil && s.displayName(b) == "日本語" && s.instance(b) != nil)
     await s.close()
+  }
+
+  @Test func draftCompletionIsJoinedBeforeSwitchingRunningAndClosing() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let model = AppModel.shared
+    let s = try model.session(for: dir)
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let a = try await s.addCard(template: .draft, in: [], at: .zero)
+    let b = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 0))
+
+    await s.startDraftEdit(a)
+    s.inlineDraft?.content = "first Draft"
+    // Return/Command-Return and focus loss can submit without awaiting each
+    // other. Opening the next Draft must join them before replacing the fields.
+    let done = Task { await s.finishDraftEdit() }
+    let blurred = Task { await s.finishDraftEdit() }
+    await s.startDraftEdit(b)
+    _ = await done.value
+    _ = await blurred.value
+    #expect(s.cardMeta(a)?["content"]?.string == "first Draft")
+    #expect(s.inlineDraft?.card == b)
+    s.inlineDraft?.content = "before running"
+    // Running the unconnected trigger has no worker work; the Draft must be
+    // committed before RunRequest, even without a focus-loss callback.
+    try await s.run(card: ["start"], propagate: false)
+    #expect(s.inlineDraft == nil && s.cardMeta(b)?["content"]?.string == "before running")
+
+    await s.startDraftEdit(b)
+    s.inlineDraft?.content = "before closing"
+    let w = Workspace()
+    model.hold(s)
+    w.open(s)
+    model.windowClosed(w)
+    for _ in 0..<200 where model.sessions[s.identity.id] != nil { try await Task.sleep(for: .milliseconds(25)) }
+    #expect(w.session == nil && model.sessions[s.identity.id] == nil)
+    #expect(s.inlineDraft == nil && s.cardMeta(b)?["content"]?.string == "before closing")
+    let saved = try JSONValue.parse(String(contentsOf: dir.appendingPathComponent("definitions/\(b)/_meta.json"), encoding: .utf8))
+    #expect(saved["content"]?.string == "before closing", "Closing waits for the transaction on disk")
   }
 
   @Test func agentChangesAndUIEditsBothStay() async throws {

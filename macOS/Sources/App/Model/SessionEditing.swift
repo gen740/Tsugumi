@@ -500,7 +500,12 @@ extension ProjectSession {
   }
 
   /// Starts writing a Draft's name and content on its Card.
-  func startDraftEdit(_ k: CardKey, revision existing: RevisionEdit? = nil) {
+  func startDraftEdit(_ k: CardKey, revision existing: RevisionEdit? = nil) async {
+    if existing == nil, let current = inlineDraft {
+      guard current.card != k else { return }
+      _ = await finishDraftEdit()
+      guard inlineDraft == nil else { return }
+    }
     let name = draftUntitled(k) ? "" : displayName(k), content = cardMeta(k)?["content"]?.string ?? ""
     let revision = existing ?? RevisionEdit()
     revision.reload(rev)
@@ -515,6 +520,27 @@ extension ProjectSession {
   /// Keeps what was written. A name the Card cannot take stays as it was, with
   /// a notice. The Card's permanent key when its name changed.
   func finishDraftEdit(overwrite: Bool = false) async -> CardKey? {
+    if let task = draftFinishTask { return await task.value }
+    guard inlineDraft != nil else { return nil }
+    let task = Task { @MainActor in
+      var renamed: CardKey?
+      repeat {
+        let result = await self.finishDraftEditOnce(overwrite: overwrite)
+        renamed = result ?? renamed
+        guard let current = self.inlineDraft else { break }
+        if current.revision.conflictRev != nil || current.revision.error != nil { break }
+      } while true
+      self.draftFinishTask = nil
+      return renamed
+    }
+    draftFinishTask = task
+    return await task.value
+  }
+
+  private func finishDraftEditOnce(overwrite: Bool) async -> CardKey? {
+    // Local canvas edits may still be saving when typing starts. Their deltas
+    // advance this editor's base; another client's deltas never do.
+    await save()
     guard let e = inlineDraft else { return nil }
     let contentChanged = e.content != e.initialContent, nameChanged = e.name != e.initialName
     guard instance(e.card) != nil, contentChanged || nameChanged else { inlineDraft = nil; return nil }

@@ -510,7 +510,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       onDrop={onDrop}>
       {session.inlineDraft && <div style={{ position: 'absolute', top: 12, left: 12, maxWidth: 520, zIndex: 20 }} onPointerDown={e => e.stopPropagation()}>
         <RevisionEditNotice edit={session.inlineDraft.revision} text={() => session.inlineDraft!.name + '\n' + session.inlineDraft!.content}
-          overwrite={() => void session.finishDraftEdit(true)} reload={() => session.startDraftEdit(session.inlineDraft!.card, session.inlineDraft!.revision)} />
+          overwrite={() => void session.finishDraftEdit(true)} reload={() => void session.startDraftEdit(session.inlineDraft!.card, session.inlineDraft!.revision)} />
       </div>}
       <div className="cv-bg" style={gridStyle(cam, prefs.showGrid, prefs.gridSize)}
         onPointerDown={onBackgroundDown} onDoubleClick={() => cv.fitAll()} onContextMenu={backgroundMenu} />
@@ -605,8 +605,9 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
             draftEdit={session.inlineDraft?.card === k ? {
               draft: session.inlineDraft,
               nameProblem: session.draftNameProblem(k, session.inlineDraft.name),
-              onChange: (change) => session.setDraftEdit(change),
+              onChange: (change) => { if (session.inlineDraft?.card === k) session.setDraftEdit(change) },
               onDone: (byKey) => {
+                if (session.inlineDraft?.card !== k) return
                 finishDraftEdit()
                 if (byKey) focus()
               },

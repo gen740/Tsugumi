@@ -109,14 +109,14 @@ extension SyncTests {
       #expect(session.rev > (snapshot.rev ?? 0))
     }
     try await save("base", "base")
-    session.startDraftEdit("a")
+    await session.startDraftEdit("a")
     try await save("agent", "agent")
     let untouchedRev = session.rev
     _ = await session.finishDraftEdit()
     #expect(session.inlineDraft == nil && !session.dirty && session.rev == untouchedRev)
     #expect(session.cardMeta("a")?["content"]?.string == "agent" && session.displayName("a") == "agent")
     for field in ["name", "content"] {
-      session.startDraftEdit("a")
+      await session.startDraftEdit("a")
       if field == "name" { session.inlineDraft?.name = "mine" } else { session.inlineDraft?.content = "mine" }
       try await save("newer", "newer")
       _ = await session.finishDraftEdit()

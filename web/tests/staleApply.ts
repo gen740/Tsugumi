@@ -12,7 +12,8 @@ function session() {
   s.scheduleSave = () => {}
   s.project = parse('{"name":"base","canvas":{"cards":[{"id":"a"}],"connections":[]}}')
   s.confirmedProject = parse('{"name":"base","canvas":{"cards":[{"id":"a"}],"connections":[]}}')
-  s.layout = s.confirmedLayout = parse('{}')
+  s.layout = parse('{}')
+  s.confirmedLayout = parse('{}')
   s.confirmedDefinitions.set('a', parse('{"template":"draft","symbol":"base"}'))
   const requests: bigint[] = []
   s.client = {
@@ -218,6 +219,111 @@ for (const field of ['content', 'name']) {
   assert.equal(str(get(s.cardMeta('a'), field === 'name' ? 'content' : 'name')), 'newer', 'untouched fields follow the Agent')
 }
 console.log('Draft no-op, conflict and explicit overwrite: passed')
+
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>(done => { resolve = done })
+  return { promise, resolve }
+}
+
+// Return/focus loss can submit twice while a preceding canvas autosave is in
+// flight. Switching Drafts, running and leaving must join that save too.
+for (const action of ['done', 'switch', 'run', 'leave']) {
+  const { s, requests } = session()
+  s.project = s.confirmedProject = parse('{"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}}')
+  s.confirmedDefinitions.set('b', parse('{"template":"draft"}'))
+  s.scheduleSave = ProjectSession.prototype.scheduleSave.bind(s)
+  const entered = deferred(), release = deferred()
+  const client = s.client!
+  const save = client.save.bind(client)
+  let first = true, ran = false
+  client.save = async (...args) => {
+    if (first) { first = false; entered.resolve(); await release.promise }
+    return save(...args)
+  }
+  client.run = async () => {
+    assert.equal(str(get(s.cardMeta('a'), 'content')), 'count words')
+    assert.equal(s.inlineDraft, undefined)
+    ran = true
+    return new R.RunAcceptedT()
+  }
+  s.edit(x => x.setPosition('a', { x: 50, y: 50 }))
+  await entered.promise
+  await s.startDraftEdit('a')
+  s.setDraftEdit({ name: '日本語', content: 'count words' })
+  const done = s.finishDraftEdit() // the UI intentionally does not await this callback
+  const next = action === 'switch' ? s.startDraftEdit('b')
+    : action === 'run' ? s.run([], false)
+    : action === 'leave' ? s.settleBeforeLeaving(async () => assert.fail('no conflict'))
+    : s.finishDraftEdit()
+  release.resolve()
+  await Promise.all([done, next])
+  assert.deepEqual(requests, [0n, 1n], action)
+  assert.equal(str(get(s.cardMeta('a'), 'content')), 'count words', action)
+  assert.equal(s.displayName('a'), '日本語', action)
+  assert.equal(s.inlineDraft?.card, action === 'switch' ? 'b' : undefined, action)
+  assert.equal(s.inlineDraft?.revision.conflictRev, undefined, action)
+  assert.equal(ran, action === 'run')
+}
+
+// Text typed after submitting, while RPC is pending, is saved before the edit
+// ends. A second focus-loss callback must not silently skip those keystrokes.
+{
+  const { s, requests } = session()
+  const entered = deferred(), release = deferred()
+  const client = s.client!, save = client.save.bind(client)
+  let first = true
+  client.save = async (...args) => {
+    if (first) { first = false; entered.resolve(); await release.promise }
+    return save(...args)
+  }
+  await s.startDraftEdit('a')
+  s.setDraftEdit({ content: 'first' })
+  const done = s.finishDraftEdit()
+  await entered.promise
+  s.setDraftEdit({ content: 'last keystrokes' })
+  const blurred = s.finishDraftEdit()
+  release.resolve()
+  await Promise.all([done, blurred])
+  assert.deepEqual(requests, [0n, 1n])
+  assert.equal(str(get(s.cardMeta('a'), 'content')), 'last keystrokes')
+  assert.equal(s.inlineDraft, undefined)
+}
+
+// A conflicting Draft cannot be replaced, run with stale content or silently
+// dropped when leaving. The explicit discard choice still works.
+{
+  const { s, requests } = session()
+  await s.startDraftEdit('a')
+  s.setDraftEdit({ content: 'keep my text' })
+  s.rev = 1n
+  await s.startDraftEdit('b')
+  assert.equal(s.inlineDraft?.card, 'a')
+  await assert.rejects(s.run([], false), RPCFailure)
+  assert.equal(await s.settleBeforeLeaving(async () => false), false)
+  assert.equal(s.hasUnsavedEdits, true)
+  assert.equal(s.inlineDraft?.content, 'keep my text')
+  assert.deepEqual(requests, [])
+  assert.equal(await s.settleBeforeLeaving(async () => true), true)
+  assert.equal(s.hasUnsavedEdits, false)
+}
+console.log('Draft pending autosave, repeated finish, switch, run and leave: passed')
+
+// Another settings editor in the same session uses the same origin. Only a
+// canvas autosave can advance the Draft's base, not that editor's transaction.
+{
+  const { s, requests } = session()
+  await s.startDraftEdit('a')
+  assert.equal(s.hasUnsavedEdits, false, 'an unchanged open editor needs no unload warning')
+  s.setDraftEdit({ content: 'mine' })
+  const other = new RevisionEdit(); other.reload(s.rev)
+  assert.equal(await other.apply(s, false, x => x.updateMeta('a', m => m.set('content', 'other editor'))), true)
+  await s.finishDraftEdit()
+  assert.equal(s.inlineDraft?.content, 'mine')
+  assert.equal(s.inlineDraft?.revision.conflictRev, 1n)
+  assert.equal(str(get(s.cardMeta('a'), 'content')), 'other editor')
+  assert.deepEqual(requests, [0n])
+}
 
 // The sticky-note and group-title forms submit through the same unchanged
 // guard and raw layout mutations; no rejected value reaches autosave.

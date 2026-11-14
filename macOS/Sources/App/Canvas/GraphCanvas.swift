@@ -297,7 +297,7 @@ struct GraphCanvas: View {
         if let draft = session.inlineDraft {
           RevisionEditNotice(edit: draft.revision, text: { draft.name + "\n" + draft.content },
             overwrite: { Task { _ = await session.finishDraftEdit(overwrite: true) } },
-            reload: { session.startDraftEdit(draft.card, revision: draft.revision) })
+            reload: { Task { await session.startDraftEdit(draft.card, revision: draft.revision) } })
             .padding(12).frame(maxWidth: 520)
         }
       }
@@ -736,25 +736,30 @@ struct GraphCanvas: View {
   /// Writing this Card's Draft, when it is the one being written.
   private func draftEdit(_ k: CardKey) -> DraftEdit? {
     guard let e = session.inlineDraft, e.card == k else { return nil }
-    return DraftEdit(name: Binding(get: { session.inlineDraft?.name ?? "" }, set: { session.inlineDraft?.name = $0 }),
-                     content: Binding(get: { session.inlineDraft?.content ?? "" }, set: { session.inlineDraft?.content = $0 }),
+    return DraftEdit(name: Binding(get: { session.inlineDraft?.card == k ? session.inlineDraft?.name ?? "" : "" },
+                                  set: { if session.inlineDraft?.card == k { session.inlineDraft?.name = $0 } }),
+                     content: Binding(get: { session.inlineDraft?.card == k ? session.inlineDraft?.content ?? "" : "" },
+                                      set: { if session.inlineDraft?.card == k { session.inlineDraft?.content = $0 } }),
                      nameProblem: session.draftNameProblem(k, e.name),
                      onDone: { byKey in
-                       finishDraftEdit()
+                       finishDraftEdit(e.revision)
                        if byKey { canvasFocused = true }
                      })
   }
 
   /// Starts writing a Draft on its Card, at a zoom where the text can be read.
   func writeDraft(_ k: CardKey) {
-    session.startDraftEdit(k)
+    Task { await session.startDraftEdit(k) }
     if camera.zoom < 0.8 { setZoom(1, around: screen(cardRect(k).center)) }
     reveal(k)
   }
 
   /// Keeps the Draft's name and content under its permanent key.
-  private func finishDraftEdit() {
-    Task { _ = await session.finishDraftEdit() }
+  private func finishDraftEdit(_ revision: RevisionEdit) {
+    Task {
+      guard session.inlineDraft?.revision === revision else { return }
+      _ = await session.finishDraftEdit()
+    }
   }
 
   private func groupFrame(_ id: String) -> some View {

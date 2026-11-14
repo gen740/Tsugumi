@@ -23,6 +23,7 @@ import TsugumiRPC
     private var sessions: [ProjectSession] = []
     private var chats: [ChatController] = []
     private var port = 0
+    private var servicePID: Int32?
 
     var session: ProjectSession { sessions[0] }
 
@@ -40,10 +41,7 @@ import TsugumiRPC
       core.standardOutput = FileHandle.nullDevice
       core.standardError = FileHandle.nullDevice
       try core.run()
-      let deadline = Date().addingTimeInterval(15)
-      while !FileManager.default.fileExists(atPath: state.appendingPathComponent("agent.ready").path),
-            core.isRunning, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
-      try #require(core.isRunning && FileManager.default.fileExists(atPath: state.appendingPathComponent("agent.ready").path))
+      try await waitForAgent()
       // Other UI tests can initialize the shared client before this fixture.
       // Join Home's startup and release its sockets before using our service.
       await AppModel.shared.initialRefresh?.value
@@ -80,22 +78,41 @@ import TsugumiRPC
     func restartAgent() async throws {
       let binary = core.executableURL
       let arguments = core.arguments
-      kill(core.processIdentifier, SIGKILL)
-      core.waitUntilExit()
-      let ready = directory.appendingPathComponent("state/agent.ready")
-      try? FileManager.default.removeItem(at: ready)
+      let oldPID = servicePID ?? core.processIdentifier
+      kill(oldPID, SIGKILL)
+      if oldPID == core.processIdentifier { core.waitUntilExit() }
+      else {
+        let deadline = Date().addingTimeInterval(5)
+        while kill(oldPID, 0) == 0, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        try #require(kill(oldPID, 0) != 0, "The previous fixture service did not exit")
+      }
+      // Leave stale readiness in place: the observer may already have replaced
+      // it with the winner's file. Validate the new PID instead of unlinking it.
       core = Process()
       core.executableURL = binary
       core.arguments = arguments
       core.standardOutput = FileHandle.nullDevice
       core.standardError = FileHandle.nullDevice
       try core.run()
-      let deadline = Date().addingTimeInterval(15)
-      while !FileManager.default.fileExists(atPath: ready.path), core.isRunning, Date() < deadline {
-        try await Task.sleep(for: .milliseconds(20))
-      }
-      try #require(core.isRunning && FileManager.default.fileExists(atPath: ready.path))
+      try await waitForAgent(replacing: oldPID)
       kill(model.processIdentifier, SIGCONT)
+    }
+
+    private func waitForAgent(replacing oldPID: Int32? = nil) async throws {
+      let ready = directory.appendingPathComponent("state/agent.ready")
+      // An observing client can win the startup lock. Status 4 means wait for
+      // that service, not that the replacement service failed to start.
+      let replacement = core
+      let value = try await AgentReadiness.wait(read: {
+        guard let bytes = try? Data(contentsOf: ready),
+              let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+              let pid = value["pid"] as? Int32, pid != oldPID, kill(pid, 0) == 0,
+              value["protocol"] as? Int == 1, value["unix_socket"] is String,
+              value["host_socket"] is String, value["user_token"] is String else { return nil }
+        return value
+      }, exitStatus: { replacement.isRunning ? nil : replacement.terminationStatus },
+      log: directory.appendingPathComponent("state/agent.log"))
+      servicePID = try #require(value["pid"] as? Int32)
     }
 
     func makeSession() throws -> ProjectSession {
@@ -154,6 +171,13 @@ import TsugumiRPC
       // terminating the isolated daemon and restoring the environment.
       try? await Task.sleep(for: .milliseconds(100))
       if model.isRunning { kill(model.processIdentifier, SIGCONT) }
+      if let pid = servicePID, pid != core.processIdentifier {
+        // The lock winner belongs to this fixture even when the client launched it.
+        kill(pid, SIGTERM)
+        let deadline = Date().addingTimeInterval(5)
+        while kill(pid, 0) == 0, Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+        if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+      }
       for process in [core, model] where process.isRunning {
         process.terminate()
         let deadline = Date().addingTimeInterval(5)

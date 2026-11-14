@@ -310,6 +310,10 @@ final class ProjectSession {
   var notice: String?
   /// The Draft being written on the canvas (geometry opens its Card up).
   var inlineDraft: InlineDraft?
+  @ObservationIgnored var draftFinishTask: Task<CardKey?, Never>?
+  var hasUnsavedEdits: Bool {
+    dirty || draftFinishTask != nil || inlineDraft.map { $0.name != $0.initialName || $0.content != $0.initialContent } == true
+  }
 
   /// A Draft being written on its Card: its name and content as typed so far.
   struct InlineDraft {
@@ -376,6 +380,7 @@ final class ProjectSession {
   /// Hashes of the externals' documents as they were read into `externals`.
   @ObservationIgnored private var externalHashes: [String: String] = [:]
   @ObservationIgnored private var saveTask: Task<Void, Never>?
+  @ObservationIgnored private var canvasSaveOp: String?
   @ObservationIgnored private var saveAgain = false
   /// Revision the draft is based on (equals `rev` while clean).
   var draftBaseRev: UInt64 { draftBase?.rev ?? rev }
@@ -899,6 +904,13 @@ final class ProjectSession {
     let shown = displayedCards
     // What the Agent's save changed, seen against the document before it.
     let presenceBefore = d.origin == "agent" ? presenceSnapshot() : nil
+    // A canvas autosave can still be in flight when typing starts. Other
+    // editors, including those in this session, keep the original conflict base.
+    if let edit = inlineDraft?.revision, edit.baseRev == d.baseRev,
+       edit.conflictRev == nil, let op = canvasSaveOp, d.opId == op,
+       d.origin == "ui:\(viewId.uuidString.lowercased())" {
+      edit.baseRev = d.rev ?? rev
+    }
     rev = d.rev ?? rev
     executionRev = d.executionRev ?? executionRev
     if let pj = d.projectJson, let v = try? JSONValue.parse(pj) { confirmedProject = v }
@@ -1242,6 +1254,7 @@ final class ProjectSession {
   /// Drops every unsaved edit and follows the latest confirmed document
   /// (only for edits that cannot be saved).
   func discardDraft() {
+    inlineDraft = nil
     dropDraft()
     // A save on its way answers about the draft that went: nothing of it stays.
     if let saving = saveTask {
@@ -1423,6 +1436,8 @@ final class ProjectSession {
   private func commitChanges(baseRev: UInt64, op: UUID, changes: [Tsugumi_RPC_DocumentChangeT],
                              editor: Bool = false) async throws -> Tsugumi_RPC_SaveResultT {
     guard let client else { throw RPCError.disconnected }
+    if !editor { canvasSaveOp = op.uuidString.lowercased() }
+    defer { if !editor { canvasSaveOp = nil } }
     let result = try await client.save(baseRev: baseRev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())",
                                        changes: changes)
     if let d = result.delta {
@@ -1604,6 +1619,10 @@ final class ProjectSession {
   // MARK: - Runs
 
   func run(card: [String], propagate: Bool) async throws {
+    _ = await finishDraftEdit()
+    guard inlineDraft == nil else {
+      throw RPCFailure(kind: .validationFailed, diagnostic: String(localized: "変更を保存できないため実行できません。"))
+    }
     guard let client else { throw RPCError.disconnected }
     if computationDirty { await save() }
     if computationDirty {

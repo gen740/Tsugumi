@@ -434,6 +434,12 @@ export class ProjectSession extends Observable {
   definitionEdits = new Map<string, DefinitionDraft>()
   /** The Draft being written on the canvas (geometry opens its Card up). */
   inlineDraft?: InlineDraft
+  private draftFinishTask?: Promise<CardKey | undefined>
+  private canvasSaveOp?: string
+  get hasUnsavedEdits() {
+    const e = this.inlineDraft
+    return this.dirty || !!this.draftFinishTask || !!e && (e.name !== e.initialName || e.content !== e.initialContent)
+  }
   /** Edited externals (by folder), written back as their files. */
   externalEdits = new Map<string, ExternalProject>()
   /** Base hashes chosen by an editor that read the file before this draft started. */
@@ -977,6 +983,10 @@ export class ProjectSession extends Observable {
     // The Cards that send displays, before this change (definitions and
     // resolution are replaced below).
     const shown = [...this.displayedCards].sort().join('|')
+    const edit = this.inlineDraft?.revision
+    // Local canvas autosaves may finish after typing starts. Only this client's
+    // consecutive autosave deltas advance the Draft's base; other editors conflict.
+    if (edit && edit.baseRev === d.baseRev && edit.conflictRev === undefined && this.canvasSaveOp && d.opId === this.canvasSaveOp && d.origin === this.origin) edit.baseRev = d.rev ?? this.rev
     this.rev = d.rev ?? this.rev
     this.executionRev = d.executionRev ?? this.executionRev
     if (d.projectJson !== null) {
@@ -1369,6 +1379,7 @@ export class ProjectSession extends Observable {
   /** Drops every unsaved edit and follows the latest confirmed document
    *  (only for edits that cannot be saved). */
   discardDraft() {
+    this.inlineDraft = undefined
     this.dropDraft()
     // A save on its way answers about the draft that went: nothing of it stays.
     void this.saveTask?.then(() => this.dropDraft())
@@ -1394,8 +1405,9 @@ export class ProjectSession extends Observable {
   /** Before leaving the project: what it holds is saved, or the user is asked why it
    *  cannot be and may give it up. Whether the project can be left now. */
   async settleBeforeLeaving(giveUp: (reason: string) => Promise<boolean>): Promise<boolean> {
+    await this.finishDraftEdit()
     if (this.dirty) await this.save()
-    if (!this.dirty) return true
+    if (!this.hasUnsavedEdits) return true
     if (!(await giveUp(this.saveError ?? this.connectionMessage ?? L('変更を保存できませんでした。')))) return false
     this.discardDraft()
     return true
@@ -1602,12 +1614,17 @@ export class ProjectSession extends Observable {
   /** The shared settings/canvas entry to ProjectSave; keeps the caller's revision. */
   private async commitChanges(baseRev: bigint, op: string, changes: R.DocumentChangeT[], editor = false) {
     if (!this.client) throw new RPCError('disconnected', L('接続していません'))
-    const result = await this.client.save(baseRev, op, this.origin, changes)
-    if (result.delta) {
-      if (editor) this.applyDelta(result.delta)
-      else this.applyDeltaFromSave(result.delta)
+    if (!editor) this.canvasSaveOp = op
+    try {
+      const result = await this.client.save(baseRev, op, this.origin, changes)
+      if (result.delta) {
+        if (editor) this.applyDelta(result.delta)
+        else this.applyDeltaFromSave(result.delta)
+      }
+      return result
+    } finally {
+      if (!editor) this.canvasSaveOp = undefined
     }
-    return result
   }
 
   /** A rejected editor copy stays in its editor, outside the autosaved draft. */
@@ -1764,6 +1781,8 @@ export class ProjectSession extends Observable {
   // ---- Runs --------------------------------------------------------------------
 
   async run(card: string[], propagate: boolean) {
+    await this.finishDraftEdit()
+    if (this.inlineDraft) throw new RPCFailure({ kind: D.FailureKind.validation_failed, diagnostic: L('変更を保存できないため実行できません。') })
     const client = this.client
     if (!client) throw new RPCError('disconnected', L('接続していません'))
     if (this.computationDirty) await this.save()
@@ -2479,7 +2498,13 @@ export class ProjectSession extends Observable {
   }
 
   /** Starts writing a Draft's name and content on its Card. */
-  startDraftEdit(k: CardKey, revision = new RevisionEdit()) {
+  async startDraftEdit(k: CardKey, revision?: RevisionEdit) {
+    if (!revision && this.inlineDraft) {
+      if (this.inlineDraft.card === k) return
+      await this.finishDraftEdit()
+      if (this.inlineDraft) return
+    }
+    revision ??= new RevisionEdit()
     const name = this.draftUntitled(k) ? '' : this.displayName(k), content = str(get(this.cardMeta(k), 'content')) ?? ''
     revision.reload(this.rev)
     this.inlineDraft = { card: k, name, content, initialName: name, initialContent: content, revision }
@@ -2500,6 +2525,23 @@ export class ProjectSession extends Observable {
   /** Keeps what was written. A name the Card cannot take stays as it was, with
    *  a notice. The Card's permanent key when its name changed. */
   async finishDraftEdit(overwrite = false): Promise<CardKey | undefined> {
+    if (this.draftFinishTask) return this.draftFinishTask
+    if (!this.inlineDraft) return undefined
+    const task = (async () => {
+      let renamed: CardKey | undefined
+      do {
+        renamed = await this.finishDraftEditOnce(overwrite) ?? renamed
+        const current = this.inlineDraft
+        if (!current || current.revision.conflictRev !== undefined || current.revision.error) break
+      } while (true)
+      return renamed
+    })()
+    this.draftFinishTask = task
+    try { return await task } finally { this.draftFinishTask = undefined; this.changed() }
+  }
+
+  private async finishDraftEditOnce(overwrite: boolean): Promise<CardKey | undefined> {
+    if (this.dirty || this.saveTask) await this.save()
     const e = this.inlineDraft
     if (!e) return undefined
     const contentChanged = e.content !== e.initialContent
