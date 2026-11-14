@@ -134,6 +134,7 @@ add_library(tsugumi_agent_core STATIC
   src/agent/tool_images.cc
   src/agent/wire.cc
   src/agent/host.cc
+  src/host/attached_folder.cc
   src/host/comments.cc
   src/host/save.cc
   src/agent/helper_scope.cc

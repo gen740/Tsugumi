@@ -456,12 +456,6 @@ struct HistoryFile {
   t::String<"head"> head;                                  // a branch name
 };
 
-// attached.json in the control folder: the folders of this host attached to
-// a chat, written by the launcher (a tsugumid on the host reads only these).
-struct Attached {
-  t::Array<"folders", v::String> folders;
-};
-
 // server.ready, written for the launcher into the 0700 control directory.
 struct ServerReady {
   t::String<"endpoint"> endpoint;  // ws://host:port/rpc as seen inside the environment

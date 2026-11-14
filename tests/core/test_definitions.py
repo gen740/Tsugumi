@@ -347,34 +347,6 @@ def test_output_types_lists_and_rewrites_a_port(tmp_path, core_factory):
     assert bad.text is None and bad.error
 
 
-def test_attached_folder_is_read_only_inside_it(tmp_path, core_factory):
-    """A folder attached to a chat: listed and read, never outside it."""
-    root = tmp_path / "p"
-    builtin_project(root)
-    folder = tmp_path / "attached"
-    (folder / "sub").mkdir(parents=True)
-    (folder / "notes.txt").write_text("日本語のメモ")
-    (tmp_path / "secret.txt").write_text("outside")
-    (folder / "escape").symlink_to(tmp_path / "secret.txt")
-    d = core_factory(project_root=root)
-    c = d.connect()
-    # Only folders the launcher listed as attached (a tsugumid on the host).
-    with pytest.raises(RpcFailure) as err:
-        c.call("AttachedFolderReadRequest", folder=str(folder), path="")
-    assert err.value.kind == "not_found"
-    (d.control / "attached.json").write_text(json.dumps({"folders": [str(folder)]}))
-    with pytest.raises(RpcFailure) as err:
-        c.call("AttachedFolderReadRequest", folder=str(tmp_path), path="secret.txt")
-    assert err.value.kind == "not_found"
-    listing = bytes(c.call("AttachedFolderReadRequest", folder=str(folder), path="").bytes).decode()
-    assert listing.splitlines() == ["escape", "notes.txt", "sub/"]
-    assert bytes(c.call("AttachedFolderReadRequest", folder=str(folder), path="notes.txt").bytes).decode() == "日本語のメモ"
-    for bad in ("../secret.txt", "escape"):
-        with pytest.raises(RpcFailure) as err:
-            c.call("AttachedFolderReadRequest", folder=str(folder), path=bad)
-        assert err.value.kind in ("invalid_path", "permission_denied"), bad
-
-
 def test_name_changes_inside_a_card_in_card_preserve_history(tmp_path, core_factory):
     """Both container and inner names change without touching a past record."""
     root = tmp_path / "p"

@@ -7,6 +7,7 @@
 #include "agent/approval.hh"
 #include "agent/catalog.hh"
 #include "agent/json.hh"
+#include "host/agent_policy.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 
 extern const unsigned char tsugumi_agent_settings[];
@@ -68,6 +69,8 @@ TEST(AgentCatalog, ExposesExactlyTheSharedRequestList) {
     ASSERT_TRUE(approval.insert(json::String(entry)).second);
     ASSERT_TRUE(expected.insert(json::String(entry)).second);
   }
+  for (const auto& raw : json::Array(json::Get(settings, "hostTools", "[]")))
+    ASSERT_TRUE(expected.insert(json::Text(json::Object(raw), "name")).second);
   ASSERT_FALSE(approval.empty());
   const Catalog catalog;
   std::set<std::string> actual;
@@ -87,16 +90,51 @@ TEST(AgentCatalog, ExposesExactlyTheSharedRequestList) {
     ASSERT_NE(tool, nullptr);
     const auto properties = json::Object(
         json::Get(json::Object(tool->spec.input_schema), "properties"));
-    for (const auto *owned : {"origin", "op_id", "approved_permissions"})
+    for (const auto *owned : {"origin", "op_id", "approved_permissions", "check_permissions",
+                               "read_only", "hide_credentials", "no_project_socket"})
       EXPECT_FALSE(properties.contains(owned));
     EXPECT_TRUE(tool->mutating);
-    EXPECT_TRUE(tool->has_origin);
+    EXPECT_EQ(tool->has_origin, std::string_view(name) != "project_shell");
   }
   const auto history = json::Object(json::Get(
       json::Object(catalog.Find("run_history_delete")->spec.input_schema),
       "properties"));
   EXPECT_FALSE(history.contains("run_ids"));
   EXPECT_FALSE(history.contains("restrict_to_run_ids"));
+}
+
+TEST(AgentPolicy, SaveAndReloadAlwaysRequestPermissionComparison) {
+  for (const auto* name : {"project_save", "project_reload"}) {
+    auto arguments = json::Object(R"({"origin":"ui","check_permissions":false})");
+    host::RestrictAgentRequest(name, arguments);
+    EXPECT_EQ(json::Get(arguments, "check_permissions"), "true");
+    arguments["op_id"] = json::Quote("operation");
+    if (std::string_view(name) == "project_save") arguments["changes"] = "[]";
+    const auto bytes = EncodeProjectRequest(name, json::Encode(arguments), 1);
+    const auto* request = Tsugumi::RPC::GetMessage(bytes.data())->payload_as_Request();
+    if (std::string_view(name) == "project_save")
+      EXPECT_TRUE(request->value_as_ProjectSaveRequest()->check_permissions());
+    else
+      EXPECT_TRUE(request->value_as_ProjectReloadRequest()->check_permissions());
+  }
+}
+
+TEST(AgentPolicy, ShellAlwaysRequestsAllRestrictions) {
+  auto arguments = json::Object(R"({"op_id":"operation","command":"true","origin":"ui","read_only":false,"hide_credentials":false,"no_project_socket":false})");
+  host::RestrictAgentRequest("project_shell", arguments);
+  EXPECT_FALSE(arguments.contains("origin"));
+  const auto bytes = EncodeProjectRequest("project_shell", json::Encode(arguments), 1);
+  const auto* request = Tsugumi::RPC::GetMessage(bytes.data())->payload_as_Request()->value_as_ProjectShellRequest();
+  ASSERT_NE(request, nullptr);
+  EXPECT_TRUE(request->read_only());
+  EXPECT_TRUE(request->hide_credentials());
+  EXPECT_TRUE(request->no_project_socket());
+}
+
+TEST(AgentCatalog, AttachedFoldersHaveNoProjectRPC) {
+  const Catalog catalog;
+  EXPECT_NE(catalog.Find("attached_folder_read"), nullptr);
+  EXPECT_THROW(EncodeProjectRequest("attached_folder_read", R"({"folder":"/ungranted","path":""})", 1), std::runtime_error);
 }
 
 TEST(AgentApprovalDescription, HistoryListsEverySelectedRunAcrossPages) {

@@ -7,7 +7,7 @@ def permissions(e: RpcFailure) -> list[str]:
     return [text(kv.value) for kv in e.failure.args if text(kv.key) == "permission"]
 
 
-def save(c, changes, origin="agent", approved=None):
+def save(c, changes, origin="agent", approved=None, check=True):
     rev = c.call("ProjectInspectRequest").rev
     extra = {"approvedPermissions": approved} if approved is not None else {}
-    return c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin=origin, changes=changes, **extra)
+    return c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin=origin, changes=changes, checkPermissions=check, **extra)

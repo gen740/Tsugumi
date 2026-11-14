@@ -38,9 +38,6 @@ struct ServiceOptions {
   std::string token;                 // required on WebSocket connections
   std::string server_instance_id;
   std::filesystem::path control_dir;  // launcher-managed files hidden from workers
-  // Launcher-managed list of the folders attached to a chat (JSON), for a
-  // tsugumid on the host (no chat_folders): only these are read.
-  std::filesystem::path attached_file;
   std::filesystem::path sdk_dir;      // installed SDK (share/tsugumi/sdk)
   std::filesystem::path worker_binary;
   std::string fault;                  // test-only fault injection point
@@ -67,10 +64,6 @@ struct ServiceOptions {
   // <host_folders>/<sha256(path)[:16]> (the shared VM). Empty: the paths as
   // they are (a tsugumid on the Mac itself).
   std::filesystem::path host_folders;
-  // Folders attached to a chat, the same way (<chat_folders>/<tag>); read
-  // only through AttachedFolderRead, never by a Card. Empty: the paths as
-  // they are.
-  std::filesystem::path chat_folders;
   bool project_shell = false;  // enabled by the isolated project launcher
   // The binary caches of the Nix daemon that builds for this project, one URL
   // per line, written by a launcher whose daemon reads settings this process
@@ -160,7 +153,6 @@ class Service : public RequestSink {
   void output_types(RequestIn& req);
   auto layout_proposal(RequestIn& req) -> void;
   void nix_source_resolve(RequestIn& req);
-  void attached_folder_read(RequestIn& req);
   void sdk_status(RequestIn& req);
   void run_plan(RequestIn& req);
   void run_cancel(RequestIn& req);

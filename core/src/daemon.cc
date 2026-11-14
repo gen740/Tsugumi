@@ -45,7 +45,6 @@ struct Options {
   stdfs::path usage_file;
   bool archive_incompatible_history = false;
   stdfs::path host_folders;
-  stdfs::path chat_folders;
   bool project_shell = false;
   stdfs::path substituters_file;
   std::string fault;
@@ -59,7 +58,7 @@ void usage() {
                "                [--archive-incompatible-history]\n"
                "                [--run-scratch-dir DIR] [--usage-roots-dir DIR] [--usage-scratch-dir DIR]\n"
                "                [--usage-file FILE]\n"
-               "                [--host-folders DIR] [--chat-folders DIR] [--substituters-file FILE]\n");
+               "                [--host-folders DIR] [--substituters-file FILE]\n");
 }
 
 std::optional<Options> parse(int argc, char** argv) {
@@ -93,7 +92,6 @@ std::optional<Options> parse(int argc, char** argv) {
     else if (a == "--usage-file") o.usage_file = next();
     else if (a == "--archive-incompatible-history") o.archive_incompatible_history = true;
     else if (a == "--host-folders") o.host_folders = next();
-    else if (a == "--chat-folders") o.chat_folders = next();
     else if (a == "--project-shell") o.project_shell = true;
     else if (a == "--substituters-file") o.substituters_file = next();
     else if (a == "--help") return std::nullopt;
@@ -174,7 +172,6 @@ int run_daemon(int argc, char** argv) {
   so.token = crypto::random_token(32);
   so.server_instance_id = crypto::uuid4();
   so.control_dir = opt.control_dir;
-  so.attached_file = opt.control_dir.empty() ? stdfs::path() : opt.control_dir / "attached.json";
   so.sdk_dir = opt.sdk_dir;
   so.worker_binary = opt.worker;
   so.fault = opt.fault;
@@ -187,7 +184,6 @@ int run_daemon(int argc, char** argv) {
   so.usage_file = opt.usage_file;
   so.archive_incompatible_history = opt.archive_incompatible_history;
   so.host_folders = opt.host_folders;
-  so.chat_folders = opt.chat_folders;
   so.project_shell = opt.project_shell;
   so.substituters_file = opt.substituters_file;
   // Block termination signals before threads start; they are taken with sigwait.
