@@ -4,21 +4,19 @@ import numpy as np
 from rdkit import Chem, DataStructs
 from rdkit.Chem import rdFingerprintGenerator
 
-from inputs.molecules.mol.Molecules import Molecules
-
 
 def main(inputs, report):
-    m = inputs.input("molecules", Molecules)
+    m = inputs.molecules
     p = inputs.params
-    n = m.NamesLength()
-    names = [m.Names(i).decode() for i in range(n)]
+    n = len(m.names)
+    names = [m.names[i].decode() for i in range(n)]
     generator = rdFingerprintGenerator.GetMorganGenerator(radius=p.radius, fpSize=p.bits)
-    prints = [generator.GetFingerprint(Chem.MolFromSmiles(m.Smiles(i).decode())) for i in range(n)]
+    prints = [generator.GetFingerprint(Chem.MolFromSmiles(m.smiles[i].decode())) for i in range(n)]
     sim = np.array([DataStructs.BulkTanimotoSimilarity(f, prints) for f in prints])
     off = sim - np.eye(n)
     a, b = np.unravel_index(np.argmax(off), off.shape)
     mean = off.sum() / max(n * (n - 1), 1)
-    report.log(str(f"mean similarity {mean:.4f}; most similar {names[a]} and {names[b]} {sim[a, b]:.4f}"))
+    report.log(f"mean similarity {mean:.4f}; most similar {names[a]} and {names[b]} {sim[a, b]:.4f}")
 
     fig, ax = plt.subplots(figsize=(8, 6.6))
     image = ax.imshow(sim, cmap="Blues", vmin=0, vmax=1)

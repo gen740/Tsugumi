@@ -15,7 +15,7 @@ end
 # smallest ones is multiplied by 1 / sigma. The values are limited only so that
 # they stay representable.
 function main(inputs, report)
-    m = Tsugumi.input(inputs, "measurement")
+    m = inputs.measurement
     x, truth, measured = Float64.(m["x"]), Float64.(m["truth"]), Float64.(m["measured"])
     n = length(x)
     V, s = heat_modes(n, m["alpha"], m["final_time"])

@@ -2,7 +2,7 @@
 centred on Cas A (its position converted with the event file's own x, y
 coordinate keywords, so every observation is centred the same way). CIAO's
 dmcopy does the binning."""
-import tsugumi
+from tsugumi import contract
 import json
 import math
 import os
@@ -14,8 +14,6 @@ from pathlib import Path
 import numpy as np
 from astropy.io import fits
 
-from inputs.ciao.casa.Ciao import Ciao
-from inputs.input.casa.Events import Events
 
 COLORS = ["red", "green", "blue"]
 
@@ -32,10 +30,10 @@ def sky_pixel(columns, ra, dec):
 
 
 def main(inputs, report, run):
-    events = inputs.input("input", Events)
-    source, obsid = events.Path().decode(), events.Obsid().decode()
-    tool = inputs.input("ciao", Ciao)
-    root = tool.Path().decode()
+    events = contract.input_object(inputs, "input")
+    source, obsid = events.path.decode(), events.obsid.decode()
+    tool = inputs.ciao
+    root = tool.path.decode()
     p = inputs.params
     limits = [p.redMinEv, p.greenMinEv, p.blueMinEv, p.maxEv]
     assert all(a < b for a, b in zip(limits, limits[1:])), "energy boundaries must increase"
@@ -76,12 +74,10 @@ def main(inputs, report, run):
         assert sum(b["photons"] for b in bands) == selected, "bands overlap or leave a gap"
         manifest = {"obsid": obsid, "events_file": source, "exposure_s": ev.header.get("EXPOSURE"), "events": len(ev.data),
                     "centre_pixel": [x0 + step * size / 2, y0 + step * size / 2], "grid": {"step": step, "pixels": size},
-                    "selected": selected, "bands": bands, "tool": {"name": "CIAO", "version": tool.Version().decode(), "path": root}}
+                    "selected": selected, "bands": bands, "tool": {"name": "CIAO", "version": tool.version.decode(), "path": root}}
     (dest / "provenance.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
-    report.log(str(json.dumps(manifest, ensure_ascii=False)))
+    report.log(json.dumps(manifest, ensure_ascii=False))
     report.table(["Band", "Energy (eV)", "Photons"],
                       [[b["color"], f"{b['min_ev']:g}–{b['max_ev']:g}", b["photons"]] for b in bands])
     s = str(dest)
-    _out_value = {}
-    _out_value['value'] = s
-    return {'images': _out_value}
+    return {'images': {'value': s}}

@@ -18,7 +18,7 @@ end
 # the start, and theory says Poisson with mean kV / gamma (so the Fano factor is 1).
 function main(inputs, report)
     outputs = Dict{String,Any}()
-    m = Tsugumi.input(inputs, "settings")
+    m = inputs.settings
     k, gamma, volume, runs = m["synthesis"], m["degradation"], m["volume"], Int(m["runs"])
     birth = k * volume
     expected = birth / gamma

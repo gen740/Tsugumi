@@ -7,7 +7,6 @@ import json
 
 import numpy as np
 
-from inputs.errors.newton.Orbits import Orbits
 from tsugumi import Failure
 
 EPS = np.finfo(float).eps
@@ -25,15 +24,15 @@ def estimate(e, m):
 
 
 def main(inputs, report):
-    o = inputs.input("errors", Orbits)
-    coeffs = o.CoeffsAsNumpy()
-    damping = o.Damping()
-    statuses = o.Status().decode().split()
-    lengths = o.LengthsAsNumpy()
-    all_errors = o.ErrorsAsNumpy()
-    start = o.StartReAsNumpy() + 1j * o.StartImAsNumpy()
-    root = o.RootReAsNumpy() + 1j * o.RootImAsNumpy()
-    mult = o.MultiplicityAsNumpy()
+    o = inputs.errors
+    coeffs = o.coeffs
+    damping = o.damping
+    statuses = o.status.decode().split()
+    lengths = o.lengths
+    all_errors = o.errors
+    start = o.startRe + 1j * o.startIm
+    root = o.rootRe + 1j * o.rootIm
+    mult = o.multiplicity
 
     lines = [
         f"**Convergence at $\\lambda = {damping:g}$** ($q$ is the order estimated from three errors)",
@@ -76,4 +75,4 @@ def main(inputs, report):
         shown = sorted({round(abs(np.polyval(d2, complex(*r["root"])) / (2 * np.polyval(d1, complex(*r["root"])))), 3) for r in simple})
         lines += ["", "Theoretical constant at simple roots $|p''(r) / (2 p'(r))|$: " + ", ".join(f"{v:g}" for v in shown) + "."]
     report.markdown("\n".join(lines))
-    report.log(str("result: " + json.dumps(rows)))
+    report.log("result: " + json.dumps(rows))

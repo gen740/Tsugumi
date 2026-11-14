@@ -13,7 +13,7 @@ end
 
 # Each check has a known answer, independent of the noise in this run.
 function main(inputs, report)
-    m = Tsugumi.input(inputs, "measurement")
+    m = inputs.measurement
     x, truth = Float64.(m["x"]), Float64.(m["truth"])
     n = length(x)
     alpha, T = m["alpha"], m["final_time"]

@@ -5,7 +5,6 @@ import json
 import matplotlib.pyplot as plt
 import numpy as np
 
-from inputs.problem.newton.Problem import Problem
 from tsugumi import Failure
 
 EPS = np.finfo(float).eps
@@ -46,17 +45,17 @@ def newton_grid(coeffs, z, damping, tolerance, max_iter):
 
 
 def main(inputs, report):
-    p = inputs.input("problem", Problem)
-    coeffs = p.CoeffsAsNumpy().copy()
-    roots = p.RootsReAsNumpy() + 1j * p.RootsImAsNumpy()
-    critical = p.CriticalReAsNumpy() + 1j * p.CriticalImAsNumpy()
+    p = inputs.problem
+    coeffs = p.coeffs.copy()
+    roots = p.rootsRe + 1j * p.rootsIm
+    critical = p.criticalRe + 1j * p.criticalIm
     params = inputs.params
     n, cx, cy, half = int(params.grid), params.centerRe, params.centerIm, params.halfWidth
 
     x = np.linspace(cx - half, cx + half, n)
     y = np.linspace(cy - half, cy + half, n)
     z0 = x[None, :] + 1j * y[:, None]
-    z, count, done = newton_grid(coeffs, z0, p.Damping(), p.Tolerance(), int(p.MaxIter()))
+    z, count, done = newton_grid(coeffs, z0, p.damping, p.tolerance, int(p.maxIter))
 
     distance = np.abs(z[..., None] - roots)
     nearest = np.nan_to_num(distance, nan=np.inf).argmin(axis=-1)
@@ -91,8 +90,8 @@ def main(inputs, report):
         ax.set_ylabel("Im $z_0$")
     # A line with $...$ is drawn by mathtext, which has no Japanese glyphs: keep them on separate lines.
     share_text = "、".join(f"r{k} {100 * s:.1f}%" for k, s in enumerate(shares))
-    fig.suptitle(f"$p(z) = {p.Label().decode()}$,  $\\lambda = {p.Damping():g}$,  {n} × {n}\n"
+    fig.suptitle(f"$p(z) = {p.label.decode()}$,  $\\lambda = {p.damping:g}$,  {n} × {n}\n"
                  f"★ は根、× は臨界点。{share_text}、未収束 {100 * unconverged:.2f}%", fontsize=12)
     report.figure()
-    report.log(str("result: " + json.dumps({"shares": shares, "unconverged": unconverged, "mean_iterations": float(count.mean()),
-                                   "max_iterations": int(count.max()), "worst_gap": float(gap[done].max()) if done.any() else None})))
+    report.log("result: " + json.dumps({"shares": shares, "unconverged": unconverged, "mean_iterations": float(count.mean()),
+                                   "max_iterations": int(count.max()), "worst_gap": float(gap[done].max()) if done.any() else None}))

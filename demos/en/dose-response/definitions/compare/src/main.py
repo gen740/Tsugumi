@@ -3,37 +3,36 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.ticker import NullLocator
 
-from inputs.intervals.dose.Intervals import Intervals
 
 COLORS = ["#2a78d6", "#eb6834"]
 
 
 def main(inputs, report):
-    r = inputs.input("intervals", Intervals)
-    n = r.NamesLength()
-    names = [r.Names(i).decode() for i in range(n)]
-    log_samples = r.LogEc50SamplesAsNumpy().reshape(n, -1)
-    hill_samples = r.HillSamplesAsNumpy().reshape(n, -1)
+    r = inputs.intervals
+    n = len(r.names)
+    names = [r.names[i].decode() for i in range(n)]
+    log_samples = r.logEc50Samples.reshape(n, -1)
+    hill_samples = r.hillSamples.reshape(n, -1)
 
     # Compounds were resampled independently, so paired draws are independent draws.
     log_ratio = log_samples[1] - log_samples[0]
     low, high = 10 ** np.nanpercentile(log_ratio, [2.5, 97.5])
-    ratio = r.Ec50(1) / r.Ec50(0)
-    true_ratio = r.Ec50True(1) / r.Ec50True(0)
+    ratio = r.ec50[1] / r.ec50[0]
+    true_ratio = r.ec50True[1] / r.ec50True[0]
     hill_low, hill_high = np.nanpercentile(hill_samples[1] - hill_samples[0], [2.5, 97.5])
     parallel = hill_low <= 0 <= hill_high
-    report.log(str(f"relative potency {names[1]}/{names[0]} {ratio:.4g} [{low:.4g}, {high:.4g}] true {true_ratio:g}; "
-          f"hill difference [{hill_low:.3f}, {hill_high:.3f}]"))
+    report.log(f"relative potency {names[1]}/{names[0]} {ratio:.4g} [{low:.4g}, {high:.4g}] true {true_ratio:g}; "
+          f"hill difference [{hill_low:.3f}, {hill_high:.3f}]")
 
     fig, (left, right) = plt.subplots(1, 2, figsize=(9, 4), gridspec_kw={"width_ratios": [1.1, 1]})
     for i in range(n):
         y = n - 1 - i
-        left.plot([r.Ec50Low(i), r.Ec50High(i)], [y, y], color=COLORS[i], lw=3, solid_capstyle="round")
-        left.plot(r.Ec50(i), y, "o", ms=8, color=COLORS[i], mec="white", label="estimate and 95% interval" if i == 0 else None)
-        left.plot(r.Ec50True(i), y, "D", ms=6, mfc="none", mec="#333333", label="true value" if i == 0 else None)
-    left.axvspan(r.ConcLow(), r.ConcHigh(), color="#000000", alpha=0.05, label="measured range")
+        left.plot([r.ec50Low[i], r.ec50High[i]], [y, y], color=COLORS[i], lw=3, solid_capstyle="round")
+        left.plot(r.ec50[i], y, "o", ms=8, color=COLORS[i], mec="white", label="estimate and 95% interval" if i == 0 else None)
+        left.plot(r.ec50True[i], y, "D", ms=6, mfc="none", mec="#333333", label="true value" if i == 0 else None)
+    left.axvspan(r.concLow, r.concHigh, color="#000000", alpha=0.05, label="measured range")
     left.set_xscale("log")
-    shown = [v for i in range(n) for v in (r.Ec50Low(i), r.Ec50High(i), r.Ec50True(i))]
+    shown = [v for i in range(n) for v in (r.ec50Low[i], r.ec50High[i], r.ec50True[i])]
     left.set_xlim(min(shown) / 1.5, max(shown) * 1.5)
     ticks = np.geomspace(min(shown) / 1.2, max(shown) * 1.2, 4)
     left.set_xticks(ticks, [f"{t:.2g}" for t in ticks])
@@ -54,7 +53,7 @@ def main(inputs, report):
     right.set_xticks(ticks, [f"{t:.3g}" for t in ticks])
     right.xaxis.set_minor_locator(NullLocator())
     right.set_xlabel(f"Relative potency EC50({names[1]}) / EC50({names[0]})")
-    right.set_ylabel(f"Count among {r.NBoot()} bootstrap samples")
+    right.set_ylabel(f"Count among {r.nBoot} bootstrap samples")
     if low <= 1 <= high:
         right.set_title(f"No difference in potency can be claimed (ratio {ratio:.3g}, the interval contains 1)")
     elif ratio > 1:

@@ -3,8 +3,6 @@ broke. Names are written on the plot only where they do not collide."""
 import numpy as np
 import plotly.graph_objects as go
 
-from inputs.checked.mol.Checked import Checked
-
 
 def labelled(mw, logp, first):
     """Indices to write a name for: `first` in order, then whatever keeps its distance from those."""
@@ -16,15 +14,15 @@ def labelled(mw, logp, first):
 
 
 def main(inputs, report):
-    c = inputs.input("checked", Checked)
-    n = c.NamesLength()
-    names = [c.Names(i).decode() for i in range(n)]
-    mw, logp, tpsa = c.MwAsNumpy(), c.LogpAsNumpy(), c.TpsaAsNumpy()
-    limit = c.MaxViolations()
-    passed = [c.Violations(i) <= limit for i in range(n)]
+    c = inputs.checked
+    n = len(c.names)
+    names = [c.names[i].decode() for i in range(n)]
+    mw, logp, tpsa = c.mw, c.logp, c.tpsa
+    limit = c.maxViolations
+    passed = [c.violations[i] <= limit for i in range(n)]
     shown = labelled(mw, logp, {i for i in range(n) if not passed[i]})
-    hover = [f"分子式 {c.Formula(i).decode()}<br>TPSA {tpsa[i]:.1f} Å²<br>"
-             + ("違反なし" if c.Violations(i) == 0 else f"違反: {c.Broken(i).decode()}") for i in range(n)]
+    hover = [f"分子式 {c.formula[i].decode()}<br>TPSA {tpsa[i]:.1f} Å²<br>"
+             + ("違反なし" if c.violations[i] == 0 else f"違反: {c.broken[i].decode()}") for i in range(n)]
 
     fig = go.Figure()
     low, high = min(logp.min(), 0) - 1, max(logp.max(), 5) + 1

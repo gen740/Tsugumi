@@ -34,7 +34,7 @@ end
 # Fewer molecules, more noise: the coefficient of variation is 1 / sqrt(mean).
 function main(inputs, report)
     outputs = Dict{String,Any}()
-    m = Tsugumi.input(inputs, "settings")
+    m = inputs.settings
     k, gamma, runs = m["synthesis"], m["degradation"], Int(m["runs"])
     volumes = sort(Float64.(inputs.params["volumes"]))
     shown = Float64.(inputs.params["shown_volumes"])

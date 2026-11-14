@@ -10,8 +10,6 @@ from skimage.measure import label, regionprops
 from skimage.morphology import remove_small_objects
 from skimage.segmentation import find_boundaries, watershed
 
-from inputs.image.cells.RealImage import RealImage
-
 
 def background(image, radius):
     small = ndi.zoom(image, 0.25, order=1)
@@ -22,8 +20,8 @@ def background(image, radius):
 
 def main(inputs, report):
     p = inputs.params
-    source = inputs.input("image", RealImage)
-    raw = imread(source.Path().decode()).astype(np.float64)
+    source = inputs.image
+    raw = imread(source.path.decode()).astype(np.float64)
     image = raw / np.percentile(raw, 99.9)
     clean = gaussian(image - background(image, p.backgroundRadius), sigma=p.sigma)
     mask = remove_small_objects(ndi.binary_fill_holes(clean > threshold_otsu(clean)), max_size=p.minArea)
@@ -34,8 +32,8 @@ def main(inputs, report):
     markers[tuple(peaks.T)] = np.arange(1, len(peaks) + 1)
     split = watershed(-distance, markers, mask=mask)
     areas = [r.area for r in regionprops(split)]
-    report.log(str(f"{raw.shape[1]} x {raw.shape[0]} px from {source.Source().decode()}"))
-    report.log(str(f"threshold only {plain.max()} objects; watershed {split.max()} objects; median area {np.median(areas):.0f} px"))
+    report.log(f"{raw.shape[1]} x {raw.shape[0]} px from {source.source.decode()}")
+    report.log(f"threshold only {plain.max()} objects; watershed {split.max()} objects; median area {np.median(areas):.0f} px")
 
     fig, axes = plt.subplots(1, 2, figsize=(9, 5.2))
     for ax in axes:

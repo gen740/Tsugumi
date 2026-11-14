@@ -4,13 +4,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
 
-from inputs.walks.walk.Walks import Walks
-
 
 def main(inputs, report):
-    w = inputs.input("walks", Walks)
-    paths = w.PositionsAsNumpy().reshape(w.Walkers(), w.Steps() + 1)
-    n = w.Steps()
+    w = inputs.walks
+    paths = w.positions.reshape(w.walkers, w.steps + 1)
+    n = w.steps
     frames = np.unique(np.linspace(1, n, inputs.params.frames).astype(int))
     lim = 3.5 * np.sqrt(n)
 
@@ -48,5 +46,6 @@ def main(inputs, report):
 
     draw(frames[0])  # titles in place before the layout is fitted
     fig.tight_layout()
-    anim = FuncAnimation(fig, draw, frames=frames, interval=60, repeat=False)
+    # Keep the animation alive while the report plays it.
+    _anim = FuncAnimation(fig, draw, frames=frames, interval=60, repeat=False)
     report.figure()

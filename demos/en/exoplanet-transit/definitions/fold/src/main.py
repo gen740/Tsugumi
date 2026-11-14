@@ -1,4 +1,3 @@
-import tsugumi
 import os
 
 import matplotlib
@@ -6,17 +5,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-from inputs.detrended.exo.DetrendedDir import DetrendedDir
-import outputs.folded.exo.FoldedDir as out
-
-
-def emit(inputs, port, out):
-    result_ports = {}
-    s = '.'
-    _out_value = {}
-    _out_value['value'] = s
-    result_ports.update({port: _out_value})
-    return result_ports
 
 
 def png(fig):
@@ -28,9 +16,8 @@ def png(fig):
 
 
 def main(inputs, report, run):
-    result_ports = {}
     p = inputs.params
-    d = np.load(os.path.join(inputs.input("detrended", DetrendedDir).Value().decode(), "detrended.npz"))
+    d = np.load(os.path.join(inputs.detrended.value.decode(), "detrended.npz"))
     t, f, period, t0, dur = d["t"], d["flux"], float(d["period"]), float(d["t0"]), float(d["duration"])
     phase = ((t - t0 + period / 2) % period) - period / 2
     hours = phase * 24
@@ -51,7 +38,7 @@ def main(inputs, report, run):
     ax.set_title(f"Kepler-6 b folded at P = {period:.4f} d")
     with open(os.path.join(run.output_directory, "folded.png"), "wb") as fh:
         fh.write(png(fig))
-    report.log(str(f"depth {depth * 1e6:.0f} ppm, Rp/R* {ratio:.4f}"))
+    report.log(f"depth {depth * 1e6:.0f} ppm, Rp/R* {ratio:.4f}")
     report.markdown(
         "**Kepler-6 b** (folded by phase)\n\n"
         f"Period $P = {period:.4f}$ d, BLS box width $\\tau \\approx {dur * 24:.1f}$ h\n\n"
@@ -60,5 +47,4 @@ def main(inputs, report, run):
         f" = {ratio:.4f}$$\n\n"
         "(An approximation that ignores limb darkening and the shape of the planet's overlap. The folded figure is kept in `folded.png`)"
     )
-    result_ports.update(emit(inputs, 'folded', out))
-    return result_ports
+    return {'folded': {"value": run.output_directory}}

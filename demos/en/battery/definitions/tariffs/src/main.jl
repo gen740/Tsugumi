@@ -4,7 +4,7 @@ include("dp.jl")
 # The same battery under four contracts. With a flat price and equal selling
 # price, cycling only loses energy: the optimum is to stay still.
 function main(inputs, report)
-    m = Tsugumi.input(inputs, "scenario")
+    m = inputs.scenario
     net_load = Float64.(m["load"]) .- Float64.(m["solar"])
     capacity, ratio = m["capacity_kwh"], m["export_ratio"]
     percent = @sprintf("%.0f%%", 100ratio)

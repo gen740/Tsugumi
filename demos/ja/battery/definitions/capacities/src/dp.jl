@@ -1,5 +1,4 @@
-# The dynamic program of the demo (the same file is in schedule, capacities,
-# tariffs and check, so that each Card can be read and rerun alone).
+# The dynamic program used by this Card.
 #
 # State: the charge of the battery, on a grid of `step` kWh. Each hour it moves
 # to any level the power limit reaches, and the bill of that hour follows. The
@@ -60,9 +59,3 @@ end
 
 no_battery_bill(net_load, price, export_ratio) =
     sum(hour_bill(net_load[t], price[t], export_ratio * price[t]) for t in eachindex(net_load))
-
-# Energy that left the battery, in full cycles of its capacity.
-function cycles(charge, capacity)
-    capacity > 0 || return 0.0
-    return sum(max(0.0, charge[t] - charge[t + 1]) for t in 1:length(charge)-1) / capacity
-end

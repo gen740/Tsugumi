@@ -1,5 +1,4 @@
-# The models, the integrator and the optimizer of the demo (the same file is in
-# fit, forecast, phase and check, so that each Card can be read and rerun alone).
+# The models, integrator and optimizer used by this Card.
 using Random
 
 # H: prey (hare), L: predator (lynx), in thousands of pelts; t in years.

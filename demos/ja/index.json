@@ -61,6 +61,7 @@
       "description": "時系列の出力を、実行中にそのままグラフで描く。",
       "path": "live-stream",
       "tags": [
+        "C++",
         "Python",
         "ライブ表示",
         "ループ",
@@ -498,7 +499,7 @@
       "id": "r-reports-draft",
       "path": "r-reports-draft",
       "title": "R レポート: R Markdown と Quarto (Draft)",
-      "description": "観測値を集計し、params を使う表・図入りレポートを作成して HTML 成果物を保存します。",
+      "description": "観測値を集計し、R Markdown と Quarto で表と図を描き、両方の HTML を保存する処理を Draft Card で示す。",
       "tags": [
         "R",
         "Quarto",
@@ -510,7 +511,7 @@
     {
       "id": "go-pipeline",
       "title": "Go のパイプライン",
-      "description": "Python → Go → C++。型付きの値と goroutine の寿命を管理する。",
+      "description": "Python → Go → C++ で型付きの整数を渡し、Go で掛けて結果を表示する。",
       "path": "go-pipeline",
       "tags": [
         "Go",
@@ -522,18 +523,20 @@
     {
       "id": "go-pipeline-draft",
       "title": "Go のパイプライン (Draft)",
-      "description": "Python → Go → C++。型付きの値と goroutine の寿命を管理する。",
+      "description": "Python → Go → C++ で型付きの整数を渡し、Go で掛けて結果を表示する。3 つの Draft Card に実装前の処理を示す。",
       "path": "go-pipeline-draft",
       "tags": [
         "Go",
         "Python",
-        "C++"
+        "C++",
+        "Draft",
+        "Agent"
       ]
     },
     {
       "id": "rust-pipeline",
       "title": "Rust のパイプライン",
-      "description": "Python → Rust → C++。型付きの入力と出力、固定した crate を使う。",
+      "description": "Python → Rust → C++ で型付きの整数を渡し、Rust で借用した値を掛けて所有する結果を返す。",
       "path": "rust-pipeline",
       "tags": [
         "Rust",
@@ -545,12 +548,14 @@
     {
       "id": "rust-pipeline-draft",
       "title": "Rust のパイプライン (Draft)",
-      "description": "Python → Rust → C++。型付きの入力と出力、固定した crate を使う。",
+      "description": "Python → Rust → C++ で型付きの整数を渡し、Rust で借用した値を掛けて所有する結果を返す。3 つの Draft Card に実装前の処理を示す。",
       "path": "rust-pipeline-draft",
       "tags": [
         "Rust",
         "Python",
-        "C++"
+        "C++",
+        "Draft",
+        "Agent"
       ]
     }
   ]

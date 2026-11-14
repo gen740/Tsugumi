@@ -6,7 +6,6 @@ import json
 import matplotlib.pyplot as plt
 import numpy as np
 
-from inputs.problem.newton.Problem import Problem
 
 EPS = np.finfo(float).eps
 NEAR = 0.3
@@ -55,9 +54,9 @@ def linear_rate(e, m):
 
 
 def main(inputs, report):
-    p = inputs.input("problem", Problem)
+    p = inputs.problem
     offset = inputs.params.offset
-    tolerance, max_iter = p.Tolerance(), int(p.MaxIter())
+    tolerance, max_iter = p.tolerance, int(p.maxIter)
     cube = [1.0, 0.0, 0.0, -1.0]
     double = [1.0, 0.0, -3.0, 2.0]  # (z - 1)^2 (z + 2)
     cycle = [1.0, 0.0, -2.0, 2.0]  # 0 -> 1 -> 0 -> ...
@@ -98,4 +97,4 @@ def main(inputs, report):
     table.set_fontsize(9)
     table.scale(1, 1.4)
     report.figure()
-    report.log(str("result: " + json.dumps(results)))
+    report.log("result: " + json.dumps(results))

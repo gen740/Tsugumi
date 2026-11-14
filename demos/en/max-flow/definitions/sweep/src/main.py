@@ -5,7 +5,6 @@ import json
 import matplotlib.pyplot as plt
 import networkx as nx
 
-from inputs.cut.flow.Cut import Cut
 from tsugumi import Failure
 
 
@@ -17,12 +16,12 @@ def max_flow(edges, raised, by):
 
 
 def main(inputs, report):
-    c = inputs.input("cut", Cut)
+    c = inputs.cut
     raise_by = int(inputs.params.raiseBy)
-    nodes = c.Nodes().decode().split()
-    edges = [(nodes[u], nodes[v], int(x)) for u, v, x in zip(c.TailAsNumpy(), c.HeadAsNumpy(), c.CapacityAsNumpy())]
-    side = set(c.SourceSide().decode().split())
-    base = int(c.Value())
+    nodes = c.nodes.decode().split()
+    edges = [(nodes[u], nodes[v], int(x)) for u, v, x in zip(c.tail, c.head, c.capacity)]
+    side = set(c.sourceSide.decode().split())
+    base = int(c.value)
 
     rows = []
     for u, v, capacity in edges:
@@ -51,4 +50,4 @@ def main(inputs, report):
     ax.grid(True, axis="y", alpha=0.25)
     fig.tight_layout()
     report.figure()
-    report.log(str("result: " + json.dumps({"base": base, "rows": rows})))
+    report.log("result: " + json.dumps({"base": base, "rows": rows}))

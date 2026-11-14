@@ -1,12 +1,10 @@
 """Fetches the public data files into the output folder and hands the folder on."""
-import tsugumi
 import hashlib
 import os
 import ssl
 import urllib.request
 
 import certifi
-
 
 
 def main(inputs, report, run):
@@ -22,13 +20,11 @@ def main(inputs, report, run):
             f.write(r.read())
         data = open(path, "rb").read()
         digest = hashlib.sha256(data).hexdigest()
-        report.log(str(f"{name}: {len(data)} bytes sha256 {digest} from {url}"))
+        report.log(f"{name}: {len(data)} bytes sha256 {digest} from {url}")
         rows.append(f"| `{name}` | {len(data):,} | `{digest[:16]}…` |")
     report.markdown(
         "**ライトカーブを取る**\n\n| ファイル | bytes | SHA-256 |\n| --- | ---: | --- |\n" + "\n".join(rows)
         + "\n\n出典: MAST Kepler archive, KIC 10874614 (Kepler-6), Q3 long cadence"
     )
-    s = '.'
-    _out_value = {}
-    _out_value['value'] = s
-    return {'data': _out_value}
+    s = run.output_directory
+    return {'data': {'value': s}}
