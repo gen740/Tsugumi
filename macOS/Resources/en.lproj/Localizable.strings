@@ -842,6 +842,7 @@
 "右下のツグミが、使い方の質問に答えたりデモを案内したりします。" = "Tsugumi at the bottom right answers your questions and gives demo tours.";
 "各 Card の最後の呼び出しを比較します。記録や現在の Workflow は変更しません。" = "Compare the last invocation of each Card. Records and the current Workflow stay unchanged.";
 "合流" = "Merge";
+"合計は容量不明のフォルダを除きます。" = "The total excludes folders with unknown sizes.";
 "合計（共有パスは一度だけ計上）" = "Total (shared paths counted once)";
 "同じ名前があります" = "That name is taken";
 "同じ版です" = "Same version";
@@ -1245,8 +1246,6 @@
 "表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。" = "Approval covers only this operation on the displayed targets. Every new operation needs approval again. Declining changes nothing.";
 "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。" = "Allow access to the listed resource and scope. Content read may be sent to the connected model.";
 "表示された権限を許可して、外部の変更を読み込みますか？" = "Allow the listed permissions and reload the external changes?";
-"表示した scratch を削除…" = "Delete listed scratch…";
-"表示した過去の scratch を削除しますか？" = "Delete the listed past scratch?";
 "表示しない" = "Don't show";
 "表示する名前です。同じ名前を複数の Card に使えます。変えても ID・接続・実行履歴は変わりません（すぐに保存します）。" = "The display name may be shared by several Cards. Changing it keeps the ID, connections and run history unchanged (saved at once).";
 "表示のみ（開いているプロジェクトの接続先）" = "Display only (the open projects' endpoints)";
@@ -1322,8 +1321,10 @@
 "選択した Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。" = "Rewrites the selected Cards in the chat as their open comments ask (adding Cards when a comment asks for it). Progress appears in the chat.";
 "選択した Card の詳細" = "Details of the selected Card";
 "選択した Card を参照に追加" = "Add selected Cards as references";
+"選択した scratch を削除…" = "Delete selected scratch…";
 "選択した実行サービスで利用できる CPU アーキテクチャを選びます。" = "Choose a CPU architecture supported by this execution service.";
 "選択した実行サービスに接続できません。" = "The selected execution service is unavailable.";
+"選択した過去の scratch を削除しますか？" = "Delete the selected past scratch?";
 "選択をグループ化" = "Group Selection";
 "選択対象を削除" = "Delete Selection";
 "選択済み" = "Selected";

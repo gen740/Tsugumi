@@ -76,6 +76,8 @@ export const CONTEXT_FULL_TEXT = "the conversation no longer fits the model's co
 
 interface ContentBlock {
   type: string
+  id?: string
+  tool_use_id?: string
   text?: string
   name?: string
   input?: string
@@ -115,7 +117,13 @@ export class ChatController extends Observable {
   /** A save of the Agent waiting for the user: what it would give Cards. */
   /** A save waiting for the user's approval: of this chat's Agent, or of
    *  Claude Code (from) working on the project through the plugin. */
-  permission?: { id: string; asked: string[]; from?: string }
+  private permissions: { id: string; asked: string[]; from?: string }[] = []
+  get permission() { return this.permissions?.[0] }
+  private enqueuePermission(p: { id: string; asked: string[]; from?: string }) {
+    this.permissions ??= []
+    if (!this.permissions.some(x => x.id === p.id)) this.permissions.push(p)
+  }
+  private removePermission(id: string) { this.permissions = (this.permissions ?? []).filter(p => p.id !== id) }
   status?: string
   failed = false
   /** The last turn stopped at the ChatGPT plan's usage limit ("Manage usage"). */
@@ -162,7 +170,7 @@ export class ChatController extends Observable {
   close() {
     this.thoughts.close()
     this.offEvents()
-    this.permission = undefined
+    this.permissions = []
     this.team.endAll('stopped', Date.now() / 1000)
     guide.chatClosed(this)
   }
@@ -194,7 +202,7 @@ export class ChatController extends Observable {
       if (this.currentId !== id) return
       this.busy = r.busy
       this.adoptInterruption(r)
-      this.permission = r.permission ?? undefined
+      if (r.permission) this.enqueuePermission(r.permission)
       this.usage = r.conversation.usage
       this.provider = r.provider
       this.load(r.conversation)
@@ -213,6 +221,7 @@ export class ChatController extends Observable {
     this.interrupted = false
     this.interruptedOperation = undefined
     if (this.available) this.status = undefined
+    this.permissions = []
     this.currentId = id
     this.items = []
     this.changed()
@@ -221,7 +230,7 @@ export class ChatController extends Observable {
     void api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; permission: { id: string; asked: string[] } | null }>('/api/chat/conversation', { ...this.base, folders: this.folders })
       .then((r) => {
         if (this.currentId !== id) return
-        this.permission = r.permission ?? undefined
+        if (r.permission) this.enqueuePermission(r.permission)
         this.usage = r.conversation.usage
         this.provider = r.provider
         this.busy = r.busy
@@ -260,6 +269,7 @@ export class ChatController extends Observable {
 
   private load(c: Conversation) {
     const out: ChatItem[] = []
+    const tools = new Map<string, ChatItem>()
     const all = [...c.archive, ...c.messages]
     all.forEach((m, i) => {
       const archived = i < c.archive.length
@@ -270,13 +280,17 @@ export class ChatController extends Observable {
       }
       for (const b of m.content) {
         if (b.type === 'text') out.push({ id: uuid(), role: m.role, text: b.text ?? '', archived })
-        else if (b.type === 'tool_use') out.push({ id: uuid(), role: 'tool', text: b.input ?? '', tool: { name: b.name ?? '' }, archived })
+        else if (b.type === 'tool_use') {
+          const item: ChatItem = { id: uuid(), role: 'tool', text: b.input ?? '', tool: { name: b.name ?? '' }, archived }
+          out.push(item)
+          if (b.id) tools.set(b.id, item)
+        }
         else if (b.type === 'web_search') {
           const sources = (b.sources ?? []).map((s) => (s.title ? `${s.title} — ${s.url}` : s.url)).join('\n')
           out.push({ id: uuid(), role: 'tool', text: `${JSON.stringify({ query: b.query ?? '' })}\n→ ${b.error ? `failed: ${b.error}` : sources || 'no results'}`, tool: { name: 'web_search', ok: !b.error }, archived })
         }
         else if (b.type === 'tool_result') {
-          const j = [...out].reverse().find((x) => x.role === 'tool' && x.tool?.ok === undefined)
+          const j = b.tool_use_id ? tools.get(b.tool_use_id) : undefined
           if (j) {
             j.tool!.ok = !b.is_error
             j.text += '\n→ ' + toolSummary(b.content ?? '')
@@ -373,7 +387,7 @@ export class ChatController extends Observable {
     this.references = []
     this.begin()
     // The chat shows what was typed, not the skills and references attached to it.
-    void this.request('/api/chat/send', { ...this.base, text, selectedCards: refs.filter((r) => r.kind === 'card').map((r) => r.card), selectedDisplays: refs.filter((r) => r.kind === 'display').map((r) => r.card), skillNames: this.skillsIn(text).map((s) => s.name), attachedResources: [...this.folderResources.values()] }).catch((e) => this.fail(e))
+    void this.request('/api/chat/send', { ...this.base, text, display: shown, selectedCards: refs.filter((r) => r.kind === 'card').map((r) => r.card), selectedDisplays: refs.filter((r) => r.kind === 'display').map((r) => r.card), skillNames: this.skillsIn(text).map((s) => s.name), attachedResources: [...this.folderResources.values()] }).catch((e) => this.fail(e))
   }
 
   /** Sends a request the app wrote for the model; the chat shows `display`. */
@@ -381,7 +395,7 @@ export class ChatController extends Observable {
     if (!this.available) return
     this.items = [...this.items, { id: uuid(), role: 'user', text: display }]
     this.begin()
-    void this.request('/api/chat/send', { ...this.base, text: prompt, skillNames: this.demoMode ? ['demo'] : [] }).catch((e) => this.fail(e))
+    void this.request('/api/chat/send', { ...this.base, text: prompt, display, skillNames: this.demoMode ? ['demo'] : [] }).catch((e) => this.fail(e))
   }
 
   /** Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved). */
@@ -502,10 +516,10 @@ export class ChatController extends Observable {
   }
 
   /** The user's answer; `always` are kinds allowed without asking from now on. */
-  answerPermission(allow: boolean, always: string[]) {
+  answerPermission(allow: boolean, always: string[], id = this.permission?.id) {
     const p = this.permission
-    if (!p) return
-    this.permission = undefined
+    if (!p || p.id !== id) return
+    this.removePermission(p.id)
     this.changed()
     void api('/api/chat/permission', { id: p.id, allow, always }).catch((e) => this.fail(e))
   }
@@ -563,10 +577,10 @@ export class ChatController extends Observable {
         break
       }
       case 'permission':
-        this.permission = { id: e.id, asked: e.asked, from: e.from }
+        this.enqueuePermission({ id: e.id, asked: e.asked, from: e.from })
         break
       case 'permissionAnswered':
-        if (this.permission?.id === e.id) this.permission = undefined
+        this.removePermission(e.id)
         break
       case 'text': {
         const last = this.items[this.items.length - 1]

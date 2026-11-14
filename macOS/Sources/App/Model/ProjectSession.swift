@@ -310,12 +310,19 @@ final class ProjectSession {
   var notice: String?
   /// The Draft being written on the canvas (geometry opens its Card up).
   var inlineDraft: InlineDraft?
+  @ObservationIgnored var draftFinishTask: Task<CardKey?, Never>?
+  var hasUnsavedEdits: Bool {
+    dirty || draftFinishTask != nil || inlineDraft.map { $0.name != $0.initialName || $0.content != $0.initialContent } == true
+  }
 
   /// A Draft being written on its Card: its name and content as typed so far.
-  struct InlineDraft: Equatable {
+  struct InlineDraft {
     var card: CardKey
     var name: String
     var content: String
+    var initialName: String
+    var initialContent: String
+    let revision: RevisionEdit
   }
 
   struct Snapshot: Equatable {
@@ -373,6 +380,7 @@ final class ProjectSession {
   /// Hashes of the externals' documents as they were read into `externals`.
   @ObservationIgnored private var externalHashes: [String: String] = [:]
   @ObservationIgnored private var saveTask: Task<Void, Never>?
+  @ObservationIgnored private var canvasSaveOp: String?
   @ObservationIgnored private var saveAgain = false
   /// Revision the draft is based on (equals `rev` while clean).
   var draftBaseRev: UInt64 { draftBase?.rev ?? rev }
@@ -442,7 +450,12 @@ final class ProjectSession {
   @ObservationIgnored var makeRepositoryOnConnect = false
 
   // Runs
-  private(set) var runStatus: Tsugumi_RPC_RunStatusT?
+  private var runProvenance: [String: Tsugumi_RPC_RunStatusT] = [:]
+  private var loadingProvenance: Set<String> = []
+  private(set) var runStatus: Tsugumi_RPC_RunStatusT? {
+    didSet { if let status = runStatus, let id = status.runId { runProvenance[id] = status } }
+  }
+  func markForRun(_ runId: String) -> String? { runMark(runProvenance[runId]) }
   private(set) var cardStates: [CardKey: CardRunState] = [:]
   private(set) var displays: [CardKey: DisplaySnapshot] = [:]
   private(set) var lastFinished: Date?
@@ -891,6 +904,13 @@ final class ProjectSession {
     let shown = displayedCards
     // What the Agent's save changed, seen against the document before it.
     let presenceBefore = d.origin == "agent" ? presenceSnapshot() : nil
+    // A canvas autosave can still be in flight when typing starts. Other
+    // editors, including those in this session, keep the original conflict base.
+    if let edit = inlineDraft?.revision, edit.baseRev == d.baseRev,
+       edit.conflictRev == nil, let op = canvasSaveOp, d.opId == op,
+       d.origin == "ui:\(viewId.uuidString.lowercased())" {
+      edit.baseRev = d.rev ?? rev
+    }
     rev = d.rev ?? rev
     executionRev = d.executionRev ?? executionRev
     if let pj = d.projectJson, let v = try? JSONValue.parse(pj) { confirmedProject = v }
@@ -929,7 +949,7 @@ final class ProjectSession {
     }
   }
 
-  private func applyRunEvent(_ e: Tsugumi_RPC_RunEventT) {
+  func applyRunEvent(_ e: Tsugumi_RPC_RunEventT) {
     guard let v = e.value else { return }
     switch v.type {
     case .runacceptedevent:
@@ -976,11 +996,23 @@ final class ProjectSession {
     }
   }
 
-  private func applyDisplay(_ d: Tsugumi_Data_DisplayT) {
+  func applyDisplay(_ d: Tsugumi_Data_DisplayT) {
     let k = key(d.card.path)
     let rev = d.revision ?? 0
     if let old = displays[k], old.runId == d.runId, old.revision >= rev { return }  // stale frame
-    if let display = recordedDisplay(d) { displays[k] = display }
+    if let display = recordedDisplay(d) {
+      displays[k] = display
+      // A reconnected canvas may receive a display from an older run.
+      if let client, runProvenance[display.runId] == nil, !loadingProvenance.contains(display.runId) {
+        loadingProvenance.insert(display.runId)
+        Task {
+          defer { loadingProvenance.remove(display.runId) }
+          if let record = try? await client.record(runId: display.runId, card: path(k), invocation: display.invocation) {
+            runProvenance[display.runId] = record.run.status
+          }
+        }
+      }
+    }
   }
 
   private func recordTimeline(_ k: CardKey, _ inv: Tsugumi_RPC_InvocationSummaryT) {
@@ -1222,6 +1254,7 @@ final class ProjectSession {
   /// Drops every unsaved edit and follows the latest confirmed document
   /// (only for edits that cannot be saved).
   func discardDraft() {
+    inlineDraft = nil
     dropDraft()
     // A save on its way answers about the draft that went: nothing of it stays.
     if let saving = saveTask {
@@ -1403,6 +1436,8 @@ final class ProjectSession {
   private func commitChanges(baseRev: UInt64, op: UUID, changes: [Tsugumi_RPC_DocumentChangeT],
                              editor: Bool = false) async throws -> Tsugumi_RPC_SaveResultT {
     guard let client else { throw RPCError.disconnected }
+    if !editor { canvasSaveOp = op.uuidString.lowercased() }
+    defer { if !editor { canvasSaveOp = nil } }
     let result = try await client.save(baseRev: baseRev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())",
                                        changes: changes)
     if let d = result.delta {
@@ -1584,6 +1619,10 @@ final class ProjectSession {
   // MARK: - Runs
 
   func run(card: [String], propagate: Bool) async throws {
+    _ = await finishDraftEdit()
+    guard inlineDraft == nil else {
+      throw RPCFailure(kind: .validationFailed, diagnostic: String(localized: "変更を保存できないため実行できません。"))
+    }
     guard let client else { throw RPCError.disconnected }
     if computationDirty { await save() }
     if computationDirty {

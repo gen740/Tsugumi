@@ -139,8 +139,8 @@ auto Execute(const std::string& command, const std::string& cwd,
     if (bwrap.empty() || ::access(bwrap.c_str(), X_OK) != 0)
       throw Failed(FailureKind::permission_denied,
                    "Agent shell reads require bubblewrap");
-    // Keep external IP networking, but reject all Unix socket creation,
-    // including abstract sockets and endpoints at arbitrary host paths.
+    // Keep external IP networking and private stream pairs, but reject Unix
+    // socket creation for abstract and filesystem endpoints on the host.
 #if defined(__aarch64__)
     constexpr auto kArchitecture = AUDIT_ARCH_AARCH64;
 #elif defined(__x86_64__)
@@ -161,8 +161,15 @@ auto Execute(const std::string& command, const std::string& cwd,
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_io_uring_setup, 0, 1),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
 #endif
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socketpair, 0, 1),
+        // Stream pairs support local event loops without an endpoint to dial.
+        // Datagram pairs can reconnect/sendto arbitrary host Unix addresses.
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socketpair, 0, 5),
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[1])),
+        BPF_STMT(BPF_ALU | BPF_AND | BPF_K,
+                 ~static_cast<unsigned>(SOCK_CLOEXEC | SOCK_NONBLOCK)),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SOCK_STREAM, 1, 0),
         BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socket, 0, 3),
         BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[0])),
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AF_UNIX, 0, 1),
