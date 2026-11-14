@@ -4,12 +4,12 @@ Choose **Add Card → marimo notebook** on Mac or Web. The starting point is an 
 
 ## One committed invocation
 
-Connect a typed value to `data`. The default binding maps its `value` field to the notebook variable `source`, and the Card parameter `factor` to the notebook variable `factor`. The notebook computes `result`; the adapter emits that finite numeric value on `value` and the saved notebook Directory on `report`. Edit the output schema and packing code for other result types.
+Connect a typed value to `data`. The default binding maps `inputs.data.value` to the notebook variable `source`, and `param.factor` to the notebook variable `factor`. The notebook computes `result`; the adapter returns a mapping with that finite numeric value on `value` and the saved notebook Directory on `report`: `{"value": {"value": value}, "report": {"value": str(folder)}}`. This follows the ordinary Card form `main(inputs[, report[, run]]) -> outputs`; the SDK encodes the mapping using the output schema. Edit the schema and returned mapping for other result types.
 
 | Setting | Meaning |
 | --- | --- |
 | `notebook` | A `.py` notebook inside the Card's source directory, default `notebook.py` |
-| `bindings` | JSON mapping notebook variables to `input.<port>.<field>` or `param.<field>` paths |
+| `bindings` | JSON mapping notebook variables to `inputs.<port>.<field>` or `param.<field>` paths |
 | `selected` | Notebook variable to emit as the starting point's numeric output |
 | `factor` | Example ordinary Card parameter, available to the binding map |
 
