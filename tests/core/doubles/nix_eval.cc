@@ -25,6 +25,7 @@ struct BuildPlan {
   schema::Opt<"gate", schema::v::String> gate;
   schema::Opt<"error", schema::v::String> error;
   schema::Opt<"cached", schema::v::Bool> cached;
+  schema::Opt<"closure", schema::v::Array<schema::v::String>> closure;
 };
 
 auto check_interrupted(const NixCall& call) -> void {
@@ -126,6 +127,7 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
                        "/nix/store/00000000000000000000000000000000-mock", call.system};
   result.manifest = std::move(manifest);
   result.built = !cached;
+  if (const auto* closure = schema::get(plan.closure)) result.closure = *closure;
   return result;
 }
 
@@ -150,7 +152,9 @@ auto NixEvaluator::realise_native(const NixCall& call, NixResult result) -> NixR
   fs::write_atomic(product, result.manifest, 0444);
   result.derivation.output = product.string();
   result.derivation.path = product.string() + ".drv";
-  result.closure = {product.string(), product.string() + "-dependency"};
+  result.closure.push_back(product.string());
+  result.closure.push_back(product.string() + "-dependency");
+  std::ranges::sort(result.closure);
   if (!call.root_dir.empty()) {
     std::filesystem::create_directories(call.root_dir);
     result.root = call.root_dir / (call.root_prefix + product.filename().string());
