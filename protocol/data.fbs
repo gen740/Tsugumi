@@ -77,6 +77,9 @@ table NamedValue {
   /// the evidence's hash while reporting the content's actual location.
   file_path:string (id: 8);
   file_missing:bool (id: 9);
+  /// SHA-256 (hex) of a recorded File's content, independent of its storage
+  /// path. Kept with the record even when the file is no longer available.
+  file_content_hash:string (id: 10);
 }
 
 // ---- Display ---------------------------------------------------------------

@@ -159,7 +159,7 @@ std::string put_schema(sql::Db& db, const types::Type& t) {
 
 RunSummaryData run_row(const sql::Stmt& st) {
   // Columns: run_id, state, rev, execution_rev, accepted_at, started_at, ended_at,
-  //          failure, source_hash, target, propagate
+  //          failure, source_hash, target, propagate, commit_id, partial_run, uses_partial_result
   RunSummaryData s;
   s.status.run_id = st.text(0);
   s.status.state = static_cast<RunState>(st.i64(1));
@@ -241,7 +241,7 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(schemas(hash TEXT PRIMARY KEY, root
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(ivalues(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL, side INTEGER NOT NULL,
   port TEXT NOT NULL, kind INTEGER NOT NULL, schema_hash TEXT NOT NULL, root_type TEXT NOT NULL,
-  size INTEGER NOT NULL, bytes BLOB, hash TEXT NOT NULL, artifact_id TEXT,
+  size INTEGER NOT NULL, bytes BLOB, hash TEXT NOT NULL, artifact_id TEXT, file_content_hash TEXT,
   PRIMARY KEY(run_id, card, invocation, side, port));
 CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(logs(
   id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, card TEXT NOT NULL,
@@ -261,9 +261,10 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-constexpr int kHistoryVersion = 6;
+// Includes partial-run provenance, portable run commits and File content digests.
+constexpr int kHistoryVersion = 8;
 constexpr const char* kCopyFormat = "tsugumi-runs";
-constexpr const char* kCopyVersion = "6";
+constexpr const char* kCopyVersion = "8";
 
 namespace stdfs = std::filesystem;
 
@@ -749,13 +750,22 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
   if (r.record_io) {
     auto put = [&](const Value& v, int side) {
       std::string h = put_schema(db, *v.type);
+      // The File has already been copied into the run's retained values.
+      // The serialized value also holds its run-specific path, so its hash
+      // cannot tell whether two Files have the same content.
+      std::optional<std::string> file_content_hash;
+      if (v.kind == PortKind::File) {
+        const auto path = path_value(v);
+        if (!path) throw sql::Error("recorded File has no path");
+        file_content_hash = fs::sha256_file(*path);
+      }
       auto ins = db.prepare(
           "INSERT OR REPLACE INTO ivalues(run_id, card, invocation, side, port, kind, schema_hash, "
-          "root_type, size, bytes, hash, artifact_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)");
+          "root_type, size, bytes, hash, artifact_id, file_content_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
       ins.bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).bind(4, side).bind(5, v.name)
           .bind(6, static_cast<int>(v.kind)).bind(7, h).bind(8, v.type->root_type)
           .bind(9, static_cast<uint64_t>(v.bytes.size())).bind_blob(10, v.bytes)
-          .bind(11, crypto::sha256_hex(v.bytes)).bind(12, v.artifact_id)
+          .bind(11, crypto::sha256_hex(v.bytes)).bind(12, v.artifact_id).bind(13, file_content_hash)
           .run();
     };
     for (const auto& v : r.inputs) put(v, 0);
@@ -1041,7 +1051,7 @@ std::optional<FailureData> History::latest_failure(sql::Db& db, const std::strin
 std::vector<StoredValueMeta> History::value_metas(sql::Db& db, const std::string& run_id,
                                                   const CardPath& card, uint64_t n, bool input) {
   auto st = db.prepare(
-      "SELECT v.port, v.kind, s.bfbs, v.root_type, v.size, v.artifact_id, v.hash FROM ivalues v "
+      "SELECT v.port, v.kind, s.bfbs, v.root_type, v.size, v.artifact_id, v.hash, v.file_content_hash FROM ivalues v "
       "JOIN schemas s ON s.hash=v.schema_hash WHERE run_id=? AND card=? AND invocation=? AND side=? "
       "ORDER BY v.port");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n).bind(4, input ? 0 : 1);
@@ -1055,6 +1065,7 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db, const std::string
     m.size_bytes = st.u64(4);
     if (!st.is_null(5)) m.artifact_id = st.text(5);
     if (!st.is_null(6)) m.hash = st.text(6);
+    if (!st.is_null(7)) m.file_content_hash = st.text(7);
     out.push_back(std::move(m));
   }
   return out;
@@ -1377,7 +1388,7 @@ constexpr Copied kCopied[] = {
      "record_io, input_sources, display, build_cached, detail",
      "rowid"},
     {"ivalues",
-     "run_id, card, invocation, side, port, kind, schema_hash, root_type, size, bytes, hash, artifact_id",
+     "run_id, card, invocation, side, port, kind, schema_hash, root_type, size, bytes, hash, artifact_id, file_content_hash",
      "rowid"},
     {"logs", "run_id, card, invocation, stream, run_off, card_off, inv_off, data", "id"},
     {"artifacts", "artifact_id, run_id, card, invocation, output, kind, name, members", "rowid"},

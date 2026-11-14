@@ -36,7 +36,8 @@ table ToolCatalogRequest {}
 table ToolCallRequest { conversation_id:string (required); project_id:string; name:string (required); arguments_json:string (required); op_id:string (required); }
 table AccessRequest { project_id:string (required); conversation_id:string; access:Access; scope:GrantScope; reason:string; }
 // Resolving/revoking grants requires the human principal, including over Unix.
-table AccessResolveRequest { request_id:string (required); allow:bool; }
+// allow answers the access needed now; also_allow explicitly opts into other listed accesses.
+table AccessResolveRequest { request_id:string (required); allow:bool; also_allow:[Access]; }
 table AccessRevokeRequest { grant_id:string (required); }
 table AccessListRequest { conversation_id:string; }
 table DemoListRequest {}
@@ -65,7 +66,9 @@ table Conversation {
 // Core-recorded operation at interruption, not inferred from transcript by clients.
 // kind: preparing, model, tool, compact. Tool details identify the in-flight call.
 table InterruptedOperation { kind:string (required); id:string; name:string; arguments_json:string; }
-table ConversationResult { conversation:Conversation (required); busy:bool; resumable:bool; continuable:bool; project_id:string; event_seq:ulong; interrupted_operation:InterruptedOperation; }
+// The resolved model of the latest accepted turn, without credentials.
+table ModelBinding { provider_id:string; model:string; effort:string; fast:bool; }
+table ConversationResult { conversation:Conversation (required); busy:bool; resumable:bool; continuable:bool; project_id:string; event_seq:ulong; interrupted_operation:InterruptedOperation; model_binding:ModelBinding; }
 table ConversationEntry { id:string; project_id:string; title:string; updated_at:long; busy:bool; }
 table ConversationList { conversations:[ConversationEntry]; }
 table SearchMatch { session:string; title:string; snippet:string; updated_at:long; }
@@ -85,7 +88,7 @@ table ToolCatalog { tools:[Tool]; }
 table Image { media_type:string; data:string; }
 table ToolResult { text:string; is_error:bool; images:[Image]; }
 table AccessResult { id:string (required); }
-table AccessEntry { id:string; project_id:string; conversation_id:string; access:Access; scope:GrantScope; reason:string; state:string; }
+table AccessEntry { id:string; project_id:string; conversation_id:string; access:Access; scope:GrantScope; reason:string; state:string; asked:[string]; }
 table Grant { id:string; project_id:string; conversation_id:string; access:Access; active:bool; }
 table AccessList { requests:[AccessEntry]; grants:[Grant]; }
 table DemoList { paths:[string]; }
