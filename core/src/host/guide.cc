@@ -36,7 +36,7 @@ auto Path(const std::string &s) -> std::string {
 struct Step {
   H::GuideStateT show;
   std::map<std::string, std::string> next;
-  std::string ok, otherwise;
+  std::string finished;
   bool home = false;
 };
 struct Script {
@@ -83,9 +83,7 @@ struct Script {
       for (const auto &[choice, target] :
            json::Object(json::Get(r, "next", "{}")))
         s.next[choice] = resolve(json::String(target));
-      const auto ran = json::Object(json::Get(r, "ran", "{}"));
-      s.ok = resolve(json::Text(ran, "ok"));
-      s.otherwise = resolve(json::Text(ran, "else"));
+      s.finished = resolve(json::Text(r, "finished"));
       steps.emplace(id, std::move(s));
     };
     for (const auto &demo : order) {
@@ -101,10 +99,8 @@ struct Script {
     add("noConnection", json::Get(root, "noConnection"), "", false);
     add("otherProject", json::Get(root, "otherProject"), "", false);
   }
-  auto Start(const std::string &demo, const std::string &kind) const
-      -> std::string {
-    return steps.contains(demo + "/" + kind) ? demo + "/" + kind
-                                             : "otherProject";
+  auto Start(const std::string &demo) const -> std::string {
+    return steps.contains(demo + "/start") ? demo + "/start" : "otherProject";
   }
   auto Demo(const std::string &interest) const -> std::string {
     const auto text = Lower(interest);
@@ -258,7 +254,7 @@ struct Guide::State {
       if (e.scripted)
         play(p.step.starts_with(p.tour->demo + "/")
                  ? p.step
-                 : script.Start(p.tour->demo, "resume"));
+                 : script.Start(p.tour->demo));
     } else if (e.kind == "message") {
       std::istringstream words(e.text);
       std::string word;
@@ -278,7 +274,7 @@ struct Guide::State {
             const auto v = json::Object(entry);
             const auto id = json::Text(v, "id");
             if (json::Text(v, "title") == e.title &&
-                script.Start(id, "start") != "otherProject") {
+                script.Start(id) != "otherProject") {
               demo = id;
               break;
             }
@@ -288,7 +284,7 @@ struct Guide::State {
         else {
           begin(demo, true);
           baseline();
-          play(script.Start(demo, "start"));
+          play(script.Start(demo));
         }
       } else {
         const auto current = script.steps.find(p.step);
@@ -320,7 +316,7 @@ struct Guide::State {
         baseline();
         note = "start";
         if (e.scripted)
-          play(script.Start(p.tour->demo, "start"));
+          play(script.Start(p.tour->demo));
       } else {
         const auto now = e.connected ? e.run + ":" + e.state : "offline";
         const auto before = p.seen;
@@ -351,9 +347,10 @@ struct Guide::State {
             baseline();
             note = "run";
             const auto current = script.steps.find(p.step);
-            if (e.scripted && current != script.steps.end())
-              play(e.state == "succeeded" ? current->second.ok
-                                          : current->second.otherwise);
+            if (e.scripted && current != script.steps.end() &&
+                !current->second.finished.empty())
+              play(e.state == "succeeded" ? current->second.finished
+                                          : p.tour->demo + "/failed");
           }
         }
       }

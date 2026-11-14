@@ -5,6 +5,7 @@
 #include <hosq/json/dom.hh>
 
 #include <map>
+#include <regex>
 #include <set>
 
 namespace tsugumi::test {
@@ -84,6 +85,69 @@ auto ReadResource(const std::filesystem::path &relative) -> std::string {
 const std::vector<std::string> demos{"report", "exoplanet-transit",
                                      "pharmacokinetics"};
 
+// Regression phrases from the removed result explanations, including claims
+// without numbers. This catches their reintroduction, not every possible claim
+// in natural language; new wording still needs review.
+auto OutputClaim(const std::string &text) -> bool {
+  static const std::regex claims(
+      "500|3\\.23|1%|0\\.1|"
+      "(numbers|CSV).*changed|changing the seed changed|"
+      "time below.*grows|recovery takes longer|approaches steady state|"
+      "shorter the interval.*smaller|divides part of the dip itself|"
+      "地域ごとの数字も変|CSV の中身が変|定常状態へ近|"
+      "有効域の下にいる時間が延び|元に戻るまでも長|間隔が短いほど|"
+      "減光そのものも一部トレンドとして割",
+      std::regex::icase);
+  return std::regex_search(text, claims);
+}
+auto UserTexts(const Dom &step) -> std::vector<std::string> {
+  std::vector<std::string> texts{String(step, "/show/say"),
+                                 String(step, "/text")};
+  for (const auto &choice : Array(step, "/show/choices"))
+    texts.push_back(String(choice));
+  for (const auto &action : Array(step, "/show/actions"))
+    texts.push_back(String(action, "/label"));
+  return texts;
+}
+
+TEST(GuideScript, GuidanceContainsNoOutputNumbersOrRemovedResultClaims) {
+  // Exercise the guard against representative old text in both languages.
+  for (const auto &old :
+       {"500 sales summarised", "period of about 3.23 days",
+        "the numbers per region changed too", "recovery takes longer",
+        "地域ごとの数字も変わりました", "定常状態へ近づく様子"})
+    EXPECT_TRUE(OutputClaim(old)) << old;
+  const std::regex number("[0-9]+(\\.[0-9]+)?");
+  const std::map<std::string, std::string> parameter_values{
+      {"report", "7"}, {"exoplanet-transit", "0.2"}, {"pharmacokinetics", "2"}};
+  for (const auto &language : {"ja", "en"}) {
+    const auto script = Parse(
+        ReadResource(std::filesystem::path("agent/Shared") /
+                     (std::string(language) == "en" ? "guide-script.en.json"
+                                                    : "guide-script.json")));
+    auto check = [&](const Dom &step, const std::string &id,
+                     const std::string &allowed_number = "") {
+      SCOPED_TRACE(std::string(language) + ":" + id);
+      for (auto text : UserTexts(step)) {
+        EXPECT_FALSE(OutputClaim(text)) << text;
+        // The catalog title is a name, not a measured output. Numeric examples
+        // are allowed only in the parameter-change instruction, at its value.
+        text = std::regex_replace(text, std::regex("Kepler-6 b"), "Kepler");
+        for (auto i = std::sregex_iterator(text.begin(), text.end(), number);
+             i != std::sregex_iterator(); ++i)
+          EXPECT_EQ(i->str(), allowed_number) << text;
+      }
+    };
+    for (const auto &[demo, tour] : Members(script, "/tours"))
+      for (const auto &group : {"home", "steps"})
+        for (const auto &[id, step] : Members(tour, "/" + std::string(group)))
+          check(step, demo + "/" + id,
+                id == "change" ? parameter_values.at(demo) : "");
+    for (const auto &id : {"noConnection", "otherProject"})
+      check(Members(script).at(id), id);
+  }
+}
+
 TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
   for (const auto &language : {"ja", "en"}) {
     const auto script = Parse(
@@ -99,9 +163,13 @@ TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
           steps[demo + "/" + id] = step;
     }
     for (const auto &demo : demos) {
-      for (const auto &id :
-           {"pick", "about", "start", "resume", "run", "ranOk", "ranFailed",
-            "change", "runAgain", "ranAgain", "next", "farewell"})
+      const std::set<std::string> expected{"start", "result", "change",
+                                           "failed", "farewell"};
+      std::set<std::string> actual;
+      for (const auto &[id, step] : Members(tours.at(demo), "/steps"))
+        actual.insert(id);
+      EXPECT_EQ(actual, expected);
+      for (const auto &id : {"pick", "about"})
         EXPECT_TRUE(steps.contains(demo + "/" + id));
       const auto index = Parse(ReadResource(std::filesystem::path("demos") /
                                             language / "index.json"));
@@ -131,8 +199,14 @@ TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
           EXPECT_TRUE(steps.contains(resolve(String(target))));
         }
         EXPECT_EQ(choices, next);
-        for (const auto &[outcome, target] : Members(step, "/ran"))
-          EXPECT_TRUE(steps.contains(resolve(String(target))));
+        EXPECT_FALSE(step["/ran"].exists());
+        if (step["/finished"].exists()) {
+          EXPECT_TRUE(steps.contains(resolve(String(step, "/finished"))));
+          EXPECT_TRUE(steps.contains(demo + "/failed"));
+          const auto actions = Array(step, "/show/actions");
+          ASSERT_EQ(actions.size(), 1u);
+          EXPECT_EQ(String(actions.front(), "/kind"), "run");
+        }
         const std::set<std::string> kinds{
             "open_demo", "show_demos",    "run",         "stop",
             "open_card", "open_settings", "new_project", "home"};
@@ -243,78 +317,82 @@ TEST_F(GuideFixture,
               step);
 }
 TEST_F(GuideFixture,
-       EveryTourRunsThroughMoreFailureRetryChangeAndFarewellInBothLanguages) {
+       EveryTourRunsWithoutConfirmationsThroughFailureRetryChangeAndFarewell) {
   for (const auto &lang : {"ja", "en"})
     for (const auto &demo : demos) {
       SCOPED_TRACE(std::string(lang) + ":" + demo);
-      const bool en = std::string(lang) == "en";
       auto s = Start(demo, lang);
       ASSERT_EQ(s.step, demo + "/start");
-      s = Choose(s, en ? "Tell me more" : "もっと詳しく", lang);
-      EXPECT_EQ(s.step, demo + "/startMore");
-      s = Choose(s, "?", lang);
-      EXPECT_EQ(s.actions.size(), 1u);
-      EXPECT_EQ(s.actions[0]->kind, "open_settings");
-      for (int i = 0; i < 25 && s.step != demo + "/run"; ++i)
-        s = Choose(s, en ? "Next" : "次へ", lang);
-      ASSERT_EQ(s.step, demo + "/run");
+      EXPECT_EQ(s.highlight, "run");
+      EXPECT_TRUE(s.choices.empty());
       ASSERT_EQ(s.actions.size(), 1u);
-      EXPECT_EQ(s.actions[0]->kind, "run");
-      s = Choose(s, en ? "I ran it!" : "実行した！", lang);
-      Observe("r1", "running", true, lang);
+      EXPECT_EQ(s.actions.front()->kind, "run");
+      // A completed client action is not a completed run or an acknowledgement
+      // the person has to send. Only the observed terminal state advances.
+      auto action = Event("action_finished");
+      action.project = "/copy";
+      EXPECT_EQ(Advance(*host, action, "desktop", lang).step, s.step);
+      EXPECT_FALSE(Observe("r1", "running", true, lang).present);
       s = Observe("r1", "failed", false, lang);
-      ASSERT_EQ(s.step, demo + "/ranFailed");
+      ASSERT_EQ(s.step, demo + "/failed");
       EXPECT_EQ(s.highlight, "logs");
-      // Use the server's translated choice, not a client transition table.
-      ASSERT_FALSE(s.choices.empty());
-      s = Choose(s, s.choices.front(), lang);
+      ASSERT_EQ(s.actions.size(), 1u);
+      EXPECT_EQ(s.actions.front()->kind, "run");
       Observe("r2", "running", true, lang);
       s = Observe("r2", "succeeded", false, lang);
-      ASSERT_EQ(s.step, demo + "/ranOk");
-      s = Choose(s, en ? "Next" : "次へ", lang);
-      EXPECT_TRUE(s.highlight.starts_with("param:"));
-      ASSERT_FALSE(s.choices.empty());
+      ASSERT_EQ(s.step, demo + "/result");
+      const auto result = s.say;
+      // An unchanged rerun gets the same location guidance, with no invented
+      // output values or claim that the person changed a parameter.
+      Observe("same-settings", "running", true, lang);
+      s = Observe("same-settings", "succeeded", false, lang);
+      EXPECT_EQ(s.step, demo + "/result");
+      EXPECT_EQ(s.say, result);
+      ASSERT_EQ(s.choices.size(), 2u);
       s = Choose(s, s.choices.front(), lang);
+      ASSERT_EQ(s.step, demo + "/change");
+      EXPECT_TRUE(s.highlight.starts_with("param:"));
+      EXPECT_TRUE(s.choices.empty());
+      ASSERT_EQ(s.actions.size(), 1u);
+      EXPECT_EQ(s.actions.front()->kind, "run");
       Observe("r3", "running", true, lang);
-      s = Observe("r3", "succeeded", false, lang);
-      ASSERT_EQ(s.step, demo + "/ranAgain");
-      s = Choose(s, en ? "Next" : "次へ", lang);
-      ASSERT_FALSE(s.choices.empty());
+      s = Observe("r3", "cancelled", false, lang);
+      EXPECT_EQ(s.step, demo + "/failed");
+      Observe("r4", "running", true, lang);
+      s = Observe("r4", "succeeded", false, lang);
+      ASSERT_EQ(s.step, demo + "/result");
+      EXPECT_EQ(s.say, result);
       s = Choose(s, s.choices.back(), lang);
       EXPECT_TRUE(s.end_tour);
       EXPECT_EQ(s.tour, nullptr);
       EXPECT_TRUE(s.present);
-      EXPECT_FALSE(Observe("r4", "succeeded", false, lang).present);
+      EXPECT_FALSE(Observe("r5", "succeeded", false, lang).present);
     }
 }
 TEST_F(GuideFixture, LateRunDuplicateRunAndTwoWindowsDoNotAdvanceTwice) {
   auto window = ConnectHost(true);
   auto s = Start("report");
-  const auto old = s;
-  auto first =
-      std::async(std::launch::async, [&] { return Choose(old, "次へ"); });
-  auto second = std::async(std::launch::async, [&] {
-    return Choose(old, "次へ", "ja", window.get());
-  });
-  s = first.get();
-  const auto stale = second.get();
-  EXPECT_EQ(s.step, "report/settings");
-  EXPECT_EQ(stale.step, s.step);
-  EXPECT_EQ(GuideGet(*window).step, s.step);
-  for (int i = 0; i < 25 && s.step != "report/run"; ++i)
-    s = Choose(s, "次へ");
-  ASSERT_EQ(s.step, "report/run");
   Observe("late", "running", true);
   Observe("current", "running", true);
   const auto late = Observe("late", "failed", false);
   EXPECT_FALSE(late.present);
   EXPECT_EQ(late.step, s.step);
   s = Observe("current", "succeeded", false);
-  ASSERT_EQ(s.step, "report/ranOk");
+  ASSERT_EQ(s.step, "report/result");
   EXPECT_FALSE(Observe("current", "succeeded", false).present);
   EXPECT_FALSE(Observe("late", "failed", false).present);
-  s = Choose(s, "次へ", "ja", window.get());
-  EXPECT_EQ(GuideGet(*host).step, s.step);
+  const auto old = s;
+  const auto choice = s.choices.front();
+  auto first =
+      std::async(std::launch::async, [&] { return Choose(old, choice); });
+  auto second = std::async(std::launch::async, [&] {
+    return Choose(old, choice, "ja", window.get());
+  });
+  s = first.get();
+  const auto stale = second.get();
+  EXPECT_EQ(s.step, "report/change");
+  EXPECT_EQ(stale.step, s.step);
+  EXPECT_EQ(GuideGet(*window).step, s.step);
   // A new tour ignores the old project's delayed terminal observation.
   auto start = Event("start");
   start.demo = "report";
@@ -326,6 +404,16 @@ TEST_F(GuideFixture, ProgressScopePersistsAndLiveStepResumesAfterRestart) {
   Advance(*host, Event("setup"));
   Advance(*host, Event("offered"));
   auto s = Start("report");
+  Observe("before-resume", "running", true);
+  s = Observe("before-resume", "succeeded", false);
+  s = Choose(s, s.choices.front());
+  ASSERT_EQ(s.step, "report/change");
+  auto e = Event("resume");
+  e.project = "/copy";
+  e.connected = true;
+  e.run = "before-resume";
+  e.state = "succeeded";
+  EXPECT_EQ(Advance(*host, e).step, s.step);
   EXPECT_FALSE(GuideGet(*host, "web:one").setup_done);
   EXPECT_FALSE(GuideGet(*host, "web:two").tour);
   Advance(*host, Event("setup"), "web:one");
@@ -340,10 +428,7 @@ TEST_F(GuideFixture, ProgressScopePersistsAndLiveStepResumesAfterRestart) {
   EXPECT_TRUE(s.demo_answered);
   ASSERT_NE(s.tour, nullptr);
   EXPECT_TRUE(s.step.empty());
-  auto e = Event("resume");
-  e.project = "/copy";
-  e.connected = true;
-  EXPECT_EQ(Advance(*host, e).step, "report/resume");
+  EXPECT_EQ(Advance(*host, e).step, "report/start");
   EXPECT_TRUE(GuideGet(*host, "web:one").setup_done);
   EXPECT_FALSE(GuideGet(*host, "web:two").setup_done);
 }
@@ -368,8 +453,8 @@ TEST_F(GuideFixture, DemoCommandUnknownProjectsAndAbsentVectors) {
       });
   const auto *value = reply.HostValue()->value_as_GuideState();
   ASSERT_NE(value, nullptr);
-  EXPECT_EQ(value->actions(), nullptr);
-  EXPECT_EQ(ListSize(value->actions()), 0u);
+  EXPECT_EQ(value->choices(), nullptr);
+  EXPECT_EQ(ListSize(value->choices()), 0u);
   auto finish = Event("action_finished", "run requested");
   finish.project = "/copy";
   EXPECT_EQ(Advance(*host, finish).step, s.step);
