@@ -11,7 +11,7 @@ import { RUST_SCAFFOLD } from './rust-scaffold'
 // the draft holds only what is on its way to the core, or what could not be
 // saved (a run in progress, a lost connection).
 import { api, EnvPublicState, onServerEvent } from '../api'
-import { arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../shared/json'
+import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../shared/json'
 import { cardPath, Change, D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../shared/rpc'
 import {
   applicableStages, CardGeometry, CardNodeData, mergeStageStatus, NEW_PORT, orderedPorts, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
@@ -19,7 +19,7 @@ import {
 } from './canvasKit'
 import type { LayoutBar, LayoutPortOrder, LayoutProposal, LayoutScene } from './layoutScene'
 import { FigureState, figureMode } from './moduleThumbnails'
-import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
+import { cloneDef, cloneExternal, defEq, extEq, documentStateJSON, readDocumentState } from './merge'
 import { Observable } from './observable'
 import { VisualizationTemplate, visualizationFiles, visualizationTemplates } from './visualizationTemplates'
 import marimoFiles from '../../../ui/templates/marimo.json'
@@ -336,7 +336,7 @@ interface Snapshot {
 }
 
 /** The documents as they look with the draft applied (what an undo entry records). */
-interface DocState {
+export interface DocState {
   project: J
   layout: J
   definitions: Map<string, DefinitionDraft>
@@ -950,7 +950,7 @@ export class ProjectSession extends Observable {
       this.externalBases = new Map()
     } else if (this.draftBase?.rev !== this.rev) {
       // Edits kept over a reconnect: merged onto what is there now, then saved.
-      this.rebase()
+      this.scheduleSave()
     }
   }
 
@@ -1018,7 +1018,7 @@ export class ProjectSession extends Observable {
     } else if (!fromSave) {
       // Changed elsewhere (the Agent, another window) while edits are on
       // their way: shown at once, the edits merged on top.
-      this.rebase()
+      this.scheduleSave()
     }
   }
 
@@ -1282,44 +1282,56 @@ export class ProjectSession extends Observable {
     this.changed()
   }
 
-  undo() {
-    const e = this.undoStack.pop()
+  async undo() {
+    const e = this.undoStack.at(-1)
     if (!e) return
-    const inverse = this.revert(e)
-    if (inverse) this.redoStack.push(inverse)
+    const result = await this.revert(e, true)
+    if (result) { this.undoStack.pop(); if (result.inverse) this.redoStack.push(result.inverse) }
     this.changed()
   }
 
-  redo() {
-    const e = this.redoStack.pop()
+  async redo() {
+    const e = this.redoStack.at(-1)
     if (!e) return
-    const inverse = this.revert(e)
-    if (inverse) this.undoStack.push(inverse)
+    const result = await this.revert(e, false)
+    if (result) { this.redoStack.pop(); if (result.inverse) this.undoStack.push(result.inverse) }
     this.changed()
   }
 
   /** Puts back what an entry changed (its `before`), over the current state.
    *  Returns the entry that does it again. */
-  private revert(e: UndoEntry): UndoEntry | undefined {
+  private async revert(e: UndoEntry, undo: boolean): Promise<{ inverse?: UndoEntry } | undefined> {
     const cur = this.docState(), curSnap = this.snapshot()
-    if (!this.dirty) this.draftBase = this.makeBase()
-    this.project = clone(merge3(e.after.project, e.before.project, cur.project) ?? cur.project)
-    this.layout = clone(merge3(e.after.layout, e.before.layout, cur.layout) ?? cur.layout)
-    for (const id of new Set([...e.before.definitions.keys(), ...e.after.definitions.keys()])) {
-      if (defEq(e.before.definitions.get(id), e.after.definitions.get(id))) continue
-      this.setEffectiveDefinition(id, mergeDefinition(e.after.definitions.get(id), e.before.definitions.get(id), cur.definitions.get(id)))
+    const revision = this.rev
+    let reply: Awaited<ReturnType<ProjectSession['mergeStates']>>
+    try { reply = await this.mergeStates(e.after, e.before, cur) }
+    catch (error) { this.saveError = errorText(error); this.changed(); return }
+    if (revision !== this.rev || !snapEq(curSnap, this.snapshot())) return
+    if (reply.conflicts.length) {
+      this.mergeConflict = { rev: revision, snapshot: curSnap, state: cur, apply: () => {
+        const stack = undo ? this.undoStack : this.redoStack
+        if (stack.at(-1) !== e) return
+        const inverse = this.applyRevert(e, cur, curSnap, reply.state)
+        stack.pop()
+        if (inverse) (undo ? this.redoStack : this.undoStack).push(inverse)
+      } }
+      this.mergeEdit.conflict(revision)
+      this.saveError = L('他の変更と重なり保存できませんでした。変更は保持しています。')
+      this.changed()
+      return
     }
-    for (const p of new Set([...e.before.externals.keys(), ...e.after.externals.keys()])) {
-      if (extEq(e.before.externals.get(p), e.after.externals.get(p))) continue
-      const b = e.before.externals.get(p)
-      if (b) {
-        if (!this.externalBases.has(p)) this.externalBases.set(p, this.externals.get(p) ?? null)
-        const t = mergeExternal(e.after.externals.get(p), b, cur.externals.get(p))
-        t.removed = false
-        this.externalEdits.set(p, t)
-      } else {
-        this.removeExternal(p)
-      }
+    return { inverse: this.applyRevert(e, cur, curSnap, reply.state) }
+  }
+
+  private applyRevert(e: UndoEntry, cur: DocState, curSnap: Snapshot, state: DocState): UndoEntry | undefined {
+    if (!this.dirty) this.draftBase = this.makeBase()
+    this.project = state.project
+    this.layout = state.layout
+    for (const id of new Set([...cur.definitions.keys(), ...state.definitions.keys()])) this.setEffectiveDefinition(id, state.definitions.get(id))
+    for (const p of new Set([...cur.externals.keys(), ...state.externals.keys()])) {
+      const ext = state.externals.get(p)
+      if (ext) this.createExternal(p, ext)
+      else this.removeExternal(p)
     }
     for (const [p, v] of e.sourcesBefore) {
       if (v.kind === 'absent') this.removeSource(p)
@@ -1357,24 +1369,70 @@ export class ProjectSession extends Observable {
 
   /** Moves the draft onto the confirmed state that just arrived: what the
    *  draft changed stays, everything else follows the new state. */
-  private rebase() {
+  prepareMerge(base: string, ours: string, theirs: string): Promise<{ mergedJson: string; conflicts: string[] }> {
+    return api('/api/document/merge', { base_json: base, ours_json: ours, theirs_json: theirs })
+  }
+  async mergeValues(base: J, ours: J, theirs: J) {
+    const reply = await this.prepareMerge(serialize(base), serialize(ours), serialize(theirs))
+    return { value: parse(reply.mergedJson), conflicts: reply.conflicts }
+  }
+  readonly mergeEdit = new RevisionEdit()
+  private mergeConflict?: { rev: bigint; snapshot: Snapshot; state: DocState; apply: () => void }
+
+  private async mergeStates(base: DocState, ours: DocState, theirs: DocState) {
+    const reply = await this.prepareMerge(serialize(documentStateJSON(base)), serialize(documentStateJSON(ours)), serialize(documentStateJSON(theirs)))
+    return { state: readDocumentState(parse(reply.mergedJson)), conflicts: reply.conflicts }
+  }
+
+  resolveMergeConflict() {
+    const pending = this.mergeConflict
+    this.mergeConflict = undefined
+    this.mergeEdit.reload(this.rev)
+    if (pending && pending.rev === this.rev && snapEq(pending.snapshot, this.snapshot()) && jeq(documentStateJSON(pending.state), documentStateJSON(this.docState()))) pending.apply()
+    this.scheduleSave()
+    this.changed()
+  }
+
+  private async rebase(): Promise<boolean> {
     const b = this.draftBase
-    if (!b) return
-    this.project = clone(merge3(b.project, this.project, this.confirmedProject) ?? this.confirmedProject)
-    this.layout = clone(merge3(b.layout, this.layout, this.confirmedLayout) ?? this.confirmedLayout)
-    const theirs = this.confirmedDefinitionDrafts
-    for (const [id, e] of [...this.definitionEdits]) {
-      this.setEffectiveDefinition(id, mergeDefinition(b.definitions.get(id), e.removed ? undefined : e, theirs.get(id)))
+    if (!b) return true
+    const revision = this.rev, sent = this.snapshot(), ours = this.docState()
+    const baseExternals = new Map(this.externals)
+    for (const [p, ext] of this.externalBases) { if (ext) baseExternals.set(p, ext); else baseExternals.delete(p) }
+    const theirs = { project: this.confirmedProject, layout: this.confirmedLayout, definitions: this.confirmedDefinitionDrafts, externals: new Map(this.externals) }
+    const reply = await this.mergeStates({ ...b, externals: baseExternals }, ours, theirs)
+    if (revision !== this.rev || !snapEq(sent, this.snapshot()) || b !== this.draftBase ||
+      !jeq(documentStateJSON(theirs), documentStateJSON({ project: this.confirmedProject, layout: this.confirmedLayout, definitions: this.confirmedDefinitionDrafts, externals: this.externals }))) { this.saveAgain = true; return false }
+    const apply = () => {
+      this.project = reply.state.project
+      this.layout = reply.state.layout
+      for (const id of new Set([...ours.definitions.keys(), ...reply.state.definitions.keys()])) this.setEffectiveDefinition(id, reply.state.definitions.get(id))
+      for (const [p, edit] of sent.externals) {
+        const ext = reply.state.externals.get(p)
+        if (ext) this.externalEdits.set(p, ext)
+        else this.externalEdits.set(p, { ...edit, removed: true })
+        this.externalBases.set(p, theirs.externals.get(p) ?? null)
+      }
+      const hashes = new Map([...this.sources].map(([p, v]) => [p, v.hash]))
+      for (const p of new Set([...this.sourceEdits.keys(), ...this.sourceRemovals])) {
+        const h = b.hashes.get(p)
+        if (h === undefined) hashes.delete(p); else hashes.set(p, h)
+      }
+      this.draftBase = { rev: revision, hashes, project: theirs.project, layout: theirs.layout, definitions: theirs.definitions }
+      this.normalizeExternalEdits()
+      this.settleDraftBase()
     }
-    const hashes = new Map([...this.sources].map(([p, v]) => [p, v.hash]))
-    // Files edited here stay checked against the version they were edited from.
-    for (const p of new Set([...this.sourceEdits.keys(), ...this.sourceRemovals])) {
-      const h = b.hashes.get(p)
-      if (h === undefined) hashes.delete(p)
-      else hashes.set(p, h)
+    if (reply.conflicts.length) {
+      this.mergeConflict = { rev: revision, snapshot: sent, state: ours, apply }
+      this.mergeEdit.conflict(revision)
+      this.saveError = L('他の変更と重なり保存できませんでした。変更は保持しています。')
+      this.changed()
+      return false
     }
-    this.draftBase = { rev: this.rev, hashes, project: this.confirmedProject, layout: this.confirmedLayout, definitions: theirs }
-    this.settleDraftBase()
+    this.mergeConflict = undefined
+    this.mergeEdit.reload(revision)
+    apply()
+    return true
   }
 
   /** Drops every unsaved edit and follows the latest confirmed document
@@ -1399,6 +1457,8 @@ export class ProjectSession extends Observable {
     this.saveAgain = false
     this.conflictRetries = 0
     this.saveError = undefined
+    this.mergeConflict = undefined
+    this.mergeEdit.reload(this.rev)
     this.savingAfterRun = false
     this.changed()
   }
@@ -1482,7 +1542,10 @@ export class ProjectSession extends Observable {
       return
     }
     await this.fillUndoSources()
-    if (this.draftBase && this.draftBase.rev !== this.rev) this.rebase()
+    if (this.mergeConflict) return
+    try {
+      if (!(await this.rebase())) return
+    } catch (error) { this.saveError = errorText(error); this.changed(); return }
     if (!this.dirty) {
       this.saveError = undefined
       return
@@ -1579,7 +1642,7 @@ export class ProjectSession extends Observable {
       for (const [prefix, ours] of [...this.externalEdits].sort(([a], [b]) => a.localeCompare(b))) {
         if (ours.removed) continue
         const theirs = this.externals.get(prefix)
-        const m = mergeExternal(this.externalBases.get(prefix) ?? undefined, ours, theirs)
+        const m = cloneExternal(ours)
         merged.set(prefix, m)
         const now = externalFiles(m), was = theirs ? externalFiles(theirs) : new Map<string, string>()
         for (const [rel, text] of [...now].sort(([a], [b]) => a.localeCompare(b))) {
@@ -1669,9 +1732,9 @@ export class ProjectSession extends Observable {
   /** After a save: the parts sent are confirmed now; edits made while it was
    *  on its way stay in the draft. */
   private forgetSaved(sent: Snapshot, layoutOnly: boolean, merged: Map<string, ExternalProject>) {
-    this.layout = jeq(this.layout, sent.layout) ? clone(this.confirmedLayout) : clone(merge3(sent.layout, this.layout, this.confirmedLayout) ?? this.layout)
+    if (jeq(this.layout, sent.layout)) this.layout = clone(this.confirmedLayout)
     if (!layoutOnly) {
-      this.project = jeq(this.project, sent.project) ? clone(this.confirmedProject) : clone(merge3(sent.project, this.project, this.confirmedProject) ?? this.project)
+      if (jeq(this.project, sent.project)) this.project = clone(this.confirmedProject)
       for (const [id, d] of sent.definitions) if (defEq(this.definitionEdits.get(id), d)) this.definitionEdits.delete(id)
       for (const [p, d] of sent.sources) {
         if (this.sourceEdits.get(p) === d) {
@@ -1709,7 +1772,12 @@ export class ProjectSession extends Observable {
       this.savingAfterRun = false
     }
     // Whatever is left was edited on top of what was just saved.
-    this.draftBase = undefined
+    const current = this.makeBase(), previous = this.draftBase ?? current
+    const definitions = new Map(this.confirmedDefinitionDrafts)
+    for (const [id, d] of sent.definitions) { if (d.removed) definitions.delete(id); else definitions.set(id, d) }
+    this.draftBase = { ...current, project: layoutOnly ? previous.project : sent.project,
+      layout: sent.layout, definitions: layoutOnly ? previous.definitions : definitions,
+      hashes: layoutOnly ? previous.hashes : current.hashes }
     this.settleDraftBase()
   }
 

@@ -293,7 +293,7 @@ import Testing
     s.edit { $0.updateLayout(of: []) { l in l["displays"] = .object([("b", .object([("x", .real(1))]))]) } }
     await s.save()
     #expect(s.saveError != nil)
-    s.undo()
+    await s.undo()
     await s.save()
     #expect(!s.dirty)
     #expect(s.saveError == nil, "\(s.saveError ?? "")")
@@ -353,7 +353,7 @@ import Testing
     #expect(s.displayFrame(b)?["x"]?.double != nil)
     #expect(s.note(note)?["x"]?.double != 3 || s.note(note)?["y"]?.double != 4)
     let arranged = s.layout
-    s.undo()
+    await s.undo()
     #expect(s.layout == before)
     await s.arrange([])
     #expect(s.layout == arranged, "from the same graph, the same layout")
@@ -412,7 +412,7 @@ import Testing
       #expect(s.displayFrame(near)?["x"]?.double == nil, "beside its Card: it goes with the Card and keeps no place")
       #expect(s.displayRect(near).origin == CGPoint(x: before.beside.minX + 30, y: before.beside.minY + 40), "not moved twice")
       #expect(s.undoStack.count == before.undos + 1, "one edit")
-      s.undo()
+      await s.undo()
       #expect(s.position(near) == before.card && s.noteRect(s.note(note)!).origin == before.note.origin)
       #expect(s.displayRect(framed).origin == CGPoint(x: 400, y: 400), "one undo brings all back")
 
@@ -425,19 +425,19 @@ import Testing
       #expect(s.position(offGrid) == CGPoint(x: snapToGrid(3010, grid) + 40, y: snapToGrid(950, grid) + 40))
       #expect(s.noteRect(s.note(note)!).origin == CGPoint(x: noteBefore.x + 40, y: noteBefore.y + 40))
       #expect(s.displayRect(framed).origin == CGPoint(x: 440, y: 440))
-      s.undo()
+      await s.undo()
       // Without a Card there is nothing to keep to the grid: they land where dropped.
       s.moveSelection(cards: [], notes: [note], frames: [framed], by: CGSize(width: 33, height: 47), snap: grid)
       #expect(s.noteRect(s.note(note)!).origin == CGPoint(x: noteBefore.x + 33, y: noteBefore.y + 47))
       #expect(s.displayRect(framed).origin == CGPoint(x: 433, y: 447))
-      s.undo()
+      await s.undo()
 
       // A frame alone is closed and its Card stays; notes go; one undo.
       let undos = s.undoStack.count
       s.deleteSelection(cards: [], notes: [note], frames: [framed], in: scope)
       #expect(s.displayFrame(framed)?["hidden"]?.bool == true && s.instance(framed) != nil)
       #expect(s.note(note) == nil && s.undoStack.count == undos + 1)
-      s.undo()
+      await s.undo()
       #expect(s.note(note) != nil && s.displayFrame(framed)?["hidden"]?.bool != true)
 
       // A Card takes its frame with it. A frame beside its Card is closed with
@@ -565,7 +565,7 @@ import Testing
     #expect(!s.dirty, "\(s.saveError ?? "")")
     s.deleteCards([b], in: [])
     await s.save()
-    s.undo()
+    await s.undo()
     await s.save()
     for _ in 0..<200 where s.displays[b] == nil { try await Task.sleep(for: .milliseconds(25)) }
     #expect(s.displays[b]?.runId == run)
@@ -643,7 +643,7 @@ import Testing
     #expect(!FileManager.default.fileExists(atPath: folder.path))
 
     // Undone, it is back with its files; deleted with an unsaved edit, it goes too.
-    s.undo()
+    await s.undo()
     await s.save()
     #expect(!s.dirty && s.saveError == nil, "\(s.saveError ?? "")")
     #expect(s.instance(code) != nil)
@@ -707,7 +707,7 @@ import Testing
 
     for c in s.comments(k) { s.removeComment(k, id: c.id) }
     #expect(s.cardMeta(k) == .object([("name", .string("plot"))]), "Removing all comments keeps the Card's name only")
-    s.undo()
+    await s.undo()
     #expect(s.comments(k).map(\.text) == ["軸に名前を"])
   }
 
@@ -868,7 +868,7 @@ import Testing
     #expect(proj["canvas"]?["connections"]?.array?.count == 3)
 
     // Undo takes back the UI's last move only; the Agent's wires stay.
-    s.undo()
+    await s.undo()
     await s.save()
     #expect(s.confirmedLayout["cards"]?["b"]?["x"]?.double == 270)
     #expect(Set(s.connections(in: []).compactMap { $0["to"]?["card"]?.string }) == ["a", "b", "c"])
@@ -1090,10 +1090,10 @@ import Testing
       Change.putDefinition(id: "a", cardJSON: #"{"language":"bash","inputs":[{"name":"in"}],"maxRuns":3,"symbol":"theirs"}"#, metaJSON: nil),
     ])
     for _ in 0..<100 where s.cardDefinition("a")?["maxRuns"] == nil { try await Task.sleep(for: .milliseconds(20)) }
-    m.follow()
+    await m.follow()
     #expect(m.definition?["maxRuns"]?.uint64 == 3)        // untouched: follows
     #expect(m.definition?["symbol"]?.string == "mine") // touched here: kept
-    #expect(m.conflicts == ["_card.json: symbol"])
+    #expect(m.conflicts == ["/definition/symbol"])
     #expect(!(await m.apply()))
     #expect(s.confirmedDefinitions["a"]?["symbol"]?.string == "theirs")
     #expect(await m.apply(overwrite: true))
@@ -1149,7 +1149,7 @@ import Testing
     #expect(s.confirmedDefinitions["c-2"]?["language"]?.string == "bash")
 
     // Undo of the copy, then of the inner move, one operation each.
-    s.undo()
+    await s.undo()
     await s.save()
     #expect(s.confirmedDefinitions["c-2"] == nil && s.instance("c-2") == nil)
   }

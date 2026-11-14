@@ -18,8 +18,8 @@ const session = () => {
   s.confirmedProject = parse('{"name":"t","canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}}')
   s.layout = parse('{}')
   s.confirmedLayout = parse('{}')
-  s.confirmedDefinitions.set('a', { card: parse('{"language":"bash","inputs":[{"name":"in"}]}') })
-  s.confirmedDefinitions.set('b', { card: parse('{"language":"bash","inputs":[{"name":"in"}]}') })
+  s.confirmedDefinitions.set('a', parse('{"language":"bash","inputs":[{"name":"in"}]}'))
+  s.confirmedDefinitions.set('b', parse('{"language":"bash","inputs":[{"name":"in"}]}'))
   s.scheduleSave = () => {} // saved by hand below
   s.connected = true
   return s
@@ -78,7 +78,7 @@ const refused = new RPCFailure({ kind: D.FailureKind.invalid_document, diagnosti
   s.edit((x) => x.setPosition('a', { x: 10, y: 20 }))
   await saveOnce(s)
   assert.ok(s.saveError)
-  s.undo()
+  await s.undo()
   assert.ok(!s.dirty)
   await saveOnce(s)
   assert.equal(s.saveError, undefined, 'the state of the save follows')

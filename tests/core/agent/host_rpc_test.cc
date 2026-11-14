@@ -1,6 +1,7 @@
 // Public Host contract scenarios, independent of project/conversation
 // lifetimes.
 #include "fixture.hh"
+#include "agent/json.hh"
 #include <unistd.h>
 
 namespace tsugumi::test {
@@ -24,6 +25,28 @@ TEST_F(AgentFixture, HostUnixAndWebSocketReturnTypedReplies) {
       reply.Value()->value_as_ConversationResult()->conversation()->id()->str(),
       conversation);
 }
+TEST_F(AgentFixture, DocumentMergeUsesTheSameHostAndAgentOperation) {
+  const std::string base = R"({"settings":{"n":1}})", ours = R"({"settings":{"n":2}})", theirs = R"({"settings":{"n":3}})";
+  const auto reply = Call(*host, H::RequestPayload::DocumentMergeRequest, [&](Builder& b) {
+    return H::CreateDocumentMergeRequest(b, b.CreateString(base), b.CreateString(ours), b.CreateString(theirs)).Union();
+  });
+  const auto* edit = reply.HostValue()->value_as_DocumentMerge();
+  ASSERT_NE(edit, nullptr);
+  ASSERT_NE(edit->conflicts(), nullptr);
+  ASSERT_EQ(edit->conflicts()->size(), 1U);
+  EXPECT_EQ(edit->conflicts()->Get(0)->str(), "/settings/n");
+  EXPECT_EQ(edit->merged_json()->str(), ours);
+  const auto conversation = Conversation("merge", true);
+  const auto result = Tool(conversation, "document_merge", agent::json::Encode(agent::json::Members{
+      {"base_json", agent::json::Quote(base)}, {"ours_json", agent::json::Quote(ours)}, {"theirs_json", agent::json::Quote(theirs)}}));
+  const auto* tool = result.Value()->value_as_ToolResult();
+  ASSERT_NE(tool, nullptr);
+  EXPECT_FALSE(tool->is_error());
+  const auto value = agent::json::Object(tool->text()->str());
+  EXPECT_EQ(agent::json::Text(value, "merged_json"), edit->merged_json()->str());
+  EXPECT_EQ(agent::json::Array(value.at("conflicts")), std::vector<std::string>({agent::json::Quote("/settings/n")}));
+}
+
 TEST_F(AgentFixture, HostRejectsTheExternalAgentCredentialOnBothTransports) {
   for (const bool websocket : {false, true})
     EXPECT_NO_THROW(ConnectHost(websocket, false, false));

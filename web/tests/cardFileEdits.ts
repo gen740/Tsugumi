@@ -54,7 +54,7 @@ for (const operation of ['nest', 'duplicate'] as const) {
   await (s as unknown as { saveOnce(): Promise<void> }).saveOnce()
   assert.equal(s.saveError, undefined)
   assert.equal(saves, 1)
-  s.undo()
+  await s.undo()
   assert.deepEqual(s.sourceEdits.get('definitions/a/data.bin'), binary, 'undo also restores bytes')
 }
 {

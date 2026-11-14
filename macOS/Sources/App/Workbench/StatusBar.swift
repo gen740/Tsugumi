@@ -30,6 +30,7 @@ struct StatusBar: View {
       PermissionPromptView(prompt: ChatController.PermissionPrompt(raw: request.permissions, answer: { _ in }),
                            answer: { allow, _, selected in Task { await session.answerReloadApproval(allow, selected: selected) } }, reload: true)
     }
+    .onChange(of: session.mergeEdit.conflictRev) { if session.mergeEdit.conflictRev != nil { showSync = true } }
     .font(.callout)
     .padding(.horizontal, 12).padding(.vertical, 5)
     .background(.regularMaterial, in: Capsule())
@@ -151,6 +152,8 @@ struct StatusBar: View {
       if case .failed(let m) = session.syncState {
         Text(m).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
       }
+      RevisionEditNotice(edit: session.mergeEdit, text: { session.unsavedText },
+                         overwrite: { session.resolveMergeConflict() }, reload: { session.discardDraft() })
       Text("変更は操作するたびに保存されます。チャットや別のウインドウでの変更もすぐに反映されます。")
         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       HStack {

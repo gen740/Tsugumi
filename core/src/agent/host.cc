@@ -1115,6 +1115,11 @@ struct Host::State {
                      tool.spec.name != "view_save"))
         specs.push_back(tool.spec);
     specs.push_back(
+        {"document_merge", "Prepare a three-way merge of unsaved document states. "
+         "Returns merged_json and conflict paths; show conflicts to the person "
+         "before saving their choice with project_save. This tool writes nothing.",
+         R"({"type":"object","properties":{"base_json":{"type":"string"},"ours_json":{"type":"string"},"theirs_json":{"type":"string"}},"required":["base_json","ours_json","theirs_json"],"additionalProperties":false})"});
+    specs.push_back(
         {"document_make_subgraph",
          "Prepare a Card in Card edit from the current affected tsugumi.json. "
          "Returns project_json, external_json and link_json; move the selected "
@@ -1602,6 +1607,14 @@ struct Host::State {
     const auto project =
         requested_project.empty() ? c.project : requested_project;
     auto args = json::Object(call.arguments);
+    if (call.name == "document_merge") {
+      const auto edit = host::MergeDocuments(json::Text(args, "base_json"),
+          json::Text(args, "ours_json"), json::Text(args, "theirs_json"));
+      std::vector<std::string> conflicts;
+      for (const auto& path : edit.conflicts) conflicts.push_back(json::Quote(path));
+      return {json::Encode(json::Members{{"merged_json", json::Quote(edit.merged_json)},
+                  {"conflicts", json::Encode(conflicts)}}), false, {}, {}};
+    }
     if (call.name == "document_make_subgraph") {
       std::vector<std::string> cards;
       for (const auto& card : json::Array(json::Get(args, "cards", "[]")))
@@ -3028,6 +3041,11 @@ struct Host::State {
     case H::RequestPayload::PermissionKindsRequest: {
       const auto* p = r->value_as_PermissionKindsRequest();
       return wire::HostReply(request.request_id, host::PermissionKinds(Text(p->language())));
+    }
+    case H::RequestPayload::DocumentMergeRequest: {
+      const auto* p = r->value_as_DocumentMergeRequest();
+      return wire::HostReply(request.request_id, host::MergeDocuments(
+          p->base_json()->str(), p->ours_json()->str(), p->theirs_json()->str()));
     }
     case H::RequestPayload::DocumentSubgraphRequest: {
       const auto* p = r->value_as_DocumentSubgraphRequest();

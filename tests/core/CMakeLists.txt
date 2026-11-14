@@ -127,9 +127,10 @@ endif()
 add_executable(tsugumi_host_settings_tests agent/document_edits_test.cc agent/catalog_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc agent_fixture_server.cc agent/helper_scope_test.cc)
 target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
 target_compile_definitions(tsugumi_host_settings_tests PRIVATE
-  TSUGUMI_SUBGRAPH_FIXTURES="${_test_guide_root}/tests/fixtures/subgraph-edits.json")
+  TSUGUMI_SUBGRAPH_FIXTURES="${_test_guide_root}/tests/fixtures/subgraph-edits.json"
+  TSUGUMI_MERGE_FIXTURES="${_test_guide_root}/tests/fixtures/merge-contract.json")
 if(TSUGUMI_INSTALLED_CORE)
-  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/subgraph-edits.json
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/subgraph-edits.json ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/merge-contract.json
     DESTINATION share/tsugumi/guide-tests/tests/fixtures)
 endif()
 target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_agent_core PkgConfig::LIBGIT2 GTest::gtest_main)

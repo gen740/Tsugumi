@@ -228,6 +228,14 @@ public actor CoreAgentClient {
     return result["kinds"] as? [Tsugumi_Host_PermissionKindT] ?? []
   }
 
+  public func mergeDocuments(base: String, ours: String, theirs: String) async throws -> (merged: String, conflicts: [String]) {
+    let result = try await call("DocumentMergeRequest", ["base_json": base, "ours_json": ours, "theirs_json": theirs])
+    guard let merged = result["mergedJson"] as? String else {
+      throw CoreAgentFailure(code: "invalid_reply", message: "Missing merged documents", requestID: nil)
+    }
+    return (merged, result["conflicts"] as? [String] ?? [])
+  }
+
   public func makeSubgraph(project: String, cards: [String], id: String) async throws -> (project: String, external: String, link: String) {
     let result = try await call("DocumentSubgraphRequest", ["project_json": project, "cards": cards, "id": id])
     guard let project = result["projectJson"] as? String, let external = result["externalJson"] as? String, let link = result["linkJson"] as? String else {

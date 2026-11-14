@@ -10,13 +10,85 @@ namespace tsugumi::host {
 namespace {
 namespace json = agent::json;
 
+auto Normalized(const std::string &value) -> std::string {
+  const auto raw = schema::text(schema::capture(value));
+  if (raw.starts_with('{')) {
+    auto fields = json::Object(raw);
+    for (auto &[key, item] : fields) {
+      (void)key;
+      item = Normalized(item);
+    }
+    return json::Encode(fields);
+  }
+  if (raw.starts_with('[')) {
+    auto items = json::Array(raw);
+    for (auto &item : items)
+      item = Normalized(item);
+    return json::Encode(items);
+  }
+  return raw;
+}
+TEST(DocumentMerge, FormerClientMergeFixtures) {
+  const auto fixtures = fs::read_file(TSUGUMI_MERGE_FIXTURES);
+  ASSERT_TRUE(fixtures.has_value());
+  for (const auto &raw : json::Array(*fixtures)) {
+    const auto fixture = json::Object(raw);
+    SCOPED_TRACE(json::Text(fixture, "name"));
+    const auto edit = MergeDocuments(fixture.at("base"), fixture.at("ours"),
+                                     fixture.at("theirs"));
+    EXPECT_EQ(Normalized(edit.merged_json), Normalized(fixture.at("expect")));
+    std::vector<std::string> conflicts;
+    for (const auto &path : json::Array(json::Get(fixture, "conflicts", "[]")))
+      conflicts.push_back(json::String(path));
+    EXPECT_EQ(edit.conflicts, conflicts);
+  }
+}
+TEST(DocumentMerge, RunConditionsAndDeletionNeedAChoiceButLayoutDoesNot) {
+  for (const auto *field :
+       {"settings", "permissions", "hostFolders", "nixSources"}) {
+    const auto state = [&](int value) {
+      return json::Encode(json::Members{{field, std::to_string(value)}});
+    };
+    EXPECT_FALSE(MergeDocuments(state(1), state(2), state(3)).conflicts.empty())
+        << field;
+  }
+  EXPECT_TRUE(MergeDocuments(R"({"layout":{"x":1}})", R"({"layout":{"x":2}})",
+                             R"({"layout":{"x":3}})")
+                  .conflicts.empty());
+  EXPECT_FALSE(MergeDocuments(R"({"params":[{"name":"layout","data":1}]})",
+                              R"({"params":[{"name":"layout","data":2}]})",
+                              R"({"params":[{"name":"layout","data":3}]})")
+                   .conflicts.empty());
+  const auto deletion = MergeDocuments(
+      R"({"definitions":{"a":{"card":{"n":1}}}})", R"({"definitions":{}})",
+      R"({"definitions":{"a":{"card":{"n":2}}}})");
+  EXPECT_EQ(deletion.conflicts, std::vector<std::string>({"/definitions/a"}));
+  EXPECT_EQ(deletion.merged_json, R"({"definitions":{}})");
+}
+TEST(DocumentMerge,
+     CompetingWireReplacementsOfferLocalWireWithoutCombiningThem) {
+  const auto state = [](const std::string &from) {
+    return R"({"connections":[{"from":")" + from + R"(","to":"input"}]})";
+  };
+  const auto edit = MergeDocuments(state("a"), state("b"), state("c"));
+  EXPECT_EQ(edit.conflicts, std::vector<std::string>({"/connections"}));
+  EXPECT_EQ(Normalized(edit.merged_json), Normalized(state("b")));
+}
+TEST(DocumentMerge, ObjectSpellingAndLargeIntegersArePreserved) {
+  const auto edit = MergeDocuments(R"({"n":9007199254740993,"x":1})",
+                                   R"({"x":1, "n":9007199254740993})",
+                                   R"({"n":9007199254740993,"x":2})");
+  EXPECT_TRUE(edit.conflicts.empty());
+  EXPECT_EQ(edit.merged_json, R"({"n":9007199254740993,"x":2})");
+}
+
 TEST(DocumentSubgraph, ClientGestureFixturesUseActualHostReplies) {
   const auto fixtures = fs::read_file(TSUGUMI_SUBGRAPH_FIXTURES);
   ASSERT_TRUE(fixtures.has_value());
-  for (const auto& raw : json::Array(*fixtures)) {
+  for (const auto &raw : json::Array(*fixtures)) {
     const auto fixture = json::Object(raw);
     std::vector<std::string> cards;
-    for (const auto& card : json::Array(fixture.at("cards")))
+    for (const auto &card : json::Array(fixture.at("cards")))
       cards.push_back(json::String(card));
     const auto edit = MakeSubgraph(json::Text(fixture, "projectJson"), cards,
                                    json::Text(fixture, "id"));
@@ -37,7 +109,7 @@ TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {
   const auto before = json::Object(root),
              outer = json::Object(edit.project_json),
              inner = json::Object(edit.external_json);
-  for (const auto* field : {"pkgsPath", "nixSources", "settings"}) {
+  for (const auto *field : {"pkgsPath", "nixSources", "settings"}) {
     EXPECT_EQ(before.at(field), inner.at(field));
     EXPECT_EQ(before.at(field), outer.at(field));
   }
@@ -51,8 +123,8 @@ TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {
   EXPECT_EQ(json::Object(boundary.at("inputs")).size(), 1);
   EXPECT_EQ(json::Object(boundary.at("outputs")).size(), 2);
   const auto outer_boundary = json::Object(outer.at("boundary"));
-  for (const auto* side : {"inputs", "outputs"})
-    for (const auto& [name, endpoint] : json::Object(outer_boundary.at(side))) {
+  for (const auto *side : {"inputs", "outputs"})
+    for (const auto &[name, endpoint] : json::Object(outer_boundary.at(side))) {
       (void)name;
       EXPECT_EQ(json::Text(json::Object(endpoint), "card"), "sub");
       const auto port = json::Text(json::Object(endpoint), "port");
@@ -89,8 +161,8 @@ TEST(DocumentSubgraph, RejectsInvalidSelectionAndIdWithoutPartialEdits) {
   EXPECT_THROW(MakeSubgraph(root, {"a"}, "../sub"), std::runtime_error);
   EXPECT_NO_THROW(MakeSubgraph(root, {"a"}, "sub"));
 }
-}  // namespace
-}  // namespace tsugumi::host
+} // namespace
+} // namespace tsugumi::host
 
 TEST(HostPermissionKinds, SuppliesIdenticalIdsAndLocalizedDescriptions) {
   const auto ja = tsugumi::host::PermissionKinds("ja");

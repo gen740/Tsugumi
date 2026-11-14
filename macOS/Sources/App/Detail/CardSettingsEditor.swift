@@ -94,26 +94,28 @@ final class CardEditorModel {
   }
 
   /// Takes in what changed elsewhere since the copy was taken.
-  func follow() {
-    guard !applying else { return }
+  func follow(whileApplying: Bool = false) async {
+    guard !applying || whileApplying else { return }
     let defNow = session.cardDefinition(cardKey), metaNow = session.cardMeta(cardKey)
-    func clashes(_ base: JSONValue?, _ ours: JSONValue?, _ theirs: JSONValue?, _ file: String) -> [String] {
-      guard ours != base, theirs != base, ours != theirs else { return [] }
-      let keys = Set((base?.object ?? []).map(\.0) + (ours?.object ?? []).map(\.0) + (theirs?.object ?? []).map(\.0))
-      return keys.sorted().filter { k in
-        base?[k] != ours?[k] && base?[k] != theirs?[k] && ours?[k] != theirs?[k]
-      }.map { "\(file): \($0)" }
+    let localDefinition = definition, localMeta = meta, revision = session.rev
+    func pair(_ d: JSONValue?, _ m: JSONValue?) -> JSONValue {
+      var fields: [(String, JSONValue)] = []
+      if let d { fields.append(("definition", d)) }
+      if let m { fields.append(("meta", m)) }
+      return .object(fields)
     }
     var found: [String] = []
-    if defNow != baseDefinition {
-      found += clashes(baseDefinition, definition, defNow, "_card.json")
-      definition = merge3(base: baseDefinition, ours: definition, theirs: defNow)
-      baseDefinition = defNow
-    }
-    if metaNow != baseMeta {
-      found += clashes(baseMeta, meta, metaNow, "_meta.json")
-      meta = merge3(base: baseMeta, ours: meta, theirs: metaNow)
-      baseMeta = metaNow
+    if defNow != baseDefinition || metaNow != baseMeta {
+      do {
+        let reply = try await session.mergeValues(base: pair(baseDefinition, baseMeta), ours: pair(localDefinition, localMeta), theirs: pair(defNow, metaNow))
+        guard revision == session.rev, localDefinition == definition, localMeta == meta,
+              defNow == session.cardDefinition(cardKey), metaNow == session.cardMeta(cardKey) else { return }
+        found += reply.conflicts
+        definition = reply.value["definition"]
+        meta = reply.value["meta"]
+        baseDefinition = defNow
+        baseMeta = metaNow
+      } catch { revisionEdit.error = String(describing: error); return }
     }
     for p in Array(texts.keys) where loads[p] == .loaded && !created.contains(p) {
       let h = session.sources[p]?.hash
@@ -251,9 +253,9 @@ final class CardEditorModel {
       message = String(localized: "実行中は Card を変更できません。実行が終わってから適用してください。")
       return false
     }
-    follow()
     applying = true
     defer { applying = false }
+    await follow(whileApplying: true)
     let def = definition, m = meta, k = cardKey
     let sentTexts = texts, sentCreated = created
     let changedTexts = texts.filter { baseTexts[$0.key] != $0.value || created.contains($0.key) }
@@ -287,8 +289,10 @@ final class CardEditorModel {
     let laterTexts = texts, laterRemoved = removed, laterCreated = created
     let savedCurrent = revisionEdit.savedRev == session.rev
     reload()
-    definition = merge3(base: def, ours: laterDef, theirs: definition)
-    meta = merge3(base: m, ours: laterMeta, theirs: meta)
+    definition = laterDef
+    meta = laterMeta
+    baseDefinition = def
+    baseMeta = m
     for (p, t) in laterTexts {
       let sent = sentTexts[p]
       if savedCurrent || t != sent {
@@ -302,6 +306,7 @@ final class CardEditorModel {
     removed = laterRemoved.subtracting(gone)
     created = laterCreated.subtracting(sentCreated)
     for p in sentTexts.keys where laterTexts[p] == nil && !gone.contains(p) { removed.insert(p) }
+    await follow(whileApplying: true)
     return true
   }
 }
@@ -388,7 +393,7 @@ struct CardSettingsEditor: View {
     // What changes elsewhere while the window is open is taken in at once;
     // and when this first shows: a window restored at launch took its copy
     // before the project was read.
-    .onChange(of: m.followToken, initial: true) { m.follow() }
+    .onChange(of: m.followToken, initial: true) { Task { await m.follow() } }
     .confirmationDialog("未適用の変更を破棄して読み込み直しますか？", isPresented: $confirmReload) {
       Button("破棄して再読込", role: .destructive) { m.reload() }
       Button("キャンセル", role: .cancel) {}

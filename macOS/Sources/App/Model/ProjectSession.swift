@@ -243,6 +243,9 @@ final class ProjectSession {
   var prepareSubgraph: (String, [String], String) async throws -> (project: String, external: String, link: String) = {
     try await CoreAgentClient.shared.makeSubgraph(project: $0, cards: $1, id: $2)
   }
+  var prepareMerge: (String, String, String) async throws -> (merged: String, conflicts: [String]) = {
+    try await CoreAgentClient.shared.mergeDocuments(base: $0, ours: $1, theirs: $2)
+  }
   var cardIdProvider: ((String, String) async throws -> String)?
   let identity: ProjectIdentity
   let environments: EnvironmentManager
@@ -797,7 +800,7 @@ final class ProjectSession {
       externalBases = [:]
     } else if draftBase?.rev != rev {
       // Edits kept over a reconnect: merged onto what is there now, then saved.
-      rebase()
+      scheduleSave()
     }
   }
 
@@ -950,7 +953,7 @@ final class ProjectSession {
     } else if !fromSave {
       // Changed elsewhere (the Agent, another window) while edits are on
       // their way: shown at once, the edits merged on top.
-      rebase()
+      scheduleSave()
     }
   }
 
@@ -1175,36 +1178,49 @@ final class ProjectSession {
     settleDraftBase()
   }
 
-  func undo() {
-    guard let e = undoStack.popLast() else { return }
-    if let inverse = revert(e) { redoStack.append(inverse) }
+  func undo() async {
+    guard let e = undoStack.last else { return }
+    if let result = await revert(e, undo: true) { undoStack.removeLast(); if let inverse = result.inverse { redoStack.append(inverse) } }
   }
 
-  func redo() {
-    guard let e = redoStack.popLast() else { return }
-    if let inverse = revert(e) { undoStack.append(inverse) }
+  func redo() async {
+    guard let e = redoStack.last else { return }
+    if let result = await revert(e, undo: false) { redoStack.removeLast(); if let inverse = result.inverse { undoStack.append(inverse) } }
   }
 
   /// Puts back what an entry changed (its `before`), over the current state.
   /// Returns the entry that does it again.
-  private func revert(_ e: UndoEntry) -> UndoEntry? {
+  private struct RevertResult { let inverse: UndoEntry? }
+
+  private func revert(_ e: UndoEntry, undo: Bool) async -> RevertResult? {
     let cur = docState(), curSnap = snapshot()
-    if !dirty { draftBase = makeBase() }
-    project = merge3(base: e.after.project, ours: e.before.project, theirs: cur.project) ?? cur.project
-    layout = merge3(base: e.after.layout, ours: e.before.layout, theirs: cur.layout) ?? cur.layout
-    for id in Set(e.before.definitions.keys).union(e.after.definitions.keys) where e.before.definitions[id] != e.after.definitions[id] {
-      setEffectiveDefinition(id, DefinitionDraft.merge(base: e.after.definitions[id], ours: e.before.definitions[id],
-                                                       theirs: cur.definitions[id]))
+    let revision = rev
+    let reply: (value: JSONValue, conflicts: [String])
+    do { reply = try await mergeValues(base: e.after.mergeJSON, ours: e.before.mergeJSON, theirs: cur.mergeJSON) }
+    catch { saveError = String(describing: error); return nil }
+    guard revision == rev, curSnap == snapshot() else { return nil }
+    let merged = DocState(mergeJSON: reply.value)
+    guard reply.conflicts.isEmpty else {
+      mergeConflict = MergeConflict(rev: revision, snapshot: curSnap, state: cur, apply: { [weak self] in
+        guard let self, (undo ? undoStack.last : redoStack.last) === e else { return }
+        let inverse = applyRevert(e, current: cur, snapshot: curSnap, merged: merged)
+        if undo { undoStack.removeLast(); if let inverse { redoStack.append(inverse) } }
+        else { redoStack.removeLast(); if let inverse { undoStack.append(inverse) } }
+      })
+      mergeEdit.conflict(revision)
+      saveError = String(localized: "他の変更と重なり保存できませんでした。変更は保持しています。")
+      return nil
     }
-    for p in Set(e.before.externals.keys).union(e.after.externals.keys) where e.before.externals[p] != e.after.externals[p] {
-      if let b = e.before.externals[p] {
-        if externalBases[p] == nil { externalBases[p] = .some(externals[p]) }
-        var t = ExternalProject.merge(base: e.after.externals[p], ours: b, theirs: cur.externals[p])
-        t.removed = false
-        externalEdits[p] = t
-      } else {
-        removeExternal(p)
-      }
+    return RevertResult(inverse: applyRevert(e, current: cur, snapshot: curSnap, merged: merged))
+  }
+
+  private func applyRevert(_ e: UndoEntry, current cur: DocState, snapshot curSnap: Snapshot, merged: DocState) -> UndoEntry? {
+    if !dirty { draftBase = makeBase() }
+    project = merged.project
+    layout = merged.layout
+    for id in Set(cur.definitions.keys).union(merged.definitions.keys) { setEffectiveDefinition(id, merged.definitions[id]) }
+    for p in Set(cur.externals.keys).union(merged.externals.keys) {
+      if let ext = merged.externals[p] { createExternal(p, ext) } else { removeExternal(p) }
     }
     for (p, v) in e.sourcesBefore {
       switch v {
@@ -1241,19 +1257,74 @@ final class ProjectSession {
 
   /// Moves the draft onto the confirmed state that just arrived: what the
   /// draft changed stays, everything else follows the new state.
-  private func rebase() {
-    guard let b = draftBase else { return }
-    project = merge3(base: b.project, ours: project, theirs: confirmedProject) ?? confirmedProject
-    layout = merge3(base: b.layout, ours: layout, theirs: confirmedLayout) ?? confirmedLayout
-    let theirs = confirmedDefinitionDrafts
-    for (id, e) in definitionEdits {
-      setEffectiveDefinition(id, DefinitionDraft.merge(base: b.definitions[id], ours: e.removed ? nil : e, theirs: theirs[id]))
+  let mergeEdit = RevisionEdit()
+  private struct MergeConflict {
+    let rev: UInt64
+    let snapshot: Snapshot
+    let state: DocState
+    let apply: () -> Void
+  }
+  @ObservationIgnored private var mergeConflict: MergeConflict?
+
+  func mergeValues(base: JSONValue, ours: JSONValue, theirs: JSONValue) async throws -> (value: JSONValue, conflicts: [String]) {
+    let reply = try await prepareMerge(base.serialized(), ours.serialized(), theirs.serialized())
+    return (try JSONValue.parse(reply.merged), reply.conflicts)
+  }
+
+  var unsavedText: String {
+    var fields: [(String, JSONValue)] = [("documents", docState().mergeJSON)]
+    fields.append(("sources", .object(sourceEdits.sorted { $0.key < $1.key }.map {
+      ($0.key, .string($0.value.base64EncodedString()))
+    })))
+    fields.append(("removed", .array(sourceRemovals.sorted().map(JSONValue.string))))
+    return JSONValue.object(fields).serialized()
+  }
+
+  func resolveMergeConflict() {
+    let pending = mergeConflict
+    mergeConflict = nil
+    mergeEdit.reload(rev)
+    if let pending, pending.rev == rev, pending.snapshot == snapshot(), pending.state == docState() { pending.apply() }
+    scheduleSave()
+  }
+
+  private func rebase() async throws -> Bool {
+    guard let b = draftBase else { return true }
+    let revision = rev, sent = snapshot(), ours = docState()
+    var baseExternals = externals
+    for (p, ext) in externalBases { baseExternals[p] = ext }
+    let theirs = DocState(project: confirmedProject, layout: confirmedLayout, definitions: confirmedDefinitionDrafts, externals: externals)
+    let base = DocState(project: b.project, layout: b.layout, definitions: b.definitions, externals: baseExternals)
+    let reply = try await mergeValues(base: base.mergeJSON, ours: ours.mergeJSON, theirs: theirs.mergeJSON)
+    guard revision == rev, sent == snapshot(), draftBase?.rev == b.rev,
+          theirs == DocState(project: confirmedProject, layout: confirmedLayout, definitions: confirmedDefinitionDrafts, externals: externals) else { saveAgain = true; return false }
+    let merged = DocState(mergeJSON: reply.value)
+    let apply = { [weak self] in
+      guard let self else { return }
+      project = merged.project
+      layout = merged.layout
+      for id in Set(ours.definitions.keys).union(merged.definitions.keys) { setEffectiveDefinition(id, merged.definitions[id]) }
+      for (p, edit) in sent.externals {
+        if let ext = merged.externals[p] { externalEdits[p] = ext }
+        else { var gone = edit; gone.removed = true; externalEdits[p] = gone }
+        externalBases[p] = .some(theirs.externals[p])
+      }
+      var hashes = sources.mapValues(\.hash)
+      for p in Set(sourceEdits.keys).union(sourceRemovals) { hashes[p] = b.hashes[p] }
+      draftBase = DraftBase(rev: revision, hashes: hashes, project: theirs.project, layout: theirs.layout, definitions: theirs.definitions)
+      normalizeExternalEdits()
+      settleDraftBase()
     }
-    var hashes = sources.mapValues(\.hash)
-    // Files edited here stay checked against the version they were edited from.
-    for p in Set(sourceEdits.keys).union(sourceRemovals) { hashes[p] = b.hashes[p] }
-    draftBase = DraftBase(rev: rev, hashes: hashes, project: confirmedProject, layout: confirmedLayout, definitions: theirs)
-    settleDraftBase()
+    if !reply.conflicts.isEmpty {
+      mergeConflict = MergeConflict(rev: revision, snapshot: sent, state: ours, apply: apply)
+      mergeEdit.conflict(revision)
+      saveError = String(localized: "他の変更と重なり保存できませんでした。変更は保持しています。")
+      return false
+    }
+    mergeConflict = nil
+    mergeEdit.reload(revision)
+    apply()
+    return true
   }
 
   /// Drops every unsaved edit and follows the latest confirmed document
@@ -1283,6 +1354,8 @@ final class ProjectSession {
     saveAgain = false
     conflictRetries = 0
     saveError = nil
+    mergeConflict = nil
+    mergeEdit.reload(rev)
     savingAfterRun = false
   }
 
@@ -1324,7 +1397,9 @@ final class ProjectSession {
       return
     }
     await fillUndoSources()
-    if let b = draftBase, b.rev != rev { rebase() }
+    guard mergeConflict == nil else { return }
+    do { guard try await rebase() else { return } }
+    catch { saveError = String(describing: error); return }
     guard dirty else {
       saveError = nil
       return
@@ -1407,7 +1482,7 @@ final class ProjectSession {
       var written = Set<String>()
       for (prefix, ours) in externalEdits.sorted(by: { $0.key < $1.key }) where !ours.removed {
         let theirs = externals[prefix]
-        let m = ExternalProject.merge(base: externalBases[prefix] ?? nil, ours: ours, theirs: theirs)
+        let m = ours
         merged[prefix] = m
         let now = m.files, was = theirs?.files ?? [:]
         for (rel, text) in now.sorted(by: { $0.key < $1.key }) where was[rel] != text {
@@ -1490,9 +1565,9 @@ final class ProjectSession {
   /// After a save: the parts sent are confirmed now; edits made while it was
   /// on its way stay in the draft.
   private func forgetSaved(_ sent: Snapshot, layoutOnly: Bool, merged: [String: ExternalProject]) {
-    if layout == sent.layout { layout = confirmedLayout } else { layout = merge3(base: sent.layout, ours: layout, theirs: confirmedLayout) ?? layout }
+    if layout == sent.layout { layout = confirmedLayout }
     if !layoutOnly {
-      if project == sent.project { project = confirmedProject } else { project = merge3(base: sent.project, ours: project, theirs: confirmedProject) ?? project }
+      if project == sent.project { project = confirmedProject }
       for (id, d) in sent.definitions where definitionEdits[id] == d { definitionEdits[id] = nil }
       for (p, d) in sent.sources where sourceEdits[p] == d {
         sourceEdits[p] = nil
@@ -1521,7 +1596,12 @@ final class ProjectSession {
       savingAfterRun = false
     }
     // Whatever is left was edited on top of what was just saved.
-    draftBase = nil
+    let current = makeBase(), previous = draftBase ?? makeBase()
+    var definitions = confirmedDefinitionDrafts
+    for (id, d) in sent.definitions { definitions[id] = d.removed ? nil : d }
+    draftBase = DraftBase(rev: current.rev, hashes: layoutOnly ? previous.hashes : current.hashes,
+                          project: layoutOnly ? previous.project : sent.project, layout: sent.layout,
+                          definitions: layoutOnly ? previous.definitions : definitions)
     settleDraftBase()
   }
 

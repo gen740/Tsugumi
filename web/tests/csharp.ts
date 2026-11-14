@@ -15,7 +15,7 @@ assert.ok(templateIcon('csharp'))
 for (const [name, text] of Object.entries(files)) if (name !== '_card.json') {
   assert.equal(await session.sourceText(`definitions/${card}/${name}`), text)
 }
-session.undo()
+await session.undo()
 assert.equal(session.instance(card), undefined)
 assert.equal(session.sourcePaths.some(p => p.endsWith('Card.cs')), false)
 console.log('C# Card creation and undo: passed')

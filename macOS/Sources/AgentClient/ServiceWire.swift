@@ -9,7 +9,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"PermissionKindsRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"PermissionKindsRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   static func request(_ method: String, _ fields: [String: Any], host: Bool) throws -> (UInt8, NativeObject) {
     if host {
       switch method {
@@ -17,6 +17,12 @@ enum ServiceWire {
         let v = Tsugumi_Host_PermissionKindsRequestT()
         v.language = fields["language"] as? String
         return (Tsugumi_Host_RequestPayload.permissionkindsrequest.rawValue, v)
+      case "DocumentMergeRequest":
+        let v = Tsugumi_Host_DocumentMergeRequestT()
+        v.baseJson = fields["base_json"] as? String ?? ""
+        v.oursJson = fields["ours_json"] as? String ?? ""
+        v.theirsJson = fields["theirs_json"] as? String ?? ""
+        return (Tsugumi_Host_RequestPayload.documentmergerequest.rawValue, v)
       case "DocumentSubgraphRequest":
         let v = Tsugumi_Host_DocumentSubgraphRequestT()
         v.projectJson = fields["project_json"] as? String ?? ""
@@ -427,6 +433,7 @@ enum ServiceWire {
   private static func view(_ value: NativeObject) throws -> Any {
     switch value {
     case let v as Tsugumi_Host_PermissionKindsT: return ["kinds": v.kinds.compactMap { $0 }]
+    case let v as Tsugumi_Host_DocumentMergeT: return ["mergedJson": v.mergedJson, "conflicts": v.conflicts.compactMap { $0 }]
     case let v as Tsugumi_Host_DocumentSubgraphT: return ["projectJson": v.projectJson, "externalJson": v.externalJson, "linkJson": v.linkJson]
     case let v as Tsugumi_Host_VersionCommentsT: return ["comments": v.comments.compactMap { $0 }]
     case let v as Tsugumi_Host_GuideStateT:

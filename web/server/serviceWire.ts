@@ -1,3 +1,4 @@
+import { DocumentMergeRequestT } from '../src/gen/tsugumi/host/document-merge-request'
 import { PermissionKindsRequestT } from '../src/gen/tsugumi/host/permission-kinds-request'
 import { DocumentSubgraphRequestT } from '../src/gen/tsugumi/host/document-subgraph-request'
 import { VersionCommentsRequestT } from '../src/gen/tsugumi/host/version-comments-request'
@@ -100,6 +101,7 @@ export function hostMethod(method: string): boolean {
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
     case 'PermissionKindsRequest': return new PermissionKindsRequestT(v.language)
+    case 'DocumentMergeRequest': return new DocumentMergeRequestT(v.base_json, v.ours_json, v.theirs_json)
     case 'DocumentSubgraphRequest': return new DocumentSubgraphRequestT(v.project_json, v.cards ?? [], v.id)
     case 'VersionCommentsRequest': return new VersionCommentsRequestT(v.project, v.commit)
     case 'GuideGetRequest': return new GuideGetRequestT(v.session_id, v.language)

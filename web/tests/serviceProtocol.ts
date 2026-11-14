@@ -187,3 +187,19 @@ assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call
   assert.ok((catalog.payload as any).value instanceof PermissionKindsRequestT)
   assert.equal((catalog.payload as any).value.language, 'en')
 }
+
+{
+  const { DocumentMergeRequestT } = await import('../src/gen/tsugumi/host/document-merge-request')
+  const { DocumentMerge } = await import('../src/gen/tsugumi/host/document-merge')
+  const frame = encodeRequest('DocumentMergeRequest', { base_json: '{}', ours_json: '{"n":2}', theirs_json: '{}' }, 1n, true)
+  const request = HostMessage.getRootAsMessage(new fb.ByteBuffer(frame)).unpack().payload as any
+  assert.ok(request.value instanceof DocumentMergeRequestT)
+  assert.equal(request.value.oursJson, '{"n":2}')
+  const b = new fb.Builder()
+  const json = b.createString('{}')
+  const result = DocumentMerge.createDocumentMerge(b, json, 0)
+  const reply = HostReply.createReply(b, HostReplyPayload.DocumentMerge, result)
+  const message = HostMessage.createMessage(b, 1n, HostPayload.Reply, reply)
+  b.finish(message, 'TSH1')
+  assert.deepEqual(decodeReply(b.asUint8Array(), true).value.conflicts, [])
+}

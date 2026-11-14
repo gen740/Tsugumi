@@ -17,6 +17,6 @@ for (const file of ['src/main.py','src/notebook.py','default.nix','_outputs.fbs'
 }
 assert.ok(TEMPLATES.some(t=>t.id==='marimo'))
 assert.ok(builtinCardItems(()=>{}).some(t=>t && typeof t!=='string' && t.label.includes('marimo')))
-session.undo();assert.equal(session.cardDefinition(card),undefined)
-session.redo();assert.equal(get(session.cardDefinition(card),'reuseWorker'),false)
+await session.undo();assert.equal(session.cardDefinition(card),undefined)
+await session.redo();assert.equal(get(session.cardDefinition(card),'reuseWorker'),false)
 console.log('marimo template: creation, mapping/source, artifacts, fresh workers and undo passed')

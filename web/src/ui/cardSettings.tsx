@@ -6,7 +6,7 @@
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { app } from '../model/app'
-import { cloneDef, merge3 } from '../model/merge'
+import { cloneDef } from '../model/merge'
 import { Observable, useObserve } from '../model/observable'
 import { OutputCatalogResult, parseOutputCatalog } from '../model/outputCatalog'
 import { prefs } from '../model/prefs'
@@ -132,29 +132,25 @@ export class CardEditorModel extends Observable {
   }
 
   /** Takes in what changed elsewhere since the copy was taken. */
-  follow() {
-    if (this.applying) return
+  async follow(whileApplying = false) {
+    if (this.applying && !whileApplying) return
     const defNow = this.session.cardDefinition(this.cardKey), metaNow = this.session.cardMeta(this.cardKey)
-    const clashes = (base: J | undefined, ours: J | undefined, theirs: J | undefined, file: string): string[] => {
-      if (jeq(ours, base) || jeq(theirs, base) || jeq(ours, theirs)) return []
-      const ks = (v: J | undefined) => (isObj(v) ? v.keys() : [])
-      const keys = [...new Set([...ks(base), ...ks(ours), ...ks(theirs)])].sort()
-      return keys.filter((k) => !jeq(get(base, k), get(ours, k)) && !jeq(get(base, k), get(theirs, k)) && !jeq(get(ours, k), get(theirs, k)))
-        .map((k) => `${file}: ${k}`)
-    }
+    const definition = clone(this.definition), meta = clone(this.meta), revision = this.session.rev
+    const pair = (d: J | undefined, m: J | undefined) => { const v = obj(); v.set('definition', d); v.set('meta', m); return v }
     const found: string[] = []
     let any = false
-    if (!jeq(defNow, this.baseDefinition)) {
-      found.push(...clashes(this.baseDefinition, this.definition, defNow, '_card.json'))
-      this.definition = clone(merge3(this.baseDefinition, this.definition, defNow))
-      this.baseDefinition = clone(defNow)
-      any = true
-    }
-    if (!jeq(metaNow, this.baseMeta)) {
-      found.push(...clashes(this.baseMeta, this.meta, metaNow, '_meta.json'))
-      this.meta = clone(merge3(this.baseMeta, this.meta, metaNow))
-      this.baseMeta = clone(metaNow)
-      any = true
+    if (!jeq(defNow, this.baseDefinition) || !jeq(metaNow, this.baseMeta)) {
+      try {
+        const reply = await this.session.mergeValues(pair(this.baseDefinition, this.baseMeta), pair(definition, meta), pair(defNow, metaNow))
+        if (revision !== this.session.rev || !jeq(definition, this.definition) || !jeq(meta, this.meta) ||
+          !jeq(defNow, this.session.cardDefinition(this.cardKey)) || !jeq(metaNow, this.session.cardMeta(this.cardKey))) return
+        found.push(...reply.conflicts)
+        this.definition = get(reply.value, 'definition')
+        this.meta = get(reply.value, 'meta')
+        this.baseDefinition = clone(defNow)
+        this.baseMeta = clone(metaNow)
+        any = true
+      } catch (error) { this.revisionEdit.error = errorText(error); this.changed(); return }
     }
     for (const p of [...this.texts.keys()]) {
       if (this.loads.get(p)?.state !== 'loaded' || this.created.has(p)) continue
@@ -320,9 +316,9 @@ export class CardEditorModel extends Observable {
       this.changed()
       return false
     }
-    this.follow()
     this.applying = true
     this.changed()
+    await this.follow(true)
     const def = clone(this.definition), m = clone(this.meta), k = this.cardKey, prefix = this.prefix
     const sentTexts = new Map(this.texts), sentCreated = new Set(this.created)
     const changedTexts = [...this.texts].filter(([p, v]) => this.baseTexts.get(p) !== v || this.created.has(p))
@@ -348,15 +344,16 @@ export class CardEditorModel extends Observable {
         if (h && !clashing.has(p.slice(prefix.length))) x.sourceBases.set(p, h)
       }
     })
-    this.applying = false
-    if (!ok) { this.changed(); return false }
+    if (!ok) { this.applying = false; this.changed(); return false }
     const laterDef = clone(this.definition), laterMeta = clone(this.meta)
     const laterTexts = new Map(this.texts), laterRemoved = new Set(this.removed), laterCreated = new Set(this.created)
     const savedCurrent = this.revisionEdit.savedRev === session.rev
     // Reload the confirmed base, then put only edits made after Send back on it.
     this.reload(false)
-    this.definition = clone(merge3(def, laterDef, this.definition))
-    this.meta = clone(merge3(m, laterMeta, this.meta))
+    this.definition = laterDef
+    this.meta = laterMeta
+    this.baseDefinition = def
+    this.baseMeta = m
     for (const [p, t] of laterTexts) {
       const sent = sentTexts.get(p)
       if (savedCurrent || t !== sent) {
@@ -371,6 +368,8 @@ export class CardEditorModel extends Observable {
     this.removed = new Set([...laterRemoved].filter(p => !gone.includes(p)))
     this.created = new Set([...laterCreated].filter(p => !sentCreated.has(p)))
     for (const p of sentTexts.keys()) if (!laterTexts.has(p) && !gone.includes(p)) this.removed.add(p)
+    await this.follow(true)
+    this.applying = false
     this.message = L('適用しました。')
     this.changed()
     return true
@@ -405,7 +404,7 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
   }, [card])
   // What changes elsewhere while the window is open is taken in at once.
   const token = model.followToken
-  useEffect(() => model.follow(), [token, model])
+  useEffect(() => { void model.follow() }, [token, model])
 
   if (!model.exists && !model.unapplied) {
     return <Empty title={L('Card が見つかりません')} icon="questionmark.square.dashed" description={L('{0} は削除されたか、まだ保存されていません。', model.cardKey)} />

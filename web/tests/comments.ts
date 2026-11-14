@@ -74,7 +74,7 @@ const session = () => {
   s.edit((x) => x.updateMeta(k, (m) => m.set('description', 'Plots')))
   s.addComment(k, 'one')
   assert.equal(str(get(s.cardMeta(k), 'description')), 'Plots')
-  s.undo()
+  await s.undo()
   assert.deepEqual(s.comments(k), [])
   assert.equal(str(get(s.cardMeta(k), 'description')), 'Plots')
 }

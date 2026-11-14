@@ -636,6 +636,6 @@ func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
   #expect(session.definitionDrafts[card]?.card["language"]?.string == language)
   #expect(try await session.sourceText("definitions/\(card)/default.nix").contains("\(language)Card"))
   #expect(try await session.sourceText("definitions/\(card)/\(source)").contains(entry))
-  session.undo()
+  await session.undo()
   #expect(session.definitionDrafts[card] == nil)
 }

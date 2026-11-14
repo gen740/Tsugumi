@@ -3,7 +3,7 @@
 Update fixtures only when the expected public behaviour changes. The suite commands are in [Repository tests](../README.md).
 
 - `model_fixture.py` supplies a deterministic model endpoint for Agent RPC tests; keep its responses aligned with the scenario being tested.
-- `merge-contract.json` covers named records, ordered arrays and connections as sets.
+- `merge-contract.json` covers the host three-way merge: named records, ordered arrays, independent wires and explicit conflict paths. Client gesture/undo tests call `tsugumi_document_edit_driver` (`TSUGUMI_DOCUMENT_EDIT_DRIVER` overrides its path).
 - `delegateSchema` in `agent-contract.json` must match `agent/Shared/agent.json`; `tests/static/test_agent_contract.py` checks it.
 - `layout-golden.json` checks core layout results. Regenerate only for an intended layout change and review the resulting coordinates.
 - `wire-routes.json`: after changing routing, regenerate with `WIRE_ROUTES_WRITE=1 npm --prefix web test`.

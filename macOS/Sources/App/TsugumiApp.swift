@@ -274,10 +274,10 @@ struct WorkbenchCommands: Commands {
         .shortcut(.home).disabled(session == nil)
     }
     CommandGroup(replacing: .undoRedo) {
-      Button("取り消す") { session?.undo() }
+      Button("取り消す") { Task { await session?.undo() } }
         .keyboardShortcut("z")
         .disabled(session?.undoStack.isEmpty ?? true)
-      Button("やり直す") { session?.redo() }
+      Button("やり直す") { Task { await session?.redo() } }
         .keyboardShortcut("z", modifiers: [.command, .shift])
         .disabled(session?.redoStack.isEmpty ?? true)
     }
