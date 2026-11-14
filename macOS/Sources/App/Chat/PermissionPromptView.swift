@@ -1,23 +1,27 @@
 import SwiftUI
 
-/// Asks whether the Agent may give Cards what its save needs (network,
-/// running without the sandbox, folders of the Mac). Each kind can be allowed
-/// without asking from now on, as in Settings > API.
+/// Shows core-owned access requests and approvals for a single operation.
 struct PermissionPromptView: View {
   let prompt: ChatController.PermissionPrompt
   let answer: (_ allow: Bool, _ always: Set<CardPermission>) -> Void
   @State private var always: Set<CardPermission> = []
 
-  private var kinds: [CardPermission] { CardPermission.allCases.filter { k in prompt.requests.contains { $0.kind == k } } }
+  private var kinds: [CardPermission] { prompt.operation != nil ? [] : CardPermission.allCases.filter { k in prompt.requests.contains { $0.kind == k } } }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
-      Label(prompt.access.isEmpty ? "Agent が Card の権限を広げようとしています" : "Agent がアクセスの許可を求めています", systemImage: "hand.raised")
+      Label(prompt.operation != nil ? "Agent がこの操作の承認を求めています" : prompt.access.isEmpty ? "Agent が Card の権限を広げようとしています" : "Agent がアクセスの許可を求めています", systemImage: "hand.raised")
         .font(.headline)
-      Text(prompt.access.isEmpty ? "許可すると、この保存が行われます。許可しなければ何も保存されず、Agent には理由を説明するよう伝えます。" : "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。")
+      Text(prompt.operation != nil ? "表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。" : prompt.access.isEmpty ? "許可すると、この保存が行われます。許可しなければ何も保存されず、Agent には理由を説明するよう伝えます。" : "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。")
         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
       VStack(alignment: .leading, spacing: 6) {
-        ForEach(prompt.access, id: \.self) { request in
+        if let operation = prompt.operation {
+          ScrollView {
+            Text(operation).font(.caption.monospaced()).textSelection(.enabled)
+              .frame(maxWidth: .infinity, alignment: .leading)
+          }.frame(maxHeight: 360)
+        }
+        ForEach(prompt.operation == nil ? prompt.access : [], id: \.self) { request in
           Text(String(request.dropFirst("project_access ".count))).textSelection(.enabled)
         }
         ForEach(prompt.requests) { r in

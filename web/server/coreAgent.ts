@@ -29,6 +29,8 @@ class Connection {
   private nextId = 0n
   private waiting = new Map<bigint, { resolve: (v: any) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }>()
   private opening?: Promise<void>
+  // A plugin retry after the page answers must resume the approved call ID.
+  private approvals = new Map<string, string>()
 
   constructor(private host: CoreAgentHost, private external: boolean, private hostContract = false) {}
 
@@ -100,7 +102,20 @@ class Connection {
 
   async call<T>(method: string, value: unknown = {}): Promise<T> {
     await this.open()
-    return this.write(method, value)
+    if (!this.external || method !== 'ToolCallRequest') return this.write(method, value)
+    const call = { ...(value as Record<string, unknown>) }
+    const key = JSON.stringify([call.conversation_id, call.project_id, call.name, call.arguments_json])
+    call.op_id = this.approvals.get(key) ?? call.op_id
+    try {
+      const result = await this.write(method, call)
+      this.approvals.delete(key)
+      return result
+    } catch (error) {
+      if (error instanceof CoreAgentError && error.code === 'grant_required' && error.message.includes('operation_approval\n'))
+        this.approvals.set(key, String(call.op_id))
+      else if (error instanceof CoreAgentError && (error.code === 'permission_denied' || error.code === 'conflict')) this.approvals.delete(key)
+      throw error
+    }
   }
 }
 

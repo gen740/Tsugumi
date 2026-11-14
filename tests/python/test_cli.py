@@ -88,8 +88,8 @@ def machine(tmp_path):
         for name, found in tools.items():
             if found and not (bin_dir / name).exists():
                 (bin_dir / name).symlink_to(found)
-        # Exercise both installer branches using this machine's rename utility.
-        executable(stubs / "mv", f'#!/bin/sh\n[ "$1" = -fT ] || [ "$1" = -fh ] && shift\nexec {shutil.which("mv")} {"-fh" if sys.platform == "darwin" else "-fT"} "$@"\n')
+        # Keep the real tools: the simulated OS need not match the userland on
+        # PATH (notably GNU coreutils from Nix on macOS).
         path = f"{stubs}:{bin_dir}" + (f":{path_extra}" if path_extra else "")
         env = {"HOME": str(home), "PATH": path, "TSUGUMI_INSTALL_BASE": release.as_uri()}
         return subprocess.run(command or ["/bin/sh", str(SCRIPT)], capture_output=True, text=True, env=env)
@@ -192,6 +192,27 @@ def test_failed_version_check_keeps_the_current_command(machine):
     assert "Version check failed" in result.stderr
     assert subprocess.check_output([machine.home / ".local/bin/tsugumi"], text=True).strip() == "1.2.3"
     assert len(list((machine.home / ".local/share/tsugumi").iterdir())) == 2
+
+
+@pytest.mark.parametrize("target", [".local/bin/tsugumi", ".local/share/tsugumi/current"])
+def test_failed_link_switch_keeps_the_current_command(machine, target):
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
+    assert machine("Darwin", "arm64").returncode == 0
+    data = machine.home / ".local/share/tsugumi"
+    previous = (data / "current").readlink()
+    artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.4")
+    # Fail only the final rename, after the real utility's capability probe.
+    executable(machine.stubs / "mv", f'''#!/bin/sh
+for destination do :; done
+[ "$destination" != "$HOME/{target}" ] || exit 1
+exec "{shutil.which("mv")}" "$@"
+''')
+    result = machine("Darwin", "arm64")
+    assert result.returncode != 0
+    assert (data / "current").readlink() == previous
+    assert subprocess.check_output([machine.home / ".local/bin/tsugumi"], text=True).strip() == "1.2.3"
+    assert sorted(p.name for p in data.iterdir()) == sorted([str(previous), "current"])
+    assert [p.name for p in (machine.home / ".local/bin").iterdir()] == ["tsugumi"]
 
 
 @needs_server

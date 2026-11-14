@@ -18,7 +18,11 @@ in the Tsugumi web UI, where the user watches each save and run live, and return
 (project_inspect first; saves need the base_rev you inspected). Project content is unavailable until the user \
 explicitly grants access. Request access through the Agent API and wait for the user's answer. The plugin \
 cannot grant itself access or approve changes to Card permissions. Project RPC tools come only from the shared \
-Agent allow list. Use project_shell for diagnosis and reads (project files are read-only), project_save for edits, \
+Agent lists: ordinary operations and operations needing approval for each call. You may propose deleting run history, \
+scratch or build caches after inspecting their targets and sizes. Cleanup, version checkout, starting versioning, \
+keeping a named version and replacing a version summary each need approval in the Tsugumi page. When a call returns \
+grant_required, wait for the person to answer there, then retry the same tool with the same arguments. A decline \
+changes nothing; continue without repeating that act. Use project_shell for diagnosis and reads (project files are read-only), project_save for edits, \
 and Cards for analysis so the user can follow the process.`
 
 const OPEN_TOOL = {

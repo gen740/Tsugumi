@@ -138,7 +138,7 @@ def test_a_renamed_draft_is_still_a_draft_to_implement(draft):
     from test_definitions import rename
     rename(c, "plan", "count")
     assert "plan: context is empty" in refused(c, [implement(cid="plan")], "context")[0]
-    refused(c, [implement({"name": "other"}, cid="plan")], "context")
+    refused(c, [implement(dict(PLAN, name="other"), cid="plan")], "context")
 
 
 def test_only_a_model_implementing_a_draft_is_asked(draft):

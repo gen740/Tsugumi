@@ -71,6 +71,7 @@ def test_rename_preserves_every_past_record_and_saved_input(tmp_path, core_facto
     """A name edit leaves all recorded bytes and exact addresses untouched."""
     root = tmp_path / "p"
     builtin_project(root, text="hi")
+    put(root / "definitions" / "out" / "_card.json", json.dumps(dict(SINK, recordIO=True)))
     put(root / "definitions" / "src" / "notes.txt", "kept")
     c = core_factory(project_root=root).connect()
     run_id, st = run_and_wait(c, "src")

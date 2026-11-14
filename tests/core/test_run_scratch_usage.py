@@ -107,7 +107,7 @@ def test_failed_acceptance_preserves_previous_scratch(core_factory, project, tmp
     daemon = core_factory(mocked_builds=True, mocked_worker=True,
                           args=["--run-scratch-dir", str(tmp_path / "scratch")])
     client = daemon.connect()
-    worker_project(client, project, tmp_path / "worker", [
+    worker_project(client, project, tmp_path, [
         {"op": "file", "port": "doc", "path": "report.txt", "text": "previous output"},
     ], outputs=FILE_OUTPUT)
     first = run(client)
@@ -207,7 +207,7 @@ def test_scratch_deletion_refuses_active_run(core_factory, project, tmp_path):
                           args=["--run-scratch-dir", str(scratch)])
     client = daemon.connect()
     gate = Gate(tmp_path, "running")
-    worker_project(client, project, tmp_path / "worker", [gate.action(),
+    worker_project(client, project, tmp_path, [gate.action(),
         {"op": "output", "port": "out", "type": "string", "value": "done"},
     ])
     run_id = run(client)

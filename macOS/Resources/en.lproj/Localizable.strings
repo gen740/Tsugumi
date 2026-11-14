@@ -56,6 +56,7 @@
 "API キーが未設定のため、決まったデモの案内だけをしています" = "No API key is set: it only gives the fixed demo tour";
 "API キーと ChatGPT のサインインは、下でそれぞれ同時に設定しておけます。チャットのモデルの一覧からも切り替えられます。" = "API keys and the ChatGPT sign-in can all be set up below at the same time. You can also switch from the chat's model menu.";
 "Agent が Card の権限を広げようとしています" = "The Agent wants to give Cards more permissions";
+"Agent がこの操作の承認を求めています" = "The Agent asks you to approve this operation";
 "Agent がアクセスの許可を求めています" = "The Agent is requesting access";
 "Agent が作業している間、Canvas の上でその様子を見せる姿です。表示しなくても、Card や接続の変化は見えます。" = "How the Agent shows itself on the canvas while it works. Even when hidden, changes to Cards and connections are visible.";
 "Agent が書きました" = "Written by the Agent";
@@ -1225,6 +1226,7 @@
 "色" = "Color";
 "表 %lld 列 × %lld 行" = "Table %lld columns × %lld rows";
 "表示" = "Show";
+"表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。" = "Approval covers only this operation on the displayed targets. Every new operation needs approval again. Declining changes nothing.";
 "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。" = "Allow access to the listed resource and scope. Content read may be sent to the connected model.";
 "表示した scratch を削除…" = "Delete listed scratch…";
 "表示した過去の scratch を削除しますか？" = "Delete the listed past scratch?";

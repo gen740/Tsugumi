@@ -112,11 +112,19 @@ reported="$("$dest/tsugumi" --version)" || fail "The new command does not run."
 printf '%s\n' "$generation" > "$dest/.installed-by-tsugumi"
 # Rename over a symlink itself, never into the directory it points at.
 # Both links are prepared on the same filesystem as their destination.
+# Detect the utility, not the OS: Nix can put GNU mv on a Mac's PATH.
+mkdir "$work/mv-dir"
+ln -s mv-dir "$work/mv-to"
+ln -s mv-new "$work/mv-from"
+if mv -fT "$work/mv-from" "$work/mv-to" 2>/dev/null; then
+  mv_link_option=-fT
+else
+  mv -fh "$work/mv-from" "$work/mv-to" 2>/dev/null || fail "mv cannot replace a symbolic link."
+  mv_link_option=-fh
+fi
+[ "$(readlink "$work/mv-to")" = mv-new ] || fail "mv followed a symbolic link instead of replacing it."
 replace_link() {
-  case "$(uname -s)" in
-    Darwin) mv -fh "$1" "$2" ;;
-    *) mv -fT "$1" "$2" ;;
-  esac
+  mv "$mv_link_option" "$1" "$2"
 }
 [ ! -e "$data/current" ] || [ -L "$data/current" ] || fail "Not an installer version link: $data/current"
 ln -s "$generation" "$work/current"

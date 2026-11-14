@@ -1,4 +1,6 @@
 {
+  "{0} がこの操作の承認を求めています": "{0} asks you to approve this operation",
+  "表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。": "Approval covers only this operation on the displayed targets. Every new operation needs approval again. Declining changes nothing.",
  "名前を入力してください（4096 バイトまで）。": "Enter a name (up to 4096 bytes).",
  "思考の過程を描きますか？": "Draw the Agent's thoughts?",
  "描く": "Draw",

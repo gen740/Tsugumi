@@ -37,6 +37,15 @@
     "LayoutUntangleRequest",
     "ProjectCacheUsageRequest"
   ],
+  "approvalRequests": [
+    "RunHistoryDeleteRequest",
+    "ProjectCacheClearRequest",
+    "RunScratchDeleteRequest",
+    "VersionCheckoutRequest",
+    "VersionInitRequest",
+    "VersionMarkRequest",
+    "VersionSummaryRequest"
+  ],
   "agentFields": ["op_id", "origin", "approved_permissions"],
   "notForModels": { "ProjectValidateRequest": ["changes"] },
   "draftRequest": {

@@ -13,8 +13,10 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
 - project_shell is for diagnosis and reads after a separate Shell grant. Project files are read-only there.
   Edit through project_save; put analysis in Cards so the user can follow its inputs, steps and outputs.
   project_reload imports external edits and requires the user's approval for every permission widening, regardless
-  of who edited the files. Deleting run history, clearing caches, checking out versions and replacing version
-  summaries are the user's actions in the UI.
+  of who edited the files. You may propose deleting run history, build caches or old run scratch: inspect usage,
+  explain the targets and sizes and what would be removed. Each cleanup, version checkout, versioning initialization,
+  named version and replacement of a version summary needs the person's approval for that call. A decline changes
+  nothing; continue without retrying the declined act.
 - project_save takes changes as a list of {"value_type": "SetProject", "value": {"json": "<entire tsugumi.json>"}};
   SetProject replaces the whole document, so start from the project_json you inspected and change only what is needed.
 - Never save edits the user did not ask for, and never save trial content (probes, placeholders, guesses) into the

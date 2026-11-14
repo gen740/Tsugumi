@@ -93,6 +93,7 @@ interface Message {
 }
 
 interface Conversation {
+  tools?: { id: string; name: string; result?: string; isError: boolean; state: string }[]
   messages: Message[]
   archive: Message[]
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheWriteTokens?: number }
@@ -253,6 +254,9 @@ export class ChatController extends Observable {
         }
       }
     })
+    for (const record of c.tools ?? []) if (record.name === 'operation_approval') {
+      out.push({ id: record.id, role: 'tool', text: record.result ?? '', tool: { name: record.name, ok: record.state === 'pending' ? undefined : !record.isError } })
+    }
     this.items = out
   }
 

@@ -64,9 +64,8 @@ export function PermissionHost({ session }: { session: ProjectSession }) {
   return p ? <PermissionPrompt key={p.id} asked={p.asked} from={p.from} onAnswer={(allow, always) => chat.answerPermission(allow, always)} /> : null
 }
 
-/** Asks whether the Agent may give Cards what its save needs; each kind can
- *  be allowed without asking from now on (as in the settings). Return allows
- *  and Esc declines; a click beside it does nothing. */
+/** Presents core-owned access and operation requests. Operations have no
+ *  standing approval option. Return allows and Esc declines. */
 function PermissionPrompt({ asked, from, onAnswer }: { asked: string[]; from?: string; onAnswer: (allow: boolean, always: string[]) => void }) {
   const who = from ?? 'Agent'
   const [always, setAlways] = useState<string[]>([])
@@ -81,15 +80,19 @@ function PermissionPrompt({ asked, from, onAnswer }: { asked: string[]; from?: s
     return () => window.removeEventListener('keydown', key, true)
   }, [onAnswer, always])
   const requests = asked.map(parsePermission).filter((r) => r !== undefined)
+  const operation = asked.find((r) => r.includes('operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
   const access = asked.filter((r) => r.startsWith('project_access '))
-  const kinds = PERMISSIONS.filter((p) => requests.some((r) => r.kind === p.kind))
+  const kinds = operation ? [] : PERMISSIONS.filter((p) => requests.some((r) => r.kind === p.kind))
   return (
     <Sheet width={460} onClose={() => onAnswer(false, [])} backdropCloses={false}>
       <div className="sheet-body permission-prompt">
-        <div className="title2"><Icon name="hand.raised" /> {access.length ? L('{0} がアクセスの許可を求めています', who) : L('{0} が Card の権限を広げようとしています', who)}</div>
-        <p className="secondary">{access.length ? L('表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。') : L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>
+        <div className="title2"><Icon name="hand.raised" /> {operation ? L('{0} がこの操作の承認を求めています', who) : access.length ? L('{0} がアクセスの許可を求めています', who) : L('{0} が Card の権限を広げようとしています', who)}</div>
+        <p className="secondary">{operation ? L('表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。') : access.length ? L('表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。') : L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>
         <ul className="permission-list">
-          {access.map((r) => <li key={r}><Icon name="hand.raised" /><div>{r.slice('project_access '.length)}</div></li>)}
+          {operation && <li><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 360, overflow: 'auto' }}>{operation.split('\n').map((line) => {
+            try { return JSON.stringify(JSON.parse(line), null, 2) } catch { return line }
+          }).join('\n')}</pre></li>}
+          {!operation && access.map((r) => <li key={r}><Icon name="hand.raised" /><div>{r.slice('project_access '.length)}</div></li>)}
           {requests.map((r) => (
             <li key={r.raw}>
               <Icon name={permissionInfo(r.kind).icon} />

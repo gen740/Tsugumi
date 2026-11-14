@@ -1,5 +1,7 @@
 #include "agent/host.hh"
 
+#include "agent/approval.hh"
+
 #include <flatbuffers/flatbuffers.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -201,6 +203,10 @@ struct Host::State {
         "TEXT NOT NULL, PRIMARY KEY(conversation,id));"
         "CREATE TABLE IF NOT EXISTS providers(conversation TEXT PRIMARY KEY, "
         "json TEXT NOT NULL);");
+    db.exec("CREATE TABLE IF NOT EXISTS operation_approvals("
+            "conversation TEXT NOT NULL, call TEXT NOT NULL, digest TEXT NOT NULL, "
+            "request TEXT NOT NULL UNIQUE, preview TEXT NOT NULL, "
+            "PRIMARY KEY(conversation,call))");
     db.exec("CREATE TABLE IF NOT EXISTS helpers(conversation TEXT NOT NULL, "
             "parent_call TEXT NOT NULL, task INTEGER NOT NULL, digest TEXT NOT "
             "NULL, messages TEXT NOT NULL, result TEXT NOT NULL, state TEXT "
@@ -471,18 +477,24 @@ struct Host::State {
   }
   auto RequestAccess(const std::string &project,
                      const std::string &conversation, A::Access access,
-                     A::GrantScope scope, const std::string &reason)
+                     A::GrantScope scope, const std::string &reason, bool per_call = false)
       -> std::string {
+    if (!per_call && reason.find("operation_approval\n") != std::string::npos)
+      throw Failure("invalid_request", "The operation approval marker is reserved for core-generated requests");
     auto folder = db.prepare("SELECT project FROM folders WHERE id=?");
     folder.bind(1, project);
     ProjectFor(folder.step() ? folder.text(0) : project);
     auto old = db.prepare(
         "SELECT id FROM access_requests WHERE project=? AND conversation=? AND "
-        "access=? AND scope=? AND state='pending'");
+        "access=? AND scope=? AND state='pending' AND "
+        "((?=1 AND reason=?) OR (?=0 AND id NOT IN (SELECT request FROM operation_approvals)))");
     old.bind(1, project)
         .bind(2, conversation)
         .bind(3, static_cast<int>(access))
-        .bind(4, static_cast<int>(scope));
+        .bind(4, static_cast<int>(scope))
+        .bind(5, per_call ? 1 : 0)
+        .bind(6, reason)
+        .bind(7, per_call ? 1 : 0);
     if (old.step())
       return old.text(0);
     const auto id = crypto::uuid4();
@@ -526,6 +538,82 @@ struct Host::State {
         throw Failure("permission_denied", "The user declined access");
       changed.wait_for(lock, std::chrono::milliseconds(100));
     }
+  }
+  auto ApproveOperation(const std::string& project,
+                        const std::string& conversation, const ToolCall& call,
+                        const std::string& digest, const json::Members& args,
+                        bool wait, std::stop_token stop) -> void {
+    auto describe = [&] {
+      return DescribeOperation(call.name, args, project,
+          [&](const std::string& name, const json::Members& query) {
+            const auto reply = json::Object(ProjectCall(project, name, json::Encode(query), stop));
+            if (json::Text(reply, "reply") == "Failure")
+              throw Failure("approval_unavailable", "Cannot read approval targets: " + json::Encode(reply));
+            return json::Object(json::Get(reply, "value", "{}"));
+          });
+    };
+    std::unique_lock lock(mutex);
+    auto old = db.prepare("SELECT digest,request,preview FROM operation_approvals WHERE conversation=? AND call=?");
+    old.bind(1, conversation).bind(2, call.id);
+    std::string request, preview;
+    if (old.step()) {
+      if (old.text(0) != digest)
+        throw Failure("conflict", "An approval cannot be used with different arguments");
+      request = old.text(1);
+      preview = old.text(2);
+    } else {
+      lock.unlock();
+      preview = describe();
+      lock.lock();
+      if (!HasGrant(project, conversation, A::Access::Read))
+        throw Failure("permission_denied", "Access was revoked while reading approval targets");
+      RememberResource(conversation, project);
+      // Another connection can submit the same call while targets are read.
+      auto raced = db.prepare("SELECT digest,request,preview FROM operation_approvals WHERE conversation=? AND call=?");
+      raced.bind(1, conversation).bind(2, call.id);
+      if (raced.step()) {
+        if (raced.text(0) != digest)
+          throw Failure("conflict", "An approval cannot be used with different arguments");
+        request = raced.text(1);
+        preview = raced.text(2);
+      } else {
+        // Reuse AccessRequest/AccessResolveRequest; this request creates no grant.
+        // The call ID prevents coalescing identical but independent acts.
+        request = RequestAccess(project, conversation, A::Access::CardPermissions,
+            A::GrantScope::Conversation, preview + "\nCall: " + json::Quote(call.id), true);
+        auto put = db.prepare("INSERT INTO operation_approvals VALUES(?,?,?,?,?)");
+        put.bind(1, conversation).bind(2, call.id).bind(3, digest)
+            .bind(4, request).bind(5, preview).run();
+      }
+    }
+    for (;;) {
+      auto state = db.prepare("SELECT state FROM access_requests WHERE id=?");
+      state.bind(1, request);
+      if (!state.step() || state.text(0) == "denied")
+        throw Failure("permission_denied", "The user declined this operation. Nothing was changed; continue without retrying it.");
+      if (state.text(0) == "allowed") break;
+      if (state.text(0) != "pending")
+        throw Failure("outcome_unknown", "This approval was already consumed; consult the recorded outcome");
+      if (!wait)
+        throw Failure("grant_required", preview, request);
+      if (stop.stop_requested() || stopping) throw Cancelled();
+      changed.wait_for(lock, std::chrono::milliseconds(100));
+    }
+    lock.unlock();
+    const auto current = describe();
+    lock.lock();
+    if (!HasGrant(project, conversation, A::Access::Read) ||
+        !HasGrant(project, conversation, A::Access::Write))
+      throw Failure("permission_denied", "Project access was revoked before approval could be used");
+    if (current != preview) {
+      auto stale = db.prepare("UPDATE access_requests SET state='stale' WHERE id=? AND state='allowed'");
+      stale.bind(1, request).run();
+      throw Failure("conflict", "Approval targets changed. Nothing was executed; propose a new call for approval.");
+    }
+    auto consume = db.prepare("UPDATE access_requests SET state='consumed' WHERE id=? AND state='allowed'");
+    consume.bind(1, request).run();
+    if (!db.changes())
+      throw Failure("outcome_unknown", "This approval was already consumed");
   }
   auto AuthorizeContext(const std::string &id,
                         const std::vector<Message> &messages) -> void {
@@ -613,6 +701,25 @@ struct Host::State {
                                      {"result", json::Quote(q.text(1))},
                                      {"isError", q.i64(2) ? "true" : "false"},
                                      {"state", json::Quote(q.text(3))}}));
+    auto approvals = db.prepare(
+        "SELECT o.call,o.preview,a.state,r.result,r.error FROM operation_approvals o "
+        "JOIN access_requests a ON a.id=o.request LEFT JOIN receipts r "
+        "ON r.conversation=o.conversation AND r.id=o.call WHERE o.conversation=? ORDER BY o.rowid");
+    approvals.bind(1, c.id);
+    while (approvals.step()) {
+      const auto outcome = approvals.text(2) == "denied" ? "Declined; nothing changed" :
+          approvals.text(2) == "pending" ? "Awaiting approval" :
+          approvals.text(2) == "stale" ? "Targets changed; nothing executed. A new approval is required" :
+          approvals.text(3).empty() ? "Approved; execution outcome not yet recorded" :
+          "Approved; outcome: " + approvals.text(3);
+      tools.push_back(json::Encode(json::Members{
+          {"id", json::Quote("approval:" + approvals.text(0))},
+          {"name", json::Quote("operation_approval")},
+          {"arguments", json::Quote("{}")},
+          {"result", json::Quote(Scrub(approvals.text(1) + "\n" + outcome))},
+          {"isError", approvals.text(2) == "denied" || approvals.text(2) == "stale" || approvals.i64(4) ? "true" : "false"},
+          {"state", json::Quote(approvals.text(2) == "pending" ? "pending" : "completed")}}));
+    }
     return json::Encode(json::Members{
         {"id", json::Quote(c.id)},
         {"title", json::Quote(c.title)},
@@ -983,7 +1090,8 @@ struct Host::State {
                     "Select a project before using project tools");
     Require(project, conversation, A::Access::Read, wait, stop,
             "Read project content");
-    const bool changes_project = spec->mutating || call.name == "view_save";
+    const bool changes_project = spec->mutating || spec->approval_required ||
+                                 call.name == "card_id";
     if (changes_project)
       Require(project, conversation, A::Access::Write, wait, stop,
               "Change project content");
@@ -1043,7 +1151,16 @@ struct Host::State {
                             Resources(conversation));
         op_id = old.text(4);
         interrupted = true;
-      } else {
+      } else if (!spec->approval_required) {
+        auto q = db.prepare("INSERT INTO receipts VALUES(?,?,?,'sent','',0,?,?)");
+        q.bind(1, conversation).bind(2, call.id).bind(3, digest)
+            .bind(4, project).bind(5, op_id).run();
+      }
+    }
+    if (spec->approval_required && !interrupted)
+      ApproveOperation(project, conversation, call, digest, args, wait, stop);
+    if (spec->approval_required && !interrupted) {
+      std::lock_guard lock(mutex);
         auto q =
             db.prepare("INSERT INTO receipts VALUES(?,?,?,'sent','',0,?,?)");
         q.bind(1, conversation)
@@ -1052,7 +1169,6 @@ struct Host::State {
             .bind(4, project)
             .bind(5, op_id)
             .run();
-      }
     }
     // An interrupted mutation can only be resolved by its durable receipt.
     // Reissuing it after a daemon restart may execute it a second time.
@@ -1135,6 +1251,11 @@ struct Host::State {
           .bind(4, call.id)
           .run();
     }
+    if (spec->approval_required && !wait)
+      Event(conversation, json::Encode(json::Members{
+          {"kind", json::Quote("toolFinished")}, {"id", json::Quote(call.id)},
+          {"name", json::Quote(call.name)}, {"text", json::Quote(result)},
+          {"ok", error ? "false" : "true"}}));
     std::vector<std::string> resources{project};
     if (!folder_resource.empty())
       resources.push_back(folder_resource);
@@ -1655,7 +1776,7 @@ struct Host::State {
       sql::Transaction tx(db);
       for (const auto* table : {"events", "receipts", "turns", "providers",
                                 "archives", "usage", "conversation_resources",
-                                "helpers", "pending_sends", "skill_catalogs"}) {
+                                "helpers", "pending_sends", "skill_catalogs", "operation_approvals", "access_requests"}) {
         auto q = db.prepare(std::string("DELETE FROM ") + table +
                             " WHERE conversation=?");
         q.bind(1, id).run();
@@ -1888,7 +2009,10 @@ struct Host::State {
       if (q.text(4) != "pending")
         throw Failure("conflict", "Access request was already answered");
       sql::Transaction tx(db);
-      if (p->allow()) {
+      auto operation = db.prepare("SELECT 1 FROM operation_approvals WHERE request=?");
+      operation.bind(1, p->request_id()->str());
+      const bool per_call = operation.step();
+      if (p->allow() && !per_call) {
         auto grant = db.prepare("INSERT INTO grants VALUES(?,?,?,?,1)");
         grant.bind(1, p->request_id()->str())
             .bind(2, q.text(0))
@@ -1902,7 +2026,9 @@ struct Host::State {
           .run();
       Event(q.text(1), json::Encode(json::Members{
                            {"kind", json::Quote("permissionAnswered")},
-                           {"id", json::Quote(p->request_id()->str())}}));
+                           {"id", json::Quote(p->request_id()->str())},
+                           {"ok", p->allow() ? "true" : "false"},
+                           {"text", json::Quote(p->allow() ? "Approved this request" : "Declined; nothing changed")}}));
       tx.commit();
       changed.notify_all();
       return wire::AgentReply(request.request_id, S::AcknowledgementT{});
@@ -1936,8 +2062,10 @@ struct Host::State {
       if (!human && id.empty())
         throw Failure("permission_denied",
                       "External clients must name their conversation");
-      if (!id.empty())
+      if (!id.empty()) {
         OwnConversation(id, human);
+        if (!human) AuthorizeHistory(id);
+      }
       A::AccessListT result;
       auto q =
           db.prepare("SELECT id,project,conversation,access,scope,reason,state "

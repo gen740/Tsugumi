@@ -286,6 +286,9 @@ final class ChatController {
         }
       }
     }
+    for record in conv.tools where record.name == "operation_approval" {
+      out.append(Item(role: "tool", text: record.result ?? "", tool: (record.name, record.state == .pending ? nil : !record.isError)))
+    }
     items = out
   }
 
@@ -454,6 +457,17 @@ final class ChatController {
     let id = UUID()
     let raw: [String]
     var requests: [CardPermission.Request] { raw.compactMap(CardPermission.Request.init) }
+    var operation: String? {
+      guard let request = raw.first(where: { $0.contains("operation_approval\n") }),
+            let marker = request.range(of: "operation_approval\n") else { return nil }
+      return request[marker.upperBound...].components(separatedBy: "\n").map { line in
+        guard let data = line.data(using: .utf8),
+              let value = try? JSONSerialization.jsonObject(with: data),
+              let formatted = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: formatted, encoding: .utf8) else { return line }
+        return text
+      }.joined(separator: "\n")
+    }
     var access: [String] { raw.filter { $0.hasPrefix("project_access ") } }
     let answer: (Set<String>) -> Void
   }
@@ -472,7 +486,7 @@ final class ChatController {
   func answerPermissions(allow: Bool, always: Set<CardPermission>) {
     guard let p = permissionPrompt else { return }
     permissionPrompt = nil
-    if allow { AppPreferences.shared.allowedPermissions.formUnion(always.map(\.rawValue)) }
+    if allow && p.operation == nil { AppPreferences.shared.allowedPermissions.formUnion(always.map(\.rawValue)) }
     p.answer(allow ? Set(p.raw) : [])
   }
 

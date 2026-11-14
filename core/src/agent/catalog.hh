@@ -13,6 +13,7 @@ struct CatalogTool {
   std::string request_name;
   bool mutating = false;
   bool has_origin = false;
+  bool approval_required = false;
 };
 
 class Catalog {

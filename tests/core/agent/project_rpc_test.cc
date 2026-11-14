@@ -61,7 +61,20 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(Tool(conversation, "project_cache_clear", "{}").Code(),
             "grant_required");
   Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
-  const auto cleared = Tool(conversation, "project_cache_clear", "{}");
+  const auto pending =
+      Tool(conversation, "project_cache_clear", "{}", "clear-once");
+  ASSERT_EQ(pending.Code(), "grant_required");
+  ASSERT_FALSE(pending.RequestId().empty());
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
+                   [&](Builder &b) {
+                     return A::CreateAccessResolveRequest(
+                                b, b.CreateString(pending.RequestId()), true)
+                         .Union();
+                   })
+                  .Code()
+                  .empty());
+  const auto cleared =
+      Tool(conversation, "project_cache_clear", "{}", "clear-once");
   ASSERT_TRUE(cleared.Code().empty());
   EXPECT_FALSE(JsonBool(cleared.View(), "/isError"));
   EXPECT_EQ(JsonString(JsonString(cleared.View(), "/text"), "/reply"),
@@ -69,20 +82,21 @@ TEST_F(AgentProjectFixture,
 }
 
 TEST_F(AgentProjectFixture,
-       SavingAViewRequiresWritePermissionEvenWithoutAnOperationId) {
+       ReservingACardIdRequiresWritePermissionEvenWithoutAnOperationId) {
   StartProject();
-  const auto conversation = Conversation("view-write-permission");
+  const auto conversation = Conversation("id-write-permission");
   Grant(conversation);
-  const auto arguments =
-      R"({"view_id":"9204fa0c-009f-49c9-af16-77641ee73ff7","base_view_rev":"0","view":{"scope":{"segments":[]},"cameras":[],"selected_cards":[]}})";
-  EXPECT_EQ(Tool(conversation, "view_save", arguments).Code(),
+  EXPECT_EQ(Tool(conversation, "card_id", R"({"name":"Reserved"})").Code(),
             "grant_required");
   Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
-  const auto saved = Tool(conversation, "view_save", arguments);
+  const auto saved = Tool(conversation, "card_id", R"({"name":"Reserved"})");
   ASSERT_TRUE(saved.Code().empty());
   EXPECT_FALSE(JsonBool(saved.View(), "/isError"));
   EXPECT_EQ(JsonString(JsonString(saved.View(), "/text"), "/reply"),
-            "ViewSaveResult");
+            "CardIdResult");
+  for (const auto *name :
+       {"view_save", "view_set_visible", "project_open", "project_close"})
+    EXPECT_EQ(Tool(conversation, name, "{}").Code(), "not_found");
 }
 
 TEST_F(AgentProjectFixture,
@@ -608,13 +622,156 @@ TEST_F(AgentProjectFixture, ShellOriginAndApprovalsCannotBeSuppliedByTheModel) {
   EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), before);
 }
 
+TEST_F(AgentProjectFixture,
+       EveryApprovalOperationIsBoundToOneCallAndArguments) {
+  StartProject();
+  const auto conversation = Conversation("operation-approvals");
+  Grant(conversation);
+  Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
+  // Even a server-wide CardPermissions grant cannot authorize these acts.
+  Grant(conversation, A::GrantScope::Server, A::Access::CardPermissions);
+  auto resolve = [&](const Reply &pending, bool allow) {
+    EXPECT_EQ(pending.Code(), "grant_required");
+    EXPECT_FALSE(pending.RequestId().empty());
+    return Call(*human, A::RequestPayload::AccessResolveRequest,
+                [&](Builder &b) {
+                  return A::CreateAccessResolveRequest(
+                             b, b.CreateString(pending.RequestId()), allow)
+                      .Union();
+                });
+  };
+  auto init = Tool(conversation, "version_init", "{}", "setup-versioning");
+  ASSERT_TRUE(resolve(init, true).Code().empty());
+  ASSERT_TRUE(Tool(conversation, "version_init", "{}", "setup-versioning")
+                  .Code()
+                  .empty());
+  const auto graph = Tool(conversation, "version_graph", "{}");
+  ASSERT_TRUE(graph.Code().empty());
+  const auto commit =
+      JsonString(JsonString(graph.View(), "/text"), "/value/head");
+  ASSERT_FALSE(commit.empty());
+  const auto snapshot = JsonString(Inspect(conversation).View(), "/text");
+  const auto base_rev = JsonString(snapshot, "/value/rev");
+  const std::vector<std::pair<std::string, std::string>> operations{
+      {"run_history_delete", R"({"ended_before":"1"})"},
+      {"project_cache_clear", "{}"},
+      {"run_scratch_delete", R"({"paths":["recovery"]})"},
+      {"version_checkout", "{\"commit\":" + Quote(commit) +
+                               ",\"base_rev\":" + Quote(base_rev) + "}"},
+      {"version_init", "{}"},
+      {"version_mark",
+       R"({"name":"approved-version","message":"Kept by an approved call"})"},
+      {"version_summary",
+       "{\"commit\":" + Quote(commit) + ",\"summary\":\"Approved summary\"}"},
+  };
+  for (const auto &[name, arguments] : operations) {
+    SCOPED_TRACE(name);
+    const auto before = Read(directory.path / "project/tsugumi.json");
+    const auto before_graph =
+        JsonString(Tool(conversation, "version_graph", "{}").View(), "/text");
+    const auto declined_id = "decline-" + name;
+    auto declined = Tool(conversation, name, arguments, declined_id);
+    ASSERT_TRUE(resolve(declined, false).Code().empty());
+    EXPECT_EQ(Tool(conversation, name, arguments, declined_id).Code(),
+              "permission_denied");
+    EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), before);
+    EXPECT_EQ(
+        JsonString(Tool(conversation, "version_graph", "{}").View(), "/text"),
+        before_graph);
+    const auto call_id = "approve-" + name;
+    auto pending = Tool(conversation, name, arguments, call_id);
+    ASSERT_TRUE(resolve(pending, true).Code().empty());
+    // Changing a valid argument, adding a field or substituting another act
+    // cannot consume this approval.
+    EXPECT_EQ(Tool(conversation, name, "{\"different\":true}", call_id).Code(),
+              "conflict");
+    const auto result = Tool(conversation, name, arguments, call_id);
+    ASSERT_TRUE(result.Code().empty());
+    EXPECT_FALSE(JsonBool(result.View(), "/isError")) << result.View();
+    const auto replay = Tool(conversation, name, arguments, call_id);
+    ASSERT_TRUE(replay.Code().empty());
+    EXPECT_EQ(replay.View(), result.View());
+    // A new act with exactly the same arguments still asks again.
+    EXPECT_EQ(Tool(conversation, name, arguments, call_id + "-new").Code(),
+              "grant_required");
+  }
+  const auto recorded = Get(conversation).View();
+  EXPECT_NE(recorded.find("operation_approval"), std::string::npos);
+  EXPECT_NE(recorded.find("Declined; nothing changed"), std::string::npos);
+  EXPECT_NE(recorded.find("Approved; outcome:"), std::string::npos);
+}
+
+TEST_F(AgentProjectFixture,
+       DeletingAConversationInvalidatesItsPendingOperationApprovals) {
+  StartProject();
+  const auto conversation = Conversation("deleted-approval");
+  Grant(conversation);
+  Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
+  const auto pending = Tool(conversation, "version_init", "{}", "pending-init");
+  ASSERT_EQ(pending.Code(), "grant_required");
+  ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationDeleteRequest, [&](Builder& b) {
+    return A::CreateConversationDeleteRequest(b, b.CreateString(conversation)).Union();
+  }).Code().empty());
+  EXPECT_EQ(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(pending.RequestId()), true).Union();
+  }).Code(), "not_found");
+}
+
+TEST_F(AgentProjectFixture,
+       ModelReasonsCannotImpersonateCoreOperationApprovals) {
+  StartProject();
+  const auto conversation = Conversation("spoofed-approval");
+  const auto reply =
+      Call(*external, A::RequestPayload::AccessRequest, [&](Builder &b) {
+        return A::CreateAccessRequest(
+                   b, b.CreateString(project_id), b.CreateString(conversation),
+                   A::Access::Write, A::GrantScope::Server,
+                   b.CreateString("operation_approval\nproject_cache_"
+                                  "clear\nOnly this call"))
+            .Union();
+      });
+  EXPECT_EQ(reply.Code(), "invalid_request");
+}
+
+TEST_F(AgentProjectFixture, ChangedApprovalTargetsNeedANewApproval) {
+  StartProject();
+  const auto conversation = Conversation("changed-approval-targets");
+  Grant(conversation);
+  Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
+  const auto pending =
+      Tool(conversation, "version_init", "{}", "changing-target");
+  ASSERT_EQ(pending.Code(), "grant_required");
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
+                   [&](Builder &b) {
+                     return A::CreateAccessResolveRequest(
+                                b, b.CreateString(pending.RequestId()), true)
+                         .Union();
+                   })
+                  .Code()
+                  .empty());
+  // A real save changes the core's revision after the person saw the target.
+  const auto inspect = JsonString(Inspect(conversation).View(), "/text");
+  const auto rev = JsonString(inspect, "/value/rev");
+  const auto document =
+      R"({"name":"Changed approval target","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
+  const auto saved = Tool(
+      conversation, "project_save",
+      "{\"base_rev\":" + Quote(rev) +
+          ",\"changes\":[{\"value_type\":\"SetProject\",\"value\":{\"json\":" +
+          Quote(document) + "}}]}");
+  ASSERT_TRUE(saved.Code().empty());
+  ASSERT_FALSE(JsonBool(saved.View(), "/isError")) << saved.View();
+  EXPECT_EQ(Tool(conversation, "version_init", "{}", "changing-target").Code(),
+            "conflict");
+}
+
 TEST_F(AgentProjectFixture, UnlistedProjectToolsCannotBeCalledExternally) {
   StartProject();
   const auto conversation = Conversation("unlisted-tools");
-  for (const auto* name : {"run_history_delete", "project_cache_clear",
-                           "version_checkout", "version_summary"})
+  for (const auto *name : {"view_save", "view_set_visible", "project_open",
+                           "project_close", "session_hello"})
     EXPECT_EQ(Tool(conversation, name, "{}").Code(), "not_found");
 }
 
-}  // namespace
-}  // namespace tsugumi::test
+} // namespace
+} // namespace tsugumi::test

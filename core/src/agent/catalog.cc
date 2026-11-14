@@ -249,26 +249,35 @@ auto Parser() -> std::unique_ptr<flatbuffers::Parser> {
 Catalog::Catalog() {
   const auto *requests =
       Schema().enums()->LookupByKey("Tsugumi.RPC.RequestPayload");
-  const auto settings = json::Object(std::string_view(
-      reinterpret_cast<const char*>(tsugumi_agent_settings),
-      tsugumi_agent_settings_size));
+  const auto settings = json::Object(
+      std::string_view(reinterpret_cast<const char *>(tsugumi_agent_settings),
+                       tsugumi_agent_settings_size));
   std::set<std::string> seen;
-  for (const auto& entry : json::Array(json::Get(settings, "requests"))) {
-    const auto name = json::String(entry);
-    const auto found = std::find_if(
-        requests->values()->begin(), requests->values()->end(),
-        [&](const auto* value) { return value->name()->str() == name; });
-    if (found == requests->values()->end() || !(*found)->value() ||
-        !seen.insert(name).second)
-      throw std::runtime_error("invalid Agent request allow list entry: " + name);
-    const auto &object = *Schema().objects()->Get((*found)->union_type()->index());
-    CatalogTool tool{{Name(name), Docs(object.documentation()),
-                      ObjectSchema(object, 0, true)},
-                     name,
-                     false};
-    tool.mutating = OwnOperationId(object);
-    tool.has_origin = object.fields()->LookupByKey("origin") != nullptr;
-    tools_.push_back(std::move(tool));
+  for (const auto *list : {"requests", "approvalRequests"}) {
+    for (const auto &entry : json::Array(json::Get(settings, list))) {
+      const auto name = json::String(entry);
+      const auto found = std::find_if(
+          requests->values()->begin(), requests->values()->end(),
+          [&](const auto *value) { return value->name()->str() == name; });
+      if (found == requests->values()->end() || !(*found)->value() ||
+          !seen.insert(name).second)
+        throw std::runtime_error("invalid Agent request allow list entry: " +
+                                 name);
+      const auto &object =
+          *Schema().objects()->Get((*found)->union_type()->index());
+      CatalogTool tool{{Name(name), Docs(object.documentation()),
+                        ObjectSchema(object, 0, true)},
+                       name,
+                       false};
+      tool.approval_required = std::string_view(list) == "approvalRequests";
+      if (tool.approval_required)
+        tool.spec.description +=
+            " Requires the person's approval for this call and its exact "
+            "targets; a declined call changes nothing.";
+      tool.mutating = OwnOperationId(object);
+      tool.has_origin = object.fields()->LookupByKey("origin") != nullptr;
+      tools_.push_back(std::move(tool));
+    }
   }
 }
 
