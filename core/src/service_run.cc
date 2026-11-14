@@ -740,11 +740,13 @@ auto Service::module_read(RequestIn& req) -> void {
   const auto* r = req.request()->value_as_ModuleReadRequest();
   const auto identity = r->module_()->str();
   const stdfs::path root(identity);
-  if (!valid_module_identity(identity) || stdfs::is_symlink(root) || !stdfs::is_directory(root))
+  if (!valid_module_identity(identity) || stdfs::is_symlink(root))
     throw Failed(FailureKind::invalid_path, "invalid module identity");
   std::string source;
   try {
-    source = module_source(root);
+    if (stdfs::is_directory(root)) source = module_source(root);
+    else if (auto cached = cached_module_source(store_->state_dir() / "modules", identity)) source = std::move(*cached);
+    else throw std::runtime_error("module source is unavailable");
   } catch (const std::exception& e) {
     throw Failed(FailureKind::output_invalid, e.what());
   }
