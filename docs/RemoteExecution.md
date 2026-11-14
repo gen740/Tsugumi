@@ -31,6 +31,8 @@ All worker connections, including its private Unix socket `STATE/worker.sock`, u
 
 Use `--max-jobs` to change the default cap of eight jobs across all project scopes. Additional accepted jobs wait durably. The timeout starts at acceptance, including queueing, building and running. Queued deadlines survive restarts. A running invocation is never automatically rerun: a surviving supervisor is adopted through its lock; a lost supervisor becomes interrupted. Cancellation of an unknown job creates a fingerprint tombstone, preventing a late submission from starting it.
 
+`--log-limit-bytes N` sets a positive per-job byte limit for combined build/stdout/stderr JSONL records (default 8388608, 8 MiB); entries that exceed the remaining budget are omitted, and a final journal line reports truncation at that limit outside the budget.
+
 For hard limits, pass `--cgroup-root` naming an owned, delegated cgroup v2 subtree. The worker enables CPU and memory controllers and verifies per-job limits before launching. Limits cover the build and invocation. Without it, omit both CPU and memory limits. The namespace launcher dies with its supervisor and tears down the job's PID namespace. A restarted listener also enforces cancellation/deadlines against supervisors by verified boot ID, process start time and pidfd.
 
 ## Host authorization and following a run

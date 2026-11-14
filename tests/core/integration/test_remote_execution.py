@@ -48,9 +48,11 @@ RUN_LIST_REMOTE = {
 }
 
 @pytest.fixture
-def remote_daemon(tmp_path):
+def remote_daemon(tmp_path, request):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
     if not binary:
+        if getattr(request, "param", None):
+            pytest.skip("worker settings tests require a disposable packaged daemon")
         endpoint = os.environ.get("TSUGUMI_REMOTE_TEST_ENDPOINT")
         key_file = os.environ.get("TSUGUMI_REMOTE_TEST_PUBLIC_KEY_FILE")
         if not endpoint or not key_file:
@@ -64,7 +66,8 @@ def remote_daemon(tmp_path):
     state = tmp_path / "daemon-state"
     state.mkdir(mode=0o700)
     env = {**os.environ, "TSUGUMI_REMOTE_STATE_DIR": str(state)}
-    command = [binary, "--host", "127.0.0.1", "--port", str(port)]
+    command = [binary, "--host", "127.0.0.1", "--port", str(port),
+               *getattr(request, "param", ())]
     key_file = tmp_path / "worker-public-key"
     key_file.write_bytes(subprocess.check_output([binary, "--public-key"], env=env))
     daemon_log = tmp_path / "execution-daemon.log"
@@ -279,6 +282,21 @@ def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broke
     with pytest.raises(RpcFailure) as downstream:
         client.call("RunRecordRequest", runId=run_id, card=path("after"))
     assert downstream.value.kind == "not_found"
+
+
+@pytest.mark.parametrize("remote_daemon", [("--log-limit-bytes", "1")], indirect=True)
+def test_remote_card_reports_log_truncation(project, core_factory, remote_broker):
+    fixture(project)
+    client = core_factory().connect()
+    run_id = start_run(client, "source")
+    run = wait_run(client, run_id, timeout=480)
+    assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
+    stdout = client.call("LogRangeRequest", runId=run_id, card=path("work"),
+                         invocation=1, stream=LogStream.stdout)
+    assert not text(stdout.text)
+    journal = client.call("LogRangeRequest", runId=run_id, card=path("work"),
+                          invocation=1, stream=LogStream.journal)
+    assert text(journal.text).count("[Log output truncated at the 1-byte limit.]") == 1
 
 
 def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker):
