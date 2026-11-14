@@ -97,7 +97,7 @@ def test_new_ids_are_unique_and_names_may_be_shared(tmp_path, core_factory):
     builtin_project(root)
     d = core_factory(project_root=root)
     c = d.connect()
-    ids = [text(c.call("CardIdRequest", name="Aggregate").id) for _ in range(80)]
+    ids = [text(c.call("CardIdRequest", stem="aggregate").id) for _ in range(80)]
     assert len(set(ids)) == len(ids)
     assert all(re.fullmatch(r"aggregate-[abcdefghjkmnpqrstuvwxyz23456789]{4}", x) for x in ids)
     snap = c.call("ProjectInspectRequest")
@@ -107,16 +107,16 @@ def test_new_ids_are_unique_and_names_may_be_shared(tmp_path, core_factory):
         change("SetProject", json=json.dumps(doc)), *[
             change("PutDefinition", id=x, cardJson='{"template":"draft"}', metaJson='{"name":"Aggregate"}') for x in ids[:2]]])
     snap = c.call("ProjectInspectRequest")
-    assert sum(text(x.name) == "Aggregate" for x in snap.resolution) == 2
+    assert sum(json.loads(text(x.metaJson) or "{}").get("name") == "Aggregate" for x in snap.definitions) == 2
     assert "src" in [text(x.id) for x in snap.definitions]  # existing ids are unchanged
     d.restart()
     c = d.connect()
-    assert text(c.call("CardIdRequest", name="Aggregate").id) not in ids
-    nested = text(c.call("CardIdRequest", name="Aggregate", projectPath="externals/new/").id)
+    assert text(c.call("CardIdRequest", stem="aggregate").id) not in ids
+    nested = text(c.call("CardIdRequest", stem="aggregate", projectPath="externals/new/").id)
     assert re.fullmatch(r"aggregate-[abcdefghjkmnpqrstuvwxyz23456789]{4}", nested)
     for bad in ("../", "externals/../", "definitions/a/", "externals/new"):
         with pytest.raises(RpcFailure):
-            c.call("CardIdRequest", name="Aggregate", projectPath=bad)
+            c.call("CardIdRequest", stem="aggregate", projectPath=bad)
 
 
 def pretty(doc: dict) -> str:
@@ -314,8 +314,8 @@ def test_trigger_setting(tmp_path, core_factory):
 
 
 def test_display_mode_setting(tmp_path, core_factory):
-    """displayMode is update or live; anything else is reported on the Card."""
-    for value, reuse_worker, valid in (("update", False, True), ("live", True, True), ("smooth", True, False)):
+    """Presentation modes do not participate in core validation."""
+    for value, reuse_worker, valid in (("update", False, True), ("live", True, True), ("smooth", True, True)):
         root = tmp_path / value
         builtin_project(root)
         card = json.loads((root / "definitions" / "out" / "_card.json").read_text())
@@ -395,8 +395,8 @@ def test_name_changes_inside_a_card_in_card_preserve_history(tmp_path, core_fact
     assert c.call("RunInvocationsRequest", runId=run_id, card=path("greet", "say")).records
     after = c.call("ProjectInspectRequest")
     assert after.executionRev == snap.executionRev
-    names = {tuple(text(s) for s in r.card.segments): text(r.name) for r in after.resolution}
-    assert names[("greet",)] == names[("greet", "say")] == "Greeting"
+    assert ("greet", "say") in {tuple(text(s) for s in r.card.segments) for r in after.resolution}
+    assert json.loads(bytes(c.call("ProjectFileReadRequest", path="externals/greeting/definitions/say/_meta.json").bytes))["name"] == "Greeting"
 
 
 def test_an_output_feeds_one_wire(tmp_path, core_factory):

@@ -258,6 +258,11 @@ public actor CoreAgentClient {
     return value
   }
 
+  public func versionComments(project: String, commit: String) async throws -> [Tsugumi_Host_VersionCommentT] {
+    let result = try await call("VersionCommentsRequest", ["project": project, "commit": commit])
+    return result["comments"] as? [Tsugumi_Host_VersionCommentT] ?? []
+  }
+
   /// Platform credential transport only; agentd chooses the note mode and model.
   public func versionNote(project: String, commit: String, language: String) async throws -> String {
     for (id, account) in [("anthropic", "Anthropic"), ("openai", "OpenAI")] {

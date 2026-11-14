@@ -143,6 +143,16 @@ auto ObjectSchema(const reflection::Object &object, int depth, bool top)
     if (field->required())
       required.push_back(json::Quote(name));
   }
+  // Agent save conveniences belong to agentd, not the project protocol.
+  if (object.name()->str() == "Tsugumi.RPC.PutDefinition") {
+    properties["fill_description"] = R"({"type":"string","description":"Fill an empty description, preserving existing text."})";
+    properties["fill_context"] = R"({"type":"string","description":"Fill an empty context, preserving existing text."})";
+  }
+  if (object.name()->str() == "Tsugumi.RPC.CardIdRequest") {
+    properties.erase("stem");
+    properties["name"] = R"({"type":"string","description":"Human name; the host derives the identifier stem."})";
+    required = {json::Quote("name")};
+  }
   json::Members schema{{"type", json::Quote("object")},
                        {"properties", json::Encode(properties)},
                        {"additionalProperties", "false"}};
@@ -288,6 +298,8 @@ Catalog::Catalog() {
                        name,
                        false};
       tool.host = host_schema;
+      if (tool.spec.name == "card_id")
+        tool.spec.description = "Reserve a permanent Card id from its human name. The host derives a readable stem; core reserves a unique id. Use the id in paths and wires and keep the name in _meta.json.name. project_path selects a nested project.";
       tool.approval_required = std::string_view(list) == "approvalRequests";
       if (tool.approval_required)
         tool.spec.description +=

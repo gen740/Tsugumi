@@ -57,6 +57,7 @@ struct StoredValueMeta {
   uint64_t size_bytes = 0;
   std::optional<std::string> artifact_id;
   std::string hash;  // SHA-256 of the bytes, stored with the value
+  std::string file_content_hash;  // SHA-256 of File content, not the path value
 };
 
 struct LogEnd {

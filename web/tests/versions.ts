@@ -103,6 +103,9 @@ assert.equal(cardKindNamed('something new'), 'code')
 
 // The UI asks only for a note. No client-side diff, model choice or note write.
 const { ProjectSession } = await import('../src/model/session')
+const { layoutHost } = await import('../src/shared/hostLayout')
+const rawCanvas = { layoutJson: '{"cards":{"plan":{"x":120,"y":80}}}', cards: [{ id: 'plan', kind: 'draft', fan: 0 }], wires: [] }
+const hostCanvas = { cards: [card('plan', 120, 80, 'draft')], wires: [], flow: 'topToBottom' }
 const fetchBefore = globalThis.fetch
 let mode: 'mechanical' | 'agent' = 'mechanical'
 let failNote = false
@@ -115,17 +118,25 @@ globalThis.fetch = async (url, init) => {
     if (body?.versionNoteMode) mode = body.versionNoteMode
     return new Response(JSON.stringify({ versionNoteMode: mode, revision: { desktop: 0 } }))
   }
+  if (path === '/api/layout/version-canvas') {
+    assert.deepEqual(body, rawCanvas, 'opaque layout and Card ids reach the host unchanged')
+    return new Response(JSON.stringify(hostCanvas))
+  }
+  if (path === '/api/versions/comments') return new Response(JSON.stringify({ comments: [{ card: 'plan', text: 'Ask', change: 'resolved', by: 'agent', cards: ['plan'] }] }))
   assert.equal(path, '/api/versions/note')
   return new Response(JSON.stringify(failNote ? { error: 'retry me' } : { text: 'Host-owned note' }), { status: failNote ? 503 : 200 })
 }
 try {
   // Avoid connecting a project: only the presentation methods under test run.
   const session = Object.create(ProjectSession.prototype) as InstanceType<typeof ProjectSession>
-  Object.assign(session, { client: {}, dir: '/project', versionNoteRequests: new Map(), versionNoteBusy: new Set(), versionNoteErrors: new Map(), versionNotes: new Map(), changed() {} })
+  Object.assign(session, { client: { versionCanvas: async (commit: string) => { assert.equal(commit, 'version'); return rawCanvas } }, layoutHost, versionCanvases: new Map(), dir: '/project', versionComments: new Map(), versionNoteRequests: new Map(), versionNoteBusy: new Set(), versionNoteErrors: new Map(), versionNotes: new Map(), changed() {} })
   await session.loadVersionNoteMode()
   assert.equal(session.versionNoteMode, 'mechanical')
+  await session.loadVersionCanvas('version')
+  assert.deepEqual(session.versionCanvases.get('version'), hostCanvas)
   await session.loadVersionNote('version')
   assert.equal(session.versionNotes.get('version'), 'Host-owned note')
+  assert.equal(session.versionComments.get('version')?.[0].card, 'plan')
   assert.deepEqual(calls.at(-1), { path: '/api/versions/note', body: { path: '/project', commit: 'version' } })
   await session.setVersionNoteMode('agent')
   assert.equal(session.versionNoteMode, 'agent')
@@ -152,4 +163,4 @@ try {
 } finally {
   globalThis.fetch = fetchBefore
 }
-console.log('version notes: host-only request, mode switching, failure display and retry passed')
+console.log('version canvas and comments: host requests; notes: mode switching, failure display and retry passed')

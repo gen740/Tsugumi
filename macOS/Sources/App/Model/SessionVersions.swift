@@ -27,6 +27,12 @@ extension ProjectSession {
     } catch { notice = String(describing: error) }
   }
 
+  func loadVersionComments(_ commit: String) async throws {
+    guard versionComments[commit] == nil else { return }
+    guard let project = try await RPCToolTransport(session: self).project() else { return }
+    versionComments[commit] = try await CoreAgentClient.shared.versionComments(project: project.id, commit: commit)
+  }
+
   /// Ask agentd for the note to display. It owns policy, generation and storage.
   func loadVersionNote(_ commit: String) async {
     guard rpc != nil else { return }
@@ -41,6 +47,7 @@ extension ProjectSession {
       }
     }
     do {
+      try await loadVersionComments(commit)
       await CorePreferences.shared.reload()
       guard let project = try await RPCToolTransport(session: self).project() else { return }
       let note = try await CoreAgentClient.shared.versionNote(project: project.id, commit: commit,

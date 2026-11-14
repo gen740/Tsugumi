@@ -108,7 +108,8 @@ TEST(CardIdentity,
   ASSERT_NE(doc->resolution->find({"q"}), nullptr);
   EXPECT_NE(doc->resolution->find({"p"})->output("out2"), nullptr);
   EXPECT_NE(doc->resolution->find({"q"})->input("in2"), nullptr);
-  EXPECT_EQ(doc->resolution->find({"q"})->name, "日本語");
+  EXPECT_EQ(doc->resolution->find({"q"})->path, (CardPath{"q"}));
+  EXPECT_EQ(doc->definitions.at("q").meta_json, R"({"name":"日本語"})");
   EXPECT_EQ(doc->resolution->edges.size(), 3u);
   EXPECT_EQ(doc->layout_json, layout_json);
 }
@@ -130,7 +131,7 @@ TEST(CardIdentity, CoreReservesUniqueReadableIdentifiersAcrossRestartsAndScopes)
     store.open();
     auto rev = store.current()->rev;
     for (int i = 0; i < 100; ++i) {
-      auto id = store.allocate_card_id("Aggregate", "");
+      auto id = store.allocate_card_id("aggregate", "");
       EXPECT_TRUE(std::regex_match(id, shape));
       EXPECT_TRUE(ids.insert(id).second);
     }
@@ -138,14 +139,16 @@ TEST(CardIdentity, CoreReservesUniqueReadableIdentifiersAcrossRestartsAndScopes)
     EXPECT_THROW(store.allocate_card_id("A", "../"), Failed);
     EXPECT_THROW(store.allocate_card_id("A", "externals/../"), Failed);
     EXPECT_THROW(store.allocate_card_id("", ""), Failed);
-    EXPECT_LE(store.allocate_card_id(std::string(4096, 'a'), "").size(), 128u);
-    EXPECT_TRUE(store.allocate_card_id("集計", "").starts_with("card-"));
+    EXPECT_THROW(store.allocate_card_id(std::string(124, 'a'), ""), Failed);
+    EXPECT_EQ(store.allocate_card_id(std::string(123, 'a'), "").size(), 128u);
+    EXPECT_THROW(store.allocate_card_id("集計", ""), Failed);
+    EXPECT_TRUE(store.allocate_card_id("Already_Chosen", "").starts_with("Already_Chosen-"));
   }
   Store store({root, ""});
   store.open();
-  EXPECT_TRUE(ids.insert(store.allocate_card_id("Aggregate", "")).second);
-  EXPECT_TRUE(std::regex_match(store.allocate_card_id("Aggregate", "externals/child/"), shape));
-  EXPECT_TRUE(std::regex_match(store.allocate_card_id("Aggregate", "externals/child/externals/inner/"), shape));
+  EXPECT_TRUE(ids.insert(store.allocate_card_id("aggregate", "")).second);
+  EXPECT_TRUE(std::regex_match(store.allocate_card_id("aggregate", "externals/child/"), shape));
+  EXPECT_TRUE(std::regex_match(store.allocate_card_id("aggregate", "externals/child/externals/inner/"), shape));
   auto reservations = fs::read_file(root / ".tsugumi/card-ids").value();
   for (const auto& id : ids) EXPECT_NE(reservations.find(id + '\n'), std::string::npos);
 }

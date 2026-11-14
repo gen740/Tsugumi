@@ -1378,6 +1378,7 @@
  "Agent の作業をアニメーションで表示": "Animate the Agent’s work",
  "オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの agentd に保存します。": "When off, saved Cards and wires appear immediately. The work marker, thought summaries and source streaming continue. This setting is stored in agentd on this host.",
  "このブラウザの外観設定と、このホストの agentd の Agent 表示設定": "Appearance in this browser; Agent presentation in agentd on this host",
+  "ファイル「{0}」を読み込めませんでした: {1}": "Could not read file “{0}”: {1}",
  "ヘルパー": "Helpers",
  "同時に動かすヘルパーの数": "Concurrent helpers",
  "1 にすると、ヘルパーは順番に動きます。": "Set to 1 to run helpers sequentially.",

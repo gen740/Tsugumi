@@ -10,12 +10,12 @@ from Tsugumi.Data.RunState import RunState
 from Tsugumi.Data.FailureKind import FailureKind
 
 
-def project_with_file(root, value, external=False):
+def project_with_file(root, value, external=False, record_io=False):
     owner = root / "externals/child" if external else root
     write(owner,
           defs={"load": {"template": "input",
                          "params": [{"name": "value", "type": "string", "data": value}],
-                         "retainArtifact": True, "artifactOutput": "doc", "_outputs": FILE_FBS},
+                         "recordIO": record_io, "retainArtifact": True, "artifactOutput": "doc", "_outputs": FILE_FBS},
                 "shared": {"template": "trigger"}},
           cards=[card("load", "load"), card("shared", "shared")], conns=[],
           files={"definitions/load/data/events.txt": "Card-local contents",
@@ -88,3 +88,47 @@ def test_input_file_must_be_in_the_project_source_manifest(project, core_factory
     local.symlink_to(outside)
     with pytest.raises(RuntimeError, match="symlink; links are not allowed"):
         core_factory()
+
+
+def test_recorded_file_digest_compares_content_across_runs_and_survives_copy(core_factory, project, tmp_path):
+    """File comparison uses recorded content, independent of run and storage path."""
+    import hashlib
+    import shutil
+
+    from tsugumi_client import change, new_id
+
+    owner, segments = project_with_file(project, "data/events.txt", record_io=True)
+    source = "definitions/load/data/events.txt"
+    data = b"\x00\xff\x80\xc3(\n"
+    (owner / source).write_bytes(data)
+    daemon = core_factory(history_dir=tmp_path / "history-original")
+    client = daemon.connect()
+
+    def recorded():
+        rid, status = run_and_wait(client, segments, timeout=10)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        outputs = client.call("RunRecordRequest", runId=rid, card=path(*segments)).record.outputs
+        assert len(outputs) == 1
+        value = outputs[0]
+        assert text(value.fileContentHash) == hashlib.sha256(data).hexdigest()
+        return rid, value
+
+    first_id, first = recorded()
+    _, equal = recorded()
+    assert text(first.contentHash) != text(equal.contentHash), "the path values belong to different runs"
+    assert text(first.fileContentHash) == text(equal.fileContentHash)
+    data = b"different content"
+    snap = client.call("ProjectInspectRequest")
+    client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="ui:test",
+                changes=[change("PutSource", path=source, bytes=list(data),
+                                baseHash=hashlib.sha256(b"\x00\xff\x80\xc3(\n").hexdigest())])
+    _, other = recorded()
+    assert text(first.fileContentHash) != text(other.fileContentHash)
+    daemon.stop()
+    copied_project = tmp_path / "copied"
+    shutil.copytree(project, copied_project, symlinks=True)
+    copied = core_factory(project_root=copied_project, history_dir=tmp_path / "history-copy")
+    outputs = copied.connect().call("RunRecordRequest", runId=first_id, card=path(*segments)).record.outputs
+    assert len(outputs) == 1
+    value = outputs[0]
+    assert text(value.fileContentHash) == text(first.fileContentHash)

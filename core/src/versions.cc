@@ -12,7 +12,6 @@
 #include <stdexcept>
 #include <tuple>
 
-#include "comments.hh"
 #include "graph.hh"
 #include "model.hh"
 #include "schema.hh"
@@ -320,22 +319,6 @@ std::vector<VersionRunNote> Versions::parse_note(const std::string& text) {
   return out;
 }
 
-namespace {
-
-// The comments of these _meta.json files (path -> its Card) in a tree.
-std::vector<comments::Comment> comments_at(git_repository* r, git_tree* tree, const std::map<std::string, std::string>& metas) {
-  std::vector<comments::Comment> out;
-  if (!tree) return out;
-  for (const auto& [path, card] : metas)
-    if (auto text = file_at(r, tree, path.c_str())) {
-      auto list = comments::parse(card, *text);
-      out.insert(out.end(), list.begin(), list.end());
-    }
-  return out;
-}
-
-}  // namespace
-
 std::optional<std::string> Versions::card_of(const std::string& path) {
   if (path == "tsugumi.json" || path == "layout.json") return std::string();
   std::vector<std::string> parts;
@@ -622,18 +605,15 @@ VersionGraphData Versions::graph(size_t limit) {
     Diff d;
     if (git_diff_tree_to_tree(d.out(), r.get(), theirs.get(), mine.get(), nullptr) == 0) {
       std::set<std::string> cards;
-      std::map<std::string, std::string> metas;  // _meta.json -> its Card
       for (size_t i = 0; i < git_diff_num_deltas(d.get()); ++i) {
         const auto* delta = git_diff_get_delta(d.get(), i);
         for (const char* p : {delta->old_file.path, delta->new_file.path})
           if (p)
             if (auto k = card_of(p)) {
               cards.insert(*k);
-              if (stdfs::path(p).filename() == "_meta.json") metas[p] = *k;
             }
       }
       vc.changed.assign(cards.begin(), cards.end());
-      vc.comments = comments::changes(comments_at(r.get(), theirs.get(), metas), comments_at(r.get(), mine.get(), metas));
     }
     g.commits.push_back(std::move(vc));
   }

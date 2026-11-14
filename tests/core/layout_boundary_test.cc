@@ -19,17 +19,20 @@ TEST(LayoutBoundary, CoreAcceptsOpaqueObjectsButRejectsOtherJsonAndOversize) {
 TEST(LayoutBoundary, OnlyExternalProjectLayoutIsExcludedFromExecutionIdentity) {
   Document doc;
   doc.project_json = "{}";
-  const auto empty = execution_fingerprint(doc);
+  const auto fingerprint = [&] {
+    return execution_fingerprint(doc, [](const std::string&) -> std::optional<std::string> { return std::nullopt; });
+  };
+  const auto empty = fingerprint();
   doc.layout_json = R"({"future":true})";
   doc.sources["externals/child/layout.json"] = {"one", 1};
   doc.sources["externals/child/externals/nested/layout.json"] = {"two", 2};
-  EXPECT_EQ(execution_fingerprint(doc), empty);
+  EXPECT_EQ(fingerprint(), empty);
   doc.sources["externals/child/layout.json"].hash = "three";
-  EXPECT_EQ(execution_fingerprint(doc), empty);
+  EXPECT_EQ(fingerprint(), empty);
   for (const auto* path : {"definitions/a/src/layout.json",
                            "externals/child/definitions/a/src/layout.json"}) {
     doc.sources[path] = {"input", 5};
-    EXPECT_NE(execution_fingerprint(doc), empty) << path;
+    EXPECT_NE(fingerprint(), empty) << path;
     doc.sources.erase(path);
   }
 }

@@ -20,9 +20,21 @@ public extension RPCClient {
     try await call(.projectinspectrequest, Tsugumi_RPC_ProjectInspectRequestT())
   }
 
+  static func cardStem(_ name: String) -> String {
+    var stem = ""
+    for byte in name.utf8 {
+      let c = byte >= 65 && byte <= 90 ? byte + 32 : byte
+      if (c >= 97 && c <= 122) || (c >= 48 && c <= 57) { stem.append(Character(UnicodeScalar(c))) }
+      else if !stem.isEmpty && !stem.hasSuffix("-") { stem += "-" }
+      if stem.count == 123 { break }
+    }
+    while stem.hasSuffix("-") { stem.removeLast() }
+    return stem.isEmpty ? "card" : stem
+  }
+
   func cardId(name: String, projectPath: String = "") async throws -> Tsugumi_RPC_CardIdResultT {
     let r = Tsugumi_RPC_CardIdRequestT()
-    r.name = name
+    r.stem = Self.cardStem(name)
     r.projectPath = projectPath
     return try await call(.cardidrequest, r)
   }
@@ -59,8 +71,9 @@ public extension RPCClient {
     return try await call(.operationgetrequest, r)
   }
 
-  /// Reads a whole file in chunks, verifying the final hash.
-  func readFile(path: String, atRev: UInt64) async throws -> Data {
+  /// Reads a whole file in chunks, verifying the final hash. A content hash
+  /// pins every chunk without depending on unrelated document revisions.
+  func readFile(path: String, atRev: UInt64?, ifHash: String? = nil) async throws -> Data {
     var out = Data()
     var offset: UInt64 = 0
     var hash = ""
@@ -68,6 +81,7 @@ public extension RPCClient {
       let r = Tsugumi_RPC_ProjectFileReadRequestT()
       r.path = path
       r.atRev = atRev
+      r.ifHash = ifHash
       r.offset = offset
       r.limitBytes = 1 << 20
       let c: Tsugumi_RPC_FileContentT = try await call(.projectfilereadrequest, r)

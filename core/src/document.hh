@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -43,7 +44,6 @@ struct SourceEntry {
 struct DefinitionDoc {
   schema::CardDefinition card;
   std::string card_json;  // empty for a link
-  std::optional<schema::CardMeta> meta;
   std::optional<std::string> meta_json;
   std::optional<std::string> link;  // externals/<link>/
   std::optional<std::string> link_json;
@@ -95,10 +95,7 @@ class DocumentError : public std::runtime_error {
 schema::Project parse_project_json(const std::string& text);
 auto check_opaque_layout(const std::string& text) -> void;
 schema::CardDefinition parse_card_json(const std::string& id, const std::string& text);
-schema::CardMeta parse_meta_json(const std::string& text);
-// _meta.json with its empty description and context filled; what has text stays as it is.
-std::string fill_meta_json(const std::string& text, const std::optional<std::string>& description,
-                           const std::optional<std::string>& context);
+void check_meta_json(const std::string& text);
 schema::CardLink parse_link_json(const std::string& id, const std::string& text);
 // The tsugumi.json of an external project (externals/.../tsugumi.json).
 schema::Project parse_external_project(const std::string& rel, const std::string& text);
@@ -111,7 +108,7 @@ void check_structure(const Document& doc);
 std::shared_ptr<Document> load_from_disk(const std::filesystem::path& root);
 
 // Fingerprint of everything that influences computation (not layout).
-std::string execution_fingerprint(const Document& doc);
+std::string execution_fingerprint(const Document& doc, const std::function<std::optional<std::string>(const std::string&)>& read);
 
 constexpr const char* kEmptyLayout = "{}";
 
