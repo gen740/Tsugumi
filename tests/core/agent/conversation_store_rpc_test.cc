@@ -86,6 +86,7 @@ TEST_F(ConversationStoreFixture,
   WaitUntilIdle(home);
   StartProject();
   const auto conversation = Conversation("project-record");
+  ASSERT_EQ(Inspect(conversation).Code(), "grant_required");
   Grant(conversation);
   ASSERT_TRUE(Inspect(conversation).Code().empty());
   ASSERT_TRUE(Send(conversation, "PROJECT_RECORD FIXTURE_API_KEY " +
@@ -100,7 +101,7 @@ TEST_F(ConversationStoreFixture,
   const auto local = directory.path / "project/.tsugumi/agent.sqlite";
   const auto host_db = directory.path / "state/agent.sqlite";
   for (const auto* table : {"conversations", "turns", "receipts", "events",
-                            "usage", "conversation_resources"}) {
+                            "model_bindings", "usage", "conversation_resources"}) {
     const auto key =
         std::string(table) == "conversations" ? "id" : "conversation";
     const auto sql = "SELECT count(*) FROM " + std::string(table) + " WHERE " +
@@ -137,10 +138,11 @@ TEST_F(ConversationStoreFixture,
   EXPECT_EQ(Search("PROJECT_RECORD").View(), "[]");
   EXPECT_EQ(List(project_id).View(), "[]");
   for (const auto* table :
-       {"conversations", "turns", "receipts", "events", "usage", "archives",
+       {"conversations", "turns", "receipts", "events", "model_bindings", "usage", "archives",
         "conversation_resources", "helpers", "pending_sends"})
     EXPECT_EQ(Scalar(local, "SELECT count(*) FROM " + std::string(table)), 0)
         << table;
+  EXPECT_EQ(Scalar(host_db, "SELECT count(*) FROM access_prompt_items"), 0);
   EXPECT_NE(Get(home).View().find("HOME_RECORD"), std::string::npos);
   EXPECT_EQ(Conversation("project-record"), conversation);
   EXPECT_EQ(Inspect(conversation).Code(), "grant_required");

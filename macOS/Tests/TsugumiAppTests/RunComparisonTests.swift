@@ -114,3 +114,36 @@ import Testing
   }
 
 }
+
+@MainActor @Test func filesCompareRecordedContentAndOneSidedValuesAreNotComparable() {
+  func file(_ path: String, _ digest: String?) -> Tsugumi_Data_NamedValueT {
+    let v = Tsugumi_Data_NamedValueT()
+    v.name = "file"; v.kind = .file; v.rootType = "File"; v.schemaBfbs = [1]
+    v.inlineBytes = Array(path.utf8); v.contentHash = path; v.fileContentHash = digest
+    return v
+  }
+  let a = file("/runs/left/value", "bytes"), b = file("/runs/right/value", "bytes")
+  #expect(RunComparison.valueDifference(a, b) == .same)
+  b.fileContentHash = "other"
+  #expect(RunComparison.valueDifference(a, b) == .changed)
+  b.fileContentHash = nil
+  #expect(RunComparison.valueDifference(a, b) == .unknown)
+  #expect(RunComparison.valueDifference(file("/same/path", nil), file("/same/path", nil)) == .unknown)
+  b.fileContentHash = "bytes"; b.fileMissing = true
+  #expect(RunComparison.valueDifference(a, b) == .same)
+  b.rootType = "Other"
+  #expect(RunComparison.valueDifference(a, b) == .changed)
+  #expect(RunComparison.valueDifference(a, nil) == .unknown)
+  #expect(RunComparison.valueDifference(nil, a) == .unknown)
+  #expect(RunComparison.valueDifference(nil, nil) == .same)
+  for output in [false, true] {
+    let x = Tsugumi_RPC_RecordResultT(), y = Tsugumi_RPC_RecordResultT()
+    x.record = Tsugumi_RPC_InvocationRecordT(); y.record = Tsugumi_RPC_InvocationRecordT()
+    x.record?.recordIo = true; y.record?.recordIo = true
+    if output { x.record?.outputs = [a] } else { x.record?.inputs = [a] }
+    let left = ComparedRunCard(summary: Tsugumi_RPC_InvocationSummaryT(), record: x)
+    let right = ComparedRunCard(summary: Tsugumi_RPC_InvocationSummaryT(), record: y)
+    #expect(RunComparison.values(output, left, right).first?.difference == .unknown)
+    #expect(RunComparison.values(output, nil, left).first?.difference == .unknown)
+  }
+}

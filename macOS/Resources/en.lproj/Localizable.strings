@@ -5,6 +5,7 @@
 " ほか %lld" = " and %lld more";
 " 実行 %@ の結果はまだ確かめていません。" = " The result of run %@ has not been checked yet.";
 "#%llu · %@ · %lld 件" = "#%llu · %@ · %lld items";
+"%@\n%@\n許可する操作: %@\n有効期間: %@" = "%@\n%@\nAllowed action: %@\nDuration: %@";
 "%@ · %@ · %lld 枚" = "%@ · %@ · %lld Cards";
 "%@ · %lld 件" = "%@ · %lld messages";
 "%@ · コメントを%@: %@" = "%@ · comment %@: %@";
@@ -85,15 +86,21 @@
 "Canvas に追加" = "Add to Canvas";
 "Canvas に配置" = "Place on the canvas";
 "Canvas（フォーカスがあるとき）" = "Canvas (when focused)";
+"Card SDK を準備" = "Prepared the Card SDK";
+"Card SDK を準備しています" = "Preparing the Card SDK";
 "Card in Card にまとめる（新しい external プロジェクト）" = "Make a Card in Card (a new external project)";
 "Card in Card の中を表示（読み取り専用。編集は externals のプロジェクトを単体で開いて行います）" = "Show inside the Card in Card (read only; to edit, open the project in externals by itself)";
 "Card in Card は externals にあるこのプロジェクト用のコピーです。ポートの対応はその tsugumi.json の boundary にあります。中に入ると Card と接続を編集できます。" = "A Card in Card is this project's own copy in externals. Its ports map to the inside through the boundary of its tsugumi.json. Go inside to edit its Cards and connections.";
 "Card が見つかりません" = "Card not found";
 "Card の定義" = "Card definition";
 "Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。" = "Relative to this Card's definition folder. Use project: for a path relative to its owning project.";
+"Card の実行" = "Run Cards";
 "Card の実行履歴から、前の入力と出力をいつでも見返せるよ" = "A Card's Run History keeps every earlier input and output.";
+"Card の権限の変更" = "Change Card permissions";
 "Card の種類のアイコンを使います" = "Uses the icon of the Card's kind";
 "Card の設定画面で開きます" = "Opens in the Card's settings";
+"Card の識別子を予約" = "Reserved a Card identifier";
+"Card の識別子を予約しています" = "Reserving a Card identifier";
 "Card は C++ でも Python でも bash でも書けるよ" = "Cards can be written in C++, Python or bash.";
 "Card は Tsugumi の Linux VM（Virtualization.framework、アプリ全体で 1 台）の中で、プロジェクトごとに隔離して実行されます。" = "Cards run isolated per project in Tsugumi's Linux VM (Virtualization.framework, one for the whole app).";
 "Card はありません" = "No Cards";
@@ -110,6 +117,7 @@
 "Card 間の Nix 参照はありません" = "No Nix references between Cards.";
 "Card「%@」の定義（definitions/%@/）です。" = "The definition of Card “%@” (definitions/%@/).";
 "ChatGPT の Plus・Pro プランで Agent を使います。リクエストは OpenAI の Responses API に送られ、プランの利用枠から使われます（API キーの課金とは別で、Tsugumi に料金はかかりません）。Plus の 5 時間ごとの利用上限は、ほかのアプリ（オープンソースのツールを含む）と共有です。Pro にはこの上限はありません。" = "The Agent uses your ChatGPT Plus or Pro plan. Requests go to OpenAI's Responses API and count against your plan's usage (apart from API key billing; Tsugumi charges nothing). Plus has one five-hour usage limit shared with other apps, open-source tools included. Pro has no such limit.";
+"ChatGPT プラン" = "ChatGPT plan";
 "ChatGPT プランを使っています" = "You're using your ChatGPT plan";
 "ChatGPT プラン（Sign in with ChatGPT）" = "ChatGPT plan (Sign in with ChatGPT)";
 "Continue with ChatGPT" = "Continue with ChatGPT";
@@ -321,6 +329,7 @@
 "このホスト（設定は agentd、API キーは macOS Keychain）" = "This host (settings in agentd; API keys in the macOS Keychain)";
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）" = "Not available for this model (only models checked against the official documents)";
+"この会話の間" = "For this conversation";
 "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。" = "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).";
 "この呼び出しの環境は記録されていません" = "No environment was recorded for this invocation.";
 "この実行では、この Card はまだ動いていません" = "This Card has not run in this Run yet";
@@ -380,6 +389,7 @@
 "アイコン" = "Icon";
 "アイコンを選ぶ" = "Choose an Icon";
 "アイコンを選ぶ…" = "Choose an Icon…";
+"アクセス" = "Access";
 "アップデート" = "Updates";
 "アップデートを確認…" = "Check for Updates…";
 "アップデートを確認できませんでした" = "Could not check for updates";
@@ -464,6 +474,9 @@
 "サインイン中（プランの利用は未許可）" = "Signed in (plan use not allowed)";
 "サンプルは編集して試せます（保存されません）。Tab はインデント幅の空白を入れます。" = "You can edit the sample to try the settings (not saved). Tab inserts spaces of the indent width.";
 "サービス ID" = "Service ID";
+"シェルコマンドの実行" = "Run shell commands";
+"シェルコマンドを実行" = "Ran a shell command";
+"シェルコマンドを実行しています" = "Running a shell command";
 "システム" = "System";
 "システムに従う" = "System";
 "システムに従う（視差効果を減らす）" = "Follow the system (Reduce motion)";
@@ -526,6 +539,8 @@
 "デモが見つかりません。" = "The demo was not found.";
 "デモの言語が正しくありません。" = "The demo language is invalid.";
 "デモは Documents/Tsugumi に編集可能なコピーとして開きます。同梱の元データは変更されません。" = "Demos open as editable copies in Documents/Tsugumi. The bundled originals are never changed.";
+"デモを一覧" = "Listed demos";
+"デモを一覧しています" = "Listing demos";
 "デモを見せて" = "Show me a demo";
 "デモを見る" = "Browse Demos";
 "デモを見る…" = "Show Demos…";
@@ -557,8 +572,13 @@
 "ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。最大 1 分ごとに再計測します。" = "Build cache uses estimated NAR sizes; scratch sums file sizes without following links. Shared dependencies count in each project, so build sizes do not add up to the total. Measurements refresh once per minute.";
 "ビルドキャッシュまたは実行の scratch が大きくなっています。内容を確認して、削除するものを選んでください。" = "Build cache or run scratch is growing. Review the contents and choose what to delete.";
 "ビルドキャッシュまたは実行の scratch が大きくなっています。設定の「ビルドキャッシュ」で容量と削除対象を確認できます。" = "Build cache or run scratch is growing. Review sizes and deletion candidates in Settings → Build Cache.";
+"ビルドキャッシュを削除" = "Deleted the build cache";
+"ビルドキャッシュを削除しています" = "Deleting the build cache";
 "ビルドキャッシュを削除しますか？" = "Delete the build cache?";
 "ファイル" = "File";
+"ファイル「%@」を読み込めませんでした: %@" = "Could not read file “%@”: %@";
+"ファイルを一覧" = "Listed files";
+"ファイルを一覧しています" = "Listing files";
 "ファイルを作成" = "Create File";
 "ファイルを検索" = "Search files";
 "ファイルを読み込めませんでした" = "Could not read the file";
@@ -590,6 +610,8 @@
 "プロジェクトの環境 %lld 件を削除しました" = "Deleted %lld project environments";
 "プロジェクトの設定" = "Project Settings";
 "プロジェクトへのアクセスは許可されませんでした。" = "Access to the project was not allowed.";
+"プロジェクトを再読込" = "Reloaded the project";
+"プロジェクトを再読込しています" = "Reloading the project";
 "プロジェクトを取り込む" = "Import Project";
 "プロジェクトを複製" = "Duplicate Project";
 "プロジェクトを複製…" = "Duplicate Project…";
@@ -662,6 +684,7 @@
 "今すぐ確認" = "Check Now";
 "今の定義と追加パスの内容に名前を付けて残します（git の tag）。" = "Name the current definitions and additional version paths (a Git tag).";
 "今の定義と追加パスは版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。" = "The current definitions and additional version paths are committed before opening this version. Changing them and running starts a new branch.";
+"今の操作に必要" = "Needed now";
 "今後は確認しない（設定の「API」でいつでも変えられます）" = "Don't ask again (can be changed any time in Settings > API)";
 "他のプロジェクトを取り込む（externals にコピーして Card in Card として置きます）" = "Import another project (copied into externals and placed as a Card in Card)";
 "他の変更と重なり保存できませんでした。変更は保持しています。" = "Could not save: it overlaps other changes. The changes are kept.";
@@ -766,6 +789,8 @@
 "共有 store を掃除…" = "Clean shared store…";
 "内容" = "Content";
 "内容が不明なため、編集・名前変更・保存はできません。\n%@" = "Its contents are unknown, so it cannot be edited, renamed or saved.\n%@";
+"内容の変更" = "Change content";
+"内容の読み取り" = "Read content";
 "内部の接続先: %@.%@" = "Inside it goes to: %@.%@";
 "内部の接続先が未設定です" = "Where it goes inside is not set";
 "再利用" = "Reused";
@@ -788,6 +813,8 @@
 "出力 " = "Output ";
 "出力の型がまだ解決されていません" = "The output's type is not resolved yet";
 "出力はありません" = "No outputs";
+"出力を一覧" = "Listed outputs";
+"出力を一覧しています" = "Listing outputs";
 "出力を切断" = "Disconnect Outputs";
 "出力を検証中" = "Validating outputs";
 "出力を見ています" = "Looking at the outputs";
@@ -834,6 +861,7 @@
 "収集" = "Collect";
 "取り消し確認中" = "Waiting for cancellation";
 "取り消す" = "Undo";
+"取り消すまで" = "Until revoked";
 "取り込む" = "Import";
 "取り込む Tsugumi のプロジェクト（tsugumi.json のあるフォルダ）を選んでください。externals にコピーされ、元のフォルダとは連動しません。" = "Choose a Tsugumi project to import (a folder with tsugumi.json). It is copied into externals and does not follow the original folder.";
 "取り込めませんでした" = "Could not import";
@@ -1086,6 +1114,8 @@
 "控えめ" = "Muted";
 "描く" = "Draw";
 "操作" = "Action";
+"操作の承認" = "Operation approval";
+"操作の承認を待っています" = "Waiting for operation approval";
 "数値計算・最適化" = "Numerics and optimization";
 "整列" = "Arrange";
 "整列（配置だけを変更）" = "Arrange (layout only)";
@@ -1160,6 +1190,8 @@
 "枠を削除（Card は残ります）" = "Remove Frame (the Card stays)";
 "根拠の記録" = "Evidence record";
 "桃" = "Pink";
+"案内を表示" = "Showed guidance";
+"案内を表示しています" = "Showing guidance";
 "検索" = "Search";
 "検索結果を 100 件ずつ表示します。" = "Showing 100 matching paths per page.";
 "検証" = "Validate";
@@ -1194,7 +1226,11 @@
 "版の履歴…" = "Version History…";
 "版の履歴を開く（確定 revision %llu、⌥⌘Y）" = "Open the version history (saved revision %llu, ⌥⌘Y)";
 "版の履歴（git、⌥⌘Y）" = "Version history (git, ⌥⌘Y)";
+"版を切り替えています" = "Switching versions";
+"版を切替" = "Switched versions";
 "版を操作できませんでした" = "The version could not be changed";
+"版を記録" = "Recorded a version";
+"版を記録しています" = "Recording a version";
 "版を選ぶと、その実行の結果と変わった Card を表示します。" = "Select a version to see its runs and the Cards it changed.";
 "版管理されていません" = "Not versioned";
 "版管理を始める" = "Start Versioning";
@@ -1347,6 +1383,8 @@
 "配線の交差を減らす" = "Untangle Wires";
 "配線の交差を減らす（Card の位置は保持）" = "Untangle wires (keep Card positions)";
 "配置されていない定義" = "Definitions not placed";
+"配置を整えています" = "Arranging the layout";
+"配置を整理" = "Arranged the layout";
 "配色" = "Colors";
 "閉じる" = "Close";
 "閉じる（Esc）。ツグミは右下に残ります" = "Close (Esc). Tsugumi stays at the bottom right";

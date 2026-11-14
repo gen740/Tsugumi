@@ -170,6 +170,8 @@ auto CreateConversationTables(sql::Db &db) -> void {
       "TEXT NOT NULL, digest TEXT NOT NULL, state TEXT NOT NULL, result TEXT "
       "NOT NULL, error INTEGER NOT NULL, project TEXT NOT NULL, operation "
       "TEXT NOT NULL, PRIMARY KEY(conversation,id));");
+  db.exec("CREATE TABLE IF NOT EXISTS model_bindings(conversation TEXT PRIMARY KEY, "
+          "provider TEXT NOT NULL, model TEXT NOT NULL, effort TEXT NOT NULL, fast INTEGER NOT NULL)");
   db.exec("CREATE TABLE IF NOT EXISTS helpers(conversation TEXT NOT NULL, "
           "parent_call TEXT NOT NULL, task INTEGER NOT NULL, digest TEXT NOT "
           "NULL, messages TEXT NOT NULL, result TEXT NOT NULL, state TEXT "
@@ -218,6 +220,8 @@ struct Host::State {
         "INTEGER NOT NULL);"
         "CREATE TABLE IF NOT EXISTS providers(conversation TEXT PRIMARY KEY, "
         "json TEXT NOT NULL);");
+    db.exec("CREATE TABLE IF NOT EXISTS access_prompt_items(request TEXT NOT NULL, access INTEGER NOT NULL, "
+            "PRIMARY KEY(request,access))");
     db.exec("CREATE TABLE IF NOT EXISTS operation_approvals("
             "conversation TEXT NOT NULL, call TEXT NOT NULL, digest TEXT NOT NULL, "
             "request TEXT NOT NULL UNIQUE, preview TEXT NOT NULL, "
@@ -373,7 +377,7 @@ struct Host::State {
       const auto endpoint = state.unix_socket.empty() ? state.endpoint : "unix:" + state.unix_socket;
       auto q = db.prepare("INSERT OR REPLACE INTO projects VALUES(?,?,?,?)");
       q.bind(1, state.project_id).bind(2, endpoint).bind(3, state.token)
-          .bind(4, std::filesystem::path(state.project).filename().string()).run();
+          .bind(4, host::ProjectDisplayName(state.project)).run();
       auto path = db.prepare("INSERT OR REPLACE INTO project_paths VALUES(?,?)");
       path.bind(1, state.project_id).bind(2, state.project).run();
       transaction.commit();
@@ -636,9 +640,43 @@ struct Host::State {
     auto q = (id.empty() ? db : ConversationDatabase(id)).prepare("INSERT INTO events(conversation,json) VALUES(?,?)");
     q.bind(1, id).bind(2, raw).run();
   }
+  auto AccessDescription(const std::string& resource, A::Access access,
+                         A::GrantScope scope, const std::string& reason, bool needed = true) -> std::string {
+    if (reason.starts_with("operation_approval\n")) return "project_access " + reason;
+    auto q = db.prepare("SELECT title,coalesce((SELECT path FROM project_paths WHERE id=projects.id),'') "
+                        "FROM projects WHERE id=? UNION ALL SELECT title,path FROM folders WHERE id=?");
+    q.bind(1, resource).bind(2, resource);
+    const bool found = q.step();
+    auto title = found ? q.text(0) : std::string{};
+    auto path = found ? q.text(1) : std::string{};
+    if (!found) {
+      auto stored = db.prepare("SELECT path FROM project_paths WHERE id=?");
+      stored.bind(1, resource);
+      if (stored.step()) path = stored.text(0);
+    }
+    if (title.empty() && !path.empty()) title = host::ProjectDisplayName(path);
+    return "project_access " + json::Encode(json::Members{
+        {"title", json::Quote(title)},
+        {"path", json::Quote(path)},
+        {"access", json::Quote(A::EnumNameAccess(access))},
+        {"scope", json::Quote(A::EnumNameGrantScope(scope))},
+        {"reason", json::Quote(reason)}, {"needed_now", needed ? "true" : "false"}});
+  }
+  auto AccessDescriptions(const std::string& id, const std::string& project,
+                          A::Access needed, A::GrantScope scope,
+                          const std::string& reason) -> std::vector<std::string> {
+    std::vector<std::string> asked{AccessDescription(project, needed, scope, reason)};
+    auto items = db.prepare("SELECT access FROM access_prompt_items WHERE request=? ORDER BY access");
+    items.bind(1, id);
+    while (items.step()) {
+      const auto access = static_cast<A::Access>(items.i64(0));
+      if (access != needed) asked.push_back(AccessDescription(project, access, scope, reason, false));
+    }
+    return asked;
+  }
   auto RequestAccess(const std::string &project,
                      const std::string &conversation, A::Access access,
-                     A::GrantScope scope, const std::string &reason, bool per_call = false)
+                     A::GrantScope scope, const std::string &reason, bool per_call = false, bool combine = false)
       -> std::string {
     if (!per_call && reason.find("operation_approval\n") != std::string::npos)
       throw Failure("invalid_request", "The operation approval marker is reserved for core-generated requests");
@@ -658,6 +696,7 @@ struct Host::State {
         .bind(7, per_call ? 1 : 0);
     if (old.step())
       return old.text(0);
+    sql::Transaction tx(db);
     const auto id = crypto::uuid4();
     auto q = db.prepare(
         "INSERT INTO access_requests VALUES(?,?,?,?,?,?, 'pending')");
@@ -668,15 +707,27 @@ struct Host::State {
         .bind(5, static_cast<int>(scope))
         .bind(6, reason)
         .run();
-    Event(conversation,
-          json::Encode(json::Members{
-              {"kind", json::Quote("permission")},
-              {"id", json::Quote(id)},
-              {"asked",
-               json::Encode(std::vector<std::string>{json::Quote(
-                   "project_access " + std::string(A::EnumNameAccess(access)) +
-                   " [" + A::EnumNameGrantScope(scope) + "] " + project + ": " +
-                   reason)})}}));
+    // Only ordinary project access is bundled. Folder access, shell access and
+    // per-operation approvals retain their own, narrower questions.
+    if (combine && access <= A::Access::Run && !conversation.empty() &&
+        GetConversation(conversation).project == project) {
+      for (const auto candidate : {A::Access::Read, A::Access::Write, A::Access::Run}) {
+        auto asked = db.prepare("SELECT 1 FROM access_requests r JOIN access_prompt_items i ON i.request=r.id "
+                                "WHERE r.project=? AND r.conversation=? AND i.access=? "
+                                "UNION ALL SELECT 1 FROM access_requests WHERE project=? AND conversation=? AND access=?");
+        asked.bind(1, project).bind(2, conversation).bind(3, static_cast<int>(candidate))
+            .bind(4, project).bind(5, conversation).bind(6, static_cast<int>(candidate));
+        if (candidate != access && (HasGrant(project, conversation, candidate) || asked.step())) continue;
+        auto item = db.prepare("INSERT INTO access_prompt_items VALUES(?,?)");
+        item.bind(1, id).bind(2, static_cast<int>(candidate)).run();
+      }
+    }
+    std::vector<std::string> asked;
+    for (const auto& description : AccessDescriptions(id, project, access, scope, reason))
+      asked.push_back(json::Quote(description));
+    tx.commit();
+    Event(conversation, json::Encode(json::Members{
+        {"kind", json::Quote("permission")}, {"id", json::Quote(id)}, {"asked", json::Encode(asked)}}));
     return id;
   }
   auto Require(const std::string &project, const std::string &conversation,
@@ -686,7 +737,7 @@ struct Host::State {
     if (HasGrant(project, conversation, access))
       return;
     const auto id = RequestAccess(project, conversation, access,
-                                  A::GrantScope::Conversation, reason);
+                                  A::GrantScope::Conversation, reason, false, true);
     if (!wait)
       throw Failure("grant_required", "Explicit user permission is required",
                     id);
@@ -959,6 +1010,15 @@ struct Host::State {
     }
     result.project_id = c.project;
     result.event_seq = seq.u64(0);
+    auto binding = ConversationDatabase(c.id).prepare("SELECT provider,model,effort,fast FROM model_bindings WHERE conversation=?");
+    binding.bind(1, c.id);
+    if (binding.step()) {
+      result.model_binding = std::make_unique<A::ModelBindingT>();
+      result.model_binding->provider_id = binding.text(0);
+      result.model_binding->model = binding.text(1);
+      result.model_binding->effort = binding.text(2);
+      result.model_binding->fast = binding.i64(3) != 0;
+    }
     return wire::AgentReply(request_id, std::move(result));
   }
 
@@ -2083,6 +2143,11 @@ struct Host::State {
       }
     }
     sql::Transaction tx(ConversationDatabase(id));
+    auto binding = ConversationDatabase(id).prepare("INSERT OR REPLACE INTO model_bindings VALUES(?,?,?,?,?)");
+    binding.bind(1, id)
+        .bind(2, config.auth == ProviderAuth::ChatGPT ? "chatgpt" : config.auth == ProviderAuth::None ? "fixture" :
+                 config.api == ProviderAPI::OpenAIResponses ? "openai" : "anthropic")
+        .bind(3, config.model).bind(4, config.effort).bind(5, config.fast ? 1 : 0).run();
     SaveMessages(id, messages);
     if (!turn.empty()) {
       auto q = ConversationDatabase(id).prepare("INSERT INTO turns VALUES(?,?,?,'running',?,'{}')");
@@ -2311,6 +2376,9 @@ struct Host::State {
       // for a deleted ID that a new conversation could reuse.
       {
         sql::Transaction tx(db);
+        auto prompts = db.prepare("DELETE FROM access_prompt_items WHERE request IN "
+                                  "(SELECT id FROM access_requests WHERE conversation=?)");
+        prompts.bind(1, id).run();
         for (const auto *table :
              {"providers", "skill_catalogs", "operation_approvals",
               "access_requests", "grants"}) {
@@ -2323,7 +2391,7 @@ struct Host::State {
       {
         sql::Transaction tx(store);
         for (const auto *table :
-             {"events", "receipts", "turns", "archives", "usage",
+             {"events", "receipts", "turns", "model_bindings", "archives", "usage",
               "conversation_resources", "helpers", "pending_sends"}) {
           auto q = store.prepare(std::string("DELETE FROM ") + table +
                                  " WHERE conversation=?");
@@ -2574,16 +2642,32 @@ struct Host::State {
             .bind(4, q.i64(2))
             .run();
       }
+      std::set<A::Access> offered;
+      auto items = db.prepare("SELECT access FROM access_prompt_items WHERE request=?");
+      items.bind(1, p->request_id()->str());
+      while (items.step()) offered.insert(static_cast<A::Access>(items.i64(0)));
+      if (p->also_allow()) {
+        for (const auto access : *p->also_allow()) {
+          if (per_call || access == static_cast<A::Access>(q.i64(2)) || !offered.contains(access))
+            throw Failure("invalid_request", "Only other accesses listed in this prompt can be allowed");
+        }
+        std::set<A::Access> allowed(p->also_allow()->begin(), p->also_allow()->end());
+        for (const auto access : allowed) {
+          auto grant = db.prepare("INSERT INTO grants VALUES(?,?,?,?,1)");
+          grant.bind(1, crypto::uuid4()).bind(2, q.text(0))
+              .bind(3, q.i64(3) == 1 ? "" : q.text(1)).bind(4, static_cast<int>(access)).run();
+        }
+      }
       auto update = db.prepare("UPDATE access_requests SET state=? WHERE id=?");
       update.bind(1, p->allow() ? "allowed" : "denied")
           .bind(2, p->request_id()->str())
           .run();
+      tx.commit();
       Event(q.text(1), json::Encode(json::Members{
                            {"kind", json::Quote("permissionAnswered")},
                            {"id", json::Quote(p->request_id()->str())},
                            {"ok", p->allow() ? "true" : "false"},
                            {"text", json::Quote(p->allow() ? "Approved this request" : "Declined; nothing changed")}}));
-      tx.commit();
       changed.notify_all();
       return wire::AgentReply(request.request_id, S::AcknowledgementT{});
     }
@@ -2635,6 +2719,7 @@ struct Host::State {
         entry->scope = static_cast<A::GrantScope>(q.i64(4));
         entry->reason = q.text(5);
         entry->state = q.text(6);
+        entry->asked = AccessDescriptions(entry->id, entry->project_id, entry->access, entry->scope, entry->reason);
         result.requests.push_back(std::move(entry));
       }
       auto g =
@@ -2817,8 +2902,16 @@ struct Host::State {
       lock.unlock();
       auto reply = host_settings->Handle(*r, request.request_id);
       if (r->value_type() == H::RequestPayload::SettingsUpdateRequest) {
+        const auto* result = H::GetMessage(reply.data())->payload_as_Reply();
+        const auto* snapshot = result ? result->value_as_Settings() : nullptr;
         lock.lock();
         helpers_changed.notify_all();
+        if (snapshot) {
+          H::SettingsChangedT changed;
+          changed.profile = r->value_as_SettingsUpdateRequest()->profile()->str();
+          changed.revision = snapshot->revision();
+          HostEvent(wire::HostEvent(std::move(changed)));
+        }
       }
       return reply;
     }

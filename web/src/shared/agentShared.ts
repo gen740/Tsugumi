@@ -2,6 +2,22 @@
 // requests offered as tools, the fields the Agent fills itself, its own
 // reference tool and model options.
 import shared from '../../../agent/Shared/agent.json'
+import { L as localize } from '../i18n'
+
+export function projectAccessNeededNow(request: string): boolean {
+  try { return JSON.parse(request.slice('project_access '.length)).needed_now !== false } catch { return true }
+}
+
+/** Core supplies this description identically for live and restored requests. */
+export function projectAccessLabel(request: string, L = localize): string {
+  try {
+    const v = JSON.parse(request.slice('project_access '.length))
+    const actions: Record<string, string> = { Read: L('内容の読み取り'), Write: L('内容の変更'), Run: L('Card の実行'),
+      CardPermissions: L('Card の権限の変更'), Shell: L('シェルコマンドの実行') }
+    return L('{0}\n{1}\n許可する操作: {2}\n有効期間: {3}', v.title, v.path, actions[v.access] ?? L('アクセス'),
+      v.scope === 'Server' ? L('取り消すまで') : L('この会話の間'))
+  } catch { return request }
+}
 
 export const AGENT = shared
 
