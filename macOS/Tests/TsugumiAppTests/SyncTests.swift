@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TsugumiAgentClient
 @testable import TsugumiApp
 @testable import TsugumiLauncher
 @testable import TsugumiRPC
@@ -146,9 +147,8 @@ import Testing
     #expect(s.connectionFailed, "\(s.connectionMessage ?? "")")
   }
 
-  /// The Agent's rename and delete send no layout: the Card stays where it was
-  /// under its new name, and the frame of a deleted Card does not come back on
-  /// a new Card of that name.
+  /// A rename leaves layout unchanged; the saving client cleans deleted references.
+  /// A deleted Card's frame does not come back on a new Card of that name.
   @Test func anAgentRenameKeepsThePlaceFrameAndGroup() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
@@ -186,8 +186,9 @@ import Testing
     var left = try JSONValue.parse(again.projectJson)
     let kept = (left["canvas"]?["cards"]?.array ?? []).filter { $0["id"]?.string != "b" }
     left["canvas"]?["cards"] = .array(kept)
+    let cleaned = try await CoreAgentClient.shared.validateLayout(again.layoutJson, removedCards: ["b"])
     _ = try await s.rpc!.save(baseRev: again.rev ?? 0, opId: UUID(), origin: "agent",
-                              changes: [Change.setProject(left.serialized()), Change.removeDefinition(id: "b")])
+                              changes: [Change.setProject(left.serialized()), Change.removeDefinition(id: "b"), Change.setLayout(cleaned)])
     for _ in 0..<200 where s.resolution[renamed] != nil { try await Task.sleep(for: .milliseconds(25)) }
     #expect(s.layout["cards"]?["b"] == nil && s.layout["displays"]?["b"] == nil)
     #expect(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.map(\.string) == ["a"])
@@ -211,7 +212,7 @@ import Testing
   }
 
   /// A frame still drawn beside its Card has no place of its own yet. Arrange gives it
-  /// the whole frame, or the core refuses the layout and nothing can be saved.
+  /// the whole frame, or the host rejects the layout and nothing can be saved.
   @Test func arrangingAFrameWithoutAPlaceCanBeSaved() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
@@ -253,7 +254,7 @@ import Testing
     await s.save()
     #expect(!s.dirty, "\(s.saveError ?? "")")
 
-    // A layout the core refuses, however it came to be.
+    // A layout the host rejects, however it came to be.
     s.edit { $0.updateLayout(of: []) { l in l["displays"] = .object([("b", .object([("x", .real(1))]))]) } }
     await s.save()
     #expect(s.saveError?.contains("display b") == true, "\(s.saveError ?? "")")

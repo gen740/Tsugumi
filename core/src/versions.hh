@@ -49,15 +49,12 @@ struct VersionCommit {
 struct VersionCanvasData {
   struct Card {
     std::string id;
-    double x = 0;
-    double y = 0;
     std::string kind = "code";
     uint32_t fan = 0;  // a fork's outputs or a merge's inputs
-    bool collapsed = false;
   };
   std::vector<Card> cards;
   std::vector<std::pair<std::string, std::string>> wires;  // from, to
-  std::string flow = "leftToRight";
+  std::string layout_json = "{}";
 };
 
 struct VersionNoteData {
@@ -102,8 +99,7 @@ class Versions {
   // commit starts a branch. `english`: the language of that first commit's message.
   void checkout(const std::string& commit, bool english);
   VersionGraphData graph(size_t limit);
-  // The Cards of `commit`: saved positions, or columns by depth when a Card
-  // has none. No Cards when its documents cannot be read.
+  // Raw layout and definition data of `commit`, without presentation logic.
   VersionCanvasData canvas(const std::string& commit);
   // What `commit` changed from from_commit, or its first parent when omitted:
   // the files a summary may read (summary_reads), cut at a limit.

@@ -1,3 +1,4 @@
+import { H } from '../shared/hostLayout'
 // The project's versions as a tree (core/src/versions.cc): each commit with its
 // branches, tags, runs (from its note) and changed Cards; hovering one shows
 // what it changed and a minimap of its Cards. A version can be named, and the
@@ -109,8 +110,8 @@ const MAP_W = 284
 const MAP_H = 132
 
 /** A version's Cards and how they connect; those it changed stand out. */
-function MiniMap({ canvas, changed }: { canvas: R.VersionCanvasT; changed: string[] }) {
-  const cards = canvas.cards.filter((c): c is R.VersionCanvasCardT => !!c)
+function MiniMap({ canvas, changed }: { canvas: H.VersionCanvasT; changed: string[] }) {
+  const cards = canvas.cards.filter((c): c is H.VersionCanvasCardT => !!c)
     .map((c) => ({ id: str(c.id), x: c.x, y: c.y, kind: cardKindNamed(str(c.kind)), fan: c.fan, collapsed: c.collapsed }))
   const map = miniMapLayout(cards, str(canvas.flow) === 'topToBottom' ? 'topToBottom' : 'leftToRight', MAP_W, MAP_H)
   const at = new Map(map.cards.map((c) => [c.id, c]))

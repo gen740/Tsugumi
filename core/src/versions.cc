@@ -665,6 +665,7 @@ VersionCanvasData Versions::canvas(const std::string& commit) {
   Tree tree;
   if (git_commit_lookup(c.out(), r.get(), &oid) != 0 || git_commit_tree(tree.out(), c.get()) != 0)
     throw Failed(FailureKind::not_found, "no version " + commit);
+  out.layout_json = file_at(r.get(), tree.get(), "layout.json").value_or("{}");
   auto text = file_at(r.get(), tree.get(), "tsugumi.json");
   schema::Project project;
   if (!text || schema::decode(*text, project)) return out;
@@ -686,50 +687,6 @@ VersionCanvasData Versions::canvas(const std::string& commit) {
       const auto* b = to ? schema::get(to->card) : nullptr;
       if (a && b && index.count(*a) && index.count(*b)) out.wires.emplace_back(*a, *b);
     }
-  // Saved positions, when every Card has one.
-  std::map<std::string, schema::Position> saved;
-  schema::Layout layout;
-  auto layout_text = file_at(r.get(), tree.get(), "layout.json");
-  if (layout_text && !schema::decode(*layout_text, layout))
-    if (const auto* positions = schema::get(layout.cards))
-      for (const auto& [key, position] : positions->entries())
-        if (schema::get(position.x) && schema::get(position.y)) saved[key] = position;
-  bool placed = !out.cards.empty();
-  for (const auto& card : out.cards) placed = placed && saved.count(card.id);
-  if (placed) {
-    for (auto& card : out.cards) {
-      const auto& position = saved[card.id];
-      card.x = *schema::get(position.x);
-      card.y = *schema::get(position.y);
-      const auto* collapsed = schema::get(position.collapsed);
-      card.collapsed = collapsed && *collapsed;
-    }
-    // The saved direction; without one, read from where the wired Cards sit,
-    // as the clients do for the canvas.
-    const auto* flow = schema::get(layout.flow);
-    if (flow && (*flow == "topToBottom" || *flow == "leftToRight")) {
-      out.flow = *flow;
-    } else {
-      double across = 0;
-      double down = 0;
-      for (const auto& [a, b] : out.wires) {
-        across += std::abs(out.cards[index[b]].x - out.cards[index[a]].x);
-        down += std::abs(out.cards[index[b]].y - out.cards[index[a]].y);
-      }
-      if (down > 0 && down >= across) out.flow = "topToBottom";
-    }
-    return out;
-  }
-  // Columns by depth (a wire back in a loop does not push a Card further).
-  std::vector<size_t> depth(out.cards.size(), 0);
-  for (size_t round = 0; round < out.cards.size(); ++round)
-    for (const auto& [a, b] : out.wires)
-      depth[index[b]] = std::max(depth[index[b]], std::min(depth[index[a]] + 1, out.cards.size() - 1));
-  std::map<size_t, int> rows;
-  for (size_t i = 0; i < out.cards.size(); ++i) {
-    out.cards[i].x = static_cast<double>(depth[i]) * 300;
-    out.cards[i].y = rows[depth[i]]++ * 120.0;
-  }
   return out;
 }
 

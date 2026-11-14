@@ -57,7 +57,6 @@ struct Document {
   std::string execution_fingerprint;
   schema::Project project;
   std::string project_json;
-  schema::Layout layout;
   std::string layout_json;
   std::map<std::string, DefinitionDoc> definitions;
   std::map<std::string, SourceEntry> sources;  // relative path -> entry
@@ -94,10 +93,7 @@ class DocumentError : public std::runtime_error {
 // Strictly decodes and shape-checks one document part. Throws
 // DocumentError(invalid_document) with the byte offset on errors.
 schema::Project parse_project_json(const std::string& text);
-schema::Layout parse_layout_json(const std::string& text);
-// Drops positions, frames and group entries for Cards removed from the root canvas.
-// Returns the original text unchanged when none of those Cards is named.
-std::string layout_without_cards(const std::string& text, const std::set<std::string>& gone);
+auto check_opaque_layout(const std::string& text) -> void;
 schema::CardDefinition parse_card_json(const std::string& id, const std::string& text);
 schema::CardMeta parse_meta_json(const std::string& text);
 // _meta.json with its empty description and context filled; what has text stays as it is.

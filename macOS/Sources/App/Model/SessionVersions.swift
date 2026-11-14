@@ -13,7 +13,18 @@ extension ProjectSession {
 
   func loadVersionCanvas(_ commit: String) async {
     guard let rpc, versionCanvases[commit] == nil else { return }
-    if let canvas = try? await rpc.versionCanvas(commit: commit) { versionCanvases[commit] = canvas }
+    do {
+      let raw = try await rpc.versionCanvas(commit: commit)
+      let request = Tsugumi_Host_VersionCanvasRequestT()
+      request.layoutJson = raw.layoutJson
+      request.cards = raw.cards.compactMap { c in c.map { c in
+        let value = Tsugumi_Host_VersionCanvasCardT(); value.id = c.id; value.kind = c.kind; value.fan = c.fan; return value
+      } }
+      request.wires = raw.wires.compactMap { w in w.map { w in
+        let value = Tsugumi_Host_VersionCanvasWireT(); value.from = w.from; value.to = w.to; return value
+      } }
+      versionCanvases[commit] = try await CoreAgentClient.shared.layoutCall(.versioncanvasrequest, request)
+    } catch { notice = String(describing: error) }
   }
 
   /// Ask agentd for the note to display. It owns policy, generation and storage.

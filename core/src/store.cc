@@ -512,7 +512,7 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
         break;
       case K::SetLayout:
         wrap([&] {
-          doc->layout = parse_layout_json(c.json);
+          check_opaque_layout(c.json);
           doc->layout_json = c.json;
         });
         break;
@@ -632,25 +632,6 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes, const std::stri
                    path + " belongs to definition " + id + " which does not exist", {{"path", path}});
   }
   wrap([&] { check_structure(*doc); });
-
-  // Removing a Card also removes its layout entries.
-  {
-    std::set<std::string> on_canvas;
-    for (const auto& card : doc->project.canvas->value().cards->value()) on_canvas.insert(card.id->value());
-    std::set<std::string> gone;
-    for (const auto& card : base->project.canvas->value().cards->value()) {
-      const auto& id = card.id->value();
-      if (!on_canvas.count(id)) gone.insert(id);
-    }
-    if (!gone.empty())
-      wrap([&] {
-        auto followed = layout_without_cards(doc->layout_json, gone);
-        if (followed != doc->layout_json) {
-          doc->layout = parse_layout_json(followed);
-          doc->layout_json = std::move(followed);
-        }
-      });
-  }
 
   size_t json_bytes = doc->project_json.size() + doc->layout_json.size();
   for (const auto& [_, d] : doc->definitions)

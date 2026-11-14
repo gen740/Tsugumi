@@ -1,3 +1,4 @@
+import TsugumiAgentClient
 import AppKit
 import FlatBuffers
 import Foundation
@@ -199,7 +200,7 @@ extension ProjectSession {
   }
 
   /// A new Card's name can be one a Card had: nothing of that Card stays with it.
-  /// The core removes this project's layout entries on deletion, but a Card
+  /// The saving client removes layout entries on deletion; a Card
   /// in Card's layout or a file written by hand can still hold a frame.
   private func startClean(_ k: CardKey) {
     forgetResult(k)
@@ -209,11 +210,12 @@ extension ProjectSession {
   /// The Card's place and frame (and the places of anything inside it).
   private func dropLayoutEntries(of k: CardKey, from l: inout JSONValue) {
     let lk = layoutKey(k)
-    if var cards = l["cards"]?.object {
-      cards.removeAll { $0.0 == lk || $0.0.hasPrefix(lk + "/") }
-      l["cards"] = .object(cards)
+    for field in ["cards", "displays", "boundaries"] {
+      if let entries = l[field]?.object {
+        l[field] = .object(entries.filter { $0.0 != lk && !$0.0.hasPrefix(lk + "/") })
+      }
     }
-    l["displays"]?[lk] = nil
+
   }
 
   /// A new Card from a template, with its own definition folder.
@@ -608,6 +610,9 @@ extension ProjectSession {
     s.updateGroups(in: scope) { groups in
       for i in groups.indices {
         groups[i]["cards"] = .array((groups[i]["cards"]?.array ?? []).filter { !ids.contains($0.string ?? "") })
+        if let outputs = groups[i]["outputs"]?.array {
+          groups[i]["outputs"] = .array(outputs.filter { !ids.contains($0["card"]?.string ?? "") })
+        }
       }
     }
   }
@@ -937,6 +942,9 @@ extension ProjectSession {
       s.updateGroups(in: scope) { groups in
         for i in groups.indices {
           groups[i]["cards"] = .array((groups[i]["cards"]?.array ?? []).filter { !ids.contains($0.string ?? "") })
+        if let outputs = groups[i]["outputs"]?.array {
+          groups[i]["outputs"] = .array(outputs.filter { !ids.contains($0["card"]?.string ?? "") })
+        }
         }
       }
     }
@@ -1170,7 +1178,7 @@ extension ProjectSession {
     }
   }
 
-  /// The core proposes the layout; it is saved as one ordinary edit with undo.
+  /// The host proposes the layout; it is saved as one ordinary edit with undo.
   func arrange(_ scope: [String]) async {
     let scene = layoutScene(scope)
     guard let placed = await proposed(scope, scene: scene, arrange: true) else { return }
@@ -1178,23 +1186,23 @@ extension ProjectSession {
   }
 
   /// Measurements only. Geometry and saved port order belong to presentation;
-  /// all decisions that rewrite the layout are made by the project core.
-  func layoutScene(_ scope: [String]) -> Tsugumi_RPC_LayoutSceneT {
-    let scene = Tsugumi_RPC_LayoutSceneT()
+  /// all decisions that rewrite the layout are made by the host service.
+  func layoutScene(_ scope: [String]) -> Tsugumi_Host_LayoutSceneT {
+    let scene = Tsugumi_Host_LayoutSceneT()
     scene.flow = flow.rawValue
     scene.grid = AppPreferences.shared.gridSize
     scene.snap = AppPreferences.shared.showGrid
     let ids = cards(in: scope).compactMap { $0["id"]?.string }
     scene.cards = ids.map { id in
       let k = key(scope + [id]), g = geometry(k), at = placedPosition(k)
-      func ports(_ names: [String], output: Bool) -> [Tsugumi_RPC_LayoutPortT?] {
+      func ports(_ names: [String], output: Bool) -> [Tsugumi_Host_LayoutPortT?] {
         names.map { name in
-          let p = g.port(name, output: output), v = Tsugumi_RPC_LayoutPortT()
+          let p = g.port(name, output: output), v = Tsugumi_Host_LayoutPortT()
           v.name = name; v.x = p.x; v.y = p.y
           return v
         }
       }
-      let c = Tsugumi_RPC_LayoutCardT()
+      let c = Tsugumi_Host_LayoutCardT()
       c.id = id; c.x = at.x; c.y = at.y; c.width = g.size.width; c.height = g.size.height
       c.inputs = ports(g.inputs, output: false); c.outputs = ports(g.outputs, output: true)
       c.reorderable = [.code, .draft, .input, .subgraph].contains(kind(k))
@@ -1203,27 +1211,27 @@ extension ProjectSession {
     scene.wires = connections(in: scope).compactMap { c in
       guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string,
             let t = c["to"]?["card"]?.string, let tp = c["to"]?["port"]?.string else { return nil }
-      let w = Tsugumi_RPC_LayoutWireT()
+      let w = Tsugumi_Host_LayoutWireT()
       w.from = f; w.fromPort = fp; w.to = t; w.toPort = tp
       return w
     }
     scene.frames = framedCards(in: scope).map { k in
-      let r = displayRect(k, origin: placedPosition(k)), b = Tsugumi_RPC_LayoutBoxT()
+      let r = displayRect(k, origin: placedPosition(k)), b = Tsugumi_Host_LayoutBoxT()
       b.id = path(k).last!; b.x = r.minX; b.y = r.minY; b.width = r.width; b.height = r.height
       return b
     }
     scene.notes = notes(in: scope).compactMap { n in
       guard let id = n["id"]?.string else { return nil }
-      let b = Tsugumi_RPC_LayoutBoxT()
+      let b = Tsugumi_Host_LayoutBoxT()
       b.id = id; b.x = n["x"]?.double ?? 0; b.y = n["y"]?.double ?? 0
       b.width = n["width"]?.double ?? 240; b.height = n["height"]?.double ?? 120
       return b
     }
-    func bar(_ side: String) -> Tsugumi_RPC_LayoutBarT? {
+    func bar(_ side: String) -> Tsugumi_Host_LayoutBarT? {
       guard !scope.isEmpty else { return nil }
-      let b = Tsugumi_RPC_LayoutBarT()
+      let b = Tsugumi_Host_LayoutBarT()
       b.ends = (boundary(key(scope))?[side]?.object ?? []).map { name, endpoint in
-        let e = Tsugumi_RPC_LayoutBarEndT()
+        let e = Tsugumi_Host_LayoutBarEndT()
         e.name = name; e.card = endpoint["card"]?.string ?? ""; e.port = endpoint["port"]?.string ?? ""
         return e
       }
@@ -1235,20 +1243,27 @@ extension ProjectSession {
     return scene
   }
 
-  private func sceneBytes(_ scene: Tsugumi_RPC_LayoutSceneT) -> Data {
+  private func sceneBytes(_ scene: Tsugumi_Host_LayoutSceneT) -> Data {
     var builder = FlatBufferBuilder(initialSize: 1024)
     var scene = scene
-    let offset = Tsugumi_RPC_LayoutScene.pack(&builder, obj: &scene)
+    let offset = Tsugumi_Host_LayoutScene.pack(&builder, obj: &scene)
     builder.finish(offset: offset)
     return builder.data
   }
 
-  private func proposed(_ scope: [String], scene: Tsugumi_RPC_LayoutSceneT, arrange: Bool,
-                        around: [String] = []) async -> Tsugumi_RPC_LayoutProposalT? {
+  private func proposed(_ scope: [String], scene: Tsugumi_Host_LayoutSceneT, arrange: Bool,
+                        around: [String] = []) async -> Tsugumi_Host_LayoutProposalT? {
     guard let client = rpc else { return nil }
     let before = docState(), bytes = sceneBytes(scene), step = undoStack.last
     do {
-      let result = try await (arrange ? client.layoutArrange(scene) : client.layoutUntangle(scene, around: around))
+      let result: Tsugumi_Host_LayoutProposalT
+      if arrange {
+        let request = Tsugumi_Host_LayoutArrangeRequestT(); request.scene = scene
+        result = try await CoreAgentClient.shared.layoutCall(.layoutarrangerequest, request)
+      } else {
+        let request = Tsugumi_Host_LayoutUntangleRequestT(); request.scene = scene; request.around = around.map(Optional.some)
+        result = try await CoreAgentClient.shared.layoutCall(.layoutuntanglerequest, request)
+      }
       // Undo, another edit, reconnect or changed measurements invalidate the proposal.
       guard rpc === client, docState() == before, undoStack.last === step,
             sceneBytes(layoutScene(scope)) == bytes else { return nil }
@@ -1259,7 +1274,7 @@ extension ProjectSession {
     }
   }
 
-  private func applyArranged(_ scope: [String], scene: Tsugumi_RPC_LayoutSceneT, placed: Tsugumi_RPC_LayoutProposalT) {
+  private func applyArranged(_ scope: [String], scene: Tsugumi_Host_LayoutSceneT, placed: Tsugumi_Host_LayoutProposalT) {
     for c in placed.cards.compactMap({ $0 }) { setPosition(key(scope + [c.id]), CGPoint(x: c.x, y: c.y)) }
     applyPortOrders(scope, placed.portOrders.compactMap { $0 })
     updateLayout(of: scope) { l in
@@ -1334,7 +1349,7 @@ extension ProjectSession {
     }
   }
 
-  private func applyPortOrders(_ scope: [String], _ orders: [Tsugumi_RPC_LayoutPortOrderT]) {
+  private func applyPortOrders(_ scope: [String], _ orders: [Tsugumi_Host_LayoutPortOrderT]) {
     for order in orders {
       let k = key(scope + [order.id])
       let at = position(k)

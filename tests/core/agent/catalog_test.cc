@@ -62,6 +62,8 @@ TEST(AgentCatalog, ExposesExactlyTheSharedRequestList) {
   std::set<std::string> expected;
   for (const auto &entry : json::Array(json::Get(settings, "requests")))
     ASSERT_TRUE(expected.insert(json::String(entry)).second);
+  for (const auto& entry : json::Array(json::Get(settings, "hostRequests")))
+    ASSERT_TRUE(expected.insert(json::String(entry)).second);
   std::set<std::string> approval;
   for (const auto &entry :
        json::Array(json::Get(settings, "approvalRequests"))) {

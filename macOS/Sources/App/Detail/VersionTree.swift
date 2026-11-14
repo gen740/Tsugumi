@@ -116,7 +116,7 @@ struct VersionMiniMapLayout {
 
 /// A version's Cards and how they connect; those it changed stand out.
 struct VersionMiniMap: View {
-  let canvas: Tsugumi_RPC_VersionCanvasT
+  let canvas: Tsugumi_Host_VersionCanvasT
   let changed: [String]
   static let width = 284.0
   static let maxHeight = 132.0

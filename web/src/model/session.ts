@@ -1,3 +1,5 @@
+import { readViewState, writeViewState } from '../shared/clientViewState'
+import { layoutHost, H } from '../shared/hostLayout'
 import { RevisionEdit } from '../ui/revisionEdit'
 import { registerModuleClient, ModuleBlobs } from './moduleSources'
 import { GO_SCAFFOLD } from './go-scaffold'
@@ -933,10 +935,11 @@ export class ProjectSession extends Observable {
     if (this.currentRunId !== sOpt(snap.run?.runId)) this.runBatches = new Map()
     this.runStatus = snap.run ?? undefined
     this.viewRev = snap.viewRev ?? 0n
-    if (snap.view) {
-      this.initialScope = segs(snap.view.scope)
-      for (const cam of snap.view.cameras) this.cameras.set(key(segs(cam.scope)), { x: cam.x ?? 0, y: cam.y ?? 0, zoom: cam.zoom ?? 1 })
-      this.initialSelection = new Set(snap.view.selectedCards.map((p) => key(segs(p))))
+    const view = readViewState(s(snap.viewJson))
+    if (view) {
+      this.initialScope = view.scope
+      for (const cam of view.cameras) this.cameras.set(key(cam.scope), { x: cam.x, y: cam.y, zoom: cam.zoom })
+      this.initialSelection = new Set(view.selected_cards.map(key))
     }
     if (resetDraft) {
       this.project = clone(this.confirmedProject)
@@ -1613,10 +1616,33 @@ export class ProjectSession extends Observable {
 
   /** The shared settings/canvas entry to ProjectSave; keeps the caller's revision. */
   private async commitChanges(baseRev: bigint, op: string, changes: R.DocumentChangeT[], editor = false) {
-    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
+    const client = this.client
+    if (!client) throw new RPCError('disconnected', L('接続していません'))
     if (!editor) this.canvasSaveOp = op
     try {
-      const result = await this.client.save(baseRev, op, this.origin, changes)
+      const projectChange = changes.find(c => c.valueType === R.DocumentChangeValue.SetProject)?.value as R.SetProjectT | undefined
+      const layoutChange = changes.find(c => c.valueType === R.DocumentChangeValue.SetLayout)?.value as R.SetLayoutT | undefined
+      const ids = (project: J) => new Set((arr(get(project, 'canvas', 'cards')) ?? []).map(c => str(get(c, 'id'))))
+      const next = projectChange ? tryParse(s(projectChange.json)) : undefined
+      const nextIds = next ? ids(next) : undefined
+      const removed = nextIds ? [...ids(this.confirmedProject)].filter((id): id is string => !!id && !nextIds.has(id)) : []
+      if (removed.length) {
+        const original = layoutChange ? s(layoutChange.json) : serialize(this.confirmedLayout)
+        const cleaned = await this.layoutHost.validate(original, removed)
+        if (layoutChange) layoutChange.json = cleaned
+        else changes = [...changes, Change.setLayout(cleaned)]
+      }
+      for (const change of changes) {
+        if (change.valueType === R.DocumentChangeValue.SetLayout) {
+          const value = change.value as R.SetLayoutT
+          await this.layoutHost.validate(s(value.json))
+        } else if (change.valueType === R.DocumentChangeValue.PutSource) {
+          const value = change.value as R.PutSourceT
+          if (/^(?:externals\/[^/]+\/)+layout\.json$/.test(s(value.path))) await this.layoutHost.validate(new TextDecoder().decode(new Uint8Array(value.bytes)))
+        }
+      }
+      if (this.client !== client) throw new RPCError('disconnected', L('接続していません'))
+      const result = await client.save(baseRev, op, this.origin, changes)
       if (result.delta) {
         if (editor) this.applyDelta(result.delta)
         else this.applyDeltaFromSave(result.delta)
@@ -1754,11 +1780,10 @@ export class ProjectSession extends Observable {
     this.viewSaveTimer = setTimeout(async () => {
       const client = this.client
       if (!client) return
-      const v = new R.ViewStateT(
-        cardPath(scope),
-        [...this.cameras].map(([k, c]) => new R.CameraT(cardPath(path(k)), c.x, c.y, c.zoom)),
-        [...selection].sort().map((k) => cardPath(path(k))),
-      )
+      const v = writeViewState({ scope,
+        cameras: [...this.cameras].map(([k, c]) => ({ scope: path(k), ...c })),
+        selected_cards: [...selection].sort().map(path),
+      })
       try {
         const r = await client.saveView(this.viewId, this.viewRev, v)
         this.viewRev = r.viewRev ?? this.viewRev
@@ -2258,7 +2283,7 @@ export class ProjectSession extends Observable {
   }
 
   /** A new Card's name can be one a Card had: nothing of that Card stays with it.
-   *  The core removes this project's layout entries on deletion, but a Card
+   *  The saving client removes layout entries on deletion; a Card
    *  in Card's layout or a file written by hand can still hold a frame. */
   private startClean(k: CardKey) {
     this.displays.delete(k)
@@ -2269,10 +2294,11 @@ export class ProjectSession extends Observable {
   /** The Card's place and frame (and the places of anything inside it). */
   private dropLayoutEntries(k: CardKey, l: JObj) {
     const lk = this.layoutKey(k)
-    const cards = l.get('cards')
-    if (isObj(cards)) for (const kk of cards.keys()) if (kk === lk || kk.startsWith(lk + '/')) cards.set(kk, undefined)
-    const displays = l.get('displays')
-    if (isObj(displays)) displays.set(lk, undefined)
+    for (const field of ['cards', 'displays', 'boundaries']) {
+      const entries = l.get(field)
+      if (isObj(entries)) for (const kk of entries.keys()) if (kk === lk || kk.startsWith(lk + '/')) entries.set(kk, undefined)
+    }
+
   }
 
   /** A new Card from a template, with its own definition folder. `place` says
@@ -2611,7 +2637,10 @@ export class ProjectSession extends Observable {
       for (const k of keys) x.dropLayoutEntries(k, l)
     })
     x.updateGroups(scope, (groups) => {
-      for (const g of groups) if (isObj(g)) g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(c) ?? '')))
+      for (const g of groups) if (isObj(g)) {
+        g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(c) ?? '')))
+        if (g.get('outputs')) g.set('outputs', (arr(g.get('outputs')) ?? []).filter(c => !ids.has(str(get(c, 'card')) ?? '')))
+      }
     })
   }
 
@@ -2932,7 +2961,10 @@ export class ProjectSession extends Observable {
       })
       x.setPosition(newKey, { x: cx, y: cy })
       x.updateGroups(scope, (groups) => {
-        for (const g of groups) if (isObj(g)) g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(c) ?? '')))
+        for (const g of groups) if (isObj(g)) {
+        g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(c) ?? '')))
+        if (g.get('outputs')) g.set('outputs', (arr(g.get('outputs')) ?? []).filter(c => !ids.has(str(get(c, 'card')) ?? '')))
+      }
       })
     })
     return newKey
@@ -3118,16 +3150,18 @@ export class ProjectSession extends Observable {
   }
 
   /** Lays out a scope's Cards, output frames and notes (layout only, one undo).
-   *  tsugumid works the layout out (LayoutArrange) from what the canvas draws:
+   *  tsugumi-agentd works the layout out (LayoutArrange) from what the canvas draws:
    *  Cards are placed, ports then take the order that crosses fewer wires, and
    *  the Cards are placed once more for that order. */
+  layoutHost = layoutHost
+
   async arrange(scope: string[]) {
     const scene = this.layoutScene(scope)
     const placed = await this.proposed(scope, scene, (c) => c.layoutArrange(scene))
     if (placed) this.edit((x) => x.applyArranged(scope, scene, placed))
   }
 
-  /** What the canvas draws in a scope, for tsugumid to lay out. Sizes and port
+  /** What the canvas draws in a scope, for tsugumi-agentd to lay out. Sizes and port
    *  positions are those of `CardGeometry`, and Cards are where they are drawn. */
   layoutScene(scope: string[]): LayoutScene {
     const ids = this.cards(scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x)
@@ -3165,16 +3199,17 @@ export class ProjectSession extends Observable {
     return { flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, frames, notes, inputs: bar('inputs'), outputs: bar('outputs') }
   }
 
-  /** Asks tsugumid for a layout. Nothing is saved by asking: what it proposes
+  /** Asks tsugumi-agentd for a layout. Nothing is saved by asking: what it proposes
    *  becomes an edit here, saved and undone like any other. */
-  private async proposed(scope: string[], scene: LayoutScene, ask: (c: RPCClient) => Promise<LayoutProposal>): Promise<LayoutProposal | undefined> {
+  private async proposed(scope: string[], scene: LayoutScene, ask: (c: typeof layoutHost) => Promise<LayoutProposal>): Promise<LayoutProposal | undefined> {
     const client = this.client
     if (!client) return undefined
     const before = this.snapshot(), measured = JSON.stringify(scene), step = this.undoStack.at(-1)
     try {
-      const proposal = await ask(client)
+      const host = this.layoutHost
+      const proposal = await ask(host)
       // Undo, another edit, reconnect or changed measurements invalidate it.
-      return this.client === client && snapEq(before, this.snapshot()) && this.undoStack.at(-1) === step &&
+      return this.client === client && this.layoutHost === host && snapEq(before, this.snapshot()) && this.undoStack.at(-1) === step &&
         JSON.stringify(this.layoutScene(scope)) === measured ? proposal : undefined
     } catch (err) {
       this.notice = err instanceof RPCFailure ? err.diagnostic ?? errorText(err) : errorText(err)
@@ -3183,7 +3218,7 @@ export class ProjectSession extends Observable {
     }
   }
 
-  /** A step of an edit: the places tsugumid proposed for the scene it was sent.
+  /** A step of an edit: the places tsugumi-agentd proposed for the scene it was sent.
    *  What is no longer on the canvas is left out. */
   private applyArranged(scope: string[], scene: LayoutScene, placed: LayoutProposal) {
     const there = new Set(this.cards(scope).map((c) => str(get(c, 'id'))))
@@ -3405,7 +3440,7 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
   }
 
   /** A version's Cards and wires (a commit never changes: read once). */
-  versionCanvases = new Map<string, R.VersionCanvasT>()
+  versionCanvases = new Map<string, H.VersionCanvasT>()
   versionNoteBusy = new Set<string>()
   versionNoteErrors = new Map<string, string>()
   versionNotes = new Map<string, string>()
@@ -3414,7 +3449,7 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
   async loadVersionCanvas(commit: string) {
     if (!this.client || this.versionCanvases.has(commit)) return
     try {
-      this.versionCanvases.set(commit, await this.client.versionCanvas(commit))
+      this.versionCanvases.set(commit, await this.layoutHost.versionCanvas(await this.client.versionCanvas(commit)))
       this.changed()
     } catch {}
   }

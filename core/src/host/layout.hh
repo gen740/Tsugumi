@@ -1,6 +1,6 @@
 // Arrange and Untangle Wires: the two operations that rewrite where a
 // project's Cards sit (layout.json) are worked out here, once, for every
-// client (LayoutArrange / LayoutUntangle of protocol/tsugumi.fbs).
+// client (LayoutArrange / LayoutUntangle of protocol/host.fbs).
 //
 // Both are functions of a Scene, what a canvas draws in one scope: a Card's
 // size and the places of its ports depend on how the window draws them and on
