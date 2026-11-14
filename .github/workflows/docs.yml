@@ -1,47 +1,7 @@
 name: Documentation
+# CI owns triggers, path selection and the Static checks prerequisite.
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'docs/**'
-      - 'README.md'
-      - 'THIRD_PARTY_NOTICES.md'
-      - 'macOS/tools/bundle-docs.sh'
-      - 'web/**'
-      - 'demos/**'
-      - 'ui/**'
-      - 'protocol/**'
-      - 'client/**'
-      - 'sdk/**'
-      - 'agent/Shared/**'
-      - 'nix/**'
-      - 'CMakeLists.txt'
-      - 'cmake/**'
-      - 'VERSION'
-      - 'flake.nix'
-      - 'flake.lock'
-      - '.github/workflows/docs.yml'
-  pull_request:
-    paths:
-      - 'docs/**'
-      - 'README.md'
-      - 'THIRD_PARTY_NOTICES.md'
-      - 'macOS/tools/bundle-docs.sh'
-      - 'web/**'
-      - 'demos/**'
-      - 'ui/**'
-      - 'protocol/**'
-      - 'client/**'
-      - 'sdk/**'
-      - 'agent/Shared/**'
-      - 'nix/**'
-      - 'CMakeLists.txt'
-      - 'cmake/**'
-      - 'VERSION'
-      - 'flake.nix'
-      - 'flake.lock'
-      - '.github/workflows/docs.yml'
-  workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 concurrency:

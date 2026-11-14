@@ -8,6 +8,10 @@ on:
       system:
         required: true
         type: string
+      checks:
+        description: JSON job selection from tests/ci/select.py.
+        required: true
+        type: string
     secrets:
       CACHIX_AUTH_TOKEN:
         required: false
@@ -22,6 +26,7 @@ env:
 jobs:
   native:
     name: Build native runtime
+    if: ${{ fromJSON(inputs.checks).native }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
     steps:
@@ -38,7 +43,7 @@ jobs:
 
   web:
     name: Build Web and Wasm
-    if: inputs.system != 'aarch64-darwin'
+    if: ${{ inputs.system != 'aarch64-darwin' && fromJSON(inputs.checks).web }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
     steps:
@@ -56,6 +61,7 @@ jobs:
 
   agent-rpc:
     name: Agent RPC
+    if: ${{ fromJSON(inputs.checks)['agent-rpc'] }}
     needs: native
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 20
@@ -80,6 +86,7 @@ jobs:
 
   rpc:
     name: Core and CLI RPC
+    if: ${{ fromJSON(inputs.checks).rpc }}
     needs: native
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 20
@@ -109,6 +116,7 @@ jobs:
 
   host:
     name: Worker and host isolation
+    if: ${{ fromJSON(inputs.checks).host }}
     needs: native
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
@@ -136,7 +144,7 @@ jobs:
 
   remote-execution:
     name: Real remote worker execution
-    if: inputs.system == 'x86_64-linux'
+    if: ${{ inputs.system == 'x86_64-linux' && fromJSON(inputs.checks)['remote-execution'] }}
     needs: native
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 60
@@ -159,6 +167,7 @@ jobs:
 
   web-contracts:
     name: Web types and behavior
+    if: ${{ inputs.system != 'aarch64-darwin' && fromJSON(inputs.checks)['web-contracts'] }}
     needs: web
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 20
@@ -178,6 +187,7 @@ jobs:
 
   adapters:
     name: Web, plugin and installer adapters
+    if: ${{ inputs.system != 'aarch64-darwin' && fromJSON(inputs.checks).adapters }}
     needs: [native, web]
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 25
@@ -211,7 +221,7 @@ jobs:
 
   sdk:
     name: SDK, examples, demos and system behavior
-    if: inputs.system != 'aarch64-darwin'
+    if: ${{ inputs.system != 'aarch64-darwin' && fromJSON(inputs.checks).sdk }}
     needs: native
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
@@ -252,7 +262,7 @@ jobs:
 
   swift:
     name: Swift adapters and application
-    if: inputs.system == 'aarch64-darwin'
+    if: ${{ inputs.system == 'aarch64-darwin' && fromJSON(inputs.checks).swift }}
     needs: native
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 90
@@ -293,7 +303,7 @@ jobs:
 
   vm:
     name: VM runtime package
-    if: inputs.system == 'aarch64-linux'
+    if: ${{ inputs.system == 'aarch64-linux' && fromJSON(inputs.checks).vm }}
     needs: native
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
