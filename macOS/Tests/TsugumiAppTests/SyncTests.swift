@@ -8,7 +8,7 @@ import TsugumiAgentClient
 /// The UI saves every edit at once and takes in what the Agent saves at the
 /// same time: both changes stay, and no save conflict is shown.
 @MainActor
-@Suite(.serialized) struct SyncTests {
+@Suite(.serialized, .hostService) struct SyncTests {
   nonisolated static let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
     .deletingLastPathComponent().deletingLastPathComponent()
 

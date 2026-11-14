@@ -4,7 +4,7 @@ import Testing
 @testable import TsugumiLauncher
 @testable import TsugumiRPC
 
-@MainActor @Test(arguments: [0, 1, 2])
+@MainActor @Test(.hostService, arguments: [0, 1, 2])
 func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) async throws {
   let directory = try SyncTests.project()
   defer { try? FileManager.default.removeItem(at: directory) }

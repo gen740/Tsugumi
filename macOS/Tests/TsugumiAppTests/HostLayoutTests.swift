@@ -5,7 +5,7 @@ import Testing
 @testable import TsugumiRPC
 
 /// The native UI applies the host's proposals as one undoable layout edit.
-@MainActor struct HostLayoutTests {
+@MainActor @Suite(.hostService) struct HostLayoutTests {
   @Test func camerasAreCheckedBeforeSavingAndAfterLoading() throws {
     let valid = ClientViewState.Camera(scope: [], x: 1.5, y: -2, zoom: 1.25)
     let bad = [0.0, -1, .infinity, .nan].map { ClientViewState.Camera(scope: [], x: 0, y: 0, zoom: $0) }
@@ -75,5 +75,6 @@ import Testing
     #expect(!s.hasPortOrder("source"))
     s.undo()
     #expect(s.geometry("source").outputs == ["b", "a"])
+    await s.close()
   }
 }

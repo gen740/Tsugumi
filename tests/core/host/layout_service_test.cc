@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <memory>
+
 #include "agent/catalog.hh"
 #include "agent/json.hh"
 #include "host/layout_saving.hh"
@@ -76,7 +78,7 @@ TEST(HostLayout, EveryGoldenRequestReturnsACorrelatedProposal) {
     const auto expected = agent::json::Object(value.at("expect"));
     auto places = [&](const auto* got, const char* key) {
       const auto positions = agent::json::Array(expected.at(key));
-      ASSERT_EQ(got->size(), positions.size());
+      ASSERT_EQ(got ? got->size() : 0u, positions.size());
       for (size_t i = 0; i < positions.size(); ++i) {
         const auto position = agent::json::Object(positions[i]);
         EXPECT_EQ(got->Get(i)->id()->str(), agent::json::Text(position, "id"));
@@ -88,7 +90,8 @@ TEST(HostLayout, EveryGoldenRequestReturnsACorrelatedProposal) {
     places(proposal->frames(), "frames");
     places(proposal->notes(), "notes");
     const auto orders = agent::json::Array(expected.at("portOrders"));
-    ASSERT_EQ(proposal->port_orders()->size(), orders.size());
+    ASSERT_EQ(proposal->port_orders() ? proposal->port_orders()->size() : 0u,
+              orders.size());
     for (size_t i = 0; i < orders.size(); ++i) {
       const auto order = agent::json::Object(orders[i]);
       const auto* got = proposal->port_orders()->Get(i);
@@ -97,12 +100,53 @@ TEST(HostLayout, EveryGoldenRequestReturnsACorrelatedProposal) {
         const auto ports = agent::json::Array(order.at(side));
         const auto* names =
             std::string(side) == "inputs" ? got->inputs() : got->outputs();
-        ASSERT_EQ(names->size(), ports.size());
+        ASSERT_EQ(names ? names->size() : 0u, ports.size());
         for (size_t p = 0; p < ports.size(); ++p)
           EXPECT_EQ(names->Get(p)->str(), agent::json::String(ports[p]));
       }
     }
   }
+}
+
+TEST(HostLayout, OmittedSceneAndPortVectorsAreEmpty) {
+  const agent::Catalog catalog;
+  for (const auto* method : {"layout_arrange", "layout_untangle"}) {
+    for (const bool has_card : {false, true}) {
+      const auto* scene = has_card
+          ? R"({"flow":"topToBottom","cards":[{"id":"a"}],"inputs":{},"outputs":{}})"
+          : R"({"flow":"topToBottom"})";
+      SCOPED_TRACE(method);
+      SCOPED_TRACE(scene);
+      const auto request = catalog.HostRequest(
+          method, std::string("{\"scene\":") + scene + "}", 7);
+      const auto reply =
+          LayoutHandle(*H::GetMessage(request.data())->payload_as_Request(), 7);
+      flatbuffers::Verifier verifier(
+          reinterpret_cast<const uint8_t*>(reply.data()), reply.size());
+      ASSERT_TRUE(H::VerifyMessageBuffer(verifier));
+      const auto* proposal = H::GetMessage(reply.data())
+                                 ->payload_as_Reply()
+                                 ->value_as_LayoutProposal();
+      ASSERT_NE(proposal, nullptr);
+      const auto result =
+          std::unique_ptr<H::LayoutProposalT>(proposal->UnPack());
+      EXPECT_EQ(result->cards.size(),
+                std::string(method) == "layout_arrange" && has_card ? 1u : 0u);
+      EXPECT_TRUE(result->frames.empty());
+      EXPECT_TRUE(result->notes.empty());
+      EXPECT_TRUE(result->port_orders.empty());
+    }
+  }
+}
+
+TEST(HostLayout, OmittedVersionCanvasVectorsAreEmpty) {
+  flatbuffers::FlatBufferBuilder b;
+  b.Finish(H::CreateVersionCanvasRequest(b, b.CreateString("{}")));
+  const auto result = VersionCanvas(
+      *flatbuffers::GetRoot<H::VersionCanvasRequest>(b.GetBufferPointer()));
+  EXPECT_TRUE(result.cards.empty());
+  EXPECT_TRUE(result.wires.empty());
+  EXPECT_EQ(result.flow, "leftToRight");
 }
 
 TEST(HostLayout, SchemaRejectsIncompleteAndUnknownPresentationFields) {
