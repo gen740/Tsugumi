@@ -8,8 +8,8 @@ from rdkit.Chem import Draw
 from inputs.molecules.mol.Molecules import Molecules
 
 
-def main(ctx):
-    m = ctx.input("molecules", Molecules)
+def main(inputs, report):
+    m = inputs.input("molecules", Molecules)
     n = m.NamesLength()
     cols = min(5, n)
     rows = math.ceil(n / cols)
@@ -21,4 +21,4 @@ def main(ctx):
         ax.imshow(Draw.MolToImage(Chem.MolFromSmiles(m.Smiles(i).decode()), size=(420, 360)))
         ax.set_title(f"{m.Names(i).decode()}\n{m.Formula(i).decode()}", fontsize=10)
     fig.tight_layout()
-    plt.show()
+    report.figure()

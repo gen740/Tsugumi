@@ -133,7 +133,6 @@ EN = {
 "%@ から %@ へつないでいます": "Connecting %@ to %@",
 "%@ から実行しています": "Running from %@",
 "プロジェクトを見ています": "Looking at the project",
-"書き方を調べています": "Looking up how to write it",
 "変更を確かめています": "Checking the changes",
 "保存しています": "Saving",
 "実行の終わりを待っています": "Waiting for the run to end",

@@ -31,7 +31,6 @@ enum PresenceEvents {
   static func activity(tool: String) -> String? {
     switch tool {
     case "project_inspect": String(localized: "プロジェクトを見ています")
-    case "reference_read": String(localized: "書き方を調べています")
     case "project_validate": String(localized: "変更を確かめています")
     case "project_save": String(localized: "保存しています")
     case "run_status": String(localized: "実行の終わりを待っています")

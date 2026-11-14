@@ -26,11 +26,12 @@ function synthetic_week(seed, days)
     return (; load, solar, flat, tou, spot)
 end
 
-function main(ctx)
-    s = input(ctx, "settings")
+function main(inputs, report)
+    outputs = Dict{String,Any}()
+    s = Tsugumi.input(inputs, "settings")
     week = synthetic_week(s["seed"], Int(s["days"]))
-    output(ctx, "scenario", merge(s, Dict(
-        "load" => week.load, "solar" => week.solar, "flat" => week.flat, "tou" => week.tou, "spot" => week.spot)))
+    outputs["scenario"] = merge(s, Dict(
+        "load" => week.load, "solar" => week.solar, "flat" => week.flat, "tou" => week.tou, "spot" => week.spot))
 
     day(t) = (t - 1) / 24
     prices = [Dict("day" => day(t), "tariff" => name, "price" => round(series[t]; digits=2))
@@ -39,7 +40,7 @@ function main(ctx)
     power = [Dict("day" => day(t), "kind" => name, "kW" => round(series[t]; digits=3))
              for (name, series) in (("家の消費", week.load), ("太陽光", week.solar)) for t in eachindex(series)]
     xaxis = Dict("field" => "day", "type" => "quantitative", "title" => "日", "axis" => Dict("tickMinStep" => 1))
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => "架空の 1 週間（乱数で作ったデータ、seed = $(s["seed"])）",
@@ -55,4 +56,6 @@ function main(ctx)
                                     "color" => Dict("field" => "kind", "type" => "nominal", "title" => "電力",
                                                     "scale" => Dict("domain" => ["家の消費", "太陽光"], "range" => ["#eb6834", "#eda100"])))),
         ]))
+
+    return outputs
 end

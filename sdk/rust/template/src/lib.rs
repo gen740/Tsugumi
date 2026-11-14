@@ -1,10 +1,8 @@
-use tsugumi::{Context, Input, Output, Result};
+use tsugumi::{Inputs, Output, Report, Result};
 
-fn run(ctx: &Context<'_>, _input: Input<'_>) -> Result<Output> {
-    ctx.display_text("hello")?;
-    let mut out = tsugumi::outputs::Out::default();
-    out.value = Some("hello".into());
-    Ok(Output { out: Some(out) })
+fn run(_inputs: Inputs<'_>, report: &Report<'_>) -> Result<Output> {
+    report.text("hello")?;
+    Ok(Output::default())
 }
 
 tsugumi::export!(run);

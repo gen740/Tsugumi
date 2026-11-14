@@ -1,11 +1,11 @@
 """Checks the MNIST files fixed by Nix (IDX format) and shows samples of each digit."""
+import tsugumi
 import struct
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 from card.dataset import DIRECTORY as directory, SOURCE as source  # written by default.nix
-import outputs.dataset.mnist.Dataset as out
 from tsugumi import Failure
 
 
@@ -20,17 +20,17 @@ def read_idx(path, magic, dims):
     return values.reshape(head[1:])
 
 
-def main(ctx):
-    train_images = read_idx(f"{directory}/train-images-idx3-ubyte", 2051, 3)
-    train_labels = read_idx(f"{directory}/train-labels-idx1-ubyte", 2049, 1)
-    test_images = read_idx(f"{directory}/t10k-images-idx3-ubyte", 2051, 3)
-    test_labels = read_idx(f"{directory}/t10k-labels-idx1-ubyte", 2049, 1)
+def main(inputs, report):
+    train_images = read_idx(f'{directory}/train-images-idx3-ubyte', 2051, 3)
+    train_labels = read_idx(f'{directory}/train-labels-idx1-ubyte', 2049, 1)
+    test_images = read_idx(f'{directory}/t10k-images-idx3-ubyte', 2051, 3)
+    test_labels = read_idx(f'{directory}/t10k-labels-idx1-ubyte', 2049, 1)
     if train_images.shape != (60000, 28, 28) or test_images.shape != (10000, 28, 28):
         raise Failure("output_invalid", f"unexpected shapes {train_images.shape}, {test_images.shape}")
     if len(train_labels) != 60000 or len(test_labels) != 10000:
         raise Failure("output_invalid", "the label files do not match the image files")
-    print(f"source: {source}")
-    print(f"train: {train_images.shape}, test: {test_images.shape}, directory: {directory}")
+    report.log(str(f"source: {source}"))
+    report.log(str(f"train: {train_images.shape}, test: {test_images.shape}, directory: {directory}"))
 
     per_digit = 20
     rows = [np.hstack(test_images[test_labels == d][:per_digit]) for d in range(10)]
@@ -41,14 +41,12 @@ def main(ctx):
     ax.tick_params(length=0)
     ax.set_title(f"MNIST 手書き数字: 訓練 {len(train_labels)} 枚、テスト {len(test_labels)} 枚\n"
                  f"テスト用から数字ごとに先頭 {per_digit} 枚。出典: {source}", fontsize=10)
-    plt.show()
-
-    b = ctx.builder()
-    directory_offset = b.CreateString(directory)
-    source_offset = b.CreateString(source)
-    out.Start(b)
-    out.AddDirectory(b, directory_offset)
-    out.AddSource(b, source_offset)
-    out.AddTrainCount(b, len(train_labels))
-    out.AddTestCount(b, len(test_labels))
-    ctx.output("dataset", b, out.End(b))
+    report.figure()
+    directory_offset = directory
+    source_offset = source
+    _out_value = {}
+    _out_value['directory'] = directory_offset
+    _out_value['source'] = source_offset
+    _out_value['train_count'] = len(train_labels)
+    _out_value['test_count'] = len(test_labels)
+    return {'dataset': _out_value}

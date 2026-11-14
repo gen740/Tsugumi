@@ -25,10 +25,10 @@ function brute_force(net_load, price, export_ratio; capacity, power, efficiency,
     return walk(1, start, 0.0), paths
 end
 
-function main(ctx)
-    m = input(ctx, "scenario")
-    hours = Int(ctx.params["brute_hours"])
-    first_hour = Int(ctx.params["brute_from_hour"]) + 1
+function main(inputs, report)
+    m = Tsugumi.input(inputs, "scenario")
+    hours = Int(inputs.params["brute_hours"])
+    first_hour = Int(inputs.params["brute_from_hour"]) + 1
     window = first_hour:first_hour+hours-1
     net_load = Float64.(m["load"]) .- Float64.(m["solar"])
     ratio, efficiency = m["export_ratio"], m["round_trip_efficiency"]
@@ -63,5 +63,7 @@ function main(ctx)
         push!(rows, [@sprintf("Step of stored energy %.4g kWh (market-linked)", step / 2^k), @sprintf("%.2f yen", s), k == 0 ? "—" : @sprintf("%+.2f yen", s - previous), k == 0 ? "reference" : "increases"])
         previous = s
     end
-    display_table(ctx, ["Checked", "Value", "Expected", "Verdict"], rows)
+    report.table(["Checked", "Value", "Expected", "Verdict"], rows)
+
+    return nothing
 end

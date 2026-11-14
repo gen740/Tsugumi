@@ -32,7 +32,10 @@ table Outputs { report:Report (required, tsugumi: "file"); }
 root_type Outputs;
 """
 IN_VM = os.environ.get("TSUGUMI_TEST_CONTAINER") == "1"
-NO_OUTPUTS = "namespace t;\ntable Outputs { }\nroot_type Outputs;\n"
+NO_OUTPUTS = '''namespace t;
+table Outputs { }
+root_type Outputs;
+'''
 
 
 def write_project(root, cards: dict, connections: list):
@@ -55,46 +58,57 @@ def write_project(root, cards: dict, connections: list):
             put(d / "src" / name, source)
 
 
-R_NIX = "{ pkgs, inputs, params }: { run = inputs.tsugumi.rCard { src = ./src; }; }\n"
-JULIA_NIX = "{ pkgs, inputs, params }: { run = inputs.tsugumi.juliaCard { src = ./src; }; }\n"
+R_NIX = '''{ pkgs, inputs, params }: { run = inputs.tsugumi.rCard { src = ./src; }; }
+'''
+JULIA_NIX = '''{ pkgs, inputs, params }: { run = inputs.tsugumi.juliaCard { src = ./src; }; }
+'''
 
-R_MAKE = r"""
-main <- function(ctx) {
-  stopifnot(ctx$params$count == 3)
-  values <- seq_len(ctx$params$count) * ctx$params$scale
-  ctx$output("numbers", list(values = values, label = "三つの値 \"quoted\"", big = ctx$params$big))
-  ctx$display_table(data.frame(i = seq_along(values), value = values))
+R_MAKE = '''
+main <- function(inputs, report, run) {
+  result <- list()
+  stopifnot(inputs$params$count == 3)
+  values <- seq_len(inputs$params$count) * inputs$params$scale
+  result[["numbers"]] <- list(values = values, label = "三つの値 \\"quoted\\"", big = inputs$params$big)
+  report$table(data.frame(i = seq_along(values), value = values))
+
+  result
 }
-"""
+'''
 
-JULIA_DOUBLE = r"""
-function main(ctx)
-    m = input(ctx, "numbers")
-    @assert m["label"] == "三つの値 \"quoted\""
+JULIA_DOUBLE = '''
+function main(inputs, report)
+    result = Dict{String,Any}()
+    m = Tsugumi.input(inputs, "numbers")
+    @assert m["label"] == "三つの値 \\"quoted\\""
     @assert m["big"] == 9007199254740993
     values = m["values"]
     doubled = 2 .* values
     @assert doubled == [3.0, 6.0, 9.0]
-    output(ctx, "numbers", Dict("values" => doubled, "label" => m["label"], "big" => m["big"]))
-    display_vegalite(ctx, Dict(
-        "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
+    result["numbers"] = Dict("values" => doubled, "label" => m["label"], "big" => m["big"])
+    vegalite(report, Dict(
+        "\\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "data" => Dict("values" => [Dict("x" => i, "y" => v) for (i, v) in enumerate(doubled)]),
         "mark" => "line",
         "encoding" => Dict("x" => Dict("field" => "x", "type" => "quantitative"),
                            "y" => Dict("field" => "y", "type" => "quantitative"))))
-end
-"""
 
-R_REPORT = r"""
-main <- function(ctx) {
-  m <- ctx$input("numbers")
+    return result
+end
+'''
+
+R_REPORT = '''
+main <- function(inputs, report, run) {
+  result <- list()
+  m <- inputs$input("numbers")
   stopifnot(identical(m$values, c(3, 6, 9)), identical(m$big, "9007199254740993"))
-  file <- file.path(ctx$output_directory, "report.txt")
+  file <- file.path(run$output_directory, "report.txt")
   writeLines(paste("sum", sum(m$values)), file)
-  ctx$output("report", list(value = file))
-  ctx$plot(plot(m$values, main = "三つの値"), alt = "the values")
+  result[["report"]] <- list(value = file)
+  report$figure(plot(m$values, main = "三つの値"), alt = "the values")
+
+  result
 }
-"""
+'''
 
 
 EXACT = """attribute "tsugumi";
@@ -107,24 +121,32 @@ root_type Outputs;
 EXACT_VALUES = [0.042169650342858, 1e-20, 5e-324, 1.7976931348623157e308, 0.1 + 0.2, 123456.78901234567, 3.0]
 EXACT_JSON = json.dumps({"numbers": {"values": EXACT_VALUES, "single": 0.1}})
 
-BASH_MAKE = "{ pkgs, inputs, params }: { run = ''\n  cat > \"$TSUGUMI_OUTPUT\" <<'END'\n" + EXACT_JSON + "\nEND\n''; }\n"
+BASH_MAKE = '''{ pkgs, inputs, params }: { run = ''
+  cat > "$TSUGUMI_OUTPUT" <<'END'
+''' + EXACT_JSON + '''
+END
+''; }
+'''
 # R reads its own literals and as.numeric less exactly than a double on some machines, so it compares what C prints.
-R_EXACT = r"""
-main <- function(ctx) {
-  m <- ctx$input("numbers")
-  stopifnot(identical(sprintf("%.17g", m$values), c(""" + ", ".join(f'"{v:.17g}"' for v in EXACT_VALUES) + r""")))
-  ctx$output("numbers", m)
+R_EXACT = '''
+main <- function(inputs) {
+  m <- inputs$numbers
+  stopifnot(identical(sprintf("%.17g", m$values), c(''' + ", ".join(f'"{v:.17g}"' for v in EXACT_VALUES) + ''')))
+  list(numbers = m)
 }
-"""
-JULIA_EXACT = r"""
-function main(ctx)
-    m = input(ctx, "numbers")
-    @assert m["values"] == [""" + ", ".join(repr(v) for v in EXACT_VALUES) + r"""]
+'''
+JULIA_EXACT = '''
+function main(inputs)
+    m = inputs.numbers
+    @assert m["values"] == [''' + ", ".join(repr(v) for v in EXACT_VALUES) + r""" ]
     @assert m["single"] == 0.1
-    output(ctx, "numbers", m)
+    return Dict("numbers" => m)
 end
 """
-BASH_SHOW = "{ pkgs, inputs, params }: { run = ''\n  jq -n --rawfile m \"$JSON_NUMBERS\" '{text: $m}' > \"$TSUGUMI_DISPLAY\"\n''; }\n"
+BASH_SHOW = '''{ pkgs, inputs, params }: { run = ''
+  jq -n --rawfile m "$JSON_NUMBERS" '{text: $m}' > "$TSUGUMI_REPORT"
+''; }
+'''
 
 
 @pytest.fixture
@@ -175,7 +197,8 @@ def test_values_cross_r_and_julia_and_each_display_arrives(project):
     image = c.call("RunRecordRequest", runId=run_id, card=path("report")).record.display
     assert image.valueType == 5 and bytes(image.value.data)[:4] == b"\x89PNG" and text(image.value.alt) == "the values"
     art = next(a for a in c.call("ArtifactListRequest", runId=run_id).artifacts if text(a.output) == "report")
-    assert bytes(c.call("ArtifactReadRequest", artifactId=text(art.artifactId)).bytes).decode() == "sum 18\n"
+    assert bytes(c.call("ArtifactReadRequest", artifactId=text(art.artifactId)).bytes).decode() == '''sum 18
+'''
 
 
 def test_a_double_crosses_bash_r_and_julia_unchanged(project):
@@ -206,7 +229,12 @@ def test_a_bash_card_shows_what_it_writes(project, display, check):
     root, connect = project
     write_project(root, {"show": {
         "card": {"language": "bash", "inputs": [{"name": "start"}]},
-        "nix": "{ pkgs, inputs, params }: { run = ''\n  cat > \"$TSUGUMI_DISPLAY\" <<'END'\n" + display + "\nEND\n''; }\n"}},
+        "nix": '''{ pkgs, inputs, params }: { run = ''
+  cat > "$TSUGUMI_REPORT" <<'END'
+''' + display + '''
+END
+''; }
+'''}},
         [("start", "out", "show", "start")])
     c = connect()
     run_id, status = run_and_wait(c, "start", timeout=600)
@@ -223,7 +251,12 @@ def test_an_invalid_display_fails_the_card_and_says_why(project, display, why):
     root, connect = project
     write_project(root, {"show": {
         "card": {"language": "bash", "inputs": [{"name": "start"}]},
-        "nix": "{ pkgs, inputs, params }: { run = ''\n  cat > \"$TSUGUMI_DISPLAY\" <<'END'\n" + display + "\nEND\n''; }\n"}},
+        "nix": '''{ pkgs, inputs, params }: { run = ''
+  cat > "$TSUGUMI_REPORT" <<'END'
+''' + display + '''
+END
+''; }
+'''}},
         [("start", "out", "show", "start")])
     c = connect()
     _, status = run_and_wait(c, "start", timeout=600)
@@ -233,7 +266,12 @@ def test_an_invalid_display_fails_the_card_and_says_why(project, display, why):
 @pytest.mark.parametrize("language", ["r", "julia"])
 def test_an_interpreter_error_fails_the_card(project, language):
     root, connect = project
-    nix, name, source = (R_NIX, "main.R", 'main <- function(ctx) stop("on purpose")\n') if language == "r" else (JULIA_NIX, "main.jl", 'function main(ctx)\n error("on purpose")\nend')
+    nix, name, source = (R_NIX, "main.R", '''main <- function(inputs, report, run) stop("on purpose")
+''') if language == "r" else (JULIA_NIX, "main.jl", '''function main(inputs, report)
+ error("on purpose")
+
+    return nothing
+end''')
     write_project(root, {"boom": {
         "card": {"language": language, "inputs": [{"name": "start"}]}, "nix": nix,
         "src": {name: source}}}, [("start", "out", "boom", "start")])
@@ -244,28 +282,35 @@ def test_an_interpreter_error_fails_the_card(project, language):
 
 
 LIFECYCLE = {
-    "r": (R_NIX, "main.R", r'''
+    "r": (R_NIX, "main.R", '''
 runs <- 0L
 calls <- 0L
-on_run_start <- function(ctx) { runs <<- runs + 1L }
-main <- function(ctx) {
+on_run_start <- function(inputs) { runs <<- runs + 1L
+  invisible(NULL)
+}
+main <- function(inputs, report, run) {
   calls <<- calls + 1L
-  stopifnot(is.null(ctx$input("absent")), !ctx$cancelled(), dir.exists(tempdir()))
-  ctx$display_text(sprintf("%d %d", runs, calls))
+  stopifnot(is.null(inputs$input("absent")), !run$cancelled(), dir.exists(tempdir()))
+  report$text(sprintf("%d %d", runs, calls))
+
+  invisible(NULL)
 }
 '''),
-    "julia": (JULIA_NIX, "main.jl", r'''
+    "julia": (JULIA_NIX, "main.jl", '''
 using Statistics, LinearAlgebra
 runs = 0
 calls = 0
-function on_run_start(ctx)
+function on_run_start(inputs)
     global runs += 1
+    return nothing
 end
-function main(ctx)
+function main(inputs, report, run)
     global calls += 1
-    @assert input(ctx, "absent") === nothing && !cancelled(ctx)
+    @assert Tsugumi.input(inputs, "absent") === nothing && !cancelled(run)
     @assert mean([1, 2]) == 1.5 && norm([3, 4]) == 5
-    display_text(ctx, "$runs $calls")
+    text(report, "$runs $calls")
+
+    return nothing
 end
 '''),
 }
@@ -293,10 +338,10 @@ def test_interpreter_state_and_run_hook(project, language, reuse):
 # an option, the position of the random number generator (seeded while the
 # source loads), an environment variable and the working directory.
 CARRIED = {
-    "r": (R_NIX, "main.R", r'''
+    "r": (R_NIX, "main.R", '''
 set.seed(1)
 calls <- 0L
-main <- function(ctx) {
+main <- function(inputs, report, run) {
   calls <<- calls + 1L
   seen <- getOption("tsugumi.carried", 0L)
   options(tsugumi.carried = seen + 1L)
@@ -305,16 +350,18 @@ main <- function(ctx) {
   moved <- identical(basename(getwd()), "elsewhere")
   dir.create("elsewhere", showWarnings = FALSE)
   setwd("elsewhere")
-  ctx$display_text(sprintf("calls=%d options=%d env=%s moved=%s random=%.9f",
+  report$text(sprintf("calls=%d options=%d env=%s moved=%s random=%.9f",
                            calls, seen, env, tolower(moved), runif(1)))
+
+  invisible(NULL)
 }
 '''),
-    "julia": (JULIA_NIX, "main.jl", r'''
+    "julia": (JULIA_NIX, "main.jl", '''
 using Random
 Random.seed!(1)
 calls = 0
 carried = Dict{String,Int}()
-function main(ctx)
+function main(inputs, report)
     global calls += 1
     seen = get(carried, "n", 0)
     carried["n"] = seen + 1
@@ -323,7 +370,9 @@ function main(ctx)
     moved = basename(pwd()) == "elsewhere"
     mkpath("elsewhere")
     cd("elsewhere")
-    display_text(ctx, "calls=$calls options=$seen env=$env moved=$moved random=$(rand())")
+    text(report, "calls=$calls options=$seen env=$env moved=$moved random=$(rand())")
+
+    return nothing
 end
 '''),
 }
@@ -383,10 +432,22 @@ def test_reuse_worker_carries_globals_options_and_the_random_position(project, l
 
 
 VERSIONED = {
-    "r": (R_NIX, "main.R", 'calls <- 0L\nmain <- function(ctx) {\n  calls <<- calls + 1L\n'
-                           '  ctx$display_text(sprintf("VERSION %d", calls))\n}\n'),
-    "julia": (JULIA_NIX, "main.jl", 'calls = 0\nfunction main(ctx)\n    global calls += 1\n'
-                                    '    display_text(ctx, "VERSION $calls")\nend\n'),
+    "r": (R_NIX, "main.R", '''calls <- 0L
+main <- function(inputs, report, run) {
+  calls <<- calls + 1L
+'''
+                           '''  report$text(sprintf("VERSION %d", calls))
+}
+'''),
+    "julia": (JULIA_NIX, "main.jl", '''calls = 0
+function main(inputs, report)
+    global calls += 1
+    return nothing
+
+'''
+                                    '''    text(report, "VERSION $calls")
+end
+'''),
 }
 
 
@@ -443,7 +504,8 @@ def test_changed_r_packages_replace_the_resident_interpreter(project):
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         assert shown_text(c, run_id, "count") == expected
     put(root / "definitions" / "count" / "default.nix",
-        "{ pkgs, inputs, params }: { run = inputs.tsugumi.rCard { src = ./src; packages = ps: [ ps.digest ]; }; }\n")
+        '''{ pkgs, inputs, params }: { run = inputs.tsugumi.rCard { src = ./src; packages = ps: [ ps.digest ]; }; }
+''')
     reload(c)
     run_id, status = run_and_wait(c, "start", timeout=1800)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
@@ -452,32 +514,36 @@ def test_changed_r_packages_replace_the_resident_interpreter(project):
 
 # The second call of a resident interpreter ends badly in one of four ways.
 BAD_SECOND_CALL = {
-    "r": (R_NIX, "main.R", r'''
+    "r": (R_NIX, "main.R", '''
 calls <- 0L
-main <- function(ctx) {
+main <- function(inputs, report, run) {
   calls <<- calls + 1L
-  ctx$display_text(sprintf("call %d", calls))
+  report$text(sprintf("call %d", calls))
   if (calls != 2L) return(invisible(NULL))
   how <- "HOW"
   if (how == "fail") stop("on purpose")
   if (how == "exit") quit(save = "no", status = 3)
   if (how == "crash") tools::pskill(Sys.getpid(), tools::SIGKILL)
-  while (!ctx$cancelled()) Sys.sleep(0.01)
+  while (!run$cancelled()) Sys.sleep(0.01)
+
+  invisible(NULL)
 }
 '''),
-    "julia": (JULIA_NIX, "main.jl", r'''
+    "julia": (JULIA_NIX, "main.jl", '''
 calls = 0
-function main(ctx)
+function main(inputs, report, run)
     global calls += 1
-    display_text(ctx, "call $calls")
+    text(report, "call $calls")
     calls == 2 || return
     how = "HOW"
     how == "fail" && error("on purpose")
     how == "exit" && exit(3)
     how == "crash" && ccall(:kill, Cint, (Cint, Cint), getpid(), 9)
-    while !cancelled(ctx)
+    while !cancelled(run)
         sleep(0.01)
     end
+
+    return nothing
 end
 '''),
 }
@@ -519,18 +585,22 @@ def test_a_resident_interpreter_is_not_reused_after_a_bad_call(project, language
 
 
 LIVE = {
-    "r": (R_NIX, "main.R", r'''
-main <- function(ctx) {
-  ctx$display_text("running")
-  while (!ctx$cancelled()) Sys.sleep(0.01)
+    "r": (R_NIX, "main.R", '''
+main <- function(inputs, report, run) {
+  report$text("running")
+  while (!run$cancelled()) Sys.sleep(0.01)
+
+  invisible(NULL)
 }
 '''),
-    "julia": (JULIA_NIX, "main.jl", r'''
-function main(ctx)
-    display_text(ctx, "running")
-    while !cancelled(ctx)
+    "julia": (JULIA_NIX, "main.jl", '''
+function main(inputs, report, run)
+    text(report, "running")
+    while !cancelled(run)
         sleep(0.01)
     end
+
+    return nothing
 end
 '''),
 }
@@ -564,8 +634,15 @@ def test_display_arrives_before_completion_and_cancel_stops_worker(project, lang
 def test_interpreter_deadline_ends_uncooperative_code(project, language):
     root, connect = project
     nix, name, _ = LIVE[language]
-    source = ('main <- function(ctx) { while (TRUE) {} }' if language == "r" else
-              'function main(ctx)\n while true\n end\nend')
+    source = ('''main <- function(inputs, report, run) { while (TRUE) {}
+  invisible(NULL)
+}''' if language == "r" else
+              '''function main(inputs, report)
+ while true
+ end
+
+    return nothing
+end''')
     write_project(root, {"slow": {"card": {"language": language, "timeoutSeconds": 2},
                                  "nix": nix, "src": {name: source}}}, [])
     c = connect()
@@ -592,14 +669,25 @@ def test_full_integer_ranges_struct_enum_and_union_cross_interpreters(project):
                "choice_type": "Item", "choice": {"value": "18446744073709551615"},
                "text": 'quoted "18446744073709551615" and \\backslash'}
     raw = json.dumps({"value": payload})
-    make = "{ pkgs, inputs, params }: { run = ''cat > \"$TSUGUMI_OUTPUT\" <<'JSON'\n" + raw + "\nJSON\n''; }"
-    show = "{ pkgs, inputs, params }: { run = ''jq -n --rawfile m \"$JSON_VALUE\" '{text:$m}' > \"$TSUGUMI_DISPLAY\"''; }"
+    make = '''{ pkgs, inputs, params }: { run = ''cat > "$TSUGUMI_OUTPUT" <<'JSON'
+''' + raw + '''
+JSON
+''; }'''
+    show = "{ pkgs, inputs, params }: { run = ''jq -n --rawfile m \"$JSON_VALUE\" '{text:$m}' > \"$TSUGUMI_REPORT\"''; }"
     write_project(root, {
         "make": {"card": {"language": "bash"}, "nix": make, "outputs": schema},
         "r": {"card": {"language": "r", "inputs": [{"name": "value"}]}, "nix": R_NIX, "outputs": schema,
-              "src": {"main.R": 'main <- function(ctx) { ctx$output("value", ctx$input("value")) }'}},
+              "src": {"main.R": '''main <- function(inputs, report, run) {
+  result <- list(); result[["value"]] <- inputs$input("value")
+  result
+}'''}},
         "julia": {"card": {"language": "julia", "inputs": [{"name": "value"}]}, "nix": JULIA_NIX, "outputs": schema,
-                  "src": {"main.jl": 'function main(ctx)\n output(ctx, "value", input(ctx, "value"))\nend'}},
+                  "src": {"main.jl": '''function main(inputs, report)
+    result = Dict{String,Any}()
+ result["value"] = Tsugumi.input(inputs, "value")
+
+    return result
+end'''}},
         "show": {"card": {"language": "bash", "inputs": [{"name": "value"}]}, "nix": show},
     }, [("make", "value", "r", "value"), ("r", "value", "julia", "value"), ("julia", "value", "show", "value")])
     c = connect()
@@ -612,7 +700,9 @@ def test_full_integer_ranges_struct_enum_and_union_cross_interpreters(project):
 def test_nix_r_packages_available_in_resident_interpreter(project):
     root, connect = project
     nix = '{ pkgs, inputs, params }: { run = inputs.tsugumi.rCard { src = ./src; packages = ps: [ ps.digest ]; }; }'
-    source = 'main <- function(ctx) { ctx$display_text(digest::digest("pinned", algo="sha256")) }'
+    source = '''main <- function(inputs, report, run) { report$text(digest::digest("pinned", algo="sha256"))
+  invisible(NULL)
+}'''
     write_project(root, {"package": {"card": {"language": "r"}, "nix": nix, "src": {"main.R": source}}}, [])
     c = connect()
     for _ in range(2):
@@ -628,7 +718,10 @@ def test_julia_package_resolution_does_not_enable_ifd(project):
     root, connect = project
     nix = '{ pkgs, inputs, params }: { run = inputs.tsugumi.juliaCard { src = ./src; packages = [ "JSON" ]; }; }'
     write_project(root, {"package": {"card": {"language": "julia"}, "nix": nix,
-                                    "src": {"main.jl": "function main(ctx)\nend"}}}, [])
+                                    "src": {"main.jl": '''function main(inputs, report)
+
+    return nothing
+end'''}}}, [])
     c = connect()
     _, status = run_and_wait(c, "start", timeout=1800)
     assert status.state == RunState.failed
@@ -648,21 +741,25 @@ def test_file_and_directory_inputs_refresh_in_resident_interpreters(project, lan
       jq -n --arg f "$TSUGUMI_OUTPUT_DIR/f" --arg d "$TSUGUMI_OUTPUT_DIR/d" '{file:{value:$f},directory:{value:$d}}' > "$TSUGUMI_OUTPUT"
     ''; }'''
     r = '''previous <- NULL
-    main <- function(ctx) {
-      file <- ctx$path("file")
+    main <- function(inputs, report, run) {
+      file <- inputs$path("file")
       stopifnot(!identical(previous, file), readLines(file) == "hello",
-                readLines(file.path(ctx$path("directory"), "value")) == "world")
+                readLines(file.path(inputs$path("directory"), "value")) == "world")
       previous <<- file
-      ctx$display_text("read both")
-    }'''
+      report$text("read both")
+
+  invisible(NULL)
+}'''
     julia = '''previous = ""
-    function main(ctx)
-      file = path(ctx, "file")
+    function main(inputs, report)
+      file = path(inputs, "file")
       @assert previous != file && strip(read(file, String)) == "hello"
-      @assert strip(read(joinpath(path(ctx, "directory"), "value"), String)) == "world"
+      @assert strip(read(joinpath(path(inputs, "directory"), "value"), String)) == "world"
       global previous = file
-      display_text(ctx, "read both")
-    end'''
+      text(report, "read both")
+
+    return nothing
+end'''
     nix, name, source = (R_NIX, "main.R", r) if language == "r" else (JULIA_NIX, "main.jl", julia)
     write_project(root, {
         "make": {"card": {"language": "bash"}, "nix": make, "outputs": schema},

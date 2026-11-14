@@ -19,9 +19,9 @@ def match(found, truth, gate):
     return rows[keep], cols[keep]
 
 
-def main(ctx):
-    scene = ctx.input("scene", Scene)
-    labels = ctx.input("labels", Labels)
+def main(inputs, report):
+    scene = inputs.input("scene", Scene)
+    labels = inputs.input("labels", Labels)
     size = scene.Size()
     image = scene.ImageAsNumpy().reshape(size, size)
     truth = np.column_stack([scene.TrueXAsNumpy(), scene.TrueYAsNumpy()])
@@ -29,7 +29,7 @@ def main(ctx):
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 5.8))
     high = np.percentile(image, 99.5)
-    report = {"cells": len(truth), "gate": gate, "true_x": truth[:, 0].round(2).tolist(), "true_y": truth[:, 1].round(2).tolist()}
+    document = {"cells": len(truth), "gate": gate, "true_x": truth[:, 0].round(2).tolist(), "true_y": truth[:, 1].round(2).tolist()}
     methods = (("plain", "Threshold only", labels.PlainAsNumpy()), ("split", "watershed", labels.SplitAsNumpy()))
     for ax, (key, title, flat) in zip(axes, methods):
         lab = flat.reshape(size, size)
@@ -42,7 +42,7 @@ def main(ctx):
         precision = len(rows) / max(len(found), 1)
         recall = len(rows) / len(truth)
         f1 = 2 * precision * recall / max(precision + recall, 1e-12)
-        report[key] = {"count": len(found), "matched": len(rows), "precision": precision, "recall": recall, "f1": f1,
+        document[key] = {"count": len(found), "matched": len(rows), "precision": precision, "recall": recall, "f1": f1,
                        "found_x": found[:, 0].round(2).tolist(), "found_y": found[:, 1].round(2).tolist()}
 
         ax.imshow(image, cmap="gray", vmin=0, vmax=high)
@@ -57,5 +57,5 @@ def main(ctx):
         ax.axis("off")
     fig.suptitle(f"Scored against the synthetic data's true count of {len(truth)} (matched within {gate:g} px)", fontsize=11)
     fig.tight_layout()
-    plt.show()
-    print("scores " + json.dumps(report))
+    report.figure()
+    report.log(str("scores " + json.dumps(document)))

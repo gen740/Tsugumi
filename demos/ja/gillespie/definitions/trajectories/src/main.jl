@@ -21,10 +21,10 @@ function simulate!(counts, rng, birth, death, times)
 end
 
 # Several single runs over the rate equation dn/dt = kV - gamma n, n(0) = 0.
-function main(ctx)
-    m = input(ctx, "settings")
+function main(inputs, report)
+    m = Tsugumi.input(inputs, "settings")
     k, gamma, volume, runs = m["synthesis"], m["degradation"], m["volume"], Int(m["runs"])
-    shown = Int(ctx.params["shown_runs"])
+    shown = Int(inputs.params["shown_runs"])
     birth = k * volume
     t_end = 5 / gamma
     times = collect(range(0.0, t_end; length=201))
@@ -37,14 +37,14 @@ function main(ctx)
     end
     average = vec(mean(counts; dims=2))
     deviation = maximum(abs.(average .- ode.(times)))
-    println(@sprintf("largest gap between the mean of %d runs and the rate equation: %.3f molecules", runs, deviation))
+    report.log(string(@sprintf("largest gap between the mean of %d runs and the rate equation: %.3f molecules", runs, deviation)))
 
     paths = [Dict("t" => times[i], "n" => counts[i, r], "run" => r) for r in 1:min(shown, runs) for i in eachindex(times)]
     curves = [Dict("t" => t, "n" => round(y; digits=3), "line" => name)
               for (name, ys) in (("率方程式（決定論）", ode.(times)), ("$runs 本の平均", average)) for (t, y) in zip(times, ys)]
     band = [Dict("t" => t, "low" => max(0.0, ode(t) - sqrt(ode(t))), "high" => ode(t) + sqrt(ode(t))) for t in times]
 
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("anchor" => "start", "text" => "1 本 1 本は揺れ、平均は率方程式に乗る",
@@ -65,4 +65,6 @@ function main(ctx)
                                     "strokeDash" => Dict("field" => "line", "type" => "nominal", "legend" => nothing,
                                                          "scale" => Dict("domain" => ["率方程式（決定論）", "$runs 本の平均"], "range" => [[1, 0], [5, 3]])))),
         ]))
+
+    return nothing
 end

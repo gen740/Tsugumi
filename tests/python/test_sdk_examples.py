@@ -129,8 +129,8 @@ def test_line_chart_uses_binary_view_input(tmp_path):
     (definition / "default.nix").write_text(
         '{ pkgs, inputs, params }: let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; '
         'in { run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }')
-    (definition / "src/main.py").write_text('''def main(ctx):
-    ctx.display_line_chart([
+    (definition / "src/main.py").write_text('''def main(inputs, report):
+    report.line_chart([
         {"id": "raw", "label": "Timestamp", "x": [1e12, 1e12 + 0.125], "y": [1e12, 1e12 + 0.25]},
         {"id": "mean", "label": "Mean", "x": [1e12, 1e12 + 0.125], "y": [1e12 + 0.125, 1e12 + 0.125]},
     ])

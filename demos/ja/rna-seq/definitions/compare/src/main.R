@@ -1,21 +1,22 @@
 library(ggplot2)
 
 # Two methods on the same data: which genes do they agree on?
-main <- function(ctx) {
-  fdr <- ctx$params$fdr
-  a <- read.csv(ctx$path("deseq2"))
-  b <- read.csv(ctx$path("edger"))
+main <- function(inputs, report, run) {
+  outputs <- list()
+  fdr <- inputs$params$fdr
+  a <- read.csv(inputs$path("deseq2"))
+  b <- read.csv(inputs$path("edger"))
   d <- merge(a[, c("gene_id", "symbol", "log2fc", "fdr")], b[, c("gene_id", "log2fc", "fdr")], by = "gene_id", suffixes = c("_deseq2", "_edger"))
   d$in_deseq2 <- !is.na(d$fdr_deseq2) & d$fdr_deseq2 < fdr
   d$in_edger <- !is.na(d$fdr_edger) & d$fdr_edger < fdr
   d$class <- ifelse(d$in_deseq2 & d$in_edger, "両方", ifelse(d$in_deseq2, "DESeq2 のみ", ifelse(d$in_edger, "edgeR のみ", "どちらでもない")))
   n <- table(factor(d$class, c("両方", "DESeq2 のみ", "edgeR のみ", "どちらでもない")))
-  file <- file.path(ctx$output_directory, "agreement.csv")
+  file <- file.path(run$output_directory, "agreement.csv")
   write.csv(as.data.frame(n, responseName = "genes"), file, row.names = FALSE)
-  ctx$output("agreement", list(value = file))
+  outputs[["agreement"]] <- list(value = file)
   overlap <- n[["両方"]] / (n[["両方"]] + n[["DESeq2 のみ"]] + n[["edgeR のみ"]])
   correlation <- cor(d$log2fc_deseq2, d$log2fc_edger, use = "complete.obs")
-  print(n)
+  report$log(paste(capture.output(print(n)), collapse = "\n"))
   unset <- sum(d$class == "edgeR のみ" & is.na(d$fdr_deseq2))
   shown <- d[order(d$class != "どちらでもない"), ]
   figure <- ggplot(shown, aes(log2fc_deseq2, log2fc_edger, colour = class)) +
@@ -30,5 +31,7 @@ main <- function(ctx) {
                             100 * overlap, correlation, unset)) +
     theme_minimal(base_size = 11) +
     theme(legend.position = "top")
-  ctx$plot(print(figure), alt = sprintf("DESeq2 and edgeR agree on %d genes", n[["両方"]]), width = 7, height = 5)
+  report$figure(print(figure), alt = sprintf("DESeq2 and edgeR agree on %d genes", n[["両方"]]), width = 7, height = 5)
+
+  outputs
 }

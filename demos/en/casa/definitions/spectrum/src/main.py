@@ -2,7 +2,7 @@
 
 Same events and sky grid as bands; its three bands are shaded in
 their colours and the emission lines of the ejecta are marked.
-Plain matplotlib: plt.show() puts the figure in the Card's display."""
+Plain matplotlib: report.figure() puts the figure in the Card's display."""
 import json
 from pathlib import Path
 
@@ -20,11 +20,11 @@ LINES = [
 SHADE = {"red": "#e5484d", "green": "#30a46c", "blue": "#3e7bfa"}
 
 
-def main(ctx):
-    source = Path(ctx.input("input", BandDir).Value().decode())
+def main(inputs, report):
+    source = Path(inputs.input("input", BandDir).Value().decode())
     manifest = json.loads((source / "provenance.json").read_text())
-    p = ctx.params()
-    lo, hi, width = p.MinEv(), p.MaxEv(), p.BinEv()
+    p = inputs.params
+    lo, hi, width = p.minEv, p.maxEv, p.binEv
     assert 0 <= lo < hi and width > 0, "bad energy range or bin"
 
     # The photons in the same square of sky as the bands' grid.
@@ -63,5 +63,5 @@ def main(ctx):
         ax.legend(loc="lower left", title="photons", frameon=False,
                   fontsize=11, title_fontsize=11)
         fig.tight_layout()
-        plt.show()
-    print(json.dumps({"photons": int(counts.sum()), "bin_ev": width}))
+        report.figure()
+    report.log(str(json.dumps({"photons": int(counts.sum()), "bin_ev": width})))

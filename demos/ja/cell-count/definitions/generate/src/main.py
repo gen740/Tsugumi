@@ -1,10 +1,10 @@
 """A synthetic fluorescence-like image with known cell centres: blobs with soft
 edges, touching pairs, uneven illumination and noise."""
+import tsugumi
 import matplotlib.pyplot as plt
 import numpy as np
 
 from tsugumi import Failure
-import outputs.scene.cells.Scene as out
 
 
 def place(rng, size, cells, pairs, radius):
@@ -58,13 +58,13 @@ def render(rng, size, centres, radius, noise, unevenness):
     return cells * gain + glow + 0.05 + rng.normal(0, noise, (size, size))
 
 
-def main(ctx):
-    p = ctx.params()
-    size, cells, pairs = p.Size(), p.Cells(), p.TouchingPairs()
-    rng = np.random.default_rng(p.Seed())
-    centres = place(rng, size, cells, pairs, p.Radius())
-    image = render(rng, size, centres, p.Radius(), p.Noise(), p.Unevenness())
-    print(f"seed {p.Seed()}: {len(centres)} cells, {pairs} touching pairs, noise {p.Noise()}, unevenness {p.Unevenness()}")
+def main(inputs, report):
+    p = inputs.params
+    size, cells, pairs = p.size, p.cells, p.touchingPairs
+    rng = np.random.default_rng(p.seed)
+    centres = place(rng, size, cells, pairs, p.radius)
+    image = render(rng, size, centres, p.radius, p.noise, p.unevenness)
+    report.log(str(f"seed {p.seed}: {len(centres)} cells, {pairs} touching pairs, noise {p.noise}, unevenness {p.unevenness}"))
 
     fig, axes = plt.subplots(1, 2, figsize=(9, 4.8))
     high = np.percentile(image, 99.5)
@@ -77,20 +77,18 @@ def main(ctx):
     axes[1].set_title(f"真の中心: {len(centres)} 個（うち {pairs} 組が接している）")
     axes[1].legend(frameon=False, loc="upper center", bbox_to_anchor=(0.5, 0.0), ncol=2)
     fig.tight_layout()
-    plt.show()
-
-    b = ctx.builder(image.size * 4 + 4096)
-    image_v = b.CreateNumpyVector(image.astype(np.float32).ravel())
-    x_v = b.CreateNumpyVector(centres[:, 0].astype(np.float32))
-    y_v = b.CreateNumpyVector(centres[:, 1].astype(np.float32))
-    out.Start(b)
-    out.AddSize(b, size)
-    out.AddImage(b, image_v)
-    out.AddTrueX(b, x_v)
-    out.AddTrueY(b, y_v)
-    out.AddRadius(b, p.Radius())
-    out.AddPairs(b, pairs)
-    out.AddSeed(b, p.Seed())
-    out.AddNoise(b, p.Noise())
-    out.AddUnevenness(b, p.Unevenness())
-    ctx.output("scene", b, out.End(b))
+    report.figure()
+    image_v = image.astype(np.float32).ravel()
+    x_v = centres[:, 0].astype(np.float32)
+    y_v = centres[:, 1].astype(np.float32)
+    _out_value = {}
+    _out_value['size'] = size
+    _out_value['image'] = image_v
+    _out_value['true_x'] = x_v
+    _out_value['true_y'] = y_v
+    _out_value['radius'] = p.radius
+    _out_value['pairs'] = pairs
+    _out_value['seed'] = p.seed
+    _out_value['noise'] = p.noise
+    _out_value['unevenness'] = p.unevenness
+    return {'scene': _out_value}

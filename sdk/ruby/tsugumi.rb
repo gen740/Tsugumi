@@ -47,11 +47,11 @@ module Tsugumi
     end
   end
 
-  class Context
+  class CallScope
     def initialize
       @owner = Thread.current
       @lifetime = { active: true }
-      @info = TsugumiHost.info.freeze
+      @info = TsugumiHost.info
       @params = JSON.parse(TsugumiHost.params, allow_nan: true)
       @inputs, @kinds = {}, {}
       TsugumiHost.inputs.each do |name, kind, json|
@@ -60,16 +60,17 @@ module Tsugumi
       end
     end
 
+    def info
+      check
+      @info
+    end
+
     def close
       @lifetime[:active] = false
     end
 
     def check
-      raise Failure.new('worker_failed', 'Card context has expired or belongs to another thread') unless @lifetime[:active] && Thread.current == @owner
-    end
-
-    %w[run_id card invocation working_directory temporary_directory output_directory].each do |name|
-      define_method(name) { check; @info.fetch(name) }
+      raise Failure.new('worker_failed', 'Card call has expired or belongs to another thread') unless @lifetime[:active] && Thread.current == @owner
     end
 
     def params
@@ -101,24 +102,24 @@ module Tsugumi
       raise Failure.new('output_invalid', e.message)
     end
 
-    def display_text(value)
+    def text(value)
       check
       TsugumiHost.display_text(Tsugumi.text(value))
     end
 
-    def display_markdown(value)
+    def markdown(value)
       check
       TsugumiHost.display_markdown(Tsugumi.text(value))
     end
 
-    def display_scalar(value, label = '')
+    def scalar(value, label = '')
       check
       raise ArgumentError, 'display scalar must be a finite number' unless value.is_a?(Numeric) && value.finite?
       TsugumiHost.display_scalar(value, Tsugumi.text(label))
     end
 
     # series: [{ id:, label:, x: [...], y: [...] }, ...]; label defaults to id.
-    def display_line_chart(series)
+    def line_chart(series)
       check
       rows = series.map do |one|
         one = one.to_h.transform_keys(&:to_s)
@@ -132,7 +133,7 @@ module Tsugumi
     end
 
     # A 3D point cloud; colors are 0xRRGGBB integers, one per point, or nil.
-    def display_points(x, y, z, colors = nil)
+    def points(x, y, z, colors = nil)
       check
       x, y, z = [x, y, z].map { |axis| axis.map { |v| Float(v) } }
       raise ArgumentError, 'x, y and z differ in length' unless x.length == y.length && y.length == z.length
@@ -143,45 +144,34 @@ module Tsugumi
       TsugumiHost.display_points(x.pack('f*'), y.pack('f*'), z.pack('f*'), colors&.pack('L*'))
     end
 
-    def display_table(columns, rows)
+    def table(columns, rows)
       check
       cells = rows.map { |row| row.map { |value| value.is_a?(String) ? Tsugumi.text(value) : JSON.generate(Tsugumi.json_value(value)) } }
       TsugumiHost.display_table(columns.map { |name| Tsugumi.text(name.to_s) }, cells)
     end
 
-    def display_image(bytes, media_type: 'image/png', alt: '')
+    def image(bytes, media_type: 'image/png', alt: '')
       check
       raise ArgumentError, 'image data must be a binary String' unless bytes.is_a?(String)
       TsugumiHost.display_image(Tsugumi.text(media_type), bytes, Tsugumi.text(alt))
     end
 
-    def display_module(name, value)
+    def module(name, value)
       check
       TsugumiHost.display_module(Tsugumi.text(name), JSON.generate(Tsugumi.json_value(value)))
     end
 
-    def display_plotly(figure)
-      display_module('plotly', figure)
+    def plotly(figure)
+      self.module('plotly', figure)
     end
 
-    def display_vegalite(spec)
-      display_module('vega-lite', spec)
+    def vegalite(spec)
+      self.module('vega-lite', spec)
     end
 
     def log(message)
       check
       TsugumiHost.log(Tsugumi.text(message))
-    end
-
-    def cancelled?
-      check
-      TsugumiHost.cancelled?
-    end
-
-    def remaining_ms
-      check
-      value = TsugumiHost.remaining_ms
-      value < 0 ? nil : value
     end
 
     def fail(kind, message)
@@ -190,13 +180,79 @@ module Tsugumi
     end
   end
 
+  def self.freeze_input(value)
+    case value
+    when Hash then value.each { |key, item| key.freeze; freeze_input(item) }
+    when Array then value.each { |item| freeze_input(item) }
+    end
+    value.freeze
+  end
+
+  class Inputs
+    def initialize(scope)
+      @params = Tsugumi.freeze_input(scope.params)
+      @kinds = TsugumiHost.inputs.to_h { |name, kind, _| [name, kind] }.freeze
+      @values = TsugumiHost.inputs.to_h { |name, _, json| [name, Tsugumi.freeze_input(JSON.parse(json, allow_nan: true))] }.freeze
+      freeze
+    end
+    attr_reader :params
+    def [](name) = @values[name.to_s]
+    def input(name) = self[name]
+    def path(name)
+      return nil unless @values.key?(name.to_s)
+      raise ArgumentError, "#{name} is not a File or Directory port" unless [1, 2].include?(@kinds[name.to_s])
+      self[name].fetch('value')
+    end
+    def method_missing(name, *args)
+      return self[name] if args.empty? && !name.to_s.end_with?('=')
+      super
+    end
+    def respond_to_missing?(name, private_ = false) = @values.key?(name.to_s) || super
+  end
+
+  class Report
+    def initialize(scope) = @scope = scope
+    %i[text markdown scalar line_chart table image points module plotly vegalite log].each do |name|
+      define_method(name) { |*args, **options| @scope.public_send(name, *args, **options) }
+    end
+  end
+
+  class Run
+    def initialize(scope) = @scope = scope
+    %w[run_id card invocation working_directory temporary_directory output_directory].each do |name|
+      define_method(name) { @scope.info.fetch(name) }
+    end
+    def cancelled? = (@scope.check; TsugumiHost.cancelled?)
+    def remaining_ms = (@scope.check; TsugumiHost.remaining_ms)
+  end
+
+  def self.call(function, scope)
+    args = [Inputs.new(scope), Report.new(scope), Run.new(scope)]
+    raise ArgumentError, 'Card functions take inputs, optionally report and run' unless (1..3).cover?(function.arity)
+    result = function.call(*args.take(function.arity))
+    send_outputs(scope, result)
+  end
+
+  def self.send_outputs(scope, result)
+    return if result.nil?
+    if result.is_a?(Enumerator)
+      result.each { |batch| send_outputs(scope, batch) }
+      return
+    end
+    raise ArgumentError, 'return a Hash by output port' unless result.is_a?(Hash)
+    result.each { |port, value| scope.output(port, value) }
+  end
+
+  private_constant :CallScope
+
+
   class Card; end
 
   def self.guard(report: true)
     before = Thread.list
-    ctx = report ? Context.new : nil
+    scope = report ? CallScope.new : nil
     begin
-      yield ctx
+      yield scope
       if (Thread.list - before).any?(&:alive?)
         raise Failure.new('worker_failed', 'join Ruby threads before returning from a Card')
       end
@@ -209,7 +265,7 @@ module Tsugumi
       end
       false
     ensure
-      ctx&.close
+      scope&.close
       (Thread.list - before).each { |thread| thread.kill; thread.join(0.1) }
       $stdout.flush
       $stderr.flush
@@ -223,16 +279,16 @@ module Tsugumi
       file = File.join(directory, 'main.rb')
       Card.class_eval(File.read(file, encoding: Encoding::UTF_8), file, 1)
       @card = Card.new
-      raise 'main(ctx) is not defined' unless @card.respond_to?(:main)
+      raise 'main(inputs[, report[, run]]) is not defined' unless @card.respond_to?(:main)
     end
   end
 
   def self._run_start
     return true unless @card.respond_to?(:on_run_start)
-    guard { |ctx| @card.on_run_start(ctx) }
+    guard { |scope| call(@card.method(:on_run_start), scope) }
   end
 
   def self._invoke
-    guard { |ctx| @card.main(ctx) }
+    guard { |scope| call(@card.method(:main), scope) }
   end
 end

@@ -1,3 +1,4 @@
+import tsugumi
 import os
 
 import matplotlib
@@ -11,12 +12,13 @@ from inputs.data.quake.QuakeFiles import QuakeFiles
 import outputs.section.quake.SectionDir as out
 
 
-def emit(ctx, port, out):
-    b = ctx.builder()
-    s = b.CreateString(ctx.output_directory)
-    out.Start(b)
-    out.AddValue(b, s)
-    ctx.output(port, b, out.End(b))
+def emit(inputs, port, out):
+    result_ports = {}
+    s = '.'
+    _out_value = {}
+    _out_value['value'] = s
+    result_ports.update({port: _out_value})
+    return result_ports
 
 
 def png(fig):
@@ -27,20 +29,21 @@ def png(fig):
     return buf.getvalue()
 
 
-def main(ctx):
-    p = ctx.params()
-    folder = ctx.input("data", QuakeFiles).Value().decode()
+def main(inputs, report, run):
+    result_ports = {}
+    p = inputs.params
+    folder = inputs.input("data", QuakeFiles).Value().decode()
     rows = list(csv.DictReader(open(os.path.join(folder, sorted(os.listdir(folder))[0]))))
     ev = np.array([(float(r["latitude"]), float(r["longitude"]), float(r["depth"]), float(r["mag"]))
                    for r in rows if r.get("type") == "earthquake" and r["mag"] and r["depth"]])
-    band = (ev[:, 0] >= p.LatMin()) & (ev[:, 0] <= p.LatMax())
+    band = (ev[:, 0] >= p.latMin) & (ev[:, 0] <= p.latMax)
     sel = ev[band]
     fig, (m, s) = plt.subplots(1, 2, figsize=(10, 4.4), gridspec_kw={"width_ratios": [1, 2.2]})
     m.scatter(ev[:, 1], ev[:, 0], s=1, c="#bbb")
     m.scatter(sel[:, 1], sel[:, 0], s=1, c="#E5484D")
     m.set_xlabel("longitude")
     m.set_ylabel("latitude")
-    m.set_title(f"{len(ev)} events, band {p.LatMin():g}-{p.LatMax():g} N", fontsize=9)
+    m.set_title(f"{len(ev)} events, band {p.latMin:g}-{p.latMax:g} N", fontsize=9)
     sc = s.scatter(sel[:, 1], sel[:, 2], s=(sel[:, 3] - 3) ** 2 * 3, c=sel[:, 3], cmap="plasma", alpha=0.6)
     s.invert_yaxis()
     s.set_xlabel("longitude")
@@ -48,10 +51,11 @@ def main(ctx):
     s.set_title("cross-section (subducting Pacific slab)", fontsize=9)
     fig.colorbar(sc, ax=s, label="M")
     data = png(fig)
-    with open(os.path.join(ctx.output_directory, "section.png"), "wb") as fh:
+    with open(os.path.join(run.output_directory, "section.png"), "wb") as fh:
         fh.write(data)
-    np.savetxt(os.path.join(ctx.output_directory, "selected.csv"), sel, delimiter=",",
+    np.savetxt(os.path.join(run.output_directory, "selected.csv"), sel, delimiter=",",
                header="latitude,longitude,depth_km,mag", comments="", fmt="%.4f")
-    print(f"{len(sel)} of {len(ev)} events between {p.LatMin():g} and {p.LatMax():g} N")
-    ctx.display_image(data, "image/png", "Japan Trench: events and depth cross-section")
-    emit(ctx, "section", out)
+    report.log(str(f"{len(sel)} of {len(ev)} events between {p.latMin:g} and {p.latMax:g} N"))
+    report.image(data, "image/png", "Japan Trench: events and depth cross-section")
+    result_ports.update(emit(inputs, 'section', out))
+    return result_ports

@@ -3,8 +3,8 @@ include("dp.jl")
 
 # The same battery under four contracts. With a flat price and equal selling
 # price, cycling only loses energy: the optimum is to stay still.
-function main(ctx)
-    m = input(ctx, "scenario")
+function main(inputs, report)
+    m = Tsugumi.input(inputs, "scenario")
     net_load = Float64.(m["load"]) .- Float64.(m["solar"])
     capacity, ratio = m["capacity_kwh"], m["export_ratio"]
     percent = @sprintf("%.0f%%", 100ratio)
@@ -18,7 +18,7 @@ function main(ctx)
         best = optimal_schedule(net_load, price, sell; capacity, power=m["power_kw"], efficiency=m["round_trip_efficiency"], step=m["soc_step_kwh"])
         saved = no_battery_bill(net_load, price, sell) - best.bill
         used = cycles(best.charge, capacity)
-        println(@sprintf("%s: saved %.2f yen, %.2f cycles", name, saved, used))
+        report.log(string(@sprintf("%s: saved %.2f yen, %.2f cycles", name, saved, used)))
         push!(results, Dict("scenario" => name, "key" => key, "export_ratio" => sell, "saved" => saved, "cycles" => used,
                             "label" => @sprintf("%.0f 円 · %.1f サイクル", saved, used)))
         append!(paths, [Dict("day" => (t - 1) / 24, "kWh" => best.charge[t], "scenario" => name) for t in eachindex(best.charge)])
@@ -26,7 +26,7 @@ function main(ctx)
     order = [s[1] for s in scenarios]
     colors = Dict("domain" => order, "range" => ["#8a8880", "#eda100", "#1baf7a", "#2a78d6"])
 
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("text" => "料金の形が運転を決める",
@@ -54,4 +54,6 @@ function main(ctx)
                                                    "y" => Dict("field" => "kWh", "type" => "quantitative", "title" => "蓄電量（kWh）", "scale" => Dict("domain" => [0, capacity]), "axis" => Dict("tickCount" => 3)),
                                                    "color" => Dict("field" => "scenario", "type" => "nominal", "scale" => colors, "legend" => nothing)))),
         ]))
+
+    return nothing
 end

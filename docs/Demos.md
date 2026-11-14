@@ -11,7 +11,7 @@ Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of ex
 | [Collatz (C++ / Python / Julia / R)](#collatz-c--python--julia--r-collatz) | The Collatz sequence | Cross-checking independent implementations in four languages, branches, merges and loops, `maxRuns`, detecting integer overflow |
 | [Python → Ruby → C++](#python--ruby--c-ruby-pipeline) | Passing a typed integer across languages | Ruby Hash outputs, parameters, resident run-start state, live displays |
 | [Live Stream](#live-stream-live-stream) | Plotting a random walk as it goes | A stream made by a feedback loop, stopping at once, WebGPU line charts |
-| [Plots](#plots-plots) | Diffusion of random walks | Ordinary matplotlib (`plt.show()`, `FuncAnimation`) drawn straight into a Card; Plotly and Altair become interactive charts |
+| [Plots](#plots-plots) | Diffusion of random walks | Matplotlib figures and `FuncAnimation` published through Report; Plotly and Altair become interactive charts |
 | [Cas A · Chandra RGB](#cas-a--chandra-rgb-casa) | X-ray observation of a supernova remnant | Observation data pinned with Nix, rerunning per Card, version history |
 | [Science demos](#science-demos-fetching-and-analysing-public-data) | Gravitational waves, a protein, an exoplanet, earthquakes | Fetching public data (sizes and SHA-256), analysing and plotting it |
 | [MNIST · comparing classifiers](#mnist--comparing-classifiers-mnist-classifiers) | Classifying handwritten digits (seven methods, from kNN to a CNN) | Seven branches from one input running at once in separate Nix environments and merging; rerunning just one branch with other conditions |
@@ -97,8 +97,7 @@ A feedback loop that sends "the next state" back to itself makes a stream that e
 
 ### Plots (`plots`)
 
-Makes random walks and plots them with the same matplotlib, Plotly and Altair code you would write anywhere else.
-No Tsugumi-specific drawing calls are used. Python Cards use the SDK's matplotlib backend, so a figure drawn with `plt.show()` appears as the Card's display. Plotly's `fig.show()` and Altair's `chart.show()` appear as interactive charts.
+Makes random walks and draws them with Matplotlib, Plotly and Altair. `report.figure()` publishes Matplotlib figures and plays animations; `report.figure(fig)` publishes a Plotly figure or an Altair chart as an interactive display.
 
 **Try**
 - Run it: `diffusion`'s display plays as an animation, and the last frame stays.

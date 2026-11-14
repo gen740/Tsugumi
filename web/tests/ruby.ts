@@ -10,7 +10,7 @@ assert(TEMPLATES.some((entry) => entry.id === 'ruby'))
 const card = s.addCard('ruby', [], { x: 0, y: 0 }, 'ruby')
 assert.equal(str(get(s.cardDefinition(card), 'language')), 'ruby')
 assert.match(await s.sourceText(`definitions/${card}/default.nix`), /rubyCard/)
-assert.match(await s.sourceText(`definitions/${card}/src/main.rb`), /def main\(ctx\)/)
+assert.match(await s.sourceText(`definitions/${card}/src/main.rb`), /def main\(inputs\)/)
 s.undo()
 
 // Offered in the canvas's "Add Card" menu, not only known to the session.

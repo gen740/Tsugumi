@@ -8,9 +8,12 @@ exact <- function(x, what = "a value") {
 # A ulong field takes digits: a double such as 27 would be written as 27.0, which the type rejects.
 whole <- function(x) sprintf("%.0f", x)
 
-main <- function(ctx) {
-  walk <- ctx$input("number")
+main <- function(inputs, report) {
+  outputs <- list()
+  walk <- inputs$input("number")
   n <- exact(walk$value, "n")
   half <- n %/% 2
-  ctx$output("next", list(value = whole(half), path = I(whole(c(exact(walk$path, "the sequence"), half)))))
+  outputs[["next"]] <- list(value = whole(half), path = I(whole(c(exact(walk$path, "the sequence"), half))))
+
+  outputs
 }

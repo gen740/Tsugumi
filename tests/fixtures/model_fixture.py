@@ -69,10 +69,6 @@ reason refusal, and "think only" a reply with nothing but a thinking block (on
 the Responses API, a refusal with no output text). Like the Messages API it
 refuses a request with empty content on any message but a final assistant one.
 
-Reading many times ("read <path> <n> times", optionally "in <r> rounds"): n
-reference_read calls in one reply, r replies in a row, then a line saying how
-many results came and how many of them were cut.
-
 The context limit (--context-limit): like the APIs, a request over it is refused
 and nothing of it is answered: a 400 on the Messages API, response.failed on
 the Responses API. A request's size is the input tokens the fixture reports.
@@ -110,7 +106,6 @@ SEARCH = re.compile(r"search the web for (.+?)(?: (with a pause|alongside inspec
 # arguments that are cut (or, "as a list", not an object), as a model may write
 # them when the API does not check them; then it says what it was told.
 BROKEN = re.compile(r"write a broken (\S+) (\d+) times( as a list)?")
-READ_MANY = re.compile(r"read (\S+) (\d+) times(?: in (\d+) rounds)?", re.I)
 
 
 # "look at the picture <path>": reads it and says how the image came; with
@@ -566,24 +561,6 @@ def decide_broken(messages, task, start):
                     f"Told to write it again: {'Make the call again' in told}. Shown my text: {'INVALID_JSON' in told}.")
 
 
-def last_read_many(messages):
-    for i in range(len(messages) - 1, -1, -1):
-        if messages[i]["role"] == "user":
-            for b in blocks(messages[i]):
-                if b.get("type") == "text" and (t := READ_MANY.search(b["text"])):
-                    return t, i
-    return None, -1
-
-
-def decide_read_many(messages, task, start):
-    after = messages[start + 1:]
-    rounds = sum(1 for m in after if m["role"] == "assistant" and any(b.get("type") == "tool_use" for b in blocks(m)))
-    if rounds < int(task.group(3) or 1):
-        return ("tools", [("reference_read", {"path": task.group(1)})] * int(task.group(2)))
-    results = [b["content"] for m in after for b in blocks(m) if b.get("type") == "tool_result"]
-    return ("text", f"Read {len(results)} results, {sum('[cut' in r for r in results)} cut.")
-
-
 def last_stale_read(messages):
     for i in range(len(messages) - 1, -1, -1):
         if messages[i]["role"] == "user" and any(STALE_READ in b.get("text", "") for b in blocks(messages[i])):
@@ -657,12 +634,9 @@ def decide(messages, system="", tools=()):
     team, team_start = last_delegate_task(messages)
     if team is not None:
         return decide_delegate(messages, team, team_start)
-    many, many_start = last_read_many(messages)
     # Only while it is the latest request (a note about a cut reply is none).
     asked = [i for i, m in enumerate(messages) if m["role"] == "user" and any(
         b.get("type") == "text" and not b["text"].startswith("Your last reply was cut") for b in blocks(m))]
-    if many is not None and many_start == asked[-1]:
-        return decide_read_many(messages, many, many_start)
     comment_text, comment_start = last_comment_task(messages)
     draft_text, draft_start = last_draft_task(messages)
     task, start = last_task(messages)

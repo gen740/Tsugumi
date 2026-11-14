@@ -16,7 +16,7 @@
       else . end;'
     case ${pkgs.lib.escapeShellArg params.format} in
       text)
-        jq -Rs "$preview"' {text: preview}' "$JSON_IN" > "$TSUGUMI_DISPLAY"
+        jq -Rs "$preview"' {text: preview}' "$JSON_IN" > "$TSUGUMI_REPORT"
         ;;
       markdown)
         jq -es --arg field ${pkgs.lib.escapeShellArg params.markdown_field} "$preview"'
@@ -27,7 +27,7 @@
             end)
           else error("Markdown input must contain the string field " + $field)
           end
-        ' "$JSON_IN" > "$TSUGUMI_DISPLAY"
+        ' "$JSON_IN" > "$TSUGUMI_REPORT"
         ;;
       *)
         printf '%s\n' 'Unknown display format: expected text or markdown' >&2

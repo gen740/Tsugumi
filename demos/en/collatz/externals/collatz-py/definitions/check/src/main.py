@@ -1,3 +1,4 @@
+import tsugumi
 from inputs.arrival.tsugumi.merge.Merged import Merged
 from inputs.arrival.tsugumi.merge.Arrival import Arrival
 from inputs.arrival.tsugumi.merge.p0.collatz.Number import Number as InitNumber
@@ -9,9 +10,9 @@ from tsugumi import Failure
 _CLASSES = {Arrival.init: InitNumber, Arrival.half: HalfNumber, Arrival.triple: TripleNumber}
 
 
-def arrival(ctx):
+def arrival(inputs):
     """Returns (port, value) of the merge union delivered by the loop."""
-    m = ctx.input("arrival", Merged)
+    m = inputs.input("arrival", Merged)
     cls = _CLASSES.get(m.ValueType())
     if cls is None:
         raise Failure("output_invalid", "unexpected arrival")
@@ -20,21 +21,19 @@ def arrival(ctx):
     number.Init(table.Bytes, table.Pos)
     return m.ValueType(), number.Value()
 
-import outputs.value.collatz.Number as value_out
-import outputs.even.collatz.Parity as even_out
 
 
-def main(ctx):
-    _, n = arrival(ctx)
+def main(inputs):
+    result_ports = {}
+    _, n = arrival(inputs)
     if n == 0:
         raise Failure("output_invalid", "Collatz is defined for positive integers")
     if n == 1:
         return  # no outputs: the loop ends
-    b = ctx.builder()
-    value_out.Start(b)
-    value_out.AddValue(b, n)
-    ctx.output("value", b, value_out.End(b))
-    b = ctx.builder()
-    even_out.Start(b)
-    even_out.AddValue(b, n % 2 == 0)
-    ctx.output("even", b, even_out.End(b))
+    _value_out_value = {}
+    _value_out_value['value'] = n
+    result_ports.update({'value': _value_out_value})
+    _even_out_value = {}
+    _even_out_value['value'] = n % 2 == 0
+    result_ports.update({'even': _even_out_value})
+    return result_ports

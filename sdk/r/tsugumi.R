@@ -1,21 +1,9 @@
-# Tsugumi R Card SDK. A Card provides `main(ctx)` in src/main.R:
-#
-#   main <- function(ctx) {
-#     n <- ctx$input("number")$value
-#     ctx$output("result", list(value = n * ctx$params$factor))
-#     ctx$plot(hist(rnorm(100)), alt = "a histogram")
-#   }
-#
-# The worker passes FlatBuffers through the Card ABI. Its in-memory adapter
-# presents messages as lists without temporary JSON files. A length-1 vector
-# is written as a scalar: wrap a vector field in I() to keep it an array.
-# Integers too large for an exact R double are decimal strings; NA/NaN are null.
-# A Card keeps no state by default: each invocation loads this file and the
-# Card's source in a new interpreter. With reuseWorker: true the interpreter
-# and module-level state persist. Each call gets a fresh ctx; display
-# functions publish immediately.
+# Tsugumi R Cards define main(inputs[, report[, run]]).
+# Return a named list of output messages; File/Directory values carry paths.
+# Inputs use inputs$port and inputs$params. Report methods publish immediately.
+# Wrap length-one vectors in I() to retain their array shape in FlatBuffers.
 
-.tsugumi_context <- function() {
+.tsugumi_arguments <- function() {
   # FlatBuffers reads a union's discriminator before its value.
   order_unions <- function(x) {
     if (is.list(x) && !is.data.frame(x)) {
@@ -25,6 +13,7 @@
     x
   }
   to_json <- function(x) jsonlite::toJSON(order_unions(x), auto_unbox = TRUE, digits = I(17), always_decimal = TRUE, null = "null", na = "null")
+  .tsugumi_json <<- to_json
   from_json <- function(x) jsonlite::fromJSON(x, simplifyVector = TRUE, bigint_as_char = TRUE)
 
   show <- function(member) {
@@ -32,36 +21,26 @@
     invisible(NULL)
   }
 
-  self <- list(
-    params = from_json(.Call("tsugumi_params")),
-    run_id = .Call("tsugumi_info", 0L),
-    card = .Call("tsugumi_info", 1L),
+  run <- list(
+    run_id = .Call("tsugumi_info", 0L), card = .Call("tsugumi_info", 1L),
     invocation = .Call("tsugumi_invocation"),
     working_directory = .Call("tsugumi_info", 2L),
     temporary_directory = .Call("tsugumi_info", 3L),
     output_directory = .Call("tsugumi_info", 4L),
     cancelled = function() .Call("tsugumi_cancelled"),
-    remaining_ms = function() .Call("tsugumi_remaining"),
-
-    input = function(port) {
-      value <- .Call("tsugumi_input", as.character(port))
-      if (is.null(value)) return(NULL)
-      from_json(value)
-    },
-    path = function(port) {
-      if (!(.Call("tsugumi_input_kind", as.character(port)) %in% c(1L, 2L))) stop("no File or Directory input port named ", port)
-      value <- self$input(port)$value
-      if (!is.character(value) || length(value) != 1L) stop("no File or Directory input port named ", port)
-      value
-    },
-    output = function(port, message) {
-      if (!.Call("tsugumi_output", as.character(port), as.character(to_json(message)))) stop("output was rejected by the worker: ", port)
-      invisible(NULL)
-    },
-    display_text = function(text) show(list(text = paste(text, collapse = "\n"))),
-    display_markdown = function(text) show(list(markdown = paste(text, collapse = "\n"))),
+    remaining_ms = function() .Call("tsugumi_remaining")
+  )
+  class(run) <- "Run"
+  read <- function(port) {
+    value <- .Call("tsugumi_input", as.character(port))
+    if (is.null(value)) NULL else from_json(value)
+  }
+  inputs <- structure(list(params = from_json(.Call("tsugumi_params")), read = read), class = "TsugumiInputs")
+  report <- list(
+    text = function(text) show(list(text = paste(text, collapse = "\n"))),
+    markdown = function(text) show(list(markdown = paste(text, collapse = "\n"))),
     # A data.frame or matrix (`digits`: significant digits of numeric columns).
-    display_table = function(table, digits = 4) {
+    table = function(table, digits = 4) {
       table <- as.data.frame(table, stringsAsFactors = FALSE)
       cells <- vapply(table, function(column) {
         if (is.numeric(column)) format(column, digits = digits, trim = TRUE) else as.character(column)
@@ -71,29 +50,65 @@
       show(list(table = list(columns = I(names(table)), rows = rows)))
     },
     # A PNG or JPEG file.
-    display_image = function(path, alt = "") show(list(image = list(path = path, alt = alt))),
+    image = function(path, alt = "") show(list(image = list(path = path, alt = alt))),
     # An interactive plot: name is "vega-lite" or "plotly", data its spec as a list.
-    display_module = function(name, data) show(list(module = list(module = name, config = data))),
+    module = function(name, data) show(list(module = list(module = name, config = data))),
     # Draws `expr` (base graphics or a ggplot) as the Card's image.
-    plot = function(expr, alt = "", width = 8, height = 5, res = 160) {
-      file <- tempfile(fileext = ".png", tmpdir = self$temporary_directory)
+    figure = function(expr, alt = "", width = 8, height = 5, res = 160) {
+      file <- tempfile(fileext = ".png", tmpdir = run$temporary_directory)
       grDevices::png(file, width = width, height = height, units = "in", res = res, type = "cairo")
       tryCatch({
         drawn <- withVisible(expr)
         if (drawn$visible && inherits(drawn$value, "ggplot")) print(drawn$value)
       }, finally = grDevices::dev.off())
       show(list(image = list(path = file, alt = alt)))
-    }
+    },
+    log = function(message) { .Call("tsugumi_log", as.character(message)); invisible(NULL) }
   )
-  self
+  class(report) <- "Report"
+  list(inputs, report, run)
+}
+
+`$.TsugumiInputs` <- function(x, name) {
+  if (name == "params") return(unclass(x)[["params"]])
+  if (name == "input") return(unclass(x)[["read"]])
+  if (name == "path") return(function(port) {
+    if (!(.Call("tsugumi_input_kind", as.character(port)) %in% c(1L, 2L))) stop("no File or Directory input port named ", port)
+    value <- unclass(x)[["read"]](port)$value
+    if (!is.character(value) || length(value) != 1L) stop("no File or Directory input port named ", port)
+    value
+  })
+  unclass(x)[["read"]](name)
+}
+`$<-.TsugumiInputs` <- function(x, name, value) stop("inputs are read-only")
+
+.tsugumi_outputs <- function(result) {
+  if (is.function(result)) {
+    repeat { batch <- result(); if (is.null(batch)) break; .tsugumi_outputs(batch) }
+    return(invisible(NULL))
+  }
+  if (!is.null(result)) {
+    if (is.list(result) && length(result) == 0L) return(invisible(NULL))
+    if (!is.list(result) || is.null(names(result))) stop("return a named list of output ports")
+    for (port in names(result)) {
+      message <- result[[port]]
+      if (!.Call("tsugumi_output", port, as.character(.tsugumi_json(message)))) stop("output was rejected: ", port)
+    }
+  }
+  invisible(NULL)
 }
 
 .tsugumi_invoke <- function(hook) {
   tryCatch({
-    ctx <- .tsugumi_context()
-    if (hook) {
-      if (exists("on_run_start", envir = .GlobalEnv, inherits = FALSE)) on_run_start(ctx)
-    } else main(ctx)
+    arguments <- .tsugumi_arguments()
+    function_ <- if (hook) {
+      if (exists("on_run_start", envir = .GlobalEnv, inherits = FALSE)) on_run_start else NULL
+    } else main
+    if (!is.null(function_)) {
+      count <- length(formals(function_))
+      if (!(count %in% 1:3)) stop("Card functions take inputs, optionally report and run")
+      .tsugumi_outputs(do.call(function_, arguments[seq_len(count)]))
+    }
     TRUE
   }, error = function(error) {
     .Call("tsugumi_fail", conditionMessage(error))

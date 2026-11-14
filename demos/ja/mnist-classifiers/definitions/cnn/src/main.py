@@ -1,4 +1,5 @@
 """A small convolutional network: it sees the digit as an image, trained on the CPU with a fixed seed."""
+import tsugumi
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -12,7 +13,6 @@ import torch
 from torch import nn
 
 from inputs.data.mnist.SubsetFile import SubsetFile
-import outputs.result.mnist.Result as out
 
 BATCH = 64
 
@@ -29,27 +29,29 @@ def confusions(ax, y, pred):
     ax.tick_params(length=0, labelsize=8)
 
 
-def send(ctx, name, settings, digest, y, pred, fit, predict):
-    b = ctx.builder()
-    model = b.CreateString(name)
-    settings = b.CreateString(settings)
-    digest = b.CreateString(digest)
-    predictions = b.CreateNumpyVector(pred.astype(np.uint8))
-    out.Start(b)
-    out.AddModel(b, model)
-    out.AddSettings(b, settings)
-    out.AddDigest(b, digest)
-    out.AddAccuracy(b, float(np.mean(pred == y)))
-    out.AddFitSeconds(b, fit)
-    out.AddPredictSeconds(b, predict)
-    out.AddPredictions(b, predictions)
-    ctx.output("result", b, out.End(b))
+def send(inputs, name, settings, digest, y, pred, fit, predict):
+    result_ports = {}
+    model = name
+    settings = settings
+    digest = digest
+    predictions = pred.astype(np.uint8)
+    _out_value = {}
+    _out_value['model'] = model
+    _out_value['settings'] = settings
+    _out_value['digest'] = digest
+    _out_value['accuracy'] = float(np.mean(pred == y))
+    _out_value['fit_seconds'] = fit
+    _out_value['predict_seconds'] = predict
+    _out_value['predictions'] = predictions
+    result_ports.update({'result': _out_value})
+    return result_ports
 
 
-def main(ctx):
-    params = ctx.params()
-    channels, epochs, seed = params.Channels(), params.Epochs(), params.Seed()
-    data = np.load(ctx.input("data", SubsetFile).Value().decode())
+def main(inputs, report):
+    result_ports = {}
+    params = inputs.params
+    channels, epochs, seed = params.channels, params.epochs, params.seed
+    data = np.load(inputs.input("data", SubsetFile).Value().decode())
     test_y = data["test_labels"]
     train_x = torch.from_numpy(data["train_images"]).reshape(-1, 1, 28, 28)
     train_y = torch.from_numpy(data["train_labels"]).long()
@@ -79,7 +81,7 @@ def main(ctx):
             optimizer.step()
             total += loss.item() * len(batch)
         losses.append(total / len(order))
-        print(f"epoch {epoch + 1}: train loss {losses[-1]:.4f}")
+        report.log(str(f"epoch {epoch + 1}: train loss {losses[-1]:.4f}"))
     fit = time.process_time() - start
 
     start = time.process_time()
@@ -87,7 +89,7 @@ def main(ctx):
         pred = model(test_x).argmax(dim=1).numpy()
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    print(f"cnn channels={channels} epochs={epochs}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
+    report.log(str(f"cnn channels={channels} epochs={epochs}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s"))
 
     # What the first layer picks out of one test digit, one small image per filter.
     with torch.no_grad():
@@ -104,6 +106,7 @@ def main(ctx):
     right.imshow(canvas, cmap="RdBu_r", vmin=-limit, vmax=limit)
     right.set(xticks=[], yticks=[], title=f"1 層目の {len(maps)} 個のフィルターが、数字 {test_y[0]} から取り出したもの")
     fig.suptitle(f"CNN {channels} チャンネル、{epochs} エポック: 正解率 {accuracy:.4f}、学習 {fit:.2f} 秒、予測 {predict:.3f} 秒", fontsize=11)
-    plt.show()
+    report.figure()
 
-    send(ctx, "cnn", f"channels={channels}, epochs={epochs}", str(data["digest"]), test_y, pred, fit, predict)
+    result_ports.update(send(inputs, 'cnn', f'channels={channels}, epochs={epochs}', str(data['digest']), test_y, pred, fit, predict))
+    return result_ports

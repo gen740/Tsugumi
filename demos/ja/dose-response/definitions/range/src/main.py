@@ -41,10 +41,10 @@ def interval(conc, reps, y, n_boot, rng):
     return 10 ** low, 10 ** high
 
 
-def main(ctx):
-    plate = ctx.input("plate", Plate)
-    p = ctx.params()
-    tops = p.TopsAsNumpy()
+def main(inputs, report):
+    plate = inputs.input("plate", Plate)
+    p = inputs.params
+    tops = p.topsAsNumpy
     design = plate.ConcAsNumpy() / plate.ConcAsNumpy()[-1]  # the dilution series, relative to its top
     reps = plate.Replicates()
     rng = np.random.default_rng(plate.Seed() + 1)
@@ -58,14 +58,14 @@ def main(ctx):
             conc = top * design
             truth = plate.Bottom(i) + (plate.Top(i) - plate.Bottom(i)) / (1 + (plate.Ec50(i) / conc) ** plate.Hill(i))
             y = (truth[:, None] + rng.normal(0, plate.NoiseSd(), (len(conc), reps))).ravel()
-            found = interval(conc, reps, y, p.NBoot(), rng)
+            found = interval(conc, reps, y, p.nBoot, rng)
             widths.append(np.nan if found is None else found[1] / found[0])
         results[name] = [float(w) for w in widths]
         ax.plot(tops, widths, "o-", color=COLORS[i], lw=2, ms=6, label=f"{name}（真の EC50 = {plate.Ec50(i):g} µM）")
         ax.axvline(plate.Ec50(i), color=COLORS[i], lw=1, ls=":")
         ax.axvline(plate.Ec50(i) / design[0], color=COLORS[i], lw=1, ls=":")
         ax.axvspan(plate.Ec50(i), plate.Ec50(i) / design[0], color=COLORS[i], alpha=0.07)
-    print("interval widths " + json.dumps({"tops": [float(t) for t in tops], "widths": results}))
+    report.log(str("interval widths " + json.dumps({"tops": [float(t) for t in tops], "widths": results})))
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("最高濃度 top (µM)")
@@ -77,4 +77,4 @@ def main(ctx):
     fig.text(0.5, 0.005, "色の帯: 真の EC50 が測定範囲に入る最高濃度。探索は測定範囲 ± 3 桁で打ち切るので、開いた区間の幅そのものに意味はありません。",
              ha="center", fontsize=8)
     fig.tight_layout(rect=(0, 0.04, 1, 1))
-    plt.show()
+    report.figure()

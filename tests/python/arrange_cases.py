@@ -122,5 +122,7 @@ def all_cases() -> list:
 if __name__ == "__main__":
     cases = all_cases()
     if "--write" in sys.argv:
-        FIXTURE.write_text(json.dumps(cases, ensure_ascii=False, separators=(",", ":")).replace('},{"name"', '},\n{"name"') + "\n")
+        FIXTURE.write_text(json.dumps(cases, ensure_ascii=False, separators=(",", ":")).replace('},{"name"', '''},
+{"name"''') + '''
+''')
     print(len(cases), "scopes")

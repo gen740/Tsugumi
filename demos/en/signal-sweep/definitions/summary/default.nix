@@ -12,6 +12,6 @@ in
       "$JSON_RESULTS" > "$TSUGUMI_OUTPUT"
     jq --arg thresholds '${toString thresholdCount}' \
       '{text: "\(.out.detections) of \(.out.comparisons) comparisons passed across \($thresholds) thresholds."}' \
-      "$TSUGUMI_OUTPUT" > "$TSUGUMI_DISPLAY"
+      "$TSUGUMI_OUTPUT" > "$TSUGUMI_REPORT"
   '';
 }

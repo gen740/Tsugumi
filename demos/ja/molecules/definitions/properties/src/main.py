@@ -1,12 +1,12 @@
 """Reads the molecules and computes their properties with RDKit. A SMILES that
 cannot be read is reported with the reason and skipped."""
+import tsugumi
 import numpy as np
 from rdkit import Chem, RDLogger
 from rdkit.Chem import Crippen, Descriptors, Lipinski, rdMolDescriptors
 
 from inputs.pasted.mol.Pasted import Pasted
 from tsugumi import Failure
-import outputs.molecules.mol.Molecules as out
 
 RDLogger.DisableLog("rdApp.*")  # reasons are shown on the Card instead
 
@@ -23,35 +23,35 @@ def read(smiles):
     return mol, None
 
 
-def entries(ctx):
+def entries(inputs):
     """(name, SMILES) from the list, then the pasted one."""
-    p = ctx.params()
+    p = inputs.params
     pairs = []
-    for i in range(p.MoleculesLength()):
-        name, _, smiles = p.Molecules(i).decode().partition(":")
+    for i in range(len(p.molecules)):
+        name, _, smiles = p.molecules[i].decode().partition(":")
         pairs.append((name.strip(), smiles.strip()) if smiles else (f"#{i + 1}", name.strip()))
-    pasted = ctx.input("pasted", Pasted)
+    pasted = inputs.input("pasted", Pasted)
     smiles = (pasted.Smiles() or b"").decode().strip()
     if smiles:
         pairs.append(((pasted.Name() or b"pasted").decode().strip() or "pasted", smiles))
     return pairs
 
 
-def strings(b, items):
-    offsets = [b.CreateString(s) for s in items]
-    b.StartVector(4, len(offsets), 4)
+def strings(items):
+    offsets = [s for s in items]
+    _b_items = []
     for o in reversed(offsets):
-        b.PrependUOffsetTRelative(o)
-    return b.EndVector()
+        _b_items.append(o)
+    return list(reversed(_b_items))
 
 
-def main(ctx):
+def main(inputs, report):
     rows, errors = [], []
-    for name, smiles in entries(ctx):
+    for name, smiles in entries(inputs):
         mol, why = read(smiles)
         if mol is None:
             errors.append(f"**{name}** の SMILES `{smiles}` は計算から外しました: {why}。")
-            print(f"skipped {name}: {smiles}: {why}")
+            report.log(str(f"skipped {name}: {smiles}: {why}"))
             continue
         rows.append(dict(
             name=name, smiles=smiles, formula=rdMolDescriptors.CalcMolFormula(mol),
@@ -69,23 +69,20 @@ def main(ctx):
               "| --- | --- | --- | --- | --- | --- | --- | --- |"]
     lines += [f"| {r['name']} | {r['formula']} | {r['mw']:.2f} | {r['logp']:.2f} | {r['tpsa']:.2f} | "
               f"{r['hbd']} | {r['hba']} | {r['rotatable']} |" for r in rows]
-    ctx.display_markdown("\n".join(lines))
-
-    b = ctx.builder(8192)
-    names, smiles, formula = (strings(b, [r[k] for r in rows]) for k in ("name", "smiles", "formula"))
-    doubles = [b.CreateNumpyVector(np.array([r[k] for r in rows], dtype=np.float64)) for k in ("mw", "logp", "tpsa")]
-    ints = [b.CreateNumpyVector(np.array([r[k] for r in rows], dtype=np.int32))
-            for k in ("hbd", "hba", "rotatable", "nh_oh", "n_o")]
-    out.Start(b)
-    out.AddNames(b, names)
-    out.AddSmiles(b, smiles)
-    out.AddFormula(b, formula)
-    out.AddMw(b, doubles[0])
-    out.AddLogp(b, doubles[1])
-    out.AddTpsa(b, doubles[2])
-    out.AddHbd(b, ints[0])
-    out.AddHba(b, ints[1])
-    out.AddRotatable(b, ints[2])
-    out.AddNhOh(b, ints[3])
-    out.AddNO(b, ints[4])
-    ctx.output("molecules", b, out.End(b))
+    report.markdown("\n".join(lines))
+    (names, smiles, formula) = (strings([r[k] for r in rows]) for k in ('name', 'smiles', 'formula'))
+    doubles = [np.array([r[k] for r in rows], dtype=np.float64) for k in ('mw', 'logp', 'tpsa')]
+    ints = [np.array([r[k] for r in rows], dtype=np.int32) for k in ('hbd', 'hba', 'rotatable', 'nh_oh', 'n_o')]
+    _out_value = {}
+    _out_value['names'] = names
+    _out_value['smiles'] = smiles
+    _out_value['formula'] = formula
+    _out_value['mw'] = doubles[0]
+    _out_value['logp'] = doubles[1]
+    _out_value['tpsa'] = doubles[2]
+    _out_value['hbd'] = ints[0]
+    _out_value['hba'] = ints[1]
+    _out_value['rotatable'] = ints[2]
+    _out_value['nh_oh'] = ints[3]
+    _out_value['n_o'] = ints[4]
+    return {'molecules': _out_value}

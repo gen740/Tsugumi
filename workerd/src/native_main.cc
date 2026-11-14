@@ -21,7 +21,7 @@
 //   JSON_P          path of a JSON file with the message (any size)
 //   FILE_P / DIR_P  the path carried by File / Directory messages
 // and writes its outputs as {"port": {...}} JSON to $TSUGUMI_OUTPUT and what it
-// shows as JSON to $TSUGUMI_DISPLAY (read when it ends; see BashDisplay).
+// shows as JSON to $TSUGUMI_REPORT (read when it ends; see BashDisplay).
 // postRun gets TSUGUMI_FAILED (0/1) and TSUGUMI_OUTPUTS (the ports sent).
 
 #include <cmath>
@@ -743,7 +743,7 @@ struct BashDisplay {
 auto json_display(const std::string& json, const std::string& cwd) -> void {
   namespace sc = tsugumi::schema;
   auto invalid = [](const std::string& why) {
-    record_failure(D::FailureKind::output_invalid, "$TSUGUMI_DISPLAY: " + why);
+    record_failure(D::FailureKind::output_invalid, "$TSUGUMI_REPORT: " + why);
   };
   BashDisplay d;
   if (auto err = sc::decode(json, d)) return invalid(err->message);
@@ -892,7 +892,7 @@ void execute(const Options& opt, Call& call) {
     set_env(run_env, "TSUGUMI_OUTPUT", out_json);
     std::string display_json = tmp + "/display.json";
     ::unlink(display_json.c_str());
-    set_env(run_env, "TSUGUMI_DISPLAY", display_json);
+    set_env(run_env, "TSUGUMI_REPORT", display_json);
     if (!call.failure) {
       int st = run_shell(opt.bash, {opt.run}, run_env, cwd, call, &timed_out);
       if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {

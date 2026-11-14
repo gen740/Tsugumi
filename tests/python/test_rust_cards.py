@@ -52,28 +52,42 @@ def test_scaffold_generated_from_one_template():
 
 def test_python_rust_cpp_values_and_params(project):
     root, connect = project
-    process = rust('''use tsugumi::{Context, Input, Output, Result};
-fn run(ctx: &Context<'_>, input: Input<'_>) -> Result<Output> {
-    assert_eq!(input.optional.unwrap().value(), 9007199254740993);
-    assert_eq!(input.number.value(), 9007199254740993);
-    assert_eq!(ctx.params()?.offset(), Some(7));
-    assert!(!ctx.cancelled());
-    ctx.log("Rust received exact uint64")?;
+    process = rust('''use tsugumi::{Report, Inputs, Output, Result};
+fn run(inputs: Inputs<'_>, report: &Report<'_>, run: &tsugumi::Run<'_>) -> Result<Output> {
+    assert_eq!(inputs.optional.unwrap().value(), 9007199254740993);
+    assert_eq!(inputs.number.value(), 9007199254740993);
+    assert_eq!(inputs.params.offset(), Some(7));
+    assert!(!run.cancelled());
+    report.log("Rust received exact uint64")?;
     let mut out = tsugumi::outputs::Out::default();
-    out.value = input.number.value() + ctx.params()?.offset().unwrap();
-    ctx.display_table(&["value"], &[vec![out.value.to_string()]])?;
+    out.value = inputs.number.value() + inputs.params.offset().unwrap();
+    report.table(&["value"], &[vec![out.value.to_string()]])?;
     Ok(Output {out: Some(out)})
 }
-tsugumi::export!(run);''', inputs=[{'name': 'number'}, {'name': 'optional', 'optional': True}], params=[{'name': 'offset', 'type': 'uint64', 'data': 7}])
+tsugumi::export!(run, with_run);''', inputs=[{'name': 'number'}, {'name': 'optional', 'optional': True}], params=[{'name': 'offset', 'type': 'uint64', 'data': 7}])
     process['outputs'] = NUMBER
     write_project(root, {
         'make': {'card': {'language': 'python'}, 'outputs': NUMBER.replace('out:Number (required);', 'out:Number (required); other:Number (required);'),
                  'nix': '{ pkgs, inputs, params }: let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in {run = inputs.tsugumi.pythonCard {inherit sdk; src=./src;};}',
-                 'src': {'main.py': 'import outputs.out.t.Number as N\ndef main(ctx):\n b=ctx.builder()\n N.Start(b)\n N.AddValue(b,9007199254740993)\n root=N.End(b)\n ctx.output("out",b,root)\n b=ctx.builder()\n N.Start(b)\n N.AddValue(b,9007199254740993)\n ctx.output("other",b,N.End(b))\n'}},
+                 'src': {'main.py': '''import tsugumi
+import outputs.out.t.Number as N
+def main(inputs):
+ b=tsugumi.builder()
+ N.Start(b)
+ N.AddValue(b,9007199254740993)
+ root=N.End(b)
+ yield {"out": tsugumi.message(b, root)}
+ b=tsugumi.builder()
+ N.Start(b)
+ N.AddValue(b,9007199254740993)
+ yield {"other": tsugumi.message(b, N.End(b))}
+'''}},
         'rust': process,
         'check': {'card': {'language': 'cpp', 'inputs': [{'name': 'number'}]},
                   'nix': '{ pkgs, inputs, params }: let sdk=inputs.tsugumi.sdk {languages=["cpp"];}; in {run=inputs.tsugumi.cppCard {inherit sdk;src=./src;};}',
-                  'src': {'card.cc': '#include <card.hh>\n#include <stdexcept>\nauto run(Card::Input& input) -> Card::Output { if(input.number.value != 9007199254741000ULL) throw std::runtime_error("wrong value"); return {}; }'}},
+                  'src': {'card.cc': '''#include <card.hh>
+#include <stdexcept>
+auto run(const Card::Inputs& inputs) -> Card::Output { if(inputs.number.value != 9007199254741000ULL) throw std::runtime_error("wrong value"); return {}; }'''}},
     }, [('make', 'out', 'rust', 'number'), ('make', 'other', 'rust', 'optional'), ('rust', 'out', 'check', 'number')])
     c = connect()
     run_id = succeeded(c)
@@ -84,14 +98,14 @@ tsugumi::export!(run);''', inputs=[{'name': 'number'}, {'name': 'optional', 'opt
 @pytest.mark.parametrize('reuse', [True, False])
 def test_state_and_run_hook(project, reuse):
     root, connect = project
-    source = '''use tsugumi::{Context, Input, Output, Result};
+    source = '''use tsugumi::{Report, Inputs, Output, Result};
 use std::sync::atomic::{AtomicU64, Ordering};
 static RUNS: AtomicU64 = AtomicU64::new(0);
 static CALLS: AtomicU64 = AtomicU64::new(0);
-fn start(_: &Context<'_>) -> Result<()> { RUNS.fetch_add(1, Ordering::Relaxed); Ok(()) }
-fn run(ctx: &Context<'_>, _: Input<'_>) -> Result<Output> {
+fn start(_inputs: Inputs<'_>, _report: &Report<'_>, _run: &tsugumi::Run<'_>) -> Result<()> { RUNS.fetch_add(1, Ordering::Relaxed); Ok(()) }
+fn run(inputs: Inputs<'_>, report: &Report<'_>) -> Result<Output> {
  let calls=CALLS.fetch_add(1, Ordering::Relaxed)+1;
- ctx.display_text(&format!("{} {}",RUNS.load(Ordering::Relaxed),calls))?;
+ report.text(&format!("{} {}",RUNS.load(Ordering::Relaxed),calls))?;
  Ok(Output::default())
 }
 tsugumi::export!(run,start);'''
@@ -112,9 +126,9 @@ tsugumi::export!(run,start);'''
 ])
 def test_failures_stay_inside_ffi_and_next_run_recovers(project, body, reason):
     root, connect = project
-    source = '''use tsugumi::{Context, Input, Output, Result};
-fn run(ctx:&Context<'_>, _:Input<'_>)->Result<Output> {
- if !ctx.params()?.fail().unwrap_or(false) { ctx.display_text("recovered")?; return Ok(Output::default()); }
+    source = '''use tsugumi::{Report, Inputs, Output, Result};
+fn run(inputs: Inputs<'_>, report: &Report<'_>)->Result<Output> {
+ if !inputs.params.fail().unwrap_or(false) { report.text("recovered")?; return Ok(Output::default()); }
  BODY
 }
 tsugumi::export!(run);'''.replace('BODY', body)
@@ -132,14 +146,14 @@ tsugumi::export!(run);'''.replace('BODY', body)
 def test_live_display_and_cancellation(project):
     from test_demos import first_display
     root, connect = project
-    source = '''use tsugumi::{Context,Input,Output,Result};
-fn run(ctx:&Context<'_>,_:Input<'_>)->Result<Output> {
- if !ctx.params()?.slow().unwrap_or(false) { ctx.display_text("recovered")?; return Ok(Output::default()); }
- ctx.display_text("running")?;
- while !ctx.cancelled() {std::thread::sleep(std::time::Duration::from_millis(10));}
+    source = '''use tsugumi::{Report,Inputs,Output,Result};
+fn run(inputs: Inputs<'_>, report: &Report<'_>, run: &tsugumi::Run<'_>)->Result<Output> {
+ if !inputs.params.slow().unwrap_or(false) { report.text("recovered")?; return Ok(Output::default()); }
+ report.text("running")?;
+ while !run.cancelled() {std::thread::sleep(std::time::Duration::from_millis(10));}
  Ok(Output::default())
 }
-tsugumi::export!(run);'''
+tsugumi::export!(run, with_run);'''
     write_project(root, {'live': rust(source, params=[{'name':'slow','type':'bool','data':True}])}, [])
     c=connect()
     opened=c.open()
@@ -156,13 +170,13 @@ tsugumi::export!(run);'''
 
 def test_deadline_kills_uncooperative_rust(project):
     root, connect = project
-    write_project(root, {'slow': rust('''use tsugumi::{Context,Input,Output,Result};
-fn run(ctx:&Context<'_>,_:Input<'_>)->Result<Output> {
- if !ctx.params()?.slow().unwrap_or(false) { ctx.display_text("recovered")?; return Ok(Output::default()); }
- assert!(ctx.remaining_ms().is_some());
+    write_project(root, {'slow': rust('''use tsugumi::{Report,Inputs,Output,Result};
+fn run(inputs: Inputs<'_>, report: &Report<'_>, run: &tsugumi::Run<'_>)->Result<Output> {
+ if !inputs.params.slow().unwrap_or(false) { report.text("recovered")?; return Ok(Output::default()); }
+ assert!(run.remaining_ms().is_some());
  loop { std::hint::spin_loop(); }
 }
-tsugumi::export!(run);''', timeoutSeconds=2, params=[{'name':'slow','type':'bool','data':True}])}, [])
+tsugumi::export!(run, with_run);''', timeoutSeconds=2, params=[{'name':'slow','type':'bool','data':True}])}, [])
     c=connect()
     run_id,status=run_and_wait(c,'start',timeout=1800)
     assert status.state == RunState.failed
@@ -183,18 +197,18 @@ def test_file_directory_inputs_and_artifact_output(project):
       echo world > "$TSUGUMI_OUTPUT_DIR/d/value"
       jq -n --arg f "$TSUGUMI_OUTPUT_DIR/f" --arg d "$TSUGUMI_OUTPUT_DIR/d" '{file:{value:$f},directory:{value:$d}}' > "$TSUGUMI_OUTPUT"
     ''; }'''
-    card=rust('''use tsugumi::{Context,Input,Output,Result};
-fn run(ctx:&Context<'_>,input:Input<'_>)->Result<Output> {
- let first=std::fs::read_to_string(input.file.value().unwrap())?;
- let second=std::fs::read_to_string(std::path::Path::new(input.directory.value().unwrap()).join("value"))?;
+    card=rust('''use tsugumi::{Report,Inputs,Output,Result};
+fn run(inputs: Inputs<'_>, report: &Report<'_>, run: &tsugumi::Run<'_>)->Result<Output> {
+ let first=std::fs::read_to_string(inputs.file.value().unwrap())?;
+ let second=std::fs::read_to_string(std::path::Path::new(inputs.directory.value().unwrap()).join("value"))?;
  assert_eq!(first,"hello\\n"); assert_eq!(second,"world\\n");
- let file=ctx.output_directory().join("report.txt");
+ let file=run.output_directory().join("report.txt");
  std::fs::write(&file,first+&second)?;
  let mut report=tsugumi::outputs::Report::default();
  report.value=Some(file.to_str().unwrap().to_owned());
  Ok(Output{report:Some(report)})
 }
-tsugumi::export!(run);''', inputs=[{'name':'file'},{'name':'directory'}], retainArtifact=True, artifactOutput='report')
+tsugumi::export!(run, with_run);''', inputs=[{'name':'file'},{'name':'directory'}], retainArtifact=True, artifactOutput='report')
     card['outputs']='attribute "tsugumi"; namespace t; table Path{value:string;} table Outputs{report:Path(required,tsugumi:"file");} root_type Outputs;'
     write_project(root,{'make':{'card':{'language':'bash'},'nix':make,'outputs':schema},'rust':card},[('make',p,'rust',p) for p in ('file','directory')])
     c=connect()
@@ -205,18 +219,18 @@ tsugumi::export!(run);''', inputs=[{'name':'file'},{'name':'directory'}], retain
 
 
 @pytest.mark.parametrize('expression,kind', [
-    ('ctx.display_text("hello")',1),
-    ('ctx.display_markdown("**hello**")',1),
-    ('ctx.display_scalar(1.5,"value")',2),
-    ('ctx.display_line_chart("one","line",&[1.0,2.0],&[3.0,4.0])',7),
-    ('ctx.display_table(&["value"],&[vec!["1".into()]])',4),
-    ('ctx.display_image("image/png", &[137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, 0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 252, 255, 31, 0, 3, 3, 2, 0, 239, 154, 218, 42, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130], "image")',5),
-    ('ctx.display_points(&[1.0],&[2.0],&[3.0],Some(&[0xff00ff]))',6),
-    ('ctx.display_module("vega-lite", r#"{"mark":"point","data":{"values":[]}}"#)',7),
+    ('report.text("hello")',1),
+    ('report.markdown("**hello**")',1),
+    ('report.scalar(1.5,"value")',2),
+    ('report.line_chart("one","line",&[1.0,2.0],&[3.0,4.0])',7),
+    ('report.table(&["value"],&[vec!["1".into()]])',4),
+    ('report.image("image/png", &[137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 4, 0, 0, 0, 181, 28, 12, 2, 0, 0, 0, 11, 73, 68, 65, 84, 120, 218, 99, 252, 255, 31, 0, 3, 3, 2, 0, 239, 154, 218, 42, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130], "image")',5),
+    ('report.points(&[1.0],&[2.0],&[3.0],Some(&[0xff00ff]))',6),
+    ('report.module("vega-lite", r#"{"mark":"point","data":{"values":[]}}"#)',7),
 ])
 def test_displays(project,expression,kind):
     root,connect=project
-    source='use tsugumi::{Context,Input,Output,Result}; fn run(ctx:&Context<\'_>,_:Input<\'_>)->Result<Output>{'+expression+'?;Ok(Output::default())} tsugumi::export!(run);'
+    source="use tsugumi::{Report,Inputs,Output,Result}; fn run(inputs: Inputs<'_>, report: &Report<'_>)->Result<Output>{"+expression+'?;Ok(Output::default())} tsugumi::export!(run);'
     write_project(root,{'show':rust(source)},[])
     c=connect()
     run_id=succeeded(c)
@@ -225,10 +239,10 @@ def test_displays(project,expression,kind):
 
 def test_borrowed_input_cannot_escape_the_call(project):
     root,connect=project
-    source='''use tsugumi::{Context,Input,Output,Result};
-fn retain(input: Input<'_>) -> Input<'static> { input }
-fn run(_: &Context<'_>, _: Input<'_>) -> Result<Output> { Ok(Output::default()) }
-tsugumi::export!(run);'''
+    source='''use tsugumi::{Report,Inputs,Output,Result};
+fn retain(inputs: Inputs<'_>) -> Inputs<'static> { inputs }
+fn run(inputs: Inputs<'_>) -> Result<Output> { Ok(Output::default()) }
+tsugumi::export!(run, inputs);'''
     write_project(root,{'escape':rust(source)},[])
     c=connect()
     run_id,status=run_and_wait(c,'start',timeout=1800)
@@ -239,9 +253,9 @@ tsugumi::export!(run);'''
 
 def test_required_output_is_validated(project):
     root,connect=project
-    card=rust('''use tsugumi::{Context,Input,Output,Result};
-fn run(_: &Context<'_>, _: Input<'_>) -> Result<Output> { Ok(Output::default()) }
-tsugumi::export!(run);''')
+    card=rust('''use tsugumi::{Report,Inputs,Output,Result};
+fn run(inputs: Inputs<'_>) -> Result<Output> { Ok(Output::default()) }
+tsugumi::export!(run, inputs);''')
     card['outputs']=NUMBER
     write_project(root,{'missing':card},[])
     c=connect()
@@ -263,18 +277,20 @@ VENDOR_HASH = "sha256-GgPGaed/lz1W3mE8NjW6M/8VldZfZZ4YSw0u0cz5hjM="
 
 
 def card_with_registry_crate(arguments):
-    card = rust("""use std::net::TcpStream;
+    card = rust('''use std::net::TcpStream;
 use std::time::Duration;
-use tsugumi::{Context, Input, Output, Result};
+use tsugumi::{Report, Inputs, Output, Result};
 
-fn run(ctx: &Context<'_>, _: Input<'_>) -> Result<Output> {
+fn run(inputs: Inputs<'_>, report: &Report<'_>) -> Result<Output> {
     let target = "1.1.1.1:443".parse().unwrap();
     assert!(TcpStream::connect_timeout(&target, Duration::from_secs(3)).is_err());
-    ctx.display_text(itoa::Buffer::new().format(42))?;
+    report.text(itoa::Buffer::new().format(42))?;
     Ok(Output::default())
 }
-tsugumi::export!(run);""")
-    card['src']['Cargo.toml'] += '\nitoa = "=1.0.15"\n'
+tsugumi::export!(run);''')
+    card['src']['Cargo.toml'] += '''
+itoa = "=1.0.15"
+'''
     lock = Path(__file__).parent / 'fixtures' / 'rust' / 'Cargo.lock'
     card['src']['Cargo.lock'] = lock.read_text()
     card['nix'] = NIX.replace('src = ./src;', f'src = ./src; {arguments}')

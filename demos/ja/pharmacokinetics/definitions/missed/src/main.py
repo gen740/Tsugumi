@@ -19,10 +19,10 @@ def concentration(t, dose_times, dose, ke, ka, volume, fraction):
     return total
 
 
-def main(ctx):
-    c = ctx.input("curves", Curves)
-    params = ctx.params()
-    missed_at, count = params.MissedAtH(), int(params.MissedCount())
+def main(inputs, report):
+    c = inputs.input("curves", Curves)
+    params = inputs.params
+    missed_at, count = params.missedAtH, int(params.missedCount)
     doses, intervals = c.DosesMgAsNumpy(), c.IntervalsHAsNumpy()
     ke = math.log(2) / c.HalfLifeH()
     ka, volume, fraction = c.KaPerH(), c.VolumeL(), c.Bioavailability()
@@ -74,5 +74,5 @@ def main(ctx):
     for ax in axes[-1]:
         ax.set_xlabel("時間 (h)")
     fig.suptitle(f"{missed_at:g} 時間以降の投与を {count} 回抜いたとき（架空の薬物。緑は作り物の有効域で、投与の指針ではありません）", fontsize=12)
-    plt.show()
-    print("result: " + json.dumps(rows))
+    report.figure()
+    report.log(str("result: " + json.dumps(rows)))

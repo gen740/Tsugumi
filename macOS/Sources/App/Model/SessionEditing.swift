@@ -1472,15 +1472,16 @@ extension ProjectSession {
       putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; };\nin\n{\n  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };\n}\n")
       putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
       putSource(dir + "src/main.py", """
+      import tsugumi
       import outputs.out.\(ns).Text as out
 
 
-      def main(ctx):
-          b = ctx.builder()
+      def main(inputs):
+          b = tsugumi.builder()
           text = b.CreateString("hello")
           out.Start(b)
           out.AddValue(b, text)
-          ctx.output("out", b, out.End(b))
+          return {"out": tsugumi.message(b, out.End(b))}
 
       """)
     case .go:
@@ -1497,7 +1498,7 @@ extension ProjectSession {
       set(.object([("language", .string("ruby")), ("inputs", .array([.object([("name", .string("in"))])]))]))
       putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"ruby\" ]; };\nin\n{\n  run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; };\n}\n")
       putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
-      putSource(dir + "src/main.rb", "def main(ctx)\n  ctx.output(\"out\", { value: \"hello\" })\nend\n")
+      putSource(dir + "src/main.rb", "def main(inputs)\n  { out: { value: \"hello\" } }\nend\n")
     case .cpp:
       set(.object([("language", .string("cpp")), ("inputs", .array([.object([("name", .string("in"))])]))]))
       putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; };\nin\n{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n")
@@ -1505,7 +1506,7 @@ extension ProjectSession {
       putSource(dir + "src/card.cc", """
       #include <card.hh>
 
-      auto run(Card::Input& input) -> Card::Output {
+      auto run(const Card::Inputs& inputs) -> Card::Output {
         Card::Output out;
         out.out.emplace().value = "hello";
         return out;

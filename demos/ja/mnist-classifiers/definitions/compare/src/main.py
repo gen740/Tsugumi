@@ -1,19 +1,19 @@
 """Waits for every branch, checks they scored the same test digits, and ranks them."""
+import tsugumi
 import numpy as np
 
 # All seven branches send the same table, so one generated class reads them all.
 from inputs.knn.mnist.Result import Result
 from inputs.data.mnist.SubsetFile import SubsetFile
-import outputs.comparison.mnist.Comparison as out
 from tsugumi import Failure
 
 MODELS = ["knn", "logistic", "svm", "forest", "boosting", "mlp", "cnn"]
 
 
-def main(ctx):
-    data = np.load(ctx.input("data", SubsetFile).Value().decode())
+def main(inputs, report):
+    data = np.load(inputs.input("data", SubsetFile).Value().decode())
     labels = data["test_labels"]
-    results = [ctx.input(m, Result) for m in MODELS]
+    results = [inputs.input(m, Result) for m in MODELS]
     predictions = np.stack([r.PredictionsAsNumpy() for r in results])
 
     # The checks: same test digits, and each reported accuracy recomputed here.
@@ -45,7 +45,7 @@ def main(ctx):
     se = np.sqrt(accuracy[best] * (1 - accuracy[best]) / n)
     fastest_fit = np.argmin(fit)
     fastest_predict = np.argmin(predict)
-    ctx.display_markdown(
+    report.markdown(
         f"**テスト {n} 枚での比較**（全員同じ画像。正解率は予測から計算し直して確認済み）\n\n"
         "| 順位 | モデル | 正解率 | 学習 (秒) | 予測 (秒) | 設定 |\n| ---: | --- | ---: | ---: | ---: | --- |\n"
         + "\n".join(rows)
@@ -55,26 +55,24 @@ def main(ctx):
           f"予測が最も短いのは **{MODELS[fastest_predict]}**（{predict[fastest_predict]:.3f} 秒）です。"
           "時間は 1 スレッドの CPU 時間で、機種によって変わります。"
     )
-
-    b = ctx.builder()
-    names = [b.CreateString(m) for m in MODELS]
-    out.StartModelsVector(b, len(names))
+    names = [m for m in MODELS]
+    _b_items = []
     for name in reversed(names):
-        b.PrependUOffsetTRelative(name)
-    models_offset = b.EndVector()
-    accuracy_offset = b.CreateNumpyVector(accuracy)
-    fit_offset = b.CreateNumpyVector(fit)
-    predict_offset = b.CreateNumpyVector(predict)
-    labels_offset = b.CreateNumpyVector(labels)
-    predictions_offset = b.CreateNumpyVector(predictions.ravel())
+        _b_items.append(name)
+    models_offset = list(reversed(_b_items))
+    accuracy_offset = accuracy
+    fit_offset = fit
+    predict_offset = predict
+    labels_offset = labels
+    predictions_offset = predictions.ravel()
     images = np.round(data["test_images"].ravel() * 255).astype(np.uint8)
-    images_offset = b.CreateNumpyVector(images)
-    out.Start(b)
-    out.AddModels(b, models_offset)
-    out.AddAccuracy(b, accuracy_offset)
-    out.AddFitSeconds(b, fit_offset)
-    out.AddPredictSeconds(b, predict_offset)
-    out.AddTestLabels(b, labels_offset)
-    out.AddPredictions(b, predictions_offset)
-    out.AddTestImages(b, images_offset)
-    ctx.output("comparison", b, out.End(b))
+    images_offset = images
+    _out_value = {}
+    _out_value['models'] = models_offset
+    _out_value['accuracy'] = accuracy_offset
+    _out_value['fit_seconds'] = fit_offset
+    _out_value['predict_seconds'] = predict_offset
+    _out_value['test_labels'] = labels_offset
+    _out_value['predictions'] = predictions_offset
+    _out_value['test_images'] = images_offset
+    return {'comparison': _out_value}

@@ -5,8 +5,8 @@ each is, and the connected input as an object of its generated type.
     from tsugumi import contract
 
     contract.port("data")["kind"]         # "flatbuffer", "file" or "directory"
-    row = contract.input_object(ctx, "data")   # the generated <Table>T object
-    factor = contract.params_object(ctx).factor
+    row = contract.input_object(inputs, "data")   # the generated <Table>T object
+    factor = contract.params_object(inputs).factor
 
 A Card's own main.py knows its ports and imports the generated classes by
 name, as the Card guide shows. The SDK installs the contract beside the
@@ -54,18 +54,16 @@ def _generated(name: str, side: str, suffix: str = "") -> Any:
 
 
 def input_class(name: str) -> Any:
-    """The generated class of an input port, as ``ctx.input`` takes it."""
+    """The generated class of an input port, as ``Inputs.input`` takes it."""
     return _generated(name, "inputs")
 
 
-def input_object(ctx: Any, name: str) -> Any:
+def input_object(inputs: Any, name: str) -> Any:
     """The input message as an object of its generated ``<Table>T`` class:
     plain attributes, readable without knowing the type's accessors."""
-    return _generated(name, "inputs", "T").InitFromObj(ctx.input(name, input_class(name)))
+    return _generated(name, "inputs", "T").InitFromObj(inputs.input(name, input_class(name)))
 
 
-def params_object(ctx: Any) -> Any:
+def params_object(inputs: Any) -> Any:
     """The params as an object of the generated ``ParamsT`` class."""
-    from params.Params import ParamsT  # generated from _params.fbs
-
-    return ParamsT.InitFromObj(ctx.params())
+    return inputs.params

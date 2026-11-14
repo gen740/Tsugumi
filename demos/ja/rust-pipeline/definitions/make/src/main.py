@@ -1,8 +1,7 @@
-import outputs.out.t.Number as Number
+import tsugumi
 
 
-def main(ctx):
-    b = ctx.builder()
-    Number.Start(b)
-    Number.AddValue(b, 7)
-    ctx.output("out", b, Number.End(b))
+def main(inputs):
+    _Number_value = {}
+    _Number_value['value'] = 7
+    return {'out': _Number_value}

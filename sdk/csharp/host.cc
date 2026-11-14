@@ -17,7 +17,7 @@ Entry g_run_start = nullptr;
 void *g_host = nullptr;
 
 // The ABI structs as this compiler lays them out from abi.h. The managed
-// mirror (sdk/csharp/Context.cs) is checked against it before the first call
+// mirror (sdk/csharp/InvocationScope.cs) is checked against it before the first call
 // (Layout.cs), so a field added to abi.h without its C# counterpart
 // stops the Card at load with a layout error.
 // Every field of every struct the worker passes to the Card is listed.

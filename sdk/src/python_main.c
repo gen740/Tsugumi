@@ -1,5 +1,5 @@
 /* main.so for Python Cards: embeds the interpreter and exposes the Card ABI as
- * the `_tsugumi_host` module; `tsugumi._invoke()` runs `card.main.main(ctx)`.
+ * the `_tsugumi_host` module; `tsugumi._invoke()` runs `card.main.main(inputs[, report[, run]])`.
  * By default each invocation gets a new worker and interpreter; with
  * reuseWorker: true the interpreter and module state persist between calls. */
 #define PY_SSIZE_T_CLEAN

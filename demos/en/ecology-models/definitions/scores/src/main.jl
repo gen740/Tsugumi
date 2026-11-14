@@ -1,9 +1,9 @@
 using Printf
 
 # All the scores side by side: fit, penalized fit and forecast.
-function main(ctx)
-    f = input(ctx, "fits")
-    h = input(ctx, "forecast")
+function main(inputs, report)
+    f = Tsugumi.input(inputs, "fits")
+    h = Tsugumi.input(inputs, "forecast")
     models = f["models"]
     best_aicc = minimum(m["aicc"] for m in models)
     best_bic = minimum(m["bic"] for m in models)
@@ -16,6 +16,8 @@ function main(ctx)
                      @sprintf("%.1f", m["bic"]), @sprintf("%+.1f", m["bic"] - best_bic),
                      @sprintf("%.3f", h["rmse_heldout"][i]), "$(m["agreeing"]) / $(m["restarts"])", parameters])
     end
-    display_table(ctx, ["Model", "Parameters", "Log RMSE", "AIC", "AICc", "ΔAICc", "BIC", "ΔBIC",
+    report.table(["Model", "Parameters", "Log RMSE", "AIC", "AICc", "ΔAICc", "BIC", "ΔBIC",
                         "Prediction log RMSE ($(h["fit_until"] + 1)–$(h["last_year"]))", "Starts reaching the same solution", "Best values"], rows)
+
+    return nothing
 end

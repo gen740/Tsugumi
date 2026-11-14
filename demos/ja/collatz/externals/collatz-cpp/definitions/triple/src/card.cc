@@ -3,8 +3,8 @@
 #include <limits>
 #include <string>
 
-auto run(Card::Input& input) -> Card::Output {
-  uint64_t n = input.number.value;
+auto run(const Card::Inputs& inputs) -> Card::Output {
+  uint64_t n = inputs.number.value;
   constexpr uint64_t kMax = std::numeric_limits<uint64_t>::max();
   if (n > (kMax - 1) / 3)
     throw tsugumi::Failure("output_invalid", "integer overflow: 3*" + std::to_string(n) + "+1 exceeds uint64");

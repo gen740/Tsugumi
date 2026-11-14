@@ -39,6 +39,6 @@ The bilingual **Visualization → report** demo connects a typed aggregate to th
 
 ## Python helper
 
-The scaffold calls `input_rows(ctx, field, member)` to read the connected input and `emit_figure(ctx, folder, plotted, **facts)` to save the plotted values and send the Directory. The Card's source owns column selection, filtering, sampling and drawing.
+The scaffold calls `input_rows(inputs, run, field, member)` to read the connected input and `figure_result(run, folder, plotted, **facts)` to save the plotted values and return the Directory mapping. The Card's source owns column selection, filtering, sampling and drawing.
 
 See `demos/en/visualization/definitions/line` for the complete Card definition. Plotly needs `ps.plotly` and Altair's offline export needs `ps.altair` and `ps.vl-convert-python`. The templates include `pkgs.ipaexfont` for Japanese labels.

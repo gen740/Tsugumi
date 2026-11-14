@@ -17,24 +17,28 @@ public static class Entry {
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
     }
     private static int Invoke(nint pointer, bool start) {
-        Context? context = null;
+        InvocationScope? scope = null;
         int result = 0;
         try {
-            context = new Context(pointer);
+            scope = new InvocationScope(pointer);
             card ??= new global::Card();
-            (start ? card.OnRunStartAsync(context) : card.RunAsync(context)).AsTask().GetAwaiter().GetResult();
+            var inputs = new Inputs(scope);
+            var report = new Report(scope);
+            var run = new Run(scope);
+            var outputs = (start ? card.OnRunStartAsync(inputs, report, run) : card.RunAsync(inputs, report, run)).AsTask().GetAwaiter().GetResult();
+            outputs.SendAsync(scope).AsTask().GetAwaiter().GetResult();
             result = 0;
         } catch (Exception error) {
             Console.Error.WriteLine(error);
             var kind = error is Failure failure ? failure.Kind : error is OperationCanceledException
-                ? context?.RemainingMilliseconds == 0 ? "timeout" : "cancelled" : "worker_failed";
-            context?.ReportFailure(kind, error.Message.Replace('\0', '\ufffd'));
+                ? scope?.RemainingMilliseconds == 0 ? "timeout" : "cancelled" : "worker_failed";
+            scope?.ReportFailure(kind, error.Message.Replace('\0', '\ufffd'));
             result = 1;
         } finally {
-            try { context?.Dispose(); }
+            try { scope?.Dispose(); }
             catch (Exception error) {
                 Console.Error.WriteLine(error);
-                context?.ReportFailure("worker_failed", error.Message.Replace('\0', '\ufffd'));
+                scope?.ReportFailure("worker_failed", error.Message.Replace('\0', '\ufffd'));
                 result = 1;
             }
         }

@@ -2,6 +2,7 @@
 centred on Cas A (its position converted with the event file's own x, y
 coordinate keywords, so every observation is centred the same way). CIAO's
 dmcopy does the binning."""
+import tsugumi
 import json
 import math
 import os
@@ -15,7 +16,6 @@ from astropy.io import fits
 
 from inputs.ciao.casa.Ciao import Ciao
 from inputs.input.casa.Events import Events
-import outputs.images.casa.BandDir as out
 
 COLORS = ["red", "green", "blue"]
 
@@ -31,23 +31,23 @@ def sky_pixel(columns, ra, dec):
     return cx.coord_ref_point + xi / cx.coord_inc, cy.coord_ref_point + eta / cy.coord_inc
 
 
-def main(ctx):
-    events = ctx.input("input", Events)
+def main(inputs, report, run):
+    events = inputs.input("input", Events)
     source, obsid = events.Path().decode(), events.Obsid().decode()
-    tool = ctx.input("ciao", Ciao)
+    tool = inputs.input("ciao", Ciao)
     root = tool.Path().decode()
-    p = ctx.params()
-    limits = [p.RedMinEv(), p.GreenMinEv(), p.BlueMinEv(), p.MaxEv()]
+    p = inputs.params
+    limits = [p.redMinEv, p.greenMinEv, p.blueMinEv, p.maxEv]
     assert all(a < b for a, b in zip(limits, limits[1:])), "energy boundaries must increase"
-    step, size = p.BinSize(), p.Pixels()
+    step, size = p.binSize, p.pixels
     assert step > 0 and 16 <= size <= 2048
-    dest = Path(ctx.output_directory) / "bands"
+    dest = Path(run.output_directory) / "bands"
     dest.mkdir(parents=True, exist_ok=True)
     with fits.open(source, memmap=True) as hd:
         ev = hd["EVENTS"]
         cols = ev.columns
         assert cols["energy"].unit == "eV", "energy must be in eV"
-        cx, cy = sky_pixel(cols, p.Ra(), p.Dec())
+        cx, cy = sky_pixel(cols, p.ra, p.dec)
         # The grid starts on a whole sky pixel: its edges are then exact in the bin= text,
         # and dmcopy makes exactly `size` bins wherever the observation's centre falls.
         x0, y0 = math.floor(cx - step * size / 2), math.floor(cy - step * size / 2)
@@ -78,11 +78,10 @@ def main(ctx):
                     "centre_pixel": [x0 + step * size / 2, y0 + step * size / 2], "grid": {"step": step, "pixels": size},
                     "selected": selected, "bands": bands, "tool": {"name": "CIAO", "version": tool.Version().decode(), "path": root}}
     (dest / "provenance.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
-    print(json.dumps(manifest, ensure_ascii=False))
-    ctx.display_table(["Band", "Energy (eV)", "Photons"],
+    report.log(str(json.dumps(manifest, ensure_ascii=False)))
+    report.table(["Band", "Energy (eV)", "Photons"],
                       [[b["color"], f"{b['min_ev']:g}–{b['max_ev']:g}", b["photons"]] for b in bands])
-    b = ctx.builder()
-    s = b.CreateString(str(dest))
-    out.Start(b)
-    out.AddValue(b, s)
-    ctx.output("images", b, out.End(b))
+    s = str(dest)
+    _out_value = {}
+    _out_value['value'] = s
+    return {'images': _out_value}

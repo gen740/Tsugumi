@@ -16,9 +16,9 @@ def max_flow(edges, raised, by):
     return nx.maximum_flow_value(graph, "s", "t")
 
 
-def main(ctx):
-    c = ctx.input("cut", Cut)
-    raise_by = int(ctx.params().RaiseBy())
+def main(inputs, report):
+    c = inputs.input("cut", Cut)
+    raise_by = int(inputs.params.raiseBy)
     nodes = c.Nodes().decode().split()
     edges = [(nodes[u], nodes[v], int(x)) for u, v, x in zip(c.TailAsNumpy(), c.HeadAsNumpy(), c.CapacityAsNumpy())]
     side = set(c.SourceSide().decode().split())
@@ -50,5 +50,5 @@ def main(ctx):
     ax.set_title(f"各辺の容量を {raise_by} 増やしたとき（元の最大流 {base}）: 増えるのは {len(rows)} 本中 {gainers} 本、赤はカットの {cut_edges} 本", fontsize=11)
     ax.grid(True, axis="y", alpha=0.25)
     fig.tight_layout()
-    plt.show()
-    print("result: " + json.dumps({"base": base, "rows": rows}))
+    report.figure()
+    report.log(str("result: " + json.dumps({"base": base, "rows": rows})))

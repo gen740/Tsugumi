@@ -1112,7 +1112,6 @@
 "更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。" = "Update: shows the last chart, dimmed while this Card or a Card upstream of it is running, and replaces it when the new result arrives. Live: replaces the chart with each one that arrives during the run, keeping the previous one on screen until the next is ready.";
 "更新（実行中は薄く表示）" = "Update (dimmed while running)";
 "書き出す…" = "Export…";
-"書き方を調べています" = "Looking up how to write it";
 "書き込み" = "Write";
 "最大同時ジョブ数" = "Maximum concurrent jobs";
 "最大発火回数" = "Maximum activations";

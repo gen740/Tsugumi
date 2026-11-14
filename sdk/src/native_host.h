@@ -55,6 +55,9 @@ int tsugumi_native_cancelled(void) {
 int64_t tsugumi_native_remaining_ms(void) {
   return current_call ? current_call->remaining_ms(current_call->host) : 0;
 }
+void tsugumi_native_log(const char* message) {
+  if (current_call) current_call->log(current_call->host, message);
+}
 void tsugumi_native_fail(const char* message) {
   if (current_call) {
     current_call->log(current_call->host, message);

@@ -187,7 +187,7 @@ def fixture(project):
       test ! -e /etc/hostname
       test -z "$TSUGUMI_REMOTE_PRIVATE_KEY"
       printf 'remote-card-stdout\\n'
-      printf '%s' '{"text":"remote Card display"}' > "$TSUGUMI_DISPLAY"
+      printf '%s' '{"text":"remote Card display"}' > "$TSUGUMI_REPORT"
       cp "$FILE_IN" "$TSUGUMI_OUTPUT_DIR/copied.txt"
       jq -nc --arg f "$TSUGUMI_OUTPUT_DIR/copied.txt" '{doc:{value:$f}}' > "$TSUGUMI_OUTPUT"
     """

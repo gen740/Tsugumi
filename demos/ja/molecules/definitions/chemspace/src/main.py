@@ -15,8 +15,8 @@ def labelled(mw, logp, first):
     return set(chosen)
 
 
-def main(ctx):
-    c = ctx.input("checked", Checked)
+def main(inputs, report):
+    c = inputs.input("checked", Checked)
     n = c.NamesLength()
     names = [c.Names(i).decode() for i in range(n)]
     mw, logp, tpsa = c.MwAsNumpy(), c.LogpAsNumpy(), c.TpsaAsNumpy()
@@ -49,4 +49,4 @@ def main(ctx):
         template="plotly_white", margin=dict(l=60, r=20, t=50, b=50),
         legend=dict(orientation="h", y=-0.18),
     )
-    fig.show()
+    report.figure(fig)

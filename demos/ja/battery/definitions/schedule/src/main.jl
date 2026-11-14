@@ -1,9 +1,9 @@
 using Printf
 include("dp.jl")
 
-function main(ctx)
-    m = input(ctx, "scenario")
-    tariff = ctx.params["tariff"]
+function main(inputs, report)
+    m = Tsugumi.input(inputs, "scenario")
+    tariff = inputs.params["tariff"]
     tariff in ("flat", "tou", "spot") || error("tariff is flat, tou or spot, not $tariff")
     price = Float64.(m[tariff])
     net_load = Float64.(m["load"]) .- Float64.(m["solar"])
@@ -14,7 +14,7 @@ function main(ctx)
     baseline = no_battery_bill(net_load, price, export_ratio)
     saved = baseline - best.bill
     used = cycles(best.charge, capacity)
-    println(@sprintf("%s: without battery %.1f yen, with battery %.1f yen, saved %.1f yen, %.2f cycles", tariff, baseline, best.bill, saved, used))
+    report.log(string(@sprintf("%s: without battery %.1f yen, with battery %.1f yen, saved %.1f yen, %.2f cycles", tariff, baseline, best.bill, saved, used)))
 
     day(t) = (t - 1) / 24
     prices = [Dict("day" => day(t), "price" => round(price[t]; digits=2)) for t in eachindex(price)]
@@ -23,7 +23,7 @@ function main(ctx)
     levels = [Dict("day" => day(t), "kWh" => best.charge[t]) for t in eachindex(best.charge)]
     xaxis(title) = Dict("field" => "day", "type" => "quantitative", "title" => title, "scale" => Dict("domain" => [0, length(price) / 24]))
     name = Dict("flat" => "定額", "tou" => "時間帯別", "spot" => "市場連動")[tariff]
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("text" => @sprintf("%s料金で最適な運転: 1 週間で %.0f 円の節約", name, saved),
@@ -44,4 +44,6 @@ function main(ctx)
                  "encoding" => Dict("x" => xaxis("日"), "y" => Dict("field" => "kWh", "type" => "quantitative", "title" => "蓄電量（kWh）",
                                                                     "scale" => Dict("domain" => [0, capacity])))),
         ]))
+
+    return nothing
 end

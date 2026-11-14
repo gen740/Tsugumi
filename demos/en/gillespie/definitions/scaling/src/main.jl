@@ -32,11 +32,12 @@ function concentration_path(rng, birth, death, volume, times)
 end
 
 # Fewer molecules, more noise: the coefficient of variation is 1 / sqrt(mean).
-function main(ctx)
-    m = input(ctx, "settings")
+function main(inputs, report)
+    outputs = Dict{String,Any}()
+    m = Tsugumi.input(inputs, "settings")
     k, gamma, runs = m["synthesis"], m["degradation"], Int(m["runs"])
-    volumes = sort(Float64.(ctx.params["volumes"]))
-    shown = Float64.(ctx.params["shown_volumes"])
+    volumes = sort(Float64.(inputs.params["volumes"]))
+    shown = Float64.(inputs.params["shown_volumes"])
     rng = Xoshiro(m["seed"] + 2)
     t_end = 8 / gamma
 
@@ -46,12 +47,12 @@ function main(ctx)
         samples = [final_count(rng, k * volume, gamma, t_end) for _ in 1:runs]
         push!(means, mean(samples))
         push!(cvs, std(samples) / mean(samples))
-        println(@sprintf("V = %g: mean %.2f, CV %.4f, 1/sqrt(mean) %.4f", volume, means[end], cvs[end], 1 / sqrt(k * volume / gamma)))
+        report.log(string(@sprintf("V = %g: mean %.2f, CV %.4f, 1/sqrt(mean) %.4f", volume, means[end], cvs[end], 1 / sqrt(k * volume / gamma))))
     end
     theory_mean = k .* volumes ./ gamma
     # The relative standard error of a sample standard deviation is about 1 / sqrt(2 runs)
     # (for very few molecules it is a little larger).
-    output(ctx, "scaling", Dict("volumes" => volumes, "means" => means, "cvs" => cvs, "theory_cvs" => 1 ./ sqrt.(theory_mean), "runs" => runs))
+    outputs["scaling"] = Dict("volumes" => volumes, "means" => means, "cvs" => cvs, "theory_cvs" => 1 ./ sqrt.(theory_mean), "runs" => runs)
 
     points = [Dict("N" => theory_mean[i], "cv" => cvs[i], "low" => cvs[i] * (1 - 2 / sqrt(2runs)), "high" => cvs[i] * (1 + 2 / sqrt(2runs)), "volume" => volumes[i]) for i in eachindex(volumes)]
     fine = exp.(range(log(minimum(theory_mean)), log(maximum(theory_mean)); length=40))
@@ -66,7 +67,7 @@ function main(ctx)
     end
     rate = [Dict("t" => t, "c" => k / gamma * (1 - exp(-gamma * t))) for t in times]
 
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("text" => "The fewer the molecules, the larger the fluctuations (CV ∝ 1/√N)",
@@ -101,4 +102,6 @@ function main(ctx)
                           "encoding" => Dict("x" => Dict("field" => "N", "type" => "quantitative"), "y" => Dict("field" => "cv", "type" => "quantitative"))),
                  ]),
         ]))
+
+    return outputs
 end

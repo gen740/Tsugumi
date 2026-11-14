@@ -5,26 +5,27 @@ select() chooses the points and main() draws them. The figure Directory
 output keeps plot.png, plot.svg and plot.pdf, the values that were drawn
 (plotted.csv) and metadata.json.
 """
+import tsugumi
 import math
 
 import matplotlib.pyplot as plt
 import numpy as np
 from tsugumi import Failure
-from tsugumi.visualization import emit_figure, figure_directory, input_rows
+from tsugumi.visualization import figure_result, figure_directory, input_rows
 
 # @select@
 
 
-def main(ctx):
-    p = ctx.params()
-    kind, x, y, series = text(p.Kind()), text(p.X()), text(p.Y()), text(p.Series())
-    rows = input_rows(ctx, field=text(p.DataPath()), member=text(p.File()))
-    points, facts = select(ctx, rows, kind, x, y, series)
+def main(inputs, report, run):
+    p = inputs.params
+    kind, x, y, series = text(p.kind), text(p.x), text(p.y), text(p.series)
+    rows = input_rows(inputs, run, field=text(p.dataPath), member=text(p.file))
+    points, facts = select(inputs, run, rows, kind, x, y, series)
     groups, plotted = marks(points, kind)
 
-    folder = figure_directory(ctx)
-    with plt.style.context(["dark_background"] if text(p.Theme()) == "dark" else []):
-        fig, ax = plt.subplots(figsize=(p.Width(), p.Height()), dpi=p.Dpi())
+    folder = figure_directory(run)
+    with plt.style.context(["dark_background"] if text(p.theme) == "dark" else []):
+        fig, ax = plt.subplots(figsize=(p.width, p.height), dpi=p.dpi)
         try:
             for name, group in groups.items():
                 if kind == "histogram":
@@ -34,9 +35,9 @@ def main(ctx):
                 else:
                     ax.scatter(group["x"], group["y"], label=name)
             ax.set(
-                title=text(p.Title()) or kind.title(),
-                xlabel=text(p.XLabel()) or x,
-                ylabel=text(p.YLabel()) or ("count" if kind == "histogram" else y),
+                title=text(p.title) or kind.title(),
+                xlabel=text(p.xLabel) or x,
+                ylabel=text(p.yLabel) or ("count" if kind == "histogram" else y),
             )
             if series and groups:
                 ax.legend()
@@ -46,9 +47,9 @@ def main(ctx):
             fig.tight_layout(rect=(0, 0.05, 1, 1))
             for extension in ("png", "svg", "pdf"):
                 fig.savefig(folder / f"plot.{extension}")
-            ctx.display_figure(fig)
+            report.figure(fig)
         finally:
             plt.close(fig)
 
-    emit_figure(ctx, folder, plotted, library="matplotlib", kind=kind, **facts)
-    print(facts["note"])
+    yield figure_result(run, folder, plotted, library="matplotlib", kind=kind, **facts)
+    report.log(str(facts["note"]))

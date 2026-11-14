@@ -64,7 +64,7 @@ import Testing
       {
         run = ''
           test -r "$JSON_IN" || exit 1
-          printf '%s' '{"text":"Received input"}' > "$TSUGUMI_DISPLAY"
+          printf '%s' '{"text":"Received input"}' > "$TSUGUMI_REPORT"
         '';
       }
       """#,

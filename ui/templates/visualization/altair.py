@@ -5,37 +5,38 @@ select() chooses the points and main() draws them. The figure Directory
 output keeps plot.json (Vega-Lite) and a self-contained plot.html, the values
 that were drawn (plotted.csv) and metadata.json.
 """
+import tsugumi
 import math
 
 import altair as alt
 import numpy as np
 from tsugumi import Failure
-from tsugumi.visualization import embed_font, emit_figure, figure_directory, input_rows
+from tsugumi.visualization import embed_font, figure_result, figure_directory, input_rows
 
 # @select@
 
 
-def main(ctx):
-    p = ctx.params()
-    kind, x, y, series = text(p.Kind()), text(p.X()), text(p.Y()), text(p.Series())
-    rows = input_rows(ctx, field=text(p.DataPath()), member=text(p.File()))
-    points, facts = select(ctx, rows, kind, x, y, series)
+def main(inputs, report, run):
+    p = inputs.params
+    kind, x, y, series = text(p.kind), text(p.x), text(p.y), text(p.series)
+    rows = input_rows(inputs, run, field=text(p.dataPath), member=text(p.file))
+    points, facts = select(inputs, run, rows, kind, x, y, series)
     groups, plotted = marks(points, kind)
 
-    folder = figure_directory(ctx)
-    x_label = text(p.XLabel()) or x
-    y_label = text(p.YLabel()) or ("count" if kind == "histogram" else y)
+    folder = figure_directory(run)
+    x_label = text(p.xLabel) or x
+    y_label = text(p.yLabel) or ("count" if kind == "histogram" else y)
     color = {"color": alt.Color("series:N", title=series)} if series else {}
-    dark = text(p.Theme()) == "dark"
+    dark = text(p.theme) == "dark"
     ink = "white" if dark else "#222"
     chart = alt.Chart(alt.Data(values=plotted)).properties(
         title=alt.TitleParams(
-            text=text(p.Title()) or kind.title(),
+            text=text(p.title) or kind.title(),
             subtitle=facts["note"],
             subtitleColor="crimson" if facts["sampled"] else ink,
         ),
-        width=round(p.Width() * p.Dpi()),
-        height=round(p.Height() * p.Dpi()),
+        width=round(p.width * p.dpi),
+        height=round(p.height * p.dpi),
     )
     if kind == "histogram":
         chart = chart.mark_bar(opacity=0.7).encode(
@@ -55,7 +56,7 @@ def main(ctx):
     chart.save(folder / "plot.json")
     chart.save(folder / "plot.html", inline=True)
     embed_font(folder / "plot.html")
-    ctx.display_figure(chart)
+    report.figure(chart)
 
-    emit_figure(ctx, folder, plotted, library="altair", kind=kind, **facts)
-    print(facts["note"])
+    yield figure_result(run, folder, plotted, library="altair", kind=kind, **facts)
+    report.log(str(facts["note"]))

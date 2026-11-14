@@ -1,8 +1,8 @@
 library(ggplot2)
 
 # Why the totals differ: rates by department, drawn by where people applied.
-main <- function(ctx) {
-  d <- read.csv(ctx$path("admissions"))
+main <- function(inputs, report) {
+  d <- read.csv(inputs$path("admissions"))
   wide <- aggregate(count ~ gender + dept, d, sum)
   names(wide)[3] <- "applied"
   admitted <- d[d$admit == "Admitted", c("gender", "dept", "count")]
@@ -24,5 +24,7 @@ main <- function(ctx) {
     labs(x = "Department (anonymised A–F)", y = "Admission rate (%)", title = "Women's applications leaned towards departments with low admission rates") +
     theme_minimal(base_size = 13) +
     theme(legend.position = "top")
-  ctx$plot(print(figure), alt = "Admission rate by department and gender, with the number of applicants", width = 7.5, height = 5.2)
+  report$figure(print(figure), alt = "Admission rate by department and gender, with the number of applicants", width = 7.5, height = 5.2)
+
+  invisible(NULL)
 }

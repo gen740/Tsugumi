@@ -136,10 +136,10 @@ From the chat on the right you can ask the Agent to implement or change things.
 ### Reading the code and trying other conditions
 
 Open a Card's settings to see its source code, its input and output ports, and the definition of its environment (`default.nix`).
-`spectrum` is the same matplotlib code you would write for a window: the figure drawn with `plt.show()` appears as the Card's display.
+`spectrum` draws with Matplotlib and publishes the figure through `report.figure()`.
 Rewrite the band edges or the bin width of the spectrum and rerun only that Card with the saved inputs, and checking continues from the very place you were curious about.
 
-<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-source.svg" alt="Opening the settings of the spectrum Card and following its matplotlib source down to plt.show()" width="100%"></a>
+<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-source.svg" alt="Opening the settings of the spectrum Card and following its matplotlib source down to report.figure()" width="100%"></a>
 
 ### Looking back at what actually ran
 

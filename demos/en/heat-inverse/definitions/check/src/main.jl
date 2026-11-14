@@ -12,8 +12,8 @@ function heat_modes(n, alpha, T)
 end
 
 # Each check has a known answer, independent of the noise in this run.
-function main(ctx)
-    m = input(ctx, "measurement")
+function main(inputs, report)
+    m = Tsugumi.input(inputs, "measurement")
     x, truth = Float64.(m["x"]), Float64.(m["truth"])
     n = length(x)
     alpha, T = m["alpha"], m["final_time"]
@@ -52,7 +52,7 @@ function main(ctx)
     require("Agrees with implicit time integration ($(steps) steps)", maximum(abs, u - forward(truth)), 0.05, "largest difference (°C)")
 
     # 4. Without noise, and early enough, the inversion recovers the truth.
-    early = ctx.params["early_time"]
+    early = inputs.params["early_time"]
     W, e = heat_modes(n, alpha, early)
     clean = W * (e .* (W' * truth))
     recovered = W * ((e ./ (e .^ 2 .+ 1e-14)) .* (W' * clean))
@@ -64,5 +64,7 @@ function main(ctx)
     spread = (maximum(clean_later) <= maximum(truth) + 1e-9 && minimum(clean_later) >= minimum(truth) - 1e-9) ? 0.0 : 1.0
     require("Never beyond the highest and lowest temperatures (maximum principle)", spread, 0.0, "any violation (0 = none)")
 
-    display_table(ctx, ["Checked", "What the value is", "Value", "Tolerance"], rows)
+    report.table(["Checked", "What the value is", "Value", "Tolerance"], rows)
+
+    return nothing
 end

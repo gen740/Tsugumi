@@ -7,8 +7,8 @@ from inputs.comparison.mnist.Comparison import Comparison
 SHOWN = 32
 
 
-def main(ctx):
-    c = ctx.input("comparison", Comparison)
+def main(inputs, report):
+    c = inputs.input("comparison", Comparison)
     n_models = c.ModelsLength()
     labels = c.TestLabelsAsNumpy()
     predictions = c.PredictionsAsNumpy().reshape(n_models, len(labels))
@@ -17,7 +17,7 @@ def main(ctx):
     wrong = (predictions != labels).sum(axis=0)
     order = np.argsort(-wrong, kind="stable")[:SHOWN]
     counts = np.bincount(wrong, minlength=n_models + 1)
-    print("test digits by the number of models wrong:", counts.tolist())
+    report.log(" ".join(str(value) for value in ("test digits by the number of models wrong:", counts.tolist(),)))
 
     columns = 8
     rows = int(np.ceil(len(order) / columns))
@@ -31,4 +31,4 @@ def main(ctx):
     fig.suptitle(f"多くのモデルが間違えたテスト画像（正解 → 多かった誤答、間違えたモデル数）\n"
                  f"{len(labels)} 枚のうち、全 {n_models} モデルが正解 {counts[0]} 枚、全モデルが不正解 {counts[n_models]} 枚",
                  fontsize=10)
-    plt.show()
+    report.figure()

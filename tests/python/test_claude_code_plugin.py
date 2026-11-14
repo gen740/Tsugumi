@@ -86,7 +86,8 @@ class MCPServer:
 
     def request(self, method: str, params: dict | None = None) -> dict:
         self.next += 1
-        self.p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": self.next, "method": method, "params": params or {}}) + "\n")
+        self.p.stdin.write(json.dumps({"jsonrpc": "2.0", "id": self.next, "method": method, "params": params or {}}) + '''
+''')
         self.p.stdin.flush()
         line = self.p.stdout.readline()
         assert line, "the MCP server ended"

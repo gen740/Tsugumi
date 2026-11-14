@@ -1,9 +1,10 @@
-import outputs.out.sample.Number as number
+import tsugumi
 
-def main(ctx):
-    value = ctx.params().Value()
-    b = ctx.builder()
-    number.Start(b)
-    number.AddValue(b, value)
-    ctx.output('out', b, number.End(b))
-    ctx.display_scalar(value, 'Python')
+def main(inputs, report):
+    result_ports = {}
+    value = inputs.params.value
+    _number_value = {}
+    _number_value['value'] = value
+    result_ports.update({'out': _number_value})
+    report.scalar(value, 'Python')
+    return result_ports

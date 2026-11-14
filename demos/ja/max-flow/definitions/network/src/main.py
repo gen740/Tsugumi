@@ -1,17 +1,17 @@
 """A synthetic layered network from a seed: s, then `layers` layers of `width`
 nodes, then t. s reaches all of the first layer and all of the last reaches t."""
+import tsugumi
 import json
 import string
 
 import numpy as np
 
 from inputs.settings.flow.Settings import Settings
-import outputs.network.flow.Network as out
 from tsugumi import Failure
 
 
-def main(ctx):
-    s = ctx.input("settings", Settings)
+def main(inputs, report):
+    s = inputs.input("settings", Settings)
     layers, width, probability, top = int(s.Layers()), int(s.Width()), s.EdgeProbability(), int(s.MaxCapacity())
     if not 1 <= layers <= 26 or width < 1 or top < 1:
         raise Failure("output_invalid", "layers must be 1 to 26, width and max_capacity at least 1")
@@ -36,22 +36,20 @@ def main(ctx):
 
     out_of_s = sum(int(c) for (u, _), c in zip(pairs, capacity) if u == "s")
     into_t = sum(int(c) for (_, v), c in zip(pairs, capacity) if v == "t")
-    ctx.display_markdown(
+    report.markdown(
         f"**架空のネットワーク**（seed {s.Seed()} から生成）\n\n"
         f"- 節点 {len(nodes)}、辺 {len(pairs)}\n"
         f"- 容量 {capacity.min()} から {capacity.max()}\n"
         f"- $s$ から出る総容量 {out_of_s}、$t$ に入る総容量 {into_t}"
     )
-    print("result: " + json.dumps({"nodes": nodes, "edges": [[u, v, int(c)] for (u, v), c in zip(pairs, capacity)]}))
-
-    b = ctx.builder()
-    names = b.CreateString(" ".join(nodes))
-    tail = b.CreateNumpyVector(np.array([index[u] for u, _ in pairs], dtype=np.uint64))
-    head = b.CreateNumpyVector(np.array([index[v] for _, v in pairs], dtype=np.uint64))
-    caps = b.CreateNumpyVector(capacity.astype(np.uint64))
-    out.Start(b)
-    out.AddNodes(b, names)
-    out.AddTail(b, tail)
-    out.AddHead(b, head)
-    out.AddCapacity(b, caps)
-    ctx.output("network", b, out.End(b))
+    report.log(str("result: " + json.dumps({"nodes": nodes, "edges": [[u, v, int(c)] for (u, v), c in zip(pairs, capacity)]})))
+    names = ' '.join(nodes)
+    tail = np.array([index[u] for (u, _) in pairs], dtype=np.uint64)
+    head = np.array([index[v] for (_, v) in pairs], dtype=np.uint64)
+    caps = capacity.astype(np.uint64)
+    _out_value = {}
+    _out_value['nodes'] = names
+    _out_value['tail'] = tail
+    _out_value['head'] = head
+    _out_value['capacity'] = caps
+    return {'network': _out_value}

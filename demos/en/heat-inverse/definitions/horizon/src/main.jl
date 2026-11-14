@@ -14,12 +14,12 @@ end
 
 # The same rod and the same noise, measured later and later: each time lambda is
 # set by the discrepancy principle. Waiting loses detail that no method brings back.
-function main(ctx)
-    m = input(ctx, "measurement")
+function main(inputs, report)
+    m = Tsugumi.input(inputs, "measurement")
     x, truth = Float64.(m["x"]), Float64.(m["truth"])
     n = length(x)
     noise = m["noise"]
-    times = sort(Float64.(ctx.params["times"]))
+    times = sort(Float64.(inputs.params["times"]))
     lambdas = exp10.(range(-8, 2; length=121))
     rng = Xoshiro(m["seed"] + 1)
     rms(v) = sqrt(sum(abs2, v) / length(v))
@@ -45,11 +45,11 @@ function main(ctx)
         push!(labels, label)
         append!(rows, [Dict("x" => x[j], "u" => round(u[j]; digits=3), "panel" => label) for j in 1:n])
         append!(rows, [Dict("x" => x[j], "truth" => truth[j], "panel" => label) for j in 1:n])
-        println(@sprintf("T = %g: lambda %.3g, RMS error %.3f, %d modes above the noise", T, l, errors[end], modes[end]))
+        report.log(string(@sprintf("T = %g: lambda %.3g, RMS error %.3f, %d modes above the noise", T, l, errors[end], modes[end])))
     end
     summary = [Dict("T" => times[i], "error" => errors[i], "modes" => modes[i]) for i in eachindex(times)]
 
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("text" => "The later you measure, the more detail is lost",
@@ -76,4 +76,6 @@ function main(ctx)
                                         "y" => Dict("field" => "modes", "type" => "quantitative", "title" => "Modes left"))),
             ]),
         ]))
+
+    return nothing
 end

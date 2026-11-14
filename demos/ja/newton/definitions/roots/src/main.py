@@ -1,12 +1,12 @@
 """Reference roots, found without Newton's method: numpy.roots takes the
 eigenvalues of the companion matrix. Roots closer than CLUSTER are one multiple
 root (rounding splits a double root by about 1e-8, a triple one by about 1e-5)."""
+import tsugumi
 import json
 
 import numpy as np
 
 from inputs.settings.newton.Settings import Settings
-import outputs.problem.newton.Problem as out
 from tsugumi import Failure
 
 CLUSTER = 1e-3
@@ -43,8 +43,8 @@ def show(z):
     return f"{z.real:.6g} {'+' if z.imag >= 0 else '-'} {abs(z.imag):.6g}i"
 
 
-def main(ctx):
-    s = ctx.input("settings", Settings)
+def main(inputs, report):
+    s = inputs.input("settings", Settings)
     coeffs = s.CoeffsAsNumpy()
     if len(coeffs) < 2 or coeffs[0] == 0:
         raise Failure("output_invalid", "coeffs must list a polynomial of degree >= 1, highest power first, leading coefficient not 0")
@@ -83,27 +83,25 @@ def main(ctx):
     if critical:
         where = "、".join(f"${show(r)}$" + (f"（重複度 {m}）" if m > 1 else "") for r, m in critical)
         lines += ["", f"**臨界点** $p'(z) = 0$: {where}。ここでは反復の式が割り算できません。"]
-    ctx.display_markdown("\n".join(lines))
-    print("result: " + json.dumps({"roots": [[r.real, r.imag, m] for r, m in roots],
-                                   "exact_gap": None if exact_gap is None else float(exact_gap)}))
-
-    b = ctx.builder()
-    label = b.CreateString(tex_poly(coeffs))
-    vec_coeffs = b.CreateNumpyVector(np.asarray(coeffs, dtype=np.float64))
-    roots_re = b.CreateNumpyVector(np.array([r.real for r, _ in roots]))
-    roots_im = b.CreateNumpyVector(np.array([r.imag for r, _ in roots]))
-    multiplicity = b.CreateNumpyVector(np.array([m for _, m in roots], dtype=np.uint64))
-    critical_re = b.CreateNumpyVector(np.array([r.real for r, _ in critical], dtype=np.float64))
-    critical_im = b.CreateNumpyVector(np.array([r.imag for r, _ in critical], dtype=np.float64))
-    out.Start(b)
-    out.AddLabel(b, label)
-    out.AddCoeffs(b, vec_coeffs)
-    out.AddRootsRe(b, roots_re)
-    out.AddRootsIm(b, roots_im)
-    out.AddMultiplicity(b, multiplicity)
-    out.AddCriticalRe(b, critical_re)
-    out.AddCriticalIm(b, critical_im)
-    out.AddDamping(b, s.Damping())
-    out.AddTolerance(b, s.Tolerance())
-    out.AddMaxIter(b, s.MaxIter())
-    ctx.output("problem", b, out.End(b))
+    report.markdown("\n".join(lines))
+    report.log(str("result: " + json.dumps({"roots": [[r.real, r.imag, m] for r, m in roots],
+                                   "exact_gap": None if exact_gap is None else float(exact_gap)})))
+    label = tex_poly(coeffs)
+    vec_coeffs = np.asarray(coeffs, dtype=np.float64)
+    roots_re = np.array([r.real for (r, _) in roots])
+    roots_im = np.array([r.imag for (r, _) in roots])
+    multiplicity = np.array([m for (_, m) in roots], dtype=np.uint64)
+    critical_re = np.array([r.real for (r, _) in critical], dtype=np.float64)
+    critical_im = np.array([r.imag for (r, _) in critical], dtype=np.float64)
+    _out_value = {}
+    _out_value['label'] = label
+    _out_value['coeffs'] = vec_coeffs
+    _out_value['roots_re'] = roots_re
+    _out_value['roots_im'] = roots_im
+    _out_value['multiplicity'] = multiplicity
+    _out_value['critical_re'] = critical_re
+    _out_value['critical_im'] = critical_im
+    _out_value['damping'] = s.Damping()
+    _out_value['tolerance'] = s.Tolerance()
+    _out_value['max_iter'] = s.MaxIter()
+    return {'problem': _out_value}

@@ -78,10 +78,6 @@ cp -R "$repo/demos" "$app/Contents/Resources/demos"
 mods="$app/Contents/Resources/modules"
 mkdir -p "$mods"
 cp "$repo/ui/modules/viewer.html" "$repo/ui/modules/viewer.js" "$mods/"
-# Bundled developer reference (the current Agent tools expose demos separately).
-mkdir -p "$app/Contents/Resources/reference"
-cp "$repo/agent/Reference/card-guide.md" "$app/Contents/Resources/reference/card-guide.md"
-cp "$repo/sdk/python/tsugumi/__init__.py" "$app/Contents/Resources/reference/tsugumi-sdk.py"
 # Help > Learn about Tsugumi: the documentation site's story pages, as they are, with
 # what they use (Sources/App/Explainer/ExplainerWindow.swift).
 (cd "$repo" && nix run .#build-doc)

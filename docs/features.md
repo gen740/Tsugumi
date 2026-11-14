@@ -142,7 +142,7 @@ Use [Build Cache settings](Usage.md#manage-build-and-scratch-space) to inspect a
 
 ## 4. Card SDK and workers
 
-Start with [Your first Card](CardGuide.md), then use the [SDK reference](../agent/Reference/card-guide.md), [worker state rules](CardGuide.md#worker-state) or [C# guide](CSharp.md). Inspect execution stages in [Run History](RunHistory.md#inspect-an-invocation).
+Start with [Your first Card](CardGuide.md), then use the [SDK reference](CardGuide.md), [worker state rules](CardGuide.md#worker-state) or [C# guide](CSharp.md). Inspect execution stages in [Run History](RunHistory.md#inspect-an-invocation).
 
 ### Execution service
 

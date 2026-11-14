@@ -12,8 +12,8 @@ function heat_modes(n, alpha, T)
 end
 
 # Each check has a known answer, independent of the noise in this run.
-function main(ctx)
-    m = input(ctx, "measurement")
+function main(inputs, report)
+    m = Tsugumi.input(inputs, "measurement")
     x, truth = Float64.(m["x"]), Float64.(m["truth"])
     n = length(x)
     alpha, T = m["alpha"], m["final_time"]
@@ -52,7 +52,7 @@ function main(ctx)
     require("陰解法の時間積分（$(steps) ステップ）と一致", maximum(abs, u - forward(truth)), 0.05, "最大の差（℃）")
 
     # 4. Without noise, and early enough, the inversion recovers the truth.
-    early = ctx.params["early_time"]
+    early = inputs.params["early_time"]
     W, e = heat_modes(n, alpha, early)
     clean = W * (e .* (W' * truth))
     recovered = W * ((e ./ (e .^ 2 .+ 1e-14)) .* (W' * clean))
@@ -64,5 +64,7 @@ function main(ctx)
     spread = (maximum(clean_later) <= maximum(truth) + 1e-9 && minimum(clean_later) >= minimum(truth) - 1e-9) ? 0.0 : 1.0
     require("最高・最低温度を超えない（最大値原理）", spread, 0.0, "外れの有無（0 = なし）")
 
-    display_table(ctx, ["確かめたこと", "何の値か", "値", "許容"], rows)
+    report.table(["確かめたこと", "何の値か", "値", "許容"], rows)
+
+    return nothing
 end

@@ -54,9 +54,9 @@ def linear_rate(e, m):
     return float(np.median(ratios)) if len(ratios) >= 6 else None
 
 
-def main(ctx):
-    p = ctx.input("problem", Problem)
-    offset = ctx.params().Offset()
+def main(inputs, report):
+    p = inputs.input("problem", Problem)
+    offset = inputs.params.offset
     tolerance, max_iter = p.Tolerance(), int(p.MaxIter())
     cube = [1.0, 0.0, 0.0, -1.0]
     double = [1.0, 0.0, -3.0, 2.0]  # (z - 1)^2 (z + 2)
@@ -97,5 +97,5 @@ def main(ctx):
     table.auto_set_font_size(False)
     table.set_fontsize(9)
     table.scale(1, 1.4)
-    plt.show()
-    print("result: " + json.dumps(results))
+    report.figure()
+    report.log(str("result: " + json.dumps(results)))

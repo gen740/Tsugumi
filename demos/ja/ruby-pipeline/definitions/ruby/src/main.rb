@@ -1,11 +1,15 @@
-def on_run_start(ctx)
+def on_run_start(inputs)
   @runs = (@runs || 0) + 1
+  nil
 end
 
-def main(ctx)
-  input = ctx.input('number').fetch('value')
-  result = input * ctx.params.fetch('factor')
-  ctx.output('out', value: result)
-  ctx.log("Ruby run #{@runs}: #{input} -> #{result}")
-  ctx.display_table(['input', 'factor', 'result'], [[input, ctx.params['factor'], result]])
+def main(inputs, report)
+  outputs = {}
+  received = inputs.input('number').fetch('value')
+  result = received * inputs.params.fetch('factor')
+  outputs['out'] = {value: result}
+  report.log("Ruby run #{@runs}: #{received} -> #{result}")
+  report.table(['input', 'factor', 'result'], [[received, inputs.params['factor'], result]])
+
+  outputs
 end

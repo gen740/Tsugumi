@@ -2,5 +2,5 @@
   "_card.json": "{\n  \"language\": \"csharp\",\n  \"inputs\": [\n    {\n      \"name\": \"in\"\n    }\n  ],\n  \"params\": [\n    {\n      \"name\": \"message\",\n      \"type\": \"string\",\n      \"data\": \"Hello from C#\"\n    }\n  ]\n}\n",
   "_outputs.fbs": "namespace card;\ntable Outputs {}\nroot_type Outputs;\n",
   "default.nix": "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"csharp\" ]; };\nin\n{\n  run = inputs.tsugumi.csharpCard { inherit sdk; src = ./src; };\n}\n",
-  "src/Card.cs": "using System.Threading.Tasks;\nusing Tsugumi;\n\npublic sealed class Card : ICard\n{\n    public ValueTask RunAsync(Context context)\n    {\n        context.DisplayText(context.Parameters.Message);\n        return ValueTask.CompletedTask;\n    }\n}\n"
+  "src/Card.cs": "using System.Threading.Tasks;\nusing Tsugumi;\n\npublic sealed class Card : ICard\n{\n    public ValueTask<Outputs> RunAsync(Inputs inputs, Report report)\n    {\n        var result = new Outputs();\n        report.Text(inputs.Params.Message);\n        return ValueTask.FromResult(result);\n    }\n}\n"
 }

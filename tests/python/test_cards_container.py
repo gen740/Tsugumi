@@ -196,9 +196,17 @@ def test_isolation(env):
 
 def test_nix_connected_exports(env):
     a = bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
-             extra='  exports = { greet = name: "hello ${name}"; };\n')
-    b_nix = ("{ pkgs, inputs, params }:\n{\n  run = ''\n    test \"${inputs.x.greet \"b\"}\" = \"hello b\"\n"
-             "    echo '{\"out\":{\"value\":2}}' > \"$TSUGUMI_OUTPUT\"\n  '';\n}\n")
+             extra='''  exports = { greet = name: "hello ${name}"; };
+''')
+    b_nix = ('''{ pkgs, inputs, params }:
+{
+  run = ''
+    test "${inputs.x.greet "b"}" = "hello b"
+'''
+             '''    echo '{"out":{"value":2}}' > "$TSUGUMI_OUTPUT"
+  '';
+}
+''')
     defs = {"trigger": {"template": "trigger"}, "a": a,
             "b": {"language": "bash", "inputs": [{"name": "x"}], "_outputs": NUM, "_nix": b_nix}}
     c = load(env, defs, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
@@ -206,7 +214,9 @@ def test_nix_connected_exports(env):
     assert st.state == RunState.succeeded, log(c, run_id, "b", 2)
     # An unknown destination port is reported before any build.
     bad = a.copy()
-    bad["_nix"] = "{ pkgs, inputs, params }:\n{ run = \"${inputs.b.greet \"a\"}\"; }\n"
+    bad["_nix"] = '''{ pkgs, inputs, params }:
+{ run = "${inputs.b.greet "a"}"; }
+'''
     c = load(env, {**defs, "a": bad}, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
     snap = c.call("ProjectInspectRequest")
     codes = [text(d.code) for r in snap.resolution for d in r.diagnostics]
@@ -263,13 +273,16 @@ HOME = Path.home()                  # read when the module is loaded
 (HOME / ".config").mkdir(parents=True, exist_ok=True)
 (HOME / ".config" / "probe").write_text("ok")
 
-def main(ctx):
-    ctx.display_text(f"{HOME} {os.environ.get('XDG_CACHE_HOME', '')}")
+def main(inputs, report):
+    report.text(f"{HOME} {os.environ.get('XDG_CACHE_HOME', '')}")
 '''
     defs = {"trigger": {"template": "trigger"},
             "show": {"language": "python",
                      "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
-                     "_nix": "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; }; in\n{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }\n"}}
+                     "_nix": '''{ pkgs, inputs, params }:
+let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
+{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }
+'''}}
     root = env.project
     c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
     put(root / "definitions" / "show" / "src" / "main.py", main)
@@ -324,8 +337,8 @@ import numpy as np
 import sklearn.neighbors
 from threadpoolctl import threadpool_info
 
-def main(ctx):
-    ctx.display_text(json.dumps({"first": FIRST, "threads": [i["num_threads"] for i in threadpool_info()]}))
+def main(inputs, report):
+    report.text(json.dumps({"first": FIRST, "threads": [i["num_threads"] for i in threadpool_info()]}))
 '''
 
 THREADS_NIX = PYTHON_NIX.replace("src = ./src;", "src = ./src; packages = ps: [ ps.numpy ps.scikit-learn ps.threadpoolctl ];") % ""
@@ -358,16 +371,19 @@ def png(w, h):
     return b"\\x89PNG\\r\\n\\x1a\\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + \\
         chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
 
-def main(ctx):
-    ctx.display_table(["n", "square"], [[str(i), str(i * i)] for i in range(5)])
-    ctx.display_image(png(4, 4), "image/png", "red square")
-    ctx.display_points([0, 1, 2], [0, 1, 4], [0, 1, 8], [0xff0000, 0x00ff00, 0x0000ff])
-    ctx.display_module("/nix/store/00000000000000000000000000000000-test-view", {"bins": [1, 2, 3]})
+def main(inputs, report):
+    report.table(["n", "square"], [[str(i), str(i * i)] for i in range(5)])
+    report.image(png(4, 4), "image/png", "red square")
+    report.points([0, 1, 2], [0, 1, 4], [0, 1, 8], [0xff0000, 0x00ff00, 0x0000ff])
+    report.module("/nix/store/00000000000000000000000000000000-test-view", {"bins": [1, 2, 3]})
 '''
     defs = {"trigger": {"template": "trigger"},
             "show": {"language": "python",
                      "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
-                     "_nix": "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; }; in\n{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }\n"}}
+                     "_nix": '''{ pkgs, inputs, params }:
+let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
+{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }
+'''}}
     root = env.project
     c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
     put(root / "definitions" / "show" / "src" / "main.py", main)
@@ -392,7 +408,8 @@ table Rich {{
 }}
 """
 
-PY_MAKE = '''
+PY_MAKE = '''import tsugumi
+
 import os
 import outputs.rich.a.Rich as Rich
 import outputs.rich.a.Point as Point
@@ -400,9 +417,9 @@ import outputs.rich.a.Circle as Circle
 import outputs.rich.a.Shape as Shape
 import outputs.doc.a.Doc as Doc
 
-def main(ctx):
+def main(inputs, report, run):
     n = 100_000
-    b = ctx.builder(1 << 20)
+    b = tsugumi.builder(1 << 20)
     name = b.CreateString("名前 ✓")
     Circle.Start(b); Circle.AddR(b, 1.5); circle = Circle.End(b)
     Rich.StartValuesVector(b, n)
@@ -419,25 +436,25 @@ def main(ctx):
     Rich.AddPoint(b, Point.CreatePoint(b, -7, 8))
     Rich.AddShapeType(b, Shape.Shape.Circle)
     Rich.AddShape(b, circle)
-    ctx.output("rich", b, Rich.End(b))
-    path = os.path.join(ctx.output_directory, "table.csv")
+    yield {"rich": tsugumi.message(b, Rich.End(b))}
+    path = os.path.join(run.output_directory, "table.csv")
     with open(path, "w") as f:
         f.write("a,b\\n" * 1000)
-    b = ctx.builder()
+    b = tsugumi.builder()
     p = b.CreateString(path)
     Doc.Start(b); Doc.AddValue(b, p)
-    ctx.output("doc", b, Doc.End(b))
+    yield {"doc": tsugumi.message(b, Doc.End(b))}
 '''
 
-CPP_CHECK = r'''
+CPP_CHECK = '''
 #include <card.hh>
 
 #include <climits>
 #include <fstream>
 #include <string>
 
-auto run(Card::Input& input) -> Card::Output {
-  const auto& r = input.rich;
+auto run(const Card::Inputs& inputs) -> Card::Output {
+  const auto& r = inputs.rich;
   if (r.id != 18446744073709551615ull) throw tsugumi::Failure("output_invalid", "id");
   if (r.neg != INT64_MIN) throw tsugumi::Failure("output_invalid", "neg");
   if (r.values.size() != 100000 || r.values[99999] != 299997) throw tsugumi::Failure("output_invalid", "values");
@@ -446,7 +463,7 @@ auto run(Card::Input& input) -> Card::Output {
   if (r.shape.type != inputs::rich::a::Shape::Circle || r.shape.AsCircle()->r != 1.5)
     throw tsugumi::Failure("output_invalid", "shape");
   if (r.name != "名前 ✓") throw tsugumi::Failure("output_invalid", "name");
-  std::ifstream f(input.doc.value);
+  std::ifstream f(inputs.doc.value);
   std::string all((std::istreambuf_iterator<char>(f)), {});
   if (all.size() != 4000) throw tsugumi::Failure("output_invalid", "file size " + std::to_string(all.size()));
   // Same structure, another namespace: structurally compatible downstream.
@@ -468,16 +485,28 @@ auto run(Card::Input& input) -> Card::Output {
 
 
 def test_values_cross_python_cpp_and_shell(env):
-    py_nix = "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; }; in\n{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }\n"
-    cpp_nix = "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; }; in\n{ run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; }; }\n"
-    a_out = RICH.format(ns="a") + "table Doc { value:string; }\ntable Outputs { rich:Rich (required); doc:Doc (required, tsugumi: \"file\"); }\nroot_type Outputs;\nattribute \"tsugumi\";\n"
-    b_out = RICH.format(ns="b") + "table Outputs { checked:Rich (required); }\nroot_type Outputs;\n"
+    py_nix = '''{ pkgs, inputs, params }:
+let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
+{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }
+'''
+    cpp_nix = '''{ pkgs, inputs, params }:
+let sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; }; in
+{ run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; }; }
+'''
+    a_out = RICH.format(ns="a") + '''table Doc { value:string; }
+table Outputs { rich:Rich (required); doc:Doc (required, tsugumi: "file"); }
+root_type Outputs;
+attribute "tsugumi";
+'''
+    b_out = RICH.format(ns="b") + '''table Outputs { checked:Rich (required); }
+root_type Outputs;
+'''
     bad = '''
-def main(ctx):
-    ctx.output_bytes("rich", b"not a flatbuffer")
+def main(inputs):
+    return {"rich": b"not a flatbuffer"}
 '''
     missing = '''
-def main(ctx):
+def main(inputs):
     pass
 '''
     shell = bash('test "$(wc -c < "$JSON_IN")" -gt 500000 && read -r -n 300 head < "$JSON_IN" && '
@@ -514,7 +543,7 @@ def main(ctx):
     assert rec["after_bad"].state == CardState.blocked and rec["after_missing"].state == CardState.blocked, detail
 
 
-SDK_CALC = r"""
+SDK_CALC = '''
 #include <card.hh>
 
 #include <dlfcn.h>
@@ -527,61 +556,65 @@ static int calls = 0;  // reuseWorker: one worker serves every invocation
 
 static std::string runtime_path() {
   Dl_info info{};
-  dladdr(reinterpret_cast<void*>(&tsugumi::cancelled), &info);
+  dladdr(reinterpret_cast<void*>(&tsugumi::card::invoke), &info);
   return info.dli_fname ? info.dli_fname : "?";
 }
 
-auto run(Card::Input& input) -> Card::Output {
+auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
   ++calls;
   // preRun ran for this invocation (postRun removes the file again).
   if (!std::ifstream("pre.txt")) throw tsugumi::Failure("output_invalid", "preRun did not run before call " + std::to_string(calls));
   const char* pre = std::getenv("PRE_VALUE");
   if (!pre || std::string(pre) != "5") throw tsugumi::Failure("output_invalid", "PRE_VALUE not carried over");
   uint64_t n = 0;
-  if (const auto* v = input.x.value.Asinit()) n = v->value;
-  else if (const auto* v = input.x.value.Asagain()) n = v->value;
-  tsugumi::log("runtime " + runtime_path());
-  tsugumi::visualization::text("n = " + std::to_string(n));
+  if (const auto* v = inputs.x.value.Asinit()) n = v->value;
+  else if (const auto* v = inputs.x.value.Asagain()) n = v->value;
+  report.log("runtime " + runtime_path());
+  report.text("n = " + std::to_string(n));
   Card::Output out;
   if (n > 0) {
     out.again.emplace().value = n - 1;
     return out;
   }
-  std::string file = tsugumi::context().output_directory + "/calls.txt";
+  std::string file = std::string(".") + "/calls.txt";
   std::ofstream(file) << calls;
   out.calls.emplace().value = calls;
   out.report.emplace().value = file;
   return out;
 }
-"""
+'''
 
-SDK_OTHER = r"""
+SDK_OTHER = '''
 #include <card.hh>
 
 #include <dlfcn.h>
 
-auto run(Card::Input& input) -> Card::Output {
+auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
   Dl_info info{};
-  dladdr(reinterpret_cast<void*>(&tsugumi::cancelled), &info);
-  tsugumi::log(std::string("runtime ") + (info.dli_fname ? info.dli_fname : "?"));
+  dladdr(reinterpret_cast<void*>(&tsugumi::card::invoke), &info);
+  report.log(std::string("runtime ") + (info.dli_fname ? info.dli_fname : "?"));
   Card::Output out;
-  out.out.emplace().value = input.in.value + Card::params().step.value();
-  tsugumi::visualization::text("out = " + std::to_string(out.out->value));
+  out.out.emplace().value = inputs.in.value + inputs.params.step.value();
+  report.text("out = " + std::to_string(out.out->value));
   return out;
 }
-"""
+'''
 
 
 def test_cpp_sdk_card_api(env):
-    """`#include <card.hh>` / run(Card::Input&) -> Card::Output: named
+    '''`#include <card.hh>` / run(const Card::Inputs& inputs) -> Card::Output: named
     inputs (a merge union), optional and File
-    outputs, params, tsugumi::visualization, `run` as a package, preRun
+    outputs, params, Report, `run` as a package, preRun
     and postRun around every invocation of a reused worker, and one shared
-    runtime library for two SDKs with different contracts."""
+    runtime library for two SDKs with different contracts.'''
     seed = bash('echo \'{"out":{"value":2}}\' > "$TSUGUMI_OUTPUT"')
-    calc_out = ("namespace t; table Num { value:ulong; } table Doc { value:string; }\n"
-                "table Outputs { again:Num; calls:Num; report:Doc (tsugumi: \"file\"); }\n"
-                "root_type Outputs;\nattribute \"tsugumi\";\n")
+    calc_out = ('''namespace t; table Num { value:ulong; } table Doc { value:string; }
+'''
+                '''table Outputs { again:Num; calls:Num; report:Doc (tsugumi: "file"); }
+'''
+                '''root_type Outputs;
+attribute "tsugumi";
+''')
     calc_nix = """{ pkgs, inputs, params }:
 let
   sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
@@ -593,8 +626,10 @@ in
 }
 """
     other_nix = calc_nix.replace(
-        '  preRun = "echo pre > pre.txt && export PRE_VALUE=5";\n', "").replace(
-        '  postRun = "test \\"$TSUGUMI_FAILED\\" = 0 && rm pre.txt";\n', "")
+        '''  preRun = "echo pre > pre.txt && export PRE_VALUE=5";
+''', "").replace(
+        '''  postRun = "test \\"$TSUGUMI_FAILED\\" = 0 && rm pre.txt";
+''', "")
     defs = {"trigger": {"template": "trigger"}, "seed": seed,
             "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
             "calc": {"language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10, "reuseWorker": True,
@@ -634,7 +669,9 @@ def test_parallel_limit_serial_card_and_unselected_branch(env):
     would not even evaluate)."""
     sleepy = bash('sleep 1; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"')
     broken = {"language": "bash", "inputs": [{"name": "in"}], "_outputs": NUM,
-              "_nix": "{ pkgs, inputs, params }:\n{ run = builtins.throw \"must never be evaluated\"; }\n"}
+              "_nix": '''{ pkgs, inputs, params }:
+{ run = builtins.throw "must never be evaluated"; }
+'''}
     defs = {"trigger": {"template": "trigger"}, "sleepy": sleepy,
             "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
             "branch": {"template": "branch"}, "broken": broken, "fork": {"template": "fork"}}
@@ -668,11 +705,18 @@ def test_parallel_limit_serial_card_and_unselected_branch(env):
 
 def test_worker_crash_then_edit_and_rerun(env):
     crash = {"language": "python", "_outputs": NUM,
-             "_nix": "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; }; in\n{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }\n"}
+             "_nix": '''{ pkgs, inputs, params }:
+let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
+{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }
+'''}
     defs = {"trigger": {"template": "trigger"}, "crash": crash}
     root = env.project
     c = load(env, defs, [card("start", "trigger"), card("crash", "crash")], [])
-    put(root / "definitions" / "crash" / "src" / "main.py", "import os, signal\n\ndef main(ctx):\n    os.kill(os.getpid(), signal.SIGKILL)\n")
+    put(root / "definitions" / "crash" / "src" / "main.py", '''import os, signal
+
+def main(inputs):
+    os.kill(os.getpid(), signal.SIGKILL)
+''')
     reload(c)
     run_id, st = run_and_wait(c, "start", timeout=1800)
     rec = c.call("RunRecordRequest", runId=run_id, card=path("crash")).status
@@ -680,7 +724,15 @@ def test_worker_crash_then_edit_and_rerun(env):
     assert rec.failure.kind == 23  # worker_failed
     # After the crash the environment keeps working: fix the source and run again.
     put(root / "definitions" / "crash" / "src" / "main.py",
-        "import outputs.out.t.Num as Num\n\ndef main(ctx):\n    b = ctx.builder()\n    Num.Start(b)\n    Num.AddValue(b, 1)\n    ctx.output('out', b, Num.End(b))\n")
+        '''import tsugumi
+import outputs.out.t.Num as Num
+
+def main(inputs):
+    b = tsugumi.builder()
+    Num.Start(b)
+    Num.AddValue(b, 1)
+    return {'out': tsugumi.message(b, Num.End(b))}
+''')
     reload(c)
     _, st2 = run_and_wait(c, "start", timeout=1800)
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)

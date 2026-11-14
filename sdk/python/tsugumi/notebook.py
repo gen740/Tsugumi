@@ -29,14 +29,14 @@ def _plain(value):
     return value
 
 
-def bindings(ctx, mapping):
+def bindings(inputs, mapping):
     """Resolve notebook variable -> input.<port>.<field> or param.<field>."""
     from tsugumi import Failure, contract
     if not isinstance(mapping, dict):
         raise Failure('validation_failed', 'bindings must be a JSON object mapping variable names to input/param paths')
     values = {
-        'input': {port['name']: _plain(contract.input_object(ctx, port['name'])) for port in contract.ports()},
-        'param': _plain(contract.params_object(ctx)),
+        'input': {port['name']: _plain(contract.input_object(inputs, port['name'])) for port in contract.ports()},
+        'param': _plain(contract.params_object(inputs)),
     }
     result = {}
     for name, path in mapping.items():
@@ -52,7 +52,7 @@ def bindings(ctx, mapping):
     return result
 
 
-def run(ctx, source_directory, notebook, definitions, selected):
+def run(report, run, source_directory, notebook, definitions, selected):
     """Return (selected JSON-compatible definitions, retained Directory path).
 
     The surrounding Python Card packs its typed outputs only after this returns.
@@ -66,14 +66,14 @@ def run(ctx, source_directory, notebook, definitions, selected):
         raise Failure('validation_failed', 'notebook must name a .py file inside the Card source directory')
     # The sandbox exposes the invocation's output directory to the worker
     # through a descriptor. A subprocess does not inherit that directory.
-    work = Path(ctx.temporary_directory) / 'marimo'
+    work = Path(run.temporary_directory) / 'marimo'
     snapshot = work / 'notebook'
     snapshot.mkdir(parents=True)
     shutil.copytree(root, snapshot / 'source', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     config = {
         'notebook': str(snapshot / 'source' / source.relative_to(root)),
         'directory': str(snapshot), 'definitions': definitions, 'selected': selected,
-        'source': notebook, 'run_id': ctx.run_id, 'card': ctx.card, 'invocation': ctx.invocation,
+        'source': notebook, 'run_id': run.run_id, 'card': run.card, 'invocation': run.invocation,
         'fonts': str(Path(__file__).with_name('_fonts.txt')),
     }
     request = work / 'request.json'
@@ -86,9 +86,9 @@ def run(ctx, source_directory, notebook, definitions, selected):
                              cwd=snapshot / 'source', env=environment)
     try:
         while child.poll() is None:
-            if ctx.cancelled():
+            if run.cancelled():
                 raise Failure('cancelled', 'Notebook invocation cancelled')
-            if ctx.remaining_ms() == 0:
+            if run.remaining_ms() == 0:
                 raise Failure('timeout', 'Notebook invocation deadline reached')
             try:
                 child.wait(timeout=0.05)
@@ -98,14 +98,14 @@ def run(ctx, source_directory, notebook, definitions, selected):
             diagnostic = snapshot / 'failure.json'
             detail = json.loads(diagnostic.read_text())['message'] if diagnostic.exists() else f'Notebook process exited with status {child.returncode}'
             raise Failure('worker_failed', detail)
-        if ctx.cancelled():
+        if run.cancelled():
             raise Failure('cancelled', 'Notebook invocation cancelled')
-        if ctx.remaining_ms() == 0:
+        if run.remaining_ms() == 0:
             raise Failure('timeout', 'Notebook invocation deadline reached')
         result = json.loads((snapshot / 'result.json').read_text())
-        folder = Path(ctx.output_directory) / 'notebook'
+        folder = Path(run.output_directory) / 'notebook'
         shutil.copytree(snapshot, folder)
-        ctx.display_markdown(f"**{notebook}** — committed notebook result\n\n" + '\n'.join(f'- `{k}`: {v}' for k, v in result.items()))
+        report.markdown(f"**{notebook}** — committed notebook result\n\n" + '\n'.join(f'- `{k}`: {v}' for k, v in result.items()))
         return result, folder
     finally:
         if child.poll() is None:

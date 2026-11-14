@@ -1,4 +1,4 @@
-"""Plain matplotlib, as written for a window: plt.show() puts the figure in the
+"""Plain matplotlib, as written for a window: report.figure() puts the figure in the
 Card's display (Tsugumi's backend, chosen for every Python Card)."""
 import matplotlib.pyplot as plt
 import numpy as np
@@ -6,8 +6,8 @@ import numpy as np
 from inputs.walks.walk.Walks import Walks
 
 
-def main(ctx):
-    w = ctx.input("walks", Walks)
+def main(inputs, report):
+    w = inputs.input("walks", Walks)
     paths = w.PositionsAsNumpy().reshape(w.Walkers(), w.Steps() + 1)
     t = np.arange(w.Steps() + 1)
 
@@ -29,4 +29,4 @@ def main(ctx):
     right.legend()
     fig.suptitle("Random walks spread as √t（拡散は √t で広がる）")
     fig.tight_layout()
-    plt.show()
+    report.figure()

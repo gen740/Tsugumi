@@ -91,6 +91,10 @@ static SEXP host_cancelled(void) {
 static SEXP host_remaining(void) {
   return Rf_ScalarReal((double)tsugumi_native_remaining_ms());
 }
+static SEXP host_log(SEXP message) {
+  if (current_call) current_call->log(current_call->host, Rf_translateCharUTF8(STRING_ELT(message, 0)));
+  return R_NilValue;
+}
 static SEXP host_fail(SEXP message) {
   tsugumi_native_fail(Rf_translateCharUTF8(STRING_ELT(message, 0)));
   return R_NilValue;
@@ -114,6 +118,7 @@ static const R_CallMethodDef methods[] = {
     {"tsugumi_display", (DL_FUNC)&host_display, 1},
     {"tsugumi_cancelled", (DL_FUNC)&host_cancelled, 0},
     {"tsugumi_remaining", (DL_FUNC)&host_remaining, 0},
+    {"tsugumi_log", (DL_FUNC)&host_log, 1},
     {"tsugumi_fail", (DL_FUNC)&host_fail, 1},
     {NULL, NULL, 0}};
 

@@ -28,12 +28,13 @@ end
 
 # Tikhonov: minimize |A u - d|^2 + lambda^2 |u|^2, which damps each mode by the
 # filter sigma / (sigma^2 + lambda^2). Three ways to choose lambda are compared.
-function main(ctx)
-    m = input(ctx, "measurement")
+function main(inputs, report)
+    outputs = Dict{String,Any}()
+    m = Tsugumi.input(inputs, "measurement")
     x, truth, measured = Float64.(m["x"]), Float64.(m["truth"]), Float64.(m["measured"])
     n = length(x)
     noise = m["noise"]
-    lambdas = exp10.(range(ctx.params["log10_lambda_min"], ctx.params["log10_lambda_max"]; length=Int(ctx.params["sweep"])))
+    lambdas = exp10.(range(inputs.params["log10_lambda_min"], inputs.params["log10_lambda_max"]; length=Int(inputs.params["sweep"])))
     V, s = heat_modes(n, m["alpha"], m["final_time"])
     coefficients = V' * measured
 
@@ -52,12 +53,12 @@ function main(ctx)
     lcurve = corner(log.(residuals), log.(norms))
     oracle = argmin(errors)
 
-    report(name, i) = println(@sprintf("%s: lambda %.3g, RMS error %.3f, residual %.3f", name, lambdas[i], errors[i], residuals[i]))
-    report("discrepancy", discrepancy)
-    report("L-curve", lcurve)
-    report("best against the truth", oracle)
-    output(ctx, "choice", Dict("discrepancy" => lambdas[discrepancy], "lcurve" => lambdas[lcurve], "oracle" => lambdas[oracle],
-                               "error_discrepancy" => errors[discrepancy], "error_lcurve" => errors[lcurve], "error_oracle" => errors[oracle]))
+    describe_choice(name, i) = report.log(string(@sprintf("%s: lambda %.3g, RMS error %.3f, residual %.3f", name, lambdas[i], errors[i], residuals[i])))
+    describe_choice("discrepancy", discrepancy)
+    describe_choice("L-curve", lcurve)
+    describe_choice("best against the truth", oracle)
+    outputs["choice"] = Dict("discrepancy" => lambdas[discrepancy], "lcurve" => lambdas[lcurve], "oracle" => lambdas[oracle],
+                               "error_discrepancy" => errors[discrepancy], "error_lcurve" => errors[lcurve], "error_oracle" => errors[oracle])
 
     sweep = [Dict("lambda" => lambdas[i], "residual" => residuals[i], "norm" => norms[i], "error" => errors[i]) for i in eachindex(lambdas)]
     marks = [Dict("lambda" => lambdas[i], "residual" => residuals[i], "norm" => norms[i], "error" => errors[i], "method" => name)
@@ -70,7 +71,7 @@ function main(ctx)
     log_y = Dict("field" => "norm", "type" => "quantitative", "title" => "解の大きさ ‖u‖", "scale" => Dict("type" => "log", "nice" => false, "zero" => false), "axis" => Dict("format" => "~g", "tickCount" => 5, "grid" => false))
     y_error = Dict("field" => "error", "type" => "quantitative", "title" => "真の値との RMS 誤差（℃）", "scale" => Dict("type" => "log", "nice" => false), "axis" => Dict("format" => "~g", "tickCount" => 5, "grid" => false))
 
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("text" => @sprintf("λ のトレードオフ: 食い違い原理で λ = %.2g、誤差 %.2f ℃", lambdas[discrepancy], errors[discrepancy]),
@@ -93,4 +94,6 @@ function main(ctx)
                      Dict("data" => Dict("values" => marks), "mark" => mark_point, "encoding" => Dict("x" => lambda_axis, "y" => y_error, "color" => method)),
                  ]),
         ]))
+
+    return outputs
 end

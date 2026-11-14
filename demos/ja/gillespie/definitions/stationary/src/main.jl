@@ -16,8 +16,9 @@ end
 
 # The stationary distribution: each run gives one independent sample long after
 # the start, and theory says Poisson with mean kV / gamma (so the Fano factor is 1).
-function main(ctx)
-    m = input(ctx, "settings")
+function main(inputs, report)
+    outputs = Dict{String,Any}()
+    m = Tsugumi.input(inputs, "settings")
     k, gamma, volume, runs = m["synthesis"], m["degradation"], m["volume"], Int(m["runs"])
     birth = k * volume
     expected = birth / gamma
@@ -31,9 +32,9 @@ function main(ctx)
     se_mean = sqrt(expected / runs)
     se_var = sqrt((expected + 2 * expected^2) / runs)
     se_fano = sqrt(2 / runs)
-    println(@sprintf("mean %.3f (theory %.3f), variance %.3f (theory %.3f), Fano %.4f", average, expected, variance, expected, fano))
-    output(ctx, "stationary", Dict("mean" => average, "variance" => variance, "fano" => fano, "theory" => expected,
-                                   "se_mean" => se_mean, "se_variance" => se_var, "se_fano" => se_fano, "runs" => runs))
+    report.log(string(@sprintf("mean %.3f (theory %.3f), variance %.3f (theory %.3f), Fano %.4f", average, expected, variance, expected, fano)))
+    outputs["stationary"] = Dict("mean" => average, "variance" => variance, "fano" => fano, "theory" => expected,
+                                   "se_mean" => se_mean, "se_variance" => se_var, "se_fano" => se_fano, "runs" => runs)
 
     top = max(maximum(samples), ceil(Int, expected + 4 * sqrt(expected)))
     bottom = min(minimum(samples), max(0, floor(Int, expected - 4 * sqrt(expected))))
@@ -47,7 +48,7 @@ function main(ctx)
     hist = [Dict("from" => n - 0.45, "to" => n + 0.45, "p" => count(==(n), samples) / runs) for n in bottom:top]
     xscale = Dict("domain" => [bottom - 0.6, top + 0.6], "nice" => false)
 
-    display_vegalite(ctx, Dict(
+    report.vegalite(Dict(
         "\$schema" => "https://vega.github.io/schema/vega-lite/v6.json",
         "background" => "white",
         "title" => Dict("anchor" => "start", "text" => "定常分布はポアソン分布",
@@ -62,4 +63,6 @@ function main(ctx)
                                     "color" => Dict("field" => "line", "type" => "nominal", "title" => nothing, "scale" => Dict("range" => ["#eb6834"]),
                                                     "legend" => Dict("orient" => "top-right")))),
         ]))
+
+    return outputs
 end

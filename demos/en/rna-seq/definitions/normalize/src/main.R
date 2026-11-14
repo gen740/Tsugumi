@@ -14,17 +14,18 @@ read_counts <- function(dir) {
 }
 
 # Size factors by the median of ratios, and the variance-stabilized matrix for the PCA.
-main <- function(ctx) {
-  x <- read_counts(ctx$path("counts"))
+main <- function(inputs, report, run) {
+  outputs <- list()
+  x <- read_counts(inputs$path("counts"))
   dds <- DESeqDataSetFromMatrix(x$counts, x$samples, ~ dex)
   dds <- estimateSizeFactors(dds)
   factors <- sizeFactors(dds)
   vst <- assay(varianceStabilizingTransformation(dds, blind = TRUE))
-  out <- file.path(ctx$output_directory, "normalized")
+  out <- file.path(run$output_directory, "normalized")
   dir.create(out)
   write.csv(data.frame(x$samples, size_factor = factors), file.path(out, "size_factors.csv"), row.names = FALSE)
   saveRDS(list(vst = vst, samples = x$samples), file.path(out, "vst.rds"))
-  ctx$output("normalized", list(value = out))
+  outputs[["normalized"]] <- list(value = out)
 
   long <- function(m, what) data.frame(sample = rep(colnames(m), each = nrow(m)), value = log2(as.vector(m) + 1), what = what)
   before <- x$counts[rowSums(x$counts == 0) == 0, ]
@@ -41,5 +42,7 @@ main <- function(ctx) {
          subtitle = "The numbers under the sample names are the size factors. The distribution of genes read in every sample") +
     theme_minimal(base_size = 11) +
     theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 7))
-  ctx$plot(print(figure), alt = "Log counts by sample before and after normalization", width = 8, height = 4.2)
+  report$figure(print(figure), alt = "Log counts by sample before and after normalization", width = 8, height = 4.2)
+
+  outputs
 }

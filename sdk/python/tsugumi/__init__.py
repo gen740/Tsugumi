@@ -1,24 +1,19 @@
 """Tsugumi Python Card SDK.
 
-A Python Card provides ``main(ctx)`` in ``src/main.py``::
+A Python Card provides ``main(inputs[, report[, run]])`` in ``src/main.py``::
 
-    from inputs.value.collatz.Number import Number
-    import outputs.next.collatz.Number as out
+    def main(inputs, report):
+        n = inputs.value.value
+        report.text("halved")
+        return {"next": {"value": n // 2}}
 
-    def main(ctx):
-        n = ctx.input("value", Number).Value()
-        b = ctx.builder()
-        out.Start(b); out.AddValue(b, n // 2)
-        ctx.output("next", b, out.End(b))
+Inputs are read-only. Returned dictionaries, sequences, arrays and data frames
+are encoded according to the generated output contract, inside the SDK.
 
-Input and output classes are generated from the Card's ``_inputs.fbs`` and
-``_outputs.fbs`` (namespaces ``inputs.<port>`` and ``outputs.<port>``); the
-parameters are ``params.Params``.
-
-matplotlib draws into the Card's display (``tsugumi.mpl``): ``plt.show()``,
-``plt.pause()`` and animations work as they would in a window. Plotly's
-``fig.show()`` and Altair's ``chart.show()`` show interactive plots there
-(``tsugumi.plots``).
+All presentation goes through Report, including ``report.figure(fig)`` for
+matplotlib, Plotly and Altair. ``report.figure()`` shows open matplotlib
+figures and plays animations; ``report.figure(wait=seconds)`` publishes a live
+frame and drives timers for that interval. Drawing alone does not publish.
 """
 
 from __future__ import annotations
@@ -33,7 +28,7 @@ import _tsugumi_host as _host
 if TYPE_CHECKING:
     import flatbuffers
 
-__all__ = ["Context", "Failure"]
+__all__ = ["Inputs", "Report", "Run", "Failure", "builder", "message"]
 
 # matplotlib's figures go to the Card's display unless the Card picks a backend.
 os.environ.setdefault("MPLBACKEND", "module://tsugumi.mpl")
@@ -43,16 +38,7 @@ _in_call = False
 
 from tsugumi import plots as _plots  # noqa: E402 - after the module's state, which plots does not read
 
-_plots.install()
-
-_card_displayed = False
-"""The Card sent a display itself (ctx.display_*) during this call."""
-
-
-def _shown_by_card() -> None:
-    global _card_displayed
-    _card_displayed = True
-
+_reporting = False
 
 class Failure(Exception):
     """Fails the invocation with a FailureKind name (e.g. ``output_invalid``)."""
@@ -63,9 +49,8 @@ class Failure(Exception):
         self.message = message
 
 
-class Context:
-    def __init__(self) -> None:
-        self._inputs = {name: (kind, data) for name, kind, data in _host.inputs()}
+class Run:
+    def __init__(self):
         self._info = _host.info()
 
     # -- identity and directories --
@@ -93,89 +78,138 @@ class Context:
     def output_directory(self) -> str:
         return self._info["output_directory"]
 
-    # -- inputs and params --
+    def cancelled(self) -> bool:
+        return bool(_host.cancelled())
+
+    def remaining_ms(self) -> int:
+        return int(_host.remaining_ms())
+
+
+def builder(size=1024):
+    # Import after the Card source has configured native libraries.
+    import flatbuffers
+    return flatbuffers.Builder(size)
+
+
+def message(value, root=None):
+    if hasattr(value, "Pack"):
+        b = builder()
+        b.Finish(value.Pack(b))
+        return bytes(b.Output())
+    if root is not None:
+        value.Finish(root)
+    return bytes(value.Output()) if hasattr(value, "Output") else bytes(value)
+
+
+class _ReadOnly:
+    """Read-only attributes of a generated object, including future input kinds."""
+    __slots__ = ("_value",)
+
+    def __init__(self, value):
+        object.__setattr__(self, "_value", value)
+
+    def __setattr__(self, name, value):
+        raise AttributeError("inputs are read-only")
+
+    def __getattr__(self, name):
+        return _freeze(getattr(self._value, name))
+
+
+def _freeze(value):
+    if isinstance(value, (list, tuple)):
+        return tuple(map(_freeze, value))
+    if hasattr(value, "Pack"):
+        return _ReadOnly(value)
+    if hasattr(value, "setflags"):
+        value.setflags(write=False)
+    return value
+
+
+class Inputs:
+    __slots__ = ("_values", "_params")
+
+    def __init__(self) -> None:
+        object.__setattr__(self, "_values", {name: (kind, bytes(data)) for name, kind, data in _host.inputs()})
+        from params.Params import ParamsT
+        object.__setattr__(self, "_params", _freeze(ParamsT.InitFromPackedBuf(_host.params())))
+
+    def __setattr__(self, name, value):
+        raise AttributeError("inputs are read-only")
+
+    @property
+    def params(self):
+        return self._params
+
+    def __getattr__(self, name):
+        from tsugumi import contract
+        port = contract.port(name)
+        if port is not None and not port["required"] and not self.has_input(name):
+            return None
+        return _freeze(contract.input_object(self, name))
+
     def has_input(self, port: str) -> bool:
-        return port in self._inputs
+        return port in self._values
 
     def input_bytes(self, port: str) -> bytes:
-        if port not in self._inputs:
+        if port not in self._values:
             raise Failure("input_missing", f"input {port} was not provided")
-        return self._inputs[port][1]
+        return self._values[port][1]
 
     def input(self, port: str, cls: Any) -> Any:
-        """Returns the input message as the generated class ``cls``."""
+        """Read a FlatBuffers view when the low-level generated API is needed."""
         return cls.GetRootAs(self.input_bytes(port), 0)
 
-    def params(self) -> Any:
-        from params.Params import Params  # generated from _params.fbs
 
-        return Params.GetRootAs(_host.params(), 0)
-
-    # -- outputs --
-    def builder(self, size: int = 1024) -> flatbuffers.Builder:
-        # Not at the top: it imports numpy, and with it the native libraries that read
-        # their settings as they load. The top of the Card's main.py comes before them.
-        import flatbuffers
-
-        return flatbuffers.Builder(size)
-
-    def output(self, port: str, builder: flatbuffers.Builder, root: Optional[int] = None) -> None:
-        if root is not None:
-            builder.Finish(root)
-        if not _host.emit_output(port, bytes(builder.Output())):
-            raise Failure("output_invalid", f"output {port} was rejected")
-
-    def output_bytes(self, port: str, data: bytes) -> None:
-        if not _host.emit_output(port, data):
-            raise Failure("output_invalid", f"output {port} was rejected")
-
+class Report:
     # -- display --
-    def display_text(self, text: str) -> None:
-        _shown_by_card()
+    def text(self, text: str) -> None:
         _host.display_text(text)
 
-    def display_markdown(self, text: str) -> None:
+    def markdown(self, text: str) -> None:
         """Markdown with TeX math ($…$ inline, $$…$$ displayed), shown formatted."""
-        _shown_by_card()
         _host.display_markdown(text)
 
-    def display_scalar(self, value: float, label: str) -> None:
-        _shown_by_card()
+    def scalar(self, value: float, label: str) -> None:
         _host.display_scalar(float(value), label)
 
-    def display_line_chart(self, series: Iterable[dict]) -> None:
-        _shown_by_card()
+    def line_chart(self, series: Iterable[dict]) -> None:
         _host.display_line_chart([(s["id"], s.get("label", s["id"]), list(map(float, s["x"])),
                                    list(map(float, s["y"]))) for s in series])
 
-    def display_table(self, columns: list, rows: Iterable[Iterable]) -> None:
-        _shown_by_card()
+    def table(self, columns: list, rows: Iterable[Iterable]) -> None:
         _host.display_table([str(c) for c in columns], [[str(c) for c in r] for r in rows])
 
-    def display_image(self, data: bytes, media_type: str = "image/png", alt: str = "") -> None:
-        _shown_by_card()
+    def image(self, data: bytes, media_type: str = "image/png", alt: str = "") -> None:
         _host.display_image(media_type, bytes(data), alt)
 
-    def display_points(self, x, y, z, colors=None) -> None:
-        _shown_by_card()
+    def points(self, x, y, z, colors=None) -> None:
         _host.display_points(list(map(float, x)), list(map(float, y)), list(map(float, z)),
                              None if colors is None else [int(c) for c in colors])
 
-    def display_figure(self, *figures) -> None:
+    def figure(self, *figures, wait: Optional[float] = None) -> None:
         """matplotlib figures as the Card's image (several are stacked), whatever the
         backend; a Plotly figure or an Altair chart as an interactive plot."""
-        _shown_by_card()
         if any(_plots.is_plotly(f) or _plots.is_altair(f) for f in figures):
             if len(figures) != 1:
-                raise Failure("output_invalid", "display_figure shows one Plotly figure or Altair chart at a time")
+                raise Failure("output_invalid", "figure shows one Plotly figure or Altair chart at a time")
             (_plots.show_plotly if _plots.is_plotly(figures[0]) else _plots.show_altair)(figures[0])
             return
         from tsugumi import mpl
 
-        mpl.display(list(figures))
+        global _reporting
+        _reporting = True
+        try:
+            if wait is not None:
+                import matplotlib.pyplot as plt
+                plt.pause(wait)
+            elif figures:
+                mpl.display(list(figures))
+            else:
+                mpl._BackendTsugumi.show()
+        finally:
+            _reporting = False
 
-    def display_module(self, module: str, config, blobs=None) -> None:
-        _shown_by_card()
+    def module(self, module: str, config, blobs=None) -> None:
         import json
         _host.display_module(module, config if isinstance(config, str) else json.dumps(config), blobs or {})
 
@@ -183,11 +217,41 @@ class Context:
     def log(self, message: str) -> None:
         _host.log(message)
 
-    def cancelled(self) -> bool:
-        return bool(_host.cancelled())
 
-    def remaining_ms(self) -> int:
-        return int(_host.remaining_ms())
+
+def _call(function):
+    import inspect
+    count = len(inspect.signature(function).parameters)
+    if count not in (1, 2, 3):
+        raise TypeError("Card functions take inputs, optionally report and run")
+    args = [Inputs()]
+    if count >= 2:
+        args.append(Report())
+    if count == 3:
+        args.append(Run())
+    return function(*args)
+
+
+def _outputs(result):
+    """Emit returned batches in order, including a generator's final result."""
+    from collections.abc import Mapping
+    from tsugumi.values import encode
+    if result is None:
+        return
+    if isinstance(result, Mapping):
+        for port, value in result.items():
+            if not _host.emit_output(port, encode(port, value)):
+                raise Failure("output_invalid", f"output {port} was rejected")
+        return
+    stream = iter(result)
+    while True:
+        try:
+            batch = next(stream)
+        except StopIteration as end:
+            if end.value is not None:
+                _outputs(end.value)
+            break
+        _outputs(batch)
 
 
 _card_module = None
@@ -205,15 +269,14 @@ def _adopt_environment() -> None:
 
 
 def _guard(body, report: bool = True) -> bool:
-    global _in_call, _card_displayed
+    global _in_call
     _in_call = report  # report is False only while loading, outside any call
-    _card_displayed = False
     done = False
     try:
         if report:
             _adopt_environment()
         body()
-        _finish_figures(show=True)
+        _close_figures()
         done = True
         sys.stdout.flush()
         sys.stderr.flush()
@@ -234,22 +297,17 @@ def _guard(body, report: bool = True) -> bool:
         return False
     finally:
         if not done:
-            _finish_figures(show=False)
+            _close_figures()
         _in_call = False
 
 
-def _finish_figures(show: bool) -> None:
-    """With the Tsugumi backend, the figures a call left open are closed (and
-    first shown, after a call that succeeded unless the Card sent a display of
-    its own: a figure it forgot to close does not replace that)."""
+def _close_figures() -> None:
+    """Close headless figures at the invocation boundary without publishing."""
     mod = sys.modules.get("tsugumi.mpl")
     plt = sys.modules.get("matplotlib.pyplot")
     if mod is None or plt is None or not _in_call or "tsugumi.mpl" not in str(plt.get_backend()):
         return
-    if show and not _card_displayed:
-        mod._finish_invocation()
-    else:
-        mod._close_all()
+    mod._close_all()
 
 
 def _load() -> bool:
@@ -261,10 +319,10 @@ def _load() -> bool:
 
 
 def _run_start() -> bool:
-    """Before the first invocation of each run: card.main.on_run_start(ctx), if defined."""
+    """Before the first invocation of each run: card.main.on_run_start(inputs[, report[, run]]), if defined."""
     hook = getattr(_card_module, "on_run_start", None)
-    return _guard(lambda: hook(Context())) if hook else True
+    return _guard(lambda: _outputs(_call(hook))) if hook else True
 
 
 def _invoke() -> bool:
-    return _guard(lambda: _card_module.main(Context()))
+    return _guard(lambda: _outputs(_call(_card_module.main)))

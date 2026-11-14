@@ -240,7 +240,7 @@ function llmsTxt(groups, mdPages, tagline) {
   }
   out.push('## Repository', '',
     `- [AGENTS.md](${RAW}/AGENTS.md): a map and instructions for agents working in this repository`,
-    `- [The Card specification](${RAW}/agent/Reference/card-guide.md): the same document the app's Agent reads`,
+    `- [The Card specification](${RAW}/docs/CardGuide.md): Card contracts and per-language SDK APIs`,
     `- [The RPC contract](${RAW}/protocol/tsugumi.fbs): the source of the contract the UI, the Web and the Agent use`, '')
   out.push('## Optional', '', ...SECONDARY.map(item), '')
   return out.join('\n')

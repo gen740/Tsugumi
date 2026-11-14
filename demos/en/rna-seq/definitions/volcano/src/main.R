@@ -2,17 +2,17 @@ library(ggplot2)
 library(ggrepel)
 
 # Volcano plot at the thresholds in the params, with the known responders named.
-main <- function(ctx) {
-  fdr <- ctx$params$fdr
-  lfc <- ctx$params$lfc
-  d <- read.csv(ctx$path("results"))
+main <- function(inputs, report) {
+  fdr <- inputs$params$fdr
+  lfc <- inputs$params$lfc
+  d <- read.csv(inputs$path("results"))
   d <- d[!is.na(d$fdr) & !is.na(d$log2fc), ]
   d$class <- ifelse(d$fdr < fdr & d$log2fc >= lfc, "up", ifelse(d$fdr < fdr & d$log2fc <= -lfc, "down", "other"))
   d$y <- pmin(-log10(pmax(d$fdr, 1e-300)), 150)
-  named <- d[d$symbol %in% ctx$params$known, ]
+  named <- d[d$symbol %in% inputs$params$known, ]
   up <- sum(d$class == "up")
   down <- sum(d$class == "down")
-  print(c(fdr = fdr, lfc = lfc, up = up, down = down))
+  report$log(paste(capture.output(print(c(fdr = fdr, lfc = lfc, up = up, down = down))), collapse = "\n"))
   figure <- ggplot(d, aes(log2fc, y, colour = class)) +
     geom_point(size = 0.5, alpha = 0.55) +
     geom_vline(xintercept = c(-lfc, lfc), linetype = "dashed", colour = "grey50") +
@@ -25,5 +25,7 @@ main <- function(ctx) {
          title = sprintf("FDR < %g and |log2FC| ≥ %g: up %d, down %d", fdr, lfc, up, down)) +
     theme_minimal(base_size = 12) +
     theme(legend.position = "top")
-  ctx$plot(print(figure), alt = sprintf("Volcano plot: %d up, %d down", up, down), width = 7.5, height = 5.2)
+  report$figure(print(figure), alt = sprintf("Volcano plot: %d up, %d down", up, down), width = 7.5, height = 5.2)
+
+  invisible(NULL)
 }

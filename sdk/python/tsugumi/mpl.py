@@ -1,25 +1,7 @@
-"""A matplotlib backend that sends figures to the Card's display.
+"""Matplotlib rendering and timers used by Report.figure.
 
-Python Cards use it unless they choose another backend (``MPLBACKEND`` is set
-to ``module://tsugumi.mpl`` before the Card is imported), so a script written
-for a window works as it is, the way X forwarding brings a remote window to
-the screen in front of you:
-
-* ``plt.show()`` draws the open figures into the Card's display (several
-  figures are stacked into one image) and closes them, as closing the window
-  would.
-* ``plt.pause(t)``, ``fig.canvas.draw_idle()`` and ``fig.canvas.flush_events()``
-  update the display while the Card keeps running, so a loop that redraws a
-  figure is seen live. Frames come at most ``FPS`` times a second; the last
-  one is always sent.
-* Timers run (``fig.canvas.new_timer``), so ``matplotlib.animation.FuncAnimation``
-  plays in the display while ``plt.show()`` waits for it: until the animation
-  ends, or until the run is stopped or reaches its deadline (closing its
-  window, in a GUI).
-* Figures still open when ``main`` returns are shown (unless the Card sent a
-  display of its own with ``ctx.display_*``) and closed, so a Card that only
-  draws needs no ``show()``, and figures do not pile up in the worker, which
-  stays across invocations and runs.
+Drawing and pyplot calls alone never publish. A Report call opens a scoped
+presentation window; animations and live frames use the same timer loop.
 """
 
 from __future__ import annotations
@@ -116,7 +98,7 @@ def display(figures=None, live: bool = False) -> None:
     if figures is None:
         figures = [m.canvas.figure for m in Gcf.get_all_fig_managers()]
     figures = [f for f in figures if f is not None]
-    if not figures or not _sdk._in_call:
+    if not figures or not _sdk._in_call or not _sdk._reporting:
         return
     for f in figures:
         f._tsugumi_live = live or getattr(f, "_tsugumi_live", False)
@@ -140,7 +122,7 @@ def _first_title(figure) -> str:
 def _frame(force: bool = False) -> None:
     """A live frame: sent now if the FPS slot is free (or ``force``), else kept for later."""
     global _pending
-    if not Gcf.get_all_fig_managers():
+    if not _sdk._reporting or not Gcf.get_all_fig_managers():
         return
     if force or time.monotonic() - _last_sent >= 1.0 / FPS:
         display(live=not force)
@@ -235,7 +217,7 @@ class _BackendTsugumi(_Backend):
 
     @staticmethod
     def show(*, block=None):
-        if not Gcf.get_all_fig_managers():
+        if not _sdk._reporting or not Gcf.get_all_fig_managers():
             return
         _drawn()
         if block is False:  # plt.pause, plt.show(block=False): a live frame, the figures stay
@@ -262,9 +244,3 @@ def _final() -> None:
     if _pending or any(f.stale or not getattr(f, "_tsugumi_final", False) for f in figures):
         display(figures)
     _pending = False
-
-
-def _finish_invocation() -> None:
-    """After ``main``: figures still open are shown and closed."""
-    _final()
-    _close_all()

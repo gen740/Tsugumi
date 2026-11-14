@@ -64,7 +64,7 @@
     {
       "id": "n1",
       "scope": "",
-      "text": "Four plotting libraries, used the same way you would write them outside Tsugumi: summary uses plt.show(), diffusion matplotlib's FuncAnimation (it moves while running), explore Plotly's fig.show(), and spread Altair's chart.show(). The Plotly and Altair figures can be zoomed, hovered and filtered by legend in the enlarged view. Try changing walkers, steps and seed of settings, or frames of diffusion, and run again.",
+      "text": "Four Cards draw the same data with Matplotlib, Plotly and Altair. Each publishes through report.figure: summary shows a static figure, diffusion plays FuncAnimation, and explore/spread show interactive Plotly/Altair charts.",
       "x": -900.0,
       "y": 0.0
     }

@@ -15,26 +15,30 @@ OUT = HERE.parents[1] / "macOS" / "Sources" / "AgentClient" / "Shared.swift"
 SDK = HERE.parents[1] / "sdk" / "python" / "tsugumi" / "__init__.py"
 PROMPT = HERE / "system-prompt.md"
 # The list stands in the system prompt between these two lines.
-SDK_BEGIN = "    The whole SDK (ctx is a Context; generated from its source):\n"
+SDK_BEGIN = "    The whole SDK (Inputs, Report and Run; generated from their source):\n"
 SDK_END = "    raise tsugumi.Failure("
 
 
 def sdk_list() -> str:
-    """One line per public member of the SDK's Context: its signature and the
-    first line of its documentation."""
+    """Public role methods and pure result constructors from the Python SDK."""
     tree = ast.parse(SDK.read_text())
-    context = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Context")
-    properties, methods = [], []
-    for m in context.body:
-        if not isinstance(m, ast.FunctionDef) or m.name.startswith("_"):
-            continue
-        if any(isinstance(d, ast.Name) and d.id == "property" for d in m.decorator_list):
-            properties.append(f"ctx.{m.name}")
-            continue
-        args = ast.unparse(m.args).removeprefix("self").removeprefix(", ")
-        doc = (ast.get_docstring(m) or "").split("\n")[0]
-        methods.append(f"      ctx.{m.name}({args})" + (f"  # {doc}" if doc else "") + "\n")
-    return "      " + ", ".join(properties) + "\n" + "".join(methods)
+    lines = ["      inputs.<port>, inputs.params.<field> (read-only generated objects)\n",
+             "      return {port: generated_object_or_bytes}; yield mappings for streaming\n"]
+    for role in ("Inputs", "Report", "Run"):
+        cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == role)
+        receiver = role.lower()
+        for method in cls.body:
+            if not isinstance(method, ast.FunctionDef) or method.name.startswith("_"):
+                continue
+            if any(isinstance(d, ast.Name) and d.id == "property" for d in method.decorator_list):
+                lines.append(f"      {receiver}.{method.name}\n")
+            else:
+                args = ast.unparse(method.args).removeprefix("self").removeprefix(", ")
+                lines.append(f"      {receiver}.{method.name}({args})\n")
+    for name in ("builder", "message"):
+        function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
+        lines.append(f"      tsugumi.{name}({ast.unparse(function.args)})\n")
+    return "".join(lines)
 
 
 def prompt() -> str:

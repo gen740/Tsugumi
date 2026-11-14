@@ -1,3 +1,4 @@
+import tsugumi
 import os
 
 import matplotlib
@@ -11,12 +12,13 @@ from inputs.whitened.gw.WhitenedDir import WhitenedDir
 import outputs.plots.gw.ChirpPlots as out
 
 
-def emit(ctx, port, out):
-    b = ctx.builder()
-    s = b.CreateString(ctx.output_directory)
-    out.Start(b)
-    out.AddValue(b, s)
-    ctx.output(port, b, out.End(b))
+def emit(inputs, port, out):
+    result_ports = {}
+    s = '.'
+    _out_value = {}
+    _out_value['value'] = s
+    result_ports.update({port: _out_value})
+    return result_ports
 
 
 def png(fig):
@@ -27,9 +29,10 @@ def png(fig):
     return buf.getvalue()
 
 
-def main(ctx):
-    p = ctx.params()
-    d = np.load(os.path.join(ctx.input("whitened", WhitenedDir).Value().decode(), "whitened.npz"))
+def main(inputs, report, run):
+    result_ports = {}
+    p = inputs.params
+    d = np.load(os.path.join(inputs.input("whitened", WhitenedDir).Value().decode(), "whitened.npz"))
     fs, t, h1, l1 = int(d["fs"]), d["t"], d["H1"], d["L1"]
     near = (t > -0.2) & (t < 0.05)
     # The time shift between the sites (light travel time, at most 10 ms) and the sign of L1.
@@ -51,17 +54,18 @@ def main(ctx):
     a.legend(loc="upper left", fontsize=8)
     a.set_title("GW150914  peak SNR (rough)  " + "   ".join(f"{d}: {s}" for d, _, s in rows), fontsize=9)
     seg = (t > -1) & (t < 0.5)
-    f, tt, S = spectrogram(h1[seg], fs=fs, nperseg=p.Nperseg(), noverlap=int(p.Nperseg() * 0.9))
+    f, tt, S = spectrogram(h1[seg], fs=fs, nperseg=p.nperseg, noverlap=int(p.nperseg * 0.9))
     band = (f > 20) & (f < 500)
     b.pcolormesh(tt + t[seg][0], f[band], np.log10(S[band] + 1e-30), shading="auto", cmap="viridis")
     b.set_xlim(-0.2, 0.05)
     b.set_ylabel("frequency [Hz]")
     b.set_xlabel("time from GPS 1126259462.4 [s]")
     data = png(fig)
-    with open(os.path.join(ctx.output_directory, "chirp.png"), "wb") as fh:
+    with open(os.path.join(run.output_directory, "chirp.png"), "wb") as fh:
         fh.write(data)
-    with open(os.path.join(ctx.output_directory, "snr.csv"), "w") as fh:
+    with open(os.path.join(run.output_directory, "snr.csv"), "w") as fh:
         fh.write("detector,peak_time,snr\n" + "".join(f"{d},{pt},{s}\n" for d, pt, s in rows))
-    print(f"L1 vs H1: shift {shift_ms:+.1f} ms, sign {sign}; " + ", ".join(f"{d} SNR {s}" for d, _, s in rows))
-    ctx.display_image(data, "image/png", "GW150914: H1/L1 overlay and H1 spectrogram")
-    emit(ctx, "plots", out)
+    report.log(str(f"L1 vs H1: shift {shift_ms:+.1f} ms, sign {sign}; " + ", ".join(f"{d} SNR {s}" for d, _, s in rows)))
+    report.image(data, "image/png", "GW150914: H1/L1 overlay and H1 spectrogram")
+    result_ports.update(emit(inputs, 'plots', out))
+    return result_ports

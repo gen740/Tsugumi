@@ -1,4 +1,5 @@
 """k nearest neighbours: a test digit takes the majority label of the k closest training digits."""
+import tsugumi
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -11,7 +12,6 @@ import numpy as np
 from sklearn.neighbors import KNeighborsClassifier
 
 from inputs.data.mnist.SubsetFile import SubsetFile
-import outputs.result.mnist.Result as out
 
 
 def confusions(ax, y, pred):
@@ -26,26 +26,28 @@ def confusions(ax, y, pred):
     ax.tick_params(length=0, labelsize=8)
 
 
-def send(ctx, name, settings, digest, y, pred, fit, predict):
-    b = ctx.builder()
-    model = b.CreateString(name)
-    settings = b.CreateString(settings)
-    digest = b.CreateString(digest)
-    predictions = b.CreateNumpyVector(pred.astype(np.uint8))
-    out.Start(b)
-    out.AddModel(b, model)
-    out.AddSettings(b, settings)
-    out.AddDigest(b, digest)
-    out.AddAccuracy(b, float(np.mean(pred == y)))
-    out.AddFitSeconds(b, fit)
-    out.AddPredictSeconds(b, predict)
-    out.AddPredictions(b, predictions)
-    ctx.output("result", b, out.End(b))
+def send(inputs, name, settings, digest, y, pred, fit, predict):
+    result_ports = {}
+    model = name
+    settings = settings
+    digest = digest
+    predictions = pred.astype(np.uint8)
+    _out_value = {}
+    _out_value['model'] = model
+    _out_value['settings'] = settings
+    _out_value['digest'] = digest
+    _out_value['accuracy'] = float(np.mean(pred == y))
+    _out_value['fit_seconds'] = fit
+    _out_value['predict_seconds'] = predict
+    _out_value['predictions'] = predictions
+    result_ports.update({'result': _out_value})
+    return result_ports
 
 
-def main(ctx):
-    k = ctx.params().K()
-    data = np.load(ctx.input("data", SubsetFile).Value().decode())
+def main(inputs, report):
+    result_ports = {}
+    k = inputs.params.k
+    data = np.load(inputs.input("data", SubsetFile).Value().decode())
     train_x, train_y, test_x, test_y = data["train_images"], data["train_labels"], data["test_images"], data["test_labels"]
 
     model = KNeighborsClassifier(n_neighbors=k, algorithm="brute")
@@ -56,7 +58,7 @@ def main(ctx):
     pred = model.predict(test_x)
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    print(f"knn k={k}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
+    report.log(str(f"knn k={k}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s"))
 
     # What it did on a few mistakes: the test digit, then its nearest training digits.
     wrong = np.flatnonzero(pred != test_y)[:6]
@@ -76,6 +78,7 @@ def main(ctx):
     right.tick_params(length=0)
     right.set_title("Digits it got wrong, and their neighbours")
     fig.suptitle(f"k-nearest neighbours k={k}: accuracy {accuracy:.4f}, training {fit:.2f} s, prediction {predict:.2f} s", fontsize=11)
-    plt.show()
+    report.figure()
 
-    send(ctx, "knn", f"k={k}", str(data["digest"]), test_y, pred, fit, predict)
+    result_ports.update(send(inputs, 'knn', f'k={k}', str(data['digest']), test_y, pred, fit, predict))
+    return result_ports

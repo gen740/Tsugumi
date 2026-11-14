@@ -105,15 +105,15 @@ def test_stopping_one_project_keeps_the_other_running(tmp_path):
         other.stop()
 
 
-CPP_ONE = r"""
+CPP_ONE = '''
 #include <card.hh>
 
-auto run(Card::Input&) -> Card::Output {
+auto run(const Card::Inputs& inputs) -> Card::Output {
   Card::Output out;
   out.out.emplace().value = 1;
   return out;
 }
-"""
+'''
 
 
 def build_outcome(c, run_id, card_id):
@@ -129,8 +129,15 @@ def test_build_roots_across_reopen_store_cleanup_and_copies(tmp_path):
     by vmd only."""
     from Tsugumi.Data.Phase import Phase
     from projects import card as c_
-    nix = ("{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; };\nin\n"
-           "{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n")
+    nix = ('''{ pkgs, inputs, params }:
+let
+  sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
+in
+'''
+           '''{
+  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
+}
+''')
     from test_cards_container import NUM
     from projects import put
     root = tmp_path / "P"

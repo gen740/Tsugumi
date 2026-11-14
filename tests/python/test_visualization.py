@@ -34,7 +34,7 @@ def flatc(tmp_path, name, schema):
     subprocess.run([os.environ.get('TSUGUMI_FLATC', 'flatc'), '--python', '--gen-object-api', '-o', str(tmp_path), str(tmp_path / name)], check=True)
 
 
-# The worker's host functions the SDK calls at import; the Context below
+# The worker's host functions the SDK calls at import; the InvocationFixture below
 # answers everything else a Card asks for.
 HOST = '''
 def inputs(): return []
@@ -48,6 +48,7 @@ def display_module(*args): pass
 
 PRELUDE = '''
 import csv, json, sys, importlib.util
+from types import SimpleNamespace
 from pathlib import Path
 import flatbuffers
 import tsugumi
@@ -63,26 +64,27 @@ class Params:
         card = json.loads(TEMPLATES['visualization_' + library]['_card.json'])
         self.values = {camel(p['name']): p['data'] for p in card['params']} | changes
     def __getattr__(self, name):
-        value = self.values[name]
-        return lambda: value.encode() if isinstance(value, str) else value
+        value = self.values[name[:1].upper() + name[1:]]
+        return value.encode() if isinstance(value, str) else value
 
-class Context:
+class InvocationFixture:
     run_id = '12345678-1234-1234-1234-123456789abc'
     card = 'chart'
     def __init__(self, library, raw=None, **params):
         self.library, self.raw, self.p = library, raw, Params(library, **params)
         self.invocation = 1; self.output_directory = str(HERE / 'out'); self.stop = False; self.deadline = 60000
         self.shown = []; self.outputs = {}
-    def params(self): return self.p
     def input(self, port, cls): return cls.GetRootAs(self.raw, 0)
     def cancelled(self): return self.stop
     def remaining_ms(self): return self.deadline
-    def display_figure(self, figure): self.shown.append(type(figure).__name__)
-    builder = tsugumi.Context.builder
-    def output(self, port, builder, root): builder.Finish(root); self.outputs[port] = bytes(builder.Output())
+    def figure(self, figure): self.shown.append(type(figure).__name__)
     def run(self, **params):
         self.p.values |= {camel(k): v for k, v in params.items()}
-        load(self.library).main(self)
+        inputs = SimpleNamespace(params=self.p, input=self.input)
+        report = SimpleNamespace(figure=self.figure, log=lambda message: None)
+        result = load(self.library).main(inputs, report, self)
+        for batch in result:
+            self.outputs.update({port: tsugumi.message(value) for port, value in batch.items()})
         from outputs.figure.visualization.Files import Files
         return Path(Files.GetRootAs(self.outputs['figure'], 0).Value().decode())
 
@@ -133,7 +135,8 @@ def run(tmp_path, code):
     env = {**os.environ, 'PYTHONPATH': str(tmp_path), 'MPLBACKEND': 'Agg',
            'MPLCONFIGDIR': str(tmp_path / 'mpl'), 'PYTHONDONTWRITEBYTECODE': '1'}
     script = tmp_path / 'run.py'
-    script.write_text(PRELUDE + '\n' + textwrap.dedent(code))
+    script.write_text(PRELUDE + '''
+''' + textwrap.dedent(code))
     result = subprocess.run([sys.executable, str(script), str(tmp_path)], env=env, text=True, capture_output=True, timeout=180)
     assert result.returncode == 0, result.stdout + result.stderr
     return result
@@ -148,13 +151,13 @@ def test_generated_template_draws_saves_and_redraws(tmp_path, library, kind):
 import matplotlib.pyplot as plt
 xs = [float(i) for i in range(24)] + [float('nan'), 3.0]
 ys = [float(i * i) for i in range(24)] + [1.0, float('inf')]
-ctx = Context({library!r}, table(xs, ys, ['a' if i % 2 else 'b' for i in range(26)]), Kind={kind!r}, Series='group')
-folder = ctx.run()
-assert folder.name == 'figure' and folder.parent == Path(ctx.output_directory)
+case = InvocationFixture({library!r}, table(xs, ys, ['a' if i % 2 else 'b' for i in range(26)]), Kind={kind!r}, Series='group')
+folder = case.run()
+assert folder.name == 'figure' and folder.parent == Path(case.output_directory)
 assert set({sorted(FILES[library])!r}) | {{'plotted.csv', 'metadata.json'}} == {{p.name for p in folder.iterdir()}}
 meta = json.loads((folder / 'metadata.json').read_text())
 finite = 25 if {kind!r} == 'histogram' else 24  # a histogram needs only x
-assert meta['run_id'] == ctx.run_id and meta['card'] == 'chart' and meta['invocation'] == 1
+assert meta['run_id'] == case.run_id and meta['card'] == 'chart' and meta['invocation'] == 1
 assert meta['library'] == {library!r} and meta['kind'] == {kind!r}
 assert (meta['source_rows'], meta['finite_rows'], meta['sampled'], meta['sample_every'], meta['max_points']) == (26, finite, False, 1, 5000)
 assert meta['drawn_rows'] == finite and meta['note'].startswith(f'{{finite}} of 26 rows')
@@ -166,12 +169,12 @@ else:
     assert set(plotted[0]) == {{'x', 'y', 'series'}} and len(plotted) == 24
     assert {{(float(r['x']), float(r['y'])) for r in plotted}} == {{(float(i), float(i * i)) for i in range(24)}}
     assert {{r['series'] for r in plotted}} == {{'a', 'b'}}
-assert len(ctx.shown) == 1  # one display per invocation
+assert len(case.shown) == 1  # one display per invocation
 artifact = folder / ('plot.png' if {library!r} == 'matplotlib' else 'plot.json')
 before = artifact.read_bytes()
 # The next invocation writes the same folder again: its own figure and metadata.
-ctx.invocation = 2; ctx.raw = table(xs, [y + 7 for y in ys], None)
-ctx.run(Series='', Theme='dark', Title='Updated')
+case.invocation = 2; case.raw = table(xs, [y + 7 for y in ys], None)
+case.run(Series='', Theme='dark', Title='Updated')
 assert artifact.read_bytes() != before
 meta = json.loads((folder / 'metadata.json').read_text())
 assert meta['invocation'] == 2 and {{r['series'] for r in rows_of(folder / 'plotted.csv')}} == {{''}}
@@ -193,11 +196,11 @@ def test_default_max_points_fails_and_sampling_is_declared(tmp_path, library):
     run(tmp_path, f'''
 n = 6001
 raw = table(range(n), [i % 17 for i in range(n)])
-ctx = Context({library!r}, raw)
+case = InvocationFixture({library!r}, raw)
 for kind in ('line', 'scatter', 'histogram'):
-    expect_failure('validation_failed', lambda: ctx.run(Kind=kind), '6001 points', 'max_points (5000)', 'sample_every')
-    assert not (Path(ctx.output_directory) / 'figure').exists() and 'figure' not in ctx.outputs
-folder = ctx.run(Kind='scatter', SampleEvery=2)
+    expect_failure('validation_failed', lambda: case.run(Kind=kind), '6001 points', 'max_points (5000)', 'sample_every')
+    assert not (Path(case.output_directory) / 'figure').exists() and 'figure' not in case.outputs
+folder = case.run(Kind='scatter', SampleEvery=2)
 meta = json.loads((folder / 'metadata.json').read_text())
 assert (meta['finite_rows'], meta['drawn_rows'], meta['sampled'], meta['sample_every']) == (6001, 3001, True, 2)
 assert 'SAMPLED: 1 point in 2 drawn (3001 of 6001)' in meta['note']
@@ -206,32 +209,32 @@ assert [float(r['x']) for r in plotted] == [float(i) for i in range(0, n, 2)]
 if {library!r} != 'matplotlib':
     assert 'SAMPLED' in (folder / 'plot.json').read_text()
 # Raising max_points draws every point without sampling.
-meta = json.loads((ctx.run(Kind='line', SampleEvery=1, MaxPoints=n) / 'metadata.json').read_text())
+meta = json.loads((case.run(Kind='line', SampleEvery=1, MaxPoints=n) / 'metadata.json').read_text())
 assert (meta['drawn_rows'], meta['sampled']) == (n, False)
 # A sampled histogram counts the selected rows and labels those bin counts.
-folder = ctx.run(Kind='histogram', SampleEvery=3, MaxPoints=5000)
+folder = case.run(Kind='histogram', SampleEvery=3, MaxPoints=5000)
 meta = json.loads((folder / 'metadata.json').read_text())
 assert (meta['drawn_rows'], meta['sampled']) == (2001, True)
 assert 'bin counts describe the sample' in meta['note']
 assert sum(int(r['count']) for r in rows_of(folder / 'plotted.csv')) == 2001
 if {library!r} != 'matplotlib':
     assert 'bin counts describe the sample' in (folder / 'plot.json').read_text()
-expect_failure('validation_failed', lambda: ctx.run(Kind='pie', SampleEvery=1), 'kind')
-expect_failure('validation_failed', lambda: ctx.run(Kind='line', Y='missing'), "'missing'")
+expect_failure('validation_failed', lambda: case.run(Kind='pie', SampleEvery=1), 'kind')
+expect_failure('validation_failed', lambda: case.run(Kind='line', Y='missing'), "'missing'")
 ''')
 
 
 def test_empty_cancelled_and_deadline(tmp_path):
     run(tmp_path, '''
 for library in ['matplotlib', 'plotly', 'altair']:
-    ctx = Context(library, table([], []))
-    meta = json.loads((ctx.run() / 'metadata.json').read_text())
+    case = InvocationFixture(library, table([], []))
+    meta = json.loads((case.run() / 'metadata.json').read_text())
     assert (meta['source_rows'], meta['drawn_rows']) == (0, 0)
-ctx = Context('matplotlib', table([1.0], [2.0]))
-ctx.stop = True
-expect_failure('cancelled', ctx.run)
-ctx.stop = False; ctx.deadline = 0
-expect_failure('timeout', ctx.run)
+case = InvocationFixture('matplotlib', table([1.0], [2.0]))
+case.stop = True
+expect_failure('cancelled', case.run)
+case.stop = False; case.deadline = 0
+expect_failure('timeout', case.run)
 ''')
 
 
@@ -248,25 +251,25 @@ rows = RowsT(); rows.rows = []
 for x, y in [(1., 3.), (2., 4.)]:
     r = RowT(); r.x, r.y = x, y; rows.rows.append(r)
 use('flatbuffer', 'Rows')
-ctx = Context('matplotlib', pack(rows), DataPath='rows')
-assert input_rows(ctx, field='rows') == [{'x': 1., 'y': 3.}, {'x': 2., 'y': 4.}]
-expect_failure('validation_failed', lambda: input_rows(ctx, field='other'), 'other')
-meta = json.loads((ctx.run() / 'metadata.json').read_text())
+case = InvocationFixture('matplotlib', pack(rows), DataPath='rows')
+assert input_rows(SimpleNamespace(input=case.input), case, field='rows') == [{'x': 1., 'y': 3.}, {'x': 2., 'y': 4.}]
+expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case, field='other'), 'other')
+meta = json.loads((case.run() / 'metadata.json').read_text())
 assert meta['drawn_rows'] == 2
 source = HERE / 'data.csv'
 source.write_text('x,y\\n1,3\\n2,4\\nbad,5\\n')
 file = FileT(); file.value = str(source)
 use('file', 'File')
-ctx = Context('matplotlib', pack(file))
-assert input_rows(ctx)[1] == {'x': '2', 'y': '4'}
-meta = json.loads((ctx.run() / 'metadata.json').read_text())
+case = InvocationFixture('matplotlib', pack(file))
+assert input_rows(SimpleNamespace(input=case.input), case)[1] == {'x': '2', 'y': '4'}
+meta = json.loads((case.run() / 'metadata.json').read_text())
 assert (meta['source_rows'], meta['finite_rows']) == (3, 2)
 file.value = str(HERE)
 use('directory', 'File')
-ctx = Context('matplotlib', pack(file))
-assert input_rows(ctx, member='data.csv')[0]['y'] == '3'
-expect_failure('validation_failed', lambda: input_rows(ctx, member='../outside.csv'), 'relative member')
+case = InvocationFixture('matplotlib', pack(file))
+assert input_rows(SimpleNamespace(input=case.input), case, member='data.csv')[0]['y'] == '3'
+expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case, member='../outside.csv'), 'relative member')
 (HERE / '_contract.json').write_text(json.dumps({'inputs': [], 'outputs': []}))
 contract._contract.cache_clear()
-expect_failure('validation_failed', lambda: input_rows(ctx), 'Connect')
+expect_failure('validation_failed', lambda: input_rows(SimpleNamespace(input=case.input), case), 'Connect')
 ''')

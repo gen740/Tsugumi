@@ -20,7 +20,10 @@ from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
 
 IN_VM = os.environ.get("TSUGUMI_TEST_CONTAINER") == "1"
-OUTPUTS = "namespace t;\ntable Outputs { }\nroot_type Outputs;\n"
+OUTPUTS = '''namespace t;
+table Outputs { }
+root_type Outputs;
+'''
 
 # tabulate is not among the packages of a Card without `packages`, and has one
 # wheel for every system, so its hash is the same wherever the test runs.
@@ -59,12 +62,12 @@ WRONG = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 # The locked package is importable, comes from the locked set and not from the
 # network: the Card has no network permission, and says so.
-USES_TABULATE = """import socket
+USES_TABULATE = '''import socket
 
 import tabulate
 
 
-def main(ctx):
+def main(inputs, report):
     assert tabulate.__version__ == "0.9.0"
     assert "tsugumi-python-locked" in tabulate.__file__, tabulate.__file__
     try:
@@ -72,20 +75,23 @@ def main(ctx):
         reached = "network"
     except OSError:
         reached = "offline"
-    ctx.display_text(reached + "\\n" + tabulate.tabulate([[1, 2]], headers=["a", "b"], tablefmt="plain"))
-"""
-WITHOUT_LOCK = """def main(ctx):
+    report.text(reached + "\\n" + tabulate.tabulate([[1, 2]], headers=["a", "b"], tablefmt="plain"))
+'''
+WITHOUT_LOCK = '''def main(inputs, report):
     try:
         import tabulate
-        ctx.display_text("found " + tabulate.__file__)
+        report.text("found " + tabulate.__file__)
     except ImportError:
-        ctx.display_text("no tabulate")
-"""
+        report.text("no tabulate")
+'''
 
 
 def nix(arguments: str) -> str:
-    return ("{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; }; in\n"
-            "{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; " + arguments + " }; }\n")
+    return ('''{ pkgs, inputs, params }:
+let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
+'''
+            "{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; " + arguments + ''' }; }
+''')
 
 
 def write_project(root, arguments: str, main: str, pyproject: str | None = PYPROJECT, sandbox: bool = True):
@@ -133,7 +139,8 @@ def run(connect, timeout: float = 1800):
 
 
 def said(status, log: str) -> str:
-    return (text(status.failure.diagnostic) if status.failure else "") + "\n" + log
+    return (text(status.failure.diagnostic) if status.failure else "") + '''
+''' + log
 
 
 def test_a_locked_package_is_installed_from_the_lock_and_runs_without_the_network(project):

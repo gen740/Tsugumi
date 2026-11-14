@@ -1,24 +1,24 @@
 """Map inputs/params to notebook variables, then commit outputs once."""
+import tsugumi
 import json
 import math
 from pathlib import Path
 from tsugumi import Failure
-from tsugumi.notebook import bindings, run
-import outputs.value.notebook.Number as number
-import outputs.report.notebook.Files as files
+from tsugumi.notebook import bindings, run as run_notebook
 
 
-def main(ctx):
-    p = ctx.params()
-    selected = p.Selected().decode()
-    definitions = bindings(ctx, json.loads(p.Bindings().decode()))
-    values, folder = run(ctx, Path(__file__).parent, p.Notebook().decode(), definitions, [selected])
+def main(inputs, report, run):
+    result_ports = {}
+    p = inputs.params
+    selected = p.selected.decode()
+    definitions = bindings(inputs, json.loads(p.bindings.decode()))
+    values, folder = run_notebook(report, run, Path(__file__).parent, p.notebook.decode(), definitions, [selected])
     value = values[selected]
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise Failure("output_invalid", "The selected notebook result must be a finite number; edit the output schema/source for another type")
-    b = ctx.builder()
-    number.Start(b); number.AddValue(b, value)
-    ctx.output("value", b, number.End(b))
-    b = ctx.builder(); path = b.CreateString(str(folder))
-    files.Start(b); files.AddValue(b, path)
-    ctx.output("report", b, files.End(b))
+    _number_value = {}; _number_value['value'] = value
+    result_ports.update({'value': _number_value})
+    path = str(folder)
+    _files_value = {}; _files_value['value'] = path
+    result_ports.update({'report': _files_value})
+    return result_ports

@@ -1,7 +1,7 @@
 #include <card.hh>
 #include <string>
 
-auto run(Card::Input& input) -> Card::Output {
-  tsugumi::visualization::text("C++ received " + std::to_string(input.number.value));
+auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
+  report.text("C++ received " + std::to_string(inputs.number.value));
   return {};
 }
