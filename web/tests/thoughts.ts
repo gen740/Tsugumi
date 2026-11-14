@@ -175,7 +175,6 @@ try {
   RemoteAgent.prototype.refresh = async () => {}
   const restoreSettings = mockHostSettings()
     const routes = chatRoutes({ support: root, here: root, envs: {}, projectDir: (p: unknown) => String(p),
-    readJSON: (_file: string, fallback: unknown) => fallback,
   } as any)
   const result = await routes['POST /api/chat/thoughts']({ path: root, session: 'web-thoughts' }, new URL('http://localhost'))
   restoreSettings()

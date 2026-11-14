@@ -14,10 +14,7 @@ def test_delegate_schema_matches_the_core_contract():
     shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
     fixture = json.loads((ROOT / "tests/fixtures/agent-contract.json").read_text())
     assert shared["delegateTool"]["inputSchema"] == fixture["delegateSchema"]
-    # The core neither injects these legacy helper texts nor enforces their promises.
     assert "helper" not in shared
-    behavior = json.loads((ROOT / "tests/fixtures/agent-behavior.json").read_text())
-    assert "helperBrief" not in behavior
 
 
 def test_swift_copy_of_the_shared_files_is_current():

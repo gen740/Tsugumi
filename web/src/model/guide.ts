@@ -8,8 +8,7 @@ import { AGENT, fill } from '../shared/agentShared'
 import { D } from '../shared/rpc'
 import { app } from './app'
 import { Observable } from './observable'
-import { get, str } from '../shared/json'
-import { CardKey, cardState, KIND_LABEL, key, ProjectSession } from './session'
+import { ProjectSession } from './session'
 import type { ChatController } from './chat'
 import type { WorkflowTab } from './workspace'
 import { L } from '../i18n'
@@ -177,7 +176,6 @@ export class GuideController extends Observable {
   /** The project chat whose bubble is out (undefined: the guide's own on Home). */
   speakingChat?: ChatController
   /** The project and workflow on the screen (choices and buttons act there). */
-  contextScreen: GuideScreen = 'home'
   contextSession?: ProjectSession
   contextTab?: WorkflowTab
   /** The bird has left home (its home shows no bird meanwhile). */
@@ -273,7 +271,6 @@ export class GuideController extends Observable {
   private queued: { prompt: string; display: string }[] = []
   private highlightTimer?: ReturnType<typeof setTimeout>
   private readSession?: ProjectSession
-  private tourTab?: WorkflowTab
   private observed?: string
 
   constructor() {
@@ -449,7 +446,7 @@ export class GuideController extends Observable {
   recommend(field: string) {
     this.answerDemoOffer()
     this.demosRequested = true
-    this.ask(L('「{0}」のおすすめは？', field), 'demos', undefined, undefined, `[Interest] The user asks which demo of the field "${field}" to see; pick one of its demos.`)
+    this.ask(L('「{0}」のおすすめは？', field))
   }
 
   // ---- Conversation ----------------------------------------------------------------
@@ -461,17 +458,17 @@ export class GuideController extends Observable {
     this.answerDemoOffer()
     this.demosRequested = true
     if (this.scripted) return this.advance({ kind: 'interest', text: q.trim() }, q.trim())
-    this.ask(q, 'demos', undefined, undefined, "[Interest] The user answered what interests them; pick a demo for it.")
+    this.ask(q)
   }
 
-  /** A question of the user, with what their screen shows. */
-  ask(q: string, screen: GuideScreen, session?: ProjectSession, tab?: WorkflowTab, note?: string) {
+  /** A question from the user, scoped to the open project when present. */
+  ask(q: string, session?: ProjectSession) {
     const t = q.trim()
     if (!this.available || this.busy || !t) return
     if (this.scripted) return this.answerScripted(t)
     this.readSession = session
     this.items.push({ id: ++this.n, role: 'user', text: t })
-    void this.send(t, t, session)
+    void this.send(t, session)
   }
 
   /** A core-selected note for the model-backed guide; notes that arrive
@@ -489,10 +486,10 @@ export class GuideController extends Observable {
     }
     if (session) this.readSession = session
     this.items.push({ id: ++this.n, role: 'note', text: display })
-    void this.send(display, display, this.readSession)
+    void this.send(display, this.readSession)
   }
 
-  private async send(prompt: string, display: string, session?: ProjectSession) {
+  private async send(prompt: string, session?: ProjectSession) {
     this.begin()
     try {
       await api('/api/guide/send', { text: prompt, project: session?.dir })
@@ -617,9 +614,8 @@ export class GuideController extends Observable {
   // ---- Bubbles and Tsugumi of a project's chat ----------------------------------------
 
   /** The screen the page shows, for choices tapped in a bubble. */
-  setContext(screen: GuideScreen, session?: ProjectSession, tab?: WorkflowTab) {
+  setContext(session?: ProjectSession, tab?: WorkflowTab) {
     if (this.contextSession && !session) void this.refresh()
-    this.contextScreen = screen
     this.contextSession = session
     this.contextTab = tab
   }
@@ -633,7 +629,7 @@ export class GuideController extends Observable {
       return
     }
     if (this.speakingChat) this.speakingChat.send(c)
-    else this.ask(c, this.contextScreen, this.contextSession, this.contextTab)
+    else this.ask(c, this.contextSession)
   }
 
   /** The bubble is closed: the bird flies back home. */
@@ -817,9 +813,8 @@ export class GuideController extends Observable {
   }
   private resumeRequested = false
 
-  observe(s: ProjectSession, tab?: WorkflowTab) {
+  observe(s: ProjectSession) {
     if (!this.available || !this.tour || !this.same(this.tour.path, s)) return
-    this.tourTab = tab
     const snapshot = `${s.dir}:${this.runKey(s)}:${s.runActive}:${this.tour.started}`
     if (snapshot === this.observed && !this.resumeRequested) return
     this.observed = snapshot

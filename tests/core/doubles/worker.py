@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import array
-import base64
 import errno
 import json
 import os
@@ -223,8 +222,6 @@ class Worker:
                 sources = {"calls": self.calls, "invocation": self.call.invocation, "pid": os.getpid()}
                 value = sources[action["source"]] if "source" in action else action["value"]
                 outputs[action["port"]] = scalar(action["type"], value)
-            elif operation == "raw":
-                outputs[action["port"]] = base64.b64decode(action["base64"], validate=True)
             elif operation == "echo":
                 value = next(v for v in self.call.inputs if text(v.name) == action["input"])
                 outputs[action["port"]] = bytes(value.value.bytes)

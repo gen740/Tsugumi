@@ -50,10 +50,8 @@ struct CardBuildPlan {
 };
 
 struct BuildRequest {
-  std::string run_id;
   const Node* node = nullptr;
   DocumentPtr doc;
-  std::filesystem::path run_dir;
   uint32_t jobs = 1;
   uint32_t cores = 1;
   uint32_t max_implementations = kMaxExecutionBatchSize;
@@ -107,7 +105,6 @@ class NixRunner {
   CacheClearOutcome clear_cache();
   // A flake to opt in to, as the settings ask for it: a flake reference or a GitHub page's URL.
   FlakeInfo resolve_flake(const std::string& ref);
-  bool available() const { return true; }
 
  private:
   std::filesystem::path cache_dir() const;

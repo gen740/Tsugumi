@@ -72,17 +72,6 @@ public extension RPCClient {
     return try await call(.operationgetrequest, r)
   }
 
-  func fileList(path: String, atRev: UInt64, depth: UInt32 = 8, directories: Bool = false, cursor: String? = nil) async throws -> Tsugumi_RPC_SourcePageT {
-    let r = Tsugumi_RPC_ProjectFileListRequestT()
-    r.path = path
-    r.atRev = atRev
-    r.depth = depth
-    r.includeDirectories = directories
-    r.cursor = cursor
-    r.limit = 500
-    return try await call(.projectfilelistrequest, r)
-  }
-
   /// Reads a whole file in chunks, verifying the final hash.
   func readFile(path: String, atRev: UInt64) async throws -> Data {
     var out = Data()
@@ -348,14 +337,6 @@ public extension RPCClient {
     r.path = path
     r.text = text
     return try await call(.projectfileformatrequest, r)
-  }
-
-  func runPlan(atRev: UInt64, card: [String], propagate: Bool) async throws -> Tsugumi_RPC_RunPlanResultT {
-    let r = Tsugumi_RPC_RunPlanRequestT()
-    r.atRev = atRev
-    r.card = cardPath(card)
-    r.propagate = propagate
-    return try await call(.runplanrequest, r)
   }
 }
 

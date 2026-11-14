@@ -49,7 +49,7 @@ Fixture helpers are not another production API.
 | `ReplyProxy` | Requests, core processing, notifications and unrelated replies | Delivery of a selected RPC reply |
 | `fault=...` | Real persistence and recovery code | Existing opt-in daemon fault points |
 
-`tsugumid-mock` is a **test-only executable**, never installed. It links the same
+`tsugumid-mock` is a **test-only executable**, installed only in `ci-core`. It links the same
 core and replaces only the Nix evaluator. One private adapter receives the
 confirmed definition directory; test cases do not import or call core classes.
 The adapter does not parse internal Nix argument strings, interpret Nix, download

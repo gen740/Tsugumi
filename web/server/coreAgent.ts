@@ -24,16 +24,6 @@ interface Ready {
   protocol: number
 }
 
-export interface AgentAccessRequest {
-  id: string
-  project_id: string
-  conversation_id?: string
-  access: string | number
-  scope?: string | number
-  reason?: string
-  state?: string
-}
-
 class Connection {
   private socket?: net.Socket
   private nextId = 0n

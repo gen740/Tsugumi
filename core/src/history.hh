@@ -130,7 +130,6 @@ class History {
   // --- reads ---
   static std::optional<RunSummaryData> run(sql::Db& db, const std::string& run_id);
   static std::optional<RunSummaryData> latest_run(sql::Db& db);
-  static std::optional<std::string> run_receipt_digest(sql::Db& db, const std::string& op_id);
   struct ReceiptRow {
     std::string kind;
     std::string digest;
@@ -214,7 +213,6 @@ class History {
   std::pair<int64_t, std::string> open_cursor(const std::string& cursor,
                                               const std::string& query_digest) const;
 
-  std::string schema_blob(sql::Db& db, const std::string& hash);
   const std::filesystem::path& path() const { return path_; }
 
   // --- the project's copy of finished runs (.tsugumi/runs.sqlite) ---

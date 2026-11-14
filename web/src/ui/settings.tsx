@@ -1,6 +1,6 @@
 // App-wide settings; the category on the left switches the content. While a
 // project is open its own settings follow the app's (kept in the project).
-import { ReactNode, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { app } from '../model/app'
 import { guide } from '../model/guide'
@@ -15,7 +15,7 @@ import { errorText, ProjectSession } from '../model/session'
 import { Button, copyText, Empty, Form, Row, Section, Segmented, Select, Sheet, Stepper, TextField, Toggle } from './controls'
 import { CodeEditor } from './editor'
 import { Icon } from './icons'
-import * as projectViews from './projectViews'
+import { ProjectSettingsContent } from './projectViews'
 import { FolderPicker } from './sidebar'
 import { adoptLanguage, L, language, type Language } from '../i18n'
 import { ExecutionServicesSettings } from './executionServices'
@@ -48,11 +48,6 @@ function paneStorage(p: ProjectSettingsPane, s: ProjectSession): string {
   }
 }
 
-/** The project panes come from the detail area when it provides them. */
-const ProjectSettingsContent = (projectViews as unknown as {
-  ProjectSettingsContent?: (p: { pane: ProjectSettingsPane; session: ProjectSession }) => ReactNode
-}).ProjectSettingsContent
-
 const STORE = { category: 'tsugumi.settings.category', project: 'tsugumi.settings.project' }
 const load = (k: string, d: string) => {
   try {
@@ -67,15 +62,6 @@ const store = (k: string, v: string) => {
   } catch {}
 }
 
-/** Opens the settings window at a project's pane. */
-export function openProjectSettings(s: ProjectSession, pane: ProjectSettingsPane = 'general') {
-  store(STORE.category, 'project.' + pane)
-  store(STORE.project, s.dir)
-  window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: { category: 'project.' + pane, project: s.dir } }))
-  app.openWindow(undefined, { kind: 'appSettings' })
-}
-const OPEN_EVENT = 'tsugumi:openSettings'
-
 export function ApplicationSettings() {
   useObserve(prefs, app)
   /** "<category>" for the app's panes, "project.<pane>" for the project's. */
@@ -85,16 +71,6 @@ export function ApplicationSettings() {
     setStored(v)
     store(STORE.category, v)
   }
-  // Opened again at another pane while it is open.
-  useEffect(() => {
-    const f = (e: Event) => {
-      const d = (e as CustomEvent<{ category: string; project: string }>).detail
-      setStored(d.category)
-      setProjectPath(d.project)
-    }
-    window.addEventListener(OPEN_EVENT, f)
-    return () => window.removeEventListener(OPEN_EVENT, f)
-  }, [])
   const projects = [...app.sessions.values()].sort((a, b) => a.scopeName([]).localeCompare(b.scopeName([])))
   const project = projects.find((s) => s.dir === projectPath) ?? projects[0]
   const pane = stored.startsWith('project.') && project ? PANES.find((p) => 'project.' + p.id === stored) : undefined
@@ -135,7 +111,7 @@ export function ApplicationSettings() {
         <div className="settings-title">{pane && project ? `${pane.title} — ${project.scopeName([])}` : category.title}</div>
         <div className="storage-note"><Icon name="externaldrive" size={11} />保存先: {pane && project ? paneStorage(pane.id, project) : category.storage}</div>
         <div className="settings-body" key={pane && project ? `${project.key}.${pane.id}` : category.id}>
-          {pane && project ? <ProjectPane pane={pane.id} session={project} /> : (
+          {pane && project ? <ProjectSettingsContent pane={pane.id} session={project} /> : (
             <>
               {category.id === 'general' && <GeneralSettings />}
               {category.id === 'appearance' && <AppearanceSettings />}
@@ -153,13 +129,6 @@ export function ApplicationSettings() {
       </div>
     </div>
   )
-}
-
-function ProjectPane({ pane, session }: { pane: ProjectSettingsPane; session: ProjectSession }) {
-  if (ProjectSettingsContent) return <>{ProjectSettingsContent({ pane, session })}</>
-  // Until the detail area provides the separate panes, the shared view holds them.
-  if (pane !== 'history') return <projectViews.WorkflowSettingsView session={session} />
-  return <Empty title={L('実行履歴')} icon="clock.arrow.circlepath" description={L('実行履歴は Workflow の「実行履歴」から見られます。')} />
 }
 
 const options = <T extends string>(labels: Record<T, string>) => (Object.keys(labels) as T[]).map((k) => ({ value: k, label: labels[k] }))
