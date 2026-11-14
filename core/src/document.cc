@@ -196,86 +196,10 @@ schema::CardLink parse_link_json(const std::string& id, const std::string& text)
   return l;
 }
 
-schema::Layout parse_layout_json(const std::string& text) {
-  auto l = decode_doc<schema::Layout>("layout.json", text);
-  if (const auto* cards = schema::get(l.cards))
-    for (const auto& [key, pos] : cards->entries())
-      if (!pos.x->has_value() || !pos.y->has_value()) invalid("layout.json: card " + key + " needs x and y");
-  if (const auto* notes = schema::get(l.notes))
-    for (const auto& n : *notes)
-      if (!n.id->has_value() || !n.text->has_value() || !n.x->has_value() || !n.y->has_value())
-        invalid("layout.json: notes need id, text, x and y");
-  if (const auto* displays = schema::get(l.displays))
-    for (const auto& [key, d] : displays->entries())
-      if (!d.x->has_value() || !d.y->has_value() || !d.width->has_value() || !d.height->has_value())
-        invalid("layout.json: display " + key + " needs x, y, width and height");
-  return l;
-}
-
-std::string layout_without_cards(const std::string& text, const std::set<std::string>& gone) {
-  using Object = schema::v::Mapping<schema::v::String, schema::Json>;
-  using hosq::json::GenericDom;
-  auto as = []<class S>(const GenericDom<>& value, S& out) {
-    if (auto err = schema::decode(value, out)) invalid("layout.json: " + err->message);
-  };
-  bool changed = false;
-  // Where a key or id of a Card goes; nothing when its Card is gone.
-  auto follow = [&](const std::string& key) -> std::optional<std::string> {
-    auto card = key.substr(0, key.find('/'));
-    if (gone.count(card)) {
-      changed = true;
-      return std::nullopt;
-    }
-    return key;
-  };
-  auto cards_by_key = [&](const GenericDom<>& value) {
-    Object in, out;
-    as(value, in);
-    for (const auto& [key, entry] : in.value())
-      if (follow(key)) out.value().emplace_back(key, entry);
-    return schema::capture(schema::encode(out));
-  };
-  auto group_ids = [&](const GenericDom<>& value) {
-    schema::v::Array<schema::v::String> in, out;
-    as(value, in);
-    for (const auto& id : in.value())
-      if (auto to = follow(id)) out.value().push_back(*to);
-    return schema::capture(schema::encode(out));
-  };
-  auto group_outputs = [&](const GenericDom<>& value) {
-    schema::v::Array<Object> in, out;
-    as(value, in);
-    for (auto port : in.value()) {
-      bool kept = true;
-      for (auto& [name, field] : port) {
-        if (name != "card") continue;
-        schema::v::String id;
-        as(field, id);
-        if (auto to = follow(id.value())) field = schema::string_value(*to);
-        else kept = false;
-      }
-      if (kept) out.value().push_back(std::move(port));
-    }
-    return schema::capture(schema::encode(out));
-  };
-
-  Object root;
-  as(schema::capture(text), root);
-  for (auto& [field, value] : root.value()) {
-    if (field == "cards" || field == "displays" || field == "boundaries") {
-      value = cards_by_key(value);
-    } else if (field == "groups") {
-      schema::v::Array<Object> groups;
-      as(value, groups);
-      for (auto& group : groups.value())
-        for (auto& [name, member] : group) {
-          if (name == "cards") member = group_ids(member);
-          else if (name == "outputs") member = group_outputs(member);
-        }
-      value = schema::capture(schema::encode(groups));
-    }
-  }
-  return changed ? schema::pretty_text(schema::encode(root)) : text;
+auto check_opaque_layout(const std::string& text) -> void {
+  if (text.size() > 8 * 1024 * 1024)
+    throw DocumentError("resource_limit", "layout.json exceeds 8 MiB");
+  decode_doc<schema::v::Mapping<schema::v::String, schema::Json>>("layout.json", text);
 }
 
 schema::CardDefinition parse_card_json(const std::string& id, const std::string& text) {
@@ -362,6 +286,14 @@ std::string execution_fingerprint(const Document& doc, const std::function<std::
   }
   for (const auto& [path, src] : doc.sources) {
     if (path.starts_with("skills/") || Document::is_card_meta_file(path)) continue;
+    // External projects carry layout as a source file; it never identifies a run.
+    auto relative = path;
+    while (relative.starts_with("externals/")) {
+      const auto slash = relative.find('/', 10);
+      if (slash == std::string::npos) break;
+      relative.erase(0, slash + 1);
+    }
+    if (relative == "layout.json") continue;
     h.update("\0src\0", 5);
     h.update(path);
     auto rel = path;
@@ -390,7 +322,7 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
 
   auto layout_text = fs::read_file(root / "layout.json");
   doc->layout_json = layout_text ? *layout_text : kEmptyLayout;
-  doc->layout = parse_layout_json(doc->layout_json);
+  check_opaque_layout(doc->layout_json);
   if (layout_text) doc->disk_hashes["layout.json"] = crypto::sha256_hex(*layout_text);
 
   std::error_code ec;

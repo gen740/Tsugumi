@@ -9,7 +9,9 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 - **Requests that change something**: carry an `op_id`, and a resend with the same `op_id` is applied only once. If a response is lost, check with `OperationGet`.
 - **The Agent's tools**: made from the same schema (`tsugumi.bfbs`) ([Features](features.md#9-agent)).
 
-There are 51 requests.
+Layout proposals, layout schema validation and minimap placement belong to the host service ([protocol/host.fbs](../protocol/host.fbs)). Saving clients remove deleted Card references. The project core carries layout objects and opaque view JSON without interpreting presentation fields.
+
+There are 49 requests.
 
 ## Connection
 
@@ -401,8 +403,6 @@ No fields.
 | [`ViewSetVisible`](#viewsetvisible) | Ack | Replaces the subscription's Display targets. enabled = true. |
 | [`ViewSave`](#viewsave) | ViewSaveResult | CAS on view_rev only. |
 | [`ModuleRead`](#moduleread) | FileContent | Reads immutable module source in bounded pages. For a Wasm view, the core assembles the shared index.js template and local view.wasm. Only canonical /nix/store/<hash>-<name> directories with index.js qualify. |
-| [`LayoutArrange`](#layoutarrange) | LayoutProposal | Places the scope's Cards, output frames and notes, then gives ports the order that crosses fewer wires and places the Cards once more for it. The bars are taken to follow the Cards again. Nothing is saved. |
-| [`LayoutUntangle`](#layoutuntangle) | LayoutProposal (port_orders only) | Reorders ports where the wires then cross less; no Card moves. With `around` (the Cards a drag just moved) only they and the Cards wired to them may change. Nothing is saved. |
 
 ### ViewSetVisible
 
@@ -418,7 +418,7 @@ No fields.
 | --- | --- | --- | --- |
 | `view_id` | `string` | yes |  |
 | `base_view_rev` | `uint64` |  |  |
-| `view` | `ViewState` | yes |  |
+| `view_json` | `string` | yes |  |
 
 ### ModuleRead
 
@@ -428,19 +428,6 @@ No fields.
 | `offset` | `uint64` |  |  |
 | `limit_bytes` | `uint32` |  |  |
 
-### LayoutArrange
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `scene` | `LayoutScene` | yes |  |
-
-### LayoutUntangle
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `scene` | `LayoutScene` | yes |  |
-| `around` | `[string]` |  |  |
-
 ## Versions
 
 | Request | Response | Description |
@@ -449,7 +436,7 @@ No fields.
 | [`VersionMark`](#versionmark) | VersionResult | Names the current version: what is saved is committed (when it changed) and gets an annotated tag `name` with `message`. |
 | [`VersionCheckout`](#versioncheckout) | SaveResult | Starts from a version: what is saved now is committed, then the project's files become those of `commit` and the document is read again (like ProjectReload). Only while no run is active. |
 | [`VersionGraph`](#versiongraph) | VersionGraph, newest first |  |
-| [`VersionCanvas`](#versioncanvas) | VersionCanvas: the Cards of a version and how they connect (a minimap) |  |
+| [`VersionCanvas`](#versioncanvas) | VersionCanvas: raw layout, definition kinds and connections of a version | The host service interprets these for a minimap. |
 | [`VersionDiff`](#versiondiff) | VersionDiff: what a version changed from another version (its first parent by default), in the text a summary is written from | Only code and settings: never data files. |
 | [`VersionNote`](#versionnote) | VersionNote | Core-generated mechanical record and the saved Agent note. The host Agent service chooses which to return to the UI. Mechanical records are kept in refs/notes/tsugumi-record-{ja,en}. |
 | [`VersionNoteStore`](#versionnotestore) | VersionResult | The host Agent service stores the generated note in refs/notes/tsugumi-summary. Clients request notes from agentd. |
