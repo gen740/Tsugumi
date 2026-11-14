@@ -4,15 +4,15 @@ import TsugumiLauncher
 import TsugumiRPC
 @testable import TsugumiApp
 
-@MainActor @Test func marimoTemplateCreatesEditableNotebookWithRetainedResult() throws {
+@MainActor @Test func marimoTemplateCreatesEditableNotebookWithRetainedResult() async throws {
   let dir = FileManager.default.temporaryDirectory.appendingPathComponent("marimo-\(UUID().uuidString)")
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   defer { try? FileManager.default.removeItem(at: dir) }
   let document = #"{"name":"test","canvas":{"cards":[],"connections":[]}}"#
   try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
-  let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+  let session = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
   session.project = try JSONValue.parse(document)
-  let card = session.addCard(template: .marimo, in: [], at: .zero)
+  let card = try await session.addCard(template: .marimo, in: [], at: .zero)
   #expect(card == "marimo")
   #expect(session.kind(card) == .code)
   #expect(session.cardDefinition(card)?["reuseWorker"]?.bool == false)

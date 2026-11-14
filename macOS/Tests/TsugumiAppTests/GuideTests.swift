@@ -64,7 +64,7 @@ import TsugumiRPC
 }
 
 /// The tour's copy is recognised whichever spelling of its folder a window has.
-@Test func theTourFolderIsTheSameThroughLinks() throws {
+@Test func theTourFolderIsTheSameThroughLinks() async throws {
   let name = "tsugumi-guide-\(UUID().uuidString)"
   try FileManager.default.createDirectory(atPath: "/private/tmp/\(name)", withIntermediateDirectories: true)
   defer { try? FileManager.default.removeItem(atPath: "/private/tmp/\(name)") }
@@ -95,9 +95,9 @@ import TsugumiRPC
   defer { try? FileManager.default.removeItem(at: dir) }
   let document = #"{"name": "t", "canvas": {"cards": [], "connections": []}}"#
   try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
-  let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+  let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
   s.project = try JSONValue.parse(document)
-  let card = s.addCard(template: .trigger, in: [], at: CGPoint(x: 100, y: 100), name: "start")
+  let card = try await s.addCard(template: .trigger, in: [], at: CGPoint(x: 100, y: 100), name: "start")
   s.cameras[key([])] = (x: 0, y: 0, zoom: 0.39)
 
   let guide = GuideController.shared

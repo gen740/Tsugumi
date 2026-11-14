@@ -1,3 +1,4 @@
+import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { CardGeometry } from '../src/model/canvasKit'
@@ -5,12 +6,12 @@ import { ProjectSession, TEMPLATES, definitionKind } from '../src/model/session'
 import { get, parse, serialize } from '../src/shared/json'
 import { CardNodeView } from '../src/ui/cardNode'
 
-const session = new ProjectSession('/switch-test', 'switch-test', 'switch-test')
+const session = cardIds(new ProjectSession('/switch-test', 'switch-test', 'switch-test'))
 session.project = parse('{"name":"switch-test","canvas":{"cards":[],"connections":[]}}')
 session.layout = parse('{}')
 let saves = 0
 session.scheduleSave = () => { saves++ }
-const card = session.addCard('switch', [], { x: 0, y: 0 }, 'calibrate')
+const card = await session.addCard('switch', [], { x: 0, y: 0 }, 'calibrate')
 assert.ok(TEMPLATES.some(t => t.id === 'switch'))
 assert.equal(definitionKind(session.cardDefinition(card)), 'switch')
 assert.equal(session.sourcePaths.length, 0, 'A built-in Switch needs no schema or source file')

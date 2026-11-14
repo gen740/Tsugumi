@@ -50,6 +50,8 @@ The Mac app, Web host and `tsugumi` command use the same Host environment reques
 
 ## 2. Cards and Workflows
 
+Every Card has a permanent identifier and a separate human name in `_meta.json.name`; when omitted, the identifier is displayed. Names need not be unique. The core creates new identifiers from the creation name's slug plus a four-character random salt, checking uniqueness within the owning project. Renaming in either app or through the Agent changes only the name: folders, wires, saved inputs and past run records keep the same identifiers, including inside a Card in Card. The Agent sees both name and identifier and uses identifiers for exact references.
+
 ### Kinds of Card
 
 | Kind | Role |

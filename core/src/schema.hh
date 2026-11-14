@@ -188,6 +188,7 @@ struct CardComment {
 // _meta.json: the intent of a definition, for every kind of Card (a Card in
 // Card too); kept when a Draft is implemented. The summary is only here.
 struct CardMeta {
+  Opt<"name", v::String> name;  // display name; absent means the identifier
   Opt<"description", v::String> description;  // short summary
   Opt<"content", v::String> content;          // a Draft's plan: inputs, outputs, processing (free text)
   Opt<"context", v::String> context;          // extra intent/notes for the Agent and readers

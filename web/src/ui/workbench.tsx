@@ -489,7 +489,7 @@ export function IssueList({ workspace, session, tab, onDone }: { workspace: Work
     }
   }
   for (const d of session.diagnostics) {
-    issues.push({ id: d.id, error: d.error, title: d.message, detail: [d.card?.join('/'), d.path, d.code].filter(Boolean).join(' · '), card: d.card, run: false })
+    issues.push({ id: d.id, error: d.error, title: d.message, detail: [d.card ? session.displayPath(d.card) : undefined, d.path, d.code].filter(Boolean).join(' · '), card: d.card, run: false })
   }
   if (!issues.length) return <Empty title={L('問題はありません')} icon="checkmark.seal" />
   const reveal = (card: string[]) => {

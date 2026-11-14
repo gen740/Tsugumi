@@ -71,10 +71,9 @@ class Scheduler {
   std::optional<RunStatusData> active_status();
   RunStatusData cancel(const std::string& run_id);
   std::optional<Note> latest_display_note(const std::string& card_key);
-  // A committed change of the document. A renamed Card keeps its display; the
-  // display of a Card that left the document is its own: see gone_.
-  void document_changed(const Document& before, const Document& after,
-                        const std::vector<std::pair<std::string, std::string>>& renamed);
+  // A committed change of the document. The display of a Card that left
+  // the document is its own: see gone_.
+  void document_changed(const Document& before, const Document& after);
   void shutdown();
 
   // Called by RunExec.

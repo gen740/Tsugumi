@@ -1,13 +1,14 @@
+import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
 import { ProjectSession, TEMPLATES } from '../src/model/session'
 import { get, parse, str } from '../src/shared/json'
 
-const s = new ProjectSession('/ruby', 'ruby', 'ruby')
+const s = cardIds(new ProjectSession('/ruby', 'ruby', 'ruby'))
 s.project = parse('{"name":"ruby","canvas":{"cards":[],"connections":[]}}')
 s.layout = parse('{}')
 s.scheduleSave = () => {}
 assert(TEMPLATES.some((entry) => entry.id === 'ruby'))
-const card = s.addCard('ruby', [], { x: 0, y: 0 }, 'ruby')
+const card = await s.addCard('ruby', [], { x: 0, y: 0 }, 'ruby')
 assert.equal(str(get(s.cardDefinition(card), 'language')), 'ruby')
 assert.match(await s.sourceText(`definitions/${card}/default.nix`), /rubyCard/)
 assert.match(await s.sourceText(`definitions/${card}/src/main.rb`), /def main\(inputs\)/)

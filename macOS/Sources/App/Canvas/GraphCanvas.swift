@@ -253,7 +253,8 @@ struct GraphCanvas: View {
           let w = world(loc)
           let at = CGPoint(x: w.x + Double(i) * 24, y: w.y + Double(i) * 24)
           if let t = DefinitionDrag.template(item) {
-            placed.append(session.addCard(template: t, in: tab.scope, at: at))
+            session.performCardEdit { tab.selection = [try await session.addCard(template: t, in: tab.scope, at: at)] }
+            accepted = true
           } else if let id = DefinitionDrag.id(item) {
             placed.append(session.placeDefinition(id, at: at))
           } else if item.hasPrefix(DefinitionDrag.externalDefinitionPrefix) {
@@ -742,15 +743,9 @@ struct GraphCanvas: View {
     reveal(k)
   }
 
-  /// Keeps what was written on a Draft's Card; a new name moves what points at the Card.
+  /// Keeps the Draft's name and content under its permanent key.
   private func finishDraftEdit() {
-    guard let from = session.inlineDraft?.card else { return }
-    Task {
-      guard let to = await session.finishDraftEdit() else { return }
-      NotificationCenter.default.post(name: .cardRenamed, object: nil,
-                                      userInfo: ["from": from, "to": to, "project": session.identity.url.path])
-      if tab.selection.remove(from) != nil { tab.selection.insert(to) }
-    }
+    Task { _ = await session.finishDraftEdit() }
   }
 
   private func groupFrame(_ id: String) -> some View {
@@ -928,9 +923,11 @@ struct GraphCanvas: View {
   /// E: a new Draft Card in the middle of the canvas, written on the Card.
   func handleAddDraft(_ n: Notification) {
     guard (n.object as? UUID) == tab.id, session.isEditable else { return }
-    let k = session.addCard(template: .draft, in: tab.scope, at: world(CGPoint(x: size.width / 2, y: size.height / 2)), clearOfOthers: true)
-    tab.selection = [k]
-    writeDraft(k)
+    session.performCardEdit {
+      let k = try await session.addCard(template: .draft, in: tab.scope, at: world(CGPoint(x: size.width / 2, y: size.height / 2)), clearOfOthers: true)
+      tab.selection = [k]
+      writeDraft(k)
+    }
   }
 
   /// The Card menu's "Write name and content".
@@ -1191,13 +1188,13 @@ struct GraphCanvas: View {
   private func finishConnect(from: (CardKey, String), at pt: CGPoint) {
     pending = nil
     guard session.isEditable, let to = wireTarget(at: pt, output: false, except: from.0) else { return }
-    session.connect(from: wireStart(from, output: true), to: to, in: tab.scope)
+    session.performCardEdit { try await session.connect(from: wireStart(from, output: true), to: to, in: tab.scope) }
   }
 
   private func finishConnect(toInput to: (CardKey, String), at pt: CGPoint) {
     pending = nil
     guard session.isEditable, let from = wireTarget(at: pt, output: true, except: to.0) else { return }
-    session.connect(from: from, to: wireStart(to, output: false), in: tab.scope)
+    session.performCardEdit { try await session.connect(from: from, to: wireStart(to, output: false), in: tab.scope) }
   }
 
   /// Another wire from a Draft's port is another port.
@@ -1266,9 +1263,11 @@ struct GraphCanvas: View {
   /// written on its Card.
   func addBuiltin(_ t: DefinitionTemplate, at w: CGPoint) {
     guard session.isEditable else { return }
-    let k = session.addCard(template: t, in: tab.scope, at: w, clearOfOthers: true)
-    tab.selection = [k]
-    if t == .draft { writeDraft(k) }
+    session.performCardEdit {
+      let k = try await session.addCard(template: t, in: tab.scope, at: w, clearOfOthers: true)
+      tab.selection = [k]
+      if t == .draft { writeDraft(k) }
+    }
   }
 
   private func addNote(at w: CGPoint? = nil) {

@@ -1,3 +1,4 @@
+import { cardIds } from './cardIds'
 // A wire to or from a Draft is dotted, whatever else it shows, until the Draft
 // has code. The Mac app checks the same (UILogicTests: draftWiresAreDotted).
 import assert from 'node:assert/strict'
@@ -16,7 +17,7 @@ const { ProjectSession } = await import('../src/model/session')
 const { WireLayer } = await import('../src/ui/cardNode')
 
 const session = () => {
-  const s = new ProjectSession('/p', 'k', 'p')
+  const s = cardIds(new ProjectSession('/p', 'k', 'p'))
   s.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   s.layout = parse('{}')
   s.scheduleSave = () => {} // no tsugumid here
@@ -44,15 +45,15 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
 
 {
   const s = session()
-  const start = s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
-  const log = s.addCard('python', [], { x: 600, y: 0 }, 'log')
-  const draft = s.addCard('draft', [], { x: 300, y: 0 }, 'plan')
-  s.connect([start, 'out'], [log, 'in'], [])
+  const start = await s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
+  const log = await s.addCard('python', [], { x: 600, y: 0 }, 'log')
+  const draft = await s.addCard('draft', [], { x: 300, y: 0 }, 'plan')
+  await s.connect([start, 'out'], [log, 'in'], [])
   assert.deepEqual(dotted(s), { 'start>log': false }, 'Cards with code keep their solid wire')
 
   s.disconnect(log, true, [])
-  s.connect([start, 'out'], [draft, NEW_PORT], [])
-  s.connect([draft, NEW_PORT], [log, 'in'], [])
+  await s.connect([start, 'out'], [draft, NEW_PORT], [])
+  await s.connect([draft, NEW_PORT], [log, 'in'], [])
   assert.deepEqual(dotted(s), { 'start>plan': true, 'plan>log': true })
 
   // The style says what the wire is doing; the dots stay with it.
@@ -76,11 +77,11 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
 {
   // In a Card in Card: its bars' wires to an inner Draft are dotted, the wires of the Card itself are not.
   const s = session()
-  const start = s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
-  const log = s.addCard('python', [], { x: 600, y: 0 }, 'log')
-  const draft = s.addCard('draft', [], { x: 300, y: 0 }, 'plan')
-  s.connect([start, 'out'], [draft, NEW_PORT], [])
-  s.connect([draft, NEW_PORT], [log, 'in'], [])
+  const start = await s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
+  const log = await s.addCard('python', [], { x: 600, y: 0 }, 'log')
+  const draft = await s.addCard('draft', [], { x: 300, y: 0 }, 'plan')
+  await s.connect([start, 'out'], [draft, NEW_PORT], [])
+  await s.connect([draft, NEW_PORT], [log, 'in'], [])
   const outer = await s.makeSubgraph(new Set([draft]), [])
   assert.ok(outer)
   assert.equal(s.kind(outer), 'subgraph')

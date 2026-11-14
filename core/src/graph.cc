@@ -457,6 +457,7 @@ class Builder {
       } else {
         def = external_definition(n);
       }
+      n.name = def && def->meta && def->meta->name->has_value() ? def->meta->name->value() : card.id->value();
       n.kind = template_of(def);
       read_settings(n, def);
       switch (n.kind) {

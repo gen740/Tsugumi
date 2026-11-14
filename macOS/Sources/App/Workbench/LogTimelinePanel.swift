@@ -118,7 +118,7 @@ struct RunLogView: View {
           Text("journal").tag(Tsugumi_Data_LogStream.journal)
         }
         .pickerStyle(.segmented).frame(width: 240).labelsHidden()
-        Text(card.map { "Card \($0.joined(separator: "/"))" + (invocation.map { " #\($0)" } ?? "") } ?? String(localized: "実行全体"))
+        Text(card.map { "Card \(session.displayPath($0))" + (invocation.map { " #\($0)" } ?? "") } ?? String(localized: "実行全体"))
           .font(.caption).foregroundStyle(.secondary)
         Spacer()
         Toggle("末尾を追う", isOn: $follow).toggleStyle(.checkbox).font(.caption)

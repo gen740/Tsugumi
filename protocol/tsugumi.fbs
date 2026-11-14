@@ -4,8 +4,8 @@
 // WebSocket subprotocol: "tsugumi.rpc.v1" (one binary message = one FlatBuffer).
 // Unix stream socket: 4 byte little-endian body length + FlatBuffer.
 //
-// Field ids and union tags are explicit and are never changed or reused within
-// generation 1. Defaults written as "= X" in comments are applied by the core
+// Field ids and union tags are explicit. Before v1.0.0, protocol changes
+// require matching clients and core. Defaults written as "= X" in comments are applied by the core
 // when the field is absent; required scalars are optional scalars whose
 // presence is validated. Every request may also be answered with Failure.
 
@@ -61,6 +61,8 @@ table ResolvedCard {
   outputs:[Tsugumi.Data.Port] (id: 2, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 3, required);
   nix_references:[CardNixReference] (id: 4, required);
+  /// Human name; CardPath segments are permanent identifiers.
+  name:string (id: 5, required);
 }
 
 table Camera {
@@ -153,13 +155,6 @@ table PutDefinition {
   fill_context:string (id: 6);
 }
 table RemoveDefinition { id:string (id: 0, required); }
-/// A Card's new name: its definition folder (with its sources) moves, and
-/// its run history and its entries in layout.json follow. The client sends
-/// the matching SetProject in the same save.
-table RenameDefinition {
-  id:string (id: 0, required);
-  to:string (id: 1, required);
-}
 table PutSource {
   path:string (id: 0, required);
   bytes:[ubyte] (id: 1, required);
@@ -188,7 +183,6 @@ union DocumentChangeValue {
   PutSource = 5,
   PatchSource = 6,
   RemoveSource = 7,
-  RenameDefinition = 8,
 }
 
 table DocumentChange { value:DocumentChangeValue (id: 1); }
@@ -292,11 +286,19 @@ table ProjectCloseRequest { subscription_id:string (id: 0, required); }
 /// -> ProjectSnapshot. No subscription, build or reload.
 table ProjectInspectRequest {}
 
-/// A Card renamed by this save's changes (inside a Card in Card, where the
-/// rename is an edit of the external's files): its run history follows.
-table CardRename {
-  from:Tsugumi.Data.CardPath (id: 0, required);
-  to:Tsugumi.Data.CardPath (id: 1, required);
+/// -> CardIdResult. Reserves a permanent identifier for a new Card without
+/// changing the document revision. Supply its human name; use the returned id
+/// in the canvas, definition paths and wires, and name in _meta.json.name.
+/// Each call reserves a fresh id; save the definition and canvas with project_save.
+table CardIdRequest {
+  name:string (id: 0, required);
+  /// Project-relative directory: empty for the root, or externals/<id>/,
+  /// repeated for nesting. May name a project being created in the same draft.
+  project_path:string (id: 1);
+}
+table CardIdResult {
+  id:string (id: 0, required);
+  name:string (id: 1, required);
 }
 
 /// -> SaveResult. Apply all changes in one transaction at base_rev.
@@ -305,12 +307,11 @@ table ProjectSaveRequest {
   op_id:string (id: 1, required);
   origin:string (id: 2, required);
   changes:[DocumentChange] (id: 3, required);
-  renamed_cards:[CardRename] (id: 4);
   /// The Card permissions this save widens that the user approved, each as
   /// an `approval_required` failure names it. Set by the client after asking
   /// the user, never by a model; a save from a model (origin "agent") is
   /// rejected unless every widening is listed.
-  approved_permissions:[string] (id: 5);
+  approved_permissions:[string] (id: 4);
 }
 
 /// -> SaveResult. Takes external edits of the allowed area into the document.
@@ -827,6 +828,7 @@ union RequestPayload {
   LayoutArrangeRequest = 46,
   LayoutUntangleRequest = 47,
   ProjectCacheUsageRequest = 48,
+  CardIdRequest = 49,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1223,6 +1225,7 @@ union ReplyPayload {
   ProjectShellResult = 34,
   LayoutProposal = 35,
   ProjectCacheUsageResult = 36,
+  CardIdResult = 37,
 }
 
 // ---- Notifications -----------------------------------------------------------

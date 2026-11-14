@@ -1,13 +1,14 @@
+import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
 import { ProjectSession, TEMPLATES } from '../src/model/session'
 import { parse, get } from '../src/shared/json'
 import { builtinCardItems } from '../src/ui/canvas'
 import files from '../../ui/templates/marimo.json'
-const session = new ProjectSession('/marimo-test','marimo-test','test')
+const session = cardIds(new ProjectSession('/marimo-test','marimo-test','test'))
 session.project=parse('{"name":"test","canvas":{"cards":[],"connections":[]}}')
 session.layout=parse('{}')
 session.scheduleSave=()=>{}
-const card=session.addCard('marimo',[],{x:0,y:0})
+const card=await session.addCard('marimo',[],{x:0,y:0})
 assert.equal(card,'marimo')
 assert.equal(get(session.cardDefinition(card),'reuseWorker'),false)
 assert.equal(get(session.cardDefinition(card),'artifactOutput'),'report')

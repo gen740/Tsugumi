@@ -22,7 +22,6 @@ import {
 } from './actions'
 import { BoundaryBarView, CardNodeView, drive, gridStyle, idleText, runText, WireLayer } from './cardNode'
 import { BatchInvocations } from './batchInvocations'
-import { retargetWindows } from './cardSettings'
 import { Button, MenuItem, Segmented, Sheet, showMenu, Stepper, TextField, Toggle } from './controls'
 import { DisplayContent } from './display'
 import { Icon } from './icons'
@@ -242,15 +241,8 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     return k ? [k, NEW_PORT] : undefined
   }
 
-  /** Keeps what was written on a Draft's Card; a new name moves what points at the Card. */
-  const finishDraftEdit = () => {
-    const from = session.inlineDraft?.card
-    void session.finishDraftEdit().then((to) => {
-      if (!from || !to) return
-      retargetWindows(session, from, to)
-      if (tab.selection.has(from)) tab.setSelection([...tab.selection].map((x) => (x === from ? to : x)))
-    })
-  }
+  /** Keeps the Draft's name and content under its permanent key. */
+  const finishDraftEdit = () => { void session.finishDraftEdit() }
 
   const commitParam = (k: CardKey, name: string, text: string) => {
     if (!session.isEditable) return
@@ -260,8 +252,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   }
 
   const addBuiltin = (t: DefinitionTemplate, at?: Pt) => {
-    const k = cv.addBuiltin(t, at)
-    if (k && t === 'draft') cv.writeDraft(k)
+    void cv.addBuiltin(t, at).then((k) => { if (k && t === 'draft') cv.writeDraft(k) }).catch((e) => { session.notice = String(e); session.changed() })
   }
 
   const single = () => (tab.selection.size === 1 ? [...tab.selection][0] : undefined)
@@ -273,8 +264,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       case 'openArtifacts': if (k) app.openWindow(session, { kind: 'artifacts', card: k }); break
       case 'openLog': if (k) showLog(workspace, k); break
       case 'addDraft': {
-        const d = cv.addDraft()
-        if (d) cv.writeDraft(d)
+        void cv.addDraft().then((d) => { if (d) cv.writeDraft(d) }).catch((e) => { session.notice = String(e); session.changed() })
         break
       }
       case 'generateDrafts': {
@@ -423,8 +413,8 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       if (!other) return
       // Another wire from a Draft's port is another port.
       const own: [CardKey, string] = [k, session.kind(k) === 'draft' && session.portWired(k, port, output, scope) ? NEW_PORT : port]
-      if (output) session.connect(own, other, scope)
-      else session.connect(other, own, scope)
+      void (output ? session.connect(own, other, scope) : session.connect(other, own, scope))
+        .catch((e) => { session.notice = String(e); session.changed() })
     })
   }
 
@@ -457,7 +447,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     const at = cv.world(local(e))
     if (item.startsWith(TEMPLATE_DRAG)) {
       const t = item.slice(TEMPLATE_DRAG.length) as DefinitionTemplate
-      if (TEMPLATES.some((x) => x.id === t)) tab.setSelection([session.addCard(t, scope, at)])
+      if (TEMPLATES.some((x) => x.id === t)) void session.addCard(t, scope, at).then((k) => tab.setSelection([k])).catch((e) => { session.notice = String(e); session.changed() })
     } else if (item.startsWith(EXTERNAL_DEFINITION_DRAG)) {
       const parts = item.slice(EXTERNAL_DEFINITION_DRAG.length).split('\n')
       if (parts.length === 2) void session.placeDefinitionCopy(parts[0], parts[1], scope, at).then((k) => k && tab.setSelection([k]))

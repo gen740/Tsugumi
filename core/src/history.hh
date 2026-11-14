@@ -227,9 +227,6 @@ class History {
   // Deletes finished runs (all, or those that ended before `ended_before`)
   // here and in the copy when it exists; returns their run ids.
   std::vector<std::string> delete_runs(const std::filesystem::path& copy, std::optional<int64_t> ended_before);
-  // A Card was renamed: its records (and those of Cards inside it) take the
-  // new path, here and in the copy.
-  void rename_card(const std::filesystem::path& copy, const std::string& from, const std::string& to);
 
  private:
   void writer_loop();

@@ -27,7 +27,7 @@ struct CardDatabaseView: View {
           TextField("検索", text: $search).textFieldStyle(.roundedBorder)
           Menu {
             ForEach(DefinitionTemplate.allCases) { t in
-              Button(t.label) { selected = path(session.addCard(template: t, in: [], at: CGPoint(x: 40, y: 40))).first }
+              Button(t.label) { session.performCardEdit { selected = path(try await session.addCard(template: t, in: [], at: CGPoint(x: 40, y: 40))).first } }
             }
           } label: { Image(systemName: "plus") }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()

@@ -140,7 +140,7 @@ struct EvidenceView: View {
         request.limitBytes = 65536
         let data: Tsugumi_RPC_FileContentT = try await rpc.call(.artifactreadrequest, request)
         if data.eof == true { preview = NSImage(data: Data(data.bytes)) }
-        bodyText = "\(a.card.path.joined(separator: "/")) · \(a.output)\n\(member ?? "")\n\n" + (preview == nil ? (String(bytes: data.bytes, encoding: .utf8) ?? String(localized: "バイナリの成果物です")) : "")
+        bodyText = "\(session.displayPath(a.card.path)) · \(a.output)\n\(member ?? "")\n\n" + (preview == nil ? (String(bytes: data.bytes, encoding: .utf8) ?? String(localized: "バイナリの成果物です")) : "")
         if data.eof != true { bodyText += "\n" + String(localized: "先頭 64 KiB を表示") }
       } else if let card = target.card {
         let r = try await rpc.record(runId: run, card: card, invocation: target.invocation)
@@ -148,7 +148,7 @@ struct EvidenceView: View {
         let summary = r.record?.summary
         let state = summary?.state ?? r.status.state
         let diagnostic = summary.map { $0.failure?.diagnostic ?? "" } ?? (r.status.failure?.diagnostic ?? "")
-        bodyText = "\(card.joined(separator: "/")) · #\(summary?.invocation ?? 0)\n\(state.label)\n\(diagnostic)"
+        bodyText = "\(session.displayPath(card)) · #\(summary?.invocation ?? 0)\n\(state.label)\n\(diagnostic)"
       } else {
         let status = try await rpc.runStatus(runId: run)
         bodyText = status.state.label

@@ -337,7 +337,7 @@ final class UIScript {
       case "add":
         // add <template> <x> <y>: a built-in Card at a canvas (world) point
         if let s = session, let t = workspace?.active, let tmpl = DefinitionTemplate(rawValue: w[1]) {
-          let k = s.addCard(template: tmpl, in: t.scope, at: CGPoint(x: Double(w[2]) ?? 0, y: Double(w[3]) ?? 0))
+          guard let k = try? await s.addCard(template: tmpl, in: t.scope, at: CGPoint(x: Double(w[2]) ?? 0, y: Double(w[3]) ?? 0)) else { continue }
           t.selection = [k]
           say("added \(k)")
         }

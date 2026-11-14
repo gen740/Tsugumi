@@ -4,7 +4,7 @@ import TsugumiLauncher
 import TsugumiRPC
 @testable import TsugumiApp
 
-@MainActor @Test func visualizationTemplatesMakeEditableCardsWithSavedArtifacts() throws {
+@MainActor @Test func visualizationTemplatesMakeEditableCardsWithSavedArtifacts() async throws {
   let dir = FileManager.default.temporaryDirectory.appendingPathComponent("visualization-\(UUID().uuidString)")
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   defer { try? FileManager.default.removeItem(at: dir) }
@@ -16,9 +16,9 @@ import TsugumiRPC
   let shared = try JSONDecoder().decode([String: [String: String]].self, from: Data(contentsOf: root.appendingPathComponent("ui/templates/visualization.json")))
   #expect(VisualizationTemplates.all == shared)
   for template in templates {
-    let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    let session = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     session.project = try JSONValue.parse(document)
-    let card = session.addCard(template: template, in: [], at: .zero)
+    let card = try await session.addCard(template: template, in: [], at: .zero)
     #expect(card == "visualization")
     #expect(session.kind(card) == .code)
     #expect(session.cardDefinition(card)?["retainArtifact"]?.bool == true)

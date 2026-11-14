@@ -1,3 +1,4 @@
+import { cardIds } from './cardIds'
 // Presentation integration: measurements go to RPC, a proposal is one layout
 // edit, and a delayed answer cannot overwrite another edit or undo.
 import assert from 'node:assert/strict'
@@ -49,20 +50,20 @@ for (const v of vectors) {
   assert.deepEqual(v.request === 'arrange' ? await rpc.layoutArrange(v.scene) : await rpc.layoutUntangle(v.scene, v.around ?? []), v.expect)
 }
 
-const make = () => {
-  const session = new ProjectSession('/p', 'k', 'p')
+const make = async () => {
+  const session = cardIds(new ProjectSession('/p', 'k', 'p'))
   session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   session.layout = parse('{"flow":"topToBottom"}')
   session.scheduleSave = () => {}
-  session.addCard('python', [], { x: 200, y: 0 }, 'source')
-  session.addCard('python', [], { x: 0, y: 300 }, 'left')
-  session.addCard('draft', [], { x: 500, y: 300 }, 'right')
+  await session.addCard('python', [], { x: 200, y: 0 }, 'source')
+  await session.addCard('python', [], { x: 0, y: 300 }, 'left')
+  await session.addCard('draft', [], { x: 500, y: 300 }, 'right')
   const ports = (names: string[]) => names.map(name => ({ name, kind: D.PortKind.value, optional: false }))
   session.resolution.set('source', { path: ['source'], inputs: [], outputs: ports(['a', 'b']), diagnostics: [] })
   session.resolution.set('left', { path: ['left'], inputs: ports(['in']), outputs: [], diagnostics: [] })
   session.updateCard('right', d => d.set('inputs', parse('[{"name":"in"}]')))
-  session.connect(['source', 'a'], ['right', 'in'], [])
-  session.connect(['source', 'b'], ['left', 'in'], [])
+  await session.connect(['source', 'a'], ['right', 'in'], [])
+  await session.connect(['source', 'b'], ['left', 'in'], [])
   return session
 }
 const orders = [{ id: 'source', inputs: [], outputs: ['b', 'a'] }]
@@ -72,7 +73,7 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
 // Arrange applies positions, frame sizes, notes and orders together, including
 // a frame still displayed beside its Card and a visual-only group.
 {
-  const s = make(), note = s.addNote([], { x: 3, y: 4 })
+  const s = await make(), note = s.addNote([], { x: 3, y: 4 })
   s.displays.set('source', { runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'text', text: 'shown' } })
   s.updateLayout([], l => l.set('groups', parse('[{"id":"g","title":"Group","cards":["source","left"]}]')))
   const was = before(s)
@@ -101,7 +102,7 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
 
 // Untangle does not move Cards or rewrite named connections.
 {
-  const s = make(), was = before(s), at = s.position('source')
+  const s = await make(), was = before(s), at = s.position('source')
   s.client = { layoutUntangle: async () => onlyOrders } as never
   await s.untangle([])
   assert.deepEqual(s.position('source'), at)
@@ -113,7 +114,7 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
 
 // Drag positions and the delayed port order form one undo/redo step.
 {
-  const s = make(), cv = new CanvasController(s, new WorkflowTab([])), was = before(s)
+  const s = await make(), cv = new CanvasController(s, new WorkflowTab([])), was = before(s)
   s.client = { layoutUntangle: async (_scene: LayoutScene, around: string[]) => {
     assert.deepEqual(around, ['left'])
     return onlyOrders
@@ -131,7 +132,7 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
 // A nested scope carries its boundary endpoints and hand-placed bars; Arrange
 // returns the bars to following Cards and does not edit the outer layout.
 {
-  const s = make()
+  const s = await make()
   const outer = (await s.makeSubgraph(new Set(['source']), []))!
   s.resolution.set(outer + '/source', { ...s.resolution.get('source')!, path: [outer, 'source'] })
   s.setBoundaryPosition([outer], 'outputs', { x: 333, y: 444 })
@@ -159,7 +160,7 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
 // No answer for an obsolete scene is applied, including after an undo,
 // reconnect, preferences/measurement change or a second edit during a drag.
 for (const action of ['edit', 'undo', 'disconnect', 'measurement'] as const) {
-  const s = make()
+  const s = await make()
   let resolve!: (p: LayoutProposal) => void
   s.client = { layoutUntangle: () => new Promise<LayoutProposal>(r => { resolve = r }) } as never
   const pending = s.untangle([])
@@ -173,7 +174,7 @@ for (const action of ['edit', 'undo', 'disconnect', 'measurement'] as const) {
   assert.deepEqual(before(s), was, `${action}: obsolete proposal is discarded`)
 }
 {
-  const s = make(), cv = new CanvasController(s, new WorkflowTab([]))
+  const s = await make(), cv = new CanvasController(s, new WorkflowTab([]))
   let resolve!: (p: LayoutProposal) => void
   s.client = { layoutUntangle: () => new Promise<LayoutProposal>(r => { resolve = r }) } as never
   const pending = cv.moveSelection(new Set(['left']), new Set(), new Set(), 1000, 0)
@@ -184,7 +185,7 @@ for (const action of ['edit', 'undo', 'disconnect', 'measurement'] as const) {
   assert.deepEqual(before(s), was, 'undo during a drag request cannot revive the drag or add another undo step')
 }
 {
-  const s = make(), was = before(s)
+  const s = await make(), was = before(s)
   s.client = { layoutArrange: async () => { throw new Error('layout failed') } } as never
   await s.arrange([])
   assert.deepEqual(before(s), was)

@@ -6,7 +6,7 @@ import Testing
 @testable import TsugumiApp
 @testable import TsugumiRPC
 
-@Test func nixSourcesNameTheirFlakesAsTheWebUIDoes() throws {
+@Test func nixSourcesNameTheirFlakesAsTheWebUIDoes() async throws {
   struct Case: Decodable { let ref: String; let name: String; let unlocked: String; let commit: String? }
   let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..")
   let cases = try JSONDecoder().decode([Case].self, from: Data(contentsOf: root.appendingPathComponent("tests/fixtures/nix-source-refs.json")))
@@ -152,17 +152,17 @@ import Testing
 
 /// A wire to or from a Draft is dotted until the Draft has code. The web checks
 /// the same (web/tests/draftWires.tsx).
-@MainActor @Test func draftWiresAreDotted() throws {
+@MainActor @Test func draftWiresAreDotted() async throws {
   let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("draft-wires-\(UUID().uuidString.prefix(8))")
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   defer { try? FileManager.default.removeItem(at: dir) }
   let document = #"{"name": "t", "canvas": {"cards": [], "connections": []}}"#
   try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
-  let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+  let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
   s.project = try JSONValue.parse(document)
-  let start = s.addCard(template: .trigger, in: [], at: .zero, name: "start")
-  let log = s.addCard(template: .python, in: [], at: CGPoint(x: 600, y: 0), name: "log")
-  let draft = s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 0), name: "plan")
+  let start = try await s.addCard(template: .trigger, in: [], at: .zero, name: "start")
+  let log = try await s.addCard(template: .python, in: [], at: CGPoint(x: 600, y: 0), name: "log")
+  let draft = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 0), name: "plan")
 
   #expect(s.isDraftWire(from: draft, to: log), "from a Draft")
   #expect(s.isDraftWire(from: start, to: draft), "to a Draft")
@@ -186,7 +186,7 @@ import Testing
 }
 
 /// The thumbnails decide the same from a demo's Cards, whatever it is drawing.
-@MainActor @Test func aThumbnailDotsADraftsWires() throws {
+@MainActor @Test func aThumbnailDotsADraftsWires() async throws {
   let card = { (id: String, kind: String) in
     "{\"id\": \"\(id)\", \"kind\": \"\(kind)\", \"x\": 0, \"y\": 0, \"inputs\": [{\"name\": \"in\"}], \"outputs\": [{\"name\": \"out\"}], \"params\": [], \"permissions\": []}"
   }
@@ -370,7 +370,7 @@ import Testing
 
 /// The paths the web finds for the same wires (web/tests/wireDemos.ts writes the file):
 /// real layouts of the demos, so the two routers cannot drift apart.
-@Test func wiresRouteAsOnTheWeb() throws {
+@Test func wiresRouteAsOnTheWeb() async throws {
   struct Point: Decodable { let x, y: CGFloat }
   struct Rect: Decodable { let x, y, width, height: CGFloat }
   struct Ends: Decodable { let a, b: Point }
@@ -513,7 +513,7 @@ import Testing
 
 /// The host registry uses Unix epoch milliseconds on every client.
 @MainActor
-@Test func hostRecentDatesUseUnixMilliseconds() throws {
+@Test func hostRecentDatesUseUnixMilliseconds() async throws {
   let recents = try AppModel.decodeRecents([["path": "/project", "name": "Project", "openedAt": 1_700_000_000_125]])
   #expect(recents.count == 1)
   #expect(recents[0].openedAt.timeIntervalSince1970 == 1_700_000_000.125)
@@ -521,7 +521,7 @@ import Testing
 }
 
 /// The same numbers as the web (tests/fixtures/port-grid-contract.json, web/tests/portGrid.ts).
-@Test func portsFollowTheGridAsOnTheWeb() throws {
+@Test func portsFollowTheGridAsOnTheWeb() async throws {
   let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..")
   let data = try Data(contentsOf: root.appendingPathComponent("tests/fixtures/port-grid-contract.json"))
   let contract = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -627,7 +627,7 @@ func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
   defer { try? FileManager.default.removeItem(at: dir) }
   let document = #"{"name":"sdk","canvas":{"cards":[],"connections":[]}}"#
   try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
-  let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+  let session = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
   session.project = try JSONValue.parse(document)
   let template = try #require(DefinitionTemplate(rawValue: language))
   let sources = ["go": ("src/card.go", "func run("),
@@ -635,7 +635,7 @@ func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
                  "ruby": ("src/main.rb", "def main(inputs)")]
   let (source, entry) = try #require(sources[language])
   #expect(BuiltinCardItems.written.contains(template))
-  let card = session.addCard(template: template, in: [], at: .zero, name: language)
+  let card = try await session.addCard(template: template, in: [], at: .zero, name: language)
   #expect(session.definitionDrafts[card]?.card["language"]?.string == language)
   #expect(try await session.sourceText("definitions/\(card)/default.nix").contains("\(language)Card"))
   #expect(try await session.sourceText("definitions/\(card)/\(source)").contains(entry))

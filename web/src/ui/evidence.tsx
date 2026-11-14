@@ -92,7 +92,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
           if (mime && bytes.eof === true) preview = <img alt={member} style={{ maxWidth: '100%' }} src={`data:${mime};base64,${btoa(Array.from(data, c => String.fromCharCode(c)).join(''))}`} />
           else { try { preview = <pre className="selectable wrap-pre">{new TextDecoder('utf-8', { fatal: true }).decode(data)}</pre> } catch { /* The binary label remains visible. */ } }
         }
-        return <><p>{segs(a.card).join('/')} · {s(a.output)} · #{String(a.invocation)}</p><p>{member}</p>{member && <EvidenceArtifactExport session={session} target={t} artifact={a} member={member} />}{preview}{bytes && bytes.eof !== true && <p>{L('先頭 64 KiB を表示')}</p>}</>
+        return <><p>{session.displayPath(segs(a.card))} · {s(a.output)} · #{String(a.invocation)}</p><p>{member}</p>{member && <EvidenceArtifactExport session={session} target={t} artifact={a} member={member} />}{preview}{bytes && bytes.eof !== true && <p>{L('先頭 64 KiB を表示')}</p>}</>
       }
       if (t.card) {
         const r = await rpc.record(t.run!, t.card, t.invocation ?? null)
@@ -100,7 +100,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
         const summary = record?.summary ?? r.status
         const display = record?.display ? recordedDisplay(record.display) : undefined
         return <>
-          <h3>{t.card.join('/')} · #{String(record?.summary?.invocation ?? t.invocation ?? '')}</h3>
+          <h3>{session.displayPath(t.card)} · #{String(record?.summary?.invocation ?? t.invocation ?? '')}</h3>
           {summary && <><p>{cardState(summary.state).label}</p><Markdown text={s(summary.failure?.diagnostic)} /></>}
           {display && <div style={{ height: 360, display: 'flex' }}><DisplayContent display={display} large /></div>}
           {record && [[L('入力'), record.inputs], [L('出力'), record.outputs]].map(([label, values], i) => <section key={i}>
@@ -111,7 +111,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
       }
       const status = await rpc.call<R.RunStatusT>(R.RequestPayload.RunStatusRequest, Object.assign(new R.RunStatusRequestT(), { runId: t.run }))
       const page = await rpc.call<R.InvocationPageT>(R.RequestPayload.RunLatestInvocationsRequest, Object.assign(new R.RunLatestInvocationsRequestT(), { runId: t.run }))
-      return <><p>{runState(status.state).label}</p>{page.records.map((r, i) => <p key={i}><EvidenceContext.Provider value={{ session }}><EvidenceLink href={`run:${t.run}/${segs(r.card).join('/')}#${r.invocation}`}>{segs(r.card).join('/')} · #{String(r.invocation)} · {cardState(r.state).label}</EvidenceLink></EvidenceContext.Provider></p>)}</>
+      return <><p>{runState(status.state).label}</p>{page.records.map((r, i) => <p key={i}><EvidenceContext.Provider value={{ session }}><EvidenceLink href={`run:${t.run}/${segs(r.card).join('/')}#${r.invocation}`}>{session.displayPath(segs(r.card))} · #{String(r.invocation)} · {cardState(r.state).label}</EvidenceLink></EvidenceContext.Provider></p>)}</>
     }
     void load().then(v => { if (alive) setBody(v) }).catch(e => { if (alive) setBody(String(e.message ?? e)) })
     return () => { alive = false }

@@ -341,20 +341,6 @@ export class CardEditorModel extends Observable {
   }
 }
 
-/** Windows showing a renamed Card (or a Card inside it) follow it. */
-export function retargetWindows(session: ProjectSession, from: CardKey, to: CardKey) {
-  let moved = false
-  for (const w of app.windows) {
-    if (w.session !== session || !('card' in w.what)) continue
-    const c = w.what.card
-    if (c === from || c.startsWith(from + '/')) {
-      w.what = { ...w.what, card: to + c.slice(from.length) }
-      moved = true
-    }
-  }
-  if (moved) app.changed()
-}
-
 function categories(m: CardEditorModel): CardEditorCategory[] {
   switch (m.kind) {
     case 'code': return ['general', 'comments', 'nix', 'source', 'ports', 'executions', 'artifacts', 'context']
@@ -373,7 +359,7 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
   })
   useObserve(model, session)
   const [confirmReload, setConfirmReload] = useState(false)
-  // The window was pointed at another Card (renamed elsewhere): follow it.
+  // The window was pointed at another Card: follow it.
   useEffect(() => {
     if (model.cardKey === card) return
     const m = new CardEditorModel(session, card)
@@ -387,12 +373,6 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
 
   if (!model.exists) {
     return <Empty title={L('Card が見つかりません')} icon="questionmark.square.dashed" description={L('{0} は削除されたか、まだ保存されていません。', model.cardKey)} />
-  }
-  const renamed = (to: CardKey) => {
-    const m = new CardEditorModel(session, to)
-    m.category = model.category
-    retargetWindows(session, model.cardKey, to)
-    setModel(m)
   }
   const close = async () => {
     if (model.unapplied && !(await model.apply())) return
@@ -426,7 +406,7 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
         {/* The preview belongs to General; editors, ports and history use the whole height. */}
         {category === 'general' && <CardPreview session={session} model={model} height={170} />}
         <div className="cse-content">
-          {category === 'general' && <GeneralCategory model={model} onRenamed={renamed} />}
+          {category === 'general' && <GeneralCategory model={model} />}
           {category === 'comments' && <CommentsCategory session={session} card={model.cardKey} />}
           {category === 'nix' && <SourceCategory model={model} only="default.nix" />}
           {category === 'source' && <SourceCategory model={model} />}
@@ -511,9 +491,9 @@ export function CardPreview({ session, model, height }: { session: ProjectSessio
 
 // ---- Categories --------------------------------------------------------------------
 
-/** Name (the Card's id and folder), description, params, when it runs, and
+/** Human name, description, params, when it runs, and
  *  the worker's permissions. */
-function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenamed: (to: CardKey) => void }) {
+function GeneralCategory({ model }: { model: CardEditorModel }) {
   const session = model.session
   const def = model.definition
   const [name, setName] = useState(() => session.displayName(model.cardKey))
@@ -522,7 +502,13 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
   // This tsugumid runs on this host: without the sandbox a Card is a process
   // of the user's, so turning it off is the user's knowing choice.
   const [confirmSandboxOff, setConfirmSandboxOff] = useState(false)
-  useEffect(() => setName(session.displayName(model.cardKey)), [model.cardKey])
+  const currentName = session.displayName(model.cardKey)
+  const previousName = useRef(currentName)
+  useEffect(() => {
+    const before = previousName.current
+    setName((typed) => typed === before ? currentName : typed)
+    previousName.current = currentName
+  }, [currentName])
 
   const rename = async () => {
     const nw = name.trim()
@@ -535,8 +521,6 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
         return
       }
       await session.renameCard(model.cardKey, nw)
-      // The editor follows the Card under its new name.
-      onRenamed(key([...path(model.cardKey).slice(0, -1), nw]))
     } catch (e) {
       setRenameError(e instanceof RPCFailure ? e.diagnostic ?? errorText(e) : errorText(e))
       setName(session.displayName(model.cardKey))
@@ -611,9 +595,9 @@ function GeneralCategory({ model, onRenamed }: { model: CardEditorModel; onRenam
   return (
     <Form>
       <Section>
-        <Row label={L('名前')} help={L('名前は Card の ID で、定義のフォルダ名（definitions/<名前>/）です。変えると接続・配置・実行履歴も追従します（すぐに保存します）。')}>
+        <Row label={L('名前')} help={L('表示する名前です。同じ名前を複数の Card に使えます。変えても ID・接続・実行履歴は変わりません（すぐに保存します）。')}>
           <div className="row gap6 center">
-            <TextField value={name} onChange={setName} mono style={{ width: 220 }}
+            <TextField value={name} onChange={setName} style={{ width: 220 }}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void rename() }} />
             {name !== session.displayName(model.cardKey) && (
               <Button disabled={renaming || !session.isEditable} onClick={() => void rename()}>{L('名前を変更')}</Button>

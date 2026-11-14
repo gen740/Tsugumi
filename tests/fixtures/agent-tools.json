@@ -79,8 +79,7 @@
          "RemoveDefinition",
          "PutSource",
          "PatchSource",
-         "RemoveSource",
-         "RenameDefinition"
+         "RemoveSource"
         ],
         "description": "variant of value"
        },
@@ -235,70 +234,11 @@
            "path",
            "base_hash"
           ]
-         },
-         {
-          "type": "object",
-          "properties": {
-           "id": {
-            "type": "string"
-           },
-           "to": {
-            "type": "string"
-           }
-          },
-          "additionalProperties": false,
-          "required": [
-           "id",
-           "to"
-          ]
          }
         ]
        }
       },
       "additionalProperties": false
-     }
-    },
-    "renamed_cards": {
-     "type": "array",
-     "items": {
-      "type": "object",
-      "properties": {
-       "from": {
-        "type": "object",
-        "properties": {
-         "segments": {
-          "type": "array",
-          "items": {
-           "type": "string"
-          }
-         }
-        },
-        "additionalProperties": false,
-        "required": [
-         "segments"
-        ]
-       },
-       "to": {
-        "type": "object",
-        "properties": {
-         "segments": {
-          "type": "array",
-          "items": {
-           "type": "string"
-          }
-         }
-        },
-        "additionalProperties": false,
-        "required": [
-         "segments"
-        ]
-       }
-      },
-      "additionalProperties": false,
-      "required": [
-       "from",
-       "to"
-      ]
      }
     }
    },
@@ -784,6 +724,28 @@
    "required": [
     "folder",
     "path"
+   ]
+  },
+  "mutating": false
+ },
+ {
+  "name": "card_id",
+  "payloadType": 49,
+  "description": "Reserves a permanent identifier for a new Card. Supply its human name; save its definition and canvas with the returned id and _meta.json.name.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "name": {
+     "type": "string"
+    },
+    "project_path": {
+     "type": "string",
+     "description": "Empty for root, or externals/<id>/ repeated for nesting."
+    }
+   },
+   "additionalProperties": false,
+   "required": [
+    "name"
    ]
   },
   "mutating": false

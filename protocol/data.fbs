@@ -17,7 +17,8 @@ table KeyValue {
   value:string (id: 1, required);
 }
 
-// A Card path such as ["nested", "step"]. Segments never contain '/'.
+// A Card path of permanent identifiers, such as ["nested", "step"].
+// Human names are separate; segments never contain '/'.
 // The empty path addresses only the graph root and never a Card.
 table CardPath {
   segments:[string] (id: 0, required);

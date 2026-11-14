@@ -9,7 +9,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 - **Requests that change something**: carry an `op_id`, and a resend with the same `op_id` is applied only once. If a response is lost, check with `OperationGet`.
 - **The Agent's tools**: made from the same schema (`tsugumi.bfbs`) ([Features](features.md#9-agent)).
 
-There are 47 requests.
+There are 48 requests.
 
 ## Connection
 
@@ -35,6 +35,7 @@ There are 47 requests.
 | [`ProjectOpen`](#projectopen) | OpenResult | Creates (or replaces) the connection's subscription. |
 | [`ProjectClose`](#projectclose) | Ack | Ends only the given subscription. Unknown ids are acknowledged. |
 | [`ProjectInspect`](#projectinspect) | ProjectSnapshot | No subscription, build or reload. |
+| [`CardId`](#cardid) | CardIdResult | Reserves a permanent identifier for a new Card without changing the document revision. Supply its human name; use the returned id in the canvas, definition paths and wires, and name in _meta.json.name. Each call reserves a fresh id; save the definition and canvas with project_save. |
 | [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. |
 | [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. |
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
@@ -59,6 +60,13 @@ There are 47 requests.
 
 No fields.
 
+### CardId
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `name` | `string` | yes |  |
+| `project_path` | `string` |  | Project-relative directory: empty for the root, or externals/<id>/, repeated for nesting. May name a project being created in the same draft. |
+
 ### ProjectSave
 
 | Field | Type | Required | Description |
@@ -67,7 +75,6 @@ No fields.
 | `op_id` | `string` | yes |  |
 | `origin` | `string` | yes |  |
 | `changes` | `[DocumentChange]` | yes |  |
-| `renamed_cards` | `[CardRename]` |  |  |
 | `approved_permissions` | `[string]` |  | The Card permissions this save widens that the user approved, each as an `approval_required` failure names it. Set by the client after asking the user, never by a model; a save from a model (origin "agent") is rejected unless every widening is listed. |
 
 ### ProjectReload

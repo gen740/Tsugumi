@@ -133,6 +133,7 @@ class Service : public RequestSink {
   // Mutation lane handlers.
   void open_project(RequestIn& req);
   void save(RequestIn& req);
+  auto card_id(RequestIn& req) -> void;
   void reload(RequestIn& req);
   void cache_clear(RequestIn& req);
   void cache_usage(RequestIn& req);

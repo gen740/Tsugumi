@@ -142,7 +142,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                   <Icon name={rs.icon} style={{ color: id === runId ? undefined : `var(--${rs.color})` }} />
                   <div className="flex1 min0">
                     <div className="callout">{formatMillis(r.status!.acceptedAt)}</div>
-                    <div className="caption secondary ellipsis">{rs.label} · 対象 {segs(r.target).join('/')}</div>
+                    <div className="caption secondary ellipsis">{rs.label} · 対象 {session.displayPath(segs(r.target))}</div>
                   </div>
                 </div>
               )
@@ -222,7 +222,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                       </Section>
                       {rec && rec.inputSources.length > 0 && (
                         <Section title={L('入力元')}>
-                          {rec.inputSources.map((x, i) => <Value key={i} label={s(x.port)} value={`${segs(x.card).join('/')} #${x.invocation ?? 0n}`} />)}
+                          {rec.inputSources.map((x, i) => <Value key={i} label={s(x.port)} value={`${session.displayPath(segs(x.card))} #${x.invocation ?? 0n}`} />)}
                         </Section>
                       )}
                       {record.orphaned && <div className="secondary pad10">{L('この Card は文書から削除されています。')}</div>}
