@@ -283,6 +283,7 @@ def test_resource_limits_use_live_worker_not_catalog(project, remote_gateway, co
 
 def test_stale_catalog_contract_does_not_prevent_probe(project, remote_gateway, core_factory, tmp_path):
     remote_gateway.catalog_contract = 99
+    remote_gateway.resource_limits = False
     client = core_factory(mocked_builds=True).connect()
     worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster")
     run_id = start_run(client, "work", propagate=False)
@@ -295,6 +296,7 @@ def test_stale_catalog_contract_does_not_prevent_probe(project, remote_gateway, 
 def test_explicit_system_is_checked_after_the_live_probe(project, remote_gateway, core_factory, tmp_path):
     remote_gateway.catalog_system = "x86_64-linux"
     remote_gateway.system = "aarch64-linux"
+    remote_gateway.resource_limits = False
     client = core_factory(mocked_builds=True).connect()
     worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
                    executionService="cluster", system="aarch64-linux")
