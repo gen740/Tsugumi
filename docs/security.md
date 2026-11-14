@@ -58,7 +58,7 @@ There are four boundaries, from the innermost outwards.
   - **Attaching a folder to the chat**: a folder for the Agent to read is shared read-only with that project.
 - Each project is given its own virtiofs device (`tsugumi-<slot>`) for sharing, so replacing one project's shares does not affect others.
 - The only entitlement given to the app is `com.apple.security.virtualization` (`macOS/Resources/Tsugumi.entitlements`).
-- The VM is started only by the one app process that holds the file lock (`flock`) on `vm/vm.lock`.
+- The signed `tsugumi-vmhost` helper holds the file lock (`flock`) on `vm/vm.lock`; agentd requests VM operations through the private helper contract.
 
 ### The VM's network
 
@@ -83,7 +83,7 @@ The managing process inside the VM, `tsugumi-vmd`, starts each project's `tsugum
 - **cgroup**: placed at `/sys/fs/cgroup/tsugumi/<id>`. Stopping a project ends exactly the processes in that cgroup with `cgroup.kill`, without affecting other projects.
 - **GC roots**: `/nix/var/nix/gcroots/tsugumi/projects/<id>/` is created by `tsugumi-vmd` as root, and the parent directory is not writable from projects, so another project cannot take it over by creating the directory first (checked in `test_shared_vm.py`).
 - **Kernel**: Linux 6.12 LTS (`macOS/Container/kernel.nix`) without io_uring, and with unprivileged BPF off by default. `/init` uses sysctls to restrict reading kernel addresses and logs, ptrace (descendants only) and planting links and files in shared sticky folders (Yama is enabled; BPF JIT and userfaultfd are not built in).
-- **Terminal**: opening the terminal inside the VM enters the project's namespaces with `setns`, joins the same cgroup and drops to the project's uid before starting `bash`. Closing the project ends the terminal too.
+- **Terminal**: opening the terminal inside the VM enters the project's namespaces with `setns`, joins the same cgroup and drops to the project's uid before starting `bash`. Stopping the project environment ends its terminals too.
 
 ### What projects share
 
@@ -167,7 +167,7 @@ A Card's `default.nix` may contain any Nix expression, but evaluation enforces t
 ### Protecting the WebSocket
 
 - The endpoint accepts only `GET /rpc` (anything else is 404) and requires `Sec-WebSocket-Protocol: tsugumi.rpc.v1`.
-- A connection with an `Origin` header is checked against the allow list (`--allow-origin`; empty when the app starts it) and refused with 403 on a mismatch. Ordinary web browsers always send an `Origin` header, so **a browser that opened a malicious web page cannot connect to Tsugumi on `127.0.0.1`** (preventing DNS rebinding and Cross-Site WebSocket Hijacking). Native clients without an `Origin` header (the app itself, the Agent, test scripts) authenticate with the token.
+- A connection with an `Origin` header is checked against the allow list (`--allow-origin`; agentd applies the origins supplied by the client starting the environment) and refused with 403 on a mismatch. Ordinary web browsers always send an `Origin` header, so **a browser that opened a malicious web page cannot connect to Tsugumi on `127.0.0.1`** (preventing DNS rebinding and Cross-Site WebSocket Hijacking). Native clients without an `Origin` header (the app itself, the Agent, test scripts) authenticate with the token.
 - The connection is closed at once on receiving an unmasked client frame, a frame with reserved bits set, a frame over the size limit, or a FlatBuffers message with an unknown union type or an invalid length (checked in `test_transport.py` and `test_contract.py`).
 
 ### Signed paging cursors
@@ -238,6 +238,7 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
   - running without isolation (`sandbox: false`)
   - Mac folders (`hostFolders`, reading and writing)
   - external Nix sources (`nixSources` in `tsugumi.json`)
+  - switching to a registered remote execution service (`executionService`)
 
   The approval works like this:
   - The Agent service requires a `CardPermissions` grant, resolved by the user through Agent RPC. It consumes this grant for one widening; the UI presents the request rather than deciding the permission rule.
@@ -259,9 +260,9 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
 | Data | Where | Deleting and managing |
 | --- | --- | --- |
 | The project's documents and sources | The project folder | Manage in Finder or the like (Tsugumi never deletes the folder itself) |
-| Run history (primary) | The VM's run-history disk `vm/history.img` (`/history-disk/<id>/` inside the VM) | "Delete Run History" in the project's settings, or "Run history in the VM" in the settings |
-| Run history (copy in the project) | `.tsugumi/runs.sqlite`, `.tsugumi/runs/` | "Delete Run History", or stop writing it with `saveRunHistory = false` |
-| Nix store, build roots | `~/Library/Application Support/Tsugumi/vm/store.img` | "Delete the build cache" and "Clean shared store" |
+| Run history (primary) | The VM's run-history disk `vm/history.img` (`/history-disk/<id>/` inside the VM) | "Delete…" under the project's Run History settings, or "Run history in the VM" in the settings |
+| Run history (copy in the project) | `.tsugumi/runs.sqlite`, `.tsugumi/runs/` | "Delete…" under Run History, or stop writing it with `saveRunHistory = false` |
+| Nix store, build roots | `~/Library/Application Support/Tsugumi/vm/store.img` | "Delete" under Build Cache and "Clean shared store" |
 | Control folders (token, origins, attached folders) | `~/Library/Application Support/Tsugumi/environments/<id>/control/` | "Reset all environments" |
 | API keys | macOS login Keychain; agentd's owner-only `host-settings.sqlite` for non-Mac/Web save fallback; Web environment keys in memory | Settings > API registers or deletes a key |
 | Agent conversations, events, receipts, grants and provisioned credentials | `agent-core/agent.sqlite` under the Mac support folder (`Tsugumi/` or `Tsugumi-dev/`), or under the Web data folder on Linux (`TSUGUMI_AGENT_STATE` overrides it) | Conversation deletion goes through Agent RPC |
@@ -280,12 +281,10 @@ Most of these spell out, as practical cautions, what lies outside the boundary i
 
 ## Remote worker boundary
 
-A registered execution host receives the Card's inputs. Use a host trusted with those data. All worker listeners, including the private Unix socket used by local integration tests, require TLS 1.3 and mutual Ed25519 public-key authentication. There is no plaintext or token-authenticated worker transport.
+A registered execution host receives the Card's inputs and derivation closure. Choose a host trusted with those data. It builds and runs the invocation; it does not evaluate Card definitions.
 
-Both peers present self-signed certificates. OpenSSL's certificate-verification callback compares the leaf's complete SPKI with an explicit public pin: the worker checks its owned `authorized_keys` file, and agentd checks the key saved with that service endpoint. This replaces CA/hostname trust; a wrong worker key is rejected before agentd writes application bytes. The worker requires a client certificate and reads no request until the authorized-key check succeeds. There is no TOFU, SSH carrier or automatic key replacement. Session resumption, tickets and early data are disabled so each new connection checks current authorization. Removing a host key refuses subsequent handshakes; an already authenticated request may finish.
+All worker connections require TLS 1.3 and mutual Ed25519 authentication. agentd verifies the worker's complete SPKI against the registered pin before sending a request. The worker requires a client certificate and checks its SPKI against the owned `authorized_keys` file at each handshake. CA and hostname trust are replaced by these explicit pins; session resumption, tickets and early data are disabled. Removing a key refuses subsequent handshakes; an authenticated request may finish. Private keys stay with their owner and are absent from Host RPC.
 
-The worker creates `STATE/identity.pem` (Ed25519 private key and self-signed certificate, 0600), prints its public key, and reads `STATE/authorized_keys` by default. The host's corresponding identity is `agent-core/execution-identity.pem` (0600); only its public key is exposed over the user-authenticated Host RPC. Private identity files must be owned regular files with no group/other permissions; symlinks are refused. The macOS app bundles OpenSSL's runtime libraries for agentd; provider HTTPS retains the system curl trust backend.
+Host-side agentd owns execution registrations and authorization. It derives a project scope from device, inode and birth time and replaces caller-supplied scopes. Copied or replaced directories get different scopes; a filesystem without birth time cannot use remote execution. The project's local broker capability is separate from worker authentication and never reaches the worker. Explicit project stop revokes it; UI disconnection and agentd restart preserve it. Replacing a registration invalidates its capabilities before another worker connection.
 
-The single execution broker in host-side `tsugumi-agentd` owns the registry and project authorization. Host RPC list/put/remove expose only public pins, endpoint information and capabilities. Registration can be saved before authorizing the host on the worker; explicit verification makes it available. The Mac's vsock adapter only carries bytes; agentd launches native project daemons with its private Unix endpoint.
-
-agentd derives scopes from device, inode and birth time, replaces caller-supplied scopes and checks the registered server/journal identity before forwarding. Registrations and scoped local capabilities live in `agent-core/execution.sqlite` (0600), and the HMAC scope key in `agent-core/execution-scope-key` (0600). Restarting a UI or agentd preserves authorization; explicit project stop revokes it durably. Replacing/removing registrations invalidates capabilities issued against the former registry before dialing a worker. Only the project daemon's host-written control share receives that project's local capability, carried in a separate broker envelope that the worker never receives. A copied/replaced directory gets a different scope; a filesystem without birth time is unavailable for remote execution. There is no token migration or automatic handling of run data. [Remote execution](RemoteExecution.md) documents setup, recovery and journal/scratch lifetime.
+Use [Remote execution](RemoteExecution.md) for registration, key storage, recovery and journal/scratch management. Run-history deletion does not delete remote job scratch.
