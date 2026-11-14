@@ -1,6 +1,6 @@
 # C# Cards
 
-C# uses the same typed ports, parameters, worker and saved run records as C++ and Python. Choose **Processing (C#)** when adding a Card. Edit `src/Card.cs`, change its parameters in Card settings and run it. The [cross-language calibration demo](Demos.md#csharp-calibration) connects C++ readings to a C# transformation and a Python report.
+C# uses the same typed ports, parameters, worker and saved run records as C++ and Python. Choose **C# Card** when adding a Card. Edit `src/Card.cs`, change its parameters in Card settings and run it. The [cross-language calibration demo](Demos.md#csharp-calibration) connects C++ readings to a C# transformation and a Python report.
 
 See [Inputs, results and reports](CardGuide.md#inputs-results-and-reports) for the shared SDK contract.
 
@@ -58,7 +58,7 @@ One `Card` instance and one .NET runtime live for the resident worker's lifetime
 
 ## Files, logs and displays
 
-File and Directory ports use their generated message's `Value` path, just as in other SDKs. Read an input path directly; write outputs below `context.OutputDirectory` and emit the generated path message. `InputKind(port)` distinguishes `File`, `Directory` and `FlatBuffer`. `WorkingDirectory` and `TemporaryDirectory` follow the Card's existing filesystem policy. Retain an output by selecting `artifactOutput` and enabling `retainArtifact` in Card settings.
+File and Directory ports use their generated message's `Value` path, just as in other SDKs. Read an input path directly; write outputs below `run.OutputDirectory` and emit the generated path message. `InputKind(port)` distinguishes `File`, `Directory` and `FlatBuffer`. `run.WorkingDirectory` and `run.TemporaryDirectory` follow the Card's existing filesystem policy. Retain an output by selecting `artifactOutput` and enabling `retainArtifact` in Card settings.
 
 The SDK provides `Log`, `Text`, `Markdown`, `Scalar`, `Table`, `Image`, `LineChart`, `Points` and `Module`. Text is strict UTF-8 and rejects embedded NUL characters. Display arrays must have matching lengths; rejected native displays fail the invocation. Image bytes and FlatBuffer bytes are binary, not text. The same sandbox/network restrictions apply to .NET and NuGet code as to other Cards.
 

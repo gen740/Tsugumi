@@ -13,14 +13,14 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 
 | Where | What |
 | --- | --- |
-| [protocol/](protocol/) | FlatBuffers contracts: project (`tsugumi.fbs`), Agent (`agent.fbs`), host operations (`host.fbs`, shared types in `service_common.fbs`), workers (`worker.fbs`, `remote_worker.fbs`), data and enums |
-| [core/](core/) | Project core `tsugumid`, host services (`src/host/`, `src/agent/`), worker pools, scheduling, Nix, history and versions |
+| [protocol/](protocol/) | FlatBuffers contracts: project (`tsugumi.fbs`), Agent (`agent.fbs`), host operations (`host.fbs`, shared types in `service_common.fbs`), private VM helper (`vm_host.fbs`), workers (`worker.fbs`, `remote_worker.fbs`), data and enums |
+| [core/](core/) | Project core `tsugumid`, host-side `tsugumi-agentd` (`src/host/`, `src/agent/`), worker pools, scheduling, Nix, history and versions |
 | [client/](client/) | Shared C++ RPC client, C interface and WebAssembly bindings |
 | [workerd/](workerd/) | Native Card host, C++ remote listener/supervisor/Nix runner, framing and job support |
 | [sdk/](sdk/) | Card ABI and runtime, language SDKs and code generation, views, [Nix SDK](sdk/nix/default.nix) |
 | [macOS/](macOS/) | SwiftUI app, RPC/Agent adapters, shared Linux VM, image definitions and app tests |
 | [ui/](ui/) | Shared isolated web-module host (`modules/`) and Card scaffolds (`templates/`) |
-| [agent/](agent/) | Shared Agent prompts, contracts (`Shared/`) and reference documents |
+| [agent/](agent/) | Shared Agent prompts, tool descriptions and guide scripts (`Shared/`) |
 | [web/](web/) | Browser UI, host server and platform adapters |
 | [cli/](cli/) | The `tsugumi` command, installers and distribution packaging |
 | [plugins/](plugins/) | Claude Code plugin; [installation and usage](docs/claude-code.md) |
@@ -37,7 +37,7 @@ Instructions for Claude Code, Codex and others (`CLAUDE.md` is a link to this fi
 
 ### Language
 
-Write documents, code comments, commit messages and pull requests in English. The UI's text is in Japanese and English: the app's English strings are in `macOS/Resources/tools/en_strings.py`.
+Write documents, code comments, commit messages and pull requests in English. The UI's text is in Japanese and English: the English strings are in `macOS/Resources/tools/en_strings.py` and `web/src/i18n/en.json`.
 
 ### Running the Mac app
 
@@ -48,7 +48,7 @@ Someone is doing other work on the same Mac. Do not take the foreground, and do 
 
 ### Checks before merging
 
-CI runs on GitHub Actions (the Linux and macOS jobs of [.github/workflows/ci.yml](.github/workflows/ci.yml)). To run the same checks locally, use [tests/ci-local.sh](tests/ci-local.sh). On a Mac it runs the macOS job as it is, and the Linux job in a Docker (OrbStack) container.
+CI runs on GitHub Actions ([.github/workflows/ci.yml](.github/workflows/ci.yml) calls [.github/workflows/ci-platform.yml](.github/workflows/ci-platform.yml)). To run the same checks locally, use [tests/ci-local.sh](tests/ci-local.sh). On a Mac it runs the macOS job as it is, and the Linux job in a Docker (OrbStack) container.
 
 Run [tests/check-fast.sh](tests/check-fast.sh) before every push: it runs the static tests (`tests/static`, which CI runs first, in about a minute) and builds the Web UI checks, including the demo player.
 Use `--no-nix` for only the static tests (seconds). See [tests/README.md](tests/README.md) for suite details and manual tools.

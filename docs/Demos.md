@@ -2,7 +2,7 @@
 
 What Cards each bundled demo connects, how, and what happens when it runs.
 Choose "Open a Copy" from "Browse Demos" on the home screen and an editable copy is made in `~/Documents/Tsugumi/<demo>` (the bundled original is not changed).
-The demos come as a Japanese set and an English set (`demos/ja`, `demos/en`), the same demos with their text in one language; the app shows the set of its language. The values below are from the English set, and the Japanese set gives the same numbers.
+The demos come as a Japanese set and an English set (`demos/ja`, `demos/en`), the same demos with their text in one language; the app shows the set of its language. Choose the language in settings; inspect values in each demo's own run records.
 Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of execution are in [Features](features.md#2-cards-and-workflows).
 
 | Demo | Subject | What it shows |
@@ -33,7 +33,7 @@ Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of ex
 | [Dynamical systems gallery](#dynamical-systems-gallery-dynamics-draft) | Six dynamical systems | The Agent splits independent Drafts among helpers and implements them at the same time |
 | [MNIST · comparing classifiers (Draft)](#mnist--comparing-classifiers-draft-mnist-classifiers-draft) | Classifying handwritten digits (seven methods) | From a plan implemented up to the data, helpers implement seven classifiers at the same time and the Agent puts the comparison together |
 
-The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), fork (distribution), branch (conditional branching), merge, subgraph (Card in Card) and code Cards (C++ / Python / bash / R / Julia / Ruby).
+The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), fork (distribution), branch (conditional branching), merge, subgraph (Card in Card) and code Cards ([supported languages](CardGuide.md#inputs-results-and-reports)).
 A fork Card only hands values out as the arrows show, so it is left out of each demo's table.
 Every Card has a summary in `_meta.json`, readable on the Canvas (by hovering, for trigger, fork, merge and branch) and in the Card's settings.
 
@@ -110,8 +110,8 @@ Pins with Nix the X-ray event data of the supernova remnant Cassiopeia A (Chandr
 It also draws the energy spectrum of the same photons, to check which element's lines became which colour.
 
 **Try**
-- Run it as it is. The default observation is ObsID 25628 (2.1 ks, 13 MB). `bands` shows the photon counts per band (red 101,187 / green 157,471 / blue 110,852) as a table.
-- Change `obsid`, `file` and `hash` of `load` to ObsID 114 (2000, 50 ks, 520 MB) or ObsID 19606 (2019, 49 ks, 349 MB): the deeper observations give a sharper image, and about twenty years of change can be compared (the values are on the sticky note and in `load`'s description). Only the first run takes time to fetch.
+- Run it as it is. The default observation is ObsID 25628 (2.1 ks, 13 MB). Read the photon-count table in `bands` and compare it with the RGB image.
+- Change `obsid`, `file` and `hash` of `load` to ObsID 114 (2000, 50 ks, 520 MB) or ObsID 19606 (2019, 49 ks, 349 MB): the deeper observations give a sharper image, and compare the observations (the download settings are on the sticky note and in `load`'s description). Only the first run takes time to fetch.
 - Change the bands of `bands`, the stretch of `rgb`, or the range and binning of `spectrum`, and rerun just that Card. The spectrum shows that the green band contains exactly the Si line, and everything from S up falls in blue.
 - Open the version tree. It holds the process of trying bands, grids and stretches: failed branches, branches not adopted, the adopted version `rgb-v1`, the version that added the spectrum on top, and the version that pinned CIAO ([Versions](Versions.md#demo-histories)).
 
@@ -141,8 +141,8 @@ Each classifier Card shows its accuracy, single-thread CPU time (training and pr
 
 **Try**
 
-- Run it as it is. The seven branches run at the same time (how many at once is "Parallel runs" in the settings, default 4). The accuracy on 2000 test images is `svm` 0.9705, `cnn` 0.9680, `mlp` 0.9625, `knn` 0.9500, `forest` 0.9475, `boosting` 0.9455 and `logistic` 0.9210, and `compare` says the gap between `svm` and `cnn` does not reach twice the noise.
-- Set `max_depth` of `forest` to 3 and run just that Card. No other branch runs, and only `forest`'s accuracy drops, from 0.9475 to 0.7570.
+- Run it as it is. The seven branches run at the same time (how many at once is "Parallel runs" in the settings, default 4). Inspect accuracy, errors and the uncertainty of pairwise differences in `compare`.
+- Set `max_depth` of `forest` to 3 and run just that Card. No other branch runs; inspect how restricting tree depth changes its errors.
 - To compare again, run from `forest` onwards ("Run from Here Downstream"). Only `forest` and what follows `compare` run, and `compare` compares the new `forest` result with the saved inputs of the other branches and `share`. The branches you did not change do not run, so their accuracy is the same.
 - Change `k` of `knn`, `gamma` of `svm` or `epochs` of `cnn`.
 - Increase `train_size` of `prepare` and see which classifiers benefit from more images and whose time grows (`svm`'s and `knn`'s prediction times grow).
@@ -156,9 +156,9 @@ Solves $z^3 - 1 = 0$ on the complex plane to see how the starting point decides 
 **Try**
 - Run it as it is. The errors in `orbits` fall quadratically on the log axis, and the estimated order in `order` lines up with the theory. `basins` draws the fractal boundaries between where points converge.
 - Set `center_re` of `basins` to -0.8 and `half_width` to 0.2 and rerun just that Card. Wherever you zoom on the boundary, all three colours gather.
-- Set `offset` of `trouble` to 1e-5. The first step is thrown out to $1/(3 z_0^2)$, and far away it comes back only by 2/3 per step, so the iterations go from 37 to 60 (exactly the default `max_iter`; smaller still, `max_iter` must be increased).
+- Set `offset` of `trouble` to 1e-5. The first step is thrown out to $1/(3 z_0^2)$, and far away it comes back only by 2/3 per step, so inspect the iteration count and raise `max_iter` if convergence reaches its cap.
 - Set `damping` of `settings` to 0.5 and run the whole. From every starting point the order becomes 1 with ratio 0.5, and the shape of the boundaries on the map changes too.
-- Set `coeffs` of `settings` to `[1, 0, -3, 2]` ($(z-1)^2(z+2)$). At the root of multiplicity 2 the order drops to 1 with ratio 0.5, and the error stops at about $10^{-8}$.
+- Set `coeffs` of `settings` to `[1, 0, -3, 2]` ($(z-1)^2(z+2)$). At the root of multiplicity 2 the order drops to 1 with ratio 0.5, and rounding limits the final error.
 - Set `coeffs` of `settings` to `[1, 0, -2, 2]` ($z^3 - 2z + 2$). A black region appears around 0 (starting points drawn into a cycle of period 2 that never converge).
 
 ### Pharmacokinetics (`pharmacokinetics`)
@@ -187,9 +187,9 @@ Makes plates of made-up compounds A and B with random numbers (synthetic data), 
 The true values are known, so you can check on the spot whether they were recovered. These are not real drugs, and this is not medical advice.
 
 **Try**
-- Run it as it is. The 95% intervals of the EC50 and Hill slope contain the true values, and the relative potency (true value 15) comes out as 14.4 (11.6 – 18.6).
-- Set `noise_sd` of `generate` to 12 and run. The intervals widen (for B's EC50, from 1.2-fold to 1.7-fold).
-- Set `top_um` of `generate` to 1 and run. B's curve never levels off, the interval's width exceeds 1000-fold, `bootstrap` warns "the concentration range does not bracket the EC50", and `compare` says "no difference in potency can be claimed".
+- Run it as it is. Check whether the EC50 and Hill-slope intervals contain their known values, then compare relative potency with the synthetic truth.
+- Set `noise_sd` of `generate` to 12 and run. Compare the uncertainty around each compound's EC50.
+- Set `top_um` of `generate` to 1 and run. Inspect B's unbracketed curve and the uncertainty warnings in `bootstrap` and `compare`.
 - Reduce `concentrations` or `replicates`. Change `n_boot` of `bootstrap` and rerun just that Card.
 
 ### Molecular properties (`molecules`)
@@ -198,7 +198,7 @@ From SMILES, which writes a molecule as a string, computes properties with RDKit
 Paste a SMILES into `paste` on the Canvas and that molecule joins every Card.
 
 **Try**
-- Run it as it is. A table of the properties of 15 molecules and their structural formulas appear. Only atorvastatin and cyclosporin A fail the Rule of Five, and the most alike are morphine and codeine (Tanimoto 0.76).
+- Run it as it is. A table of the properties of 15 molecules and their structural formulas appear. Inspect the Rule of Five violations and the pairwise similarity scores.
 - Paste another SMILES into `smiles` of `paste` and run.
 - Set `smiles` of `paste` to `C1CC(` or `C(C)(C)(C)(C)C` and run. It does not crash: the reason it cannot be read appears above `properties`' table, and the other molecules are computed.
 - Set `max_violations` of `lipinski` to 0 and rerun just that Card. Cholesterol fails.
@@ -210,8 +210,8 @@ Makes synthetic fluorescence-like images whose centres are known, counts the cel
 You see what separating touching cells gains, and from where counting fails. The lower row applies the same procedure to a real image of nuclei (with no ground truth, it is not scored).
 
 **Try**
-- Run it as it is. Against a true count of 80, threshold only finds 60 (recall 0.75) and watershed 74 (recall 0.93). On the real image of nuclei, threshold only finds 271 and watershed 311 (with no ground truth, check the outlines by eye).
-- Set `cells` of `generate` to 320 and run. Threshold only's recall falls to 0.24, while watershed keeps 0.79.
+- Run it as it is. Compare thresholding and watershed against the known synthetic count. On the real nuclei image, check the outlines by eye because there is no ground truth.
+- Set `cells` of `generate` to 320 and run. Compare each method's recall as cells overlap more.
 - Raise `noise` of `generate`. As the top left of `sweep`'s table shows, the fewer the cells, the more the threshold falls into the noise and overcounts.
 - Change `min_distance` of `segment` and rerun just that Card. Larger values separate less.
 
@@ -221,10 +221,10 @@ With `lung`, bundled with the survival package (real data from the NCCTG advance
 How much the same hazard ratio moves with "who is included" and "what is adjusted for" is laid out in one figure on the Canvas. These are associations in old trial data; they show no cause and are not advice.
 
 **Try**
-- Run it as it is. Median survival is 426 days for women and 270 for men, and the log-rank χ² is 10.33. `specs` lays out the hazard ratios of 24 combinations of subjects and adjustments.
-- Read the figure in `specs`. The hazard ratio for women is 0.59 for everyone, but 0.76 (with an interval crossing 1) under 65 adjusted up to ECOG, and 0.39 for ECOG 2 and above adjusted for four variables. In the latter, missing weight-loss values reduce 51 people to 46.
-- Set `group` of `km` to `ecog` and run. The log-rank χ² changes from 10.33 to 18.98.
-- Add `ph.karno` to `covariates` of `cox` and run from `cox` onwards. The overall p-value of `zph` falls from 0.216 to 0.016, and the proportional hazards assumption becomes doubtful (in a single-Card run `zph`'s input is not updated, so run on from `cox`).
+- Run it as it is. Read the survival curves and log-rank test, then inspect the combinations of subjects and adjustments in `specs`.
+- Read the figure in `specs`. Compare the hazard ratio and confidence interval across age groups and adjustment sets. Check how missing covariates change the number of included subjects.
+- Set `group` of `km` to `ecog` and run. Compare the group curves and log-rank test.
+- Add `ph.karno` to `covariates` of `cox` and run from `cox` onwards. Inspect `zph` to judge the proportional hazards assumption (a single-Card run does not update `zph`'s input, so run downstream from `cox`).
 - Set `age_min` of `cohort` to 65, run, and look at how `km` and `cox` change.
 
 ### Meta-analysis: the BCG vaccine (`meta-analysis`)
@@ -233,10 +233,10 @@ With `dat.bcg`, bundled with metafor (13 trials of the BCG vaccine against tuber
 How much the conclusion moves with choices such as leaving one trial out or changing the estimator can be seen on the Canvas. This is an example of statistical method, not advice about vaccination.
 
 **Try**
-- In the forest plot of `pool`, compare the fixed-effect diamond, 0.65, with the random-effects diamond, 0.49. I² is 92.1%.
-- Set `exclude` of `pool` to `[8]` (TPT Madras, the largest trial) and run only `pool`. The fixed effect moves from 0.65 to 0.48.
-- Set `method` of `pool` to `REML`. τ² changes from 0.309 to 0.313, but the pooled risk ratio hardly moves.
-- In `moderator`, see latitude reduce τ² from 0.313 to 0.076. Set `moderator` to `year` to compare.
+- In the forest plot of `pool`, compare the fixed-effect and random-effects diamonds and inspect heterogeneity.
+- Set `exclude` of `pool` to `[8]` (TPT Madras, the largest trial) and run only `pool`. Compare the pooled estimate and its uncertainty.
+- Set `method` of `pool` to `REML`. Compare τ² and the pooled risk ratio.
+- In `moderator`, compare residual heterogeneity with latitude and with `moderator` set to `year`.
 
 ### RNA-seq: airway and dexamethasone (`rna-seq`)
 
@@ -244,11 +244,11 @@ With Bioconductor's airway (real data from four airway smooth muscle cell lines 
 How much "the number of differentially expressed genes" changes with thresholds and design can be checked in each Card. This is a cell-culture experiment; it shows no effect of treatment and is not medical advice.
 
 **Try**
-- Run it as it is (the first time, the Nix builds of DESeq2, edgeR and airway take a while). `compare` shows 3985 genes on which DESeq2 and edgeR agree.
-- Read the figure in `design`. Including the cell line term increases the genes with FDR < 0.05 from 2713 to 4030. The log2FC hardly changes; only the statistics grow.
+- Run it as it is (the first time, the Nix builds of DESeq2, edgeR and airway take a while). Inspect which genes DESeq2 and edgeR agree on in `compare`.
+- Read the figure in `design`. Compare gene counts, log2 fold changes and significance with and without the cell-line term.
 - Change `lfc` of `volcano` from 1 to 2, or change `fdr`, and run only `volcano`. The counts match those in `thresholds`' table.
 - Set `min_total` of `filter` to 100 and run from `filter` onwards.
-- In `top`, look at the ranks of FKBP5, DUSP1 and TSC22D3. Ranking genes by FDR and by the size of their fold change do not give the same order (FKBP5 is 16.5-fold at rank 143; DUSP1 is 7.7-fold at rank 3).
+- In `top`, look at the ranks of FKBP5, DUSP1 and TSC22D3. Compare ranking by FDR with ranking by fold-change size.
 
 ### A correlation that reverses when stratified (`simpson`)
 
@@ -256,24 +256,24 @@ A relationship seen in the whole can reverse its sign when split into strata. Th
 A note says that which value to read is not decided by the data alone, but by the causal question.
 
 **Try**
-- Run it as it is. The r of bill length and depth is −0.24 overall, but 0.39, 0.65 and 0.64 within species: the direction reverses.
+- Run it as it is. Compare the overall correlation of bill length and depth with the correlations within species.
 - Set `stratify` of `correlate` to `sex` and run from `correlate` onwards. r stays negative in every stratum and does not reverse.
 - Set `stratify` to `island`. It stays negative on Biscoe, and turns positive on Dream and Torgersen.
-- In `admissions`' table, see the overall odds ratio of 1.84 become 0.90 when adjusted for department. In `applications`' figure, see how applications were skewed.
+- Compare the overall and department-adjusted odds ratios in `admissions`, then inspect the distribution of applications in `applications`.
 
 ### Scheduling a battery (`battery`)
 
 **Try**
-- Run it as it is. Over the made-up week, with exports at half price, it saves about 786 yen even at the flat tariff, about 1478 yen with time-of-use and about 1442 yen market-linked. `check` shows dynamic programming agreeing with exhaustive search.
+- Run it as it is. Compare savings under the synthetic tariffs and inspect the agreement between dynamic programming and exhaustive search in `check`.
 - Change `tariff` of `schedule` to `flat`, `tou` or `spot` and rerun just that Card.
-- Lower `round_trip_efficiency` of `settings` and run. With time-of-use prices, once the efficiency falls below cheap / expensive (18 / 42), the round trip no longer pays.
+- Lower `round_trip_efficiency` of `settings` and run. Compare savings as efficiency crosses cheap / expensive (18 / 42) under time-of-use prices.
 - Set `export_ratio` of `settings` to 1 and exports earn the same as imports cost, so storing solar is pointless. At the flat tariff the saving is 0 yen with 0 cycles: the battery does not run.
 - Change `capacities_kwh` of `capacities` and see where it levels off.
 
 ### Fluctuations in chemical reactions (`gillespie`)
 
 **Try**
-- Run it as it is. The trajectories fluctuate, but the mean of 2000 runs follows the rate equation. The stationary mean and variance are close to the theoretical 20 (20.15, 20.46), and the Fano factor is 1.015. With two of each, A + B ⇌ C has a fraction bound of 0.57, off from the rate equation's 0.50 (it approaches it as the volume grows).
+- Run it as it is. The trajectories fluctuate, but the mean of 2000 runs follows the rate equation. Compare stationary mean, variance and Fano factor with theory. In the reversible binding model, compare the bound fraction with the rate equation as volume changes.
 - Set `volume` of `settings` to 0.1 and run. It becomes a Poisson distribution with mean 2, and trajectories drop to 0 too. The Fano factor stays 1.
 - Increase `shown_runs` of `trajectories` and rerun just that Card.
 - Change `on_rate` or `concentration` of `binding` and see how far it departs from the rate equation.
@@ -282,7 +282,7 @@ A note says that which value to read is not decided by the data alone, but by th
 ### An inverse problem in heat conduction (`heat-inverse`)
 
 **Try**
-- Run it as it is. The naive inverse diverges to as much as 3.8e+33 °C, while Tikhonov regularisation recovers the shape with an error of 5.1 °C. In `horizon`, the later the measurement, the fewer modes stay above the noise (from 37 to 3), and the error grows from 1.9 °C to 10.6 °C.
+- Run it as it is. Compare the naive inverse with Tikhonov regularisation. In `horizon`, inspect recoverable modes and reconstruction error as measurement time changes.
 - Set `final_time` of `settings` to 0.02 and run. With the same noise, the recovery's error grows.
 - Change `lambda` of `reconstruct` and rerun just that Card. Back at 0, it uses the discrepancy principle's value.
 - Set `noise` of `settings` to 0 and `final_time` to 0.00005, and the recovery returns to the truth.
@@ -291,7 +291,7 @@ A note says that which value to read is not decided by the data alone, but by th
 ### Comparing ecological models (`ecology-models`)
 
 **Try**
-- Run it as it is. Over these 21 years the three models fit almost equally (log RMSE 0.219), AICc favours Lotka–Volterra with the fewest parameters, and Holling's handling time h goes towards 0. The error of forecasts fitted up to 1914 is also smaller for Lotka–Volterra (0.353, against 0.421 for the others). The sticky note says that a good AIC does not mean the mechanism is right, and that pelts are not population counts.
+- Run it as it is. Compare fit error, AICc, parameter estimates and held-out forecasts. Use the sticky note's cautions when interpreting a good score: it does not establish a mechanism, and pelts are not population counts.
 - Change `fit_until` of `forecast` between 1908 and 1918 and rerun just that Card. The more years held out, the harder the forecast.
 - Lower or raise `restarts` of `fit` and look at "starting points that reached the same solution" and the errors in `scores`.
 - Increase `years` of `phase` and see where the logistic spiral heads.
