@@ -2,6 +2,7 @@
 // Unix: little-endian uint32 length then one buffer. WebSocket: one binary
 // buffer, subprotocol tsugumi.host.v1. The external Agent token is rejected.
 include "service_common.fbs";
+include "tsugumi.fbs";
 namespace Tsugumi.Host;
 // Every optional list in this contract is empty when its vector is omitted.
 
@@ -157,7 +158,16 @@ table VersionComment {
 table VersionCommentsRequest { project:string (required); commit:string (required); }
 table VersionComments { comments:[VersionComment]; }
 
+// Pure editing support: paths select a language and label diagnostics, never files.
+table FileFormatRequest { path:string (required); text:string (required); language:Tsugumi.Data.FormatLanguage; }
+table FileFormatResult { text:string (required); diagnostics:[Tsugumi.Data.Diagnostic]; }
+// Language applies on every read, including commits/runs created by another client.
+table HostVersionDiffRequest { project:string (required); commit:string (required); from_commit:string; }
+table VersionDiff { text:string (required); truncated:bool; }
+table HostVersionGraphRequest { project:string (required); language:string; limit:uint = 500; }
+
 union RequestPayload {
+  FileFormatRequest, HostVersionGraphRequest, HostVersionDiffRequest,
   VersionCommentsRequest,
   GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
@@ -165,6 +175,7 @@ union RequestPayload {
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
+  FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   VersionComments,
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   GuideState, EnvironmentState, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,

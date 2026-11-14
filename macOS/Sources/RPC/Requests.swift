@@ -296,17 +296,6 @@ public extension RPCClient {
     return try await call(.versioncanvasrequest, r)
   }
 
-  /// What a version changed: the code and settings a summary may read, never data.
-  func versionDiff(commit: String, fromCommit: String? = nil) async throws -> Tsugumi_RPC_VersionDiffT {
-    let r = Tsugumi_RPC_VersionDiffRequestT()
-    r.commit = commit
-    r.fromCommit = fromCommit
-    return try await call(.versiondiffrequest, r)
-  }
-
-  /// Keeps a summary of a version in its own note.
-
-
   /// Makes the project a git repository (a demo's history becomes its versions).
   func versionInit(opId: UUID, origin: String) async throws -> Tsugumi_RPC_VersionResultT {
     let r = Tsugumi_RPC_VersionInitRequestT()
@@ -347,12 +336,7 @@ public extension RPCClient {
     return try await call(.outputtypesrequest, r)
   }
 
-  func format(path: String, text: String) async throws -> Tsugumi_RPC_ProjectFileFormatResultT {
-    let r = Tsugumi_RPC_ProjectFileFormatRequestT()
-    r.path = path
-    r.text = text
-    return try await call(.projectfileformatrequest, r)
-  }
+
 }
 
 /// DocumentChange builders.

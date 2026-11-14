@@ -12,6 +12,8 @@ flatbuffers_root=$(cd "$(dirname "$(command -v flatc)")/.." && pwd)
 cmake_path=$(command -v cmake)
 run() {
   env -i HOME="$HOME" PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" \
+    TSUGUMI_FORMAT_CLANG="${TSUGUMI_FORMAT_CLANG:?}" TSUGUMI_FORMAT_RUFF="${TSUGUMI_FORMAT_RUFF:?}" \
+    TSUGUMI_FORMAT_NIX="${TSUGUMI_FORMAT_NIX:?}" TSUGUMI_FORMAT_SH="${TSUGUMI_FORMAT_SH:?}" \
     HOSQ_INCLUDE_DIR="$HOSQ_INCLUDE_DIR" \
     TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV:?}" \
     TSUGUMI_CARD_NIXPKGS_NARHASH="${TSUGUMI_CARD_NIXPKGS_NARHASH:?}" \
@@ -19,6 +21,8 @@ run() {
     CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-}" "$@"
 }
 run "$cmake_path" --fresh -S "$repo" -B "$repo/build-host" -G Ninja \
+  -DTSUGUMI_FORMAT_CLANG="@bundle/clang-format" -DTSUGUMI_FORMAT_RUFF="@bundle/ruff" \
+  -DTSUGUMI_FORMAT_NIX="@bundle/nixfmt" -DTSUGUMI_FORMAT_SH="@bundle/shfmt" \
   -DTSUGUMI_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT="$sdk_path" \
   -Dflatbuffers_DIR="$flatbuffers_root/lib/cmake/flatbuffers" \
@@ -27,6 +31,10 @@ run "$cmake_path" --fresh -S "$repo" -B "$repo/build-host" -G Ninja \
   -DCURL_LIBRARY_DEBUG="$sdk_path/usr/lib/libcurl.tbd" -DCURL_INCLUDE_DIR="$sdk_path/usr/include" \
   -DTSUGUMI_AGENT_SQLITE_LIBRARY="$sdk_path/usr/lib/libsqlite3.tbd"
 run "$cmake_path" --build "$repo/build-host" --target tsugumi-agentd
+
+# Copy pinned native formatter binaries and their dylibs, with no Nix paths at runtime.
+python3 "$repo/macOS/tools/bundle-formatters.py" "$repo/build-host/Resources/formatters" \
+  "$TSUGUMI_FORMAT_CLANG" "$TSUGUMI_FORMAT_RUFF" "$TSUGUMI_FORMAT_NIX" "$TSUGUMI_FORMAT_SH"
 
 # Bundle the two OpenSSL runtime libraries, keeping the native product usable
 # without a Nix installation. Provider HTTPS still uses the system libcurl.

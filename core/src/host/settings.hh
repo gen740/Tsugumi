@@ -35,6 +35,7 @@ class Settings {
       -> std::string;
   auto Redact(std::string text) -> std::string;
   auto HelperPolicy(const std::string &profile) -> std::pair<size_t, bool>;
+  auto Language(const std::string& profile) -> std::string;
   auto VersionNoteMode(const std::string& profile) -> std::string;
   auto VersionNoteProvider(const std::string& profile, const std::string& anthropic_keys,
                            const std::string& openai_keys) -> agent::ProviderConfig;

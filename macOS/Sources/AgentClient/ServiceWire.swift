@@ -9,10 +9,26 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   static func request(_ method: String, _ fields: [String: Any], host: Bool) throws -> (UInt8, NativeObject) {
     if host {
       switch method {
+      case "FileFormatRequest":
+        let v = Tsugumi_Host_FileFormatRequestT()
+        v.path = fields["path"] as? String ?? ""
+        v.text = fields["text"] as? String ?? ""
+        return (Tsugumi_Host_RequestPayload.fileformatrequest.rawValue, v)
+      case "HostVersionGraphRequest":
+        let v = Tsugumi_Host_HostVersionGraphRequestT()
+        v.project = fields["project"] as? String ?? ""
+        v.language = fields["language"] as? String
+        return (Tsugumi_Host_RequestPayload.hostversiongraphrequest.rawValue, v)
+      case "HostVersionDiffRequest":
+        let v = Tsugumi_Host_HostVersionDiffRequestT()
+        v.project = fields["project"] as? String ?? ""
+        v.commit = fields["commit"] as? String ?? ""
+        v.fromCommit = fields["from_commit"] as? String
+        return (Tsugumi_Host_RequestPayload.hostversiondiffrequest.rawValue, v)
       case "VersionCommentsRequest":
         let v = Tsugumi_Host_VersionCommentsRequestT()
         v.project = fields["project"] as? String ?? ""
@@ -416,6 +432,9 @@ enum ServiceWire {
 
   private static func view(_ value: NativeObject) throws -> Any {
     switch value {
+    case let v as Tsugumi_Host_FileFormatResultT: return ["result": v]
+    case let v as Tsugumi_RPC_VersionGraphT: return ["result": v]
+    case let v as Tsugumi_Host_VersionDiffT: return ["result": v]
     case let v as Tsugumi_Host_VersionCommentsT: return ["comments": v.comments.compactMap { $0 }]
     case let v as Tsugumi_Host_GuideStateT:
       var out: [String: Any] = ["sessionId": v.sessionId, "revision": v.revision, "answerRevision": v.answerRevision,

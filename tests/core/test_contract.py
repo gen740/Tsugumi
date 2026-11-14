@@ -108,7 +108,7 @@ def test_session_requires_hello_and_negotiates_protocol_and_project(daemon):
         capabilities = {text(capability) for capability in negotiated.capabilities}
         assert {f"display:Display{kind}" for kind in
                 ("Text", "Scalar", "Table", "Image", "PointCloud", "Module")} <= capabilities
-        assert {f"format:{kind}" for kind in ("json", "cpp", "python", "nix", "bash")} <= capabilities
+        assert not any(cap.startswith("format:") for cap in capabilities)
         with pytest.raises(RpcFailure) as error:
             connect().hello(project=new_id())
         assert error.value.kind == "permission_denied"
@@ -280,43 +280,14 @@ def test_view_save_cas(client):
     assert opened.snapshot.view.cameras[0].zoom == 1.25
 
 
-def test_validate_and_unsupported_format(client):
-    """Validation requires the requested revision and formatting rejects unsupported languages."""
+def test_validate_revision(client):
+    """Validation requires the requested revision."""
     snap = client.open().snapshot
     v = client.call("ProjectValidateRequest", atRev=snap.rev)
     assert v.valid is True
     with pytest.raises(RpcFailure) as e:
         client.call("ProjectValidateRequest", atRev=snap.rev + 5)
     assert e.value.kind == "revision_conflict"
-    with pytest.raises(RpcFailure) as e:
-        client.call("ProjectFileFormatRequest", path="x.fbs", text="table T {}", language=6)
-    assert e.value.kind == "unsupported"
-
-
-def test_format_is_separate_from_saving(client):
-    """Formatting returns text or diagnostics without saving the project."""
-    import shutil
-    snap = client.open().snapshot
-    r = client.call("ProjectFileFormatRequest", path="definitions/a/_card.json", text='{"a":[1,2],"b":{}}')
-    assert text(r.text) == '{\n  "a": [\n    1,\n    2\n  ],\n  "b": {}\n}\n'
-    bad = client.call("ProjectFileFormatRequest", path="definitions/a/x.json", text='{"a":')
-    assert [text(d.code) for d in bad.diagnostics] == ["syntax_error"] and text(bad.text) == '{"a":'
-    tools = {"cpp": ("clang-format", "x.cc", "int  main( ){return 0;}", None),
-             "python": ("ruff", "x.py", "def f(:\n  pass\n", (1, 7)),
-             "nix": ("nixfmt", "x.nix", "{ a = 1; b = [ 1 2 ]; }", None)}
-    for lang, (tool, name, src, err_pos) in tools.items():
-        if not shutil.which(tool):
-            with pytest.raises(RpcFailure) as e:
-                client.call("ProjectFileFormatRequest", path="definitions/a/" + name, text=src)
-            assert e.value.kind == "unsupported" and tool in str(e.value)
-            continue
-        res = client.call("ProjectFileFormatRequest", path="definitions/a/" + name, text=src)
-        if err_pos:
-            assert [text(d.code) for d in res.diagnostics] == ["syntax_error"]
-            assert res.diagnostics[0].offset is not None
-        else:
-            assert not res.diagnostics and text(res.text) != src
-    assert client.call("ProjectInspectRequest").rev == snap.rev
 
 
 def test_ui_layout_fields_and_draft_outputs(client):

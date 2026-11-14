@@ -19,9 +19,7 @@
 #include "util/crypto.hh"
 #include "util/fs.hh"
 #include "util/log.hh"
-#include "util/process.hh"
 
-#include <regex>
 
 extern const unsigned char tsugumi_rpc_bfbs[];
 
@@ -401,15 +399,14 @@ std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {
       "SessionHello", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
       "ProjectReload", "ProjectValidate", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "RunHistoryDelete", "OperationGet",
-      "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "LayoutArrange", "LayoutUntangle", "AttachedFolderRead",
+      "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "OutputTypes", "LayoutArrange", "LayoutUntangle", "AttachedFolderRead",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
       "ArtifactRead", "ModuleRead", "LogRange", "ViewSetVisible", "ViewSave",
-      "NixSourceResolve", "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionNote", "VersionNoteStore"};
-  // Every Display kind of the protocol, and the languages ProjectFileFormat formats.
+      "NixSourceResolve", "VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionNote"};
+  // Every Display kind of the protocol.
   for (auto v : D::EnumValuesDisplayValue())
     if (v != D::DisplayValue::NONE) caps.push_back(std::string("display:") + D::EnumNameDisplayValue(v));
-  for (const char* f : {"json", "cpp", "python", "nix", "bash"}) caps.push_back(std::string("format:") + f);
   return caps;
 }
 
@@ -441,10 +438,6 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
   }
   if (h->expected_project_id() && h->expected_project_id()->str() != store_->project_id())
     return failure(FailureKind::permission_denied, "this endpoint serves a different project");
-  {
-    std::lock_guard<std::mutex> l(subs_mu_);
-    english_[in.conn] = h->language() && h->language()->str() == "en";
-  }
   FBB b;
   auto caps = capabilities();
   std::vector<flatbuffers::Offset<flatbuffers::String>> cv;
@@ -466,13 +459,6 @@ void Service::disconnected(ConnId conn) {
   }
   std::lock_guard<std::mutex> l(subs_mu_);
   subscriptions_.erase(conn);
-  english_.erase(conn);
-}
-
-bool Service::english(ConnId conn) {
-  std::lock_guard<std::mutex> l(subs_mu_);
-  auto it = english_.find(conn);
-  return it != english_.end() && it->second;
 }
 
 void Service::on_lane(Lane& lane, RequestIn req, void (Service::*fn)(RequestIn&)) {
@@ -510,9 +496,7 @@ void Service::dispatch(RequestIn req) {
     case P::VersionCheckoutRequest: return on_lane(m, std::move(req), &Service::version_checkout);
     case P::VersionGraphRequest: return on_lane(r, std::move(req), &Service::version_graph);
     case P::VersionCanvasRequest: return on_lane(r, std::move(req), &Service::version_canvas);
-    case P::VersionDiffRequest: return on_lane(r, std::move(req), &Service::version_diff);
     case P::VersionNoteRequest: return on_lane(m, std::move(req), &Service::version_note);
-    case P::VersionNoteStoreRequest: return on_lane(m, std::move(req), &Service::version_note_store);
     case P::ProjectCloseRequest: return on_lane(r, std::move(req), &Service::close_project);
     case P::ProjectInspectRequest: return on_lane(r, std::move(req), &Service::inspect);
     case P::ProjectValidateRequest: return on_lane(r, std::move(req), &Service::validate);
@@ -520,7 +504,6 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectFileListRequest: return on_lane(r, std::move(req), &Service::file_list);
     case P::ProjectFileStatRequest: return on_lane(r, std::move(req), &Service::file_stat);
     case P::ProjectFileReadRequest: return on_lane(r, std::move(req), &Service::file_read);
-    case P::ProjectFileFormatRequest: return on_lane(r, std::move(req), &Service::file_format);
     case P::LayoutArrangeRequest:
     case P::LayoutUntangleRequest: return on_lane(r, std::move(req), &Service::layout_proposal);
     case P::OutputTypesRequest: return on_lane(r, std::move(req), &Service::output_types);
@@ -1132,7 +1115,7 @@ std::string version_receipt(const std::string& op_id, const std::string& commit,
 }
 }  // namespace
 
-void Service::note_run_end(const RunStatusData& s, const std::string& summary) {
+void Service::note_run_end(const RunStatusData& s, const std::string& record_json) {
   if (!s.commit || !s.run_id || !s.terminal()) return;
   VersionRunNote n;
   n.run_id = *s.run_id;
@@ -1141,7 +1124,7 @@ void Service::note_run_end(const RunStatusData& s, const std::string& summary) {
   int64_t start = s.started_at.value_or(s.accepted_at.value_or(end));
   n.ended = Versions::iso_utc(end);
   n.seconds = end > start ? static_cast<double>(end - start) / 1000.0 : 0;
-  n.summary = summary;
+  n.record_json = record_json;
   try {
     versions_->note_run(*s.commit, n);
   } catch (const std::exception& e) {
@@ -1156,7 +1139,7 @@ void Service::version_init(RequestIn& req) {
   if (replay_or_join(req, op_id, "version", digest)) return;
   try {
     if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
-    auto commit = versions_->init(english(req.conn));
+    auto commit = versions_->init();
     auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
     history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "version", digest, receipt); });
     reply(req, receipt_reply(req.request_id, receipt, false));
@@ -1210,7 +1193,7 @@ void Service::version_checkout(RequestIn& req) {
     if (auto active = scheduler_->active_status())
       throw Failed(FailureKind::busy, "a run is in progress", {{"run_id", *active->run_id}});
     if (!versions_->enabled()) throw Failed(FailureKind::invalid_request, "the project is not versioned yet");
-    versions_->checkout(r->commit()->str(), english(req.conn));
+    versions_->checkout(r->commit()->str());
     // The files are those of the version now: read them like a reload.
     auto staged = store_->stage_reload(op_id, r->origin()->str());
     std::string receipt;
@@ -1248,7 +1231,7 @@ void Service::version_graph(RequestIn& req) {
     std::vector<flatbuffers::Offset<R::VersionRun>> runs;
     for (const auto& n : c.runs)
       runs.push_back(R::CreateVersionRun(b, b.CreateString(n.run_id), b.CreateString(n.state), b.CreateString(n.ended), n.seconds,
-                                         n.summary.empty() ? 0 : b.CreateString(n.summary)));
+                                         n.record_json.empty() ? 0 : b.CreateString(n.record_json)));
     commits.push_back(R::CreateVersionCommit(b, b.CreateString(c.id), strings(c.parents), b.CreateString(c.summary),
                                              b.CreateString(c.message), b.CreateString(c.author), c.time_ms,
                                              strings(c.branches), strings(c.tags), b.CreateVector(runs), strings(c.changed)));
@@ -1269,45 +1252,12 @@ void Service::version_canvas(RequestIn& req) {
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionCanvas, vc.Union()));
 }
 
-void Service::version_diff(RequestIn& req) {
-  const auto* r = req.request()->value_as_VersionDiffRequest();
-  auto d = versions_->diff(r->commit()->str(), r->from_commit() ? r->from_commit()->str() : "");
-  FBB b;
-  auto vd = R::CreateVersionDiff(b, b.CreateString(d.text), d.truncated);
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionDiff, vd.Union()));
-}
-
 void Service::version_note(RequestIn& req) {
   const auto* r = req.request()->value_as_VersionNoteRequest();
-  auto note = versions_->note(r->commit()->str(), r->language()->str() == "en");
+  auto note = versions_->note(r->commit()->str());
   FBB b;
-  auto n = R::CreateVersionNote(b, b.CreateString(note.text), b.CreateString(note.agent_summary));
+  auto n = R::CreateVersionNote(b, b.CreateString(note.record_json));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionNote, n.Union()));
-}
-
-void Service::version_note_store(RequestIn& req) {
-  const auto* r = req.request()->value_as_VersionNoteStoreRequest();
-  std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(req.request());
-  if (replay_or_join(req, op_id, "version", digest)) return;
-  try {
-    if (!crypto::is_uuid(op_id)) throw Failed(FailureKind::invalid_request, "op_id must be a UUID");
-    std::string commit = r->commit()->str();
-    std::string summary = r->summary()->str();
-    if (summary.empty() || summary.size() > 2000) throw Failed(FailureKind::invalid_request, "a summary is 1 to 2000 bytes");
-    versions_->set_summary(commit, summary);
-    auto receipt = version_receipt(op_id, commit, versions_->graph(1).branch);
-    history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, "version", digest, receipt); });
-    reply(req, receipt_reply(req.request_id, receipt, false));
-    finish_op(op_id, receipt);
-  } catch (const Failed& f) {
-    store_failure_receipt(op_id, "version", digest, f.failure);
-    throw;
-  } catch (const std::exception& e) {
-    auto f = FailureData::make(FailureKind::internal_error, e.what());
-    store_failure_receipt(op_id, "version", digest, f);
-    throw Failed(f);
-  }
 }
 
 void Service::cache_clear(RequestIn& req) {
@@ -1753,81 +1703,6 @@ void Service::file_read(RequestIn& req) {
                              bytes->size(), hash));
 }
 
-namespace {
-
-// Indents compact JSON (strings are copied verbatim, so escapes survive).
-std::string pretty_json(const std::string& compact) {
-  std::string out;
-  int depth = 0;
-  bool in_str = false;
-  bool esc = false;
-  auto newline = [&] { out += '\n' + std::string(static_cast<size_t>(depth) * 2, ' '); };
-  for (size_t i = 0; i < compact.size(); ++i) {
-    char c = compact[i];
-    if (in_str) {
-      out += c;
-      if (esc) esc = false;
-      else if (c == '\\') esc = true;
-      else if (c == '"') in_str = false;
-      continue;
-    }
-    switch (c) {
-      case '"': in_str = true; out += c; break;
-      case '{': case '[':
-        out += c;
-        if (i + 1 < compact.size() && (compact[i + 1] == '}' || compact[i + 1] == ']')) { out += compact[++i]; break; }
-        ++depth;
-        newline();
-        break;
-      case '}': case ']': --depth; newline(); out += c; break;
-      case ',': out += c; newline(); break;
-      case ':': out += ": "; break;
-      default: out += c;
-    }
-  }
-  return out + "\n";
-}
-
-std::optional<D::FormatLanguage> language_of(const std::string& path) {
-  auto ext = stdfs::path(path).extension().string();
-  if (ext == ".json") return D::FormatLanguage::json;
-  if (ext == ".cc" || ext == ".cpp" || ext == ".cxx" || ext == ".hh" || ext == ".hpp" || ext == ".h") return D::FormatLanguage::cpp;
-  if (ext == ".py") return D::FormatLanguage::python;
-  if (ext == ".nix") return D::FormatLanguage::nix;
-  if (ext == ".sh" || ext == ".bash") return D::FormatLanguage::bash;
-  if (ext == ".fbs") return D::FormatLanguage::fbs;
-  return std::nullopt;
-}
-
-std::optional<std::string> find_tool(const std::string& name) {
-  const char* path = std::getenv("PATH");
-  if (!path) return std::nullopt;
-  std::string p(path);
-  for (size_t s = 0; s <= p.size();) {
-    size_t e = p.find(':', s);
-    auto cand = stdfs::path(p.substr(s, e == std::string::npos ? std::string::npos : e - s)) / name;
-    if (!cand.parent_path().empty() && ::access(cand.c_str(), X_OK) == 0) return cand.string();
-    if (e == std::string::npos) break;
-    s = e + 1;
-  }
-  return std::nullopt;
-}
-
-// Byte offset of 1-based line/column in text.
-uint64_t offset_of(const std::string& text, uint64_t line, uint64_t col) {
-  uint64_t off = 0;
-  uint64_t l = 1;
-  while (l < line && off < text.size()) {
-    if (text[off] == '\n') ++l;
-    ++off;
-  }
-  return std::min<uint64_t>(off + (col > 0 ? col - 1 : 0), text.size());
-}
-
-}  // namespace
-
-// Formatting never changes the document: the text comes and goes in the
-// request/reply only. Formatters are external tools of the environment.
 void Service::attached_folder_read(RequestIn& req) {
   const auto* r = req.request()->value_as_AttachedFolderReadRequest();
   std::string folder = r->folder()->str();
@@ -1907,88 +1782,6 @@ void Service::output_types(RequestIn& req) {
   auto er = err.empty() ? flatbuffers::Offset<flatbuffers::String>() : b.CreateString(err);
   auto res = R::CreateOutputTypesResult(b, bv, rt, tx, er);
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::OutputTypesResult, res.Union()));
-}
-
-void Service::file_format(RequestIn& req) {
-  const auto* r = req.request()->value_as_ProjectFileFormatRequest();
-  std::string rel = r->path()->str();
-  check_path_arg(rel, false);
-  auto lang = r->language() != D::FormatLanguage::unspecified ? std::optional(r->language()) : language_of(rel);
-  if (!lang) throw Failed(FailureKind::unsupported, "the language of " + rel + " is not known; pass language");
-  FBB b;
-  std::vector<Diag> diags;
-  std::string text = r->text()->str();
-  auto syntax = [&](const std::string& message, std::optional<uint64_t> offset) {
-    Diag d;
-    d.code = "syntax_error";
-    d.message = message;
-    d.path = rel;
-    d.offset = offset;
-    diags.push_back(d);
-  };
-  if (*lang == D::FormatLanguage::json) {
-    try {
-      schema::Json j;
-      j.value() = schema::capture(text);
-      text = pretty_json(schema::encode(j));
-    } catch (const std::exception& e) {
-      syntax(e.what(), std::nullopt);
-    }
-  } else {
-    // tool, arguments before the file, whether it rewrites the file in place
-    struct Tool { const char* exe; std::vector<std::string> args; bool in_place; const char* ext; };
-    Tool tool;
-    switch (*lang) {
-      case D::FormatLanguage::cpp:
-        // clang-format when the environment has it, otherwise the much smaller astyle (the image).
-        tool = {"clang-format", {"--style={BasedOnStyle: Google, ColumnLimit: 110}"}, false, ".cc"};
-        if (!find_tool("clang-format"))
-          tool = {"astyle", {"--style=google", "--indent=spaces=2", "--max-code-length=110", "--suffix=none", "--quiet"}, true, ".cc"};
-        break;
-      case D::FormatLanguage::python: tool = {"ruff", {"format", "--no-cache"}, true, ".py"}; break;
-      case D::FormatLanguage::nix: tool = {"nixfmt", {}, true, ".nix"}; break;
-      case D::FormatLanguage::bash: tool = {"shfmt", {"-i", "2"}, false, ".sh"}; break;
-      default: throw Failed(FailureKind::unsupported, "no formatter is provided for this language");
-    }
-    std::string exe = find_tool(tool.exe).value_or("");
-    if (exe.empty())
-      throw Failed(FailureKind::unsupported, std::string("the formatter ") + tool.exe + " is not installed in this environment",
-                   {{"formatter", tool.exe}});
-    auto dir = store_->state_dir() / "format" / crypto::uuid4();
-    auto file = dir / (std::string("source") + tool.ext);
-    fs::write_atomic(file, text, 0600);
-    struct Cleanup { stdfs::path d; ~Cleanup() { std::error_code ec; stdfs::remove_all(d, ec); } } cleanup{dir};
-    proc::Spec spec;
-    spec.argv = {exe};
-    spec.argv.insert(spec.argv.end(), tool.args.begin(), tool.args.end());
-    spec.argv.push_back(file.string());
-    for (const char* k : {"PATH", "HOME", "LANG"})
-      if (const char* v = std::getenv(k)) spec.env.push_back(std::string(k) + "=" + v);
-    spec.cwd = dir.string();
-    std::string err;
-    std::atomic<bool> stop{false};
-    auto res = proc::run(spec, &stop, std::chrono::steady_clock::now() + std::chrono::seconds(20),
-                         [&](const std::string& line) { if (err.size() < 8192) err += line; });
-    if (res.cancelled) throw Failed(FailureKind::cancelled, "formatting was cancelled");
-    if (res.timed_out) throw Failed(FailureKind::timeout, std::string(tool.exe) + " did not finish within 20 s");
-    if (!proc::exited_ok(res.status)) {
-      // Syntax errors: keep the text unchanged and point at the position.
-      static const std::regex pos(R"((\d+):(\d+))");
-      std::smatch m;
-      std::optional<uint64_t> off;
-      if (std::regex_search(err, m, pos)) off = offset_of(text, std::stoull(m[1]), std::stoull(m[2]));
-      std::string msg = err.empty() ? std::string(tool.exe) + " failed" : err;
-      std::string shown = file.string();
-      for (size_t at; (at = msg.find(shown)) != std::string::npos;) msg.replace(at, shown.size(), rel);
-      syntax(msg, off);
-    } else {
-      text = tool.in_place ? fs::read_file_or_throw(file) : res.out;
-    }
-  }
-  auto t = b.CreateString(text);
-  auto dv = wire::diagnostics(b, diags);
-  auto off = R::CreateProjectFileFormatResult(b, t, dv);
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::ProjectFileFormatResult, off.Union()));
 }
 
 void Service::view_save(RequestIn& req) {

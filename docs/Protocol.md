@@ -9,7 +9,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 - **Requests that change something**: carry an `op_id`, and a resend with the same `op_id` is applied only once. If a response is lost, check with `OperationGet`.
 - **The Agent's tools**: made from the same schema (`tsugumi.bfbs`) ([Features](features.md#9-agent)).
 
-There are 51 requests.
+There are 48 requests.
 
 ## Connection
 
@@ -26,7 +26,6 @@ There are 51 requests.
 | `expected_project_id` | `string` |  |  |
 | `token` | `string` |  |  |
 | `min_protocol` | `uint32` |  |  |
-| `language` | `string` |  | The client's language ("ja" or "en"; anything else is Japanese). What tsugumid writes into the project's git for the runs this connection starts (the commit message, the run's note) is in it. |
 
 ## Projects and saving
 
@@ -135,7 +134,6 @@ No fields.
 | [`ProjectFileList`](#projectfilelist) | SourcePage | depth = 0 (0..8), include_directories = false, limit = 100. |
 | [`ProjectFileStat`](#projectfilestat) | SourceInfo |  |
 | [`ProjectFileRead`](#projectfileread) | FileContent | offset = 0, limit_bytes = 262144 (1..1 MiB). |
-| [`ProjectFileFormat`](#projectfileformat) | ProjectFileFormatResult | Never changes the document. |
 | [`AttachedFolderRead`](#attachedfolderread) | FileContent | Reads a folder of the Mac attached to a chat (read-only, shared with this project only): a file's bytes, or for a folder its entries as text, one per line (folders end with "/"). `folder` is the attached folder's path on the Mac; `path` is relative to it ("" = itself). |
 
 ### ProjectFileList
@@ -165,14 +163,6 @@ No fields.
 | `if_hash` | `string` |  |  |
 | `offset` | `uint64` |  |  |
 | `limit_bytes` | `uint32` |  |  |
-
-### ProjectFileFormat
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `path` | `string` | yes |  |
-| `text` | `string` | yes |  |
-| `language` | `FormatLanguage` |  |  |
 
 ### AttachedFolderRead
 
@@ -450,9 +440,7 @@ No fields.
 | [`VersionCheckout`](#versioncheckout) | SaveResult | Starts from a version: what is saved now is committed, then the project's files become those of `commit` and the document is read again (like ProjectReload). Only while no run is active. |
 | [`VersionGraph`](#versiongraph) | VersionGraph, newest first |  |
 | [`VersionCanvas`](#versioncanvas) | VersionCanvas: the Cards of a version and how they connect (a minimap) |  |
-| [`VersionDiff`](#versiondiff) | VersionDiff: what a version changed from another version (its first parent by default), in the text a summary is written from | Only code and settings: never data files. |
-| [`VersionNote`](#versionnote) | VersionNote | Core-generated mechanical record and the saved Agent note. The host Agent service chooses which to return to the UI. Mechanical records are kept in refs/notes/tsugumi-record-{ja,en}. |
-| [`VersionNoteStore`](#versionnotestore) | VersionResult | The host Agent service stores the generated note in refs/notes/tsugumi-summary. Clients request notes from agentd. |
+| [`VersionNote`](#versionnote) | VersionNote | Neutral facts, cached in refs/notes/tsugumi-record. |
 
 ### VersionInit
 
@@ -491,28 +479,11 @@ No fields.
 | --- | --- | --- | --- |
 | `commit` | `string` | yes |  |
 
-### VersionDiff
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `commit` | `string` | yes |  |
-| `from_commit` | `string` |  | Compare from this version; absent means the first parent of commit. |
-
 ### VersionNote
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `commit` | `string` | yes |  |
-| `language` | `string` | yes |  |
-
-### VersionNoteStore
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `op_id` | `string` | yes |  |
-| `origin` | `string` | yes |  |
-| `commit` | `string` | yes |  |
-| `summary` | `string` | yes |  |
 
 ## Notifications
 

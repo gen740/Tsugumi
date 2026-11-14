@@ -62,7 +62,7 @@ TEST_F(VersionFiles, DefinitionsAndLiteralOptInsShareOneSelection) {
   std::filesystem::create_directory_symlink(root / ".tsugumi", root / "chosen folder/linked-state");
   std::filesystem::create_symlink(root / ".tsugumi/runs.sqlite", root / "definitions/a/src/linked-state");
   Versions versions(root);
-  const auto first = versions.init(true);
+  const auto first = versions.init();
   auto expected = definitions;
   expected.insert({"tsugumi.json", "inputs/reference.csv", "chosen folder/nested/value.csv", "literal[1].csv"});
   EXPECT_EQ(Paths(first), expected);
@@ -93,7 +93,7 @@ TEST_F(VersionFiles, InternalStateAndUnselectedIndexEntriesNeverEnterTheNextVers
   Put("stray.csv");
   Put(".tsugumi/state");
   Versions versions(root);
-  const auto first = versions.init(true);
+  const auto first = versions.init();
   EXPECT_EQ(Paths(first), (std::set<std::string>{"tsugumi.json", "result.csv"}));
   git_repository* repo = nullptr;
   ASSERT_EQ(git_repository_open(&repo, root.c_str()), 0);
@@ -135,7 +135,7 @@ TEST_F(VersionFiles, ImportedDemoDifferencesCannotAddInternalOrUnselectedFiles) 
     "result.csv":"result", "definitions/a/_card.json":"{\"template\":\"draft\"}"
   }}],"branches":{"main":"first"},"head":"main"})");
   Versions versions(root);
-  EXPECT_EQ(Paths(versions.init(true)), (std::set<std::string>{"tsugumi.json", "definitions/a/_card.json", "chosen.csv"}));
+  EXPECT_EQ(Paths(versions.init()), (std::set<std::string>{"tsugumi.json", "definitions/a/_card.json", "chosen.csv"}));
   EXPECT_EQ(fs::read_file(root / ".tsugumi/state"), "content");
   EXPECT_EQ(fs::read_file(root / "result.csv"), "content");
 }

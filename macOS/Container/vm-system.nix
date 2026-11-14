@@ -14,14 +14,13 @@
 # The supervisor registers it with binfmt_misc and adds x86_64-linux to Nix's
 # extra-platforms before any project starts.
 #
-# Tools a project's terminal and Card shell steps see, and the source
-# formatters (ProjectFileFormat). tsugumid's own run time tools (bubblewrap,
+# Tools a project's terminal and Card shell steps see. Editing formatters live
+# on the host. tsugumid's own run time tools (bubblewrap,
 # sqlite, jq) come with its closure.
 { lib, runCommand, writeShellScript, tsugumid, tini, bashInteractive, cacert, coreutils, findutils, gnugrep
-, gnused, gawk, gnutar, gzip, nix, util-linux, qemu-user, astyle, ruff, nixfmt, shfmt }:
+, gnused, gawk, gnutar, gzip, nix, util-linux, qemu-user }:
 let
-  formatters = [ astyle ruff nixfmt shfmt ];
-  projectTools = [ bashInteractive coreutils findutils gnugrep gnused gawk gnutar gzip nix ] ++ formatters;
+  projectTools = [ bashInteractive coreutils findutils gnugrep gnused gawk gnutar gzip nix ];
   # Not part of this closure: fetched only when qemu is asked for.
   qemu = builtins.unsafeDiscardStringContext qemu-user.outPath;
   x86 = writeShellScript "tsugumi-x86_64" ''

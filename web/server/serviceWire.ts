@@ -1,3 +1,6 @@
+import { FileFormatRequestT } from '../src/gen/tsugumi/host/file-format-request'
+import { HostVersionGraphRequestT } from '../src/gen/tsugumi/host/host-version-graph-request'
+import { HostVersionDiffRequestT } from '../src/gen/tsugumi/host/host-version-diff-request'
 import { VersionCommentsRequestT } from '../src/gen/tsugumi/host/version-comments-request'
 import { RuntimeAction } from '../src/gen/tsugumi/host/runtime-action'
 import { TerminalAction } from '../src/gen/tsugumi/host/terminal-action'
@@ -97,6 +100,9 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
+    case 'FileFormatRequest': return new FileFormatRequestT(v.path, v.text)
+    case 'HostVersionGraphRequest': return new HostVersionGraphRequestT(v.project, v.language, v.limit ?? 500)
+    case 'HostVersionDiffRequest': return new HostVersionDiffRequestT(v.project, v.commit, v.from_commit)
     case 'VersionCommentsRequest': return new VersionCommentsRequestT(v.project, v.commit)
     case 'GuideGetRequest': return new GuideGetRequestT(v.session_id, v.language)
     case 'GuideAdvanceRequest': {

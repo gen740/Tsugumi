@@ -7,8 +7,16 @@ import TsugumiRPC
 /// versions as tags.
 extension ProjectSession {
   func refreshVersions() async {
-    guard let rpc else { return }
-    versionGraph = try? await rpc.versionGraph()
+    guard rpc != nil else { return }
+    do {
+      guard let project = try await RPCToolTransport(session: self).project() else { return }
+      versionGraph = try await CoreAgentClient.shared.versionGraph(project: project.id, language: AppPreferences.Language.running.rawValue)
+    } catch { versionGraph = nil }
+  }
+
+  func versionDiff(commit: String, from: String?) async throws -> Tsugumi_Host_VersionDiffT {
+    guard let project = try await RPCToolTransport(session: self).project() else { throw RPCError.disconnected }
+    return try await CoreAgentClient.shared.versionDiff(project: project.id, commit: commit, from: from)
   }
 
   func loadVersionCanvas(_ commit: String) async {

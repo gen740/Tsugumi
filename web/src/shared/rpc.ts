@@ -92,8 +92,8 @@ export class RPCClient {
   }
 
   /** SessionHello: must be the first request. The token never appears in URLs. */
-  async connect(token: string | undefined, language: 'ja' | 'en', clientId = uuid(), expectedProjectId?: string): Promise<R.HelloResultT> {
-    const req = Object.assign(new R.SessionHelloRequestT(), { protocol: 1, clientId, token: token ?? null, expectedProjectId: expectedProjectId ?? null, language })
+  async connect(token: string | undefined, clientId = uuid(), expectedProjectId?: string): Promise<R.HelloResultT> {
+    const req = Object.assign(new R.SessionHelloRequestT(), { protocol: 1, clientId, token: token ?? null, expectedProjectId: expectedProjectId ?? null })
     this.hello = await this.call<R.HelloResultT>(RequestPayload.SessionHelloRequest, req)
     return this.hello
   }
@@ -342,9 +342,6 @@ export class RPCClient {
   versionCanvas(commit: string) {
     return this.call<R.VersionCanvasT>(RequestPayload.VersionCanvasRequest, Object.assign(new R.VersionCanvasRequestT(), { commit }))
   }
-  versionDiff(commit: string, fromCommit: string | null = null) {
-    return this.call<R.VersionDiffT>(RequestPayload.VersionDiffRequest, Object.assign(new R.VersionDiffRequestT(), { commit, fromCommit }))
-  }
 
   versionInit(opId: string, origin: string) {
     return this.call<R.VersionResultT>(RequestPayload.VersionInitRequest, Object.assign(new R.VersionInitRequestT(), { opId, origin }))
@@ -356,9 +353,7 @@ export class RPCClient {
     return this.call<R.SaveResultT>(RequestPayload.VersionCheckoutRequest,
       Object.assign(new R.VersionCheckoutRequestT(), { baseRev, opId, origin, commit }))
   }
-  format(path: string, text: string) {
-    return this.call<R.ProjectFileFormatResultT>(RequestPayload.ProjectFileFormatRequest, Object.assign(new R.ProjectFileFormatRequestT(), { path, text }))
-  }
+
 }
 
 function sceneRequest(scene: LayoutScene): R.LayoutSceneT {

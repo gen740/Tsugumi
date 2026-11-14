@@ -1,4 +1,5 @@
 #include "versions.hh"
+#include "version_record.hh"
 
 #include <git2.h>
 
@@ -24,11 +25,7 @@ namespace stdfs = std::filesystem;
 namespace {
 
 constexpr const char* kNotesRef = "refs/notes/tsugumi";
-constexpr const char* kSummaryRef = "refs/notes/tsugumi-summary";
-constexpr const char* kRecordRefEn = "refs/notes/tsugumi-record-en";
-constexpr const char* kRecordRefJa = "refs/notes/tsugumi-record-ja";
-constexpr size_t kDiffLimit = 12000;     // what a summary reads of a version
-constexpr size_t kDiffFileLimit = 4000;  // of one file, so one file cannot fill it
+constexpr const char* kRecordRef = "refs/notes/tsugumi-record";
 constexpr const char* kHistoryFile = ".tsugumi-history.json";
 constexpr const char* kIgnore = ".tsugumi/\n.DS_Store\n";
 
@@ -295,11 +292,13 @@ bool Versions::enabled() const {
 std::string Versions::iso_utc(int64_t ms) { return iso(ms / 1000); }
 
 std::string Versions::format_note(const VersionRunNote& r) {
-  char secs[32];
-  std::snprintf(secs, sizeof secs, "%.1fs", r.seconds);
-  std::string line = "run " + r.run_id + " " + r.state + " " + r.ended + " " + secs;
-  if (!r.summary.empty()) line += " " + r.summary;
-  return line;
+  version_record::RunNote note;
+  *note.run_id = r.run_id;
+  *note.state = r.state;
+  *note.ended = r.ended;
+  *note.seconds = r.seconds;
+  *note.record_json = r.record_json;
+  return schema::encode(note);
 }
 
 std::vector<VersionRunNote> Versions::parse_note(const std::string& text) {
@@ -307,14 +306,10 @@ std::vector<VersionRunNote> Versions::parse_note(const std::string& text) {
   std::istringstream in(text);
   std::string line;
   while (std::getline(in, line)) {
-    std::istringstream w(line);
-    std::string word;
-    std::string secs;
-    VersionRunNote r;
-    if (!(w >> word) || word != "run" || !(w >> r.run_id >> r.state >> r.ended)) continue;
-    if (w >> secs) r.seconds = std::atof(secs.c_str());
-    std::getline(w >> std::ws, r.summary);
-    out.push_back(std::move(r));
+    version_record::RunNote note;
+    if (auto error = schema::decode(line, note))
+      throw Failed(FailureKind::invalid_document, "run note: " + error->message);
+    out.push_back({*note.run_id, *note.state, *note.ended, *note.seconds, *note.record_json});
   }
   return out;
 }
@@ -335,7 +330,7 @@ std::optional<std::string> Versions::card_of(const std::string& path) {
   return std::nullopt;
 }
 
-std::string Versions::init(bool english) {
+std::string Versions::init() {
   std::lock_guard<std::mutex> l(mu_);
   Repo r;
   if (open(r, root_)) {
@@ -349,7 +344,7 @@ std::string Versions::init(bool english) {
   stdfs::remove(root_ / kHistoryFile, ec);
   auto tip = stage_project(r.get(), root_);
   if (!history) {
-    commit_tree(r.get(), tip, {}, english ? "Create the project" : "プロジェクトを作成", "HEAD");
+    commit_tree(r.get(), tip, {}, version_record::commit("create"), "HEAD");
     auto h = head_oid(r.get());
     return hex(&*h);
   }
@@ -505,8 +500,8 @@ std::string Versions::mark(const std::string& name, const std::string& message) 
   return id;
 }
 
-void Versions::checkout(const std::string& commit, bool english) {
-  commit_all(english ? "Changes in progress" : "作業中の変更");
+void Versions::checkout(const std::string& commit) {
+  commit_all(version_record::commit("checkout"));
   std::lock_guard<std::mutex> l(mu_);
   Repo r;
   if (!open(r, root_)) throw Failed(FailureKind::invalid_request, "the project is not versioned yet");
@@ -620,21 +615,6 @@ VersionGraphData Versions::graph(size_t limit) {
   return g;
 }
 
-bool Versions::summary_reads(const std::string& path) {
-  if (path == "tsugumi.json") return true;  // layout.json is where things sit, not what they do
-  std::vector<std::string> parts;
-  for (const auto& p : stdfs::path(path)) parts.push_back(p.string());
-  size_t i = 0;
-  while (i + 1 < parts.size() && parts[i] == "externals") i += 2;
-  if (i == parts.size() - 1) return parts[i] == "tsugumi.json";
-  if (i + 2 >= parts.size() || parts[i] != "definitions") return false;
-  const std::string& file = parts[i + 2];
-  if (i + 3 == parts.size())
-    return file == "_card.json" || file == "_meta.json" || file == "_link.json" || file == "_outputs.fbs" || file == "default.nix";
-  static const std::set<std::string> code = {".py", ".cc", ".cpp", ".cxx", ".c", ".h", ".hh", ".hpp", ".nix", ".fbs", ".sh"};
-  return file == "src" && code.count(stdfs::path(path).extension().string()) > 0;
-}
-
 VersionCanvasData Versions::canvas(const std::string& commit) {
   std::lock_guard<std::mutex> l(mu_);
   VersionCanvasData out;
@@ -713,61 +693,9 @@ VersionCanvasData Versions::canvas(const std::string& commit) {
   return out;
 }
 
-auto Versions::diff(const std::string& commit, const std::string& from_commit) -> VersionDiffData {
-  std::lock_guard<std::mutex> l(mu_);
-  VersionDiffData out;
-  Repo r;
-  git_oid oid;
-  if (!open(r, root_) || git_oid_fromstr(&oid, commit.c_str()) != 0) throw Failed(FailureKind::not_found, "no version " + commit);
-  Commit c;
-  if (git_commit_lookup(c.out(), r.get(), &oid) != 0) throw Failed(FailureKind::not_found, "no version " + commit);
-  Tree mine;
-  Tree theirs;
-  check(git_commit_tree(mine.out(), c.get()), "tree");
-  if (!from_commit.empty()) {
-    git_oid from_oid;
-    Commit from;
-    if (git_oid_fromstr(&from_oid, from_commit.c_str()) != 0 || git_commit_lookup(from.out(), r.get(), &from_oid) != 0)
-      throw Failed(FailureKind::not_found, "no version " + from_commit);
-    check(git_commit_tree(theirs.out(), from.get()), "base tree");
-  } else if (git_commit_parentcount(c.get()) > 0) {
-    Commit p;
-    if (git_commit_parent(p.out(), c.get(), 0) == 0) git_commit_tree(theirs.out(), p.get());
-  }
-  git_diff_options options;
-  git_diff_options_init(&options, GIT_DIFF_OPTIONS_VERSION);
-  options.context_lines = 2;
-  Diff d;
-  check(git_diff_tree_to_tree(d.out(), r.get(), theirs.get(), mine.get(), &options), "diff");
-  for (size_t i = 0; i < git_diff_num_deltas(d.get()); ++i) {
-    const auto* delta = git_diff_get_delta(d.get(), i);
-    const char* path = delta->new_file.path ? delta->new_file.path : delta->old_file.path;
-    if (!path || !summary_reads(path)) continue;
-    Patch p;
-    if (git_patch_from_diff(p.out(), d.get(), i) != 0 || !p) continue;
-    git_buf buf = GIT_BUF_INIT;
-    if (git_patch_to_buf(&buf, p.get()) != 0) continue;
-    std::string text(buf.ptr, buf.size);
-    git_buf_dispose(&buf);
-    if (text.size() > kDiffFileLimit) {
-      text.resize(kDiffFileLimit);
-      out.truncated = true;
-    }
-    if (out.text.size() + text.size() > kDiffLimit) {
-      out.truncated = true;
-      break;
-    }
-    out.text += text;
-    if (out.text.back() != '\n') out.text += '\n';
-  }
-  // Cut inside a character at most: what a client sends stays valid text.
-  while (!out.text.empty() && (static_cast<unsigned char>(out.text.back()) & 0x80)) out.text.pop_back();
-  return out;
-}
-
 // Read full trees, independently of the cut-down text sent to a model. Never
 // include parameter values, source contents, data files or inferred intent.
-auto Versions::note(const std::string& commit, bool english) -> VersionNoteData {
+auto Versions::note(const std::string& commit) -> VersionNoteData {
   std::lock_guard<std::mutex> l(mu_);
   Repo r;
   git_oid oid;
@@ -784,13 +712,9 @@ auto Versions::note(const std::string& commit, bool english) -> VersionNoteData 
     check(git_commit_tree(theirs.out(), parent.get()), "parent tree");
   }
   VersionNoteData out;
-  Note saved;
-  if (git_note_read(saved.out(), r.get(), kSummaryRef, &oid) == 0)
-    out.agent_summary = git_note_message(saved.get());
-  const auto* record_ref = english ? kRecordRefEn : kRecordRefJa;
   Note record;
-  if (git_note_read(record.out(), r.get(), record_ref, &oid) == 0) {
-    out.text = git_note_message(record.get());
+  if (git_note_read(record.out(), r.get(), kRecordRef, &oid) == 0) {
+    out.record_json = git_note_message(record.get());
     return out;
   }
   Diff d;
@@ -798,7 +722,6 @@ auto Versions::note(const std::string& commit, bool english) -> VersionNoteData 
   std::set<std::string> added, removed;
   std::map<std::string, std::set<std::string>> changed;
   bool workflow = false;
-  const auto label = [english](const char* en, const char* ja) { return std::string(english ? en : ja); };
   const auto project_at = [&](git_tree* tree, const std::string& path) {
     schema::Project p;
     if (auto text = file_at(r.get(), tree, path.c_str()))
@@ -835,10 +758,12 @@ auto Versions::note(const std::string& commit, bool english) -> VersionNoteData 
     const auto* delta = git_diff_get_delta(d.get(), i);
     const std::string path = delta->new_file.path ? delta->new_file.path : delta->old_file.path;
     const bool source = source_input(path);
-    if (!summary_reads(path) && !source) continue;
+    // Other files are opaque to the run definition (including _meta.json).
+    const auto filename = stdfs::path(path).filename().string();
+    if (!source && filename != "tsugumi.json" && filename != "_card.json" &&
+        filename != "_link.json" && filename != "_outputs.fbs" && filename != "default.nix") continue;
     auto card = card_of(path);
     if (!card) continue;
-    const auto filename = stdfs::path(path).filename().string();
     if (!source && filename == "tsugumi.json") {
       const auto before = project_at(theirs.get(), path), after = project_at(mine.get(), path);
       const auto old_ids = ids(before), new_ids = ids(after);
@@ -850,61 +775,45 @@ auto Versions::note(const std::string& commit, bool english) -> VersionNoteData 
       auto all = old_ids;
       all.insert(new_ids.begin(), new_ids.end());
       for (const auto& id : all)
-        if (old_wires[id] != new_wires[id]) changed[prefix + id].insert(label("wiring", "接続"));
+        if (old_wires[id] != new_wires[id]) changed[prefix + id].insert("wiring");
       auto a = document_fields(file_at(r.get(), theirs.get(), path.c_str()));
       auto b = document_fields(file_at(r.get(), mine.get(), path.c_str()));
       a.erase("canvas"); b.erase("canvas");
       if (a != b) {
         if (card->empty()) workflow = true;
-        else changed[*card].insert(label("definition", "定義"));
+        else changed[*card].insert("definition");
       }
     } else if (!source && filename == "_card.json") {
       const auto old_text = file_at(r.get(), theirs.get(), path.c_str());
       const auto new_text = file_at(r.get(), mine.get(), path.c_str());
       auto before = document_fields(old_text), after = document_fields(new_text);
       if (before["params"] != after["params"])
-        changed[*card].insert(label("parameters", "パラメータ"));
+        changed[*card].insert("parameters");
       before.erase("params"); after.erase("params");
       if (before != after || !old_text || !new_text)
-        changed[*card].insert(label("definition", "定義"));
+        changed[*card].insert("definition");
     } else {
-      changed[*card].insert(source ? label("source", "ソース") : label("definition", "定義"));
+      changed[*card].insert(source ? "source" : "definition");
     }
   }
   for (const auto& id : added) changed.erase(id);
   for (const auto& id : removed) changed.erase(id);
-  std::vector<std::string> entries;
-  for (const auto& id : added) entries.push_back(label("Added ", "追加: ") + id);
-  for (const auto& id : removed) entries.push_back(label("Removed ", "削除: ") + id);
+  version_record::Changes facts;
+  facts.added->assign(added.begin(), added.end());
+  facts.removed->assign(removed.begin(), removed.end());
+  *facts.workflow = workflow;
   for (const auto& [id, kinds] : changed) {
-    std::string entry = label("Changed ", "変更: ") + (id.empty() ? label("Workflow", "Workflow") : id) + " (";
-    for (const auto& kind : kinds) entry += (entry.back() == '(' ? "" : ", ") + kind;
-    entries.push_back(entry + ")");
+    version_record::Change change;
+    *change.card = id;
+    change.kinds->assign(kinds.begin(), kinds.end());
+    facts.changed->push_back(std::move(change));
   }
-  if (workflow) entries.push_back(label("Changed Workflow settings", "Workflow の設定を変更"));
-  for (size_t i = 0; i < std::min(entries.size(), size_t{6}); ++i)
-    out.text += (i ? "; " : "") + entries[i];
-  if (entries.size() > 6)
-    out.text += english ? "; and " + std::to_string(entries.size() - 6) + " more" : " ほか " + std::to_string(entries.size() - 6) + " 件";
-  if (out.text.empty()) out.text = label("No Card definition, source, parameter or wiring changes", "Card の定義・ソース・パラメータ・接続の変更なし");
+  out.record_json = schema::encode(facts);
   Sig sig;
   signature(sig, r.get());
   git_oid note_id;
-  check(git_note_create(&note_id, r.get(), record_ref, sig.get(), sig.get(), &oid, out.text.c_str(), 0), "record note");
+  check(git_note_create(&note_id, r.get(), kRecordRef, sig.get(), sig.get(), &oid, out.record_json.c_str(), 0), "record note");
   return out;
-}
-
-void Versions::set_summary(const std::string& commit, const std::string& summary) {
-  std::lock_guard<std::mutex> l(mu_);
-  Repo r;
-  git_oid oid;
-  if (!open(r, root_) || git_oid_fromstr(&oid, commit.c_str()) != 0) throw Failed(FailureKind::not_found, "no version " + commit);
-  Commit c;
-  if (git_commit_lookup(c.out(), r.get(), &oid) != 0) throw Failed(FailureKind::not_found, "no version " + commit);
-  Sig sig;
-  signature(sig, r.get());
-  git_oid out;
-  check(git_note_create(&out, r.get(), kSummaryRef, sig.get(), sig.get(), &oid, summary.c_str(), 1), "note");
 }
 
 }  // namespace tsugumi

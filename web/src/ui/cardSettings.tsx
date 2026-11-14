@@ -1303,13 +1303,13 @@ function SourceCategory({ model, only }: { model: CardEditorModel; only?: string
     if (!rpc || source === undefined || formatting) return
     setFormatting(true)
     try {
-      const r = await rpc.format(p, source)
+      const r = await api<{ text: string; diagnostics: { offset?: string; message: string }[] }>('/api/file/format', { path: p, text: source })
       if (!r.diagnostics.length) {
         model.setText(p, s(r.text))
         setFormatMessage(L('整形しました'))
         setFormatMarkers([])
       } else {
-        setFormatMarkers(r.diagnostics.map((d) => ({ offset: d.offset ?? 0n, message: s(d.message) })))
+        setFormatMarkers(r.diagnostics.map((d) => ({ offset: BigInt(d.offset ?? 0), message: s(d.message) })))
         setFormatMessage(L('構文エラーがあります（テキストは変更していません）'))
       }
     } catch (e) {
@@ -1377,7 +1377,7 @@ function SourceCategory({ model, only }: { model: CardEditorModel; only?: string
     )
   } else if (shown && model.files.includes(shown)) {
     const markers = [
-      ...(session.resolution.get(model.cardKey)?.diagnostics ?? []).filter((d) => d.path === shown).map((d) => ({ offset: d.offset ?? 0n, message: d.message })),
+      ...(session.resolution.get(model.cardKey)?.diagnostics ?? []).filter((d) => d.path === shown).map((d) => ({ offset: BigInt(d.offset ?? 0), message: d.message })),
       ...formatMarkers,
     ]
     const text = model.loadedText(shown)

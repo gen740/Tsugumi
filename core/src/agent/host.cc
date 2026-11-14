@@ -29,10 +29,11 @@
 #include "agent/wire.hh"
 #include "host/environment.hh"
 #include "host/projects.hh"
+#include "host/format.hh"
+#include "host/version_text.hh"
 #include "host/save.hh"
 #include "host/execution_broker.hh"
 #include "host/guide.hh"
-#include "host/projects.hh"
 #include "host/settings.hh"
 #include "host/skills.hh"
 #include "lanes.hh"
@@ -1129,9 +1130,38 @@ struct Host::State {
     }
     return specs;
   }
+  auto ProjectRoot(const std::string& project) -> std::filesystem::path {
+    std::lock_guard lock(mutex);
+    ProjectFor(project);
+    auto path = db.prepare("SELECT path FROM project_paths WHERE id=?");
+    path.bind(1, project);
+    if (!path.step() || path.text(0).empty()) throw Failure("not_found", "Project path is not registered");
+    return path.text(0);
+  }
   auto ProjectCall(const std::string& project, const std::string& name,
                    const std::string& arguments, std::stop_token stop = {}) -> std::string {
     auto args = json::Object(arguments);
+    if (name == "project_file_format") {
+      H::FileFormatRequestT request;
+      request.path = json::Text(args, "path");
+      request.text = json::Text(args, "text");
+      const auto language = json::Text(args, "language");
+      bool known = language.empty();
+      for (auto value : Tsugumi::Data::EnumValuesFormatLanguage())
+        if (language == Tsugumi::Data::EnumNameFormatLanguage(value)) { request.language = value; known = true; }
+      if (!known) throw Failure("unsupported", "Unknown formatting language");
+      auto formatted = host::Format(request);
+      std::vector<std::string> diagnostics;
+      for (const auto& d : formatted.diagnostics) {
+        json::Members diag{{"severity", json::Quote("error")}, {"code", json::Quote(d->code)}, {"message", json::Quote(d->message)}, {"path", json::Quote(d->path)}};
+        if (d->offset) diag["offset"] = json::Quote(std::to_string(*d->offset));
+        diagnostics.push_back(json::Encode(diag));
+      }
+      return json::Encode(json::Members{{"reply", json::Quote("FileFormatResult")},
+        {"value", json::Encode(json::Members{{"text", json::Quote(formatted.text)}, {"diagnostics", json::Encode(diagnostics)}})}});
+    }
+    const bool english = json::Text(args, "language") == "en";
+    if (name == "version_graph") args.erase("language");
     if (name == "card_id") {
       args["stem"] = json::Quote(host::CardStem(json::Text(args, "name")));
       args.erase("name");
@@ -1180,8 +1210,8 @@ struct Host::State {
           path.bind(1, project);
           if (path.step()) root = path.text(0);
         }
+        auto graph = host::PresentGraph(json::Object(json::Get(envelope, "value", "{}")), english);
         if (!root.empty()) {
-          auto graph = json::Object(json::Get(envelope, "value", "{}"));
           auto commits = json::Array(json::Get(graph, "commits", "[]"));
           for (auto& raw : commits) {
             auto commit = json::Object(raw);
@@ -1189,9 +1219,9 @@ struct Host::State {
             raw = json::Encode(commit);
           }
           graph["commits"] = json::Encode(commits);
-          envelope["value"] = json::Encode(graph);
-          result = json::Encode(envelope);
         }
+        envelope["value"] = json::Encode(graph);
+        result = json::Encode(envelope);
       }
     }
     return result;
@@ -1209,7 +1239,7 @@ struct Host::State {
     return json::Encode(envelope);
   }
   auto RawProjectCall(const std::string &project, const std::string &name,
-                   const std::string &arguments, std::stop_token stop = {})
+                   const std::string &arguments, std::stop_token stop = {}, std::string* raw = nullptr)
       -> std::string {
     Project endpoint;
     {
@@ -1256,6 +1286,7 @@ struct Host::State {
       throw Cancelled();
     if (result.error)
       throw Failure("outcome_unknown", result.error.message);
+    if (raw) raw->assign(reinterpret_cast<const char*>(result.bytes.data()), result.bytes.size());
     return catalog.Reply({reinterpret_cast<const char *>(result.bytes.data()),
                           result.bytes.size()});
   }
@@ -1831,6 +1862,7 @@ struct Host::State {
     } else {
       if (stop.stop_requested())
         throw Cancelled();
+      if (call.name == "version_graph") args["language"] = json::Quote(host_settings->Language(HelperProfile(conversation)));
       result = ProjectCall(project, call.name, json::Encode(args), stop);
     }
     const auto envelope = json::Object(result);
@@ -2854,6 +2886,7 @@ struct Host::State {
       if (!gate) { gate = std::make_shared<std::mutex>(); weak = gate; }
       lock.unlock();
       std::lock_guard note_lock(*gate);
+      const auto root = ProjectRoot(project);
       const auto call = [&](const std::string& name, const std::string& args) {
         const auto reply = json::Object(ProjectCall(project, name, args));
         const auto value = json::Object(json::Get(reply, "value", "{}"));
@@ -2863,18 +2896,20 @@ struct Host::State {
       };
       const auto note = call(
           "version_note", json::Encode(json::Members{
-              {"commit", json::Quote(commit)}, {"language", json::Quote(english ? "en" : "ja")}}));
+              {"commit", json::Quote(commit)}}));
+      const auto factual = host::ChangeText(json::Text(note, "record_json"), english);
+      const auto saved_summary = host::ReadSummary(root, commit, english);
       A::TextResultT result;
       if (host_settings->VersionNoteMode(profile) == "mechanical") {
-        result.text = json::Text(note, "text");
-      } else if (!json::Text(note, "agent_summary").empty()) {
-        result.text = json::Text(note, "agent_summary");
+        result.text = factual;
+      } else if (!saved_summary.empty()) {
+        result.text = saved_summary;
       } else {
-        const auto body = call("version_diff",
-            json::Encode(json::Members{{"commit", json::Quote(commit)}}));
+        const auto diff = host::VersionDiff(root, commit);
+        const json::Members body{{"text", json::Quote(diff.text)}, {"truncated", diff.truncated ? "true" : "false"}};
         // Layout-only and data-only versions have no model input.
         if (json::Text(body, "text").empty()) {
-          result.text = json::Text(note, "text");
+          result.text = factual;
         } else {
           auto config = host_settings->VersionNoteProvider(profile, anthropic_keys, openai_keys);
           if (config.auth == ProviderAuth::ChatGPT)
@@ -2903,10 +2938,7 @@ struct Host::State {
           while (!result.text.empty() && result.text.back() == ' ') result.text.pop_back();
           if (result.text.empty())
             throw Failure("unavailable", english ? "The model returned no summary." : "モデルが文を返しませんでした。");
-          call("version_note_store",
-              json::Encode(json::Members{{"op_id", json::Quote(crypto::uuid4())},
-                  {"origin", json::Quote("agent")}, {"commit", json::Quote(commit)},
-                  {"summary", json::Quote(result.text)}}));
+          host::StoreSummary(root, commit, english, result.text);
         }
       }
       return wire::AgentReply(request.request_id, std::move(result));
@@ -2951,6 +2983,30 @@ struct Host::State {
     std::unique_lock lock(mutex);
     if (stopping)
       throw Failure("unavailable", "Host service is stopping");
+    if (const auto* format = r->value_as_FileFormatRequest()) {
+      auto input = std::unique_ptr<H::FileFormatRequestT>(format->UnPack());
+      lock.unlock();
+      return wire::HostReply(request.request_id, host::Format(*input));
+    }
+    if (const auto* graph = r->value_as_HostVersionGraphRequest()) {
+      const auto project = graph->project()->str();
+      const bool english = Text(graph->language()) == "en";
+      const auto limit = graph->limit();
+      ProjectFor(project);
+      lock.unlock();
+      std::string bytes;
+      RawProjectCall(project, "version_graph", json::Encode(json::Members{{"limit", std::to_string(limit)}}), {}, &bytes);
+      const auto* reply = R::GetMessage(bytes.data())->payload_as_Reply();
+      if (!reply || !reply->value_as_VersionGraph()) throw Failure("unavailable", "Cannot read version graph");
+      auto result = std::unique_ptr<R::VersionGraphT>(reply->value_as_VersionGraph()->UnPack());
+      host::PresentGraph(*result, english);
+      return wire::HostReply(request.request_id, std::move(*result));
+    }
+    if (const auto* diff = r->value_as_HostVersionDiffRequest()) {
+      const auto project = diff->project()->str(), commit = diff->commit()->str(), from = Text(diff->from_commit());
+      lock.unlock();
+      return wire::HostReply(request.request_id, host::VersionDiff(ProjectRoot(project), commit, from));
+    }
     if (const auto* environment = r->value_as_EnvironmentRequest()) {
       auto input = std::unique_ptr<H::EnvironmentRequestT>(environment->UnPack());
       lock.unlock();

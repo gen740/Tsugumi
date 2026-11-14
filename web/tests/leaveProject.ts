@@ -86,10 +86,11 @@ const session = (dir = '/p', key = 'k') => {
 // The versions cannot be read: it is said, and the next read that works clears it.
 {
   const s = session()
-  s.client = { versionGraph: async () => { throw new Error('git failed') } } as any
+  s.client = {} as any
+  globalThis.fetch = (async () => ({ ok: false, status: 500, json: async () => ({ error: 'git failed' }) })) as typeof fetch
   await s.refreshVersions()
   assert.match(s.versionGraphError ?? '', /git failed/)
-  s.client = { versionGraph: async () => ({ enabled: false, commits: [] }) } as any
+  globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ enabled: false, commits: [] }) })) as typeof fetch
   await s.refreshVersions()
   assert.equal(s.versionGraphError, undefined)
 }

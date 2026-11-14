@@ -12,7 +12,7 @@ TEST_F(AgentProjectFixture, VersionNotesDefaultToFactsAndShareOneSavedAgentSumma
   model.Queue(AnthropicText("  The workflow settings\n changed.  "), true);
   // Let a regressed second generation finish, so it fails the count/text
   // assertions rather than waiting forever for another provider response.
-  model.Queue(AnthropicText("Unexpected second summary."));
+  model.Queue(AnthropicText("Workflow の設定を変更しました。"));
   Configure(model, "anthropic");
   StartProject();
   const auto conversation = Conversation("version-notes");
@@ -55,18 +55,39 @@ TEST_F(AgentProjectFixture, VersionNotesDefaultToFactsAndShareOneSavedAgentSumma
   EXPECT_EQ(model.Requests().size(), 1u);
   EXPECT_EQ(note(*human, "en", "HEAD").Code(), "invalid_request");
   EXPECT_EQ(JsonString(model.Requests().front(), "/model"), "claude-haiku-5-5");
-  // A cache miss in a client or another language cannot make a second model call.
-  EXPECT_EQ(note(*human, "ja").Value()->value_as_TextResult()->text()->str(), "The workflow settings changed.");
-  EXPECT_EQ(model.Requests().size(), 1u);
+  // Each display language owns its own generated summary.
+  EXPECT_EQ(note(*human, "ja").Value()->value_as_TextResult()->text()->str(), "Workflow の設定を変更しました。");
+  EXPECT_EQ(model.Requests().size(), 2u);
   ASSERT_TRUE(SettingsPatch(*host, "desktop", {{"versions.noteMode", Quote("mechanical")}}).Code().empty());
   EXPECT_EQ(note(*human).Value()->value_as_TextResult()->text()->str(), "Changed Workflow settings");
   ASSERT_TRUE(SettingsPatch(*host, "desktop", {{"versions.noteMode", Quote("agent")}}).Code().empty());
   EXPECT_EQ(note(*human).Value()->value_as_TextResult()->text()->str(), "The workflow settings changed.");
-  EXPECT_EQ(model.Requests().size(), 1u);
+  EXPECT_EQ(model.Requests().size(), 2u);
   human.reset(); other.reset(); external.reset(); host.reset();
   agent.Stop(); StartAgent();
   EXPECT_EQ(note(*human).Value()->value_as_TextResult()->text()->str(), "The workflow settings changed.");
-  EXPECT_EQ(model.Requests().size(), 1u);
+  EXPECT_EQ(model.Requests().size(), 2u);
+}
+TEST_F(AgentProjectFixture, HostGraphsRenderOneCommitInBothLanguagesAndAgentFormattingStaysOnHost) {
+  StartProject();
+  const auto conversation = Conversation("host-presentation");
+  Grant(conversation, A::GrantScope::Conversation, A::Access::Read);
+  Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
+  ASSERT_TRUE(ApprovedTool(conversation, "version_init", "{}").Code().empty());
+  for (const auto& [language, expected] : std::vector<std::pair<std::string, std::string>>{
+      {"en", "Create the project"}, {"ja", "プロジェクトを作成"}}) {
+    const auto result = Call(*host, H::RequestPayload::HostVersionGraphRequest, [&](Builder& b) {
+      return H::CreateHostVersionGraphRequest(b, b.CreateString(project_id), b.CreateString(language)).Union();
+    });
+    ASSERT_TRUE(result.Code().empty());
+    const auto* graph = result.HostValue()->value_as_VersionGraph();
+    ASSERT_NE(graph, nullptr);
+    ASSERT_EQ(graph->commits()->size(), 1u);
+    EXPECT_EQ(graph->commits()->Get(0)->message()->str(), expected);
+  }
+  const auto formatted = Tool(conversation, "project_file_format", R"({"path":"x.json","text":"{\"a\":1}"})", "format");
+  ASSERT_TRUE(formatted.Code().empty());
+  EXPECT_EQ(JsonString(JsonString(formatted.View(), "/text"), "/value/text"), "{\n  \"a\": 1\n}\n");
 }
 TEST_F(AgentProjectFixture, VersionNoteFailureCanBeRetriedAndEmptyDiffNeverCallsAModel) {
   ModelServer model;

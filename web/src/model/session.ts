@@ -26,7 +26,7 @@ import marimoFiles from '../../../ui/templates/marimo.json'
 import { FlowDirection, prefs } from './prefs'
 import { runMark } from './runMark'
 import { cardPermissions } from './permissions'
-import { L, language } from '../i18n'
+import { L } from '../i18n'
 
 export type CardKey = string // "a/b"
 export const key = (p: string[]): CardKey => p.join('/')
@@ -731,7 +731,7 @@ export class ProjectSession extends Observable {
       try {
         const c = new RPCClient(await this.openTransport(endpoint))
         registerModuleClient(c)
-        await c.connect(token, language())
+        await c.connect(token)
         return c
       } catch (e) {
         if (!(e instanceof RPCError && e.code === 'disconnected')) throw e
@@ -3414,10 +3414,14 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
   /** Made or copied by this page: it becomes a repository when it connects. */
   makeRepositoryOnConnect = false
 
+  versionDiff(commit: string, from?: string) {
+    return api<{ text: string; truncated: boolean }>('/api/versions/diff', { path: this.dir, commit, from })
+  }
+
   async refreshVersions() {
     if (!this.client) return
     try {
-      this.versionGraph = await this.client.versionGraph()
+      this.versionGraph = await api('/api/versions/graph', { path: this.dir })
       this.versionGraphError = undefined
     } catch (e) {
       this.versionGraphError = errorText(e)

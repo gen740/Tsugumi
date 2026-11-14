@@ -1471,11 +1471,11 @@ private struct SourceCategory: View {
   }
 
   private func format(_ p: String) {
-    guard let rpc = model.session.rpc, let source = model.loadedText(p) else { return }
+    guard model.session.rpc != nil, let source = model.loadedText(p) else { return }
     formatting = true
     Task {
       do {
-        let r = try await rpc.format(path: p, text: source)
+        let r = try await CoreAgentClient.shared.format(path: p, text: source)
         let errors = r.diagnostics.compactMap { $0 }
         if errors.isEmpty {
           model.texts[p] = r.text
