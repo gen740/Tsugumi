@@ -97,6 +97,53 @@ def test_runs_commit_note_and_branch(tmp_path, core_factory):
     assert [text(p) for p in third.parents] == [first]
 
 
+def test_runs_version_definitions_and_explicit_paths_only(tmp_path, core_factory):
+    """Run commits and named versions exclude stray files and internal state."""
+    root = tmp_path / "p"
+    builtin_project(root)
+    (root / ".gitignore").write_text("# State is not ignored here\n")
+    (root / "result.csv").write_text("stray result")
+    (root / "reference.csv").write_text("chosen input")
+    daemon = core_factory(project_root=root)
+    c = daemon.connect()
+    first = text(c.call("VersionInitRequest", opId=new_id(), origin="test").commit)
+
+    def paths(commit):
+        return set(git(root, "ls-tree", "-r", "--name-only", commit).splitlines())
+
+    assert "result.csv" not in paths(first) and "reference.csv" not in paths(first)
+    (root / "result.csv").write_text("another stray result")
+    (root / ".tsugumi" / "sentinel").write_text("internal state")
+    _, unchanged = run_and_wait(c, "start")
+    assert unchanged.state == RunState.succeeded and text(unchanged.commit) == first
+    assert not graph(c).dirty
+    snap = c.call("ProjectInspectRequest")
+    document = json.loads(text(snap.projectJson))
+    document["versionPaths"] = ["reference.csv"]
+    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
+           changes=[change("SetProject", json=json.dumps(document))])
+    set_text(c, "changed definition")
+    _, changed = run_and_wait(c, "start")
+    second = text(changed.commit)
+    assert changed.state == RunState.succeeded and second != first
+    assert "reference.csv" in paths(second) and "result.csv" not in paths(second)
+    assert "changed definition" in git(root, "show", second + ":definitions/src/_card.json")
+    assert not any(".tsugumi" in p.split("/") for p in paths(second))
+    (root / "reference.csv").write_text("changed chosen input")
+    _, chosen = run_and_wait(c, "start")
+    assert chosen.state == RunState.succeeded and text(chosen.commit) != second
+    assert git(root, "show", text(chosen.commit) + ":reference.csv") == "changed chosen input"
+    (root / "reference.csv").write_text("kept by hand")
+    mark = _request_class("VersionMarkRequest")()
+    mark.opId, mark.origin, mark.name = new_id(), "test", "chosen-input"
+    c.wait_reply(c.send("VersionMarkRequest", mark))
+    assert git(root, "show", "chosen-input:reference.csv") == "kept by hand"
+    assert "result.csv" not in paths("chosen-input")
+    assert not any(".tsugumi" in p.split("/") for p in paths("chosen-input"))
+    assert (root / "result.csv").read_text() == "another stray result"
+    assert (root / ".tsugumi" / "sentinel").read_text() == "internal state"
+
+
 
 def test_a_demo_history_becomes_its_versions(tmp_path, core_factory):
     """An imported project history retains its branches, named versions and run results."""

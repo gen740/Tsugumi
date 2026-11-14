@@ -1,11 +1,21 @@
 # Versions (git)
 
-A project's folder is a git repository. Projects made in the app, and copies of demos, become repositories the first time they are opened. Other projects can be made repositories with "Start Versioning" in "Version History". `.tsugumi/` (tsugumid's state) is excluded in `.gitignore`.
+A project's folder is a git repository. Projects made in the app, and copies of demos, become repositories the first time they are opened. Other projects can be made repositories with "Start Versioning" in "Version History".
+
+Versions contain the project's definitions: `tsugumi.json`, `layout.json`, each Card's documents (`_card.json`, `_link.json`, `_meta.json`) and source files, including Nix definitions and pins, Skills (`skills/`), and embedded projects (`externals/`). The document model's source areas cover all files under each Card's `definitions/<id>/` folder, `skills/` and `externals/`, as in the project file APIs and saves.
+
+Other files, including results and downloads outside those areas, enter a version only when explicitly listed in `versionPaths` in `tsugumi.json`. Edit **Additional paths to version** in the project's General settings in either the Mac app or Web UI: one project-relative file or folder per line. Folder entries include their descendants. Paths are literal, without wildcard expansion; missing paths add nothing. For example:
+
+```json
+"versionPaths": ["inputs/reference.csv", "calibration"]
+```
+
+Choosing data here fixes it as part of the computation's definition. Removing a path stops versioning it unless it is also in a definition's source area. Files outside this selection remain untracked and untouched, including files previously staged or tracked that the next version leaves out; their contents stay on disk. `.tsugumi/` and `.git/` at any depth are always excluded, regardless of `.gitignore` or the selection. Symbolic links are not followed or versioned. Definitions and explicit selections are included even if `.gitignore` ignores them.
 
 ## When a version is made
 
-- **When a run starts**: if the content has changed since the last version, the saved content is committed (message "Run: <Card>" in English, "実行: <Card>" in Japanese). The run records the commit at its start, which you can see in the list of runs and in `RunStatus.commit`. Running again without changing anything adds a run to the same commit (commits and runs are 1 : N).
-- **Keep as Version**: commits the current content and gives it a name (an annotated tag) and a memo.
+- **When a run starts**: if the saved definitions or additional selected paths have changed since the last version, they are committed (message "Run: <Card>" in English, "実行: <Card>" in Japanese). The run records the commit at its start, which you can see in the list of runs and in `RunStatus.commit`. Running again without changing them adds a run to the same commit (commits and runs are 1 : N). Unselected files do not mark the version history as changed.
+- **Keep as Version**: commits the same definitions and additional selected paths and gives the version a name (an annotated tag) and a memo. Starting versioning uses the same selection.
 
 ## The results of runs
 
@@ -46,7 +56,7 @@ In the Mac app, open it with "Version History…" (⌥⌘Y) in the Workflow menu
 
 - Branches and merges are drawn as lines, and each version shows the number and results of its runs (the dot's colour: green succeeded, red failed), the name of a version kept by hand (a tag), branch names and the Cards that changed.
 - Hover a version's dot or row to see a short note on what changed in that version and a minimap of that version's Cards and connections, in which the Cards that changed in that version are highlighted.
-- Select a version to see its message, its note and its runs' results and summaries. "Start from This Version" keeps the current content as a version and then returns to that version's content.
+- Select a version to see its message, its note and its runs' results and summaries. "Start from This Version" keeps the current definitions and additional selected paths as a version and then returns to that version's content.
 - Returning to the version at the tip of a branch continues that branch. Changing and running from any other version starts a new branch (`try-<version>`); the earlier line is not lost.
 - You cannot move to another version while there are unsaved changes or a run is going.
 

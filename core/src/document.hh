@@ -72,6 +72,8 @@ struct Document {
   static auto is_card_meta_file(const std::string& rel) -> bool;
   static bool is_document_file(const std::string& rel);
   static bool is_source_area(const std::string& rel);
+  // Version opt-ins never name internal state or Git metadata, at any depth.
+  static auto valid_version_path(const std::string& rel) -> bool;
 
   const std::string& pkgs_path() const { return project.pkgs_path->value(); }
   bool save_run_history() const { return project.save_run_history->value_or(true); }

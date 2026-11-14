@@ -84,15 +84,15 @@ class Versions {
   ~Versions();
 
   bool enabled() const;
-  // Makes the folder a repository with a first commit of what is in it
-  // (.gitignore keeps .tsugumi/ out). A demo's history file
+  // Makes the folder a repository with a first commit of its definitions and
+  // versionPaths opt-ins, always excluding .tsugumi/. A demo's history file
   // (.tsugumi-history.json) becomes its commits, branches, tags and notes
   // instead, ending in what is on disk. Returns HEAD. `english` is the language
   // of the first commit's message (the connection's, as for runs).
   std::string init(bool english);
-  // Commits what is on disk when it differs from HEAD (on a detached HEAD a
-  // branch is made first, so nothing is left unreachable). Returns HEAD; ""
-  // when the folder is not a repository.
+  // Commits saved definitions and versionPaths opt-ins when they differ from
+  // HEAD (on a detached HEAD a branch is made first, so nothing is left
+  // unreachable). Returns HEAD; "" when the folder is not a repository.
   std::string commit_all(const std::string& message);
   void note_run(const std::string& commit, const VersionRunNote& run);
   // commit_all(message), then an annotated tag `name` on it.
