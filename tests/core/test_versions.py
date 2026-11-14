@@ -362,11 +362,15 @@ def test_a_version_has_its_canvas_diff_and_summary(tmp_path, core_factory):
     placed = {text(k.id): (k.x, k.y) for k in c.call("VersionCanvasRequest", commit=second).cards}
     assert placed["src"][1] == 7 and placed["out"][0] == 200
     # The summary: on the commit, in its own note, and replaced when written again.
-    assert not next(x for x in graph(c).commits if text(x.id) == second).changeSummary
+    factual = c.call("VersionNoteRequest", commit=second, language="ja")
+    assert text(factual.text) == "変更: src (パラメータ)"
+    assert not factual.agentSummary
+    assert git(root, "notes", "--ref=tsugumi-record-ja", "show", second).strip() == text(factual.text)
+    assert text(c.call("VersionNoteRequest", commit=second, language="en").text) == "Changed src (parameters)"
     for words in ("一度目", "failed が出ないように直した"):
-        c.call("VersionSummaryRequest", opId=new_id(), origin="test", commit=second, summary=words)
-    got = next(x for x in graph(c).commits if text(x.id) == second)
-    assert text(got.changeSummary) == "failed が出ないように直した"
+        c.call("VersionNoteStoreRequest", opId=new_id(), origin="test", commit=second, summary=words)
+    got = c.call("VersionNoteRequest", commit=second, language="ja")
+    assert text(got.agentSummary) == "failed が出ないように直した"
     notes(c, second, 1)
     assert all(text(run.state) == "succeeded" for run in notes(c, second, 1))
     # A commit that is not there is refused, and nothing is kept.

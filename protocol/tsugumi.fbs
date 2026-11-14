@@ -424,9 +424,17 @@ table VersionDiffRequest {
   from_commit:string (id: 1);
 }
 
-/// -> VersionResult. Keeps a client's summary of a version in the commit's own
-/// note (refs/notes/tsugumi-summary), replacing the one there.
-table VersionSummaryRequest {
+/// -> VersionNote. Core-generated mechanical record and the saved Agent note.
+/// The host Agent service chooses which to return to the UI.
+/// Mechanical records are kept in refs/notes/tsugumi-record-{ja,en}.
+table VersionNoteRequest {
+  commit:string (id: 0, required);
+  language:string (id: 1, required);
+}
+
+/// -> VersionResult. The host Agent service stores the generated note in
+/// refs/notes/tsugumi-summary. Clients request notes from agentd.
+table VersionNoteStoreRequest {
   op_id:string (id: 0, required);
   origin:string (id: 1, required);
   commit:string (id: 2, required);
@@ -817,7 +825,7 @@ union RequestPayload {
   VersionGraphRequest = 36,
   VersionCanvasRequest = 37,
   VersionDiffRequest = 38,
-  VersionSummaryRequest = 39,
+  VersionNoteStoreRequest = 39,
   NixSourceResolveRequest = 40,
   RunLatestInvocationsRequest = 41,
   RunEnvironmentsRequest = 42,
@@ -827,6 +835,7 @@ union RequestPayload {
   LayoutArrangeRequest = 46,
   LayoutUntangleRequest = 47,
   ProjectCacheUsageRequest = 48,
+  VersionNoteRequest = 49,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -875,11 +884,8 @@ table VersionCommit {
   /// Card keys whose files changed from the first parent ("" for the
   /// project's own documents).
   changed:[string] (id: 9);
-  /// What this version changed, in a sentence a model wrote from its diff
-  /// (refs/notes/tsugumi-summary). Absent until one is written.
-  change_summary:string (id: 10);
   /// What this version did to the comments on Cards, from the first parent.
-  comments:[VersionComment] (id: 11);
+  comments:[VersionComment] (id: 10);
 }
 
 table VersionCanvasCard {
@@ -908,6 +914,11 @@ table VersionCanvas {
   /// The way the Cards run: "leftToRight" or "topToBottom". Columns by depth
   /// are always leftToRight.
   flow:string (id: 2, required);
+}
+
+table VersionNote {
+  text:string (id: 0, required);
+  agent_summary:string (id: 1);
 }
 
 table VersionDiff {
@@ -1223,6 +1234,7 @@ union ReplyPayload {
   ProjectShellResult = 34,
   LayoutProposal = 35,
   ProjectCacheUsageResult = 36,
+  VersionNote = 37,
 }
 
 // ---- Notifications -----------------------------------------------------------

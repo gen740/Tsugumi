@@ -45,25 +45,32 @@ Outputs and logs are in [run history](RunHistory.md#history-storage), separate f
 In the Mac app, open it with "Version History…" (⌥⌘Y) in the Workflow menu; in the Web UI, with the button at the bottom of the sidebar.
 
 - Branches and merges are drawn as lines, and each version shows the number and results of its runs (the dot's colour: green succeeded, red failed), the name of a version kept by hand (a tag), branch names and the Cards that changed.
-- Hover a version's dot or row to see a short sentence on what changed in that version (the version summary) and a minimap of that version's Cards and connections, in which the Cards that changed in that version are highlighted.
-- Select a version to see its message, its version summary and its runs' results and summaries. "Start from This Version" keeps the current content as a version and then returns to that version's content.
+- Hover a version's dot or row to see a short note on what changed in that version and a minimap of that version's Cards and connections, in which the Cards that changed in that version are highlighted.
+- Select a version to see its message, its note and its runs' results and summaries. "Start from This Version" keeps the current content as a version and then returns to that version's content.
 - Returning to the version at the tip of a branch continues that branch. Changing and running from any other version starts a new branch (`try-<version>`); the earlier line is not lost.
 - You cannot move to another version while there are unsaved changes or a run is going.
 
-## Version summaries
+## Version notes
 
-Turn on "Version summaries" above the version history (it asks first; off by default) and a small model (`claude-haiku-5-5` for Anthropic; for OpenAI, the Agent's model) writes a short sentence on what changed in each version. This is different from the run summary: it is text a model writes.
+Choose **Change record** or **Agent summary** beside the version history. This setting applies to all projects in the current host settings profile and is stored in `tsugumi-agentd` (`versions.noteMode`). Change record is the default.
 
-- **When it is made**: once, when a run of that version ends, or when you hover a version without a summary. The host-side Agent service reads the authorized version diff and requests the model summary; `tsugumid` never calls a model. For runs while no page or app is open, it is made the next time you hover.
-- **What is sent**: that version's `VersionDiff`, limited to diffs of `tsugumi.json`, the Cards' `_card.json`, `_meta.json`, `_link.json`, `_outputs.fbs` and `default.nix`, and the code in `src/` (`.py` `.cc` `.cpp` `.cxx` `.c` `.h` `.hh` `.hpp` `.nix` `.fbs` `.sh`). Data files such as `data/`, non-code files in `src/` and `layout.json` are not sent. Long diffs are cut (4,000 bytes per file, 12,000 in all). Parameter values in `_card.json` and values written in code are sent, though.
-- **Where it is kept**: a commit note (`refs/notes/tsugumi-summary`). It is kept apart from the run records (`refs/notes/tsugumi`), so `git log --notes=tsugumi --grep=failed` is not affected by the model's text. Read it from git with:
+- **Change record**: the project core compares the full version tree with its first parent, without a model. It lists Cards added or removed and changes to their definitions, source, parameters and wiring, in the requesting app's language. Workflow settings are listed separately. Each record shows at most six entries and the remaining count. It contains no source text or parameter values. All files under a Card's `src/` count as source inputs, including assets and languages outside the model-diff allowlist. Changes to `layout.json` and files under `data/` are excluded.
+- **Agent summary**: the Agent writes one short sentence from the code and settings diff. The diff goes to the model provider and uses tokens. It can contain mistakes; the diff and run records are the evidence. This is different from the mechanical run summary above.
+
+The clients request a note when a version is hovered or selected, and display the returned text. The host Agent service chooses the mode and model, reads the authorized diff, generates the summary when needed and saves it. Requests from multiple windows for the same project and version share a gate: the saved Agent note is checked before any model call. A successful note is reused across windows and service restarts. Failed requests can be retried. Runs with no open version history do not request model summaries.
+
+The mechanical record is generated once per requested language and stored in `refs/notes/tsugumi-record-ja` or `refs/notes/tsugumi-record-en`. It is displayed in the requesting app's language. The Agent note keeps the language of the request that first generated it. Switching to Change record shows the mechanical record even if an Agent note is saved; switching back reuses the saved Agent note.
+
+Agent summaries use the host's small-model override (`agent.thoughtModel` or `agent.thoughtModel.openai`) when set; the defaults are `claude-haiku-5-5` for Anthropic and the Agent's configured model for OpenAI. They are unavailable with the ChatGPT plan. If no code or settings changed, the mechanical record is returned without calling a model.
+
+The model receives `VersionDiff`, limited to diffs of `tsugumi.json`, the Cards' `_card.json`, `_meta.json`, `_link.json`, `_outputs.fbs` and `default.nix`, and code in `src/` (`.py` `.cc` `.cpp` `.cxx` `.c` `.h` `.hh` `.hpp` `.nix` `.fbs` `.sh`). Data files such as `data/`, non-code files in `src/` and `layout.json` are excluded. Long diffs are cut (4,000 bytes per file, 12,000 in all). Parameter values and values written in code are sent.
+
+An Agent note is stored in `refs/notes/tsugumi-summary`, apart from the run records (`refs/notes/tsugumi`). Read it from git with:
 
 ```bash
 git log --notes=tsugumi-summary
+git log --notes=tsugumi-record-en
 ```
-
-- The model is asked to write only from the diff, but it is a model's text and can be wrong. What is certain is the diff and the run records.
-- It is not made with the ChatGPT plan (the plan's allowance is for the Agent).
 
 ## Comments
 

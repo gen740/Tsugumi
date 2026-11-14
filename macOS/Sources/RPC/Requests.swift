@@ -283,14 +283,7 @@ public extension RPCClient {
   }
 
   /// Keeps a summary of a version in its own note.
-  func versionSummary(opId: UUID, origin: String, commit: String, summary: String) async throws -> Tsugumi_RPC_VersionResultT {
-    let r = Tsugumi_RPC_VersionSummaryRequestT()
-    r.opId = opId.uuidString.lowercased()
-    r.origin = origin
-    r.commit = commit
-    r.summary = summary
-    return try await call(.versionsummaryrequest, r)
-  }
+
 
   /// Makes the project a git repository (a demo's history becomes its versions).
   func versionInit(opId: UUID, origin: String) async throws -> Tsugumi_RPC_VersionResultT {

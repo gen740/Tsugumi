@@ -32,6 +32,9 @@ class Settings {
   auto Handle(const Tsugumi::Host::Request& request, uint64_t id)
       -> std::string;
   auto Redact(std::string text) -> std::string;
+  auto VersionNoteMode(const std::string& profile) -> std::string;
+  auto VersionNoteProvider(const std::string& profile, const std::string& anthropic_keys,
+                           const std::string& openai_keys) -> agent::ProviderConfig;
   auto Resolve(const agent::json::Members& selection) -> agent::ProviderConfig;
 
  private:

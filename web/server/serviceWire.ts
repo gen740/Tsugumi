@@ -55,7 +55,7 @@ import { AccessResolveRequestT as AAccessResolveRequest } from '../src/gen/tsugu
 import { AccessRevokeRequestT as AAccessRevokeRequest } from '../src/gen/tsugumi/agent/access-revoke-request'
 import { AccessListRequestT as AAccessListRequest } from '../src/gen/tsugumi/agent/access-list-request'
 import { DemoReadRequestT as ADemoReadRequest } from '../src/gen/tsugumi/agent/demo-read-request'
-import { VersionSummarizeRequestT as AVersionSummarizeRequest } from '../src/gen/tsugumi/agent/version-summarize-request'
+import { VersionNoteRequestT as AVersionNoteRequest } from '../src/gen/tsugumi/agent/version-note-request'
 import { ConversationSummarizeRequestT as AConversationSummarizeRequest } from '../src/gen/tsugumi/agent/conversation-summarize-request'
 import { HelloRequestT as HHelloRequest } from '../src/gen/tsugumi/service/hello-request'
 import { RegisterProjectRequestT as HRegisterProjectRequest } from '../src/gen/tsugumi/host/register-project-request'
@@ -153,7 +153,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'AccessRevokeRequest': return new AAccessRevokeRequest(v.grant_id)
     case 'AccessListRequest': return new AAccessListRequest(v.conversation_id)
     case 'DemoReadRequest': return new ADemoReadRequest(v.path)
-    case 'VersionSummarizeRequest': return new AVersionSummarizeRequest(v.project_id, v.commit, provider(v.provider))
+    case 'VersionNoteRequest': return new AVersionNoteRequest(v.project_id, v.commit, v.profile, v.language, v.anthropic_key_profile, v.openai_key_profile)
     case 'ConversationSummarizeRequest': return new AConversationSummarizeRequest(v.conversation_id, provider(v.provider))
   }
   throw new Error(`Unknown ${host ? 'Host' : 'Agent'} request: ${method}`)

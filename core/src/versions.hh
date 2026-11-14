@@ -2,7 +2,7 @@
 // commits what is saved when it starts (when it changed) and records that
 // commit; when it ends, a line goes to the commit's note (refs/notes/tsugumi),
 // with what ran, so a commit has its runs' results and git selects versions by them
-// (git log --notes=tsugumi --grep=failed). A client may keep what a version
+// (git log --notes=tsugumi --grep=failed). The Agent service keeps what a version
 // changed, in words a model wrote from its diff, in a note of its own
 // (refs/notes/tsugumi-summary), apart from that record. A version the user
 // names is an annotated tag. .tsugumi/ (tsugumid's state) is never part of it.
@@ -42,7 +42,6 @@ struct VersionCommit {
   // Card keys ("a", "outer/b") whose files changed from the first parent;
   // "" for the project's own documents (tsugumi.json, layout.json).
   std::vector<std::string> changed;
-  std::string change_summary;  // refs/notes/tsugumi-summary; empty until written
   std::vector<comments::Change> comments;
 };
 
@@ -59,6 +58,11 @@ struct VersionCanvasData {
   std::vector<Card> cards;
   std::vector<std::pair<std::string, std::string>> wires;  // from, to
   std::string flow = "leftToRight";
+};
+
+struct VersionNoteData {
+  std::string text;
+  std::string agent_summary;
 };
 
 struct VersionDiffData {
@@ -104,6 +108,9 @@ class Versions {
   // What `commit` changed from from_commit, or its first parent when omitted:
   // the files a summary may read (summary_reads), cut at a limit.
   auto diff(const std::string& commit, const std::string& from_commit = "") -> VersionDiffData;
+  // A short factual record, kept per language in refs/notes/tsugumi-record-{ja,en}.
+  // No model or data values. Also returns the saved Agent note, if any.
+  auto note(const std::string& commit, bool english) -> VersionNoteData;
   void set_summary(const std::string& commit, const std::string& summary);
 
   static std::string format_note(const VersionRunNote& r);

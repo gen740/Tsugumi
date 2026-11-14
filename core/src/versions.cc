@@ -26,6 +26,8 @@ namespace {
 
 constexpr const char* kNotesRef = "refs/notes/tsugumi";
 constexpr const char* kSummaryRef = "refs/notes/tsugumi-summary";
+constexpr const char* kRecordRefEn = "refs/notes/tsugumi-record-en";
+constexpr const char* kRecordRefJa = "refs/notes/tsugumi-record-ja";
 constexpr size_t kDiffLimit = 12000;     // what a summary reads of a version
 constexpr size_t kDiffFileLimit = 4000;  // of one file, so one file cannot fill it
 constexpr const char* kHistoryFile = ".tsugumi-history.json";
@@ -143,10 +145,62 @@ std::string new_branch_name(git_repository* r, const std::string& from) {
 // A file of a commit's tree as text.
 std::optional<std::string> file_at(git_repository* r, git_tree* tree, const char* path) {
   TreeEntry e;
-  if (git_tree_entry_bypath(e.out(), tree, path) != 0) return std::nullopt;
+  if (!tree || git_tree_entry_bypath(e.out(), tree, path) != 0) return std::nullopt;
   Blob b;
   if (git_blob_lookup(b.out(), r, git_tree_entry_id(e.get())) != 0) return std::nullopt;
   return std::string(static_cast<const char*>(git_blob_rawcontent(b.get())), git_blob_rawsize(b.get()));
+}
+
+// Every file supplied through a Card's src/ is a source input, including
+// assets and languages outside the model-diff allowlist. Only its path is read.
+auto source_input(const std::string& path) -> bool {
+  std::vector<std::string> parts;
+  for (const auto& part : stdfs::path(path)) parts.push_back(part.string());
+  size_t i = 0;
+  while (i + 1 < parts.size() && parts[i] == "externals") i += 2;
+  return i + 3 < parts.size() && parts[i] == "definitions" && parts[i + 2] == "src";
+}
+
+// Compare JSON values without whitespace or object member ordering. Document
+// schemas have optional decode-only fields, so they are not serialization types.
+auto canonical_value(const hosq::json::GenericDom<>& value) -> std::string {
+  const auto raw = schema::text(value);
+  const auto first = raw.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos) return "";
+  if (raw[first] == '{') {
+    schema::v::Mapping<schema::v::String, schema::Json> fields;
+    if (auto error = schema::decode(value, fields)) throw std::runtime_error(error->message);
+    std::map<std::string, std::string> sorted;
+    for (const auto& [key, item] : fields.value()) sorted[key] = canonical_value(item);
+    std::string out = "{";
+    for (const auto& [key, item] : sorted) {
+      schema::v::String name; name.value() = key;
+      out += (out.size() > 1 ? "," : "") + schema::encode(name) + ":" + item;
+    }
+    return out + "}";
+  }
+  if (raw[first] == '[') {
+    schema::v::Array<schema::Json> items;
+    if (auto error = schema::decode(value, items)) throw std::runtime_error(error->message);
+    std::string out = "[";
+    for (const auto& item : items.value()) out += (out.size() > 1 ? "," : "") + canonical_value(item);
+    return out + "]";
+  }
+  if (raw[first] == '"') {
+    schema::v::String text;
+    if (auto error = schema::decode(value, text)) throw std::runtime_error(error->message);
+    return schema::encode(text);
+  }
+  return raw.substr(first, raw.find_last_not_of(" \t\r\n") - first + 1);
+}
+
+auto document_fields(const std::optional<std::string>& text) -> std::map<std::string, std::string> {
+  std::map<std::string, std::string> out;
+  if (!text) return out;
+  schema::v::Mapping<schema::v::String, schema::Json> fields;
+  if (auto error = schema::decode(*text, fields)) throw std::runtime_error(error->message);
+  for (const auto& [name, value] : fields.value()) out[name] = canonical_value(value);
+  return out;
 }
 
 // What a Card is in this version and, for a fork or merge, how many ports it
@@ -506,8 +560,6 @@ VersionGraphData Versions::graph(size_t limit) {
     vc.tags = tags[vc.id];
     Note n;
     if (git_note_read(n.out(), r.get(), kNotesRef, &oid) == 0) vc.runs = parse_note(git_note_message(n.get()));
-    Note about;
-    if (git_note_read(about.out(), r.get(), kSummaryRef, &oid) == 0) vc.change_summary = git_note_message(about.get());
     // What changed from the first parent, by Card.
     Tree mine;
     Tree theirs;
@@ -679,6 +731,135 @@ auto Versions::diff(const std::string& commit, const std::string& from_commit) -
   }
   // Cut inside a character at most: what a client sends stays valid text.
   while (!out.text.empty() && (static_cast<unsigned char>(out.text.back()) & 0x80)) out.text.pop_back();
+  return out;
+}
+
+// Read full trees, independently of the cut-down text sent to a model. Never
+// include parameter values, source contents, data files or inferred intent.
+auto Versions::note(const std::string& commit, bool english) -> VersionNoteData {
+  std::lock_guard<std::mutex> l(mu_);
+  Repo r;
+  git_oid oid;
+  if (!open(r, root_) || git_oid_fromstr(&oid, commit.c_str()) != 0)
+    throw Failed(FailureKind::not_found, "no version " + commit);
+  Commit c;
+  if (git_commit_lookup(c.out(), r.get(), &oid) != 0)
+    throw Failed(FailureKind::not_found, "no version " + commit);
+  Tree mine, theirs;
+  check(git_commit_tree(mine.out(), c.get()), "tree");
+  if (git_commit_parentcount(c.get()) > 0) {
+    Commit parent;
+    check(git_commit_parent(parent.out(), c.get(), 0), "parent");
+    check(git_commit_tree(theirs.out(), parent.get()), "parent tree");
+  }
+  VersionNoteData out;
+  Note saved;
+  if (git_note_read(saved.out(), r.get(), kSummaryRef, &oid) == 0)
+    out.agent_summary = git_note_message(saved.get());
+  const auto* record_ref = english ? kRecordRefEn : kRecordRefJa;
+  Note record;
+  if (git_note_read(record.out(), r.get(), record_ref, &oid) == 0) {
+    out.text = git_note_message(record.get());
+    return out;
+  }
+  Diff d;
+  check(git_diff_tree_to_tree(d.out(), r.get(), theirs.get(), mine.get(), nullptr), "diff");
+  std::set<std::string> added, removed;
+  std::map<std::string, std::set<std::string>> changed;
+  bool workflow = false;
+  const auto label = [english](const char* en, const char* ja) { return std::string(english ? en : ja); };
+  const auto project_at = [&](git_tree* tree, const std::string& path) {
+    schema::Project p;
+    if (auto text = file_at(r.get(), tree, path.c_str()))
+      if (auto error = schema::decode(*text, p)) throw Failed(FailureKind::invalid_document, path + ": " + error->message);
+    return p;
+  };
+  const auto ids = [](const schema::Project& p) {
+    std::set<std::string> result;
+    if (auto g = schema::get(p.canvas))
+      if (auto cards = schema::get(g->cards))
+        for (const auto& card : *cards)
+          if (auto id = schema::get(card.id)) result.insert(*id);
+    return result;
+  };
+  const auto wires = [](const schema::Project& p) {
+    std::map<std::string, std::set<std::string>> result;
+    if (auto g = schema::get(p.canvas))
+      if (auto connections = schema::get(g->connections))
+        for (const auto& wire : *connections) {
+          const auto endpoint_text = [](const auto* endpoint) {
+            if (!endpoint) return std::string();
+            const auto* card = schema::get(endpoint->card);
+            const auto* port = schema::get(endpoint->port);
+            return (card ? *card : "") + std::string(1, '\x1f') + (port ? *port : "");
+          };
+          const auto encoded = endpoint_text(schema::get(wire.from)) + std::string(1, '\x1e') + endpoint_text(schema::get(wire.to));
+          for (auto endpoint : {schema::get(wire.from), schema::get(wire.to)})
+            if (endpoint)
+              if (auto id = schema::get(endpoint->card)) result[*id].insert(encoded);
+        }
+    return result;
+  };
+  for (size_t i = 0; i < git_diff_num_deltas(d.get()); ++i) {
+    const auto* delta = git_diff_get_delta(d.get(), i);
+    const std::string path = delta->new_file.path ? delta->new_file.path : delta->old_file.path;
+    const bool source = source_input(path);
+    if (!summary_reads(path) && !source) continue;
+    auto card = card_of(path);
+    if (!card) continue;
+    const auto filename = stdfs::path(path).filename().string();
+    if (!source && filename == "tsugumi.json") {
+      const auto before = project_at(theirs.get(), path), after = project_at(mine.get(), path);
+      const auto old_ids = ids(before), new_ids = ids(after);
+      // card_of(tsugumi.json) is the containing Workflow; its children use it as a prefix.
+      const std::string prefix = card->empty() ? "" : *card + "/";
+      for (const auto& id : new_ids) if (!old_ids.count(id)) added.insert(prefix + id);
+      for (const auto& id : old_ids) if (!new_ids.count(id)) removed.insert(prefix + id);
+      auto old_wires = wires(before), new_wires = wires(after);
+      auto all = old_ids;
+      all.insert(new_ids.begin(), new_ids.end());
+      for (const auto& id : all)
+        if (old_wires[id] != new_wires[id]) changed[prefix + id].insert(label("wiring", "接続"));
+      auto a = document_fields(file_at(r.get(), theirs.get(), path.c_str()));
+      auto b = document_fields(file_at(r.get(), mine.get(), path.c_str()));
+      a.erase("canvas"); b.erase("canvas");
+      if (a != b) {
+        if (card->empty()) workflow = true;
+        else changed[*card].insert(label("definition", "定義"));
+      }
+    } else if (!source && filename == "_card.json") {
+      const auto old_text = file_at(r.get(), theirs.get(), path.c_str());
+      const auto new_text = file_at(r.get(), mine.get(), path.c_str());
+      auto before = document_fields(old_text), after = document_fields(new_text);
+      if (before["params"] != after["params"])
+        changed[*card].insert(label("parameters", "パラメータ"));
+      before.erase("params"); after.erase("params");
+      if (before != after || !old_text || !new_text)
+        changed[*card].insert(label("definition", "定義"));
+    } else {
+      changed[*card].insert(source ? label("source", "ソース") : label("definition", "定義"));
+    }
+  }
+  for (const auto& id : added) changed.erase(id);
+  for (const auto& id : removed) changed.erase(id);
+  std::vector<std::string> entries;
+  for (const auto& id : added) entries.push_back(label("Added ", "追加: ") + id);
+  for (const auto& id : removed) entries.push_back(label("Removed ", "削除: ") + id);
+  for (const auto& [id, kinds] : changed) {
+    std::string entry = label("Changed ", "変更: ") + (id.empty() ? label("Workflow", "Workflow") : id) + " (";
+    for (const auto& kind : kinds) entry += (entry.back() == '(' ? "" : ", ") + kind;
+    entries.push_back(entry + ")");
+  }
+  if (workflow) entries.push_back(label("Changed Workflow settings", "Workflow の設定を変更"));
+  for (size_t i = 0; i < std::min(entries.size(), size_t{6}); ++i)
+    out.text += (i ? "; " : "") + entries[i];
+  if (entries.size() > 6)
+    out.text += english ? "; and " + std::to_string(entries.size() - 6) + " more" : " ほか " + std::to_string(entries.size() - 6) + " 件";
+  if (out.text.empty()) out.text = label("No Card definition, source, parameter or wiring changes", "Card の定義・ソース・パラメータ・接続の変更なし");
+  Sig sig;
+  signature(sig, r.get());
+  git_oid note_id;
+  check(git_note_create(&note_id, r.get(), record_ref, sig.get(), sig.get(), &oid, out.text.c_str(), 0), "record note");
   return out;
 }
 

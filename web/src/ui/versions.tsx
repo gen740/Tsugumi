@@ -8,7 +8,7 @@ import { CardGeometry, CardNodeData } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { FlowDirection } from '../model/prefs'
 import { cardKindNamed, CardKind, commentChange, ProjectSession } from '../model/session'
-import { Button, Confirm, Empty, Sheet, TextField, Toggle } from './controls'
+import { Button, Confirm, Empty, Sheet, TextField } from './controls'
 import { Icon } from './icons'
 import { L } from '../i18n'
 
@@ -137,13 +137,13 @@ function MiniMap({ canvas, changed }: { canvas: R.VersionCanvasT; changed: strin
 function VersionHover({ session, commit, top }: { session: ProjectSession; commit: R.VersionCommitT; top: number }) {
   const id = str(commit.id)
   const canvas = session.versionCanvases.get(id)
-  const error = session.versionSummaryErrors.get(id)
+  const error = session.versionNoteErrors.get(id)
   return (
     <div className="version-hover" style={{ top }}>
-      {commit.changeSummary ? <div>{str(commit.changeSummary)}</div>
-        : session.versionSummaryBusy.has(id) ? <div className="secondary">{L('要約しています…')}</div>
+      {session.versionNotes.get(id) ? <div>{session.versionNotes.get(id)}</div>
+        : session.versionNoteBusy.has(id) ? <div className="secondary">{L('ノートを読み込んでいます…')}</div>
           : <div>{str(commit.summary)}</div>}
-      {error && <div className="caption" style={{ color: 'var(--red)' }}>{L('要約を作れませんでした: {0}', error)}</div>}
+      {error && <div className="caption" style={{ color: 'var(--red)' }}>{L('ノートを読み込めませんでした: {0}', error)}</div>}
       {canvas && canvas.cards.length > 0 && <MiniMap canvas={canvas} changed={list(commit.changed)} />}
     </div>
   )
@@ -163,23 +163,25 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
   const [error, setError] = useState<string>()
   const [naming, setNaming] = useState(false)
   const [confirmStart, setConfirmStart] = useState<string>()
-  const [confirmSummaries, setConfirmSummaries] = useState(false)
   // The version under the pointer, and the one whose panel shows (a moment later).
   const [pointed, setPointed] = useState<string>()
   const [hovered, setHovered] = useState<string>()
   const treeRef = useRef<HTMLDivElement>(null)
   useEffect(() => { void session.refreshVersions() }, [session, session.rev])
-  useEffect(() => { void session.loadVersionSummaries() }, [session])
+  useEffect(() => { void session.loadVersionNoteMode().catch((e) => setError(String(e))) }, [session])
   useEffect(() => {
     setHovered(undefined)
     if (!pointed) return
     const t = setTimeout(() => {
       setHovered(pointed)
       void session.loadVersionCanvas(pointed)
-      void session.summarizeVersion(pointed)
+      void session.loadVersionNote(pointed)
     }, 250)
     return () => clearTimeout(t)
-  }, [session, pointed])
+  }, [session, pointed, session.versionNoteMode])
+  useEffect(() => {
+    if (selected) void session.loadVersionNote(selected)
+  }, [session, selected, session.versionNoteMode])
   // The run's note is written as the run ends: read it a moment later.
   useEffect(() => {
     const t = setTimeout(() => void session.refreshVersions(), 600)
@@ -232,9 +234,14 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
         <span>{branch ? L('枝: {0}', branch) : L('枝の外（次の変更で新しい枝）')}</span>
         {(g.dirty || session.dirty) && <span className="caption" style={{ color: 'var(--orange)' }}>{L('最後の版から変更あり（次の実行で版になります）')}</span>}
         <span className="flex1" />
-        <Toggle small checked={session.versionSummaries} label={L('版の要約')}
-          help={L('オンにすると、小さなモデルが各版の変更を短い文にします（コードと設定を送ります）')}
-          onChange={(on) => { if (on) setConfirmSummaries(true); else act(() => session.setVersionSummaries(false)) }} />
+        <div className="col gap4">
+          <label>{L('版のノート')} <select value={session.versionNoteMode}
+            onChange={(e) => act(() => session.setVersionNoteMode(e.target.value as 'mechanical' | 'agent'))}>
+            <option value="mechanical">{L('変更の記録')}</option>
+            <option value="agent">{L('Agent の要約')}</option>
+          </select></label>
+          <div className="caption secondary">{L('変更の記録は Card の追加・削除と定義・ソース・パラメータ・接続の変更を無料で記録します。Agent の要約は差分をモデルのプロバイダへ送り、token を使います。この設定は全プロジェクトに適用します。')}</div>
+        </div>
         <Button disabled={!session.connected} onClick={() => setNaming(true)}>{L('版として残す…')}</Button>
         <Button kind="borderless" iconOnly icon="arrow.clockwise" help={L('読み直す')} onClick={() => void session.refreshVersions()} />
       </div>
@@ -299,7 +306,12 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
           {sel ? (
             <div className="col gap8">
               <div className="title3">{str(sel.summary)}</div>
-              {str(sel.changeSummary) && <div className="selectable">{str(sel.changeSummary)}</div>}
+              {session.versionNotes.get(str(sel.id)) && <div className="selectable">{session.versionNotes.get(str(sel.id))}</div>}
+              {session.versionNoteBusy.has(str(sel.id)) && <div className="secondary">{L('ノートを読み込んでいます…')}</div>}
+              {session.versionNoteErrors.get(str(sel.id)) && <div className="caption" style={{ color: 'var(--red)' }}>
+                {L('ノートを読み込めませんでした: {0}', session.versionNoteErrors.get(str(sel.id))!)}
+                <Button onClick={() => void session.loadVersionNote(str(sel.id))}>{L('再試行')}</Button>
+              </div>}
               {/* The message's body: what follows its first line (the summary). */}
               {str(sel.message).split('\n').slice(1).join('\n').trim() && (
                 <div className="selectable" style={{ whiteSpace: 'pre-wrap' }}>{str(sel.message).split('\n').slice(1).join('\n').trim()}</div>
@@ -344,12 +356,6 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
           ) : <div className="secondary">{L('版を選ぶと、その実行の結果と変わった Card を表示します。')}</div>}
         </div>
       </div>
-      {confirmSummaries && (
-        <Confirm title={L('版の要約をオンにしますか？')} confirm={L('オンにする')}
-          message={L('新しい版ができたときと、要約のない版にポインタを乗せたときに、その版で変わったコードと設定を接続中のモデルのプロバイダへ送り、小さなモデル（Anthropic なら claude-haiku-5-5）が短い文にします。データのファイルは送りません。Agent とは別に token を使います。ChatGPT プランでは作りません。')}
-          onConfirm={() => { setConfirmSummaries(false); act(() => session.setVersionSummaries(true)) }}
-          onCancel={() => setConfirmSummaries(false)} />
-      )}
       {confirmStart && (
         <Confirm title={L('この版から始めますか？')} confirm={L('この版から始める')}
           message={L('今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。')}

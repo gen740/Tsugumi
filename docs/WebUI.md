@@ -31,7 +31,7 @@ The installed Mac command uses the release app's support directory by default:
 | VM, store, project control folders | `~/Library/Application Support/Tsugumi/`; override with `TSUGUMI_SUPPORT_DIR` |
 | Recent projects | `recent-projects.json` under agentd's state directory; shared by clients of that service |
 | Default project destination | `~/Documents/Tsugumi` |
-| Language, provider, model, effort, Fast, web search, permission preferences, version summaries | agentd's `desktop` settings profile, shared with the app |
+| Language, provider, model, effort, Fast, web search, permission preferences, version note mode | agentd's `desktop` settings profile, shared with the app |
 | Skill folders and ChatGPT accounts | Separate `web:<Web data folder>` profile in agentd |
 | Scripted guide progress | Separate desktop and Web sessions in agentd; shared across that client's windows or tabs |
 

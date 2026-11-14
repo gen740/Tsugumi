@@ -18,10 +18,7 @@ import Testing
   }
 }
 
-@Test func aVersionHoverIsWrittenFromItsChangeAndFitsItsCards() {
-  #expect(VersionSummarizer.input(message: "実行: bands\n", changed: ["bands", ""], diff: "+x\n", truncated: true)
-    == "Commit message: 実行: bands\nChanged Cards: bands, the Workflow itself\n\nDiff (cut short):\n+x\n")
-  #expect(VersionSummarizer.clean(" 緑を\n  広げた。 ") == "緑を 広げた。")
+@Test func aVersionHoverFitsItsCards() {
   // Every Card stays inside the box, in the order it has on the canvas.
   let wide = VersionMiniMapLayout([.init(id: "a", x: 100, y: 0), .init(id: "b", x: 5000, y: 300), .init(id: "c", x: 2500, y: -400)],
                                   flow: .leftToRight, width: 284, height: 132)
