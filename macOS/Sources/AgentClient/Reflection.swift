@@ -2,8 +2,7 @@ import FlatBuffers
 import Foundation
 
 /// Minimal reader for FlatBuffers binary schemas (reflection.fbs layout).
-/// Tool schemas and tool argument/result conversion are derived from the
-/// published tsugumi.bfbs so the Agent never hand-maintains the RPC shape.
+/// The app reads port types and recorded values from their schemas.
 public struct BFBS {
   public enum BaseType: Int8 {
     case none = 0, utype, bool, byte, ubyte, short, ushort, int, uint, long, ulong, float, double
@@ -21,18 +20,12 @@ public struct BFBS {
     public let type: TypeInfo
     public let id: UInt16
     public let offset: UInt16  // vtable slot
-    public let defaultInteger: Int64
-    public let defaultReal: Double
-    public let required: Bool
-    public let optional: Bool
-    public let documentation: [String]
   }
 
   public struct Object {
     public let name: String
     public let fields: [Field]
     public let isStruct: Bool
-    public let documentation: [String]
   }
 
   public struct EnumValue {
@@ -44,8 +37,6 @@ public struct BFBS {
   public struct Enum {
     public let name: String
     public let values: [EnumValue]
-    public let isUnion: Bool
-    public let underlying: TypeInfo
   }
 
   public let objects: [Object]
@@ -85,19 +76,6 @@ public struct BFBS {
     return o == 0 ? "" : (t.string(at: o) ?? "")
   }
 
-  private static func strings(_ t: Table, _ id: Int32) -> [String] {
-    let o = t.offset(vo(id))
-    guard o != 0 else { return [] }
-    let n = t.vector(count: o)
-    let start = t.vector(at: o)
-    return (0..<n).compactMap { i in
-      let pos = start + i * 4
-      let s = pos + t.bb.read(def: Int32.self, position: Int(pos))
-      let len = t.bb.read(def: Int32.self, position: Int(s))
-      return t.bb.readString(at: Int(s) + 4, count: Int(len))
-    }
-  }
-
   private static func scalar<T>(_ t: Table, _ id: Int32, _ def: T) -> T {
     let o = t.offset(vo(id))
     return o == 0 ? def : t.readBuffer(of: T.self, at: o)
@@ -117,19 +95,16 @@ public struct BFBS {
   private static func object(_ t: Table) -> Object {
     let fields = tables(t, 1).map { f in
       Field(name: string(f, 0), type: child(f, 1).map(type) ?? TypeInfo(base: .none, element: .none, index: -1),
-            id: scalar(f, 2, UInt16(0)), offset: scalar(f, 3, UInt16(0)),
-            defaultInteger: scalar(f, 4, Int64(0)), defaultReal: scalar(f, 5, Double(0)),
-            required: scalar(f, 7, false), optional: scalar(f, 11, false), documentation: strings(f, 10))
+            id: scalar(f, 2, UInt16(0)), offset: scalar(f, 3, UInt16(0)))
     }.sorted { $0.id < $1.id }
-    return Object(name: string(t, 0), fields: fields, isStruct: scalar(t, 2, false), documentation: strings(t, 6))
+    return Object(name: string(t, 0), fields: fields, isStruct: scalar(t, 2, false))
   }
 
   private static func enumeration(_ t: Table) -> Enum {
     let values = tables(t, 1).map { v in
       EnumValue(name: string(v, 0), value: scalar(v, 1, Int64(0)), unionType: child(v, 3).map(type))
     }
-    return Enum(name: string(t, 0), values: values, isUnion: scalar(t, 2, false),
-                underlying: child(t, 3).map(type) ?? TypeInfo(base: .ubyte, element: .none, index: -1))
+    return Enum(name: string(t, 0), values: values)
   }
 }
 

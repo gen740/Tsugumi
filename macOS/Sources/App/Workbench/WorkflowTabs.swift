@@ -418,10 +418,6 @@ struct EnvironmentProblemView: View {
   }
 }
 
-extension EnvironmentState {
-  var isPreparing: Bool { if case .preparing = self { return true }; return false }
-}
-
 /// Run entry points shared by the canvas control, menus and shortcuts.
 @MainActor
 enum RunActions {
