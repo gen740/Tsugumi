@@ -169,7 +169,6 @@ auto check_version_paths(const schema::Project& p) -> void {
 
 schema::Project parse_project_json(const std::string& text) {
   auto p = decode_doc<schema::Project>("tsugumi.json", text);
-  if (!p.name->has_value()) invalid("tsugumi.json: \"name\" is required");
   if (!p.pkgs_path->has_value()) invalid("tsugumi.json: \"pkgsPath\" is required");
   if (!p.canvas->has_value()) invalid("tsugumi.json: \"canvas\" is required");
   check_nix_sources(p);
@@ -283,32 +282,9 @@ schema::CardDefinition parse_card_json(const std::string& id, const std::string&
   return decode_doc<schema::CardDefinition>("definitions/" + id + "/_card.json", text);
 }
 
-schema::CardMeta parse_meta_json(const std::string& text) { return decode_doc<schema::CardMeta>("_meta.json", text); }
-
-std::string fill_meta_json(const std::string& text, const std::optional<std::string>& description,
-                           const std::optional<std::string>& context) {
-  auto meta = parse_meta_json(text);
-  const auto empty = [](const auto& field) {
-    const auto* s = schema::get(field);
-    if (!s) return true;
-    const std::string value(*s);
-    return value.find_first_not_of(" \t\r\n") == std::string::npos;
-  };
-  schema::v::Mapping<schema::v::String, schema::Json> root;
-  if (schema::decode(schema::capture(text), root)) throw DocumentError("invalid_document", "_meta.json is not an object");
-  bool any = false;
-  const auto fill = [&](const std::string& name, const std::optional<std::string>& value, bool is_empty) {
-    if (!value || !is_empty) return;
-    std::remove_reference_t<decltype(root.value())> next;
-    for (const auto& [key, field] : root.value())
-      if (key != name) next.emplace_back(key, field);
-    next.emplace_back(name, schema::string_value(*value));
-    root.value() = std::move(next);
-    any = true;
-  };
-  fill("description", description, empty(meta.description));
-  fill("context", context, empty(meta.context));
-  return any ? schema::pretty_text(schema::encode(root)) : text;
+void check_meta_json(const std::string& text) {
+  if (text.size() > (1u << 20)) invalid("_meta.json exceeds 1 MiB");
+  decode_doc<schema::v::Mapping<schema::v::String, schema::Json>>("_meta.json", text);
 }
 
 void check_structure(const Document& doc) {
@@ -335,20 +311,71 @@ void check_structure(const Document& doc) {
   }
 }
 
-std::string execution_fingerprint(const Document& doc) {
+namespace {
+// Project/Card documents are hashed by value: a client's JSON writer may
+// reorder or reindent the rest while changing a presentation field.
+auto execution_value(const hosq::json::GenericDom<>& value) -> std::string {
+  auto raw = schema::text(value);
+  auto first = raw.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos) return "";
+  if (raw[first] == '{') {
+    schema::v::Mapping<schema::v::String, schema::Json> fields;
+    if (auto error = schema::decode(value, fields)) throw DocumentError("invalid_document", error->message);
+    std::map<std::string, std::string> sorted;
+    for (const auto& [key, item] : fields.value()) sorted[key] = execution_value(item);
+    std::string out = "{";
+    for (const auto& [key, item] : sorted) out += (out.size() > 1 ? "," : "") + schema::text(schema::string_value(key)) + ":" + item;
+    return out + "}";
+  }
+  if (raw[first] == '[') {
+    schema::v::Array<schema::Json> items;
+    if (auto error = schema::decode(value, items)) throw DocumentError("invalid_document", error->message);
+    std::string out = "[";
+    for (const auto& item : items.value()) out += (out.size() > 1 ? "," : "") + execution_value(item);
+    return out + "]";
+  }
+  if (raw[first] == '"') {
+    schema::v::String text;
+    if (auto error = schema::decode(value, text)) throw DocumentError("invalid_document", error->message);
+    return schema::encode(text);
+  }
+  return raw.substr(first, raw.find_last_not_of(" \t\r\n") - first + 1);
+}
+auto execution_json(const std::string& text, const char* omitted) -> std::string {
+  schema::v::Mapping<schema::v::String, schema::Json> object;
+  if (auto error = schema::decode(text, object)) throw DocumentError("invalid_document", error->message);
+  std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>> fields;
+  for (const auto& [key, value] : object.value())
+    if (key != omitted) fields.emplace_back(key, &value);
+  return execution_value(schema::capture(schema::object_text(fields)));
+}
+}  // namespace
+
+std::string execution_fingerprint(const Document& doc, const std::function<std::optional<std::string>(const std::string&)>& read) {
   crypto::Sha256 h;
-  h.update(doc.project_json);
+  h.update(execution_json(doc.project_json, "name"));
   for (const auto& [id, def] : doc.definitions) {
     h.update("\0def\0", 5);
     h.update(id);
-    h.update(def.card_json);
+    if (!def.card_json.empty()) h.update(execution_json(def.card_json, "displayMode"));
     if (def.link_json) h.update(*def.link_json);
   }
   for (const auto& [path, src] : doc.sources) {
     if (path.starts_with("skills/") || Document::is_card_meta_file(path)) continue;
     h.update("\0src\0", 5);
     h.update(path);
-    h.update(src.hash);
+    auto rel = path;
+    while (rel.starts_with("externals/")) {
+      auto slash = rel.find('/', 10);
+      if (slash == std::string::npos) break;
+      rel.erase(0, slash + 1);
+    }
+    const char* omitted = rel == "tsugumi.json" ? "name" :
+                          Document::is_document_file(rel) && rel.ends_with("/_card.json") ? "displayMode" : nullptr;
+    if (omitted) {
+      if (auto text = read(path)) h.update(execution_json(*text, omitted));
+      else h.update(src.hash);  // Unavailable source: resolution reports it; never substitute empty content.
+    } else h.update(src.hash);
   }
   return h.finish_hex();
 }
@@ -388,7 +415,7 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
         doc->disk_hashes["definitions/" + id + "/_link.json"] = crypto::sha256_hex(*link_text);
       }
       if (auto meta = fs::read_file(entry.path() / "_meta.json")) {
-        d.meta = parse_meta_json(*meta);
+        check_meta_json(*meta);
         d.meta_json = *meta;
         doc->disk_hashes["definitions/" + id + "/_meta.json"] = crypto::sha256_hex(*meta);
       }
@@ -405,11 +432,12 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
       std::string rel = std::string(area) + "/" + f;
       if (!Document::is_source_area(rel)) continue;
       auto data = fs::read_file_or_throw(root / rel);
+      if (Document::is_card_meta_file(rel)) check_meta_json(data);
       doc->sources[rel] = SourceEntry{crypto::sha256_hex(data), data.size()};
     }
   }
   check_structure(*doc);
-  doc->execution_fingerprint = execution_fingerprint(*doc);
+  doc->execution_fingerprint = execution_fingerprint(*doc, [&](const std::string& path) { return fs::read_file(root / path); });
   return doc;
 }
 

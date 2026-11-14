@@ -61,8 +61,6 @@ table ResolvedCard {
   outputs:[Tsugumi.Data.Port] (id: 2, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 3, required);
   nix_references:[CardNixReference] (id: 4, required);
-  /// Human name; CardPath segments are permanent identifiers.
-  name:string (id: 5, required);
 }
 
 table Camera {
@@ -152,11 +150,6 @@ table PutDefinition {
   /// Keep _meta.json as it is (meta_json omitted): change settings without
   /// writing the intent text again.
   keep_meta:bool = false (id: 4);
-  /// Fill _meta.json's description if it is empty; what has text stays as it is
-  /// (keeps the rest of _meta.json, as keep_meta).
-  fill_description:string (id: 5);
-  /// Fill _meta.json's context if it is empty; what has text stays as it is.
-  fill_context:string (id: 6);
 }
 table RemoveDefinition { id:string (id: 0, required); }
 table PutSource {
@@ -212,8 +205,6 @@ table SaveResult {
   rev:uint64 = null (id: 1);
   execution_rev:uint64 = null (id: 2);
   replayed:bool = null (id: 3);
-  /// What a model's save did to the comments on Cards.
-  comments:[VersionComment] (id: 4);
 }
 
 table ProjectCacheClearResult {
@@ -292,18 +283,17 @@ table ProjectCloseRequest { subscription_id:string (id: 0, required); }
 table ProjectInspectRequest {}
 
 /// -> CardIdResult. Reserves a permanent identifier for a new Card without
-/// changing the document revision. Supply its human name; use the returned id
-/// in the canvas, definition paths and wires, and name in _meta.json.name.
+/// changing the document revision. Supply a caller-derived stem (1..123 ASCII
+/// identifier characters); use the returned id in the canvas, paths and wires.
 /// Each call reserves a fresh id; save the definition and canvas with project_save.
 table CardIdRequest {
-  name:string (id: 0, required);
+  stem:string (id: 0, required);
   /// Project-relative directory: empty for the root, or externals/<id>/,
   /// repeated for nesting. May name a project being created in the same draft.
   project_path:string (id: 1);
 }
 table CardIdResult {
   id:string (id: 0, required);
-  name:string (id: 1, required);
 }
 
 /// -> SaveResult. Apply all changes in one transaction at base_rev.
@@ -927,21 +917,6 @@ table VersionRun {
   summary:string (id: 4);
 }
 
-/// A comment on a Card that a version or a save changed.
-table VersionComment {
-  card:string (id: 0, required);
-  text:string (id: 1, required);
-  /// added, edited, resolved, reopened or removed. A comment written and
-  /// resolved within one version is resolved.
-  change:string (id: 2, required);
-  resolution:string (id: 3);
-  /// Who did it, as the comment records it: agent or user. Absent when it is
-  /// not recorded, as for a comment that is gone.
-  by:string (id: 4);
-  /// The Cards the save that resolved it changed.
-  cards:[string] (id: 5);
-}
-
 table VersionCommit {
   id:string (id: 0, required);
   parents:[string] (id: 1);
@@ -955,8 +930,6 @@ table VersionCommit {
   /// Card keys whose files changed from the first parent ("" for the
   /// project's own documents).
   changed:[string] (id: 9);
-  /// What this version did to the comments on Cards, from the first parent.
-  comments:[VersionComment] (id: 10);
 }
 
 table VersionCanvasCard {

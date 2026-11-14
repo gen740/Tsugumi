@@ -32,9 +32,6 @@ struct ChangeIn {
   std::string json;  // SetProject / SetLayout / card_json
   std::optional<std::string> meta_json;
   bool keep_meta = false;  // PutDefinition without meta_json keeps the current _meta.json
-  // With keep_meta: what fills the _meta.json's fields that are empty.
-  std::optional<std::string> fill_description;
-  std::optional<std::string> fill_context;
   std::string path;   // sources
   std::string bytes;  // PutSource
   std::optional<std::string> base_hash;
@@ -78,7 +75,7 @@ class Store {
   void open();
 
   DocumentPtr current() const;
-  auto allocate_card_id(const std::string& name, const std::string& project_path) -> std::string;
+  auto allocate_card_id(const std::string& stem, const std::string& project_path) -> std::string;
   const std::filesystem::path& root() const { return opts_.root; }
   std::string project_id() const { return project_id_; }
 
