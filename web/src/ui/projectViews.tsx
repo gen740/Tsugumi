@@ -12,6 +12,7 @@ import { Button, Confirm, Empty, Form, HSplit, MenuButton, Row, Section, Select,
 import { CodeEditor } from './editor'
 import { Icon } from './icons'
 import { L } from '../i18n'
+import { RevisionEdit, RevisionEditNotice } from './revisionEdit'
 
 // ---- Card database -----------------------------------------------------------------
 
@@ -24,6 +25,8 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
   const [cardText, setCardText] = useState('')
   const [metaText, setMetaText] = useState('')
   const [base, setBase] = useState({ card: '', meta: '' })
+  const [revisionEdit] = useState(() => new RevisionEdit())
+  useObserve(revisionEdit)
   const [parseError, setParseError] = useState<string>()
   const [message, setMessage] = useState<string>()
 
@@ -36,6 +39,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
     setCardText(ct)
     setMetaText(mtt)
     setBase({ card: ct, meta: mtt })
+    revisionEdit.reload(session.rev)
     setParseError(undefined)
     setMessage(undefined)
   }
@@ -51,7 +55,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
     !q || id.toLowerCase().includes(q) || (str(get(session.definitionMeta.get(id), 'description')) ?? '').toLowerCase().includes(q))
   const unplaced = new Set(session.unplacedDefinitions)
 
-  const apply = async (id: string) => {
+  const apply = async (id: string, overwrite = false) => {
     let card: J, meta: J | undefined
     try {
       card = parse(cardText)
@@ -61,15 +65,17 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
       return
     }
     setParseError(undefined)
-    session.edit((x) => x.setEffectiveDefinition(id, { card, meta }))
-    await session.save()
-    setMessage(session.saveError ? L('保存できませんでした: {0}', session.saveError) : L('適用しました（revision {0}）。', session.rev))
+    if (!await revisionEdit.apply(session, overwrite, (x) => {
+      const d = x.cardDefinitionDraft(key([id]))
+      x.setCardDefinition(key([id]), { card: d?.link === undefined ? card : d.card, meta, link: d?.link })
+    })) return
     load(id)
+    setMessage(L('適用しました（revision {0}）。', session.rev))
   }
 
   const detail = (() => {
     const id = selected
-    if (!id || !session.definitions.has(id)) return <Empty key="none" title={L('定義を選んでください')} icon="square.stack" description={L('ドラッグして Canvas に配置できます。')} />
+    if (!id) return <Empty key="none" title={L('定義を選んでください')} icon="square.stack" description={L('ドラッグして Canvas に配置できます。')} />
     const unapplied = cardText !== base.card || metaText !== base.meta
     const isUnplaced = unplaced.has(id)
     return (
@@ -84,6 +90,8 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
         <CodeEditor text={cardText} onChange={setCardText} language="json" documentId={`db:${id}/_card.json`} style={{ flex: 2, minHeight: 180 }} />
         <div className="headline">{L('_meta.json（説明・計画・追加コンテキスト、任意）')}</div>
         <CodeEditor text={metaText} onChange={setMetaText} language="json" documentId={`db:${id}/_meta.json`} style={{ flex: 1, minHeight: 80, maxHeight: 140 }} />
+        <RevisionEditNotice edit={revisionEdit} text={() => `_card.json\n${cardText}\n_meta.json\n${metaText}`}
+          overwrite={() => void apply(id, true)} reload={() => load(id)} />
         {parseError && <span className="label selectable" style={{ color: 'var(--red)' }}><Icon name="xmark.octagon" />{parseError}</span>}
         {message && <div className="callout secondary selectable">{message}</div>}
         <div className="row gap8 center">
@@ -98,7 +106,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
             onClick={() => { session.edit((x) => x.removeDefinition(id)); setSelected(undefined) }}>{L('削除')}</Button>
           <span className="spacer" />
           <Button onClick={() => load()}>{L('再読込')}</Button>
-          <Button kind="prominent" disabled={!unapplied || !session.isEditable} onClick={() => void apply(id)}>{L('適用')}</Button>
+          <Button kind="prominent" disabled={!unapplied || revisionEdit.applying || !session.isEditable} onClick={() => void apply(id)}>{L('適用')}</Button>
         </div>
       </div>
     )
@@ -184,12 +192,17 @@ const setProject = (x: ProjectSession, k: string, v: J) => {
 /** Flakes this project opts in to: an address gives its commit, hash and packages, which Cards read as inputs. */
 function NixSourceSettings({ session }: { session: ProjectSession }) {
   useObserve(session)
+  const baseRev = session.rev
   const sources = arr(get(session.project, 'nixSources')) ?? []
   const [address, setAddress] = useState('')
   const [found, setFound] = useState<{ name: string; ref: string; packages: string[] }>()
   const [working, setWorking] = useState(false)
   const [message, setMessage] = useState<string>()
+  const [revisionEdit] = useState(() => new RevisionEdit())
+  const [pending, setPending] = useState<J[]>()
+  useObserve(revisionEdit)
   const resolve = async (ref: string) => {
+    revisionEdit.reload(baseRev)
     setWorking(true)
     setMessage(undefined)
     try {
@@ -202,10 +215,9 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
       setWorking(false)
     }
   }
-  const save = async (list: J[]) => {
-    session.edit((x) => setProject(x, 'nixSources', list))
-    await session.save()
-    setMessage(session.saveError ? L('保存できませんでした: {0}', session.saveError) : undefined)
+  const save = async (list: J[], overwrite = false) => {
+    setPending(list)
+    if (await revisionEdit.apply(session, overwrite, (x) => setProject(x, 'nixSources', list))) setPending(undefined)
   }
   const entry = (name: string, ref: string) => obj([['name', name], ['type', 'flake'], ['ref', ref]])
   const look = async () => {
@@ -237,7 +249,7 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
           <Row key={name} label={name}>
             <code className="secondary" title={ref}>{unlockedRef(ref)} {shortCommit(ref)}</code>
             <Button disabled={working || !session.isEditable} onClick={() => void update(name, ref)}>{L('更新')}</Button>
-            <Button kind="destructive" disabled={working || !session.isEditable} onClick={() => void save(sources.filter((x) => x !== s))}>{L('削除')}</Button>
+            <Button kind="destructive" disabled={working || !session.isEditable} onClick={() => { revisionEdit.reload(baseRev); void save(sources.filter((x) => x !== s)) }}>{L('削除')}</Button>
           </Row>
         )
       })}
@@ -254,6 +266,8 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
           <Row><Button disabled={taken || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(found.name)} onClick={() => void add()}>{L('追加')}</Button>{taken && <span className="secondary caption">{L('同じ名前があります')}</span>}</Row>
         </>
       )}
+      <RevisionEditNotice edit={revisionEdit} text={() => serialize(pending ?? [])}
+        overwrite={() => { if (pending) void save(pending, true) }} reload={() => { setPending(undefined); revisionEdit.reload(baseRev) }} />
       {message && <Row><span className="label caption" style={{ color: 'var(--orange)', whiteSpace: 'normal' }}>{message}</span></Row>}
     </Section>
   )
@@ -263,15 +277,22 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   const [name, setName] = useState(str(get(session.project, 'name')) ?? '')
   const [pkgs, setPkgs] = useState(str(get(session.project, 'pkgsPath')) ?? '')
   const [message, setMessage] = useState<string>()
+  const [revisionEdit] = useState(() => { const e = new RevisionEdit(); e.reload(session.rev); return e })
+  useObserve(revisionEdit)
   const pin = app.status?.nixpkgsPin ?? undefined
   const changed = name !== (str(get(session.project, 'name')) ?? '') || pkgs !== (str(get(session.project, 'pkgsPath')) ?? '')
-  const save = async () => {
-    session.edit((x) => {
+  const load = () => {
+    setName(str(get(session.project, 'name')) ?? '')
+    setPkgs(str(get(session.project, 'pkgsPath')) ?? '')
+    revisionEdit.reload(session.rev)
+  }
+  const save = async (overwrite = false) => {
+    if (!await revisionEdit.apply(session, overwrite, (x) => {
       setProject(x, 'name', name)
       setProject(x, 'pkgsPath', pkgs || 'tsugumi:default')
-    })
-    await session.save()
-    setMessage(session.saveError ?? L('保存しました。'))
+    })) return
+    load()
+    setMessage(L('保存しました。'))
   }
   return (
     <div className="col fill" onKeyDown={(e) => {
@@ -296,10 +317,12 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           </Section>
         </Form>
       </div>
+      <RevisionEditNotice edit={revisionEdit} text={() => `name: ${name}\npkgsPath: ${pkgs}`}
+        overwrite={() => void save(true)} reload={load} />
       <div className="detail-foot">
         {message && <span className="callout secondary selectable">{message}</span>}
         <span className="spacer" />
-        <Button kind="prominent" disabled={!changed || !session.isEditable} onClick={() => void save()}>{L('保存')}</Button>
+        <Button kind="prominent" disabled={!changed || revisionEdit.applying || !session.isEditable} onClick={() => void save()}>{L('保存')}</Button>
       </div>
     </div>
   )
@@ -334,12 +357,15 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
   const [message, setMessage] = useState<string>()
   const [failed, setFailed] = useState(false)
   const [confirm, setConfirm] = useState(false)
+  const [revisionEdit] = useState(() => new RevisionEdit())
+  const [pendingSaving, setPendingSaving] = useState(true)
+  useObserve(revisionEdit)
+  const baseRev = session.rev
   const saving = bool(get(session.project, 'saveRunHistory')) ?? true
-  const setSaving = async (on: boolean) => {
-    session.edit((x) => setProject(x, 'saveRunHistory', on))
-    await session.save()
-    setFailed(!!session.saveError)
-    setMessage(session.saveError ? L('保存できませんでした: {0}', session.saveError) : undefined)
+  const setSaving = async (on: boolean, overwrite = false) => {
+    if (!overwrite) revisionEdit.reload(baseRev)
+    setPendingSaving(on)
+    await revisionEdit.apply(session, overwrite, (x) => setProject(x, 'saveRunHistory', on))
   }
   const del = async () => {
     setWorking(true)
@@ -376,6 +402,8 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
           </Section>
         </Form>
       </div>
+      <RevisionEditNotice edit={revisionEdit} text={() => `saveRunHistory: ${pendingSaving}`}
+        overwrite={() => void setSaving(pendingSaving, true)} reload={() => revisionEdit.reload(session.rev)} />
       <div className="detail-foot">
         {message && <span className="callout selectable" style={{ color: failed ? 'var(--red)' : 'var(--secondary)' }}>{message}</span>}
         <span className="spacer" />

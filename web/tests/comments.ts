@@ -42,9 +42,9 @@ const session = () => {
   assert.ok(s.cardDetails(k).some((l) => l.includes('y 軸を対数に')), 'the hover says what is asked')
 
   s.addComment(k, '軸に名前を')
-  s.editComment(k, first.id, '両軸を対数に')
+  s.edit((x) => x.setCommentText(k, first.id, '両軸を対数に'))
   assert.deepEqual(s.comments(k).map((c) => c.text), ['両軸を対数に', '軸に名前を'])
-  s.editComment(k, first.id, '  ')
+  s.edit((x) => x.setCommentText(k, first.id, '  '))
   assert.equal(s.comments(k)[0].text, '両軸を対数に', 'a comment keeps its text rather than going blank')
 
   // The Agent's line goes away when the comment is opened again.
@@ -118,7 +118,7 @@ const session = () => {
   s.addComment(k, 'mine')
   const [c] = s.comments(k)
   assert.equal(c.author, 'user')
-  s.editComment(k, c.id, 'mine, reworded')
+  s.edit((x) => x.setCommentText(k, c.id, 'mine, reworded'))
   assert.equal(s.comments(k)[0].editedBy, 'user')
   s.setCommentResolved(k, c.id, true)
   assert.equal(s.comments(k)[0].stateBy, 'user')

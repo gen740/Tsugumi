@@ -1455,71 +1455,18 @@ export class ProjectSession extends Observable {
     this.changed()
     try {
       const base = this.draftBase ?? this.makeBase()
-      // While a run is active the core takes layout changes only.
       const layoutOnly = this.runActive && this.computationDirty
       this.savingAfterRun = layoutOnly
-      const changes: R.DocumentChangeT[] = []
-      const sent = this.snapshot()
-      if (!jeq(this.layout, this.confirmedLayout)) changes.push(Change.setLayout(serialize(this.layout)))
-      const merged = new Map<string, ExternalProject>()
-      if (!layoutOnly) {
-        if (!jeq(this.project, this.confirmedProject)) changes.push(Change.setProject(serialize(this.project)))
-        // A removed definition takes its folder with it: the core refuses a change to a file in it.
-        const removedFolders: string[] = []
-        for (const [id, d] of [...this.definitionEdits].sort(([a], [b]) => a.localeCompare(b))) {
-          if (d.removed) {
-            if (this.confirmedDefinitions.has(id) || this.confirmedLinks.has(id)) {
-              changes.push(Change.removeDefinition(id))
-              removedFolders.push(`definitions/${id}/`)
-            }
-          } else {
-            changes.push(Change.putDefinition(id, serialize(d.card), d.meta !== undefined ? serialize(d.meta) : null, d.link !== undefined ? serialize(d.link) : null))
-          }
-        }
-        const written = new Set<string>()
-        for (const [prefix, ours] of [...this.externalEdits].sort(([a], [b]) => a.localeCompare(b))) {
-          if (ours.removed) continue
-          const theirs = this.externals.get(prefix)
-          const m = mergeExternal(this.externalBases.get(prefix) ?? undefined, ours, theirs)
-          merged.set(prefix, m)
-          const now = externalFiles(m), was = theirs ? externalFiles(theirs) : new Map<string, string>()
-          for (const [rel, text] of [...now].sort(([a], [b]) => a.localeCompare(b))) {
-            if (was.get(rel) === text) continue
-            const p = prefix + rel
-            written.add(p)
-            changes.push(Change.putSource(p, new TextEncoder().encode(text), (theirs ? this.externalHashes.get(p) : this.sources.get(p)?.hash) ?? null))
-          }
-          for (const rel of [...was.keys()].sort()) {
-            if (now.has(rel)) continue
-            const p = prefix + rel
-            const h = this.externalHashes.get(p) ?? this.sources.get(p)?.hash
-            if (h && !this.sourceRemovals.has(p)) {
-              written.add(p)
-              changes.push(Change.removeSource(p, h))
-            }
-          }
-        }
-        const goesWithItsDefinition = (p: string) => removedFolders.some((f) => p.startsWith(f))
-        for (const [p, text] of [...this.sourceEdits].sort(([a], [b]) => a.localeCompare(b))) {
-          if (this.sourceRemovals.has(p) || written.has(p) || goesWithItsDefinition(p)) continue
-          changes.push(Change.putSource(p, sourceBytes(text), this.sourceBases.get(p) ?? base.hashes.get(p) ?? null))
-        }
-        for (const p of [...this.sourceRemovals].sort()) {
-          if (written.has(p) || goesWithItsDefinition(p)) continue
-          const h = this.sourceBases.get(p) ?? base.hashes.get(p) ?? this.sources.get(p)?.hash
-          if (h) changes.push(Change.removeSource(p, h))
-        }
-      }
+      const { changes, sent, merged } = this.prepareSave(layoutOnly, base)
       if (!changes.length) {
         if (!layoutOnly) this.forgetSaved(sent, false, new Map())
         return
       }
       const op = uuid()
       try {
-        const result = await client.save(base.rev, op, this.origin, changes)
+        await this.commitChanges(base.rev, op, changes)
         this.saveError = undefined
         this.conflictRetries = 0
-        if (result.delta) this.applyDeltaFromSave(result.delta)
         this.forgetSaved(sent, layoutOnly, merged)
       } catch (e) {
         if (e instanceof RPCFailure) {
@@ -1569,6 +1516,108 @@ export class ProjectSession extends Observable {
       this.saving = false
       this.changed()
     }
+  }
+
+  /** The common transaction encoder for canvas drafts and editor copies. */
+  private prepareSave(layoutOnly: boolean, base: DraftBase) {
+    // While a run is active the core takes layout changes only.
+    const changes: R.DocumentChangeT[] = []
+    const sent = this.snapshot()
+    if (!jeq(this.layout, this.confirmedLayout)) changes.push(Change.setLayout(serialize(this.layout)))
+    const merged = new Map<string, ExternalProject>()
+    if (!layoutOnly) {
+      if (!jeq(this.project, this.confirmedProject)) changes.push(Change.setProject(serialize(this.project)))
+      // A removed definition takes its folder with it: the core refuses a change to a file in it.
+      const removedFolders: string[] = []
+      for (const [id, d] of [...this.definitionEdits].sort(([a], [b]) => a.localeCompare(b))) {
+        if (d.removed) {
+          if (this.confirmedDefinitions.has(id) || this.confirmedLinks.has(id)) {
+            changes.push(Change.removeDefinition(id))
+            removedFolders.push(`definitions/${id}/`)
+          }
+        } else {
+          changes.push(Change.putDefinition(id, serialize(d.card), d.meta !== undefined ? serialize(d.meta) : null, d.link !== undefined ? serialize(d.link) : null))
+        }
+      }
+      const written = new Set<string>()
+      for (const [prefix, ours] of [...this.externalEdits].sort(([a], [b]) => a.localeCompare(b))) {
+        if (ours.removed) continue
+        const theirs = this.externals.get(prefix)
+        const m = mergeExternal(this.externalBases.get(prefix) ?? undefined, ours, theirs)
+        merged.set(prefix, m)
+        const now = externalFiles(m), was = theirs ? externalFiles(theirs) : new Map<string, string>()
+        for (const [rel, text] of [...now].sort(([a], [b]) => a.localeCompare(b))) {
+          if (was.get(rel) === text) continue
+          const p = prefix + rel
+          written.add(p)
+          changes.push(Change.putSource(p, new TextEncoder().encode(text), (theirs ? this.externalHashes.get(p) : this.sources.get(p)?.hash) ?? null))
+        }
+        for (const rel of [...was.keys()].sort()) {
+          if (now.has(rel)) continue
+          const p = prefix + rel
+          const h = this.externalHashes.get(p) ?? this.sources.get(p)?.hash
+          if (h && !this.sourceRemovals.has(p)) {
+            written.add(p)
+            changes.push(Change.removeSource(p, h))
+          }
+        }
+      }
+      const goesWithItsDefinition = (p: string) => removedFolders.some((f) => p.startsWith(f))
+      for (const [p, text] of [...this.sourceEdits].sort(([a], [b]) => a.localeCompare(b))) {
+        if (this.sourceRemovals.has(p) || written.has(p) || goesWithItsDefinition(p)) continue
+        changes.push(Change.putSource(p, sourceBytes(text), this.sourceBases.get(p) ?? base.hashes.get(p) ?? null))
+      }
+      for (const p of [...this.sourceRemovals].sort()) {
+        if (written.has(p) || goesWithItsDefinition(p)) continue
+        const h = this.sourceBases.get(p) ?? base.hashes.get(p) ?? this.sources.get(p)?.hash
+        if (h) changes.push(Change.removeSource(p, h))
+      }
+    }
+    return { changes, sent, merged }
+  }
+
+  /** The shared settings/canvas entry to ProjectSave; keeps the caller's revision. */
+  private async commitChanges(baseRev: bigint, op: string, changes: R.DocumentChangeT[], editor = false) {
+    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
+    const result = await this.client.save(baseRev, op, this.origin, changes)
+    if (result.delta) {
+      if (editor) this.applyDelta(result.delta)
+      else this.applyDeltaFromSave(result.delta)
+    }
+    return result
+  }
+
+  /** A rejected editor copy stays in its editor, outside the autosaved draft. */
+  async applyEdit(baseRev: bigint, change: (s: this) => void): Promise<bigint> {
+    if (this.dirty || this.saveTask) await this.save()
+    if (!this.connected || !this.client) throw new RPCError('disconnected', L('接続していません'))
+    if (baseRev !== this.rev) throw new RPCFailure({ kind: D.FailureKind.revision_conflict, diagnostic: 'Editor revision changed' })
+    if (this.dirty) throw new RPCFailure({ kind: D.FailureKind.busy, diagnostic: L('変更を保存できませんでした。') })
+    const before = this.docState(), beforeSnap = this.snapshot(), base = this.makeBase()
+    change(this)
+    this.normalizeExternalEdits()
+    const prepared = this.prepareSave(false, base)
+    const after = this.docState()
+    this.dropDraft()
+    if (!prepared.changes.length) return baseRev
+    const step = this.record(before, beforeSnap, after, prepared.sent)
+    await this.fillUndoSources()
+    // Reading undo sources may yield to another client. Keep baseRev fixed.
+    const result = await this.commitChanges(baseRev, uuid(), prepared.changes, true)
+    if (this.rev === result.rev) {
+      for (const [prefix, ext] of prepared.merged) {
+        this.externals.set(prefix, ext)
+        for (const rel of externalFiles(ext).keys()) {
+          const hash = this.sources.get(prefix + rel)?.hash
+          if (hash) this.externalHashes.set(prefix + rel, hash)
+        }
+      }
+    }
+    this.undoStack.push(step)
+    if (this.undoStack.length > 500) this.undoStack.shift()
+    this.redoStack = []
+    this.changed()
+    return result.rev ?? baseRev
   }
 
   /** Whether a path is one of an external's documents (merged, not compared by hash). */
@@ -1910,18 +1959,21 @@ export class ProjectSession extends Observable {
       .map((id) => key([...scope, id])).filter((k) => this.openComments(k).length > 0)
   }
 
-  /** Saved at once; a Card in Card has a _meta.json too. One call is one step of undo. */
+  /** Changes comments through the common definition setter. */
+  private changeComments(k: CardKey, fn: (list: J[]) => J[]) {
+    const d = this.cardDefinitionDraft(k)
+    if (!d) return
+    const n = cloneDef(d)
+    const meta: JObj = isObj(n.meta) ? n.meta : obj()
+    const list = fn((arr(meta.get('comments')) ?? []).map((c) => clone(c)))
+    meta.set('comments', list.length ? list : undefined)
+    n.meta = meta.size ? meta : undefined
+    this.setCardDefinition(k, n)
+  }
+
+  /** Immediate comment actions have no open working copy. */
   private editComments(k: CardKey, fn: (list: J[]) => J[]) {
-    this.edit((x) => {
-      const d = x.cardDefinitionDraft(k)
-      if (!d) return
-      const n = cloneDef(d)
-      const meta: JObj = isObj(n.meta) ? n.meta : obj()
-      const list = fn((arr(meta.get('comments')) ?? []).map((c) => clone(c)))
-      meta.set('comments', list.length ? list : undefined)
-      n.meta = meta.size ? meta : undefined
-      x.setCardDefinition(k, n)
-    })
+    this.edit((x) => x.changeComments(k, fn))
   }
 
   addComment(k: CardKey, text: string) {
@@ -1929,15 +1981,18 @@ export class ProjectSession extends Observable {
     if (t) this.editComments(k, (list) => [...list, obj([['id', uuid()], ['text', t], ['author', 'user']])])
   }
 
-  editComment(k: CardKey, id: string, text: string) {
+  setCommentText(k: CardKey, id: string, text: string) {
     const t = text.trim()
-    if (t) this.editComments(k, (list) => list.map((c) => {
-      if (str(get(c, 'id')) === id && isObj(c)) {
-        c.set('text', t)
-        c.set('editedBy', 'user')
-      }
-      return c
-    }))
+    if (t) this.changeComments(k, (list) => {
+      if (!list.some((c) => str(get(c, 'id')) === id)) return [...list, obj([['id', id], ['text', t], ['author', 'user']])]
+      return list.map((c) => {
+        if (str(get(c, 'id')) === id && isObj(c)) {
+          c.set('text', t)
+          c.set('editedBy', 'user')
+        }
+        return c
+      })
+    })
   }
 
   /** Marks a comment by hand. Opening one again takes back what was said about it. */

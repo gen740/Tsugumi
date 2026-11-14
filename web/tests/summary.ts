@@ -19,6 +19,7 @@ const session = () => {
   s.layout = parse('{}')
   s.scheduleSave = () => {} // no tsugumid here
   s.save = async () => {}
+  s.applyEdit = async (_rev, change) => { change(s); return s.rev }
   s.connected = true
   return s
 }
