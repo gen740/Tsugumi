@@ -30,18 +30,18 @@ def _plain(value):
 
 
 def bindings(inputs, mapping):
-    """Resolve notebook variable -> input.<port>.<field> or param.<field>."""
+    """Resolve notebook variable -> inputs.<port>.<field> or param.<field>."""
     from tsugumi import Failure, contract
     if not isinstance(mapping, dict):
-        raise Failure('validation_failed', 'bindings must be a JSON object mapping variable names to input/param paths')
+        raise Failure('validation_failed', 'bindings must be a JSON object mapping variable names to inputs/param paths')
     values = {
-        'input': {port['name']: _plain(contract.input_object(inputs, port['name'])) for port in contract.ports()},
+        'inputs': {port['name']: _plain(contract.input_object(inputs, port['name'])) for port in contract.ports()},
         'param': _plain(contract.params_object(inputs)),
     }
     result = {}
     for name, path in mapping.items():
         if not name.isidentifier() or keyword.iskeyword(name) or not isinstance(path, str):
-            raise Failure('validation_failed', 'Bindings must map Python variable names to input/param paths')
+            raise Failure('validation_failed', 'Bindings must map Python variable names to inputs/param paths')
         value = values
         try:
             for field in path.split('.'):
