@@ -10,7 +10,7 @@ from tsugumi_client import text
 from harness.host import Host
 
 
-def make(name, **fields):
+def make(name, /, **fields):
     value = getattr(importlib.import_module(f"Tsugumi.Host.{name}"), name + "T")()
     for key, item in fields.items():
         setattr(value, key, item)
@@ -73,3 +73,14 @@ def test_layout_rejects_invalid_measurements(host, field, value):
     with pytest.raises(RuntimeError) as failure:
         host.call("LayoutArrangeRequest", scene=scene_object(scene))
     assert "invalid_request" in str(failure.value)
+
+
+@pytest.mark.parametrize("case", json.loads(
+    (Path(__file__).parents[2] / "fixtures/layout-invalid.json").read_text()),
+    ids=lambda case: case["name"])
+def test_layout_validation_rejects_near_miss_fields_and_overflow(host, case):
+    """The host refuses the exact layout vectors that the core preserves as opaque text."""
+    with pytest.raises(RuntimeError, match="invalid_request"):
+        host.call("LayoutValidateRequest", json=case["json"])
+    # A rejected layout still receives a reply and leaves the connection usable.
+    assert text(host.call("LayoutValidateRequest", json=" { } ").json) == " { } "

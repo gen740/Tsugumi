@@ -5,10 +5,105 @@
 #include "agent/catalog.hh"
 #include "agent/json.hh"
 #include "host/layout_saving.hh"
+#include "util/fs.hh"
 
 namespace tsugumi::host {
 namespace {
 namespace H = Tsugumi::Host;
+
+TEST(HostLayout, ValidationRejectsTheOpaqueCoreVectors) {
+  const auto cases = agent::json::Array(fs::read_file_or_throw(
+      std::string(TSUGUMI_LAYOUT_FIXTURES) + "/layout-invalid.json"));
+  ASSERT_EQ(cases.size(), 16u);
+  for (const auto& raw : cases) {
+    const auto value = agent::json::Object(raw);
+    SCOPED_TRACE(agent::json::Text(value, "name"));
+    flatbuffers::FlatBufferBuilder b;
+    const auto input = H::CreateLayoutValidateRequest(
+        b, b.CreateString(agent::json::Text(value, "json")));
+    b.Finish(H::CreateRequest(b, H::RequestPayload::LayoutValidateRequest,
+                              input.Union()));
+    EXPECT_THROW(
+        LayoutHandle(*flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()),
+                     7),
+        LayoutFailure);
+  }
+}
+
+TEST(HostLayout, EveryGoldenRequestReturnsACorrelatedProposal) {
+  const agent::Catalog catalog;
+  for (const auto& raw : agent::json::Array(fs::read_file_or_throw(
+           std::string(TSUGUMI_LAYOUT_FIXTURES) + "/layout-golden.json"))) {
+    const auto value = agent::json::Object(raw);
+    SCOPED_TRACE(agent::json::Text(value, "name"));
+    auto scene = agent::json::Object(value.at("scene"));
+    std::vector<std::string> wires;
+    for (const auto& wire : agent::json::Array(scene.at("wires"))) {
+      auto fields = agent::json::Object(wire);
+      fields["from_port"] = fields.at("fromPort");
+      fields["to_port"] = fields.at("toPort");
+      fields.erase("fromPort");
+      fields.erase("toPort");
+      wires.push_back(agent::json::Encode(fields));
+    }
+    scene["wires"] = agent::json::Encode(wires);
+    for (const auto* side : {"inputs", "outputs"}) {
+      if (!scene.contains(side)) continue;
+      auto bar = agent::json::Object(scene.at(side));
+      if (bar.contains("at")) {
+        for (const auto& [key, coordinate] : agent::json::Object(bar.at("at")))
+          bar[key] = coordinate;
+        bar.erase("at");
+      }
+      scene[side] = agent::json::Encode(bar);
+    }
+    agent::json::Members args{{"scene", agent::json::Encode(scene)}};
+    if (value.contains("around")) args["around"] = value.at("around");
+    const auto request = catalog.HostRequest(
+        agent::json::Text(value, "request") == "arrange" ? "layout_arrange"
+                                                         : "layout_untangle",
+        agent::json::Encode(args), 7);
+    const auto reply =
+        LayoutHandle(*H::GetMessage(request.data())->payload_as_Request(), 7);
+    flatbuffers::Verifier verifier(
+        reinterpret_cast<const uint8_t*>(reply.data()), reply.size());
+    ASSERT_TRUE(H::VerifyMessageBuffer(verifier));
+    const auto* message = H::GetMessage(reply.data());
+    EXPECT_EQ(message->request_id(), 7u);
+    const auto* proposal =
+        message->payload_as_Reply()->value_as_LayoutProposal();
+    ASSERT_NE(proposal, nullptr);
+    const auto expected = agent::json::Object(value.at("expect"));
+    auto places = [&](const auto* got, const char* key) {
+      const auto positions = agent::json::Array(expected.at(key));
+      ASSERT_EQ(got->size(), positions.size());
+      for (size_t i = 0; i < positions.size(); ++i) {
+        const auto position = agent::json::Object(positions[i]);
+        EXPECT_EQ(got->Get(i)->id()->str(), agent::json::Text(position, "id"));
+        EXPECT_EQ(got->Get(i)->x(), std::stod(position.at("x")));
+        EXPECT_EQ(got->Get(i)->y(), std::stod(position.at("y")));
+      }
+    };
+    places(proposal->cards(), "cards");
+    places(proposal->frames(), "frames");
+    places(proposal->notes(), "notes");
+    const auto orders = agent::json::Array(expected.at("portOrders"));
+    ASSERT_EQ(proposal->port_orders()->size(), orders.size());
+    for (size_t i = 0; i < orders.size(); ++i) {
+      const auto order = agent::json::Object(orders[i]);
+      const auto* got = proposal->port_orders()->Get(i);
+      EXPECT_EQ(got->id()->str(), agent::json::Text(order, "id"));
+      for (const auto* side : {"inputs", "outputs"}) {
+        const auto ports = agent::json::Array(order.at(side));
+        const auto* names =
+            std::string(side) == "inputs" ? got->inputs() : got->outputs();
+        ASSERT_EQ(names->size(), ports.size());
+        for (size_t p = 0; p < ports.size(); ++p)
+          EXPECT_EQ(names->Get(p)->str(), agent::json::String(ports[p]));
+      }
+    }
+  }
+}
 
 TEST(HostLayout, SchemaRejectsIncompleteAndUnknownPresentationFields) {
   EXPECT_EQ(ValidateLayout(" { } "), " { } ");
