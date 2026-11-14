@@ -61,7 +61,7 @@ struct Delta {
 
 struct Receipt {
   std::string op_id;
-  std::string kind;    // "save", "reload", "import", "run", "cache_clear", "sdk"
+  std::string kind;    // "save", "reload", "run", "cache_clear", "sdk"
   std::string digest;  // canonical request digest
   std::string bytes;   // OperationReceipt FlatBuffer (root)
 };

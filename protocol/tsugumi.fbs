@@ -218,16 +218,6 @@ table SaveResult {
   comments:[VersionComment] (id: 4);
 }
 
-table IdMapping {
-  from:string (id: 0, required);
-  to:string (id: 1, required);
-}
-
-table ProjectImportResult {
-  save:SaveResult (id: 0, required);
-  id_map:[IdMapping] (id: 1, required);
-}
-
 table ProjectCacheClearResult {
   deleted:[string] (id: 0, required);
   retained:[string] (id: 1, required);
@@ -260,7 +250,6 @@ table RunAccepted {
 
 union ReceiptValue {
   SaveResult = 1,
-  ProjectImportResult = 2,
   RunAccepted = 3,
   ProjectCacheClearResult = 4,
   CardSDKPrepareResult = 5,
@@ -341,15 +330,6 @@ table ProjectValidateRequest {
   /// them is checked and nothing is saved. For the apps' editors; the model is
   /// not offered this field (it saves, then checks).
   changes:[DocumentChange] (id: 3);
-}
-
-/// -> ProjectImportResult. definitions = [] imports every definition of the grant.
-table ProjectImportRequest {
-  base_rev:uint64 = null (id: 0);
-  op_id:string (id: 1, required);
-  origin:string (id: 2, required);
-  source_grant:string (id: 3, required);
-  definitions:[string] (id: 4);
 }
 
 /// -> ProjectCacheClearResult. Only while no run or SDK job is active.
@@ -807,7 +787,6 @@ union RequestPayload {
   ProjectSaveRequest = 5,
   ProjectReloadRequest = 6,
   ProjectValidateRequest = 7,
-  ProjectImportRequest = 8,
   ProjectCacheClearRequest = 9,
   OperationGetRequest = 10,
   ProjectFileListRequest = 11,
@@ -1215,7 +1194,6 @@ union ReplyPayload {
   ProjectSnapshot = 4,
   SaveResult = 5,
   ProjectValidateResult = 6,
-  ProjectImportResult = 7,
   ProjectCacheClearResult = 8,
   OperationResult = 9,
   SourcePage = 10,

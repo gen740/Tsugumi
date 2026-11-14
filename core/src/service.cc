@@ -430,7 +430,7 @@ void Service::export_now() {
 std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {
       "SessionHello", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
-      "ProjectReload", "ProjectValidate", "ProjectImport", "ProjectCacheClear", "ProjectCacheUsage", "RunHistoryDelete", "OperationGet",
+      "ProjectReload", "ProjectValidate", "ProjectCacheClear", "ProjectCacheUsage", "RunHistoryDelete", "OperationGet",
       "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "LayoutArrange", "LayoutUntangle", "AttachedFolderRead",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
@@ -528,7 +528,6 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectOpenRequest: return on_lane(m, std::move(req), &Service::open_project);
     case P::ProjectSaveRequest: return on_lane(m, std::move(req), &Service::save);
     case P::ProjectReloadRequest: return on_lane(m, std::move(req), &Service::reload);
-    case P::ProjectImportRequest: return on_lane(m, std::move(req), &Service::import_definitions);
     case P::ProjectCacheClearRequest: return on_lane(m, std::move(req), &Service::cache_clear);
     case P::ProjectCacheUsageRequest: return on_lane(r, std::move(req), &Service::cache_usage);
     case P::RunHistoryDeleteRequest: return on_lane(m, std::move(req), &Service::history_delete);
@@ -588,7 +587,6 @@ std::string Service::receipt_reply(uint64_t request_id, const std::string& recei
   const char* tname = nullptr;
   switch (rc->result_type()) {
     case R::ReceiptValue::SaveResult: type = R::ReplyPayload::SaveResult; tname = "Tsugumi.RPC.SaveResult"; break;
-    case R::ReceiptValue::ProjectImportResult: type = R::ReplyPayload::ProjectImportResult; tname = "Tsugumi.RPC.ProjectImportResult"; break;
     case R::ReceiptValue::RunAccepted: type = R::ReplyPayload::RunAccepted; tname = "Tsugumi.RPC.RunAccepted"; break;
     case R::ReceiptValue::ProjectCacheClearResult: type = R::ReplyPayload::ProjectCacheClearResult; tname = "Tsugumi.RPC.ProjectCacheClearResult"; break;
     case R::ReceiptValue::CardSDKPrepareResult: type = R::ReplyPayload::CardSDKPrepareResult; tname = "Tsugumi.RPC.CardSDKPrepareResult"; break;
@@ -605,9 +603,6 @@ std::string Service::receipt_reply(uint64_t request_id, const std::string& recei
     switch (type) {
       case R::ReplyPayload::SaveResult:
         static_cast<R::SaveResult*>(rep->mutable_value())->mutate_replayed(true);
-        break;
-      case R::ReplyPayload::ProjectImportResult:
-        static_cast<R::ProjectImportResult*>(rep->mutable_value())->mutable_save()->mutate_replayed(true);
         break;
       case R::ReplyPayload::RunAccepted:
         static_cast<R::RunAccepted*>(rep->mutable_value())->mutate_replayed(true);
@@ -690,7 +685,7 @@ void Service::store_failure_receipt(const std::string& op_id, const std::string&
   }
   std::string bytes = failure_receipt(op_id, f);
   try {
-    if (kind == "save" || kind == "reload" || kind == "import") store_->record_receipt({op_id, kind, digest, bytes});
+    if (kind == "save" || kind == "reload") store_->record_receipt({op_id, kind, digest, bytes});
     else history_->write_sync([&](sql::Db& db) { History::put_receipt(db, op_id, kind, digest, bytes); });
   } catch (const std::exception& e) {
     log::error(std::string("cannot persist failure receipt: ") + e.what());
@@ -1371,103 +1366,6 @@ void Service::version_summary(RequestIn& req) {
   } catch (const std::exception& e) {
     auto f = FailureData::make(FailureKind::internal_error, e.what());
     store_failure_receipt(op_id, "version", digest, f);
-    throw Failed(f);
-  }
-}
-
-void Service::import_definitions(RequestIn& req) {
-  const auto* r = req.request()->value_as_ProjectImportRequest();
-  std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(req.request());
-  if (replay_or_join(req, op_id, "import", digest)) return;
-  try {
-    require_mutation(r->base_rev(), r->op_id());
-    auto base = store_->current();
-    if (*r->base_rev() != base->rev) {
-      FailureData f = FailureData::make(FailureKind::revision_conflict, "the document changed since base_rev");
-      f.current_rev = base->rev;
-      throw Failed(f);
-    }
-    // Grants are registered by the launcher in a file that RPC cannot change.
-    std::string grant = r->source_grant()->str();
-    auto grants_text = fs::read_file(opts_.grants_file);
-    if (!grants_text) throw Failed(FailureKind::permission_denied, "no import grants are registered");
-    schema::Grants grants;
-    if (schema::decode(*grants_text, grants))
-      throw Failed(FailureKind::permission_denied, "the import grant registry is unreadable");
-    const std::string* granted = nullptr;
-    for (const auto& [id, path] : grants.grants->entries())
-      if (id == grant) granted = &path;
-    if (!granted) throw Failed(FailureKind::permission_denied, "unknown or revoked source grant");
-    stdfs::path src_root = *granted;
-    std::shared_ptr<Document> src;
-    try {
-      src = load_from_disk(src_root);
-    } catch (const DocumentError& e) {
-      throw Failed(FailureKind::invalid_document, std::string("import source: ") + e.what());
-    }
-    std::vector<std::string> wanted;
-    if (r->definitions() && r->definitions()->size() > 0) {
-      for (const auto* d : *r->definitions()) wanted.push_back(d->str());
-    } else {
-      for (const auto& [id, _] : src->definitions) wanted.push_back(id);
-    }
-    std::vector<ChangeIn> changes;
-    std::vector<std::pair<std::string, std::string>> id_map;
-    std::set<std::string> taken;
-    for (const auto& [id, _] : base->definitions) taken.insert(id);
-    for (const auto& id : wanted) {
-      auto it = src->definitions.find(id);
-      if (it == src->definitions.end())
-        throw Failed(FailureKind::not_found, "definition " + id + " is not in the source", {{"definition", id}});
-      std::string to = id;
-      for (int k = 2; taken.count(to); ++k) to = id + "-" + std::to_string(k);
-      taken.insert(to);
-      id_map.emplace_back(id, to);
-      ChangeIn pd;
-      pd.kind = ChangeIn::Kind::PutDefinition;
-      pd.id = to;
-      pd.json = it->second.card_json;
-      pd.meta_json = it->second.meta_json;
-      changes.push_back(std::move(pd));
-      std::string prefix = "definitions/" + id + "/";
-      for (const auto& [path, entry] : src->sources) {
-        if (!path.starts_with(prefix)) continue;
-        // Content fixed at acceptance; hashed again so the copy matches the manifest.
-        auto data = fs::read_file_or_throw(src_root / path);
-        if (crypto::sha256_hex(data) != entry.hash)
-          throw Failed(FailureKind::external_change, path + " changed while importing", {{"path", path}});
-        ChangeIn ps;
-        ps.kind = ChangeIn::Kind::PutSource;
-        ps.path = "definitions/" + to + "/" + path.substr(prefix.size());
-        ps.bytes = std::move(data);
-        changes.push_back(std::move(ps));
-      }
-    }
-    if (changes.empty()) throw Failed(FailureKind::invalid_request, "nothing to import");
-    auto staged = store_->stage(changes, op_id, r->origin()->str());
-    std::string receipt;
-    store_->commit(staged, "import", digest, [&](const Delta* d) {
-      FBB b(1 << 14);
-      auto sr = save_result(b, d, *base);
-      std::vector<flatbuffers::Offset<R::IdMapping>> maps;
-      for (const auto& [from, to] : id_map)
-        maps.push_back(R::CreateIdMapping(b, b.CreateString(from), b.CreateString(to)));
-      auto ir = R::CreateProjectImportResult(b, sr, b.CreateVector(maps));
-      receipt = finish_receipt(b, op_id, R::ReceiptValue::ProjectImportResult, ir.Union());
-      return receipt;
-    });
-    if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc, {});
-    reply(req, receipt_reply(req.request_id, receipt, false));
-    if (staged.delta.doc) publish_delta(staged.delta);
-    finish_op(op_id, receipt);
-  } catch (const Failed& f) {
-    store_failure_receipt(op_id, "import", digest, f.failure);
-    throw;
-  } catch (const std::exception& e) {
-    // Any other error ends the operation too (retryable under the same id).
-    auto f = FailureData::make(FailureKind::internal_error, e.what());
-    store_failure_receipt(op_id, "import", digest, f);
     throw Failed(f);
   }
 }

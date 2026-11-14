@@ -74,7 +74,7 @@ Open the `http://127.0.0.1:8780/?key=…` shown at startup (`--open` opens it au
 
 `key` is a key made at each start. It is replaced by a cookie only this page sends (HttpOnly, SameSite=Strict) and disappears from the address bar. All of `/api/` (GET and event subscriptions included) requires this cookie, so other users of the same machine and pages of other sites cannot use it. Calls that change something require a dedicated header as well. Responses carry a CSP (`frame-ancestors 'none'`) and `nosniff`.
 
-The [Claude Code plugin](claude-code.md) finds a running server through the `server.json` it puts in the data folder (how far that key reaches: [Security §8](security.md#the-agents-permission-boundary)).
+The [Claude Code plugin](claude-code.md) finds a running server through the `server.json` it puts in the data folder (how far that key reaches: [Security §7](security.md#the-agents-permission-boundary)).
 
 | Environment variable | Meaning |
 | --- | --- |

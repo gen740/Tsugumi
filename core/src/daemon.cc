@@ -173,7 +173,7 @@ int run_daemon(int argc, char** argv) {
   so.root = root;
   so.token = crypto::random_token(32);
   so.server_instance_id = crypto::uuid4();
-  so.grants_file = opt.control_dir.empty() ? stdfs::path() : opt.control_dir / "grants.json";
+  so.control_dir = opt.control_dir;
   so.attached_file = opt.control_dir.empty() ? stdfs::path() : opt.control_dir / "attached.json";
   so.sdk_dir = opt.sdk_dir;
   so.worker_binary = opt.worker;

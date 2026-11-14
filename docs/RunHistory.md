@@ -54,4 +54,4 @@ Archiving leaves active remote jobs running on the execution host. Confirm they 
 
 Archives contain the database and its SQLite sidecars together under `history-archive-<UUID>` beside the database. On Mac, the primary archive is on the VM history disk; for a directly run daemon it is in the project state directory. The portable archive is in the project's `.tsugumi/`.
 
-[Storage paths and deletion controls](security.md#9-where-data-is-kept-and-how-to-delete-it).
+[Storage paths and deletion controls](security.md#8-where-data-is-kept-and-how-to-delete-it).

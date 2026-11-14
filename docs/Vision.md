@@ -40,7 +40,7 @@ In a pipeline like "read files → clean them → aggregate → write a report",
 If the boundaries of the processing are clearly separated by Cards and the types of their ports, both the scope of the change you ask AI for and the scope a person must review can be kept to a minimum.
 You can feed saved inputs into the rewritten Card, check its output, and then return to the whole Workflow.
 
-In Tsugumi, a coherent piece of processing can also be handled as a child Workflow (a Card in a Card), and definitions can be imported from other projects and combined.
+In Tsugumi, a coherent piece of processing can also be handled as a child Workflow (a Card in a Card), and other projects can be copied into `externals/` and combined as Cards in Cards.
 **Grow what you made once into the next use, checking as you go.**
 Surveying, in one Workflow, what you change and how far the effect reaches, and recombining the parts you need to keep using them: that is Tsugumi's aim in engineering.
 
