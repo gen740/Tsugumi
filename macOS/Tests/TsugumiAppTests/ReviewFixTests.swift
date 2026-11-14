@@ -6,6 +6,26 @@ import TsugumiLauncher
 import TsugumiRPC
 
 @MainActor struct ReviewFixTests {
+  @Test func aRecordedReplacementKeepsTheUsersDisplayAfterPreparation() {
+    var conversation = Conversation()
+    conversation.messages = [
+      ChatMessage(role: "user", content: [.text("hello interrupted")]),
+      ChatMessage(role: "assistant", content: [.toolUse(id: "pending", name: "project_inspect", input: "{}")]),
+      ChatMessage(role: "user", content: [.toolResult(toolUseId: "pending", content: "The tool was not replayed", isError: true)]),
+      ChatMessage(role: "user", content: [.text("hello instead")], display: "hello instead"),
+    ]
+    let accepted = ChatController.restoredItems(conversation)
+    // Preparation changes model input, but every subsequent snapshot must
+    // preserve exactly the text the optimistic row showed.
+    conversation.messages[3] = ChatMessage(role: "user", content: [.text("hello instead\n[Selected Card IDs]\ncard-id")], display: "hello instead")
+    conversation.messages.append(ChatMessage(role: "assistant", content: [.text("Finished")]))
+    let completed = ChatController.restoredItems(conversation)
+    #expect(accepted.filter { $0.role == "user" }.map(\.text) == ["hello interrupted", "hello instead"])
+    #expect(completed.filter { $0.role == "user" }.map(\.text) == ["hello interrupted", "hello instead"])
+    #expect(completed[1].tool?.ok == false)
+    #expect(completed.last?.text == "Finished")
+  }
+
   @Test func restoredToolResultsFollowIDsAcrossArchive() {
     var conversation = Conversation()
     conversation.archive = [ChatMessage(role: "assistant", content: [

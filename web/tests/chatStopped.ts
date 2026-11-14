@@ -177,3 +177,48 @@ console.log('chat stopped behavior: passed')
   globalThis.fetch = beforeFetch
 }
 console.log('tool result identity and queued approvals: passed')
+
+// A final snapshot can replace optimistic rows before or after the send's
+// acknowledgement. Preparation belongs to model input, never the user's row.
+for (const acknowledgeFirst of [false, true]) {
+  const beforeFetch = globalThis.fetch
+  let sent: any
+  let acknowledge!: () => void
+  const accepted = new Promise<void>(resolve => { acknowledge = resolve })
+  globalThis.fetch = (async (url, init) => {
+    if (url === '/api/chat/send') {
+      sent = JSON.parse(String(init?.body))
+      await accepted
+      return { ok: true, json: async () => ({}) } as Response
+    }
+    if (url === '/api/chat/sessions') return { ok: true, json: async () => [] } as Response
+    return { ok: true, json: async () => ({ conversation: {
+      archive: [], usage: {}, messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hello interrupted' }] },
+        { role: 'assistant', content: [{ type: 'tool_use', id: 'pending', name: 'project_inspect', input: '{}' }] },
+        { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'pending', content: 'The tool was not replayed', is_error: true }] },
+        { role: 'user', display: sent.display, content: [{ type: 'text', text: 'hello instead\n[Selected Card IDs; read their content only through authorized tools]\n[Selected display IDs]' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'Finished' }] },
+      ],
+    } }) } as Response
+  }) as typeof fetch
+  try {
+    const c = chat()
+    delete c.refreshAfterTurn
+    Object.assign(c, { available: true, references: [], skills: [], folderResources: new Map() })
+    c.send('hello instead')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(c.items.at(-1).text, 'hello instead')
+    if (acknowledgeFirst) acknowledge()
+    c.handle({ kind: 'text', text: 'Finished' })
+    c.handle({ kind: 'finished' })
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(c.busy, false)
+    assert.deepEqual(c.items.filter((i: any) => i.role === 'user').map((i: any) => i.text), ['hello interrupted', 'hello instead'])
+    assert.equal(c.items[1].tool.ok, false)
+    if (!acknowledgeFirst) acknowledge()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(c.items.at(-2).text, 'hello instead')
+  } finally { globalThis.fetch = beforeFetch }
+}
+console.log('optimistic user display survives the completed snapshot in either acknowledgement order: passed')

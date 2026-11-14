@@ -5,6 +5,18 @@ import XCTest
 @testable import TsugumiAgentClient
 
 final class ServiceWireTests: XCTestCase {
+  func testSendCarriesTheOptimisticDisplaySeparatelyFromModelInput() throws {
+    let bytes = try ServiceWire.encode("ConversationSendRequest", fields: [
+      "conversation_id": "c", "turn_id": "t", "text": "Model instructions",
+      "display": "hello instead", "selected_cards": [String](), "selected_displays": [String](),
+    ], id: 1, host: false)
+    var buffer = ByteBuffer(data: bytes)
+    let message: Tsugumi_Agent_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSA1")
+    let request = message.payload(type: Tsugumi_Agent_Request.self)!.value(type: Tsugumi_Agent_ConversationSendRequest.self)!
+    XCTAssertEqual(request.text, "Model instructions")
+    XCTAssertEqual(request.display, "hello instead")
+  }
+
   func testContractsAndExactSequenceNumbers() throws {
     let high = UInt64.max - 1
     let bytes = try ServiceWire.encode("EventsRequest", fields: ["conversation_id": "日本語", "after_seq": high], id: high, host: false)

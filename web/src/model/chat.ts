@@ -387,7 +387,7 @@ export class ChatController extends Observable {
     this.references = []
     this.begin()
     // The chat shows what was typed, not the skills and references attached to it.
-    void this.request('/api/chat/send', { ...this.base, text, selectedCards: refs.filter((r) => r.kind === 'card').map((r) => r.card), selectedDisplays: refs.filter((r) => r.kind === 'display').map((r) => r.card), skillNames: this.skillsIn(text).map((s) => s.name), attachedResources: [...this.folderResources.values()] }).catch((e) => this.fail(e))
+    void this.request('/api/chat/send', { ...this.base, text, display: shown, selectedCards: refs.filter((r) => r.kind === 'card').map((r) => r.card), selectedDisplays: refs.filter((r) => r.kind === 'display').map((r) => r.card), skillNames: this.skillsIn(text).map((s) => s.name), attachedResources: [...this.folderResources.values()] }).catch((e) => this.fail(e))
   }
 
   /** Sends a request the app wrote for the model; the chat shows `display`. */
@@ -395,7 +395,7 @@ export class ChatController extends Observable {
     if (!this.available) return
     this.items = [...this.items, { id: uuid(), role: 'user', text: display }]
     this.begin()
-    void this.request('/api/chat/send', { ...this.base, text: prompt, skillNames: this.demoMode ? ['demo'] : [] }).catch((e) => this.fail(e))
+    void this.request('/api/chat/send', { ...this.base, text: prompt, display, skillNames: this.demoMode ? ['demo'] : [] }).catch((e) => this.fail(e))
   }
 
   /** Asks the Agent to implement the Draft Cards of a scope (after they were wired and saved). */

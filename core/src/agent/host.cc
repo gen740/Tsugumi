@@ -1454,13 +1454,13 @@ struct Host::State {
       resources.push_back(c.project);
     }
     std::string text = p->text()->str();
-    if (p->selected_cards()) {
+    if (p->selected_cards() && p->selected_cards()->size()) {
       text += "\n[Selected Card IDs; read their content only through "
               "authorized tools]";
       for (const auto *card : *p->selected_cards())
         text += "\n" + card->str();
     }
-    if (p->selected_displays()) {
+    if (p->selected_displays() && p->selected_displays()->size()) {
       text += "\n[Selected display IDs]";
       for (const auto *display : *p->selected_displays())
         text += "\n" + display->str();
@@ -1553,7 +1553,8 @@ struct Host::State {
   auto Start(const std::string &id, const std::string &turn,
              const std::string &text, A::Action action = A::Action::Resume,
              const std::vector<std::string> &resources = {},
-             std::string pending_frame = {}) -> void {
+             std::string pending_frame = {}, const std::string &display = {})
+      -> void {
     auto c = GetConversation(id);
     auto digest_frame = pending_frame;
     if (!digest_frame.empty())
@@ -1581,7 +1582,7 @@ struct Host::State {
       block.text = text;
       block.resource_ids = resources;
       messages.push_back(
-          {"user", {block}, {}, {}, ProviderAPI::AnthropicMessages});
+          {"user", {block}, display, {}, ProviderAPI::AnthropicMessages});
     }
     if (messages.empty())
       throw Failure("invalid_request", "The conversation has no messages");
@@ -1925,7 +1926,8 @@ struct Host::State {
                       "A turn needs a nonempty ID of at most 256 bytes");
       OwnConversation(p->conversation_id()->str(), human);
       Start(p->conversation_id()->str(), p->turn_id()->str(), p->text()->str(),
-            A::Action::Resume, {}, *request.frame);
+            A::Action::Resume, {}, *request.frame,
+            p->display() ? p->display()->str() : p->text()->str());
       S::AcknowledgementT result;
       result.accepted = true;
       return wire::AgentReply(request.request_id, std::move(result));

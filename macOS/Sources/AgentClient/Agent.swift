@@ -199,7 +199,7 @@ public actor Agent {
       try await self.client.configure(self.provider, conversationID: self.id)
       try await self.beginTurn()
       _ = try await self.client.call("ConversationSendRequest", ["conversation_id": self.id,
-        "turn_id": turn, "text": prompt, "selected_cards": selectedCards,
+        "turn_id": turn, "text": prompt, "display": display ?? prompt, "selected_cards": selectedCards,
         "selected_displays": selectedDisplays, "skill_names": skillNames, "attached_resources": attachedResources])
     }
   }
