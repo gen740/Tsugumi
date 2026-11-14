@@ -38,6 +38,7 @@ enum ExecutionHistorySelection {
 struct CardExecutionView: View {
   let session: ProjectSession
   let cardKey: CardKey
+  var onOpenSource: (String, Int) -> Void
   @State private var runs: [Tsugumi_RPC_RunSummaryT] = []
   @State private var filter = Filter.all
   @State private var runId: String?
@@ -302,6 +303,13 @@ struct CardExecutionView: View {
         if let f = r.status.failure {
           LabeledContent("失敗の種類", value: String(describing: f.kind))
           Text(f.diagnostic ?? "").textSelection(.enabled).foregroundStyle(.red)
+          let args = f.args.compactMap { $0 }
+          if let source = args.first(where: { $0.key == "source" })?.value,
+             let rawLine = args.first(where: { $0.key == "line" })?.value,
+             let line = Int(rawLine), line > 0 {
+            let cell = args.first(where: { $0.key == "cell" })?.value ?? source
+            Button("\(cell) · \(source):\(line)") { onOpenSource(source, line) }
+          }
         }
         LabeledContent("集計", value: String(localized: "呼び出し \(r.aggregate.calls ?? 0) · 成功 \(r.aggregate.succeeded ?? 0) · 失敗 \(r.aggregate.failed ?? 0)"))
         if let srcs = r.record?.inputSources, !srcs.isEmpty {

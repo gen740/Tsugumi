@@ -33,6 +33,7 @@ def test_notebook_passes_typed_result_and_keeps_snapshot(tmp_path):
         html = read('index.html')
         assert '変換後の値は'.encode() in html and b'data:image/png;base64,' in html
         assert json.loads(read('result.json')) == {'result':14}
+        assert json.loads(read('bindings.json')) == {'source': 7, 'factor': 2}
         members = {text(m.path) for m in art.members}
         assert {'source/notebook.py', 'metadata.json', 'bindings.json'} <= members
         figure = next(name for name in members if name.startswith('assets/cell-') and name.endswith('.png'))
@@ -43,7 +44,7 @@ def test_notebook_passes_typed_result_and_keeps_snapshot(tmp_path):
         }
         assert text(art.card.segments[0]) == 'notebook'
         assert art.invocation == record.summary.invocation
-        edit_card(env, c, 'source', lambda card: set_param(card, 'factor', 3))
+        edit_card(env, c, 'notebook', lambda card: set_param(card, 'factor', 3))
         updated = start_run(c, ['source'], propagate=True)
         assert wait_run(c,updated,timeout=600).state == RunState.succeeded, stderr(c,updated,'notebook')
         assert '21' in text(c.call('RunRecordRequest',runId=updated,card=path('notebook')).record.display.value.text)
@@ -59,6 +60,7 @@ def test_notebook_passes_typed_result_and_keeps_snapshot(tmp_path):
 
 @pytest.mark.parametrize("problem", ["binding", "cell"])
 def test_a_failed_notebook_sends_no_downstream_result(tmp_path, problem):
+    failed_line = []
     def edit(root):
         notebook = root / 'definitions/notebook'
         if problem == 'binding':
@@ -72,6 +74,8 @@ def test_a_failed_notebook_sends_no_downstream_result(tmp_path, problem):
                 'def explanation(result):', '''def explanation(result):
     raise RuntimeError("notebook test failure")'''
             ))
+            failed_line.append(next(i for i, line in enumerate(source.read_text().splitlines(), 1)
+                                    if 'raise RuntimeError' in line))
 
     env = demo_environment(tmp_path, 'marimo', edit=edit)
     try:
@@ -79,9 +83,16 @@ def test_a_failed_notebook_sends_no_downstream_result(tmp_path, problem):
         rid = start_run(client, ['start'], propagate=True)
         state = wait_run(client, rid, timeout=600)
         assert state.state == RunState.failed
-        failure = client.call('RunRecordRequest', runId=rid, card=path('notebook')).status.failure
+        record = client.call('RunRecordRequest', runId=rid, card=path('notebook'))
+        failure = record.status.failure
         expected = 'has no source' if problem == 'binding' else 'notebook test failure'
         assert expected in text(failure.diagnostic)
+        if problem == 'cell':
+            args = {text(a.key): text(a.value) for a in failure.args}
+            assert args['source'] == 'src/notebook.py'
+            assert args['cell'] == 'explanation'
+            assert int(args['line']) == failed_line[0]
+            assert 'Traceback (most recent call last)' in text(failure.diagnostic)
         downstream = client.call('RunInvocationsRequest', runId=rid, card=path('result'))
         assert len(downstream.records) == 1
         blocked = downstream.records[0]
@@ -103,11 +114,20 @@ def test_project_owns_notebook_process_tree(tmp_path,ending):
         card=json.loads(card_file.read_text())
         if ending=='deadline':card['timeoutSeconds']=12
         card_file.write_text(json.dumps(card))
-        (root/'definitions/notebook/src/notebook.py').write_text('''import os,sys,subprocess,time
-child=subprocess.Popen([sys.executable,"-c","import time; time.sleep(120)"])
-print("NOTEBOOK_PROCESSES",os.getpid(),child.pid,flush=True)
-''' + ('''raise RuntimeError("intentional cell failure")
-''' if ending=='failure' else '''time.sleep(120)
+        (root/'definitions/notebook/src/notebook.py').write_text('''import marimo
+app = marimo.App()
+@app.cell
+def configuration():
+    source = 0
+    factor = 0
+    return source, factor
+@app.cell
+def lifecycle():
+    import os, sys, subprocess, time
+    child=subprocess.Popen([sys.executable,"-c","import time; time.sleep(120)"])
+    print("NOTEBOOK_PROCESSES",os.getpid(),child.pid,flush=True)
+''' + ('''    raise RuntimeError("intentional cell failure")
+''' if ending=='failure' else '''    time.sleep(120)
 '''))
     env=demo_environment(tmp_path,'marimo',edit=edit)
     try:
@@ -125,6 +145,11 @@ print("NOTEBOOK_PROCESSES",os.getpid(),child.pid,flush=True)
         else:
             state=wait_run(c,rid,timeout=30)
             assert state.state!=RunState.succeeded
+            if ending == 'failure':
+                failure = c.call('RunRecordRequest', runId=rid, card=path('notebook')).status.failure
+                args = {text(a.key): text(a.value) for a in failure.args}
+                assert (args['source'], args['line'], args['cell']) == ('src/notebook.py', '13', 'lifecycle')
+                assert 'Traceback (most recent call last)' in text(failure.diagnostic)
         def alive(pid):
             try:os.kill(pid,0);return True
             except ProcessLookupError:return False

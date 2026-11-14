@@ -200,6 +200,15 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
     Plotly/Altair interactive plots carry at most 1 MiB of JSON, data inline.
     HOME, XDG_CONFIG_HOME and XDG_CACHE_HOME are writable folders of the worker (libraries such as astropy and
     matplotlib need nothing more).
+  * marimo: use the shared marimo notebook starting point (ui/templates/marimo.py; demo_read
+    en/marimo/definitions/notebook/src/main.py and src/notebook.py). It is an ordinary Python Card with
+    ps.marimo in pythonCard packages and reuseWorker: false. Keep the notebook in src/notebook.py;
+    the bindings JSON maps notebook variables to inputs.<port>.<field> or param.<field>, e.g.
+    {"source":"inputs.data.source","factor":"param.factor"}. Supply every variable of an overridden cell.
+    The adapter calls tsugumi.notebook.bindings and run once, then returns
+    {"value":{"value":values[selected]},"report":{"value":str(folder)}} against _outputs.fbs
+    (numeric value and report Directory, filesystem/retainArtifact enabled). Notebook cells do not emit ports.
+    Interactive sessions are separate (#267).
   * C++: sources are `#include <card.hh>` and `auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output` with one member per
     port (inputs.<port>, Output's ports are std::optional); visualization is
     report.text/markdown/scalar/line_chart/table/image/points/module.

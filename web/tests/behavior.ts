@@ -113,3 +113,5 @@ await import('./terminalEnvironment')
 await import('./projectImport')
 
 await import("./cardFileEdits")
+
+await import('./marimo')

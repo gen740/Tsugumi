@@ -281,8 +281,12 @@ static PyObject* host_fail(PyObject* self, PyObject* args) {
   if (!require_call()) return NULL;
   const char* kind;
   const char* msg;
-  if (!PyArg_ParseTuple(args, "ss", &kind, &msg)) return NULL;
-  g_call->fail(g_call->host, kind, msg);
+  const char* source = NULL;
+  const char* cell = NULL;
+  unsigned int line = 0;
+  if (!PyArg_ParseTuple(args, "ss|zIz", &kind, &msg, &source, &line, &cell)) return NULL;
+  if (source) g_call->fail_at(g_call->host, kind, msg, source, line, cell);
+  else g_call->fail(g_call->host, kind, msg);
   Py_RETURN_NONE;
 }
 
