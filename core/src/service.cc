@@ -401,7 +401,7 @@ std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {
       "SessionHello", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
       "ProjectReload", "ProjectValidate", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "RunHistoryDelete", "OperationGet",
-      "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "LayoutArrange", "LayoutUntangle", "AttachedFolderRead",
+      "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "AttachedFolderRead",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
       "ArtifactRead", "ModuleRead", "LogRange", "ViewSetVisible", "ViewSave",
@@ -521,8 +521,6 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectFileStatRequest: return on_lane(r, std::move(req), &Service::file_stat);
     case P::ProjectFileReadRequest: return on_lane(r, std::move(req), &Service::file_read);
     case P::ProjectFileFormatRequest: return on_lane(r, std::move(req), &Service::file_format);
-    case P::LayoutArrangeRequest:
-    case P::LayoutUntangleRequest: return on_lane(r, std::move(req), &Service::layout_proposal);
     case P::OutputTypesRequest: return on_lane(r, std::move(req), &Service::output_types);
     case P::NixSourceResolveRequest: return on_lane(r, std::move(req), &Service::nix_source_resolve);
     case P::AttachedFolderReadRequest: return on_lane(r, std::move(req), &Service::attached_folder_read);
@@ -687,48 +685,6 @@ flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<R::SourceInfo>>> man
   return b.CreateVector(v);
 }
 
-flatbuffers::Offset<R::ViewState> view_state(FBB& b, const schema::ViewStateJson& v) {
-  std::vector<flatbuffers::Offset<R::Camera>> cams;
-  for (const auto& c : *v.cameras) {
-    auto sp = wire::path(b, *c.scope);
-    R::CameraBuilder cb(b);
-    cb.add_scope(sp);
-    cb.add_x(*c.x);
-    cb.add_y(*c.y);
-    cb.add_zoom(*c.zoom);
-    cams.push_back(cb.Finish());
-  }
-  std::vector<flatbuffers::Offset<D::CardPath>> sel;
-  for (const auto& p : *v.selected_cards) sel.push_back(wire::path(b, p));
-  auto scope = wire::path(b, *v.scope);
-  return R::CreateViewState(b, scope, b.CreateVector(cams), b.CreateVector(sel));
-}
-
-schema::ViewStateJson view_json(const R::ViewState* v) {
-  auto checked = [](const D::CardPath* p) {
-    if (!p) throw Failed(FailureKind::invalid_request, "view paths are required");
-    auto path = wire::path(p);
-    for (const auto& s : path)
-      if (!valid_id(s)) throw Failed(FailureKind::invalid_request, "invalid card id in view");
-    return path;
-  };
-  schema::ViewStateJson out;
-  *out.scope = checked(v->scope());
-  for (const auto* c : *v->cameras()) {
-    if (!c->x() || !c->y() || !c->zoom() || !std::isfinite(*c->x()) || !std::isfinite(*c->y()) ||
-        !std::isfinite(*c->zoom()) || *c->zoom() <= 0)
-      throw Failed(FailureKind::invalid_request, "camera needs finite x, y and a positive zoom");
-    schema::ViewCamera cam;
-    *cam.scope = checked(c->scope());
-    *cam.x = *c->x();
-    *cam.y = *c->y();
-    *cam.zoom = *c->zoom();
-    out.cameras->push_back(std::move(cam));
-  }
-  for (const auto* p : *v->selected_cards()) out.selected_cards->push_back(checked(p));
-  return out;
-}
-
 }  // namespace
 
 std::optional<Service::ViewRecord> Service::load_view(const std::string& view_id) {
@@ -774,13 +730,13 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(FBB& b, const Document
         b.CreateVectorOfStrings(target.systems), R::ExecutionServiceKind::remote_daemon, target.available,
         target.resource_limits, target.max_jobs ? flatbuffers::Optional(target.max_jobs) : flatbuffers::nullopt));
   auto execution_services = b.CreateVector(services);
-  flatbuffers::Offset<R::ViewState> view;
+  flatbuffers::Offset<flatbuffers::String> view;
   flatbuffers::Offset<flatbuffers::String> vid;
   std::optional<uint64_t> vrev;
   if (view_id) {
     vid = b.CreateString(*view_id);
     if (auto rec = load_view(*view_id)) {
-      view = view_state(b, rec->view);
+      view = b.CreateString(rec->view);
       vrev = rec->rev;
     } else {
       vrev = 0;
@@ -799,7 +755,7 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(FBB& b, const Document
   sb.add_run(run);
   sb.add_execution_services(execution_services);
   if (view_id) {
-    if (!view.IsNull()) sb.add_view(view);
+    if (!view.IsNull()) sb.add_view_json(view);
     sb.add_view_id(vid);
     sb.add_view_rev(*vrev);
   }
@@ -1262,10 +1218,10 @@ void Service::version_canvas(RequestIn& req) {
   auto canvas = versions_->canvas(r->commit()->str());
   FBB b;
   std::vector<flatbuffers::Offset<R::VersionCanvasCard>> cards;
-  for (const auto& c : canvas.cards) cards.push_back(R::CreateVersionCanvasCard(b, b.CreateString(c.id), c.x, c.y, b.CreateString(c.kind), c.fan, c.collapsed));
+  for (const auto& c : canvas.cards) cards.push_back(R::CreateVersionCanvasCard(b, b.CreateString(c.id), b.CreateString(c.kind), c.fan));
   std::vector<flatbuffers::Offset<R::VersionCanvasWire>> wires;
   for (const auto& [from, to] : canvas.wires) wires.push_back(R::CreateVersionCanvasWire(b, b.CreateString(from), b.CreateString(to)));
-  auto vc = R::CreateVersionCanvas(b, b.CreateVector(cards), b.CreateVector(wires), b.CreateString(canvas.flow));
+  auto vc = R::CreateVersionCanvas(b, b.CreateVector(cards), b.CreateVector(wires), b.CreateString(canvas.layout_json));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionCanvas, vc.Union()));
 }
 
@@ -1996,7 +1952,12 @@ void Service::view_save(RequestIn& req) {
   std::string view_id = r->view_id()->str();
   if (!crypto::is_uuid(view_id)) throw Failed(FailureKind::invalid_request, "view_id must be a UUID");
   if (!r->base_view_rev()) throw Failed(FailureKind::invalid_request, "base_view_rev is required");
-  schema::ViewStateJson view = view_json(r->view());
+  const auto view = r->view_json()->str();
+  if (view.size() > 1024 * 1024) throw Failed(FailureKind::resource_limit, "view exceeds 1 MiB");
+  // Validate JSON syntax only; scope, selection and camera belong to clients.
+  schema::Json opaque;
+  if (auto error = schema::decode(view, opaque))
+    throw Failed(FailureKind::invalid_request, error->message);
   std::lock_guard<std::mutex> l(view_mu_);
   auto path = store_->state_dir() / "view.json";
   schema::ViewFile file;

@@ -45,17 +45,13 @@ add_library(tsugumi_core STATIC
   src/remote_invocation.cc
   src/remote_execution_service.cc
   src/scheduler.cc
-  src/layout.cc
-  src/layout_place.cc
-  src/layout_wires.cc
-  src/service_layout.cc
   src/service.cc
   src/service_run.cc
   src/service_shell.cc
   src/daemon.cc
   ${CMAKE_CURRENT_BINARY_DIR}/tsugumi_rpc_bfbs.cc
 )
-set_source_files_properties(src/layout.cc src/layout_place.cc src/layout_wires.cc
+set_source_files_properties(src/host/layout.cc src/host/layout_place.cc src/host/layout_wires.cc
   PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 
 target_include_directories(tsugumi_core
@@ -83,6 +79,12 @@ add_executable(tsugumid src/main.cc)
 target_include_directories(tsugumid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(tsugumid PRIVATE tsugumi_core)
 install(TARGETS tsugumid RUNTIME DESTINATION bin)
+
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc
+  COMMAND ${CMAKE_COMMAND} -DINPUT=${TSUGUMI_GEN_DIR}/bfbs/host.bfbs
+    -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc -DSYMBOL=tsugumi_host_bfbs
+    -P ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
+  DEPENDS ${TSUGUMI_GEN_DIR}/bfbs/host.bfbs VERBATIM)
 
 # Agent state and model execution live in the core, independently of project
 # lifetimes. Frontends use the separate agent.fbs and host.fbs contracts.
@@ -118,6 +120,7 @@ foreach(language ja en)
   list(APPEND _agent_prompts ${output})
 endforeach()
 add_library(tsugumi_agent_core STATIC
+  ${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc
   ${CMAKE_CURRENT_BINARY_DIR}/agent_settings.cc
   ${_agent_prompts}
   src/server.cc
@@ -139,6 +142,11 @@ add_library(tsugumi_agent_core STATIC
   src/host/guide.cc
   src/host/settings.cc
   src/host/skills.cc
+  src/host/layout.cc
+  src/host/layout_place.cc
+  src/host/layout_wires.cc
+  src/host/layout_service.cc
+  src/host/layout_saving.cc
   src/host/projects.cc
   src/host/execution_broker.cc
   src/host/environment.cc

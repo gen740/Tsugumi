@@ -1,3 +1,5 @@
+import * as H from '../src/gen/tsugumi/host'
+import { sceneRequest } from '../src/shared/hostLayout'
 import { VersionCommentsRequestT } from '../src/gen/tsugumi/host/version-comments-request'
 import { RuntimeAction } from '../src/gen/tsugumi/host/runtime-action'
 import { TerminalAction } from '../src/gen/tsugumi/host/terminal-action'
@@ -98,6 +100,12 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
+    case 'LayoutArrangeRequest': return new H.LayoutArrangeRequestT(sceneRequest(v.scene))
+    case 'LayoutUntangleRequest': return new H.LayoutUntangleRequestT(sceneRequest(v.scene), v.around)
+    case 'LayoutValidateRequest': return new H.LayoutValidateRequestT(v.json, v.removedCards)
+    case 'VersionCanvasRequest': return new H.VersionCanvasRequestT(v.layoutJson,
+      v.cards.map((c: any) => new H.VersionCanvasCardT(c.id, 0, 0, c.kind, c.fan)),
+      v.wires.map((w: any) => new H.VersionCanvasWireT(w.from, w.to)))
     case 'VersionCommentsRequest': return new VersionCommentsRequestT(v.project, v.commit)
     case 'GuideGetRequest': return new GuideGetRequestT(v.session_id, v.language)
     case 'GuideAdvanceRequest': {
