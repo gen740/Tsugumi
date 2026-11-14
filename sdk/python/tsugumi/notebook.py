@@ -73,7 +73,7 @@ def run(report, run, source_directory, notebook, definitions, selected):
     config = {
         'notebook': str(snapshot / 'source' / source.relative_to(root)),
         'directory': str(snapshot), 'definitions': definitions, 'selected': selected,
-        'source': notebook, 'run_id': run.run_id, 'card': run.card, 'invocation': run.invocation,
+        'source': source.relative_to(root).as_posix(), 'run_id': run.run_id, 'card': run.card, 'invocation': run.invocation,
         'fonts': str(Path(__file__).with_name('_fonts.txt')),
     }
     request = work / 'request.json'
@@ -96,8 +96,9 @@ def run(report, run, source_directory, notebook, definitions, selected):
                 pass
         if child.returncode:
             diagnostic = snapshot / 'failure.json'
-            detail = json.loads(diagnostic.read_text())['message'] if diagnostic.exists() else f'Notebook process exited with status {child.returncode}'
-            raise Failure('worker_failed', detail)
+            detail = json.loads(diagnostic.read_text()) if diagnostic.exists() else {
+                'message': f'Notebook process exited with status {child.returncode}'}
+            raise Failure('worker_failed', detail['message'], **detail.get('position', {}))
         if run.cancelled():
             raise Failure('cancelled', 'Notebook invocation cancelled')
         if run.remaining_ms() == 0:
@@ -147,7 +148,7 @@ def _execute(request):
     folder = Path(config['directory'])
     notebook = Path(config['notebook'])
     code = notebook.read_text()
-    cells = [{'name': n.name, 'line': n.lineno, 'code': ast.get_source_segment(code, n)}
+    cells = [{'name': n.name, 'line': n.lineno, 'end_line': n.end_lineno, 'code': ast.get_source_segment(code, n)}
              for n in ast.parse(code).body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
     print('Notebook cells: ' + ', '.join(f"{c['name']} ({config['source']}:{c['line']})" for c in cells), flush=True)
     try:
@@ -180,8 +181,18 @@ def _execute(request):
         (folder / 'bindings.json').write_text(json.dumps(config['definitions'], ensure_ascii=False))
         (folder / 'metadata.json').write_text(json.dumps({k: config[k] for k in ['source', 'run_id', 'card', 'invocation']}, indent=2))
     except BaseException as error:
-        message = f"{config['source']}: {type(error).__name__}: {error} (see cell names and traceback in stderr)"
-        (folder / 'failure.json').write_text(json.dumps({'message': message, 'cells': cells}))
+        # marimo compiles cells with positions in the original notebook. Use
+        # the notebook frame even when a helper deeper in the stack raises.
+        position = {}
+        for frame, line in traceback.walk_tb(error.__traceback__):
+            if Path(frame.f_code.co_filename) == notebook:
+                cell = next((c for c in cells if c['line'] <= line <= c['end_line']), None)
+                if cell:
+                    position = {'source': 'src/' + config['source'], 'line': line, 'cell': cell['name']}
+        trace = traceback.format_exc()
+        location = f"{config['source']}:{position['line']} ({position['cell']})" if position else config['source']
+        message = f"{location}: {type(error).__name__}: {error}\n\n{trace}"
+        (folder / 'failure.json').write_text(json.dumps({'message': message, 'position': position}))
         traceback.print_exc()
         return 1
     return 0

@@ -48,7 +48,8 @@ function EvidenceLink({ href, children }: { href: string; children: ReactNode })
     e.preventDefault()
     void resolveEvidence(context.session, target).then(exists => {
       if (!exists) return setValid(false)
-      if (target.kind === 'card' && context.tab) {
+      if (target.kind === 'card' && target.file) app.openWindow(context.session, { kind: 'evidence', href })
+      else if (target.kind === 'card' && context.tab) {
         context.tab.enter(target.card!.slice(0, -1)); context.tab.setSelection([key(target.card!)]); requestAnimationFrame(() => canvasFor(context.session, context.tab!).reveal(key(target.card!)))
       } else if (target.kind === 'card' && app.cardNavigators.has(context.session)) app.cardNavigators.get(context.session)!(key(target.card!))
       else if (target.kind === 'card') openWorkflowWindow(context.session, target.card!.slice(0, -1), key(target.card!))
@@ -78,6 +79,13 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
     const load = async () => {
       const t = parseEvidence(href), rpc = session.rpc
       if (!t || !rpc || !await resolveEvidence(session, t)) throw new Error(L('このプロジェクトに根拠の記録がありません'))
+      if (t.kind === 'card' && t.file) {
+        const directory = session.definitionDir(key(t.card!))
+        if (!directory) throw new Error(L('このプロジェクトに根拠の記録がありません'))
+        const source = await session.sourceText(directory + t.file)
+        const lines = source.split('\n')
+        return <pre className="selectable wrap-pre">{lines.slice(t.lineStart! - 1, t.lineEnd).map((line, i) => `${t.lineStart! + i}: ${line}`).join('\n')}</pre>
+      }
       if (t.kind === 'log') {
         const log = await rpc.logRange(t.run!, t.card ?? null, t.invocation ?? null, streamOf(t), t.offset)
         return <><p>{t.stream} · {L('位置')} {String(log.offset ?? 0n)}</p><pre className="selectable wrap-pre">{s(log.text)}</pre></>

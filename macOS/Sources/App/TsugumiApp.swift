@@ -66,7 +66,7 @@ struct TsugumiApp: App {
     .restorationBehavior(.disabled)
 
     WindowGroup("実行履歴", id: "executions", for: CardRef.self) { $ref in
-      if let ref { DetailHost(path: ref.path) { CardExecutionView(session: $0, cardKey: ref.card) } }
+      if let ref { DetailHost(path: ref.path) { CardSettingsEditor(session: $0, ref: CardRef(path: ref.path, card: ref.card, category: .executions)) } }
     }
     .defaultSize(width: 900, height: 560)
     .restorationBehavior(.disabled)

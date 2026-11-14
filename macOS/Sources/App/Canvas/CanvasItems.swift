@@ -32,6 +32,14 @@ struct CardMenu: View {
     Button("実行履歴…") { openWindow(id: "executions", value: ref) }
     Button("成果物…") { openWindow(id: "artifacts", value: ref) }
     Button("ログを表示") { workspace.showLog(for: cardKey) }
+    Menu("Skill を実行") {
+      ForEach(AppModel.shared.chat(for: session).skills.filter(\.scoped)) { skill in
+        Button("$\(skill.name) (\(skill.scope.joined(separator: ", ")))") {
+          workspace.showChat = true
+          AppModel.shared.chat(for: session).send("$\(skill.name)", selection: targets.sorted(), scopedSkill: skill.name)
+        }.disabled(AppModel.shared.chat(for: session).busy)
+      }
+    }
     Button("チャットに参照を追加") {
       for k in targets.sorted() { AppModel.shared.chat(for: session).addReference(.card(k)) }
       workspace.showChat = true
@@ -245,6 +253,8 @@ struct DisplayContent: View {
 
   var body: some View {
     switch display?.value {
+    case .unavailable?:
+      Text("この結果は表示できません").font(.system(size: size(10, 13))).foregroundStyle(.secondary)
     case .text(let t)?:
       scrolling {
         Text(t).font(.system(size: size(11, 13), design: .monospaced)).textSelection(.enabled)

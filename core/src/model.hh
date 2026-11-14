@@ -180,41 +180,15 @@ struct InputSourceData {
   uint64_t invocation = 0;
 };
 
-// The kinds of display, outside DisplayData: clang with libstdc++ does not
-// count a nested struct with member initializers as default-constructible
-// inside its enclosing class, so the variant would have no default.
-namespace display {
-struct Text {
-  std::string text;
-  bool markdown = false;
-};
-struct Scalar { double value = 0; std::string label; };
-struct Table { std::vector<std::string> columns; std::vector<std::vector<std::string>> rows; };
-struct Image { std::string media_type; std::string data; std::string alt; };
-struct PointCloud {
-  std::vector<float> x;
-  std::vector<float> y;
-  std::vector<float> z;
-  std::vector<uint32_t> colors;
-};
-struct Module { std::string module; std::string config_json; std::map<std::string, std::string> blobs; };
-}  // namespace display
-
+// The core owns only the address and revision. Presentation remains an opaque
+// verified FlatBuffer, including any shared tables and strings inside it.
 struct DisplayData {
   CardPath card;
   std::string run_id;
   uint64_t invocation = 0;
   uint64_t revision = 0;
-  using Text = display::Text;
-  using Scalar = display::Scalar;
-  using Table = display::Table;
-  using Image = display::Image;
-  using PointCloud = display::PointCloud;
-  using Module = display::Module;
-  std::variant<Text, Scalar, Table, Image, PointCloud, Module> value;
-
-  // Validates structure and size limits of every variant (see data.fbs).
-  std::optional<std::string> validate() const;
+  std::string bytes;
+  size_t root_offset = 0;
 };
 
 struct ArtifactMemberData {

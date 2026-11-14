@@ -4,6 +4,8 @@ import { DocumentCopyRequestT } from '../src/gen/tsugumi/host/document-copy-requ
 import { DocumentMergeRequestT } from '../src/gen/tsugumi/host/document-merge-request'
 import { PermissionKindsRequestT } from '../src/gen/tsugumi/host/permission-kinds-request'
 import { DocumentSubgraphRequestT } from '../src/gen/tsugumi/host/document-subgraph-request'
+import * as H from '../src/gen/tsugumi/host'
+import { sceneRequest } from '../src/shared/hostLayout'
 import { VersionCommentsRequestT } from '../src/gen/tsugumi/host/version-comments-request'
 import { RuntimeAction } from '../src/gen/tsugumi/host/runtime-action'
 import { TerminalAction } from '../src/gen/tsugumi/host/terminal-action'
@@ -68,6 +70,7 @@ import { HelloRequestT as HHelloRequest } from '../src/gen/tsugumi/service/hello
 import { RegisterProjectRequestT as HRegisterProjectRequest } from '../src/gen/tsugumi/host/register-project-request'
 import { RegisterFolderRequestT as HRegisterFolderRequest } from '../src/gen/tsugumi/host/register-folder-request'
 import { ModelsListRequestT as HModelsListRequest } from '../src/gen/tsugumi/host/models-list-request'
+import { HostProjectReadRequestT } from '../src/gen/tsugumi/host/host-project-read-request'
 import { HostProjectInfoRequestT as HHostProjectInfoRequest } from '../src/gen/tsugumi/host/host-project-info-request'
 import { HostProjectCreateRequestT as HHostProjectCreateRequest } from '../src/gen/tsugumi/host/host-project-create-request'
 import { HostProjectDuplicateRequestT as HHostProjectDuplicateRequest } from '../src/gen/tsugumi/host/host-project-duplicate-request'
@@ -109,6 +112,12 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'DocumentCopyRequest': return new DocumentCopyRequestT(v.state_json, v.paths ?? [], v.from, v.to, v.name)
     case 'DocumentMergeRequest': return new DocumentMergeRequestT(v.base_json, v.ours_json, v.theirs_json)
     case 'DocumentSubgraphRequest': return new DocumentSubgraphRequestT(v.project_json, v.cards ?? [], v.id)
+    case 'LayoutArrangeRequest': return new H.LayoutArrangeRequestT(sceneRequest(v.scene))
+    case 'LayoutUntangleRequest': return new H.LayoutUntangleRequestT(sceneRequest(v.scene), v.around)
+    case 'LayoutValidateRequest': return new H.LayoutValidateRequestT(v.json, v.removedCards)
+    case 'VersionCanvasRequest': return new H.VersionCanvasRequestT(v.layoutJson,
+      v.cards.map((c: any) => new H.VersionCanvasCardT(c.id, 0, 0, c.kind, c.fan)),
+      v.wires.map((w: any) => new H.VersionCanvasWireT(w.from, w.to)))
     case 'VersionCommentsRequest': return new VersionCommentsRequestT(v.project, v.commit)
     case 'GuideGetRequest': return new GuideGetRequestT(v.session_id, v.language)
     case 'GuideAdvanceRequest': {
@@ -139,6 +148,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'RegisterFolderRequest': return new HRegisterFolderRequest(v.project_id, v.resource_id, v.folder, v.title)
     case 'SkillsListRequest': return new HSkillsListRequest(v.project_path, v.folders, v.conversation_id)
     case 'ModelsListRequest': return new HModelsListRequest(v.provider_id, v.refresh, v.profile, v.account_profile, v.key_profile)
+    case 'HostProjectReadRequest': return new HostProjectReadRequestT(v.path, v.file_index ?? 0, BigInt(v.offset ?? 0))
     case 'HostProjectInfoRequest': return new HHostProjectInfoRequest(v.path)
     case 'HostProjectCreateRequest': return new HHostProjectCreateRequest(v.parent, v.name, v.flow)
     case 'HostProjectDuplicateRequest': return new HHostProjectDuplicateRequest(v.path, v.parent, v.name)
@@ -157,7 +167,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'ConversationGetRequest': return new AConversationGetRequest(v.conversation_id)
     case 'ConversationDeleteRequest': return new AConversationDeleteRequest(v.conversation_id)
     case 'ConversationSearchRequest': return new AConversationSearchRequest(v.project_id, v.text)
-    case 'ConversationSendRequest': return new AConversationSendRequest(v.conversation_id, v.turn_id, v.text, v.selected_cards, v.selected_displays, v.skill_names, v.intent, v.attached_resources, v.display)
+    case 'ConversationSendRequest': return new AConversationSendRequest(v.conversation_id, v.turn_id, v.text, v.selected_cards, v.selected_displays, v.skill_names, v.intent, v.attached_resources, v.display, v.scoped_skill)
     case 'ConversationActionRequest': return new AConversationActionRequest(v.conversation_id, enumValue(Action, v.action))
     case 'ConversationCancelRequest': return new AConversationCancelRequest(v.conversation_id)
     case 'EventsRequest': return new AEventsRequest(v.conversation_id, BigInt(v.after_seq ?? 0), v.limit)
@@ -200,7 +210,7 @@ function view(value: any): any {
   if (typeof value !== 'object') return value
   const out: Record<string, any> = {}
   const names: Record<string, string> = { projectId: 'project_id', conversationId: 'conversation_id',
-    eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
+    sourceFolder: 'source_folder', attachmentFolder: 'attachment_folder', eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
     inputJson: 'input', argumentsJson: 'arguments', resultJson: 'result', inputSchemaJson: 'inputSchema',
     contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', attemptId: 'attempt_id', valueJson: 'value_json', capabilityFile: 'capability_file' }
   for (const [key, v] of Object.entries(value)) {
@@ -212,7 +222,7 @@ function view(value: any): any {
     }
     if (key === 'resultJson' && 'callId' in value) { out[name] = JSON.parse(String(v)); continue }
     if (key === 'access') { out[name] = Access[v as number]; continue }
-    if (key === 'scope') { out[name] = GrantScope[v as number]; continue }
+    if (key === 'scope' && typeof v === 'number') { out[name] = GrantScope[v as number]; continue }
     out[name] = ['seq', 'eventSeq', 'nextSeq'].includes(key) ? v : ['contentJson', 'providerContentJson', 'inputSchemaJson'].includes(key) ? JSON.parse(String(v)) : view(v)
   }
   return out

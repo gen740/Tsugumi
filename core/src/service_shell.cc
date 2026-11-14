@@ -203,7 +203,7 @@ auto Execute(const std::string& command, const std::string& cwd,
   // The VM launcher supplies the project's environment. Never forward model
   // credentials or arbitrary host environment variables to a command.
   spec.env = {std::string("PATH=") +
-              (std::getenv("PATH") ? std::getenv("PATH") : TSUGUMI_CARD_PATH)};
+              (std::getenv("PATH") ? std::getenv("PATH") : "/usr/bin:/bin")};
   for (const char* key :
        {"USER", "LANG", "NIX_SSL_CERT_FILE",
         "SSL_CERT_FILE", "TSUGUMI_PROJECT_ID"})

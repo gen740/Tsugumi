@@ -85,6 +85,7 @@ def main(contract_path, out):
             for p in c["outputs"]:
                 m = member(p["name"])
                 cc.append(f'    if (output.{m}) c.emit_object<{cxx(p["type"])}>("{p["name"]}", *output.{m});')
+            cc.append("    c.finish_outputs();")
         cc += ["  });", "}", ""]
     open(os.path.join(out, "include", "card.hh"), "w").write("\n".join(hh))
     open(os.path.join(out, "src", "card_adapter.cc"), "w").write("\n".join(cc))

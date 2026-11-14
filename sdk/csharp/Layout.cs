@@ -98,6 +98,8 @@ internal static unsafe class Layout {
         Add("tsugumi_call.params_json", c, &c->ParamsJson, pointer);
         Add("tsugumi_call.emit_json", c, &c->EmitJson, pointer);
         Add("tsugumi_call.display_json", c, &c->DisplayJson, pointer);
+        Add("tsugumi_call.finish_outputs", c, &c->FinishOutputs, pointer);
+        Add("tsugumi_call.fail_at", c, &c->FailAt, pointer);
         return list;
     }
 }

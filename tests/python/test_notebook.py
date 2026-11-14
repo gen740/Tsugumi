@@ -15,7 +15,8 @@ spec=importlib.util.spec_from_file_location('notebook_adapter',ROOT/'sdk/python/
 notebook=importlib.util.module_from_spec(spec);spec.loader.exec_module(notebook)
 
 class Failure(Exception):
-    def __init__(self,kind,message):super().__init__(message);self.kind=kind
+    def __init__(self,kind,message,**position):
+        super().__init__(message);self.kind=kind;self.position=position
 
 class Run:
     run_id='notebook-test'
@@ -75,6 +76,9 @@ def test_cell_failure_exposes_notebook_source_and_no_result(tmp_path,host,capfd)
 app=marimo.App()
 @app.cell
 def failing_cell():
+    import os
+    from pathlib import Path
+    Path("pid").write_text(str(os.getpid()))
     result=1/0
     return result,
 ''')
@@ -82,6 +86,11 @@ def failing_cell():
     with pytest.raises(Failure,match='broken.py') as e:
         notebook.run(types.SimpleNamespace(markdown=lambda value: None), run_info,source,'broken.py',{},['result'])
     assert e.value.kind=='worker_failed'
+    assert e.value.position == {'source': 'src/broken.py', 'line': 8, 'cell': 'failing_cell'}
+    assert 'Traceback (most recent call last)' in str(e.value)
+    assert 'ZeroDivisionError' in str(e.value)
+    pid = int((run_info.temporary_directory/'marimo/notebook/source/pid').read_text())
+    with pytest.raises(ProcessLookupError): os.kill(pid, 0)
     output=capfd.readouterr()
     assert 'failing_cell (broken.py:4)' in output.out
     assert 'ZeroDivisionError' in output.err
@@ -106,3 +115,22 @@ time.sleep(60)
     pid=int((run_info.temporary_directory/'marimo/notebook/source/pid').read_text())
     with pytest.raises(ProcessLookupError):os.kill(pid,0)
     assert not (run_info.output_directory / 'notebook').exists()
+
+
+def test_demo_binds_upstream_and_parameter_into_running_notebook(tmp_path, host):
+    import shutil
+    root = ROOT / 'demos/en/marimo/definitions/notebook'
+    source = tmp_path / 'src'
+    shutil.copytree(root / 'src', source)
+    card = json.loads((root / '_card.json').read_text())
+    mapping = json.loads(next(p['data'] for p in card['params'] if p['name'] == 'bindings'))
+    inputs = types.SimpleNamespace(data=types.SimpleNamespace(source=7), params=types.SimpleNamespace(factor=3))
+    sys.modules['tsugumi'].contract = types.SimpleNamespace(
+        ports=lambda: [{'name': 'data'}], input_object=lambda inputs, name: inputs.data,
+        params_object=lambda inputs: inputs.params)
+    definitions = notebook.bindings(inputs, mapping)
+    assert definitions == {'source': 7, 'factor': 3}
+    result, folder = notebook.run(types.SimpleNamespace(markdown=lambda value: None),
+                                  Run(tmp_path/'call'), source, 'notebook.py', definitions, ['result'])
+    assert result == {'result': 21}
+    assert json.loads((folder/'bindings.json').read_text()) == definitions

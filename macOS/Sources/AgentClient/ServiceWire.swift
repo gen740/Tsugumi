@@ -9,7 +9,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   static func request(_ method: String, _ fields: [String: Any], host: Bool) throws -> (UInt8, NativeObject) {
     if host {
       switch method {
@@ -201,6 +201,12 @@ enum ServiceWire {
         v.profile = fields["profile"] as? String
         v.accountProfile = fields["account_profile"] as? String
         return (Tsugumi_Host_RequestPayload.modelslistrequest.rawValue, v)
+      case "HostProjectReadRequest":
+        let v = Tsugumi_Host_HostProjectReadRequestT()
+        v.path = fields["path"] as? String ?? ""
+        v.fileIndex = (fields["file_index"] as? NSNumber)?.uint32Value ?? 0
+        v.offset = (fields["offset"] as? NSNumber)?.uint64Value ?? 0
+        return (Tsugumi_Host_RequestPayload.hostprojectreadrequest.rawValue, v)
       case "HostProjectInfoRequest":
         let v = Tsugumi_Host_HostProjectInfoRequestT()
         v.path = fields["path"] as? String ?? ""
@@ -287,6 +293,7 @@ enum ServiceWire {
         v.selectedCards = fields["selected_cards"] as? [String] ?? []
         v.selectedDisplays = fields["selected_displays"] as? [String] ?? []
         v.skillNames = fields["skill_names"] as? [String] ?? []
+        v.scopedSkill = fields["scoped_skill"] as? String
         v.intent = fields["intent"] as? String
         v.attachedResources = fields["attached_resources"] as? [String] ?? []
         return (Tsugumi_Agent_RequestPayload.conversationsendrequest.rawValue, v)
@@ -435,6 +442,10 @@ enum ServiceWire {
     result.id = v.id
     result.title = v.title ?? ""
     result.updatedAt = Date(timeIntervalSince1970: Double(v.updatedAt) / 1000)
+    result.helpers = try v.helpers.compactMap { value in
+      guard let value else { return nil }
+      return HelperTrace(call: value.callId ?? "", task: value.task, messages: try messages(value.messages), state: value.state ?? "")
+    }
     result.messages = try messages(v.messages)
     result.archive = try messages(v.archive)
     result.summary = v.summary
@@ -610,7 +621,7 @@ enum ServiceWire {
       out["id"] = v.id
       out["project_id"] = v.projectId
       out["conversation_id"] = v.conversationId
-      out["access"] = ["Read", "Write", "Run", "CardPermissions", "Shell"][Int(v.access.rawValue)]
+      out["access"] = ["Read", "Write", "Run", "CardPermissions", "Shell", "HelperScope"][Int(v.access.rawValue)]
       out["scope"] = ["Conversation", "Server"][Int(v.scope.rawValue)]
       out["reason"] = v.reason
       out["state"] = v.state
@@ -620,7 +631,7 @@ enum ServiceWire {
       out["id"] = v.id
       out["project_id"] = v.projectId
       out["conversation_id"] = v.conversationId
-      out["access"] = ["Read", "Write", "Run", "CardPermissions", "Shell"][Int(v.access.rawValue)]
+      out["access"] = ["Read", "Write", "Run", "CardPermissions", "Shell", "HelperScope"][Int(v.access.rawValue)]
       out["active"] = v.active
       return out
     case let v as Tsugumi_Agent_AccessListT:
@@ -639,6 +650,11 @@ enum ServiceWire {
       var out: [String: Any] = [:]
       out["nixpkgsPin"] = v.nixpkgsPin
       return out
+    case let v as Tsugumi_Host_ProjectFilesT:
+      return ["name": v.name, "files": try v.files.compactMap { item in try item.map { try view($0) } },
+              "nextFile": v.nextFile, "nextOffset": v.nextOffset, "complete": v.complete]
+    case let v as Tsugumi_Host_ProjectFileT:
+      return ["path": v.path, "bytes": v.bytes]
     case let v as Tsugumi_Host_ProjectInfoT:
       var out: [String: Any] = [:]
       out["path"] = v.path
@@ -708,7 +724,7 @@ enum ServiceWire {
       return out
     case let v as Tsugumi_Host_SkillT:
       return ["name": v.name, "description": v.description ?? "", "path": v.path,
-              "source_folder": v.sourceFolder ?? "", "attachment_folder": v.attachmentFolder ?? "", "status": v.status]
+              "source_folder": v.sourceFolder ?? "", "attachment_folder": v.attachmentFolder ?? "", "status": v.status, "scoped": v.scoped, "scope": v.scope]
     case let v as Tsugumi_Host_SkillFolderT:
       return ["path": v.path, "status": v.status]
     case let v as Tsugumi_Host_SkillsListT:

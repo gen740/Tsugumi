@@ -3,18 +3,43 @@
 # Inputs use inputs$port and inputs$params. Report methods publish immediately.
 # Wrap length-one vectors in I() to retain their array shape in FlatBuffers.
 
-.tsugumi_arguments <- function() {
+.tsugumi_from_json <- function(text) {
+  # Only bare numeric tokens change; quoted strings keep their meaning. '$'
+  # cannot occur in a FlatBuffers field name, so this internal tag is unambiguous.
+  tokens <- gregexpr('"(?:[^"\\\\]|\\\\.)*"|-?Infinity|NaN', text, perl = TRUE)
+  values <- regmatches(text, tokens)[[1]]
+  replacement <- vapply(values, function(value) {
+    if (startsWith(value, '"')) value else paste0('{"$tsugumi_number":"', value, '"}')
+  }, character(1))
+  regmatches(text, tokens) <- list(replacement)
+  restore <- function(value) {
+    if (is.list(value) && identical(names(value), "$tsugumi_number"))
+      return(switch(value[[1]], `NaN` = NaN, Infinity = Inf, `-Infinity` = -Inf))
+    if (is.list(value)) {
+      value <- lapply(value, restore)
+      if (is.null(names(value)) && length(value) && all(vapply(value, function(x) is.atomic(x) && length(x) == 1L, logical(1))))
+        value <- unlist(value, use.names = FALSE)
+    }
+    value
+  }
+  restore(jsonlite::fromJSON(text, simplifyVector = FALSE, bigint_as_char = TRUE))
+}
+
+.tsugumi_arguments <- function(scope) {
+  check <- function() { if (!isTRUE(scope$active)) stop("Card call has expired") }
   # FlatBuffers reads a union's discriminator before its value.
   order_unions <- function(x) {
+    if (is.numeric(x) && any(is.na(x) & !is.nan(x)))
+      stop("NA has no FlatBuffers numeric value; use NaN or NULL for an absent optional scalar")
     if (is.list(x) && !is.data.frame(x)) {
       x <- lapply(x, order_unions)
       if (!is.null(names(x))) x <- x[order(!endsWith(names(x), "_type"))]
     }
     x
   }
-  to_json <- function(x) jsonlite::toJSON(order_unions(x), auto_unbox = TRUE, digits = I(17), always_decimal = TRUE, null = "null", na = "null")
+  to_json <- function(x) jsonlite::toJSON(order_unions(x), auto_unbox = TRUE, digits = I(17), always_decimal = TRUE, null = "null", na = "string")
   .tsugumi_json <<- to_json
-  from_json <- function(x) jsonlite::fromJSON(x, simplifyVector = TRUE, bigint_as_char = TRUE)
+  from_json <- .tsugumi_from_json
 
   show <- function(member) {
     if (!.Call("tsugumi_display", as.character(to_json(member)))) stop("display was rejected by the worker")
@@ -27,8 +52,8 @@
     working_directory = .Call("tsugumi_info", 2L),
     temporary_directory = .Call("tsugumi_info", 3L),
     output_directory = .Call("tsugumi_info", 4L),
-    cancelled = function() .Call("tsugumi_cancelled"),
-    remaining_ms = function() .Call("tsugumi_remaining")
+    cancelled = function() { check(); .Call("tsugumi_cancelled") },
+    remaining_ms = function() { check(); .Call("tsugumi_remaining") }
   )
   class(run) <- "Run"
   read <- function(port) {
@@ -99,8 +124,11 @@
 }
 
 .tsugumi_invoke <- function(hook) {
+  scope <- new.env(parent = emptyenv())
+  scope$active <- TRUE
+  on.exit(scope$active <- FALSE)
   tryCatch({
-    arguments <- .tsugumi_arguments()
+    arguments <- .tsugumi_arguments(scope)
     function_ <- if (hook) {
       if (exists("on_run_start", envir = .GlobalEnv, inherits = FALSE)) on_run_start else NULL
     } else main
@@ -109,6 +137,7 @@
       if (!(count %in% 1:3)) stop("Card functions take inputs, optionally report and run")
       .tsugumi_outputs(do.call(function_, arguments[seq_len(count)]))
     }
+    if (!hook && !.Call("tsugumi_finish_outputs")) stop("required outputs were not emitted")
     TRUE
   }, error = function(error) {
     .Call("tsugumi_fail", conditionMessage(error))

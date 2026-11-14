@@ -7,8 +7,14 @@ app = marimo.App()
 @app.cell
 def configuration():
     source = 4.0
-    result = 8.0
-    return source, result
+    factor = 2.0
+    return source, factor
+
+
+@app.cell
+def calculation(source, factor):
+    result = source * factor
+    return result,
 
 
 @app.cell

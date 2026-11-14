@@ -1,3 +1,5 @@
+import { layoutHost } from '../src/shared/hostLayout'
+layoutHost.validate = async (json) => json
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -5,8 +7,10 @@ const root = process.argv[2]
 // Agent recovery, images, references, approvals and compaction run through
 // protocol/agent.fbs in tests/core/agent_rpc_test.cc. These are UI behaviors.
 
+await import("./clientViewState")
 await import("./serviceProtocol")
 await import('./chatModelRefresh')
+await import('./scopedSkills')
 await import("./guideRpc")
 await import("./environmentHost")
 await import("./chatStopped")
@@ -57,7 +61,7 @@ await import("./portGrid")
 
 await import("./marquee")
 
-await import("./layoutScenarios")
+await import("./hostLayoutScenarios")
 
 await import("./freeSpot")
 
@@ -96,4 +100,13 @@ await import("./runScratch")
 await import('./cardIdentity')
 await import('./agentAppearance')
 
+await import("./invalidDisplays")
+
+await import('./binarySources')
+
+await import('./terminalEnvironment')
+await import('./projectImport')
+
 await import("./cardFileEdits")
+
+await import('./marimo')

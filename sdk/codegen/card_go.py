@@ -55,7 +55,8 @@ func InvokeRun(raw unsafe.Pointer, function any) int {
   }
   if err!=nil{return err}
   if err:=scope.wait();err!=nil{return err}
-  return out.emit(scope)
+  if err:=out.emit(scope);err!=nil{return err}
+  return scope.finishOutputs()
  })
 }
 func InvokeStart(raw unsafe.Pointer, function any) int {

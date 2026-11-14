@@ -108,6 +108,7 @@ struct CodeEditor: NSViewRepresentable {
   /// Which document is shown (a file path). Selection and undo belong to a
   /// document: switching documents never carries them over.
   var documentID = ""
+  var revealLine: Int?
 
   func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -146,6 +147,7 @@ struct CodeEditor: NSViewRepresentable {
     tv.setSelectedRange(NSRange(location: 0, length: 0))
     context.coordinator.document = documentID
     configure(tv)
+    reveal(in: tv, coordinator: context.coordinator)
     return scroll
   }
 
@@ -168,8 +170,20 @@ struct CodeEditor: NSViewRepresentable {
       Self.select(sel, in: tv)
     }
     configure(tv)
+    reveal(in: tv, coordinator: c)
     (scroll.verticalRulerView as? LineNumberRuler)?.problemLines = markerLines(tv.string)
     scroll.verticalRulerView?.needsDisplay = true
+  }
+
+  private func reveal(in tv: NSTextView, coordinator: Coordinator) {
+    guard let line = revealLine, line > 0 else { coordinator.revealed = nil; return }
+    let target = "\(documentID):\(line)"
+    guard coordinator.revealed != target else { return }
+    coordinator.revealed = target
+    let start = text.components(separatedBy: "\n").prefix(line - 1).reduce(0) { $0 + $1.utf16.count + 1 }
+    let range = NSRange(location: min(start, (text as NSString).length), length: 0)
+    tv.setSelectedRange(range)
+    tv.scrollRangeToVisible(range)
   }
 
   /// Sets a selection that fits the current text (UTF-16 ranges). With no
@@ -234,6 +248,7 @@ struct CodeEditor: NSViewRepresentable {
   final class Coordinator: NSObject, NSTextViewDelegate {
     var parent: CodeEditor
     var document = ""
+    var revealed: String?
     /// Selection of each document seen in this editor.
     var selections: [String: [NSRange]] = [:]
     init(_ p: CodeEditor) { parent = p }

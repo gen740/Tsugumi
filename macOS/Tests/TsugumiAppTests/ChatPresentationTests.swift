@@ -13,6 +13,15 @@ import Testing
     #expect(!text.contains("[Conversation]") && !text.contains("Read project content"))
   }
 
+  @Test func scopedSkillPromptNamesOnlyTheDeclaredCardSets() throws {
+    let task: [String: Any] = ["name": "review", "skill_path": "builtin:review", "read_cards": ["outer/a", "b"], "write_cards": [String](), "run_cards": [String]()]
+    let data = try JSONSerialization.data(withJSONObject: ["task": task])
+    let text = ProjectAccessLabel.text("project_access helper_scope\n" + String(decoding: data, as: UTF8.self))
+    #expect(text.contains("$review") && text.contains("read: outer/a, b"))
+    #expect(text.contains("write: ") && text.contains("run: "))
+    #expect(!text.contains("この会話の間"))
+  }
+
   @Test func accessChoicesDefaultToNeededAndAllowAnIndependentSubset() throws {
     func item(_ access: String, needed: Bool) throws -> String {
       let data = try JSONSerialization.data(withJSONObject: ["access": access, "needed_now": needed])

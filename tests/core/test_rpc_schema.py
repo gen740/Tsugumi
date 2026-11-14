@@ -1,6 +1,7 @@
 """Document schemas exercised by saving and inspecting public RPC documents."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -67,31 +68,16 @@ def test_layout_fields_with_a_shared_prefix_remain_distinct(client, order):
     assert json.loads(text(client.call("ProjectInspectRequest").layoutJson)) == layout
 
 
-@pytest.mark.parametrize("key,value", [
-    ("boundar", "{}"), ("boundaryX", "{}"), ("boundariesX", "{}"), ("Boundary", "{}"),
-    ("boundarie", "{}"), (r"boundary\u0000", "{}"), ("", "{}"),
-    ("flo", '"leftToRight"'), ("flows", '"leftToRight"'), ("Flow", '"leftToRight"'),
-    (" flow", '"leftToRight"'), ("flow ", '"leftToRight"'), ("flöw", '"leftToRight"'),
-    ("フロー", '"leftToRight"'), (r"fl\u006fw", '"leftToRight"'),
-], ids=["truncated-boundary", "extended-boundary", "extended-boundaries", "uppercase-boundary",
-        "near-boundaries", "nul-suffix", "empty-key", "truncated-flow", "plural-flow", "uppercase-flow",
-        "leading-space", "trailing-space", "accented-flow", "translated-flow", "escaped-flow"])
-def test_layout_rejects_near_miss_field_names(client, key, value):
-    """A field resembling a layout setting is rejected instead of silently misread."""
+@pytest.mark.parametrize("case", json.loads(
+    (Path(__file__).parents[1] / "fixtures/layout-invalid.json").read_text()),
+    ids=lambda case: case["name"])
+def test_core_stores_opaque_layout_unchanged(client, case):
+    """Layout validation belongs to the host; the core preserves even unknown or unbounded fields."""
     before = client.call("ProjectInspectRequest")
-    raw = '{"' + key + '":' + value + '}'
-    with pytest.raises(RpcFailure) as failure:
-        client.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:test",
-                    changes=[change("SetLayout", json=raw)])
-    assert failure.value.kind == "invalid_document"
-    assert client.call("ProjectInspectRequest").rev == before.rev
-
-
-def test_layout_rejects_coordinates_that_overflow_a_number(client):
-    """A layout coordinate must be finite even when its JSON number is valid."""
-    before = client.call("ProjectInspectRequest")
-    with pytest.raises(RpcFailure) as failure:
-        client.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:test",
-                    changes=[change("SetLayout", json='{"boundary":{"inputs":{"x":1e999,"y":0}}}')])
-    assert failure.value.kind == "invalid_document"
-    assert client.call("ProjectInspectRequest").rev == before.rev
+    raw = case["json"]
+    saved = client.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:test",
+                        changes=[change("SetLayout", json=raw)])
+    assert text(saved.delta.layoutJson) == raw
+    after = client.call("ProjectInspectRequest")
+    assert after.rev == before.rev + 1
+    assert text(after.layoutJson) == raw

@@ -1,9 +1,8 @@
 #pragma once
 
-#include <charconv>
+#include <functional>
 #include <cstdint>
 #include <ostream>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -12,21 +11,20 @@
 
 namespace tsugumi::workerd {
 
-inline constexpr uint64_t kDefaultLogLimitBytes = uint64_t{8} << 20;
-
-inline auto parse_log_limit_bytes(std::string_view value) -> uint64_t {
-  uint64_t limit = 0;
-  const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), limit);
-  if (error != std::errc{} || end != value.data() + value.size() || !limit)
-    throw std::runtime_error("invalid log-limit-bytes: expected a positive byte count");
-  return limit;
-}
-
 // The limit counts complete JSONL entries, including their trailing newlines.
 class InvocationLog {
  public:
   InvocationLog(std::ostream& output, uint64_t log_limit_bytes)
-      : output_(output), log_limit_bytes_(log_limit_bytes) {}
+      : InvocationLog([&output](uint64_t stream, const std::string& text) {
+          remote::LogJson entry;
+          *entry.stream = stream;
+          *entry.text = text;
+          output << schema::encode(entry) << '\n';
+        }, log_limit_bytes) {}
+
+  using Sink = std::function<void(uint64_t, const std::string&)>;
+  InvocationLog(Sink sink, uint64_t log_limit_bytes)
+      : sink_(std::move(sink)), log_limit_bytes_(log_limit_bytes) {}
 
   auto append(uint64_t stream, const std::string& text) -> void {
     if (text.size() > log_limit_bytes_ - logged_) {
@@ -41,25 +39,29 @@ class InvocationLog {
       truncated_ = true;
       return;
     }
-    output_ << encoded << '\n';
+    sink_(stream, text);
     logged_ += encoded.size() + 1;
   }
 
+  // A downstream runner may already have omitted bytes under this policy.
+  auto truncate() -> void { truncated_ = true; }
+
   auto finish() -> void {
-    if (!truncated_) return;
+    if (!truncated_ || notice_written_) return;
     // Keep the notice outside the budget so even a one-byte limit is explicit.
     remote::LogJson entry;
     *entry.stream = static_cast<uint64_t>(Tsugumi::Data::LogStream::journal);
     *entry.text = "\n[Log output truncated at the " + std::to_string(log_limit_bytes_) + "-byte limit.]\n";
-    output_ << schema::encode(entry) << '\n';
-    truncated_ = false;
+    sink_(*entry.stream, *entry.text);
+    notice_written_ = true;
   }
 
  private:
-  std::ostream& output_;
+  Sink sink_;
   uint64_t log_limit_bytes_;
   uint64_t logged_ = 0;
   bool truncated_ = false;
+  bool notice_written_ = false;
 };
 
 }  // namespace tsugumi::workerd

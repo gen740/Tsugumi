@@ -45,17 +45,13 @@ add_library(tsugumi_core STATIC
   src/remote_invocation.cc
   src/remote_execution_service.cc
   src/scheduler.cc
-  src/layout.cc
-  src/layout_place.cc
-  src/layout_wires.cc
-  src/service_layout.cc
   src/service.cc
   src/service_run.cc
   src/service_shell.cc
   src/daemon.cc
   ${CMAKE_CURRENT_BINARY_DIR}/tsugumi_rpc_bfbs.cc
 )
-set_source_files_properties(src/layout.cc src/layout_place.cc src/layout_wires.cc
+set_source_files_properties(src/host/layout.cc src/host/layout_place.cc src/host/layout_wires.cc
   PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 
 target_include_directories(tsugumi_core
@@ -71,24 +67,29 @@ endif()
 set(TSUGUMI_CARD_NIXPKGS_REV "$ENV{TSUGUMI_CARD_NIXPKGS_REV}" CACHE STRING "nixpkgs revision for Cards")
 set(TSUGUMI_CARD_NIXPKGS_NARHASH "$ENV{TSUGUMI_CARD_NIXPKGS_NARHASH}" CACHE STRING "nixpkgs NAR hash for Cards")
 set(TSUGUMI_BWRAP "" CACHE FILEPATH "bubblewrap used for sandbox: true Cards")
-set(TSUGUMI_BASH "/bin/bash" CACHE FILEPATH "bash used for Card shell steps")
-set(TSUGUMI_CARD_PATH "/usr/bin:/bin" CACHE STRING "PATH given to Card shell steps")
+# Not a Card's shell: that one, and its PATH, come from the Card's own manifest.
+set(TSUGUMI_BASH "/bin/bash" CACHE FILEPATH "bash of the project shell commands (the Shell RPC)")
 target_compile_definitions(tsugumi_core PRIVATE
   TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV}"
   TSUGUMI_CARD_NIXPKGS_NARHASH="${TSUGUMI_CARD_NIXPKGS_NARHASH}"
   TSUGUMI_BWRAP="${TSUGUMI_BWRAP}"
-  TSUGUMI_BASH="${TSUGUMI_BASH}"
-  TSUGUMI_CARD_PATH="${TSUGUMI_CARD_PATH}")
+  TSUGUMI_BASH="${TSUGUMI_BASH}")
 
 add_executable(tsugumid src/main.cc)
 target_include_directories(tsugumid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(tsugumid PRIVATE tsugumi_core)
 install(TARGETS tsugumid RUNTIME DESTINATION bin)
 
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc
+  COMMAND ${CMAKE_COMMAND} -DINPUT=${TSUGUMI_GEN_DIR}/bfbs/host.bfbs
+    -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc -DSYMBOL=tsugumi_host_bfbs
+    -P ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
+  DEPENDS ${TSUGUMI_GEN_DIR}/bfbs/host.bfbs VERBATIM)
+
 # Agent state and model execution live in the core, independently of project
 # lifetimes. Frontends use the separate agent.fbs and host.fbs contracts.
 set(_agent_prompts "")
-foreach(prompt system-prompt guide-prompt demo-skill)
+foreach(prompt system-prompt guide-prompt demo-skill review-skill rerun-compare-skill)
   string(REPLACE "-" "_" symbol ${prompt})
   set(output ${CMAKE_CURRENT_BINARY_DIR}/agent_${symbol}.cc)
   add_custom_command(OUTPUT ${output}
@@ -129,6 +130,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/host_templates.cc
   DEPENDS ${_template_files} ${PROJECT_SOURCE_DIR}/cmake/embed_templates.cmake
     ${PROJECT_SOURCE_DIR}/cmake/embed.cmake VERBATIM)
 add_library(tsugumi_agent_core STATIC
+  ${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc
   ${CMAKE_CURRENT_BINARY_DIR}/agent_settings.cc
   ${_agent_prompts}
   src/server.cc
@@ -154,6 +156,11 @@ add_library(tsugumi_agent_core STATIC
   src/host/guide.cc
   src/host/settings.cc
   src/host/skills.cc
+  src/host/layout.cc
+  src/host/layout_place.cc
+  src/host/layout_wires.cc
+  src/host/layout_service.cc
+  src/host/layout_saving.cc
   src/host/projects.cc
   src/host/execution_broker.cc
   src/host/environment.cc

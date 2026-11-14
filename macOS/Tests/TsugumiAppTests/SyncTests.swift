@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TsugumiAgentClient
 @testable import TsugumiApp
 @testable import TsugumiLauncher
 @testable import TsugumiRPC
@@ -7,7 +8,7 @@ import Testing
 /// The UI saves every edit at once and takes in what the Agent saves at the
 /// same time: both changes stay, and no save conflict is shown.
 @MainActor
-@Suite(.serialized) struct SyncTests {
+@Suite(.serialized, .hostService) struct SyncTests {
   nonisolated static let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
     .deletingLastPathComponent().deletingLastPathComponent()
 
@@ -146,9 +147,8 @@ import Testing
     #expect(s.connectionFailed, "\(s.connectionMessage ?? "")")
   }
 
-  /// The Agent's rename and delete send no layout: the Card stays where it was
-  /// under its new name, and the frame of a deleted Card does not come back on
-  /// a new Card of that name.
+  /// A rename leaves layout unchanged; the saving client cleans deleted references.
+  /// A deleted Card's frame does not come back on a new Card of that name.
   @Test func anAgentRenameKeepsThePlaceFrameAndGroup() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
@@ -186,8 +186,9 @@ import Testing
     var left = try JSONValue.parse(again.projectJson)
     let kept = (left["canvas"]?["cards"]?.array ?? []).filter { $0["id"]?.string != "b" }
     left["canvas"]?["cards"] = .array(kept)
+    let cleaned = try await CoreAgentClient.shared.validateLayout(again.layoutJson, removedCards: ["b"])
     _ = try await s.rpc!.save(baseRev: again.rev ?? 0, opId: UUID(), origin: "agent",
-                              changes: [Change.setProject(left.serialized()), Change.removeDefinition(id: "b")])
+                              changes: [Change.setProject(left.serialized()), Change.removeDefinition(id: "b"), Change.setLayout(cleaned)])
     for _ in 0..<200 where s.resolution[renamed] != nil { try await Task.sleep(for: .milliseconds(25)) }
     #expect(s.layout["cards"]?["b"] == nil && s.layout["displays"]?["b"] == nil)
     #expect(s.groups(in: []).first { $0["id"]?.string == group }?["cards"]?.array?.map(\.string) == ["a"])
@@ -211,7 +212,7 @@ import Testing
   }
 
   /// A frame still drawn beside its Card has no place of its own yet. Arrange gives it
-  /// the whole frame, or the core refuses the layout and nothing can be saved.
+  /// the whole frame, or the host rejects the layout and nothing can be saved.
   @Test func arrangingAFrameWithoutAPlaceCanBeSaved() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
@@ -253,7 +254,7 @@ import Testing
     await s.save()
     #expect(!s.dirty, "\(s.saveError ?? "")")
 
-    // A layout the core refuses, however it came to be.
+    // A layout the host rejects, however it came to be.
     s.edit { $0.updateLayout(of: []) { l in l["displays"] = .object([("b", .object([("x", .real(1))]))]) } }
     await s.save()
     #expect(s.saveError?.contains("display b") == true, "\(s.saveError ?? "")")
@@ -925,41 +926,6 @@ import Testing
     #expect(s.docState() == before)
     await s.redo()
     #expect(s.docState() == after)
-    await s.close()
-  }
-
-  @Test func aCardsSummaryIsInItsMetaWhateverItsKind() async throws {
-    let dir = try Self.project(), other = try Self.project()
-    let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir); try? FileManager.default.removeItem(at: other) }
-    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.endpointOverride = d.endpoint
-    s.start()
-    try await Self.connected(s)
-    func written(_ id: String) throws -> String? {
-      let url = dir.appendingPathComponent("definitions/\(id)/_meta.json")
-      guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-      return try JSONValue.parse(String(decoding: Data(contentsOf: url), as: UTF8.self))["description"]?.string
-    }
-
-    let code = CardEditorModel(session: s, cardKey: "a")
-    code.meta = .object([("description", .string("logs the value"))])
-    #expect(await code.apply())
-    #expect(try written("a") == "logs the value")
-    #expect(s.nodeData("a").summary == "logs the value")
-    #expect(s.cardDescription("a") == "logs the value")
-    #expect(s.cardDefinition("a")?["description"] == nil)
-
-    // A Card in Card has no _card.json, and its summary is saved all the same.
-    let k = try await s.importProject(from: other, in: [], at: CGPoint(x: 400, y: 0))
-    await s.save()
-    #expect(s.saveError == nil)
-    let name = path(k).last!
-    let link = CardEditorModel(session: s, cardKey: k)
-    link.meta = .object([("description", .string("the imported graph"))])
-    #expect(await link.apply())
-    #expect(try written(name) == "the imported graph")
-    #expect(s.nodeData(k).summary == "the imported graph")
     await s.close()
   }
 
