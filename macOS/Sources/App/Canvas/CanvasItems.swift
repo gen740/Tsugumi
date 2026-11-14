@@ -191,6 +191,7 @@ struct OutputFrameView: View {
         Image(systemName: "chart.xyaxis.line").font(.system(size: 10 * z)).foregroundStyle(.purple)
         Text(session.displayName(cardKey)).font(.system(size: 10 * z, weight: .bold)).lineLimit(1)
         if let d = display {
+          if let mark = session.markForRun(d.runId) { Text(mark).font(.system(size: 9 * z)) }
           Text("Run \(String(d.runId.prefix(6))) · 実行 #\(d.invocation)").font(.system(size: 9 * z).monospacedDigit()).foregroundStyle(.secondary)
             .help("Run \(d.runId) の中で、この Card の \(d.invocation) 回目の実行の結果")
         }
@@ -433,6 +434,8 @@ struct NoteEditor: View {
   @State private var height = 120.0
   @State private var fontSize = 13.0
 
+  @State private var edit = InlineParamEdit()
+
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text("付箋を編集").font(.title2.bold())
@@ -456,32 +459,42 @@ struct NoteEditor: View {
         Stepper("幅 \(Int(width))", value: $width, in: 120...800, step: 20)
         Stepper("高さ \(Int(height))", value: $height, in: 60...600, step: 20)
       }
+      RevisionEditNotice(edit: edit.revision, text: { value }, overwrite: { apply(overwrite: true) }, reload: load)
       HStack {
         Button("削除", role: .destructive) { session.removeNote(noteId); dismiss() }
         Spacer()
         Button("キャンセル") { dismiss() }
-        Button("適用") { apply(); dismiss() }.keyboardShortcut(.defaultAction)
+        Button("適用") { apply() }.keyboardShortcut(.defaultAction)
       }
     }
     .padding(20)
     .frame(width: 560)
-    .onAppear {
-      let n = session.note(noteId)
-      text = n?["text"]?.string ?? ""
-      color = n?["color"]?.string ?? "yellow"
-      width = n?["width"]?.double ?? 240
-      height = n?["height"]?.double ?? 120
-      fontSize = n?["fontSize"]?.double ?? 13
-    }
+    .onAppear(perform: load)
   }
 
-  private func apply() {
-    session.updateNote(noteId) { n in
-      n["text"] = .string(text)
-      n["color"] = .string(color)
-      n["width"] = .real(width)
-      n["height"] = .real(height)
-      n["fontSize"] = fontSize == 13 ? nil : .real(fontSize)
+  private func load() {
+    let n = session.note(noteId)
+    text = n?["text"]?.string ?? ""
+    color = n?["color"]?.string ?? "yellow"
+    width = n?["width"]?.double ?? 240
+    height = n?["height"]?.double ?? 120
+    fontSize = n?["fontSize"]?.double ?? 13
+    edit.begin(value, rev: session.rev)
+  }
+
+  private var value: String { JSONValue.array([.string(text), .string(color), .real(width), .real(height), .real(fontSize)]).serialized() }
+  private func apply(overwrite: Bool = false) {
+    Task {
+      let ok = await edit.commit(session, text: value, overwrite: overwrite) { s in
+        s.changeNote(noteId) { n in
+          n["text"] = .string(text)
+          n["color"] = .string(color)
+          n["width"] = .real(width)
+          n["height"] = .real(height)
+          n["fontSize"] = fontSize == 13 ? nil : .real(fontSize)
+        }
+      }
+      if ok { dismiss() }
     }
   }
 }
@@ -496,6 +509,8 @@ struct GroupEditor: View {
   @State private var color = "blue"
   @State private var members: Set<String> = []
   @State private var outputs: Set<String> = []  // "card\tport"
+
+  @State private var edit = InlineParamEdit()
 
   var body: some View {
     let ids = session.cards(in: scope).compactMap { $0["id"]?.string }
@@ -529,38 +544,51 @@ struct GroupEditor: View {
       }
       .frame(height: 240)
       Text("グループは見た目のまとまりです。実行順序は変わらず、解除しても Card は残ります。").font(.caption).foregroundStyle(.secondary)
+      RevisionEditNotice(edit: edit.revision, text: { value }, overwrite: { apply(overwrite: true) }, reload: load)
       HStack {
         Button("グループを解除", role: .destructive) { session.ungroup(groupId); dismiss() }
         Spacer()
         Button("キャンセル") { dismiss() }
-        Button("適用") { apply(); dismiss() }.keyboardShortcut(.defaultAction)
+        Button("適用") { apply() }.keyboardShortcut(.defaultAction)
       }
     }
     .padding(20)
     .frame(width: 600)
-    .onAppear {
-      let g = session.groups(in: scope).first { $0["id"]?.string == groupId }
-      name = g?["name"]?.string ?? ""
-      color = g?["color"]?.string ?? "blue"
-      members = Set((g?["cards"]?.array ?? []).compactMap { $0.string })
-      outputs = Set((g?["outputs"]?.array ?? []).compactMap { o in
-        guard let c = o["card"]?.string, let p = o["port"]?.string else { return nil }
-        return "\(c)\t\(p)"
-      })
-    }
+    .onAppear(perform: load)
   }
 
-  private func apply() {
-    session.updateGroup(groupId) { g in
-      g["name"] = .string(name)
-      g["color"] = .string(color)
-      g["cards"] = .array(members.sorted().map { .string($0) })
-      let outs: [JSONValue] = outputs.sorted().compactMap { t in
-        let parts = t.split(separator: "\t").map(String.init)
-        guard parts.count == 2, members.contains(parts[0]) else { return nil }
-        return .object([("card", .string(parts[0])), ("port", .string(parts[1]))])
+  private func load() {
+    let g = session.groups(in: scope).first { $0["id"]?.string == groupId }
+    name = g?["name"]?.string ?? ""
+    color = g?["color"]?.string ?? "blue"
+    members = Set((g?["cards"]?.array ?? []).compactMap { $0.string })
+    outputs = Set((g?["outputs"]?.array ?? []).compactMap { o in
+      guard let c = o["card"]?.string, let p = o["port"]?.string else { return nil }
+      return "\(c)\t\(p)"
+    })
+    edit.begin(value, rev: session.rev)
+  }
+
+  private var value: String { JSONValue.array([.string(name), .string(color), .array(members.sorted().map { .string($0) }), .array(outputs.sorted().map { .string($0) })]).serialized() }
+  private func apply(overwrite: Bool = false) {
+    Task {
+      let ok = await edit.commit(session, text: value, overwrite: overwrite) { s in
+        s.updateGroups(in: scope) { groups in
+          guard let i = groups.firstIndex(where: { $0["id"]?.string == groupId }) else { return }
+          var g = groups[i]
+          g["name"] = .string(name)
+          g["color"] = .string(color)
+          g["cards"] = .array(members.sorted().map { .string($0) })
+          let outs: [JSONValue] = outputs.sorted().compactMap { t in
+            let parts = t.split(separator: "\t").map(String.init)
+            guard parts.count == 2, members.contains(parts[0]) else { return nil }
+            return .object([("card", .string(parts[0])), ("port", .string(parts[1]))])
+          }
+          g["outputs"] = outs.isEmpty ? nil : .array(outs)
+          groups[i] = g
+        }
       }
-      g["outputs"] = outs.isEmpty ? nil : .array(outs)
+      if ok { dismiss() }
     }
   }
 }

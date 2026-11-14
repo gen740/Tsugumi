@@ -11,7 +11,7 @@ function main(inputs, report)
     outputs = Dict{String,Any}()
     n, path = arrival(inputs)
     report.text("$(length(path)) values: " * join(path, " "))
-    n == 1 && outputs["sequence"] = Dict("values" => path)
+    n == 1 && (outputs["sequence"] = Dict("values" => path))
 
     return outputs
 end

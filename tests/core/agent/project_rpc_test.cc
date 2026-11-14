@@ -3,7 +3,13 @@
 
 #include <unistd.h>
 #include <cstdlib>
+#include <cstring>
 #include <iostream>
+
+#ifndef __APPLE__
+#include <sys/socket.h>
+#include <sys/un.h>
+#endif
 
 #include "tsugumi/protocol/tsugumi_generated.h"
 
@@ -16,6 +22,26 @@ namespace {
 TEST(AgentShellProbe, DirectProjectRequest) {
   const char* endpoint = std::getenv("TSUGUMI_SHELL_PROBE_ENDPOINT");
   if (!endpoint) GTEST_SKIP() << "Only used by the shell isolation scenario";
+#ifndef __APPLE__
+  // Local stream pairs remain useful, but cannot be repurposed to dial the
+  // project socket. This still runs when Python is absent from the shell.
+  int pair[2];
+  ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair), 0);
+  EXPECT_EQ(::send(pair[0], "x", 1, 0), 1);
+  char byte = 0;
+  EXPECT_EQ(::read(pair[1], &byte, 1), 1);
+  EXPECT_EQ(byte, 'x');
+  sockaddr_un address{};
+  address.sun_family = AF_UNIX;
+  const auto path = std::string(endpoint).substr(5);
+  ASSERT_LT(path.size(), sizeof address.sun_path);
+  std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
+  const auto connected =
+      ::connect(pair[0], reinterpret_cast<sockaddr*>(&address), sizeof address);
+  ::close(pair[0]);
+  ::close(pair[1]);
+  EXPECT_LT(connected, 0) << "A stream pair connected to the project RPC socket";
+#endif
   namespace R = Tsugumi::RPC;
   client::Options options;
   options.endpoint = endpoint;
@@ -706,6 +732,139 @@ TEST_F(AgentProjectFixture, ShellHidesControlCredentialsAndCannotSendDirectRPC) 
       " ./rpc-probe --gtest_filter=AgentShellProbe.DirectProjectRequest");
   EXPECT_NE(result.find("\"exit_code\":0"), std::string::npos) << result;
   EXPECT_NE(JsonString(result, "/value/stdout").find("DIRECT_RPC_BLOCKED"), std::string::npos);
+}
+
+TEST_F(AgentProjectFixture,
+       CardPermissionApprovalsBelongToOneCallAndItsArguments) {
+  StartProject();
+  const auto conversation = Conversation("card-permission-approvals");
+  Grant(conversation);
+  Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
+  // General grants must never substitute for approval of a particular save.
+  Grant(conversation, A::GrantScope::Server, A::Access::CardPermissions);
+  const auto snapshot = JsonString(Inspect(conversation).View(), "/text");
+  const auto revision = JsonString(snapshot, "/value/rev");
+  const auto document =
+      R"({"name":"Permission test","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"work"}],"connections":[]}})";
+  auto save = [&](const std::string& body) {
+    return "{\"base_rev\":" + Quote(revision) +
+        ",\"changes\":[{\"value_type\":\"SetProject\",\"value\":{\"json\":" +
+        Quote(document) +
+        "}},{\"value_type\":\"PutDefinition\",\"value\":{\"id\":\"work\",\"card_json\":" +
+        Quote(body) + ",\"keep_meta\":true}}]}";
+  };
+  const auto network = save(R"({"template":"draft","network":true})");
+  const auto sandbox = save(R"({"template":"draft","sandbox":false})");
+  const auto a = Tool(conversation, "project_save", network, "save-a");
+  const auto b = Tool(conversation, "project_save", sandbox, "save-b");
+  const auto independent = Tool(conversation, "project_save", network, "save-c");
+  ASSERT_EQ(a.Code(), "grant_required");
+  ASSERT_EQ(b.Code(), "grant_required");
+  ASSERT_EQ(independent.Code(), "grant_required");
+  ASSERT_FALSE(a.RequestId().empty());
+  ASSERT_FALSE(b.RequestId().empty());
+  ASSERT_FALSE(independent.RequestId().empty());
+  EXPECT_NE(a.RequestId(), b.RequestId());
+  EXPECT_NE(a.RequestId(), independent.RequestId());
+  const auto repeated = Tool(conversation, "project_save", network, "save-a");
+  EXPECT_EQ(repeated.Code(), "grant_required");
+  EXPECT_EQ(repeated.RequestId(), a.RequestId());
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
+                   [&](Builder& builder) {
+                     return A::CreateAccessResolveRequest(
+                                builder, builder.CreateString(a.RequestId()), true)
+                         .Union();
+                   }).Code().empty());
+  // Trying B first used to consume A's network approval for sandbox_off.
+  const auto still_pending = Tool(conversation, "project_save", sandbox, "save-b");
+  EXPECT_EQ(still_pending.Code(), "grant_required");
+  EXPECT_EQ(still_pending.RequestId(), b.RequestId());
+  EXPECT_EQ(Tool(conversation, "project_save", sandbox, "save-a").Code(),
+            "conflict");
+  const auto still_independent = Tool(conversation, "project_save", network, "save-c");
+  EXPECT_EQ(still_independent.Code(), "grant_required");
+  EXPECT_EQ(still_independent.RequestId(), independent.RequestId());
+  const auto result = Tool(conversation, "project_save", network, "save-a");
+  ASSERT_TRUE(result.Code().empty());
+  ASSERT_FALSE(JsonBool(result.View(), "/isError")) << result.View();
+  EXPECT_EQ(Tool(conversation, "project_save", network, "save-a").View(),
+            result.View());
+  const auto settings = Read(directory.path / "project/definitions/work/_card.json");
+  EXPECT_TRUE(JsonBool(settings, "/network"));
+  EXPECT_EQ(settings.find("\"sandbox\":false"), std::string::npos);
+}
+
+TEST_F(AgentProjectFixture, DiagnosticShellSupportsPythonAsyncioWhenAvailable) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
+  StartProject(true);
+  const auto conversation = Conversation("shell-asyncio");
+  for (auto access : {A::Access::Read, A::Access::Write, A::Access::Run, A::Access::Shell})
+    Grant(conversation, A::GrantScope::Conversation, access);
+  const auto result = Tool(
+      conversation, "project_shell",
+      R"({"command":"if command -v python3 >/dev/null 2>&1; then python3 -c 'import asyncio; asyncio.run(asyncio.sleep(0))'; else printf PYTHON_UNAVAILABLE; fi"})");
+  ASSERT_TRUE(result.Code().empty());
+  ASSERT_FALSE(JsonBool(result.View(), "/isError")) << result.View();
+  const auto text = JsonString(result.View(), "/text");
+  EXPECT_EQ(JsonString(text, "/reply"), "ProjectShellResult");
+  EXPECT_EQ(JsonUInt(text, "/value/exit_code"), 0u) << text;
+  if (JsonString(text, "/value/stdout") == "PYTHON_UNAVAILABLE")
+    GTEST_SKIP() << "Python is absent from the project shell environment";
+  EXPECT_EQ(JsonString(text, "/value/stdout"), "");
+}
+
+TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
+  StartProject();
+  const auto conversation = Conversation("reload-permission-set");
+  Grant(conversation);
+  Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
+  const auto snapshot = JsonString(Inspect(conversation).View(), "/text");
+  const auto arguments =
+      "{\"base_rev\":" + Quote(JsonString(snapshot, "/value/rev")) + "}";
+  Write(directory.path / "project/tsugumi.json",
+        R"({"name":"External edit","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"work"}],"connections":[]}})");
+  const auto definition = directory.path / "project/definitions/work/_card.json";
+  Write(definition, R"({"template":"draft","network":true})");
+  const auto pending = Tool(conversation, "project_reload", arguments, "reload-a");
+  ASSERT_EQ(pending.Code(), "grant_required");
+  ASSERT_FALSE(pending.RequestId().empty());
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
+                   [&](Builder& builder) {
+                     return A::CreateAccessResolveRequest(
+                                builder, builder.CreateString(pending.RequestId()), true)
+                         .Union();
+                   }).Code().empty());
+  Write(definition, R"({"template":"draft","sandbox":false})");
+  const auto result = Tool(conversation, "project_reload", arguments, "reload-a");
+  // The same arguments now require different permissions. Like other changed
+  // approval targets, this needs a new call rather than consuming the old one.
+  EXPECT_EQ(result.Code(), "conflict");
+  EXPECT_EQ(JsonString(JsonString(Inspect(conversation).View(), "/text"),
+                       "/value/rev"), JsonString(snapshot, "/value/rev"));
+  EXPECT_EQ(Tool(conversation, "project_reload", arguments, "reload-a").Code(),
+            "conflict");
+  const auto next = Tool(conversation, "project_reload", arguments, "reload-b");
+  ASSERT_EQ(next.Code(), "grant_required");
+  ASSERT_FALSE(next.RequestId().empty());
+  EXPECT_NE(next.RequestId(), pending.RequestId());
+  EXPECT_NE(next.Failure()->message()->str().find("sandbox_off work"),
+            std::string::npos);
+  EXPECT_EQ(Tool(conversation, "project_reload", arguments, "reload-b").RequestId(),
+            next.RequestId());
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
+                   [&](Builder& builder) {
+                     return A::CreateAccessResolveRequest(
+                                builder, builder.CreateString(next.RequestId()), true)
+                         .Union();
+                   }).Code().empty());
+  EXPECT_EQ(Tool(conversation, "project_reload",
+                 R"({"base_rev":0,"different":true})", "reload-b").Code(),
+            "conflict");
+  const auto reloaded = Tool(conversation, "project_reload", arguments, "reload-b");
+  ASSERT_TRUE(reloaded.Code().empty());
+  ASSERT_FALSE(JsonBool(reloaded.View(), "/isError")) << reloaded.View();
+  EXPECT_EQ(Tool(conversation, "project_reload", arguments, "reload-b").View(),
+            reloaded.View());
 }
 
 TEST_F(AgentProjectFixture,

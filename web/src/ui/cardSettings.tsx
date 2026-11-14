@@ -23,7 +23,7 @@ import { Icon } from './icons'
 import { FolderPicker } from './sidebar'
 import { SymbolPicker } from './symbolPicker'
 import { L } from '../i18n'
-import { RevisionEdit, RevisionEditNotice } from './revisionEdit'
+import { InlineParamEdit, RevisionEdit, RevisionEditNotice } from './revisionEdit'
 
 /** Whether a source file's content is known. A file that could not be read
  *  is never shown or treated as an empty file. */
@@ -528,6 +528,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   const session = model.session
   const def = model.definition
   const [name, setName] = useState(() => session.displayName(model.cardKey))
+  const [nameEdit] = useState(() => { const e = new InlineParamEdit(); e.begin(session.displayName(model.cardKey), session.rev); return e })
   const [renaming, setRenaming] = useState(false)
   const [renameError, setRenameError] = useState<string>()
   // This tsugumid runs on this host: without the sandbox a Card is a process
@@ -537,24 +538,21 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   const previousName = useRef(currentName)
   useEffect(() => {
     const before = previousName.current
-    setName((typed) => typed === before ? currentName : typed)
+    if (name === before) { setName(currentName); nameEdit.begin(currentName, session.rev) }
     previousName.current = currentName
   }, [currentName])
 
-  const rename = async () => {
+  const rename = async (overwrite = false) => {
     const nw = name.trim()
     if (nw === session.displayName(model.cardKey)) return
     setRenaming(true)
     setRenameError(undefined)
     try {
-      if (model.unapplied && !(await model.apply())) {
-        setRenaming(false)
-        return
-      }
-      await session.renameCard(model.cardKey, nw)
+      const problem = session.cardNameProblem(model.cardKey, nw)
+      if (problem) throw new Error(problem)
+      await nameEdit.commit(session, nw, overwrite, x => x.updateMeta(model.cardKey, m => m.set('name', nw)))
     } catch (e) {
       setRenameError(e instanceof RPCFailure ? e.diagnostic ?? errorText(e) : errorText(e))
-      setName(session.displayName(model.cardKey))
     }
     setRenaming(false)
   }
@@ -636,7 +634,8 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
             {renaming && <Spinner small />}
           </div>
         </Row>
-        {renameError && <Row><span className="caption selectable" style={{ color: 'var(--red)' }}>{renameError}</span></Row>}
+        <RevisionEditNotice edit={nameEdit} text={() => name} overwrite={() => void rename(true)} reload={() => { setName(currentName); nameEdit.begin(currentName, session.rev) }} />
+      {renameError && <Row><span className="caption selectable" style={{ color: 'var(--red)' }}>{renameError}</span></Row>}
         <Value label={L('種類')} value={KIND_LABEL[kind]} />
         {def !== undefined && kind !== 'switch' && (
           <Row label={L('アイコン')}>
@@ -1102,7 +1101,7 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
   useObserve(session)
   const baseRev = session.rev
   const [text, setText] = useState('')
-  const [revisionEdit] = useState(() => new RevisionEdit())
+  const [revisionEdit] = useState(() => new InlineParamEdit())
   useObserve(revisionEdit)
   const [editing, setEditing] = useState<{ id: string; text: string }>()
   const comments = session.comments(card)
@@ -1114,7 +1113,7 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
   const saveEdit = async (overwrite = false) => {
     if (!editing) return
     const copy = editing
-    if (await revisionEdit.apply(session, overwrite, (x) => x.setCommentText(card, copy.id, copy.text))) setEditing(undefined)
+    if (await revisionEdit.commit(session, copy.text, overwrite, (x) => x.setCommentText(card, copy.id, copy.text))) setEditing(undefined)
   }
   const submitting = (run: () => void) => (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
@@ -1145,7 +1144,7 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
             </div>
           )}
           <div className="row end gap6">
-            <Button small disabled={!session.connected} onClick={() => { revisionEdit.reload(baseRev); setEditing({ id: c.id, text: c.text }) }}>{L('編集')}</Button>
+            <Button small disabled={!session.connected} onClick={() => { revisionEdit.begin(c.text, baseRev); setEditing({ id: c.id, text: c.text }) }}>{L('編集')}</Button>
             {c.resolved
               ? <Button small disabled={!session.connected} onClick={() => session.setCommentResolved(card, c.id, false)}>{L('開き直す')}</Button>
               : <Button small disabled={!session.connected} onClick={() => session.setCommentResolved(card, c.id, true)}>{L('解決')}</Button>}
@@ -1165,7 +1164,7 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
       <RevisionEditNotice edit={revisionEdit} text={() => editing?.text ?? ''} overwrite={() => void saveEdit(true)} reload={() => {
         const current = comments.find((c) => c.id === editing?.id)
         setEditing(current ? { id: current.id, text: current.text } : undefined)
-        revisionEdit.reload(session.rev)
+        revisionEdit.begin(current?.text ?? '', session.rev)
       }} />
       {editing && !comments.some((c) => c.id === editing.id) && row({ ...editing, resolved: false, cards: [] })}
       {open.map(row)}

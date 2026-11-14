@@ -225,8 +225,10 @@ class History {
   // Adds the runs missing in the copy (creating it); returns how many.
   size_t export_runs(const std::filesystem::path& copy);
   // Deletes finished runs (all, or those that ended before `ended_before`)
-  // here and in the copy when it exists; returns their run ids.
-  std::vector<std::string> delete_runs(const std::filesystem::path& copy, std::optional<int64_t> ended_before);
+  // here and in the copy when it exists; returns their run ids. When run_ids
+  // is present, only those ids may be deleted (an empty set deletes nothing).
+  std::vector<std::string> delete_runs(const std::filesystem::path& copy, std::optional<int64_t> ended_before,
+                                       const std::optional<std::vector<std::string>>& run_ids);
 
  private:
   void writer_loop();

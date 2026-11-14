@@ -1,5 +1,7 @@
 #include "util/staging.hh"
 
+#include "util/sparse.hh"
+
 #include <dirent.h>
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -27,15 +29,44 @@ namespace {
                               " (errno " + std::to_string(error) + ")");
 }
 
-auto clear_directory(int source, const std::filesystem::path& path) -> void {
+// Pin Linux directories without requiring read permission. Darwin has no
+// equivalent: its caller supplies permission recovery with Card authority.
+auto pin_directory(int parent, const char* name, const std::function<void(int, const char*)>& recover) -> int {
+#ifdef __APPLE__
+  constexpr int access = O_RDONLY;
+#else
+  constexpr int access = O_PATH;
+  (void)recover;
+#endif
+  constexpr int flags = access | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
+  int fd = ::openat(parent, name, flags);
+#ifdef __APPLE__
+  if (fd < 0 && errno == EACCES && recover) {
+    // Recovery must have no more authority than the Card that wrote staging.
+    recover(parent, name);
+    fd = ::openat(parent, name, flags);
+  }
+#endif
+  return fd;
+}
+
+auto clear_directory(int source, const std::filesystem::path& path, const std::function<void(int, const char*)>& recover) -> void {
   struct stat status{};
   if (::fstat(source, &status) != 0) failed("fstat", path);
   // Unlinking a read-only file is allowed, but requires write/search permission
   // on its parent. chmod only the pinned directory, never a link's target or a
   // regular file (which might be a hard link outside scratch).
-  if ((status.st_mode & S_IRWXU) != S_IRWXU &&
-      ::fchmod(source, status.st_mode | S_IRWXU) != 0)
-    failed("fchmod", path);
+  if ((status.st_mode & S_IRWXU) != S_IRWXU) {
+#ifdef __APPLE__
+    const int changed = ::fchmod(source, status.st_mode | S_IRWXU);
+#else
+    // fchmod rejects O_PATH descriptors. procfs resolves this pinned inode,
+    // including after a rename, without traversing a Card-controlled path.
+    const auto pinned = "/proc/self/fd/" + std::to_string(source);
+    const int changed = ::chmod(pinned.c_str(), status.st_mode | S_IRWXU);
+#endif
+    if (changed != 0) failed("chmod pinned directory", path);
+  }
 
   // A new open description has its own directory offset, unlike dup(2).
   const int scan = ::openat(source, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -57,12 +88,11 @@ auto clear_directory(int source, const std::filesystem::path& path) -> void {
     const std::string name = entry->d_name;
     if (name == "." || name == "..") continue;
     const auto child_path = path / name;
-    const int child = ::openat(source, name.c_str(),
-                               O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    const int child = pin_directory(source, name.c_str(), recover);
     int flags = 0;
     if (child >= 0) {
       try {
-        clear_directory(child, child_path);
+        clear_directory(child, child_path, recover);
       } catch (...) {
         ::close(child);
         throw;
@@ -229,24 +259,8 @@ auto copy_entry(int root, int source, const std::filesystem::path& physical,
                O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (fd < 0) failed("open destination", destination);
     Handle written(fd);
-    std::vector<char> buffer(65536);
-    for (;;) {
-      check_copy_cancel(cancel);
-      const auto count = ::read(source, buffer.data(), buffer.size());
-      if (count < 0 && errno == EINTR) continue;
-      if (count < 0)
-        reject(label, "regular file",
-               "read: " + std::generic_category().message(errno));
-      if (!count) break;
-      ssize_t offset = 0;
-      while (offset < count) {
-        const auto n = ::write(fd, buffer.data() + offset,
-                               static_cast<size_t>(count - offset));
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) failed("write", destination);
-        offset += n;
-      }
-    }
+    copy_sparse_file(source, fd, label, destination,
+                     [&](std::string_view) { check_copy_cancel(cancel); });
     return;
   }
   if (!S_ISDIR(st.st_mode))
@@ -288,12 +302,11 @@ auto copy_entry(int root, int source, const std::filesystem::path& physical,
 
 }  // namespace
 
-auto clear_staging(const std::filesystem::path& path) -> void {
-  const int directory =
-      ::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+auto clear_staging(const std::filesystem::path& path, const std::function<void(int, const char*)>& recover) -> void {
+  const int directory = pin_directory(AT_FDCWD, path.c_str(), recover);
   if (directory < 0) failed("open", path);
   try {
-    clear_directory(directory, path);
+    clear_directory(directory, path, recover);
   } catch (...) {
     ::close(directory);
     throw;

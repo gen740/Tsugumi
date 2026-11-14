@@ -1539,7 +1539,21 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            card_status(s);
            set_state(RunState::running);
          },
-         [&] { card_status(s); }});
+         [&] { card_status(s); },
+         [&](const ExecutionResult& completed) {
+           w.out_alias = completed.out_alias;
+           std::vector<Value> outputs;
+           for (const auto& [name, bytes] : completed.outcome.outputs)
+             outputs.push_back({name, PortKind::FlatBuffer, nullptr, bytes, {}});
+           const auto started = now_ms();
+           try {
+             validate_outputs(node, w, outputs, in);
+           } catch (...) {
+             stage_begin(s, Phase::validate);
+             svc_.server()->broadcast(timeline_note(run_id_, node.path, inv, Phase::validate, lane, started, now_ms()));
+             throw;
+           }
+         }});
     w.out_alias = std::move(result.out_alias);
     Produced p;
     p.failure = result.outcome.failure;
@@ -2174,14 +2188,11 @@ std::optional<Note> Scheduler::latest_display_note(const std::string& card_key) 
 void Scheduler::finished(RunExec* exec) {
   svc_.schedule_export();
   svc_.refresh_cache_usage();
+  std::lock_guard<std::mutex> l(mu_);
   std::shared_ptr<RunExec> done;
-  {
-    std::lock_guard<std::mutex> l(mu_);
-    if (active_.get() == exec) done = std::move(active_);
-  }
+  if (active_.get() == exec) done = std::move(active_);
   if (done) {
     // The run thread finishes on its own; reap it off the callback thread.
-    std::lock_guard<std::mutex> l(mu_);
     reapers_.emplace_back([this, done] {
       done->join();
       svc_.note_run_end(done->status(), done->note_summary());

@@ -284,7 +284,16 @@ TEST_F(AgentProjectFixture,
   Grant(conversation);
   EXPECT_FALSE(model.WaitForRequests(2, 150ms));
   // A new message needs a new idempotency key; the fixture defaults to turn-1.
-  const auto sent = Send(conversation, "Do something else instead", "turn-2");
+  // Both UIs encode empty selection vectors, rather than omitting them.
+  const auto sent = Call(
+      *external, A::RequestPayload::ConversationSendRequest, [&](Builder &b) {
+        const auto empty = b.CreateVector(
+            std::vector<flatbuffers::Offset<flatbuffers::String>>{});
+        return A::CreateConversationSendRequest(
+                   b, b.CreateString(conversation), b.CreateString("turn-2"),
+                   b.CreateString("Do something else instead"), empty, empty)
+            .Union();
+      });
   ASSERT_TRUE(sent.Code().empty()) << sent.Code();
   EXPECT_NE(WaitUntilIdle(conversation).find("Followed the new message"),
             std::string::npos);
@@ -301,6 +310,46 @@ TEST_F(AgentProjectFixture,
             std::string::npos);
   EXPECT_NE(model.Requests()[1].find("The tool was not replayed"),
             std::string::npos);
+  const auto recorded = Get(conversation).View();
+  EXPECT_EQ(JsonString(recorded, "/conversation/messages/3/display"),
+            "Do something else instead");
+  EXPECT_EQ(JsonString(recorded, "/conversation/messages/3/content/0/text"),
+            "Do something else instead");
+}
+
+TEST_F(AgentFixture, DisplaySurvivesPreparationAndTheCompletedSnapshot) {
+  ModelServer model;
+  model.Queue(AnthropicText("Finished"), true);
+  Configure(model);
+  const auto conversation = Conversation("display-preserved");
+  ASSERT_TRUE(
+      Call(*external, A::RequestPayload::ConversationSendRequest,
+           [&](Builder &b) {
+             A::ConversationSendRequestT request;
+             request.conversation_id = conversation;
+             request.turn_id = "display-turn";
+             request.text = "Use the demo skill";
+             request.display = "A short request";
+             request.skill_names = {"demo"};
+             return A::ConversationSendRequest::Pack(b, &request).Union();
+           })
+          .Code()
+          .empty());
+  ASSERT_TRUE(model.WaitForRequests(1));
+  const auto preparing = Get(conversation).View();
+  EXPECT_TRUE(JsonBool(preparing, "/busy"));
+  EXPECT_EQ(JsonString(preparing, "/conversation/messages/0/display"),
+            "A short request");
+  EXPECT_NE(JsonString(preparing, "/conversation/messages/0/content/0/text")
+                .find("[User-selected bundled demo skill]"),
+            std::string::npos);
+  EXPECT_EQ(model.Requests()[0].find("A short request"), std::string::npos);
+  model.Release();
+  const auto completed = WaitUntilIdle(conversation);
+  EXPECT_EQ(JsonString(completed, "/conversation/messages/0/display"),
+            "A short request");
+  EXPECT_EQ(JsonString(completed, "/conversation/messages/1/content/0/text"),
+            "Finished");
 }
 
 TEST_F(AgentFixture, PublicCancellationStopsAnInFlightModelRequest) {
