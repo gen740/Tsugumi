@@ -1,4 +1,7 @@
 // Realises and runs one accepted invocation inside its supervised namespace.
+#include <fcntl.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -15,6 +18,7 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "util/crypto.hh"
 #include "util/fs.hh"
+#include "util/staging.hh"
 #include "wire.hh"
 
 namespace tsugumi {
@@ -68,21 +72,28 @@ auto make_result(const WorkerOutcome& outcome) -> std::string {
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
 }
 
-auto copy_tree(const stdfs::path& source, const stdfs::path& destination) -> void {
-  if (stdfs::is_regular_file(stdfs::symlink_status(source))) {
-    stdfs::create_directories(destination.parent_path());
-    stdfs::copy_file(source, destination);
-    return;
+class StagingHandle {
+ public:
+  explicit StagingHandle(const stdfs::path& path)
+      : fd_(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)) {
+    if (fd_ < 0) throw Failed(FailureKind::output_invalid, "cannot open remote staging directory");
   }
-  if (!stdfs::is_directory(stdfs::symlink_status(source)))
-    throw Failed(FailureKind::output_invalid, "remote output must be a regular file or directory");
-  stdfs::create_directories(destination);
-  for (const auto& entry : stdfs::recursive_directory_iterator(source)) {
-    const auto path = destination / entry.path().lexically_relative(source);
-    const auto status = entry.symlink_status();
-    if (stdfs::is_directory(status)) stdfs::create_directory(path);
-    else if (stdfs::is_regular_file(status)) stdfs::copy_file(entry.path(), path);
-    else throw Failed(FailureKind::output_invalid, "remote output directory contains a symlink or special file");
+  ~StagingHandle() { ::close(fd_); }
+  StagingHandle(const StagingHandle&) = delete;
+  auto get() const -> int { return fd_; }
+ private:
+  int fd_;
+};
+
+// Use the same declared-output traversal, link policy and sparse copier as
+// native execution. The root is pinned before any Card code runs.
+auto copy_output(int source, const stdfs::path& relative, const stdfs::path& destination,
+                 PortKind kind) -> void {
+  const std::atomic<bool> cancel = false;
+  try {
+    fs::copy_staging_output(source, relative, destination, kind == PortKind::Directory, cancel);
+  } catch (const std::exception& error) {
+    throw Failed(FailureKind::output_invalid, error.what());
   }
 }
 
@@ -159,11 +170,13 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
       bytes(call.params()->schema_bfbs()), call.params()->root_type()->str(), bytes(call.params()->bytes()), outputs,
       worker.work_dir(), worker.tmp_dir(), needs_out ? out_alias : "", environment, {});
   worker.set_logs(log);
+  StagingHandle output_directory(worker.out_dir());
+  StagingHandle input_directory(input);
   auto outcome = worker.call(frame, id, nullptr, {}, display);
   // Nothing written by the Card can change once we inspect its output tree.
   worker.terminate();
   if (outcome.failure) return outcome;
-  if (needs_out) copy_tree(worker.out_dir(), out);
+
   stdfs::path forwarded;
   for (auto& [name, data] : outcome.outputs) {
     const auto port = std::ranges::find(outputs, name, &types::PortType::name);
@@ -176,16 +189,20 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
     stdfs::path rel;
     if (*actual == out_alias) {
       rel = "out";
+      copy_output(output_directory.get(), ".", out, port->kind);
     } else if (actual->starts_with(out_alias + "/")) {
-      rel = "out" / remote::relative_path(std::string_view(*actual).substr(out_alias.size() + 1));
+      const auto relative = remote::relative_path(std::string_view(*actual).substr(out_alias.size() + 1));
+      rel = "out" / relative;
+      copy_output(output_directory.get(), relative, out / relative, port->kind);
     } else if (std::ranges::any_of(values, [&](const Value& in) { return in.kind == port->kind && path_value(in) == actual; })) {
       if (forwarded.empty()) {
         forwarded = stdfs::path("out") / (".forwarded-" + crypto::uuid4());
-        if (!stdfs::create_directory(directory / "result/files" / forwarded))
+        if (!stdfs::create_directories(directory / "result/files" / forwarded))
           throw Failed(FailureKind::output_invalid, "cannot create a private forwarded output directory");
       }
       rel = forwarded / std::to_string(port - outputs.begin()) / stdfs::path(*actual).filename();
-      copy_tree(*actual, directory / "result/files" / rel);
+      copy_output(input_directory.get(), stdfs::path(*actual).lexically_relative(input),
+                  directory / "result/files" / rel, port->kind);
     } else {
       throw Failed(FailureKind::output_invalid, "remote output points outside its output directory");
     }
@@ -193,10 +210,6 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
     if (!fs::resolves_inside(out, actual_path) && actual_path != out)
       throw Failed(FailureKind::output_invalid, "remote output escapes its directory");
     data = with_path(value, rel.generic_string()).bytes;
-  }
-  if (*invocation.filesystem) {
-    copy_tree(worker.work_dir(), directory / "result/files/work");
-    copy_tree(worker.tmp_dir(), directory / "result/files/tmp");
   }
   return outcome;
 }
@@ -228,7 +241,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs:
     const auto source = blob(*file.sha256);
     if (stdfs::file_size(source) != *file.size) throw std::runtime_error("remote input size mismatch");
     stdfs::create_directories(path.parent_path());
-    stdfs::copy_file(source, path);
+    fs::copy_beneath(blobs, *file.sha256, path, {});
   }
   const auto frame = read(blob(*invocation.call_sha256), kWorkerLimit);
   flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(frame.data()), frame.size());

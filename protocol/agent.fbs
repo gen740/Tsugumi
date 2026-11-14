@@ -24,6 +24,8 @@ table ConversationSendRequest {
   conversation_id:string (required); turn_id:string (required); text:string (required);
   selected_cards:[string]; selected_displays:[string]; skill_names:[string]; intent:string;
   attached_resources:[string];
+  // Human-visible text, before core attaches references and skill contents.
+  display:string;
 }
 // Resume is an explicit user request; restart/reconnect never sends it.
 table ConversationActionRequest { conversation_id:string (required); action:Action; }

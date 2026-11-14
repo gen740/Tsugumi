@@ -150,9 +150,12 @@ export function App() {
       return onServerEvent((e) => {
         const s = workspace.session
         if (s && e.type === 'projectClosed' && s.dir === e.project) {
-          workspace.close()
-          app.closeProject(s)
-          window.close()
+          void s.settleBeforeLeaving((reason) => new Promise((answer) => setUnsaved({ reason, answer }))).then(settled => {
+            if (!settled) return
+            workspace.close()
+            app.closeProject(s)
+            window.close()
+          })
         }
       })
     }
@@ -240,7 +243,7 @@ export function App() {
   // by closing the browser tab without a warning.
   useEffect(() => {
     const before = (e: BeforeUnloadEvent) => {
-      if ([...app.sessions.values()].some((s) => s.dirty)) e.preventDefault()
+      if ([...app.sessions.values()].some((s) => s.hasUnsavedEdits)) e.preventDefault()
     }
     window.addEventListener('beforeunload', before)
     return () => window.removeEventListener('beforeunload', before)

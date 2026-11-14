@@ -112,6 +112,8 @@ class WorkerProc {
   int err_fd_ = -1;
   bool alive_ = false;
   std::string scratch_;
+  // Darwin's permission repair runs with the same authority as the Card.
+  std::function<void(int, const char*)> recover_permissions_;
   uint64_t call_id_ = 0;
   LogSink logs_;
   std::mutex log_mu_;

@@ -435,10 +435,19 @@ private struct RunHistorySettings: View {
   }
 }
 
+/// A selection can include an unreadable folder, whose bytes do not count as zero.
+struct ScratchSelection {
+  var paths: Set<String> = []
+  func rows(_ candidates: [Tsugumi_RPC_RunScratchUsageT]) -> [Tsugumi_RPC_RunScratchUsageT] { candidates.filter { paths.contains($0.path) } }
+  func knownBytes(_ candidates: [Tsugumi_RPC_RunScratchUsageT]) -> UInt64 { rows(candidates).filter { !$0.sizeUnknown }.reduce(0) { $0 + $1.bytes } }
+  func hasUnknown(_ candidates: [Tsugumi_RPC_RunScratchUsageT]) -> Bool { rows(candidates).contains { $0.sizeUnknown } }
+}
+
 private struct CacheSettings: View {
   let session: ProjectSession
   @Environment(AppModel.self) private var model
   @State private var scratchSelection: [String] = []
+  @State private var selectedScratch = ScratchSelection()
   @State private var confirmScratch = false
   @State private var scratchResult: Tsugumi_RPC_RunScratchDeleteResultT?
   private var scratchCandidates: [Tsugumi_RPC_RunScratchUsageT] {
@@ -499,13 +508,20 @@ private struct CacheSettings: View {
       GroupBox("このプロジェクトの過去の scratch") {
         VStack(alignment: .leading, spacing: 4) {
           ForEach(scratchCandidates, id: \.path) { item in
-            LabeledContent(item.path, value: bytes(item.bytes))
+            HStack {
+              Toggle(item.path, isOn: Binding(get: { selectedScratch.paths.contains(item.path) }, set: {
+                if $0 { selectedScratch.paths.insert(item.path) } else { selectedScratch.paths.remove(item.path) }
+              }))
+              Spacer()
+              Text(item.sizeUnknown ? String(localized: "不明") : bytes(item.bytes))
+            }
           }
-          LabeledContent("削除対象の合計", value: bytes(scratchCandidates.reduce(UInt64(0)) { $0 + $1.bytes }))
-          Button("表示した scratch を削除…", role: .destructive) {
-            scratchSelection = scratchCandidates.map(\.path)
+          LabeledContent("削除対象の合計", value: bytes(selectedScratch.knownBytes(scratchCandidates)))
+          if selectedScratch.hasUnknown(scratchCandidates) { Text("合計は容量不明のフォルダを除きます。").font(.caption).foregroundStyle(.secondary) }
+          Button("選択した scratch を削除…", role: .destructive) {
+            scratchSelection = selectedScratch.rows(scratchCandidates).map(\.path)
             confirmScratch = true
-          }.disabled(working || session.runActive || !session.connected || scratchCandidates.isEmpty)
+          }.disabled(working || session.runActive || !session.connected || selectedScratch.rows(scratchCandidates).isEmpty)
           if let r = scratchResult {
             LabeledContent("解放", value: bytes(r.freedBytes))
             if !r.retained.isEmpty {
@@ -534,12 +550,12 @@ private struct CacheSettings: View {
       }
     }
     .padding(16)
-    .confirmationDialog("表示した過去の scratch を削除しますか？", isPresented: $confirmScratch) {
+    .confirmationDialog("選択した過去の scratch を削除しますか？", isPresented: $confirmScratch) {
       Button("削除", role: .destructive) {
         working = true
         message = nil
         Task {
-          do { scratchResult = try await session.deleteRunScratch(paths: scratchSelection) }
+          do { scratchResult = try await session.deleteRunScratch(paths: scratchSelection); selectedScratch.paths = [] }
           catch { message = String(localized: "削除できませんでした: \(String(describing: error))") }
           working = false
         }

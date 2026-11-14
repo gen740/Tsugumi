@@ -270,8 +270,8 @@ struct CardNodeData: Equatable {
 
   /// "Invocation #3 · Succeeded" and the like; nil before the first invocation.
   var runText: String? {
-    if executionList { return state.map { $0.label + (runMark.map { " · " + $0 } ?? "") } }
-    guard let state, invocation > 0 else { return nil }
+    if executionList { return state.map { $0.label + (runMark.map { " · " + $0 } ?? "") } ?? runMark }
+    guard let state, invocation > 0 else { return runMark }
     var s = String(localized: "実行 #\(invocation)")
     if let cur = stage?.current, state == .running || state == .preparing {
       s += " · " + cur.stage.activeLabel

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <functional>
 #include <set>
+#include <vector>
 
 #include "agent/json.hh"
 
@@ -13,8 +14,10 @@ namespace tsugumi::agent {
 inline auto DescribeOperation(
     const std::string &name, json::Members args, const std::string &project,
     const std::function<json::Members(const std::string &,
-                                      const json::Members &)> &read)
+                                      const json::Members &)> &read,
+    std::vector<std::string> *run_ids = nullptr)
     -> std::string {
+  if (run_ids) run_ids->clear();
   json::Members targets{{"project", json::Quote(project)}};
   if (name == "run_history_delete") {
     std::vector<std::string> runs;
@@ -34,8 +37,12 @@ inline auto DescribeOperation(
              state == "cancelled") &&
             (cutoff == "null" ||
              (ended != "null" && std::stoll(json::String(ended, ended)) <
-                                     std::stoll(json::String(cutoff, cutoff)))))
+                                     std::stoll(json::String(cutoff, cutoff))))) {
           runs.push_back(json::Encode(status));
+          const auto id = json::Text(status, "run_id");
+          if (id.empty()) throw std::runtime_error("approval target has no run ID");
+          if (run_ids) run_ids->push_back(json::Quote(id));
+        }
       }
       const auto next = json::Text(page, "next_cursor");
       if (!next.empty() && next == cursor)
@@ -43,6 +50,7 @@ inline auto DescribeOperation(
       cursor = next;
     } while (!cursor.empty());
     std::sort(runs.begin(), runs.end());
+    if (run_ids) std::sort(run_ids->begin(), run_ids->end());
     targets["runs"] = json::Encode(runs);
     targets["run_count"] = std::to_string(runs.size());
     targets["removes"] = json::Quote(

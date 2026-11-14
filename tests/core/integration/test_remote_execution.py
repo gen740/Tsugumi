@@ -492,3 +492,38 @@ def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, 
     downstream = client.call("RunInvocationsRequest", runId=run_id, card=path("collect"))
     blocked, = downstream.records
     assert blocked.state == CardState.blocked and not downstream.batches
+
+
+@pytest.mark.parametrize("directory", [False, True])
+def test_remote_transfers_only_declared_outputs(project, core_factory, remote_broker, tmp_path, directory):
+    """Remote execution ignores undeclared files/FIFOs and materializes relative links within a declared Directory."""
+    from harness.real_cards import bash, log
+    schema = FILE_FBS.replace('tsugumi: "file"', 'tsugumi: "directory"') if directory else FILE_FBS
+    create = ('mkdir "$TSUGUMI_OUTPUT_DIR/report"; '
+              'echo safe > "$TSUGUMI_OUTPUT_DIR/report/data"; '
+              'ln -s data "$TSUGUMI_OUTPUT_DIR/report/link"; '
+              'result=report; ' if directory else
+              'echo safe > "$TSUGUMI_OUTPUT_DIR/result"; result=result; ')
+    script = (create +
+              'mkfifo "$TSUGUMI_OUTPUT_DIR/undeclared-fifo"; '
+              'echo unused > "$TSUGUMI_OUTPUT_DIR/undeclared-file"; '
+              'mkfifo "$TSUGUMI_WORK_DIR/undeclared-fifo"; '
+              'mkfifo "$TSUGUMI_TMP_DIR/undeclared-fifo"; '
+              'printf \'{"doc":{"value":"%s/%s"}}\' "$TSUGUMI_OUTPUT_DIR" "$result" > "$TSUGUMI_OUTPUT"')
+    definition = bash(script, outputs=schema, executionService="remote-test", recordIO=True,
+                      filesystem=True, timeoutSeconds=600)
+    write(project, {"copy": definition}, [card("copy", "copy")], [])
+    scratch = tmp_path / "scratch"
+    c = core_factory(args=["--run-scratch-dir", str(scratch)]).connect()
+    run_id, st = run_and_wait(c, "copy", timeout=900)
+    assert st.state == RunState.succeeded, log(c, run_id, "copy", 2)
+    record = c.call("RunRecordRequest", runId=run_id, card=path("copy")).record
+    saved = Path(text(record.outputs[0].filePath))
+    if directory:
+        assert (saved / "data").read_text() == "safe\n"
+        assert (saved / "link").read_text() == "safe\n"
+        assert not (saved / "link").is_symlink()
+    else:
+        assert saved.read_text() == "safe\n"
+    invocation = scratch / "runs" / run_id / "work/copy/1"
+    assert not list(invocation.rglob("undeclared-*"))

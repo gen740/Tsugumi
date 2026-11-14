@@ -1,8 +1,9 @@
+import { CardNodeView } from '../src/ui/cardNode'
 import assert from 'node:assert/strict'
 import { Builder, ByteBuffer } from 'flatbuffers'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { clone, get, parse, str } from '../src/shared/json'
-import { D, R, RPCClient, RPCFailure, RequestPayload, s as text } from '../src/shared/rpc'
+import { D, R, cardPath, RPCClient, RPCFailure, RequestPayload, s as text } from '../src/shared/rpc'
 import { ProjectSession } from '../src/model/session'
 import { CardEditorModel } from '../src/ui/cardSettings'
 import { InlineParamEdit } from '../src/ui/revisionEdit'
@@ -182,3 +183,27 @@ assert.equal(runMark(new R.RunStatusT()), undefined)
   assert.equal(s.undoStack.length, 0)
 }
 console.log('owner UI review: delayed connect, in-flight edits, inline revision, reload approval passed')
+
+// A display keeps the provenance of its own run when another branch is run.
+{
+  const s = session()
+  const events = s as unknown as { applyRunEvent(e: R.RunEventT): void; applyDisplay(d: D.DisplayT): void }
+  const accept = (id: string, partial: boolean) => {
+    const status = Object.assign(new R.RunStatusT(), { runId: id, partialRun: partial })
+    events.applyRunEvent(Object.assign(new R.RunEventT(), { runId: id, valueType: R.RunEventValue.RunAcceptedEvent,
+      value: Object.assign(new R.RunAcceptedEventT(), { status }) }))
+  }
+  const display = (id: string) => events.applyDisplay(Object.assign(new D.DisplayT(), {
+    card: cardPath(['a']), runId: id, invocation: 1n, revision: 1n,
+    valueType: D.DisplayValue.DisplayText, value: new D.DisplayTextT('B result'),
+  }))
+  accept('partial-b', true); display('partial-b')
+  assert.equal(s.nodeData('c').runMark, undefined, 'a Card with no run or display has no provenance mark')
+  accept('other-input', false)
+  const data = s.nodeData('a')
+  assert.equal(data.runMark, '部分実行')
+  assert.ok(renderToStaticMarkup(<CardNodeView data={data} flow="topToBottom" selected={false} />).includes('部分実行'))
+  accept('whole', false); display('whole')
+  assert.equal(s.nodeData('a').runMark, undefined)
+}
+console.log('display provenance survives another branch: passed')

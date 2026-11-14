@@ -259,6 +259,18 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
         }
       }
     }
+    if (!result.outcome.failure && request.validate) {
+      try {
+        request.validate(result);
+      } catch (const Failed& error) {
+        // Validation failures are failed calls, rather than transfer errors:
+        // the next invocation must start without this Card's mutated state.
+        result.outcome.failure = error.failure;
+      } catch (...) {
+        workers_.release(worker_card, key, std::move(lease.worker), false, "the previous call failed validation");
+        throw;
+      }
+    }
     // Dead/cancelled workers are destroyed without inspecting their scratch.
     // A cleanup error must not replace the failure the Card already reported.
     try {

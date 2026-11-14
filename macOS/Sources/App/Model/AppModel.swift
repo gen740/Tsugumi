@@ -206,7 +206,7 @@ final class AppModel {
     guard holders[id] ?? 0 <= 0 else { return }
     holders[id] = nil
     // Edits that could not be saved stay open: opening it again finds them, quitting asks.
-    guard !s.dirty else { return }
+    guard !s.hasUnsavedEdits else { return }
     if let c = chats[id] { GuideController.shared.chatClosed(c) }
     chats[id]?.detach()
     chats[id] = nil

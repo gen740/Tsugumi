@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "util/crypto.hh"
+#include "util/sparse.hh"
 #include "util/text.hh"
 
 namespace tsugumi::fs {
@@ -307,12 +308,14 @@ auto stream_beneath(const stdfs::path& root, const stdfs::path& rel, uint64_t li
 
 auto copy_beneath(const stdfs::path& root, const stdfs::path& rel, const stdfs::path& destination,
                   const std::function<void(std::string_view)>& on_chunk) -> uint64_t {
+  const int source = open_beneath(root, rel, O_RDONLY | O_NONBLOCK);
+  struct Close {
+    int fd;
+    ~Close() { ::close(fd); }
+  } close{source};
   uint64_t size = 0;
   write_atomic_using(destination, 0644, [&](int fd, const stdfs::path& temporary) {
-    size = stream_beneath(root, rel, UINT64_MAX, [&](std::string_view chunk) {
-      on_chunk(chunk);
-      write_all(fd, chunk.data(), chunk.size(), temporary);
-    });
+    size = copy_sparse_file(source, fd, root / rel, temporary, on_chunk);
   });
   return size;
 }

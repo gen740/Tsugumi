@@ -297,8 +297,11 @@ final class ChatController {
     }
   }
 
-  private func load(_ conv: Conversation) {
+  private func load(_ conv: Conversation) { items = Self.restoredItems(conv) }
+
+  static func restoredItems(_ conv: Conversation) -> [Item] {
     var out: [Item] = []
+    var tools: [String: Int] = [:]
     for (i, m) in conv.fullHistory.enumerated() {
       let archived = i < conv.archive.count
       if let d = m.display {
@@ -308,9 +311,11 @@ final class ChatController {
       for b in m.content {
         switch b {
         case .text(let t): out.append(Item(role: m.role, text: t, archived: archived))
-        case .toolUse(_, let n, let a): out.append(Item(role: "tool", text: a, tool: (n, nil), archived: archived))
-        case .toolResult(_, let c, let e, _):
-          if let j = out.lastIndex(where: { $0.role == "tool" && $0.tool?.ok == nil }) {
+        case .toolUse(let id, let n, let a):
+          tools[id] = out.count
+          out.append(Item(role: "tool", text: a, tool: (n, nil), archived: archived))
+        case .toolResult(let id, let c, let e, _):
+          if let j = tools[id] {
             out[j].tool?.ok = !e
             out[j].text += "\n→ " + Agent.toolSummary(c)
           }
@@ -322,7 +327,7 @@ final class ChatController {
     for record in conv.tools where record.name == "operation_approval" {
       out.append(Item(role: "tool", text: record.result ?? "", tool: (record.name, record.state == .pending ? nil : !record.isError)))
     }
-    items = out
+    return out
   }
 
   func newSession() {
@@ -504,23 +509,34 @@ final class ChatController {
     var access: [String] { raw.filter { $0.hasPrefix("project_access ") } }
     let answer: (Set<String>) -> Void
   }
-  var permissionPrompt: PermissionPrompt?
+  struct PermissionQueue {
+    private var pending: [PermissionPrompt] = []
+    var first: PermissionPrompt? { pending.first }
+    mutating func append(_ prompt: PermissionPrompt) { pending.append(prompt) }
+    @discardableResult mutating func answer(_ id: UUID, allow: Bool) -> PermissionPrompt? {
+      guard first?.id == id else { return nil }
+      let prompt = pending.removeFirst()
+      prompt.answer(allow ? Set(prompt.raw) : [])
+      return prompt
+    }
+    mutating func release() { while let id = first?.id { answer(id, allow: false) } }
+  }
+  private var permissionQueue = PermissionQueue()
+  var permissionPrompt: PermissionPrompt? { permissionQueue.first }
 
   /// The widenings the user approves: those of the kinds allowed without
   /// asking at once, the others when asked (nothing when declined).
   func approve(_ asked: [String]) async -> Set<String> {
-    permissionPrompt?.answer([])
     return await withCheckedContinuation { continuation in
-      permissionPrompt = PermissionPrompt(raw: asked) { continuation.resume(returning: $0) }
+      permissionQueue.append(PermissionPrompt(raw: asked) { continuation.resume(returning: $0) })
     }
   }
 
   /// The user's answer; `always` are kinds allowed without asking from now on.
-  func answerPermissions(allow: Bool, always: Set<CardPermission>) {
-    guard let p = permissionPrompt else { return }
-    permissionPrompt = nil
+  func answerPermissions(id: UUID, allow: Bool, always: Set<CardPermission>) {
+    guard let p = permissionPrompt, p.id == id else { return }
     if allow && p.operation == nil { AppPreferences.shared.allowedPermissions.formUnion(always.map(\.rawValue)) }
-    p.answer(allow ? Set(p.raw) : [])
+    permissionQueue.answer(id, allow: allow)
   }
 
   /// A window releases its UI subscriptions without cancelling core work.
@@ -535,17 +551,16 @@ final class ChatController {
       await remote?.detach()
       // Both observers are cancelled before releasing a pending UI answer.
       // Their cancellation check prevents this from denying the core request.
-      let prompt = permissionPrompt
-      permissionPrompt = nil
-      prompt?.answer([])
+      releasePermissions()
     }
   }
 
+  private func releasePermissions() {
+    permissionQueue.release()
+  }
+
   func cancel() {
-    if let p = permissionPrompt {
-      permissionPrompt = nil
-      p.answer([])
-    }
+    releasePermissions()
     opening?.cancel()
     opening = nil
     answer += 1
@@ -675,7 +690,7 @@ final class ChatController {
   private func handle(_ e: AgentEvent, of number: Int) {
     if number != answer {
       switch e {
-      case .text, .discardText, .retrying, .compacting, .compacted, .error, .finished, .stepLimit: return
+      case .text, .discardText, .retrying, .compacting, .compacted, .error, .finished, .interrupted, .stepLimit: return
       default: break
       }
     }
@@ -741,6 +756,10 @@ final class ChatController {
         : usageLimited ? String(localized: "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。")
         : contextFull ? String(localized: "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。")
         : String(localized: "エラー: \(s)")
+      refreshAfterTurn()
+    case .interrupted:
+      busy = false
+      session.presence.turnEnded(.stopped)
       refreshAfterTurn()
     case .finished:
       if failed || stoppedAtLimit {

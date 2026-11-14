@@ -416,8 +416,23 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
   )
 }
 
+/** The same row controls and selected total used by the cache pane. */
+export function ScratchRows({ candidates, selected, onSelect, disabled = false, onDelete }: { candidates: R.RunScratchUsageT[]; selected: Set<string>; onSelect: (path: string, on: boolean) => void; disabled?: boolean; onDelete: (paths: string[]) => void }) {
+  const selection = candidates.filter(p => selected.has(s(p.path)))
+  return <>
+    {candidates.map(p => <div className="row gap8" key={s(p.path)}>
+      <Toggle kind="checkbox" label={s(p.path)} checked={selected.has(s(p.path))} onChange={on => onSelect(s(p.path), on)} />
+      <span>{p.sizeUnknown ? L('不明') : formatBytes(p.bytes)}</span>
+    </div>)}
+    <Value label={L('削除対象の合計')} value={formatBytes(selection.filter(p => !p.sizeUnknown).reduce((n, p) => n + p.bytes, 0n))} />
+    {selection.some(p => p.sizeUnknown) && <div className="caption secondary">{L('合計は容量不明のフォルダを除きます。')}</div>}
+    <Button kind="destructive" disabled={disabled || !selection.length} onClick={() => onDelete(selection.map(p => s(p.path)))}>{L('選択した scratch を削除…')}</Button>
+  </>
+}
+
 function CacheSettings({ session }: { session: ProjectSession }) {
   useObserve(session)
+  const [selectedScratch, setSelectedScratch] = useState<Set<string>>(() => new Set())
   const [scratchSelection, setScratchSelection] = useState<string[]>()
   const [scratchResult, setScratchResult] = useState<R.RunScratchDeleteResultT>()
   const scratch = session.cacheUsage?.projects.find(p => s(p.project) === s(session.cacheUsage?.currentProject))?.runScratch ?? []
@@ -427,7 +442,7 @@ function CacheSettings({ session }: { session: ProjectSession }) {
     setMessage(undefined)
     const paths = scratchSelection ?? []
     setScratchSelection(undefined)
-    try { setScratchResult(await session.deleteRunScratch(paths)) }
+    try { setScratchResult(await session.deleteRunScratch(paths)); setSelectedScratch(new Set()) }
     catch (e) { setMessage(L('削除できませんでした: {0}', errorText(e))) }
     setWorking(false)
   }
@@ -475,14 +490,13 @@ function CacheSettings({ session }: { session: ProjectSession }) {
       <div className="caption secondary">{L('過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。')}</div>
       <div className="groupbox col gap4">
         <div className="headline">{L('このプロジェクトの過去の scratch')}</div>
-        {candidates.map(p => <Value key={s(p.path)} label={s(p.path)} value={formatBytes(p.bytes)} />)}
-        <Value label={L('削除対象の合計')} value={formatBytes(candidates.reduce((n, p) => n + p.bytes, 0n))} />
-        <Button kind="destructive" disabled={working || session.runActive || !session.connected || !candidates.length}
-          onClick={() => setScratchSelection(candidates.map(p => s(p.path)))}>{L('表示した scratch を削除…')}</Button>
+        <ScratchRows candidates={candidates} selected={selectedScratch} disabled={working || session.runActive || !session.connected} onDelete={setScratchSelection} onSelect={(path, on) => setSelectedScratch(before => {
+          const next = new Set(before); if (on) next.add(path); else next.delete(path); return next
+        })} />
         {scratchResult && <Value label={L('解放')} value={formatBytes(scratchResult.freedBytes)} />}
         {!!scratchResult?.retained.length && <div>{L('削除できず残ったフォルダ')}: {scratchResult.retained.map(s).join(', ')}</div>}
       </div>
-      {scratchSelection && <Confirm title={L('表示した過去の scratch を削除しますか？')} confirm={L('削除')}
+      {scratchSelection && <Confirm title={L('選択した過去の scratch を削除しますか？')} confirm={L('削除')}
         onConfirm={() => void deleteScratch()} onCancel={() => setScratchSelection(undefined)} />}
       {result && (
         <div className="groupbox col gap4">

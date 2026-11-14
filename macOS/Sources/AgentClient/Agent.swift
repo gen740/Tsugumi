@@ -82,6 +82,8 @@ public enum AgentEvent: Sendable {
   case discardText
   case error(String)
   case finished
+  /// Observation found a core-owned interruption; work stays stopped.
+  case interrupted
   /// The turn used its steps (model replies with tool calls) without
   /// finishing; `unconfirmedRun` is a run it started and never saw end.
   case stepLimit(steps: Int, unconfirmedRun: String?)
@@ -197,7 +199,7 @@ public actor Agent {
       try await self.client.configure(self.provider, conversationID: self.id)
       try await self.beginTurn()
       _ = try await self.client.call("ConversationSendRequest", ["conversation_id": self.id,
-        "turn_id": turn, "text": prompt, "selected_cards": selectedCards,
+        "turn_id": turn, "text": prompt, "display": display ?? prompt, "selected_cards": selectedCards,
         "selected_displays": selectedDisplays, "skill_names": skillNames, "attached_resources": attachedResources])
     }
   }
@@ -252,12 +254,18 @@ public actor Agent {
             } else if let event = Self.event(event) {
               if case .finished = event { try await refresh() }
               try Task.checkCancellation()
-              events(event)
+              if case .finished = event, resumable { events(.interrupted) }
+              else { events(event) }
             }
           }
           sequence = max(sequence, result["next_seq"] as? UInt64 ?? sequence)
           busy = result["busy"] as? Bool ?? false
-          if !busy { try await refresh(); break }
+          if !busy {
+            try await refresh()
+            try Task.checkCancellation()
+            if resumable { events(.interrupted) }
+            break
+          }
           try await Task.sleep(for: .milliseconds(80))
         }
       } catch is CancellationError {} catch {
@@ -265,7 +273,9 @@ public actor Agent {
           // A restarted service owns the interrupted snapshot. Reading it
           // updates the controls without sending an action.
           try? await refresh()
-          if !Task.isCancelled { events(.error(String(describing: error))) }
+          if !Task.isCancelled {
+            events(resumable ? .interrupted : .error(String(describing: error)))
+          }
         }
       }
     }

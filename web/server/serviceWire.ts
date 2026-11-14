@@ -143,7 +143,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'ConversationGetRequest': return new AConversationGetRequest(v.conversation_id)
     case 'ConversationDeleteRequest': return new AConversationDeleteRequest(v.conversation_id)
     case 'ConversationSearchRequest': return new AConversationSearchRequest(v.project_id, v.text)
-    case 'ConversationSendRequest': return new AConversationSendRequest(v.conversation_id, v.turn_id, v.text, v.selected_cards, v.selected_displays, v.skill_names, v.intent, v.attached_resources)
+    case 'ConversationSendRequest': return new AConversationSendRequest(v.conversation_id, v.turn_id, v.text, v.selected_cards, v.selected_displays, v.skill_names, v.intent, v.attached_resources, v.display)
     case 'ConversationActionRequest': return new AConversationActionRequest(v.conversation_id, enumValue(Action, v.action))
     case 'ConversationCancelRequest': return new AConversationCancelRequest(v.conversation_id)
     case 'EventsRequest': return new AEventsRequest(v.conversation_id, BigInt(v.after_seq ?? 0), v.limit)
