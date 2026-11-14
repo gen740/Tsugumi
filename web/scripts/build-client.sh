@@ -11,7 +11,7 @@ if [ -n "${TSUGUMI_WASM_CLIENT_DIR:-}" ]; then
   exit 0
 fi
 repo=$(cd "$(dirname "$0")/../.." && pwd)
-build=${TSUGUMI_WASM_BUILD_DIR:-"$repo/build-wasm"}
+build="$repo/build-wasm"
 flatc_root=$(cd "$(dirname "$(command -v flatc)")/.." && pwd)
 emcmake cmake -S "$repo" -B "$build" -G Ninja \
   -DTSUGUMI_BUILD_CORE=OFF -DTSUGUMI_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release \

@@ -59,7 +59,7 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
 cp "$repo/build-host/Frameworks/"*.dylib "$app/Contents/Frameworks/"
 cp "$bin/Tsugumi" "$app/Contents/MacOS/Tsugumi"
-cp "$bin/tsugumi-vmhost" "$repo/build-host/core/tsugumi-agentd" "$repo/build-host/client/tsugumi-rpc" "$app/Contents/MacOS/"
+cp "$bin/tsugumi-vmhost" "$repo/build-host/core/tsugumi-agentd" "$app/Contents/MacOS/"
 cp "$repo/build-host/generated/bfbs/"{agent,host}.bfbs "$app/Contents/Resources/"
 
 # Nothing may look for files where this machine built them (that only works here).
@@ -151,7 +151,6 @@ for library in "$app/Contents/Frameworks/"*.dylib; do
   codesign --force --sign "$identity" "$library" >/dev/null
 done
 codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-agentd" >/dev/null
-codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-rpc" >/dev/null
 codesign --force --sign "$identity" --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app/Contents/MacOS/tsugumi-vmhost" >/dev/null
 codesign --force --sign "$identity" --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app" >/dev/null
 # The bundle was made anew: Finder and the Dock read its icon again.
