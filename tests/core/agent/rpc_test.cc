@@ -734,20 +734,29 @@ TEST_F(AgentFixture, ShortenedHelperResultsPointToFullTraceAndSumUsageOnce) {
   const auto state = WaitUntilIdle(conversation);
   const auto requests = model.Requests();
   ASSERT_EQ(requests.size(), 3u);
-  const auto result = JsonString(requests[2], "/messages/2/content/0/text");
+  EXPECT_EQ(JsonString(requests[0], "/messages/0/content/0/text"),
+            "Delegate the review.");
+  // Tool results carry their payload in content, not a text block's text.
+  EXPECT_EQ(JsonString(requests[2], "/messages/2/content/0/type"),
+            "tool_result");
+  EXPECT_EQ(JsonString(requests[2], "/messages/2/content/0/tool_use_id"),
+            "long-helper");
+  EXPECT_FALSE(JsonBool(requests[2], "/messages/2/content/0/is_error"));
+  const auto result = JsonString(requests[2], "/messages/2/content/0/content");
   EXPECT_TRUE(JsonBool(result, "/0/shortened"));
   EXPECT_EQ(JsonString(result, "/0/conversation_id"), conversation);
   EXPECT_EQ(JsonString(result, "/0/call_id"), "long-helper");
   EXPECT_NE(JsonString(result, "/0/notice").find("full"), std::string::npos);
   EXPECT_LT(result.size(), 60000u);
   EXPECT_NE(state.find("FULL_HELPER_TRACE_END"), std::string::npos);
-  EXPECT_NE(
+  EXPECT_EQ(
       JsonString(state,
-                 "/conversation/helpers/0/result/messages/1/content/0/text")
-          .find("FULL_HELPER_TRACE_END"),
-      std::string::npos);
-  EXPECT_EQ(JsonUInt(state, "/conversation/usage/inputTokens"), 36u);
-  EXPECT_EQ(JsonUInt(state, "/conversation/usage/outputTokens"), 12u);
+                 "/conversation/helpers/0/result/messages/1/content/0/text"),
+      long_text);
+  // Runtime reports its last input size: parent 12 + helper (12 + 7 + 3).
+  // Outputs accumulate across every reply: delegate 8 + helper 4 + parent 4.
+  EXPECT_EQ(JsonUInt(state, "/conversation/usage/inputTokens"), 34u);
+  EXPECT_EQ(JsonUInt(state, "/conversation/usage/outputTokens"), 16u);
   EXPECT_EQ(JsonUInt(state, "/conversation/usage/cacheReadTokens"), 7u);
   EXPECT_EQ(JsonUInt(state, "/conversation/usage/cacheWriteTokens"), 3u);
   // Replaying the completed delegation returns its receipt without another
@@ -760,14 +769,18 @@ TEST_F(AgentFixture, ShortenedHelperResultsPointToFullTraceAndSumUsageOnce) {
           .Code()
           .empty());
   EXPECT_EQ(model.Requests().size(), 3u);
-  EXPECT_EQ(
-      JsonUInt(Get(conversation).View(), "/conversation/usage/inputTokens"),
-      36u);
+  const auto replayed = Get(conversation).View();
+  EXPECT_EQ(JsonUInt(replayed, "/conversation/usage/inputTokens"), 34u);
+  EXPECT_EQ(JsonUInt(replayed, "/conversation/usage/outputTokens"), 16u);
+  EXPECT_EQ(JsonUInt(replayed, "/conversation/usage/cacheReadTokens"), 7u);
+  EXPECT_EQ(JsonUInt(replayed, "/conversation/usage/cacheWriteTokens"), 3u);
   model.Queue(AnthropicText("A separate turn."));
   ASSERT_TRUE(Send(conversation, "Continue.", "turn-2").Code().empty());
   const auto next = WaitUntilIdle(conversation);
-  EXPECT_EQ(JsonUInt(next, "/conversation/usage/inputTokens"), 48u);
-  EXPECT_EQ(JsonUInt(next, "/conversation/usage/outputTokens"), 16u);
+  EXPECT_EQ(JsonUInt(next, "/conversation/usage/inputTokens"), 46u);
+  EXPECT_EQ(JsonUInt(next, "/conversation/usage/outputTokens"), 20u);
+  EXPECT_EQ(JsonUInt(next, "/conversation/usage/cacheReadTokens"), 7u);
+  EXPECT_EQ(JsonUInt(next, "/conversation/usage/cacheWriteTokens"), 3u);
 }
 
 }  // namespace

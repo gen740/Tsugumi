@@ -1055,9 +1055,15 @@ struct Host::State {
                         "Helper scope cannot resolve Card file " + path);
         }
         const auto value = json::Object(json::Get(reply, "value", "{}"));
-        const auto page = json::Array(json::Get(value, "bytes", "[]"));
-        for (const auto &byte : page)
-          bytes += static_cast<char>(json::UInt(byte));
+        // Catalog replies expose byte vectors as UTF-8 text or base64 objects.
+        const auto raw = json::Get(value, "bytes");
+        std::string page;
+        if (raw.starts_with('"'))
+          page = json::String(raw);
+        else if (!crypto::base64_decode(
+                     json::Text(json::Object(raw), "base64"), page))
+          throw Failure("unavailable", "Invalid helper Card metadata encoding");
+        bytes += page;
         if (json::Bool(json::Get(value, "eof")))
           break;
         if (page.empty())

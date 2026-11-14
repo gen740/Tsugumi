@@ -1084,10 +1084,14 @@ TEST_F(AgentProjectFixture,
     const auto pointer =
         "/messages/" + std::to_string(2 * (i + 1)) + "/content/0";
     const bool denied = i != 0 && i != 2 && i != 3;
+    EXPECT_EQ(JsonString(requests[i + 1], pointer + "/type"), "tool_result");
+    EXPECT_EQ(JsonString(requests[i + 1], pointer + "/tool_use_id"),
+              "scope-call-" + std::to_string(i));
     EXPECT_EQ(JsonBool(requests[i + 1], pointer + "/is_error"), denied)
-        << calls[i].first;
+        << calls[i].first << ' ' << calls[i].second << '\n'
+        << JsonString(requests[i + 1], pointer + "/content");
     if (denied)
-      EXPECT_NE(JsonString(requests[i + 1], pointer + "/text")
+      EXPECT_NE(JsonString(requests[i + 1], pointer + "/content")
                     .find("Helper scope denied"),
                 std::string::npos);
     EXPECT_EQ(requests[i + 1].find("HIDDEN_CARD_SENTINEL"), std::string::npos);
@@ -1122,8 +1126,15 @@ TEST_F(AgentProjectFixture, HelperOwnsTheCardItReservesFromEmptySets) {
     FAIL() << "The helper did not report its reservation";
     return;
   }
+  const auto reservation_request = model.Requests()[1];
+  EXPECT_EQ(JsonString(reservation_request, "/messages/2/content/0/type"),
+            "tool_result");
+  EXPECT_EQ(JsonString(reservation_request, "/messages/2/content/0/tool_use_id"),
+            "reserve");
+  EXPECT_FALSE(JsonBool(reservation_request, "/messages/2/content/0/is_error"));
   const auto reserved =
-      JsonString(model.Requests()[1], "/messages/2/content/0/text");
+      JsonString(reservation_request, "/messages/2/content/0/content");
+  EXPECT_EQ(JsonString(reserved, "/reply"), "CardIdResult");
   const auto id = JsonString(reserved, "/value/id");
   ASSERT_FALSE(id.empty());
   const auto path = "definitions/" + id + "/src/own.txt";
@@ -1141,10 +1152,20 @@ TEST_F(AgentProjectFixture, HelperOwnsTheCardItReservesFromEmptySets) {
   ASSERT_TRUE(result.Code().empty()) << result.View();
   const auto requests = model.Requests();
   ASSERT_EQ(requests.size(), 4u);
+  EXPECT_EQ(JsonString(requests[2], "/messages/4/content/0/type"),
+            "tool_result");
+  EXPECT_EQ(JsonString(requests[2], "/messages/4/content/0/tool_use_id"),
+            "save-own");
   EXPECT_FALSE(JsonBool(requests[2], "/messages/4/content/0/is_error"));
+  EXPECT_EQ(JsonString(requests[3], "/messages/6/content/0/type"),
+            "tool_result");
+  EXPECT_EQ(JsonString(requests[3], "/messages/6/content/0/tool_use_id"),
+            "read-own");
   EXPECT_FALSE(JsonBool(requests[3], "/messages/6/content/0/is_error"));
-  const auto content = JsonString(requests[3], "/messages/6/content/0/text");
-  EXPECT_EQ(JsonUInt(content, "/value/bytes/0"), 111u);
+  const auto content = JsonString(requests[3], "/messages/6/content/0/content");
+  EXPECT_EQ(JsonString(content, "/reply"), "FileContent");
+  EXPECT_EQ(JsonString(content, "/value/bytes"), "own");
+  EXPECT_TRUE(JsonBool(content, "/value/eof"));
   EXPECT_EQ(Read(directory.path / "project" / path), "own");
 }
 
