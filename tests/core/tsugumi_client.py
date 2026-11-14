@@ -121,17 +121,12 @@ class Client:
         self._cv = threading.Condition(self._lock)
         self._replies: dict[int, MessageT] = {}
         self.notifications: deque = deque()
-        # Called with (payload, receive time) for every notification (measurements).
-        self.on_notification: Optional[Callable[[Any, float], None]] = None
         self.closed = False
         self.reader_error: Exception | None = None
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
 
     # -- transport ---------------------------------------------------------
-
-    def send_raw(self, payload: bytes, timeout: float = 30.0) -> None:
-        self._send_payload(payload, time.monotonic() + timeout)
 
     def _send_payload(self, payload: bytes, deadline: float) -> None:
         left = deadline - time.monotonic()
@@ -219,8 +214,6 @@ class Client:
                     else:
                         self.notifications.append(msg.payload)
                     self._cv.notify_all()
-                if msg.payloadType != Payload.Reply and self.on_notification:
-                    self.on_notification(msg.payload, time.time())
         except Exception as error:
             self.reader_error = error
         finally:

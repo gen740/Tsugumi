@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-# Also support the measurement scripts launched directly from this folder.
+# Also support the documentation player harvester launched directly.
 sys.path.insert(0, str(ROOT / "tests" / "core"))
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build"))
 TSUGUMID = Path(os.environ.get("TSUGUMID", BUILD / "core" / "tsugumid"))
@@ -39,14 +39,13 @@ def write_project(root: Path, project: dict | None = None, layout: dict | None =
 
 
 class Daemon:
-    def __init__(self, project: Path, env: dict | None = None, listen: bool = False, args: list | None = None):
+    def __init__(self, project: Path, env: dict | None = None, args: list | None = None):
         self.project = project
         self.args = list(args or [])
         # Unix socket paths are short-limited; keep them under /tmp-like dirs.
         self.sock_dir = Path(tempfile.mkdtemp(prefix="tsg-"))
         self.unix = str(self.sock_dir / "s")
         self.control = self.sock_dir / "control"
-        self.listen = listen
         self.env = env or {}
         self.proc: subprocess.Popen | None = None
         self.ready: dict = {}
@@ -55,8 +54,6 @@ class Daemon:
         args = [str(TSUGUMID), "--project", str(self.project), "--unix", self.unix,
                 "--control-dir", str(self.control), "--worker", str(WORKER),
                 "--sdk-dir", str(SDK), "--allow-missing-origin"]
-        if self.listen:
-            args += ["--listen", "127.0.0.1:0"]
         args += self.args
         env = dict(os.environ)
         env.update(self.env)
@@ -115,14 +112,6 @@ def daemon(project: Path):
     d = Daemon(project).start()
     yield d
     d.cleanup()
-
-
-@pytest.fixture
-def client(daemon):
-    c = daemon.client()
-    c.hello()
-    yield c
-    c.close()
 
 
 class SharedVM:
@@ -238,7 +227,7 @@ class VMEnv:
         if self.id:
             self.vm.command(f"stop {self.project}")
 
-    def cleanup(self, keep_volume: bool = True):
+    def cleanup(self):
         self.stop()
 
 

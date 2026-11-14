@@ -34,12 +34,6 @@ if(NOT TSUGUMI_INSTALLED_CORE)
     ENVIRONMENT "TSUGUMI_BUILD_DIR=${PROJECT_BINARY_DIR};TSUGUMI_PY_BINDINGS=${TSUGUMI_GEN_DIR}/python;TSUGUMI_MOCK_DAEMON=$<TARGET_FILE:tsugumid-mock>;TSUGUMID=$<TARGET_FILE:tsugumid>;TSUGUMI_WORKER=$<TARGET_FILE:tsugumi-worker>")
 endif()
 
-# The thought scheduler's timing can also be checked without any sockets.
-add_executable(tsugumi_thought_schedule_tests agent/thought_schedule_test.cc)
-target_include_directories(tsugumi_thought_schedule_tests PRIVATE ${_core_headers})
-target_compile_options(tsugumi_thought_schedule_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
-add_test(NAME core_thought_schedule COMMAND tsugumi_thought_schedule_tests)
-
 # Product client -> real Agent/core sockets -> controlled external model.
 # These scenarios neither include nor link private core implementation APIs.
 find_package(GTest CONFIG REQUIRED)
@@ -101,7 +95,7 @@ gtest_discover_tests(tsugumi_remote_result_tests TEST_PREFIX "core_remote." DISC
   PROPERTIES TIMEOUT 30)
 
 if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi-environment-daemon-double tsugumid-mock tsugumi_agent_rpc_tests tsugumi_rpc_cli_tests tsugumi_remote_result_tests tsugumi_thought_schedule_tests
+  install(TARGETS tsugumi-environment-daemon-double tsugumid-mock tsugumi_agent_rpc_tests tsugumi_rpc_cli_tests tsugumi_remote_result_tests
     RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()
 
@@ -122,8 +116,9 @@ if(TSUGUMI_INSTALLED_CORE)
   install(TARGETS tsugumi_peer_tls_tests RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()
 
-# Owner-only storage and bounded Skill reads are injectable without sockets.
-add_executable(tsugumi_host_settings_tests agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent_fixture_server.cc)
+# Storage, Skill reads, environment adapters and thought timing need no sockets.
+add_executable(tsugumi_host_settings_tests agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc agent_fixture_server.cc)
+target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
 target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_agent_core GTest::gtest_main)
 target_compile_options(tsugumi_host_settings_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 gtest_discover_tests(tsugumi_host_settings_tests TEST_PREFIX "core_host_settings." DISCOVERY_MODE PRE_TEST)
