@@ -33,7 +33,7 @@ endif()
 
 set(TSUGUMI_PROTOCOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/protocol)
 set(TSUGUMI_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
-set(TSUGUMI_SCHEMAS tsugumi_enums data worker remote_worker tsugumi service_common agent host)
+set(TSUGUMI_SCHEMAS tsugumi_enums data worker remote_worker tsugumi service_common agent host vm_host)
 
 # Bindings are generated with the standard flatc into the build tree only.
 set(_gen_cpp "")
@@ -50,18 +50,18 @@ foreach(schema ${TSUGUMI_SCHEMAS})
             -o ${TSUGUMI_GEN_DIR}/python ${_src}
     COMMAND ${TSUGUMI_FLATC} --swift --gen-object-api -I ${TSUGUMI_PROTOCOL_DIR}
             -o ${TSUGUMI_GEN_DIR}/swift ${_src}
-    DEPENDS ${_src} ${TSUGUMI_PROTOCOL_DIR}/service_common.fbs ${TSUGUMI_PROTOCOL_DIR}/data.fbs ${TSUGUMI_PROTOCOL_DIR}/tsugumi_enums.fbs
+    DEPENDS ${_src} ${TSUGUMI_PROTOCOL_DIR}/service_common.fbs ${TSUGUMI_PROTOCOL_DIR}/host.fbs ${TSUGUMI_PROTOCOL_DIR}/data.fbs ${TSUGUMI_PROTOCOL_DIR}/tsugumi_enums.fbs
     COMMENT "flatc ${schema}.fbs"
     VERBATIM)
 endforeach()
-foreach(schema worker remote_worker tsugumi agent host)
+foreach(schema worker remote_worker tsugumi agent host vm_host)
   list(APPEND _gen_bfbs ${TSUGUMI_GEN_DIR}/bfbs/${schema}.bfbs)
   add_custom_command(
     OUTPUT ${TSUGUMI_GEN_DIR}/bfbs/${schema}.bfbs
     COMMAND ${TSUGUMI_FLATC} -b --schema --bfbs-comments --bfbs-builtins
             -I ${TSUGUMI_PROTOCOL_DIR} -o ${TSUGUMI_GEN_DIR}/bfbs
             ${TSUGUMI_PROTOCOL_DIR}/${schema}.fbs
-    DEPENDS ${TSUGUMI_PROTOCOL_DIR}/${schema}.fbs ${TSUGUMI_PROTOCOL_DIR}/service_common.fbs ${TSUGUMI_PROTOCOL_DIR}/data.fbs
+    DEPENDS ${TSUGUMI_PROTOCOL_DIR}/${schema}.fbs ${TSUGUMI_PROTOCOL_DIR}/service_common.fbs ${TSUGUMI_PROTOCOL_DIR}/host.fbs ${TSUGUMI_PROTOCOL_DIR}/data.fbs
             ${TSUGUMI_PROTOCOL_DIR}/tsugumi_enums.fbs
     VERBATIM)
 endforeach()

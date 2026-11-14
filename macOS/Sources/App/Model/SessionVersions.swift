@@ -31,8 +31,6 @@ enum VersionSummarizer {
 
   static func summarize(project: AgentProject, commit: String, config: ProviderConfig) async throws -> String {
     let client = CoreAgentClient.shared
-    _ = try await client.call("RegisterProjectRequest", ["project_id": project.id, "endpoint": project.endpoint,
-      "token": project.token, "title": project.title])
     let result = try await client.call("VersionSummarizeRequest", ["project_id": project.id, "commit": commit, "provider": try await client.provider(config)])
     return clean(result["text"] as? String ?? "")
   }

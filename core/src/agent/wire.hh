@@ -41,4 +41,13 @@ template <class T> auto HostReply(uint64_t id, T value) -> std::string {
                                      Tsugumi::Host::Message::Pack(b, &message));
   return {reinterpret_cast<const char *>(b.GetBufferPointer()), b.GetSize()};
 }
+template <class T> auto HostEvent(T value) -> std::string {
+  Tsugumi::Host::EventT event;
+  event.value.Set(std::move(value));
+  Tsugumi::Host::MessageT message;
+  message.payload.Set(std::move(event));
+  flatbuffers::FlatBufferBuilder b;
+  Tsugumi::Host::FinishMessageBuffer(b, Tsugumi::Host::Message::Pack(b, &message));
+  return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
+}
 } // namespace tsugumi::agent::wire

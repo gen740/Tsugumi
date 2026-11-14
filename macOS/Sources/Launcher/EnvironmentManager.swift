@@ -1,9 +1,8 @@
 import Darwin
 import Foundation
-import Virtualization
+@_exported import TsugumiAgentClient
+import TsugumiRPC
 
-/// Steps of starting a project's environment. The raw values are internal
-/// names (shown as details); the UI says each in words.
 public enum EnvironmentStage: String, Sendable, CaseIterable {
   case vmImage = "installing the VM image"
   case vmDisk = "creating the Nix store disk"
@@ -30,422 +29,163 @@ public enum EnvironmentStage: String, Sendable, CaseIterable {
   }
 }
 
-/// Starts, finds and stops project environments in the app's one shared VM.
-///
-/// All projects run in one Linux VM (SharedVM) with one Nix store, kept as a
-/// sparse disk image in `~/Library/Application Support/Tsugumi/vm/`
-/// (`Tsugumi-dev/vm/` for builds from source, AppChannel). Each
-/// open project has its own tsugumid there (its own uid, mount and PID
-/// namespaces and cgroup; tsugumi-vmd), sees only its own folder and control
-/// folder, and stopping it never stops another project. Project documents,
-/// history and artifacts stay in the project folder; the control folder
-/// (server.ready, import grants) is `environments/<id>/control` here.
+/// Presentation and file-descriptor adapter for agentd's environment service.
 public actor EnvironmentManager {
   public nonisolated let support: URL
-  public nonisolated let vm: SharedVM
-  private let image: VMImage?
-  private nonisolated let resident: ResidentVMHost?
-  private var observingHost = false
+  public nonisolated let vm: HostRuntimeSnapshot
   public nonisolated let resources: VMResources
-  private var observers: [String: [UUID: (EnvironmentState) -> Void]] = [:]
+  private let client: CoreAgentClient
+  private let runtimeArguments: [String]
+  private var token: UUID?
   private var states: [String: EnvironmentState] = [:]
-  private var bridges: [String: LoopbackBridge] = [:]
-  private var starting: [String: Task<Endpoint, Error>] = [:]
+  private var observers: [String: [UUID: @Sendable (EnvironmentState) -> Void]] = [:]
+  private var pipes: [UInt64: TerminalPipe] = [:]
+  private var pendingOutput: [UInt64: [String: Any]] = [:]
+  public private(set) var extraFolders: [String: [String]] = [:]
+  public private(set) var allowedOrigins: [String] = []
 
-  public init(support: URL? = nil, image: VMImage? = VMImage.find(), resources: VMResources = .default, ownsVM: Bool = false) {
-    self.support = support ?? AppChannel.current.supportDirectory
-    self.image = image
-    self.resources = resources
-    resident = ownsVM ? nil : ResidentVMHost(support: self.support, image: image, resources: resources)
-    vm = SharedVM(directory: self.support.appendingPathComponent("vm", isDirectory: true))
+  public init(support: URL? = nil, image: VMImage? = VMImage.find(), resources: VMResources = .default) {
+    let support = support ?? AppChannel.current.supportDirectory
+    self.support = support; self.resources = resources
+    client = CoreAgentClient(support: support)
+    runtimeArguments = HostRuntimeConfiguration.arguments(support: support, image: image, resources: resources)
+    vm = HostRuntimeSnapshot(directory: support.appendingPathComponent("vm"))
   }
-
-  // MARK: - Paths
-
-  nonisolated var environmentsDir: URL { support.appendingPathComponent("environments", isDirectory: true) }
-  nonisolated func envDir(_ p: ProjectIdentity) -> URL { environmentsDir.appendingPathComponent(p.id, isDirectory: true) }
-  nonisolated public func controlDir(_ p: ProjectIdentity) -> URL { envDir(p).appendingPathComponent("control", isDirectory: true) }
-
-  // MARK: - Observation
-
-  public func observe(_ p: ProjectIdentity, _ handler: @escaping @Sendable (EnvironmentState) -> Void) -> UUID {
-    let id = UUID()
-    observers[p.id, default: [:]][id] = handler
-    handler(states[p.id] ?? .stopped)
+  public nonisolated func controlDir(_ project: ProjectIdentity) -> URL {
+    support.appendingPathComponent("environments/\(project.id)/control")
+  }
+  private func prepare() async {
+    guard token == nil else { return }
+    await client.configureRuntime(runtimeArguments)
+    token = await client.observeHost { [weak self] event in Task { await self?.event(event) } }
+  }
+  private func set(_ key: String, _ state: EnvironmentState) {
+    states[key] = state
+    for handler in observers[key]?.values ?? Dictionary<UUID, @Sendable (EnvironmentState) -> Void>().values { handler(state) }
+  }
+  public func observe(_ project: ProjectIdentity, _ handler: @escaping @Sendable (EnvironmentState) -> Void) async -> UUID {
+    await prepare()
+    let id = UUID(); observers[project.id, default: [:]][id] = handler
+    handler(states[project.id] ?? .stopped)
+    Task { _ = try? await environment(project, .state) }
     return id
   }
-
-  public func stopObserving(_ p: ProjectIdentity, _ token: UUID) {
-    observers[p.id]?[token] = nil
-  }
-
-  private func set(_ id: String, _ s: EnvironmentState) {
-    states[id] = s
-    for (_, h) in observers[id] ?? [:] { h(s) }
-  }
-
-  public func state(_ p: ProjectIdentity) -> EnvironmentState { states[p.id] ?? .stopped }
-
-  private func observeHost() async {
-    guard let resident, !observingHost else { return }
-    observingHost = true
-    await resident.observe { [weak self] event in
-      Task { await self?.hostEvent(event) }
+  public func stopObserving(_ project: ProjectIdentity, _ token: UUID) { observers[project.id]?[token] = nil }
+  public func state(_ project: ProjectIdentity) -> EnvironmentState { states[project.id] ?? .stopped }
+  private func adopt(_ value: [String: Any]) -> EnvironmentState {
+    let state: EnvironmentState
+    switch value["phase"] as? Tsugumi_Host_EnvironmentPhase ?? .stopped {
+    case .ready:
+      if let url = (value["endpoint"] as? String).flatMap(URL.init(string:)), let token = value["token"] as? String,
+         let id = value["project_id"] as? String, let instance = value["server_instance_id"] as? String {
+        state = .ready(Endpoint(url: url, token: token, projectId: id, serverInstanceId: instance))
+      } else { state = .failed(message: "Invalid environment endpoint", recovery: "Retry", log: "") }
+    case .starting: state = .starting(value["message"] as? String ?? "")
+    case .failed:
+      if let raw = value["startup_error_json"] as? String, let diagnostic = (try? JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String: Any], let issue = HistoryVersionMismatch(diagnostic: diagnostic) {
+        state = .incompatibleHistory(issue)
+      } else { state = .failed(message: value["message"] as? String ?? "", recovery: value["recovery"] as? String ?? "", log: value["log"] as? String ?? "") }
+    case .stopped: state = .stopped
     }
+    if let key = value["key"] as? String { set(key, state) }
+    return state
   }
-
-  private func hostEvent(_ event: [String: Any]) {
-    switch event["event"] as? String {
-    case "vmState", "console": vm.mirrorHostEvent(event)
-    case "progress":
-      if let id = event["key"] as? String, let stage = event["stage"] as? String { set(id, .starting(stage)) }
-    case "stopped":
-      if let id = event["key"] as? String { set(id, .stopped) }
+  private func event(_ event: [String: Any]) {
+    switch event["type"] as? String {
+    case "EnvironmentState": if let value = event["value"] as? [String: Any] { _ = adopt(value) }
+    case "EnvironmentProgress": if let key = event["key"] as? String { set(key, event["preparing"] as? Bool == true ? .preparing(event["stage"] as? String ?? "") : .starting(event["stage"] as? String ?? "")) }
+    case "HostRuntime": if let value = event["value"] as? [String: Any] { vm.adopt(value) }
+    case "HostTerminalData":
+      if let value = event["value"] as? [String: Any], let session = value["session"] as? UInt64 {
+        if let pipe = pipes[session] { pipe.receive(value) }
+        else if pendingOutput.count < 16 {
+          let previous = pendingOutput[session] ?? [:]
+          let bytes = (previous["data"] as? [UInt8] ?? []) + (value["data"] as? [UInt8] ?? [])
+          if bytes.count <= 65536 { pendingOutput[session] = ["data": bytes, "closed": (previous["closed"] as? Bool ?? false) || (value["closed"] as? Bool ?? false)] }
+        }
+      }
+    case "Disconnected":
+      for (key, state) in states { if case .ready = state { set(key, .reconnecting) } }
+      for pipe in pipes.values { pipe.stop() }; pipes.removeAll()
     default: break
     }
   }
-
-  // MARK: - Lifecycle
-
-  /// Returns the endpoint of a running environment, starting the VM and the
-  /// project's tsugumid when needed. Concurrent callers share one start.
-  @discardableResult
-  public func start(_ p: ProjectIdentity, archiveIncompatibleHistory: Bool = false) async throws -> Endpoint {
-    if let resident {
-      await observeHost()
-      set(p.id, .starting(EnvironmentStage.connecting.rawValue))
-      do {
-        let result = try await resident.call("start", [
-          "path": p.url.path, "origins": allowedOrigins, "folders": extraFolders[p.id] ?? [],
-          "archive_incompatible_history": archiveIncompatibleHistory,
-        ])
-        guard let url = (result["endpoint"] as? String).flatMap(URL.init(string:)),
-              let token = result["token"] as? String, let projectId = result["projectId"] as? String,
-              let serverInstanceId = result["serverInstanceId"] as? String else { throw LauncherError.notReady("VM host returned an invalid endpoint") }
-        let endpoint = Endpoint(url: url, token: token, projectId: projectId, serverInstanceId: serverInstanceId)
-        set(p.id, .ready(endpoint))
-        return endpoint
-      } catch {
-        let launcher = error as? LauncherError
-        if case .incompatibleHistory(let issue)? = launcher {
-          set(p.id, .incompatibleHistory(issue))
-        } else {
-          set(p.id, .failed(message: "\(error)", recovery: launcher?.recovery ?? "Retry the connection.", log: ""))
-        }
-        throw error
-      }
-    }
-    // A ready project is reused only while its tsugumid still runs (it may
-    // have exited or crashed since; then it is started again).
-    if case .ready(let ep) = states[p.id], bridges[p.id] != nil {
-      if let status = try? await vm.request("status", timeout: 10), status.split(separator: " ").contains(where: { $0.hasPrefix("\(p.id):") }) {
-        _ = try await vm.executionBroker.authorize(p, control: controlDir(p))
-        return ep
-      }
-      bridges[p.id]?.close()
-      bridges[p.id] = nil
-    }
-    if let t = starting[p.id] { return try await t.value }
-    let t = Task { try await self.startProject(p, archiveIncompatibleHistory: archiveIncompatibleHistory) }
-    starting[p.id] = t
-    defer { starting[p.id] = nil }
-    do {
-      let ep = try await t.value
-      set(p.id, .ready(ep))
-      return ep
-    } catch let e as LauncherError {
-      if case .incompatibleHistory(let issue) = e {
-        set(p.id, .incompatibleHistory(issue))
-      } else {
-        var log = ""
-        if case .startFailed(_, let l) = e { log = l }
-        set(p.id, .failed(message: e.description, recovery: e.recovery, log: log))
-      }
-      throw e
-    } catch {
-      set(p.id, .failed(message: "\(error)", recovery: "Retry; if it persists, quit Tsugumi and open the project again.", log: ""))
-      throw error
+  private func environment(_ project: ProjectIdentity, _ action: Tsugumi_Host_EnvironmentAction, archive: Bool = false) async throws -> EnvironmentState {
+    await prepare()
+    let reply = try await client.call("EnvironmentRequest", ["project": project.url.path, "action": action,
+      "origins": allowedOrigins, "folders": extraFolders[project.id] ?? [], "archive_incompatible_history": archive])
+    return adopt(reply)
+  }
+  @discardableResult public func start(_ project: ProjectIdentity, archiveIncompatibleHistory: Bool = false) async throws -> Endpoint {
+    switch try await environment(project, .start, archive: archiveIncompatibleHistory) {
+    case .ready(let endpoint): return endpoint
+    case .incompatibleHistory(let issue): throw LauncherError.incompatibleHistory(issue)
+    case .failed(let message, _, let log): throw LauncherError.startFailed(reason: message, log: log)
+    default: throw LauncherError.notReady("the environment is not ready")
     }
   }
-
-  private func startProject(_ p: ProjectIdentity, archiveIncompatibleHistory: Bool) async throws -> Endpoint {
-    guard let image else { throw LauncherError.imageMissing }
-    // The VM's own progress is the project's progress until it runs.
-    let first = !FileManager.default.fileExists(atPath: vm.directory.appendingPathComponent("store.img").path)
-    let token = vm.observe { [weak self] s in
-      guard case .starting(let stage) = s else { return }
-      let raw = EnvironmentStage(vmStage: stage).rawValue
-      Task { await self?.set(p.id, first ? .preparing(raw) : .starting(raw)) }
-    }
-    defer { vm.stopObserving(token) }
-    try await vm.start(image: image, resources: resources)
-
-    set(p.id, .starting(EnvironmentStage.startingDaemon.rawValue))
-    let control = controlDir(p)
-    try FileManager.default.createDirectory(at: control, withIntermediateDirectories: true)
-    // Restrict the host-side parent without changing the permissions of the
-    // control share that the project daemon uses inside the guest.
-    guard chmod(envDir(p).path, 0o700) == 0 else { throw POSIXError(.EACCES) }
-    _ = try await vm.executionBroker.authorize(p, control: control)
-    var connected = false
-    defer { if !connected { Task { try? await vm.executionBroker.revoke(p.id) } } }
-    let ready = control.appendingPathComponent("server.ready")
-    try? FileManager.default.removeItem(at: ready)
-    let startupError = control.appendingPathComponent("server.startup-error.json")
-    if FileManager.default.fileExists(atPath: startupError.path) {
-      try FileManager.default.removeItem(at: startupError)
-    }
-    let grants = control.appendingPathComponent("grants.json")
-    if !FileManager.default.fileExists(atPath: grants.path) {
-      try Data(#"{"grants":{}}"#.utf8).write(to: grants, options: .atomic)
-    }
-    try writeEnvironmentInfo(p)
-    // Folders of the Mac the project's Cards may use (Experimental), and those
-    // attached to its chats: each a share entry host-<tag>, seen only by this
-    // project (/run/tsugumi/host/<tag>); read-only unless a Card writes there.
-    var entries: [String: URL] = ["project": p.url, "control": control]
-    var readOnly: Set<String> = []
-    for f in HostFolders.wanted(project: p.url, extra: []) {
-      let name = "host-" + HostFolders.tag(f.path)
-      entries[name] = URL(fileURLWithPath: f.path, isDirectory: true)
-      if !f.write { readOnly.insert(name) }
-    }
-    // A chat's folders: read-only, apart from the Cards' (only the Agent reads them).
-    for path in extraFolders[p.id] ?? [] {
-      var isDir: ObjCBool = false
-      guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { continue }
-      let name = "chat-" + HostFolders.tag(path)
-      entries[name] = URL(fileURLWithPath: path, isDirectory: true)
-      readOnly.insert(name)
-    }
-    let shared = entries.keys.filter { $0.hasPrefix("host-") || $0.hasPrefix("chat-") }.sorted()
-    if !shared.isEmpty { vm.console.note("\(p.id): \(shared.count) folder(s) of the Mac shared (\(shared.joined(separator: ", ")))") }
-    let slot = try await vm.attach(p.id, entries, readOnly: readOnly)
-    // The share may take a moment to show new folders in the VM.
-    var started = false
-    var lastError = ""
-    let command = archiveIncompatibleHistory ? "archive-history" : "start"
-    for _ in 0..<50 {
-      do {
-        let origins = allowedOrigins.isEmpty ? "" : " " + allowedOrigins.joined(separator: ",")
-        try await vm.request("\(command) \(p.id) \(resources.cpus) \(hostName(p)) \(slot)\(origins)")
-        started = true
-        break
-      } catch {
-        lastError = "\(error)"
-        try await Task.sleep(for: .milliseconds(100))
-      }
-    }
-    guard started else { throw LauncherError.startFailed(reason: lastError, log: tsugumidLog(p)) }
-    bridges[p.id]?.close()
-    let bridge = try LoopbackBridge(vm: vm, projectId: p.id)
-    bridges[p.id] = bridge
-
-    set(p.id, .starting(EnvironmentStage.connecting.rawValue))
-    let deadline = Date().addingTimeInterval(90)
-    while Date() < deadline {
-      if let ep = try? readyEndpoint(p, port: bridge.port) {
-        connected = true
-        return ep
-      }
-      if let status = try? await vm.request("status"), !status.contains("\(p.id):") {
-        if let data = try? Data(contentsOf: startupError),
-           let details = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-           let issue = HistoryVersionMismatch(diagnostic: details) {
-          throw LauncherError.incompatibleHistory(issue)
-        }
-        throw LauncherError.startFailed(reason: "tsugumid exited during startup", log: tsugumidLog(p))
-      }
-      try await Task.sleep(for: .milliseconds(100))
-    }
-    throw LauncherError.startFailed(reason: "no readiness signal within 90 s", log: tsugumidLog(p))
+  public func stop(_ project: ProjectIdentity) async throws { _ = try await environment(project, .stop) }
+  public func setExtraFolders(_ project: ProjectIdentity, _ paths: [String]) async throws {
+    extraFolders[project.id] = paths
+    _ = try await environment(project, .folders)
   }
-
-  /// Stops the project's tsugumid (active runs are recorded as interrupted)
-  /// and nothing else; the VM and other projects keep running.
-  public func stop(_ p: ProjectIdentity) async throws {
-    if let resident {
-      _ = try await resident.call("stop", ["path": p.url.path])
-      set(p.id, .stopped)
-      return
-    }
-    if case .running = vm.state {
-      try await vm.request("stop \(p.id)")
-      await vm.detach(p.id)
-    }
-    bridges[p.id]?.close()
-    bridges[p.id] = nil
-    try await vm.executionBroker.revoke(p.id)
-    try? FileManager.default.removeItem(at: controlDir(p).appendingPathComponent("server.ready"))
-    set(p.id, .stopped)
-  }
-
-  /// Folders shared with a project besides those its Cards name (a chat's
-  /// attached folders); applied when the project's environment starts.
-  public private(set) var extraFolders: [String: [String]] = [:]
-
-  public func setExtraFolders(_ p: ProjectIdentity, _ paths: [String]) { extraFolders[p.id] = paths }
-
-  /// The web pages a project's tsugumid started from now on lets connect (the
-  /// `tsugumi` command's server). None for the app, whose client sends no Origin.
-  public private(set) var allowedOrigins: [String] = []
-
   public func setAllowedOrigins(_ origins: [String]) { allowedOrigins = origins }
-
-  /// The shared store's cleanup (an app setting): what no project's GC root
-  /// keeps. Starts the VM when it is not running.
+  private func runtime(_ action: Tsugumi_Host_RuntimeAction = .state, project: String? = nil, key: String? = nil, command: String? = nil) async throws -> [String: Any] {
+    await prepare()
+    var fields: [String: Any] = ["action": action]
+    fields["project"] = project; fields["project_id"] = key; fields["command"] = command
+    let reply = try await client.call("HostRuntimeRequest", fields)
+    vm.adopt(reply)
+    return reply
+  }
+  public func runtimeCommand(_ command: String) async throws -> String { try await runtime(.command, command: command)["message"] as? String ?? "" }
   public func cleanupStore() async throws -> (bytes: UInt64, paths: Int) {
-    if let resident {
-      await observeHost()
-      let result = try await resident.call("cleanupStore", timeout: 3600)
-      return (result["bytes"] as? UInt64 ?? 0, result["paths"] as? Int ?? 0)
-    }
-    if case .running = vm.state {} else {
-      guard let image else { throw LauncherError.imageMissing }
-      try await vm.start(image: image, resources: resources)
-    }
-    let reply = try await vm.request("gc", timeout: 3600)
-    let parts = reply.split(separator: " ")
-    return (UInt64(parts.first ?? "") ?? 0, Int(parts.dropFirst().first ?? "") ?? 0)
+    let reply = try await runtime(.cleanupstore)
+    return (reply["bytes"] as? UInt64 ?? 0, Int(reply["paths"] as? UInt32 ?? 0))
   }
-
-  /// Run history kept in the VM, per project id.
-  public struct VMHistory: Sendable, Identifiable, Hashable {
-    public let id: String
-    public let bytes: UInt64
-    public let lastStart: Date?
-    public let running: Bool
-  }
-
-  /// Lists the run histories in the VM. Starts the VM when it is not running.
+  public struct VMHistory: Sendable, Identifiable, Hashable { public let id: String; public let bytes: UInt64; public let lastStart: Date?; public let running: Bool }
   public func vmHistories() async throws -> [VMHistory] {
-    if let resident {
-      await observeHost()
-      let result = try await resident.call("histories")
-      return (result["histories"] as? [[String: Any]] ?? []).compactMap { row in
-        guard let id = row["id"] as? String, let bytes = row["bytes"] as? UInt64 else { return nil }
-        return VMHistory(id: id, bytes: bytes, lastStart: (row["lastStart"] as? Double).map(Date.init(timeIntervalSince1970:)), running: row["running"] as? Bool ?? false)
-      }
-    }
-    if case .running = vm.state {} else {
-      guard let image else { throw LauncherError.imageMissing }
-      try await vm.start(image: image, resources: resources)
-    }
-    let reply = try await vm.request("histories")
-    return reply.split(separator: " ").compactMap { item in
-      let f = item.split(separator: ":")
-      guard f.count == 4, let bytes = UInt64(f[1]), let ms = Int64(f[2]) else { return nil }
-      return VMHistory(id: String(f[0]), bytes: bytes, lastStart: ms > 0 ? Date(timeIntervalSince1970: Double(ms) / 1000) : nil,
-                       running: f[3] == "1")
+    let reply = try await runtime(.histories)
+    return (reply["histories"] as? [[String: Any]] ?? []).compactMap { row in
+      guard let id = row["id"] as? String else { return nil }
+      let ms = row["last_start_ms"] as? Int64 ?? 0
+      return VMHistory(id: id, bytes: row["bytes"] as? UInt64 ?? 0, lastStart: ms > 0 ? Date(timeIntervalSince1970: Double(ms) / 1000) : nil, running: row["running"] as? Bool ?? false)
     }
   }
-
-  /// Deletes a stopped project's data in the VM by id (its run history and
-  /// build roots), also for a project whose folder is gone.
-  public func deleteVMData(id: String) async throws {
-    if let resident { _ = try await resident.call("deleteVMData", ["projectId": id]); return }
-    guard case .running = vm.state else { throw LauncherError.notReady("the VM is not running") }
-    let status = try await vm.request("status")
-    if status.split(separator: " ").contains(where: { $0.hasPrefix("\(id):") }) {
-      throw LauncherError.notReady("the project is running; close it first")
-    }
-    _ = try await vm.request("forget \(id)")
-  }
-
-  /// Deletes the project's environment data: its control folder, its build
-  /// roots in the shared store (the builds become garbage) and its run
-  /// history in the VM. Documents, artifacts and the run history copy in the
-  /// project folder (.tsugumi/runs.sqlite) stay.
-  public func deleteData(_ p: ProjectIdentity) async throws {
-    if let resident { _ = try await resident.call("deleteData", ["path": p.url.path]); set(p.id, .stopped); return }
-    try await stop(p)
-    if case .running = vm.state { try await vm.request("forget \(p.id)") }
-    try removeFolder(envDir(p))
-  }
-
-  /// A terminal in the project's environment (its uid and namespaces, in
-  /// /project): the returned socket carries the terminal's bytes both ways.
-  public func openTerminal(_ p: ProjectIdentity, rows: Int, cols: Int) async throws -> (fd: Int32, session: UInt64) {
-    if let resident { return try await resident.terminal(p, rows: rows, cols: cols) }
-    guard case .running = vm.state, bridges[p.id] != nil else { throw LauncherError.notReady("the project's environment is not running") }
-    let fd = try await vm.connect(port: SharedVM.controlPort)
-    do {
-      try writeAll(fd, Data("shell \(p.id) \(max(rows, 2)) \(max(cols, 10))\n".utf8))
-      let reply = readLine(fd)
-      guard reply.hasPrefix("ok "), let sid = UInt64(reply.dropFirst(3)) else {
-        throw LauncherError.notReady(reply.hasPrefix("error ") ? String(reply.dropFirst(6)) : "no terminal")
-      }
-      return (fd, sid)
-    } catch {
-      close(fd)
-      throw error
-    }
-  }
-
-  public nonisolated func resizeTerminal(session: UInt64, rows: Int, cols: Int) async {
-    if let resident { _ = try? await resident.call("resize", ["session": session, "rows": rows, "cols": cols], timeout: 5); return }
-    _ = try? await vm.request("resize \(session) \(max(rows, 2)) \(max(cols, 10))", timeout: 5)
-  }
-
-  /// Explicitly stops every project and the VM; closing a UI does not call this.
-  public func shutdown() async {
-    if let resident { _ = try? await resident.call("shutdown"); return }
-    for (_, b) in bridges { b.close() }
-    bridges.removeAll()
-    await vm.shutdown()
-    for id in states.keys { set(id, .stopped) }
-  }
-
-  /// What `resetAll` removed.
-  public struct ResetReport: Sendable {
-    public var environments = 0
-    public var vmRemoved = false
-    public init() {}
-  }
-
-  /// Stops the VM and removes the shared store, the VM image copy and every
-  /// project's control folder. Project folders are not touched. The next
-  /// start sets everything up anew.
+  public func deleteVMData(id: String) async throws { _ = try await runtime(.deletehistory, key: id) }
+  public func deleteData(_ project: ProjectIdentity) async throws { _ = try await runtime(.deleteenvironment, project: project.url.path) }
+  public func shutdown() async { _ = try? await runtime(.shutdown) }
+  public struct ResetReport: Sendable { public var environments = 0; public var vmRemoved = false; public init() {} }
   public func resetAll() async throws -> ResetReport {
-    if let resident {
-      let result = try await resident.call("resetAll")
-      await resident.disconnect()
-      if let pid = result["hostPid"] as? Int32, pid > 1 {
-        let deadline = Date().addingTimeInterval(5)
-        while kill(pid, 0) == 0 {
-          guard Date() < deadline else { throw LauncherError.notReady("the VM host has not finished resetting") }
-          try await Task.sleep(for: .milliseconds(20))
-        }
-      }
-      var report = ResetReport()
-      report.environments = result["environments"] as? Int ?? 0
-      report.vmRemoved = result["vmRemoved"] as? Bool ?? false
-      return report
-    }
-    var report = ResetReport()
-    await shutdown()
-    // The run history disk stays: projects keep their runs across a reset.
-    let items = (try? FileManager.default.contentsOfDirectory(atPath: vm.directory.path)) ?? []
-    for item in items where item != vm.historyImage.lastPathComponent {
-      try removeFolder(vm.directory.appendingPathComponent(item))
-      report.vmRemoved = true
-    }
-    let envs = (try? FileManager.default.contentsOfDirectory(atPath: environmentsDir.path)) ?? []
-    for id in envs where !id.hasPrefix(".") {
-      try removeFolder(environmentsDir.appendingPathComponent(id))
-      report.environments += 1
-    }
-    return report
+    let reply = try await runtime(.reset)
+    var report = ResetReport(); report.environments = Int(reply["environments"] as? UInt32 ?? 0); report.vmRemoved = reply["vm_removed"] as? Bool ?? false; return report
   }
-
-  /// Registers a read-only snapshot of an external project for ProjectImport.
-  /// The copy is fixed at this moment; core only reads granted copies.
+  public struct SetupStatus: Sendable, Equatable {
+    public var virtualizationSupported = false; public var imageAvailable = false; public var imageVersion: String?
+    public var ready: Bool { virtualizationSupported && imageAvailable }; public init() {}
+  }
+  public func setupStatus() async -> SetupStatus {
+    var status = SetupStatus()
+    if let reply = try? await runtime() { status.virtualizationSupported = reply["virtualization_supported"] as? Bool ?? false; status.imageAvailable = reply["image_available"] as? Bool ?? false; status.imageVersion = reply["image_version"] as? String }
+    return status
+  }
+  public func openTerminal(_ project: ProjectIdentity, rows: Int, cols: Int) async throws -> (fd: Int32, session: UInt64) {
+    return try await openTerminal(id: project.url.path, rows: rows, cols: cols)
+  }
+  public func openTerminal(id: String, rows: Int, cols: Int) async throws -> (fd: Int32, session: UInt64) {
+    await prepare()
+    let reply = try await client.call("HostTerminalRequest", ["action": Tsugumi_Host_TerminalAction.open_, "project": id, "rows": rows, "cols": cols])
+    guard let session = reply["session"] as? UInt64 else { throw LauncherError.notReady("invalid terminal session") }
+    let pipe = try TerminalPipe(client: client, session: session) { [weak self] in Task { await self?.removeTerminal(session) } }
+    pipes[session] = pipe
+    if let value = pendingOutput.removeValue(forKey: session) { pipe.receive(value) }
+    return (pipe.local, session)
+  }
+  private func removeTerminal(_ session: UInt64) { pipes[session] = nil }
+  public func resizeTerminal(session: UInt64, rows: Int, cols: Int) async {
+    _ = try? await client.call("HostTerminalRequest", ["action": Tsugumi_Host_TerminalAction.resize, "session": session, "rows": rows, "cols": cols])
+  }
   public func grantImport(_ p: ProjectIdentity, source: URL) async throws -> String {
-    if let resident {
-      let result = try await resident.call("grantImport", ["path": p.url.path, "source": source.path])
-      guard let grant = result["grant"] as? String else { throw LauncherError.notReady("VM host returned an invalid grant") }
-      return grant
-    }
     let grant = UUID().uuidString.lowercased()
     let control = controlDir(p)
     let dest = control.appendingPathComponent("grants/\(grant)", isDirectory: true)
@@ -463,63 +203,31 @@ public actor EnvironmentManager {
     return grant
   }
 
-  // MARK: - Initial setup
+}
 
-  /// What the Mac needs before projects can start.
-  public struct SetupStatus: Sendable, Equatable {
-    public var virtualizationSupported = false
-    public var imageAvailable = false
-    public var imageVersion: String?
-    public var ready: Bool { virtualizationSupported && imageAvailable }
-    public init() {}
+/// Runtime state and console presentation; it has no VM control methods.
+public final class HostRuntimeSnapshot: @unchecked Sendable {
+  public let directory: URL
+  public let console = ConsoleLog()
+  private let lock = NSLock()
+  private var current: SharedVM.State = .stopped
+  private var observers: [UUID: @Sendable (SharedVM.State) -> Void] = [:]
+  public init(directory: URL) { self.directory = directory }
+  public var state: SharedVM.State { lock.withLock { current } }
+  public func observe(_ handler: @escaping @Sendable (SharedVM.State) -> Void) -> UUID {
+    let token = UUID(); let state = lock.withLock { observers[token] = handler; return current }; handler(state); return token
   }
-
-  public func setupStatus() -> SetupStatus {
-    var s = SetupStatus()
-    s.virtualizationSupported = VZVirtualMachine.isSupported
-    s.imageAvailable = image != nil
-    s.imageVersion = image?.version
-    return s
-  }
-
-  // MARK: - Helpers
-
-  /// The project's name for the VM's host name (prompt of its terminal).
-  private nonisolated func hostName(_ p: ProjectIdentity) -> String {
-    let name = p.url.lastPathComponent.map { c -> Character in
-      c.isASCII && (c.isLetter || c.isNumber || c == "-") ? c : "-"
+  public func stopObserving(_ token: UUID) { lock.withLock { observers[token] = nil } }
+  func adopt(_ value: [String: Any]) {
+    let state: SharedVM.State
+    switch value["vm_state"] as? String {
+    case "running": state = .running
+    case "starting": state = .starting(SharedVM.Stage(rawValue: value["stage"] as? String ?? "") ?? .boot)
+    case "failed": state = .failed(value["message"] as? String ?? "")
+    default: state = .stopped
     }
-    let s = String(name).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-    return s.isEmpty ? "project" : String(s.prefix(40))
-  }
-
-  private nonisolated func tsugumidLog(_ p: ProjectIdentity) -> String {
-    let url = controlDir(p).appendingPathComponent("tsugumid.log")
-    let text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-    return String(text.suffix(4000))
-  }
-
-  private nonisolated func removeFolder(_ url: URL) throws {
-    guard FileManager.default.fileExists(atPath: url.path) else { return }
-    do { try FileManager.default.removeItem(at: url) } catch {
-      throw LauncherError.deleteFailed(what: url.path, log: "\(error)")
-    }
-  }
-
-  private nonisolated func writeEnvironmentInfo(_ p: ProjectIdentity) throws {
-    let info: [String: Any] = ["project": p.url.path, "id": p.id]
-    try JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted, .sortedKeys])
-      .write(to: envDir(p).appendingPathComponent("environment.json"), options: .atomic)
-  }
-
-  private nonisolated func readyEndpoint(_ p: ProjectIdentity, port: Int) throws -> Endpoint {
-    let url = controlDir(p).appendingPathComponent("server.ready")
-    let data = try Data(contentsOf: url)
-    guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let token = obj["token"] as? String, let pid = obj["project_id"] as? String,
-          let sid = obj["server_instance_id"] as? String else {
-      throw LauncherError.notReady("server.ready is incomplete")
-    }
-    return Endpoint(url: URL(string: "ws://127.0.0.1:\(port)/rpc")!, token: token, projectId: pid, serverInstanceId: sid)
+    let handlers = lock.withLock { current = state; return Array(observers.values) }
+    for handler in handlers { handler(state) }
+    for line in value["console"] as? [String] ?? [] { _ = console.feed(Data((line + "\n").utf8)) }
   }
 }

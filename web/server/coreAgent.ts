@@ -9,7 +9,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { Environments } from './env'
+import type { Environments, HostEvent } from './environment'
 import { ToolCatalog, type ProviderConfig, type AgentEvent, type Conversation } from './agent'
 import { BFBS } from '../src/shared/bfbs'
 
@@ -70,6 +70,7 @@ class Connection {
           if (input.length < length + 4) break
           const reply = decodeReply(input.subarray(4, 4 + length), this.hostContract)
           input = input.subarray(4 + length)
+          if (reply.event) { this.host.event(reply.event); continue }
           if (reply.id > this.nextId || reply.id === 0n) throw new Error('Invalid service request ID')
           const p = this.waiting.get(reply.id)
           if (!p) continue // A late reply after its deadline.
@@ -100,7 +101,7 @@ class Connection {
       const timer = setTimeout(() => {
         this.waiting.delete(requestId)
         reject(new Error('Service request timed out'))
-      }, 120_000)
+      }, method === 'EnvironmentRequest' || method === 'HostRuntimeRequest' ? 3_600_000 : 120_000)
       timer.unref()
       this.waiting.set(requestId, { resolve, reject, timer })
       this.socket!.write(frame)
@@ -130,6 +131,12 @@ export class CoreAgentHost {
   }
   readonly external = new Connection(this, true)
   private projects = new Map<string, string>()
+  private hostListeners = new Set<(event: HostEvent) => void>()
+  observeHost(fn: (event: HostEvent) => void) {
+    this.hostListeners.add(fn)
+    return () => this.hostListeners.delete(fn)
+  }
+  event(event: HostEvent) { for (const listener of this.hostListeners) listener(event) }
   private api?: ToolCatalog
 
   constructor(readonly support: string, here: string, readonly envs: Environments) {
@@ -162,7 +169,7 @@ export class CoreAgentHost {
       const socketDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-agent-'))
       fs.chmodSync(socketDir, 0o700)
       const child = spawn(this.binary, ['--state-dir', this.state, '--unix', path.join(socketDir, 'agent.sock'),
-        '--listen', '127.0.0.1:0', '--demos-dir', this.demoRoot], { detached: true, stdio: ['ignore', log, log] })
+        '--listen', '127.0.0.1:0', '--demos-dir', this.demoRoot, ...(this.envs.agentArguments ?? [])], { detached: true, stdio: ['ignore', log, log] })
       fs.closeSync(log)
       child.unref()
       let error: Error | undefined
@@ -190,8 +197,6 @@ export class CoreAgentHost {
   async project(folder: string): Promise<string> {
     const state = await this.envs.start(folder)
     if (state.state !== 'ready') throw new Error(state.state === 'failed' ? state.message : 'Project core is not ready')
-    await this.user.call('RegisterProjectRequest', { project_id: state.projectId,
-      endpoint: state.unix ? `unix:${state.unix}` : state.endpoint, token: state.token, title: path.basename(folder), path: folder })
     this.projects.set(folder, state.projectId)
     return state.projectId
   }

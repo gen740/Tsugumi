@@ -3,7 +3,7 @@
 # shared Linux VM of the desktop app. The same VM, store, control folders,
 # recent projects and settings as the release app (docs/WebUI.md).
 #
-#   tsugumi [project folder]   opens the Web UI; Ctrl-C stops it and the VM
+#   tsugumi [project folder]   opens the Web UI; Ctrl-C stops the Web host; projects keep running
 #   tsugumi update             puts the latest release in place
 #   tsugumi uninstall [--yes]   previews removal; --yes removes the command
 set -eu

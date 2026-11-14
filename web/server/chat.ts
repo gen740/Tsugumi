@@ -7,7 +7,7 @@ import { AGENT, modelChoices } from '../src/shared/agentShared'
 import { type AgentEvent, guideText, type ProviderConfig } from './agent'
 import { CoreAgentHost, CoreAgentError, RemoteAgent } from './coreAgent'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
-import { Environments, projectKey } from './env'
+import { Environments, projectKey } from './environment'
 import { L, language, setLanguage, type Language } from './i18n'
 
 export interface ChatContext {
@@ -465,6 +465,10 @@ async function turnAgent(b: any) {
 }
 
 // The same authenticated host connection also serves Home's project requests.
+export function observeHost(handler: (event: import('./environment').HostEvent) => void) {
+  return core.observeHost(handler)
+}
+
 export function hostRequest<T = any>(method: string, fields: unknown = {}): Promise<T> {
   return core.user.call<T>(method, fields)
 }

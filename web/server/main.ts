@@ -1,7 +1,5 @@
-// Tsugumi web UI host server: serves the UI, starts one tsugumid per project
-// on this host, and hosts the Agent. The browser talks to tsugumid directly
-// over its WebSocket RPC; this server only does what a page cannot (files,
-// processes, the model API key).
+// Browser HTTP/SSE host. agentd owns project environments and Agent execution;
+// this process serves the page and adapts authenticated Host requests.
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import fs from 'node:fs'
@@ -13,9 +11,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { IPty } from 'node-pty'
 import { AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir } from './paths'
-import { cancelChats, chatRoutes, chatStatus, hostRequest } from './chat'
-import { EnvironmentManager, Environments, EnvState, projectKey } from './env'
-import { VMEnvironmentManager, VMTerminal } from './vm'
+import { cancelChats, chatRoutes, chatStatus, hostRequest, observeHost } from './chat'
+import { EnvironmentManager, Environments, EnvState, projectKey } from './environment'
+import type { VMHostOptions, VMTerminal } from './environment'
 import { L, language } from './i18n'
 import { CoreAgentError } from './coreAgent'
 import { hostProjectErrorText } from './hostProjects'
@@ -68,7 +66,7 @@ const launchProject = argv.filter((a, i) => !a.startsWith('--') && argv[i - 1] !
 const build = process.env.TSUGUMI_BUILD_DIR ?? path.join(repo, 'build')
 const bins = {
   tsugumid: process.env.TSUGUMID ?? path.join(build, 'core', 'tsugumid'),
-  worker: process.env.TSUGUMI_WORKER ?? path.join(build, 'sdk', 'tsugumi-worker'),
+  worker: process.env.TSUGUMI_WORKER ?? path.join(build, 'workerd', 'tsugumi-worker'),
   sdkDir: process.env.TSUGUMI_SDK_DIR ?? path.join(repo, 'sdk'),
 }
 const support = webDataDir()
@@ -79,19 +77,13 @@ const publicDir = path.join(here, 'public')
 
 let origins: string[] = []
 // The Mac's tsugumi command (cli/tsugumi): the desktop app's shared VM and settings.
-const vm = process.env.TSUGUMI_VMHOST
-  ? new VMEnvironmentManager({
-      host: process.env.TSUGUMI_VMHOST,
-      image: process.env.TSUGUMI_VM_IMAGE!,
-      source: process.env.TSUGUMI_VM_SOURCE!,
-      support: process.env.TSUGUMI_SUPPORT_DIR!,
-    }, () => origins)
-  : undefined
+const vm: VMHostOptions | undefined = process.env.TSUGUMI_VMHOST ? {
+  host: process.env.TSUGUMI_VMHOST, image: process.env.TSUGUMI_VM_IMAGE!,
+  source: process.env.TSUGUMI_VM_SOURCE!, support: process.env.TSUGUMI_SUPPORT_DIR!,
+} : undefined
 const desktop = !!vm
-const envs: Environments = vm ?? new EnvironmentManager(bins, support, () => origins,
-  !vm ? async (project, folder, control) => hostRequest('ExecutionProjectAuthorizeRequest', {
-    project_id: project, path: folder, control_dir: control,
-  }) : undefined, !vm ? async (project) => { await hostRequest('ExecutionProjectRevokeRequest', { project_id: project }) } : undefined)
+const envs = new EnvironmentManager(bins, support, () => origins,
+  (method, fields) => hostRequest(method, fields), (handler) => observeHost(handler), vm)
 
 // ---- Small JSON stores -----------------------------------------------------------
 
@@ -225,7 +217,7 @@ async function startTerminal(project: string, cols: unknown, rows: unknown) {
   // In the VM the project's own shell, as in the app's terminal (no node-pty there).
   const shell = vm ? '/bin/bash' : [process.env.SHELL, '/bin/bash', '/bin/sh'].find((s) => s && fs.existsSync(s))!
   const proc: IPty | VMTerminal = vm
-    ? await vm.terminal(project, terminalSize(cols, 80), terminalSize(rows, 24))
+    ? await envs.terminal(project, terminalSize(cols, 80), terminalSize(rows, 24))
     : (await loadPty()).spawn(shell, ['-l'], {
         name: 'xterm-256color', cwd: project, cols: terminalSize(cols, 80), rows: terminalSize(rows, 24),
         env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', TSUGUMI_PROJECT: project } as Record<string, string>,
@@ -259,7 +251,7 @@ let building: { log: string; running: boolean; code?: number } | undefined
 function setupStatus() {
   // In the VM, Tsugumi is built there on its first boot: nothing to do on this host.
   if (vm) {
-    const ok = { path: vm.options.host, ok: true }
+    const ok = { path: vm.host, ok: true }
     return { tsugumid: ok, worker: ok, sdk: ok, nix: { ok: true }, repo, building: null }
   }
   const has = (p: string) => fs.existsSync(p)
@@ -385,7 +377,7 @@ const routes: Record<string, Handler> = {
   'POST /api/env/start': async (b) => publicState(await envs.start(projectDir(b.path))),
   'POST /api/env/archive-history': async (b) => {
     const dir = projectDir(b.path)
-    const state = envs.state(dir)
+    const state = await envs.state(dir)
     if (state.state !== 'failed' || !state.historyVersionMismatch) return publicState(state)
     return publicState(await envs.start(dir, true))
   },
@@ -581,7 +573,7 @@ server.on('listening', () => {
   origins = [`http://127.0.0.1:${p}`, `http://localhost:${p}`]
   const url = `http://127.0.0.1:${p}/?key=${key}` + (launchProject ? `&project=${encodeURIComponent(launchProject)}` : '')
   console.log(`Tsugumi web UI: ${url}`)
-  if (vm) console.log(`  VM:       ${path.join(vm.options.support, 'vm')}`)
+  if (vm) console.log(`  VM:       ${path.join(vm.support, 'vm')}`)
   else console.log(`  tsugumid: ${bins.tsugumid}${fs.existsSync(bins.tsugumid) ? '' : ' (missing: build the core first)'}`)
   console.log(`  data:     ${support}`)
   // For local clients of this user (the Claude Code plugin's MCP server): how
