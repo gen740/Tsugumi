@@ -136,7 +136,7 @@ in { run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }
 RECEIPT = REPORT.replace('report:Location', 'receipt:Location').replace('"directory"', '"file"')
 FILE_CARD = '''using System; using System.IO; using System.Threading.Tasks; using Tsugumi;
 public sealed class Card : ICard {
- public ValueTask<Outputs> RunAsync(Inputs inputs, Run run) {
+ public ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) {
         var result = new Outputs();
   if (inputs.InputKind("report") != PortKind.Directory) throw new Exception("wrong port kind");
   string data = File.ReadAllText(Path.Combine(inputs.Report.Value, "values.txt"));
@@ -147,6 +147,47 @@ public sealed class Card : ICard {
  }
 }
 '''
+
+# These methods compile because ICard has default implementations, but none
+# implements a supported entry point. Keep their rejection actionable.
+INVALID_ENTRIES = [
+    ("skipped-report", "public ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
+     ["Card.RunAsync(Tsugumi.Inputs inputs, Tsugumi.Run run)", "parameter 2: expected Tsugumi.Report, found Tsugumi.Run"]),
+    ("static", "public static ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
+     ["public static", "must be an instance method"]),
+    ("private", "private ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
+     ["private instance", "must be public"]),
+    ("task", "public Task<Outputs> RunAsync(Inputs inputs, Run run) => Task.FromResult(new Outputs());",
+     ["Task<Tsugumi.Outputs>", "return type: expected System.Threading.Tasks.ValueTask<Tsugumi.Outputs>"]),
+    ("typed-output", "public ValueTask<Other.Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Other.Outputs());",
+     ["ValueTask<Other.Outputs>", "return type: expected System.Threading.Tasks.ValueTask<Tsugumi.Outputs>"]),
+    ("foreign-input", "public ValueTask<Outputs> RunAsync(Other.Inputs inputs) => ValueTask.FromResult(new Outputs());",
+     ["Other.Inputs inputs", "parameter 1: expected Tsugumi.Inputs, found Other.Inputs"]),
+    ("missing", "", ["no RunAsync methods"]),
+]
+
+
+@pytest.mark.parametrize("name, method, expected", INVALID_ENTRIES, ids=[entry[0] for entry in INVALID_ENTRIES])
+def test_invalid_entry_names_the_candidate_and_rejection(tmp_path, name, method, expected):
+    root = tmp_path / name
+    source = ("using Tsugumi; using System.Threading.Tasks; public sealed class Card : ICard {" + method
+              + "} namespace Other { public class Inputs {} public class Outputs {} }")
+    write_project(root, {"bad": {"card": {"language": "csharp", "inputs": [{"name": "start"}]},
+                                "nix": NIX, "src": {"Card.cs": source}}}, [("start", "out", "bad", "start")])
+    env, c = open_environment(root, "tsugumi-test-csharp-entry")
+    try:
+        rid, status = run_and_wait(c, "start", timeout=2400)
+        assert status.state == RunState.failed
+        failure = c.call("RunRecordRequest", runId=rid, card=path("bad")).status.failure
+        assert failure.kind == FailureKind.worker_failed
+        diagnostic = text(failure.diagnostic)
+        assert "Found:" in diagnostic
+        for detail in expected:
+            assert detail in diagnostic, diagnostic
+    finally:
+        c.close()
+        env.cleanup()
+
 
 def open_environment(root, name):
     env = real_environment(root, name) if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1" else Daemon(root).start()

@@ -41,6 +41,8 @@ public sealed class Card : ICard {
 
 The exact types come from the resolved Card contract: `inputs.<port>.<namespace>.<Table>T`, `outputs.<port>.<namespace>.<Table>T`, and `params.ParamsT`. Optional ports return nullable objects; check them before use. Scalar parameters are nullable, so choose a fallback or report a missing value explicitly. C# namespaces use verbatim identifiers when needed (`@params`). Unions use FlatBuffers' generated union object API. Core validation still checks every emitted message.
 
+Implement an instance `ICard.RunAsync` returning exactly `ValueTask<Tsugumi.Outputs>`, using this Card's generated types. Trailing roles may be omitted, but requesting `Run` requires `(Inputs inputs, Report report, Run run)`. A method with a different signature can compile without implementing the interface's entry point; the runtime diagnostic lists the candidates and why they were rejected.
+
 `inputs.Input(port)` exposes an owned `Google.FlatBuffers.ByteBuffer` for direct generated-table access. Return typed properties on `Outputs`, or finished bytes in its dictionary (`new Outputs { ["port"] = builder.SizedByteArray() }`). The adapter emits the returned result after awaiting `RunAsync`. For repeated or incremental results, return `Outputs.Stream(IAsyncEnumerable<Outputs>)`; each yielded batch is sent before advancing the iterator. File/Directory properties contain their path messages, including files written beneath `run.OutputDirectory`.
 
 
