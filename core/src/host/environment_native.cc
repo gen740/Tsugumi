@@ -1,5 +1,6 @@
 #include <fcntl.h>
 #include <poll.h>
+#include <pwd.h>
 #include <signal.h>
 #include <spawn.h>
 #include <sys/socket.h>
@@ -8,6 +9,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
@@ -17,24 +19,47 @@
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "util/crypto.hh"
 
-extern char** environ;
-
 namespace tsugumi::host {
 namespace {
 using namespace std::chrono_literals;
 class NativeProcess final : public EnvironmentProcess {
  public:
   auto Launch(const EnvironmentLaunch& launch) -> int64_t override {
-    std::vector<char*> arguments;
-    for (const auto& argument : launch.arguments)
-      arguments.push_back(const_cast<char*>(argument.c_str()));
+    std::vector<char *> arguments;
+    for (const auto &argument : launch.arguments)
+      arguments.push_back(const_cast<char *>(argument.c_str()));
     arguments.push_back(nullptr);
-    std::vector<std::string> environment;
-    for (auto** item = environ; *item; ++item) {
-      std::string value(*item);
-      if (!value.starts_with("TSUGUMI_EXECUTION_BROKER=") &&
-          !value.starts_with("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE="))
-        environment.push_back(std::move(value));
+    // Project runtime values come from the OS and fixed installation paths.
+    // The VM helper additionally receives only its named startup options.
+    passwd user{};
+    passwd *found = nullptr;
+    std::vector<char> buffer(16384);
+    if (::getpwuid_r(::getuid(), &user, buffer.data(), buffer.size(), &found) ||
+        !found)
+      throw std::runtime_error("Cannot determine the project process home");
+    const std::string home = user.pw_dir;
+    std::vector<std::string> environment = {
+        "HOME=" + home, "TMPDIR=/tmp", "LANG=C.UTF-8",
+        "PATH=" + home +
+            "/.nix-profile/bin:/nix/var/nix/profiles/default/bin:"
+            "/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin"};
+    if (launch.vm_helper) {
+      for (const auto *name :
+           {"TSUGUMI_VM_X86", "TSUGUMI_VM_CMDLINE", "TSUGUMI_PY_BINDINGS",
+            "TSUGUMID", "TSUGUMI_WORKER", "TSUGUMI_SDK_DIR", "HOST_LOG",
+            "HOST_BUSY", "HOST_PID"}) {
+        if (const auto *value = std::getenv(name))
+          environment.push_back(std::string(name) + "=" + value);
+      }
+    }
+    for (const auto *certificate :
+         {"/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem",
+          "/nix/var/nix/profiles/default/etc/ssl/certs/ca-bundle.crt"}) {
+      if (::access(certificate, R_OK) == 0) {
+        environment.push_back(std::string("SSL_CERT_FILE=") + certificate);
+        environment.push_back(std::string("NIX_SSL_CERT_FILE=") + certificate);
+        break;
+      }
     }
     if (launch.authorization.available) {
       environment.push_back("TSUGUMI_EXECUTION_BROKER=" +
@@ -42,8 +67,9 @@ class NativeProcess final : public EnvironmentProcess {
       environment.push_back("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE=" +
                             launch.authorization.capability_file);
     }
-    std::vector<char*> env;
-    for (auto& value : environment) env.push_back(value.data());
+    std::vector<char *> env;
+    for (auto &value : environment)
+      env.push_back(value.data());
     env.push_back(nullptr);
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);

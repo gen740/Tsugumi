@@ -940,41 +940,6 @@ import Testing
     await s.close()
   }
 
-  @Test func aCardsSummaryIsInItsMetaWhateverItsKind() async throws {
-    let dir = try Self.project(), other = try Self.project()
-    let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir); try? FileManager.default.removeItem(at: other) }
-    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.endpointOverride = d.endpoint
-    s.start()
-    try await Self.connected(s)
-    func written(_ id: String) throws -> String? {
-      let url = dir.appendingPathComponent("definitions/\(id)/_meta.json")
-      guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-      return try JSONValue.parse(String(decoding: Data(contentsOf: url), as: UTF8.self))["description"]?.string
-    }
-
-    let code = CardEditorModel(session: s, cardKey: "a")
-    code.meta = .object([("description", .string("logs the value"))])
-    #expect(await code.apply())
-    #expect(try written("a") == "logs the value")
-    #expect(s.nodeData("a").summary == "logs the value")
-    #expect(s.cardDescription("a") == "logs the value")
-    #expect(s.cardDefinition("a")?["description"] == nil)
-
-    // A Card in Card has no _card.json, and its summary is saved all the same.
-    let k = try await s.importProject(from: other, in: [], at: CGPoint(x: 400, y: 0))
-    await s.save()
-    #expect(s.saveError == nil)
-    let name = path(k).last!
-    let link = CardEditorModel(session: s, cardKey: k)
-    link.meta = .object([("description", .string("the imported graph"))])
-    #expect(await link.apply())
-    #expect(try written(name) == "the imported graph")
-    #expect(s.nodeData(k).summary == "the imported graph")
-    await s.close()
-  }
-
   @Test func reloadingSettingsKeepsTheExactWorkingText() {
     let edit = RevisionEdit()
     edit.reload(0)

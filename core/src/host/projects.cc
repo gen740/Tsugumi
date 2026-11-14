@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 
 #include "agent/json.hh"
 #include "agent/wire.hh"
@@ -91,26 +92,94 @@ auto Prepare(const f::path& destination) -> bool {
   return true;
 }
 
-auto Copy(const f::path& source, const f::path& destination) -> void {
-  // Do not traverse links or bring repository identity and run state along.
-  for (const auto& entry : f::directory_iterator(source)) {
+// Both duplication and import use this traversal. Hidden definition files
+// are source data; only repository identity, run state and links are excluded.
+template <typename Directory, typename File>
+auto WalkProject(const f::path &source, const f::path &relative,
+                 const Directory &directory, const File &file) -> void {
+  std::vector<f::directory_entry> entries;
+  for (const auto &entry : f::directory_iterator(source))
+    entries.push_back(entry);
+  std::sort(entries.begin(), entries.end(), [](const auto &a, const auto &b) {
+    return a.path().filename() < b.path().filename();
+  });
+  for (const auto &entry : entries) {
     const auto name = entry.path().filename();
-    if (name == ".tsugumi" || name == ".git" || entry.is_symlink()) continue;
-    const auto target = destination / name;
+    if (name == ".tsugumi" || name == ".git" || entry.is_symlink())
+      continue;
+    const auto rel = relative / name;
     if (entry.is_directory()) {
-      f::create_directory(target);
-      Copy(entry.path(), target);
+      directory(rel);
+      WalkProject(entry.path(), rel, directory, file);
     } else if (entry.is_regular_file()) {
-      f::copy_file(entry.path(), target);
-      f::permissions(target,
-                     entry.status().permissions() | f::perms::owner_write);
+      file(entry.path(), rel);
     }
   }
+}
+
+auto Copy(const f::path &source, const f::path &destination) -> void {
+  WalkProject(
+      source, {},
+      [&](const auto &rel) {
+        f::create_directory(destination / rel);
+        f::permissions(destination / rel, f::perms::owner_all,
+                       f::perm_options::add);
+      },
+      [&](const auto &path, const auto &rel) {
+        f::copy_file(path, destination / rel);
+        f::permissions(destination / rel,
+                       f::status(path).permissions() | f::perms::owner_write);
+      });
   f::permissions(destination, f::perms::owner_all, f::perm_options::add);
 }
 
+auto ReadProject(const A::HostProjectReadRequest &request) -> A::ProjectFilesT {
+  const auto root = f::canonical(Path(Text(request.path())));
+  Info(root);
+  A::ProjectFilesT result;
+  result.name = root.filename().string();
+  constexpr uint64_t kLimit = 64 << 20;
+  constexpr uint64_t kChunk = 1 << 20;
+  uint64_t total = 0;
+  std::vector<f::path> paths;
+  WalkProject(
+      root, {}, [](const auto &) {},
+      [&](const auto &path, const auto &rel) {
+        const auto size = f::file_size(path);
+        if (size > kLimit - total || paths.size() >= 65536)
+          throw ProjectFailure("project_too_large",
+                               "The project exceeds the import limit");
+        total += size;
+        paths.push_back(rel);
+      });
+  const auto index = request.file_index();
+  if (index >= paths.size())
+    throw ProjectFailure("invalid_request", "Invalid project import cursor");
+  const auto size = f::file_size(root / paths[index]);
+  if (request.offset() > size)
+    throw ProjectFailure("project_io_error",
+                         "A project file changed while reading");
+  auto file = std::make_unique<A::ProjectFileT>();
+  file->path = paths[index].generic_string();
+  file->bytes.resize(std::min(kChunk, size - request.offset()));
+  std::ifstream input(root / paths[index], std::ios::binary);
+  input.seekg(request.offset());
+  if (!input.read(reinterpret_cast<char *>(file->bytes.data()),
+                  file->bytes.size()))
+    throw ProjectFailure("project_io_error", "Cannot read a project file");
+  result.next_offset = request.offset() + file->bytes.size();
+  result.next_file = index;
+  if (result.next_offset == size) {
+    result.next_offset = 0;
+    ++result.next_file;
+  }
+  result.complete = result.next_file == paths.size();
+  result.files.push_back(std::move(file));
+  return result;
+}
+
 template <typename Write>
-auto Populate(const f::path& destination, Write write) -> std::string {
+auto Populate(const f::path &destination, Write write) -> std::string {
   const bool created = Prepare(destination);
   try {
     write();
@@ -189,6 +258,8 @@ auto Projects::Recents() const -> std::vector<std::string> {
 }
 
 auto Projects::Handle(const A::Request &request, uint64_t id) -> std::string {
+  if (const auto* read = request.value_as_HostProjectReadRequest())
+    return agent::wire::HostReply(id, ReadProject(*read));
   const auto raw = Apply(request);
   auto reply = [id](auto value) {
     return agent::wire::HostReply(id, std::move(value));
