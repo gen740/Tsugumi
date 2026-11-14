@@ -31,6 +31,7 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"ファイル「%@」を読み込めませんでした: %@": "Could not read file “%@”: %@",
 'プロジェクトを再読込しています': 'Reloading the project',
 'プロジェクトを再読込': 'Reloaded the project',
 'シェルコマンドを実行しています': 'Running a shell command',

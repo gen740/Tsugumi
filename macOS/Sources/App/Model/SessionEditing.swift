@@ -271,30 +271,30 @@ extension ProjectSession {
 
   /// Copies a Card's definition folder (settings and every file) into a
   /// scope as a new Card. A Card in Card brings its own copy of the external.
-  func copyDefinition(from k: CardKey, to scope: [String], name: String? = nil) async -> (id: String, apply: (ProjectSession) -> Void)? {
+  func copyDefinition(from k: CardKey, to scope: [String], name: String? = nil) async throws -> (id: String, apply: (ProjectSession) -> Void)? {
     guard let id = path(k).last, let prefix = projectPrefix(Array(path(k).dropLast())) else { return nil }
-    return await copyDefinition(prefix: prefix, id: id, to: scope, name: name)
+    return try await copyDefinition(prefix: prefix, id: id, to: scope, name: name)
   }
 
   /// Copies the definition `id` of the project at `prefix` ("" for this one).
-  func copyDefinition(prefix: String, id: String, to scope: [String], name: String? = nil) async
+  func copyDefinition(prefix: String, id: String, to scope: [String], name: String? = nil) async throws
     -> (id: String, apply: (ProjectSession) -> Void)? {
     guard let d = prefix.isEmpty ? definitionDrafts[id] : external(prefix)?.definitions[id] else { return nil }
     let dir = prefix + "definitions/\(id)/"
-    guard let newId = try? await newCardId(name ?? d.meta?["name"]?.string ?? id, in: scope) else { return nil }
+    let newId = try await newCardId(name ?? d.meta?["name"]?.string ?? id, in: scope)
     let toPrefix = projectPrefix(scope) ?? ""
     var files: [String: Data] = [:]
     for p in sourcePaths where p.hasPrefix(dir) {
       let rel = String(p.dropFirst(dir.count))
       if ["_card.json", "_link.json", "_meta.json"].contains(rel) { continue }
-      if let d = try? await rpcBytes(p) { files[toPrefix + "definitions/\(newId)/" + rel] = d }
+      files[toPrefix + "definitions/\(newId)/" + rel] = try await copyBytes(p)
     }
     // A Card in Card's external is copied along (a copy of its own).
     var link = d.link
     var ext: ExternalCopy?
     if let name = link?["external"]?.string {
-      guard let extName = try? await newCardId(name, in: scope) else { return nil }
-      ext = await copyExternal(from: prefix + "externals/\(name)/", to: toPrefix + "externals/\(extName)/")
+      let extName = try await newCardId(name, in: scope)
+      ext = try await copyExternal(from: prefix + "externals/\(name)/", to: toPrefix + "externals/\(extName)/")
       link = .object([("external", .string(extName))])
     }
     // The copy's comments are comments of its own.
@@ -334,7 +334,7 @@ extension ProjectSession {
   }
 
   /// Copies the external at `from` (with the externals in it) to the folder `to`.
-  func copyExternal(from: String, to: String) async -> ExternalCopy {
+  func copyExternal(from: String, to: String) async throws -> ExternalCopy {
     var c = ExternalCopy()
     let inside = effectiveExternals.filter { $0.key.hasPrefix(from) }
     for (p, e) in inside { c.docs[to + p.dropFirst(from.count)] = e }
@@ -342,7 +342,7 @@ extension ProjectSession {
       let rel = String(p.dropFirst(from.count))
       // Documents come from the parsed externals; every other file is copied.
       if inside.keys.contains(where: { p.hasPrefix($0) && ExternalProject.isDocument(String(p.dropFirst($0.count))) }) { continue }
-      if let t = try? await rpcBytes(p) { c.files[to + rel] = t }
+      c.files[to + rel] = try await copyBytes(p)
     }
     return c
   }
@@ -351,7 +351,19 @@ extension ProjectSession {
   func rpcBytes(_ p: String) async throws -> Data {
     if let d = sourceEdits[p] { return d }
     guard let rpc else { throw RPCError.disconnected }
-    return try await rpc.readFile(path: p, atRev: rev)
+    guard let hash = sources[p]?.hash else { throw RPCFailure(kind: .notFound, diagnostic: "unknown source: \(p)") }
+    // Autosave can advance the core's revision before its delta reaches us.
+    // Copy the manifest's exact bytes, regardless of unrelated canvas edits.
+    return try await rpc.readFile(path: p, atRev: nil, ifHash: hash)
+  }
+
+  /// Every byte is read before an edit removes or replaces any definition.
+  private func copyBytes(_ p: String) async throws -> Data {
+    do { return try await rpcBytes(p) }
+    catch {
+      throw NSError(domain: "CardFileRead", code: 1, userInfo: [NSLocalizedDescriptionKey:
+        String(format: String(localized: "ファイル「%@」を読み込めませんでした: %@"), p, error.localizedDescription)])
+    }
   }
 
   /// Places a copy of an external (`from`) in a scope as a new Card in Card.
@@ -361,7 +373,9 @@ extension ProjectSession {
     let base = from.split(separator: "/").last.map(String.init) ?? "sub"
     guard let name = try? await newCardId(base, in: scope) else { return nil }
     let toPrefix = projectPrefix(scope) ?? ""
-    let copy = await copyExternal(from: from, to: toPrefix + "externals/\(name)/")
+    let copy: ExternalCopy
+    do { copy = try await copyExternal(from: from, to: toPrefix + "externals/\(name)/") }
+    catch { notice = error.localizedDescription; return nil }
     let k = key(scope + [name])
     edit { s in
       copy.apply(s)
@@ -375,7 +389,11 @@ extension ProjectSession {
   /// Places a copy of a definition of an external (or of this project) as a new Card.
   @discardableResult
   func placeDefinitionCopy(prefix: String, id: String, in scope: [String], at point: CGPoint) async -> CardKey? {
-    guard let c = await copyDefinition(prefix: prefix, id: id, to: scope) else { return nil }
+    let c: (id: String, apply: (ProjectSession) -> Void)
+    do {
+      guard let prepared = try await copyDefinition(prefix: prefix, id: id, to: scope) else { return nil }
+      c = prepared
+    } catch { notice = error.localizedDescription; return nil }
     let k = key(scope + [c.id])
     edit { s in
       c.apply(s)
@@ -452,12 +470,14 @@ extension ProjectSession {
   func duplicate(_ keys: Set<CardKey>, in scope: [String]) async -> Set<CardKey> {
     var map: [String: String] = [:]
     var applies: [(ProjectSession) -> Void] = []
-    for k in keys.sorted() {
-      guard let id = path(k).last else { continue }
-      guard let c = await copyDefinition(from: k, to: scope) else { continue }
-      map[id] = c.id
-      applies.append(c.apply)
-    }
+    do {
+      for k in keys.sorted() {
+        guard let id = path(k).last else { continue }
+        guard let c = try await copyDefinition(from: k, to: scope) else { return [] }
+        map[id] = c.id
+        applies.append(c.apply)
+      }
+    } catch { notice = error.localizedDescription; return [] }
     var made: Set<CardKey> = []
     edit { s in
       for a in applies { a(s) }
@@ -842,20 +862,20 @@ extension ProjectSession {
     // Files of the Cards' definition folders, and of their own externals.
     var files: [String: Data] = [:]
     var moved: [String: ExternalProject] = [:]
-    for k in keys {
-      guard let dir = definitionDir(k), let id = path(k).last else { continue }
-      for p in sourcePaths where p.hasPrefix(dir) && !ExternalProject.isDocument(String(p.dropFirst(scopePrefix.count))) {
-        if let d = try? await rpcBytes(p) { files[ext + "definitions/\(id)/" + p.dropFirst(dir.count)] = d }
-      }
-      if let inner = cardExternal(k), let e = external(inner), let name = cardDefinitionDraft(k)?.link?["external"]?.string {
-        let to = ext + "externals/\(name)/"
-        for p in sourcePaths where p.hasPrefix(inner) && !ExternalProject.isDocument(String(p.dropFirst(inner.count))) {
-          if let d = try? await rpcBytes(p) { files[to + p.dropFirst(inner.count)] = d }
+    do {
+      for k in keys.sorted() {
+        guard let dir = definitionDir(k), let id = path(k).last else { continue }
+        for p in sourcePaths where p.hasPrefix(dir) && !ExternalProject.isDocument(String(p.dropFirst(scopePrefix.count))) {
+          files[ext + "definitions/\(id)/" + p.dropFirst(dir.count)] = try await copyBytes(p)
         }
-        moved[to] = e
-        moved[inner] = nil
+        if let inner = cardExternal(k), let name = cardDefinitionDraft(k)?.link?["external"]?.string {
+          let to = ext + "externals/\(name)/"
+          let copy = try await copyExternal(from: inner, to: to)
+          files.merge(copy.files) { _, new in new }
+          moved.merge(copy.docs) { _, new in new }
+        }
       }
-    }
+    } catch { notice = error.localizedDescription; return nil }
     edit { s in
       var center = CGPoint.zero
       for k in keys { let p = s.position(k); center.x += p.x; center.y += p.y }
@@ -908,6 +928,7 @@ extension ProjectSession {
         ("canvas", .object([("cards", .array(inner)), ("connections", .array(innerConns))])),
         ("boundary", .object([("inputs", .object(inputs)), ("outputs", .object(outputs))])),
       ]), layout: .object([]), definitions: [:])
+      e.project["nixSources"] = root["nixSources"]
       var extCards: [(String, JSONValue)] = []
       for k in keys.sorted() {
         guard let id = path(k).last else { continue }
@@ -917,7 +938,9 @@ extension ProjectSession {
       }
       e.layout = .object([("cards", .object(extCards))])
       for k in keys {
-        if let inner = s.cardExternal(k) { s.removeExternal(inner) }
+        if let inner = s.cardExternal(k) {
+          for p in s.effectiveExternals.keys.filter({ $0.hasPrefix(inner) }) { s.removeExternal(p) }
+        }
         s.removeCardDefinition(k)
       }
       for (p, d) in files {

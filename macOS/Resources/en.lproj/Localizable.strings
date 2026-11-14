@@ -576,6 +576,7 @@
 "ビルドキャッシュを削除しています" = "Deleting the build cache";
 "ビルドキャッシュを削除しますか？" = "Delete the build cache?";
 "ファイル" = "File";
+"ファイル「%@」を読み込めませんでした: %@" = "Could not read file “%@”: %@";
 "ファイルを一覧" = "Listed files";
 "ファイルを一覧しています" = "Listing files";
 "ファイルを作成" = "Create File";
