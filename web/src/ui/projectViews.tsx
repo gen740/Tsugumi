@@ -276,22 +276,28 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
 function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   const [name, setName] = useState(str(get(session.project, 'name')) ?? '')
   const [pkgs, setPkgs] = useState(str(get(session.project, 'pkgsPath')) ?? '')
+  const savedPaths = (arr(get(session.project, 'versionPaths')) ?? []).map(x => str(x) ?? '').join('\n')
+  const [versionPaths, setVersionPaths] = useState(savedPaths)
   const [message, setMessage] = useState<string>()
   const [revisionEdit] = useState(() => { const e = new RevisionEdit(); e.reload(session.rev); return e })
   useObserve(revisionEdit)
   const pin = app.status?.nixpkgsPin ?? undefined
-  const changed = name !== (str(get(session.project, 'name')) ?? '') || pkgs !== (str(get(session.project, 'pkgsPath')) ?? '')
+  const changed = name !== (str(get(session.project, 'name')) ?? '') || pkgs !== (str(get(session.project, 'pkgsPath')) ?? '') || versionPaths !== savedPaths
   const load = () => {
     setName(str(get(session.project, 'name')) ?? '')
     setPkgs(str(get(session.project, 'pkgsPath')) ?? '')
+    setVersionPaths(savedPaths)
     revisionEdit.reload(session.rev)
   }
   const save = async (overwrite = false) => {
+    const paths = versionPaths.split(/\r?\n/).filter(x => x.length > 0)
     if (!await revisionEdit.apply(session, overwrite, (x) => {
       setProject(x, 'name', name)
       setProject(x, 'pkgsPath', pkgs || 'tsugumi:default')
+      setProject(x, 'versionPaths', paths)
     })) return
     setPkgs(current => current === pkgs ? pkgs || 'tsugumi:default' : current)
+    setVersionPaths(current => current === versionPaths ? paths.join('\n') : current)
     setMessage(L('保存しました。'))
   }
   return (
@@ -311,13 +317,16 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
               <Row><Button onClick={() => setPkgs(pin)}>{!pkgs || pkgs === 'tsugumi:default' ? L('この Tsugumi の Nixpkgs に固定') : L('この Tsugumi の Nixpkgs に更新')}</Button></Row>
             )}
           </Section>
+          <Section footer={L('定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。')}>
+            <Row label={L('版に含める追加パス')}><TextField value={versionPaths} onChange={setVersionPaths} multiline rows={5} style={{ width: 320 }} /></Row>
+          </Section>
           <NixSourceSettings session={session} />
           <Section>
             <Value label={L('場所')} value={session.dir} />
           </Section>
         </Form>
       </div>
-      <RevisionEditNotice edit={revisionEdit} text={() => `name: ${name}\npkgsPath: ${pkgs}`}
+      <RevisionEditNotice edit={revisionEdit} text={() => `name: ${name}\npkgsPath: ${pkgs}\nversionPaths:\n${versionPaths}`}
         overwrite={() => void save(true)} reload={load} />
       <div className="detail-foot">
         {message && <span className="callout secondary selectable">{message}</span>}

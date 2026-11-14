@@ -31,6 +31,8 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。": "Definitions are versioned automatically. List additional project-relative files or folders, one per line (no wildcards). This applies when a run starts and to Keep as Version. .tsugumi/, .git/ and symbolic links are excluded.",
+"版に含める追加パス": "Additional paths to version",
 "外部の変更が Card の権限を広げます": "External changes widen Card permissions",
 "表示された権限を許可して、外部の変更を読み込みますか？": "Allow the listed permissions and reload the external changes?",
 "部分実行": "Partial run",
@@ -1188,7 +1190,7 @@ EN = {
 "版を操作できませんでした": "The version could not be changed",
 "この版から始めますか？": "Start from this version?",
 "この版から始める": "Start from This Version",
-"今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。": "What you have now is kept as a version first, then the project becomes this version. Changing and running from here starts a new branch.",
+"今の定義と追加パスは版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。": "The current definitions and additional version paths are committed before opening this version. Changing them and running starts a new branch.",
 "枝: %@": "Branch: %@",
 "枝の外（次の変更で新しい枝）": "Not on a branch (the next change starts one)",
 "最後の版から変更あり（次の実行で版になります）": "Changed since the last version (the next run makes a version)",
@@ -1212,7 +1214,7 @@ EN = {
 "git の履歴でも同じ情報を見られます（git log --notes=tsugumi、git tag）。": "git shows the same (git log --notes=tsugumi, git tag).",
 "版を選ぶと、その実行の結果と変わった Card を表示します。": "Select a version to see its runs and the Cards it changed.",
 "版として残す": "Keep as Version",
-"今の内容に名前を付けて残します（git の tag）。": "Names what you have now as a version (a git tag).",
+"今の定義と追加パスの内容に名前を付けて残します（git の tag）。": "Name the current definitions and additional version paths (a Git tag).",
 "名前（例: thin-bands）": "Name (e.g. thin-bands)",
 "残す": "Keep",
 "未保存の変更があります。保存してから選んでください。": "There are unsaved changes. Save them first.",

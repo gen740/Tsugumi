@@ -277,11 +277,13 @@ private struct GeneralProjectSettings: View {
   let session: ProjectSession
   @State private var name = ""
   @State private var pkgs = ""
+  @State private var versionPaths = ""
   @State private var message: String?
   @State private var revisionEdit = RevisionEdit()
 
   var body: some View {
-    let changed = name != (session.project["name"]?.string ?? "") || pkgs != (session.project["pkgsPath"]?.string ?? "")
+    let savedPaths = (session.project["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
+    let changed = name != (session.project["name"]?.string ?? "") || pkgs != (session.project["pkgsPath"]?.string ?? "") || versionPaths != savedPaths
     VStack(alignment: .leading) {
       Form {
         TextField("プロジェクト名", text: $name)
@@ -296,11 +298,18 @@ private struct GeneralProjectSettings: View {
         }
         Text("このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。")
           .font(.caption).foregroundStyle(.secondary)
+        Section {
+          LabeledContent("版に含める追加パス") {
+            TextEditor(text: $versionPaths).font(.system(.body, design: .monospaced)).frame(minHeight: 90)
+          }
+          Text("定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。")
+            .font(.caption).foregroundStyle(.secondary)
+        }
         LabeledContent("場所", value: session.identity.url.path)
         NixSourceSettings(session: session)
       }
       .formStyle(.grouped)
-      RevisionEditNotice(edit: revisionEdit, text: { "name: \(name)\npkgsPath: \(pkgs)" },
+      RevisionEditNotice(edit: revisionEdit, text: { "name: \(name)\npkgsPath: \(pkgs)\nversionPaths:\n\(versionPaths)" },
                          overwrite: { Task { await save(overwrite: true) } }, reload: { load() })
         .padding(.horizontal, 12)
       HStack {
@@ -320,16 +329,20 @@ private struct GeneralProjectSettings: View {
   private func load() {
     name = session.project["name"]?.string ?? ""
     pkgs = session.project["pkgsPath"]?.string ?? ""
+    versionPaths = (session.project["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
     revisionEdit.reload(session.rev)
   }
 
   private func save(overwrite: Bool = false) async {
-    let sentName = name, sentPkgs = pkgs
+    let sentName = name, sentPkgs = pkgs, sentPaths = versionPaths
+    let paths = sentPaths.components(separatedBy: .newlines).filter { !$0.isEmpty }
     if await revisionEdit.apply(session, overwrite: overwrite, { s in
       s.project["name"] = .string(sentName)
       s.project["pkgsPath"] = .string(sentPkgs.isEmpty ? "tsugumi:default" : sentPkgs)
+      s.project["versionPaths"] = .array(paths.map { .string($0) })
     }) {
       if pkgs == sentPkgs { pkgs = sentPkgs.isEmpty ? "tsugumi:default" : sentPkgs }
+      if versionPaths == sentPaths { versionPaths = paths.joined(separator: "\n") }
       message = String(localized: "保存しました。")
     }
   }
