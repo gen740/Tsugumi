@@ -4,6 +4,7 @@
 #include <string_view>
 #include <vector>
 
+#include "agent/json.hh"
 #include "agent/provider.hh"
 
 namespace tsugumi::agent {
@@ -24,6 +25,7 @@ struct CatalogTool {
 class Catalog {
 public:
   Catalog();
+  auto shared() const -> json::Members;
   auto tools() const -> const std::vector<CatalogTool> & { return tools_; }
   auto Find(std::string_view name) const -> const CatalogTool *;
   auto Json() const -> std::string;

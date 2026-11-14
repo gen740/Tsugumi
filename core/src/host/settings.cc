@@ -251,6 +251,8 @@ auto Defaults() -> j::Members {
           {"agent.fastModel", j::Quote("")},
           {"agent.webSearch", "false"},
           {"agent.animateWork", "true"},
+          {"agent.helperParallelism", "4"},
+          {"agent.allowUnscopedHelpers", "false"},
           {"agent.permissions.allowed", "[]"},
           {"agent.skillFolders", "[]"},
           {"versions.noteMode", j::Quote("mechanical")},
@@ -694,10 +696,10 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                   throw std::runtime_error("Invalid permission kind");
             if (key == "versions.noteMode" && j::String(value) != "mechanical" && j::String(value) != "agent")
               throw std::runtime_error("Unknown version note mode");
-            if ((key == "agent.webSearch" ||
-                 key == "agent.drawThoughts" ||
+            if ((key == "agent.webSearch" || key == "agent.drawThoughts" ||
                  key == "agent.drawThoughtsAsked" ||
-                 key == "agent.animateWork") &&
+                 key == "agent.animateWork" ||
+                 key == "agent.allowUnscopedHelpers") &&
                 value != "true" && value != "false")
               throw std::runtime_error("Expected a boolean setting");
             if ((key == "agent.provider" || key.starts_with("agent.model") ||
@@ -709,6 +711,11 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                 j::String(value) != "openai" && j::String(value) != "chatgpt" &&
                 j::String(value) != "fixture")
               throw std::runtime_error("Unknown provider");
+            if (key == "agent.helperParallelism" &&
+                (value != std::to_string(j::UInt(value)) ||
+                 j::UInt(value) < 1 || j::UInt(value) > 8))
+              throw std::runtime_error(
+                  "Helper parallelism must be an integer from 1 to 8");
             if (key == "agent.fixturePort" &&
                 (j::UInt(value) < 1 || j::UInt(value) > 65535))
               throw std::runtime_error("Invalid fixture port");
@@ -865,6 +872,14 @@ auto Settings::Redact(std::string text) -> std::string {
   for (const auto& [_, secret] : s.ephemeral) remove(secret);
   return text;
 }
+auto Settings::HelperPolicy(const std::string &profile)
+    -> std::pair<size_t, bool> {
+  std::lock_guard lock(state_->mutex);
+  const auto values = state_->Values(profile).second;
+  return {j::UInt(j::Get(values, "agent.helperParallelism"), 4),
+          j::Bool(j::Get(values, "agent.allowUnscopedHelpers"))};
+}
+
 auto Settings::VersionNoteMode(const std::string& profile) -> std::string {
   std::lock_guard lock(state_->mutex);
   return j::Text(state_->Values(profile).second, "versions.noteMode", "mechanical");

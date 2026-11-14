@@ -438,6 +438,8 @@ interface APIState {
   keys: { Anthropic: KeySource; OpenAI: KeySource }
   keyEnv: { Anthropic: string; OpenAI: string }
   allowedPermissions: string[]
+  helperParallelism: number
+  allowUnscopedHelpers: boolean
   webSearch: boolean
 }
 
@@ -498,6 +500,17 @@ function APISettings() {
           </Row>
         ))}
         <Row><span className="caption secondary" style={{ whiteSpace: 'normal' }}>{L('オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。')}</span></Row>
+      </Section>
+      <Section title={L('ヘルパー')}>
+        <Row label={L('同時に動かすヘルパーの数')}>
+          <Select<number> value={s.helperParallelism} onChange={(v) => update({ helperParallelism: v })}
+            options={Array.from({ length: 8 }, (_, i) => ({ value: i + 1, label: String(i + 1) }))} />
+        </Row>
+        <Row><span className="caption secondary">{L('1 にすると、ヘルパーは順番に動きます。')}</span></Row>
+        <Row label={L('範囲を指定しないヘルパーを許可する')}>
+          <Toggle checked={s.allowUnscopedHelpers} onChange={(v) => update({ allowUnscopedHelpers: v })} />
+        </Row>
+        <Row><span className="caption secondary">{L('オフにすると、各ヘルパーが読める Card と変更・実行できる Card を Agent が指定します。')}</span></Row>
       </Section>
       <Section title={L('Web 検索')}>
         <Row label={L('Agent が自分の判断で Web を検索する')}><Toggle checked={s.webSearch} onChange={(v) => update({ webSearch: v })} /></Row>

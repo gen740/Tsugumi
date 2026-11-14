@@ -1,8 +1,10 @@
 #pragma once
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "agent/json.hh"
 #include "agent/provider.hh"
@@ -32,6 +34,7 @@ class Settings {
   auto Handle(const Tsugumi::Host::Request& request, uint64_t id)
       -> std::string;
   auto Redact(std::string text) -> std::string;
+  auto HelperPolicy(const std::string &profile) -> std::pair<size_t, bool>;
   auto VersionNoteMode(const std::string& profile) -> std::string;
   auto VersionNoteProvider(const std::string& profile, const std::string& anthropic_keys,
                            const std::string& openai_keys) -> agent::ProviderConfig;
