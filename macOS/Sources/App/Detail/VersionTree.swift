@@ -223,7 +223,7 @@ struct VersionTreeView: View {
       }
       Button("キャンセル", role: .cancel) { confirmStart = nil }
     } message: {
-      Text("今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。")
+      Text("今の定義と追加パスは版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。")
     }
     .onChange(of: noteMode) {
       session.versionNotes.removeAll()
@@ -541,7 +541,7 @@ struct VersionTreeView: View {
   private var nameSheet: some View {
     VStack(alignment: .leading, spacing: 12) {
       Text("版として残す").font(.title3.bold())
-      Text("今の内容に名前を付けて残します（git の tag）。").font(.callout).foregroundStyle(.secondary)
+      Text("今の定義と追加パスの内容に名前を付けて残します（git の tag）。").font(.callout).foregroundStyle(.secondary)
       TextField("名前（例: thin-bands）", text: $name)
       TextField("メモ", text: $message, axis: .vertical).lineLimit(3...6)
       HStack {

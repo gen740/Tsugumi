@@ -5,6 +5,8 @@ import { R, s, segs } from '../shared/rpc'
 import { Button, Empty, Select, Spinner } from './controls'
 import { DisplayContent } from './display'
 import { L } from '../i18n'
+import { environmentChange } from '../model/environments'
+import { EnvironmentComparison } from './environments'
 import { runMark } from '../model/runMark'
 
 export function RunComparisonView({ session, runs, initial, onClose }: { session: ProjectSession; runs: R.RunSummaryT[]; initial?: string; onClose: () => void }) {
@@ -48,7 +50,7 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
           <RunScopes left={a} right={b} displayPath={(p) => session.displayPath(p)} />
           <VersionDifference from={from} to={to} diff={diff} error={diffError} />
           {!rows.length && <Empty title={L('記録がありません')} icon="tray" />}
-          {rows.map(row => <ComparedCardView key={row.card} row={row} displayPath={(p) => session.displayPath(p)} />)}
+          {rows.map(row => <ComparedCardView key={row.card} row={row} environmentSection={<EnvironmentComparison key={`${left}:${right}:${row.card}`} session={session} left={{ run: left, id: s((row.left?.record?.record?.summary ?? row.left?.summary)?.environmentId) }} right={{ run: right, id: s((row.right?.record?.record?.summary ?? row.right?.summary)?.environmentId) }} />} displayPath={(p) => session.displayPath(p)} />)}
         </>}
     </div>
   </div>
@@ -99,15 +101,16 @@ function SideStatus({ side }: { side?: ComparedCard }) {
   </div>
 }
 
-export function ComparedCardView({ row, displayPath = p => p.join('/') }: { row: ComparedRow; displayPath?: (p: string[]) => string }) {
+export function ComparedCardView({ row, displayPath = p => p.join('/'), environmentSection }: { row: ComparedRow; displayPath?: (p: string[]) => string; environmentSection?: React.ReactNode }) {
   const a = row.left?.record, b = row.right?.record
   const leftDisplay = a?.record?.display ? recordedDisplay(a.record.display) : undefined, rightDisplay = b?.record?.display ? recordedDisplay(b.record.display) : undefined
   const statusChanged = row.left?.summary.state !== row.right?.summary.state || row.left?.summary.durationMs !== row.right?.summary.durationMs
   const displayChanged = !sameDisplay(leftDisplay, rightDisplay)
   return <details className="comparison-card" open>
-    <summary>{displayPath(row.card.split('/'))}</summary>
+    <summary>{displayPath(row.card.split('/'))} {environmentChange(s((row.left?.record?.record?.summary ?? row.left?.summary)?.environmentId), s((row.right?.record?.record?.summary ?? row.right?.summary)?.environmentId)) === 'changed' && <span className="caption">· {L('環境が変わった Card')}</span>}</summary>
     <div className={`comparison-pair pad8${statusChanged ? ' changed' : ''}`}><SideStatus side={row.left} /><SideStatus side={row.right} /></div>
     <ComparedFields title={L('実行条件')} fields={comparedConditions(row.left, row.right, displayPath)} />
+    {environmentSection}
     <ComparedFields title={L('パラメータ')} fields={comparedParams(a, b)} />
     <ComparedFields title={L('入力')} fields={comparedValues('inputs', a, b)} />
     <ComparedFields title={L('出力')} fields={comparedValues('outputs', a, b)} />

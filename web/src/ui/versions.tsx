@@ -358,7 +358,7 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
       </div>
       {confirmStart && (
         <Confirm title={L('この版から始めますか？')} confirm={L('この版から始める')}
-          message={L('今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。')}
+          message={L('今の定義と追加パスは版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。')}
           onConfirm={() => { const c = confirmStart; setConfirmStart(undefined); act(() => session.startFrom(c)) }}
           onCancel={() => setConfirmStart(undefined)} />
       )}
@@ -375,7 +375,7 @@ function NameSheet({ onClose, onSave }: { onClose: () => void; onSave: (name: st
     <Sheet onClose={onClose} width={420}>
       <form className="sheet-body" onSubmit={(e) => { e.preventDefault(); if (name.trim()) onSave(name.trim(), message) }}>
         <div className="title2">{L('版として残す')}</div>
-        <div className="secondary">{L('今の内容に名前を付けて残します（git の tag）。')}</div>
+        <div className="secondary">{L('今の定義と追加パスの内容に名前を付けて残します（git の tag）。')}</div>
         <TextField value={name} onChange={setName} placeholder={L('名前（例: thin-bands）')} />
         <TextField value={message} onChange={setMessage} placeholder={L('メモ')} />
         <div className="row end gap8">
