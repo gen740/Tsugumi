@@ -81,7 +81,6 @@ class Call {
   explicit Call(const tsugumi_call* call) : c_(call) {}
 
   const uint8_t* input(std::string_view port) const;  // nullptr when absent
-  const uint8_t* params() const { return c_->params; }
   void emit(std::string_view port, const flatbuffers::FlatBufferBuilder& b) const;
 
   template <class Table, class T>
