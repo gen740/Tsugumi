@@ -12,6 +12,7 @@
 #include "execution_service.hh"
 #include "nix_store.hh"
 #include "tsugumi/workerd/invocation.hh"
+#include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "util/crypto.hh"
@@ -25,7 +26,6 @@ namespace W = Tsugumi::Worker;
 namespace stdfs = std::filesystem;
 
 constexpr uint64_t kWorkerLimit = uint64_t{16} << 20;
-constexpr size_t kLogLimit = size_t{8} << 20;
 constexpr int32_t kOutSlot = 900;
 
 auto read(const stdfs::path& path, uint64_t limit) -> std::string {
@@ -218,7 +218,8 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
 }  // namespace
 
 namespace workerd {
-auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs::path& store) -> void {
+auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs::path& store,
+            uint64_t log_limit_bytes) -> void {
   const auto job = parse_spec(read(directory / "spec.fb", kMaxSpec));
   const auto& derivation = job->derivation;
   const auto& output = job->output;
@@ -252,16 +253,9 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs:
   const auto result_dir = directory / "result";
   stdfs::create_directories(result_dir);
   std::ofstream logs(result_dir / "logs.jsonl", std::ios::binary);
-  size_t logged = 0;
+  InvocationLog invocation_log(logs, log_limit_bytes);
   auto log = [&](LogStream stream, const std::string& text) {
-    if (text.size() > kLogLimit - logged) return;
-    remote::LogJson entry;
-    *entry.stream = static_cast<uint64_t>(stream);
-    *entry.text = text;
-    const auto encoded = schema::encode(entry);
-    if (encoded.size() + 1 > kLogLimit - logged) return;
-    logs << encoded << '\n';
-    logged += encoded.size() + 1;
+    invocation_log.append(static_cast<uint64_t>(stream), text);
   };
   std::string display;
   NixResult environment;
@@ -279,6 +273,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs:
   } catch (const std::exception& error) {
     outcome.failure = FailureData::make(environment.derivation.output.empty() ? FailureKind::nix_failed : FailureKind::worker_failed, error.what());
   }
+  invocation_log.finish();
   remote::EnvironmentJson info;
   *info.paths = std::move(environment.closure);
   *info.built = environment.built;

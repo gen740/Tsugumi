@@ -6,9 +6,11 @@
 #include <atomic>
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <thread>
 
 #include "journal.hh"
+#include "tsugumi/workerd/log.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -49,6 +51,61 @@ auto chunk(const std::string& data) -> R::PutBlobRequestT {
   p.total = data.size();
   p.bytes.assign(data.begin(), data.end());
   return p;
+}
+auto log_test() -> void {
+  expect(kDefaultLogLimitBytes == 8 * 1024 * 1024, "default log limit changed");
+  expect(parse_log_limit_bytes("23") == 23, "log limit setting was not parsed");
+  expect(parse_log_limit_bytes("18446744073709551615") == UINT64_MAX,
+         "log limit setting lost precision");
+  for (const auto* value : {"", "0", "-1", "+1", " 1", "23bytes", "18446744073709551616"})
+    rejected([&] { parse_log_limit_bytes(value); });
+  // 25 encoded bytes: the raw text fits, but JSON escaping and framing do not
+  // fit in a 23-byte budget. A dropped entry must not look like a complete log.
+  std::ostringstream output;
+  InvocationLog log(output, 23);
+  log.append(1, "\n");
+  log.finish();
+  remote::LogJson entry;
+  std::istringstream lines(output.str());
+  std::string line;
+  expect(static_cast<bool>(std::getline(lines, line)), "missing truncation notice");
+  expect(!schema::decode(line, entry) && *entry.stream == 3 &&
+             *entry.text == "\n[Log output truncated at the 23-byte limit.]\n",
+         "invalid truncation notice");
+  expect(!std::getline(lines, line), "unexpected log entry");
+
+  const std::string first = "{\"stream\":4,\"text\":\"build\"}\n";
+  const std::string second = "{\"stream\":2,\"text\":\"error\"}\n";
+  for (const auto limit : {first.size() + second.size(), first.size() + second.size() + 1}) {
+    std::ostringstream complete;
+    InvocationLog full(complete, limit);
+    full.append(4, "build");
+    full.append(2, "error");
+    full.finish();
+    expect(complete.str() == first + second, "complete log was changed or marked truncated");
+  }
+  std::ostringstream combined;
+  InvocationLog bounded(combined, first.size() + second.size() - 1);
+  bounded.append(4, "build");
+  bounded.append(2, "error");
+  bounded.append(1, std::string(100, 'x'));
+  bounded.finish();
+  const auto once = combined.str();
+  bounded.finish();
+  expect(combined.str() == once, "duplicate truncation notice");
+  expect(once.starts_with(first) && once.find("error") == std::string::npos,
+         "combined stream budget was not enforced");
+  expect(once.find("[Log output truncated at the " + std::to_string(first.size() + second.size() - 1) +
+                       "-byte limit.]") != std::string::npos,
+         "combined stream truncation lacks its configured limit");
+
+  std::ostringstream tiny;
+  InvocationLog minimum(tiny, 1);
+  minimum.append(1, "too large");
+  minimum.append(2, "also too large");
+  minimum.finish();
+  expect(tiny.str().find("[Log output truncated at the 1-byte limit.]") != std::string::npos,
+         "tiny budget suppressed the truncation notice");
 }
 auto protocol_test() -> void {
   R::RequestT q;
@@ -257,6 +314,7 @@ auto main() -> int {
   const auto root = stdfs::temp_directory_path() /
                     ("tsugumi-workerd-" + tsugumi::crypto::uuid4());
   try {
+    log_test();
     protocol_test();
     journal_test(root);
     discard_tree(root);
