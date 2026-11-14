@@ -27,7 +27,7 @@ The installed Mac command uses the release app's support directory by default:
 
 | Data | Location and sharing |
 | --- | --- |
-| API keys | The same login Keychain items as the app; agentd keeps provisioned keys in memory. Web Keychain-save failures use agentd's private store. [Credential handling](security.md#8-the-models-api-keys-agent) |
+| API keys | The same login Keychain items as the app; agentd keeps provisioned keys in memory. Web Keychain-save failures use agentd's private store. [Credential handling](security.md#7-the-models-api-keys-agent) |
 | VM, store, project control folders | `~/Library/Application Support/Tsugumi/`; override with `TSUGUMI_SUPPORT_DIR` |
 | Recent projects | `recent-projects.json` under agentd's state directory; shared by clients of that service |
 | Default project destination | `~/Documents/Tsugumi` |
