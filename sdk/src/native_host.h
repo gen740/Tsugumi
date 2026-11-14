@@ -45,6 +45,9 @@ int tsugumi_native_output(const char* port, const char* json) {
   return current_call ? current_call->emit_json(current_call->host, port, json)
                       : 1;
 }
+int tsugumi_native_finish_outputs(void) {
+  return current_call ? current_call->finish_outputs(current_call->host) : 1;
+}
 int tsugumi_native_display(const char* json) {
   return current_call ? current_call->display_json(current_call->host, json)
                       : 1;

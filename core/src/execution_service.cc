@@ -16,13 +16,7 @@
 #include "store.hh"
 #include "util/crypto.hh"
 #include "util/staging.hh"
-
-#ifndef TSUGUMI_CARD_PATH
-#define TSUGUMI_CARD_PATH "/usr/bin:/bin"
-#endif
-#ifndef TSUGUMI_BASH
-#define TSUGUMI_BASH "/bin/bash"
-#endif
+#include "tsugumi/workerd/log.hh"
 
 namespace tsugumi {
 
@@ -99,7 +93,9 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   // A package of another system is loaded by the worker its build made for
   // that system, which the kernel runs under the emulator.
   sp.worker_binary = build.worker.empty() ? service_.options().worker_binary.string() : build.worker;
-  sp.bash = TSUGUMI_BASH;
+  // The shell and PATH are the definition's (the manifest's), so they are in
+  // the recorded environment and do not change with this build of the core.
+  sp.bash = build.shell;
   sp.build = build;
   sp.sandbox = node.settings.sandbox;
   sp.uid = uid;
@@ -143,6 +139,10 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   if (!lease.replaced.empty() && request.log)
     request.log(LogStream::stderr, "Resident worker state started fresh: " + lease.replaced + ".\n");
 
+  auto invocation_log = std::make_shared<workerd::InvocationLog>(
+      [sink = request.log](uint64_t stream, const std::string& text) {
+        if (sink) sink(static_cast<LogStream>(stream), text);
+      }, request.log_limit_bytes);
   // A transfer/staging error does not discard a living resident's state.
   // If the call itself throws, its protocol state is unknown: end the worker.
   bool between_calls = true;
@@ -196,7 +196,7 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
     auto ptype = NixRunner::params_type(node);
     std::string params = NixRunner::params_buffer(node);
     std::vector<std::pair<std::string, std::string>> env = {
-        {"PATH", TSUGUMI_CARD_PATH},
+        {"PATH", build.path},
         {"HOME", work},
         {"LANG", "C.UTF-8"},
         {"TSUGUMI_RUN_ID", s.run_id},
@@ -216,12 +216,16 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
                                           ptype->bfbs, ptype->root_type, params, node.outputs, work, tmp, out, env,
                                           deadline_ms);
     // Logs and displays of this call belong to this run and invocation.
-    worker.set_logs(request.log);
+    worker.set_logs([invocation_log](LogStream stream, const std::string& text) {
+      invocation_log->append(static_cast<uint64_t>(stream), text);
+    });
     StagingHandle output_directory(worker.out_dir());
     int64_t t0 = now_ms();
     between_calls = false;
     result.outcome = worker.call(frame, call_id, &request.cancel, deadline, request.display);
     between_calls = true;
+    worker.set_logs(nullptr);
+    invocation_log->finish();
     request.on_timing(t0, now_ms());
     // Forwarded inputs retain their recorded path, not the worker's temporary
     // staging path. All other output paths go through normal output validation.
@@ -288,6 +292,7 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
     } catch (...) {
       // Preserve the original failure if clearing staging also fails.
     }
+    try { invocation_log->finish(); } catch (...) {}
     throw;
   }
 

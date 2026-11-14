@@ -40,3 +40,19 @@ def test_recorded_closure_matches_nix_and_survives_definition_changes(core_facto
     assert environments[0][1:] == environments[1][1:]
     assert environments[0][1] != environments[2][1]
     assert text(client.call("RunEnvironmentsRequest", runId=environments[0][0]).environments[0].id) == environments[0][1]
+
+
+def test_local_tools_come_from_the_definition_and_are_recorded(core_factory, project):
+    """Local bodies and hooks use the Card's nixpkgs tools, including on cached runs."""
+    from harness.real_cards import DEFINITION_TOOLS_NIX, TXT, check_definition_tools
+
+    client = core_factory().connect()
+    Project(project).card("work", {"language": "bash", "sandbox": False, "recordIO": True},
+                          outputs=TXT, sources={"default.nix": DEFINITION_TOOLS_NIX}).save(client)
+    observed = []
+    for _ in range(2):
+        run_id = run(client)
+        status = wait_run(client, run_id, timeout=600)
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        observed.append(check_definition_tools(client, run_id))
+    assert observed[0] == observed[1]

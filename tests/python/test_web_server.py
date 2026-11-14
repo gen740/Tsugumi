@@ -195,8 +195,8 @@ def test_a_project_taken_in_keeps_its_binary_files(web, tmp_path):
     blob = bytes(range(256))
     (other / "blob.bin").write_bytes(blob)
     r = post(port, cookie, "/api/import/project", {"folder": str(other)})
-    assert base64.b64decode(r["binary"]["blob.bin"]) == blob
-    assert "blob.bin" not in r["files"] and "tsugumi.json" in r["files"]
+    assert base64.b64decode(r["files"]["blob.bin"]) == blob
+    assert json.loads(base64.b64decode(r["files"]["tsugumi.json"]))["name"] == "test"
 
 
 def test_the_page_is_told_whether_host_folders_can_be_used(web):

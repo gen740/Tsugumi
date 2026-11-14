@@ -1,6 +1,6 @@
 // Typed project operations. The shared C++ client owns transport, validation,
 // request correlation, deadlines and disconnect handling (Wasm in the browser).
-import { Builder, ByteBuffer } from 'flatbuffers'
+import { Builder, ByteBuffer, Encoding } from 'flatbuffers'
 import * as D from '../gen/tsugumi/data'
 import * as R from '../gen/tsugumi/rpc'
 import { Message, MessageT } from '../gen/tsugumi/rpc/message'
@@ -18,6 +18,81 @@ export { D, R, RequestPayload }
 /** Strings of the object API are always decoded text. */
 export const s = (v: string | Uint8Array | null | undefined): string => (typeof v === 'string' ? v : v ? new TextDecoder().decode(v) : '')
 export const sOpt = (v: string | Uint8Array | null | undefined): string | undefined => (v === null || v === undefined ? undefined : s(v))
+
+/** Preserve invalid display text as an unavailable display, before lossy decoding. */
+export function unpackDisplay(wire: D.Display): D.DisplayT {
+  let bytes = 0
+  const decode = (v: string | Uint8Array | null) => {
+    if (v == null) throw new Error('missing display text')
+    if (v instanceof Uint8Array) {
+      bytes += v.length + 8
+      if (bytes > 16 << 20) throw new Error('display content exceeds 16 MiB')
+      new TextDecoder('utf-8', { fatal: true }).decode(v)
+    }
+  }
+  try {
+    switch (wire.valueType()) {
+      case D.DisplayValue.DisplayText: decode((wire.value(new D.DisplayText()) as D.DisplayText).text(Encoding.UTF8_BYTES)); break
+      case D.DisplayValue.DisplayScalar: decode((wire.value(new D.DisplayScalar()) as D.DisplayScalar).label(Encoding.UTF8_BYTES)); break
+      case D.DisplayValue.DisplayTable: {
+        const t = wire.value(new D.DisplayTable()) as D.DisplayTable
+        if (!t.columnsLength() || t.columnsLength() > 64 || t.rowsLength() > 10000) throw new Error('invalid table size')
+        for (let i=0;i<t.columnsLength();i++) decode(t.columns(i, Encoding.UTF8_BYTES))
+        for (let i=0;i<t.rowsLength();i++) {
+          const row=t.rows(i)!
+          if (row.cellsLength() !== t.columnsLength()) throw new Error('invalid table row')
+          for (let j=0;j<row.cellsLength();j++) decode(row.cells(j, Encoding.UTF8_BYTES))
+        }
+        break
+      }
+      case D.DisplayValue.DisplayImage: {
+        const im=wire.value(new D.DisplayImage()) as D.DisplayImage
+        if (im.dataLength() > 8 << 20) throw new Error('invalid image size')
+        decode(im.mediaType(Encoding.UTF8_BYTES))
+        const alt=im.alt(Encoding.UTF8_BYTES); if (alt != null) decode(alt)
+        break
+      }
+      case D.DisplayValue.DisplayPointCloud: {
+        const p=wire.value(new D.DisplayPointCloud()) as D.DisplayPointCloud
+        if (p.xLength() > 1000000 || p.yLength() !== p.xLength() || p.zLength() !== p.xLength() ||
+            (p.colorsLength() && p.colorsLength() !== p.xLength())) throw new Error('invalid point cloud size')
+        break
+      }
+      case D.DisplayValue.DisplayModule: {
+        const m=wire.value(new D.DisplayModule()) as D.DisplayModule
+        if (m.blobsLength() > 64) throw new Error('invalid module size')
+        let blobBytes = 0
+        for (let i=0;i<m.blobsLength();i++) blobBytes += m.blobs(i)!.dataLength()
+        if (blobBytes > 8 << 20) throw new Error('invalid module size')
+        decode(m.module(Encoding.UTF8_BYTES)); decode(m.configJson(Encoding.UTF8_BYTES))
+        for(let i=0;i<m.blobsLength();i++) decode(m.blobs(i)!.name(Encoding.UTF8_BYTES))
+        break
+      }
+    }
+    return wire.unpack()
+  } catch {
+    return Object.assign(new D.DisplayT(), { card: wire.card()?.unpack(), runId: wire.runId(),
+      invocation: wire.invocation(), revision: wire.revision() })
+  }
+}
+
+function unpackRecordResult(wire: R.RecordResult): R.RecordResultT {
+  const value = Object.assign(new R.RecordResultT(), {
+    selectedInvocation: wire.selectedInvocation(), run: wire.run()?.unpack() ?? null,
+    status: wire.status()?.unpack() ?? null, aggregate: wire.aggregate()?.unpack() ?? null,
+    exists: wire.exists(), recordingDisabled: wire.recordingDisabled(), truncated: wire.truncated(), orphaned: wire.orphaned(),
+  })
+  const record = wire.record()
+  if (record) value.record = Object.assign(new R.InvocationRecordT(), {
+    summary: record.summary()?.unpack() ?? null,
+    inputs: Array.from({ length: record.inputsLength() }, (_, i) => record.inputs(i)!.unpack()),
+    outputs: Array.from({ length: record.outputsLength() }, (_, i) => record.outputs(i)!.unpack()),
+    inputSources: Array.from({ length: record.inputSourcesLength() }, (_, i) => record.inputSources(i)!.unpack()),
+    display: record.display() ? unpackDisplay(record.display()!) : null,
+    recordIo: record.recordIo(), paramsJson: record.paramsJson(),
+  })
+  return value
+}
 
 /** A structured failure returned by tsugumid (never matched by its text). */
 export class RPCFailure extends Error {
@@ -114,8 +189,12 @@ export class RPCClient {
     try {
       const bb = new ByteBuffer(frame)
       const message = Message.getRootAsMessage(bb)
-      const note = message.unpack().payload as NotificationT | null
-      if (message.payloadType() !== Payload.Notification || !note) throw new Error('unexpected notification')
+      if (message.payloadType() !== Payload.Notification) throw new Error('unexpected notification')
+      const raw = message.payload(new R.Notification()) as R.Notification
+      const note = raw.valueType() === R.NotificationPayload.DisplayUpdated
+        ? Object.assign(new R.NotificationT(), { subscriptionId: raw.subscriptionId(), seq: raw.seq(), valueType: raw.valueType(),
+          value: new R.DisplayUpdatedT(unpackDisplay((raw.value(new R.DisplayUpdated()) as R.DisplayUpdated).display()!)) })
+        : raw.unpack()
       this.onNotification?.({ subscriptionId: s(note.subscriptionId), seq: note.seq ?? 0n, type: note.valueType, value: note.value })
     } catch (error) {
       this.transport.close()
@@ -132,7 +211,12 @@ export class RPCClient {
       this.close()
       throw new RPCError('protocol', 'unexpected RPC reply')
     }
-    return raw ? bytes : (message.payload(new Reply()) as Reply).unpack()
+    if (raw) return bytes
+    const wire = message.payload(new Reply()) as Reply
+    const reply = wire.valueType() === R.ReplyPayload.RecordResult
+      ? new ReplyT(R.ReplyPayload.RecordResult, unpackRecordResult(wire.value(new R.RecordResult()) as R.RecordResult))
+      : wire.unpack()
+    return reply
   }
 
   /** Sends one request and waits for its reply. Failure replies throw RPCFailure. */

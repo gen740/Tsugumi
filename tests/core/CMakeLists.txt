@@ -124,11 +124,32 @@ if(TSUGUMI_INSTALLED_CORE)
 endif()
 
 # Storage, Skill reads, environment adapters and thought timing need no sockets.
-add_executable(tsugumi_host_settings_tests agent/version_text_test.cc agent/format_test.cc agent/catalog_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc agent_fixture_server.cc agent/helper_scope_test.cc)
+add_executable(tsugumi_host_settings_tests agent/version_text_test.cc agent/format_test.cc agent/catalog_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/native_environment_test.cc agent/project_files_test.cc agent/thought_schedule_test.cc agent_fixture_server.cc agent/helper_scope_test.cc agent/save_policy_test.cc)
 target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
 target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_agent_core tsugumi_core PkgConfig::LIBGIT2 GTest::gtest_main)
 target_compile_options(tsugumi_host_settings_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 gtest_discover_tests(tsugumi_host_settings_tests TEST_PREFIX "core_host_settings." DISCOVERY_MODE PRE_TEST)
 if(TSUGUMI_INSTALLED_CORE)
   install(TARGETS tsugumi_host_settings_tests RUNTIME DESTINATION libexec/tsugumi-tests)
+endif()
+
+add_executable(tsugumi_native_contract_tests native_contract_test.cc)
+target_include_directories(tsugumi_native_contract_tests PRIVATE ${_core_headers}
+  ${_test_sdk}/include ${_test_sdk}/worker/include ${_test_sdk}/worker/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../workerd/include ${CMAKE_CURRENT_SOURCE_DIR}/../../workerd/src)
+target_link_libraries(tsugumi_native_contract_tests PRIVATE tsugumi_worker_protocol tsugumi_json
+  flatbuffers::flatbuffers GTest::gtest_main Threads::Threads ${CMAKE_DL_LIBS})
+gtest_discover_tests(tsugumi_native_contract_tests TEST_PREFIX "native_contract." DISCOVERY_MODE PRE_TEST)
+
+add_executable(tsugumi_execution_service_tests execution_service_test.cc doubles/nix_eval.cc)
+target_include_directories(tsugumi_execution_service_tests PRIVATE ${_core_headers})
+target_link_libraries(tsugumi_execution_service_tests PRIVATE tsugumi_core GTest::gtest_main)
+target_compile_definitions(tsugumi_execution_service_tests PRIVATE
+  TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
+  TSUGUMI_TEST_SDK="${_test_sdk}")
+add_dependencies(tsugumi_execution_service_tests tsugumi-worker)
+gtest_discover_tests(tsugumi_execution_service_tests TEST_PREFIX "native_execution." DISCOVERY_MODE PRE_TEST)
+
+if(TSUGUMI_INSTALLED_CORE)
+  install(TARGETS tsugumi_native_contract_tests tsugumi_execution_service_tests RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()
