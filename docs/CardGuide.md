@@ -483,7 +483,7 @@ import numpy as np
 
 Top-level settings last for the worker; environment changes made inside an entry point or hook last for that call. `HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` are writable worker directories for library caches.
 
-The shell steps are `preRun → run → postRun`. `preRun` and `postRun` receive no Card inputs. `postRun` also runs after a failed earlier step, with `TSUGUMI_FAILED=1` and the produced port names in `TSUGUMI_OUTPUTS`; it cannot clear the failure. Cancellation or a deadline prevents further steps, including `postRun`, from starting. File/Directory results are written under the invocation's output directory, then returned as path messages; see [Building results](#building-results).
+The shell steps are `preRun → run → postRun`. `preRun` and `postRun` receive no Card inputs. Their shell and the tools on `PATH` (Bash, coreutils, findutils, grep, sed, gawk, tar, gzip and jq; the same `PATH` is what a code Card's subprocesses see) are built from the Card's own nixpkgs: local and remote runs use the same ones, an update of the app does not change them, and they are part of the environment recorded for the invocation. Name any other tool by its package (`${pkgs.ripgrep}/bin/rg`). `postRun` also runs after a failed earlier step, with `TSUGUMI_FAILED=1` and the produced port names in `TSUGUMI_OUTPUTS`; it cannot clear the failure. Cancellation or a deadline prevents further steps, including `postRun`, from starting. File/Directory results are written under the invocation's output directory, then returned as path messages; see [Building results](#building-results).
 
 ## What to read next
 

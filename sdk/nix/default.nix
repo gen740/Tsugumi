@@ -964,7 +964,12 @@ rec {
     pkgs.writeText "tsugumi-card.json" (
       builtins.toJSON (
         runs
-        // lib.optionalAttrs remote {
+        // {
+          # The shell of preRun, a bash run and postRun, and the tools on their
+          # PATH (and on that of every process the body starts). They come from
+          # the Card's nixpkgs, as its packages do: the same wherever the Card
+          # runs, unchanged by an update of the app, and part of the closure
+          # recorded for an invocation.
           shell = "${pkgs.bash}/bin/bash";
           path = lib.makeBinPath (
             with pkgs;

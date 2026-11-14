@@ -62,6 +62,7 @@ import { HelloRequestT as HHelloRequest } from '../src/gen/tsugumi/service/hello
 import { RegisterProjectRequestT as HRegisterProjectRequest } from '../src/gen/tsugumi/host/register-project-request'
 import { RegisterFolderRequestT as HRegisterFolderRequest } from '../src/gen/tsugumi/host/register-folder-request'
 import { ModelsListRequestT as HModelsListRequest } from '../src/gen/tsugumi/host/models-list-request'
+import { HostProjectReadRequestT } from '../src/gen/tsugumi/host/host-project-read-request'
 import { HostProjectInfoRequestT as HHostProjectInfoRequest } from '../src/gen/tsugumi/host/host-project-info-request'
 import { HostProjectCreateRequestT as HHostProjectCreateRequest } from '../src/gen/tsugumi/host/host-project-create-request'
 import { HostProjectDuplicateRequestT as HHostProjectDuplicateRequest } from '../src/gen/tsugumi/host/host-project-duplicate-request'
@@ -127,6 +128,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'RegisterFolderRequest': return new HRegisterFolderRequest(v.project_id, v.resource_id, v.folder, v.title)
     case 'SkillsListRequest': return new HSkillsListRequest(v.project_path, v.folders, v.conversation_id)
     case 'ModelsListRequest': return new HModelsListRequest(v.provider_id, v.refresh, v.profile, v.account_profile, v.key_profile)
+    case 'HostProjectReadRequest': return new HostProjectReadRequestT(v.path, v.file_index ?? 0, BigInt(v.offset ?? 0))
     case 'HostProjectInfoRequest': return new HHostProjectInfoRequest(v.path)
     case 'HostProjectCreateRequest': return new HHostProjectCreateRequest(v.parent, v.name, v.flow)
     case 'HostProjectDuplicateRequest': return new HHostProjectDuplicateRequest(v.path, v.parent, v.name)

@@ -276,7 +276,6 @@ def test_deleting_history_removes_its_environment_inventory(core_factory, projec
     assert error.value.kind == "not_found"
 
 
-
 def test_renamed_card_keeps_its_recorded_environment(core_factory, project, tmp_path):
     """Renaming a Card preserves its environment and portable invocation history."""
     daemon = core_factory(mocked_builds=True, mocked_worker=True, history_dir=tmp_path / "history")
@@ -375,3 +374,38 @@ def test_dependency_search_is_literal_case_insensitive_and_paginated(core_factor
             assert page.nextOffset > offset
             offset = page.nextOffset
         assert found == expected
+
+
+def test_local_worker_uses_manifest_shell_and_path(core_factory, project, tmp_path):
+    """The manifest controls the shell and PATH for both hooks and the body, also after reuse."""
+    from harness.observations import decode_scalar, read_output
+
+    client = core_factory(mocked_builds=True).connect()
+    graph = Project(project)
+    inventories = []
+    for version in ["first", "changed"]:
+        tools = tmp_path / version
+        tools.mkdir()
+        shell = tools / "bash"
+        shell.write_text(f'#!/bin/sh\nexport DEFINITION_SHELL={version}\nexec /bin/bash "$@"\n')
+        shell.chmod(0o755)
+        jq = tools / "jq"
+        jq.write_text(f'#!/bin/sh\nprintf %s {version}\n')
+        jq.chmod(0o755)
+        check = f'test "$DEFINITION_SHELL" = {version} && test "$(jq)" = {version} || exit 42\n'
+        body = check + 'printf \'{"out":{"value":"%s"}}\' "$(jq)" > "$TSUGUMI_OUTPUT"'
+        graph.card("work", {"language": "bash", "sandbox": False, "recordIO": True, "reuseWorker": True},
+                   outputs=STRING_OUTPUT,
+                   plan={"closure": [str(tools)]},
+                   manifest={"shell": str(shell), "path": str(tools), "run": {"bash": body},
+                             "preRun": check + "echo pre", "postRun": check + "echo post"}).save(client)
+        for _ in range(2):
+            run_id = run(client)
+            assert wait_run(client, run_id).state == RunState.succeeded
+            assert decode_scalar(read_output(client, run_id)) == version
+            _, paths = inventory(client, run_id)
+            assert str(tools) in paths
+            inventories.append(paths)
+    assert inventories[0] == inventories[1]
+    assert inventories[2] == inventories[3]
+    assert inventories[0] != inventories[2]

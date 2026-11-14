@@ -9,7 +9,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   static func request(_ method: String, _ fields: [String: Any], host: Bool) throws -> (UInt8, NativeObject) {
     if host {
       switch method {
@@ -163,6 +163,12 @@ enum ServiceWire {
         v.profile = fields["profile"] as? String
         v.accountProfile = fields["account_profile"] as? String
         return (Tsugumi_Host_RequestPayload.modelslistrequest.rawValue, v)
+      case "HostProjectReadRequest":
+        let v = Tsugumi_Host_HostProjectReadRequestT()
+        v.path = fields["path"] as? String ?? ""
+        v.fileIndex = (fields["file_index"] as? NSNumber)?.uint32Value ?? 0
+        v.offset = (fields["offset"] as? NSNumber)?.uint64Value ?? 0
+        return (Tsugumi_Host_RequestPayload.hostprojectreadrequest.rawValue, v)
       case "HostProjectInfoRequest":
         let v = Tsugumi_Host_HostProjectInfoRequestT()
         v.path = fields["path"] as? String ?? ""
@@ -595,6 +601,11 @@ enum ServiceWire {
       var out: [String: Any] = [:]
       out["nixpkgsPin"] = v.nixpkgsPin
       return out
+    case let v as Tsugumi_Host_ProjectFilesT:
+      return ["name": v.name, "files": try v.files.compactMap { item in try item.map { try view($0) } },
+              "nextFile": v.nextFile, "nextOffset": v.nextOffset, "complete": v.complete]
+    case let v as Tsugumi_Host_ProjectFileT:
+      return ["path": v.path, "bytes": v.bytes]
     case let v as Tsugumi_Host_ProjectInfoT:
       var out: [String: Any] = [:]
       out["path"] = v.path

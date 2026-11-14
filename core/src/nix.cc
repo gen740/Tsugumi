@@ -609,6 +609,12 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   for (const auto& run : plan.implementations)
     if ((schema::get(run.package) != nullptr) == (schema::get(run.bash) != nullptr))
       throw Failed(FailureKind::nix_failed, "each Card implementation needs exactly one package or Bash body");
+  const auto* shell = schema::get(manifest.shell);
+  const auto* path = schema::get(manifest.path);
+  if (!shell || shell->empty() || !path || path->empty())
+    throw Failed(FailureKind::nix_failed, "the Card manifest lacks its shell or PATH");
+  build.shell = *shell;
+  build.path = *path;
   build.emulator = emulator;
   if (const auto* pre = schema::get(manifest.pre_run)) build.pre_run = *pre;
   if (const auto* post = schema::get(manifest.post_run)) build.post_run = *post;
