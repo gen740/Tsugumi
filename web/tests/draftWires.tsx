@@ -65,10 +65,17 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   assert.equal(dotted(s)['start>plan'], true, 'carried')
   s.cardStates.clear()
 
-  // Code written for the Draft: its wires are solid again, without any other change.
-  s.updateCard(draft, (c) => {
-    c.set('template', undefined)
-    c.set('language', 'python')
+  // Implement the Draft and rebind its wire ends: the wires are solid again.
+  s.edit((x) => {
+    x.updateCard(draft, (c) => {
+      c.set('template', undefined)
+      c.set('language', 'python')
+      c.set('inputs', parse('[{"name":"in"}]'))
+    })
+    x.updateGraph([], (g) => g.set('connections', parse(`[
+      {"from":{"card":"start","port":"out"},"to":{"card":"plan","port":"in"}},
+      {"from":{"card":"plan","port":"out"},"to":{"card":"log","port":"in"}}
+    ]`)))
   })
   assert.equal(s.kind(draft), 'code')
   assert.deepEqual(dotted(s), { 'start>plan': false, 'plan>log': false })

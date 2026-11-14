@@ -1015,7 +1015,7 @@ private struct PortsCategory: View {
     .formStyle(.grouped)
   }
 
-  /// Port purpose kept in _meta.json (also after a Draft is implemented).
+  /// Descriptions of an implemented Card's ports, kept in _meta.json.
   private func note(_ list: String, _ name: String) -> Binding<String> {
     portNote(model, list, name)
   }

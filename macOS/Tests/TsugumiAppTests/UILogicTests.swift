@@ -168,7 +168,7 @@ import Testing
   #expect(!s.isDraftWire(from: start, to: log), "between Cards with code")
   #expect(!s.isDraftWire(from: start, to: nil), "from a Card with code to the bar")
 
-  // Code written for the Draft: its wires are solid again, without any other change.
+  // Once the Card is implemented, endpoint styling becomes solid.
   s.updateCard(draft) { (card: inout JSONValue) in card = .object([("language", .string("python"))]) }
   #expect(s.kind(draft) == .code)
   #expect(!s.isDraftWire(from: draft, to: log))
@@ -185,9 +185,14 @@ import Testing
 /// The thumbnails decide the same from a demo's Cards, whatever it is drawing.
 @MainActor @Test func aThumbnailDotsADraftsWires() async throws {
   let card = { (id: String, kind: String) in
-    "{\"id\": \"\(id)\", \"kind\": \"\(kind)\", \"x\": 0, \"y\": 0, \"inputs\": [{\"name\": \"in\"}], \"outputs\": [{\"name\": \"out\"}], \"params\": [], \"permissions\": []}"
+    let inputs = kind == "draft" ? "[]" : #"[{"name":"in"}]"#
+    let outputs = kind == "draft" ? "[]" : #"[{"name":"out"}]"#
+    return "{\"id\": \"\(id)\", \"kind\": \"\(kind)\", \"x\": 0, \"y\": 0, \"inputs\": \(inputs), \"outputs\": \(outputs), \"params\": [], \"permissions\": []}"
   }
-  let wire = { (a: String, b: String) in "{\"from\": \"\(a)\", \"fromPort\": \"out\", \"to\": \"\(b)\", \"toPort\": \"in\"}" }
+  let wire = { (a: String, b: String) in
+    let fromPort = a == "d" ? "" : "out", toPort = b == "d" ? "" : "in"
+    return "{\"from\": \"\(a)\", \"fromPort\": \"\(fromPort)\", \"to\": \"\(b)\", \"toPort\": \"\(toPort)\"}"
+  }
   let json = """
     {"flow": "topToBottom", "draftOnly": true, "frames": {}, "steps": [], "final": {}, "outputs": {},
      "cards": [\(card("a", "code")), \(card("b", "code")), \(card("d", "draft"))],
@@ -204,11 +209,11 @@ import Testing
   #expect(empty.port(CardGeometry.newPort, output: false) == CGPoint(x: CardGeometry.width / 2, y: 0))
   data.outputs = [PortData(name: "out")]
   let wired = CardGeometry(data, flow: .topToBottom)
-  // The port is where the wire started; wires do not change the size of a Draft.
+  // Even supplied port declarations are ignored: Draft wires use Card anchors.
   #expect(wired.port("out", output: true) == CGPoint(x: CardGeometry.width / 2, y: wired.height))
   #expect(wired.newPortPoint(output: true) == empty.newPortPoint(output: true), "attachment remains available for more wires")
   #expect(wired.height == empty.height)
-  // Across a left-to-right flow: the middle of the side; several around it.
+  // Across a left-to-right flow: the same anchor at the middle of the side.
   let right = CardGeometry(data, flow: .leftToRight)
   #expect(right.port("out", output: true) == CGPoint(x: CardGeometry.width, y: right.height / 2))
   #expect(right.newPortPoint(output: false) == CGPoint(x: 0, y: right.height / 2))

@@ -488,8 +488,8 @@ struct CardGeometry {
     guard flow == .leftToRight, shape == .card else { return 0 }
     let count = max(inputs.count, outputs.count, 1)
     if draft {
-      // A Draft has no port names to give a row: its ports are at the middle
-      // of its sides. On the grid they do not close up, so it makes room.
+      // A Draft's wire anchors sit at the middle of its sides, with no port rows.
+      // On the grid they do not close up, so it makes room.
       guard let grid else { return 0 }
       let p = Self.rowPitch(grid)
       return max(0, CGFloat(count) * p + 8 - contentHeight)

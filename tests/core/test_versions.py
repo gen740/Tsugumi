@@ -179,10 +179,11 @@ def test_a_demo_history_becomes_its_versions(tmp_path, core_factory):
 
 
 
-def test_the_casa_demo_carries_its_trials(tmp_path, core_factory):
+@pytest.mark.parametrize("language", ["ja", "en"])
+def test_the_casa_demo_carries_its_trials(tmp_path, core_factory, language):
     """The Cas A project exposes its trials and can return to its original Drafts."""
     root = tmp_path / "casa"
-    shutil.copytree(ROOT / "demos" / "ja" / "casa", root)
+    shutil.copytree(ROOT / "demos" / language / "casa", root)
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     c.call("VersionInitRequest", opId=new_id(), origin="test")
@@ -193,21 +194,42 @@ def test_the_casa_demo_carries_its_trials(tmp_path, core_factory):
     assert "failed" in states and states.count("succeeded") >= 5
     by_id = {text(x.id): x for x in g.commits}
     head = by_id[text(g.head)]
-    assert text(head.message).startswith("CIAO を固定") and not (head.tags or [])
+    assert text(head.message).startswith("CIAO を固定" if language == "ja" else "Pin CIAO") and not (head.tags or [])
     spectrum = by_id[text(head.parents[0])]
-    assert text(spectrum.message).startswith("spectrum を追加")
+    assert text(spectrum.message).startswith("spectrum を追加" if language == "ja" else "Add spectrum")
     adopted = by_id[text(spectrum.parents[0])]
     assert [text(t) for t in adopted.tags] == ["rgb-v1"]
     assert all(text(run.state) != "failed" for run in head.runs or [])
     # The versions before CIAO are as they were: no Card of it, bands without dmcopy.
     assert "ciao" not in [text(card.id) for card in c.call("VersionCanvasRequest", commit=text(spectrum.id)).cards]
-    assert any(text(entry.message).startswith("青の帯域") and any(text(run.state) == "failed" for run in entry.runs or []) for entry in g.commits)
+    assert any(text(entry.message).startswith("青の帯域" if language == "ja" else "Try starting the blue band")
+               and any(text(run.state) == "failed" for run in entry.runs or []) for entry in g.commits)
     # Going back to the plan gives the Drafts.
     plan = next(x for x in g.commits if not (x.parents or []))
     rev = c.call("ProjectInspectRequest").rev
     c.call("VersionCheckoutRequest", baseRev=rev, opId=new_id(), origin="test", commit=text(plan.id))
     snap = c.call("ProjectInspectRequest")
     assert all(json.loads(text(d.cardJson)).get("template") in ("draft", "trigger") for d in snap.definitions)
+    drafts = {text(d.id) for d in snap.definitions if json.loads(text(d.cardJson)).get("template") == "draft"}
+    assert drafts == {"load", "bands", "rgb"}
+    for d in snap.definitions:
+        if text(d.id) in drafts:
+            assert json.loads(text(d.cardJson)) == {"template": "draft"}
+            meta = json.loads(text(d.metaJson))
+            assert not meta.get("inputs") and not meta.get("outputs")
+    for card in snap.resolution:
+        if text(card.card.segments[0]) in drafts:
+            assert not card.inputs and not card.outputs
+    assert json.loads(text(snap.projectJson))["canvas"]["connections"] == [
+        {"from": {"card": "start", "port": "out"}, "to": {"card": "load", "port": ""}},
+        {"from": {"card": "load", "port": ""}, "to": {"card": "bands", "port": ""}},
+        {"from": {"card": "bands", "port": ""}, "to": {"card": "rgb", "port": ""}},
+    ]
+    # Returning to the implemented tip restores its real ports and exact document.
+    c.call("VersionCheckoutRequest", baseRev=snap.rev, opId=new_id(), origin="test", commit=text(head.id))
+    restored = c.call("ProjectInspectRequest")
+    assert json.loads(text(restored.projectJson)) == json.loads((ROOT / "demos" / language / "casa" / "tsugumi.json").read_text())
+    assert not graph(c).dirty
 
 
 

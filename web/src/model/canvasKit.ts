@@ -100,10 +100,10 @@ export interface ParamData {
   value: string
 }
 
-/** Everything a Card view needs, with no dependency on a session. */
-/** What a wire names to end at a Draft's next port (`session.connect` makes the port). */
+/** The unnamed anchor for wires attaching directly to a Draft. */
 export const NEW_PORT = ''
 
+/** Everything a Card view needs, with no dependency on a session. */
 export interface CardNodeData {
   runMark?: string
   title: string
@@ -316,8 +316,8 @@ export class CardGeometry {
     if (this.flow !== 'leftToRight' || this.shape !== 'card') return 0
     const count = Math.max(this.inputs.length, this.outputs.length, 1)
     if (this.draft) {
-      // A Draft has no port names to give a row: its ports are at the middle
-      // of its sides. On the grid they do not close up, so it makes room.
+      // A Draft's wire anchors sit at the middle of its sides, with no port rows.
+      // On the grid they do not close up, so it makes room.
       if (!this.grid) return 0
       return Math.max(0, count * CardGeometry.rowPitch(this.grid) + 8 - this.contentHeight)
     }

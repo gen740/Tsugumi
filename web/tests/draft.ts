@@ -118,7 +118,7 @@ const ports = (s: Session, k: string) => {
 }
 
 {
-  // A side without a port starts its wire from the middle; a side with one from it; none while collapsed.
+  // Draft wires use the middle of each side; attachments hide while collapsed.
   const s = session()
   const a = await s.addCard('draft', [], { x: 0, y: 0 }), b = await s.addCard('draft', [], { x: 300, y: 0 })
   // The grid has its own test (portGrid.ts).
@@ -130,11 +130,12 @@ const ports = (s: Session, k: string) => {
   const wired = new CardGeometry(offGrid(a), 'topToBottom')
   assert.deepEqual(wired.port(NEW_PORT, true), { x: CardGeometry.width / 2, y: wired.height }, 'the port is where the wire started')
   assert.deepEqual(wired.newPort(true), empty.newPort(true), 'the Card attachment stays available for more wires')
-  // Across a left-to-right flow: the middle of the side; several around it.
+  // Across a left-to-right flow: the same anchor at the middle of the side.
   const side = new CardGeometry(offGrid(b), 'leftToRight')
   assert.deepEqual(side.port(NEW_PORT, false), { x: 0, y: side.height / 2 })
   const none = new CardGeometry({ ...offGrid(b), inputs: [] }, 'leftToRight')
   assert.deepEqual(none.newPort(false), { x: 0, y: none.height / 2 })
+  // Supplied port declarations do not create Draft ports or move the anchor.
   const two = new CardGeometry({ ...offGrid(b), inputs: [{ name: 'x' }, { name: 'y' }] }, 'leftToRight')
   assert.equal((two.port(NEW_PORT, false).y + two.port(NEW_PORT, false).y) / 2, two.height / 2)
   assert.equal(empty.height, wired.height, 'wires do not change the size of a Draft')

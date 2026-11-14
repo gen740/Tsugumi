@@ -655,8 +655,7 @@ import TsugumiAgentClient
     #expect(!FileManager.default.fileExists(atPath: folder.path))
   }
 
-  /// A Draft's wires make its ports and take them away, and what is written on
-  /// its Card is kept, under a new name too.
+  /// Comments stay on their Card, with authorship and resolution history.
   @Test func commentsAreSavedOnTheirCardWithWhoDidWhat() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
@@ -712,6 +711,7 @@ import TsugumiAgentClient
     #expect(s.comments(k).map(\.text) == ["軸に名前を"])
   }
 
+  /// Draft wires attach to the Card itself; its content and name survive saving.
   @Test func aDraftIsWiredAndWrittenOnTheCanvas() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
