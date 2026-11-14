@@ -19,12 +19,17 @@
     {
       "name": "bindings",
       "type": "string",
-      "data": "{\"source\":\"inputs.data.source\",\"result\":\"inputs.data.result\"}"
+      "data": "{\"source\":\"inputs.data.source\",\"factor\":\"param.factor\"}"
     },
     {
       "name": "selected",
       "type": "string",
       "data": "result"
+    },
+    {
+      "name": "factor",
+      "type": "double",
+      "data": 2
     }
   ]
 }

@@ -80,6 +80,41 @@ TEST_F(NativeContract, RequiredOutputFailsAtTheSdkCompletionCallback) {
   ASSERT_TRUE(call.failure);
   EXPECT_NE(call.failure->message.find("required output first"), std::string::npos);
 }
+TEST_F(NativeContract, SourceFailureSurvivesCompletionAndTheFailureReply) {
+  fail_at_impl(nullptr, "worker_failed", "cell traceback", "src/notebook.py", 8, "calculation");
+  EXPECT_NE(finish_outputs_impl(nullptr), 0);
+  fail_impl(nullptr, "output_invalid", "must not replace the first failure");
+
+  // Capture the real framed reply in a file, without a worker socket.
+  const int saved = ::dup(kData);
+  FILE* capture = std::tmpfile();
+  ASSERT_NE(capture, nullptr);
+  ASSERT_EQ(::dup2(::fileno(capture), kData), kData);
+  reply(call);
+  if (saved >= 0) {
+    EXPECT_EQ(::dup2(saved, kData), kData);
+    ::close(saved);
+  } else if (::fileno(capture) != kData) {
+    ::close(kData);
+  }
+  std::rewind(capture);
+  const auto bytes = read_frame(::fileno(capture));
+  std::fclose(capture);
+  ASSERT_TRUE(bytes);
+  flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes->data()), bytes->size());
+  ASSERT_TRUE(W::VerifyWorkerMessageBuffer(verifier));
+  const auto* message = W::GetWorkerMessage(bytes->data());
+  EXPECT_EQ(message->call_id(), call.call_id);
+  ASSERT_NE(message->value_as_WorkerFailure(), nullptr);
+  const auto* failure = message->value_as_WorkerFailure()->failure();
+  EXPECT_EQ(failure->kind(), D::FailureKind::worker_failed);
+  EXPECT_EQ(failure->diagnostic()->str(), "cell traceback");
+  std::map<std::string, std::string> args;
+  for (const auto* entry : *failure->args()) args.emplace(entry->key()->str(), entry->value()->str());
+  const std::map<std::string, std::string> expected = {
+      {"card", "card"}, {"source", "src/notebook.py"}, {"line", "8"}, {"cell", "calculation"}};
+  EXPECT_EQ(args, expected);
+}
 TEST_F(NativeContract, ReportRejectionCanBeHandledByTheCard) {
   ASSERT_NE(display_scalar_impl(nullptr, NAN, "value"), 0);
   ASSERT_FALSE(call.failure);

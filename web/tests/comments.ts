@@ -143,3 +143,16 @@ const session = () => {
 }
 
 console.log('comments: ok')
+
+{
+  const { s } = session()
+  const k = await s.addCard('python', [], { x: 0, y: 0 })
+  s.addComment(k, 'Read only: [source](card:a?file=src%2Fmain.py&lines=2-4) uses a clock.', true)
+  assert.equal(s.comments(k)[0].finding, true)
+  assert.equal(s.openComments(k).length, 1, 'Kept observations remain visible as comments')
+  assert.deepEqual(s.changeRequests(k), [])
+  assert.deepEqual(s.cardsWithOpenComments([]), [], 'A kept finding does not trigger generation')
+  s.addComment(k, 'Change the clock to an explicit input')
+  assert.equal(s.changeRequests(k).length, 1)
+  assert.deepEqual(s.cardsWithOpenComments([]), [k])
+}

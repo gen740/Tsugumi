@@ -9,6 +9,16 @@
 namespace tsugumi {
 namespace {
 
+TEST(HistoryCopy, NotebookFailurePositionRoundtrip) {
+  auto failure = FailureData::make(FailureKind::worker_failed, "calculation: ZeroDivisionError\nTraceback");
+  failure.args = {{"source", "src/notebook.py"}, {"line", "8"}, {"cell", "calculation"}};
+  const auto restored = FailureData::from_bytes(failure.to_bytes());
+  ASSERT_TRUE(restored);
+  EXPECT_EQ(restored->args, failure.args);
+  EXPECT_EQ(restored->diagnostic, failure.diagnostic);
+  EXPECT_EQ(restored->kind, failure.kind);
+}
+
 TEST(HistoryCopy, IncompatibleSchemasAreRejectedWithoutChangingEitherDatabase) {
   const auto directory = std::filesystem::temp_directory_path() / ("tsugumi-history-" + crypto::uuid4());
   std::filesystem::create_directories(directory);

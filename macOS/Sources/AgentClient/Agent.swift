@@ -32,6 +32,12 @@ public struct ToolRecord: Codable, Equatable {
 }
 
 /// A snapshot of a conversation persisted by the core Agent service.
+public struct HelperTrace: Codable, Equatable {
+  public var call: String
+  public var task: UInt32
+  public var messages: [ChatMessage]
+  public var state: String
+}
 public struct Conversation: Codable, Equatable {
   public var id = UUID().uuidString.lowercased()
   public var title: String?
@@ -41,12 +47,13 @@ public struct Conversation: Codable, Equatable {
   /// model no longer sees them, but the full history stays readable and searchable.
   public var archive: [ChatMessage] = []
   public var tools: [ToolRecord] = []
+  public var helpers: [HelperTrace] = []
   public var usage = Usage()
   public var summary: String?  // compacted history
 
   public init() {}
 
-  enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, archive, tools, usage, summary }
+  enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, archive, tools, helpers, usage, summary }
 
   public init(from d: Decoder) throws {
     let c = try d.container(keyedBy: CodingKeys.self)
@@ -56,6 +63,7 @@ public struct Conversation: Codable, Equatable {
     messages = try c.decode([ChatMessage].self, forKey: .messages)
     archive = try c.decodeIfPresent([ChatMessage].self, forKey: .archive) ?? []
     tools = try c.decode([ToolRecord].self, forKey: .tools)
+    helpers = try c.decodeIfPresent([HelperTrace].self, forKey: .helpers) ?? []
     usage = try c.decode(Usage.self, forKey: .usage)
     summary = try c.decodeIfPresent(String.self, forKey: .summary)
   }
@@ -90,6 +98,7 @@ public enum AgentEvent: Sendable {
   /// finishing; `unconfirmedRun` is a run it started and never saw end.
   case stepLimit(steps: Int, unconfirmedRun: String?)
   /// What a helper started by `delegate` does (its own events).
+  case helperStarted(String)
   indirect case helper(name: String, event: AgentEvent)
 }
 
@@ -207,7 +216,7 @@ public actor Agent {
   public var hasUnfinishedWork: Bool { busy }
 
   public func send(prompt: String, title: String, display: String? = nil,
-                   selectedCards: [String] = [], selectedDisplays: [String] = [], skillNames: [String] = [], attachedResources: [String] = [],
+                   selectedCards: [String] = [], selectedDisplays: [String] = [], skillNames: [String] = [], scopedSkill: String? = nil, attachedResources: [String] = [],
                    events: @escaping @Sendable (AgentEvent) -> Void) {
     let turn = UUID().uuidString
     start(events) {
@@ -216,7 +225,7 @@ public actor Agent {
       try await self.beginTurn()
       _ = try await self.request("ConversationSendRequest", ["conversation_id": self.id,
         "turn_id": turn, "text": prompt, "display": display ?? prompt, "selected_cards": selectedCards,
-        "selected_displays": selectedDisplays, "skill_names": skillNames, "attached_resources": attachedResources])
+        "selected_displays": selectedDisplays, "skill_names": skillNames, "scoped_skill": scopedSkill as Any, "attached_resources": attachedResources])
     }
   }
 
@@ -345,6 +354,7 @@ public actor Agent {
     case "error": return .error(value["message"] as? String ?? text)
     case "finished", "cancelled": return .finished
     case "stepLimit": return .stepLimit(steps: value["steps"] as? Int ?? 0, unconfirmedRun: value["unconfirmedRun"] as? String)
+    case "helperStarted": return .helperStarted(text)
     case "helper":
       guard let nested = value["event"] as? [String: Any], let event = event(nested) else { return nil }
       return .helper(name: name, event: event)

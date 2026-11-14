@@ -18,13 +18,20 @@ import { RunLogView } from './logs'
 import { L } from '../i18n'
 import { runMark } from '../model/runMark'
 
+export function FailureSourceLink({ failure, onOpenSource }: { failure: D.FailureT; onOpenSource: (source: string, line: number) => void }) {
+  const args = new Map(failure.args.map((a) => [s(a.key), s(a.value)]))
+  const source = args.get('source'), line = Number(args.get('line'))
+  if (!source || !Number.isSafeInteger(line) || line < 1) return null
+  return <Row><Button onClick={() => onOpenSource(source, line)}>{args.get('cell') ?? source} · {source}:{line}</Button></Row>
+}
+
 type Filter = 'all' | 'succeeded' | 'failed'
 type Detail = 'io' | 'log' | 'packages' | 'info'
 
 /** Runs of one Card (filter by success/failure) → invocations → I/O, log, info.
  *  The packages are those recorded for the invocation.
  *  Loading, failed and empty are said plainly, never as an empty split view. */
-export function CardExecutionView({ session, cardKey }: { session: ProjectSession; cardKey: CardKey }) {
+export function CardExecutionView({ session, cardKey, onOpenSource }: { session: ProjectSession; cardKey: CardKey; onOpenSource: (source: string, line: number) => void }) {
   useObserve(session)
   const [runs, setRuns] = useState<R.RunSummaryT[]>([])
   const [filter, setFilter] = useState<Filter>('all')
@@ -220,6 +227,7 @@ export function CardExecutionView({ session, cardKey }: { session: ProjectSessio
                           <>
                             <Value label={L('失敗の種類')} value={D.FailureKind[record.status!.failure.kind] ?? String(record.status!.failure.kind)} />
                             <Row><span className="selectable wrap-pre" style={{ color: 'var(--red)' }}>{s(record.status!.failure.diagnostic)}</span></Row>
+                            <FailureSourceLink failure={record.status!.failure} onOpenSource={onOpenSource} />
                           </>
                         )}
                         <Value label={L('集計')} value={L('呼び出し {0} · 成功 {1} · 失敗 {2}', record.aggregate?.calls ?? 0n, record.aggregate?.succeeded ?? 0n, record.aggregate?.failed ?? 0n)} />
