@@ -103,25 +103,13 @@ struct WelcomeLayout {
   var dot: CGPoint { w(TsugumiWordmark.iDot) }
 }
 
-/// The word sampled along its line (its own units), with the furthest x
-/// reached so far at each sample: the written part grows to the right as the
-/// bird flies over, whatever the line does in its loops.
+/// The word sampled along its line (its own units).
 fileprivate enum WordTrace {
   static let n = 300
   static let points: [CGPoint] = (0...n).map {
     TsugumiWordmark.path.trimmedPath(from: 0, to: Double($0) / Double(n)).currentPoint ?? CGPoint(x: -44, y: -70)
   }
-  static let reach: [CGFloat] = {
-    var m = -CGFloat.infinity
-    return points.map { m = max(m, $0.x); return m }
-  }()
   static func tip(_ f: Double) -> CGPoint { points[min(n, max(0, Int((f * Double(n)).rounded())))] }
-  static func reachX(_ f: Double) -> CGFloat { reach[min(n, max(0, Int((f * Double(n)).rounded())))] }
-}
-
-/// The bill relative to the feet, in a pose.
-fileprivate func billOffset(_ pose: BirdPose) -> CGPoint {
-  TsugumiBird.point(TsugumiBird.gape, at: .zero, scale: WelcomeLayout.birdScale, pose: pose)
 }
 
 /// Flying with strong beats: a slow upstroke raising the wing high, a

@@ -1577,9 +1577,6 @@ final class ProjectSession {
     return externals[prefix]
   }
 
-  /// Whether a scope is inside a Card in Card (its Cards belong to the external's copy).
-  func isExternalScope(_ scope: [String]) -> Bool { !scope.isEmpty }
-
   private func graph(_ scope: [String]) -> JSONValue? {
     guard let prefix = projectPrefix(scope) else { return nil }
     return prefix.isEmpty ? project["canvas"] : external(prefix)?.project["canvas"]
@@ -1620,9 +1617,6 @@ final class ProjectSession {
 
   /// A Card's key in the layout of its scope.
   func layoutKey(_ k: CardKey) -> String { path(k).count > 1 ? (path(k).last ?? k) : k }
-
-  /// The scope a note's or group's "scope" field means in the layout it is in.
-  func layoutScopeKey(_ scope: [String]) -> String { scope.count > 0 ? "" : key(scope) }
 
   func instance(_ k: CardKey) -> JSONValue? {
     let p = path(k)

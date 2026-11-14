@@ -129,7 +129,6 @@ public actor EnvironmentManager {
     extraFolders[project.id] = paths
     _ = try await environment(project, .folders)
   }
-  public func setAllowedOrigins(_ origins: [String]) { allowedOrigins = origins }
   private func runtime(_ action: Tsugumi_Host_RuntimeAction = .state, project: String? = nil, key: String? = nil, command: String? = nil) async throws -> [String: Any] {
     await prepare()
     var fields: [String: Any] = ["action": action]

@@ -21,7 +21,6 @@
 "%@ と同じ文書です" = "Same document as %@";
 "%@ に書き込めないため、このアプリを更新できません。" = "This app cannot be updated because %@ is not writable.";
 "%@ のキーを Keychain から削除しました。" = "Removed the %@ key from the Keychain.";
-"%@ のキーを agentd から削除しました。" = "Deleted the key for %@ from agentd.";
 "%@ の準備ができました。次に終了したときに更新します。" = "%@ is ready. It is installed the next time you quit.";
 "%@ は別の場所でも変更されたため保存していません。変更は保持しています。" = "%@ was also changed elsewhere, so it was not saved. The changes are kept.";
 "%@ は削除されたか、まだ保存されていません。" = "%@ was deleted or has not been saved yet.";
@@ -136,11 +135,9 @@
 "Home へ戻るには、保存できない変更を破棄します。破棄した変更は取り消せません。\n\n保存できない理由: %@" = "To go back to Home, the changes that cannot be saved are discarded. Discarded changes cannot be recovered.\n\nWhy they cannot be saved: %@";
 "JSON として読めません: %@" = "Not readable as JSON: %@";
 "Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。" = "Saved in Keychain. The key is used by the Agent service and is not stored in Cards, projects, settings or logs.";
-"Keychain に保存しました。キーは core や Card には渡されず、プロジェクト・設定・ログにも残りません。" = "Saved in the Keychain. The key is never passed to core or Cards, and is not left in projects, settings or logs.";
 "Mac のフォルダに書く" = "Write to folders of the Mac";
 "Mac のフォルダを読む" = "Read folders of the Mac";
 "Manage usage" = "Manage usage";
-"Manage usage（chatgpt.com/settings/usage）" = "Manage usage (chatgpt.com/settings/usage)";
 "Markdown（見出し・太字・リスト・表・コード）と数式（$…$、$$…$$）を使えます。付箋は実行には参加しません。" = "Markdown (headings, bold, lists, tables, code) and math ($…$, $$…$$) can be used. Notes take no part in runs.";
 "Matplotlib（PNG / SVG / PDF）" = "Matplotlib (PNG / SVG / PDF)";
 "NAR サイズによる概算です。共有する依存関係は各プロジェクトにも含まれるため、内訳の和と合計は異なります。最大 1 分ごとに再計測します。" = "Estimated from NAR sizes. Shared dependencies count in each project, so project sizes do not add up to the total. Measurements refresh once per minute.";
@@ -194,7 +191,6 @@
 "Tsugumi を知る" = "Learn about Tsugumi";
 "Tsugumi を知る のページが見つかりません" = "The \"Learn about Tsugumi\" page was not found";
 "Usage limit reached: ChatGPT の設定で、プランかこのアプリの利用上限を確かめてください。" = "Usage limit reached: review your plan or this app's limit in ChatGPT settings.";
-"Using ChatGPT plan" = "Using ChatGPT plan";
 "VM と Nix store を削除" = "Deleted the VM and the Nix store";
 "VM の中で Tsugumi を組み立てています（初回とアプリの更新後のみ。1〜2 分）" = "Building Tsugumi inside the VM (first start and after an update only; a minute or two)";
 "VM を起動しています" = "Booting the VM";
@@ -255,7 +251,6 @@
 "「%@」のビルドキャッシュを削除しますか？" = "Delete the build cache for “%@”?";
 "「%@」はすでに使われています。" = "“%@” is already used.";
 "「%@」を読み取り専用で実行環境に共有し、Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（%@）に送られます。共有のため実行環境を再起動します（実行中の Run は止まります）。" = "“%@” is shared read-only with the environment so that the Agent can read it. What the Agent reads is sent to the model provider (%@). Sharing restarts the environment (a running Run stops).";
-"「tsugumi:default」はアプリが固定した Nixpkgs です。変更すると Card の再ビルドが必要になります。" = "“tsugumi:default” is the Nixpkgs pinned by the app. Changing it requires rebuilding Cards.";
 "「デモを見る」から、Collatz などの例をすぐに開けるよ" = "Open an example such as Collatz from Browse Demos.";
 "「再試行」で接続し直します。未保存の変更は保持しています。" = "“Retry” connects again. Unsaved changes are kept.";
 "あとで" = "Later";
@@ -295,7 +290,6 @@
 "このアプリの Nixpkgs に更新" = "Update to This App's Nixpkgs";
 "このアプリは自動更新できません" = "This app cannot update itself";
 "このアプリ（この Mac のユーザー設定）" = "This app (this Mac's user settings)";
-"このアプリ（この Mac。API キーは macOS のキーチェーン）" = "This app (this Mac; API keys in the macOS Keychain)";
 "このタブで開く" = "Open in This Tab";
 "このデバイスのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。" = "The tokens on this device were removed, but the revocation at OpenAI could not be confirmed. You can disconnect Tsugumi in ChatGPT settings.";
 "このデモを開く" = "Open This Demo";
@@ -351,7 +345,6 @@
 "これより後の削除はしていません。実行環境のファイルは残っています。もう一度削除してください。" = "Nothing else was removed after this step; the environment's files are kept. Retry the deletion.";
 "こんにちは、ツグミです。Tsugumi の使い方を、ここからいつでもご案内します。" = "Hello, I'm Tsugumi. I can show you how to use Tsugumi, any time, from here.";
 "こんにちは、ツグミです。何をしてみますか？" = "Hello, I'm Tsugumi. What would you like to try?";
-"こんにちは、ツグミです。動くデモを一緒に見てみますか？" = "Hello, I'm Tsugumi. Shall we look at a working demo together?";
 "すべて" = "All";
 "すべての入力が揃ったとき" = "When every input has arrived";
 "すべての実行" = "All runs";
@@ -408,7 +401,6 @@
 "ガイドのツグミに聞く" = "Ask Tsugumi the Guide";
 "ガイドのツグミに聞く（%@）" = "Ask Tsugumi the Guide (%@)";
 "ガイドのツグミを呼ぶ準備" = "Getting Tsugumi the Guide Ready";
-"ガイドは上の接続先とキーを使います。キーを登録すると現れ、削除すると消えます。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection and key above. It appears when a key is set and goes away when the key is deleted. Answering questions never changes your project.";
 "ガイドは使う接続先を使います。使える接続（キー、ChatGPT のサインイン）があると質問に答え、ないあいだは決まったデモの案内だけをします（通信はしません）。質問に答えるだけではプロジェクトを変えません。" = "The guide uses the connection in use. With a working connection (a key, the ChatGPT sign-in) it answers questions; without one it only gives a fixed demo tour (nothing is sent). Answering questions never changes your project.";
 "キャッシュ URL" = "Cache URL";
 "キャッシュの使用量が大きくなっています。必要なビルド結果を確認して、削除するものを選んでください。" = "The cache is using substantial space. Review the build results and choose which ones to delete.";
@@ -462,7 +454,6 @@
 "サインアウト" = "Sign Out";
 "サインアウト済み" = "Signed out";
 "サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。" = "You are signed in, but using your ChatGPT plan was not allowed. Allow it with “Allow Plan Use”, or use an API key connection.";
-"サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。トークンは macOS Keychain（このデバイスのみ）に置かれ、core や Card には渡されず、プロジェクト・設定・ログにも残りません。" = "You sign in in your browser, and Tsugumi receives the result on 127.0.0.1. Tokens stay in the macOS Keychain (this device only); they are never passed to core or Cards and never written to projects, settings or logs.";
 "サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は agentd が行います。トークンは Card やプロジェクト・設定・ログには残りません。" = "Sign in in your browser. agentd receives the result on 127.0.0.1, validates it and stores the tokens. Tokens are not stored in Cards, projects, settings or logs.";
 "サインインを中止しました。" = "The sign-in was cancelled.";
 "サインイン中" = "Signed in";
@@ -587,7 +578,6 @@
 "プロジェクトのファイル（tsugumi.json・layout.json・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。" = "Fix the format of the project's files (tsugumi.json, layout.json, files in definitions) and retry; your documents and history are kept.";
 "プロジェクトのフォルダを作成する場所を選んでください" = "Choose where to make the project's folder";
 "プロジェクトの実行環境" = "Project execution environment";
-"プロジェクトの実行環境が起動するとターミナルを使えます。" = "The terminal can be used once the project's environment is running.";
 "プロジェクトの操作に失敗しました。" = "The project operation failed.";
 "プロジェクトの環境 %lld 件を削除しました" = "Deleted %lld project environments";
 "プロジェクトの設定" = "Project Settings";
@@ -920,7 +910,6 @@
 "実行 %lld 回（成功 %lld・失敗 %lld）· 最後: %@" = "%lld runs (%lld succeeded, %lld failed) · last: %@";
 "実行 revision" = "Execution revision";
 "実行: %@" = "Run: %@";
-"実行が始まりました" = "A run started";
 "実行が終わったら保存します" = "Saved when the run ends";
 "実行ごとに残った版（git）を枝・タグ・実行結果と一緒に見ます" = "Shows the versions kept at each run (git) with their branches, tags and run results";
 "実行されていません" = "Not run";
@@ -1057,16 +1046,12 @@
 "接続から生成されるファイルです（手で編集しません）" = "A file generated from the connections (not edited by hand)";
 "接続して始める" = "Connect and Start";
 "接続するとターミナルが自動で開きます。" = "Terminals open automatically when the environment connects.";
-"接続をテスト" = "Test connection";
 "接続を確かめられませんでした（%@）。キーを入れ直すか、ネットワークを確かめて再試行してください。" = "Could not confirm the connection (%@). Enter the key again, or check the network and try again.";
 "接続を確認して更新" = "Verify and Update";
-"接続を確認して登録" = "Verify and Register";
 "接続を確認しました。" = "Connection verified.";
 "接続中" = "Connected";
 "接続先" = "Provider";
-"接続先で Tsugumi の実行デーモンを起動してください。" = "Start the Tsugumi execution daemon at this endpoint.";
 "接続断（結果未確認）" = "Disconnected (outcome unconfirmed)";
-"接続方法" = "Transport";
 "接続未確認" = "Connection unverified";
 "接続設定…" = "Connection Settings…";
 "控えめ" = "Muted";
@@ -1280,7 +1265,6 @@
 "詳しいログ" = "Detailed log";
 "詳しくはチャットに書きました" = "More in the chat";
 "詳細を閉じる" = "Close details";
-"認証トークン" = "Authentication token";
 "認証情報はこの Mac のアプリ用ファイル（0600）に保存し、VM の Nix daemon だけに渡します。プロジェクトや実行記録には含めません。" = "Credentials are stored in a private application file on this Mac (0600) and provided only to the VM’s Nix daemon. They are excluded from project files and run history.";
 "認証（非公開キャッシュ）" = "Authentication (Private Caches)";
 "読み取り専用" = "Read only";
@@ -1363,7 +1347,6 @@
 "（変更した Card: %@）" = " (changed Cards: %@)";
 "（実行中）" = "(running)";
 "（必須）" = "(required)";
-"（応答が長すぎて途中で切れたため、小さく分けてやり直します）" = "(The response was too long and was cut off; trying again in smaller pieces)";
 "（次の入力を待てます）" = "(can wait for the next input)";
 "（止まったところから続けます）" = "(going on from where it stopped)";
 "（省略可）" = " (optional)";

@@ -709,7 +709,7 @@ private struct HelperRow: View {
 }
 
 /// A folded tool step: one line saying what was done; details on demand.
-private struct ToolRow: View {
+struct ToolRow: View {
   let item: ChatController.Item
   let tab: WorkflowTab?
   let session: ProjectSession

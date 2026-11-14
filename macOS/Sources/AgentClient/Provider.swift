@@ -30,34 +30,6 @@ public struct WebSearch: Codable, Equatable, Sendable {
   public var arguments: String {
     String(decoding: (try? JSONSerialization.data(withJSONObject: ["query": query], options: [.sortedKeys])) ?? Data(), as: UTF8.self)
   }
-
-  /// The cited sources as Markdown links under a reply. They come from the
-  /// web: only http(s) is linked, and a title cannot break out of its link.
-  static func sourcesText(_ sources: [WebSource]) -> String {
-    var seen = Set<String>()
-    var lines: [String] = []
-    for s in sources {
-      let lower = s.url.lowercased()
-      guard lower.hasPrefix("https://") || lower.hasPrefix("http://"), seen.insert(s.url).inserted else { continue }
-      var url = ""
-      for c in s.url {
-        switch c {
-        case "(": url += "%28"
-        case ")": url += "%29"
-        case "<": url += "%3C"
-        case ">": url += "%3E"
-        case _ where c.isWhitespace: url += "%20"
-        default: url.append(c)
-        }
-      }
-      let cleaned = (s.title ?? s.url).split(whereSeparator: { $0 == "[" || $0 == "]" || $0.isNewline }).joined(separator: " ")
-        .trimmingCharacters(in: .whitespaces)
-      lines.append("- [\(cleaned.isEmpty ? s.url : cleaned)](\(url))")
-    }
-    // The app's language (AppPreferences writes it as the app's AppleLanguages).
-    let heading = Shared.data.webSearch.sources[Bundle.main.preferredLocalizations.first == "en" ? "en" : "ja"]!
-    return lines.isEmpty ? "" : "\n\n\(heading):\n\(lines.joined(separator: "\n"))\n"
-  }
 }
 
 /// One content block of a conversation snapshot returned by core.

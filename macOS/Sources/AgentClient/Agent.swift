@@ -321,7 +321,7 @@ public actor Agent {
   }
 
   public static func guideText(_ key: String, _ values: [String: String] = [:]) -> String {
-    Shared.fill(Shared.data.guide.text(key), values)
+    Shared.fill(Shared.guideTexts[key]!, values)
   }
 
   public static func toolSummary(_ result: String) -> String { String(result.prefix(400)) }

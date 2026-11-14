@@ -215,14 +215,6 @@ final class ChatController {
     }
   }
 
-  private func firstText(_ c: Conversation) -> String? {
-    for m in c.fullHistory where m.role == "user" {
-      if let d = m.display { return String(d.prefix(60)) }
-      for b in m.content { if case .text(let t) = b { return String(t.prefix(60)) } }
-    }
-    return nil
-  }
-
   func select(_ id: String) {
     // Observation moves to this conversation; the previous one stays in core.
     let previous = agent
