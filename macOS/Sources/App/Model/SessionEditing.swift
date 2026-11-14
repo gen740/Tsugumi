@@ -1521,6 +1521,13 @@ extension ProjectSession {
     return try await rpc.clearCache(opId: UUID())
   }
 
+  func deleteRunScratch(paths: [String]) async throws -> Tsugumi_RPC_RunScratchDeleteResultT {
+    guard let rpc else { throw RPCError.disconnected }
+    let result = try await rpc.deleteRunScratch(opId: UUID(), paths: paths)
+    await refreshCacheUsage()
+    return result
+  }
+
   func deleteRunHistory(endedBefore: Date?) async throws -> Tsugumi_RPC_RunHistoryDeleteResultT {
     guard let rpc else { throw RPCError.disconnected }
     return try await rpc.deleteHistory(opId: UUID(), endedBefore: endedBefore)

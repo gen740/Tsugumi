@@ -358,12 +358,12 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
     <div className="col fill">
       <div className="scroll flex1">
         <Form>
-          <Section footer={L('実行履歴はこのマシンに保存します。オンのときは、終わった実行の記録（値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。')}>
+          <Section footer={L('実行履歴はこのマシンに保存します。オンのときは、終わった実行の記録（実行したコードのコミット・値・型・ログ・成果物の一覧）をプロジェクトの .tsugumi/runs.sqlite にも書き出します。コピーしたり別の Mac に移したりしたプロジェクトは、開いたときに VM にない実行をここから読み込みます。オフにすると、新しい実行は VM の中だけに保存します。')}>
             <Row label={L('実行履歴をプロジェクトに保存する')}>
               <Toggle checked={saving} disabled={!session.isEditable} onChange={(v) => void setSaving(v)} />
             </Row>
           </Section>
-          <Section title={L('削除')} footer={L('実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。')}>
+          <Section title={L('削除')} footer={L('実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。')}>
             <Row label={L('対象')}>
               <Select<'before' | 'all'> value={scope} onChange={setScope}
                 options={[{ value: 'before', label: L('指定した日時より前に終わった実行') }, { value: 'all', label: L('すべての実行') }]} />
@@ -390,6 +390,19 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
 
 function CacheSettings({ session }: { session: ProjectSession }) {
   useObserve(session)
+  const [scratchSelection, setScratchSelection] = useState<string[]>()
+  const [scratchResult, setScratchResult] = useState<R.RunScratchDeleteResultT>()
+  const scratch = session.cacheUsage?.projects.find(p => s(p.project) === s(session.cacheUsage?.currentProject))?.runScratch ?? []
+  const candidates = scratch.filter(p => s(p.path) !== `runs/${s(session.cacheUsage?.protectedRun)}`)
+  const deleteScratch = async () => {
+    setWorking(true)
+    setMessage(undefined)
+    const paths = scratchSelection ?? []
+    setScratchSelection(undefined)
+    try { setScratchResult(await session.deleteRunScratch(paths)) }
+    catch (e) { setMessage(L('削除できませんでした: {0}', errorText(e))) }
+    setWorking(false)
+  }
   const [clearTarget, setClearTarget] = useState(session)
   const [result, setResult] = useState<R.ProjectCacheClearResultT>()
   const [working, setWorking] = useState(false)
@@ -414,8 +427,8 @@ function CacheSettings({ session }: { session: ProjectSession }) {
         <div className="headline">{L('キャッシュ使用量')}</div>
         <Value label={L('合計（共有パスは一度だけ計上）')} value={session.cacheUsage?.buildBytes != null ? formatBytes(session.cacheUsage.buildBytes) : L('計測中または取得できません')} />
         {session.cacheUsage?.storeAvailableBytes != null && <Value label={L('store ディスクの空き')} value={formatBytes(session.cacheUsage.storeAvailableBytes)} />}
-        {session.cacheUsage?.large && <div className="callout">{L('キャッシュの使用量が大きくなっています。必要なビルド結果を確認して、削除するものを選んでください。')}</div>}
-        <div className="caption secondary">{L('NAR サイズによる概算です。共有する依存関係は各プロジェクトにも含まれるため、内訳の和と合計は異なります。最大 1 分ごとに再計測します。')}</div>
+        {session.cacheUsage?.large && <div className="callout">{L('ビルドキャッシュまたは実行の scratch が大きくなっています。内容を確認して、削除するものを選んでください。')}</div>}
+        <div className="caption secondary">{L('ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。最大 1 分ごとに再計測します。')}</div>
         {session.cacheUsage?.measuredAt != null && <Value label={L('計測日時')} value={new Date(Number(session.cacheUsage.measuredAt)).toLocaleString()} />}
         {session.cacheUsage?.error && <div className="caption selectable">{s(session.cacheUsage.error)}</div>}
         {session.cacheUsage?.projects.map(p => {
@@ -424,14 +437,25 @@ function CacheSettings({ session }: { session: ProjectSession }) {
             <div className="row gap8"><span className="headline flex1">{s(p.name)}</span><Button kind="destructive" disabled={!target?.connected || working || !!target?.runActive}
               onClick={() => { if (target) { setClearTarget(target); setConfirm(true) } }}>{L('削除')}</Button></div>
             <Value label={L('ビルドキャッシュ')} value={p.buildBytes !== null ? formatBytes(p.buildBytes) : L('取得できません')} />
-            <Value label={L('直近の実行の scratch')} value={p.scratchBytes !== null ? formatBytes(p.scratchBytes) : L('取得できません')} />
+            <Value label={L('実行の scratch（合計）')} value={p.scratchBytes !== null ? formatBytes(p.scratchBytes) : L('取得できません')} />
             <Value label={L('root の最終使用')} value={p.lastUsed !== null ? new Date(Number(p.lastUsed)).toLocaleString() : L('不明')} />
             {!target && <div className="caption secondary">{L('削除するにはこのプロジェクトを開いてください。')}</div>}
             {p.error && <div className="caption selectable">{s(p.error)}</div>}
           </div>
         })}
       </div>
-      <div className="caption secondary">{L('scratch は次の実行を始めると削除します。保持した記録・成果物・最後の入力は残ります。ビルドキャッシュは自動では削除しません。')}</div>
+      <div className="caption secondary">{L('過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。')}</div>
+      <div className="groupbox col gap4">
+        <div className="headline">{L('このプロジェクトの過去の scratch')}</div>
+        {candidates.map(p => <Value key={s(p.path)} label={s(p.path)} value={formatBytes(p.bytes)} />)}
+        <Value label={L('削除対象の合計')} value={formatBytes(candidates.reduce((n, p) => n + p.bytes, 0n))} />
+        <Button kind="destructive" disabled={working || session.runActive || !session.connected || !candidates.length}
+          onClick={() => setScratchSelection(candidates.map(p => s(p.path)))}>{L('表示した scratch を削除…')}</Button>
+        {scratchResult && <Value label={L('解放')} value={formatBytes(scratchResult.freedBytes)} />}
+        {!!scratchResult?.retained.length && <div>{L('削除できず残ったフォルダ')}: {scratchResult.retained.map(s).join(', ')}</div>}
+      </div>
+      {scratchSelection && <Confirm title={L('表示した過去の scratch を削除しますか？')} confirm={L('削除')}
+        onConfirm={() => void deleteScratch()} onCancel={() => setScratchSelection(undefined)} />}
       {result && (
         <div className="groupbox col gap4">
           <div className="headline">{L('結果')}</div>

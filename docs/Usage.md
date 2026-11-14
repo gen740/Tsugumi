@@ -76,9 +76,9 @@ On Mac, the app and the installed browser command use the project's environment 
 
 ## Manage build and scratch space
 
-Open **Settings → project → Build Cache** in Mac or Web. Review the shared total, per-project build cache, last root use and each project's latest-run scratch. **Delete** beside an open project removes its build registrations; open a closed project first to use that action. **Clean shared store** in the Mac app's External Connections settings then removes unrooted store paths. Shared dependencies can stay because another project still keeps them.
+Open **Settings → project → Build Cache** in Mac or Web. Review the shared total, per-project build cache, last root use and each project's total run scratch. **Delete** beside an open project removes its build registrations; open a closed project first to use that action. **Clean shared store** in the Mac app's External Connections settings then removes unrooted store paths. Shared dependencies can stay because another project still keeps them. For this project, review the past scratch folders and their sizes, then choose **Delete listed scratch…** to remove that selection. The latest run stays available for reruns; older scratch remains until a person deletes it, including after restarting.
 
-The core suggests reviewing this pane when build caches occupy at least 20% of the store disk and at least 1 GiB. The notice never deletes anything. Sizes are cached NAR estimates and can take up to a minute to refresh; errors and unknown measurements are shown explicitly. For scratch lifetime and retained copies, see [Run history](RunHistory.md#copy-or-delete-history).
+The core suggests reviewing this pane when build caches or run scratch occupy at least 20% of their disk and at least 1 GiB. The notice never deletes anything. Build sizes are cached NAR estimates; scratch sizes sum file lengths without following links. Measurements can take up to a minute to refresh; errors and unknown sizes are shown explicitly. For scratch lifetime and retained copies, see [Run history](RunHistory.md#copy-or-delete-history).
 
 ## Card settings and app settings
 

@@ -4,6 +4,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <fstream>
+
 #include "run_scratch.hh"
 #include "util/crypto.hh"
 
@@ -50,6 +52,35 @@ TEST_F(RunScratch, RefusesAParentWritableByOtherUsers) {
   std::filesystem::create_directory(base / "public");
   ASSERT_EQ(::chmod((base / "public").c_str(), 0777), 0);
   EXPECT_THROW(private_disk_scratch(base / "public" / "project"), std::runtime_error);
+}
+
+TEST_F(RunScratch, MeasurementsRetainAllRunsAndDeletionDoesNotFollowLinks) {
+  const auto old = base / "runs" / crypto::uuid4();
+  const auto latest = base / "runs" / crypto::uuid4();
+  std::filesystem::create_directories(old / "work");
+  std::filesystem::create_directories(latest);
+  std::ofstream(old / "work" / "diagnostic") << "diagnostic";
+  std::ofstream(latest / "output") << "latest";
+  const auto outside = base / "keep";
+  std::filesystem::create_directory(outside);
+  std::ofstream(outside / "evidence") << "do not delete";
+  std::filesystem::create_directory_symlink(outside, old / "link");
+  std::filesystem::create_directory_symlink(outside, base / "recovery");
+  const auto measured = measure_run_scratch(base);
+  ASSERT_EQ(measured.size(), 3);
+  uint64_t bytes = 0;
+  for (const auto& entry : measured) bytes += entry.bytes;
+  EXPECT_EQ(bytes, 16);
+  EXPECT_EQ(measure_run_scratch(base).size(), 3);
+  EXPECT_TRUE(std::filesystem::exists(old / "work" / "diagnostic"));
+  std::filesystem::permissions(old / "work", std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+  EXPECT_TRUE(remove_run_scratch(old));
+  EXPECT_FALSE(std::filesystem::exists(old));
+  EXPECT_TRUE(std::filesystem::exists(latest / "output"));
+  EXPECT_TRUE(std::filesystem::exists(outside / "evidence"));
+  EXPECT_TRUE(remove_run_scratch(base / "recovery"));
+  EXPECT_TRUE(std::filesystem::exists(outside / "evidence"));
+  EXPECT_TRUE(remove_run_scratch(old));  // retry after a partial operation is harmless
 }
 
 #ifdef __linux__
