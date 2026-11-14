@@ -96,6 +96,23 @@ table HostRecentForgetRequest { paths:[string]; }
 table DocumentSubgraphRequest { project_json:string (required); cards:[string]; id:string (required); }
 table DocumentSubgraph { project_json:string (required); external_json:string (required); link_json:string (required); }
 
+// Copy documents and plan exact byte transfers from the caller's current state.
+// The caller reads every source before applying the returned patch in one edit,
+// and keeps those bytes in that edit for undo/redo, even after an autosave.
+table DocumentFileCopy { from:string (required); to:string (required); }
+table DocumentCopyRequest { state_json:string (required); paths:[string]; from:string (required); to:string (required); name:string; }
+table DocumentCopy { edits_json:string (required); files:[DocumentFileCopy]; }
+
+// Scope state contains project, layout and definitions, plus current visible
+// port names under ports/<card>/{inputs,outputs} for a Draft '+' gesture.
+table DocumentConnectRequest { state_json:string (required); from_card:string (required); from_port:string (required); to_card:string (required); to_port:string (required); fork_id:string; }
+table DocumentConnect { state_json:string (required); inserted_id:string; needs_fork:bool; }
+
+// The host serves the shared ui/templates catalog for a new Card.
+table DocumentTemplateRequest { name:string (required); id:string (required); }
+table DocumentTemplateFile { path:string (required); text:string (required); }
+table DocumentTemplate { definition_json:string (required); files:[DocumentTemplateFile]; }
+
 // Pure three-way merge of document states (project, layout, definitions and
 // externals). Conflicts are paths in that state; the proposed local values
 // must not be saved until the person explicitly chooses them.
@@ -176,7 +193,7 @@ table VersionCommentsRequest { project:string (required); commit:string (require
 table VersionComments { comments:[VersionComment]; }
 
 union RequestPayload {
-  DocumentSubgraphRequest, DocumentMergeRequest,
+  DocumentSubgraphRequest, DocumentMergeRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest,
   PermissionKindsRequest,
   VersionCommentsRequest,
   GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
@@ -185,7 +202,7 @@ union RequestPayload {
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
-  DocumentSubgraph, DocumentMerge,
+  DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate,
   PermissionKinds,
   VersionComments,
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,

@@ -89,19 +89,6 @@ const session = () => {
   assert.equal(str(get(s.cardDefinitionDraft(k)?.link, 'external')), 'inner', 'it stays a Card in Card')
 }
 
-{
-  // A copy keeps what the Card says, comments too, as comments of its own.
-  const { s } = session()
-  const k = await s.addCard('python', [], { x: 0, y: 0 })
-  s.edit((x) => x.updateMeta(k, (m) => m.set('description', 'Plots')))
-  s.addComment(k, 'one')
-  const made = [...await s.duplicate(new Set([k]), [])]
-  assert.equal(made.length, 1)
-  assert.deepEqual(s.comments(made[0]).map((c) => c.text), ['one'])
-  assert.notEqual(s.comments(made[0])[0].id, s.comments(k)[0].id)
-  assert.equal(str(get(s.cardMeta(made[0]), 'description')), 'Plots')
-  assert.ok(serialize(s.cardMeta(k)).includes('"author"'))
-}
 
 {
   // A Draft takes comments as any Card.

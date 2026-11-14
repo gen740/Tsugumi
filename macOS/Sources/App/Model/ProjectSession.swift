@@ -243,6 +243,15 @@ final class ProjectSession {
   var prepareSubgraph: (String, [String], String) async throws -> (project: String, external: String, link: String) = {
     try await CoreAgentClient.shared.makeSubgraph(project: $0, cards: $1, id: $2)
   }
+  var prepareTemplate: (String, String) async throws -> (definition: String, files: [(path: String, text: String)]) = {
+    try await CoreAgentClient.shared.writeTemplate(name: $0, id: $1)
+  }
+  var prepareConnect: (String, (String, String), (String, String), String?) async throws -> (state: String, insertedId: String, needsFork: Bool) = {
+    try await CoreAgentClient.shared.connectDocuments(state: $0, from: $1, to: $2, forkId: $3)
+  }
+  var prepareCopy: (String, [String], String, String, String?) async throws -> (edits: String, files: [(from: String, to: String)]) = {
+    try await CoreAgentClient.shared.copyDocuments(state: $0, paths: $1, from: $2, to: $3, name: $4)
+  }
   var prepareMerge: (String, String, String) async throws -> (merged: String, conflicts: [String]) = {
     try await CoreAgentClient.shared.mergeDocuments(base: $0, ours: $1, theirs: $2)
   }
@@ -1196,14 +1205,26 @@ final class ProjectSession {
     let cur = docState(), curSnap = snapshot()
     let revision = rev
     let reply: (value: JSONValue, conflicts: [String])
-    do { reply = try await mergeValues(base: e.after.mergeJSON, ours: e.before.mergeJSON, theirs: cur.mergeJSON) }
+    var kept: [String: SourceValue] = [:]
+    do {
+      for p in e.sourcesBefore.keys {
+        var value = sourceValue(curSnap, p)
+        if value == .confirmed {
+          if case .bytes(let bytes) = e.sourcesAfter[p], sha256Hex(bytes) == sources[p]?.hash {
+            value = .bytes(bytes)
+          } else { value = .bytes(try await rpcBytes(p)) }
+        }
+        kept[p] = value
+      }
+      reply = try await mergeValues(base: e.after.mergeJSON, ours: e.before.mergeJSON, theirs: cur.mergeJSON)
+    }
     catch { saveError = String(describing: error); return nil }
     guard revision == rev, curSnap == snapshot() else { return nil }
     let merged = DocState(mergeJSON: reply.value)
     guard reply.conflicts.isEmpty else {
       mergeConflict = MergeConflict(rev: revision, snapshot: curSnap, state: cur, apply: { [weak self] in
         guard let self, (undo ? undoStack.last : redoStack.last) === e else { return }
-        let inverse = applyRevert(e, current: cur, snapshot: curSnap, merged: merged)
+        let inverse = applyRevert(e, current: cur, snapshot: curSnap, merged: merged, kept: kept)
         if undo { undoStack.removeLast(); if let inverse { redoStack.append(inverse) } }
         else { redoStack.removeLast(); if let inverse { undoStack.append(inverse) } }
       })
@@ -1211,10 +1232,10 @@ final class ProjectSession {
       saveError = String(localized: "他の変更と重なり保存できませんでした。変更は保持しています。")
       return nil
     }
-    return RevertResult(inverse: applyRevert(e, current: cur, snapshot: curSnap, merged: merged))
+    return RevertResult(inverse: applyRevert(e, current: cur, snapshot: curSnap, merged: merged, kept: kept))
   }
 
-  private func applyRevert(_ e: UndoEntry, current cur: DocState, snapshot curSnap: Snapshot, merged: DocState) -> UndoEntry? {
+  private func applyRevert(_ e: UndoEntry, current cur: DocState, snapshot curSnap: Snapshot, merged: DocState, kept: [String: SourceValue]) -> UndoEntry? {
     if !dirty { draftBase = makeBase() }
     project = merged.project
     layout = merged.layout
@@ -1235,10 +1256,7 @@ final class ProjectSession {
     settleDraftBase()
     let now = snapshot()
     guard now != curSnap else { return nil }
-    var sb: [String: SourceValue] = [:]
-    for p in e.sourcesBefore.keys { sb[p] = sourceValue(curSnap, p) }
-    let inverse = UndoEntry(before: cur, after: docState(), sourcesBefore: sb, sourcesAfter: e.sourcesBefore)
-    if sb.values.contains(.confirmed) { unfilled.append(inverse) }
+    let inverse = UndoEntry(before: cur, after: docState(), sourcesBefore: kept, sourcesAfter: e.sourcesBefore)
     scheduleSave()
     return inverse
   }

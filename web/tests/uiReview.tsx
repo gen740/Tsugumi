@@ -1,3 +1,4 @@
+import { cardIds } from './cardIds'
 import { CardNodeView } from '../src/ui/cardNode'
 import assert from 'node:assert/strict'
 import { Builder, ByteBuffer } from 'flatbuffers'
@@ -16,7 +17,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 function session() {
-  const s = new ProjectSession('/p', 'k', 'p')
+  const s = cardIds(new ProjectSession('/p', 'k', 'p'))
   s.connected = true
   s.scheduleSave = () => {}
   s.project = parse('{"name":"base","canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"b","port":"in"}}]}}')

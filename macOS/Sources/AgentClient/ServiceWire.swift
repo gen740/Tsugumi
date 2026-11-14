@@ -9,7 +9,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"PermissionKindsRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   static func request(_ method: String, _ fields: [String: Any], host: Bool) throws -> (UInt8, NativeObject) {
     if host {
       switch method {
@@ -17,6 +17,28 @@ enum ServiceWire {
         let v = Tsugumi_Host_PermissionKindsRequestT()
         v.language = fields["language"] as? String
         return (Tsugumi_Host_RequestPayload.permissionkindsrequest.rawValue, v)
+      case "DocumentTemplateRequest":
+        let v = Tsugumi_Host_DocumentTemplateRequestT()
+        v.name = fields["name"] as? String ?? ""
+        v.id = fields["id"] as? String ?? ""
+        return (Tsugumi_Host_RequestPayload.documenttemplaterequest.rawValue, v)
+      case "DocumentConnectRequest":
+        let v = Tsugumi_Host_DocumentConnectRequestT()
+        v.stateJson = fields["state_json"] as? String ?? ""
+        v.fromCard = fields["from_card"] as? String ?? ""
+        v.fromPort = fields["from_port"] as? String ?? ""
+        v.toCard = fields["to_card"] as? String ?? ""
+        v.toPort = fields["to_port"] as? String ?? ""
+        v.forkId = fields["fork_id"] as? String
+        return (Tsugumi_Host_RequestPayload.documentconnectrequest.rawValue, v)
+      case "DocumentCopyRequest":
+        let v = Tsugumi_Host_DocumentCopyRequestT()
+        v.stateJson = fields["state_json"] as? String ?? ""
+        v.paths = (fields["paths"] as? [String] ?? []).map(Optional.some)
+        v.from = fields["from"] as? String ?? ""
+        v.to = fields["to"] as? String ?? ""
+        v.name = fields["name"] as? String
+        return (Tsugumi_Host_RequestPayload.documentcopyrequest.rawValue, v)
       case "DocumentMergeRequest":
         let v = Tsugumi_Host_DocumentMergeRequestT()
         v.baseJson = fields["base_json"] as? String ?? ""
@@ -433,6 +455,9 @@ enum ServiceWire {
   private static func view(_ value: NativeObject) throws -> Any {
     switch value {
     case let v as Tsugumi_Host_PermissionKindsT: return ["kinds": v.kinds.compactMap { $0 }]
+    case let v as Tsugumi_Host_DocumentTemplateT: return ["definitionJson": v.definitionJson, "files": v.files.compactMap { $0 }]
+    case let v as Tsugumi_Host_DocumentConnectT: return ["stateJson": v.stateJson, "insertedId": v.insertedId ?? "", "needsFork": v.needsFork]
+    case let v as Tsugumi_Host_DocumentCopyT: return ["editsJson": v.editsJson, "files": v.files.compactMap { $0 }]
     case let v as Tsugumi_Host_DocumentMergeT: return ["mergedJson": v.mergedJson, "conflicts": v.conflicts.compactMap { $0 }]
     case let v as Tsugumi_Host_DocumentSubgraphT: return ["projectJson": v.projectJson, "externalJson": v.externalJson, "linkJson": v.linkJson]
     case let v as Tsugumi_Host_VersionCommentsT: return ["comments": v.comments.compactMap { $0 }]

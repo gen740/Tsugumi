@@ -1,3 +1,6 @@
+import { DocumentTemplateRequestT } from '../src/gen/tsugumi/host/document-template-request'
+import { DocumentConnectRequestT } from '../src/gen/tsugumi/host/document-connect-request'
+import { DocumentCopyRequestT } from '../src/gen/tsugumi/host/document-copy-request'
 import { DocumentMergeRequestT } from '../src/gen/tsugumi/host/document-merge-request'
 import { PermissionKindsRequestT } from '../src/gen/tsugumi/host/permission-kinds-request'
 import { DocumentSubgraphRequestT } from '../src/gen/tsugumi/host/document-subgraph-request'
@@ -101,6 +104,9 @@ export function hostMethod(method: string): boolean {
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
     case 'PermissionKindsRequest': return new PermissionKindsRequestT(v.language)
+    case 'DocumentTemplateRequest': return new DocumentTemplateRequestT(v.name, v.id)
+    case 'DocumentConnectRequest': return new DocumentConnectRequestT(v.state_json, v.from_card, v.from_port, v.to_card, v.to_port, v.fork_id)
+    case 'DocumentCopyRequest': return new DocumentCopyRequestT(v.state_json, v.paths ?? [], v.from, v.to, v.name)
     case 'DocumentMergeRequest': return new DocumentMergeRequestT(v.base_json, v.ours_json, v.theirs_json)
     case 'DocumentSubgraphRequest': return new DocumentSubgraphRequestT(v.project_json, v.cards ?? [], v.id)
     case 'VersionCommentsRequest': return new VersionCommentsRequestT(v.project, v.commit)

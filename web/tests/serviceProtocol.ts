@@ -203,3 +203,25 @@ assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call
   b.finish(message, 'TSH1')
   assert.deepEqual(decodeReply(b.asUint8Array(), true).value.conflicts, [])
 }
+
+// Every new operation uses the Host envelope, including omitted file vectors.
+{
+  const { DocumentCopyRequestT } = await import('../src/gen/tsugumi/host/document-copy-request')
+  const { DocumentCopy } = await import('../src/gen/tsugumi/host/document-copy')
+  const copy = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('DocumentCopyRequest', { state_json: '{}', from: 'externals/a/', to: 'externals/b/' }, high, true))).unpack().payload as any
+  assert.ok(copy.value instanceof DocumentCopyRequestT)
+  assert.deepEqual(copy.value.paths, [])
+  assert.equal(copy.value.to, 'externals/b/')
+  const b = new fb.Builder(), json = b.createString('{}')
+  const value = DocumentCopy.createDocumentCopy(b, json, 0)
+  const reply = HostReply.createReply(b, HostReplyPayload.DocumentCopy, value)
+  const root = HostMessage.createMessage(b, 1n, HostPayload.Reply, reply)
+  b.finish(root, 'TSH1')
+  assert.deepEqual(decodeReply(b.asUint8Array(), true).value.files, [])
+  const connect = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('DocumentConnectRequest', { state_json: '{}', from_card: 'a', from_port: '+', to_card: 'b', to_port: 'in' }, 2n, true))).unpack().payload as any
+  assert.equal(connect.value.fromPort, '+')
+  assert.equal(connect.value.forkId, null)
+  const template = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('DocumentTemplateRequest', { name: 'python', id: 'new-card' }, 3n, true))).unpack().payload as any
+  assert.equal(template.value.name, 'python')
+  assert.equal(template.value.id, 'new-card')
+}

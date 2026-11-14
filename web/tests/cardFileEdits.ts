@@ -91,3 +91,37 @@ console.log('Card file edits: atomic failed reads, binary conversion/copy/undo, 
   assert.equal(get(s.project, 'name'), 'changed while waiting')
   assert.equal(s.undoStack.length, 0)
 }
+
+// A copied binary must survive save -> undo -> redo before the next autosave.
+{
+  const { clone, str } = await import('../src/shared/json')
+  const { R, s: text, sha256Hex } = await import('../src/shared/rpc')
+  const s = fixture(), copied = [...await s.duplicate(new Set(['a']), [])][0]
+  const target = `definitions/${copied}/data.bin`
+  let saves = 0
+  s.client = { readFile: async () => binary.slice(), save: async (_rev: bigint, _op: string, _origin: string, changes: R.DocumentChangeT[]) => {
+    saves++
+    for (const change of changes) {
+      if (change.valueType === R.DocumentChangeValue.PutDefinition) {
+        const value = change.value as R.PutDefinitionT
+        s.confirmedDefinitions.set(text(value.id), parse(text(value.cardJson)))
+        if (value.metaJson) s.confirmedDefinitionMeta.set(text(value.id), parse(text(value.metaJson)))
+      }
+      if (change.valueType === R.DocumentChangeValue.PutSource) {
+        const value = change.value as R.PutSourceT
+        const bytes = new Uint8Array(value.bytes)
+        s.sources.set(text(value.path), { hash: await sha256Hex(bytes), size: BigInt(bytes.length) })
+      }
+    }
+    s.confirmedProject = clone(s.project); s.confirmedLayout = clone(s.layout)
+    return { rev: 1n }
+  } } as never
+  await (s as unknown as { saveOnce(): Promise<void> }).saveOnce()
+  assert.equal(saves, 1)
+  assert.equal(s.sourceEdits.has(target), false, 'the save has confirmed the copied bytes')
+  await s.undo()
+  assert.equal(s.instance(copied), undefined)
+  await s.redo()
+  assert.equal(str(get(s.instance(copied), 'id')), copied)
+  assert.deepEqual(s.sourceEdits.get(target), binary, 'redo retains the bytes after autosave')
+}

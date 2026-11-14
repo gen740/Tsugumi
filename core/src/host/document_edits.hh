@@ -13,6 +13,16 @@ auto MakeSubgraph(const std::string &project,
                   const std::vector<std::string> &cards, const std::string &id)
     -> Tsugumi::Host::DocumentSubgraphT;
 
+auto CopyDocuments(const std::string &state,
+                   const std::vector<std::string> &paths,
+                   const std::string &from, const std::string &to,
+                   const std::string &name) -> Tsugumi::Host::DocumentCopyT;
+
+auto ConnectDocuments(const std::string &state, const std::string &from_card,
+                      const std::string &from_port, const std::string &to_card,
+                      const std::string &to_port, const std::string &fork_id)
+    -> Tsugumi::Host::DocumentConnectT;
+
 auto MergeDocuments(const std::string &base, const std::string &ours,
                     const std::string &theirs) -> Tsugumi::Host::DocumentMergeT;
 

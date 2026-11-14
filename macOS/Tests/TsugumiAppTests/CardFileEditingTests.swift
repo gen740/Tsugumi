@@ -61,6 +61,28 @@ import TsugumiRPC
     #expect(s.docState() == before && s.sourceEdits == edits && s.sourceRemovals == removed && s.undoStack.count == undos)
   }
 
+  @Test func copiedBytesSurviveSaveUndoAndImmediateRedo() async throws {
+    let dir = try SyncTests.project()
+    let daemon = try SyncTests.Daemon(project: dir)
+    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
+    s.endpointOverride = daemon.endpoint
+    s.start()
+    try await SyncTests.connected(s)
+    s.sourceEdits["definitions/a/data.bin"] = binary
+    let made = try #require(await s.duplicate(["a"], in: []).first)
+    let target = try #require(s.definitionDir(made)) + "data.bin"
+    await s.save()
+    for _ in 0..<100 where s.dirty { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(s.sourceEdits[target] == nil)
+    await s.undo()
+    #expect(s.instance(made) == nil)
+    await s.redo()
+    #expect(s.instance(made) != nil)
+    #expect(try await s.rpcBytes(target) == binary)
+    await s.close()
+  }
+
   @Test func conversionAndCopiesKeepBinaryFilesAndNestedDocuments() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("card-files-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

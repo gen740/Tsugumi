@@ -696,10 +696,6 @@ import Testing
     let plan = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 200), name: "plan")
     s.addComment(plan, "単位を考える")
     #expect(s.cardsWithOpenComments(in: []).contains(plan))
-    // A copy keeps what the Card says, comments too, as comments of its own.
-    let copy = await s.duplicate([k], in: [])
-    #expect(copy.count == 1 && s.comments(copy.first!).map(\.text) == s.comments(k).map(\.text))
-    #expect(s.comments(copy.first!)[0].id != s.comments(k)[0].id)
     // What the core recorded of the Agent reads back, in the words the screen uses.
     let agent = CardComment.list(in: try JSONValue.parse(#"{"comments":[{"id":"a","text":"t","author":"agent","resolved":true,"stateBy":"agent","cards":["p","q"]}]}"#))
     #expect(agent[0].cards == ["p", "q"] && agent[0].author == "agent")
@@ -906,9 +902,8 @@ import Testing
     await s.close()
   }
 
-  /// One wire per output: a second wire from an output goes through a fork
-  /// Card inserted for it; more wires become more branches of that fork.
-  @Test func aSecondWireFromAnOutputGoesThroughAFork() async throws {
+  /// The returned host graph is saved and undone as one client edit.
+  @Test func hostConnectionIsOneSavedUndoEdit() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
     defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
@@ -916,27 +911,20 @@ import Testing
     s.endpointOverride = d.endpoint
     s.start()
     try await Self.connected(s)
-    func wires() -> Set<String> {
-      Set(s.connections(in: []).compactMap { c in
-        guard let f = c["from"]?["card"]?.string, let fp = c["from"]?["port"]?.string, let t = c["to"]?["card"]?.string else { return nil }
-        return "\(f).\(fp)>\(t)"
-      })
-    }
     try await s.connect(from: ("start", "out"), to: ("a", "in"), in: [])
-    #expect(wires() == ["start.out>a"])
+    let before = s.docState(), undos = s.undoStack.count
     try await s.connect(from: ("start", "out"), to: ("b", "in"), in: [])
-    #expect(wires() == ["start.out>fork", "fork.a>a", "fork.b>b"])
-    #expect(s.kind("fork") == .fork)
-    // From the trigger again, or from the fork: one more branch, no second fork.
-    try await s.connect(from: ("start", "out"), to: ("c", "in"), in: [])
-    #expect(wires() == ["start.out>fork", "fork.a>a", "fork.b>b", "fork.c>c"])
-    #expect(s.cards(in: []).count == 5)
+    let after = s.docState()
+    #expect(s.undoStack.count == undos + 1)
     await s.save()
     for _ in 0..<100 where s.dirty { try await Task.sleep(for: .milliseconds(20)) }
-    // The core agrees: no output has two wires.
     let snap = try await s.rpc!.inspect()
     let codes = snap.resolution.compactMap { $0 }.flatMap { $0.diagnostics.compactMap { $0?.code } }
-    #expect(!codes.contains("fan_out"), "\(codes)")
+    #expect(!codes.contains("fan_out"))
+    await s.undo()
+    #expect(s.docState() == before)
+    await s.redo()
+    #expect(s.docState() == after)
     await s.close()
   }
 
@@ -1160,7 +1148,7 @@ extension SyncTests {
     let dir = try Self.project()
     let daemon = try Daemon(project: dir)
     defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
-    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = daemon.endpoint
     s.start()
     try await Self.connected(s)

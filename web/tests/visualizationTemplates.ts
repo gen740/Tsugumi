@@ -1,7 +1,8 @@
+import visualizationFiles from '../../ui/templates/visualization.json'
 import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
 import { ProjectSession, TEMPLATES, definitionKind } from '../src/model/session'
-import { visualizationTemplates, visualizationFiles } from '../src/model/visualizationTemplates'
+import { visualizationTemplates } from '../src/model/visualizationTemplates'
 import { arr, parse, get, str } from '../src/shared/json'
 import { builtinCardItems } from '../src/ui/canvas'
 

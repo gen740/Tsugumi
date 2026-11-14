@@ -228,6 +228,34 @@ public actor CoreAgentClient {
     return result["kinds"] as? [Tsugumi_Host_PermissionKindT] ?? []
   }
 
+  public func writeTemplate(name: String, id: String) async throws -> (definition: String, files: [(path: String, text: String)]) {
+    let result = try await call("DocumentTemplateRequest", ["name": name, "id": id])
+    guard let definition = result["definitionJson"] as? String else {
+      throw CoreAgentFailure(code: "invalid_reply", message: "Missing Card template", requestID: nil)
+    }
+    return (definition, (result["files"] as? [Tsugumi_Host_DocumentTemplateFileT] ?? []).map { ($0.path, $0.text) })
+  }
+
+  public func connectDocuments(state: String, from: (String, String), to: (String, String), forkId: String?) async throws -> (state: String, insertedId: String, needsFork: Bool) {
+    var fields: [String: Any] = ["state_json": state, "from_card": from.0, "from_port": from.1, "to_card": to.0, "to_port": to.1]
+    fields["fork_id"] = forkId
+    let result = try await call("DocumentConnectRequest", fields)
+    guard let state = result["stateJson"] as? String else {
+      throw CoreAgentFailure(code: "invalid_reply", message: "Missing connection edit", requestID: nil)
+    }
+    return (state, result["insertedId"] as? String ?? "", result["needsFork"] as? Bool ?? false)
+  }
+
+  public func copyDocuments(state: String, paths: [String], from: String, to: String, name: String?) async throws -> (edits: String, files: [(from: String, to: String)]) {
+    var fields: [String: Any] = ["state_json": state, "paths": paths, "from": from, "to": to]
+    fields["name"] = name
+    let result = try await call("DocumentCopyRequest", fields)
+    guard let edits = result["editsJson"] as? String else {
+      throw CoreAgentFailure(code: "invalid_reply", message: "Missing copy edits", requestID: nil)
+    }
+    return (edits, (result["files"] as? [Tsugumi_Host_DocumentFileCopyT] ?? []).map { ($0.from, $0.to) })
+  }
+
   public func mergeDocuments(base: String, ours: String, theirs: String) async throws -> (merged: String, conflicts: [String]) {
     let result = try await call("DocumentMergeRequest", ["base_json": base, "ours_json": ours, "theirs_json": theirs])
     guard let merged = result["mergedJson"] as? String else {

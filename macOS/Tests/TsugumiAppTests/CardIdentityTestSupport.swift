@@ -25,6 +25,22 @@ import Foundation
     }
     return (outer, inner, link)
   }
+  session.prepareTemplate = { template, id in
+    let reply = try hostDocumentReply(["template": template, "id": id])
+    return (reply["definitionJson"] as! String, (reply["files"] as? [[String: String]] ?? []).map { (path: $0["path"]!, text: $0["text"]!) })
+  }
+  session.prepareConnect = { state, from, to, forkId in
+    var fields: [String: Any] = ["stateJson": state, "fromCard": from.0, "fromPort": from.1, "toCard": to.0, "toPort": to.1]
+    fields["forkId"] = forkId
+    let reply = try hostDocumentReply(fields)
+    return (reply["stateJson"] as! String, reply["insertedId"] as? String ?? "", reply["needsFork"] as? Bool ?? false)
+  }
+  session.prepareCopy = { state, paths, from, to, name in
+    var fields: [String: Any] = ["stateJson": state, "paths": paths, "from": from, "to": to]
+    fields["name"] = name
+    let reply = try hostDocumentReply(fields)
+    return (reply["editsJson"] as! String, (reply["files"] as? [[String: String]] ?? []).map { (from: $0["from"]!, to: $0["to"]!) })
+  }
   session.prepareMerge = { base, ours, theirs in
     let reply = try hostMergeReply(base: base, ours: ours, theirs: theirs)
     return reply
@@ -64,4 +80,24 @@ import Foundation
     throw NSError(domain: "HostDocumentMerge", code: 1, userInfo: [NSLocalizedDescriptionKey: String(decoding: error.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)])
   }
   return (merged, conflicts)
+}
+
+@MainActor func hostDocumentReply(_ fields: [String: Any]) throws -> [String: Any] {
+  let env = ProcessInfo.processInfo.environment
+  let build = env["TSUGUMI_BUILD_DIR"].map { URL(fileURLWithPath: $0) } ?? SyncTests.root.appendingPathComponent("build")
+  let binary = env["TSUGUMI_DOCUMENT_EDIT_DRIVER"].map { URL(fileURLWithPath: $0) }
+    ?? env["TSUGUMI_MOCK_DAEMON"].map { URL(fileURLWithPath: $0).deletingLastPathComponent().appendingPathComponent("tsugumi_document_edit_driver") }
+    ?? build.appendingPathComponent("tests/core/tsugumi_document_edit_driver")
+  let process = Process(), input = Pipe(), output = Pipe(), error = Pipe()
+  process.executableURL = binary
+  process.standardInput = input; process.standardOutput = output; process.standardError = error
+  try process.run()
+  try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: fields))
+  try input.fileHandleForWriting.close()
+  let bytes = output.fileHandleForReading.readDataToEndOfFile()
+  process.waitUntilExit()
+  guard process.terminationStatus == 0, let reply = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else {
+    throw NSError(domain: "HostDocumentEdit", code: 1, userInfo: [NSLocalizedDescriptionKey: String(decoding: error.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)])
+  }
+  return reply
 }
