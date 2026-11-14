@@ -354,16 +354,6 @@ auto Connection::CallFrame(Bytes frame, Completion callback,
                            std::chrono::milliseconds timeout) -> void {
   state_->Submit({}, std::move(frame), std::move(callback), timeout);
 }
-auto Connection::CallFrame(Bytes frame, std::chrono::milliseconds timeout)
-    -> std::future<Result> {
-  auto promise = std::make_shared<std::promise<Result>>();
-  auto future = promise->get_future();
-  CallFrame(
-      std::move(frame),
-      [promise](Result result) { promise->set_value(std::move(result)); },
-      timeout);
-  return future;
-}
 auto Connection::Close() -> void {
   auto state = state_;
   auto transport = transport_;

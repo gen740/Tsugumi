@@ -880,12 +880,6 @@ std::optional<History::ReceiptRow> History::receipt(sql::Db& db, const std::stri
   return ReceiptRow{st.text(0), st.text(1), st.blob(2)};
 }
 
-std::optional<std::string> History::run_receipt_digest(sql::Db& db, const std::string& op_id) {
-  auto r = receipt(db, op_id);
-  if (!r) return std::nullopt;
-  return r->digest;
-}
-
 std::vector<InvocationSummaryData> History::latest_invocations(sql::Db& db, const std::string& run_id) {
   auto st = db.prepare(
       "SELECT card, invocation, state, phase, started_at, ended_at, duration_ms, failure, waiting, build_cached, detail, NULL "
@@ -1631,13 +1625,6 @@ void History::rename_card(const std::filesystem::path& copy, const std::string& 
   }
   t.commit();
   if (has_copy) put_copy(*db, copy);
-}
-
-std::string History::schema_blob(sql::Db& db, const std::string& hash) {
-  auto st = db.prepare("SELECT bfbs FROM schemas WHERE hash=?");
-  st.bind(1, hash);
-  if (!st.step()) return {};
-  return st.blob(0);
 }
 
 }  // namespace tsugumi

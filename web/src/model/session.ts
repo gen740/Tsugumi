@@ -383,12 +383,6 @@ class Unreached extends Error {
 }
 type Notification = Parameters<NonNullable<RPCClient['onNotification']>>[0]
 
-/** What a version's summary is written from: its message and what it changed. */
-export function versionSummaryInput(c: Pick<R.VersionCommitT, 'message' | 'changed'>, diff: Pick<R.VersionDiffT, 'text' | 'truncated'>): string {
-  const cards = (c.changed ?? []).map((k) => s(k) || 'the Workflow itself').join(', ')
-  return `Commit message: ${s(c.message).trim()}\nChanged Cards: ${cards}\n\nDiff${diff.truncated ? ' (cut short)' : ''}:\n${s(diff.text)}`
-}
-
 export class ProjectSession extends Observable {
   readonly viewId: string
   readonly origin: string

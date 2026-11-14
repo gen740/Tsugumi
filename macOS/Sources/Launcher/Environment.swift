@@ -52,14 +52,6 @@ public enum EnvironmentState: Sendable, Equatable {
   }
 }
 
-/// Resource limits of one environment (adjustable; defaults per the spec).
-public struct EnvironmentLimits: Sendable, Codable, Equatable {
-  public var cpus = 2
-  public var memoryGiB = 4
-  public var storeGiB = 20
-  public init() {}
-}
-
 /// Identifies a project directory independent of the path used to open it.
 public struct ProjectIdentity: Sendable, Hashable {
   public let id: String  // 16 hex chars derived from device + inode

@@ -1,8 +1,7 @@
 // The chat of one project: several conversations (sessions), each an Agent
 // run by the host server with its own persisted transcript.
 import { api, onServerEvent } from '../api'
-import { commentRequest, draftRequest, toolSummary } from '../shared/agentShared'
-import { get, str } from '../shared/json'
+import { toolSummary } from '../shared/agentShared'
 import { uuid } from '../shared/rpc'
 import type { AppModel } from './app'
 import { guide, GuideAction, type GuideShow, parseShow } from './guide'
@@ -10,7 +9,7 @@ import { HelperTeam } from './helperBirds'
 import { LiveCodePlayer, writesSources } from './liveCode'
 import { Observable } from './observable'
 import { Thoughts, type ThoughtReply } from './thoughts'
-import { CardKey, cardState, KIND_LABEL, path, ProjectSession } from './session'
+import { CardKey, ProjectSession } from './session'
 import { L } from '../i18n'
 
 export interface ChatItem {
@@ -135,7 +134,7 @@ export class ChatController extends Observable {
   private readonly offEvents: () => void
   readonly thoughts: Thoughts
 
-  constructor(readonly session: ProjectSession, private readonly app: AppModel) {
+  constructor(readonly session: ProjectSession, app: AppModel) {
     super()
     this.thoughts = new Thoughts(() => ({ identity: `${this.currentId}:${this.turn}`, active: this.busy && !!this.provider.thoughtModel }),
       () => api<ThoughtReply>('/api/chat/thoughts', this.base),

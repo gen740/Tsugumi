@@ -46,22 +46,22 @@ def port(name: str, side: str = "inputs") -> Optional[dict]:
     return next((p for p in ports(side) if p["name"] == name), None)
 
 
-def _generated(name: str, side: str, suffix: str = "") -> Any:
-    found = port(name, side)
+def _generated(name: str, suffix: str = "") -> Any:
+    found = port(name)
     if found is None:
-        raise Failure("input_missing" if side == "inputs" else "output_invalid", f"this Card has no typed {side[:-1]} {name}")
+        raise Failure("input_missing", f"this Card has no typed input {name}")
     return getattr(importlib.import_module(found["type"]), found["type"].rsplit(".", 1)[-1] + suffix)
 
 
 def input_class(name: str) -> Any:
     """The generated class of an input port, as ``Inputs.input`` takes it."""
-    return _generated(name, "inputs")
+    return _generated(name)
 
 
 def input_object(inputs: Any, name: str) -> Any:
     """The input message as an object of its generated ``<Table>T`` class:
     plain attributes, readable without knowing the type's accessors."""
-    return _generated(name, "inputs", "T").InitFromObj(inputs.input(name, input_class(name)))
+    return _generated(name, "T").InitFromObj(inputs.input(name, input_class(name)))
 
 
 def params_object(inputs: Any) -> Any:

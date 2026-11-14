@@ -47,16 +47,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable, Codable {
     }
   }
 
-  /// Works only while the canvas has the focus (a key without ⌘ would
-  /// otherwise be taken from a text field).
-  var canvasOnly: Bool {
-    switch self {
-    case .openSettings, .openArtifacts, .openLog, .toggleCollapse, .duplicate, .fitAll, .actualSize, .zoomIn, .zoomOut,
-         .arrange, .group, .addDraft, .generateDrafts: return true
-    default: return false
-    }
-  }
-
   var defaultKey: KeyBinding {
     switch self {
     case .newProject: return KeyBinding(key: "n", command: true)

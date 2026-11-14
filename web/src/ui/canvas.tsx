@@ -1133,7 +1133,7 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (c: string)
   )
 }
 
-function EditorButtons({ remove, removeLabel, onClose, onApply }: { remove: () => void; removeLabel: string; onClose: () => void; onApply: () => void }) {
+function EditorButtons({ remove, removeLabel, onClose }: { remove: () => void; removeLabel: string; onClose: () => void }) {
   return (
     <div className="row gap8" style={{ alignItems: 'center' }}>
       <Button kind="destructive" onClick={() => { remove(); onClose() }}>{removeLabel}</Button>
@@ -1190,7 +1190,7 @@ function NoteEditor({ session, noteId, onClose }: { session: ProjectSession; not
         <Stepper label={L('幅 {0}', Math.round(width))} value={width} onChange={setWidth} min={120} max={800} step={20} />
         <Stepper label={L('高さ {0}', Math.round(height))} value={height} onChange={setHeight} min={60} max={600} step={20} />
       </div>
-      <EditorButtons removeLabel={L('削除')} remove={() => session.removeNote(noteId)} onClose={onClose} onApply={apply} />
+      <EditorButtons removeLabel={L('削除')} remove={() => session.removeNote(noteId)} onClose={onClose} />
     </EditorSheet>
   )
 }
@@ -1250,7 +1250,7 @@ function GroupEditor({ session, scope, groupId, onClose }: { session: ProjectSes
         </div>
       </div>
       <div className="caption secondary">{L('グループは見た目のまとまりです。実行順序は変わらず、解除しても Card は残ります。')}</div>
-      <EditorButtons removeLabel={L('グループを解除')} remove={() => session.ungroup(groupId)} onClose={onClose} onApply={apply} />
+      <EditorButtons removeLabel={L('グループを解除')} remove={() => session.ungroup(groupId)} onClose={onClose} />
     </EditorSheet>
   )
 }

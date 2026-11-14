@@ -691,13 +691,6 @@ struct CardGeometry {
       return CGPoint(x: x, y: rowsTop + i * Self.portRow + Self.portRow / 2)
     }
   }
-
-  /// Anchor of the line to the Card's output frame (on the side, across the flow).
-  var displayAnchor: CGPoint {
-    let r = outlineRect
-    return flow == .topToBottom ? CGPoint(x: r.maxX, y: r.minY + min(Self.header / 2, r.height / 2))
-                                : CGPoint(x: r.midX, y: r.maxY)
-  }
 }
 
 /// A closed polygon with rounded corners: each corner is cut `radius` along its
@@ -2002,12 +1995,6 @@ struct WireRouter {
     path.move(to: a)
     path.addCurve(to: b, control1: c1, control2: c2)
     return path
-  }
-
-  /// The same samples as the Web router, for comparing wire crossings.
-  func curvePoints(_ a: CGPoint, _ b: CGPoint) -> [CGPoint] {
-    let (c1, c2) = controls(a, b)
-    return (0...32).map { Self.bezier(a, c1, c2, b, CGFloat($0) / 32) }
   }
 
   /// A polyline with rounded corners.

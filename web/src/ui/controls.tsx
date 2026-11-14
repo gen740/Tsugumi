@@ -46,15 +46,6 @@ export function Button(props: {
   )
 }
 
-export function Label({ icon, children, color, className, help, style }: { icon: string; children?: ReactNode; color?: string; className?: string; help?: string; style?: CSSProperties }) {
-  return (
-    <span className={`label ${className ?? ''}`} style={{ color: color ? `var(--${color})` : undefined, ...style }} title={help}>
-      <Icon name={icon} />
-      {children !== undefined && <span className="label-text">{children}</span>}
-    </span>
-  )
-}
-
 export function Toggle({ checked, onChange, label, disabled, kind = 'switch', small, help }: {
   checked: boolean; onChange: (v: boolean) => void; label?: ReactNode; disabled?: boolean; kind?: 'switch' | 'checkbox'; small?: boolean; help?: string
 }) {
@@ -133,14 +124,6 @@ export function Stepper({ value, onChange, min, max, step = 1, label }: { value:
 
 export function Spinner({ small }: { small?: boolean }) {
   return <span className={`spinner${small ? ' spinner-small' : ''}`} role="progressbar" aria-label={L('読み込み中')} />
-}
-
-export function Progress({ value, total, width = 80, help }: { value: number; total: number; width?: number; help?: string }) {
-  return (
-    <span className="progress" style={{ width }} title={help} role="progressbar" aria-valuenow={value} aria-valuemax={total}>
-      <span style={{ width: `${total > 0 ? (100 * value) / total : 0}%` }} />
-    </span>
-  )
 }
 
 /** ContentUnavailableView */

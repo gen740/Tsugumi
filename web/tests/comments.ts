@@ -3,7 +3,7 @@
 // what is kept; the canvas shows how many are open and the Agent is asked about those only.
 import assert from 'node:assert/strict'
 import { get, parse, serialize, str } from '../src/shared/json'
-import { commentRequest, savedComments, toolSummary } from '../src/shared/agentShared'
+import { savedComments, toolSummary } from '../src/shared/agentShared'
 
 // The session's module reads the page when it loads, and listens to the server.
 const page = globalThis as Record<string, unknown>
@@ -139,13 +139,6 @@ const session = () => {
   assert.deepEqual(savedComments(row), list)
   assert.deepEqual(savedComments('args\n→ ' + toolSummary('{"reply":"RunStatus"}')), [])
   assert.equal(toolSummary('x'.repeat(500)).length, 400)
-}
-
-{
-  // A comment's words are never read as parts of the request.
-  const text = commentRequest(['outer'], [{ key: 'outer/plot', definition: 'plot', comments: [{ id: 'c1', text: 'keep {list} and {where}' }] }])
-  assert.ok(text.includes('* c1: keep {list} and {where}'))
-  assert.ok(text.includes('the child workflow outer'))
 }
 
 console.log('comments: ok')

@@ -193,7 +193,6 @@ public actor RPCClient {
   }
 
   private func closedByPeer() { closed = true; receiveTask = nil; notify.finish() }
-  public var isClosed: Bool { closed }
 
   public func call<R>(_ type: RequestPayload, _ value: NativeObject, timeout: Duration = .seconds(60)) async throws -> R {
     let reply = try await send(type, value, timeout: timeout)

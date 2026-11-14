@@ -103,7 +103,6 @@ class Server {
                    std::string ack, std::vector<Note> initial);
   void broadcast(Note note);
   void close(ConnId conn);
-  size_t connection_count() const { return conn_count_.load(); }
 
  private:
   struct Conn;
@@ -134,7 +133,6 @@ class Server {
   int bound_port_ = -1;
   std::thread thread_;
   std::atomic<bool> stopping_{false};
-  std::atomic<size_t> conn_count_{0};
   std::mutex inbox_mu_;
   std::vector<Command> inbox_;
   std::map<ConnId, std::unique_ptr<Conn>> conns_;

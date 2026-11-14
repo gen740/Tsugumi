@@ -59,7 +59,6 @@ public actor CoreAgentClient {
   public func observeHost(_ handler: @escaping @Sendable ([String: Any]) -> Void) -> UUID {
     let token = UUID(); hostObservers[token] = handler; return token
   }
-  public func stopObservingHost(_ token: UUID) { hostObservers[token] = nil }
   private func hostEvent(_ data: Data, identity: UUID) {
     guard connectionID == identity, let event = try? ServiceWire.decodeEvent(data) else { return }
     for handler in hostObservers.values { handler(event) }

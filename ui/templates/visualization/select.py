@@ -1,13 +1,7 @@
-import tsugumi
 # How every Visualization template chooses the points it draws. The generator
 # (ui/templates/visualization.py) writes what follows the marker below into
 # each library's src/main.py in place of its "# @select@" line, so a Card
-# carries all of its selection code; the imports above the marker are in
-# each library's source already.
-import math
-
-import numpy as np
-from tsugumi import Failure
+# carries all of its selection code. Each library's source supplies the imports.
 
 # @insert@
 

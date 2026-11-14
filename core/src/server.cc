@@ -97,7 +97,6 @@ struct Server::Conn {
     std::string raw;
     std::optional<Note> note;
     std::string sub_id;
-    bool is_reply = false;
   };
   std::deque<Out> outq;
   size_t out_bytes = 0;
@@ -326,7 +325,6 @@ void Server::enqueue_raw(Conn& c, std::string bytes, bool is_reply) {
   c.out_bytes += bytes.size();
   Conn::Out o;
   o.raw = std::move(bytes);
-  o.is_reply = is_reply;
   c.outq.push_back(std::move(o));
   enforce_outbox(c);
 }
@@ -460,7 +458,6 @@ void Server::accept_on(int lfd, bool websocket) {
     c->websocket = websocket;
     c->connected_at = mono_ms();
     conns_[c->id] = std::move(c);
-    conn_count_ = conns_.size();
   }
 }
 
@@ -822,7 +819,6 @@ void Server::loop() {
         ::close(c.fd);
         ConnId id = c.id;
         it = conns_.erase(it);
-        conn_count_ = conns_.size();
         sink_->disconnected(id);
         continue;
       }
