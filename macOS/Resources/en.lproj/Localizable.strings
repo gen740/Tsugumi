@@ -654,8 +654,8 @@
 "中止" = "Cancel";
 "互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 外部で実行中のジョブは実行先で継続し、新しい履歴には引き継がれません。" = "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app. Running remote jobs continue on the execution host and will be unavailable in the new history.";
 "今すぐ確認" = "Check Now";
-"今の内容に名前を付けて残します（git の tag）。" = "Names what you have now as a version (a git tag).";
-"今の内容は版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。" = "What you have now is kept as a version first, then the project becomes this version. Changing and running from here starts a new branch.";
+"今の定義と追加パスの内容に名前を付けて残します（git の tag）。" = "Name the current definitions and additional version paths (a Git tag).";
+"今の定義と追加パスは版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。" = "The current definitions and additional version paths are committed before opening this version. Changing them and running starts a new branch.";
 "今後は確認しない（設定の「API」でいつでも変えられます）" = "Don't ask again (can be changed any time in Settings > API)";
 "他のプロジェクトを取り込む（externals にコピーして Card in Card として置きます）" = "Import another project (copied into externals and placed as a Card in Card)";
 "他の変更と重なり保存できませんでした。変更は保持しています。" = "Could not save: it overlaps other changes. The changes are kept.";
@@ -918,6 +918,7 @@
 "定番のデモを見る" = "See the Standard Demo";
 "定義" = "Definition";
 "定義とソースを削除" = "Delete the definition and its sources";
+"定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。" = "Definitions are versioned automatically. List additional project-relative files or folders, one per line (no wildcards). This applies when a run starts and to Keep as Version. .tsugumi/, .git/ and symbolic links are excluded.";
 "定義をこのプロジェクトの definitions にコピーして Card を置きます" = "Copies the definition into this project's definitions and places the Card";
 "定義を持たない Card には追加コンテキストを置けません。" = "A Card without a definition cannot hold extra context.";
 "定義を選んでください" = "Choose a definition";
@@ -1176,6 +1177,7 @@
 "版が記録されていないため差分を表示できません。" = "A version was not recorded, so its changes are unavailable.";
 "版として残す" = "Keep as Version";
 "版として残す…" = "Keep as Version…";
+"版に含める追加パス" = "Additional paths to version";
 "版のノート" = "Version note";
 "版の履歴" = "Version History";
 "版の履歴…" = "Version History…";
