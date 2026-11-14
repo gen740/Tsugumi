@@ -159,7 +159,7 @@ std::string put_schema(sql::Db& db, const types::Type& t) {
 
 RunSummaryData run_row(const sql::Stmt& st) {
   // Columns: run_id, state, rev, execution_rev, accepted_at, started_at, ended_at,
-  //          failure, source_hash, target, propagate
+  //          failure, source_hash, target, propagate, commit_id, partial_run, uses_partial_result
   RunSummaryData s;
   s.status.run_id = st.text(0);
   s.status.state = static_cast<RunState>(st.i64(1));
@@ -261,9 +261,10 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-constexpr int kHistoryVersion = 7;
+// Includes partial-run provenance, portable run commits and File content digests.
+constexpr int kHistoryVersion = 8;
 constexpr const char* kCopyFormat = "tsugumi-runs";
-constexpr const char* kCopyVersion = "7";
+constexpr const char* kCopyVersion = "8";
 
 namespace stdfs = std::filesystem;
 

@@ -351,7 +351,10 @@ extension ProjectSession {
   func rpcBytes(_ p: String) async throws -> Data {
     if let d = sourceEdits[p] { return d }
     guard let rpc else { throw RPCError.disconnected }
-    return try await rpc.readFile(path: p, atRev: rev)
+    guard let hash = sources[p]?.hash else { throw RPCFailure(kind: .notFound, diagnostic: "unknown source: \(p)") }
+    // Autosave can advance the core's revision before its delta reaches us.
+    // Copy the manifest's exact bytes, regardless of unrelated canvas edits.
+    return try await rpc.readFile(path: p, atRev: nil, ifHash: hash)
   }
 
   /// Every byte is read before an edit removes or replaces any definition.

@@ -9,6 +9,49 @@
 namespace tsugumi {
 namespace {
 
+TEST(HistoryCopy, IncompatibleSchemasAreRejectedWithoutChangingEitherDatabase) {
+  const auto directory = std::filesystem::temp_directory_path() / ("tsugumi-history-" + crypto::uuid4());
+  std::filesystem::create_directories(directory);
+  struct Cleanup {
+    std::filesystem::path path;
+    ~Cleanup() { std::filesystem::remove_all(path); }
+  } cleanup{directory};
+  for (const int version : {5, 6, 7, 9}) {
+    for (const bool portable : {false, true}) {
+      SCOPED_TRACE(std::to_string(version) + (portable ? " portable" : " local"));
+      const auto local = directory / "history.sqlite";
+      const auto copy = directory / "runs.sqlite";
+      const auto database = portable ? copy : local;
+      {
+        sql::Db db(database.string());
+        db.exec("CREATE TABLE fixture(note TEXT); INSERT INTO fixture VALUES('retained')");
+        if (portable) {
+          db.exec("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)");
+          db.prepare("INSERT INTO meta VALUES('format', 'tsugumi-runs'), ('version', ?)")
+              .bind(1, std::to_string(version)).run();
+        } else {
+          db.exec("PRAGMA user_version=" + std::to_string(version));
+        }
+      }
+      const auto original = fs::read_file_or_throw(database);
+      try {
+        History::prepare_storage(local, copy, false, {});
+        FAIL() << "incompatible history was accepted";
+      } catch (const IncompatibleHistory& error) {
+        EXPECT_EQ(error.found, std::to_string(version));
+        EXPECT_EQ(error.expected, "8");
+        EXPECT_EQ(error.source, portable ? "portable" : "local");
+        EXPECT_NE(std::string(error.what()).find("has schema version " + std::to_string(version) +
+                                                ", but this Tsugumi requires 8"), std::string::npos);
+      }
+      if (!portable) EXPECT_THROW(History(database, "secret"), IncompatibleHistory);
+      EXPECT_EQ(fs::read_file_or_throw(database), original);
+      EXPECT_FALSE(std::filesystem::exists(portable ? local : copy));
+      std::filesystem::remove(database);
+    }
+  }
+}
+
 TEST(HistoryCopy, FileContentDigestsSurviveMissingFilesAndPortableHistory) {
   const auto directory = std::filesystem::temp_directory_path() / ("tsugumi-history-" + crypto::uuid4());
   std::filesystem::create_directories(directory);
@@ -140,6 +183,27 @@ TEST(HistoryCopy, RoundTripPreservesEveryRunFieldIncludingCommit) {
       EXPECT_EQ(st.text(0), op_id);
       EXPECT_EQ(st.i64(1), 1);
     });
+    // Both readers use kRunCols; the cursor sequence follows the two flags.
+    for (auto* history : {&original, &restored}) {
+      history->read([&](sql::Db& db) {
+        const auto max = History::max_run_seq(db);
+        std::vector<int64_t> seqs;
+        const auto page = History::runs_page(db, input.target, true, max + 1, max, 1, &seqs);
+        ASSERT_EQ(page.size(), 1u);
+        EXPECT_EQ(seqs, std::vector<int64_t>{max});
+        EXPECT_EQ(page[0].status.run_id, input.status.run_id);
+        EXPECT_EQ(page[0].status.commit, input.status.commit);
+        EXPECT_TRUE(page[0].status.partial_run);
+        EXPECT_TRUE(page[0].status.uses_partial_result);
+        const auto next = History::runs_page(db, input.target, true, seqs[0], max, 1, &seqs);
+        if (max == 1) EXPECT_TRUE(next.empty());
+        else {
+          ASSERT_EQ(next.size(), 1u);
+          EXPECT_NE(next[0].status.run_id, input.status.run_id);
+          EXPECT_EQ(seqs.back(), max - 1);
+        }
+      });
+    }
   }
   EXPECT_EQ(restored.import_runs(directory / "runs.sqlite"), 0);
 }

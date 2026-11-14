@@ -7,6 +7,40 @@ import TsugumiRPC
 @MainActor struct CardFileEditingTests {
   let binary = Data([0, 255, 128, 195, 40, 10])
 
+  @Test func copyReadsCheckContentAcrossUnrelatedSaves() async throws {
+    let dir = try SyncTests.project()
+    let daemon = try SyncTests.Daemon(project: dir)
+    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    let client = RPCClient(endpoint: daemon.endpoint.url)
+    _ = try await client.connect(token: daemon.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    let source = "definitions/a/data.bin"
+    // More than one read chunk, including bytes that are not UTF-8.
+    let bytes = Data(repeating: 255, count: (1 << 20) + 1) + binary
+    var snap = try await client.inspect()
+    _ = try await client.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "test", changes: [
+      Change.putSource(path: source, bytes: bytes, baseHash: nil),
+    ])
+    snap = try await client.inspect()
+    let hash = try #require(snap.sources.compactMap { $0 }.first { $0.path == source }?.hash)
+    _ = try await client.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "test", changes: [
+      Change.setLayout(#"{"cards":{"a":{"x":100,"y":200}}}"#),
+    ])
+    do {
+      _ = try await client.readFile(path: source, atRev: snap.rev)
+      Issue.record("the old document revision must be stale")
+    } catch let error as RPCFailure { #expect(error.kind == .revisionConflict) }
+    #expect(try await client.readFile(path: source, atRev: nil, ifHash: hash) == bytes)
+    snap = try await client.inspect()
+    _ = try await client.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "test", changes: [
+      Change.putSource(path: source, bytes: binary, baseHash: hash),
+    ])
+    do {
+      _ = try await client.readFile(path: source, atRev: nil, ifHash: hash)
+      Issue.record("copying a changed file must fail")
+    } catch let error as RPCFailure { #expect(error.kind == .hashConflict) }
+    await client.close()
+  }
+
   // Use the same real-project/daemon setup as the neighbouring SyncTests.
   @Test func failedReadAbortsConversionAndDuplicationWithoutAnyEdits() async throws {
     let dir = try SyncTests.project()
