@@ -28,7 +28,8 @@
 #include "agent/tool_images.hh"
 #include "agent/wire.hh"
 #include "host/environment.hh"
-#include "host/projects.hh"
+#include "host/layout_service.hh"
+#include "host/layout_saving.hh"
 #include "host/save.hh"
 #include "host/execution_broker.hh"
 #include "host/guide.hh"
@@ -88,6 +89,14 @@ auto HostFailed(uint64_t id, std::string_view code, std::string_view message,
   failure.message = message;
   failure.request_id = request;
   return wire::HostReply(id, std::move(failure));
+}
+
+auto LayoutToolFailure(const std::string& kind, const std::string& message) -> std::string {
+  return json::Encode(json::Members{
+      {"reply", json::Quote("Failure")},
+      {"value", json::Encode(json::Members{{"kind", json::Quote(kind)},
+                                           {"diagnostic", json::Quote(message)},
+                                           {"args", "[]"}})}});
 }
 
 auto ToolOutput(std::string_view raw, bool error,
@@ -1129,6 +1138,85 @@ struct Host::State {
     }
     return specs;
   }
+  // Read the exact revision being saved; never clean up a newer client's
+  // layout.
+  auto PrepareLayoutSave(const std::string &project, const std::string &args,
+                         std::stop_token stop) -> std::string {
+    struct StaleRevision {};
+    std::optional<json::Members> snapshot;
+    const auto fields = json::Object(args);
+    const auto expected =
+        json::Get(fields, fields.contains("base_rev") ? "base_rev" : "at_rev");
+    auto read =
+        [&](const std::string &path) -> std::optional<host::LayoutFile> {
+      if (!snapshot) {
+        const auto response =
+            json::Object(ProjectCall(project, "project_inspect", "{}", stop));
+        snapshot = json::Object(json::Get(response, "value", "{}"));
+        const auto revision = json::Get(*snapshot, "rev");
+        if (json::String(expected, expected) !=
+            json::String(revision, revision))
+          throw StaleRevision{};
+      }
+      if (path == "tsugumi.json")
+        return host::LayoutFile{json::Text(*snapshot, "project_json"),
+                                std::nullopt};
+      if (path == "layout.json")
+        return host::LayoutFile{json::Text(*snapshot, "layout_json", "{}"),
+                                std::nullopt};
+      std::string hash;
+      for (const auto &raw :
+           json::Array(json::Get(*snapshot, "sources", "[]"))) {
+        const auto source = json::Object(raw);
+        if (json::Text(source, "path") == path)
+          hash = json::Text(source, "hash");
+      }
+      if (hash.empty())
+        return std::nullopt;
+      std::string text;
+      uint64_t offset = 0;
+      for (;;) {
+        const auto response = json::Object(ProjectCall(
+            project, "project_file_read",
+            json::Encode(json::Members{{"path", json::Quote(path)},
+                                       {"at_rev", expected},
+                                       {"if_hash", json::Quote(hash)},
+                                       {"offset", std::to_string(offset)},
+                                       {"limit_bytes", "1048576"}}),
+            stop));
+        if (json::Text(response, "reply") == "Failure")
+          throw Failure("conflict",
+                        "Layout source changed while preparing save");
+        const auto chunk = json::Object(json::Get(response, "value", "{}"));
+        const auto bytes = json::Get(chunk, "bytes");
+        if (!bytes.empty() && bytes.front() == '"')
+          text += json::String(bytes);
+        else {
+          std::string decoded;
+          if (!crypto::base64_decode(json::Text(json::Object(bytes), "base64"),
+                                     decoded))
+            throw Failure("invalid_request", "Invalid layout source bytes");
+          text += decoded;
+        }
+        if (text.size() > 8 * 1024 * 1024)
+          throw Failure("resource_limit", "Layout document exceeds 8 MiB");
+        if (json::Bool(json::Get(chunk, "eof")))
+          break;
+        const auto next = json::Get(chunk, "next_offset");
+        const auto position = json::UInt(json::String(next, next));
+        if (position <= offset)
+          throw Failure("invalid_request", "Invalid layout source page");
+        offset = position;
+      }
+      return host::LayoutFile{std::move(text), hash};
+    };
+    try {
+      return host::PrepareLayoutSave(args, read);
+    } catch (const StaleRevision &) {
+      return args;
+    } // Let the core issue its normal CAS receipt.
+  }
+
   auto ProjectCall(const std::string& project, const std::string& name,
                    const std::string& arguments, std::stop_token stop = {}) -> std::string {
     auto args = json::Object(arguments);
@@ -1246,9 +1334,19 @@ struct Host::State {
     const auto *reply = R::GetMessage(hello.bytes.data())->payload_as_Reply();
     if (!reply || reply->value_type() != R::ReplyPayload::HelloResult)
       throw Failure("unauthenticated", "Project rejected the Agent host");
+    auto prepared = arguments;
+    if (name == "project_save" || (name == "project_validate" && json::Object(arguments).contains("changes"))) {
+      try {
+        prepared = PrepareLayoutSave(project, arguments, stop);
+      } catch (const host::LayoutFailure& error) {
+        // A host schema rejection is a completed tool result, so retrying the
+        // same call does not look for a core mutation that was never sent.
+        return LayoutToolFailure("invalid_document", error.what());
+      }
+    }
     auto result = connection
                       .Call([&](uint64_t id) {
-                        auto bytes = EncodeProjectRequest(name, arguments, id);
+                        auto bytes = EncodeProjectRequest(name, prepared, id);
                         return client::Bytes(bytes.begin(), bytes.end());
                       })
                       .get();
@@ -1831,7 +1929,16 @@ struct Host::State {
     } else {
       if (stop.stop_requested())
         throw Cancelled();
-      result = ProjectCall(project, call.name, json::Encode(args), stop);
+      if (spec->host) {
+        const auto bytes = catalog.HostRequest(call.name, json::Encode(args), 1);
+        try {
+          result = catalog.HostReply(host::LayoutHandle(*H::GetMessage(bytes.data())->payload_as_Request(), 1));
+        } catch (const host::LayoutFailure& error) {
+          result = LayoutToolFailure("invalid_request", error.what());
+        }
+      } else {
+        result = ProjectCall(project, call.name, json::Encode(args), stop);
+      }
     }
     const auto envelope = json::Object(result);
     bool error = json::Text(envelope, "reply") == "Failure";
@@ -3000,6 +3107,10 @@ struct Host::State {
     }
     if (host::Guide::Handles(r->value_type()))
       return guide.Handle(*r, request.request_id);
+    if (host::LayoutHandles(r->value_type())) {
+      try { return host::LayoutHandle(*r, request.request_id); }
+      catch (const host::LayoutFailure& error) { throw Failure("invalid_request", error.what()); }
+    }
     if (host::Projects::Handles(r->value_type()))
       return host_projects.Handle(*r, request.request_id);
     switch (r->value_type()) {

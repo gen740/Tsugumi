@@ -20,7 +20,7 @@ GROUPS = [
     ("Running", ["RunPlan", "Run", "RunCancel", "RunStatus"]),
     ("History and artifacts", ["RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "RunHistoryDelete",
                  "ArtifactList", "ArtifactRead", "LogRange", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses"]),
-    ("Views", ["ViewSetVisible", "ViewSave", "ModuleRead", "LayoutArrange", "LayoutUntangle"]),
+    ("Views", ["ViewSetVisible", "ViewSave", "ModuleRead"]),
     ("Versions", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionDiff", "VersionNote", "VersionNoteStore"]),
 ]
 
@@ -94,6 +94,8 @@ def render() -> str:
         "- **Failure**: any request may be answered with `Failure`.",
         "- **Requests that change something**: carry an `op_id`, and a resend with the same `op_id` is applied only once. If a response is lost, check with `OperationGet`.",
         "- **The Agent's tools**: made from the same schema (`tsugumi.bfbs`) ([Features](features.md#9-agent)).",
+        "",
+        "Layout proposals, layout schema validation and minimap placement belong to the host service ([protocol/host.fbs](../protocol/host.fbs)). Saving clients remove deleted Card references. The project core carries layout objects and opaque view JSON without interpreting presentation fields.",
         "",
         f"There are {len(requests)} requests.",
         "",

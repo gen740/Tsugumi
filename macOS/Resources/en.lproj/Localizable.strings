@@ -353,6 +353,7 @@
 "この版での実行はありません。" = "No runs of this version.";
 "この環境の package はありません" = "No packages for this system";
 "この環境を共有する Card と呼び出し" = "Cards and invocations sharing this environment";
+"この結果は表示できません" = "This result cannot be displayed";
 "この返事を送ります" = "Sends this reply";
 "この階層の Card の未解決のコメントに従って、チャットで Card を書き換えます（コメントが求めれば Card を足します）。進捗はチャットに表示されます。" = "Rewrites the Cards of this level in the chat as their open comments ask (adding Cards when a comment asks for it). Progress appears in the chat.";
 "この階層の Draft をチャットで実装します。進捗はチャットに表示されます。" = "Implements the Drafts of this level through the chat. Progress appears in the chat.";

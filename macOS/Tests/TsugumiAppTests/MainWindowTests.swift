@@ -25,7 +25,7 @@ import Testing
 }
 
 /// The bird out in one project's window leaves the others' birds at home.
-@MainActor @Test func theBirdIsAwayOnlyForItsOwnProject() {
+@MainActor @Test(.hostService) func theBirdIsAwayOnlyForItsOwnProject() {
   let guide = GuideController.shared
   let stage = GuideStage()
   stage.project = "/a"
@@ -43,13 +43,13 @@ import Testing
 }
 
 /// What the guide says on Home stays on Home; no chat is speaking here.
-@MainActor @Test func theGuideOfHomeSpeaksOnHomeOnly() {
+@MainActor @Test(.hostService) func theGuideOfHomeSpeaksOnHomeOnly() {
   #expect(GuideController.shared.speaks(in: nil))
   #expect(!GuideController.shared.speaks(in: "/a"))
 }
 
 /// A new window takes what it was opened for, in order, once.
-@MainActor @Test func aNewWindowTakesItsIntentOnce() {
+@MainActor @Test(.hostService) func aNewWindowTakesItsIntentOnce() {
   let model = AppModel.shared
   let url = URL(fileURLWithPath: "/tmp/x")
   model.pendingWindowIntents = [.open(url), .newProject]
@@ -59,7 +59,7 @@ import Testing
 }
 
 /// ⌘N on Home opens the sheet of that window alone.
-@MainActor @Test func aNewProjectOnHomeStaysInThatWindow() {
+@MainActor @Test(.hostService) func aNewProjectOnHomeStaysInThatWindow() {
   let model = AppModel.shared
   let one = Workspace(), other = Workspace()
   model.newProject(from: one, openWindow: EnvironmentValues().openWindow)
@@ -68,7 +68,7 @@ import Testing
 }
 
 /// A closed window leaves the list; the others stay.
-@MainActor @Test func closingAWindowLeavesTheOthers() {
+@MainActor @Test(.hostService) func closingAWindowLeavesTheOthers() {
   let model = AppModel.shared
   let one = Workspace(), other = Workspace()
   model.register(one)

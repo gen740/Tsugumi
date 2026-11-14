@@ -1,4 +1,4 @@
-// What the core refuses to save: Arrange does not make such a layout, Discard Changes goes
+// Layout edits the host rejects: Arrange does not make such a layout, Discard Changes goes
 // back to what is saved, and the state of the save follows.
 import assert from 'node:assert/strict'
 import { parse, get, dbl } from '../src/shared/json'
@@ -22,17 +22,19 @@ const session = () => {
   s.confirmedDefinitions.set('b', { card: parse('{"language":"bash","inputs":[{"name":"in"}]}') })
   s.scheduleSave = () => {} // saved by hand below
   s.connected = true
+  s.layoutHost = { ...s.layoutHost }
   return s
 }
 const saveOnce = (s: unknown) => (s as { saveOnce(): Promise<void> }).saveOnce()
 const refused = new RPCFailure({ kind: D.FailureKind.invalid_document, diagnostic: 'layout.json: display b needs x, y, width and height' })
 
-// Arrange gives a frame still drawn beside its Card the whole frame the core asks for.
+// Arrange gives a frame still drawn beside its Card the whole frame the host asks for.
 {
   const s = session()
   s.displays.set('b', { runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'text', text: 'shown' } })
   assert.equal(s.displayFrame('b'), undefined, 'shown beside its Card, with no frame in the layout')
-  s.client = { layoutArrange: async () => ({ cards: [{ id: 'a', x: 0, y: 0 }, { id: 'b', x: 300, y: 0 }], frames: [{ id: 'b', x: 600, y: 0 }], notes: [], portOrders: [] }) } as never
+  s.client = {} as never
+  s.layoutHost = { layoutArrange: async () => ({ cards: [{ id: 'a', x: 0, y: 0 }, { id: 'b', x: 300, y: 0 }], frames: [{ id: 'b', x: 600, y: 0 }], notes: [], portOrders: [] }) } as never
   await s.arrange([])
   const f = s.displayFrame('b')
   assert.notEqual(dbl(get(f, 'x')), undefined)
@@ -46,9 +48,10 @@ const refused = new RPCFailure({ kind: D.FailureKind.invalid_document, diagnosti
   const s = session()
   let refuse = true
   const sent: unknown[] = []
+  s.layoutHost.validate = async json => { if (refuse) throw refused; return json }
   s.client = {
     save: async (_rev: unknown, _op: unknown, _origin: unknown, changes: unknown[]) => {
-      if (refuse) throw refused
+      assert.equal(refuse, false, "invalid layout never reaches the project core")
       sent.push(changes)
       return { rev: 1n }
     },
@@ -74,7 +77,8 @@ const refused = new RPCFailure({ kind: D.FailureKind.invalid_document, diagnosti
 // The refused edit undone: nothing is left to save, so the error does not stay.
 {
   const s = session()
-  s.client = { save: async () => { throw refused } } as never
+  s.layoutHost.validate = async () => { throw refused }
+  s.client = { save: async () => { assert.fail("invalid layout never reaches the core") } } as never
   s.edit((x) => x.setPosition('a', { x: 10, y: 20 }))
   await saveOnce(s)
   assert.ok(s.saveError)

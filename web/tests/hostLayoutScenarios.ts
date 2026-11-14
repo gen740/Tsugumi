@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { Builder, ByteBuffer } from 'flatbuffers'
 import fs from 'node:fs'
 import path from 'node:path'
-import { D, R, RPCClient, RequestPayload, s as text } from '../src/shared/rpc'
+import { D } from '../src/shared/rpc'
 import { parse, serialize, get, dbl } from '../src/shared/json'
 import type { LayoutProposal, LayoutScene } from '../src/model/layoutScene'
 
@@ -18,36 +18,36 @@ const { ProjectSession } = await import('../src/model/session')
 const { CanvasController } = await import('../src/model/canvas')
 const { WorkflowTab } = await import('../src/model/workspace')
 
-// Exercise real FlatBuffers request/response wrappers against recorded answers.
+// The host service wire encodes the measured scene, preserving golden inputs.
+const { encodeRequest, decodeReply } = await import('../server/serviceWire')
+const { H } = await import('../src/shared/hostLayout')
 const vectors: { request: string; scene: LayoutScene; around?: string[]; expect: LayoutProposal }[] = JSON.parse(fs.readFileSync(path.join(process.argv[2], 'tests/fixtures/layout-golden.json'), 'utf8'))
 for (const v of vectors) {
-  const rpc = new RPCClient({ close() {}, async call(frame) {
-    const m = R.Message.getRootAsMessage(new ByteBuffer(frame)).unpack()
-    const request = m.payload as R.RequestT
-    assert.equal(request.valueType, v.request === 'arrange' ? RequestPayload.LayoutArrangeRequest : RequestPayload.LayoutUntangleRequest)
-    const value = request.value as R.LayoutArrangeRequestT | R.LayoutUntangleRequestT
-    const scene = value.scene!
-    assert.equal(text(scene.flow), v.scene.flow)
-    assert.equal(scene.grid, v.scene.grid)
-    assert.equal(scene.snap, v.scene.snap)
-    for (const k of ['cards', 'wires', 'frames', 'notes'] as const) assert.deepEqual(JSON.parse(JSON.stringify(scene[k])), v.scene[k])
-    for (const k of ['inputs', 'outputs'] as const) {
-      const b = v.scene[k]
-      if (!b) { assert.equal(scene[k], null); continue }
-      assert.deepEqual(JSON.parse(JSON.stringify(scene[k]!.ends)), b.ends)
-      assert.equal(scene[k]!.x, b.at?.x ?? null)
-      assert.equal(scene[k]!.y, b.at?.y ?? null)
-    }
-    if (v.request === 'untangle') assert.deepEqual((value as R.LayoutUntangleRequestT).around, v.around ?? [])
-    const place = (p: { id: string; x: number; y: number }) => new R.LayoutPlaceT(p.id, p.x, p.y)
-    const proposal = new R.LayoutProposalT(v.expect.cards.map(place), v.expect.frames.map(place), v.expect.notes.map(place),
-      v.expect.portOrders.map(o => new R.LayoutPortOrderT(o.id, o.inputs, o.outputs)))
-    const reply = new R.MessageT(m.requestId, R.Payload.Reply, new R.ReplyT(R.ReplyPayload.LayoutProposal, proposal))
-    const b = new Builder(1024)
-    b.finish(reply.pack(b), 'TSG1')
-    return b.asUint8Array().slice()
-  } })
-  assert.deepEqual(v.request === 'arrange' ? await rpc.layoutArrange(v.scene) : await rpc.layoutUntangle(v.scene, v.around ?? []), v.expect)
+  const method = v.request === 'arrange' ? 'LayoutArrangeRequest' : 'LayoutUntangleRequest'
+  const bytes = encodeRequest(method, { scene: v.scene, around: v.around ?? [] }, 1n, true)
+  const message = H.Message.getRootAsMessage(new ByteBuffer(bytes)).unpack()
+  const request = message.payload as H.RequestT
+  assert.equal(request.valueType, H.RequestPayload[method])
+  const value = request.value as H.LayoutArrangeRequestT | H.LayoutUntangleRequestT
+  assert.equal(value.scene!.flow, v.scene.flow)
+  const scene = value.scene!
+  assert.equal(scene.grid, v.scene.grid)
+  assert.equal(scene.snap, v.scene.snap)
+  for (const k of ['cards', 'wires', 'frames', 'notes'] as const) assert.deepEqual(JSON.parse(JSON.stringify(scene[k])), v.scene[k])
+  for (const side of ['inputs', 'outputs'] as const) {
+    const bar = v.scene[side]
+    if (!bar) { assert.equal(scene[side], null); continue }
+    assert.deepEqual(JSON.parse(JSON.stringify(scene[side]!.ends)), bar.ends)
+    assert.equal(scene[side]!.x, bar.at?.x ?? null)
+    assert.equal(scene[side]!.y, bar.at?.y ?? null)
+  }
+  if (v.request === 'untangle') assert.deepEqual((value as H.LayoutUntangleRequestT).around, v.around ?? [])
+  const place = (p: { id: string; x: number; y: number }) => new H.LayoutPlaceT(p.id, p.x, p.y)
+  const proposal = new H.LayoutProposalT(v.expect.cards.map(place), v.expect.frames.map(place), v.expect.notes.map(place),
+    v.expect.portOrders.map(o => new H.LayoutPortOrderT(o.id, o.inputs, o.outputs)))
+  const reply = new H.MessageT(1n, H.Payload.Reply, new H.ReplyT(H.ReplyPayload.LayoutProposal, proposal))
+  const builder = new Builder(1024); builder.finish(reply.pack(builder), 'TSH1')
+  assert.deepEqual(JSON.parse(JSON.stringify(decodeReply(builder.asUint8Array(), true).value)), v.expect)
 }
 
 const make = async () => {
@@ -55,6 +55,7 @@ const make = async () => {
   session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
   session.layout = parse('{"flow":"topToBottom"}')
   session.scheduleSave = () => {}
+  session.client = {} as never
   await session.addCard('python', [], { x: 200, y: 0 }, 'source')
   await session.addCard('python', [], { x: 0, y: 300 }, 'left')
   await session.addCard('draft', [], { x: 500, y: 300 }, 'right')
@@ -78,7 +79,7 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
   s.updateLayout([], l => l.set('groups', parse('[{"id":"g","title":"Group","cards":["source","left"]}]')))
   const was = before(s)
   let measured: LayoutScene | undefined
-  s.client = { layoutArrange: async (scene: LayoutScene) => {
+  s.layoutHost = { layoutArrange: async (scene: LayoutScene) => {
     measured = scene
     return { cards: [{ id: 'source', x: 20, y: 40 }, { id: 'left', x: 0, y: 200 }, { id: 'right', x: 300, y: 200 }],
       frames: [{ id: 'source', x: 500, y: 40 }], notes: [{ id: note, x: 600, y: 400 }], portOrders: orders }
@@ -103,7 +104,7 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
 // Untangle does not move Cards or rewrite named connections.
 {
   const s = await make(), was = before(s), at = s.position('source')
-  s.client = { layoutUntangle: async () => onlyOrders } as never
+  s.layoutHost = { layoutUntangle: async () => onlyOrders } as never
   await s.untangle([])
   assert.deepEqual(s.position('source'), at)
   assert.equal(serialize(s.project), was.project)
@@ -115,7 +116,7 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
 // Drag positions and the delayed port order form one undo/redo step.
 {
   const s = await make(), cv = new CanvasController(s, new WorkflowTab([])), was = before(s)
-  s.client = { layoutUntangle: async (_scene: LayoutScene, around: string[]) => {
+  s.layoutHost = { layoutUntangle: async (_scene: LayoutScene, around: string[]) => {
     assert.deepEqual(around, ['left'])
     return onlyOrders
   } } as never
@@ -138,7 +139,7 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
   s.setBoundaryPosition([outer], 'outputs', { x: 333, y: 444 })
   const beforeOuter = s.position(outer), was = before(s)
   let seen = false
-  s.client = { layoutArrange: async (scene: LayoutScene) => {
+  s.layoutHost = { layoutArrange: async (scene: LayoutScene) => {
     seen = true
     assert.deepEqual(scene.cards.map(c => c.id), ['source'])
     assert.deepEqual(scene.outputs?.at, { x: 333, y: 444 })
@@ -162,7 +163,7 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
 for (const action of ['edit', 'undo', 'disconnect', 'measurement'] as const) {
   const s = await make()
   let resolve!: (p: LayoutProposal) => void
-  s.client = { layoutUntangle: () => new Promise<LayoutProposal>(r => { resolve = r }) } as never
+  s.layoutHost = { layoutUntangle: () => new Promise<LayoutProposal>(r => { resolve = r }) } as never
   const pending = s.untangle([])
   if (action === 'edit') s.edit(x => x.setPosition('left', { x: 999, y: 888 }))
   if (action === 'undo') s.undo()
@@ -176,7 +177,7 @@ for (const action of ['edit', 'undo', 'disconnect', 'measurement'] as const) {
 {
   const s = await make(), cv = new CanvasController(s, new WorkflowTab([]))
   let resolve!: (p: LayoutProposal) => void
-  s.client = { layoutUntangle: () => new Promise<LayoutProposal>(r => { resolve = r }) } as never
+  s.layoutHost = { layoutUntangle: () => new Promise<LayoutProposal>(r => { resolve = r }) } as never
   const pending = cv.moveSelection(new Set(['left']), new Set(), new Set(), 1000, 0)
   s.undo()
   const was = before(s)
@@ -186,7 +187,7 @@ for (const action of ['edit', 'undo', 'disconnect', 'measurement'] as const) {
 }
 {
   const s = await make(), was = before(s)
-  s.client = { layoutArrange: async () => { throw new Error('layout failed') } } as never
+  s.layoutHost = { layoutArrange: async () => { throw new Error('layout failed') } } as never
   await s.arrange([])
   assert.deepEqual(before(s), was)
   assert.equal(s.notice, 'layout failed')

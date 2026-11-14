@@ -17,6 +17,7 @@ auto EncodeProjectRequest(std::string_view name, std::string_view arguments,
 struct CatalogTool {
   ToolSpec spec;
   std::string request_name;
+  bool host = false;
   bool mutating = false;
   bool has_origin = false;
   bool approval_required = false;
@@ -32,6 +33,8 @@ public:
   auto Request(std::string_view name, std::string_view arguments,
                uint64_t id) const -> std::string;
   auto Reply(std::string_view bytes) const -> std::string;
+  auto HostRequest(std::string_view name, std::string_view arguments, uint64_t id) const -> std::string;
+  auto HostReply(std::string_view bytes) const -> std::string;
 
 private:
   std::vector<CatalogTool> tools_;
