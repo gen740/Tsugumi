@@ -31,6 +31,9 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+"実行環境の状態を確認できませんでした": "Could not check the execution environment",
+"実行環境の状態を確認しています…": "Checking the execution environment…",
+"実行環境からの状態の応答が不正です。": "The execution environment returned an invalid status reply.",
 'agentd（このホストの所有者だけが読み書きできます）': 'agentd (readable and writable only by this host’s owner)',
 'agentd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。': 'Saved in agentd. The key is not stored in Cards, projects, settings or logs.',
 '%@ のキーを agentd から削除しました。': 'Deleted the key for %@ from agentd.',

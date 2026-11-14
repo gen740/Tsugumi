@@ -148,11 +148,16 @@ final class ServiceWireTests: XCTestCase {
 
   func testRuntimeAndTerminalOmittedVectorsAndEvents() throws {
     let runtime = Tsugumi_Host_HostRuntimeT(); runtime.vmState = "stopped"
+    runtime.virtualizationSupported = true; runtime.imageAvailable = true; runtime.imageVersion = "bundled-image"
     let reply = Tsugumi_Host_ReplyT(); reply.value = Tsugumi_Host_ReplyPayloadUnion(runtime, type: .hostruntime)
     let message = Tsugumi_Host_MessageT(); message.requestId = 1; message.payload = Tsugumi_Host_PayloadUnion(reply, type: .reply)
     var builder = FlatBufferBuilder(initialSize: 128); var object: Tsugumi_Host_MessageT? = message
     let offset = Tsugumi_Host_Message.pack(&builder, obj: &object); Tsugumi_Host_Message.finish(&builder, end: offset)
     let decoded = try ServiceWire.decode(builder.data, host: true)
+    XCTAssertNil(decoded["value"])
+    XCTAssertEqual(decoded["virtualization_supported"] as? Bool, true)
+    XCTAssertEqual(decoded["image_available"] as? Bool, true)
+    XCTAssertEqual(decoded["image_version"] as? String, "bundled-image")
     XCTAssertTrue(try XCTUnwrap(decoded["console"] as? [String]).isEmpty)
     XCTAssertTrue(try XCTUnwrap(decoded["histories"] as? [Any]).isEmpty)
     let terminal = Tsugumi_Host_HostTerminalDataT(); terminal.session = UInt64.max - 1; terminal.closed = true

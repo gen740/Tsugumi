@@ -48,9 +48,10 @@ final class AppModel {
   var setupNeeded: Bool { !smokeMode && (setup.map { !$0.ready } ?? false) }
 
   func refreshSetup() async {
+    guard !checkingSetup else { return }
     checkingSetup = true
+    defer { checkingSetup = false }
     setup = await environments.setupStatus()
-    checkingSetup = false
   }
 
   /// First-start preparation of the shared VM happens when the first

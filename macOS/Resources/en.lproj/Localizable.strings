@@ -977,6 +977,7 @@
 "実行時の依存パス" = "Runtime dependencies";
 "実行条件" = "Execution conditions";
 "実行状況はありません" = "No run activity";
+"実行環境からの状態の応答が不正です。" = "The execution environment returned an invalid status reply.";
 "実行環境が起動の途中で止まりました: %@" = "The environment stopped while starting: %@";
 "実行環境に接続していません" = "Not connected to the environment";
 "実行環境に接続できませんでした" = "Could not connect to the environment";
@@ -984,6 +985,8 @@
 "実行環境のコンソール" = "Environment Console";
 "実行環境のデータ" = "Environment data";
 "実行環境の準備ができませんでした: %@" = "The environment could not get ready: %@";
+"実行環境の状態を確認しています…" = "Checking the execution environment…";
+"実行環境の状態を確認できませんでした" = "Could not check the execution environment";
 "実行環境の管理プロセスを起動しています" = "Starting the environment's supervisor";
 "実行環境は Nix で固定。同じ計算をもう一度確かめられるよ" = "The environment is pinned with Nix, so any result can be checked again.";
 "実行環境は停止しています" = "The environment is stopped";
