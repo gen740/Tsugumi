@@ -27,6 +27,8 @@ export function DisplayContent({ display, large = false, zoom = 1, emptyNote, fi
     return <div className="display-center secondary" style={{ fontSize: size(10, 13) }}>{emptyNote ?? L('まだ結果がありません（実行すると表示されます）')}</div>
   }
   switch (v.kind) {
+    case 'unavailable':
+      return <div className="display-center secondary" style={{ fontSize: size(10, 13) }}>{L('この結果は表示できません')}</div>
     case 'text':
       return scrolling(<pre className={`display-text${large ? ' selectable' : ''}`} style={{ fontSize: size(11, 13) }}>{v.text}</pre>)
     case 'markdown':

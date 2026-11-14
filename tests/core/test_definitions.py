@@ -165,8 +165,8 @@ def test_an_agent_name_change_preserves_layout_verbatim(tmp_path, core_factory):
     assert text(d.connect().call("ProjectInspectRequest").layoutJson) == spelled(LAID_OUT)
 
 
-def test_a_card_that_leaves_the_canvas_takes_its_layout_with_it(tmp_path, core_factory):
-    """Removing a card also removes its position, frame and group membership.
+def test_the_saving_client_supplies_deleted_card_layout_cleanup(tmp_path, core_factory):
+    """The saving client supplies position, frame and group cleanup atomically.
 
     A new card with the same name starts without that layout, while restoring
     the card and its layout together keeps the supplied layout.
@@ -176,21 +176,21 @@ def test_a_card_that_leaves_the_canvas_takes_its_layout_with_it(tmp_path, core_f
     d = core_factory(project_root=root)
     c = d.connect()
     rev, doc = project_json(c)
-    c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
-        change("SetProject", json=json.dumps(without_card(doc, "src"))), change("RemoveDefinition", id="src")])
     kept = json.loads(json.dumps(LAID_OUT))
     kept["cards"] = {k: v for k, v in kept["cards"].items() if k not in ("src", "src/inner")}
     del kept["displays"]["src"]
     kept["groups"][0]["cards"] = ["out"]
     kept["groups"][0]["outputs"] = [{"card": "out", "port": "x"}]
+    c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
+        change("SetProject", json=json.dumps(without_card(doc, "src"))), change("RemoveDefinition", id="src"), change("SetLayout", json=spelled(kept))])
     assert text(c.call("ProjectInspectRequest").layoutJson) == spelled(kept)
 
     # Off the canvas with its definition left behind is deleted too.
     rev, doc = project_json(c)
-    c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
-        change("SetProject", json=json.dumps(without_card(doc, "src2")))])
     del kept["cards"]["src2"]
     del kept["displays"]["src2"]
+    c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
+        change("SetProject", json=json.dumps(without_card(doc, "src2"))), change("SetLayout", json=spelled(kept))])
     assert text(c.call("ProjectInspectRequest").layoutJson) == spelled(kept)
 
     # A Card of the same name starts with no frame.

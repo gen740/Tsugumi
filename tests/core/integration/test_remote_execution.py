@@ -376,19 +376,26 @@ def test_remote_display_module_matches_local_source(project, core_factory, remot
     assert read_pages(client, "ModuleReadRequest", module=text(local.module), page_bytes=65536) == remote_source
 
 
-@pytest.mark.parametrize("remote_daemon", [("--log-limit-bytes", "1")], indirect=True)
-def test_remote_card_reports_log_truncation(project, core_factory, remote_broker):
+@pytest.mark.parametrize("execution_service", ["local", "remote-test"])
+def test_core_recording_budget_is_the_same_locally_and_remotely(project, core_factory, remote_broker, execution_service):
     fixture(project)
+    definition = project / "definitions/work/_card.json"
+    settings = json.loads(definition.read_text())
+    settings["executionService"] = execution_service
+    definition.write_text(json.dumps(settings))
+    source = project / "definitions/work/default.nix"
+    source.write_text(source.read_text().replace("printf 'remote-card-stdout\\n'",
+        "head -c 9437184 /dev/zero | tr '\\000' x"))
     client = core_factory().connect()
     run_id = start_run(client, "source")
     run = wait_run(client, run_id, timeout=480)
     assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
     stdout = client.call("LogRangeRequest", runId=run_id, card=path("work"),
                          invocation=1, stream=LogStream.stdout)
-    assert not text(stdout.text)
+    assert 0 < stdout.sizeBytes <= 8 << 20
     journal = client.call("LogRangeRequest", runId=run_id, card=path("work"),
                           invocation=1, stream=LogStream.journal)
-    assert text(journal.text).count("[Log output truncated at the 1-byte limit.]") == 1
+    assert text(journal.text).count("[Log output truncated at the 8388608-byte limit.]") == 1
 
 
 def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker):

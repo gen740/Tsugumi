@@ -345,8 +345,6 @@ the result; do not require confirmations of checks or a detailed explanation of 
     "RunEnvironmentPathsRequest",
     "ProjectShellRequest",
     "ModuleReadRequest",
-    "LayoutArrangeRequest",
-    "LayoutUntangleRequest",
     "ProjectCacheUsageRequest"
   ],
   "hostTools": [{
@@ -364,6 +362,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
       "additionalProperties": false
     }
   }],
+  "hostRequests": ["LayoutArrangeRequest", "LayoutUntangleRequest", "LayoutValidateRequest"],
   "approvalRequests": [
     "RunHistoryDeleteRequest",
     "ProjectCacheClearRequest",

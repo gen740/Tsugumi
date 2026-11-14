@@ -56,6 +56,7 @@ unsafe extern "C" {
     ) -> c_int;
     fn tsugumi_rs_info(call: *const c_void, field: u32) -> *const c_char;
     fn tsugumi_rs_invocation(call: *const c_void) -> u64;
+    fn tsugumi_rs_finish_outputs(call: *const c_void) -> c_int;
     fn tsugumi_rs_check(call: *const c_void) -> c_int;
     fn tsugumi_rs_input(call: *const c_void, name: *const c_char, size: *mut usize) -> *const u8;
     fn tsugumi_rs_params(call: *const c_void, size: *mut usize) -> *const u8;
@@ -111,6 +112,7 @@ pub struct Call<'call> {
     thread: PhantomData<Rc<()>>,
 }
 impl Call<'_> {
+    pub fn finish_outputs(&self) -> Result<()> { accepted(unsafe { tsugumi_rs_finish_outputs(self.raw) }) }
     fn info(&self, field: u32) -> &str {
         let value = unsafe { tsugumi_rs_info(self.raw, field) };
         if value.is_null() {
