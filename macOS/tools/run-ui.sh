@@ -8,8 +8,9 @@
 # taken all the same, with the window in its inactive colors.
 #
 # Settings after the project folder are passed as arguments, which UserDefaults
-# reads before the saved ones and never saves: `-agent.provider anthropic
-# -agent.model claude-sonnet-5-5` holds for this launch only.
+# reads before the saved ones and never saves. The Agent's settings (provider,
+# model) live in the host service: set them from the script with
+# `setting <key> <json>`, which saves them.
 # TSUGUMI_UI_LANGUAGE=en (or ja) does the same for the app's language.
 set -u
 absolute() { (cd "$(dirname "$1")" && echo "$(pwd -P)/$(basename "$1")"); }
