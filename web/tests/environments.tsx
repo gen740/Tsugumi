@@ -71,3 +71,53 @@ assert.deepEqual([sent[1][1].runId, sent[1][1].environmentId, sent[1][1].query, 
 assert.equal(storeName('/nix/store/' + 'a'.repeat(32) + '-python-3.13'), 'python-3.13')
 assert.equal(storeName('/nix/store/short-name'), 'short-name')
 console.log('recorded packages: passed')
+
+// Navigation, search and comparison stay on the selected run's recorded pages.
+const { environmentPage, environmentChange } = await import('../src/model/environments')
+const { EnvironmentComparison, recordedEnvironmentUses, StorePath } = await import('../src/ui/environments')
+assert.deepEqual((await environmentPage(source, 'imported-run', 2n)).environments.map(e => e.id), ['c'])
+assert.equal(environmentChange('a', 'a'), 'same')
+assert.equal(environmentChange('a', 'b'), 'changed')
+assert.equal(environmentChange('a', ''), 'unknown')
+const differenceCalls: Record<string, unknown>[] = []
+const historyRPC = {
+  async call(type: number, request: Record<string, unknown>) {
+    differenceCalls.push({ type, ...request })
+    if (type === R.RequestPayload.RunEnvironmentUsesRequest) return Object.assign(new R.EnvironmentUsePageT(), {
+      uses: [Object.assign(new R.EnvironmentUseT(), { card: request.offset === 0n ? 'deleted-card' : 'other-card', invocation: 9n })],
+      nextOffset: request.offset === 0n ? 100n : null,
+    })
+    return Object.assign(new R.EnvironmentPathPageT(), {
+      paths: [request.excludingRunId === 'left' ? '/nix/store/added' : '/nix/store/removed'],
+      total: 200n, nextOffset: request.offset === 0n ? 100n : null,
+    })
+  },
+}
+const diffSource = recordedEnvironmentSource(historyRPC as never)
+const removed = await environmentPaths(diffSource, 'left', 'old-env', 0n, '', { run: 'right', id: 'new-env' })
+assert.deepEqual(removed.paths, ['/nix/store/removed'])
+assert.equal(removed.next, 100n)
+await environmentPaths(diffSource, 'left', 'old-env', removed.next!, 'Python', { run: 'right', id: 'new-env' })
+assert.deepEqual(differenceCalls.at(-1), {
+  type: R.RequestPayload.RunEnvironmentPathsRequest, runId: 'left', environmentId: 'old-env', offset: 100n,
+  limit: 100, query: 'Python', excludingRunId: 'right', excludingEnvironmentId: 'new-env',
+})
+assert.deepEqual((await environmentPaths(diffSource, 'right', 'new-env', 0n, '', { run: 'left', id: 'old-env' })).paths, ['/nix/store/added'])
+const users = await recordedEnvironmentUses(historyRPC as never, 'imported-run', 'shared', 0n)
+assert.equal(users.uses[0].card, 'deleted-card')
+assert.equal(users.nextOffset, 100n)
+const moreUsers = await recordedEnvironmentUses(historyRPC as never, 'imported-run', 'shared', users.nextOffset!)
+assert.equal(moreUsers.uses[0].card, 'other-card')
+assert.equal(moreUsers.nextOffset, null)
+assert.equal(differenceCalls.at(-1)!.runId, 'imported-run')
+// Rendering a changed environment exposes both directions and the closure caveat.
+const changed = renderToStaticMarkup(<EnvironmentComparison session={{ rpc: historyRPC } as unknown as ProjectSession} left={{ run: 'left', id: 'old' }} right={{ run: 'right', id: 'new' }} />)
+for (const text of ['環境が変わった Card', '削除された実行時の依存パス', '追加された実行時の依存パス', 'ビルド時の依存関係の完全な一覧ではありません']) assert.ok(changed.includes(text))
+const missing = renderToStaticMarkup(<EnvironmentComparison session={untouchable} left={{ run: 'left', id: '' }} right={{ run: 'right', id: 'new' }} />)
+assert.ok(missing.includes('比較できません'))
+assert.ok(!missing.includes('追加された実行時の依存パス'))
+assert.equal(touched, 0)
+const fullPath = '/nix/store/' + 'a'.repeat(32) + '-python-3.13'
+const pathHTML = renderToStaticMarkup(<StorePath value={fullPath} />)
+assert.ok(pathHTML.includes('<summary>python-3.13</summary>'))
+assert.ok(pathHTML.includes(fullPath) && pathHTML.includes('selectable'))

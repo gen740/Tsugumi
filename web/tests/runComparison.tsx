@@ -114,12 +114,12 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   assert.equal(comparedConditions(x, y)[3].right, 'この実行の Card からは届いていません')
   assert.deepEqual(comparedConditions(x, x).map(f => f.difference), ['same', 'same', 'same', 'same'])
   assert.deepEqual(comparedConditions(x, side('older', 'env-a', null)).slice(1, 3).map(f => [f.right, f.difference]), [[undefined, 'unknown'], [undefined, 'unknown']])
-  // An environment recorded on one side only is not comparable; on neither side there is nothing to differ.
+  // Missing environment records on either side cannot establish equality.
   assert.equal(comparedConditions(x, side('right', null, null))[0].difference, 'unknown')
-  assert.equal(comparedConditions(side('left', null, null), side('right', null, null))[0].difference, 'same')
+  assert.equal(comparedConditions(side('left', null, null), side('right', null, null))[0].difference, 'unknown')
   assert.equal(comparedConditions(x, undefined)[0].difference, 'changed')
   const html = renderToStaticMarkup(<ComparedCardView row={{ card: 'bands', left: x, right: y }} />)
-  for (const text of ['実行条件', 'env-a', 'env-b', 'qemu-x86_64', 'プロジェクトの実行環境', 'load #2']) assert.ok(html.includes(text), text)
+  for (const text of ['実行条件', '環境が変わった Card', 'env-a', 'env-b', 'qemu-x86_64', 'プロジェクトの実行環境', 'load #2']) assert.ok(html.includes(text), text)
 }
 
 // Run scope: where each run started and whether it went on downstream.

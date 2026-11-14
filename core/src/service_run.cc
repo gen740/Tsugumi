@@ -375,6 +375,11 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
   const auto limit = page_limit(r->limit());
   if (offset > INT64_MAX) throw Failed(FailureKind::invalid_request, "offset is too large");
   const auto query = r->query() ? r->query()->str() : std::string{};
+  if (bool(r->excluding_run_id()) != bool(r->excluding_environment_id()))
+    throw Failed(FailureKind::invalid_request, "both excluded run and environment are required");
+  if (r->excluding_run_id()) require_uuid(r->excluding_run_id(), "excluding_run_id");
+  const auto excluded_run = r->excluding_run_id() ? r->excluding_run_id()->str() : std::string{};
+  const auto excluded_id = r->excluding_environment_id() ? r->excluding_environment_id()->str() : std::string{};
   FBB b;
   std::vector<flatbuffers::Offset<flatbuffers::String>> paths;
   uint64_t total = 0;
@@ -382,19 +387,34 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
     auto environment = db.prepare("SELECT path_count FROM build_environments WHERE run_id=? AND id=?");
     environment.bind(1, run).bind(2, id);
     if (!environment.step()) throw Failed(FailureKind::not_found, "unknown run environment");
-    total = environment.u64(0);
-    const auto predicate = std::string{
-        "FROM environment_paths AS p WHERE run_id=? AND environment_id=? "
-        "AND instr(lower(path), lower(?))>0 "};
-    if (!query.empty()) {
-      auto count = db.prepare("SELECT count(*) " + predicate);
-      count.bind(1, run).bind(2, id).bind(3, query);
-      count.step();
-      total = count.u64(0);
+    const auto recorded_count = environment.u64(0);
+    auto actual = db.prepare("SELECT count(*) FROM environment_paths WHERE run_id=? AND environment_id=?");
+    actual.bind(1, run).bind(2, id);
+    actual.step();
+    if (actual.u64(0) != recorded_count)
+      throw Failed(FailureKind::integrity_error, "recorded environment has missing store paths");
+    if (r->excluding_run_id()) {
+      auto other = db.prepare("SELECT path_count FROM build_environments WHERE run_id=? AND id=?");
+      other.bind(1, excluded_run).bind(2, excluded_id);
+      if (!other.step()) throw Failed(FailureKind::not_found, "unknown excluded run environment");
+      actual.reset();
+      actual.bind(1, excluded_run).bind(2, excluded_id);
+      actual.step();
+      if (actual.u64(0) != other.u64(0))
+        throw Failed(FailureKind::integrity_error, "excluded environment has missing store paths");
     }
-    auto q = db.prepare("SELECT path " + predicate + "ORDER BY position LIMIT ? OFFSET ?");
-    q.bind(1, run).bind(2, id).bind(3, query)
-        .bind(4, static_cast<int>(limit)).bind(5, offset);
+    // EXCEPT computes the exact store-path difference without materializing closures in a client.
+    const auto predicate = std::string{
+        "FROM (SELECT path FROM environment_paths WHERE run_id=?1 AND environment_id=?2 "
+        "EXCEPT SELECT path FROM environment_paths WHERE run_id=?4 AND environment_id=?5) "
+        "WHERE instr(lower(path), lower(?3))>0 "};
+    auto count = db.prepare("SELECT count(*) " + predicate);
+    count.bind(1, run).bind(2, id).bind(3, query).bind(4, excluded_run).bind(5, excluded_id);
+    count.step();
+    total = count.u64(0);
+    auto q = db.prepare("SELECT path " + predicate + "ORDER BY path LIMIT ?6 OFFSET ?7");
+    q.bind(1, run).bind(2, id).bind(3, query).bind(4, excluded_run).bind(5, excluded_id)
+        .bind(6, static_cast<int>(limit)).bind(7, offset);
     while (q.step()) {
       const auto path = q.text(0);
       if (path.size() + 16 > kPagePayload)
@@ -412,6 +432,44 @@ auto Service::run_environment_paths(RequestIn& req) -> void {
   if (offset < total && paths.size() < total - offset) page.add_next_offset(offset + paths.size());
   auto off = page.Finish();
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::EnvironmentPathPage, off.Union()));
+}
+
+auto Service::run_environment_uses(RequestIn& req) -> void {
+  const auto* r = req.request()->value_as_RunEnvironmentUsesRequest();
+  require_uuid(r->run_id(), "run_id");
+  const auto run = r->run_id()->str(), id = r->environment_id()->str();
+  const auto offset = r->offset().value_or(0);
+  const auto limit = page_limit(r->limit());
+  if (offset > INT64_MAX) throw Failed(FailureKind::invalid_request, "offset is too large");
+  FBB b;
+  std::vector<flatbuffers::Offset<R::EnvironmentUse>> rows;
+  bool more = false;
+  history_->read([&](sql::Db& db) {
+    auto environment = db.prepare("SELECT 1 FROM build_environments WHERE run_id=? AND id=?");
+    environment.bind(1, run).bind(2, id);
+    if (!environment.step()) throw Failed(FailureKind::not_found, "unknown run environment");
+    auto q = db.prepare(
+        "SELECT card, invocation FROM ("
+        "SELECT card, invocation, detail FROM invocations WHERE run_id=?1 "
+        "UNION ALL SELECT card, invocation, detail FROM statuses AS s WHERE run_id=?1 "
+        "AND NOT EXISTS (SELECT 1 FROM invocations AS i WHERE i.run_id=s.run_id "
+        "AND i.card=s.card AND i.invocation=s.invocation)) "
+        "WHERE json_extract(detail, '$.environment_id')=?2 ORDER BY card, invocation LIMIT ?3 OFFSET ?4");
+    q.bind(1, run).bind(2, id).bind(3, static_cast<int>(limit + 1)).bind(4, offset);
+    while (q.step()) {
+      const auto card = q.text(0);
+      if (card.size() + 64 > kPagePayload)
+        throw Failed(FailureKind::resource_limit, "recorded Card path exceeds the page size");
+      if (rows.size() == limit || b.GetSize() + card.size() + 64 > kPagePayload) { more = true; break; }
+      rows.push_back(R::CreateEnvironmentUse(b, b.CreateString(card), q.u64(1)));
+    }
+  });
+  const auto uses = b.CreateVector(rows);
+  R::EnvironmentUsePageBuilder page(b);
+  page.add_uses(uses);
+  if (more) page.add_next_offset(offset + rows.size());
+  const auto off = page.Finish();
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::EnvironmentUsePage, off.Union()));
 }
 
 void Service::run_record(RequestIn& req) {

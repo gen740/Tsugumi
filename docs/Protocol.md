@@ -9,7 +9,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 - **Requests that change something**: carry an `op_id`, and a resend with the same `op_id` is applied only once. If a response is lost, check with `OperationGet`.
 - **The Agent's tools**: made from the same schema (`tsugumi.bfbs`) ([Features](features.md#9-agent)).
 
-There are 50 requests.
+There are 51 requests.
 
 ## Connection
 
@@ -278,6 +278,7 @@ No fields.
 | [`LogRange`](#logrange) | LogSlice | limit_bytes = 65536 (4..256 KiB). tail with offset != 0 is rejected. invocation requires card. |
 | [`RunEnvironments`](#runenvironments) | BuildEnvironmentPage | Recorded environments, in first-use order; no Nix evaluation. offset defaults to 0; limit defaults to 100 (maximum 500). |
 | [`RunEnvironmentPaths`](#runenvironmentpaths) | EnvironmentPathPage | Runtime closure, including the manifest, in store-path order. These are runtime references, not the full set of build-time dependencies. |
+| [`RunEnvironmentUses`](#runenvironmentuses) | EnvironmentUsePage | Recorded users of a shared environment, ordered by Card and invocation. |
 
 ### RunHistory
 
@@ -381,6 +382,17 @@ No fields.
 | `offset` | `uint64` |  |  |
 | `limit` | `uint32` |  |  |
 | `query` | `string` |  | Case-insensitive literal substring search. Offset and total refer to matching paths. |
+| `excluding_run_id` | `string` |  | If both are present, return paths absent from this other recorded environment. Difference and search run in the history database, with bounded result pages. |
+| `excluding_environment_id` | `string` |  |  |
+
+### RunEnvironmentUses
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `run_id` | `string` | yes |  |
+| `environment_id` | `string` | yes |  |
+| `offset` | `uint64` |  |  |
+| `limit` | `uint32` |  |  |
 
 ## Views
 

@@ -64,7 +64,6 @@ using Walk = Ptr<git_revwalk, git_revwalk_free>;
 using Diff = Ptr<git_diff, git_diff_free>;
 using Object = Ptr<git_object, git_object_free>;
 using RefIter = Ptr<git_reference_iterator, git_reference_iterator_free>;
-using Status = Ptr<git_status_list, git_status_list_free>;
 using Patch = Ptr<git_patch, git_patch_free>;
 using TreeEntry = Ptr<git_tree_entry, git_tree_entry_free>;
 using Blob = Ptr<git_blob, git_blob_free>;
@@ -98,16 +97,63 @@ std::optional<git_oid> head_oid(git_repository* r) {
   return id;
 }
 
-// The working tree as a tree (every file not ignored), written to the index.
-git_oid stage_all(git_repository* r) {
+// Use the same document/source areas as Store and ProjectFileList. Other
+// files enter a version only through the project's literal opt-in paths.
+struct VersionFiles {
+  std::vector<std::string> extra;
+
+  explicit VersionFiles(const stdfs::path& root) {
+    if (auto text = fs::read_file(root / "tsugumi.json")) {
+      schema::Project project;
+      if (auto error = schema::decode(*text, project))
+        throw Failed(FailureKind::invalid_document, "tsugumi.json: " + error->message);
+      if (const auto* paths = schema::get(project.version_paths)) extra = *paths;
+    }
+  }
+
+  auto includes(const std::string& path) const -> bool {
+    if (!Document::valid_version_path(path)) return false;
+    if (Document::is_document_file(path) || Document::is_source_area(path)) return true;
+    return std::any_of(extra.begin(), extra.end(), [&](const auto& p) {
+      return Document::valid_version_path(p) && (path == p || path.starts_with(p + "/"));
+    });
+  }
+
+  auto descends(const std::string& path) const -> bool {
+    if (!Document::valid_version_path(path)) return false;
+    if (path == "definitions" || path == "skills" || path == "externals" ||
+        Document::is_document_file(path + "/_card.json") || includes(path)) return true;
+    return std::any_of(extra.begin(), extra.end(), [&](const auto& p) {
+      return Document::valid_version_path(p) && p.starts_with(path + "/");
+    });
+  }
+};
+
+// Rebuild the index, including deletions, without touching working files or
+// inheriting unrelated files someone staged with Git. Ignore rules do not
+// override definitions or an explicit opt-in. Never follow symlinks.
+auto stage_project(git_repository* r, const stdfs::path& root, bool write_index = true) -> git_oid {
+  const VersionFiles files(root);
   Index idx;
   check(git_repository_index(idx.out(), r), "index");
-  char star[] = "*";
-  char* pats[] = {star};
-  git_strarray spec = {pats, 1};
-  check(git_index_add_all(idx.get(), &spec, GIT_INDEX_ADD_DEFAULT, nullptr, nullptr), "add");
-  check(git_index_update_all(idx.get(), &spec, nullptr, nullptr), "update");
-  check(git_index_write(idx.get()), "write index");
+  check(git_index_clear(idx.get()), "clear index");
+  for (auto it = stdfs::recursive_directory_iterator(root); it != stdfs::recursive_directory_iterator(); ++it) {
+    const auto path = it->path().lexically_relative(root).generic_string();
+    const auto status = it->symlink_status();
+    if (stdfs::is_symlink(status)) continue;
+    if (stdfs::is_directory(status)) {
+      if (!files.descends(path)) it.disable_recursion_pending();
+    } else if (stdfs::is_regular_file(status) && files.includes(path)) {
+      const auto bytes = fs::read_beneath(root, path);
+      git_index_entry entry{};
+      entry.path = path.c_str();
+      entry.mode = (status.permissions() & stdfs::perms::owner_exec) != stdfs::perms::none
+                       ? GIT_FILEMODE_BLOB_EXECUTABLE : GIT_FILEMODE_BLOB;
+      check(git_blob_create_from_buffer(&entry.id, r, bytes.data(), bytes.size()), "blob " + path);
+      check(git_index_add(idx.get(), &entry), "add " + path);
+    }
+  }
+  if (write_index) check(git_index_write(idx.get()), "write index");
   git_oid tree;
   check(git_index_write_tree(&tree, idx.get()), "write tree");
   return tree;
@@ -318,7 +364,7 @@ std::string Versions::init(bool english) {
   auto history = fs::read_file(root_ / kHistoryFile);
   std::error_code ec;
   stdfs::remove(root_ / kHistoryFile, ec);
-  auto tip = stage_all(r.get());
+  auto tip = stage_project(r.get(), root_);
   if (!history) {
     commit_tree(r.get(), tip, {}, english ? "Create the project" : "プロジェクトを作成", "HEAD");
     auto h = head_oid(r.get());
@@ -326,6 +372,7 @@ std::string Versions::init(bool english) {
   }
   // A demo's history: each commit is the files on disk with its differences,
   // built without touching the working tree, which is the head's tip.
+  const VersionFiles version_files(root_);
   schema::HistoryFile hf;
   if (auto e = schema::decode(*history, hf)) throw Failed(FailureKind::invalid_document, std::string(kHistoryFile) + ": " + e->message);
   Index base;
@@ -348,6 +395,7 @@ std::string Versions::init(bool english) {
       for (const auto& path : *removed) git_index_remove_bypath(idx.get(), path.c_str());
     if (const auto* files = schema::get(c.files)) {
       for (const auto& [path, text] : files->entries()) {
+        if (!version_files.includes(path)) continue;
         git_index_entry e{};
         e.mode = GIT_FILEMODE_BLOB;
         e.path = path.c_str();
@@ -412,7 +460,7 @@ std::string Versions::commit_all(const std::string& message) {
   std::lock_guard<std::mutex> l(mu_);
   Repo r;
   if (!open(r, root_)) return "";
-  auto tree = stage_all(r.get());
+  auto tree = stage_project(r.get(), root_);
   auto head = head_oid(r.get());
   if (head) {
     Commit c;
@@ -514,12 +562,15 @@ VersionGraphData Versions::graph(size_t limit) {
     Ref h;
     if (git_repository_head(h.out(), r.get()) == 0) g.branch = git_reference_shorthand(h.get());
   }
-  {
-    git_status_options so;
-    git_status_options_init(&so, GIT_STATUS_OPTIONS_VERSION);
-    so.flags = GIT_STATUS_OPT_INCLUDE_UNTRACKED | GIT_STATUS_OPT_RECURSE_UNTRACKED_DIRS;
-    Status st;
-    if (git_status_list_new(st.out(), r.get(), &so) == 0) g.dirty = git_status_list_entrycount(st.get()) > 0;
+  const auto saved = stage_project(r.get(), root_, false);
+  if (head) {
+    Commit c;
+    check(git_commit_lookup(c.out(), r.get(), &*head), "head");
+    g.dirty = !git_oid_equal(git_commit_tree_id(c.get()), &saved);
+  } else {
+    Tree tree;
+    check(git_tree_lookup(tree.out(), r.get(), &saved), "tree");
+    g.dirty = git_tree_entrycount(tree.get()) > 0;
   }
   if (!head) return g;
   // Branch and tag names by the commit they point at.

@@ -97,7 +97,7 @@ export function comparedConditions(left?: ComparedCard, right?: ComparedCard, di
   }
   const fields = [
     // Recorded on one side only (a Card that stopped before its build, say): not comparable.
-    field(L('環境'), environment(a), environment(b), Boolean(s(a?.environmentId)) === Boolean(s(b?.environmentId))),
+    field(L('環境'), environment(a), environment(b), !!s(a?.environmentId) && !!s(b?.environmentId)),
     field(L('実行方式'), method(a), method(b), !!method(a) && !!method(b)),
     field(L('実行サービス'), service(a), service(b), !!service(a) && !!service(b)),
   ]

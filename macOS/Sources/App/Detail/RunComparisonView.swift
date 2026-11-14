@@ -263,7 +263,7 @@ struct RunComparisonView: View {
             ComparedFieldsView(title: "実行の範囲", values: [RunComparison.scope(run(left), run(right), displayPath: session.displayPath)])
             versionDifference
             if rows.isEmpty { ContentUnavailableView("記録がありません", systemImage: "tray") }
-            ForEach(rows) { ComparedRunCardView(session: session, row: $0) }
+            ForEach(rows) { ComparedRunCardView(session: session, row: $0, leftRun: left, rightRun: right) }
           } else { ProgressView() }
         }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
       }
@@ -320,6 +320,8 @@ struct RunComparisonView: View {
 private struct ComparedRunCardView: View {
   let session: ProjectSession
   let row: ComparedRunRow
+  let leftRun: String
+  let rightRun: String
   @State private var expanded = true
   private var a: Tsugumi_RPC_RecordResultT? { row.left?.record }
   private var b: Tsugumi_RPC_RecordResultT? { row.right?.record }
@@ -336,6 +338,10 @@ private struct ComparedRunCardView: View {
             status(row.right).frame(maxWidth: .infinity, alignment: .leading)
           }.padding(6).background(row.left?.summary.state != row.right?.summary.state || row.left?.summary.durationMs != row.right?.summary.durationMs ? changed : .clear)
           ComparedFieldsView(title: "実行条件", values: RunComparison.conditions(row.left, row.right, displayPath: session.displayPath))
+          RecordedEnvironmentComparison(session: session,
+            left: .init(run: leftRun, id: (row.left?.record?.record?.summary ?? row.left?.summary)?.environmentId ?? ""),
+            right: .init(run: rightRun, id: (row.right?.record?.record?.summary ?? row.right?.summary)?.environmentId ?? ""))
+            .id(leftRun + ":" + rightRun + ":" + row.card)
           ComparedFieldsView(title: "パラメータ", values: RunComparison.params(row.left, row.right),
                              unavailable: RunComparison.paramsUnavailable(row.left) || RunComparison.paramsUnavailable(row.right))
           ComparedFieldsView(title: "入力", values: RunComparison.values(false, row.left, row.right),
@@ -350,7 +356,15 @@ private struct ComparedRunCardView: View {
             }.background(RunComparison.sameDisplay(leftDisplay, rightDisplay) ? .clear : changed)
           }
         }.padding(.top, 8)
-      } label: { Text(session.displayPath(path(row.card))).font(.headline) }
+      } label: {
+        HStack {
+          Text(session.displayPath(path(row.card))).font(.headline)
+          if EnvironmentHistorySource.change((row.left?.record?.record?.summary ?? row.left?.summary)?.environmentId ?? "",
+                                             (row.right?.record?.record?.summary ?? row.right?.summary)?.environmentId ?? "") == .changed {
+            Text("環境が変わった Card").font(.caption).foregroundStyle(Color.accentColor)
+          }
+        }
+      }
     }
   }
 

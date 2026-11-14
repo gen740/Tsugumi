@@ -92,6 +92,8 @@ struct Project {
   Opt<"name", v::String> name;
   Opt<"pkgsPath", v::String> pkgs_path;
   Opt<"nixSources", v::Array<Obj<NixSource>>> nix_sources;
+  // Additional literal project-relative files or folders kept in versions.
+  Opt<"versionPaths", v::Array<v::String>> version_paths;
   // Finished runs are also kept in the project (.tsugumi/runs.sqlite); default true.
   Opt<"saveRunHistory", v::Bool> save_run_history;
   Opt<"canvas", Obj<Graph>> canvas;

@@ -55,6 +55,9 @@ def inventory(client, run_id, card="work"):
     assert paths == sorted(set(paths))
     assert text(environment.manifest) in paths
     assert text(environment.derivation).endswith(".drv")
+    users = client.call("RunEnvironmentUsesRequest", runId=run_id, environmentId=text(environment.id), limit=1)
+    assert [(text(u.card), u.invocation) for u in users.uses] == [(card, 1)]
+    assert users.nextOffset is None
     return text(environment.id), paths
 
 
@@ -148,6 +151,10 @@ def test_failed_execution_keeps_its_environment(core_factory, project, tmp_path)
     ("RunEnvironmentsRequest", {"offset": 2**64 - 1}),
     ("RunEnvironmentPathsRequest", {"environmentId": "missing", "limit": 0}),
     ("RunEnvironmentPathsRequest", {"environmentId": "missing", "offset": 2**64 - 1}),
+    ("RunEnvironmentPathsRequest", {"environmentId": "missing", "excludingRunId": new_id()}),
+    ("RunEnvironmentPathsRequest", {"environmentId": "missing", "excludingEnvironmentId": "other"}),
+    ("RunEnvironmentUsesRequest", {"environmentId": "missing", "limit": 0}),
+    ("RunEnvironmentUsesRequest", {"environmentId": "missing", "offset": 2**64 - 1}),
 ])
 def test_environment_queries_reject_invalid_ranges(client, method, fields):
     """Environment pages reject invalid limits and overflowing offsets."""
@@ -159,7 +166,8 @@ def test_environment_queries_reject_invalid_ranges(client, method, fields):
 def test_unknown_environment_is_not_found(client):
     """A missing run or environment cannot expose another run's environment."""
     for method, fields in [("RunEnvironmentsRequest", {}),
-                            ("RunEnvironmentPathsRequest", {"environmentId": "missing"})]:
+                            ("RunEnvironmentPathsRequest", {"environmentId": "missing"}),
+                            ("RunEnvironmentUsesRequest", {"environmentId": "missing"})]:
         with pytest.raises(RpcFailure) as error:
             client.call(method, runId=new_id(), **fields)
         assert error.value.kind == "not_found"
@@ -183,6 +191,13 @@ def test_cards_share_one_environment_and_changed_builds_get_new_ids(core_factory
     page = client.call("RunEnvironmentsRequest", runId=first)
     assert len(page.environments) == 1
     original_id = text(page.environments[0].id)
+    users = client.call("RunEnvironmentUsesRequest", runId=first, environmentId=original_id, limit=1)
+    assert [(text(u.card), u.invocation) for u in users.uses] == [("a", 1)]
+    assert users.nextOffset == 1
+    users = client.call("RunEnvironmentUsesRequest", runId=first, environmentId=original_id,
+                        offset=users.nextOffset, limit=1)
+    assert [(text(u.card), u.invocation) for u in users.uses] == [("b", 1)]
+    assert users.nextOffset is None
     latest = client.call("RunLatestInvocationsRequest", runId=first).records
     ids = {"/".join(text(x) for x in row.card.segments): text(row.environmentId) for row in latest}
     assert ids == {"start": None, "split": None, "a": original_id, "b": original_id}
@@ -202,6 +217,34 @@ def test_cards_share_one_environment_and_changed_builds_get_new_ids(core_factory
     ids = {"/".join(text(x) for x in row.card.segments): text(row.environmentId) for row in rows}
     assert ids["a"] == original_id and ids["b"] != original_id
     assert len(client.call("RunEnvironmentsRequest", runId=first).environments) == 1
+    changed_id = ids["b"]
+    def closure(run_id, environment_id):
+        return [text(p) for p in client.call("RunEnvironmentPathsRequest", runId=run_id,
+                                           environmentId=environment_id).paths]
+    old_paths, new_paths = closure(first, original_id), closure(second, changed_id)
+    for run_id, environment_id, other_run, other_id, expected in [
+        (first, original_id, second, changed_id, sorted(set(old_paths) - set(new_paths))),
+        (second, changed_id, first, original_id, sorted(set(new_paths) - set(old_paths))),
+        (first, original_id, second, original_id, []),
+    ]:
+        for query in ["", "NIX", "%", "no-such-dependency"]:
+            matching = [p for p in expected if query.lower() in p.lower()]
+            offset, found = 0, []
+            while True:
+                page = client.call("RunEnvironmentPathsRequest", runId=run_id, environmentId=environment_id,
+                                   excludingRunId=other_run, excludingEnvironmentId=other_id,
+                                   query=query, offset=offset, limit=1)
+                assert page.total == len(matching)
+                found.extend(text(p) for p in page.paths)
+                if page.nextOffset is None:
+                    break
+                assert page.nextOffset > offset
+                offset = page.nextOffset
+            assert found == matching
+    with pytest.raises(RpcFailure) as error:
+        client.call("RunEnvironmentPathsRequest", runId=first, environmentId=original_id,
+                    excludingRunId=second, excludingEnvironmentId="missing")
+    assert error.value.kind == "not_found"
 
 
 def test_build_failure_has_no_claimed_environment(core_factory, project):
