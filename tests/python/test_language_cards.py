@@ -442,10 +442,9 @@ main <- function(inputs, report, run) {
     "julia": (JULIA_NIX, "main.jl", '''calls = 0
 function main(inputs, report)
     global calls += 1
-    return nothing
-
 '''
                                     '''    text(report, "VERSION $calls")
+    return nothing
 end
 '''),
 }

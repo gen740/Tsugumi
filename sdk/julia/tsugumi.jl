@@ -2,7 +2,7 @@
 # main(inputs[, report[, run]]); presentation functions take report first.
 module Tsugumi
 
-export Inputs, Report, input, path, text, markdown, table, image, vegalite, Run
+export Inputs, Report, input, path, text, markdown, table, image, vegalite, Run, cancelled, remaining_ms
 
 # ---- JSON (the standard library has none) ------------------------------------
 

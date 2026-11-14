@@ -632,7 +632,7 @@ func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
   let template = try #require(DefinitionTemplate(rawValue: language))
   let sources = ["go": ("src/card.go", "func run("),
                  "rust": ("src/src/lib.rs", "fn run("),
-                 "ruby": ("src/main.rb", "def main(inputs, report)")]
+                 "ruby": ("src/main.rb", "def main(inputs)")]
   let (source, entry) = try #require(sources[language])
   #expect(BuiltinCardItems.written.contains(template))
   let card = session.addCard(template: template, in: [], at: .zero, name: language)

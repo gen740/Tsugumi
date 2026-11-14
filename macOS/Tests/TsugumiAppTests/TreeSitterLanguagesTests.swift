@@ -35,7 +35,7 @@ private let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent
 }
 
 @Test func treeSitterColorsJulia() {
-  let t = tokens("# note\nusing Printf\n\nfunction main(inputs, report)\n    x = 1.5\n    if x > 1 && true\n        @printf(\"%d\", 2)\n    end\n    return :sym\nend\n", "jl")
+  let t = tokens("# note\nusing Printf\n\nfunction main(inputs, report)\n    x = 1.5\n    if x > 1 && true\n        @printf(\"%d\", 2)\n    end\n    return Dict{String,Any}(\"result\" => Dict(\"value\" => x, \"tag\" => :sym))\nend\n", "jl")
   #expect(t.contains("comment:# note") && t.contains("keyword:using") && t.contains("keyword:function") && t.contains("keyword:end"))
   #expect(t.contains("keyword:if") && t.contains("keyword:return") && t.contains("number:1.5") && t.contains("constant:true"))
   #expect(t.contains("string:\"%d\"") && t.contains("function:main") && t.contains("type:Dict"))

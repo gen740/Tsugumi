@@ -58,7 +58,7 @@ def shown(client, run, card='ruby'):
 def test_ruby_resident_state_gc_and_run_start(ruby_project):
     _, connect = ruby_project
     c = connect({'ruby': ruby('''
-def on_run_start
+def on_run_start(inputs)
   @runs = (@runs || 0) + 1
   nil
 end
@@ -194,7 +194,7 @@ end'''
     ('{out: {label: "\\xff".b}}', 'UTF-8'),
     ("{out: {value: 'wrong'}}", "enum values"),
     ("raise Tsugumi::Failure.new('worker_failed', 'specific failure')", 'specific failure'),
-    ("Thread.new { sleep 60 }", 'join Ruby threads'),
+    ("Thread.new { sleep 60 }; nil", 'join Ruby threads'),
 ])
 def test_ruby_failures_are_structured_and_next_worker_is_fresh(ruby_project, expression, diagnostic):
     root, connect = ruby_project

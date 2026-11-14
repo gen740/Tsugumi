@@ -142,7 +142,7 @@ function on_run_start(inputs, report, run)
     Dict("hook" => Dict("value" => 1))
 end
 function main(inputs, report, run)
-    @assert inputs.number["value"] == 21 && !Tsugumi.cancelled(run)
+    @assert inputs.number["value"] == 21 && !cancelled(run) && remaining_ms(run) == -1
     inputs.number["value"] = 0
     @assert inputs.number["value"] == 21
     report.text("ready")
