@@ -1147,6 +1147,7 @@ EN = {
 '用途': 'Purpose',
 '画像': 'Image',
 '画像を表示できません': 'Cannot show the image',
+'この結果は表示できません': 'This result cannot be displayed',
 'Plotly のグラフ': 'Plotly chart',
 'Vega-Lite のグラフ': 'Vega-Lite chart',
 'グラフの更新': 'Chart updates',

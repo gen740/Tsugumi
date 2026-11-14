@@ -14,14 +14,51 @@
 
 #include <algorithm>
 #include <charconv>
+#include <cctype>
 #include <cmath>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace tsugumi::message_json {
+
+// Rewrites the bare non-finite tokens outside strings from one spelling to
+// the other. A bare word in JSON text is otherwise only true, false or null.
+inline auto respell(std::string_view text, bool to_flatbuffers) -> std::string {
+  static constexpr std::pair<std::string_view, std::string_view> words[] = {
+      {"nan", "NaN"}, {"inf", "Infinity"}, {"infinity", "Infinity"}};
+  std::string out;
+  out.reserve(text.size());
+  for (size_t i = 0; i < text.size();) {
+    const char c = text[i];
+    if (c == '"') {
+      const size_t start = i++;
+      while (i < text.size() && text[i] != '"') i += text[i] == '\\' ? 2 : 1;
+      i = std::min(i + 1, text.size());
+      out.append(text.substr(start, i - start));
+      continue;
+    }
+    if (!std::isalpha(static_cast<unsigned char>(c))) {
+      out += c;
+      ++i;
+      continue;
+    }
+    size_t end = i;
+    while (end < text.size() && std::isalpha(static_cast<unsigned char>(text[end]))) ++end;
+    const std::string_view word = text.substr(i, end - i);
+    std::string_view replacement = word;
+    for (const auto& [flat, json] : words) {
+      if (to_flatbuffers && word == json) replacement = flat == "infinity" ? "inf" : flat;
+      if (!to_flatbuffers && word == flat) replacement = json;
+    }
+    out.append(replacement);
+    i = end;
+  }
+  return out;
+}
 
 namespace detail {
 
@@ -205,12 +242,28 @@ class Writer {
 
 }  // namespace detail
 
+// The JSON language face uses NaN/Infinity/-Infinity for IEEE non-finite
+// values; null retains its meaning as an absent optional scalar. Parsing uses
+// FlatBuffers' numeric rules, including quoted numeric values (used by R).
+inline auto parse_json(flatbuffers::Parser& parser, std::string_view json) -> bool {
+  return parser.ParseJson(respell(json, true).c_str());
+}
+
 // Like flatbuffers::GenText: nullptr, or what went wrong. The parser has its root type set.
 inline const char* gen_text(const flatbuffers::Parser& parser, const void* buffer, std::string* out) {
   detail::Writer writer(*out, parser.opts.indent_step);
   const char* error = writer.table(*parser.root_struct_def_, flatbuffers::GetRoot<flatbuffers::Table>(buffer), 0);
   if (!error && parser.opts.indent_step >= 0) *out += '\n';
   return error;
+}
+
+// Interpreter JSON libraries agree on this extension; the schema JSON used by
+// the core and Bash keeps FlatBuffers' own nan/inf spellings.
+inline auto gen_language_text(const flatbuffers::Parser& parser, const void* buffer, std::string* out) -> const char* {
+  std::string text;
+  if (const auto* error = gen_text(parser, buffer, &text)) return error;
+  *out = respell(text, false);
+  return nullptr;
 }
 
 }  // namespace tsugumi::message_json

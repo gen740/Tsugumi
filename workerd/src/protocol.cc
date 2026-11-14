@@ -4,6 +4,7 @@
 #include <set>
 
 #include "tsugumi/workerd/frame.hh"
+#include "tsugumi/workerd/log_limits.hh"
 
 namespace tsugumi::workerd {
 auto encode(R::MessageT message) -> std::string {
@@ -85,7 +86,8 @@ auto validate_spec(const R::JobSpecT& s) -> void {
       unique.size() != s.input_blobs.size() ||
       !unique.contains(s.invocation_sha256) ||
       !std::ranges::all_of(s.input_blobs, digest) || !s.timeout_seconds ||
-      s.timeout_seconds > 7 * 24 * 3600 ||
+      s.timeout_seconds > 7 * 24 * 3600 || !s.log_limit_bytes ||
+      s.log_limit_bytes > remote::kMaxLogLimitBytes ||
       (s.cpu_millis == 0) != (s.memory_bytes == 0) || s.cpu_millis > 256000 ||
       s.memory_bytes > (uint64_t{1} << 40))
     throw Error(R::ErrorCode::Rejected,

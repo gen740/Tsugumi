@@ -28,3 +28,5 @@ const unsigned char *tsugumi_go_input(const tsugumi_call *call,
                                       const char *name, size_t *size);
 const unsigned char *tsugumi_go_params(const tsugumi_call *call, size_t *size);
 const char *tsugumi_go_info(const tsugumi_call *call, unsigned field);
+
+int tsugumi_go_finish_outputs(const tsugumi_call* call);

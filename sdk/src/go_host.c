@@ -85,3 +85,5 @@ int tsugumi_go_points(const tsugumi_call *call, const float *x, const float *y,
                       const float *z, const uint32_t *colors, size_t count) {
   return call->display_points(call->host, x, y, z, colors, count);
 }
+
+int tsugumi_go_finish_outputs(const tsugumi_call* call) { return call->finish_outputs(call->host); }

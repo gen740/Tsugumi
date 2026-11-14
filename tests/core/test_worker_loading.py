@@ -38,7 +38,7 @@ def library(tmp_path, source, name="main", *, adapter=False):
 
 
 @contextlib.contextmanager
-def worker(package):
+def worker(package, *, stderr=None):
     with contextlib.ExitStack() as stack:
         data, child_data = socket.socketpair()
         control, child_control = socket.socketpair()
@@ -50,7 +50,7 @@ def worker(package):
                   'os.execv(sys.argv[3],sys.argv[3:])')
         p = subprocess.Popen([sys.executable, "-c", launch, str(child_data.fileno()), str(child_control.fileno()),
                               str(WORKER), "--package", str(package), "--bash", "/bin/bash"],
-                             pass_fds=(child_data.fileno(), child_control.fileno()), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                             pass_fds=(child_data.fileno(), child_control.fileno()), stdout=subprocess.PIPE, stderr=subprocess.PIPE if stderr is None else stderr)
         child_data.close()
         child_control.close()
         data.settimeout(3)
@@ -243,7 +243,9 @@ raise RuntimeError("import stopped")
                     "-lpython" + sysconfig.get_config_var("LDVERSION"), "-Wl,-rpath," + str(libdir),
                     "-o", str(tmp_path / "lib/runtime.so")], check=True)
     (tmp_path / "lib/tsugumi-runtime").write_text(str(tmp_path / "lib/runtime.so") + "\n")
-    with worker(tmp_path) as (p, data, _):
+    # Production WorkerProc drains logs while waiting for the result. A file
+    # gives this direct socket fixture the same absence of pipe backpressure.
+    with (tmp_path / "python.log").open("wb") as log, worker(tmp_path, stderr=log) as (p, data, _):
         assert not select.select([p.stdout], [], [], 0.3)[0], "Python Card ran in standby"
         send_call(data, tmp_path)
         shown = receive(data)

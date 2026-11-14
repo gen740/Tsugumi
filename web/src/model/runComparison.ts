@@ -131,6 +131,7 @@ export function sameDisplay(a?: DisplaySnapshot, b?: DisplaySnapshot): boolean {
   const x = a?.value, y = b?.value
   if (!x || !y) return !x && !y
   switch (x.kind) {
+    case 'unavailable': return y.kind === 'unavailable'
     case 'text': case 'markdown': return y.kind === x.kind && x.text === y.text
     case 'scalar': return y.kind === 'scalar' && sameNumbers([x.value], [y.value]) && x.label === y.label
     case 'table': return y.kind === 'table' && sameStrings(x.columns, y.columns) && x.rows.length === y.rows.length && x.rows.every((r, i) => sameStrings(r, y.rows[i]))

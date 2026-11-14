@@ -116,6 +116,10 @@ jobs:
         run: '"$CORE_TEST_ENV" python3 -m pytest -q --core-report -m "not environment" -n auto --dist load --durations=40 tests/core'
       - name: Remote worker protocol and journal
         run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_workerd_tests"'
+      - name: Card invocation contracts
+        run: |
+          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_native_contract_tests"
+          "$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_execution_service_tests"
       - name: Worker staging cleanup
         run: '"$CORE_TEST_ENV" "$PWD/build-ci/libexec/tsugumi-tests/tsugumi_worker_staging_tests"'
 

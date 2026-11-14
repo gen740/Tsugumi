@@ -262,6 +262,9 @@ module Tsugumi
   end
 
   def self._invoke
-    guard { |scope| call(@card.method(:main), scope) }
+    guard do |scope|
+      call(@card.method(:main), scope)
+      TsugumiHost.finish_outputs
+    end
   end
 end

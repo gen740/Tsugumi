@@ -112,7 +112,7 @@ def test_appending_a_callback_without_csharp_is_detected():
     assert errors and "display_progress" in errors[0], errors
     # A matching C# field makes it whole again.
     context = CONTEXT.read_text().replace(
-        "DisplayJson;\n}", "DisplayJson;\n    internal delegate* unmanaged[Cdecl]<void*, double, int> Progress;\n}")
+        "FinishOutputs;\n}", "FinishOutputs;\n    internal delegate* unmanaged[Cdecl]<void*, double, int> Progress;\n}")
     assert not mirror_errors(abi, context)
 
 

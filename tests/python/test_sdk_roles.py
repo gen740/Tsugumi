@@ -42,6 +42,7 @@ def info():
     events.append("info")
     return dict(run_id="test", card="step", invocation=7, working_directory="work", temporary_directory="temp", output_directory="outputs")
 def environ(): return list(os.environb.items())
+def finish_outputs(): return accept
 def emit_output(port, value): events.append((port, bytes(value))); return accept
 def display_text(text): events.append(("text", text))
 def log(text): events.append(("log", text))
@@ -106,9 +107,11 @@ def test_stream_is_lazy_ordered_and_keeps_final_result(sdk):
         report.log("between")
         yield {"next": inputs.input_bytes("number")}
         return {"last": inputs.input_bytes("number")}
-    result = module._call(main)
-    assert host.events == ["info"]
-    module._outputs(result)
+    def body():
+        result = module._call(main)
+        assert host.events == ["info"]
+        module._outputs(result)
+    assert module._guard(body)
     assert [e[0] for e in host.events[1:]] == ["text", "result", "log", "next", "last"]
 
 
@@ -123,3 +126,63 @@ def test_hook_uses_same_roles_and_rejection_fails_invocation(sdk):
     host.accept = False
     assert not module._invoke()
     assert host.events[-1][0:2] == ("failure", "output_invalid")
+
+
+def test_run_expires_between_calls_and_during_the_next_call(sdk):
+    module, host = sdk
+    saved = []
+    assert module._guard(lambda: saved.append(module.Run()))
+    for method in (saved[0].cancelled, saved[0].remaining_ms):
+        with pytest.raises(module.Failure, match="expired"):
+            method()
+    def next_call():
+        for method in (saved[0].cancelled, saved[0].remaining_ms):
+            with pytest.raises(module.Failure, match="expired"):
+                method()
+        current = module.Run()
+        assert current.cancelled() is False and current.remaining_ms() == -1
+    assert module._guard(next_call)
+
+
+def test_run_callbacks_reject_background_threads(sdk):
+    import threading
+    module, host = sdk
+    errors = []
+    def body():
+        run = module.Run()
+        def background():
+            for method in (run.cancelled, run.remaining_ms):
+                try:
+                    method()
+                except module.Failure as error:
+                    errors.append(str(error))
+        thread = threading.Thread(target=background)
+        thread.start()
+        thread.join()
+    assert module._guard(body)
+    assert len(errors) == 2
+
+
+def test_required_output_completion_fails_inside_the_language_guard(sdk):
+    from types import SimpleNamespace
+    module, host = sdk
+    host.accept = False
+    module._card_module = SimpleNamespace(main=lambda inputs: {})
+    assert module._invoke() is False
+    assert host.events[-1] == ('failure', 'output_invalid', 'required outputs were not emitted')
+
+
+def test_python_reads_the_shared_numeric_vectors_without_changing_bits(sdk):
+    import math
+    import struct
+    module, host = sdk
+    from params.Params import ParamsT
+    vectors = json.loads((ROOT / 'tests/fixtures/number-vectors.json').read_text())
+    params = ParamsT()
+    params.samples = [float(token) for token in vectors['values']]
+    params.labels = vectors['strings']
+    host.parameter_bytes = module.message(params)
+    inputs = module.Inputs()
+    assert [value.decode() for value in inputs.params.labels] == vectors['strings']
+    for actual, expected in zip(inputs.params.samples, params.samples, strict=True):
+        assert math.isnan(actual) if math.isnan(expected) else struct.pack('<d', actual) == struct.pack('<d', expected)

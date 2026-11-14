@@ -29,6 +29,9 @@ function parse_value(s, i)
     startswith(SubString(s, i), "true") && return true, i + 4
     startswith(SubString(s, i), "false") && return false, i + 5
     startswith(SubString(s, i), "null") && return nothing, i + 4
+    for (token, value) in (("NaN", NaN), ("Infinity", Inf), ("-Infinity", -Inf))
+        startswith(SubString(s, i), token) && return value, i + ncodeunits(token)
+    end
     stop = i
     while stop <= ncodeunits(s) && codeunit(s, stop) in codeunits("+-.0123456789eE")
         stop += 1
@@ -105,7 +108,7 @@ write_json(io, v::AbstractString) = (print(io, '"'); escape_json(io, v); print(i
 write_json(io, v::Symbol) = write_json(io, String(v))
 write_json(io, v::Bool) = print(io, v)
 write_json(io, v::Integer) = print(io, v)
-write_json(io, v::AbstractFloat) = isfinite(v) ? print(io, Float64(v)) : print(io, "null")
+write_json(io, v::AbstractFloat) = print(io, isnan(v) ? "NaN" : isinf(v) ? (signbit(v) ? "-Infinity" : "Infinity") : Float64(v))
 write_json(io, ::Nothing) = print(io, "null")
 function write_json(io, v::AbstractDict)
     print(io, '{')
@@ -147,7 +150,14 @@ json_text(v) = (io = IOBuffer(); write_json(io, v); String(take!(io)))
 
 const HOST = ENV["TSUGUMI_NATIVE_LIBRARY"]
 
+mutable struct CallScope
+    active::Bool
+    owner::Task
+end
+const active_scope = Ref{Union{Nothing,CallScope}}(nothing)
+
 struct Run
+    scope::CallScope
     output_directory::String
     temporary_directory::String
     working_directory::String
@@ -162,7 +172,9 @@ function info(field)
 end
 
 function Run()
-    Run( info(4), info(3), info(2), info(0), info(1),
+    scope = active_scope[]
+    scope === nothing && error("no active Card invocation")
+    Run(scope, info(4), info(3), info(2), info(0), info(1),
             ccall((:tsugumi_native_invocation, HOST), UInt64, ()))
 end
 
@@ -207,8 +219,11 @@ function send_outputs(result)
         end
     end
 end
-cancelled(run::Run) = ccall((:tsugumi_native_cancelled, HOST), Cint, ()) != 0
-remaining_ms(run::Run) = ccall((:tsugumi_native_remaining_ms, HOST), Int64, ())
+function check(run::Run)
+    run.scope.active && run.scope === active_scope[] && run.scope.owner === current_task() || error("Card call has expired or belongs to another task")
+end
+cancelled(run::Run) = (check(run); ccall((:tsugumi_native_cancelled, HOST), Cint, ()) != 0)
+remaining_ms(run::Run) = (check(run); ccall((:tsugumi_native_remaining_ms, HOST), Int64, ()))
 log(report::Report, message::AbstractString) = ccall((:tsugumi_native_log, HOST), Cvoid, (Cstring,), message)
 
 function show_member(member)
@@ -228,6 +243,8 @@ function table(report::Report, columns, rows)
 end
 
 function invoke(hook::Bool)
+    scope = CallScope(true, current_task())
+    active_scope[] = scope
     try
         arguments = (Inputs(), Report(), Run())
         function_ = hook ? (isdefined(Main, :on_run_start) ? Main.on_run_start : nothing) : Main.main
@@ -241,11 +258,17 @@ function invoke(hook::Bool)
                 count == 3 && error("Card functions take inputs, optionally report and run")
             end
         end
+        if !hook
+            ccall((:tsugumi_native_finish_outputs, HOST), Cint, ()) == 0 || error("required outputs were not emitted")
+        end
         return true
     catch error
         message = sprint(showerror, error, catch_backtrace())
         ccall((:tsugumi_native_fail, HOST), Cvoid, (Cstring,), message)
         return false
+    finally
+        scope.active = false
+        active_scope[] = nothing
     end
 end
 

@@ -543,9 +543,9 @@ WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id,
       switch (m->value_type()) {
         case W::WorkerPayload::WorkerDisplay:
           try {
-            if (display) display(wire::display(m->value_as_WorkerDisplay()->display()));
-          } catch (const Failed& f) {
-            outcome.failure = f.failure;
+            if (display) display(wire::display(m->value_as_WorkerDisplay()->display(), msg));
+          } catch (const Failed&) {
+            // Presentation cannot fail the invocation.
           }
           break;
         case W::WorkerPayload::WorkerResult: {

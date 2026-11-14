@@ -217,8 +217,7 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
 }  // namespace
 
 namespace workerd {
-auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs::path& store,
-            uint64_t log_limit_bytes) -> void {
+auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs::path& store) -> void {
   const auto job = parse_spec(read(directory / "spec.fb", kMaxSpec));
   const auto& derivation = job->derivation;
   const auto& output = job->output;
@@ -252,7 +251,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs:
   const auto result_dir = directory / "result";
   stdfs::create_directories(result_dir);
   std::ofstream logs(result_dir / "logs.jsonl", std::ios::binary);
-  InvocationLog invocation_log(logs, log_limit_bytes);
+  InvocationLog invocation_log(logs, job->log_limit_bytes);
   auto log = [&](LogStream stream, const std::string& text) {
     invocation_log.append(static_cast<uint64_t>(stream), text);
   };
@@ -267,18 +266,25 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs, const stdfs:
         [&](const std::string& line) { log(LogStream::build, line + "\n"); });
     outcome = run_worker(*call, invocation, input, directory, store, environment, log,
         [&](const DisplayData& data) { display = wire::standalone_display(data); });
-    if (auto data = wire::standalone_display(display)) {
-      if (const auto* module = std::get_if<DisplayData::Module>(&data->value)) {
-        if (!valid_module_identity(module->module) ||
-            std::ranges::find(environment.closure, module->module) == environment.closure.end())
-          throw std::runtime_error("display module is outside the built closure");
-        // Assemble only immutable build outputs, while this job still owns its
-        // private store. The same loader serves local ModuleReadRequest calls.
-        const auto store_directory = store / "nix/store";
-        const auto root = store_directory / stdfs::path(module->module).filename();
-        if (stdfs::is_symlink(root) || !stdfs::is_directory(root))
-          throw std::runtime_error("invalid display module output");
-        fs::write_atomic(result_dir / "module.js", module_source(root, store_directory), 0600);
+    if (!display.empty()) {
+      const auto* module = flatbuffers::GetRoot<Tsugumi::Data::Display>(display.data())->value_as_DisplayModule();
+      if (module && module->module_()) {
+        try {
+          const auto identity = module->module_()->str();
+          if (!valid_module_identity(identity) ||
+              std::ranges::find(environment.closure, identity) == environment.closure.end())
+            throw std::runtime_error("display module is outside the built closure");
+          // Transport a built definition resource under its immutable identity.
+          // The core imports it without interpreting the display's run data.
+          const auto store_directory = store / "nix/store";
+          const auto basename = stdfs::path(identity).filename();
+          const auto root = store_directory / basename;
+          if (stdfs::is_symlink(root) || !stdfs::is_directory(root))
+            throw std::runtime_error("invalid display module output");
+          fs::write_atomic(result_dir / "modules" / basename / "index.js", module_source(root, store_directory), 0600);
+        } catch (const std::exception&) {
+          // A view failure must not replace the Card result.
+        }
       }
     }
   } catch (const Failed& error) {

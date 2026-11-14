@@ -9,6 +9,7 @@
 #include <set>
 
 #include "execution_service.hh"
+#include "tsugumi/workerd/log.hh"
 #include "collect_value.hh"
 #include "history.hh"
 #include "remote_execution_service.hh"
@@ -174,16 +175,7 @@ Note display_note(const DisplayData& d) {
   n.kind = Note::Kind::Display;
   n.card_key = path_key(d.card);
   n.coalesce_key = "display|" + n.card_key;
-  n.approx_bytes = 1024;
-  if (const auto* t = std::get_if<DisplayData::Table>(&d.value))
-    for (const auto& r : t->rows)
-      for (const auto& c : r) n.approx_bytes += c.size() + 8;
-  if (const auto* im = std::get_if<DisplayData::Image>(&d.value)) n.approx_bytes += im->data.size();
-  if (const auto* p = std::get_if<DisplayData::PointCloud>(&d.value)) n.approx_bytes += p->x.size() * 16;
-  if (const auto* m = std::get_if<DisplayData::Module>(&d.value)) {
-    n.approx_bytes += m->module.size() + m->config_json.size();
-    for (const auto& [name, bytes] : m->blobs) n.approx_bytes += name.size() + bytes.size();
-  }
+  n.approx_bytes = d.bytes.size() + 1024;
   n.build = std::make_shared<const Note::Build>([shared](FBB& b) {
     auto dv = wire::display(b, *shared);
     return std::make_pair(R::NotificationPayload::DisplayUpdated, R::CreateDisplayUpdated(b, dv).Union());
@@ -360,7 +352,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         });
   }
 
-  void card_log(const CardPath& card, uint64_t inv, LogStream stream, const std::string& text) {
+  void record_card_log(const CardPath& card, uint64_t inv, LogStream stream, const std::string& text) {
     auto ends = std::make_shared<std::vector<LogEnd>>();
     std::string run = run_id_;
     svc_.history().submit(
@@ -372,6 +364,21 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           if (ok)
             for (const auto& e : *ends) self->svc_.server()->broadcast(log_note(e));
         });
+  }
+
+  void card_log(const CardPath& card, uint64_t inv, LogStream stream, const std::string& text) {
+    std::lock_guard<std::mutex> lock(log_policy_mu_);
+    auto& budget = log_budgets_[{path_key(card), inv}];
+    if (!budget) budget = std::make_unique<workerd::InvocationLog>(
+        [this, card, inv](uint64_t stream, const std::string& text) {
+          record_card_log(card, inv, static_cast<LogStream>(stream), text);
+        }, kInvocationLogLimitBytes);
+    // Backends use journal entries for their truncation notice. The core
+    // records one notice for its combined build and execution budget.
+    if (stream == LogStream::journal) budget->truncate();
+    else budget->append(static_cast<uint64_t>(stream), text);
+    // Record the first omission immediately, including on interrupted runs.
+    budget->finish();
   }
 
   // ---- setup ----------------------------------------------------------------
@@ -1504,9 +1511,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   auto on_display(NodeRt& rt, Work& w, DisplayData d) -> void {
-    if (d.card != rt.node->path || d.run_id != run_id_)
-      throw Failed(FailureKind::output_invalid, "display addressed another card or run");
-    if (auto err = d.validate()) throw Failed(FailureKind::output_invalid, *err);
+    if (d.card != rt.node->path || d.run_id != run_id_ || d.invocation != w.invocation ||
+        d.bytes.size() > (16u << 20)) return;
     {
       std::lock_guard<std::mutex> l(mu_);
       d.revision = ++rt.display_rev;
@@ -1765,6 +1771,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   std::optional<FailureData> first_failure_;
   std::optional<FailureData> start_failure_;
   std::optional<FailureData> stall_failure_;
+  std::mutex log_policy_mu_;
+  std::map<std::pair<std::string, uint64_t>, std::unique_ptr<workerd::InvocationLog>> log_budgets_;
   std::mutex persist_mu_;
   std::optional<FailureData> persist_failure_;
 };

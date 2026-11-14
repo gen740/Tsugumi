@@ -39,7 +39,7 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s);
 auto run_batch(FBB& b, const RunBatchData& batch) -> Off<R::RunBatch>;
 Off<D::Display> display(FBB& b, const DisplayData& d);
 // Throws Failed(output_invalid) when the display is malformed.
-DisplayData display(const D::Display* d);
+DisplayData display(const D::Display* d, std::string_view buffer);
 
 // Finishes a reply Message.
 std::string reply(FBB& b, uint64_t request_id, R::ReplyPayload type, Off<void> value);

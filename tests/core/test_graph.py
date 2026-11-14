@@ -203,3 +203,14 @@ def test_nix_reference_inventory_refreshes_and_deduplicates(core_factory, projec
         snap = client.call("ProjectInspectRequest")
         result = next(r for r in snap.resolution if [text(s) for s in r.card.segments] == ["result"])
         assert [(text(r.name), r.valid) for r in result.nixReferences] == expected
+
+
+@pytest.mark.parametrize("language", ["custom-sdk", None])
+def test_execution_does_not_enumerate_sdk_languages(core_factory, project, language):
+    definition = code()
+    if language is None:
+        definition.pop("language")
+    else:
+        definition["language"] = language
+    _, resolved = inspect_graph(core_factory, project, {"card": definition}, [])
+    assert "invalid_language" not in codes(resolved["card"])
