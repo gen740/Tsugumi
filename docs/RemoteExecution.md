@@ -16,7 +16,7 @@ nix build .#remote-worker --out-link "$HOME/.tsugumi-remote-worker"
 1. Start the worker. Its startup line prints `public key: ed25519:...`. It creates `STATE/identity.pem` on first use, with owner-only permissions. `--public-key` prints that same public key before starting a listener (stop a running worker first if using this command).
 2. Copy the worker's public key through a trusted channel. It is the base64 DER SubjectPublicKeyInfo (SPKI), prefixed with `ed25519:`. There is no CA, SSH, trust on first use or automatic key replacement.
 3. In **Settings → Execution service**, enter a name, service ID, endpoint such as `tls://worker.example:8765`, and the worker's public key. **Register** saves this public pin; it does not yet admit jobs. The same settings page shows **This host's public key** with a copy action.
-4. Add Tsugumi's host public key to the worker's `STATE/authorized_keys`, then choose the saved service and **Verify and update**. Successful mutual authentication probes the worker and makes the service available. Replacing a key requires the same explicit registration process.
+4. Add Tsugumi's host public key to the worker's `STATE/authorized_keys`, then choose the saved service and **Verify and Update**. Successful mutual authentication probes the worker and makes the service available. Replacing a key requires the same explicit registration process.
 
 For example, `authorized_keys` contains one public key per line; blank lines and `#` comments are allowed:
 
@@ -27,7 +27,7 @@ ed25519:PASTE_THE_COMPLETE_HOST_SPKI_HERE
 
 `--authorized-keys FILE` overrides the default file. It must be an owned regular file, not writable by other users; symlinks and malformed keys fail closed. The worker re-reads it during each handshake. Removing a key refuses new connections immediately; an already authenticated request can finish. Private keys never leave their owner or cross Host RPC.
 
-All worker connections, including its private Unix socket `STATE/worker.sock`, use TLS 1.3. `--socket`, `--host` (an IPv4 or IPv6 literal) and `--port` (default 8765) configure listeners. The Unix listener remains for local integration tests and cannot be reached over the network; it has exactly the same mutual authentication as TCP. There is no plaintext listener. The default TCP bind is `127.0.0.1`; use an explicit routable bind for another machine. The host verifies the registered worker SPKI in OpenSSL's verification callback before writing any request bytes; the worker requires a client certificate and accepts only an explicitly authorized SPKI. CA and hostname checks are replaced by these pins.
+All worker connections, including its private Unix socket `STATE/worker.sock`, use TLS 1.3. `--socket`, `--host` (an IPv4 or IPv6 literal) and `--port` (default 8765) configure listeners. The Unix listener remains for local integration tests and cannot be reached over the network; it has exactly the same mutual authentication as TCP. There is no plaintext listener. The default TCP bind is `127.0.0.1`; use an explicit routable bind for another machine. Review the [authentication boundary](security.md#remote-worker-boundary) before authorizing a host.
 
 Use `--max-jobs` to change the default cap of eight jobs across all project scopes. Additional accepted jobs wait durably. The timeout starts at acceptance, including queueing, building and running. Queued deadlines survive restarts. A running invocation is never automatically rerun: a surviving supervisor is adopted through its lock; a lost supervisor becomes interrupted. Cancellation of an unknown job creates a fingerprint tombstone, preventing a late submission from starting it.
 
@@ -39,7 +39,7 @@ agentd stores registrations, worker public pins and project capabilities in `age
 
 agentd derives each project scope from the host directory's device, inode and birth time. A filesystem without birth time gets no remote capability. A random local broker capability is written only to that project's control share, not returned over RPC (0600 on Linux; 0644 inside the Mac's host-private virtiofs parent, since the guest has a different uid). It survives agentd/UI restarts. Explicit project stop revokes it durably. Replacing/removing a registration invalidates capabilities issued against the previous registry before contacting any worker; settings reauthorize running projects against the new registry. Scope identity remains stable across that reauthorization and directory renames; copied/replaced directories get different scopes.
 
-The local capability travels in a separate `BrokerRequest` envelope and is never forwarded to the worker. Remote requests have no token. There is no migration from the old token-based registry: stop agentd and explicitly reset its `execution.sqlite` (including SQLite sidecars) before re-registering when upgrading that development format. Keep the scope key and worker journal if existing scopes are still needed. No run data is migrated, expired or deleted by the broker.
+The local capability travels in a separate `BrokerRequest` envelope. [Security](security.md#remote-worker-boundary) describes scope and peer checks.
 
 Choose the service in Card settings. `_card.json` stores `"executionService": "compute"` and optionally `"executionResources": { "cpuMillis": 1000, "memoryBytes": 4294967296 }`. Remote Cards require filesystem isolation and fresh workers; host-folder grants and resident workers are unavailable. The execution host receives the invocation's inputs, so register hosts trusted with those inputs.
 
@@ -57,6 +57,4 @@ State defaults to `$XDG_STATE_HOME/tsugumi/remote-execution` or `$HOME/.local/st
 
 A host that never returns leaves its accepted job scratch available for recovery. Stop the worker and explicitly remove abandoned state if no host can recover it. Removing host run history does not itself delete remote jobs. Host-side run retention and artifact choices are unchanged; this remote scratch is a transfer workspace, not a second notebook or result cache.
 
-## Validation
-
-Core Host RPC scenarios cover registration, scope isolation, relay, restart, revocation, changed registrations and a TLS peer. Socketpair TLS scenarios check right/wrong pins, unauthorized and missing client certificates, key-file permissions, authorized-key removal and rejection of TLS 1.2 without requiring a network listener. Linux tests drive the C++ listener for admission, scoping, chunk integrity, parallel submissions, tombstones and restart identity. `tests/ci-remote-worker.sh` runs real Cards through agentd's public Host RPC and TLS broker, covering results, cancellation and listener/host restarts. Full supervisor/cgroup fault injection and exhaustive crash-boundary coverage remain work in progress; Linux/Nix integration requires a runner permitting listeners and Nix builds.
+For integration checks, use [Repository tests](../tests/README.md).

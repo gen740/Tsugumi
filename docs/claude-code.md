@@ -6,15 +6,14 @@ The work shows in the [Web UI](WebUI.md) as it happens: Cards Claude Code saves 
 ## How it works
 
 ```text
-Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* ── Web UI server ── tsugumid
+Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* ── Web UI server ── tsugumi-agentd ── tsugumid
                                                                        └─ events ── browser (Canvas, thrush, approvals)
 ```
 
-- The plugin's MCP server (`web/server/mcp.ts`) does not connect to `tsugumid` directly. It asks the Web UI's server, which runs the same tools as the chat's Agent (`project_inspect`, `project_save`, `run`, `run_record`, `log_range` and the rest) with the same checks (argument validation, `op_id`, revision conflicts, waiting for runs). The `origin` of its saves is `agent`.
-- The server also tells the page about each call (`agentWork`). As with the chat's Agent, the page flies the thrush to that Card and adds a word such as "Reading generate's record". After about ten seconds without calls, the thrush returns to the top left of the chat. The thrush appears while Claude Code works even if no model key is registered in Tsugumi.
-- The run animation (Card states, values flowing along wires) comes from `tsugumid`, so it looks the same whoever runs it.
-- A save that newly gives a Card the network, running without isolation or a host folder waits for the user's approval, as for the chat's Agent. The approval appears in the Web UI's chat as "Claude Code wants to widen a Card's permissions". Without an open Web UI page there is no way to approve, so the save is not made, and Claude Code is told to explain this to the user.
-- Reading a folder attached to the chat (`attached_folder_read`), handing work to helpers (`delegate`) and the thrush's speech bubble (`guide_show`) belong to the chat and are not given to Claude Code, which uses its own file operations and subagents.
+- The MCP server (`web/server/mcp.ts`) asks the Web host, which forwards calls to `tsugumi-agentd` as an external-agent principal. The service validates tool arguments, checks access grants, applies saves with `origin: agent` and follows runs through the project RPC.
+- Agent events and project notifications let the Web UI show the work and run progress. A model key in Tsugumi is not required for Claude Code to use the tools.
+- Read, Write and Run access and permission-widening saves can require a user decision. Keep a Web UI page open to answer pending access requests. A disconnected page does not cancel a core conversation. [Agent permission boundary](security.md#the-agents-permission-boundary)
+- The MCP server exposes agentd's tool catalog and Agent API operations prefixed with `agent_`. Use the Agent API to request project access before inspecting it. Claude Code can also use its own file tools and subagents; their permissions belong to Claude Code.
 
 ## Setup
 

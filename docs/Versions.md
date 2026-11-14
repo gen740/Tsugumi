@@ -38,7 +38,7 @@ git log --notes=tsugumi --grep=failed
 git tag -l
 ```
 
-Outputs and logs are not put in git; as before, they are in the run's record (the history inside the VM, `.tsugumi/runs.sqlite`).
+Outputs and logs are in [run history](RunHistory.md#history-storage), separate from git.
 
 ## The version tree
 
@@ -82,7 +82,3 @@ A new project holds the nixpkgs of the Tsugumi that made it (`flake.lock`) as a 
 ## Demo histories
 
 A demo folder's `.tsugumi-history.json` becomes commits, branches, tags and notes when a copy becomes a repository (the file itself goes away). The Cas A demo carries the process of trying bands, grids and stretches: failed branches, branches not adopted, the adopted version `rgb-v1`, the version that added the spectrum on top of it, and the version that pinned CIAO.
-
-## Not yet possible
-
-- Selecting a version and seeing its Canvas and results without going back to it. For now, go back with "Start from This Version" to see them.

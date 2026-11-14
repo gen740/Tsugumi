@@ -15,7 +15,7 @@ start ──out→ settings ──number→ multiply
 | --- | --- | --- |
 | `start` | Start (trigger) | Where the run begins |
 | `settings` | Input value (input) | Sends a number you can edit on the Canvas |
-| `multiply` | Processing (Python) | Multiplies the number it receives by `factor`, outputs the result and displays it |
+| `multiply` | Python step | Multiplies the number it receives by `factor`, outputs the result and displays it |
 
 When it is done, the Canvas looks like this. Below are the same Cards as on the real screen, and they run without installing anything. Press ▶ Run to watch the flow, and click `multiply` to read the Python code on this page (web version only).
 
@@ -24,7 +24,7 @@ When it is done, the Canvas looks like this. Below are the same Cards as on the 
 ## Making it on screen
 
 1. Make a project with "New Project…" on the home screen.
-2. Right-click the Canvas and, from "Add Card", place "Start", "Input value" and "Processing (Python)", naming them `start`, `settings` and `multiply`.
+2. Right-click the Canvas and, from "Add Card", place "Start", "Input value" and "Python step", naming them `start`, `settings` and `multiply`.
 3. Draw a wire from the output of `start` to `settings`, and from the output of `settings` to `multiply`.
 4. Open each Card (the `s` key or "Settings" in the context menu) and make it the same as the files in the next section.
 
@@ -155,7 +155,7 @@ A package that nixpkgs does not have, or a version it does not carry, comes from
 
 4. Run the Card once. The Card’s build log reports `hash mismatch ... got: sha256-...`. Replace `pkgs.lib.fakeHash` with that hash (`hash = "sha256-...";`) and run again.
 
-From then on the Card is built from exactly those files, without the network. To change a dependency, edit `pyproject.toml`, repeat steps 2 to 4, and keep `pyproject.toml`, `uv.lock` and `default.nix` together in the Card's folder. A lock that no longer matches `pyproject.toml`, a lock without a hash and a hash that does not match are errors that say so; an old hash never lets the previous packages through.
+From then on the Card is built from exactly those files, without the network. To change a dependency, edit `pyproject.toml`, repeat steps 2 to 4, and keep `pyproject.toml`, `uv.lock` and `default.nix` together in the Card's folder. A lock inconsistent with `pyproject.toml`, a missing hash or a mismatched hash fails the build.
 
 - Only wheels are installed. A package that has no wheel for the Card's Python and system fails with a message; take such a package from nixpkgs with `packages`. `packages` and `lock` can be used together, and a locked package wins over one of the same name from nixpkgs.
 - Compiled wheels differ per system, so their hash does too. Give one per system the Card is built for: `hash = { aarch64-linux = "sha256-..."; x86_64-linux = "sha256-..."; };`.
@@ -205,7 +205,7 @@ def main(inputs, report):
 
 ## Inputs, results and reports
 
-A Card receives read-only `inputs`, returns its output ports, and publishes presentation through `report`. A Card that needs invocation metadata also asks for `run`. Parameters belong to `inputs.params`; input access is not restricted to a closed set of value kinds, so a future secret input can use the same access path. Secrets are not implemented here.
+A Card receives read-only `inputs`, returns its output ports, and publishes presentation through `report`. A Card that needs invocation metadata also asks for `run`. Parameters belong to `inputs.params`. Omit unused trailing roles; requesting `run` requires the preceding `report` argument.
 
 | Language | Entry point and result |
 | --- | --- |
@@ -227,15 +227,15 @@ Inputs do not expose emission or presentation callbacks. C++ takes a const objec
 
 Python returns generated output `TableT` objects directly: `return {"result": result}`. A finished builder or bytes can also be a mapping value. `tsugumi.builder()` constructs a FlatBuffers builder; `tsugumi.message(builder, root)` finishes it and owns its bytes. `tsugumi.message(builder)` copies a builder already finished by the Card. This also allows building several roots in one builder, snapshotting each result before reusing the builder.
 
-C++, Go and Rust keep their generated owned `Output` object. Set an optional field for each produced port and return it. The adapter packs it after the function succeeds (and after Go's managed tasks finish). These public typed SDKs previously produced one value per port per invocation; that remains the contract. Their low-level C ABI remains an adapter implementation detail.
+C++, Go and Rust keep their generated owned `Output` object. Set an optional field for each produced port and return it. The adapter packs it after the function succeeds (and after Go's managed tasks finish). Each port may be produced once per invocation. The low-level C ABI is an adapter implementation detail.
 
 R lists, Julia Dicts and Ruby Hashes carry messages checked by the JSON face against each port's FlatBuffers schema. C# returns generated `Outputs` properties, or uses its byte dictionary for finished buffers: `new Outputs { ["result"] = builder.SizedByteArray() }`. The adapter packs each typed property after awaiting the function.
 
-File and Directory outputs use the same result forms as other messages. Their `value` / `Value` field is an absolute path beneath `run.output_directory` (Go `run.OutputDirectory()`, C# `run.OutputDirectory`, Bash `$TSUGUMI_OUTPUT_DIR`). Write the files there, then return the path message. A Directory result includes its files and nested directories under the existing artifact rules; no new retention, reuse or deletion policy is introduced. The run object also exposes working and temporary directories, run and Card IDs, invocation number, cancellation and remaining time.
+File and Directory outputs use the same result forms as other messages. Their `value` / `Value` field is an absolute path beneath `run.output_directory` (Go `run.OutputDirectory()`, C# `run.OutputDirectory`, Bash `$TSUGUMI_OUTPUT_DIR`). Write the files there, then return the path message. A Directory result includes its files and nested directories; [Run history](RunHistory.md#keep-and-open-artifacts) describes retention. The run object also exposes working and temporary directories, run and Card IDs, invocation number, cancellation and remaining time.
 
 ### Results during a long invocation
 
-Python generators yield mappings incrementally; a final returned mapping is emitted too. Each port may be produced once per invocation; a repeated port in a later batch fails with `output_invalid`, as it did with the old emission API. Use `yield from helper(...)` when a helper returns a stream. Ruby returns an Enumerator which yields Hashes. Julia returns an iterator of Dicts (a Channel can produce them incrementally). R returns a zero-argument closure yielding the next named list, then `NULL` at end. C# returns `Outputs.Stream(IAsyncEnumerable<Outputs>)`; the adapter awaits and emits each batch before advancing the iterator. These streams let those SDKs build successive port batches without putting a write method on any role object. The worker buffers port results until the invocation completes; an error after an earlier batch still fails the invocation. Report displays publish live.
+Python generators yield mappings incrementally; a final returned mapping is emitted too. Each port may be produced once per invocation; a repeated port in a later batch fails with `output_invalid`. Use `yield from helper(...)` when a helper returns a stream. Ruby returns an Enumerator which yields Hashes. Julia returns an iterator of Dicts (a Channel can produce them incrementally). R returns a zero-argument closure yielding the next named list, then `NULL` at end. C# returns `Outputs.Stream(IAsyncEnumerable<Outputs>)`; the adapter awaits and emits each batch before advancing the iterator. These streams let those SDKs build successive port batches without putting a write method on any role object. The worker buffers port results until the invocation completes; an error after an earlier batch still fails the invocation. Report displays publish live.
 
 ### Presentation and hooks
 
@@ -247,7 +247,7 @@ Python uses `report.figure(fig)` for Matplotlib, Plotly or Altair. `report.figur
 
 Rust selects arity explicitly: `export!(run, inputs)` for inputs only, `export!(run)` for inputs and report, `export!(run, with_run)` for all three. Add the hook as the last macro argument; the hook receives all three roles and returns `Result<()>`.
 
-Bash `preRun` / `postRun` keep their existing environment and lifecycle contract; they do not acquire Card inputs. The worker ABI, output validation, display types and project RPC are unchanged.
+Bash `preRun` / `postRun` receive no Card inputs; see [Worker state](#worker-state) for their lifecycle.
 
 ## Writing the same Card in another language
 
@@ -580,7 +580,7 @@ project after generating the files, then obtain the hash as above.
 
 ## C#
 
-Choose Processing (C#) for a .NET Card. The [C# guide](CSharp.md) covers typed inputs, outputs and parameters, asynchronous work, NuGet dependencies and the cross-language demo.
+Choose C# Card for a .NET Card. The [C# guide](CSharp.md) covers typed inputs, outputs and parameters, asynchronous work, NuGet dependencies and the cross-language demo.
 
 ## Rust Cards
 
@@ -669,8 +669,7 @@ A view is fixed by the Card's Nix definition. Write it either as a JavaScript
 ES module using DOM, canvas, WebGPU or bundled libraries, or as C/C++ compiled
 to a small Wasm module using standard `webgpu.h` and the SDK's shared host.
 Choose JavaScript for DOM/SVG, plotting libraries and direct browser APIs;
-choose C/C++ for existing native rendering code or a view whose source should
-also be usable by a future native WebGPU host. No Tsugumi drawing API is
+choose C/C++ for existing native rendering code or portable GPU rendering code. No Tsugumi drawing API is
 involved. Pointer handling stays in the frame and works
 after the worker exits. The built-in line chart uses this same module mechanism
 on both platforms; Card authors keep their existing line-chart SDK calls.
@@ -735,9 +734,8 @@ third argument of `report.module`. The ABI is version 5;
 `tsugumi_blob` contains `name`, `data` and `size`. A display on the RPC carries
 `Module { module, config_json, blobs }`, where `module` is the immutable
 Nix store directory, not the declaration's short name. Configuration is limited
-to 1 MiB; up to 64 blobs together to 8 MiB (within the existing 16 MiB frame limit). Plotly and Vega-Lite are ordinary view
-outputs of this same SDK and use the same loader and RPC. There is no old
-named-renderer JSON-only wire form.
+to 1 MiB; up to 64 blobs together to 8 MiB (within the existing 16 MiB frame limit). Plotly and Vega-Lite are view
+outputs of this SDK and use the same loader and RPC.
 
 The [view isolation boundary](security.md#showing-card-views-line-charts-plotly-vega-lite-and-card-owned-modules) applies to both platforms; code is separate from retained display data.
 
@@ -811,11 +809,10 @@ Use the [C/Wasm point-cloud example](../tests/fixtures/view-point-cloud-wasm) to
 
 ### Built-in line chart
 
-Existing `line_chart` / `line_chart` calls (and their other-language
-equivalents) produce the built-in `line-chart` view. No API change is needed in
-a Card. The JSON configuration is `{series: [{id, label, offset, count}, ...]}`.
+`report.line_chart` calls (and their other-language
+equivalents) produce the built-in `line-chart` view. The JSON configuration is `{series: [{id, label, offset, count}, ...]}`.
 Offsets and counts index two named blobs, `x` and `y`, each a concatenation of
-little-endian float64 arrays. The existing limit remains 10,000 points and
+little-endian float64 arrays. The limit is 10,000 points and
 1 MiB of coordinate/label data. The view subtracts the visible origin in double
 precision before converting to float32 GPU vertices, preserving small differences
 in large values such as timestamps. Multiple series, the four-colour palette,
