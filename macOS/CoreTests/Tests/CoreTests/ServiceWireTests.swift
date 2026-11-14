@@ -24,6 +24,29 @@ final class ServiceWireTests: XCTestCase {
     XCTAssertFalse(ServiceWire.hostMethod("ConfigureRequest", ["conversation_id": "c"]))
   }
 
+  func testGuideHostStateHasTopLevelPresentationAndEmptyVectors() throws {
+    let bytes = try ServiceWire.encode("GuideAdvanceRequest", fields: ["session_id": "desktop", "language": "en",
+      "event": ["kind": "message", "text": "Next", "expected_step": "report/start", "project": "/copy"]], id: 1, host: true)
+    var buffer = ByteBuffer(data: bytes)
+    let root: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
+    let request = try XCTUnwrap(Tsugumi_Host_MessageT(root).payload?.value as? Tsugumi_Host_RequestT)
+    let guide = try XCTUnwrap(request.value?.value as? Tsugumi_Host_GuideAdvanceRequestT)
+    XCTAssertEqual(guide.event.expectedStep, "report/start")
+    XCTAssertEqual(guide.event.scripted, true)
+    XCTAssertTrue(ServiceWire.hostMethod("GuideGetRequest", [:]))
+    var b = FlatBufferBuilder(initialSize: 128)
+    let session = b.create(string: "desktop")
+    let state = Tsugumi_Host_GuideState.createGuideState(&b, sessionIdOffset: session)
+    let reply = Tsugumi_Host_Reply.createReply(&b, valueType: .guidestate, valueOffset: state)
+    let message = Tsugumi_Host_Message.createMessage(&b, requestId: 1, payloadType: .reply, payloadOffset: reply)
+    Tsugumi_Host_Message.finish(&b, end: message)
+    let decoded = try ServiceWire.decode(b.data, host: true)
+    XCTAssertNil(decoded["value"])
+    XCTAssertEqual(decoded["sessionId"] as? String, "desktop")
+    XCTAssertTrue(try XCTUnwrap(decoded["choices"] as? [String]).isEmpty)
+    XCTAssertTrue(try XCTUnwrap(decoded["actions"] as? [Any]).isEmpty)
+  }
+
   func testExecutionSettingsUseTheHostContract() throws {
     for (method, fields) in [
       ("ExecutionServicesRequest", [:]),
@@ -125,11 +148,16 @@ final class ServiceWireTests: XCTestCase {
 
   func testRuntimeAndTerminalOmittedVectorsAndEvents() throws {
     let runtime = Tsugumi_Host_HostRuntimeT(); runtime.vmState = "stopped"
+    runtime.virtualizationSupported = true; runtime.imageAvailable = true; runtime.imageVersion = "bundled-image"
     let reply = Tsugumi_Host_ReplyT(); reply.value = Tsugumi_Host_ReplyPayloadUnion(runtime, type: .hostruntime)
     let message = Tsugumi_Host_MessageT(); message.requestId = 1; message.payload = Tsugumi_Host_PayloadUnion(reply, type: .reply)
     var builder = FlatBufferBuilder(initialSize: 128); var object: Tsugumi_Host_MessageT? = message
     let offset = Tsugumi_Host_Message.pack(&builder, obj: &object); Tsugumi_Host_Message.finish(&builder, end: offset)
     let decoded = try ServiceWire.decode(builder.data, host: true)
+    XCTAssertNil(decoded["value"])
+    XCTAssertEqual(decoded["virtualization_supported"] as? Bool, true)
+    XCTAssertEqual(decoded["image_available"] as? Bool, true)
+    XCTAssertEqual(decoded["image_version"] as? String, "bundled-image")
     XCTAssertTrue(try XCTUnwrap(decoded["console"] as? [String]).isEmpty)
     XCTAssertTrue(try XCTUnwrap(decoded["histories"] as? [Any]).isEmpty)
     let terminal = Tsugumi_Host_HostTerminalDataT(); terminal.session = UInt64.max - 1; terminal.closed = true

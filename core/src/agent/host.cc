@@ -25,6 +25,7 @@
 #include "host/execution_broker.hh"
 #include "host/environment.hh"
 #include "host/projects.hh"
+#include "host/guide.hh"
 #include "host/settings.hh"
 #include "host/skills.hh"
 #include "lanes.hh"
@@ -159,6 +160,7 @@ struct Host::State {
       : options(std::move(o)),
         db((options.state_dir / "agent.sqlite").string()),
         host_projects(options.state_dir, options.demos_dir),
+        guide(options.state_dir, options.demos_dir),
         requests(4, 128, std::chrono::seconds(30)),
         tool_requests(4, 128, std::chrono::seconds(30)), terminal_requests(1, 128, std::chrono::seconds(30)) {
     ::chmod((options.state_dir / "agent.sqlite").c_str(), 0600);
@@ -281,6 +283,7 @@ struct Host::State {
   HostOptions options;
   sql::Db db;
   host::Projects host_projects;
+  host::Guide guide;
   std::unique_ptr<host::Settings> host_settings;
   std::unique_ptr<host::ExecutionBroker> execution_broker;
   std::unique_ptr<host::Environments> environments;
@@ -2080,6 +2083,8 @@ struct Host::State {
       lock.unlock();
       return host_settings->Handle(*r, request.request_id);
     }
+    if (host::Guide::Handles(r->value_type()))
+      return guide.Handle(*r, request.request_id);
     if (host::Projects::Handles(r->value_type()))
       return host_projects.Handle(*r, request.request_id);
     switch (r->value_type()) {

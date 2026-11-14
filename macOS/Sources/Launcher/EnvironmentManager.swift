@@ -160,14 +160,31 @@ public actor EnvironmentManager {
     let reply = try await runtime(.reset)
     var report = ResetReport(); report.environments = Int(reply["environments"] as? UInt32 ?? 0); report.vmRemoved = reply["vm_removed"] as? Bool ?? false; return report
   }
-  public struct SetupStatus: Sendable, Equatable {
-    public var virtualizationSupported = false; public var imageAvailable = false; public var imageVersion: String?
-    public var ready: Bool { virtualizationSupported && imageAvailable }; public init() {}
+  public enum SetupStatus: Sendable, Equatable {
+    case checked(virtualizationSupported: Bool, imageAvailable: Bool, imageVersion: String?)
+    case failed(String)
+
+    public var ready: Bool {
+      if case .checked(let supported, let image, _) = self { return supported && image }
+      return false
+    }
+
+    /// A failed request or malformed reply says nothing about the Mac or image.
+    static func query(_ runtime: () async throws -> [String: Any]) async -> SetupStatus {
+      do {
+        let reply = try await runtime()
+        guard let supported = reply["virtualization_supported"] as? Bool,
+              let image = reply["image_available"] as? Bool else {
+          return .failed(String(localized: "実行環境からの状態の応答が不正です。", bundle: .main))
+        }
+        return .checked(virtualizationSupported: supported, imageAvailable: image, imageVersion: reply["image_version"] as? String)
+      } catch {
+        return .failed(String(describing: error))
+      }
+    }
   }
   public func setupStatus() async -> SetupStatus {
-    var status = SetupStatus()
-    if let reply = try? await runtime() { status.virtualizationSupported = reply["virtualization_supported"] as? Bool ?? false; status.imageAvailable = reply["image_available"] as? Bool ?? false; status.imageVersion = reply["image_version"] as? String }
-    return status
+    await SetupStatus.query { try await self.runtime() }
   }
   public func openTerminal(_ project: ProjectIdentity, rows: Int, cols: Int) async throws -> (fd: Int32, session: UInt64) {
     return try await openTerminal(id: project.url.path, rows: rows, cols: cols)

@@ -105,6 +105,20 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/agent_settings.cc
     -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/agent_settings.cc -DSYMBOL=tsugumi_agent_settings
     -P ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
   DEPENDS ${PROJECT_SOURCE_DIR}/agent/Shared/agent.json ${PROJECT_SOURCE_DIR}/cmake/embed.cmake VERBATIM)
+foreach(language ja en)
+  if(language STREQUAL "en")
+    set(script guide-script.en.json)
+  else()
+    set(script guide-script.json)
+  endif()
+  set(output ${CMAKE_CURRENT_BINARY_DIR}/guide_script_${language}.cc)
+  add_custom_command(OUTPUT ${output}
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${PROJECT_SOURCE_DIR}/agent/Shared/${script}
+      -DOUTPUT=${output} -DSYMBOL=tsugumi_guide_script_${language}
+      -P ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
+    DEPENDS ${PROJECT_SOURCE_DIR}/agent/Shared/${script} ${PROJECT_SOURCE_DIR}/cmake/embed.cmake VERBATIM)
+  list(APPEND _agent_prompts ${output})
+endforeach()
 add_library(tsugumi_agent_core STATIC
   ${CMAKE_CURRENT_BINARY_DIR}/agent_settings.cc
   ${_agent_prompts}
@@ -121,6 +135,7 @@ add_library(tsugumi_agent_core STATIC
   src/agent/tool_images.cc
   src/agent/wire.cc
   src/agent/host.cc
+  src/host/guide.cc
   src/host/settings.cc
   src/host/skills.cc
   src/host/projects.cc

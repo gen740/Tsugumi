@@ -101,3 +101,32 @@ for (const type of [HostReplyPayload.Settings, HostReplyPayload.SignInStatus]) {
   assert.deepEqual(type === HostReplyPayload.Settings ? decoded.values : decoded.accounts, [])
 }
 console.log('Settings and sign-in readers: omitted vectors are empty')
+
+// Guide replies expose presentation fields directly; omitted vectors are empty.
+const { GuideState } = await import('../src/gen/tsugumi/host/guide-state')
+const { Request: HostRequest } = await import('../src/gen/tsugumi/host/request')
+const { RequestPayload: HostRequestPayload } = await import('../src/gen/tsugumi/host/request-payload')
+const { GuideAdvanceRequest } = await import('../src/gen/tsugumi/host/guide-advance-request')
+{
+  const b = new fb.Builder()
+  const session = b.createString('web:host')
+  GuideState.startGuideState(b)
+  GuideState.addSessionId(b, session)
+  const value = GuideState.endGuideState(b)
+  const reply = HostReply.createReply(b, HostReplyPayload.GuideState, value)
+  HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
+  const decoded = decodeReply(b.asUint8Array(), true).value
+  assert.deepEqual(decoded.choices, [])
+  assert.deepEqual(decoded.actions, [])
+  assert.equal(decoded.sessionId, 'web:host')
+  assert.equal(decoded.value, undefined)
+  const bytes = encodeRequest('GuideAdvanceRequest', { session_id: 'web:host', language: 'en',
+    event: { kind: 'message', text: 'Next', expected_step: 'report/start', project: '/copy' } }, 2n, true)
+  const req = HostMessage.getRootAsMessage(new fb.ByteBuffer(bytes)).payload(new HostRequest())!
+  assert.equal(req.valueType(), HostRequestPayload.GuideAdvanceRequest)
+  const guide = req.value(new GuideAdvanceRequest())!
+  assert.equal(guide.event()?.expectedStep(), 'report/start')
+  assert.equal(guide.event()?.scripted(), true)
+  assert.equal(hostMethod('GuideGetRequest'), true)
+}
+console.log('Guide Host adapter: events, direct presentation and omitted vectors passed')

@@ -665,11 +665,11 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
             }
             if (value.size() > 65536 || key == "agent.oauthHostID" ||
                 !(key.starts_with("agent.") || key == "versions.summaries" ||
-                  key == "app.language" || key == "web.guide"))
+                  key == "app.language"))
               throw std::runtime_error("Invalid setting");
             j::Object("{\"value\":" + value + "}");
             const auto defaults = Defaults();
-            if (!defaults.contains(key) && key != "web.guide" &&
+            if (!defaults.contains(key) &&
                 key != "agent.drawThoughts" &&
                 key != "agent.drawThoughtsAsked" &&
                 key != "agent.thoughtModel" &&
