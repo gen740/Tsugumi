@@ -13,6 +13,9 @@ struct EvidenceTarget: Hashable, Identifiable {
   var offset: UInt64 = 0
   var artifact: String?
   var member: String?
+  var file: String?
+  var lineStart: Int?
+  var lineEnd: Int?
 
   static func recognizes(_ href: String) -> Bool {
     ["card:", "run:", "log:", "artifact:"].contains { href.lowercased().hasPrefix($0) }
@@ -33,8 +36,21 @@ struct EvidenceTarget: Hashable, Identifiable {
     var parts = part(2)!.components(separatedBy: "/")
     var target = Self(href: href, kind: kind)
     if kind == "card" {
-      guard query == nil, fragment == nil, validCard(parts) else { return nil }
-      target.card = parts; return target
+      guard fragment == nil, validCard(parts) else { return nil }
+      target.card = parts
+      guard let query else { return target }
+      guard query.removingPercentEncoding != nil,
+            let components = URLComponents(string: "evidence:?" + query.replacingOccurrences(of: "+", with: "%20")) else { return nil }
+      let items = components.queryItems ?? []
+      guard Set(items.map(\.name)).count == items.count,
+            Set(items.map(\.name)) == ["file", "lines"],
+            let file = items.first(where: { $0.name == "file" })?.value,
+            !file.contains("\\"), !file.unicodeScalars.contains(where: { $0.value < 32 }),
+            !file.components(separatedBy: "/").contains(where: { $0.isEmpty || $0 == "." || $0 == ".." }),
+            let lines = items.first(where: { $0.name == "lines" })?.value?.components(separatedBy: "-"), lines.count == 2,
+            let first = number(lines[0]), let last = number(lines[1]), first > 0, last >= first, last <= 9_007_199_254_740_991 else { return nil }
+      target.file = file; target.lineStart = Int(first); target.lineEnd = Int(last)
+      return target
     }
     let run = parts.removeFirst()
     guard run.range(of: #"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"#, options: .regularExpression) != nil,
@@ -99,5 +115,22 @@ struct EvidenceTarget: Hashable, Identifiable {
       }
       return true
     } catch { return false }
+  }
+}
+
+/// Source-citing paragraphs can be kept individually; ordinary answers stay in chat.
+struct ChatFinding: Identifiable {
+  var id: String { text }
+  let text: String
+  let target: EvidenceTarget
+  static func list(_ text: String) -> [Self] {
+    guard let regex = try? NSRegularExpression(pattern: #"\[[^\]]*\]\((card:[^\s)]+)\)"#) else { return [] }
+    return text.components(separatedBy: "\n\n").compactMap { paragraph in
+      for match in regex.matches(in: paragraph, range: NSRange(paragraph.startIndex..., in: paragraph)) {
+        guard let range = Range(match.range(at: 1), in: paragraph), let target = EvidenceTarget.parse(String(paragraph[range])), target.file != nil else { continue }
+        return Self(text: paragraph, target: target)
+      }
+      return nil
+    }
   }
 }

@@ -17,6 +17,7 @@ import { WorkflowTab } from '../model/workspace'
 import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner, TextField, Toggle } from './controls'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
+import { findings } from '../model/evidence'
 import { EvidenceContext, evidenceLink } from './evidence'
 import { ChatChoices, GuideNest } from './guide'
 import { guide } from '../model/guide'
@@ -294,7 +295,7 @@ function Row({ item, streaming, session, tab }: { item: ChatItem; streaming: boo
     case 'note':
       return <div className="chat-note caption secondary"><Icon name="rectangle.compress.vertical" size={11} />{item.text}</div>
     default:
-      return streaming ? <StreamingText text={item.text} /> : <div style={{ opacity: op }}><ChatMarkdown text={item.text} /></div>
+      return streaming ? <StreamingText text={item.text} /> : <div style={{ opacity: op }}><ChatMarkdown text={item.text} />{!item.archived && findings(item.text).map((f, i) => <div key={i} className="row gap8"><span className="caption">{f.target.file}:{f.target.lineStart}-{f.target.lineEnd}</span><Button disabled={!session.isEditable} onClick={() => session.addComment(key(f.target.card!), f.text, true)}>{L('指摘をコメントに残す')}</Button></div>)}</div>
   }
 }
 
@@ -604,7 +605,7 @@ function HelperRow({ item, color }: { item: ChatItem; color: string }) {
   const step = item.tool ? toolStep(item.tool.name, item.text) : undefined
   const ok = item.tool?.ok
   const text = item.ended ?? (step ? (ok === undefined ? step.running : step.done + (ok ? '' : L('：失敗'))) : L('考えています…'))
-  return (
+  const row = (
     <div className="helper-row">
       <span className="helper-dot" style={{ background: color }} />
       <span className="caption" style={{ fontWeight: 600, color }}>{item.helper}</span>
@@ -613,6 +614,7 @@ function HelperRow({ item, color }: { item: ChatItem; color: string }) {
       {!item.ended && <Spinner small />}
     </div>
   )
+  return item.trace ? <details><summary>{row}</summary><pre className="selectable wrap-pre">{item.trace}</pre></details> : row
 }
 
 /** A search's details with its sources as links (only http and https). */

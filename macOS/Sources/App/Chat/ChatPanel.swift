@@ -487,7 +487,11 @@ struct ChatPanel: View {
     case "tool":
       ToolRow(item: item, tab: tab, session: session).opacity(item.archived ? 0.6 : 1)
     case "helper":
-      HelperRow(item: item, tint: session.helperPresences.first { $0.label == item.helper }?.tint ?? 1)
+      if let trace = item.trace {
+        DisclosureGroup {
+          ScrollView { Text(trace).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 400)
+        } label: { HelperRow(item: item, tint: 1) }
+      } else { HelperRow(item: item, tint: session.helperPresences.first { $0.label == item.helper }?.tint ?? 1) }
     case "note":
       Label(item.text, systemImage: "rectangle.compress.vertical").font(.caption).foregroundStyle(.secondary)
         .frame(maxWidth: .infinity)
@@ -496,6 +500,14 @@ struct ChatPanel: View {
         StreamingText(text: item.text)
       } else {
         ChatMarkdown(text: item.text).modifier(EvidenceMarkup(text: item.text, session: session, tab: tab)).opacity(item.archived ? 0.6 : 1)
+        if !item.archived {
+          ForEach(ChatFinding.list(item.text)) { finding in
+            HStack {
+              Text("\(finding.target.file ?? ""):\(finding.target.lineStart ?? 1)-\(finding.target.lineEnd ?? 1)").font(.caption)
+              Button("指摘をコメントに残す") { session.addComment(key(finding.target.card!), finding.text, finding: true) }.disabled(!session.isEditable)
+            }
+          }
+        }
       }
     }
   }

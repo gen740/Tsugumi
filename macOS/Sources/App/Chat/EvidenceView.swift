@@ -31,7 +31,7 @@ struct EvidenceMarkup: ViewModifier {
         guard allowed.contains(href), let target = EvidenceTarget.parse(href) else { return .discarded }
         Task { @MainActor in
           guard await target.exists(in: session) else { allowed.remove(href); return }
-          if target.kind == "card", let card = target.card {
+          if target.kind == "card", target.file == nil, let card = target.card {
             if let tab {
               tab.enter(Array(card.dropLast())); tab.selection = [key(card)]
               DispatchQueue.main.async { NotificationCenter.default.post(name: .canvasReveal, object: tab.id, userInfo: ["card": key(card)]) }
@@ -122,6 +122,16 @@ struct EvidenceView: View {
       .sheet(item: $selected) { EvidenceView(session: session, target: $0) }
   }
   private func load() async {
+    if target.kind == "card", let file = target.file, let card = target.card,
+       let directory = session.definitionDir(key(card)), let rpc = session.rpc {
+      do {
+        let bytes = try await rpc.readFile(path: directory + file, atRev: session.rev)
+        let lines = String(decoding: bytes, as: UTF8.self).components(separatedBy: "\n")
+        let start = target.lineStart ?? 1, end = min(target.lineEnd ?? start, lines.count)
+        bodyText = start <= end ? (start...end).map { "\($0): \(lines[$0 - 1])" }.joined(separator: "\n") : ""
+      } catch { bodyText = String(describing: error) }
+      return
+    }
     guard let rpc = session.rpc, await target.exists(in: session), let run = target.run else {
       bodyText = String(localized: "このプロジェクトに根拠の記録がありません"); return
     }

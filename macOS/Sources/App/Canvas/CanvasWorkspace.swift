@@ -281,7 +281,7 @@ struct CanvasCommentControls: View {
     if !cards.isEmpty {
       let chosen = cards.filter { tab.selection.contains($0) }
       let asked = chosen.isEmpty ? cards : chosen
-      let count = asked.reduce(0) { $0 + session.openComments($1).count }
+      let count = asked.reduce(0) { $0 + session.changeRequests($1).count }
       Button {
         workspace.showChat = true
         model.chat(for: session).generateFromComments(scope: tab.scope, cards: asked)

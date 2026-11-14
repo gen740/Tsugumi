@@ -6,7 +6,7 @@ include "service_common.fbs";
 namespace Tsugumi.Agent;
 
 enum Action:ubyte { Resume, Retry, Continue, Compact, Reset }
-enum Access:ubyte { Read, Write, Run, CardPermissions, Shell }
+enum Access:ubyte { Read, Write, Run, CardPermissions, Shell, HelperScope }
 enum GrantScope:ubyte { Conversation, Server }
 
 // Conversation-specific selection; global provisioning uses the Host contract.
@@ -26,6 +26,8 @@ table ConversationSendRequest {
   attached_resources:[string];
   // Human-visible text, before core attaches references and skill contents.
   display:string;
+  // Explicit direct helper start. Requires one declared Skill and selected Cards.
+  scoped_skill:string;
 }
 // Resume is an explicit user request; restart/reconnect never sends it.
 table ConversationActionRequest { conversation_id:string (required); action:Action; }

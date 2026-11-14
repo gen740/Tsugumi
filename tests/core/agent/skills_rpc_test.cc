@@ -30,7 +30,7 @@ class SkillsFixture : public AgentProjectFixture {
 TEST_F(SkillsFixture, NoProjectStillHasDemoAndMissingFoldersHaveStatus) {
   const auto empty = List({}, false);
   ASSERT_TRUE(empty.Code().empty());
-  EXPECT_EQ(ListSize(empty.HostValue()->value_as_SkillsList()->skills()), 1u);
+  EXPECT_EQ(ListSize(empty.HostValue()->value_as_SkillsList()->skills()), 3u);
   EXPECT_EQ(ListSize(empty.HostValue()->value_as_SkillsList()->folders()), 0u);
   const auto missing =
       List({(directory.path / "missing").string()}, false, true);
@@ -48,14 +48,14 @@ TEST_F(SkillsFixture, FrontMatterFallbackNamesAndSwiftSortOrder) {
   Write(root / "notes.txt", "ignored");
   const auto reply = List();
   const auto* list = reply.HostValue()->value_as_SkillsList()->skills();
-  ASSERT_EQ(ListSize(list), 4u);
+  ASSERT_EQ(ListSize(list), 6u);
   EXPECT_EQ(list->Get(0)->path()->str(), "builtin:demo");
-  EXPECT_EQ(list->Get(1)->name()->str(), "B");  // Swift <, not localeCompare.
-  EXPECT_EQ(list->Get(1)->description()->str(), "Explain runs");
-  EXPECT_EQ(list->Get(2)->name()->str(), "Card-review-");
-  EXPECT_EQ(list->Get(2)->description()->str(), "Review outputs");
-  EXPECT_EQ(list->Get(3)->name()->str(), "c");
-  EXPECT_EQ(list->Get(3)->description()->str(), "---");
+  EXPECT_EQ(list->Get(3)->name()->str(), "B");  // Swift <, not localeCompare.
+  EXPECT_EQ(list->Get(3)->description()->str(), "Explain runs");
+  EXPECT_EQ(list->Get(4)->name()->str(), "Card-review-");
+  EXPECT_EQ(list->Get(4)->description()->str(), "Review outputs");
+  EXPECT_EQ(list->Get(5)->name()->str(), "c");
+  EXPECT_EQ(list->Get(5)->description()->str(), "---");
   EXPECT_EQ(
       std::string(reply.bytes.begin(), reply.bytes.end()).find("BODY_SENTINEL"),
       std::string::npos);
@@ -71,13 +71,13 @@ TEST_F(SkillsFixture, SwiftUnicodeNamesWhitespaceAndCRLFBehavior) {
         "---\nname: bad" + std::string("\xff", 1) + "name\n---\nbody");
   const auto reply = List();
   const auto* skills = reply.HostValue()->value_as_SkillsList()->skills();
-  ASSERT_EQ(ListSize(skills), 4u);
-  EXPECT_EQ(skills->Get(1)->name()->str(), "é-Ⅳ-¼--");
-  EXPECT_EQ(skills->Get(1)->description()->str(), "Review");
-  EXPECT_EQ(skills->Get(2)->name()->str(), "b");
-  EXPECT_EQ(skills->Get(2)->description()->str(),
+  ASSERT_EQ(ListSize(skills), 6u);
+  EXPECT_EQ(skills->Get(3)->name()->str(), "é-Ⅳ-¼--");
+  EXPECT_EQ(skills->Get(3)->description()->str(), "Review");
+  EXPECT_EQ(skills->Get(4)->name()->str(), "b");
+  EXPECT_EQ(skills->Get(4)->description()->str(),
             "---\r\nname: ignored\r\n---\r\nbody");
-  EXPECT_EQ(skills->Get(3)->name()->str(), "bad-name");
+  EXPECT_EQ(skills->Get(5)->name()->str(), "bad-name");
 }
 
 TEST_F(SkillsFixture, StrictSizeBoundaryAndUnreadableFilesAndFolders) {
@@ -96,11 +96,11 @@ TEST_F(SkillsFixture, StrictSizeBoundaryAndUnreadableFilesAndFolders) {
   ASSERT_TRUE(reply.Code().empty());
   const auto* result = reply.HostValue()->value_as_SkillsList();
   const auto* list = result->skills();
-  ASSERT_EQ(ListSize(list), 5u);
-  EXPECT_EQ(list->Get(1)->status()->str(), "ready");
-  EXPECT_EQ(list->Get(2)->status()->str(), "too_large");
-  EXPECT_EQ(list->Get(3)->status()->str(), "too_large");
-  EXPECT_EQ(list->Get(4)->status()->str(), "unreadable");
+  ASSERT_EQ(ListSize(list), 7u);
+  EXPECT_EQ(list->Get(3)->status()->str(), "ready");
+  EXPECT_EQ(list->Get(4)->status()->str(), "too_large");
+  EXPECT_EQ(list->Get(5)->status()->str(), "too_large");
+  EXPECT_EQ(list->Get(6)->status()->str(), "unreadable");
   EXPECT_EQ(result->folders()->Get(1)->status()->str(), "unreadable");
 }
 TEST_F(SkillsFixture,
@@ -116,12 +116,12 @@ TEST_F(SkillsFixture,
   std::filesystem::create_symlink(first / "same.md", first / "file-link.md");
   const auto reply = List({first.string(), second.string()});
   const auto* list = reply.HostValue()->value_as_SkillsList()->skills();
-  ASSERT_EQ(ListSize(list), 6u);
-  EXPECT_EQ(list->Get(1)->source_folder()->str(), root.string());
-  EXPECT_EQ(list->Get(2)->path()->str(), (first / "file-link.md").string());
-  EXPECT_EQ(list->Get(3)->name()->str(), "real");
-  EXPECT_EQ(list->Get(4)->name()->str(), "same");
-  EXPECT_EQ(list->Get(5)->source_folder()->str(), second.string());
+  ASSERT_EQ(ListSize(list), 8u);
+  EXPECT_EQ(list->Get(3)->source_folder()->str(), root.string());
+  EXPECT_EQ(list->Get(4)->path()->str(), (first / "file-link.md").string());
+  EXPECT_EQ(list->Get(5)->name()->str(), "real");
+  EXPECT_EQ(list->Get(6)->name()->str(), "same");
+  EXPECT_EQ(list->Get(7)->source_folder()->str(), second.string());
 }
 TEST_F(SkillsFixture,
        NamesSelectEveryCollisionAndSourcesBelongToTheConversation) {
@@ -143,7 +143,7 @@ TEST_F(SkillsFixture,
   ASSERT_EQ(inside.HostValue()
                 ->value_as_SkillsList()
                 ->skills()
-                ->Get(1)
+                ->Get(3)
                 ->attachment_folder(),
             nullptr);
   Grant(one);
@@ -238,6 +238,59 @@ TEST_F(AgentProjectFixture,
   Revoke(grant);
   EXPECT_EQ(Send(conversation, "Continue with that skill.", "turn-2").Code(),
             "permission_denied");
+}
+TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
+  ModelServer model;
+  model.Queue(AnthropicTool("try-write", "project_save", R"({"base_rev":0,"changes":[{"value_type":"RemoveDefinition","value":{"id":"selected"}}]})"));
+  model.Queue(AnthropicText("Read only: [source](card:selected?file=src%2Fmain.py&lines=1-2) uses a clock."));
+  Configure(model);
+  StartProject();
+  Write(directory.path / "project/skills/inspect.md", "---\nname: inspect\nscope: [read]\n---\nINSPECT_SKILL_SENTINEL");
+  const auto conversation = Conversation("direct-skill");
+  ASSERT_TRUE(List({}, true, false, conversation).Code().empty());
+  const auto start = Call(*human, A::RequestPayload::ConversationSendRequest, [&](Builder& b) {
+    A::ConversationSendRequestT request;
+    request.conversation_id = conversation;
+    request.turn_id = "direct-turn";
+    request.text = "$inspect";
+    request.selected_cards = {"selected"};
+    request.skill_names = {"inspect"};
+    request.scoped_skill = "inspect";
+    return A::ConversationSendRequest::Pack(b, &request).Union();
+  });
+  ASSERT_TRUE(start.Code().empty());
+  EXPECT_FALSE(model.WaitForRequests(1, 100ms));
+  std::string approval;
+  const auto deadline = std::chrono::steady_clock::now() + 3s;
+  while (approval.empty() && std::chrono::steady_clock::now() < deadline) {
+    const auto list = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+      return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+    });
+    for (const auto* item : *list.Value()->value_as_AccessList()->requests())
+      if (item->access() == A::Access::HelperScope) {
+        approval = item->id()->str();
+        EXPECT_NE(item->reason()->str().find("selected"), std::string::npos);
+        EXPECT_NE(item->reason()->str().find(R"("write_cards":[])"), std::string::npos);
+      }
+    if (approval.empty()) std::this_thread::sleep_for(10ms);
+  }
+  ASSERT_FALSE(approval.empty());
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(approval), true).Union();
+  }).Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(2));
+  WaitUntilIdle(conversation);
+  const auto snapshot = Get(conversation);
+  EXPECT_EQ(ListSize(snapshot.Value()->value_as_ConversationResult()->conversation()->helpers()), 1u);
+  EXPECT_NE(snapshot.View().find("Read only:"), std::string::npos);
+  EXPECT_EQ(model.Requests().size(), 2u);  // Only the helper; no parent model turn.
+  EXPECT_NE(model.Requests()[0].find("INSPECT_SKILL_SENTINEL"), std::string::npos);
+  EXPECT_NE(model.Requests()[1].find("Helper scope denied"), std::string::npos);
+  const auto access = Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+    return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
+  });
+  EXPECT_EQ(ListSize(access.Value()->value_as_AccessList()->grants()), 0u);
+  EXPECT_EQ(ListSize(access.Value()->value_as_AccessList()->requests()), 1u);
 }
 }  // namespace
 }  // namespace tsugumi::test

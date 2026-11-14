@@ -254,14 +254,14 @@ async function guideState() {
 
 // ---- Skills ----------------------------------------------------------------------
 
-interface Skill { name: string; description: string; path: string; source: string; source_folder: string; attachment_folder?: string; status: string }
+interface Skill { name: string; description: string; path: string; source: string; source_folder: string; attachment_folder?: string; status: string; scoped?: boolean; scope?: string[] }
 interface SkillListing { skills: Skill[]; folders: { path: string; status: string }[] }
 
 async function skillMetadata(project?: string, folders = settings().skillFolders.filter((f) => f.enabled).map((f) => f.path), conversationId?: string): Promise<SkillListing> {
   const result = await core.user.call<SkillListing>('SkillsListRequest', { project_path: project, folders, conversation_id: conversationId })
   return { ...result, skills: result.skills.map((s) => ({ ...s,
     description: s.path === 'builtin:demo' ? L('ツグミが画面を飛び回って、デモや画面の使い方を案内します') : s.description,
-    source: s.path === 'builtin:demo' ? 'Tsugumi' : s.source_folder === (project && path.join(project, 'skills')) ? L('プロジェクト') : path.basename(s.source_folder),
+    source: s.path.startsWith('builtin:') ? 'Tsugumi' : s.source_folder === (project && path.join(project, 'skills')) ? L('プロジェクト') : path.basename(s.source_folder),
   })) }
 }
 
@@ -593,6 +593,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
       selected_cards: Array.isArray(b.selectedCards) ? b.selectedCards.map(String) : [],
       selected_displays: Array.isArray(b.selectedDisplays) ? b.selectedDisplays.map(String) : [],
       skill_names: [...new Set(skillNames)],
+      scoped_skill: b.scopedSkill ? String(b.scopedSkill) : undefined,
       attached_resources: Array.isArray(b.attachedResources) ? b.attachedResources.map(String) : [],
     }))
       .catch((e) => host.events(a.id)({ kind: 'error', message: e.message }))
