@@ -553,6 +553,8 @@ private struct APISettings: View {
   @HostStorage("agent.model.openai") private var openAIModel = ProviderConfig.openAI.model
   @HostStorage("agent.fixturePort") private var port = 8765
   @HostStorage(AgentSettings.webSearchKey) private var webSearch = false
+  @HostStorage("agent.helperParallelism") private var helperParallelism = 4
+  @HostStorage("agent.allowUnscopedHelpers") private var allowUnscopedHelpers = false
 
   var body: some View {
     Form {
@@ -587,6 +589,19 @@ private struct APISettings: View {
         Text("Agent が確認なしに Card に与えてよい権限")
       } footer: {
         Text("オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+      Section {
+        Picker("同時に動かすヘルパーの数", selection: $helperParallelism) {
+          ForEach(1...8, id: \.self) { Text(String($0)).tag($0) }
+        }
+        Text("1 にすると、ヘルパーは順番に動きます。")
+          .font(.caption).foregroundStyle(.secondary)
+        Toggle("範囲を指定しないヘルパーを許可する", isOn: $allowUnscopedHelpers)
+      } header: {
+        Text("ヘルパー")
+      } footer: {
+        Text("オフにすると、各ヘルパーが読める Card と変更・実行できる Card を Agent が指定します。")
           .font(.caption).foregroundStyle(.secondary)
       }
       Section {

@@ -17,7 +17,10 @@ class DelegateContractTests(unittest.TestCase):
         self.assertEqual(set(arguments), set(schema["required"]))
         task_schema = schema["properties"]["tasks"]["items"]
         for task in arguments["tasks"]:
-            self.assertEqual(set(task), set(task_schema["required"]))
+            # The example shows the scope sets, which are optional in the schema
+            # (omitting both is the unscoped form a person has to enable).
+            self.assertLessEqual(set(task_schema["required"]), set(task))
+            self.assertLessEqual({"read_cards", "write_cards"}, set(task))
             self.assertLessEqual(set(task), set(task_schema["properties"]))
 
     def test_delegate_texts_do_not_promise_legacy_host_behaviors(self):
@@ -32,8 +35,12 @@ class DelegateContractTests(unittest.TestCase):
                           "delegate needs 2 to 8", "takes 2 to 8 tasks"):
                 with self.subTest(stale=stale):
                     self.assertNotIn(stale, text)
-        self.assertIn("Helpers may read the whole project", prompt)
-        self.assertIn("not an enforced write boundary", prompt)
+        # A helper's read and write sets are enforced by the core now.
+        for stale in ("Helpers may read the whole project", "not an enforced write boundary"):
+            with self.subTest(stale=stale):
+                self.assertNotIn(stale, prompt)
+        self.assertIn('"read_cards"', prompt)
+        self.assertIn('"write_cards"', prompt)
         self.assertIn("The core does not retry these failures for helpers", prompt)
 
 
