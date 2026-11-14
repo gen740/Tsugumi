@@ -80,6 +80,13 @@ table SkillsList { skills:[Skill]; folders:[SkillFolder]; }
 // a provider configuration; ordinary reads never need credentials.
 table ModelsListRequest { provider_id:string (required); refresh:bool; profile:string; account_profile:string; key_profile:string; }
 table HostProjectDefaultsRequest {}
+// Read the same regular files as project duplication: keep hidden definition
+// files, omit .git, .tsugumi and symbolic links at every depth. Bytes stay bytes.
+// Continuations split files across bounded replies, including binary files
+// larger than one service frame. The initial cursor is (0, 0).
+table HostProjectReadRequest { path:string (required); file_index:uint; offset:ulong; }
+table ProjectFile { path:string (required); bytes:[ubyte]; }
+table ProjectFiles { name:string (required); files:[ProjectFile]; next_file:uint; next_offset:ulong; complete:bool; }
 table HostProjectInfoRequest { path:string (required); }
 table HostProjectCreateRequest { parent:string (required); name:string (required); flow:string; }
 table HostProjectDuplicateRequest { path:string (required); parent:string (required); name:string (required); }
@@ -140,12 +147,12 @@ table ModelList { models:[Model]; }
 union RequestPayload {
   GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
-  RegisterProjectRequest, RegisterFolderRequest, SkillsListRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
+  RegisterProjectRequest, RegisterFolderRequest, SkillsListRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectReadRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
-  GuideState, EnvironmentState, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
+  GuideState, EnvironmentState, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectFiles, ProjectInfo, ProjectLocation, RecentProject,
   RecentList, DemoList, SkillsList, ModelList, Failure:Tsugumi.Service.Failure
 }
 table Reply { value:ReplyPayload; }
