@@ -131,6 +131,14 @@ auto Populate(const f::path& destination, Write write) -> std::string {
 }
 }  // namespace
 
+auto ProjectDisplayName(const std::filesystem::path& folder) -> std::string {
+  try {
+    return json::Text(json::Object(Info(folder)), "name");
+  } catch (const std::exception&) {
+    return folder.filename().string();
+  }
+}
+
 auto Projects::Handles(A::RequestPayload type) -> bool {
   return type >= A::RequestPayload::HostProjectDefaultsRequest &&
          type <= A::RequestPayload::HostRecentForgetRequest;

@@ -450,6 +450,61 @@ import TsugumiRPC
     }
   }
 
+  @Test func copiedProjectsNeverRestoreEachOthersChatOrPermission() async throws {
+    try await withFixture(slow: 0) { t in
+      let original = t.makeChat()
+      try await until("copy A is open") { original.currentId == t.conversationID }
+      try await t.send("Only copy A")
+      let project = try #require(t.session.endpointOverride)
+      _ = try await CoreAgentClient.shared.call("AccessRequest", ["project_id": project.projectId,
+        "conversation_id": t.conversationID, "access": "Read", "scope": "Conversation", "reason": "Read project content"])
+      let copied = t.directory.appendingPathComponent("copy-b")
+      // A distinct project copies definitions, without the original project's conversation store.
+      try FileManager.default.createDirectory(at: copied, withIntermediateDirectories: true)
+      for source in try FileManager.default.contentsOfDirectory(at: t.session.identity.url, includingPropertiesForKeys: nil)
+        where source.lastPathComponent != ".tsugumi" {
+        try FileManager.default.copyItem(at: source, to: copied.appendingPathComponent(source.lastPathComponent))
+      }
+      let identity = try ProjectIdentity(url: copied)
+      #expect(identity.id != t.session.identity.id)
+      let second = ProjectSession(identity: identity, environments: t.session.environments)
+      let projectID = UUID().uuidString.lowercased()
+      second.endpointOverride = Endpoint(url: project.url, token: project.token, projectId: projectID, serverInstanceId: project.serverInstanceId)
+      _ = try await CoreAgentClient.shared.call("RegisterProjectRequest", ["project_id": projectID,
+        "endpoint": project.url.absoluteString, "token": project.token, "title": "copy-b", "path": copied.path])
+      let chat = ChatController(session: second, connection: { .fixture })
+      t.keep(chat)
+      try await until("copy B has its own conversation") { !chat.currentId.isEmpty }
+      #expect(chat.currentId != t.conversationID)
+      #expect(chat.sessions.isEmpty && chat.items.isEmpty && chat.permissionPrompt == nil)
+      #expect(await chat.search("Only copy A").isEmpty)
+      chat.select(t.conversationID)
+      try await until("an explicit cross-project selection is refused") { chat.status?.contains("original project") == true }
+      #expect(chat.items.isEmpty && chat.permissionPrompt == nil)
+      let saved = try await t.snapshot()
+      #expect(saved["project_id"] as? String == project.projectId)
+    }
+  }
+
+  @Test func theChatModelFollowsSettingsEditedOutsideItsWindow() async throws {
+    try await withFixture(slow: 0) { t in
+      let chat = ChatController(session: t.session)
+      t.keep(chat)
+      let settings = try await CoreAgentClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
+      _ = try await CoreAgentClient.shared.call("SettingsUpdateRequest", ["profile": "desktop", "revision": settings["revision"]!,
+        "changes": [["key": "agent.provider", "value_json": "\"chatgpt\""],
+                    ["key": "agent.model.chatgpt", "value_json": "\"gpt-6.1-terra\""]]])
+      // Opening the panel/menu or activating its window reads once, with no timer.
+      await chat.refreshModelSettings()
+      #expect(chat.displayedProvider.model == "gpt-6.1-terra")
+      #expect(chat.displayedProvider.auth == .chatGPT)
+      let menu = ModelMenu()
+      menu.setContents(connections: [.init(id: "chatgpt", name: String(localized: "ChatGPT プラン"), models: ["gpt-6.1-sol", "gpt-6.1-terra"])],
+        provider: "chatgpt", model: chat.displayedProvider.model, names: [:])
+      #expect(menu.menu.items.filter { $0.state == .on && $0.title.hasPrefix("gpt-") }.map(\.title) == ["gpt-6.1-terra"])
+    }
+  }
+
   @Test func theChatFollowsTheOpenSession() async throws {
     try await withFixture(slow: 0) { t in
       let back = try t.makeSession()

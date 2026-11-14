@@ -17,12 +17,13 @@ struct ChatPanel: View {
   @State private var showList = false
   @State private var query = ""
   @State private var input = ""
-  @State private var model = AgentSettings.current().model
+  private var model: String { chat.displayedProvider.model }
+  private var displayedProviderID: String {
+    let c = chat.displayedProvider
+    return c.auth == .chatGPT ? "chatgpt" : c.auth == .none ? "fixture" : c.api == .openAIResponses ? "openai" : "anthropic"
+  }
   /// The connection chosen in Settings > API: the model menu follows it when it changes.
   @HostStorage("agent.provider") private var providerSetting = "anthropic"
-  /// The model menu's effort and Fast mode (AgentSettings.chat() reads them).
-  @HostStorage(AgentSettings.effortKey) private var effortSetting = ""
-  @HostStorage(AgentSettings.fastModelKey) private var fastModelSetting = ""
   /// The connections set up (keys stored, ChatGPT signed in) with their models.
   @State private var connections: [Connection] = []
   struct Connection: Identifiable {
@@ -62,7 +63,7 @@ struct ChatPanel: View {
     }
     .background(Color(nsColor: .windowBackgroundColor))
     .sheet(item: Binding(get: { detached ? chat.permissionPrompt : nil }, set: { _ in })) { p in
-      PermissionPromptView(prompt: p) { allow, always in chat.answerPermissions(id: p.id, allow: allow, always: always) }
+      PermissionPromptView(prompt: p) { allow, always, selected in chat.answerPermissions(id: p.id, allow: allow, always: always, selected: selected) }
     }
   }
 
@@ -410,6 +411,10 @@ struct ChatPanel: View {
     }
     .padding(10)
     .task {
+      modelMenu.beforeOpen = {
+        await chat.refreshModelSettings()
+        showConnections(chatGPT: connections.contains { $0.id == "chatgpt" })
+      }
       modelMenu.onOpen = { refreshModels() }
       modelMenu.onChoose = { provider, m in choose(provider, m) }
       UIScript.shared.modelMenu = modelMenu
@@ -422,8 +427,15 @@ struct ChatPanel: View {
         showChoices()
       }
       await loadModels()
+      await chat.refreshModelBinding()
+    }
+    .onChange(of: shown) { if shown { Task { await chat.refreshModelSettings() } } }
+    .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+      guard let window = notification.object as? NSWindow, window === modelMenu.anchor?.window else { return }
+      Task { await chat.refreshModelSettings() }
     }
     .onDisappear {
+      modelMenu.beforeOpen = nil
       modelMenu.onOpen = nil
       modelMenu.onChoose = nil
       modelMenu.onEffort = nil
@@ -431,6 +443,7 @@ struct ChatPanel: View {
     }
     // Settings > API switched the connection (ChatGPT, OpenAI, Anthropic): its model and list.
     .onChange(of: providerSetting) { Task { await loadModels() } }
+    .onChange(of: chat.displayedProvider) { showConnections(chatGPT: connections.contains { $0.id == "chatgpt" }) }
     .confirmationDialog("思考の過程を描きますか？", isPresented: $askThoughts) {
       Button("描く") { drawThoughtsAsked = true; drawThoughts = true }
       Button("キャンセル", role: .cancel) {}
@@ -537,36 +550,33 @@ struct ChatPanel: View {
   /// Everything saved, on the panel and in the menu. Without waiting for
   /// anything, as the main actor does not run while the menu is open.
   private func showConnections(chatGPT: Bool) {
-    let current = AgentSettings.current().model
+    let current = model
     let names = Dictionary(ModelCatalogSnapshot.shared.models("chatgpt").map { ($0.id, $0.name) }, uniquingKeysWith: { a, _ in a })
     var out: [Connection] = []
     func add(_ id: String, _ name: String) {
       let chosen = AgentSettings.config(for: id).model
       let listed = ModelCatalogSnapshot.shared.models(id).map(\.id)
-      out.append(Connection(id: id, name: name, models: Array(Set(listed + [chosen])).sorted()))
+      out.append(Connection(id: id, name: name, models: Array(Set(listed + [chosen] + (id == displayedProviderID ? [current] : []))).sorted()))
     }
     if ProviderCredentials.exists(account: ProviderConfig.anthropic.name) { add("anthropic", "Anthropic API") }
     if ProviderCredentials.exists(account: ProviderConfig.openAI.name) { add("openai", "OpenAI API") }
-    if chatGPT { add("chatgpt", "ChatGPT プラン") }
+    if chatGPT || (chat.busy && displayedProviderID == "chatgpt") { add("chatgpt", String(localized: "ChatGPT プラン")) }
     if providerSetting == "fixture" { add("fixture", "Local fixture") }
-    model = current
     modelNames = names
     connections = out
-    modelMenu.setContents(connections: out, provider: providerSetting, model: current, names: names)
+    modelMenu.setContents(connections: out, provider: displayedProviderID, model: current, names: names)
     showChoices()
   }
 
   /// What the requests carry, in the menu.
   private func showChoices() {
-    let c = AgentSettings.chat()
+    let c = chat.displayedProvider
     modelMenu.setChoices(effort: c.effort, fast: c.fast)
   }
 
   /// The model with what its requests carry beyond the defaults.
   private var modelLabel: String {
-    var c = AgentSettings.config(for: providerSetting)
-    c.model = model
-    c = c.choosing(effort: effortSetting, fastModel: fastModelSetting)
+    let c = chat.displayedProvider
     return ([modelName(model), c.effort, c.fast ? "Fast" : nil] as [String?]).compactMap { $0 }.joined(separator: " · ")
   }
 
@@ -602,9 +612,7 @@ struct ChatPanel: View {
   private func choose(_ provider: String, _ m: String) {
     CorePreferences.shared.set(m, forKey: AgentSettings.modelKey(provider))
     providerSetting = provider
-    model = m
-    modelMenu.setCurrent(provider: provider, model: m)
-    showChoices()
+    showConnections(chatGPT: connections.contains { $0.id == "chatgpt" })
     GuideController.shared.refreshAvailability()
   }
 
@@ -667,8 +675,22 @@ struct ToolStep {
 
   private var verb: (running: String, done: String) {
     let n = name.lowercased()
+    if n == "project_reload" { return (String(localized: "プロジェクトを再読込しています"), String(localized: "プロジェクトを再読込")) }
+    if n == "project_shell" { return (String(localized: "シェルコマンドを実行しています"), String(localized: "シェルコマンドを実行")) }
+    if n == "card_s_d_k_prepare" { return (String(localized: "Card SDK を準備しています"), String(localized: "Card SDK を準備")) }
+    if n == "layout_arrange" || n == "layout_untangle" { return (String(localized: "配置を整えています"), String(localized: "配置を整理")) }
+    if n == "project_cache_clear" { return (String(localized: "ビルドキャッシュを削除しています"), String(localized: "ビルドキャッシュを削除")) }
+    if n == "version_checkout" { return (String(localized: "版を切り替えています"), String(localized: "版を切替")) }
+    if n == "version_init" || n == "version_mark" { return (String(localized: "版を記録しています"), String(localized: "版を記録")) }
+    if n == "card_id" { return (String(localized: "Card の識別子を予約しています"), String(localized: "Card の識別子を予約")) }
+    if n == "artifact_list" { return (String(localized: "出力を一覧しています"), String(localized: "出力を一覧")) }
+    if n == "project_file_list" { return (String(localized: "ファイルを一覧しています"), String(localized: "ファイルを一覧")) }
+    if n == "demo_list" { return (String(localized: "デモを一覧しています"), String(localized: "デモを一覧")) }
+    if n == "operation_approval" { return (String(localized: "操作の承認を待っています"), String(localized: "操作の承認")) }
+    if n == "guide_show" { return (String(localized: "案内を表示しています"), String(localized: "案内を表示")) }
     if n == "delegate" { return (String(localized: "手分けして進めています"), String(localized: "手分けして進めました")) }
     if n == "web_search" { return (String(localized: "Web を検索しています"), String(localized: "Web を検索")) }
+    if ["project_file_stat", "output_types", "version_graph", "version_canvas", "version_diff", "nix_source_resolve", "project_cache_usage"].contains(n) { return (String(localized: "確認しています"), String(localized: "確認")) }
     if n.contains("save") || n.contains("put") || n.contains("write") { return (String(localized: "変更を保存しています"), String(localized: "変更を保存")) }
     if n.contains("run") && !n.contains("status") { return (String(localized: "実行しています"), String(localized: "実行")) }
     if n.contains("read") || n.contains("inspect") || n.contains("get") { return (String(localized: "確認しています"), String(localized: "確認")) }
