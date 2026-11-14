@@ -23,6 +23,7 @@ import { Icon } from './icons'
 import { FolderPicker } from './sidebar'
 import { SymbolPicker } from './symbolPicker'
 import { L } from '../i18n'
+import { RevisionEdit, RevisionEditNotice } from './revisionEdit'
 
 /** Whether a source file's content is known. A file that could not be read
  *  is never shown or treated as an empty file. */
@@ -30,8 +31,8 @@ export type SourceLoad = { state: 'loading' } | { state: 'loaded' } | { state: '
 
 /** Local working copy of one Card. It follows what changes elsewhere while it
  *  is open (the Agent, the canvas): settings and files not touched here take
- *  the new content; those changed on both sides are listed as conflicts, and
- *  applying keeps what was edited here. */
+ *  the new content; changes on both sides require an explicit overwrite or
+ *  reload choice. */
 export class CardEditorModel extends Observable {
   definition?: J
   meta?: J
@@ -41,6 +42,7 @@ export class CardEditorModel extends Observable {
   created = new Set<string>()
   message?: string
   applying = false
+  readonly revisionEdit = new RevisionEdit()
   /** Settings and files changed both here and elsewhere since the copy was taken. */
   conflicts: string[] = []
   /** Category shown in the window (kept with the model, so edits and the place survive switching). */
@@ -97,7 +99,7 @@ export class CardEditorModel extends Observable {
     const prefix = this.prefix
     const files = this.session.sourcePaths.filter((p) => p.startsWith(prefix)).map((p) => `${p}=${this.session.sources.get(p)?.hash ?? '-'}`)
     const ser = (v: J | undefined) => (v === undefined ? '' : serialize(v, false))
-    return [ser(this.session.cardDefinition(this.cardKey)), ser(this.session.cardMeta(this.cardKey))].join('\u0001') + files.join(';')
+    return [String(this.session.rev), ser(this.session.cardDefinition(this.cardKey)), ser(this.session.cardMeta(this.cardKey))].join('\u0001') + files.join(';')
   }
 
   /** Takes the project's current state as the new base. After an apply
@@ -125,6 +127,7 @@ export class CardEditorModel extends Observable {
     this.created = new Set()
     this.message = undefined
     this.conflicts = []
+    this.revisionEdit.reload(this.session.rev)
     this.changed()
   }
 
@@ -169,7 +172,14 @@ export class CardEditorModel extends Observable {
         any = true
       }
     }
-    if (found.length) this.conflicts = [...new Set([...this.conflicts, ...found])].sort()
+    for (const p of new Set([...this.removed, ...this.created])) {
+      if (this.baseHashes.get(p) !== this.session.sources.get(p)?.hash) found.push(p.slice(this.prefix.length))
+    }
+    if (found.length) {
+      this.conflicts = [...new Set([...this.conflicts, ...found])].sort()
+      this.revisionEdit.conflict(this.session.rev)
+    }
+    this.revisionEdit.baseRev = this.session.rev
     if (any || found.length) this.changed()
   }
 
@@ -249,6 +259,8 @@ export class CardEditorModel extends Observable {
     const p = prefix + rel
     this.removed.delete(p)
     this.created.add(p)
+    const hash = this.session.sources.get(p)?.hash
+    if (hash) this.baseHashes.set(p, hash)
     this.texts.set(p, text)
     this.loads.set(p, { state: 'loaded' })
     this.changed()
@@ -271,6 +283,8 @@ export class CardEditorModel extends Observable {
   }
 
   removeFile(p: string) {
+    const hash = this.session.sources.get(p)?.hash
+    if (hash && !this.baseHashes.has(p)) this.baseHashes.set(p, hash)
     if (this.created.has(p)) this.created.delete(p)
     else this.removed.add(p)
     this.texts.delete(p)
@@ -291,8 +305,13 @@ export class CardEditorModel extends Observable {
     this.changed()
   }
 
+  get recoveryText(): string {
+    return `_card.json\n${this.definition === undefined ? '' : serialize(this.definition)}\n_meta.json\n${this.meta === undefined ? '' : serialize(this.meta)}` +
+      [...this.texts].map(([p, t]) => `\n${p}\n${t}`).join('') + [...this.removed].map((p) => `\n- ${p}`).join('')
+  }
+
   /** Copies the working copy into the project as one undoable edit (saved at once). */
-  async apply(): Promise<boolean> {
+  async apply(overwrite = false): Promise<boolean> {
     const session = this.session
     if (!session.isEditable) {
       this.message = L('実行中は Card を変更できません。実行が終わってから適用してください。')
@@ -307,13 +326,12 @@ export class CardEditorModel extends Observable {
     const gone = [...this.removed]
     const bases = new Map(this.baseHashes)
     const clashing = new Set(this.conflicts)
-    session.edit((x) => {
-      const d = x.cardDefinitionDraft(k)
+    const ok = await this.revisionEdit.apply(session, overwrite, (x) => {
+      const current = x.cardDefinitionDraft(k)
+      const d = current ?? { card: def ?? obj(), meta: m }
       // A Card in Card has no settings of its own, but a _meta.json like any other.
-      if (d) {
-        const card = d.link === undefined && def !== undefined ? def : d.card
-        if (!jeq(card, d.card) || !jeq(m, d.meta)) x.setCardDefinition(k, { ...cloneDef(d), card: clone(card), meta: clone(m) })
-      }
+      const card = d.link === undefined && def !== undefined ? def : d.card
+      if (!current || !jeq(card, d.card) || !jeq(m, d.meta)) x.setCardDefinition(k, { ...cloneDef(d), card: clone(card), meta: clone(m) })
       for (const [p, t] of changedTexts) {
         x.putSource(p, t)
         // Saved against the version this editor read (a file changed on both
@@ -324,17 +342,12 @@ export class CardEditorModel extends Observable {
       for (const p of gone) {
         x.removeSource(p)
         const h = bases.get(p)
-        if (h) x.sourceBases.set(p, h)
+        if (h && !clashing.has(p.slice(prefix.length))) x.sourceBases.set(p, h)
       }
     })
-    await session.save()
     this.applying = false
-    if (session.saveError) {
-      this.message = L('保存できませんでした: ') + session.saveError
-      this.changed()
-      return false
-    }
-    this.reload(true)
+    if (!ok) { this.changed(); return false }
+    this.reload(this.revisionEdit.savedRev === session.rev)
     this.message = L('適用しました。')
     this.changed()
     return true
@@ -385,7 +398,7 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
   const token = model.followToken
   useEffect(() => model.follow(), [token, model])
 
-  if (!model.exists) {
+  if (!model.exists && !model.unapplied) {
     return <Empty title={L('Card が見つかりません')} icon="questionmark.square.dashed" description={L('{0} は削除されたか、まだ保存されていません。', model.cardKey)} />
   }
   const renamed = (to: CardKey) => {
@@ -435,13 +448,8 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
           {category === 'artifacts' && <CardArtifactsView session={session} cardKey={model.cardKey} />}
           {category === 'context' && <ContextCategory model={model} />}
         </div>
-        {model.conflicts.length > 0 && (
-          <div className="cse-conflicts">
-            <Icon name="exclamationmark.triangle.fill" style={{ color: 'var(--orange)' }} />
-            <span className="callout flex1">{L('別の場所でも変更されました: {0}。適用するとここでの編集が残ります。', model.conflicts.join(', '))}</span>
-            <Button onClick={() => setConfirmReload(true)}>{L('最新を読み込む')}</Button>
-          </div>
-        )}
+        <RevisionEditNotice edit={model.revisionEdit} text={() => model.recoveryText}
+          overwrite={() => void model.apply(true)} reload={() => model.reload()} />
         <div className="cse-footer">
           {model.unapplied && <span className="label" style={{ color: 'var(--orange)' }}><Icon name="pencil.circle.fill" />{L('未適用の変更')}</span>}
           {model.message ? <span className="callout clamp2 selectable" style={{ color: session.saveError ? 'var(--red)' : 'var(--secondary)' }}>{model.message}</span>
@@ -1085,7 +1093,10 @@ function CommentRecord({ comment: c }: { comment: CardComment }) {
  *  (during a run, when the run ends, as other edits): it says nothing about how it runs. */
 function CommentsCategory({ session, card }: { session: ProjectSession; card: CardKey }) {
   useObserve(session)
+  const baseRev = session.rev
   const [text, setText] = useState('')
+  const [revisionEdit] = useState(() => new RevisionEdit())
+  useObserve(revisionEdit)
   const [editing, setEditing] = useState<{ id: string; text: string }>()
   const comments = session.comments(card)
   const open = comments.filter((c) => !c.resolved), resolved = comments.filter((c) => c.resolved)
@@ -1093,9 +1104,10 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
     session.addComment(card, text)
     setText('')
   }
-  const saveEdit = () => {
-    if (editing) session.editComment(card, editing.id, editing.text)
-    setEditing(undefined)
+  const saveEdit = async (overwrite = false) => {
+    if (!editing) return
+    const copy = editing
+    if (await revisionEdit.apply(session, overwrite, (x) => x.setCommentText(card, copy.id, copy.text))) setEditing(undefined)
   }
   const submitting = (run: () => void) => (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
@@ -1108,10 +1120,10 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
     <div key={c.id} className="cse-comment col gap6" data-comment={c.id}>
       {editing?.id === c.id ? (
         <>
-          <TextField multiline rows={3} autoFocus value={editing.text} onChange={(t) => setEditing({ id: c.id, text: t })} onKeyDown={submitting(saveEdit)} />
+          <TextField multiline rows={3} autoFocus value={editing.text} onChange={(t) => setEditing({ id: c.id, text: t })} onKeyDown={submitting(() => void saveEdit())} />
           <div className="row end gap6">
             <Button small onClick={() => setEditing(undefined)}>{L('キャンセル')}</Button>
-            <Button small kind="prominent" disabled={!editing.text.trim() || !session.connected} onClick={saveEdit}>{L('保存')}</Button>
+            <Button small kind="prominent" disabled={!editing.text.trim() || !session.connected} onClick={() => void saveEdit()}>{L('保存')}</Button>
           </div>
         </>
       ) : (
@@ -1126,7 +1138,7 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
             </div>
           )}
           <div className="row end gap6">
-            <Button small disabled={!session.connected} onClick={() => setEditing({ id: c.id, text: c.text })}>{L('編集')}</Button>
+            <Button small disabled={!session.connected} onClick={() => { revisionEdit.reload(baseRev); setEditing({ id: c.id, text: c.text }) }}>{L('編集')}</Button>
             {c.resolved
               ? <Button small disabled={!session.connected} onClick={() => session.setCommentResolved(card, c.id, false)}>{L('開き直す')}</Button>
               : <Button small disabled={!session.connected} onClick={() => session.setCommentResolved(card, c.id, true)}>{L('解決')}</Button>}
@@ -1143,6 +1155,12 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
       <div className="row end">
         <Button kind="prominent" disabled={!text.trim() || !session.connected} help="⌘Return" onClick={add}>{L('コメントを追加')}</Button>
       </div>
+      <RevisionEditNotice edit={revisionEdit} text={() => editing?.text ?? ''} overwrite={() => void saveEdit(true)} reload={() => {
+        const current = comments.find((c) => c.id === editing?.id)
+        setEditing(current ? { id: current.id, text: current.text } : undefined)
+        revisionEdit.reload(session.rev)
+      }} />
+      {editing && !comments.some((c) => c.id === editing.id) && row({ ...editing, resolved: false, cards: [] })}
       {open.map(row)}
       {resolved.length > 0 && <Disclosure label={L('解決済み（{0}）', resolved.length)}><div className="col gap6">{resolved.map(row)}</div></Disclosure>}
     </div>

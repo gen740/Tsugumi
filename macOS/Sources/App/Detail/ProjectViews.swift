@@ -17,6 +17,7 @@ struct CardDatabaseView: View {
   @State private var metaText = ""
   @State private var baseCard = ""
   @State private var baseMeta = ""
+  @State private var revisionEdit = RevisionEdit()
   @State private var parseError: String?
   @State private var message: String?
 
@@ -64,7 +65,7 @@ struct CardDatabaseView: View {
   }
 
   @ViewBuilder private var detail: some View {
-    if let id = selected, session.definitions[id] != nil {
+    if let id = selected {
       let unapplied = cardText != baseCard || metaText != baseMeta
       VStack(alignment: .leading, spacing: 8) {
         HStack {
@@ -77,6 +78,8 @@ struct CardDatabaseView: View {
         CodeEditor(text: $cardText, language: "json").frame(minHeight: 180)
         Text("_meta.json（説明・計画・追加コンテキスト、任意）").font(.headline)
         CodeEditor(text: $metaText, language: "json").frame(minHeight: 80, maxHeight: 140)
+        RevisionEditNotice(edit: revisionEdit, text: { "_card.json\n" + cardText + "\n_meta.json\n" + metaText },
+                           overwrite: { Task { await apply(id, overwrite: true) } }, reload: { load() })
         if let parseError { Label(parseError, systemImage: "xmark.octagon").foregroundStyle(.red) }
         if let message { Text(message).font(.callout).foregroundStyle(.secondary) }
         HStack {
@@ -91,7 +94,7 @@ struct CardDatabaseView: View {
             .help(session.unplacedDefinitions.contains(id) ? "定義とソースを削除" : "Card を削除すると定義も削除されます")
           Spacer()
           Button("再読込") { load() }
-          Button("適用") { Task { await apply(id) } }.disabled(!unapplied || !session.isEditable)
+          Button("適用") { Task { await apply(id) } }.disabled(!unapplied || revisionEdit.applying || !session.isEditable)
         }
       }
       .padding(12)
@@ -106,6 +109,7 @@ struct CardDatabaseView: View {
     metaText = session.definitionMeta[id]?.serialized() ?? ""
     baseCard = cardText
     baseMeta = metaText
+    revisionEdit.reload(session.rev)
     parseError = nil
     message = nil
   }
@@ -115,15 +119,19 @@ struct CardDatabaseView: View {
     message = String(localized: "\(k) を Workflow に配置しました（未保存）。")
   }
 
-  private func apply(_ id: String) async {
+  private func apply(_ id: String, overwrite: Bool = false) async {
     do {
       let card = try JSONValue.parse(cardText)
       let meta = metaText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : try JSONValue.parse(metaText)
       parseError = nil
-      session.edit { $0.setDefinition(id, card: card, meta: meta) }
-      await session.save()
-      message = session.saveError.map { String(localized: "保存できませんでした: \($0)") } ?? String(localized: "適用しました（revision \(session.rev)）。")
+      guard await revisionEdit.apply(session, overwrite: overwrite, { s in
+        var d = s.cardDefinitionDraft(key([id])) ?? DefinitionDraft(card: card, meta: meta)
+        if d.link == nil { d.card = card }
+        d.meta = meta
+        s.setCardDefinition(key([id]), d)
+      }) else { return }
       load()
+      message = String(localized: "適用しました（revision \(session.rev)）。")
     } catch {
       parseError = String(localized: "JSON として読めません: \(String(describing: error))")
     }
@@ -156,13 +164,16 @@ private struct NixSourceSettings: View {
   @State private var found: Found?
   @State private var working = false
   @State private var message: String?
+  @State private var revisionEdit = RevisionEdit()
+  @State private var pending: [JSONValue]?
 
   private var sources: [JSONValue] { session.project["nixSources"]?.array ?? [] }
   private func entry(_ name: String, _ ref: String) -> JSONValue {
     .object([("name", .string(name)), ("type", .string("flake")), ("ref", .string(ref))])
   }
 
-  private func resolve(_ ref: String) async -> (ref: String, packages: [String])? {
+  private func resolve(_ ref: String, baseRev: UInt64) async -> (ref: String, packages: [String])? {
+    revisionEdit.reload(baseRev)
     working = true
     message = nil
     defer { working = false }
@@ -175,15 +186,18 @@ private struct NixSourceSettings: View {
     }
   }
 
-  private func save(_ list: [JSONValue]) async {
-    session.edit { $0.project["nixSources"] = .array(list) }
-    await session.save()
-    message = session.saveError.map { String(localized: "保存できませんでした: \($0)") }
+  private func save(_ list: [JSONValue], overwrite: Bool = false) async {
+    pending = list
+    if await revisionEdit.apply(session, overwrite: overwrite, { $0.project["nixSources"] = .array(list) }) {
+      pending = nil
+    }
   }
 
   private var taken: Bool { found.map { f in sources.contains { $0["name"]?.string == f.name } } ?? false }
 
   var body: some View {
+    let baseRev = session.rev
+    let shownSources = sources
     Section {
       ForEach(sources.indices, id: \.self) { i in
         let name = sources[i]["name"]?.string ?? ""
@@ -194,8 +208,9 @@ private struct NixSourceSettings: View {
               .font(.caption.monospaced()).foregroundStyle(.secondary).help(ref)
             Button("更新") {
               Task {
-                guard let r = await resolve(NixSources.unlockedRef(ref)) else { return }
-                await save(sources.map { source in
+                let baseSources = shownSources
+                guard let r = await resolve(NixSources.unlockedRef(ref), baseRev: baseRev) else { return }
+                await save(baseSources.map { source in
                   guard source["name"]?.string == name else { return source }
                   var updated = source
                   updated["ref"] = .string(r.ref)
@@ -204,7 +219,7 @@ private struct NixSourceSettings: View {
               }
             }
             Button("削除", role: .destructive) {
-              Task { await save(sources.filter { $0["name"]?.string != name }) }
+              Task { revisionEdit.reload(baseRev); await save(shownSources.filter { $0["name"]?.string != name }) }
             }
           }
           .disabled(working || !session.isEditable)
@@ -216,7 +231,7 @@ private struct NixSourceSettings: View {
         Button("取得") {
           let ref = address.trimmingCharacters(in: .whitespaces)
           Task {
-            if let r = await resolve(ref) { found = Found(name: NixSources.sourceName(ref), ref: r.ref, packages: r.packages) }
+            if let r = await resolve(ref, baseRev: baseRev) { found = Found(name: NixSources.sourceName(ref), ref: r.ref, packages: r.packages) }
           }
         }
         .disabled(working || address.trimmingCharacters(in: .whitespaces).isEmpty || !session.isEditable)
@@ -232,7 +247,7 @@ private struct NixSourceSettings: View {
         HStack {
           Button("追加") {
             Task {
-              await save(sources + [entry(f.name, f.ref)])
+              await save(shownSources + [entry(f.name, f.ref)])
               found = nil
               address = ""
             }
@@ -241,6 +256,9 @@ private struct NixSourceSettings: View {
           if taken { Text("同じ名前があります").font(.caption).foregroundStyle(.secondary) }
         }
       }
+      RevisionEditNotice(edit: revisionEdit, text: { JSONValue.array(pending ?? []).serialized() },
+                         overwrite: { if let pending { Task { await save(pending, overwrite: true) } } },
+                         reload: { pending = nil; revisionEdit.reload(session.rev) })
       if let message { Text(message).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
     } header: {
       Text("外部ソース")
@@ -256,6 +274,7 @@ private struct GeneralProjectSettings: View {
   @State private var name = ""
   @State private var pkgs = ""
   @State private var message: String?
+  @State private var revisionEdit = RevisionEdit()
 
   var body: some View {
     let changed = name != (session.project["name"]?.string ?? "") || pkgs != (session.project["pkgsPath"]?.string ?? "")
@@ -277,28 +296,34 @@ private struct GeneralProjectSettings: View {
         NixSourceSettings(session: session)
       }
       .formStyle(.grouped)
+      RevisionEditNotice(edit: revisionEdit, text: { "name: \(name)\npkgsPath: \(pkgs)" },
+                         overwrite: { Task { await save(overwrite: true) } }, reload: { load() })
+        .padding(.horizontal, 12)
       HStack {
         if let message { Text(message).font(.callout).foregroundStyle(.secondary) }
         Spacer()
         Button("保存") {
-          session.edit { s in
-            s.project["name"] = .string(name)
-            s.project["pkgsPath"] = .string(pkgs.isEmpty ? "tsugumi:default" : pkgs)
-          }
-          Task {
-            await session.save()
-            message = session.saveError ?? String(localized: "保存しました。")
-          }
+          Task { await save() }
         }
-        .disabled(!changed || !session.isEditable)
+        .disabled(!changed || revisionEdit.applying || !session.isEditable)
         .keyboardShortcut(.defaultAction)
       }
       .padding(12)
     }
-    .onAppear {
-      name = session.project["name"]?.string ?? ""
-      pkgs = session.project["pkgsPath"]?.string ?? ""
-    }
+    .onAppear { load() }
+  }
+
+  private func load() {
+    name = session.project["name"]?.string ?? ""
+    pkgs = session.project["pkgsPath"]?.string ?? ""
+    revisionEdit.reload(session.rev)
+  }
+
+  private func save(overwrite: Bool = false) async {
+    if await revisionEdit.apply(session, overwrite: overwrite, { s in
+      s.project["name"] = .string(name)
+      s.project["pkgsPath"] = .string(pkgs.isEmpty ? "tsugumi:default" : pkgs)
+    }) { load(); message = String(localized: "保存しました。") }
   }
 }
 
@@ -328,18 +353,22 @@ private struct RunHistorySettings: View {
   @State private var message: String?
   @State private var failed = false
   @State private var confirm = false
+  @State private var revisionEdit = RevisionEdit()
+  @State private var pendingSaving = true
 
   private var saving: Binding<Bool> {
-    Binding(
+    let baseRev = session.rev
+    return Binding(
       get: { session.project["saveRunHistory"]?.bool ?? true },
       set: { on in
-        session.edit { $0.project["saveRunHistory"] = .bool(on) }
-        Task {
-          await session.save()
-          failed = session.saveError != nil
-          message = session.saveError.map { String(localized: "保存できませんでした: \($0)") }
-        }
+        revisionEdit.reload(baseRev)
+        pendingSaving = on
+        Task { await saveHistorySetting() }
       })
+  }
+
+  private func saveHistorySetting(overwrite: Bool = false) async {
+    _ = await revisionEdit.apply(session, overwrite: overwrite) { $0.project["saveRunHistory"] = .bool(pendingSaving) }
   }
 
   var body: some View {
@@ -361,6 +390,10 @@ private struct RunHistorySettings: View {
         }
       }
       .formStyle(.grouped)
+      RevisionEditNotice(edit: revisionEdit, text: { "saveRunHistory: \(pendingSaving)" },
+                         overwrite: { Task { await saveHistorySetting(overwrite: true) } },
+                         reload: { revisionEdit.reload(session.rev) })
+        .padding(.horizontal, 12)
       HStack {
         if let message { Text(message).font(.callout).foregroundStyle(failed ? .red : .secondary).textSelection(.enabled) }
         Spacer()

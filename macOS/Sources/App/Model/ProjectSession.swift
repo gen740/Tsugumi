@@ -1297,9 +1297,61 @@ final class ProjectSession {
     saving = true
     defer { saving = false }
     let base = draftBase ?? makeBase()
-    // While a run is active the core takes layout changes only.
     let layoutOnly = runActive && computationDirty
     savingAfterRun = layoutOnly
+    let (changes, sent, merged) = prepareSave(layoutOnly: layoutOnly, base: base)
+    guard !changes.isEmpty else {
+      if !layoutOnly { forgetSaved(sent, layoutOnly: false, merged: [:]) }
+      return
+    }
+    let op = UUID()
+    do {
+      let renames = layoutOnly ? [] : pendingCardRenames
+      try await commitChanges(baseRev: base.rev, op: op, changes: changes, renamed: renames)
+      if !renames.isEmpty { pendingCardRenames.removeFirst(min(renames.count, pendingCardRenames.count)) }
+      saveError = nil
+      conflictRetries = 0
+      forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
+    } catch let f as RPCFailure {
+      switch f.kind {
+      case .revisionConflict, .hashConflict:
+        if f.kind == .hashConflict, let p = f.args["path"], !isExternalDocument(p) {
+          // A file this window edited was changed elsewhere too: kept, not merged.
+          saveError = String(localized: "\(p) は別の場所でも変更されたため保存していません。変更は保持しています。")
+          return
+        }
+        guard conflictRetries < 8 else {
+          conflictRetries = 0
+          saveError = String(localized: "他の変更と重なり保存できませんでした。変更は保持しています。")
+          return
+        }
+        // Newer changes are on their way (DocPatched): merge them in and try again.
+        conflictRetries += 1
+        let want = f.currentRev ?? rev + 1
+        for _ in 0..<40 where rev < want { try? await Task.sleep(for: .milliseconds(50)) }
+        try? await Task.sleep(for: .milliseconds(30 * conflictRetries))
+        saveAgain = true
+      case .busy:
+        savingAfterRun = true
+      case .externalChange:
+        saveError = String(localized: "\(f.args["path"] ?? "ファイル") が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。")
+      default:
+        saveError = f.description
+      }
+    } catch {
+      // The reply may have been lost after the save committed: ask the core.
+      if let r = try? await client.operation(op), r.state == .completed {
+        saveError = nil
+        forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
+      } else {
+        saveError = String(localized: "保存できませんでした: \(String(describing: error))。変更は保持しています。")
+      }
+    }
+  }
+
+  /// Builds every document edit through the same transaction encoder.
+  private func prepareSave(layoutOnly: Bool, base: DraftBase) -> (changes: [Tsugumi_RPC_DocumentChangeT], sent: Snapshot, merged: [String: ExternalProject]) {
+    // While a run is active the core takes layout changes only.
     var changes: [Tsugumi_RPC_DocumentChangeT] = []
     let sent = snapshot()
     if layout != confirmedLayout { changes.append(Change.setLayout(layout.serialized())) }
@@ -1347,55 +1399,52 @@ final class ProjectSession {
         if let h = sourceBases[p] ?? base.hashes[p] ?? sources[p]?.hash { changes.append(Change.removeSource(path: p, baseHash: h)) }
       }
     }
-    guard !changes.isEmpty else {
-      if !layoutOnly { forgetSaved(sent, layoutOnly: false, merged: [:]) }
-      return
+    return (changes, sent, merged)
+  }
+
+  /// The shared settings/canvas entry to ProjectSave. The caller supplies the revision
+  /// it actually edited; this function never advances it or retries.
+  @discardableResult
+  private func commitChanges(baseRev: UInt64, op: UUID, changes: [Tsugumi_RPC_DocumentChangeT],
+                             renamed: [(from: [String], to: [String])] = [], editor: Bool = false) async throws -> Tsugumi_RPC_SaveResultT {
+    guard let client else { throw RPCError.disconnected }
+    let result = try await client.save(baseRev: baseRev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())",
+                                       changes: changes, renamed: renamed)
+    if let d = result.delta {
+      if editor { applyDelta(d) } else { applyDeltaFromSave(d) }
     }
-    let op = UUID()
-    do {
-      let renames = layoutOnly ? [] : pendingCardRenames
-      let result = try await client.save(baseRev: base.rev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())", changes: changes,
-                                         renamed: renames)
-      if !renames.isEmpty { pendingCardRenames.removeFirst(min(renames.count, pendingCardRenames.count)) }
-      saveError = nil
-      conflictRetries = 0
-      if let d = result.delta { applyDeltaFromSave(d) }
-      forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
-    } catch let f as RPCFailure {
-      switch f.kind {
-      case .revisionConflict, .hashConflict:
-        if f.kind == .hashConflict, let p = f.args["path"], !isExternalDocument(p) {
-          // A file this window edited was changed elsewhere too: kept, not merged.
-          saveError = String(localized: "\(p) は別の場所でも変更されたため保存していません。変更は保持しています。")
-          return
-        }
-        guard conflictRetries < 8 else {
-          conflictRetries = 0
-          saveError = String(localized: "他の変更と重なり保存できませんでした。変更は保持しています。")
-          return
-        }
-        // Newer changes are on their way (DocPatched): merge them in and try again.
-        conflictRetries += 1
-        let want = f.currentRev ?? rev + 1
-        for _ in 0..<40 where rev < want { try? await Task.sleep(for: .milliseconds(50)) }
-        try? await Task.sleep(for: .milliseconds(30 * conflictRetries))
-        saveAgain = true
-      case .busy:
-        savingAfterRun = true
-      case .externalChange:
-        saveError = String(localized: "\(f.args["path"] ?? "ファイル") が Tsugumi の外で変更されました。再読込で取り込めます（変更は保持しています）。")
-      default:
-        saveError = f.description
-      }
-    } catch {
-      // The reply may have been lost after the save committed: ask the core.
-      if let r = try? await client.operation(op), r.state == .completed {
-        saveError = nil
-        forgetSaved(sent, layoutOnly: layoutOnly, merged: merged)
-      } else {
-        saveError = String(localized: "保存できませんでした: \(String(describing: error))。変更は保持しています。")
+    return result
+  }
+
+  /// Applies an editor's working copy without putting a rejected edit into
+  /// the autosaved session draft. Both settings editors and the canvas use
+  /// prepareSave/commitChanges; only the canvas rebases and retries its draft.
+  func applyEdit(baseRev: UInt64, _ change: (ProjectSession) -> Void) async throws -> UInt64 {
+    if dirty || saveTask != nil { await save() }
+    guard connected, client != nil else { throw RPCError.disconnected }
+    guard baseRev == rev else { throw RPCFailure(kind: .revisionConflict, diagnostic: "Editor revision changed") }
+    guard !dirty else { throw RPCFailure(kind: .busy, diagnostic: String(localized: "変更を保存できませんでした。")) }
+    let before = docState(), beforeSnap = snapshot(), base = makeBase()
+    change(self)
+    normalizeExternalEdits()
+    let prepared = prepareSave(layoutOnly: false, base: base)
+    let after = docState()
+    dropDraft()
+    guard !prepared.changes.isEmpty else { return baseRev }
+    let step = record(before: before, beforeSnap: beforeSnap, after: after, afterSnap: prepared.sent)
+    await fillUndoSources()
+    // Reading undo sources can yield to another client. Keep baseRev fixed.
+    let result = try await commitChanges(baseRev: baseRev, op: UUID(), changes: prepared.changes, editor: true)
+    if rev == result.rev {
+      for (prefix, ext) in prepared.merged {
+        externals[prefix] = ext
+        for rel in ext.files.keys { externalHashes[prefix + rel] = sources[prefix + rel]?.hash }
       }
     }
+    undoStack.append(step)
+    if undoStack.count > 500 { undoStack.removeFirst() }
+    redoStack.removeAll()
+    return result.rev ?? baseRev
   }
 
   /// Whether a path is one of an external's documents (merged, not compared by hash).
@@ -1704,16 +1753,19 @@ final class ProjectSession {
     cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }.filter { !openComments($0).isEmpty }
   }
 
-  /// Saved at once; a Card in Card has a _meta.json too. One call is one step of undo.
+  /// Changes comments in the draft, through the same definition setter.
+  private func changeComments(_ k: CardKey, _ fn: ([JSONValue]) -> [JSONValue]) {
+    guard var d = cardDefinitionDraft(k) else { return }
+    var meta = d.meta ?? .object([])
+    let list = fn(meta["comments"]?.array ?? [])
+    meta["comments"] = list.isEmpty ? nil : .array(list)
+    d.meta = meta.object?.isEmpty ?? true ? nil : meta
+    setCardDefinition(k, d)
+  }
+
+  /// Immediate comment actions have no open working copy.
   private func editComments(_ k: CardKey, _ fn: ([JSONValue]) -> [JSONValue]) {
-    edit { x in
-      guard var d = x.cardDefinitionDraft(k) else { return }
-      var meta = d.meta ?? .object([])
-      let list = fn(meta["comments"]?.array ?? [])
-      meta["comments"] = list.isEmpty ? nil : .array(list)
-      d.meta = meta.object?.isEmpty ?? true ? nil : meta
-      x.setCardDefinition(k, d)
-    }
+    edit { $0.changeComments(k, fn) }
   }
 
   func addComment(_ k: CardKey, _ text: String) {
@@ -1722,11 +1774,14 @@ final class ProjectSession {
     editComments(k) { $0 + [.object([("id", .string(UUID().uuidString.lowercased())), ("text", .string(t)), ("author", .string("user"))])] }
   }
 
-  func editComment(_ k: CardKey, id: String, text: String) {
+  func setCommentText(_ k: CardKey, id: String, text: String) {
     let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !t.isEmpty else { return }
-    editComments(k) { list in
-      list.map { c in
+    changeComments(k) { list in
+      if !list.contains(where: { $0["id"]?.string == id }) {
+        return list + [.object([("id", .string(id)), ("text", .string(t)), ("author", .string("user"))])]
+      }
+      return list.map { c in
         guard c["id"]?.string == id else { return c }
         var n = c
         n["text"] = .string(t)

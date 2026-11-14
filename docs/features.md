@@ -167,7 +167,7 @@ Start with [Your first Card](CardGuide.md), then use the [SDK reference](CardGui
 
 ## 5. Documents and saving
 
-[The Card guide](CardGuide.md#the-files) describes project files. [ProjectSave](Protocol.md#projectsave) defines save transactions and conflicts; [Versions](Versions.md) explains returning to saved code and settings.
+[The Card guide](CardGuide.md#the-files) describes project files. [ProjectSave](Protocol.md#projectsave) defines save transactions and conflicts; [Settings editing](SettingsEditing.md) describes the shared editor path and explicit conflict choices; [Versions](Versions.md) explains returning to saved code and settings.
 
 ## 6. Run history and artifacts
 

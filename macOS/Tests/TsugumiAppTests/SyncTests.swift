@@ -798,8 +798,8 @@ import Testing
     #expect(s.comments(k).map(\.text) == ["y 軸を対数に"])
     s.addComment(k, "軸に名前を")
     let first = s.comments(k)[0].id
-    s.editComment(k, id: first, text: "両軸を対数に")
-    s.editComment(k, id: first, text: "  ")
+    s.edit { $0.setCommentText(k, id: first, text: "両軸を対数に") }
+    s.edit { $0.setCommentText(k, id: first, text: "  ") }
     #expect(s.comments(k).map(\.text) == ["両軸を対数に", "軸に名前を"])
     #expect(s.nodeData(k).openComments == 2 && s.cardsWithOpenComments(in: []) == [k])
     #expect(s.cardDetails(k).contains { $0.contains("両軸を対数に") })
@@ -1047,6 +1047,103 @@ import Testing
     await s.close()
   }
 
+  @Test func reloadingSettingsKeepsTheExactWorkingText() {
+    let edit = RevisionEdit()
+    edit.reload(0)
+    edit.conflict(1)
+    var text = "{\"symbol\": \"mine\",\n"
+    let mine = text
+    edit.keepAndReload(text) { text = "{}"; edit.reload(1) }
+    #expect(text == "{}")
+    #expect(edit.keptText == mine)
+    #expect(edit.baseRev == 1 && edit.conflictRev == nil)
+  }
+
+  /// JSON definitions and project settings retain their own opening revision.
+  /// Rejected text is not left in the session for a later autosave to send.
+  @Test func staleSettingsApplyNeedsAnExplicitRevisionChoice() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let other = RPCClient(endpoint: d.endpoint.url)
+    _ = try await other.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    for projectDocument in [false, true] {
+      let editor = RevisionEdit()
+      editor.reload(s.rev)
+      func agentSave(_ value: String) async throws {
+        let snap = try await other.inspect()
+        var project = try JSONValue.parse(snap.projectJson)
+        project["name"] = .string(value)
+        _ = try await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: projectDocument
+          ? [Change.setProject(project.serialized())]
+          : [Change.putDefinition(id: "a", cardJSON: #"{"template":"draft","symbol":""# + value + #""}"#, metaJSON: nil)])
+        for _ in 0..<100 where s.rev <= (snap.rev ?? 0) { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(s.rev > (snap.rev ?? 0))
+      }
+      func apply(_ overwrite: Bool = false) async -> Bool {
+        await editor.apply(s, overwrite: overwrite) { x in
+          if projectDocument { x.project["name"] = .string("mine") }
+          else { x.setCardDefinition("a", DefinitionDraft(card: .object([("template", .string("draft")), ("symbol", .string("mine"))]), meta: nil)) }
+        }
+      }
+      try await agentSave("newer")
+      #expect(!(await apply()))
+      #expect(editor.conflictRev == s.rev)
+      #expect(!s.dirty)
+      #expect(!(await apply()))
+      try await agentSave("newest")
+      #expect(!(await apply(true)))
+      #expect(!s.dirty)
+      #expect(await apply(true))
+      #expect(!s.dirty)
+      #expect(projectDocument ? s.project["name"]?.string == "mine" : s.cardDefinition("a")?["symbol"]?.string == "mine")
+    }
+    await other.close()
+    await s.close()
+  }
+
+  @Test func cardEditorSourceConflictsNeedAnExplicitChoice() async throws {
+    let dir = try Self.project()
+    let d = try Daemon(project: dir)
+    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let other = RPCClient(endpoint: d.endpoint.url)
+    _ = try await other.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
+    for removing in [false, true] {
+      let rel = removing ? "remove.txt" : "create.txt"
+      let p = "definitions/a/" + rel
+      func agentSave(_ text: String) async throws {
+        let snap = try await other.inspect()
+        let hash = snap.sources.compactMap { $0 }.first { $0.path == p }?.hash
+        _ = try await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: [
+          Change.putSource(path: p, bytes: Data(text.utf8), baseHash: hash),
+        ])
+        for _ in 0..<100 where s.rev <= (snap.rev ?? 0) { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(s.rev > (snap.rev ?? 0))
+      }
+      if removing { try await agentSave("base") }
+      let model = CardEditorModel(session: s, cardKey: "a")
+      if removing { model.removeFile(p) } else { model.createFile(rel, text: "mine") }
+      try await agentSave("agent")
+      #expect(!(await model.apply()))
+      #expect(model.conflicts == [rel])
+      #expect(!s.dirty)
+      #expect(await model.apply(overwrite: true))
+      #expect(!s.dirty)
+      if removing { #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent(p).path)) }
+      else { #expect(try String(contentsOf: dir.appendingPathComponent(p), encoding: .utf8) == "mine") }
+    }
+    await other.close()
+    await s.close()
+  }
+
   @Test func cardEditorFollowsUntouchedSettings() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
@@ -1069,7 +1166,9 @@ import Testing
     #expect(m.definition?["maxRuns"]?.uint64 == 3)        // untouched: follows
     #expect(m.definition?["symbol"]?.string == "mine") // touched here: kept
     #expect(m.conflicts == ["_card.json: symbol"])
-    #expect(await m.apply())
+    #expect(!(await m.apply()))
+    #expect(s.confirmedDefinitions["a"]?["symbol"]?.string == "theirs")
+    #expect(await m.apply(overwrite: true))
     #expect(s.confirmedDefinitions["a"]?["symbol"]?.string == "mine")
     #expect(s.confirmedDefinitions["a"]?["maxRuns"]?.uint64 == 3)
   }

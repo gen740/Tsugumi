@@ -27,7 +27,7 @@ import Testing
       _ = s.addCard(template: id == "left" ? .python : .draft, in: [], at: CGPoint(x: x, y: y), name: id)
       func ports(_ names: [String]) -> JSONValue { .array(names.map { .object([("name", .string($0))]) }) }
       s.updateCard(id) { $0["inputs"] = ports(ins) }
-      s.setDefinition(id, card: s.cardDefinition(id)!, meta: .object([("outputs", ports(outs))]))
+      s.setCardDefinition(id, DefinitionDraft(card: s.cardDefinition(id)!, meta: .object([("outputs", ports(outs))])))
     }
     s.connect(from: ("source", "a"), to: ("right", "in"), in: [])
     s.connect(from: ("source", "b"), to: ("left", "in"), in: [])

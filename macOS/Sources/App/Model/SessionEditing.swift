@@ -1396,10 +1396,6 @@ extension ProjectSession {
 
   // MARK: - Definitions
 
-  func setDefinition(_ id: String, card: JSONValue, meta: JSONValue?) {
-    definitionEdits[id] = DefinitionDraft(card: card, meta: meta)
-  }
-
   func removeDefinition(_ id: String) { removeCardDefinition(key([id])) }
 
   /// Removes a Card's definition folder (its documents and every file in it).

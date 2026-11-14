@@ -89,7 +89,7 @@ enum SmokeTest {
         s.edit { s in
           var meta = s.definitionMeta[draft] ?? .object([])
           meta["outputs"] = .array([.object([("name", .string("summary")), ("description", .string("the result in words"))])])
-          s.setDefinition(draft, card: s.definitions[draft] ?? .object([]), meta: meta)
+          s.setCardDefinition(key([draft]), DefinitionDraft(card: s.definitions[draft] ?? .object([]), meta: meta))
         }
         await s.save()
         report["draft_outputs"] = s.resolution[dk]?.outputs.map(\.name) ?? []
