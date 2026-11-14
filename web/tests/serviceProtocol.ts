@@ -18,6 +18,7 @@ import { ReplyT } from '../src/gen/tsugumi/agent/reply'
 import { ReplyPayload } from '../src/gen/tsugumi/agent/reply-payload'
 import { RequestT } from '../src/gen/tsugumi/agent/request'
 import { EventsRequestT } from '../src/gen/tsugumi/agent/events-request'
+import { ConversationSendRequestT } from '../src/gen/tsugumi/agent/conversation-send-request'
 import { EventsPageT } from '../src/gen/tsugumi/agent/events-page'
 import { SequencedEventT } from '../src/gen/tsugumi/agent/sequenced-event'
 import { EventT } from '../src/gen/tsugumi/agent/event'
@@ -25,6 +26,10 @@ import { FailureT } from '../src/gen/tsugumi/service/failure'
 import { Message as HostMessage } from '../src/gen/tsugumi/host/message'
 
 const high = (1n << 64n) - 2n
+const sent = Message.getRootAsMessage(new fb.ByteBuffer(encodeRequest('ConversationSendRequest', {
+  conversation_id: 'c', turn_id: 't', text: 'Model instructions', display: 'hello instead', selected_cards: [], selected_displays: [],
+}, 1n, false))).unpack()
+assert.equal(((sent.payload as RequestT).value as ConversationSendRequestT).display, 'hello instead')
 const frame = encodeRequest('EventsRequest', { conversation_id: '日本語', after_seq: high }, high, false)
 const request = Message.getRootAsMessage(new fb.ByteBuffer(frame)).unpack()
 assert.equal(request.requestId, high)

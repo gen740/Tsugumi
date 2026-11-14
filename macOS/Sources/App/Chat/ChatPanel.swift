@@ -62,7 +62,7 @@ struct ChatPanel: View {
     }
     .background(Color(nsColor: .windowBackgroundColor))
     .sheet(item: Binding(get: { detached ? chat.permissionPrompt : nil }, set: { _ in })) { p in
-      PermissionPromptView(prompt: p) { allow, always in chat.answerPermissions(allow: allow, always: always) }
+      PermissionPromptView(prompt: p) { allow, always in chat.answerPermissions(id: p.id, allow: allow, always: always) }
     }
   }
 

@@ -152,29 +152,28 @@ def test_cancelled_call_with_fifo_preserves_cancellation(core_factory, tmp_path)
 def test_worker_staging_uses_disk_scratch_and_releases_call_bytes(core_factory, tmp_path):
     """Input/output staging is below disk run scratch; only lifetime home survives a call."""
     from pathlib import Path
-    # The output path reveals the configured disk scratch without depending on
-    # whether the daemon is running on Linux or macOS.
+    # Recorded files live in project history, separately from disk scratch.
+    scratch = tmp_path / "scratch"
     make = bash('echo wired > "$TSUGUMI_OUTPUT_DIR/data"; '
                 'printf \'{"doc":{"value":"%s/data"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
                 outputs=FILE_FBS)
     read = bash('printf \'{"text":"%s|%s"}\' "$FILE_DOC" "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_REPORT"; '
                 'cat "$FILE_DOC" > "$TSUGUMI_OUTPUT_DIR/copied"; '
                 'printf \'{"doc":{"value":"%s/copied"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-                inputs=["doc"], outputs=FILE_FBS, reuseWorker=True)
+                inputs=["doc"], outputs=FILE_FBS, reuseWorker=True, recordIO=True)
     root = tmp_path / "p"
     write(root, {"make": make, "read": read}, [card("make", "make"), card("read", "read")],
           [conn("make", "doc", "read", "doc")])
-    c = core_factory(project_root=root).connect()
+    c = core_factory(project_root=root, args=["--run-scratch-dir", str(scratch)]).connect()
     run_id, st = run_and_wait(c, "make")
     assert st.state == RunState.succeeded, log(c, run_id, "read", 2)
     record = c.call("RunRecordRequest", runId=run_id, card=path("read")).record
     recorded = Path(text(record.outputs[0].filePath))
-    # <scratch>/runs/<run>/<card>/<invocation>/out/copied
-    scratch = next(parent.parent for parent in recorded.parents if parent.name == "runs")
     staged_input, staged_out = text(record.display.value.text).split("|")
     worker_root = Path(staged_out).parent
     assert worker_root.parent == scratch / "workers"
     assert Path(staged_input).is_relative_to(worker_root / "inputs")
+    assert (scratch / "runs" / run_id / "work" / "read" / "1" / "out" / "copied").read_text() == "wired\n"
     assert recorded.read_text() == "wired\n"
     assert not list((worker_root / "inputs").iterdir())
     assert not list((worker_root / "out").iterdir())
@@ -219,7 +218,7 @@ def test_successful_call_ignores_undeclared_special_entries(core_factory, tmp_pa
                       'mkdir "$stage/nested"; ' + create + '; done; '
                       'echo safe > "$TSUGUMI_OUTPUT_DIR/result"; '
                       'printf \'{"doc":{"value":"%s/result"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-                      outputs=FILE_FBS, filesystem=True)
+                      outputs=FILE_FBS, filesystem=True, recordIO=True)
     write(tmp_path / "p", {"copy": definition}, [card("copy", "copy")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     run_id, st = run_and_wait(c, "copy")
@@ -279,6 +278,7 @@ int tsugumi_main(const tsugumi_call* c) {
 '''.replace("HOST_SECRET", json.dumps(str(victim)))
     definition = {
         "language": "cpp",
+        "recordIO": True,
         "_outputs": FILE_FBS.replace('tsugumi: "file"', 'tsugumi: "directory"'),
         "_nix": '''{ pkgs, inputs, params }: {
   run = pkgs.runCommandCC "racing-output" {} ''

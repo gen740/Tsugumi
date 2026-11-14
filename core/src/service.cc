@@ -1472,6 +1472,14 @@ void Service::history_delete(RequestIn& req) {
     // A later run may read files of earlier ones (saved inputs, upstream outputs).
     if (scheduler_->active_status())
       throw Failed(FailureKind::busy, "run history can only be deleted while no run is active");
+    std::optional<std::vector<std::string>> run_ids;
+    if (r->restrict_to_run_ids()) {
+      run_ids.emplace();
+      if (r->run_ids())
+        for (const auto* id : *r->run_ids()) run_ids->push_back(id->str());
+    } else if (r->run_ids() && r->run_ids()->size()) {
+      throw Failed(FailureKind::invalid_request, "run_ids requires restrict_to_run_ids");
+    }
     auto sizes = [&] {
       uint64_t n = 0;
       std::error_code ec;
@@ -1482,7 +1490,7 @@ void Service::history_delete(RequestIn& req) {
     uint64_t before = sizes();
     const auto scratch_before = fs::directory_size(run_scratch_ / "runs");
     uint64_t files = 0;
-    auto ids = history_->delete_runs(runs_copy(), r->ended_before());
+    auto ids = history_->delete_runs(runs_copy(), r->ended_before(), run_ids);
     for (const auto& id : ids)
       if (crypto::is_uuid(id)) remove_run_scratch(run_scratch_ / "runs" / id);
     const auto scratch_after = fs::directory_size(run_scratch_ / "runs");

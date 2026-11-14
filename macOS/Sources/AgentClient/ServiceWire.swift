@@ -240,6 +240,7 @@ enum ServiceWire {
         v.conversationId = fields["conversation_id"] as? String ?? ""
         v.turnId = fields["turn_id"] as? String ?? ""
         v.text = fields["text"] as? String ?? ""
+        v.display = fields["display"] as? String
         v.selectedCards = fields["selected_cards"] as? [String] ?? []
         v.selectedDisplays = fields["selected_displays"] as? [String] ?? []
         v.skillNames = fields["skill_names"] as? [String] ?? []
