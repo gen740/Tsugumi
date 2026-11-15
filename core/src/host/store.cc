@@ -44,7 +44,7 @@ HostStore::HostStore(const std::filesystem::path& directory)
       "TEXT NOT NULL);"
       "CREATE TABLE IF NOT EXISTS skill_catalogs(conversation TEXT PRIMARY "
       "KEY, path TEXT NOT NULL, folders TEXT NOT NULL);"
-      "CREATE TABLE IF NOT EXISTS model_lists(id TEXT PRIMARY KEY, models "
-      "TEXT NOT NULL);");
+      "CREATE TABLE IF NOT EXISTS model_lists(id TEXT NOT NULL, connection "
+      "TEXT NOT NULL, models TEXT NOT NULL, PRIMARY KEY(id,connection));");
 }
 }  // namespace tsugumi::host

@@ -1116,8 +1116,9 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
       return get(client, stale);
     };
   }
-  const auto window =
-      host::Models::ContextWindowTokens(s.directory, id, c.model);
+  const auto window = host::Models::ContextWindowTokens(
+      s.directory, id, c.model, profile, j::Text(selection, "account_profile"),
+      j::Text(selection, "key_profile"));
   const auto margin =
       window / 20;  // Reserve 5% for estimation/protocol overhead.
   if (c.max_tokens >= window - margin)

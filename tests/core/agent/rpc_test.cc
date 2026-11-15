@@ -358,9 +358,15 @@ TEST_F(AgentProjectFixture,
 
 TEST_F(AgentFixture, DisplaySurvivesPreparationAndTheCompletedSnapshot) {
   ModelServer model;
-  model.Queue(AnthropicText("Finished"), true);
   Configure(model);
   const auto conversation = Conversation("display-preserved");
+  model.Queue(AnthropicText("Earlier answer"));
+  ASSERT_TRUE(Send(conversation, "Earlier request").Code().empty());
+  WaitUntilIdle(conversation);
+  const auto before = Get(conversation);
+  const auto archive_size = ListSize(
+      before.Value()->value_as_ConversationResult()->conversation()->archive());
+  model.Queue(AnthropicText("Finished"), true);
   ASSERT_TRUE(
       Call(*external, A::RequestPayload::ConversationSendRequest,
            [&](Builder &b) {
@@ -374,21 +380,36 @@ TEST_F(AgentFixture, DisplaySurvivesPreparationAndTheCompletedSnapshot) {
            })
           .Code()
           .empty());
-  ASSERT_TRUE(model.WaitForRequests(1));
+  ASSERT_TRUE(model.WaitForRequests(2));
   const auto preparing = Get(conversation).View();
   EXPECT_TRUE(JsonBool(preparing, "/busy"));
-  EXPECT_EQ(JsonString(preparing, "/conversation/messages/0/display"),
+  EXPECT_EQ(JsonString(preparing, "/conversation/messages/2/display"),
             "A short request");
-  EXPECT_NE(JsonString(preparing, "/conversation/messages/0/content/0/text")
+  EXPECT_NE(JsonString(preparing, "/conversation/messages/2/content/0/text")
                 .find("[User-selected bundled demo skill]"),
             std::string::npos);
-  EXPECT_EQ(model.Requests()[0].find("A short request"), std::string::npos);
+  const auto during = Get(conversation);
+  EXPECT_EQ(ListSize(during.Value()
+                         ->value_as_ConversationResult()
+                         ->conversation()
+                         ->archive()),
+            archive_size);
+  EXPECT_EQ(model.Requests()[1].find("A short request"), std::string::npos);
   model.Release();
   const auto completed = WaitUntilIdle(conversation);
-  EXPECT_EQ(JsonString(completed, "/conversation/messages/0/display"),
-            "A short request");
+  EXPECT_EQ(JsonString(completed, "/conversation/messages/0/content/0/text"),
+            "Earlier request");
   EXPECT_EQ(JsonString(completed, "/conversation/messages/1/content/0/text"),
+            "Earlier answer");
+  EXPECT_EQ(JsonString(completed, "/conversation/messages/2/display"),
+            "A short request");
+  EXPECT_EQ(JsonString(completed, "/conversation/messages/3/content/0/text"),
             "Finished");
+  const auto after = Get(conversation);
+  const auto* presented =
+      after.Value()->value_as_ConversationResult()->conversation();
+  EXPECT_EQ(ListSize(presented->archive()), archive_size);
+  EXPECT_EQ(ListSize(presented->messages()), 4u);
 }
 
 TEST_F(AgentFixture, PublicCancellationStopsAnInFlightModelRequest) {
@@ -548,7 +569,7 @@ TEST_F(AgentFixture,
   model.Queue(AnthropicText(earlier));
   model.Queue(AnthropicText("SECOND_LONG_ANSWER " + std::string(1500, 'b')));
   model.Queue(
-      AnthropicText("THIRD_LONG_ANSWER " + std::string(1500, 'c'), 3500));
+      AnthropicText("THIRD_LONG_ANSWER " + std::string(1500, 'c'), 109000));
   model.Queue(
       AnthropicText("Earlier decisions were retained in a brief summary."));
   model.Queue(AnthropicText("The fourth turn continued after compaction."));
@@ -562,7 +583,9 @@ TEST_F(AgentFixture,
     ASSERT_TRUE(model.WaitForRequests(turn));
     WaitUntilIdle(conversation);
   }
-  Configure(model, "fixture", 4000);
+  // The real system prompt and tool catalog must fit too. Measured usage
+  // triggers compaction; a 4K budget cannot even hold those fixed inputs.
+  Configure(model, "fixture", 110000);
   ASSERT_TRUE(Send(conversation, "Keep working.", "turn-4").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(5));
   const auto state = WaitUntilIdle(conversation);

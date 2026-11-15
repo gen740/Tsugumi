@@ -1,5 +1,7 @@
 #include "host/models.hh"
 
+#include <algorithm>
+
 #include "agent/json.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
@@ -29,19 +31,41 @@ auto Models::StoredChatGPTModels(const std::filesystem::path& state_dir)
   sql::Db model_db((state_dir / "host.sqlite").string(), true);
   auto q =
       model_db.prepare("SELECT models FROM model_lists WHERE id='chatgpt'");
-  if (q.step())
-    for (const auto& row : json::Array(q.text(0)))
-      models.push_back(json::Text(json::Object(row), "id"));
+  while (q.step())
+    for (const auto& row : json::Array(q.text(0))) {
+      const auto id = json::Text(json::Object(row), "id");
+      if (std::find(models.begin(), models.end(), id) == models.end())
+        models.push_back(id);
+    }
   return models;
+}
+
+auto Models::CatalogConnection(std::string_view provider,
+                               std::string_view profile,
+                               std::string_view account_profile,
+                               std::string_view key_profile) -> std::string {
+  if (profile.empty()) profile = "desktop";
+  auto credentials = provider == "chatgpt" ? account_profile : key_profile;
+  if (credentials.empty()) credentials = profile;
+  // The profile owns the endpoint; credentials may come from a separate
+  // account/key profile. Do not share reported windows across connections.
+  return json::Encode(
+      std::vector<std::string>{json::Quote(profile), json::Quote(credentials)});
 }
 
 auto Models::ContextWindowTokens(const std::filesystem::path& state_dir,
                                  std::string_view provider,
-                                 std::string_view model) -> uint32_t {
+                                 std::string_view model,
+                                 std::string_view profile,
+                                 std::string_view account_profile,
+                                 std::string_view key_profile) -> uint32_t {
   if (std::filesystem::exists(state_dir / "host.sqlite")) {
     sql::Db catalog((state_dir / "host.sqlite").string(), true);
-    auto q = catalog.prepare("SELECT models FROM model_lists WHERE id=?");
-    q.bind(1, std::string(provider));
+    auto q = catalog.prepare(
+        "SELECT models FROM model_lists WHERE id=? AND connection=?");
+    q.bind(1, std::string(provider))
+        .bind(2, CatalogConnection(provider, profile, account_profile,
+                                   key_profile));
     if (q.step())
       for (const auto& row : json::Array(q.text(0))) {
         const auto value = json::Object(row);
@@ -80,6 +104,9 @@ auto Models::Handle(const RequestIn& request, bool human,
   const auto key = p->provider_id()->str();
   if (key.empty())
     throw Failure("invalid_request", "A model catalog needs a provider ID");
+  const auto connection =
+      CatalogConnection(key, Text(p->profile()), Text(p->account_profile()),
+                        Text(p->key_profile()));
   if (p->refresh()) {
     auto config = host_settings->Resolve(
         {{"profile", json::Quote(Text(p->profile()))},
@@ -97,13 +124,17 @@ auto Models::Handle(const RequestIn& request, bool human,
                           {"name", json::Quote(model.name)},
                           {"contextWindowTokens",
                            std::to_string(model.context_window_tokens)}}));
-      auto q = db.prepare("INSERT OR REPLACE INTO model_lists VALUES(?,?)");
-      q.bind(1, key).bind(2, scrub(json::Encode(rows))).run();
+      auto q = db.prepare("INSERT OR REPLACE INTO model_lists VALUES(?,?,?)");
+      q.bind(1, key)
+          .bind(2, connection)
+          .bind(3, scrub(json::Encode(rows)))
+          .run();
     }
   }
   H::ModelListT result;
-  auto stored = db.prepare("SELECT models FROM model_lists WHERE id=?");
-  stored.bind(1, key);
+  auto stored =
+      db.prepare("SELECT models FROM model_lists WHERE id=? AND connection=?");
+  stored.bind(1, key).bind(2, connection);
   if (stored.step())
     for (const auto& row : json::Array(stored.text(0))) {
       const auto value = json::Object(row);

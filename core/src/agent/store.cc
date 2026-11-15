@@ -269,14 +269,18 @@ auto ConversationStore::AuthorizeHistory(const std::string& id) -> void {
 }
 
 auto ConversationStore::SaveMessages(const std::string& id,
-                                     const std::vector<Message>& messages)
-    -> void {
+                                     const std::vector<Message>& messages,
+                                     SaveMode mode) -> void {
   std::lock_guard lock(gate.mutex);
   auto& database = ConversationDatabase(id);
   std::optional<sql::Transaction> transaction;
   if (sqlite3_get_autocommit(database.get())) transaction.emplace(database);
   const auto previous = ParseMessages(GetConversation(id).messages);
-  const auto removed = RemovedMessages(previous, messages);
+  // Preparing a send expands the provisional request in place. Only runtime
+  // replacements remove conversation history that belongs in the archive.
+  const auto removed = mode == SaveMode::PrepareSend
+                           ? std::vector<Message>{}
+                           : RemovedMessages(previous, messages);
   if (!removed.empty()) {
     auto archive = database.prepare("INSERT INTO archives VALUES(?,?)");
     archive.bind(1, id).bind(2, scrub(SerializeMessages(removed))).run();

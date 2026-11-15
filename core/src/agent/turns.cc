@@ -520,7 +520,8 @@ auto Turns::Start(const std::string& id, const std::string& turn,
             messages[pending_index].content = {std::move(block)};
             std::lock_guard lock(mutex);
             sql::Transaction tx(conversations->ConversationDatabase(id));
-            conversations->SaveMessages(id, messages);
+            conversations->SaveMessages(
+                id, messages, ConversationStore::SaveMode::PrepareSend);
             auto pending = conversations->ConversationDatabase(id).prepare(
                 "DELETE FROM pending_sends WHERE conversation=?");
             if (task.empty()) pending.bind(1, id).run();

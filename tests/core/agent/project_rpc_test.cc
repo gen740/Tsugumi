@@ -579,8 +579,10 @@ TEST_F(AgentProjectFixture, HelpersRereadOnlyTheirOwnFilteredResults) {
 TEST_F(AgentProjectFixture,
        HelperCompactionKeepsItsFullTraceAndHidesTheSummary) {
   ModelServer model;
+  // Leave room for the real system prompt/tool catalog and complete tool
+  // exchanges. The second reply's measured usage triggers compaction below.
   const auto instruction =
-      "Read the two records and report. " + std::string(80000, 'i');
+      "Read the two records and report. " + std::string(30000, 'i');
   model.Queue(AnthropicTool(
       "delegate-long-reader", "delegate",
       "{\"tasks\":[{\"name\":\"reader\",\"instruction\":" + Quote(instruction) +

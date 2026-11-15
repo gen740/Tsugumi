@@ -5,7 +5,7 @@ namespace {
 class ModelsFixture : public AgentFixture {
  protected:
   auto Models(std::string id, const ModelServer* server = nullptr,
-              bool websocket = false) -> Reply {
+              bool websocket = false, std::string key_profile = {}) -> Reply {
     if (server) {
       const auto configured =
           Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
@@ -25,7 +25,10 @@ class ModelsFixture : public AgentFixture {
             Tsugumi::Host::ProviderInputT key;
             key.api_key = "MODEL_KEY_SENTINEL";
             return H::CreateProviderSetRequest(
-                       b, b.CreateString("desktop"), b.CreateString(id),
+                       b,
+                       b.CreateString(key_profile.empty() ? "desktop"
+                                                         : key_profile),
+                       b.CreateString(id),
                        Tsugumi::Host::ProviderInput::Pack(b, &key), false,
                        true)
                 .Union();
@@ -38,9 +41,10 @@ class ModelsFixture : public AgentFixture {
                 H::RequestPayload::ModelsListRequest, [&](Builder& b) {
                   Tsugumi::Host::ProviderInputT config;
                   if (server) config.endpoint = server->URL();
-                  return H::CreateModelsListRequest(b, b.CreateString(id),
-                                                    server != nullptr,
-                                                    b.CreateString("desktop"))
+                  return H::CreateModelsListRequest(
+                             b, b.CreateString(id), server != nullptr,
+                             b.CreateString("desktop"), {},
+                             b.CreateString(key_profile))
                       .Union();
                 });
   }
@@ -87,6 +91,34 @@ TEST_F(ModelsFixture, ConcurrentRefreshesKeepSeparateProviderCatalogs) {
   ASSERT_TRUE(b.get().Code().empty());
   EXPECT_EQ(JsonString(Models("anthropic").View(), "/0/id"), "a");
   EXPECT_EQ(JsonString(Models("openai").View(), "/0/id"), "b");
+}
+
+TEST_F(ModelsFixture, SameProviderConnectionsKeepTheirOwnCatalogs) {
+  ModelServer provider;
+  provider.QueueHTTP(
+      R"({"data":[{"id":"shared","display_name":"First connection","max_input_tokens":1000000}]})");
+  ASSERT_TRUE(Models("anthropic", &provider, false, "first").Code().empty());
+  provider.QueueHTTP(
+      R"({"data":[{"id":"shared","display_name":"Second connection","max_input_tokens":128000}]})");
+  ASSERT_TRUE(Models("anthropic", &provider, false, "second").Code().empty());
+  EXPECT_EQ(
+      JsonString(Models("anthropic", nullptr, true, "first").View(), "/0/name"),
+      "First connection");
+  EXPECT_EQ(JsonString(Models("anthropic", nullptr, true, "second").View(),
+                       "/0/name"),
+            "Second connection");
+  EXPECT_EQ(Models("anthropic").View(), "[]");
+  host.reset();
+  external.reset();
+  human.reset();
+  service.Stop();
+  StartHost();
+  EXPECT_EQ(
+      JsonString(Models("anthropic", nullptr, true, "first").View(), "/0/name"),
+      "First connection");
+  EXPECT_EQ(JsonString(Models("anthropic", nullptr, true, "second").View(),
+                       "/0/name"),
+            "Second connection");
 }
 }  // namespace
 }  // namespace tsugumi::test

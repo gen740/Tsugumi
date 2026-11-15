@@ -1,7 +1,9 @@
 // The same scenario runs against the baseline and candidate installed core.
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <iostream>
+#include <numeric>
 #include <thread>
 
 #include "../agent_fixture_server.hh"
@@ -103,11 +105,20 @@ TEST(AgentContextMeasure, LongToolConversationKeepsEveryVisibleResult) {
     const auto text = id + " HEAD " + std::string(48000, 'x') + " TAIL " + id;
     EXPECT_NE(human.find(text), std::string::npos) << id;
   }
+  // bd315031's real-runtime measurement: retain its send-size improvement
+  // while fixing overflow recovery. These are wire bytes, not model tokens.
+  const auto total =
+      std::accumulate(input_sizes.begin(), input_sizes.end(), size_t{0});
+  const auto maximum =
+      *std::max_element(input_sizes.begin(), input_sizes.end());
+  EXPECT_LE(total, 3839651u);
+  EXPECT_LE(maximum, 137774u);
+  EXPECT_EQ(summaries, 0);
   std::cout << "CONTEXT_MEASURE normal_request_bytes=[";
   for (size_t i = 0; i < input_sizes.size(); ++i)
     std::cout << (i ? "," : "") << input_sizes[i];
   std::cout << "] compactions=" << summaries << " visible_results=" << kCalls
-            << '\n';
+            << " total_bytes=" << total << " max_bytes=" << maximum << '\n';
 }
 }  // namespace
 }  // namespace tsugumi::test
