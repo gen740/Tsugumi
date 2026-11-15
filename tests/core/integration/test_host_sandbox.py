@@ -145,7 +145,7 @@ def test_a_card_with_network_reaches_no_mach_service_of_the_session(core_factory
 
 def test_a_card_with_network_reaches_only_the_resolver_among_unix_sockets(core_factory, tmp_path):
     """A network-enabled card reaches the resolver socket while other Unix sockets remain blocked."""
-    with tempfile.TemporaryDirectory(dir="/tmp") as folder, socket.socket(socket.AF_UNIX) as listener:
+    with tempfile.TemporaryDirectory() as folder, socket.socket(socket.AF_UNIX) as listener:
         # In /tmp: a Unix socket path is limited to about 100 bytes.
         other = str(Path(folder) / "s")
         listener.bind(other)

@@ -51,7 +51,7 @@ class Daemon:
         self.args = list(args or [])
         if history_dir is not None:
             self.args += ["--history-dir", str(history_dir)]
-        self.directory = Path(tempfile.mkdtemp(prefix="tsg-rpc-"))
+        self.directory = Path(tempfile.mkdtemp(prefix="tsg-rpc-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))).resolve()
         self.unix = str(self.directory / "rpc")
         self.control = self.directory / "control"
         self.gates = self.directory / "gates"
@@ -74,7 +74,9 @@ class Daemon:
         env["TSUGUMI_MOCK_CONTROL"] = str(self.gates)
         if self.fault:
             env.update(TSUGUMI_ENABLE_FAULTS="1", TSUGUMI_FAULT=FAULTS[self.fault])
-        args = [str(self.binary), "--project", str(self.project), "--unix", self.unix,
+        args = [str(self.binary), "--scratch-dir", str(self.directory / "scratch"),
+                "--run-scratch-dir", str(self.directory / "run-scratch"),
+                "--project", str(self.project), "--unix", self.unix,
                 "--listen", "127.0.0.1:0", "--control-dir", str(self.control),
                 "--worker", str(self.worker), "--sdk-dir", str(SDK),
                 "--allow-origin", "http://rpc.test", "--cpus", "2"]

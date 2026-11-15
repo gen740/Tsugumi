@@ -22,19 +22,22 @@ from Tsugumi.Host.RequestPayload import RequestPayload
 
 class Host:
     def __init__(self, directory):
-        self.directory = Path(directory)
-        self.socket_directory = tempfile.TemporaryDirectory(prefix="tsg-host-", dir="/tmp")
+        self.directory = Path(directory).resolve()
+        self.socket_directory = tempfile.TemporaryDirectory(prefix="th-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
         self.log_path = Path(self.socket_directory.name) / "host.log"
         self.log = self.log_path.open("wb")
-        self.process = subprocess.Popen([
-            os.environ.get("TSUGUMI_HOSTD", str(BUILD / "core/tsugumi-hostd")),
-            "--state-dir", str(self.directory), "--no-websocket",
-            "--unix", str(Path(self.socket_directory.name) / "rpc"),
-        ], stdout=self.log, stderr=self.log)
+        self.process = None
         self.socket = None
         self.stream = None
         self.request_id = 0
         try:
+            self.process = subprocess.Popen([
+                os.environ.get("TSUGUMI_HOSTD", str(BUILD / "core/tsugumi-hostd")),
+                "--state-dir", str(self.directory), "--no-websocket",
+                "--socket-dir", str(Path(self.socket_directory.name) / "b"),
+                "--usage-scratch-dir", str(self.directory / "run-scratch"),
+                "--unix", str(Path(self.socket_directory.name) / "rpc"),
+            ], stdout=self.log, stderr=self.log)
             until = time.monotonic() + 15
             while time.monotonic() < until:
                 if self.process.poll() is not None:
@@ -100,7 +103,7 @@ class Host:
             self.stream.close()
         if self.socket:
             self.socket.close()
-        if self.process.poll() is None:
+        if self.process is not None and self.process.poll() is None:
             self.process.terminate()
             try:
                 self.process.wait(timeout=10)

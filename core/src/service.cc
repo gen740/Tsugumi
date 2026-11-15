@@ -234,10 +234,8 @@ void Service::open() {
   nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
   substituters_ = configured_substituters(opts_.substituters_file);
   for (const char* d : {"runs", "inputs"}) stdfs::create_directories(store_->state_dir() / d);
-  run_scratch_ = private_disk_scratch(opts_.run_scratch_dir.empty() ? default_run_scratch(opts_.root)
+  run_scratch_ = disk_scratch_path(opts_.run_scratch_dir.empty() ? default_run_scratch(opts_.root)
                                                                  : opts_.run_scratch_dir);
-  private_disk_scratch(run_scratch_ / "runs");
-  stdfs::create_directories(run_scratch_ / "recovery");
   execution_service_ = std::make_unique<NativeExecutionService>(*this, scratch / "workers");
   remote_execution_ = std::make_unique<RemoteExecutionService>(*this, remote_jobs_);
   scheduler_ = std::make_unique<Scheduler>(*this);

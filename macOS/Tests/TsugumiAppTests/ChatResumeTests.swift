@@ -12,7 +12,7 @@ import TsugumiRPC
 @MainActor
 @Suite(.serialized, .hostService) struct ChatResumeTests {
   @MainActor final class Fixture {
-    let directory = URL(fileURLWithPath: "/tmp/tsugumi-chat-\(UUID().uuidString.prefix(8))")
+    let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/tmp").appendingPathComponent("chat-\(UUID().uuidString.prefix(8))")
     let conversationID = UUID().uuidString.lowercased()
     var core = Process()
     let model = Process()
@@ -34,7 +34,10 @@ import TsugumiRPC
         ?? SyncTests.root.appendingPathComponent("build")
       core.executableURL = ProcessInfo.processInfo.environment["TSUGUMI_HOSTD"].map { URL(fileURLWithPath: $0) }
         ?? build.appendingPathComponent("core/tsugumi-hostd")
-      core.arguments = ["--state-dir", state.path, "--unix", directory.appendingPathComponent("agent.sock").path,
+      core.arguments = ["--state-dir", state.path,
+                        "--socket-dir", directory.appendingPathComponent("b").path,
+                        "--usage-scratch-dir", directory.resolvingSymlinksInPath().appendingPathComponent("scratch").path,
+                        "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--demos-dir", SyncTests.root.appendingPathComponent("demos").path]
       core.standardOutput = FileHandle.nullDevice
       core.standardError = FileHandle.nullDevice

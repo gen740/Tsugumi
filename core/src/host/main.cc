@@ -40,6 +40,7 @@ auto RunHost(int argc, char** argv) -> int {
     listener.tcp_host = "127.0.0.1";
     listener.tcp_port = 0;
     listener.allow_missing_origin = true;
+    std::filesystem::path broker_dir;
     for (int i = 1; i < argc; ++i) {
       const std::string arg = argv[i];
       auto next = [&]() -> std::string {
@@ -74,6 +75,10 @@ auto RunHost(int argc, char** argv) -> int {
         options.environment.sdk = next();
       else if (arg == "--environment-dir")
         options.environment.directory = next();
+      else if (arg == "--socket-dir")
+        broker_dir = next();
+      else if (arg == "--usage-scratch-dir")
+        options.environment.run_scratch_directory = next();
       else if (arg == "--demos-dir")
         options.demos_dir = next();
       else if (arg == "--allow-origin")
@@ -108,12 +113,17 @@ auto RunHost(int argc, char** argv) -> int {
     ::pthread_sigmask(SIG_BLOCK, &signals, nullptr);
     // Detached project daemons must reconnect to the same broker after a
     // hostd restart, even when its UI RPC sockets get a new temp directory.
-    const auto broker_dir =
-        std::filesystem::path("/tmp") /
-        ("tsugumi-exec-" + std::to_string(::getuid()) + "-" +
-         crypto::sha256_hex(
-             std::filesystem::canonical(options.state_dir).string())
-             .substr(0, 16));
+    if (broker_dir.empty()) {
+      const auto* root = std::getenv("TSUGUMI_SOCKET_DIR");
+      const auto key =
+          crypto::sha256_hex(
+              std::filesystem::canonical(options.state_dir).string())
+              .substr(0, 16);
+      broker_dir =
+          std::filesystem::path(root ? root : "/tmp") /
+          ((root ? "e-" : "tsugumi-exec-" + std::to_string(::getuid()) + "-") +
+           key);
+    }
     if (::mkdir(broker_dir.c_str(), 0700) != 0 && errno != EEXIST)
       throw std::runtime_error("Cannot create execution broker directory");
     struct stat broker_stat{};

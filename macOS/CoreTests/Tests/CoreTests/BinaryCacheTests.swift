@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 import TsugumiLauncher
@@ -108,7 +109,18 @@ private func cache(_ url: String = "https://cache.example.org/team") -> BinaryCa
   probe.standardOutput = output
   probe.standardError = try FileHandle(forWritingTo: errors)
   try probe.run()
-  defer { if probe.isRunning { probe.terminate() } }
+  defer {
+    // EOF lets the interactive probe unwind its private HTTPS server on a
+    // failed assertion too. Bound the wait if a download has not returned.
+    try? input.fileHandleForWriting.close()
+    let deadline = Date().addingTimeInterval(5)
+    while probe.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+    if probe.isRunning { probe.terminate() }
+    let stopped = Date().addingTimeInterval(5)
+    while probe.isRunning && Date() < stopped { Thread.sleep(forTimeInterval: 0.02) }
+    if probe.isRunning { kill(probe.processIdentifier, SIGKILL) }
+    probe.waitUntilExit()
+  }
   func said() -> String { (try? String(contentsOf: errors, encoding: .utf8)) ?? "" }
 
   // The private cache the probe started, as a person would enter it in Settings.

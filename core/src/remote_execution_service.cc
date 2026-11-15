@@ -7,6 +7,7 @@
 
 #include "remote_invocation.hh"
 #include "service.hh"
+#include "run_scratch.hh"
 #include "store.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -263,7 +264,7 @@ auto RemoteExecutionService::recover(RemoteJobRecord& job, const RemoteJobState&
     const auto run_dir = run_dir_of(service_, inv.run_id);
     // Recovery never recreates an older run's scratch. This staging folder is
     // removed after its recorded files and artifact have been copied.
-    const auto staging = service_.run_scratch() / "recovery" / crypto::uuid4();
+    const auto staging = private_disk_scratch(service_.run_scratch() / "recovery") / crypto::uuid4();
     const auto directory = staging / remote::relative_path(job.directory);
     struct RemoveStaging {
       stdfs::path path;

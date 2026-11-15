@@ -14,6 +14,7 @@
 #include "collect_value.hh"
 #include "history.hh"
 #include "remote_execution_service.hh"
+#include "run_scratch.hh"
 #include "schema.hh"
 #include "nix.hh"
 #include "service.hh"
@@ -1355,7 +1356,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   stdfs::path invocation_dir(const Node& node, uint64_t inv) {
-    return svc_.run_scratch() / "runs" / run_id_ / "work" / path_key(node.path) / std::to_string(inv);
+    return private_disk_scratch(svc_.run_scratch() / "runs") / run_id_ / "work" / path_key(node.path) / std::to_string(inv);
   }
 
   auto retain_artifact(const Node& node, uint64_t inv, Value& v, const std::atomic<bool>& stop) -> void {

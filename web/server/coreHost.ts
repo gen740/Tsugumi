@@ -170,7 +170,7 @@ export class CoreHost {
     const existing = read()
     if (existing) return existing
     return this.starting ??= (async () => {
-      const socketDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-host-'))
+      const socketDir = fs.mkdtempSync(path.join(process.env.TSUGUMI_SOCKET_DIR ?? '/tmp', 'tsugumi-host-'))
       // Only the service creates and numbers state. Move its startup log into
       // the new folder once this process has published readiness.
       const stateLog = path.join(this.state, 'host.log')

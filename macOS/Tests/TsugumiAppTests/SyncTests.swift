@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Observation
 import Testing
@@ -19,7 +20,7 @@ import TsugumiAgentClient
     var ready: [String: Any] = [:]
 
     init(project: URL, mockedBuilds: Bool = false) throws {
-      dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("tsg-\(UUID().uuidString.prefix(8))")
+      dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/tmp").appendingPathComponent("tsg-\(UUID().uuidString.prefix(8))")
       try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
       let env = ProcessInfo.processInfo.environment
       let build = env["TSUGUMI_BUILD_DIR"].map { URL(fileURLWithPath: $0) }
@@ -27,23 +28,27 @@ import TsugumiAgentClient
       let binary = mockedBuilds ? ("TSUGUMI_MOCK_DAEMON", "tests/core/tsugumid-mock") : ("TSUGUMID", "core/tsugumid")
       process.executableURL = env[binary.0].map { URL(fileURLWithPath: $0) } ?? build.appendingPathComponent(binary.1)
       if mockedBuilds { process.environment = env.merging(["TSUGUMI_MOCK_CONTROL": dir.path]) { _, value in value } }
-      process.arguments = ["--project", project.path, "--unix", dir.appendingPathComponent("s").path,
+      process.arguments = ["--scratch-dir", dir.appendingPathComponent("scratch").path,
+                           "--run-scratch-dir", dir.resolvingSymlinksInPath().appendingPathComponent("run-scratch").path,
+                           "--project", project.path, "--unix", dir.appendingPathComponent("s").path,
                            "--control-dir", dir.appendingPathComponent("control").path,
                            "--worker", env["TSUGUMI_WORKER"] ?? build.appendingPathComponent("workerd/tsugumi-worker").path,
                            "--sdk-dir", env["TSUGUMI_SDK_DIR"] ?? SyncTests.root.appendingPathComponent("sdk").path,
                            "--allow-missing-origin", "--listen", "127.0.0.1:0"]
       process.standardOutput = FileHandle.nullDevice
       process.standardError = FileHandle.nullDevice
-      try process.run()
-      let file = dir.appendingPathComponent("control/server.ready")
-      for _ in 0..<400 {
-        if let d = try? Data(contentsOf: file), let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
-          ready = j
-          return
+      do {
+        try process.run()
+        let file = dir.appendingPathComponent("control/server.ready")
+        for _ in 0..<400 {
+          if let d = try? Data(contentsOf: file), let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] {
+            ready = j
+            return
+          }
+          Thread.sleep(forTimeInterval: 0.025)
         }
-        Thread.sleep(forTimeInterval: 0.025)
-      }
-      throw CocoaError(.fileReadNoSuchFile)
+        throw CocoaError(.fileReadNoSuchFile)
+      } catch { stop(); throw error }
     }
 
     var endpoint: Endpoint {
@@ -52,8 +57,13 @@ import TsugumiAgentClient
     }
 
     func stop() {
-      process.terminate()
-      process.waitUntilExit()
+      if process.isRunning {
+        process.terminate()
+        let deadline = Date().addingTimeInterval(5)
+        while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+        if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        process.waitUntilExit()
+      }
       try? FileManager.default.removeItem(at: dir)
     }
   }

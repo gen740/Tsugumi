@@ -53,7 +53,7 @@ class PreparedNativeExecution final : public PreparedExecution {
 }  // namespace
 
 NativeExecutionService::NativeExecutionService(Service& service, std::filesystem::path /*scratch_root*/)
-    : service_(service), workers_(private_disk_scratch(service.run_scratch() / "workers")) {}
+    : service_(service), workers_(service.run_scratch() / "workers") {}
 
 auto NativeExecutionService::clear() -> void { workers_.clear(false); }
 
@@ -66,6 +66,7 @@ auto NativeExecutionService::prepare(const Node& node, const std::filesystem::pa
 }
 
 auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionResult {
+  private_disk_scratch(service_.run_scratch() / "workers");
   const Node& node = request.node;
   const CardBuild& build = request.build;
   InvocationSummaryData& s = request.summary;

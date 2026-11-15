@@ -113,7 +113,8 @@ public actor CoreHostClient {
       return object
     }
     if let existing = read() { return existing }
-    let directory = URL(fileURLWithPath: "/private/tmp", isDirectory: true).appendingPathComponent("tsugumi-host-\(UUID().uuidString)")
+    let socketRoot = ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/private/tmp"
+    let directory = URL(fileURLWithPath: socketRoot, isDirectory: true).appendingPathComponent("tsugumi-host-\(UUID().uuidString.prefix(8))")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let daemon = Process()
     daemon.executableURL = try executable("tsugumi-hostd", environment: "TSUGUMI_HOSTD", component: "core")

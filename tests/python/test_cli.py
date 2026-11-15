@@ -410,8 +410,6 @@ def vm_server(tmp_path):
                 os.kill(int((tmp_path / "host.pid").read_text()), signal.SIGTERM)
             except ProcessLookupError:
                 pass
-        endpoint = Path("/tmp") / f"tsugumi-vmhost-{os.getuid()}-{hashlib.sha256(str(support.resolve()).encode()).hexdigest()[:24]}.sock"
-        endpoint.unlink(missing_ok=True)
 
 
 def api(port: int, cookie: str, method: str, route: str, body=None):
