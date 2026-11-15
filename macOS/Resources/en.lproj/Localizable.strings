@@ -680,6 +680,7 @@
 "中断" = "Interrupted";
 "中止" = "Cancel";
 "互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 外部で実行中のジョブは実行先で継続し、新しい履歴には引き継がれません。" = "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app. Running remote jobs continue on the execution host and will be unavailable in the new history.";
+"今すぐ再起動" = "Restart now";
 "今すぐ確認" = "Check Now";
 "今の定義と追加パスの内容に名前を付けて残します（git の tag）。" = "Name the current definitions and additional version paths (a Git tag).";
 "今の定義と追加パスは版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。" = "The current definitions and additional version paths are committed before opening this version. Changing them and running starts a new branch.";
@@ -1306,6 +1307,8 @@
 "表示中" = "Shown";
 "表示中の Card" = "Cards Shown";
 "表示中のファイルを削除" = "Delete the file shown";
+"表示言語は再起動後に変わります。これからプロジェクトに書く記録には、すでに新しい言語が使われます。実行中の処理は再起動しても続きます。" = "The display language will change after a restart. New records written into the project already use the new language. Ongoing runs will continue through the restart.";
+"表示言語を変えるには再起動が必要です" = "Restart required to change the display language";
 "複製" = "Duplicate";
 "複製できませんでした: " = "Could not duplicate: ";
 "複製を作る場所を選んでください（保存済みの内容を複製します）" = "Choose where to make the copy (the saved contents are copied)";

@@ -139,7 +139,7 @@ final class Updater {
   private let bundleID: String
   private let channel: AppChannel
   private var staged: URL?
-  private var relaunch = false
+  private(set) var relaunch = false
   private var loop: Task<Void, Never>?
 
   init(bundle: Bundle = .main, channel: AppChannel = .current) {
@@ -228,22 +228,33 @@ final class Updater {
   /// Quits (asking about unsaved edits as usual) and opens the new version.
   func installAndRelaunch() {
     guard case .ready = state else { return }
-    relaunch = true
-    NSApp.terminate(nil)
+    restart()
   }
+
+  /// Language changes use the same normal quit and wait-for-exit relaunch.
+  func restart(terminate: @MainActor () -> Void = { NSApp.terminate(nil) }) {
+    relaunch = true
+    terminate()
+  }
+
+  func cancelRelaunch() { relaunch = false }
 
   /// From applicationWillTerminate: the downloaded version takes the app's
   /// place. Any failure keeps the current app as it is.
-  func installIfReady() {
-    guard let new = staged, FileManager.default.fileExists(atPath: new.path) else { return }
-    do {
-      _ = try FileManager.default.replaceItemAt(app, withItemAt: new, backupItemName: nil, options: [.usingNewMetadataOnly])
-    } catch {
-      NSLog("Tsugumi update not installed: \(error)")
-      return
+  func installIfReady(reopen: @MainActor (URL) -> Void = Updater.openAfterExit) {
+    if let new = staged, FileManager.default.fileExists(atPath: new.path) {
+      do {
+        _ = try FileManager.default.replaceItemAt(app, withItemAt: new, backupItemName: nil, options: [.usingNewMetadataOnly])
+        LSRegisterURL(app as CFURL, true)
+      } catch {
+        NSLog("Tsugumi update not installed: \(error)")
+      }
     }
-    LSRegisterURL(app as CFURL, true)
     guard relaunch else { return }
+    reopen(app)
+  }
+
+  private static func openAfterExit(_ app: URL) {
     // Opened once this UI has exited; ongoing work remains in the resident host.
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/bin/sh")
