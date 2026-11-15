@@ -662,6 +662,33 @@ import TsugumiTestSupport
     #expect(!s.dirty, "\(s.saveError ?? "")")
   }
 
+  /// A failed save keeps a newly dropped Card in place; retry saves that place.
+  @Test func aDroppedCardKeepsItsPlaceAfterASaveFailure() async throws {
+    let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let d = try Daemon(project: dir)
+    defer { d.stop() }
+    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
+    s.endpointOverride = d.endpoint
+    s.start()
+    try await Self.connected(s)
+    let at = CGPoint(x: 320, y: 240)
+    let k = try await s.addCard(template: .draft, in: [], at: at, name: "dropped")
+    s.edit { $0.updateLayout(of: []) { l in l["displays"] = .object([("b", .object([("x", .real(1))]))]) } }
+    await s.save()
+    #expect(s.saveError?.contains("display b") == true, "\(s.saveError ?? "")")
+    #expect(s.dirty && s.instance(k) != nil)
+    #expect(s.position(k) == at)
+
+    s.edit { $0.updateLayout(of: []) { $0["displays"] = nil } }
+    await s.save()
+    #expect(s.saveError == nil, "\(s.saveError ?? "")")
+    #expect(!s.dirty && s.instance(k) != nil)
+    #expect(s.position(k) == at)
+    #expect(s.confirmedLayout["cards"]?[k]?["x"]?.double == Double(at.x))
+    #expect(s.confirmedLayout["cards"]?[k]?["y"]?.double == Double(at.y))
+  }
+
   /// A deleted Card takes its files with it: saving the removal works, for a
   /// Card with files on disk and for one whose files were just written.
   @Test func deletingACardWithFilesSaves() async throws {
