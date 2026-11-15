@@ -67,6 +67,7 @@ struct NixEvaluator::Impl {
   std::filesystem::path control;
   std::filesystem::path products;
   std::vector<std::string> allowed;
+  uint64_t full_evaluations = 0;
 };
 
 auto NixEvaluator::init_process() -> void {}
@@ -95,6 +96,8 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
       }))
     throw std::runtime_error("mock build needs confirmed definition sources inside the evaluation area");
 
+  fs::write_atomic(impl_->control / "full-evaluations", std::to_string(++impl_->full_evaluations), 0600);
+
   BuildPlan plan;
   const auto source = fs::read_beneath(call.definition_dir, "mock-build.json");
   if (auto error = schema::decode(source, plan))
@@ -102,6 +105,7 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   // Reject incomplete plans before announcing a gate. An error plan may omit
   // its product, while malformed products never fall back to real Nix.
   NixResult result;
+  result.evaluation_epoch = 1;
   std::string manifest;
   if (schema::get(plan.manifest)) manifest = manifest_text(plan, call, result);
   if (!schema::get(plan.error) && manifest.empty())
@@ -131,6 +135,10 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   return result;
 }
 
+auto NixEvaluator::reuse(const NixCall&, const NixResult& result) -> bool {
+  return valid(result.derivation.output);
+}
+
 auto NixEvaluator::make_available(const NixCall& call, const DerivationClosureTransport& transport,
                                   const WorkerDerivation& derivation) -> void {
   check_interrupted(call);
@@ -155,6 +163,7 @@ auto NixEvaluator::realise_native(const NixCall& call, NixResult result) -> NixR
   result.closure.push_back(product.string());
   result.closure.push_back(product.string() + "-dependency");
   std::ranges::sort(result.closure);
+  result.closure.erase(std::unique(result.closure.begin(), result.closure.end()), result.closure.end());
   if (!call.root_dir.empty()) {
     std::filesystem::create_directories(call.root_dir);
     result.root = call.root_dir / (call.root_prefix + product.filename().string());
@@ -166,8 +175,15 @@ auto NixEvaluator::realise_native(const NixCall& call, NixResult result) -> NixR
   return result;
 }
 
-auto NixEvaluator::flake(const NixCall&, const std::string&) -> FlakeInfo {
-  throw std::runtime_error("tsugumid-mock does not resolve flakes or contact the network");
+auto NixEvaluator::flake(const NixCall& call, const std::string& ref) -> FlakeInfo {
+  // Controlled source products, never a fetcher: key tests supply the result
+  // for an exact ref/system/override request in their private control folder.
+  const auto key = crypto::sha256_hex(ref + "|" + call.system + "|" + call.source_overrides);
+  const auto product = fs::read_file(impl_->control / "flakes" / (key + ".json"));
+  if (!product) throw std::runtime_error("tsugumid-mock does not resolve flakes or contact the network");
+  FlakeInfo result;
+  result.json = *product;
+  return result;
 }
 
 auto NixEvaluator::valid(const std::string& store_path) -> bool {
