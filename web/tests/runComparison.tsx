@@ -212,7 +212,7 @@ for (const name of ['rgb', 'spectrum']) {
 
 // Versions: a run that recorded none, the same version, an empty diff and a diff cut short.
 {
-  const diff = (text: string, truncated = false) => Object.assign(new R.VersionDiffT(), { text, truncated })
+  const diff = (text: string, truncated = false) => ({ text, truncated })
   const html = (props: Parameters<typeof VersionDifference>[0]) => renderToStaticMarkup(<VersionDifference {...props} />)
   assert.ok(html({ from: '', to: 'b'.repeat(40) }).includes('版が記録されていないため差分を表示できません。'), 'no version on one side')
   assert.ok(html({ from: '', to: '' }).includes('版が記録されていないため差分を表示できません。'))

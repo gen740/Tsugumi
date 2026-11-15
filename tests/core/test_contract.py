@@ -108,7 +108,7 @@ def test_session_requires_hello_and_negotiates_protocol_and_project(daemon):
         capabilities = {text(capability) for capability in negotiated.capabilities}
         assert {f"display:Display{kind}" for kind in
                 ("Text", "Scalar", "Table", "Image", "PointCloud", "Module")} <= capabilities
-        assert {f"format:{kind}" for kind in ("json", "cpp", "python", "nix", "bash")} <= capabilities
+        assert not any(cap.startswith("format:") for cap in capabilities)
         with pytest.raises(RpcFailure) as error:
             connect().hello(project=new_id())
         assert error.value.kind == "permission_denied"
@@ -273,43 +273,14 @@ def test_view_save_cas(client):
     assert text(opened.snapshot.viewJson) == v
 
 
-def test_validate_and_unsupported_format(client):
-    """Validation requires the requested revision and formatting rejects unsupported languages."""
+def test_validate_revision(client):
+    """Validation requires the requested revision."""
     snap = client.open().snapshot
     v = client.call("ProjectValidateRequest", atRev=snap.rev)
     assert v.valid is True
     with pytest.raises(RpcFailure) as e:
         client.call("ProjectValidateRequest", atRev=snap.rev + 5)
     assert e.value.kind == "revision_conflict"
-    with pytest.raises(RpcFailure) as e:
-        client.call("ProjectFileFormatRequest", path="x.fbs", text="table T {}", language=6)
-    assert e.value.kind == "unsupported"
-
-
-def test_format_is_separate_from_saving(client):
-    """Formatting returns text or diagnostics without saving the project."""
-    import shutil
-    snap = client.open().snapshot
-    r = client.call("ProjectFileFormatRequest", path="definitions/a/_card.json", text='{"a":[1,2],"b":{}}')
-    assert text(r.text) == '{\n  "a": [\n    1,\n    2\n  ],\n  "b": {}\n}\n'
-    bad = client.call("ProjectFileFormatRequest", path="definitions/a/x.json", text='{"a":')
-    assert [text(d.code) for d in bad.diagnostics] == ["syntax_error"] and text(bad.text) == '{"a":'
-    tools = {"cpp": ("clang-format", "x.cc", "int  main( ){return 0;}", None),
-             "python": ("ruff", "x.py", "def f(:\n  pass\n", (1, 7)),
-             "nix": ("nixfmt", "x.nix", "{ a = 1; b = [ 1 2 ]; }", None)}
-    for lang, (tool, name, src, err_pos) in tools.items():
-        if not shutil.which(tool):
-            with pytest.raises(RpcFailure) as e:
-                client.call("ProjectFileFormatRequest", path="definitions/a/" + name, text=src)
-            assert e.value.kind == "unsupported" and tool in str(e.value)
-            continue
-        res = client.call("ProjectFileFormatRequest", path="definitions/a/" + name, text=src)
-        if err_pos:
-            assert [text(d.code) for d in res.diagnostics] == ["syntax_error"]
-            assert res.diagnostics[0].offset is not None
-        else:
-            assert not res.diagnostics and text(res.text) != src
-    assert client.call("ProjectInspectRequest").rev == snap.rev
 
 
 def test_ui_layout_fields_and_draft_outputs(client):
@@ -470,11 +441,11 @@ def test_run_logs_and_display(project, tmp_path, core_factory):
     rec = c.call("RunRecordRequest", runId=run_id, card=shown)
     assert rec.exists and rec.recordingDisabled is True
     # Read the stdout log in small chunks; never split a character.
-    whole = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout, limitBytes=262144)
+    whole = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output, limitBytes=262144)
     assert text(whole.text) == message + "\n"
     pieces, off = [], 0
     while True:
-        s = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout,
+        s = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output,
                    offset=off, limitBytes=7)
         pieces.append(text(s.text))
         if s.nextOffset == off:
@@ -483,14 +454,14 @@ def test_run_logs_and_display(project, tmp_path, core_factory):
         if off >= s.sizeBytes:
             break
     assert "".join(pieces) == text(whole.text)
-    tail = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout, tail=True, limitBytes=10)
+    tail = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output, tail=True, limitBytes=10)
     assert text(whole.text).endswith(text(tail.text)) and tail.truncated
     inside = text(whole.text).encode().index("日".encode()) + 1  # inside a 3-byte character
     with pytest.raises(RpcFailure) as e:
-        c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout, offset=inside)
+        c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output, offset=inside)
     assert e.value.kind == "invalid_range"
     with pytest.raises(RpcFailure):
-        c.call("LogRangeRequest", runId=run_id, stream=LogStream.stdout, tail=True, offset=3)
+        c.call("LogRangeRequest", runId=run_id, stream=LogStream.standard_output, tail=True, offset=3)
     journal = c.call("LogRangeRequest", runId=run_id, stream=LogStream.journal)
     assert text(journal.text)
     history = c.call("RunHistoryRequest")

@@ -119,7 +119,7 @@ func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugum
         assert text(shown(c,run,'count').value.text)==f'{expected} {expected}'
         rec=c.call('RunInvocationsRequest',runId=run,card=path('count')).records[0]
         assert bool(rec.workerReused)==(reuse and n==2)
-        log = text(c.call('LogRangeRequest', runId=run, card=path('count'), stream=LogStream.stderr).text)
+        log = text(c.call('LogRangeRequest', runId=run, card=path('count'), stream=LogStream.standard_error).text)
         assert 'before-go' in log and 'after-go' in log
 
 

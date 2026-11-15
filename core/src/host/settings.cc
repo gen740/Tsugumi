@@ -880,6 +880,11 @@ auto Settings::HelperPolicy(const std::string &profile)
           j::Bool(j::Get(values, "agent.allowUnscopedHelpers"))};
 }
 
+auto Settings::Language(const std::string& profile) -> std::string {
+  std::lock_guard lock(state_->mutex);
+  return j::Text(state_->Values(profile).second, "app.language", "ja");
+}
+
 auto Settings::VersionNoteMode(const std::string& profile) -> std::string {
   std::lock_guard lock(state_->mutex);
   return j::Text(state_->Values(profile).second, "versions.noteMode", "mechanical");

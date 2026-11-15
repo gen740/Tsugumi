@@ -14,27 +14,22 @@ Choosing data here fixes it as part of the computation's definition. Removing a 
 
 ## When a version is made
 
-- **When a run starts**: if the saved definitions or additional selected paths have changed since the last version, they are committed (message "Run: <Card>" in English, "実行: <Card>" in Japanese). The run records the commit at its start, which you can see in the list of runs and in `RunStatus.commit`. Running again without changing them adds a run to the same commit (commits and runs are 1 : N). Unselected files do not mark the version history as changed.
+- **When a run starts**: if the saved definitions or additional selected paths have changed since the last version, they are committed (a language-neutral JSON commit record; the host displays "Run: <Card>" or "実行: <Card>"). The run records the commit at its start, which you can see in the list of runs and in `RunStatus.commit`. Running again without changing them adds a run to the same commit (commits and runs are 1 : N). Unselected files do not mark the version history as changed.
 - **Keep as Version**: commits the same definitions and additional selected paths and gives the version a name (an annotated tag) and a memo. Starting versioning uses the same selection.
 
 ## The results of runs
 
-Each time a run ends, one line is appended to the note of that run's commit (`refs/notes/tsugumi`). The end of the line is a short summary of what ran:
+Each time a run ends, one JSON record is appended to the note of that run's commit (`refs/notes/tsugumi`). It holds `run_id`, the terminal `state`, UTC `ended` time, `seconds`, and `record_json`: neutral facts about where the run started, whether it propagated or used saved inputs, the IDs and invocation counts of Cards that ran, failure kinds, and IDs of Cards never invoked. The schema is in `core/src/version_record.hh`. No failure messages, logs, display names or data values are stored in these notes.
 
-```
-run 3f2a9c1e-… succeeded 2026-11-04T10:12:00Z 12.3s whole: load, bands ×3, rgb
-run 7c01d2aa-… failed 2026-11-04T10:15:00Z 1.8s from bands (with saved inputs): bands / failed: bands (worker_failed) / not run: rgb
-```
+Automatic commit messages are JSON records with `tsugumi: "commit"`, `kind` (`create`, `run`, `checkout`) and a Card ID. User-written messages and imported demo messages remain opaque text. Neither writing nor reading a project RPC selects a language; `SessionHello` has no language field.
 
-The commit message and the summary are in the language of the app (or Web UI) that started the run: its client tells tsugumid in `SessionHello` (`language`), so a model cannot change it. In Japanese the same lines read `全体: load、bands ×3、rgb` and `bands から（保存済みの入力で）: bands / 失敗: bands（worker_failed） / 未実行: rgb`.
-
-The summary is made mechanically from the results the core recorded for that run. No model is used.
+The host service (`tsugumi-agentd`) turns these records into Japanese or English on each request, so the same saved commit and run can be read in either language later. The Mac app and Web UI use `HostVersionGraphRequest`; the Agent uses the same host presentation logic. For example, a run can read `whole: load, bands ×3, rgb` or `全体: load、bands ×3、rgb`. No model is used for this presentation.
 
 - **Where it started**: `whole` (a run from a trigger or a Workflow), `from <Card>` (that Card and downstream), `only <Card>`. When any Card that ran used saved inputs from an earlier run, `(with saved inputs)` is added.
 - **Cards that ran**: the Cards actually invoked. One invoked several times gets `×count`. The trigger of a whole run is not included.
 - **Failed**: the Cards that failed and the kind of failure (the kind of `Failure`). The failure's text and logs are not put in git; see them in the run's record.
 - **Not run**: Cards not invoked because something upstream failed or stopped.
-- To keep it short, each list has at most six Cards, and the rest are `and N more`.
+- The host displays at most six Cards per list and the remaining count. The stored record retains every Card.
 
 Runs of versions made from a demo's history have no summary (the history file has no such record).
 
@@ -64,22 +59,22 @@ In the Mac app, open it with "Version History…" (⌥⌘Y) in the Workflow menu
 
 Choose **Change record** or **Agent summary** beside the version history. This setting applies to all projects in the current host settings profile and is stored in `tsugumi-agentd` (`versions.noteMode`). Change record is the default.
 
-- **Change record**: the project core compares the full version tree with its first parent, without a model. It lists Cards added or removed and changes to their definitions, source, parameters and wiring, in the requesting app's language. Workflow settings are listed separately. Each record shows at most six entries and the remaining count. It contains no source text or parameter values. All files under a Card's `src/` count as source inputs, including assets and languages outside the model-diff allowlist. Changes to `layout.json` and files under `data/` are excluded.
+- **Change record**: the project core compares the full version tree with its first parent, without a model. It lists Cards added or removed and changes to their definitions, source, parameters and wiring, as neutral kinds of change. The host renders these facts in the requesting app's language. Workflow settings are listed separately. The host shows at most six entries and the remaining count; the record keeps all entries. It contains no source text or parameter values. All files under a Card's `src/` count as source inputs, including assets and languages outside the model-diff allowlist. Changes to `layout.json` and files under `data/` are excluded.
 - **Agent summary**: the Agent writes one short sentence from the code and settings diff. The diff goes to the model provider and uses tokens. It can contain mistakes; the diff and run records are the evidence. This is different from the mechanical run summary above.
 
 The clients request a note when a version is hovered or selected, and display the returned text. The host Agent service chooses the mode and model, reads the authorized diff, generates the summary when needed and saves it. Requests from multiple windows for the same project and version share a gate: the saved Agent note is checked before any model call. A successful note is reused across windows and service restarts. Failed requests can be retried. Runs with no open version history do not request model summaries.
 
-The mechanical record is generated once per requested language and stored in `refs/notes/tsugumi-record-ja` or `refs/notes/tsugumi-record-en`. It is displayed in the requesting app's language. The Agent note keeps the language of the request that first generated it. Switching to Change record shows the mechanical record even if an Agent note is saved; switching back reuses the saved Agent note.
+The core stores the language-neutral mechanical record in `refs/notes/tsugumi-record`: added and removed Card IDs, changed Card IDs with change kinds, and whether Workflow settings changed. It contains no sentence templates. The host renders it in the requesting app's language. Generated Agent notes are stored separately per language. Switching to Change record shows the mechanical record even if an Agent note is saved; switching back reuses the saved Agent note.
 
 Agent summaries use the host's small-model override (`agent.thoughtModel` or `agent.thoughtModel.openai`) when set; the defaults are `claude-haiku-5-5` for Anthropic and the Agent's configured model for OpenAI. They are unavailable with the ChatGPT plan. If no code or settings changed, the mechanical record is returned without calling a model.
 
-The model receives `VersionDiff`, limited to diffs of `tsugumi.json`, the Cards' `_card.json`, `_meta.json`, `_link.json`, `_outputs.fbs` and `default.nix`, and code in `src/` (`.py` `.cc` `.cpp` `.cxx` `.c` `.h` `.hh` `.hpp` `.nix` `.fbs` `.sh`). Data files such as `data/`, non-code files in `src/` and `layout.json` are excluded. Long diffs are cut (4,000 bytes per file, 12,000 in all). Parameter values and values written in code are sent.
+The host owns `SummaryReads`, the file allowlist and diff limits. The model receives `VersionDiff`, limited to diffs of `tsugumi.json`, the Cards' `_card.json`, `_meta.json`, `_link.json`, `_outputs.fbs` and `default.nix`, and code in `src/` (`.py` `.cc` `.cpp` `.cxx` `.c` `.h` `.hh` `.hpp` `.nix` `.fbs` `.sh`). Data files such as `data/`, non-code files in `src/` and `layout.json` are excluded. Long diffs are cut (4,000 bytes per file, 12,000 in all). Parameter values and values written in code are sent.
 
-An Agent note is stored in `refs/notes/tsugumi-summary`, apart from the run records (`refs/notes/tsugumi`). Read it from git with:
+The host writes Agent notes to `refs/notes/tsugumi-summary-ja` or `refs/notes/tsugumi-summary-en`, apart from the neutral core records. `HostVersionDiffRequest` provides the same host-selected diff to run comparisons. Read it from git with:
 
 ```bash
-git log --notes=tsugumi-summary
-git log --notes=tsugumi-record-en
+git log --notes=tsugumi-summary-en
+git log --notes=tsugumi-record
 ```
 
 ## Comments

@@ -203,7 +203,7 @@ extension ChatResumeTests {
   #expect(before != after)
   #expect(after.card?.state == .succeeded)
   let output = try await session.rpc!.logRange(runId: after.runId!, card: ["start"], invocation: 1,
-                                                stream: .stdout, offset: 0, limit: 1024)
+                                                stream: .standardOutput, offset: 0, limit: 1024)
   #expect(output.text.isEmpty)
   let history = try await session.rpc!.history(card: ["start"], limit: 100)
   #expect(history.runs.first??.status.runId == after.runId)

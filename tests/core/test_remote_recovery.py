@@ -422,7 +422,7 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
         assert len(artifacts) == 1
         saved = client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), limitBytes=1024)
         assert bytes(saved.bytes) == b"retained after shutdown\n"
-        log = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1, stream=LogStream.stdout)
+        log = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
         assert text(log.text) == "one recovered message\n"
         assert gateway.submit_count == 1
     else:

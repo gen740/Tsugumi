@@ -247,7 +247,7 @@ def check_success(client, run_id, name, system):
     assert bytes(content.bytes) == b"remote-input-roundtrip\n"
     member, = artifacts[0].members
     assert text(member.hash) == hashlib.sha256(bytes(content.bytes)).hexdigest()
-    logs = client.call("LogRangeRequest", runId=run_id, card=path(name), invocation=1, stream=LogStream.stdout)
+    logs = client.call("LogRangeRequest", runId=run_id, card=path(name), invocation=1, stream=LogStream.standard_output)
     assert text(logs.text) == "remote-card-stdout\n"
     environments = client.call("RunEnvironmentsRequest", runId=run_id).environments
     assert environments and text(environments[0].system) == system
@@ -391,7 +391,7 @@ def test_core_recording_budget_is_the_same_locally_and_remotely(project, core_fa
     run = wait_run(client, run_id, timeout=480)
     assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
     stdout = client.call("LogRangeRequest", runId=run_id, card=path("work"),
-                         invocation=1, stream=LogStream.stdout)
+                         invocation=1, stream=LogStream.standard_output)
     assert 0 < stdout.sizeBytes <= 8 << 20
     journal = client.call("LogRangeRequest", runId=run_id, card=path("work"),
                           invocation=1, stream=LogStream.journal)
@@ -494,7 +494,7 @@ def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, 
     assert cancelled.executionState == RemoteExecutionState.cancelled
     assert text(cancelled.executionJobId) == text(running.executionJobId)
     log = client.call("LogRangeRequest", runId=run_id, card=path("fails"),
-                      invocation=failed.invocation, stream=LogStream.stderr)
+                      invocation=failed.invocation, stream=LogStream.standard_error)
     assert "expected-batch-member-failure" in text(log.text)
     downstream = client.call("RunInvocationsRequest", runId=run_id, card=path("collect"))
     blocked, = downstream.records

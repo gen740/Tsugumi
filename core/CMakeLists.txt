@@ -137,6 +137,9 @@ add_library(tsugumi_agent_core STATIC
   src/agent/wire.cc
   src/agent/host.cc
   src/host/attached_folder.cc
+  src/host/format.cc
+  src/host/version_text.cc
+  src/util/process.cc
   src/host/comments.cc
   src/host/save.cc
   src/agent/helper_scope.cc
@@ -153,6 +156,11 @@ add_library(tsugumi_agent_core STATIC
   src/host/environment.cc
   src/host/environment_native.cc
   src/host/vm_process.cc)
+# Absolute paths to the pinned host tools. Empty means unavailable; never search PATH.
+foreach(tool CLANG RUFF NIX SH)
+  set(TSUGUMI_FORMAT_${tool} "" CACHE STRING "Host formatter ${tool}: absolute path or @bundle/name on macOS")
+  target_compile_definitions(tsugumi_agent_core PRIVATE TSUGUMI_FORMAT_${tool}="${TSUGUMI_FORMAT_${tool}}")
+endforeach()
 if(APPLE)
   target_link_libraries(tsugumi_agent_core PRIVATE "-framework CoreFoundation")
 else()

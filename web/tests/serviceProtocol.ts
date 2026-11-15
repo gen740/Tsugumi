@@ -169,3 +169,26 @@ assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call
   assert.equal(value.allow, true)
   assert.deepEqual(value.alsoAllow, [1])
 }
+
+// Formatting and version presentation are Host operations, independently of the core PATH/language.
+{
+  for (const [method, fields] of [
+    ['FileFormatRequest', { path: 'x.json', text: '{"a":1}' }],
+    ['HostVersionGraphRequest', { project: 'p', language: 'en' }],
+    ['HostVersionDiffRequest', { project: 'p', commit: 'next', from_commit: 'before' }],
+  ] as const) {
+    assert.equal(hostMethod(method), true)
+    const frame = encodeRequest(method, fields, 7n, true)
+    const request = HostMessage.getRootAsMessage(new fb.ByteBuffer(frame)).unpack()
+    const value = (request.payload as any).value
+    for (const [key, field] of Object.entries(fields)) assert.equal(value[key === 'from_commit' ? 'fromCommit' : key], field)
+    assert.throws(() => encodeRequest(method, fields, 7n, false), /Unknown Agent/)
+  }
+  const { FileFormatResult } = await import('../src/gen/tsugumi/host/file-format-result')
+  const b = new fb.Builder()
+  const formatted = FileFormatResult.createFileFormatResult(b, b.createString('{}\n'), 0)
+  const reply = HostReply.createReply(b, HostReplyPayload.FileFormatResult, formatted)
+  HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 7n, HostPayload.Reply, reply))
+  assert.deepEqual(decodeReply(b.asUint8Array(), true).value, { text: '{}\n', diagnostics: [] })
+}
+console.log('Host formatting and version presentation adapters: passed')

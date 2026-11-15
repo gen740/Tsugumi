@@ -742,8 +742,8 @@ TEST_F(AgentProjectFixture, ShellCommandsRequireTheirOwnExplicitGrant) {
   ASSERT_TRUE(result.Code().empty());
   const auto text = JsonString(result.View(), "/text");
   EXPECT_EQ(JsonString(text, "/reply"), "ProjectShellResult");
-  EXPECT_EQ(JsonString(text, "/value/stdout"), "allowed");
-  EXPECT_EQ(JsonString(text, "/value/stderr"), "diagnostic");
+  EXPECT_EQ(JsonString(text, "/value/stdout_bytes"), "allowed");
+  EXPECT_EQ(JsonString(text, "/value/stderr_bytes"), "diagnostic");
   EXPECT_NE(text.find("\"exit_code\":3"), std::string::npos);
 }
 
@@ -921,7 +921,7 @@ TEST_F(AgentProjectFixture, ShellHidesControlCredentialsAndCannotSendDirectRPC) 
       "test ! -r " + quote(marker.string()) +
       " && printf private > \"$TMPDIR/diagnostic\" && cat \"$TMPDIR/diagnostic\"");
   EXPECT_NE(private_tmp.find("\"exit_code\":0"), std::string::npos) << private_tmp;
-  EXPECT_EQ(JsonString(private_tmp, "/value/stdout"), "private");
+  EXPECT_EQ(JsonString(private_tmp, "/value/stdout_bytes"), "private");
   const auto next = run("test ! -e \"$TMPDIR/diagnostic\"");
   EXPECT_NE(next.find("\"exit_code\":0"), std::string::npos) << next;
   const auto result = run(
@@ -930,7 +930,7 @@ TEST_F(AgentProjectFixture, ShellHidesControlCredentialsAndCannotSendDirectRPC) 
       " TSUGUMI_SHELL_PROBE_TOKEN=" + quote(JsonString(project_ready, "/token")) +
       " ./rpc-probe --gtest_filter=AgentShellProbe.DirectProjectRequest");
   EXPECT_NE(result.find("\"exit_code\":0"), std::string::npos) << result;
-  EXPECT_NE(JsonString(result, "/value/stdout").find("DIRECT_RPC_BLOCKED"), std::string::npos);
+  EXPECT_NE(JsonString(result, "/value/stdout_bytes").find("DIRECT_RPC_BLOCKED"), std::string::npos);
 }
 
 TEST_F(AgentProjectFixture,
@@ -1007,9 +1007,9 @@ TEST_F(AgentProjectFixture, DiagnosticShellSupportsPythonAsyncioWhenAvailable) {
   const auto text = JsonString(result.View(), "/text");
   EXPECT_EQ(JsonString(text, "/reply"), "ProjectShellResult");
   EXPECT_EQ(JsonUInt(text, "/value/exit_code"), 0u) << text;
-  if (JsonString(text, "/value/stdout") == "PYTHON_UNAVAILABLE")
+  if (JsonString(text, "/value/stdout_bytes") == "PYTHON_UNAVAILABLE")
     GTEST_SKIP() << "Python is absent from the project shell environment";
-  EXPECT_EQ(JsonString(text, "/value/stdout"), "");
+  EXPECT_EQ(JsonString(text, "/value/stdout_bytes"), "");
 }
 
 TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {

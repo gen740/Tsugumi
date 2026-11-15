@@ -30,8 +30,8 @@ def shell_daemon(core_factory):
 def test_shell_uses_project_user_and_cwd_and_returns_both_streams(shell_daemon, project):
     """A command returns its separate stdout, stderr and exit status in the project environment."""
     result = shell(shell_daemon.connect(), "pwd; id -u; printf diagnostic >&2; exit 7")
-    assert bytes(result.stdout).decode().splitlines() == [str(project.resolve()), str(os.geteuid())]
-    assert bytes(result.stderr) == b"diagnostic"
+    assert bytes(result.stdoutBytes).decode().splitlines() == [str(project.resolve()), str(os.geteuid())]
+    assert bytes(result.stderrBytes) == b"diagnostic"
     assert result.exitCode == 7
     assert result.signal == 0 and not result.cancelled and not result.timedOut
 
@@ -39,8 +39,8 @@ def test_shell_uses_project_user_and_cwd_and_returns_both_streams(shell_daemon, 
 def test_binary_output_is_preserved(shell_daemon):
     """Shell output is returned as bytes, including NUL and non-UTF-8 data."""
     result = shell(shell_daemon.connect(), "printf '\\000\\377'; printf '\\376' >&2")
-    assert bytes(result.stdout) == b"\0\xff"
-    assert bytes(result.stderr) == b"\xfe"
+    assert bytes(result.stdoutBytes) == b"\0\xff"
+    assert bytes(result.stderrBytes) == b"\xfe"
 
 
 @pytest.mark.parametrize("command", ["exec 1>&- 2>&-; sleep 20", "trap '' TERM; while :; do :; done"])
@@ -57,7 +57,7 @@ def test_output_without_newlines_is_bounded_and_does_not_block_timeout(shell_dae
     """Flooding stderr without newlines is truncated while cancellation remains responsive."""
     result = shell(shell_daemon.connect(), "while :; do printf '012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789' >&2; done", timeoutMs=500)
     assert result.timedOut and result.stderrTruncated
-    assert len(result.stderr) == 262144
+    assert len(result.stderrBytes) == 262144
 
 
 def test_operation_receipts_prevent_reexecution_after_restart(shell_daemon, project):
@@ -65,11 +65,11 @@ def test_operation_receipts_prevent_reexecution_after_restart(shell_daemon, proj
     client = shell_daemon.connect()
     operation = new_id()
     command = "printf x >> executions; printf complete"
-    assert bytes(shell(client, command, opId=operation).stdout) == b"complete"
+    assert bytes(shell(client, command, opId=operation).stdoutBytes) == b"complete"
     shell_daemon.stop()
     shell_daemon.start()
     client = shell_daemon.connect()
-    assert bytes(shell(client, command, opId=operation).stdout) == b"complete"
+    assert bytes(shell(client, command, opId=operation).stdoutBytes) == b"complete"
     assert (project / "executions").read_text() == "x"
     with pytest.raises(RpcFailure) as failure:
         shell(client, "printf different", opId=operation)
@@ -142,8 +142,8 @@ def test_running_shell_receipts_are_pending_and_duplicate_calls_join(shell_daemo
             time.sleep(0.01)
         assert observer.call("OperationGetRequest", opId=operation).state == OperationState.pending
         joined = threads.submit(shell, second, command, opId=operation)
-        assert bytes(running.result(timeout=3).stdout) == b"finished"
-        assert bytes(joined.result(timeout=3).stdout) == b"finished"
+        assert bytes(running.result(timeout=3).stdoutBytes) == b"finished"
+        assert bytes(joined.result(timeout=3).stdoutBytes) == b"finished"
     assert (project / "joined-executions").read_text() == "x"
 
 
@@ -156,12 +156,12 @@ def test_shell_read_only_is_explicit(shell_daemon, project, writable):
     target.write_text("original")
     (project / "alias").symlink_to(target)
     read = shell(client, "cat diagnostic.txt", readOnly=not writable)
-    assert read.exitCode == 0 and bytes(read.stdout) == b"original"
+    assert read.exitCode == 0 and bytes(read.stdoutBytes) == b"original"
     for command in ["printf changed > diagnostic.txt", "printf changed > alias",
                     "rm diagnostic.txt", "mv diagnostic.txt moved.txt",
                     "mkdir new-directory", "printf changed > " + shlex.quote(str(target))]:
         result = shell(client, command, readOnly=not writable)
-        assert (result.exitCode == 0) == writable, bytes(result.stderr)
+        assert (result.exitCode == 0) == writable, bytes(result.stderrBytes)
         if writable:
             if (project / "moved.txt").exists():
                 (project / "moved.txt").unlink()

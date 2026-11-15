@@ -7,6 +7,7 @@
 #include "module_source.hh"
 #include "nix.hh"
 #include "scheduler.hh"
+#include "version_record.hh"
 #include "service.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -70,7 +71,6 @@ void Service::run(RequestIn& req) {
     p.digest = digest;
     p.card = wire::card_arg(r->card());
     p.propagate = r->propagate().value_or(true);
-    p.english = english(req.conn);
     p.max_concurrency = r->max_concurrency().value_or(4);
     p.nix_jobs = r->nix_jobs().value_or(1);
     p.nix_cores = r->nix_cores().value_or(1);
@@ -89,7 +89,7 @@ void Service::run(RequestIn& req) {
     // The version it runs: what is saved, committed when it changed. A git
     // problem never stops a run (it then records no version).
     try {
-      p.commit = versions_->commit_all((p.english ? "Run: " : "実行: ") + (p.card.empty() ? std::string("Workflow") : path_key(p.card)));
+      p.commit = versions_->commit_all(version_record::commit("run", path_key(p.card)));
     } catch (const std::exception& e) {
       log::warn(std::string("versions: no commit for this run: ") + e.what());
     }
@@ -822,9 +822,9 @@ void Service::log_range(RequestIn& req) {
     inv = *r->invocation();
   }
   auto stream = r->stream();
-  if (stream != LogStream::stdout && stream != LogStream::stderr && stream != LogStream::journal &&
+  if (stream != LogStream::standard_output && stream != LogStream::standard_error && stream != LogStream::journal &&
       stream != LogStream::build)
-    throw Failed(FailureKind::invalid_request, "stream must be stdout, stderr or journal");
+    throw Failed(FailureKind::invalid_request, "stream must be standard_output, standard_error, build or journal");
   bool tail = r->tail().value_or(false);
   uint64_t offset = r->offset().value_or(0);
   if (tail && offset != 0) throw Failed(FailureKind::invalid_request, "tail and offset cannot be combined");

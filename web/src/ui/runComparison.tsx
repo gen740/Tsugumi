@@ -14,7 +14,7 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
   const [right, setRight] = useState(s(runs.find(r => s(r.status?.runId) !== (initial ?? s(runs[0]?.status?.runId)))?.status?.runId))
   const [rows, setRows] = useState<ComparedRow[]>()
   const [error, setError] = useState<string>()
-  const [diff, setDiff] = useState<R.VersionDiffT>()
+  const [diff, setDiff] = useState<{ text: string; truncated: boolean }>()
   const [diffError, setDiffError] = useState<string>()
   const [attempt, setAttempt] = useState(0)
   const a = runs.find(r => s(r.status?.runId) === left), b = runs.find(r => s(r.status?.runId) === right)
@@ -32,7 +32,7 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
     setDiff(undefined); setDiffError(undefined)
     if (!session.rpc || !from || !to || from === to) return
     let alive = true
-    void session.rpc.versionDiff(to, from).then(v => alive && setDiff(v)).catch(e => alive && setDiffError(errorText(e)))
+    void session.versionDiff(to, from).then(v => alive && setDiff(v)).catch(e => alive && setDiffError(errorText(e)))
     return () => { alive = false }
   }, [session.rpc, from, to, attempt])
   const options = runs.map(r => ({ value: s(r.status?.runId), label: `${formatMillis(r.status?.acceptedAt)} · ${runState(r.status!.state).label} · ${s(r.status?.runId).slice(0, 8)}${runMark(r) ? ` · ${runMark(r)}` : ''}` }))
@@ -58,7 +58,7 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
 
 /** The code and settings between the two runs' versions. A run without a recorded
  *  version, and a diff cut short, are said in words: neither reads as "no changes". */
-export function VersionDifference({ from, to, diff, error }: { from: string; to: string; diff?: R.VersionDiffT; error?: string }) {
+export function VersionDifference({ from, to, diff, error }: { from: string; to: string; diff?: { text: string; truncated: boolean }; error?: string }) {
   return <details className="comparison-card" open={false}>
     <summary>{L('コードと設定の差分')} · {from.slice(0, 8) || '—'} → {to.slice(0, 8) || '—'}</summary>
     {!from || !to ? <p>{L('版が記録されていないため差分を表示できません。')}</p>

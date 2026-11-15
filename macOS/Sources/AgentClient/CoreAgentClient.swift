@@ -258,6 +258,26 @@ public actor CoreAgentClient {
     return value
   }
 
+  public func format(path: String, text: String) async throws -> Tsugumi_Host_FileFormatResultT {
+    let reply = try await call("FileFormatRequest", ["path": path, "text": text])
+    guard let result = reply["result"] as? Tsugumi_Host_FileFormatResultT else { throw CoreAgentFailure(code: "protocol", message: "Missing format result", requestID: nil) }
+    return result
+  }
+
+  public func versionGraph(project: String, language: String) async throws -> Tsugumi_RPC_VersionGraphT {
+    let reply = try await call("HostVersionGraphRequest", ["project": project, "language": language])
+    guard let result = reply["result"] as? Tsugumi_RPC_VersionGraphT else { throw CoreAgentFailure(code: "protocol", message: "Missing version graph", requestID: nil) }
+    return result
+  }
+
+  public func versionDiff(project: String, commit: String, from: String?) async throws -> Tsugumi_Host_VersionDiffT {
+    var fields: [String: Any] = ["project": project, "commit": commit]
+    if let from { fields["from_commit"] = from }
+    let reply = try await call("HostVersionDiffRequest", fields)
+    guard let result = reply["result"] as? Tsugumi_Host_VersionDiffT else { throw CoreAgentFailure(code: "protocol", message: "Missing version diff", requestID: nil) }
+    return result
+  }
+
   public func versionComments(project: String, commit: String) async throws -> [Tsugumi_Host_VersionCommentT] {
     let result = try await call("VersionCommentsRequest", ["project": project, "commit": commit])
     return result["comments"] as? [Tsugumi_Host_VersionCommentT] ?? []

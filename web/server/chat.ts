@@ -502,6 +502,15 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     await patchSettings(b ?? {}, b?.revision ?? { ...revisions })
     return { ...settings(), revision: { ...revisions }, ...await modelCatalogs(), chatProvider: await providerInfo() }
   },
+  'POST /api/file/format': (b) => core.user.call('FileFormatRequest', { path: String(b.path), text: String(b.text) }),
+  'POST /api/versions/graph': async (b) => {
+    const project = await core.project(projectDir(b.path))
+    return core.user.call('HostVersionGraphRequest', { project, language: settings().language })
+  },
+  'POST /api/versions/diff': async (b) => {
+    const project = await core.project(projectDir(b.path))
+    return core.user.call('HostVersionDiffRequest', { project, commit: String(b.commit), from_commit: b.from })
+  },
   'POST /api/versions/comments': async (b) => {
     const project = await core.project(projectDir(b.path))
     return core.user.call('VersionCommentsRequest', { project, commit: String(b.commit) })

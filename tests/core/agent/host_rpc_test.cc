@@ -24,6 +24,16 @@ TEST_F(AgentFixture, HostUnixAndWebSocketReturnTypedReplies) {
       reply.Value()->value_as_ConversationResult()->conversation()->id()->str(),
       conversation);
 }
+TEST_F(AgentFixture, EditorFormattingIsAHostRequestWithoutAProject) {
+  const auto result = Call(*host, H::RequestPayload::FileFormatRequest, [](Builder& b) {
+    return H::CreateFileFormatRequest(b, b.CreateString("missing/file.json"), b.CreateString("{\"a\":1}")).Union();
+  });
+  ASSERT_TRUE(result.Code().empty());
+  const auto* formatted = result.HostValue()->value_as_FileFormatResult();
+  ASSERT_NE(formatted, nullptr);
+  EXPECT_EQ(formatted->text()->str(), "{\n  \"a\": 1\n}\n");
+  EXPECT_TRUE(!formatted->diagnostics() || formatted->diagnostics()->size() == 0);
+}
 TEST_F(AgentFixture, HostRejectsTheExternalAgentCredentialOnBothTransports) {
   for (const bool websocket : {false, true})
     EXPECT_NO_THROW(ConnectHost(websocket, false, false));

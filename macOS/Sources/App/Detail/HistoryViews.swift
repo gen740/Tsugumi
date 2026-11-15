@@ -48,7 +48,7 @@ struct CardExecutionView: View {
   @State private var nextCursor: String?
   @State private var batchRevision = 0
   @State private var invocation: UInt64?
-  @State private var logStream: Tsugumi_Data_LogStream = .stdout
+  @State private var logStream: Tsugumi_Data_LogStream = .standardOutput
   @State private var record: Tsugumi_RPC_RecordResultT?
   @State private var detail = Detail.io
   @State private var error: String?
