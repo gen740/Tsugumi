@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import socket
+import tempfile
 import subprocess
 import time
 from pathlib import Path
@@ -66,7 +67,12 @@ def remote_daemon(tmp_path, request):
     state = tmp_path / "daemon-state"
     state.mkdir(mode=0o700)
     env = {**os.environ, "TSUGUMI_REMOTE_STATE_DIR": str(state)}
+    # The listener's private socket defaults to a path inside its state folder,
+    # which under pytest's temporary folder can exceed the socket path limit.
+    sockets = tempfile.TemporaryDirectory(prefix="w-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
+    request.addfinalizer(sockets.cleanup)
     command = [binary, "--host", "127.0.0.1", "--port", str(port),
+               "--socket", str(Path(sockets.name) / "w.sock"),
                *getattr(request, "param", ())]
     key_file = tmp_path / "worker-public-key"
     key_file.write_bytes(subprocess.check_output([binary, "--public-key"], env=env))

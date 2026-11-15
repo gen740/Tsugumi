@@ -546,7 +546,8 @@ auto unix_listener(const stdfs::path& path) -> int {
   sockaddr_un address{};
   const auto text = path.string();
   if (!path.is_absolute() || text.size() >= sizeof address.sun_path)
-    throw std::runtime_error("invalid Unix socket path");
+    throw std::runtime_error("Unix socket path must be absolute and shorter than " +
+                             std::to_string(sizeof address.sun_path) + " bytes (choose one with --socket): " + text);
   // The singleton lock owns this private endpoint; never unlink arbitrary
   // files.
   struct stat st{};
