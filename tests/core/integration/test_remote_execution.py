@@ -32,6 +32,7 @@ from projects import (
     write,
 )
 from Tsugumi.Data.CardState import CardState
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
@@ -273,11 +274,23 @@ def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broke
     started = wait_invocation(client, run_id, "slow", lambda row: row.executionState == RemoteExecutionState.running)
     if restart := remote_daemon[2]:
         restart()
+    assert wait_run(client, run_id, timeout=480).state == RunState.succeeded
+    resumed = check_success(client, run_id, "slow", system)
+    assert text(resumed.executionJobId) == text(started.executionJobId)
+
+    run_id = start_run(client, "later")
+    started = wait_invocation(client, run_id, "slow", lambda row: row.executionState == RemoteExecutionState.running)
     daemon.restart(crash=True)
     client = daemon.connect()
     wait_invocation(client, run_id, "slow", lambda row: row.endedAt is not None)
-    recovered = check_success(client, run_id, "slow", system)
-    assert text(recovered.executionJobId) == text(started.executionJobId)
+    interrupted = client.call("RunRecordRequest", runId=run_id, card=path("slow")).record
+    assert interrupted.summary.state == CardState.failed
+    assert interrupted.summary.executionState == RemoteExecutionState.interrupted
+    assert interrupted.summary.failure.kind == FailureKind.interrupted
+    assert text(interrupted.summary.failure.diagnostic) == "tsugumid restarted while the run was active"
+    assert text(interrupted.summary.executionJobId) == text(started.executionJobId)
+    assert not interrupted.outputs and not interrupted.display
+    assert not client.call("ArtifactListRequest", runId=run_id, card=path("slow")).artifacts
     assert client.call("RunStatusRequest", runId=run_id).state == RunState.failed
     with pytest.raises(RpcFailure) as downstream:
         client.call("RunRecordRequest", runId=run_id, card=path("after"))

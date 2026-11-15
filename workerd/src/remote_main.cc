@@ -266,12 +266,16 @@ class Daemon {
         (q.body.type != R::RequestBody::ProbeRequest && q.instance_id.empty()))
       throw Error(R::ErrorCode::InstanceChanged,
                   "project journal identity changed");
+    journal->touch_core(q.core_life_id);
     if (q.body.type == R::RequestBody::ProbeRequest)
       return reply(capabilities(journal->instance()));
     check_id(q.job_id);
+    if (q.body.type != R::RequestBody::CancelRequest &&
+        q.body.type != R::RequestBody::ReleaseRequest)
+      journal->require_owner(q.job_id, q.core_life_id);
     switch (q.body.type) {
       case R::RequestBody::PutBlobRequest:
-        journal->put(q.job_id, *q.body.AsPutBlobRequest());
+        journal->put(q.job_id, *q.body.AsPutBlobRequest(), q.core_life_id);
         return reply(R::AckT{});
       case R::RequestBody::GetBlobRequest:
         return reply(journal->get(q.job_id, *q.body.AsGetBlobRequest()));
@@ -290,7 +294,7 @@ class Daemon {
           throw Error(R::ErrorCode::Rejected,
                       "hard limits require a delegated cgroup v2 subtree and "
                       "at least one page of memory");
-        return reply(journal->submit(q.job_id, data).status());
+        return reply(journal->submit(q.job_id, data, q.core_life_id).status());
       }
       case R::RequestBody::StatusRequest:
         return reply(journal->status(q.job_id).status());
@@ -341,6 +345,7 @@ class Daemon {
           Fd lock(supervisor_lock(*p, job));
           if (lock.value < 0)
             throw std::runtime_error("cannot open supervisor lock");
+          p->expire_core(job);
           auto state = p->status(job);
           if (::flock(lock.value, LOCK_EX | LOCK_NB) != 0) {
             ++active;
@@ -497,6 +502,7 @@ auto supervise(const std::string& self, const stdfs::path& root,
     }
     int status = 0;
     for (;;) {
+      journal.expire_core(job);
       const auto current = journal.status(job);
       if (current.state == R::JobState::Cancelling)
         throw std::runtime_error("cancelled");
@@ -523,6 +529,7 @@ auto supervise(const std::string& self, const stdfs::path& root,
     if (now_ms() >= journal.status(job).deadline)
       throw std::runtime_error("timed out after " +
                                std::to_string(spec->timeout_seconds) + " s");
+    journal.expire_core(job);
     outcome = R::JobState::Succeeded;
   } catch (const std::exception& e) {
     diagnostic = e.what();

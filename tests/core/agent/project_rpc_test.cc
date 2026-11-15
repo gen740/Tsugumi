@@ -1181,7 +1181,8 @@ TEST_F(AgentProjectFixture,
   const std::vector<std::pair<std::string, std::string>> operations{
       {"run_history_delete", R"({"ended_before":"1"})"},
       {"project_cache_clear", "{}"},
-      {"run_scratch_delete", R"({"paths":["recovery"]})"},
+      {"run_scratch_delete",
+       R"({"paths":["runs/00000000-0000-4000-8000-000000000001"]})"},
       {"version_checkout", "{\"commit\":" + Quote(commit) +
                                ",\"base_rev\":" + Quote(base_rev) + "}"},
       {"version_init", "{}"},

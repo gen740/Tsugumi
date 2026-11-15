@@ -4,9 +4,12 @@
 #include <cstdint>
 #include <filesystem>
 #include <iosfwd>
+#include <map>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include "tsugumi/workerd/protocol.hh"
@@ -55,6 +58,7 @@ struct BrokerRequestRejected : std::runtime_error {
 class RemoteJobClient {
  public:
   RemoteJobClient();
+  ~RemoteJobClient();
 
   auto enabled() const -> bool { return !endpoint_.empty(); }
   auto stop() -> void { stopped_.store(true); }
@@ -76,6 +80,11 @@ class RemoteJobClient {
  private:
   auto request(Tsugumi::RemoteWorker::RequestT message, const std::atomic<bool>* cancel = nullptr) const
       -> Tsugumi::RemoteWorker::ReplyT;
+  auto keep_alive(std::string_view service, std::string_view server) const
+      -> void;
+  const std::string core_life_id_;
+  mutable std::mutex heartbeat_mutex_;
+  mutable std::map<std::string, std::jthread> heartbeats_;
   std::string endpoint_;
   std::filesystem::path capability_file_;
   std::atomic<bool> stopped_{false};

@@ -11,6 +11,8 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 
 Layout proposals, layout schema validation and minimap placement belong to the host service ([protocol/host.fbs](../protocol/host.fbs)). Saving clients remove deleted Card references. The project core carries layout objects and opaque view JSON without interpreting presentation fields.
 
+A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Same-life probes renew a 45-second lease; reconnecting within that lease resumes existing work. Expiry cancels accepted jobs. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
+
 There are 46 requests.
 
 ## Connection

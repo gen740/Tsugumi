@@ -1,10 +1,11 @@
-"""Black-box admission, scoping and recovery against the C++ remote worker.
+"""Black-box admission, scoping and core lifetimes against the C++ remote worker.
 
 The socket-free C++ suite covers journal races and protocol verification. This
 suite runs on the Linux CI runner, outside the build sandbox.
 """
 import concurrent.futures
 import hashlib
+import json
 import os
 import ssl
 import socket
@@ -24,6 +25,7 @@ class Worker:
         self.root = root
         self.identity = TLS.identity(root)
         self.scope = "c" * 64
+        self.core_life_id = "e" * 64
         with socket.socket() as temporary:
             temporary.bind(("127.0.0.1", 0))
             self.port = temporary.getsockname()[1]
@@ -77,7 +79,7 @@ class Worker:
     def call(self, kind, body, *, job=None, scoped=True, unix=False, identity=None, **routing):
         fields = {}
         if scoped:
-            fields.update(serverId=self.caps.serverId, projectScope=self.scope)
+            fields.update(serverId=self.caps.serverId, projectScope=self.scope, coreLifeId=self.core_life_id)
             if kind != R.RequestBody.ProbeRequest:
                 fields["instanceId"] = self.instance
         fields.update(routing)
@@ -120,7 +122,7 @@ def worker(tmp_path):
 
 
 def test_probe_authentication_unix_and_private_state(worker):
-    assert worker.caps.workerContract == 4 and worker.caps.maxJobs == 1
+    assert worker.caps.workerContract == 5 and worker.caps.maxJobs == 1
     assert worker.caps.nativeSystem in (b"aarch64-linux", b"x86_64-linux")
     stranger = TLS.identity(worker.root, "stranger")
     with pytest.raises((ssl.SSLError, OSError, EOFError)):
@@ -200,7 +202,8 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
     assert result.returncode != 0
 
 
-def test_global_cap_adopts_survivors_and_expires_queued_jobs(tmp_path):
+@pytest.mark.parametrize("end", ["cancel", "listener_expiry", "supervisor_expiry"])
+def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path, end):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_RAW_WORKER")
     if not binary:
         pytest.skip("needs the raw C++ executable for a controlled namespace launcher")
@@ -214,7 +217,10 @@ def test_global_cap_adopts_survivors_and_expires_queued_jobs(tmp_path):
     peer = Worker(tmp_path, binary, env={**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"]})
     jobs = [str(n) * 64 for n in (4, 5, 6)]
     fingerprints = {}
+    expired = False
     def state(job):
+        if expired:
+            return json.loads((peer.state / "projects" / peer.scope / "jobs" / job / "state").read_text())["state"]
         return peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=job).body.state
     def wait(job, expected):
         deadline = time.monotonic() + 10
@@ -236,9 +242,31 @@ def test_global_cap_adopts_survivors_and_expires_queued_jobs(tmp_path):
         peer.restart()
         assert state(jobs[0]) == R.JobState.Running and state(jobs[1]) == R.JobState.Queued
         wait(jobs[2], R.JobState.Failed)
-        peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprints[jobs[0]]), job=jobs[0])
-        wait(jobs[0], R.JobState.Cancelled)
-        wait(jobs[1], R.JobState.Running)
+        if end == "cancel":
+            peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprints[jobs[0]]), job=jobs[0])
+            wait(jobs[0], R.JobState.Cancelled)
+            wait(jobs[1], R.JobState.Running)
+        else:
+            if end == "supervisor_expiry":
+                peer.process.kill()
+                peer.process.wait(timeout=5)
+                peer.log.close()
+            lease = peer.state / "projects" / peer.scope / "cores" / peer.core_life_id
+            expired_lease = lease.with_suffix(".expired")
+            expired_lease.write_text("0")
+            expired_lease.replace(lease)  # deterministic expiry, no 45-second sleep
+            expired = True
+            wait(jobs[0], R.JobState.Cancelled)
+            if end == "supervisor_expiry":
+                peer.start()
+            peer.core_life_id = "f" * 64
+            peer.call(R.RequestBody.ProbeRequest, R.ProbeRequestT())
+            wait(jobs[1], R.JobState.Cancelled)
+            for job in jobs[:2]:
+                blobs = peer.state / "projects" / peer.scope / "jobs" / job / "blobs"
+                assert list(blobs.iterdir()), "ordinary cancellation must retain verified blobs"
+            refused = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=jobs[0])
+            assert refused.bodyType == R.ReplyBody.Failure
     finally:
         for job, fingerprint in fingerprints.items():
             peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprint), job=job)

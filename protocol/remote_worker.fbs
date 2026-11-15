@@ -23,7 +23,7 @@ table JobSpec {
 table SubmitRequest { spec:[ubyte] (required); }
 table StatusRequest {}
 table CancelRequest { fingerprint:string (required); }
-// Sent only after the host durably imports the result (or failure). Idempotent.
+// Sent after durable completion, including interruption on core restart. Idempotent.
 // Erases all job scratch. A compact identity/fingerprint tombstone prevents
 // late submissions from executing again, and is not a retained run result.
 table ReleaseRequest { fingerprint:string (required); }
@@ -33,12 +33,15 @@ union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest,
 table Request {
   service:string; server_id:string; instance_id:string;
   project_scope:string; job_id:string;
+  // Random identity of one tsugumid process. Scoped probes renew its lease.
+  core_life_id:string;
   body:RequestBody (required);
 }
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  worker_contract:uint = 4;
+  // Zero means no advertised contract; writers explicitly send contract 5.
+  worker_contract:uint;
 }
 table Target { id:string (required); available:bool; capabilities:Capabilities (required); }
 table Catalog { services:[Target] (required); }

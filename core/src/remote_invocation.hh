@@ -14,18 +14,6 @@ struct RemoteInvocationResult {
   bool built = false;
 };
 
-struct RemoteRecoveryContract {
-  std::vector<types::PortType> outputs;
-  std::vector<Value> inputs;
-  std::vector<InputSourceData> sources;
-  bool record_io;
-  std::string artifact_output;
-};
-
-auto remote_recovery_contract(const Node& node, const std::vector<Value>& inputs,
-                              const std::vector<InputSourceData>& sources) -> std::string;
-auto remote_recovery_contract(const std::string& encoded) -> RemoteRecoveryContract;
-
 auto stage_remote_archive(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
                           const std::string& instance, const std::string& job_id, const std::filesystem::path& archive,
                           const std::atomic<bool>& cancel) -> std::string;
