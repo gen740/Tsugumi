@@ -20,6 +20,47 @@
 namespace tsugumi::host {
 namespace V = Tsugumi::VMHost;
 namespace H = Tsugumi::Host;
+auto VMResetPolicy() -> V::ResetT {
+  V::ResetT request;
+  request.keep_files = {"history.img"};
+  request.discard_other_files = true;
+  return request;
+}
+auto DescribeVMReset(H::HostRuntimeT &runtime) -> void {
+  const auto policy = VMResetPolicy();
+  std::string kept;
+  for (const auto &name : policy.keep_files) {
+    if (!kept.empty())
+      kept += ", ";
+    kept += name;
+  }
+  runtime.reset_confirmation_ja =
+      "開いているプロジェクトの実行と VM を停止します。VM "
+      "フォルダに残すファイル（実行履歴のディスク）: " +
+      kept + "。";
+  runtime.reset_confirmation_en =
+      "Stop running projects and the VM. Keep these files in the VM folder "
+      "(the run history disk): " +
+      kept + ". ";
+  if (policy.discard_other_files) {
+    runtime.reset_confirmation_ja +=
+        "VM フォルダのその他すべて（共有 Nix store、展開した VM "
+        "イメージ、ログなど）を削除します。";
+    runtime.reset_confirmation_en +=
+        "Delete everything else in the VM folder (the shared Nix store, "
+        "extracted VM image, logs and other files). ";
+  }
+  runtime.reset_confirmation_ja +=
+      "各プロジェクトの実行環境フォルダ（control "
+      "フォルダなど）も削除します。プロジェクトの文書・成果物・保存した実行履歴"
+      "（.tsugumi/runs.sqlite）とホストの /nix/store "
+      "は保持します。削除した実行環境は次に開くときに作り直します。";
+  runtime.reset_confirmation_en +=
+      "Delete each project's environment folder (including its control folder) "
+      "as well. Keep project documents, artifacts, saved run history "
+      "(.tsugumi/runs.sqlite) and the host's /nix/store. Recreate deleted "
+      "environments when next opened.";
+}
 namespace {
 using namespace std::chrono_literals;
 struct Socket {
@@ -185,7 +226,9 @@ class VMProcess final : public EnvironmentProcess {
       boot.broker_endpoint = options_.broker_endpoint;
       Call(std::move(boot));
     }
-    auto reply = Call(request);
+    auto reply = request.action == H::RuntimeAction::Reset
+                     ? Call(VMResetPolicy())
+                     : Call(request);
     const auto* runtime = reply->value.AsHostRuntime();
     if (!runtime)
       throw std::runtime_error("VM helper returned no runtime state");

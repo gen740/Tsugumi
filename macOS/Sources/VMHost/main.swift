@@ -212,17 +212,25 @@ actor Driver {
       guard key.count == 16, key.allSatisfy({ $0.isHexDigit }) else { throw LauncherError.notReady("invalid project identity") }
       guard !(try await process(key)).running else { throw LauncherError.notReady("the project is running; stop it first") }
       _ = try await vm.request("forget \(key)")
-    case .reset:
-      await vm.shutdown(); for bridge in bridges.values { bridge.close() }; bridges.removeAll()
-      for name in (try? FileManager.default.contentsOfDirectory(atPath: vm.directory.path)) ?? [] where name != "history.img" {
-        try FileManager.default.removeItem(at: vm.directory.appendingPathComponent(name)); result.vmRemoved = true
-      }
     case .command:
       guard case .running = vm.state else { throw LauncherError.notReady("the VM is not running") }
       result.message = try await vm.request(request.command ?? "")
     default: throw LauncherError.notReady("unsupported VM runtime operation")
     }
     let current = runtime(); result.vmState = current.vmState; result.storeExists = current.storeExists
+    return result
+  }
+  func reset(_ request: Tsugumi_VMHost_ResetT) async throws -> Tsugumi_Host_HostRuntimeT {
+    await vm.shutdown()
+    for bridge in bridges.values { bridge.close() }
+    bridges.removeAll()
+    let report = try VMReset.apply(directory: vm.directory,
+                                  keepFiles: request.keepFiles.compactMap { $0 },
+                                  discardOtherFiles: request.discardOtherFiles)
+    let result = runtime()
+    result.resetKeptFiles = report.kept.map(Optional.some)
+    result.resetDiscardedFiles = report.discarded.map(Optional.some)
+    result.vmRemoved = !report.discarded.isEmpty
     return result
   }
   func terminal(_ request: Tsugumi_Host_HostTerminalRequestT, _ peer: Peer, id: UInt64) async throws {
@@ -268,7 +276,9 @@ func serve(_ message: Tsugumi_VMHost_MessageT, _ peer: Peer) async throws {
     peer.emit(encode(try await driver.process(request.key), reply: .process, id: id))
   case let request as Tsugumi_Host_HostRuntimeRequestT:
     peer.emit(encode(try await driver.operation(request), reply: .hostruntime, id: id))
-    if request.action == .reset { unlink(socketPath); exit(0) }
+  case let request as Tsugumi_VMHost_ResetT:
+    peer.emit(encode(try await driver.reset(request), reply: .hostruntime, id: id))
+    unlink(socketPath); exit(0)
   case let request as Tsugumi_Host_HostTerminalRequestT: try await driver.terminal(request, peer, id: id)
   default: throw LauncherError.notReady("unknown VM adapter operation")
   }

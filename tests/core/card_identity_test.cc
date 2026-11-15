@@ -12,6 +12,31 @@
 namespace tsugumi {
 namespace {
 
+TEST(InitialDocument, LoadsAnEmptyProjectAndEscapesItsName) {
+  const auto root =
+      std::filesystem::temp_directory_path() / ("initial-" + crypto::uuid4());
+  struct Cleanup {
+    std::filesystem::path root;
+    ~Cleanup() { std::filesystem::remove_all(root); }
+  } cleanup{root};
+  const std::string name = "New \"project\"\n日本語";
+  const auto text = initial_project_json(name);
+  const auto project = parse_project_json(text);
+  EXPECT_EQ(schema::text(project.name->value()),
+            schema::text(schema::string_value(name)));
+  EXPECT_TRUE(project.canvas->value().cards->value().empty());
+  EXPECT_TRUE(project.canvas->value().connections->value().empty());
+  EXPECT_TRUE(project.pkgs_path->value().starts_with(
+      "https://github.com/NixOS/nixpkgs/archive/"));
+  EXPECT_NE(project.pkgs_path->value().find(".tar.gz#sha256-"),
+            std::string::npos);
+  fs::write_atomic(root / "tsugumi.json", text);
+  const auto loaded = load_from_disk(root);
+  EXPECT_EQ(loaded->project_json, text);
+  EXPECT_TRUE(loaded->definitions.empty());
+  check_structure(*loaded);
+}
+
 TEST(CardIdentity, MetadataIsNonComputationalOnlyAtDefinitionPaths) {
   EXPECT_TRUE(Document::is_card_meta_file("definitions/card/_meta.json"));
   EXPECT_TRUE(Document::is_card_meta_file("externals/outer/externals/inner/definitions/card/_meta.json"));
@@ -28,9 +53,7 @@ TEST(CardIdentity,
     std::filesystem::path root;
     ~Cleanup() { std::filesystem::remove_all(root); }
   } cleanup{root};
-  fs::write_atomic(
-      root / "tsugumi.json",
-      R"({"name":"test","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(root / "tsugumi.json", initial_project_json("test"));
   fs::write_atomic(root / "substituters", "");
   ServiceOptions options;
   options.root = root;
@@ -132,7 +155,7 @@ TEST(CardIdentity, CoreReservesUniqueReadableIdentifiersAcrossRestartsAndScopes)
     std::filesystem::path root;
     ~Cleanup() { std::filesystem::remove_all(root); }
   } cleanup{root};
-  fs::write_atomic(root / "tsugumi.json", R"({"name":"test","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(root / "tsugumi.json", initial_project_json("test"));
   fs::write_atomic(root / "layout.json", "{}");
   fs::write_atomic(root / "externals/child/tsugumi.json", R"({"canvas":{"cards":[],"connections":[]}})");
   std::set<std::string> ids;

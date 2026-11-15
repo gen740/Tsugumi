@@ -252,6 +252,8 @@ async function updateExecutionServices(method: string, body: unknown) {
 
 type Handler = (b: any, url: URL) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
+  'GET /api/runtime': () => hostRequest('HostRuntimeRequest'),
+  'POST /api/runtime/reset': () => hostRequest('HostRuntimeRequest', { action: 'Reset' }),
   'GET /api/permission-kinds': () => hostRequest('PermissionKindsRequest', { language: language() }),
   'POST /api/document/merge': (b) => hostRequest('DocumentMergeRequest', b),
   'POST /api/document/template': (b) => hostRequest('DocumentTemplateRequest', b),

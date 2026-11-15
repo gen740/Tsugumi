@@ -58,6 +58,19 @@ final class ServiceWireTests: XCTestCase {
     }
   }
 
+  func testRuntimeResetConfirmationAndReportSurviveTheAdapter() throws {
+    let runtime = Tsugumi_Host_HostRuntimeT()
+    runtime.vmState = "stopped"
+    runtime.resetConfirmationJa = "履歴を保持"
+    runtime.resetConfirmationEn = "Keep history"
+    runtime.resetKeptFiles = ["history.img"]
+    runtime.resetDiscardedFiles = ["store.img", ".lock"]
+    let reply = try ServiceWire.decode(hostReply(runtime, type: .hostruntime), host: true)
+    XCTAssertEqual(reply["reset_confirmation_ja"] as? String, "履歴を保持")
+    XCTAssertEqual(reply["reset_confirmation_en"] as? String, "Keep history")
+    XCTAssertEqual(reply["reset_kept_files"] as? [String], ["history.img"])
+    XCTAssertEqual(reply["reset_discarded_files"] as? [String], ["store.img", ".lock"])
+  }
   func testHostOwnsPurposeAndKeyPolicyWire() throws {
     let input = Tsugumi_Host_ProviderInputT(); input.apiKey = "memory-key"
     let bytes = try ServiceWire.encode("ProviderSetRequest", fields: ["profile": "client", "id": "anthropic",

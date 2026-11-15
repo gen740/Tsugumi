@@ -79,6 +79,10 @@ table HostRuntime { vm_state:string (required); store_path:string; store_exists:
   virtualization_supported:bool; image_available:bool; image_version:string;
   stage:string; message:string; console:[string]; bytes:ulong; paths:uint;
   histories:[RuntimeHistory]; environments:uint; vm_removed:bool;
+  // Host-authored confirmation of the same policy sent to the VM helper.
+  reset_confirmation_ja:string; reset_confirmation_en:string;
+  // Actual VM-directory entries kept and discarded by the helper.
+  reset_kept_files:[string]; reset_discarded_files:[string];
 }
 table SettingsChanged { profile:string (required); revision:ulong; }
 union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged }
@@ -380,7 +384,6 @@ table VersionNoteRequest { project_id:string (required); commit:string (required
 table DemoPaths { paths:[string]; }
 
 union RequestPayload {
-  DemoListRequest, DemoReadRequest, VersionNoteRequest,
   VersionCommentsRequest,
   GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
@@ -388,11 +391,11 @@ union RequestPayload {
   LayoutArrangeRequest, LayoutUntangleRequest, LayoutValidateRequest, VersionCanvasRequest,
   FileFormatRequest, HostVersionGraphRequest, HostVersionDiffRequest,
   DocumentSubgraphRequest, DocumentMergeRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest,
-  ModelSelectionRequest
+  ModelSelectionRequest,
+  DemoListRequest, DemoReadRequest, VersionNoteRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
-  DemoPaths, TextResult:Tsugumi.Service.TextResult,
   VersionComments,
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   GuideState, EnvironmentState, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectFiles, ProjectInfo, ProjectLocation, RecentProject,
@@ -400,7 +403,8 @@ union ReplyPayload {
   LayoutProposal, LayoutValidated, VersionCanvas,
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds,
-  ModelSelection
+  ModelSelection,
+  DemoPaths, TextResult:Tsugumi.Service.TextResult
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

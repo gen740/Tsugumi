@@ -6,6 +6,7 @@
 
 #include "agent/json.hh"
 #include "agent/wire.hh"
+#include "document.hh"
 #include "util/fs.hh"
 
 namespace tsugumi::host {
@@ -51,15 +52,6 @@ auto Info(const f::path& folder) -> std::string {
   return json::Encode(
       json::Members{{"path", json::Quote(f::canonical(folder).string())},
                     {"name", json::Quote(name)}});
-}
-
-auto Pin() -> std::string {
-  const std::string rev = TSUGUMI_CARD_NIXPKGS_REV;
-  const std::string hash = TSUGUMI_CARD_NIXPKGS_NARHASH;
-  if (rev.empty() || hash.empty())
-    throw ProjectFailure("project_defaults_unavailable",
-                         "This build has no default Card Nixpkgs pin");
-  return "https://github.com/NixOS/nixpkgs/archive/" + rev + ".tar.gz#" + hash;
 }
 
 // Destination ownership is established before writing any files. Never remove
@@ -326,8 +318,11 @@ auto Projects::Handle(const A::Request &request, uint64_t id) -> std::string {
 auto Projects::Apply(const A::Request &request) -> std::string {
   try {
     switch (request.value_type()) {
-      case A::RequestPayload::HostProjectDefaultsRequest:
-        return json::Encode(json::Members{{"nixpkgsPin", json::Quote(Pin())}});
+      case A::RequestPayload::HostProjectDefaultsRequest: {
+        const auto document = parse_project_json(initial_project_json(""));
+        return json::Encode(json::Members{
+            {"nixpkgsPin", json::Quote(document.pkgs_path->value())}});
+      }
       case A::RequestPayload::HostProjectInfoRequest:
         return Info(
             Path(request.value_as_HostProjectInfoRequest()->path()->str()));
@@ -339,16 +334,10 @@ auto Projects::Apply(const A::Request &request) -> std::string {
         if (flow != "topToBottom" && flow != "leftToRight")
           throw ProjectFailure("invalid_flow",
                                "Choose topToBottom or leftToRight");
-        const auto pin = Pin();
+        const auto document = initial_project_json(name);
         const auto destination = Path(p->parent()->str()) / name;
         return Populate(destination, [&] {
-          fs::write_atomic(
-              destination / "tsugumi.json",
-              json::Encode(json::Members{
-                  {"name", json::Quote(name)},
-                  {"pkgsPath", json::Quote(pin)},
-                  {"canvas", R"({"cards":[],"connections":[]})"}}) +
-                  '\n');
+          fs::write_atomic(destination / "tsugumi.json", document);
           fs::write_atomic(
               destination / "layout.json",
               json::Encode(json::Members{{"flow", json::Quote(flow)}}) + '\n');
@@ -438,7 +427,9 @@ auto Projects::Apply(const A::Request &request) -> std::string {
     }
   } catch (const ProjectFailure&) {
     throw;
-  } catch (const std::exception& e) {
+  } catch (const DocumentError &e) {
+    throw ProjectFailure(e.code, e.what());
+  } catch (const std::exception &e) {
     throw ProjectFailure("project_io_error", e.what());
   }
 }

@@ -530,9 +530,6 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 
 | Request | Fields |
 | --- | --- |
-| `DemoListRequest` | None |
-| `DemoReadRequest` | `path: string` (required) |
-| `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `profile: string` (required), `language: string` (required), `anthropic_key_profile: string`, `openai_key_profile: string` |
 | `VersionCommentsRequest` | `project: string` (required), `commit: string` (required) |
 | `GuideGetRequest` | `session_id: string` (required), `language: string` |
 | `GuideAdvanceRequest` | `session_id: string` (required), `language: string`, `event: GuideInput` (required) |
@@ -580,5 +577,8 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `DocumentTemplateRequest` | `name: string` (required), `id: string` (required) |
 | `PermissionKindsRequest` | `language: string` |
 | `ModelSelectionRequest` | `profile: string` (required), `purpose: string` (required) |
+| `DemoListRequest` | None |
+| `DemoReadRequest` | `path: string` (required) |
+| `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `profile: string` (required), `language: string` (required), `anthropic_key_profile: string`, `openai_key_profile: string` |
 
-Reply variants: `DemoPaths`, `TextResult`, `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`.
+Reply variants: `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`.
