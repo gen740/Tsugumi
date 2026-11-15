@@ -272,7 +272,7 @@ const routes: Record<string, Handler> = {
     setup: setupStatus(), demos: await hostRequest('HostDemoListRequest', { language: language() }),
     recents: await hostRequest('HostRecentListRequest'), home: os.homedir(), launchProject: launchProject ?? null,
     ...await hostRequest('HostProjectDefaultsRequest'),
-    // /host/<name> needs bubblewrap: on a Mac, the app's shared VM (core/src/worker_proc.cc).
+    // /host/<name> needs bubblewrap: on a Mac, the app's shared VM (workerd/src/worker_proc.cc).
     hostFolders: process.platform !== 'darwin' || !!vm,
     ...chatStatus(), documents: projectsDir,
   }),

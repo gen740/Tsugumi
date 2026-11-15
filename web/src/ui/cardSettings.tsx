@@ -792,7 +792,6 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
               {serviceId !== 'local' && bool(get(def, 'reuseWorker')) === true && (
                 <Row><span className="caption">{L('外部の実行サービスでは worker の状態を残せません。')}</span></Row>
               )}
-              {toggle('filesystem', L('作業・出力領域を使う'), false)}
               <Row label={L('ファイルアクセスを制限')}>
                 <Toggle checked={bool(get(def, 'sandbox')) ?? true} disabled={serviceId !== 'local' && bool(get(def, 'sandbox')) !== false}
                   onChange={(v) => (v ? model.setSetting('sandbox', undefined) : serviceId === 'local' && setConfirmSandboxOff(true))} />
@@ -801,8 +800,8 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
                 <Row><span className="caption">{L('外部の実行サービスにはファイルアクセスの制限が必要です。')}</span></Row>
               )}
               {confirmSandboxOff && (
-                <Confirm title={L('この Card を隔離なしで実行しますか？')} confirm={L('隔離なしで実行する')}
-                  message={L('Web UI の tsugumid はこのマシンで直接動いています。隔離をやめると、この Card はあなたの権限でこのマシンのファイル・ネットワーク・プロセスに触れられます。Linux で他人の Card を動かすときは、tsugumid を隔離されたコンテナの中で動かしてください。')}
+                <Confirm title={L('この Card のファイルアクセス制限を解除しますか？')} confirm={L('制限を解除する')}
+                  message={L('アクセスできる範囲は実行環境の権限と共有フォルダに依存します。ネットワーク制限も実行環境によっては無効になります。')}
                   onConfirm={() => { setConfirmSandboxOff(false); model.setSetting('sandbox', false) }} onCancel={() => setConfirmSandboxOff(false)} />
               )}
             </>
@@ -811,7 +810,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
       )}
       {kind === 'code' && (
         <Section title={<span className="label"><Icon name="flask" />Experimental</span>}>
-          {toggle('network', L('ネットワークへのアクセスを許可する'), false, L('オフ（デフォルト）: preRun・run・postRun のどれからも外へ通信できません。'))}
+          {toggle('network', L('ネットワークへのアクセスを許可する'), false, L('オフ（デフォルト）: ファイルアクセスの制限がオンなら、preRun・run・postRun の外部通信を禁止します。'))}
           <Row><HostFoldersEditor model={model} remote={serviceId !== 'local'} /></Row>
         </Section>
       )}

@@ -7,7 +7,6 @@
   ],
   "retainArtifact": true,
   "artifactOutput": "pca",
-  "filesystem": true,
   "params": [
     {
       "name": "top_genes",

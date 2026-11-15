@@ -10,7 +10,6 @@
   ],
   "retainArtifact": true,
   "artifactOutput": "design",
-  "filesystem": true,
   "params": [
     {
       "name": "fdr",

@@ -6,6 +6,5 @@
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "penguins",
-  "filesystem": true
+  "artifactOutput": "penguins"
 }

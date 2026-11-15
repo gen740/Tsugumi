@@ -6,6 +6,5 @@
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "normalized",
-  "filesystem": true
+  "artifactOutput": "normalized"
 }

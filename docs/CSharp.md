@@ -58,7 +58,7 @@ One `Card` instance and one .NET runtime live for the resident worker's lifetime
 
 ## Files, logs and displays
 
-File and Directory ports use their generated message's `Value` path, just as in other SDKs. Read an input path directly; write outputs below `run.OutputDirectory` and emit the generated path message. `InputKind(port)` distinguishes `File`, `Directory` and `FlatBuffer`. `run.WorkingDirectory` and `run.TemporaryDirectory` follow the Card's existing filesystem policy. Retain an output by selecting `artifactOutput` and enabling `retainArtifact` in Card settings.
+File and Directory ports use their generated message's `Value` path, just as in other SDKs. Read an input path directly; write outputs below `run.OutputDirectory` and emit the generated path message. `InputKind(port)` distinguishes `File`, `Directory` and `FlatBuffer`. `run.WorkingDirectory` and `run.TemporaryDirectory` are worker-local scratch areas cleared between invocations. Retain an output by selecting `artifactOutput` and enabling `retainArtifact` in Card settings.
 
 The SDK provides `Log`, `Text`, `Markdown`, `Scalar`, `Table`, `Image`, `LineChart`, `Points` and `Module`. Text is strict UTF-8 and rejects embedded NUL characters. Display arrays must have matching lengths; rejected native displays fail the invocation. Image bytes and FlatBuffer bytes are binary, not text. The same sandbox/network restrictions apply to .NET and NuGet code as to other Cards.
 
