@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -18,7 +19,10 @@ struct RunScratchUsage {
   std::optional<uint64_t> bytes;
 };
 // Measures without following symbolic links. Errors leave the measurement unknown.
-auto measure_run_scratch(const std::filesystem::path& root) -> std::vector<RunScratchUsage>;
+// `cancelled` is asked before every entry; once it answers true the walk ends
+// and the partial result is the caller's to discard.
+auto measure_run_scratch(const std::filesystem::path& root, const std::function<bool()>& cancelled = {})
+    -> std::vector<RunScratchUsage>;
 // Removes read-only Card output too, without following symbolic links.
 // Returns false if anything remains, so the UI can report retained folders.
 auto remove_run_scratch(const std::filesystem::path& path) -> bool;

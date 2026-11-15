@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
+#include <optional>
 
 #include "fixture.hh"
 #include "tsugumi/workerd/protocol.hh"
@@ -164,8 +165,84 @@ TEST_F(RealEnvironmentFixture, AuthenticatesTheRealProjectServiceBeforeReady) {
       project / "tsugumi.json",
       R"({"name":"Environment","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   Write(project / "layout.json", "{}");
-  const auto state = Environment(H::EnvironmentAction::Start);
-  ASSERT_EQ(state.phase, H::EnvironmentPhase::Ready) << state.message;
+  struct Startup {
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::vector<H::EnvironmentStateT> states;
+    std::string stage;
+    std::optional<client::Result> reply;
+  };
+  const auto startup = std::make_shared<Startup>();
+  host->OnEvent([startup](const client::Bytes& bytes) {
+    const auto* event = H::GetMessage(bytes.data())->payload_as_Event();
+    std::lock_guard lock(startup->mutex);
+    if (const auto* state = event->value_as_EnvironmentState())
+      startup->states.push_back(
+          *std::unique_ptr<H::EnvironmentStateT>(state->UnPack()));
+    if (const auto* progress = event->value_as_EnvironmentProgress())
+      startup->stage = progress->stage()->str();
+    startup->changed.notify_all();
+  });
+  // Start owns a 60s startup budget (plus bounded stop/kill cleanup). The
+  // ordinary fixture Call's 5s RPC deadline is unrelated to authentication.
+  // Follow the state stream instead; 90s is only a deadlock watchdog.
+  const auto deadline = std::chrono::steady_clock::now() + 90s;
+  host->Call(
+      [&](uint64_t id) {
+        Builder b;
+        const auto value = H::CreateEnvironmentRequest(
+            b, b.CreateString(project.string()), H::EnvironmentAction::Start);
+        H::FinishMessageBuffer(
+            b, H::CreateMessage(
+                   b, id, H::Payload::Request,
+                   H::CreateRequest(b, H::RequestPayload::EnvironmentRequest,
+                                    value.Union())
+                       .Union()));
+        return client::Bytes(b.GetBufferPointer(),
+                             b.GetBufferPointer() + b.GetSize());
+      },
+      [startup](client::Result reply) {
+        std::lock_guard lock(startup->mutex);
+        startup->reply = std::move(reply);
+        startup->changed.notify_all();
+      },
+      90s);
+  std::unique_lock lock(startup->mutex);
+  const auto terminal = [&] {
+    return !startup->states.empty() &&
+           (startup->states.back().phase == H::EnvironmentPhase::Ready ||
+            startup->states.back().phase == H::EnvironmentPhase::Failed);
+  };
+  ASSERT_TRUE(startup->changed.wait_until(
+      lock, deadline, [&] { return terminal() || startup->reply.has_value(); }))
+      << "Environment start stalled at: " << startup->stage << "\n"
+      << Read(directory.path / "agent.log") << "\n"
+      << (startup->states.empty()
+              ? "No environment state received"
+              : Read(std::filesystem::path(startup->states.back().control_dir) /
+                     "server.log"));
+  if (startup->reply)
+    ASSERT_FALSE(startup->reply->error) << startup->reply->error.message;
+  ASSERT_FALSE(startup->states.empty())
+      << "Start returned without state events";
+  const auto state = startup->states.back();
+  ASSERT_EQ(startup->states.front().phase, H::EnvironmentPhase::Starting);
+  ASSERT_EQ(state.phase, H::EnvironmentPhase::Ready)
+      << startup->stage << ": " << state.message << "\n"
+      << state.log;
+  ASSERT_TRUE(startup->changed.wait_until(lock, deadline, [&] {
+    return startup->reply.has_value();
+  })) << "Ready was published but Start did not reply";
+  ASSERT_FALSE(startup->reply->error) << startup->reply->error.message;
+  const Reply reply{std::move(startup->reply->bytes)};
+  ASSERT_TRUE(reply.Code().empty()) << reply.Code();
+  const auto* returned = reply.HostValue()->value_as_EnvironmentState();
+  ASSERT_NE(returned, nullptr);
+  EXPECT_EQ(returned->phase(), H::EnvironmentPhase::Ready);
+  EXPECT_EQ(returned->project_id()->str(), state.project_id);
+  EXPECT_EQ(returned->server_instance_id()->str(), state.server_instance_id);
+  EXPECT_EQ(returned->token()->str(), state.token);
+  lock.unlock();
   EXPECT_GT(state.pid, 0);
   EXPECT_FALSE(state.project_id.empty());
   EXPECT_FALSE(state.token.empty());

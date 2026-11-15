@@ -69,7 +69,13 @@ target_compile_options(tsugumi-environment-daemon-double PRIVATE -Wall -Wextra -
 add_dependencies(tsugumi_agent_rpc_tests tsugumi-agentd tsugumid-mock tsugumi-environment-daemon-double)
 include(GoogleTest)
 gtest_discover_tests(tsugumi_agent_rpc_tests TEST_PREFIX "core_agent." DISCOVERY_MODE PRE_TEST
+  TEST_FILTER "-RealEnvironmentFixture.AuthenticatesTheRealProjectServiceBeforeReady"
   PROPERTIES TIMEOUT 30)
+# This scenario follows the real environment's startup and cleanup budget.
+gtest_discover_tests(tsugumi_agent_rpc_tests TEST_PREFIX "core_agent." DISCOVERY_MODE PRE_TEST
+  TEST_FILTER "RealEnvironmentFixture.AuthenticatesTheRealProjectServiceBeforeReady"
+  TEST_LIST real_environment_tests
+  PROPERTIES TIMEOUT 120)
 
 add_executable(tsugumi_rpc_cli_tests rpc_cli_test.cc agent_fixture_server.cc)
 target_link_libraries(tsugumi_rpc_cli_tests PRIVATE GTest::gtest_main hosq Threads::Threads)

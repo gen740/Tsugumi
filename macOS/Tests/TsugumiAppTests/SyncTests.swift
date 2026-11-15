@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import Testing
 import TsugumiAgentClient
 @testable import TsugumiApp
@@ -104,23 +105,42 @@ import TsugumiAgentClient
     return p
   }
 
-  /// The Agent's side: adds a connection with its own read-modify-save, as the Agent tools do.
-  static func agentConnect(_ c: RPCClient, to card: String) async throws {
-    for _ in 0..<20 {
-      let snap = try await c.inspect()
-      var proj = try JSONValue.parse(snap.projectJson)
-      var conns = proj["canvas"]?["connections"]?.array ?? []
-      conns.append(.object([("from", .object([("card", .string("start")), ("port", .string("out"))])),
-                            ("to", .object([("card", .string(card)), ("port", .string("in"))]))]))
-      proj["canvas"]?["connections"] = .array(conns)
-      do {
-        _ = try await c.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent", changes: [Change.setProject(proj.serialized())])
-        return
-      } catch let f as RPCFailure where f.kind == .revisionConflict {
-        continue
+  /// The Agent's read-modify-save. A conflict is handled by the scenario,
+  /// after joining the competing UI save, rather than racing a retry count.
+  @discardableResult
+  static func agentConnect(_ c: RPCClient, to card: String,
+                           snapshot: Tsugumi_RPC_ProjectSnapshotT? = nil) async throws -> UInt64 {
+    let snap: Tsugumi_RPC_ProjectSnapshotT
+    if let snapshot { snap = snapshot } else { snap = try await c.inspect() }
+    var proj = try JSONValue.parse(snap.projectJson)
+    var conns = proj["canvas"]?["connections"]?.array ?? []
+    conns.append(.object([("from", .object([("card", .string("start")), ("port", .string("out"))])),
+                          ("to", .object([("card", .string(card)), ("port", .string("in"))]))]))
+    proj["canvas"]?["connections"] = .array(conns)
+    let saved = try await c.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "agent",
+                                 changes: [Change.setProject(proj.serialized())])
+    return saved.rev ?? 0
+  }
+
+  /// A revision is the notification barrier. The timer only diagnoses a stuck
+  /// stream; receiving a save reply on another connection is not this barrier.
+  static func received(_ revision: UInt64, by session: ProjectSession) async throws {
+    try await withThrowingTaskGroup(of: Void.self) { group in
+      defer { group.cancelAll() }
+      group.addTask { @MainActor in
+        for await current in Observations({ session.rev }) {
+          if current >= revision { return }
+        }
+        throw CancellationError()
       }
+      group.addTask {
+        try await Task.sleep(for: .seconds(60))
+        throw NSError(domain: "SyncTests", code: 1, userInfo: [
+          NSLocalizedDescriptionKey: "UI did not receive document revision \(revision)",
+        ])
+      }
+      try await group.next()
     }
-    throw RPCError.timeout
   }
 
   static func connected(_ s: ProjectSession) async throws {
@@ -842,15 +862,26 @@ import TsugumiAgentClient
     let agent = RPCClient(endpoint: d.endpoint.url)
     _ = try await agent.connect(token: d.endpoint.token, clientId: UUID(), expectedProjectId: nil)
 
-    // The Agent wires Cards while the UI moves them (each move is saved at once).
-    let wiring = Task { for id in ["a", "b", "c"] { try await Self.agentConnect(agent, to: id); try await Task.sleep(for: .milliseconds(15)) } }
-    for i in 0..<30 {
-      s.edit { $0.setPosition(i % 2 == 0 ? "a" : "b", CGPoint(x: Double(i * 10), y: 5)) }
-      try await Task.sleep(for: .milliseconds(5))
+    defer { Task { await agent.close() } }
+    // Start each Agent edit with UI edits pending. Either transaction may win;
+    // if the Agent loses, join the UI saves before retrying its fresh snapshot.
+    // No further UI writes compete with that retry, so exhaustion of an
+    // arbitrary retry count cannot masquerade as an RPC timeout.
+    for (batch, id) in ["a", "b", "c"].enumerated() {
+      let snapshot = try await agent.inspect()
+      for i in (batch * 10)..<(batch * 10 + 10) {
+        s.edit { $0.setPosition(i % 2 == 0 ? "a" : "b", CGPoint(x: Double(i * 10), y: 5)) }
+      }
+      let revision: UInt64
+      do { revision = try await Self.agentConnect(agent, to: id, snapshot: snapshot) }
+      catch let failure as RPCFailure where failure.kind == .revisionConflict {
+        await s.save()
+        try #require(s.saveError == nil && !s.dirty, "UI save failed: \(s.saveError ?? "still dirty")")
+        revision = try await Self.agentConnect(agent, to: id)
+      }
+      try await Self.received(revision, by: s)
+      await s.save()
     }
-    try await wiring.value
-    await s.save()
-    for _ in 0..<100 where s.connections(in: []).count < 3 || s.dirty { try await Task.sleep(for: .milliseconds(20)) }
 
     #expect(s.saveError == nil)
     #expect(!s.dirty)
@@ -869,6 +900,7 @@ import TsugumiAgentClient
     await s.save()
     #expect(s.confirmedLayout["cards"]?["b"]?["x"]?.double == 270)
     #expect(Set(s.connections(in: []).compactMap { $0["to"]?["card"]?.string }) == ["a", "b", "c"])
+    await s.close()
   }
 
   /// delegate: each helper's bird writes the Cards it owns; a Card no helper
