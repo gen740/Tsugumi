@@ -27,7 +27,7 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **Stage** | A step within an invocation: SDK preparation, Nix evaluation, build, run, output validation, saving ([Inspect a stage](RunHistory.md#inspect-an-invocation)) |
 | **`skipped`** | Downstream of a branch that was not taken. Not a failure |
 | **`blocked`** | A Card that cannot run because of a failed, blocked or cancelled upstream Card, or missing required inputs. Comes with a reason. Drafts and paths requiring their outputs receive no execution state |
-| **`interrupted`** | A run that was in progress when the process ended abnormally or restarted |
+| **`interrupted`** | A local or remote run left unfinished when its submitting `tsugumid` ended; recorded as `failed` with failure kind `interrupted`, with no result rescue or automatic rerun |
 | **Partial run (single run)** | Running only the chosen Cards, or "from here". Uses saved inputs ([Rerunning from the middle](Rationale.md#rerunning-from-the-middle)) |
 | **Saved inputs** | The full set of inputs of the latest trigger, including any batches. Partial runs use these inputs independently of `recordIO` |
 | **`recordIO`** | A setting that keeps the input and output values of every invocation of a Card in the history (off by default) |

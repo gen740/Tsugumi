@@ -36,7 +36,7 @@ let listener = try VMHostIPC.listen(path: socketPath)
 let vm = SharedVM(directory: support.appendingPathComponent("vm"))
 let image = VMImage(directory: imageDir, source: sourceDir, sourceEntries: sourceEntries.isEmpty ? nil : sourceEntries)
 
-func encode(_ value: NativeObject, reply: Tsugumi_VMHost_ReplyPayload? = nil, event: Tsugumi_VMHost_EventPayload? = nil, id: UInt64 = 0) -> Data {
+@Sendable func encode(_ value: NativeObject, reply: Tsugumi_VMHost_ReplyPayload? = nil, event: Tsugumi_VMHost_EventPayload? = nil, id: UInt64 = 0) -> Data {
   let message = Tsugumi_VMHost_MessageT()
   message.requestId = id
   if let reply {
@@ -71,7 +71,7 @@ final class Watchers: @unchecked Sendable {
   func emit(_ data: Data) { for peer in lock.withLock({ Array(peers.values) }) { peer.emit(data) } }
 }
 let watchers = Watchers()
-func runtime() -> Tsugumi_Host_HostRuntimeT {
+@Sendable func runtime() -> Tsugumi_Host_HostRuntimeT {
   let value = Tsugumi_Host_HostRuntimeT()
   switch vm.state {
   case .stopped: value.vmState = "stopped"
@@ -260,7 +260,7 @@ actor Driver {
   }
 }
 let driver = Driver()
-func serve(_ message: Tsugumi_VMHost_MessageT, _ peer: Peer) async throws {
+@Sendable func serve(_ message: Tsugumi_VMHost_MessageT, _ peer: Peer) async throws {
   guard message.requestId > 0, let request = message.payload?.value as? Tsugumi_VMHost_RequestT, let value = request.value?.value else { throw LauncherError.notReady("invalid VM adapter request") }
   let id = message.requestId
   switch value {

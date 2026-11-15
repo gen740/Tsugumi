@@ -19,7 +19,7 @@ Prose and `README.md` run the documentation build/tests; `docs/features.md` also
 | [tests/core/](core/README.md) | Core behavior, public RPC and integration tests |
 | `tests/python/` | SDKs, examples, demos, CLI/plugin/Web adapters and host/VM integration |
 | `tests/static/` | Repository contracts, packaging, release, licenses and generated-file consistency |
-| `tests/remote/` | C++ remote worker admission, scoping, transfers and recovery on Linux |
+| `tests/remote/` | C++ remote worker admission, scoping, transfers, same-core reconnects and core-lifetime expiry on Linux |
 | `macOS/CoreTests/`, `macOS/Tests/` | Agent, RPC and app behavior |
 | `web/` | Browser UI type checks and behavior contracts |
 | `tests/prompt/` | Offline prompt probe scoring |

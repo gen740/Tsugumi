@@ -887,7 +887,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       const auto inputs_index = code ? index / static_cast<uint32_t>(implementations.size()) : index;
       member.inputs = batch_inputs(node, work.groups, inputs_index);
       auto produced = invoke(member, worker_lane);
-      bool stop_siblings = false;
       {
         std::lock_guard lock(outcome_mu);
         if (!produced.failure && !produced.detached) {
@@ -906,19 +905,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           failure = produced.failure.value_or(FailureData::make(FailureKind::interrupted, "batch interrupted"));
           work.cancellation->failed.store(!produced.detached && !detaching_.load());
           work.cancellation->stop.store(true);
-          stop_siblings = work.cancellation->failed.load();
         }
         if (failure) produced.outputs.clear();
         members[index] = std::move(produced);
-      }
-      if (stop_siblings && prepared) {
-        try {
-          svc_.history().write_sync([&](sql::Db& db) {
-            prepared->cancel_batch(db, run_id_, node.path, work.activation);
-          });
-        } catch (const Failed&) {
-          persistence_lost("cancelling batch of " + path_key(node.path));
-        }
       }
     };
 
@@ -1175,7 +1164,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           w.cancellation->stop.store(true);
         }
         h.write_sync([&](sql::Db& db) {
-          if (failed_batch) w.execution->cancel_batch(db, run_id_, node.path, w.activation);
           if (remote_artifact && !out.failure) History::put_artifact(db, *remote_artifact);
           for (const auto& [stream, text] : out.remote_logs)
             remote_log_ends[stream] = h.append_log(db, s.run_id, s.card, s.invocation, stream, text);
@@ -1710,7 +1698,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           History::update_run(db, sum.status);
           History::interrupt_batches(db, *sum.status.run_id);
           // Detached external invocations are still pending after the local
-          // graph ends. Keep their progress until recovery commits a result.
+          // graph ends. Startup records interruption before remote cleanup.
           db.prepare("DELETE FROM statuses WHERE run_id=? AND NOT EXISTS ("
                      "SELECT 1 FROM remote_jobs AS j WHERE j.run_id=statuses.run_id AND j.card=statuses.card "
                      "AND j.invocation=statuses.invocation)").bind(1, *sum.status.run_id).run();
@@ -1776,7 +1764,14 @@ Scheduler::Scheduler(Service& svc) : svc_(svc) {}
 Scheduler::~Scheduler() { shutdown(); }
 
 void Scheduler::recover_interrupted() {
-  auto runs = svc_.history().read([](sql::Db& db) { return History::unfinished_runs(db); });
+  auto runs = svc_.history().read([](sql::Db& db) {
+    auto result = History::unfinished_runs(db);
+    auto pending = db.prepare("SELECT DISTINCT run_id FROM remote_jobs");
+    while (pending.step())
+      if (std::ranges::find(result, pending.text(0)) == result.end())
+        result.push_back(pending.text(0));
+    return result;
+  });
   for (const auto& run_id : runs) {
     svc_.history().write_sync([&](sql::Db& db) {
       auto r = History::run(db, run_id);
@@ -1787,10 +1782,11 @@ void Scheduler::recover_interrupted() {
       History::update_run(db, r->status);
       History::interrupt_batches(db, run_id);
       // In-progress invocations become interrupted failures; nothing is re-run.
-      auto st = db.prepare("SELECT s.card, s.invocation, e.environment_id FROM statuses AS s "
-                           "LEFT JOIN active_environments AS e ON e.run_id=s.run_id AND e.card=s.card "
-                           "AND e.invocation=s.invocation WHERE s.run_id=? AND NOT EXISTS ("
-                           "SELECT 1 FROM remote_jobs AS j WHERE j.run_id=s.run_id AND j.card=s.card AND j.invocation=s.invocation)");
+      auto st = db.prepare(
+          "SELECT s.card, s.invocation, e.environment_id FROM statuses AS s "
+          "LEFT JOIN active_environments AS e ON e.run_id=s.run_id AND "
+          "e.card=s.card "
+          "AND e.invocation=s.invocation WHERE s.run_id=?");
       st.bind(1, run_id);
       std::vector<InvocationRecordData> recs;
       while (st.step()) {
@@ -1800,6 +1796,21 @@ void Scheduler::recover_interrupted() {
         rec.summary = std::move(*summary);
         if (rec.summary.environment_id.empty()) rec.summary.environment_id = st.text(2);
         rec.summary.state = CardState::failed;
+        rec.summary.ended_at = r->status.ended_at;
+        if (rec.summary.started_at)
+          rec.summary.duration_ms = static_cast<uint64_t>(
+              std::max<int64_t>(0, *rec.summary.ended_at - *rec.summary.started_at));
+        stage_close(rec.summary, StageOutcome::failed);
+        auto remote = db.prepare(
+            "SELECT job_id FROM remote_jobs WHERE run_id=? AND card=? AND "
+            "invocation=?");
+        remote.bind(1, run_id)
+            .bind(2, path_key(rec.summary.card))
+            .bind(3, rec.summary.invocation);
+        if (remote.step()) {
+          rec.summary.execution_job_id = remote.text(0);
+          rec.summary.execution_state = RemoteExecutionState::interrupted;
+        }
         rec.summary.failure = r->status.failure;
         recs.push_back(std::move(rec));
       }
@@ -1809,90 +1820,13 @@ void Scheduler::recover_interrupted() {
   }
 }
 
-auto Scheduler::reconcile_remote_job(RemoteJobRecord& job) -> bool {
-  auto& h = svc_.history();
-  auto& backend = svc_.remote_execution();
-  auto& inv = job.invocation;
-  const auto before = inv.execution_state;
-  const auto accepted = job.accepted;
-  const auto reply = backend.poll_recovered(job);
-  if (inv.execution_state != before || job.accepted != accepted)
-    h.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
-  h.set_live(inv);
-  if (inv.execution_state != before) svc_.server()->broadcast(card_note(inv));
-  if (!reply || reply->state == "queued" || reply->state == "running" || reply->state == "cancelling") return false;
-  RecoveredRemoteJob recovered;
-  try {
-    recovered = backend.recover(job, *reply, stop_recovery_);
-  } catch (const BrokerDisconnected&) {
-    inv.execution_state = RemoteExecutionState::disconnected;
-    h.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
-    h.set_live(inv);
-    svc_.server()->broadcast(card_note(inv));
-    return false;
-  }
-  auto& result = recovered.record;
-  const auto& logs = recovered.logs;
-  auto& artifact = recovered.artifact;
-  const auto& environment = recovered.environment;
-  inv.state = !inv.failure ? CardState::succeeded : inv.failure->kind == FailureKind::cancelled
-               ? CardState::cancelled : CardState::failed;
-  inv.ended_at = now_ms();
-  if (inv.started_at) inv.duration_ms = static_cast<uint64_t>(std::max<int64_t>(0, *inv.ended_at - *inv.started_at));
-  stage_close(inv, !inv.failure ? StageOutcome::done : inv.state == CardState::cancelled
-                     ? StageOutcome::cancelled : StageOutcome::failed);
-  if (inv.failure) {
-    result.outputs.clear();
-    artifact.reset();
-  }
-  result.summary = inv;
-  std::map<LogStream, std::vector<LogEnd>> log_ends;
-  std::optional<CardPath> completed_card;
-  h.write_sync([&](sql::Db& db) {
-    // Resolve the recorded Card key in the same transaction as completion.
-    completed_card = History::remote_job_card(db, inv.execution_job_id);
-    if (!completed_card) return;
-    result.summary.card = *completed_card;
-    if (result.display) result.display->card = *completed_card;
-    if (artifact) artifact->card = *completed_card;
-    // A restart may have happened before the failing member could commit
-    // its cancellation intent. A terminal worker failure still stops siblings.
-    if (inv.batch_activation && inv.failure &&
-        (reply->state == "failed" || reply->state == "succeeded" || inv.failure->kind == FailureKind::timeout))
-      History::cancel_remote_batch(db, inv.run_id, *completed_card, *inv.batch_activation);
-
-    if (!environment.id.empty()) History::put_environment(db, inv.run_id, environment);
-    if (artifact) History::put_artifact(db, *artifact);
-    for (const auto& [stream, text] : logs)
-      log_ends[stream] = h.append_log(db, inv.run_id, *completed_card, inv.invocation, stream, text);
-    h.complete_invocation(db, result);
-  });
-  h.clear_live(inv);
-  if (!completed_card) return true;
-  h.clear_live(result.summary);
-  for (const auto& [_, ends] : log_ends)
-    for (const auto& end : ends) svc_.server()->broadcast(log_note(end));
-  svc_.server()->broadcast(card_note(result.summary));
-  svc_.schedule_export();
-  return true;
-}
-
-auto Scheduler::recover_remote_jobs() -> void {
-  const auto jobs = svc_.history().read([](sql::Db& db) { return History::remote_jobs(db); });
-  std::set<std::string> pending;
-  for (const auto& job : jobs) pending.insert(job.invocation.execution_job_id);
-  remote_recovery_ = std::thread([this, pending = std::move(pending)]() mutable {
-    while (!stop_recovery_.load()) {
+auto Scheduler::start_remote_cleanup() -> void {
+  remote_cleanup_ = std::thread([this] {
+    while (!stop_cleanup_.load()) {
       try {
         svc_.remote_execution().release_completed();
-        auto jobs = svc_.history().read([](sql::Db& db) { return History::remote_jobs(db); });
-        for (auto& job : jobs) {
-          if (stop_recovery_.load()) return;
-          const auto& id = job.invocation.execution_job_id;
-          if (pending.contains(id) && reconcile_remote_job(job)) pending.erase(id);
-        }
       } catch (const std::exception& error) {
-        log::warn(std::string("external job recovery: ") + error.what());
+        log::warn(std::string("external job cleanup: ") + error.what());
       }
       std::this_thread::sleep_for(std::chrono::seconds(1));
     }
@@ -2097,7 +2031,6 @@ RunStatusData Scheduler::cancel(const std::string& run_id) {
   }
   std::optional<RunStatusData> active;
   if (exec) active = exec->request_cancel(false);
-  svc_.history().write_sync([&](sql::Db& db) { History::cancel_remote_jobs(db, run_id); });
   if (active) return *active;
   auto r = svc_.history().read([&](sql::Db& db) { return History::run(db, run_id); });
   if (!r) throw Failed(FailureKind::not_found, "unknown run " + run_id, {{"run_id", run_id}});
@@ -2201,14 +2134,14 @@ void Scheduler::finished(RunExec* exec) {
 }
 
 void Scheduler::shutdown() {
-  stop_recovery_.store(true);
+  stop_cleanup_.store(true);
   std::shared_ptr<RunExec> exec;
   {
     std::lock_guard<std::mutex> l(mu_);
     exec = active_;
   }
   if (exec) exec->request_cancel(true);
-  if (remote_recovery_.joinable()) remote_recovery_.join();
+  if (remote_cleanup_.joinable()) remote_cleanup_.join();
   if (exec) exec->join();
   std::vector<std::thread> reapers;
   {

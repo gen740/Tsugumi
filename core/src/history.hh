@@ -43,8 +43,6 @@ struct RemoteJobRecord {
   std::string instance;
   std::string server_id;
   std::string spec;
-  std::string contract;
-  std::string directory;
   bool accepted = false;
   bool cancel_requested = false;
 };
@@ -107,12 +105,7 @@ class History {
   static auto put_batch(sql::Db& db, const RunBatchData& batch) -> void;
   static auto interrupt_batches(sql::Db& db, const std::string& run_id) -> void;
   static auto put_remote_job(sql::Db& db, const RemoteJobRecord& job) -> void;
-  static auto cancel_remote_jobs(sql::Db& db, const std::string& run_id) -> void;
-  static auto cancel_remote_batch(sql::Db& db, const std::string& run_id, const CardPath& card,
-                                  uint64_t activation) -> void;
-  static auto remote_jobs(sql::Db& db) -> std::vector<RemoteJobRecord>;
   static auto has_remote_jobs(sql::Db& db) -> bool;
-  static auto remote_job_card(sql::Db& db, const std::string& job_id) -> std::optional<CardPath>;
   void complete_invocation(sql::Db& db, const InvocationRecordData& r) const;
   // Waits until every write submitted before this call has been committed or failed.
   void flush();

@@ -10,9 +10,9 @@
 #include <thread>
 
 #include "journal.hh"
+#include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/log_limits.hh"
-#include "tsugumi/protocol/worker_generated.h"
 #include "util/crypto.hh"
 #include "util/fs.hh"
 
@@ -33,7 +33,8 @@ auto rejected(F f) -> void {
   }
   expect(failed, "invalid input was accepted");
 }
-auto spec(const std::string& digest, uint32_t timeout = 60, uint64_t log_limit = 8u << 20) -> std::string {
+auto spec(const std::string& digest, uint32_t timeout = 60, uint64_t log_limit = 8u << 20, uint32_t interval = 15,
+          uint32_t missed = 0) -> std::string {
   R::JobSpecT s;
   s.system = "x86_64-linux";
   s.derivation = "/nix/store/00000000000000000000000000000000-test.drv";
@@ -42,6 +43,8 @@ auto spec(const std::string& digest, uint32_t timeout = 60, uint64_t log_limit =
   s.input_blobs = {digest};
   s.timeout_seconds = timeout;
   s.log_limit_bytes = log_limit;
+  s.heartbeat_interval_seconds = interval;
+  s.missed_heartbeats = missed;
   validate_spec(s);
   flatbuffers::FlatBufferBuilder b;
   b.Finish(R::JobSpec::Pack(b, &s));
@@ -165,6 +168,8 @@ auto protocol_test() -> void {
 }
 auto journal_test(const stdfs::path& root) -> void {
   Journal j(root / "a");
+  const std::string core(64, 'a');
+  j.touch_core(core);
   Journal other(root / "b");
   expect(j.instance() != other.instance(), "project identities overlap");
   expect(Journal(root / "a").instance() == j.instance(),
@@ -176,44 +181,44 @@ auto journal_test(const stdfs::path& root) -> void {
   expect(j.status(job).state == R::JobState::Missing,
          "unknown job must be missing");
   rejected([&] { j.status("../escape"); });
-  rejected([&] { j.submit(job, bytes); });
-  j.put(job, p);
-  j.put(job, p);
+  rejected([&] { j.submit(job, bytes, core); });
+  j.put(job, p, core);
+  j.put(job, p, core);
   R::GetBlobRequestT get;
   get.digest = p.digest;
   expect(j.get(job, get).bytes == p.bytes, "blob roundtrip");
   rejected([&] { other.get(job, get); });
   auto corrupt = p;
   corrupt.digest = std::string(64, 'a');
-  rejected([&] { j.put(job, corrupt); });
+  rejected([&] { j.put(job, corrupt, core); });
   corrupt = p;
   corrupt.total = kMaxBlob + 1;
-  rejected([&] { j.put(job, corrupt); });
+  rejected([&] { j.put(job, corrupt, core); });
   corrupt = p;
   corrupt.offset = 1;
-  rejected([&] { j.put(second, corrupt); });
+  rejected([&] { j.put(second, corrupt, core); });
   auto large = chunk(std::string(kChunkBytes + 17, 'x'));
   auto tail = large;
   large.bytes.resize(kChunkBytes);
-  j.put(job, large);
-  j.put(job, large);  // repeat an already acknowledged chunk
+  j.put(job, large, core);
+  j.put(job, large, core);  // repeat an already acknowledged chunk
   tail.offset = kChunkBytes;
   tail.bytes.erase(tail.bytes.begin(), tail.bytes.begin() + kChunkBytes);
-  j.put(job, tail);
+  j.put(job, tail, core);
   get.digest = large.digest;
   get.offset = kChunkBytes;
   expect(j.get(job, get).bytes == tail.bytes, "chunked binary transfer");
   get.limit = kChunkBytes + 1;
   rejected([&] { j.get(job, get); });
-  auto accepted = j.submit(job, bytes);
+  auto accepted = j.submit(job, bytes, core);
   expect(accepted.state == R::JobState::Queued &&
              accepted.fingerprint == fingerprint,
          "submit receipt");
-  expect(j.submit(job, bytes).deadline == accepted.deadline,
+  expect(j.submit(job, bytes, core).deadline == accepted.deadline,
          "resubmission reset deadline");
-  rejected([&] { j.submit(job, spec(p.digest, 61)); });
+  rejected([&] { j.submit(job, spec(p.digest, 61), core); });
   rejected([&] { j.cancel(job, std::string(64, 'f')); });
-  rejected([&] { j.put(job, p); });
+  rejected([&] { j.put(job, p, core); });
   rejected([&] { j.release(job, fingerprint); });
   std::atomic<int> claims{0};
   std::vector<std::thread> threads;
@@ -237,14 +242,14 @@ auto journal_test(const stdfs::path& root) -> void {
   expect(std::distance(stdfs::directory_iterator(j.job_path(job)),
                        stdfs::directory_iterator{}) == 1,
          "tombstone kept payload");
-  expect(j.submit(job, bytes).state == R::JobState::Released,
+  expect(j.submit(job, bytes, core).state == R::JobState::Released,
          "release allowed a late replay");
   j.cancel(cancelled, fingerprint);
-  expect(j.submit(cancelled, bytes).state == R::JobState::Cancelled,
+  expect(j.submit(cancelled, bytes, core).state == R::JobState::Cancelled,
          "cancel-before-submit allowed execution");
-  rejected([&] { j.submit(cancelled, spec(p.digest, 62)); });
-  j.put(second, p);
-  j.submit(second, bytes);
+  rejected([&] { j.submit(cancelled, spec(p.digest, 62), core); });
+  j.put(second, p, core);
+  j.submit(second, bytes, core);
   Journal reopened(root / "a");
   expect(reopened.status(second).state == R::JobState::Queued,
          "queue lost on reopen");
@@ -254,8 +259,8 @@ auto journal_test(const stdfs::path& root) -> void {
   expect(!reopened.claim(second, 1, 1, "boot"),
          "interrupted invocation was rerun");
   const std::string result_job(64, '7');
-  j.put(result_job, p);
-  j.submit(result_job, bytes);
+  j.put(result_job, p, core);
+  j.submit(result_job, bytes, core);
   j.claim(result_job, 100, 1, "boot");
   const auto output = j.job_path(result_job) / "work/result";
   private_directory(output);
@@ -295,13 +300,13 @@ auto journal_test(const stdfs::path& root) -> void {
   auto partial = chunk("prefixsuffix");
   auto prefix = partial;
   prefix.bytes.resize(6);
-  j.put(interrupted_upload, prefix);
+  j.put(interrupted_upload, prefix, core);
   fs::write_atomic(j.job_path(interrupted_upload) / "parts" / partial.digest,
                    "prefixsuffix", 0600);
   auto suffix = partial;
   suffix.offset = 6;
   suffix.bytes.erase(suffix.bytes.begin(), suffix.bytes.begin() + 6);
-  j.put(interrupted_upload, suffix);
+  j.put(interrupted_upload, suffix, core);
   R::GetBlobRequestT repaired;
   repaired.digest = partial.digest;
   expect(j.get(interrupted_upload, repaired).bytes == partial.bytes,
@@ -331,6 +336,87 @@ auto journal_test(const stdfs::path& root) -> void {
   ::chmod(insecure.c_str(), 0755);
   rejected([&] { Journal bad(insecure); });
 }
+auto core_lifetime_test(const stdfs::path& root) -> void {
+  Journal journal(root / "lifetimes");
+  const std::string core(64, 'a'), replacement(64, 'b');
+  constexpr uint32_t interval = 2, missed = 3;
+  constexpr uint64_t grace = uint64_t{interval} * missed * 1000 + kHeartbeatGrace.count();
+  const uint64_t start = now_ms();
+  const auto input = chunk("input");
+  rejected([&] { spec(input.digest, 60, 8u << 20, 0, missed); });
+  // The maximum uint32 pair must not overflow expiry arithmetic.
+  const auto maximum = spec(input.digest, 60, 8u << 20, UINT32_MAX, UINT32_MAX);
+  const auto bytes = spec(input.digest, 60, 8u << 20, interval, missed);
+  journal.touch_core(core, start);
+  const std::string single(64, '7');
+  journal.put(single, input, core);
+  journal.submit(single, spec(input.digest, 60, 8u << 20, 15, 1), core);
+  journal.touch_core(core, start + 15001);
+  expect(journal.status(single).state == R::JobState::Queued,
+         "one missed interval cancelled an on-time probe plus scheduling delay");
+  // Reset the synthetic lease before testing the other exact boundaries.
+  journal.touch_core(core, start);
+  const std::string huge(64, '5');
+  journal.put(huge, input, core);
+  journal.submit(huge, maximum, core);
+  journal.expire_core(huge, start + uint64_t{365} * 24 * 3600 * 1000);
+  expect(journal.status(huge).state == R::JobState::Queued,
+         "maximum settings overflowed the allowance");
+  for (const auto& job :
+       {std::string(64, '1'), std::string(64, '2'), std::string(64, '3')}) {
+    journal.put(job, input, core);
+    journal.submit(job, bytes, core);
+  }
+  const std::string queued(64, '1'), running(64, '2');
+  expect(journal.claim(running, 10, 1, "boot"), "running lease fixture");
+  journal.expire_core(queued, start + grace - 1);
+  journal.expire_core(running, start + grace - 1);
+  expect(journal.status(queued).state == R::JobState::Queued &&
+             journal.status(running).state == R::JobState::Running,
+         "cancelled before N missed intervals");
+  const std::string unlimited(64, '4'), unlimited_running(64, '6');
+  for (const auto& job : {unlimited, unlimited_running}) {
+    journal.put(job, input, core);
+    journal.submit(job, spec(input.digest), core);
+  }
+  expect(journal.claim(unlimited_running, 11, 1, "boot"), "never running fixture");
+  rejected([&] { journal.submit(queued, spec(input.digest, 60, 8u << 20, 4, missed), core); });
+  journal.touch_core(core, start + grace - 1);  // brief network cut, same core
+  Journal restarted(root / "lifetimes");
+  restarted.expire_core(running, start + grace);
+  expect(restarted.status(running).state == R::JobState::Running,
+         "same-life reconnect cancelled a run");
+  restarted.touch_core(
+      replacement,
+      start + grace);  // a different core cannot renew the old life
+  rejected([&] { restarted.require_owner(running, replacement); });
+  rejected([&] { restarted.submit(queued, bytes, replacement); });
+  const auto expired = start + 2 * grace - 1;
+  restarted.expire_core(queued, expired);
+  restarted.expire_core(running, expired);
+  expect(restarted.status(queued).state == R::JobState::Cancelled,
+         "orphaned queue was not cancelled");
+  expect(restarted.status(running).state == R::JobState::Cancelling,
+         "orphaned worker was not cancelled");
+  restarted.expire_core(unlimited, expired + uint64_t{365} * 24 * 3600 * 1000);
+  restarted.expire_core(unlimited_running, expired + uint64_t{365} * 24 * 3600 * 1000);
+  expect(restarted.status(unlimited).state == R::JobState::Queued &&
+             restarted.status(unlimited_running).state == R::JobState::Running,
+         "never policy cancelled a job");
+  restarted.touch_core(core, expired);
+  expect(restarted.status(queued).state == R::JobState::Cancelled,
+         "late reconnect revived an expired job");
+  expect(restarted.status(std::string(64, '3')).state == R::JobState::Cancelled,
+         "reconnect before the expiry tick rescued an orphan");
+  restarted.finish(running, R::JobState::Succeeded, std::string(64, 'c'), {});
+  expect(restarted.status(running).state == R::JobState::Cancelled,
+         "late result beat core expiry");
+  expect(stdfs::exists(restarted.job_path(running) / "blobs" / input.digest),
+         "cancellation changed data policy");
+  restarted.release(running, crypto::sha256_hex(bytes));
+  expect(!stdfs::exists(restarted.job_path(running) / "blobs"),
+         "ordinary release retained scratch");
+}
 }  // namespace
 }  // namespace tsugumi::workerd
 
@@ -343,6 +429,7 @@ auto main() -> int {
     log_test();
     protocol_test();
     journal_test(root);
+    core_lifetime_test(root);
     discard_tree(root);
     std::cout << "workerd protocol and journal tests passed\n";
     return 0;

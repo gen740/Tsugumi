@@ -12,8 +12,8 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -31,7 +31,7 @@ namespace R = Tsugumi::RemoteWorker;
 using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
 constexpr auto kConnectTimeout = 5s;
-constexpr auto kControlTimeout = 30s;
+constexpr auto kControlTimeout = workerd::kControlTimeout;
 constexpr auto kIdleTimeout = 30s;
 constexpr auto kTransferTimeout = 24h;
 constexpr auto kStopCheckInterval = 100ms;
@@ -197,10 +197,44 @@ auto require_ack(const R::ReplyT& reply) -> void {
 }  // namespace
 
 RemoteJobClient::RemoteJobClient()
-    : endpoint_(environment("TSUGUMI_EXECUTION_BROKER")),
-      capability_file_(environment("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE")) {}
+    : core_life_id_(crypto::random_token(32)),
+      endpoint_(environment("TSUGUMI_EXECUTION_BROKER")),
+      capability_file_(
+          environment("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE")) {}
+
+RemoteJobClient::~RemoteJobClient() {
+  stop();
+  // Threads read client state, so join before member destruction begins.
+  heartbeats_.clear();
+}
+
+auto RemoteJobClient::keep_alive(std::string_view service,
+                                 std::string_view server,
+                                 uint32_t interval) const -> void {
+  std::lock_guard guard(heartbeat_mutex_);
+  if (!interval)
+    throw BrokerRequestRejected("Heartbeat interval must be at least 1 second");
+  const auto key = std::string(service) + "\n" + std::string(server) + "\n" +
+                   std::to_string(interval);
+  if (heartbeats_.contains(key)) return;
+  heartbeats_.emplace(
+      key, std::jthread([this, target = std::string(service),
+                         pinned = std::string(server), interval] {
+        while (!stopped_.load()) {
+          const auto next = Clock::now() + std::chrono::seconds(interval);
+          try {
+            request(command(R::ProbeRequestT{}, target, pinned));
+          } catch (const std::exception&) { /* The execution loop reports
+                                               transport/state failures. */
+          }
+          while (Clock::now() < next && !stopped_.load())
+            std::this_thread::sleep_for(workerd::kHeartbeatPollInterval);
+        }
+      }));
+}
 
 auto RemoteJobClient::request(R::RequestT q, const std::atomic<bool>* cancel) const -> R::ReplyT {
+  q.core_life_id = core_life_id_;
   const bool upload = q.body.type == R::RequestBody::PutBlobRequest;
   const BrokerIo io{stopped_, cancel, upload};
   const auto start = Clock::now();
@@ -245,15 +279,18 @@ auto RemoteJobClient::catalog() const -> std::vector<RemoteTarget> {
     if (!t->capabilities) throw BrokerDisconnected("missing target capabilities");
     const auto& c = *t->capabilities;
     targets.push_back({t->id, c.native_system, c.systems, c.server_id,
-                      t->available, c.resource_limits, c.max_jobs});
+                      t->available, c.resource_limits, c.max_jobs,
+                      t->heartbeat_interval_seconds, t->missed_heartbeats});
   }
   return targets;
 }
-auto RemoteJobClient::probe(std::string_view service, std::string_view registered_server) const -> RemoteProbe {
+auto RemoteJobClient::probe(std::string_view service, std::string_view registered_server,
+                            uint32_t heartbeat_interval_seconds) const -> RemoteProbe {
   auto reply = request(command(R::ProbeRequestT{}, service, registered_server));
   const auto& c = checked_capabilities(reply.body.AsCapabilities());
   if (c.server_id != registered_server) throw Failed(FailureKind::unsupported, "The remote worker's server ID changed. Verify the registered endpoint.");
   if (!crypto::is_sha256_hex(c.instance_id)) throw BrokerDisconnected("remote worker did not identify its project journal");
+  keep_alive(service, registered_server, heartbeat_interval_seconds);
   return {c.native_system, c.instance_id, c.server_id, c.systems, c.resource_limits};
 }
 auto RemoteJobClient::put_blob(std::string_view service, std::string_view server, std::string_view instance,
