@@ -36,11 +36,11 @@ TEST_F(AgentFixture, DocumentMergeUsesTheSameHostAndAgentOperation) {
   ASSERT_EQ(edit->conflicts()->size(), 1U);
   EXPECT_EQ(edit->conflicts()->Get(0)->str(), "/settings/n");
   EXPECT_EQ(edit->merged_json()->str(), ours);
-  const auto conversation = Conversation("merge", true);
+  const auto conversation = Conversation("merge");
   const auto result = Tool(conversation, "document_merge", agent::json::Encode(agent::json::Members{
       {"base_json", agent::json::Quote(base)}, {"ours_json", agent::json::Quote(ours)}, {"theirs_json", agent::json::Quote(theirs)}}));
   const auto* tool = result.Value()->value_as_ToolResult();
-  ASSERT_NE(tool, nullptr);
+  ASSERT_NE(tool, nullptr) << result.Code();
   EXPECT_FALSE(tool->is_error());
   const auto value = agent::json::Object(tool->text()->str());
   EXPECT_EQ(agent::json::Text(value, "merged_json"), edit->merged_json()->str());
