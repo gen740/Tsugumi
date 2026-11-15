@@ -5,13 +5,25 @@ target_link_libraries(tsugumi_worker_protocol PUBLIC tsugumi_protocol flatbuffer
 
 add_library(tsugumi_workerd_support STATIC src/journal.cc src/paths.cc
   ${PROJECT_SOURCE_DIR}/core/src/util/crypto.cc ${PROJECT_SOURCE_DIR}/core/src/util/fs.cc
-  ${PROJECT_SOURCE_DIR}/core/src/util/staging.cc)
+  src/staging.cc)
 target_include_directories(tsugumi_workerd_support PRIVATE ${PROJECT_SOURCE_DIR}/core/src
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(tsugumi_workerd_support PUBLIC tsugumi_worker_protocol tsugumi_json)
 if(NOT APPLE)
   target_link_libraries(tsugumi_workerd_support PRIVATE PkgConfig::CRYPTO)
 endif()
+
+set(TSUGUMI_BWRAP "" CACHE FILEPATH "bubblewrap used for sandbox: true Cards")
+
+# One implementation of worker ownership and invocation, shared by the core and
+# remote launcher. Embed these objects in the core archive for installed users;
+# the engine does not link back to the core's scheduling or service layer.
+add_library(tsugumi_worker_runtime OBJECT src/worker_proc.cc src/worker_pool.cc src/worker_execution.cc)
+target_include_directories(tsugumi_worker_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
+  PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
+target_link_libraries(tsugumi_worker_runtime PUBLIC tsugumi_workerd_support Threads::Threads)
+target_compile_definitions(tsugumi_worker_runtime PRIVATE TSUGUMI_BWRAP="${TSUGUMI_BWRAP}")
+target_compile_options(tsugumi_worker_runtime PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 
 add_executable(tsugumi-worker src/native_main.cc)
 target_include_directories(tsugumi-worker PRIVATE ${PROJECT_SOURCE_DIR}/sdk/include ${CMAKE_CURRENT_SOURCE_DIR}/include)

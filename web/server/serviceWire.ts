@@ -36,6 +36,12 @@ import { DemoListRequestT as HDemoListRequest } from '../src/gen/tsugumi/host/de
 import { ToolCatalogRequestT as AToolCatalogRequest } from '../src/gen/tsugumi/agent/tool-catalog-request'
 import { HostRecentListRequestT as HHostRecentListRequest } from '../src/gen/tsugumi/host/host-recent-list-request'
 import { HostProjectDefaultsRequestT as HHostProjectDefaultsRequest } from '../src/gen/tsugumi/host/host-project-defaults-request'
+function heartbeatSetting(value: unknown, fallback: number, minimum: number): number {
+  if (value === undefined) return fallback
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < minimum || value > 0xffffffff)
+    throw Error('Invalid heartbeat setting')
+  return value
+}
 // Binary service adapters. Only model content and open-ended tool data are JSON.
 import * as fb from 'flatbuffers'
 import { Message as AgentMessage, MessageT as AgentMessageT } from '../src/gen/tsugumi/agent/message'
@@ -149,7 +155,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'SignInActionRequest': return new HSignInActionRequest(v.profile, v.attempt_id, v.action, v.client_id)
     case 'SignInStatusRequest': return new HSignInStatusRequest(v.profile, v.attempt_id)
     case 'ExecutionServicesRequest': return new ExecutionServicesRequestT()
-    case 'ExecutionServicePutRequest': return new ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify)
+    case 'ExecutionServicePutRequest': return new ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify, heartbeatSetting(v.heartbeatIntervalSeconds, 15, 1), heartbeatSetting(v.missedHeartbeats, 0, 0))
     case 'ExecutionServiceRemoveRequest': return new ExecutionServiceRemoveRequestT(v.id)
     case 'ExecutionProjectAuthorizeRequest': return new ExecutionProjectAuthorizeRequestT(v.project_id, v.path, v.control_dir, v.guest)
     case 'ExecutionProjectRevokeRequest': return new ExecutionProjectRevokeRequestT(v.project_id)

@@ -44,10 +44,12 @@
 "%lld 点 · ドラッグで回転" = "%lld points · drag to rotate";
 "%lld–%lld / %lld 行" = "%lld–%lld of %lld rows";
 "%llu 件の実行を削除し、%@ を解放しました。" = "Deleted %llu runs and freed %@.";
+"0 は無期限です。スリープ中も実行を継続するには 0 を指定してください。" = "0 means never. Use 0 to keep jobs running while this computer sleeps.";
 "0 秒" = "0 s";
 "1 にすると、ヘルパーは順番に動きます。" = "Set to 1 to run helpers sequentially.";
 "100% で表示" = "Actual Size";
 "100% に戻す" = "Reset to 100%";
+"1〜4294967295 秒で指定してください。" = "Enter 1 to 4294967295 seconds.";
 "90 秒たっても準備ができませんでした" = "no readiness signal within 90 s";
 "API の設定…" = "API Settings…";
 "API の設定を開く" = "Open API Settings";
@@ -193,7 +195,7 @@
 "Tsugumi で何ができる？" = "What can Tsugumi do?";
 "Tsugumi のアニメーション" = "Tsugumi animation";
 "Tsugumi のプロジェクトではありません: %@" = "Not a Tsugumi project: %@";
-"Tsugumi の再起動後は、このジョブの結果を回収します。下流の Card は改めて実行してください。" = "Tsugumi retrieves this job's result after restarting. Start a new run for downstream Cards.";
+"Tsugumi の再起動により、この実行は中断されました。結果は回収されません。必要な Card を改めて実行してください。" = "This run was interrupted when Tsugumi restarted. Its results will not be retrieved. Run the Cards you need again.";
 "Tsugumi の外で編集されたファイルを取り込みます" = "Takes in files edited outside Tsugumi";
 "Tsugumi の実行環境のイメージが見つかりません。" = "The Tsugumi environment image is not available.";
 "Tsugumi の実行環境を準備します" = "Set up the Tsugumi environment";
@@ -336,7 +338,6 @@
 "この実行にはありません" = "Absent from this run";
 "この実行の Card からは届いていません" = "Not sent by a Card of this run";
 "この実行の共有環境" = "Shared environments in this run";
-"この実行の未完了ジョブを取り消す" = "Cancel pending jobs in this run";
 "この実行サービスではリソースを指定できません。" = "This execution service does not support resource requests.";
 "この実行環境では %@ を実行できません。" = "%@ cannot run in this execution environment.";
 "この実行環境の既定" = "Execution environment default";
@@ -555,6 +556,7 @@
 "ネットワークを設定しています" = "Setting up the network";
 "ノートを読み込めませんでした: %@" = "Could not load note: %@";
 "ノートを読み込んでいます…" = "Loading note…";
+"ハートビート間隔（秒）" = "Heartbeat interval (seconds)";
 "バイナリ %lld bytes。書き出して確認してください。" = "Binary, %lld bytes. Export it to inspect.";
 "バイナリの成果物です" = "This artifact contains binary data";
 "バイナリキャッシュ" = "Binary Caches";
@@ -753,6 +755,7 @@
 "保持する出力" = "Output to retain";
 "値" = "Value";
 "停止" = "Stop";
+"停止までの連続未受信回数" = "Consecutive missed heartbeats before stopping";
 "停止中" = "Stopping";
 "停止済み" = "Stopped";
 "偶数を半分にする" = "Halves even numbers";

@@ -191,6 +191,8 @@ auto ProjectIdentity(const std::string& path) -> std::string {
 struct Entry {
   std::string id, name, endpoint, worker_public_key;
   R::CapabilitiesT capabilities;
+  uint32_t heartbeat_interval_seconds = 15;
+  uint32_t missed_heartbeats = 0;
   // Only transport identity changes invalidate a project's grant. Capabilities
   // are observations of the worker and the name is presentation.
   std::string generation;
@@ -201,6 +203,8 @@ auto Public(const Entry& entry) -> std::unique_ptr<H::ExecutionServiceT> {
   value->name = entry.name;
   value->endpoint = entry.endpoint;
   value->worker_public_key = entry.worker_public_key;
+  value->heartbeat_interval_seconds = entry.heartbeat_interval_seconds;
+  value->missed_heartbeats = entry.missed_heartbeats;
   auto& c = value->capabilities = std::make_unique<H::ExecutionCapabilitiesT>();
   c->isolation = "pid_namespace";
   c->server_id = entry.capabilities.server_id;
@@ -249,7 +253,8 @@ struct ExecutionBroker::State {
         "NULL,"
         "endpoint TEXT NOT NULL,worker_public_key TEXT NOT NULL,capabilities "
         "BLOB NOT "
-        "NULL,generation TEXT NOT NULL);"
+        "NULL,heartbeat_interval_seconds INTEGER NOT NULL,missed_heartbeats "
+        "INTEGER NOT NULL,generation TEXT NOT NULL);"
         "CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,identity TEXT "
         "NOT NULL,"
         "scope TEXT NOT NULL,capability TEXT NOT NULL UNIQUE);"
@@ -302,7 +307,8 @@ struct ExecutionBroker::State {
   }
   auto Entries() -> std::vector<Entry> {
     auto q = db.prepare(
-        "SELECT id,name,endpoint,worker_public_key,capabilities,generation FROM services "
+        "SELECT id,name,endpoint,worker_public_key,capabilities,"
+        "heartbeat_interval_seconds,missed_heartbeats,generation FROM services "
         "ORDER BY id");
     std::vector<Entry> entries;
     while (q.step()) {
@@ -311,7 +317,9 @@ struct ExecutionBroker::State {
       Require(reply && reply->body.AsCapabilities(),
               "Invalid stored worker capabilities");
       entries.push_back({q.text(0), q.text(1), q.text(2), q.text(3),
-                         *reply->body.AsCapabilities(), q.text(5)});
+                         *reply->body.AsCapabilities(),
+                         static_cast<uint32_t>(q.u64(5)),
+                         static_cast<uint32_t>(q.u64(6)), q.text(7)});
     }
     return entries;
   }
@@ -393,7 +401,10 @@ struct ExecutionBroker::State {
           for (const auto& e : entries) {
             auto target = std::make_unique<R::TargetT>();
             target->id = e.id;
-            auto grant = db.prepare("SELECT generation FROM project_services WHERE project=? AND service=?");
+            target->heartbeat_interval_seconds = e.heartbeat_interval_seconds;
+            target->missed_heartbeats = e.missed_heartbeats;
+            auto grant = db.prepare("SELECT generation FROM project_services "
+                                    "WHERE project=? AND service=?");
             grant.bind(1, q.text(1)).bind(2, e.id);
             target->available = grant.step() && grant.text(0) == e.generation &&
                                 !e.capabilities.server_id.empty();
@@ -539,7 +550,11 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
                   p->name()->str(),
                   p->endpoint()->str(),
                   p->worker_public_key()->str(),
-                  {}, crypto::random_token(32)};
+                  {},
+                  p->heartbeat_interval_seconds(),
+                  p->missed_heartbeats(), crypto::random_token(32)};
+      Require(entry.heartbeat_interval_seconds >= 1,
+              "Heartbeat interval must be at least 1 second");
       Require(ValidId(entry.id),
               "Invalid execution service ID (local is reserved)");
       Require(
@@ -558,7 +573,9 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
         std::lock_guard lock(state_->mutex);
         for (const auto& e : state_->Entries())
           if (e.id == entry.id) {
-            previous = e.generation + e.endpoint + e.worker_public_key + e.name;
+            previous = e.generation + e.endpoint + e.worker_public_key + e.name + "\n" +
+                       std::to_string(e.heartbeat_interval_seconds) + ":" +
+                       std::to_string(e.missed_heartbeats);
             if (entry.endpoint == e.endpoint &&
                 entry.worker_public_key == e.worker_public_key)
               entry.capabilities = e.capabilities;
@@ -582,7 +599,9 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
       std::string current;
       for (const auto& e : state_->Entries())
         if (e.id == entry.id) {
-          current = e.generation + e.endpoint + e.worker_public_key + e.name;
+          current = e.generation + e.endpoint + e.worker_public_key + e.name +
+                    "\n" + std::to_string(e.heartbeat_interval_seconds) + ":" +
+                    std::to_string(e.missed_heartbeats);
           if (e.endpoint != entry.endpoint || e.worker_public_key != entry.worker_public_key ||
               e.capabilities.server_id != entry.capabilities.server_id)
             entry.generation = crypto::random_token(32);
@@ -594,13 +613,15 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
               "Registration changed while verifying; reopen settings");
       sql::Transaction transaction(state_->db);
       auto q = state_->db.prepare(
-          "INSERT OR REPLACE INTO services VALUES(?,?,?,?,?,?)");
+          "INSERT OR REPLACE INTO services VALUES(?,?,?,?,?,?,?,?)");
       q.bind(1, entry.id)
           .bind(2, entry.name)
           .bind(3, entry.endpoint)
           .bind(4, entry.worker_public_key)
           .bind_blob(5, caps)
-          .bind(6, entry.generation)
+          .bind(6, static_cast<int64_t>(entry.heartbeat_interval_seconds))
+          .bind(7, static_cast<int64_t>(entry.missed_heartbeats))
+          .bind(8, entry.generation)
           .run();
       transaction.commit();
       return agent::wire::HostReply(id, state_->List());

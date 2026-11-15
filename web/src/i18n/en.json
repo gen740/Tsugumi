@@ -952,12 +952,11 @@
  "外部の実行サービスにはファイルアクセスの制限が必要です。": "Remote execution requires restricted file access.",
  "外部の実行サービスにはホストのフォルダを共有できません。": "Host folders cannot be shared with a remote execution service.",
  "実行サービスで待機中": "Queued at the execution service",
- "この実行の未完了ジョブを取り消す": "Cancel pending jobs in this run",
  "接続断（結果未確認）": "Disconnected (outcome unconfirmed)",
  "取り消し確認中": "Waiting for cancellation",
  "実行サービスの状態": "Execution service status",
  "ジョブ ID": "Job ID",
- "Tsugumi の再起動後は、このジョブの結果を回収します。下流の Card は改めて実行してください。": "Tsugumi retrieves this job's result after restarting. Start a new run for downstream Cards.",
+ "Tsugumi の再起動により、この実行は中断されました。結果は回収されません。必要な Card を改めて実行してください。": "This run was interrupted when Tsugumi restarted. Its results will not be retrieved. Run the Cards you need again.",
  "プロジェクトの実行環境": "Project execution environment",
  "CPU アーキテクチャ": "CPU architecture",
  "この実行環境の既定": "Execution environment default",
@@ -1439,5 +1438,9 @@
  "指摘をコメントに残す": "Keep finding as comment",
  "実行環境のデータ": "Execution environment data",
  "すべての実行環境を初期化…": "Reset all execution environments…",
- "初期化しました。次に開くときに実行環境を作り直します。": "Reset complete. Environments will be recreated when next opened."
+ "初期化しました。次に開くときに実行環境を作り直します。": "Reset complete. Environments will be recreated when next opened.",
+  "ハートビート間隔（秒）": "Heartbeat interval (seconds)",
+  "1〜4294967295 秒で指定してください。": "Enter 1 to 4294967295 seconds.",
+  "停止までの連続未受信回数": "Consecutive missed heartbeats before stopping",
+  "0 は無期限です。スリープ中も実行を継続するには 0 を指定してください。": "0 means never. Use 0 to keep jobs running while this computer sleeps."
 }

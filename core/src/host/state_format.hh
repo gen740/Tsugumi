@@ -9,7 +9,7 @@ namespace tsugumi::host {
 // when changing the tables covered by tests/static/test_host_state_format.py.
 inline constexpr int kStateFormat = 3;
 inline constexpr std::string_view kStateSchemaDigest =
-    "1918993b5d066fbb71af0929fe0e4057c186cd3752924034dd8a86e173032ff3";
+    "0c781df957c55676fc0dc1260f860a58239b0abc682e315c7d3c25c599ea616b";
 
 class StateFormatError final : public std::runtime_error {
  public:

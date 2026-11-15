@@ -105,8 +105,8 @@ add_dependencies(tsugumi_rpc_cli_tests tsugumi-rpc tsugumid-mock)
 gtest_discover_tests(tsugumi_rpc_cli_tests TEST_PREFIX "core_rpc_cli." DISCOVERY_MODE PRE_TEST
   PROPERTIES TIMEOUT 30)
 
-add_executable(tsugumi_remote_result_tests remote_result_test.cc shell_test.cc collect_value_test.cc display_module_test.cc version_files_test.cc cache_usage_test.cc history_copy_test.cc module_source_test.cc card_identity_test.cc metadata_test.cc layout_boundary_test.cc doubles/nix_eval.cc remote_execution_test.cc host_requirements_test.cc)
-target_include_directories(tsugumi_remote_result_tests PRIVATE ${_core_headers})
+add_executable(tsugumi_remote_result_tests remote_result_test.cc shell_test.cc collect_value_test.cc display_module_test.cc version_files_test.cc cache_usage_test.cc history_copy_test.cc module_source_test.cc card_identity_test.cc metadata_test.cc layout_boundary_test.cc doubles/nix_eval.cc remote_execution_test.cc remote_lifetime_test.cc host_requirements_test.cc)
+target_include_directories(tsugumi_remote_result_tests PRIVATE ${_core_headers} ${_workerd_headers})
 target_link_libraries(tsugumi_remote_result_tests PRIVATE tsugumi_core GTest::gtest_main)
 target_compile_options(tsugumi_remote_result_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 gtest_discover_tests(tsugumi_remote_result_tests TEST_PREFIX "core_remote." DISCOVERY_MODE PRE_TEST
@@ -178,8 +178,9 @@ target_link_libraries(tsugumi_native_contract_tests PRIVATE tsugumi_worker_proto
   flatbuffers::flatbuffers GTest::gtest_main Threads::Threads ${CMAKE_DL_LIBS})
 gtest_discover_tests(tsugumi_native_contract_tests TEST_PREFIX "native_contract." DISCOVERY_MODE PRE_TEST)
 
-add_executable(tsugumi_execution_service_tests execution_service_test.cc doubles/nix_eval.cc)
+add_executable(tsugumi_execution_service_tests execution_service_test.cc worker_execution_test.cc doubles/nix_eval.cc)
 target_include_directories(tsugumi_execution_service_tests PRIVATE ${_core_headers})
+target_compile_options(tsugumi_execution_service_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
 target_link_libraries(tsugumi_execution_service_tests PRIVATE tsugumi_core GTest::gtest_main)
 target_compile_definitions(tsugumi_execution_service_tests PRIVATE
   TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"

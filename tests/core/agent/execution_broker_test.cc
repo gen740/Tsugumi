@@ -185,7 +185,8 @@ class BrokerFixture : public AgentFixture {
                           ->str());
   }
   auto Put(std::string key = {}, std::string id = "worker",
-           std::string endpoint = {}, bool verify = true, std::string name = "Test worker") -> Reply {
+           std::string endpoint = {}, bool verify = true, std::string name = "Test worker", uint32_t interval = 15,
+           uint32_t missed = 0) -> Reply {
     return Call(
         *host, H::RequestPayload::ExecutionServicePutRequest, [&](Builder& b) {
           return H::CreateExecutionServicePutRequest(
@@ -197,7 +198,7 @@ class BrokerFixture : public AgentFixture {
                              : endpoint),
                      b.CreateString(key.empty() ? worker->identity.public_key()
                                                 : key),
-                     verify)
+                     verify, interval, missed)
               .Union();
         });
   }
@@ -325,6 +326,40 @@ TEST_F(BrokerFixture, RegistrationProbesPersistsAndNeverReturnsCredentials) {
   EXPECT_EQ(
       ListSize(List().HostValue()->value_as_ExecutionServices()->services()),
       0u);
+}
+TEST_F(BrokerFixture, HeartbeatSettingsRoundTripPersistAndReachTheCore) {
+  ASSERT_TRUE(Put().Code().empty());
+  auto listed = List();
+  auto *service =
+      listed.HostValue()->value_as_ExecutionServices()->services()->Get(0);
+  EXPECT_EQ(service->heartbeat_interval_seconds(), 15u);
+  EXPECT_EQ(service->missed_heartbeats(), 0u);
+  const auto capability = Authorize("project");
+  ASSERT_TRUE(Put({}, "worker", {}, false, "Test worker", 2, 3).Code().empty());
+  Restart();
+  listed = List();
+  service =
+      listed.HostValue()->value_as_ExecutionServices()->services()->Get(0);
+  EXPECT_EQ(service->heartbeat_interval_seconds(), 2u);
+  EXPECT_EQ(service->missed_heartbeats(), 3u);
+  const auto response = Broker(R::CatalogRequestT{}, capability);
+  const auto *catalog = response->payload.AsReply()->body.AsCatalog();
+  ASSERT_NE(catalog, nullptr);
+  ASSERT_EQ(catalog->services.size(), 1u);
+  EXPECT_TRUE(catalog->services[0]->available);
+  EXPECT_EQ(catalog->services[0]->heartbeat_interval_seconds, 2u);
+  EXPECT_EQ(catalog->services[0]->missed_heartbeats, 3u);
+  EXPECT_FALSE(
+      Put({}, "worker", {}, false, "Test worker", 0, 3).Code().empty());
+  ASSERT_TRUE(
+      Put({}, "worker", {}, false, "Test worker", UINT32_MAX, UINT32_MAX)
+          .Code()
+          .empty());
+  listed = List();
+  service =
+      listed.HostValue()->value_as_ExecutionServices()->services()->Get(0);
+  EXPECT_EQ(service->heartbeat_interval_seconds(), UINT32_MAX);
+  EXPECT_EQ(service->missed_heartbeats(), UINT32_MAX);
 }
 TEST_F(BrokerFixture, RelayOverwritesScopeAndPreservesChunkBytes) {
   ASSERT_TRUE(Put().Code().empty());

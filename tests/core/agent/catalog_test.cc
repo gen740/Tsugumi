@@ -230,14 +230,16 @@ TEST(AgentApprovalDescription,
   auto read = [](const auto &name, const auto &) {
     EXPECT_EQ(name, "project_cache_usage");
     return json::Object(
-        R"({"current_project":"our-cache","projects":[{"project":"other-cache","build_bytes":"9999"},{"project":"our-cache","name":"Our project","build_bytes":"1234","run_scratch":[{"path":"recovery","bytes":"75"},{"path":"runs/old","bytes":"80"}]}]})");
+        R"({"current_project":"our-cache","projects":[{"project":"other-cache","build_bytes":"9999"},{"project":"our-cache","name":"Our project","build_bytes":"1234","run_scratch":[{"path":"runs/00000000-0000-4000-8000-000000000001","bytes":"75"},{"path":"runs/old","bytes":"80"}]}]})");
   };
   const auto cache =
       DescribeOperation("project_cache_clear", {}, "project", read);
   EXPECT_NE(cache.find("1234"), std::string::npos);
   EXPECT_EQ(cache.find("9999"), std::string::npos);
   const auto scratch = DescribeOperation(
-      "run_scratch_delete", {{"paths", R"(["recovery"])"}}, "project", read);
+      "run_scratch_delete",
+      {{"paths", R"(["runs/00000000-0000-4000-8000-000000000001"])"}},
+      "project", read);
   EXPECT_NE(scratch.find("75"), std::string::npos);
   EXPECT_EQ(scratch.find("runs/old"), std::string::npos);
 }

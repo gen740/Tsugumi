@@ -19,7 +19,7 @@
 #include "model.hh"
 #include "log_policy.hh"
 #include "nix.hh"
-#include "worker_pool.hh"
+#include "tsugumi/workerd/worker_execution.hh"
 
 namespace tsugumi {
 
@@ -29,7 +29,7 @@ namespace sql {
 class Db;
 }
 
-struct ExecutionResult;
+using ExecutionResult = workerd::InvocationResult;
 
 // One invocation handed to a backend.
 struct ExecutionRequest {
@@ -45,7 +45,8 @@ struct ExecutionRequest {
   // Set when the run is cancelled or interrupted.
   const std::atomic<bool>& cancel;
   // An explicit run cancellation or a failed sibling asks the backend to
-  // cancel submitted work. Shutdown alone leaves submitted work recoverable.
+  // cancel submitted work. Shutdown stops waiting; startup records
+  // interruption.
   std::function<bool()> cancel_requested;
   // Set when the process leaves the run while its invocations may still run
   // elsewhere (shutdown).
@@ -66,18 +67,8 @@ struct ExecutionRequest {
   uint64_t log_limit_bytes = kInvocationLogLimitBytes;
 };
 
-struct ExecutionResult {
-  WorkerOutcome outcome;
-  // Logs returned with the result instead of streamed through `log`; they are
-  // recorded in the same transaction as the invocation's completion.
-  std::vector<std::pair<LogStream, std::string>> logs;
-  // The (descriptor path, real path) of out/ when the folder reached the Card
-  // as a descriptor.
-  std::optional<std::pair<std::string, std::string>> out_alias;
-};
-
-// Thrown by execute() when the process detaches from an invocation that keeps
-// running in its backend. Recovery completes its record later.
+// Thrown by execute() when shutdown stops waiting for remote execution.
+// Startup completes its record as interrupted.
 struct ExecutionDetached {};
 
 // A backend's preparation for one activation. Kept until all its invocations
@@ -87,8 +78,6 @@ class PreparedExecution {
   virtual ~PreparedExecution() = default;
   // Make the derivation closure available before starting any invocation.
   virtual auto stage(const std::atomic<bool>&) -> void {}
-  // Record the cancellation of work already submitted for this activation.
-  virtual auto cancel_batch(sql::Db&, const std::string&, const CardPath&, uint64_t) -> void {}
   // Runs the invocation. Throws Failed when it cannot be started.
   virtual auto execute(const ExecutionRequest& request) -> ExecutionResult = 0;
 };

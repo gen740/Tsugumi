@@ -262,7 +262,7 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
 
 // Version of the local history's tables (PRAGMA user_version).
 // Includes partial-run provenance, portable run commits and File content digests.
-constexpr int kHistoryVersion = 8;
+constexpr int kHistoryVersion = 10;
 constexpr const char* kCopyFormat = "tsugumi-runs";
 constexpr const char* kCopyVersion = "8";
 
@@ -468,12 +468,11 @@ CREATE TABLE IF NOT EXISTS statuses(
   PRIMARY KEY(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS remote_jobs(
   job_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
-  instance TEXT NOT NULL, server_id TEXT NOT NULL, spec TEXT NOT NULL, contract TEXT NOT NULL, directory TEXT NOT NULL,
-  accepted INTEGER NOT NULL, cancel_requested INTEGER NOT NULL, detail TEXT NOT NULL, batch_activation INTEGER NOT NULL,
+  instance TEXT NOT NULL, server_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
   UNIQUE(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS remote_releases(
   job_id TEXT PRIMARY KEY, service TEXT NOT NULL, server_id TEXT NOT NULL,
-  instance TEXT NOT NULL, fingerprint TEXT NOT NULL);
+  instance TEXT NOT NULL, fingerprint TEXT NOT NULL, delete_data INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS last_inputs(
   card TEXT PRIMARY KEY, run_id TEXT NOT NULL, invocation INTEGER NOT NULL, inputs TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS receipts(
@@ -661,55 +660,20 @@ auto History::interrupt_batches(sql::Db& db, const std::string& run_id) -> void 
 
 auto History::put_remote_job(sql::Db& db, const RemoteJobRecord& job) -> void {
   const auto& inv = job.invocation;
-  auto st = db.prepare("INSERT INTO remote_jobs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET "
-                       "accepted=max(accepted,excluded.accepted), cancel_requested=max(cancel_requested,excluded.cancel_requested), "
-                       "detail=excluded.detail");
-  st.bind(1, inv.execution_job_id).bind(2, inv.run_id).bind(3, key(inv.card)).bind(4, inv.invocation)
-      .bind(5, job.instance).bind(6, job.server_id).bind(7, job.spec).bind(8, job.contract).bind(9, job.directory)
-      .bind(10, job.accepted).bind(11, job.cancel_requested).bind(12, detail_json(inv))
-      .bind(13, inv.batch_activation.value_or(0)).run();
-}
-
-auto History::cancel_remote_jobs(sql::Db& db, const std::string& run_id) -> void {
-  db.prepare("UPDATE remote_jobs SET cancel_requested=1 WHERE run_id=?").bind(1, run_id).run();
-}
-
-auto History::cancel_remote_batch(sql::Db& db, const std::string& run_id, const CardPath& card,
-                                  uint64_t activation) -> void {
-  db.prepare("UPDATE remote_jobs SET cancel_requested=1 WHERE run_id=? AND card=? AND batch_activation=?")
-      .bind(1, run_id).bind(2, key(card)).bind(3, activation).run();
+  db.prepare("INSERT INTO remote_jobs VALUES(?,?,?,?,?,?,?)")
+      .bind(1, inv.execution_job_id)
+      .bind(2, inv.run_id)
+      .bind(3, key(inv.card))
+      .bind(4, inv.invocation)
+      .bind(5, job.instance)
+      .bind(6, job.server_id)
+      .bind(7, crypto::sha256_hex(job.spec))
+      .run();
 }
 
 auto History::has_remote_jobs(sql::Db& db) -> bool {
   auto st = db.prepare("SELECT 1 FROM remote_jobs LIMIT 1");
   return st.step();
-}
-
-auto History::remote_job_card(sql::Db& db, const std::string& job_id) -> std::optional<CardPath> {
-  auto st = db.prepare("SELECT card FROM remote_jobs WHERE job_id=?");
-  st.bind(1, job_id);
-  if (!st.step()) return std::nullopt;
-  return path_from_key(st.text(0));
-}
-
-auto History::remote_jobs(sql::Db& db) -> std::vector<RemoteJobRecord> {
-  auto st = db.prepare("SELECT run_id,card,invocation,instance,server_id,spec,contract,directory,accepted,cancel_requested,detail,job_id "
-                       "FROM remote_jobs ORDER BY run_id,card,invocation");
-  std::vector<RemoteJobRecord> jobs;
-  while (st.step()) {
-    const auto id = st.text(0);
-    if (!crypto::is_uuid(id) || !crypto::is_sha256_hex(st.text(3)) || !crypto::is_sha256_hex(st.text(4)) ||
-        !crypto::is_sha256_hex(st.text(11)))
-      throw std::runtime_error("invalid saved remote job identity");
-    const auto card = path_from_key(st.text(1));
-    auto inv = status(db, id, card, st.u64(2));
-    if (!inv) throw std::runtime_error("remote job has no invocation status");
-    detail_into(st.text(10), *inv);
-    if (inv->execution_job_id != st.text(11)) throw std::runtime_error("remote job identity differs from its invocation");
-    jobs.push_back({std::move(*inv), st.text(3), st.text(4), st.text(5), st.text(6), st.text(7),
-                    st.i64(8) != 0, st.i64(9) != 0});
-  }
-  return jobs;
 }
 
 void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) const {
@@ -737,12 +701,19 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
   db.prepare("DELETE FROM statuses WHERE run_id=? AND card=? AND invocation=?")
       .bind(1, s.run_id).bind(2, key(s.card)).bind(3, s.invocation).run();
   if (!s.execution_job_id.empty()) {
-    auto pending = db.prepare("SELECT server_id,instance,spec FROM remote_jobs WHERE job_id=?");
+    auto pending = db.prepare(
+        "SELECT server_id,instance,fingerprint FROM remote_jobs WHERE "
+        "job_id=?");
     pending.bind(1, s.execution_job_id);
     if (pending.step())
-      db.prepare("INSERT OR REPLACE INTO remote_releases VALUES(?,?,?,?,?)")
-        .bind(1, s.execution_job_id).bind(2, s.execution_service).bind(3, pending.text(0))
-        .bind(4, pending.text(1)).bind(5, crypto::sha256_hex(pending.text(2))).run();
+      db.prepare("INSERT OR REPLACE INTO remote_releases VALUES(?,?,?,?,?,?)")
+          .bind(1, s.execution_job_id)
+          .bind(2, s.execution_service)
+          .bind(3, pending.text(0))
+          .bind(4, pending.text(1))
+          .bind(5, pending.text(2))
+          .bind(6, !s.failure || s.failure->kind != FailureKind::interrupted)
+          .run();
     db.prepare("DELETE FROM remote_jobs WHERE job_id=?").bind(1, s.execution_job_id).run();
   }
   db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)")

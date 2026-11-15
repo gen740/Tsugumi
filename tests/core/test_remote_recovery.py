@@ -1,7 +1,8 @@
-"""Core RPC reattaches by the persisted external job ID after a lost reply and crash."""
+"""Core RPC handles lost replies within a core lifetime and interrupts runs after restart."""
 
 import hashlib
 import json
+import os
 import secrets
 import signal
 import socketserver
@@ -20,6 +21,7 @@ from harness.fixtures import worker_project
 from harness.scenario import Project
 from projects import FILE_FBS, start_run, wait_run
 from Tsugumi.Data.CardState import CardState
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
@@ -34,7 +36,7 @@ class Gateway(socketserver.UnixStreamServer):
     """Double of hostd's local broker, not its TLS worker connection.
 
     Keep partial/lost replies at the core-facing boundary so these tests still
-    exercise core deadlines, shutdown and durable recovery. Real hostd/TLS
+    exercise core deadlines, shutdown and core lifetime interruption. Real hostd/TLS
     authentication is covered by the broker RPC and remote integration suites.
     """
     instance = "1" * 64
@@ -52,7 +54,14 @@ class Gateway(socketserver.UnixStreamServer):
         self.probe_overrides = {}
         self.receipts = {}
         self.submit_count = 0
+        self.download_count = 0
+        self.released = set()
+        self.cancelled = set()
+        self.core_ids = set()
         self.probe_count = 0
+        self.probe_times = []
+        self.heartbeat_interval = 15
+        self.missed_heartbeats = 0
         self.blobs = set()
         self.blob_contents = {}
         self.specs = {}
@@ -96,20 +105,23 @@ class Gateway(socketserver.UnixStreamServer):
         self.receipts[job] = {**self.receipts[job], "state": "succeeded", "result_sha256": blob(manifest)}
 
     def operation(self, q):
+        self.core_ids.add(R.string(q.coreLifeId))
         kind, body = q.bodyType, q.body
         caps = R.CapabilitiesT(serverId=self.registered_server, nativeSystem=self.system, systems=[self.system],
-                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=4)
+                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=6)
         if kind == R.RequestBody.CatalogRequest:
             caps.resourceLimits = self.catalog_resource_limits
             caps.workerContract = self.catalog_contract
             caps.nativeSystem = self.catalog_system
             caps.systems = [self.catalog_system]
-            return R.reply(R.ReplyBody.Catalog, R.CatalogT(services=[R.TargetT(id="cluster", available=True, capabilities=caps)]))
+            return R.reply(R.ReplyBody.Catalog, R.CatalogT(services=[R.TargetT(id="cluster", available=True, capabilities=caps,
+                heartbeatIntervalSeconds=self.heartbeat_interval, missedHeartbeats=self.missed_heartbeats)]))
         assert R.string(q.serverId) == self.server_id
         if R.string(q.serverId) != self.registered_server:
             return R.failure(R.ErrorCode.RegistrationChanged, "execution service was replaced")
         if kind == R.RequestBody.ProbeRequest:
             self.probe_count += 1
+            self.probe_times.append(time.monotonic())
             caps.instanceId = self.instance
             for key, value in self.probe_overrides.items():
                 setattr(caps, key, value)
@@ -132,11 +144,13 @@ class Gateway(socketserver.UnixStreamServer):
         if not self.online:
             return None
         if kind == R.RequestBody.GetBlobRequest:
+            self.download_count += 1
             data = self.results[R.string(body.digest)]
             return R.reply(R.ReplyBody.BlobChunk, R.BlobChunkT(digest=body.digest, total=len(data), offset=body.offset,
                                                              bytes=data[body.offset:body.offset + body.limit]))
         job = R.string(q.jobId)
         if kind == R.RequestBody.ReleaseRequest:
+            self.released.add(job)
             return R.reply(R.ReplyBody.Ack, R.AckT())
         if kind == R.RequestBody.SubmitRequest:
             self.submit_count += 1
@@ -151,9 +165,11 @@ class Gateway(socketserver.UnixStreamServer):
             self.receipts[job] = {"state": "running", "fingerprint": hashlib.sha256(bytes(body.spec)).hexdigest()}
             return None  # the receipt exists, but its reply was lost
         if kind == R.RequestBody.CancelRequest:
+            self.cancelled.add(job)
             receipt = self.receipts[job]
             assert receipt["fingerprint"] == R.string(body.fingerprint)
-            receipt["state"] = "cancelled"
+            if receipt["state"] not in {"succeeded", "failed", "cancelled"}:
+                receipt["state"] = "cancelled"
         else:
             assert kind == R.RequestBody.StatusRequest
         state = self.receipts.get(job, {"state": "missing"})
@@ -202,7 +218,7 @@ def wait_for_state(client, run_id, expected, card_state=None, timeout=15):
 
 @pytest.fixture
 def remote_gateway(monkeypatch):
-    with tempfile.TemporaryDirectory(prefix="tsugumi-remote-", dir="/tmp") as directory:
+    with tempfile.TemporaryDirectory(prefix="tsugumi-remote-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp")) as directory:
         endpoint = str(Path(directory) / "broker")
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", "unix:" + endpoint)
         capability = secrets.token_hex(32)
@@ -239,6 +255,8 @@ def running_job(project, remote_gateway, core_factory, tmp_path):
 
 
 @pytest.mark.parametrize("field,value,diagnostic", [
+    ("workerContract", 0, "Rebuild the remote worker"),
+    ("workerContract", 4, "Rebuild the remote worker"),
     ("workerContract", 1, "Rebuild the remote worker"),
     ("workerContract", 99, "Rebuild the remote worker"),
     ("serverId", "3" * 64, "server ID changed"),
@@ -304,6 +322,29 @@ def test_explicit_system_is_checked_after_the_live_probe(project, remote_gateway
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     assert text(live.executionSystem) == "aarch64-linux"
     assert remote_gateway.probe_count > 0
+    remote_gateway.finish(text(live.executionJobId))
+    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+
+
+@pytest.mark.parametrize("interval,missed", [(1, 3), (2, 0)])
+def test_registered_heartbeat_policy_reaches_job_and_controls_probes(project, remote_gateway, core_factory, tmp_path, interval, missed):
+    remote_gateway.heartbeat_interval = interval
+    remote_gateway.missed_heartbeats = missed
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
+                   executionResources={"cpuMillis": 500, "memoryBytes": 256 << 20})
+    run_id = start_run(client, "work", propagate=False)
+    live = wait_for_state(client, run_id, RemoteExecutionState.running)
+    spec = remote_gateway.specs[text(live.executionJobId)]
+    assert spec.heartbeatIntervalSeconds == interval
+    assert spec.missedHeartbeats == missed
+    # Ignore the initial synchronous probe and the thread's initial probe.
+    deadline = time.monotonic() + 10
+    while len(remote_gateway.probe_times) < 4 and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert len(remote_gateway.probe_times) >= 4
+    gaps = [b - a for a, b in zip(remote_gateway.probe_times[1:3], remote_gateway.probe_times[2:4])]
+    assert all(interval - 0.1 <= gap <= interval + 1 for gap in gaps), gaps
     remote_gateway.finish(text(live.executionJobId))
     assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
 
@@ -410,32 +451,52 @@ def test_invalid_remote_results_do_not_publish_outputs(running_job, fault):
     assert not client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
 
 
-def assert_cancelled(client, gateway, run_id, job_id):
-    finished = wait_for_state(client, run_id, RemoteExecutionState.cancelled, CardState.cancelled)
-    assert finished.state == CardState.cancelled
-    assert text(finished.executionJobId) == job_id
-    assert gateway.submit_count == 1
-
-
 @pytest.mark.parametrize("outage", ["offline", "registration_replaced"])
-def test_core_restart_reattaches_to_the_same_external_job(running_job, outage):
-    """An unknown transport outcome remains pending, and cancellation survives reconnection."""
+@pytest.mark.parametrize("completed", [False, True])
+def test_core_restart_interrupts_the_external_job(running_job, outage, completed):
+    """A new core never fetches old results, even after transport returns."""
     gateway, daemon, client, run_id, job_id = running_job
     if outage == "offline":
         gateway.online = False
     else:
         gateway.registered_server = "3" * 64
     wait_for_state(client, run_id, RemoteExecutionState.disconnected)
+    if completed:
+        gateway.finish(job_id)
     daemon.restart(crash=True)
     client = daemon.connect()
     assert client.call("RunStatusRequest", runId=run_id).state == RunState.failed
-    pending = wait_for_state(client, run_id, RemoteExecutionState.disconnected)
-    assert text(pending.executionJobId) == job_id
-
-    client.call("RunCancelRequest", runId=run_id)
+    interrupted = wait_for_state(client, run_id, RemoteExecutionState.interrupted, CardState.failed)
+    assert interrupted.endedAt is not None
+    assert interrupted.durationMs == max(0, interrupted.endedAt - interrupted.startedAt)
+    assert text(interrupted.executionJobId) == job_id
+    assert interrupted.failure.kind == FailureKind.interrupted
+    assert text(interrupted.failure.diagnostic) == "tsugumid restarted while the run was active"
     gateway.online = True
     gateway.registered_server = gateway.server_id
-    assert_cancelled(client, gateway, run_id, job_id)
+    deadline = time.monotonic() + 10
+    while job_id not in gateway.cancelled and time.monotonic() < deadline:
+        time.sleep(0.1)
+    assert job_id in gateway.cancelled
+    assert job_id not in gateway.released
+    assert gateway.receipts[job_id]["state"] == ("succeeded" if completed else "cancelled")
+    assert len(gateway.core_ids) == 2
+    record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+    assert not record.outputs and not record.display
+    assert not client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
+    assert gateway.submit_count == 1 and gateway.download_count == 0
+
+
+def test_network_cut_within_same_core_life_resumes(running_job):
+    gateway, _, client, run_id, job_id = running_job
+    original = set(gateway.core_ids)
+    gateway.online = False
+    wait_for_state(client, run_id, RemoteExecutionState.disconnected)
+    gateway.online = True
+    gateway.finish(job_id)
+    assert wait_run(client, run_id, timeout=15).state == RunState.succeeded
+    assert gateway.submit_count == 1
+    assert gateway.core_ids == original
 
 
 @pytest.mark.parametrize("mode,operation,request_cancel", [
@@ -444,7 +505,7 @@ def test_core_restart_reattaches_to_the_same_external_job(running_job, outage):
     ("blackhole", R.RequestBody.StatusRequest, False),
 ])
 def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, operation, request_cancel):
-    """SIGTERM stops waiting for the executor and keeps any explicit cancellation intent."""
+    """SIGTERM stops waiting; the next core interrupts rather than importing."""
     gateway, daemon, client, run_id, job_id = running_job
     gateway.stall_operation = operation
     gateway.stall = mode
@@ -461,23 +522,12 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
     gateway.resume.set()
     daemon.restart()
     client = daemon.connect()
-    if not request_cancel:
-        pending = wait_for_state(client, run_id, RemoteExecutionState.running)
-        assert text(pending.executionJobId) == job_id
-        assert gateway.receipts[job_id]["state"] == "running"
-        gateway.finish(job_id)
-        recovered = wait_for_state(client, run_id, RemoteExecutionState.succeeded, CardState.succeeded)
-        assert recovered.state == CardState.succeeded
-        assert text(recovered.executionJobId) == job_id
-        artifacts = client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
-        assert len(artifacts) == 1
-        saved = client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), limitBytes=1024)
-        assert bytes(saved.bytes) == b"retained after shutdown\n"
-        log = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
-        assert text(log.text) == "one recovered message\n"
-        assert gateway.submit_count == 1
-    else:
-        assert_cancelled(client, gateway, run_id, job_id)
+    interrupted = wait_for_state(client, run_id, RemoteExecutionState.interrupted, CardState.failed)
+    assert interrupted.endedAt is not None
+    assert interrupted.durationMs == max(0, interrupted.endedAt - interrupted.startedAt)
+    assert text(interrupted.executionJobId) == job_id
+    assert interrupted.failure.kind == FailureKind.interrupted
+    assert gateway.download_count == 0 and gateway.submit_count == 1
 
 
 def test_maximum_log_budget_including_truncation_notice_imports(running_job):
