@@ -88,7 +88,6 @@ auto measure_run_scratch(const std::filesystem::path& root, const std::function<
       measure(entry.path());
     }
   if (stopped()) return result;
-  if (fs::exists(fs::symlink_status(root / "recovery"))) measure(root / "recovery");
   std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
   return result;
 }

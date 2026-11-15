@@ -254,7 +254,8 @@ void Service::open() {
 }
 
 auto Service::file_roots() const -> std::vector<stdfs::path> {
-  return {store_->state_dir() / "runs", store_->state_dir() / "inputs", run_scratch_ / "runs", run_scratch_ / "recovery"};
+  return {store_->state_dir() / "runs", store_->state_dir() / "inputs",
+          run_scratch_ / "runs"};
 }
 
 auto Service::keep_file_value(const Value& value, const stdfs::path& directory,
@@ -305,7 +306,9 @@ auto Service::remote_targets() const -> std::vector<RemoteTarget> {
   }
 }
 
-auto Service::recover_remote_jobs() -> void { scheduler_->recover_remote_jobs(); }
+auto Service::start_remote_cleanup() -> void {
+  scheduler_->start_remote_cleanup();
+}
 
 auto Service::execution_diagnostic(const Node& node, const std::vector<RemoteTarget>& targets) -> std::optional<Diag> {
   const auto& settings = node.settings;
@@ -1280,7 +1283,7 @@ void Service::scratch_delete(RequestIn& req) {
     for (const auto* item : *r->paths()) {
       if (!item) throw Failed(FailureKind::invalid_request, "scratch folder is missing");
       const auto path = item->str();
-      if (path != "recovery" && !(path.starts_with("runs/") && crypto::is_uuid(path.substr(5))))
+      if (!(path.starts_with("runs/") && crypto::is_uuid(path.substr(5))))
         throw Failed(FailureKind::invalid_request, "invalid scratch folder");
       // A case-insensitive host filesystem must protect UUID case variants too.
       if (std::ranges::equal(path, protected_path, [](unsigned char a, unsigned char b) {

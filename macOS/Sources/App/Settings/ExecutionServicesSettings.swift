@@ -41,6 +41,11 @@ struct ExecutionServicesSettings: View {
             .monospaced().help("TLS 接続先を入力してください（例: tls://worker.example:8765）。")
           TextField("実行デーモンの公開鍵", text: field(\.workerPublicKey))
             .monospaced().help("公開鍵は ed25519: で始まる SPKI 形式です。")
+          TextField("ハートビート間隔（秒）", value: numberField(\.heartbeatIntervalSeconds), format: .number.grouping(.never))
+            .help("1〜4294967295 秒で指定してください。")
+          TextField("停止までの連続未受信回数", value: numberField(\.missedHeartbeats), format: .number.grouping(.never))
+          Text("0 は無期限です。スリープ中も実行を継続するには 0 を指定してください。")
+            .font(.caption).foregroundStyle(.secondary)
           if let caps = saved?.capabilities, !caps.serverId.isEmpty {
             LabeledContent("CPU アーキテクチャ", value: caps.systems.joined(separator: ", "))
             LabeledContent("隔離方式", value: String(localized: "PID 名前空間"))
@@ -105,6 +110,8 @@ struct ExecutionServicesSettings: View {
       next.name = entry.name
       next.endpoint = entry.endpoint
       next.workerPublicKey = entry.workerPublicKey
+      next.heartbeatIntervalSeconds = entry.heartbeatIntervalSeconds
+      next.missedHeartbeats = entry.missedHeartbeats
     }
     draft = next
     original = entry?.id
@@ -118,9 +125,16 @@ struct ExecutionServicesSettings: View {
     })
   }
 
+  private func numberField(_ key: WritableKeyPath<ExecutionServiceRegistration, UInt32>) -> Binding<UInt32> {
+    Binding(get: { draft?[keyPath: key] ?? 0 }, set: { value in
+      draft?[keyPath: key] = value
+      message = nil
+    })
+  }
+
   private func valid(_ entry: ExecutionServiceRegistration) -> Bool {
     guard [entry.id, entry.name, entry.endpoint].allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { return false }
-    return !entry.workerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    return entry.heartbeatIntervalSeconds >= 1 && !entry.workerPublicKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
   }
 
   private func adopt(_ result: ExecutionServicesState) {

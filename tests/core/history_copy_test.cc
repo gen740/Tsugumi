@@ -26,8 +26,10 @@ TEST(HistoryCopy, IncompatibleSchemasAreRejectedWithoutChangingEitherDatabase) {
     std::filesystem::path path;
     ~Cleanup() { std::filesystem::remove_all(path); }
   } cleanup{directory};
-  for (const int version : {5, 6, 7, 9}) {
+  for (const int version : {5, 6, 7, 8, 9, 10, 11}) {
     for (const bool portable : {false, true}) {
+      const std::string expected = portable ? "8" : "10";
+      if (std::to_string(version) == expected) continue;
       SCOPED_TRACE(std::to_string(version) + (portable ? " portable" : " local"));
       const auto local = directory / "history.sqlite";
       const auto copy = directory / "runs.sqlite";
@@ -49,10 +51,12 @@ TEST(HistoryCopy, IncompatibleSchemasAreRejectedWithoutChangingEitherDatabase) {
         FAIL() << "incompatible history was accepted";
       } catch (const IncompatibleHistory& error) {
         EXPECT_EQ(error.found, std::to_string(version));
-        EXPECT_EQ(error.expected, "8");
+        EXPECT_EQ(error.expected, expected);
         EXPECT_EQ(error.source, portable ? "portable" : "local");
-        EXPECT_NE(std::string(error.what()).find("has schema version " + std::to_string(version) +
-                                                ", but this Tsugumi requires 8"), std::string::npos);
+        EXPECT_NE(std::string(error.what())
+                      .find("has schema version " + std::to_string(version) +
+                            ", but this Tsugumi requires " + expected),
+                  std::string::npos);
       }
       if (!portable) EXPECT_THROW(History(database, "secret"), IncompatibleHistory);
       EXPECT_EQ(fs::read_file_or_throw(database), original);

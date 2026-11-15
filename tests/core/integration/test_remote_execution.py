@@ -10,6 +10,7 @@ Use tsugumi-test-env and pytest -m environment.
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import socket
 import tempfile
@@ -33,6 +34,7 @@ from projects import (
     write,
 )
 from Tsugumi.Data.CardState import CardState
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
@@ -171,22 +173,33 @@ def broker_request(endpoint, capability_file, server_id, body_type, body, **rout
 
 def test_remote_broker_isolates_copies_of_a_project(remote_broker):
     endpoint, original, copy, server_id = (remote_broker[name] for name in ("endpoint", "capability", "copyCapability", "serverId"))
-    first = broker_request(endpoint, original, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT()).body
-    second = broker_request(endpoint, copy, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT()).body
+    missing_life = broker_request(endpoint, original, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT())
+    assert missing_life.bodyType == R.ReplyBody.Failure
+    assert missing_life.body.code == R.ErrorCode.Invalid
+    assert R.string(missing_life.body.message) == "expected a 64-hex identity"
+    # Keep the life ID identical to check project scoping independently of job ownership.
+    core_life = secrets.token_hex(32)
+    first = broker_request(endpoint, original, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT(), coreLifeId=core_life)
+    second = broker_request(endpoint, copy, server_id, R.RequestBody.ProbeRequest, R.ProbeRequestT(), coreLifeId=core_life)
+    assert first.bodyType == R.ReplyBody.Capabilities, vars(first.body)
+    assert second.bodyType == R.ReplyBody.Capabilities, vars(second.body)
+    first, second = first.body, second.body
     assert first.instanceId != second.instanceId
     value = b"private to the original project\n"
     digest = hashlib.sha256(value).hexdigest()
     job = "8" * 64
     uploaded = broker_request(endpoint, original, server_id, R.RequestBody.PutBlobRequest,
-        R.PutBlobRequestT(digest=digest, total=len(value), bytes=value), instanceId=first.instanceId, jobId=job)
+        R.PutBlobRequestT(digest=digest, total=len(value), bytes=value), instanceId=first.instanceId, jobId=job, coreLifeId=core_life)
     assert uploaded.bodyType == R.ReplyBody.Ack
     accepted = broker_request(endpoint, original, server_id, R.RequestBody.GetBlobRequest,
-        R.GetBlobRequestT(digest=digest), instanceId=first.instanceId, jobId=job)
+        R.GetBlobRequestT(digest=digest), instanceId=first.instanceId, jobId=job, coreLifeId=core_life)
     assert accepted.bodyType == R.ReplyBody.BlobChunk and bytes(accepted.body.bytes) == value
-    for instance in (first.instanceId, second.instanceId):
+    for instance, code in ((first.instanceId, R.ErrorCode.InstanceChanged),
+                           (second.instanceId, R.ErrorCode.NotFound)):
         refused = broker_request(endpoint, copy, server_id, R.RequestBody.GetBlobRequest,
-            R.GetBlobRequestT(digest=digest), instanceId=instance, jobId=job)
+            R.GetBlobRequestT(digest=digest), instanceId=instance, jobId=job, coreLifeId=core_life)
         assert refused.bodyType == R.ReplyBody.Failure
+        assert refused.body.code == code, R.string(refused.body.message)
 
 
 def fixture(project):
@@ -278,12 +291,26 @@ def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broke
     run_id = start_run(client, "later")
     started = wait_invocation(client, run_id, "slow", lambda row: row.executionState == RemoteExecutionState.running)
     if restart := remote_daemon[2]:
+        # Only the listener restarts: its journal and detached supervisor survive.
+        # The same core life must resume this job under the default never-expire policy.
         restart()
+    assert wait_run(client, run_id, timeout=480).state == RunState.succeeded
+    resumed = check_success(client, run_id, "slow", system)
+    assert text(resumed.executionJobId) == text(started.executionJobId)
+
+    run_id = start_run(client, "later")
+    started = wait_invocation(client, run_id, "slow", lambda row: row.executionState == RemoteExecutionState.running)
     daemon.restart(crash=True)
     client = daemon.connect()
     wait_invocation(client, run_id, "slow", lambda row: row.endedAt is not None)
-    recovered = check_success(client, run_id, "slow", system)
-    assert text(recovered.executionJobId) == text(started.executionJobId)
+    interrupted = client.call("RunRecordRequest", runId=run_id, card=path("slow")).record
+    assert interrupted.summary.state == CardState.failed
+    assert interrupted.summary.executionState == RemoteExecutionState.interrupted
+    assert interrupted.summary.failure.kind == FailureKind.interrupted
+    assert text(interrupted.summary.failure.diagnostic) == "tsugumid restarted while the run was active"
+    assert text(interrupted.summary.executionJobId) == text(started.executionJobId)
+    assert not interrupted.outputs and not interrupted.display
+    assert not client.call("ArtifactListRequest", runId=run_id, card=path("slow")).artifacts
     assert client.call("RunStatusRequest", runId=run_id).state == RunState.failed
     with pytest.raises(RpcFailure) as downstream:
         client.call("RunRecordRequest", runId=run_id, card=path("after"))

@@ -58,7 +58,7 @@ class Scheduler {
 
   // Marks runs left unfinished by a previous process as failed/interrupted.
   void recover_interrupted();
-  auto recover_remote_jobs() -> void;
+  auto start_remote_cleanup() -> void;
   static RunPlanData plan(const Resolution& res, const CardPath& card, bool propagate);
   /// Drafts and the Cards that need their outputs (they do not run).
   static std::set<size_t> draft_waiting(const Resolution& res);
@@ -78,7 +78,6 @@ class Scheduler {
   void finished(RunExec* exec);
 
  private:
-  auto reconcile_remote_job(RemoteJobRecord& job) -> bool;
   Service& svc_;
   // Lock order: mu_ -> History::write_sync() only in accept(), with no active_
   // run. History writer callbacks may take mu_ while active_ is set, so
@@ -87,8 +86,8 @@ class Scheduler {
   std::mutex mu_;
   std::shared_ptr<RunExec> active_;
   std::vector<std::thread> reapers_;
-  std::atomic<bool> stop_recovery_{false};
-  std::thread remote_recovery_;
+  std::atomic<bool> stop_cleanup_{false};
+  std::thread remote_cleanup_;
   std::map<std::string, DisplayData> displays_;  // latest per card key (any run)
   // Cards that left the document, with what they were made of. Their name can
   // come back: the same Card (an undo, an older version) has its display again,

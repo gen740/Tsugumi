@@ -312,7 +312,7 @@ def main():
     parser.add_argument("--timeout", type=float, default=3600, help="Seconds per request/run")
     parser.add_argument("--remote-endpoint", help="Existing tls://host:port or unix:/path remote-worker listener")
     parser.add_argument("--remote-worker-key", help="Pinned ed25519:... worker public key")
-    parser.add_argument("--remote-host-ready", type=Path, help="agent.ready of an already-running, authorized Host")
+    parser.add_argument("--remote-host-ready", type=Path, help="host.ready of an already-running, authorized Host")
     args = parser.parse_args()
     if args.repetitions < 1 or args.timeout <= 0:
         parser.error("repetitions and timeout must be positive")

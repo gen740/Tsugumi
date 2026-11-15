@@ -1,4 +1,4 @@
-// Presentation types for core-owned execution services.
+// Presentation types for host-owned execution service registrations.
 export interface ExecutionServiceCapabilities {
   serverId: string
   nativeSystem: string
@@ -14,6 +14,8 @@ export interface ExecutionServiceConnection {
   name: string
   endpoint: string
   workerPublicKey: string
+  heartbeatIntervalSeconds: number
+  missedHeartbeats: number
   capabilities: ExecutionServiceCapabilities
 }
 
@@ -22,6 +24,8 @@ export interface ExecutionServiceRegistration {
   name: string
   endpoint: string
   workerPublicKey: string
+  heartbeatIntervalSeconds: number
+  missedHeartbeats: number
 }
 
 export interface ExecutionServicesState { services: ExecutionServiceConnection[]; hostPublicKey: string }
