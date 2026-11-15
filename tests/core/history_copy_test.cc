@@ -26,9 +26,9 @@ TEST(HistoryCopy, IncompatibleSchemasAreRejectedWithoutChangingEitherDatabase) {
     std::filesystem::path path;
     ~Cleanup() { std::filesystem::remove_all(path); }
   } cleanup{directory};
-  for (const int version : {5, 6, 7, 8, 9, 10}) {
+  for (const int version : {5, 6, 7, 8, 9, 10, 11}) {
     for (const bool portable : {false, true}) {
-      const std::string expected = portable ? "8" : "9";
+      const std::string expected = portable ? "8" : "10";
       if (std::to_string(version) == expected) continue;
       SCOPED_TRACE(std::to_string(version) + (portable ? " portable" : " local"));
       const auto local = directory / "history.sqlite";

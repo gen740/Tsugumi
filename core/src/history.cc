@@ -262,7 +262,7 @@ CREATE TABLE IF NOT EXISTS )SQL" + p + R"SQL(displays(
 
 // Version of the local history's tables (PRAGMA user_version).
 // Includes partial-run provenance, portable run commits and File content digests.
-constexpr int kHistoryVersion = 9;
+constexpr int kHistoryVersion = 10;
 constexpr const char* kCopyFormat = "tsugumi-runs";
 constexpr const char* kCopyVersion = "8";
 
@@ -472,7 +472,7 @@ CREATE TABLE IF NOT EXISTS remote_jobs(
   UNIQUE(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS remote_releases(
   job_id TEXT PRIMARY KEY, service TEXT NOT NULL, server_id TEXT NOT NULL,
-  instance TEXT NOT NULL, fingerprint TEXT NOT NULL);
+  instance TEXT NOT NULL, fingerprint TEXT NOT NULL, delete_data INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS last_inputs(
   card TEXT PRIMARY KEY, run_id TEXT NOT NULL, invocation INTEGER NOT NULL, inputs TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS receipts(
@@ -706,12 +706,13 @@ void History::complete_invocation(sql::Db& db, const InvocationRecordData& r) co
         "job_id=?");
     pending.bind(1, s.execution_job_id);
     if (pending.step())
-      db.prepare("INSERT OR REPLACE INTO remote_releases VALUES(?,?,?,?,?)")
+      db.prepare("INSERT OR REPLACE INTO remote_releases VALUES(?,?,?,?,?,?)")
           .bind(1, s.execution_job_id)
           .bind(2, s.execution_service)
           .bind(3, pending.text(0))
           .bind(4, pending.text(1))
           .bind(5, pending.text(2))
+          .bind(6, !s.failure || s.failure->kind != FailureKind::interrupted)
           .run();
     db.prepare("DELETE FROM remote_jobs WHERE job_id=?").bind(1, s.execution_job_id).run();
   }

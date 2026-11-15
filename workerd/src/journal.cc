@@ -205,8 +205,10 @@ auto Journal::expire_core(std::string_view job, uint64_t now) -> void {
     const auto lease = fs::read_file(root_ / "cores" / state.core_life_id);
     if (lease) {
       const auto last = std::stoull(*lease);
+      constexpr auto grace = static_cast<uint64_t>(kHeartbeatGrace.count());
       // Divide instead of multiplying two uint32 settings and milliseconds.
-      if (now < last || (now - last) / 1000 / state.heartbeat_interval_seconds <
+      if (now < last || now - last < grace ||
+          (now - last - grace) / 1000 / state.heartbeat_interval_seconds <
                             state.missed_heartbeats) return;
     }
     // Use precisely the ordinary cancellation transition and data policy.

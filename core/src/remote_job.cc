@@ -31,7 +31,7 @@ namespace R = Tsugumi::RemoteWorker;
 using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
 constexpr auto kConnectTimeout = 5s;
-constexpr auto kControlTimeout = 30s;
+constexpr auto kControlTimeout = workerd::kControlTimeout;
 constexpr auto kIdleTimeout = 30s;
 constexpr auto kTransferTimeout = 24h;
 constexpr auto kStopCheckInterval = 100ms;
@@ -228,7 +228,7 @@ auto RemoteJobClient::keep_alive(std::string_view service,
                                                transport/state failures. */
           }
           while (Clock::now() < next && !stopped_.load())
-            std::this_thread::sleep_for(100ms);
+            std::this_thread::sleep_for(workerd::kHeartbeatPollInterval);
         }
       }));
 }

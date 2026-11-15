@@ -116,10 +116,11 @@ TEST(RemoteExecutionLifetime,
         EXPECT_FALSE(record->summary.execution_state);
     }
     EXPECT_FALSE(History::has_remote_jobs(db));
-    auto releases = db.prepare("SELECT fingerprint FROM remote_releases");
+    auto releases = db.prepare("SELECT fingerprint,delete_data FROM remote_releases");
     int count = 0;
     while (releases.step()) {
       EXPECT_EQ(releases.text(0), fingerprint);
+      EXPECT_EQ(releases.i64(1), 0);
       ++count;
     }
     EXPECT_EQ(count, 2);

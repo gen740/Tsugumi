@@ -364,13 +364,11 @@ class Daemon {
           if (state.state == R::JobState::Running ||
               state.state == R::JobState::Cancelling) {
             remove_cgroup(cgroup_path(config_.cgroup, *p, job));
-            discard_tree(p->job_path(job) / "work");
             p->finish(job, R::JobState::Interrupted, {},
                       "execution supervisor ended without recording a result");
           }
           if (terminal(state.state)) {
             remove_cgroup(cgroup_path(config_.cgroup, *p, job));
-            discard_tree(p->job_path(job) / "work");
           }
           p->expire(job);
           if (p->status(job).state == R::JobState::Queued)
@@ -541,11 +539,8 @@ auto supervise(const std::string& self, const stdfs::path& root,
     }
   }
   remove_cgroup(group);
-  try {
-    discard_tree(work);
-  } catch (const std::exception& e) {
-    log(e.what());
-  }
+  // Keep partial outputs and logs as well as imported blobs until release.
+  // Stopping a supervisor frees its execution slot without deleting run data.
   journal.finish(job, outcome, result, diagnostic);
   return 0;
 }

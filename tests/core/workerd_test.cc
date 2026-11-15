@@ -340,13 +340,21 @@ auto core_lifetime_test(const stdfs::path& root) -> void {
   Journal journal(root / "lifetimes");
   const std::string core(64, 'a'), replacement(64, 'b');
   constexpr uint32_t interval = 2, missed = 3;
-  constexpr uint64_t grace = uint64_t{interval} * missed * 1000;
+  constexpr uint64_t grace = uint64_t{interval} * missed * 1000 + kHeartbeatGrace.count();
   const uint64_t start = now_ms();
   const auto input = chunk("input");
   rejected([&] { spec(input.digest, 60, 8u << 20, 0, missed); });
   // The maximum uint32 pair must not overflow expiry arithmetic.
   const auto maximum = spec(input.digest, 60, 8u << 20, UINT32_MAX, UINT32_MAX);
   const auto bytes = spec(input.digest, 60, 8u << 20, interval, missed);
+  journal.touch_core(core, start);
+  const std::string single(64, '7');
+  journal.put(single, input, core);
+  journal.submit(single, spec(input.digest, 60, 8u << 20, 15, 1), core);
+  journal.touch_core(core, start + 15001);
+  expect(journal.status(single).state == R::JobState::Queued,
+         "one missed interval cancelled an on-time probe plus scheduling delay");
+  // Reset the synthetic lease before testing the other exact boundaries.
   journal.touch_core(core, start);
   const std::string huge(64, '5');
   journal.put(huge, input, core);

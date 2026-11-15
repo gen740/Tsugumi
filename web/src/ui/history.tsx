@@ -47,7 +47,6 @@ export function CardExecutionView({ session, cardKey, onOpenSource }: { session:
   const [loaded, setLoaded] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const [comparing, setComparing] = useState(false)
-  const [cancelling, setCancelling] = useState(false)
   const batchRevision = useBatchHistoryRevision(session)
 
   useEffect(() => {
@@ -122,18 +121,9 @@ export function CardExecutionView({ session, cardKey, onOpenSource }: { session:
   const summary = rec?.summary ?? invocations.find((item) => item.invocation === invocation)
   const batch = summary?.batchActivation != null ? batches.find((item) => item.activation === summary.batchActivation) : batches.at(-1)
   const executionState = remoteExecutionLabel(summary?.executionState)
-  const recoveredRunId = s(record?.run?.status?.runId)
-  const recoveredRun = !!runId && recoveredRunId === runId && !!summary?.executionJobId &&
+  const interruptedRunId = s(record?.run?.status?.runId)
+  const interruptedRun = !!runId && interruptedRunId === runId && !!summary?.executionJobId &&
     record?.run?.status?.failure?.kind === D.FailureKind.interrupted
-  const canCancel = recoveredRun && [D.RemoteExecutionState.queued, D.RemoteExecutionState.running, D.RemoteExecutionState.disconnected].some((state) => state === summary?.executionState)
-  async function cancelPending() {
-    const rpc = session.rpc
-    if (!rpc || !canCancel) return
-    setCancelling(true)
-    try { await rpc.cancel(recoveredRunId); setError(undefined) }
-    catch (e) { setError(errorText(e)) }
-    finally { setCancelling(false) }
-  }
   return (
     <HSplit sizes={[260, null]} min={[220, 380]}>
       {[
@@ -212,10 +202,9 @@ export function CardExecutionView({ session, cardKey, onOpenSource }: { session:
                             {executionState && <Value label={L('実行サービスの状態')} value={executionState} />}
                             {summary.executionSystem && <Value label={L('CPU アーキテクチャ')} value={s(summary.executionSystem)} />}
                             {summary.executionJobId && <Value label={L('ジョブ ID')} value={s(summary.executionJobId)} />}
-                            {recoveredRun && (
-                              <Row><span className="caption secondary">{L('Tsugumi の再起動後は、このジョブの結果を回収します。下流の Card は改めて実行してください。')}</span></Row>
+                            {interruptedRun && (
+                              <Row><span className="caption secondary">{L('Tsugumi の再起動により、この実行は中断されました。結果は回収されません。必要な Card を改めて実行してください。')}</span></Row>
                             )}
-                            {canCancel && <Row><Button kind="destructive" disabled={cancelling || !session.rpc} onClick={() => void cancelPending()}>{L('この実行の未完了ジョブを取り消す')}</Button></Row>}
                             {summary.executionResources?.cpuMillis != null && <Value label={L('CPU 上限（ミリコア）')} value={String(summary.executionResources.cpuMillis)} />}
                             {summary.executionResources?.memoryBytes != null && <Value label={L('メモリ上限（バイト）')} value={String(summary.executionResources.memoryBytes)} />}
                             {/* A Card built for another system (its `system` setting): what ran it. */}

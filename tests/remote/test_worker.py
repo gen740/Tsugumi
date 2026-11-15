@@ -277,6 +277,90 @@ def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path
         peer.close()
 
 
+def test_never_heartbeat_orphan_times_out_kills_child_and_reuses_slot(tmp_path):
+    """A running orphan keeps Card timeout enforcement even without heartbeats."""
+    binary = os.environ.get("TSUGUMI_REMOTE_TEST_RAW_WORKER")
+    if not binary:
+        pytest.skip("needs the raw C++ executable for a controlled namespace launcher")
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    child_pid = tmp_path / "child.pid"
+    launcher = tools / "unshare"
+    launcher.write_text('#!/bin/sh\nfor arg do test "$arg" != --check-namespace || exit 0; done\n'
+                        'echo $$ > "$TEST_CHILD_PID"\necho partial-log\nexec sleep 120\n')
+    launcher.chmod(0o755)
+    peer = Worker(tmp_path, binary, env={**os.environ,
+        "PATH": str(tools) + os.pathsep + os.environ["PATH"], "TEST_CHILD_PID": str(child_pid)})
+    first, second = "7" * 64, "8" * 64
+    directory = peer.state / "projects" / peer.scope / "jobs" / first
+
+    def wait_for(check, message):
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if check():
+                return
+            time.sleep(0.05)
+        raise AssertionError(message)
+
+    def record(job):
+        return json.loads((peer.state / "projects" / peer.scope / "jobs" / job / "state").read_text())
+
+    def child():
+        try:
+            return int(child_pid.read_text())
+        except (FileNotFoundError, ValueError):
+            return None  # The launcher may still be writing its PID file.
+
+    pid = None
+    fingerprints = {}
+    try:
+        digest = peer.upload(first, b"orphan input")
+        spec = peer.spec(digest, timeout=5, interval=1, missed=0)
+        fingerprints[first] = hashlib.sha256(spec).hexdigest()
+        accepted = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=first)
+        assert accepted.body.state == R.JobState.Queued
+        # From acceptance to timeout there are no further core requests at all.
+        wait_for(lambda: child() is not None and
+                 record(first)["state"] == R.JobState.Running,
+                 "orphan never started its child")
+        pid = child()
+        assert os.path.exists(f"/proc/{pid}"), "child must be alive before the deadline"
+        assert record(first)["missed_heartbeats"] == 0
+        # Exercise the supervisor's deadline independently of the listener tick.
+        peer.process.kill()
+        peer.process.wait(timeout=5)
+        peer.log.close()
+        wait_for(lambda: record(first)["state"] == R.JobState.Failed, "orphan did not time out")
+        assert record(first)["diagnostic"] == "timed out after 5 s"
+        wait_for(lambda: not os.path.exists(f"/proc/{pid}"), "timed-out child survived")
+        assert (directory / "blobs" / digest).read_bytes() == b"orphan input"
+        assert "partial-log" in (directory / "work" / "adapter.log").read_text()
+        peer.start()
+        # A new life cannot collect the old result, but can use the freed slot.
+        peer.core_life_id = "f" * 64
+        peer.call(R.RequestBody.ProbeRequest, R.ProbeRequestT())
+        digest = peer.upload(second, b"next input")
+        spec = peer.spec(digest, timeout=30, interval=1, missed=0)
+        fingerprints[second] = hashlib.sha256(spec).hexdigest()
+        peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=second)
+        wait_for(lambda: record(second)["state"] == R.JobState.Running and
+                 child() not in (None, pid), "execution slot was not reused")
+        peer.call(R.RequestBody.CancelRequest,
+                  R.CancelRequestT(fingerprint=hashlib.sha256(spec).hexdigest()), job=second)
+        wait_for(lambda: record(second)["state"] == R.JobState.Cancelled, "cleanup did not stop next job")
+        assert "partial-log" in (directory / "work" / "adapter.log").read_text()
+    finally:
+        try:
+            if peer.process.poll() is not None:
+                peer.start()
+            for job, fingerprint in fingerprints.items():
+                peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprint), job=job)
+                wait_for(lambda: record(job)["state"] in (R.JobState.Failed, R.JobState.Cancelled),
+                         "test cleanup did not stop its supervisor")
+        finally:
+            peer.close()
+
+
 def test_bounded_frames_and_single_listener(worker):
     import struct
     for raw in (struct.pack("<I", (2 << 20) + 1), struct.pack("<I", 24) + bytes(24)):

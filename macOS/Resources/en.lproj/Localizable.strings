@@ -198,7 +198,7 @@
 "Tsugumi で何ができる？" = "What can Tsugumi do?";
 "Tsugumi のアニメーション" = "Tsugumi animation";
 "Tsugumi のプロジェクトではありません: %@" = "Not a Tsugumi project: %@";
-"Tsugumi の再起動後は、このジョブの結果を回収します。下流の Card は改めて実行してください。" = "Tsugumi retrieves this job's result after restarting. Start a new run for downstream Cards.";
+"Tsugumi の再起動により、この実行は中断されました。結果は回収されません。必要な Card を改めて実行してください。" = "This run was interrupted when Tsugumi restarted. Its results will not be retrieved. Run the Cards you need again.";
 "Tsugumi の外で編集されたファイルを取り込みます" = "Takes in files edited outside Tsugumi";
 "Tsugumi の実行環境のイメージが見つかりません。" = "The Tsugumi environment image is not available.";
 "Tsugumi の実行環境を準備します" = "Set up the Tsugumi environment";
@@ -341,7 +341,6 @@
 "この実行にはありません" = "Absent from this run";
 "この実行の Card からは届いていません" = "Not sent by a Card of this run";
 "この実行の共有環境" = "Shared environments in this run";
-"この実行の未完了ジョブを取り消す" = "Cancel pending jobs in this run";
 "この実行サービスではリソースを指定できません。" = "This execution service does not support resource requests.";
 "この実行環境では %@ を実行できません。" = "%@ cannot run in this execution environment.";
 "この実行環境の既定" = "Execution environment default";

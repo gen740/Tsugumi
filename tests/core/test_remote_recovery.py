@@ -56,6 +56,7 @@ class Gateway(socketserver.UnixStreamServer):
         self.submit_count = 0
         self.download_count = 0
         self.released = set()
+        self.cancelled = set()
         self.core_ids = set()
         self.probe_count = 0
         self.probe_times = []
@@ -164,6 +165,7 @@ class Gateway(socketserver.UnixStreamServer):
             self.receipts[job] = {"state": "running", "fingerprint": hashlib.sha256(bytes(body.spec)).hexdigest()}
             return None  # the receipt exists, but its reply was lost
         if kind == R.RequestBody.CancelRequest:
+            self.cancelled.add(job)
             receipt = self.receipts[job]
             assert receipt["fingerprint"] == R.string(body.fingerprint)
             if receipt["state"] not in {"succeeded", "failed", "cancelled"}:
@@ -473,9 +475,10 @@ def test_core_restart_interrupts_the_external_job(running_job, outage, completed
     gateway.online = True
     gateway.registered_server = gateway.server_id
     deadline = time.monotonic() + 10
-    while job_id not in gateway.released and time.monotonic() < deadline:
+    while job_id not in gateway.cancelled and time.monotonic() < deadline:
         time.sleep(0.1)
-    assert job_id in gateway.released
+    assert job_id in gateway.cancelled
+    assert job_id not in gateway.released
     assert gateway.receipts[job_id]["state"] == ("succeeded" if completed else "cancelled")
     assert len(gateway.core_ids) == 2
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
