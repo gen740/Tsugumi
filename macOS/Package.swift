@@ -118,7 +118,8 @@ let package = Package(
       exclude: ["Resources/TreeSitter/SOURCES.md"],
       resources: [.copy("Resources/TreeSitter")],
       swiftSettings: [.swiftLanguageMode(.v5)]),
-    .target(name: "TsugumiTestSupport", path: "Tests/Support"),
+    .target(name: "TsugumiSecretStoreIsolation", path: "Tests/SecretStoreIsolation"),
+    .target(name: "TsugumiTestSupport", dependencies: ["TsugumiSecretStoreIsolation"], path: "Tests/Support"),
     // The app's own logic. The model, RPC, Agent and launcher tests are the
     // package CoreTests/ (they build without the app).
     .testTarget(

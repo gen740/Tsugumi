@@ -153,15 +153,31 @@ public struct ProviderConfig: Codable, Equatable, Sendable {
 
 }
 
-public enum Keychain {
+// This boundary only denies access; no test setting can enable the real store.
+// Injected runners implement a fake without executing the supplied OS operation.
+func runSystemKeychain(_ operation: String, _ body: () -> OSStatus) -> OSStatus {
+  let environment = ProcessInfo.processInfo.environment
+  guard environment["TSUGUMI_TEST_RUN_ROOT"] == nil,
+        environment["TSUGUMI_TEST_NO_SECRET_STORE"] != "1" else { return errSecNotAvailable }
+  return body()
+}
+
+final class KeychainStore {
+  typealias Run = (String, () -> OSStatus) -> OSStatus
+  private let execute: Run
+  init(run: @escaping Run = { _, body in body() }) { self.execute = run }
+  private func run(_ operation: String, _ body: () -> OSStatus) -> OSStatus {
+    // Even an injected runner that invokes its body cannot bypass isolation.
+    execute(operation) { runSystemKeychain(operation, body) }
+  }
   static let service = "app.tsugumi.agent"
 
   /// Operations under way that may show the access dialog, and the lock that
   /// keeps a read without asking from turning their dialog off.
-  private static let gate = NSLock()
-  nonisolated(unsafe) private static var mayAsk = 0
+  private let gate = NSLock()
+  private var mayAsk = 0
 
-  private static func askingAllowed<T>(_ body: () -> T) -> T {
+  private func askingAllowed<T>(_ body: () -> T) -> T {
     gate.lock()
     mayAsk += 1
     gate.unlock()
@@ -174,39 +190,39 @@ public enum Keychain {
   }
 
   /// Removes the stored secret of a provider (no error when there is none).
-  public static func delete(account: String) {
-    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+  func delete(account: String) {
+    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Self.service,
                             kSecAttrAccount as String: account]
-    askingAllowed { _ = SecItemDelete(q as CFDictionary) }
+    askingAllowed { _ = run("SecItemDelete") { SecItemDelete(q as CFDictionary) } }
   }
 
   /// Saves in place when the item exists (a reader never sees it missing).
-  public static func save(_ secret: String, account: String) throws {
-    let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+  func save(_ secret: String, account: String) throws {
+    let base: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Self.service,
                                kSecAttrAccount as String: account]
-    let u = askingAllowed { SecItemUpdate(base as CFDictionary, [kSecValueData as String: Data(secret.utf8)] as CFDictionary) }
+    let u = askingAllowed { run("SecItemUpdate") { SecItemUpdate(base as CFDictionary, [kSecValueData as String: Data(secret.utf8)] as CFDictionary) } }
     if u == errSecSuccess { return }
     guard u == errSecItemNotFound else { throw AgentError.provider("Keychain error \(u)") }
     var add = base
     add[kSecValueData as String] = Data(secret.utf8)
     add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-    let s = askingAllowed { SecItemAdd(add as CFDictionary, nil) }
+    let s = askingAllowed { run("SecItemAdd") { SecItemAdd(add as CFDictionary, nil) } }
     guard s == errSecSuccess else { throw AgentError.provider("Keychain error \(s)") }
   }
 
   /// Whether a provider's secret is stored, without reading it (no access prompt).
-  public static func exists(account: String) -> Bool {
-    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+  func exists(account: String) -> Bool {
+    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Self.service,
                             kSecAttrAccount as String: account, kSecReturnAttributes as String: true]
     var out: CFTypeRef?
-    return SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess
+    return run("SecItemCopyMatching(attributes)") { SecItemCopyMatching(q as CFDictionary, &out) } == errSecSuccess
   }
 
-  public static func load(account: String) -> String? {
-    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+  func load(account: String) -> String? {
+    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Self.service,
                             kSecAttrAccount as String: account, kSecReturnData as String: true]
     var out: CFTypeRef?
-    guard askingAllowed({ SecItemCopyMatching(q as CFDictionary, &out) }) == errSecSuccess, let d = out as? Data else { return nil }
+    guard askingAllowed({ run("SecItemCopyMatching(data)") { SecItemCopyMatching(q as CFDictionary, &out) } }) == errSecSuccess, let d = out as? Data else { return nil }
     return String(data: d, encoding: .utf8)
   }
 
@@ -218,18 +234,30 @@ public enum Keychain {
   /// while another operation may be asking. It is deprecated, but nothing
   /// replaces it: a login keychain item still shows its dialog with
   /// kSecUseAuthenticationUIFail.
-  public static func loadWithoutAsking(account: String) -> String? {
-    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+  func loadWithoutAsking(account: String) -> String? {
+    let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: Self.service,
                             kSecAttrAccount as String: account, kSecReturnData as String: true]
     gate.lock()
     defer { gate.unlock() }
     guard mayAsk == 0 else { return nil }
-    SecKeychainSetUserInteractionAllowed(false)
-    defer { SecKeychainSetUserInteractionAllowed(true) }
     var out: CFTypeRef?
-    guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
+    let status = run("SecItemCopyMatching(without asking)") {
+      SecKeychainSetUserInteractionAllowed(false)
+      defer { SecKeychainSetUserInteractionAllowed(true) }
+      return SecItemCopyMatching(q as CFDictionary, &out)
+    }
+    guard status == errSecSuccess, let d = out as? Data else { return nil }
     return String(data: d, encoding: .utf8)
   }
+}
+
+public enum Keychain {
+  private static let store = KeychainStore()
+  public static func delete(account: String) { store.delete(account: account) }
+  public static func save(_ secret: String, account: String) throws { try store.save(secret, account: account) }
+  public static func exists(account: String) -> Bool { store.exists(account: account) }
+  public static func load(account: String) -> String? { store.load(account: account) }
+  public static func loadWithoutAsking(account: String) -> String? { store.loadWithoutAsking(account: account) }
 }
 
 /// Platform secret storage and explicit, memory-only provisioning. Settings,

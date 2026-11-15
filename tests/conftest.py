@@ -1,5 +1,6 @@
 """Shared public-RPC support for core and remaining integration suites."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -9,6 +10,10 @@ sys.path.insert(0, str(Path(__file__).parent / "core"))
 
 
 def pytest_configure(config):
+    # Apply also to direct pytest invocations and all spawned Web/MCP servers.
+    os.environ['TSUGUMI_TEST_NO_SECRET_STORE'] = '1'
+    if 'TSUGUMI_TEST_RUN_ROOT' not in os.environ:
+        pytest.exit('Run pytest through tsugumi-test-env or tests/run-isolated.py', returncode=4)
     config.addinivalue_line(
         "markers",
         "static: reads only files of the repository (or runs a generator with --check); needs no daemon, "
