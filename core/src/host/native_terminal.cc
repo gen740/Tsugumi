@@ -122,8 +122,11 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
     for (auto& value : values) environment.push_back(value.data());
     environment.push_back(nullptr);
     const char* shell = "/bin/bash";
-    char* const args[] = {const_cast<char*>(shell), const_cast<char*>("-l"),
-                          nullptr};
+    // Skip login profiles and interactive rc files: they can rewrite or extend
+    // the explicit environment even though execve inherits nothing.
+    char* const args[] = {
+        const_cast<char*>(shell), const_cast<char*>("--noprofile"),
+        const_cast<char*>("--norc"), const_cast<char*>("-i"), nullptr};
     const auto pid = ::fork();
     if (pid == 0) {
       ::setsid();
