@@ -242,6 +242,23 @@ table LayoutBox {
   height:double (id: 4);
 }
 
+/// A rectangle in Card-local coordinates. Anchors multiply the measured Card
+/// width/height; x/y are world-unit offsets. Clients only transform coordinates.
+table DisplayGeometry {
+  anchor_x:double;
+  anchor_y:double;
+  x:double;
+  y:double;
+  width:double;
+  height:double;
+}
+/// -> DisplayGeometries. Host-owned default output-frame geometry for both flows.
+table DisplayGeometryRequest {}
+table DisplayGeometries {
+  top_to_bottom:DisplayGeometry (required);
+  left_to_right:DisplayGeometry (required);
+}
+
 /// One port of a Card in Card and the inner Card it goes to or comes from.
 table LayoutBarEnd {
   name:string (id: 0, required);
@@ -392,7 +409,7 @@ union RequestPayload {
   FileFormatRequest, HostVersionGraphRequest, HostVersionDiffRequest,
   DocumentSubgraphRequest, DocumentMergeRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest,
   ModelSelectionRequest,
-  DemoListRequest, DemoReadRequest, VersionNoteRequest
+  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -404,7 +421,7 @@ union ReplyPayload {
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds,
   ModelSelection,
-  DemoPaths, TextResult:Tsugumi.Service.TextResult
+  DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

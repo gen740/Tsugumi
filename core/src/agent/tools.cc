@@ -246,6 +246,12 @@ auto Tools::RememberBase(const std::string& project,
       throw Failure(json::Text(value, "kind"), json::Text(value, "message"));
     return value;
   });
+  StoreBase(project, base);
+  return base;
+}
+
+auto Tools::StoreBase(const std::string& project, const host::SaveBase& base)
+    -> void {
   std::lock_guard lock(mutex);
   auto q = db.prepare("INSERT OR REPLACE INTO save_bases VALUES(?,?,?,?)");
   q.bind(1, project)
@@ -253,7 +259,6 @@ auto Tools::RememberBase(const std::string& project,
       .bind(3, json::Encode(base.snapshot))
       .bind(4, json::Encode(base.files))
       .run();
-  return base;
 }
 
 auto Tools::SaveProject(const std::string& project, json::Members original,
@@ -288,11 +293,11 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
   for (int attempt = 0; attempt < 8; ++attempt) {
     if (stop.stop_requested()) throw Cancelled();
     try {
+      const auto snapshot = read("project_inspect", json::Members{});
+      const auto latest = RememberBase(project, snapshot, stop);
+      if (check) check(latest);
       if (!prepared) {
         auto args = original;
-        const auto snapshot = read("project_inspect", json::Members{});
-        const auto latest = RememberBase(project, snapshot, stop);
-        if (check) check(latest);
         if (json::String(json::Get(args, "base_rev"),
                          json::Get(args, "base_rev")) !=
             json::Text(snapshot, "rev")) {
@@ -305,6 +310,8 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
         }
         args["op_id"] = json::Quote(attempt_id);
         prepared = PrepareAgentSave(args, read);
+        prepared->arguments = json::Object(PrepareLayoutSave(
+            project, json::Encode(prepared->arguments), stop));
         std::lock_guard lock(mutex);
         auto q = db.prepare(
             "INSERT OR REPLACE INTO save_preparations VALUES(?,?,?)");
@@ -321,6 +328,12 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
           project, "project_save", json::Encode(prepared->arguments), stop);
       const auto envelope = json::Object(result);
       const auto value = json::Object(json::Get(envelope, "value", "{}"));
+      if (json::Text(envelope, "reply") == "SaveResult") {
+        const auto base = host::AdvanceSaveBase(
+            SavedBase(project, json::Get(prepared->arguments, "base_rev")),
+            value, prepared->arguments);
+        StoreBase(project, base);
+      }
       if (json::Text(envelope, "reply") != "Failure" ||
           json::Text(value, "kind") != "revision_conflict")
         return result;
@@ -335,6 +348,8 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
     } catch (const Failure& e) {
       if (e.code != "revision_conflict") throw;
       prepared.reset();
+    } catch (const host::LayoutFailure& e) {
+      return LayoutToolFailure("invalid_document", e.what());
     } catch (const std::exception& e) {
       return failure("validation_failed", e.what());
     }
@@ -939,6 +954,22 @@ auto Tools::ExecuteTool(const std::string& conversation,
         .bind(5, op_id)
         .run();
   }
+  // Keep the original scoped request across permission approval. Expansion and
+  // binding checks are identical on the initial send, resend and CAS retries.
+  auto project_call = [&]() {
+    if (!boundary || !boundary->scoped() || call.name != "project_save")
+      return ProjectCall(project, call.name, json::Encode(args), stop);
+    const auto before = HelperReader(
+        conversation, stop, json::Get(args, "base_rev"), authorization);
+    const auto expanded = boundary->ExpandSave(args, before);
+    return SaveProject(
+        project, expanded, stop, [&](const host::SaveBase& latest) {
+          boundary->CheckBindings(before, [&](const std::string& path) {
+            const auto found = latest.files.find(path);
+            return found == latest.files.end() ? std::string{} : found->second;
+          });
+        });
+  };
   // An interrupted mutation can only be resolved by its durable receipt.
   // Reissuing it after a daemon restart may execute it a second time.
   std::string result;
@@ -974,21 +1005,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
         result = LayoutToolFailure("invalid_request", error.what());
       }
     } else {
-      if (boundary && boundary->scoped() && call.name == "project_save") {
-        const auto before = HelperReader(
-            conversation, stop, json::Get(args, "base_rev"), authorization);
-        args = boundary->ExpandSave(args, before);
-        result = SaveProject(project, args, stop, [&](const host::SaveBase& latest) {
-          // Check the exact document being rebased. CAS rejects a link/alias
-          // change after this check; the next attempt checks again.
-          boundary->CheckBindings(before, [&](const std::string& path) {
-            const auto found = latest.files.find(path);
-            return found == latest.files.end() ? std::string{} : found->second;
-          });
-        });
-      } else {
-        result = ProjectCall(project, call.name, json::Encode(args), stop);
-      }
+      result = project_call();
     }
   }
   const auto envelope = json::Object(result);
@@ -1027,7 +1044,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
         receipt.bind(1, op_id).bind(2, conversation).bind(3, call.id).run();
         tx.commit();
       }
-      result = ProjectCall(project, call.name, json::Encode(args), stop);
+      result = project_call();
       error = json::Text(json::Object(result), "reply") == "Failure";
     }
   }

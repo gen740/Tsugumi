@@ -90,11 +90,13 @@ extension ProjectSession {
   func displayRect(_ k: CardKey, origin: CGPoint? = nil) -> CGRect {
     let o = origin ?? position(k)
     let f = displayFrame(k)
-    let sz = CGSize(width: f?["width"]?.double ?? 320, height: f?["height"]?.double ?? 170)
-    let at = flow == .topToBottom
-      ? CGPoint(x: f?["x"]?.double ?? (o.x + geometry(k).size.width + 40), y: f?["y"]?.double ?? o.y)
-      : CGPoint(x: f?["x"]?.double ?? o.x, y: f?["y"]?.double ?? (o.y + geometry(k).height + 30))
-    return CGRect(origin: at, size: sz)
+    let d = flow == .topToBottom ? displayGeometries?.topToBottom : displayGeometries?.leftToRight
+    let size = geometry(k).size
+    // Transform the host's Card-local rectangle using this window's measures.
+    return CGRect(x: f?["x"]?.double ?? (o.x + size.width * (d?.anchorX ?? 0) + (d?.x ?? 0)),
+                  y: f?["y"]?.double ?? (o.y + size.height * (d?.anchorY ?? 0) + (d?.y ?? 0)),
+                  width: f?["width"]?.double ?? d?.width ?? 0,
+                  height: f?["height"]?.double ?? d?.height ?? 0)
   }
 
 }

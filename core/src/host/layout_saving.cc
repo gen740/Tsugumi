@@ -94,6 +94,9 @@ auto CompleteLayout(const std::string& project, const std::string& text,
                    double fallback) {
     return value.contains(key) ? std::stod(value.at(key)) : fallback;
   };
+  const auto displays = json::Object(json::Get(doc, "displays", "{}"));
+  const auto geometry = DefaultDisplayGeometry(scene.top_to_bottom);
+  const auto other_geometry = DefaultDisplayGeometry(!scene.top_to_bottom);
   for (const auto& raw : json::Array(json::Get(graph, "cards", "[]"))) {
     const auto id = json::Text(json::Object(raw), "id");
     const auto position = json::Object(json::Get(positions, id, "{}"));
@@ -123,11 +126,34 @@ auto CompleteLayout(const std::string& project, const std::string& text,
         std::max(320.0, 64.0 * static_cast<double>(ports) + 24);
     const double height = 240 + 26.0 * static_cast<double>(params) +
                           30.0 * static_cast<double>(ports);
+    // A default frame follows the measured Card edge in each UI. Our Card
+    // reservation bounds normal UI sizes, so reserve the whole envelope from
+    // the Card origin through that frame, including smaller/folded Cards.
+    // Reserve it before any run too: placement must not depend on run history.
+    const bool default_frame = !displays.contains(id);
+    auto reserve = [&](const auto& d, bool horizontal) {
+      return horizontal ? d.anchor_x * width + d.x + d.width
+                        : d.anchor_y * height + d.y + d.height;
+    };
+    // Without a saved direction, windows may infer a flow or use their own
+    // preference. Reserve both possible default frames in that case.
+    const double reserved_width =
+        default_frame
+            ? std::max(
+                  {width, reserve(geometry, true),
+                   doc.contains("flow") ? 0 : reserve(other_geometry, true)})
+            : width;
+    const double reserved_height =
+        default_frame
+            ? std::max(
+                  {height, reserve(geometry, false),
+                   doc.contains("flow") ? 0 : reserve(other_geometry, false)})
+            : height;
     scene.cards.push_back({id,
                            number(position, "x", 0),
                            number(position, "y", 0),
-                           width,
-                           height,
+                           reserved_width,
+                           reserved_height,
                            {},
                            {},
                            false});

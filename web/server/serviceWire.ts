@@ -122,6 +122,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'DocumentCopyRequest': return new DocumentCopyRequestT(v.state_json, v.paths ?? [], v.from, v.to, v.name)
     case 'DocumentMergeRequest': return new DocumentMergeRequestT(v.base_json, v.ours_json, v.theirs_json)
     case 'DocumentSubgraphRequest': return new DocumentSubgraphRequestT(v.project_json, v.cards ?? [], v.id)
+    case 'DisplayGeometryRequest': return new H.DisplayGeometryRequestT()
     case 'LayoutArrangeRequest': return new H.LayoutArrangeRequestT(sceneRequest(v.scene))
     case 'LayoutUntangleRequest': return new H.LayoutUntangleRequestT(sceneRequest(v.scene), v.around)
     case 'LayoutValidateRequest': return new H.LayoutValidateRequestT(v.json, v.removedCards)

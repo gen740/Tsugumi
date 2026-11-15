@@ -104,6 +104,82 @@ auto CaptureSaveBase(const json::Members& snapshot, const SaveRead& read)
   return base;
 }
 
+auto AdvanceSaveBase(const SaveBase& base, const json::Members& result,
+                     const json::Members& arguments) -> SaveBase {
+  if (!result.contains("delta") || result.at("delta") == "null") return base;
+  const auto delta = json::Object(result.at("delta"));
+  auto snapshot = base.snapshot;
+  for (const auto* key : {"rev", "project_json", "layout_json"})
+    if (delta.contains(key)) snapshot[key] = delta.at(key);
+  auto update = [&](const char* field, const char* upsert, const char* removed,
+                    const char* key) {
+    json::Members entries;
+    for (const auto& raw : json::Array(json::Get(snapshot, field, "[]")))
+      entries[json::Text(json::Object(raw), key)] = raw;
+    for (const auto& raw : json::Array(json::Get(delta, removed, "[]")))
+      entries.erase(json::String(raw));
+    for (const auto& raw : json::Array(json::Get(delta, upsert, "[]")))
+      entries[json::Text(json::Object(raw), key)] = raw;
+    std::vector<std::string> values;
+    for (const auto& [id, raw] : entries) values.push_back(raw);
+    snapshot[field] = json::Encode(values);
+  };
+  update("definitions", "definitions_upsert", "definitions_removed", "id");
+  update("sources", "sources_upsert", "sources_removed", "path");
+  auto files = base.files;
+  for (const auto& raw : json::Array(json::Get(arguments, "changes", "[]"))) {
+    const auto change = json::Object(raw);
+    const auto kind = json::Text(change, "value_type");
+    const auto value = json::Object(json::Get(change, "value", "{}"));
+    const auto path = json::Text(value, "path");
+    if (!DocumentPath(path)) continue;
+    if (kind == "PutSource")
+      files[path] = Content(json::Get(value, "bytes"));
+    else if (kind == "PatchSource") {
+      const auto previous = files.at(path);
+      std::string text;
+      size_t cursor = 0;
+      for (const auto& raw_patch : json::Array(json::Get(value, "patches"))) {
+        const auto patch = json::Object(raw_patch);
+        auto integer = [&](const char* key) {
+          const auto raw = json::Get(patch, key);
+          return json::UInt(json::String(raw, raw));
+        };
+        const auto offset = integer("offset"), remove = integer("remove");
+        text += previous.substr(cursor, offset - cursor) +
+                json::Text(patch, "text");
+        cursor = offset + remove;
+      }
+      files[path] = text + previous.substr(cursor);
+    } else if (kind == "RemoveSource")
+      files.erase(path);
+  }
+  // Definition and root documents come from the acknowledged delta. External
+  // document bytes come from the acknowledged request, never a post-save read.
+  for (const auto* key : {"project_json", "layout_json"})
+    if (delta.contains(key))
+      files[std::string(key) == "project_json" ? "tsugumi.json"
+                                               : "layout.json"] =
+          json::Text(delta, key);
+  for (const auto& raw :
+       json::Array(json::Get(delta, "definitions_upsert", "[]"))) {
+    const auto definition = json::Object(raw);
+    const auto dir = "definitions/" + json::Text(definition, "id") + '/';
+    for (const auto& [key, name] : {std::pair{"card_json", "_card.json"},
+                                    {"meta_json", "_meta.json"},
+                                    {"link_json", "_link.json"}}) {
+      files.erase(dir + name);
+      const auto text = json::Text(definition, key);
+      if (!text.empty()) files[dir + name] = text;
+    }
+  }
+  return CaptureSaveBase(snapshot, [&](const auto&, const auto& query) {
+    return json::Members{
+        {"bytes", json::Quote(files.at(json::Text(query, "path")))},
+        {"eof", "true"}};
+  });
+}
+
 auto RebaseSave(json::Members args, const SaveBase& base,
                 const SaveBase& latest) -> json::Members {
   auto ours = base.files;

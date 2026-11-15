@@ -51,6 +51,8 @@ struct Tools {
         host::Access& access, Dependencies dependencies);
   auto RememberBase(const std::string& project, const json::Members& snapshot,
                     std::stop_token stop) -> host::SaveBase;
+  auto StoreBase(const std::string& project, const host::SaveBase& base)
+      -> void;
   auto SaveProject(const std::string& project, json::Members args,
                    std::stop_token stop,
                    const std::function<void(const host::SaveBase&)>& check = {}) -> std::string;

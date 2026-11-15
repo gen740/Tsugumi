@@ -285,13 +285,33 @@ auto VersionCanvas(const R::VersionCanvasRequest& in) -> R::VersionCanvasT {
   return result;
 }
 
+auto DefaultDisplayGeometry(bool top_to_bottom) -> R::DisplayGeometryT {
+  R::DisplayGeometryT geometry;
+  geometry.anchor_x = top_to_bottom ? 1 : 0;
+  geometry.anchor_y = top_to_bottom ? 0 : 1;
+  geometry.x = top_to_bottom ? 40 : 0;
+  geometry.y = top_to_bottom ? 0 : 30;
+  geometry.width = 320;
+  geometry.height = 170;
+  return geometry;
+}
+
 auto LayoutHandles(R::RequestPayload type) -> bool {
-  return type == R::RequestPayload::LayoutArrangeRequest ||
+  return type == R::RequestPayload::DisplayGeometryRequest ||
+         type == R::RequestPayload::LayoutArrangeRequest ||
          type == R::RequestPayload::LayoutUntangleRequest ||
          type == R::RequestPayload::LayoutValidateRequest ||
          type == R::RequestPayload::VersionCanvasRequest;
 }
 auto LayoutHandle(const R::Request& req, uint64_t id) -> std::string {
+  if (req.value_as_DisplayGeometryRequest()) {
+    R::DisplayGeometriesT result;
+    result.top_to_bottom =
+        std::make_unique<R::DisplayGeometryT>(DefaultDisplayGeometry(true));
+    result.left_to_right =
+        std::make_unique<R::DisplayGeometryT>(DefaultDisplayGeometry(false));
+    return agent::wire::HostReply(id, std::move(result));
+  }
   if (const auto* v = req.value_as_LayoutValidateRequest()) {
     std::set<std::string> removed;
     if (v->removed_cards())

@@ -712,6 +712,7 @@ export class ProjectSession extends Observable {
       this.changed()
       if (env.state !== 'ready') return
       const c = await this.reach(env.endpoint!, env.token)
+      this.displayGeometries = await this.layoutHost.displayGeometry()
       const opened = await c.open(this.viewId)
       if (this.closed) {
         c.close()
@@ -3139,6 +3140,17 @@ export class ProjectSession extends Observable {
    *  tsugumi-hostd works the layout out (LayoutArrange) from what the canvas draws:
    *  Cards are placed, ports then take the order that crosses fewer wires, and
    *  the Cards are placed once more for that order. */
+  displayGeometries?: H.DisplayGeometriesT
+
+  /** Transform the host's rectangle from measured Card-local to world units. */
+  displayRect(k: CardKey, origin = this.placedPosition(k)) {
+    const f = this.displayFrame(k), size = this.geometry(k).size
+    const d = this.flow === 'topToBottom' ? this.displayGeometries?.topToBottom : this.displayGeometries?.leftToRight
+    return { x: dbl(get(f, 'x')) ?? origin.x + size.width * (d?.anchorX ?? 0) + (d?.x ?? 0),
+      y: dbl(get(f, 'y')) ?? origin.y + size.height * (d?.anchorY ?? 0) + (d?.y ?? 0),
+      width: dbl(get(f, 'width')) ?? d?.width ?? 0, height: dbl(get(f, 'height')) ?? d?.height ?? 0 }
+  }
+
   layoutHost = layoutHost
 
   async arrange(scope: string[]) {
@@ -3166,10 +3178,7 @@ export class ProjectSession extends Observable {
     const frames = ids.flatMap((id) => {
       const k = key([...scope, id]), f = this.displayFrame(k)
       if ((!this.displays.has(k) && f === undefined) || bool(get(f, 'hidden')) === true) return []
-      const at = this.placedPosition(k), g = this.geometry(k)
-      return [{ id, x: dbl(get(f, 'x')) ?? (this.flow === 'topToBottom' ? at.x + g.size.width + 40 : at.x),
-        y: dbl(get(f, 'y')) ?? (this.flow === 'topToBottom' ? at.y : at.y + g.height + 30),
-        width: dbl(get(f, 'width')) ?? 320, height: dbl(get(f, 'height')) ?? 170 }]
+      return [{ id, ...this.displayRect(k) }]
     })
     const notes = this.notes(scope).flatMap((n) => {
       const id = str(get(n, 'id'))

@@ -126,14 +126,7 @@ export class Scene {
 
   /** Output frame of a Card: saved place, or beside the Card. */
   frameRect(k: CardKey): Rect {
-    const o = this.origin(k)
-    const f = this.session.displayFrame(k)
-    const g = this.geometry(k)
-    const width = dbl(get(f, 'width')) ?? 320, height = dbl(get(f, 'height')) ?? 170
-    const fx = dbl(get(f, 'x')), fy = dbl(get(f, 'y'))
-    const r = this.flow === 'topToBottom'
-      ? { x: fx ?? o.x + g.size.width + 40, y: fy ?? o.y, width, height }
-      : { x: fx ?? o.x, y: fy ?? o.y + g.height + 30, width, height }
+    const r = this.session.displayRect(k, this.origin(k))
     const m = this.drag.cards
     return m?.frames?.has(k) && !this.session.frameFollowsCard(k, m.keys) ? { ...r, x: r.x + m.dx, y: r.y + m.dy } : r
   }

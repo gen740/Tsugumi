@@ -618,6 +618,8 @@ final class ProjectSession {
     Task { [weak self] in await self?.connect(archiveIncompatibleHistory: true) }
   }
 
+  var displayGeometries: Tsugumi_Host_DisplayGeometriesT?
+
   private func connect(archiveIncompatibleHistory: Bool = false) async {
     connectionMessage = nil
     do {
@@ -628,6 +630,8 @@ final class ProjectSession {
         ep = try await environments.start(identity, archiveIncompatibleHistory: archiveIncompatibleHistory)
       }
       let c = try await reach(ep)
+      displayGeometries = try await CoreHostClient.shared.layoutCall(
+        .displaygeometryrequest, Tsugumi_Host_DisplayGeometryRequestT())
       let opened = try await c.open(viewId: viewId)
       client = c
       ModuleSources.register(c)

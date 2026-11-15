@@ -535,3 +535,41 @@ TEST(HostSaveMerge, ConcurrentSourceWriteIsNeverOverwritten) {
 }
 }  // namespace
 }  // namespace tsugumi::host
+
+namespace tsugumi::host {
+namespace {
+TEST(HostSaveMerge,
+     ReturnedDeltaKeepsDocumentsAndSourceHashesWithoutRereading) {
+  namespace json = agent::json;
+  const std::string external = "externals/storage/tsugumi.json";
+  const std::string source = "definitions/a/src/main.py";
+  SaveBase base;
+  base.snapshot = json::Object(
+      R"({"rev":"7","project_json":"{}","layout_json":"{}","definitions":[{"id":"a","card_json":"{\"template\":\"draft\"}"},{"id":"removed","card_json":"{\"template\":\"draft\"}"}],"sources":[]})");
+  base.files = {{"tsugumi.json", "{}"},
+                {"layout.json", "{}"},
+                {"definitions/a/_card.json", R"({"template":"draft"})"},
+                {external, R"({"name":"before"})"}};
+  const auto arguments = json::Object(
+      R"json({"changes":[{"value_type":"PatchSource","value":{"path":"externals/storage/tsugumi.json","patches":[{"offset":"9","remove":"6","text":"after"}]}},{"value_type":"PutSource","value":{"path":"definitions/a/src/main.py","bytes":"print(1)"}}]})json");
+  const auto delta = json::Object(
+      R"({"rev":"8","definitions_upsert":[{"id":"a","card_json":"{\"template\":\"draft\",\"maxRuns\":2}"}],"definitions_removed":["removed"],"sources_upsert":[{"path":"externals/storage/tsugumi.json","hash":"external-new"},{"path":"definitions/a/src/main.py","hash":"source-new"}],"sources_removed":[]})");
+  const auto advanced =
+      AdvanceSaveBase(base, {{"delta", json::Encode(delta)}}, arguments);
+  EXPECT_EQ(json::Text(advanced.snapshot, "rev"), "8");
+  EXPECT_EQ(json::Array(advanced.snapshot.at("definitions")).size(), 1u);
+  EXPECT_EQ(json::Array(advanced.snapshot.at("sources")).size(), 2u);
+  EXPECT_EQ(advanced.files.at(external), R"({"name":"after"})");
+  EXPECT_EQ(advanced.files.at("definitions/a/_card.json"),
+            R"({"template":"draft","maxRuns":2})");
+  EXPECT_FALSE(
+      advanced.files.contains(source));  // Only its hash is a merge input.
+  EXPECT_FALSE(advanced.files.contains("definitions/removed/_card.json"));
+  auto latest = advanced;
+  latest.snapshot["rev"] = json::Quote("9");
+  auto next = json::Object(
+      R"json({"base_rev":"8","changes":[{"value_type":"PutSource","value":{"path":"definitions/a/src/main.py","base_hash":"source-new","bytes":"print(2)"}}]})json");
+  EXPECT_NO_THROW(RebaseSave(next, advanced, latest));
+}
+}  // namespace
+}  // namespace tsugumi::host

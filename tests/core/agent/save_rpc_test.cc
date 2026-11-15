@@ -246,3 +246,274 @@ TEST_F(AgentProjectFixture,
 }
 }  // namespace
 }  // namespace tsugumi::test
+
+namespace tsugumi::test {
+namespace {
+TEST_F(AgentProjectFixture, ReturnedSaveRevisionIsACompleteMergeBase) {
+  Write(directory.path / "project/definitions/new/_card.json",
+        R"({"template":"draft"})");
+  StartProject();
+  const auto agent = Conversation("save-chain");
+  Grant(agent);
+  Grant(agent, Tsugumi::Service::GrantScope::Conversation,
+        Tsugumi::Service::Access::Write);
+  const auto initial = json::Object(json::Get(
+      json::Object(JsonString(Inspect(agent).View(), "/text")), "value"));
+  auto save = [&](const std::string& conversation, const std::string& rev,
+                  const std::string& document, const std::string& id) {
+    return Tool(
+        conversation, "project_save",
+        json::Encode(json::Members{
+            {"base_rev", rev},
+            {"changes",
+             json::Encode(std::vector<std::string>{json::Encode(json::Members{
+                 {"value_type", json::Quote("SetProject")},
+                 {"value", json::Encode(json::Members{
+                               {"json", json::Quote(document)}})}})})}}),
+        id);
+  };
+  auto first_doc = json::Object(json::Text(initial, "project_json"));
+  first_doc["name"] = json::Quote("Agent's first save");
+  const auto first =
+      save(agent, json::Get(initial, "rev"), json::Encode(first_doc), "first");
+  ASSERT_FALSE(JsonBool(first.View(), "/isError")) << first.View();
+  const auto returned_rev =
+      json::Get(json::Object(json::Get(
+                    json::Object(JsonString(first.View(), "/text")), "value")),
+                "rev");
+  // No inspect by the Agent between saves. Another editor changes the name.
+  // Use the UI's direct project RPC. An Agent inspect/save by the other
+  // editor would itself populate the host's global save_bases and mask the bug.
+  client::Options options;
+  options.endpoint = "unix:" + JsonString(project_ready, "/unix_socket");
+  client::Connection editor(options);
+  ASSERT_FALSE(editor.Start().get());
+  const auto hello =
+      editor
+          .Call([&](uint64_t id) {
+            namespace R = Tsugumi::RPC;
+            Builder b;
+            const auto input = R::CreateSessionHelloRequest(
+                b, 1, b.CreateString("00000000-0000-4000-8000-000000000001"),
+                b.CreateString(project_id),
+                b.CreateString(JsonString(project_ready, "/token")), 1);
+            const auto request = R::CreateRequest(
+                b, R::RequestPayload::SessionHelloRequest, input.Union());
+            R::FinishMessageBuffer(
+                b,
+                R::CreateMessage(b, id, R::Payload::Request, request.Union()));
+            return client::Bytes(b.GetBufferPointer(),
+                                 b.GetBufferPointer() + b.GetSize());
+          })
+          .get();
+  ASSERT_FALSE(hello.error) << hello.error.message;
+  ASSERT_NE(Tsugumi::RPC::GetMessage(hello.bytes.data())
+                ->payload_as_Reply()
+                ->value_as_HelloResult(),
+            nullptr);
+  auto person_doc = first_doc;
+  person_doc["name"] = json::Quote("Person's edit");
+  const auto person_result =
+      editor
+          .Call([&](uint64_t id) {
+            namespace R = Tsugumi::RPC;
+            R::ProjectSaveRequestT save;
+            save.base_rev =
+                json::UInt(json::String(returned_rev, returned_rev));
+            save.op_id = "00000000-0000-4000-8000-000000000002";
+            save.origin = "ui";
+            R::SetProjectT document;
+            document.json = json::Encode(person_doc);
+            auto change = std::make_unique<R::DocumentChangeT>();
+            change->value.Set(std::move(document));
+            save.changes.push_back(std::move(change));
+            Builder b;
+            const auto input = R::ProjectSaveRequest::Pack(b, &save);
+            const auto request = R::CreateRequest(
+                b, R::RequestPayload::ProjectSaveRequest, input.Union());
+            R::FinishMessageBuffer(
+                b,
+                R::CreateMessage(b, id, R::Payload::Request, request.Union()));
+            return client::Bytes(b.GetBufferPointer(),
+                                 b.GetBufferPointer() + b.GetSize());
+          })
+          .get();
+  ASSERT_FALSE(person_result.error) << person_result.error.message;
+  ASSERT_NE(Tsugumi::RPC::GetMessage(person_result.bytes.data())
+                ->payload_as_Reply()
+                ->value_as_SaveResult(),
+            nullptr);
+  auto independent = first_doc;
+  independent["canvas"] = R"({"cards":[{"id":"new"}],"connections":[]})";
+  const auto merged =
+      save(agent, returned_rev, json::Encode(independent), "independent");
+  ASSERT_FALSE(JsonBool(merged.View(), "/isError")) << merged.View();
+  const auto final_doc = Read(directory.path / "project/tsugumi.json");
+  EXPECT_EQ(JsonString(final_doc, "/name"), "Person's edit");
+  EXPECT_EQ(JsonString(final_doc, "/canvas/cards/0/id"), "new");
+  auto collision = first_doc;
+  collision["name"] = json::Quote("Agent's colliding edit");
+  const auto refused =
+      save(agent, returned_rev, json::Encode(collision), "collision");
+  ASSERT_TRUE(JsonBool(refused.View(), "/isError")) << refused.View();
+  const auto failure = JsonString(refused.View(), "/text");
+  EXPECT_EQ(JsonString(failure, "/value/kind"), "revision_conflict");
+  EXPECT_NE(JsonString(failure, "/value/message").find("name"),
+            std::string::npos);
+  EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), final_doc);
+}
+
+TEST_F(AgentProjectFixture,
+       HelperRechecksAliasesAddedWhilePermissionIsPending) {
+  Write(directory.path / "project/definitions/outer/_link.json",
+        R"({"external":"storage"})");
+  Write(directory.path / "project/definitions/writer/_card.json",
+        R"({"template":"draft"})");
+  Write(directory.path / "project/definitions/alias/_card.json",
+        R"({"template":"draft"})");
+  Write(
+      directory.path / "project/externals/storage/tsugumi.json",
+      R"({"name":"Nested","canvas":{"cards":[{"id":"child"}],"connections":[]}})");
+  Write(
+      directory.path / "project/externals/storage/definitions/child/_card.json",
+      R"({"template":"draft"})");
+  const auto source = directory.path /
+                      "project/externals/storage/definitions/child/src/main.py";
+  Write(source, "original\n");
+  StartProject();
+  const auto conversation = Conversation("pending-alias");
+  Grant(conversation);
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation,
+        Tsugumi::Service::Access::Write);
+  auto inspect = [&] {
+    return json::Object(json::Get(
+        json::Object(JsonString(Inspect(conversation).View(), "/text")),
+        "value"));
+  };
+  auto snapshot = inspect();
+  auto project_doc = json::Object(json::Text(snapshot, "project_json"));
+  project_doc["canvas"] =
+      R"({"cards":[{"id":"outer"},{"id":"alias"},{"id":"writer"}],"connections":[]})";
+  const auto seeded = Tool(
+      conversation, "project_save",
+      json::Encode(json::Members{
+          {"base_rev", json::Get(snapshot, "rev")},
+          {"changes",
+           json::Encode(std::vector<std::string>{json::Encode(json::Members{
+               {"value_type", json::Quote("SetProject")},
+               {"value",
+                json::Encode(json::Members{
+                    {"json", json::Quote(json::Encode(project_doc))}})}})})}}),
+      "seed");
+  ASSERT_FALSE(JsonBool(seeded.View(), "/isError")) << seeded.View();
+  snapshot = inspect();
+  const auto file =
+      Tool(conversation, "project_file_stat",
+           json::Encode(json::Members{
+               {"path",
+                json::Quote("externals/storage/definitions/child/src/main.py")},
+               {"at_rev", json::Get(snapshot, "rev")}}));
+  ASSERT_TRUE(file.Code().empty()) << file.Code();
+  ASSERT_FALSE(JsonBool(file.View(), "/isError")) << file.View();
+  const auto hash = JsonString(JsonString(file.View(), "/text"), "/value/hash");
+  ASSERT_FALSE(hash.empty()) << file.View();
+  ModelServer model;
+  Configure(model);
+  model.Queue(AnthropicTool(
+      "save", "project_save",
+      json::Encode(json::Members{
+          {"base_rev", json::Get(snapshot, "rev")},
+          {"changes",
+           json::Encode(std::vector<std::string>{
+               json::Encode(json::Members{
+                   {"value_type", json::Quote("PutSource")},
+                   {"value",
+                    json::Encode(json::Members{
+                        {"path", json::Quote("externals/storage/definitions/"
+                                             "child/src/main.py")},
+                        {"bytes", json::Quote("changed\n")},
+                        {"base_hash", json::Quote(hash)}})}}),
+               R"({"value_type":"PutDefinition","value":{"id":"writer","card_json":"{\"template\":\"draft\",\"network\":true}","keep_meta":true}})"})}})));
+  model.Queue(AnthropicText("Finished."));
+  auto delegated = std::async(std::launch::async, [&] {
+    return Tool(
+        conversation, "delegate",
+        R"({"tasks":[{"name":"scoped","instruction":"Save the supplied edits.","read_cards":["outer/child","writer"],"write_cards":["outer/child","writer"],"run_cards":[]}]})",
+        "delegate");
+  });
+  // Always unblock approval on an assertion failure before joining the helper.
+  std::string approval;
+  const auto deadline = std::chrono::steady_clock::now() + 10s;
+  while (approval.empty() && std::chrono::steady_clock::now() < deadline) {
+    const auto list =
+        Call(*human, A::RequestPayload::AccessListRequest,
+             [&](Builder& b) { return A::CreateAccessListRequest(b).Union(); });
+    if (const auto* requests = list.Value()->value_as_AccessList()->requests())
+      for (const auto* item : *requests)
+        if (item->access() == Tsugumi::Service::Access::CardPermissions)
+          approval = item->id()->str();
+    if (approval.empty()) std::this_thread::sleep_for(10ms);
+  }
+  const std::shared_ptr<void> unblock(&model, [&](void*) {
+    if (approval.empty()) {
+      service.Stop();
+      return;
+    }
+    (void)Call(*human, A::RequestPayload::AccessResolveRequest,
+               [&](Builder& b) {
+                 return A::CreateAccessResolveRequest(
+                            b, b.CreateString(approval), false)
+                     .Union();
+               });
+  });
+  ASSERT_FALSE(approval.empty());
+  // The parent links an out-of-scope container to the same external while the
+  // helper waits. A CAS merge alone would preserve this link and leak its edit.
+  const auto alias = Tool(
+      conversation, "project_save",
+      json::Encode(json::Members{
+          {"base_rev", json::Get(snapshot, "rev")},
+          {"changes",
+           json::Encode(std::vector<std::string>{
+               R"({"value_type":"PutDefinition","value":{"id":"alias","card_json":"","link_json":"{\"external\":\"storage\"}","meta_json":"{\"description\":\"Shared container\"}"}})"})}}),
+      "add-alias");
+  EXPECT_FALSE(JsonBool(alias.View(), "/isError")) << alias.View();
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
+                   [&](Builder& b) {
+                     return A::CreateAccessResolveRequest(
+                                b, b.CreateString(approval), true)
+                         .Union();
+                   })
+                  .Code()
+                  .empty());
+  const auto result = delegated.get();
+  ASSERT_TRUE(result.Code().empty()) << result.Code();
+  ASSERT_TRUE(model.WaitForRequests(2));
+  const auto requests = model.Requests();
+  EXPECT_TRUE(JsonBool(requests[1], "/messages/2/content/0/is_error"));
+  // The helper receives a redacted failure; its parent can inspect the full
+  // durable receipt. Assert the actual scope refusal, not just any error.
+  const auto history = Get(conversation);
+  ASSERT_TRUE(history.Code().empty()) << history.Code();
+  const auto* receipts =
+      history.Value()->value_as_ConversationResult()->conversation()->tools();
+  ASSERT_NE(receipts, nullptr);
+  bool scope_denied = false;
+  for (const auto* receipt : *receipts) {
+    if (!receipt->is_error() || !receipt->result_json()) continue;
+    const auto raw = receipt->result_json()->str();
+    if (!raw.starts_with('{')) continue;
+    const auto envelope = json::Object(raw);
+    if (json::Text(envelope, "reply") != "Failure") continue;
+    const auto failure = json::Object(json::Get(envelope, "value", "{}"));
+    if (json::Text(failure, "message").find("Helper scope denied") !=
+        std::string::npos)
+      scope_denied = true;
+  }
+  EXPECT_TRUE(scope_denied) << history.View();
+  EXPECT_EQ(Read(source), "original\n");
+  EXPECT_EQ(Read(directory.path / "project/definitions/writer/_card.json"),
+            R"({"template":"draft"})");
+}
+}  // namespace
+}  // namespace tsugumi::test

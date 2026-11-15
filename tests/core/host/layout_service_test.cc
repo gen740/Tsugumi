@@ -393,3 +393,77 @@ TEST(HostCardPlacement, PlacesNearItsNeighbourAndAvoidsSavedFramesAndNotes) {
 }
 }  // namespace
 }  // namespace tsugumi::host
+
+namespace tsugumi::host {
+namespace {
+TEST(HostLayout, DefaultDisplayGeometryIsServedToBothClients) {
+  flatbuffers::FlatBufferBuilder b;
+  const auto input = H::CreateDisplayGeometryRequest(b);
+  b.Finish(H::CreateRequest(b, H::RequestPayload::DisplayGeometryRequest,
+                            input.Union()));
+  const auto reply =
+      LayoutHandle(*flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()), 9);
+  const auto* frames = H::GetMessage(reply.data())
+                           ->payload_as_Reply()
+                           ->value_as_DisplayGeometries();
+  ASSERT_NE(frames, nullptr);
+  for (bool vertical : {true, false}) {
+    const auto* g =
+        vertical ? frames->top_to_bottom() : frames->left_to_right();
+    ASSERT_NE(g, nullptr);
+    EXPECT_EQ(g->anchor_x(), vertical ? 1 : 0);
+    EXPECT_EQ(g->anchor_y(), vertical ? 0 : 1);
+    EXPECT_EQ(g->x(), vertical ? 40 : 0);
+    EXPECT_EQ(g->y(), vertical ? 0 : 30);
+    EXPECT_EQ(g->width(), 320);
+    EXPECT_EQ(g->height(), 170);
+  }
+}
+
+TEST(HostCardPlacement, DefaultDisplayBlocksTheTemptingRightHandSlot) {
+  namespace json = agent::json;
+  // Left and below are occupied. No display position is saved: both UIs
+  // nevertheless show the source's output to its right after a display call.
+  const auto project =
+      R"({"canvas":{"cards":[{"id":"source"},{"id":"left"},{"id":"below"},{"id":"new"}],"connections":[{"from":{"card":"source","port":"out"},"to":{"card":"new","port":"in"}}]}})";
+  const auto layout =
+      R"({"flow":"topToBottom","cards":{"source":{"x":0,"y":0},"left":{"x":-340,"y":0},"below":{"x":0,"y":300}}})";
+  const auto completed = json::Object(CompleteLayout(project, layout));
+  const auto positions = json::Object(completed.at("cards"));
+  const auto p = json::Object(positions.at("new"));
+  const auto x = std::stod(p.at("x")), y = std::stod(p.at("y"));
+  // Check expanded and folded source sizes, using the host geometry that the
+  // UIs transform by their measured Card dimensions.
+  const auto d = DefaultDisplayGeometry(true);
+  for (double card_width : {112., 220., 320.}) {
+    const auto fx = card_width * d.anchor_x + d.x;
+    EXPECT_TRUE(x + 320 <= fx || fx + d.width <= x || y + 270 <= d.y ||
+                d.y + d.height <= y)
+        << "new Card at " << x << ',' << y << " overlaps the default display";
+  }
+  EXPECT_FALSE(completed.contains("displays"));
+  const auto old = json::Object(json::Object(layout).at("cards"));
+  for (const auto& [id, value] : old) EXPECT_EQ(positions.at(id), value);
+}
+}  // namespace
+}  // namespace tsugumi::host
+
+namespace tsugumi::host {
+namespace {
+TEST(HostCardPlacement, UnsavedFlowReservesEitherDefaultDisplay) {
+  namespace json = agent::json;
+  const auto project =
+      R"({"canvas":{"cards":[{"id":"source"},{"id":"new"}],"connections":[{"from":{"card":"source","port":"out"},"to":{"card":"new","port":"in"}}]}})";
+  const auto completed = json::Object(
+      CompleteLayout(project, R"({"cards":{"source":{"x":0,"y":0}}})"));
+  const auto p = json::Object(json::Object(completed.at("cards")).at("new"));
+  const auto x = std::stod(p.at("x")), y = std::stod(p.at("y"));
+  for (bool vertical : {true, false}) {
+    const auto d = DefaultDisplayGeometry(vertical);
+    const auto fx = d.anchor_x * 220 + d.x, fy = d.anchor_y * 170 + d.y;
+    EXPECT_TRUE(x + 320 <= fx || fx + d.width <= x || y + 270 <= fy ||
+                fy + d.height <= y);
+  }
+}
+}  // namespace
+}  // namespace tsugumi::host
