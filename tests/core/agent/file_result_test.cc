@@ -1,7 +1,9 @@
 #include <gtest/gtest.h>
 
 #include "../agent_fixture_server.hh"
-#include "agent/tools.hh"
+#include "agent/context.hh"
+#include "agent/json.hh"
+#include "agent/runtime.hh"
 #include "util/crypto.hh"
 
 namespace tsugumi::test {
@@ -54,11 +56,7 @@ TEST(FileResults, KeepTheirStructureInActualProviderRequests) {
   hooks.checkpoint = [](const auto&) {};
   hooks.execute_tool = [&](const agent::ToolCall& call, std::stop_token) {
     return agent::ToolResult{
-        agent::FileResultForModel(
-            call.id == "shell" ? shell : read(call.id == "binary")),
-        false,
-        {},
-        {}};
+        call.id == "shell" ? shell : read(call.id == "binary"), false, {}, {}};
   };
   agent::ProviderConfig config;
   config.auth = agent::ProviderAuth::None;
@@ -79,7 +77,13 @@ TEST(FileResults, KeepTheirStructureInActualProviderRequests) {
   ASSERT_EQ(requests.size(), 4u);
   const auto model_shell =
       JsonString(requests[1], "/messages/2/content/0/content");
-  ASSERT_LT(model_shell.size(), 60000u);
+  ASSERT_LE(model_shell.size(), agent::kToolResultBytes);
+  EXPECT_EQ(model_shell.find("Omitted bytes"), std::string::npos);
+  EXPECT_NE(JsonString(model_shell, "/value/hint").find("tool_result_read"),
+            std::string::npos);
+  EXPECT_NE(JsonString(model_shell, "/value/hint").find("shell"),
+            std::string::npos);
+  EXPECT_EQ(messages[2].content[0].text, shell);
   EXPECT_EQ(JsonString(model_shell, "/reply"), "ProjectShellResult");
   EXPECT_EQ(JsonUInt(model_shell, "/value/changed_files_count"), 3000u);
   EXPECT_EQ(JsonString(model_shell, "/value/save/rev"), "1");
@@ -99,11 +103,24 @@ TEST(FileResults, KeepTheirStructureInActualProviderRequests) {
         JsonString(model_shell, std::string("/value/") + stream + "_size"),
         "900000");
   }
+  // Overflow recovery reshapes the original record once at the smaller cap.
+  for (const auto cap : {agent::kToolResultBytes / 2, size_t{1024}}) {
+    const auto view = agent::RequestMessages(messages, 0, cap);
+    for (size_t i : {2u, 4u, 6u}) {
+      const auto& shaped = view[i].content[0].text;
+      ASSERT_LE(shaped.size(), cap);
+      EXPECT_EQ(shaped.find("Omitted bytes"), std::string::npos);
+      EXPECT_FALSE(JsonString(shaped, "/reply").empty());
+    }
+  }
   for (size_t i = 1; i <= 2; ++i) {
     const auto page =
         JsonString(requests[i + 1], "/messages/" + std::to_string(2 * (i + 1)) +
                                         "/content/0/content");
-    ASSERT_LT(page.size(), 60000u);
+    ASSERT_LE(page.size(), agent::kToolResultBytes);
+    EXPECT_EQ(page.find("Omitted bytes"), std::string::npos);
+    EXPECT_NE(JsonString(page, "/value/hint").find("next_offset"),
+              std::string::npos);
     EXPECT_EQ(JsonString(page, "/reply"), "FileContent");
     const auto value = json::Object(json::Get(json::Object(page), "value"));
     auto data = json::Text(value, "bytes");

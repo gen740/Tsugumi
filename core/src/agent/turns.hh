@@ -84,6 +84,7 @@ struct Turns {
   Dependencies dependencies;
   std::map<std::string, std::shared_ptr<std::jthread>> jobs;
   std::set<std::string> running;
+  std::map<std::string, std::shared_ptr<ContextUsage>> context_usage;
   std::map<std::string, std::shared_ptr<ThoughtSchedule>> thoughts;
 };
 }  // namespace tsugumi::agent

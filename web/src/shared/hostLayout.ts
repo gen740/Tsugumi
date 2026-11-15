@@ -4,6 +4,7 @@ import type { LayoutBar, LayoutBox, LayoutPort, LayoutProposal, LayoutScene } fr
 import { api } from '../api'
 export { H }
 export const layoutHost = {
+  displayGeometry: () => api<H.DisplayGeometriesT>('/api/layout/display-geometry', {}),
   layoutArrange: (scene: LayoutScene) => api<LayoutProposal>('/api/layout/arrange', { scene }),
   layoutUntangle: (scene: LayoutScene, around: string[]) => api<LayoutProposal>('/api/layout/untangle', { scene, around }),
   validate: async (json: string, removedCards: string[] = []) => (await api<{ json: string }>('/api/layout/validate', { json, removedCards })).json,

@@ -313,14 +313,14 @@ class AgentFixture : public ::testing::Test {
   }
 
   auto Configure(const ModelServer& model, std::string provider = "fixture",
-                 uint32_t context_limit = 600000) -> void {
+                 uint32_t context_limit_tokens = 600000) -> void {
     auto reply =
         Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
           Tsugumi::Host::ProviderInputT config;
           config.endpoint = model.URL();
           config.model = "fixture-model";
           config.max_tokens = 1024;
-          config.context_limit = context_limit;
+          config.context_limit = context_limit_tokens;
           const auto p = Tsugumi::Host::ProviderInput::Pack(b, &config);
           return H::CreateProviderSetRequest(b, b.CreateString("desktop"),
                                              b.CreateString(provider), p)

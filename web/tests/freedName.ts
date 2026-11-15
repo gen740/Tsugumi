@@ -3,7 +3,7 @@ import { cardIds } from './cardIds'
 // starts without that Card's result and frame.
 import assert from 'node:assert/strict'
 import type { ProjectSession as Session } from '../src/model/session'
-import { parse, num } from '../src/shared/json'
+import { parse, num, get } from '../src/shared/json'
 
 // The session's module reads the page when it loads, and listens to the server.
 const page = globalThis as Record<string, unknown>
@@ -11,7 +11,6 @@ page.document = { documentElement: { dataset: {}, style: {} }, addEventListener(
 page.window = globalThis
 page.matchMedia = () => ({ matches: false, addEventListener() {} })
 page.EventSource = class { addEventListener() {} close() {} }
-const { Scene } = await import('../src/model/canvas')
 const { ProjectSession } = await import('../src/model/session')
 
 const session = (cards: string[]) => {
@@ -107,11 +106,10 @@ const clean = (s: Session, k: string) => {
   const occupied = await s.addCard('draft', [], here, 'occupied')
   resolved(s, ['b', 'occupied'])
   framed(s, 'b')
-  const k = await s.addCard('draft', [], here, 'b', (c) => new Scene(s, []).freeSpot(here, c))
+  const k = await s.addCard('draft', [], here, 'b', true)
   assert.equal(k, 'b')
   clean(s, k)
-  const scene = new Scene(s, [])
-  const a = scene.cardRect(k), b = scene.cardRect(occupied)
-  assert.ok(!(a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height), 'a free place')
+  assert.equal(get(s.layout, 'cards', k), undefined, 'a reused id has no stale place; the host places it')
+  assert.deepEqual(s.position(occupied), here)
 }
 console.log('freed name behavior: passed')

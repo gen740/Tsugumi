@@ -281,7 +281,7 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
     }
     if (row->text.empty())
       row->text = task.state == "completed"
-                      ? json::Text(ObjectOrEmpty(task.result_json), "excerpt")
+                      ? json::Text(ObjectOrEmpty(task.result_json), "report")
                       : "";
     for (const auto& child : row->children) row->failed += child->failed;
     if (row->state == "failed" && !row->failed) row->failed = 1;

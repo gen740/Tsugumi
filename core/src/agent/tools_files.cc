@@ -3,6 +3,7 @@
 #include <map>
 #include <set>
 
+#include "agent/context.hh"
 #include "agent/tools.hh"
 #include "host/access.hh"
 #include "host/failure.hh"
@@ -50,74 +51,103 @@ auto Value(const std::string& result) -> json::Members {
 }
 }  // namespace
 
-// Keep these file tool results below Runtime's 60,000-byte text cap, including
-// JSON escaping/base64. The durable receipt retains the full RPC page/output.
-auto FileResultForModel(std::string_view raw) -> std::string {
+// Shape only the provider view. The saved transcript keeps the original bytes.
+auto FileResultForModel(std::string_view raw, size_t limit,
+                        std::string_view reference) -> std::string {
   auto envelope = json::Object(raw);
   const auto reply = json::Text(envelope, "reply");
   if (reply != "ProjectShellResult" && reply != "FileContent")
-    return std::string(raw);
-  auto value = json::Object(json::Get(envelope, "value", "{}"));
+    return ClipMiddle(raw, limit, reference);
+  const auto original_value = json::Get(envelope, "value", "{}");
+  const bool shell = reply == "ProjectShellResult";
   auto bytes = [](const std::string& encoded) {
     if (encoded.starts_with('"')) return json::String(encoded);
     std::string decoded;
-    if (!crypto::base64_decode(json::Text(json::Object(encoded), "base64"), decoded))
+    if (!crypto::base64_decode(json::Text(json::Object(encoded), "base64"),
+                               decoded))
       throw std::runtime_error("Invalid file result bytes");
     return decoded;
   };
   auto encode = [](const std::string& data) {
     return text::valid_utf8(data) && data.find('\0') == std::string::npos
-        ? json::Quote(data)
-        : json::Encode(json::Members{{"base64", json::Quote(crypto::base64(data))}});
+               ? json::Quote(data)
+               : json::Encode(json::Members{
+                     {"base64", json::Quote(crypto::base64(data))}});
   };
-  for (const auto* field : {"bytes", "stdout_bytes", "stderr_bytes"}) {
-    if (!value.contains(field)) continue;
-    const auto original = bytes(value.at(field));
-    size_t count = original.size();
-    std::string encoded = value.at(field);
-    const bool shell = reply == "ProjectShellResult";
-    size_t head = count, tail = 0;
-    while (encoded.size() > 18000) {
-      count /= 2;
-      head = shell ? count / 2 : count;
-      tail = shell ? count - head : 0;
-      // Keep text reads contiguous and do not split a UTF-8 codepoint.
-      if (!shell && text::valid_utf8(original))
-        while (head && (static_cast<unsigned char>(original[head]) & 0xc0) == 0x80) --head;
-      encoded = encode(original.substr(0, head) + original.substr(original.size() - tail));
+  // Budget encoded bytes, including JSON escaping or base64, for both streams
+  // and metadata. The same rule also fits a smaller overflow-recovery request.
+  for (size_t page_bytes = limit / 4;; page_bytes /= 2) {
+    auto value = json::Object(original_value);
+    for (const auto* field : {"bytes", "stdout_bytes", "stderr_bytes"}) {
+      if (!value.contains(field)) continue;
+      const auto original = bytes(value.at(field));
+      size_t count = original.size();
+      std::string encoded = value.at(field);
+      size_t head = count, tail = 0;
+      while (encoded.size() > page_bytes && count) {
+        count /= 2;
+        head = shell ? count / 2 : count;
+        tail = shell ? count - head : 0;
+        if (text::valid_utf8(original)) {
+          while (head && head < original.size() &&
+                 (static_cast<unsigned char>(original[head]) & 0xc0) == 0x80)
+            --head;
+          while (tail &&
+                 (static_cast<unsigned char>(original[original.size() - tail]) &
+                  0xc0) == 0x80)
+            --tail;
+        }
+        encoded = encode(original.substr(0, head) +
+                         original.substr(original.size() - tail));
+      }
+      value[field] = encoded;
+      if (head + tail == original.size()) continue;
+      if (shell) {
+        const auto prefix = std::string(field).substr(0, 6);
+        value[prefix + "_truncated"] = "true";
+        value[prefix + "_head_bytes"] = std::to_string(head);
+        value[prefix + "_tail_bytes"] = std::to_string(tail);
+      } else {
+        const auto offset = json::Get(value, "offset", "0");
+        const auto begin = json::UInt(json::String(offset, offset));
+        value["next_offset"] = json::Quote(std::to_string(begin + head));
+        value["eof"] = "false";
+      }
     }
-    value[field] = encoded;
-    if (head + tail == original.size()) continue;
-    if (shell) {
-      const auto prefix = std::string(field).substr(0, 6);
-      value[prefix + "_truncated"] = "true";
-      value[prefix + "_head_bytes"] = std::to_string(head);
-      value[prefix + "_tail_bytes"] = std::to_string(tail);
-    } else {
-      const auto offset = json::Get(value, "offset", "0");
-      const auto begin = json::UInt(json::String(offset, offset));
-      value["next_offset"] = json::Quote(std::to_string(begin + head));
-      value["eof"] = "false";
-    }
-  }
-  envelope["value"] = json::Encode(value);
-  if (json::Encode(envelope).size() > 58000 && reply == "ProjectShellResult") {
-    // A save can have thousands of changed files. Keep its outcome and totals
-    // here; project_inspect exposes the complete manifest without output loss.
-    const auto files = json::Array(json::Get(value, "changed_files", "[]"));
-    value["changed_files_count"] = std::to_string(files.size());
-    value["changed_files"] = "[]";
-    if (value.contains("save")) {
-      const auto save = json::Object(value.at("save"));
-      json::Members summary;
-      for (const auto* key : {"rev", "execution_rev", "op_id", "replayed"})
-        if (save.contains(key)) summary[key] = save.at(key);
-      value["save"] = json::Encode(summary);
-    }
-    value["hint"] = json::Quote("Use project_inspect for the complete changed-file manifest.");
+    value["hint"] =
+        json::Quote(shell ? "For more output, " + std::string(reference) +
+                                "; full_output_path holds the complete .stdout "
+                                "and .stderr files."
+                          : "Continue the same file read at next_offset; "
+                            "size_bytes is the full file size. "
+                            "Use project_copy to move files without reading "
+                            "them, or project_shell to examine large files.");
     envelope["value"] = json::Encode(value);
+    if (json::Encode(envelope).size() > limit && shell) {
+      // A save can have thousands of changed files. Keep its outcome and
+      // totals; the saved result and project_inspect expose the complete
+      // manifest.
+      const auto files = json::Array(json::Get(value, "changed_files", "[]"));
+      value["changed_files_count"] = std::to_string(files.size());
+      value["changed_files"] = "[]";
+      if (value.contains("save")) {
+        const auto save = json::Object(value.at("save"));
+        json::Members summary;
+        for (const auto* key : {"rev", "execution_rev", "op_id", "replayed"})
+          if (save.contains(key)) summary[key] = save.at(key);
+        value["save"] = json::Encode(summary);
+      }
+      value["hint"] = json::Quote(
+          json::Text(value, "hint") +
+          " Use project_inspect for the complete changed-file manifest.");
+      envelope["value"] = json::Encode(value);
+    }
+    const auto shaped = json::Encode(envelope);
+    // If metadata alone exceeds the cap, use the general saved-result view of
+    // the original receipt, never cut an already shaped page or its offsets.
+    if (shaped.size() <= limit) return shaped;
+    if (page_bytes <= 2) return ClipMiddle(raw, limit, reference);
   }
-  return json::Encode(envelope);
 }
 
 auto Tools::FileOperation(const std::string& conversation,

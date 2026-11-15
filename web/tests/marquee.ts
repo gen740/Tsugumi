@@ -151,3 +151,18 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
   assert.deepEqual([dbl(get(s.displayFrame(framed), 'x')), dbl(get(s.displayFrame(framed), 'y'))], [433, 447])
 }
 console.log('marquee behavior: passed')
+
+{
+  // Both drawing and Arrange consume the host rectangle, including its size;
+  // no default offsets or dimensions are chosen by either UI path.
+  const { s, near } = await setup()
+  s.layout = parse('{"flow":"topToBottom"}')
+  s.updateDisplayFrame(near, (f) => f.set('hidden', false))
+  const d = s.displayGeometries!.topToBottom!
+  Object.assign(d, { anchorX: 0.5, anchorY: 0.25, x: 71, y: 93, width: 411, height: 219 })
+  const size = s.geometry(near).size, at = s.placedPosition(near)
+  const expected = { x: at.x + size.width * 0.5 + 71, y: at.y + size.height * 0.25 + 93, width: 411, height: 219 }
+  assert.deepEqual(new Scene(s, []).frameRect(near), expected)
+  const frame = s.layoutScene([]).frames.find((f) => f.id === near)!
+  assert.deepEqual(frame, { id: near, ...expected })
+}

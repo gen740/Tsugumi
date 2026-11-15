@@ -4,6 +4,8 @@ import assert from 'node:assert/strict'
 import { parse, get, dbl } from '../src/shared/json'
 import { RPCFailure } from '../src/shared/rpc'
 import * as D from '../src/gen/tsugumi/data'
+import * as R from '../src/gen/tsugumi/rpc'
+import { cardIds } from './cardIds'
 
 const page = globalThis as Record<string, unknown>
 page.document ??= { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
@@ -13,7 +15,7 @@ page.EventSource ??= class { addEventListener() {} close() {} }
 const { ProjectSession } = await import('../src/model/session')
 
 const session = () => {
-  const s = new ProjectSession('/p', 'k', 'p')
+  const s = cardIds(new ProjectSession('/p', 'k', 'p'))
   s.project = parse('{"name":"t","canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}}')
   s.confirmedProject = parse('{"name":"t","canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}}')
   s.layout = parse('{}')
@@ -27,6 +29,41 @@ const session = () => {
 }
 const saveOnce = (s: unknown) => (s as { saveOnce(): Promise<void> }).saveOnce()
 const refused = new RPCFailure({ kind: D.FailureKind.invalid_document, diagnostic: 'layout.json: display b needs x, y, width and height' })
+
+// A person's drop survives both host validation and core save failures, then a retry.
+for (const failure of ['validation', 'save']) {
+  const s = session(), at = { x: 320, y: 240 }
+  let refuse = true
+  s.layoutHost.validate = async json => { if (refuse && failure === 'validation') throw refused; return json }
+  s.client = {
+    save: async (baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[]) => {
+      if (refuse) throw refused
+      const delta = Object.assign(new R.DocumentDeltaT(), { baseRev, rev: baseRev + 1n, opId, origin })
+      for (const change of changes) {
+        if (change.valueType === R.DocumentChangeValue.SetLayout) delta.layoutJson = (change.value as R.SetLayoutT).json
+        if (change.valueType === R.DocumentChangeValue.SetProject) delta.projectJson = (change.value as R.SetProjectT).json
+        if (change.valueType === R.DocumentChangeValue.PutDefinition) {
+          delta.definitionsUpsert.push(Object.assign(new R.DefinitionT(), change.value))
+        }
+      }
+      assert.deepEqual({ x: dbl(get(parse(String(delta.layoutJson)), 'cards', 'dropped', 'x')),
+        y: dbl(get(parse(String(delta.layoutJson)), 'cards', 'dropped', 'y')) }, at, 'the retry sends the drop position')
+      return { rev: delta.rev, delta }
+    },
+  } as never
+  const k = await s.addCard('draft', [], at, 'dropped')
+  await saveOnce(s)
+  assert.ok(s.saveError, failure)
+  assert.ok(s.dirty)
+  assert.ok(s.instance(k), 'the unsaved Card stays on the canvas')
+  assert.deepEqual(s.position(k), at, 'a failed save does not move the Card')
+  refuse = false
+  await saveOnce(s)
+  assert.equal(s.saveError, undefined)
+  assert.ok(!s.dirty)
+  assert.ok(s.instance(k), 'the saved Card stays on the canvas')
+  assert.deepEqual(s.position(k), at, 'a successful retry does not move the Card')
+}
 
 // Arrange gives a frame still drawn beside its Card the whole frame the host asks for.
 {

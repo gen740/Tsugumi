@@ -23,6 +23,10 @@ HostStore::HostStore(const std::filesystem::path& directory)
       "CREATE TABLE IF NOT EXISTS providers(conversation TEXT PRIMARY KEY, "
       "json TEXT NOT NULL);");
   db.exec(
+      "CREATE TABLE IF NOT EXISTS save_bases(project TEXT NOT NULL, rev TEXT "
+      "NOT NULL, "
+      "snapshot TEXT NOT NULL, files TEXT NOT NULL, PRIMARY KEY(project,rev))");
+  db.exec(
       "CREATE TABLE IF NOT EXISTS save_preparations(operation TEXT PRIMARY "
       "KEY, arguments TEXT NOT NULL, comments TEXT NOT NULL)");
   db.exec(
@@ -46,7 +50,7 @@ HostStore::HostStore(const std::filesystem::path& directory)
       "TEXT NOT NULL);"
       "CREATE TABLE IF NOT EXISTS skill_catalogs(conversation TEXT PRIMARY "
       "KEY, path TEXT NOT NULL, folders TEXT NOT NULL);"
-      "CREATE TABLE IF NOT EXISTS model_lists(id TEXT PRIMARY KEY, models "
-      "TEXT NOT NULL);");
+      "CREATE TABLE IF NOT EXISTS model_lists(id TEXT NOT NULL, connection "
+      "TEXT NOT NULL, models TEXT NOT NULL, PRIMARY KEY(id,connection));");
 }
 }  // namespace tsugumi::host

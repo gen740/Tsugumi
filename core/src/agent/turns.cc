@@ -489,10 +489,12 @@ auto Turns::Start(const std::string& id, const std::string& turn,
   tx.commit();
   // Finished jobs never need the mutex again. Join before replacing one.
   if (auto found = jobs.find(id); found != jobs.end()) jobs.erase(found);
+  auto& context = context_usage[id];
+  if (!context) context = std::make_shared<ContextUsage>();
   running.insert(id);
   ThoughtsFor(id)->TurnStarted();
   jobs[id] = std::make_shared<std::jthread>(
-      [this, id, turn = active_turn, config, role = c.role,
+      [this, id, turn = active_turn, config, context, role = c.role,
        messages = std::move(messages), pending_frame = std::move(pending_frame),
        pending_index, action](std::stop_token stop) mutable {
         std::string final_state = "finished";
@@ -518,7 +520,8 @@ auto Turns::Start(const std::string& id, const std::string& turn,
             messages[pending_index].content = {std::move(block)};
             std::lock_guard lock(mutex);
             sql::Transaction tx(conversations->ConversationDatabase(id));
-            conversations->SaveMessages(id, messages);
+            conversations->SaveMessages(
+                id, messages, ConversationStore::SaveMode::PrepareSend);
             auto pending = conversations->ConversationDatabase(id).prepare(
                 "DELETE FROM pending_sends WHERE conversation=?");
             if (task.empty()) pending.bind(1, id).run();
@@ -562,12 +565,16 @@ auto Turns::Start(const std::string& id, const std::string& turn,
                   "DELETE FROM pending_sends WHERE conversation=?");
               pending.bind(1, id).run();
             }
-          } else if (action == A::Action::Compact)
-            Runtime().Compact(config, messages, stop, hooks);
-          else {
+          } else if (action == A::Action::Compact) {
+            Runtime().Compact(config, System(role == "guide"), messages,
+                              dependencies.specs(role == "guide"), stop, hooks,
+                              context.get());
+            *context = {};
+          } else {
             const auto result =
                 Runtime().Run(config, System(role == "guide"), messages,
-                              dependencies.specs(role == "guide"), stop, hooks);
+                              dependencies.specs(role == "guide"), stop, hooks,
+                              context.get());
             if (result.outcome == RunOutcome::Cancelled)
               final_state = "cancelled";
             else if (result.outcome == RunOutcome::Failed)

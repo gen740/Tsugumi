@@ -7,6 +7,7 @@
 #include <chrono>
 #include <utility>
 
+#include "agent/context.hh"
 #include "agent/json.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
@@ -269,21 +270,23 @@ auto ConversationStore::AuthorizeHistory(const std::string& id) -> void {
 }
 
 auto ConversationStore::SaveMessages(const std::string& id,
-                                     const std::vector<Message>& messages)
-    -> void {
+                                     const std::vector<Message>& messages,
+                                     SaveMode mode) -> void {
   std::lock_guard lock(gate.mutex);
-  auto before = GetConversation(id);
-  const auto previous = ParseMessages(before.messages);
-  if (messages.size() < previous.size()) {
-    size_t retained = 0;
-    while (retained < messages.size() && retained < previous.size() &&
-           SerializeMessages({messages[messages.size() - retained - 1]}) ==
-               SerializeMessages({previous[previous.size() - retained - 1]}))
-      ++retained;
-    const std::vector<Message> removed(previous.begin(),
-                                       previous.end() - retained);
-    auto archive =
-        ConversationDatabase(id).prepare("INSERT INTO archives VALUES(?,?)");
+  auto& database = ConversationDatabase(id);
+  std::optional<sql::Transaction> transaction;
+  if (sqlite3_get_autocommit(database.get())) transaction.emplace(database);
+  const auto previous = ParseMessages(GetConversation(id).messages);
+  const auto serialized = scrub(SerializeMessages(messages));
+  // Compare the same persisted representation on both sides. Scrubbing also
+  // orders JSON objects in providerContent; that is not a history replacement.
+  // Preparing a send expands the provisional request in place. Only runtime
+  // replacements remove conversation history that belongs in the archive.
+  const auto removed = mode == SaveMode::PrepareSend
+                           ? std::vector<Message>{}
+                           : RemovedMessages(previous, ParseMessages(serialized));
+  if (!removed.empty()) {
+    auto archive = database.prepare("INSERT INTO archives VALUES(?,?)");
     archive.bind(1, id).bind(2, scrub(SerializeMessages(removed))).run();
   }
   for (const auto& message : messages)
@@ -292,10 +295,11 @@ auto ConversationStore::SaveMessages(const std::string& id,
         RememberResource(id, resource);
   auto q = ConversationDatabase(id).prepare(
       "UPDATE conversations SET messages=?,updated=? WHERE id=?");
-  q.bind(1, scrub(SerializeMessages(messages)))
+  q.bind(1, serialized)
       .bind(2, Now())
       .bind(3, id)
       .run();
+  if (transaction) transaction->commit();
 }
 
 auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
@@ -349,7 +353,7 @@ auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
       "SELECT parent_call,task,messages,result,state,spec,anchor,archive FROM "
       "helpers WHERE conversation=? ORDER BY rowid");
   helper.bind(1, c.id);
-  while (helper.step())
+  while (helper.step()) {
     helpers.push_back(json::Encode(json::Members{
         {"call_id", json::Quote(helper.text(0))},
         {"task", std::to_string(helper.i64(1))},
@@ -362,6 +366,7 @@ auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
         {"streaming",
          json::Quote(helper_streams[{
              helper.text(0), static_cast<uint32_t>(helper.i64(1))}])}}));
+  }
   std::vector<std::string> tools;
   auto q = ConversationDatabase(c.id).prepare(
       "SELECT id,result,error,state FROM receipts WHERE "

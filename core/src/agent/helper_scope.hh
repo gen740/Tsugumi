@@ -24,6 +24,17 @@ public:
   static auto Validate(const json::Members &task, bool allow_unscoped) -> void;
   auto Check(const std::string &tool, const json::Members &args,
              const Reader &read) const -> void;
+  auto ExpandSave(json::Members args, const Reader& read) const
+      -> json::Members;
+  auto ProjectPrefix(const std::string& path, const Reader& read) const
+      -> std::string;
+  auto SafeCollision(const std::string& message, const Reader& read) const
+      -> bool;
+  auto CheckBindings(const Reader& before, const Reader& now) const -> void;
+  auto Graph(const std::string& text, const std::string& prefix) const
+      -> std::string;
+  auto SaveResult(const std::string& result, const Reader& read) const
+      -> std::string;
   auto Inspect(const std::string &result, const Reader &read) const
       -> std::string;
   auto Completed(const std::string &tool, const json::Members &args,

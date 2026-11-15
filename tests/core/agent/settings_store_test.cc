@@ -1,9 +1,20 @@
 // The service uses the same explicit input/reply tables with a secret-store
-// double. No platform Keychain, credential file or listener is involved.
+// double. No platform Keychain or credential file is involved. Context-budget
+// scenarios below use an external streaming HTTP fixture.
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <thread>
+
 #include "../agent_fixture_server.hh"
+#include "agent/json.hh"
+#include "agent/runtime.hh"
+#include "host/models.hh"
 #include "host/settings.hh"
+#include "host/store.hh"
+
+extern const unsigned char tsugumi_agent_settings[];
+extern const unsigned long tsugumi_agent_settings_size;
 
 namespace tsugumi::test {
 namespace {
@@ -397,5 +408,567 @@ TEST_F(HostPolicyTest, GuideAndSummaryUseSettingsAndHostCatalog) {
   Set("agent.provider", "fixture");
   EXPECT_EQ(service->ModelSelection("desktop", "summary").model, "fixture");
 }
+
+// These requests use the real runtime and external streaming HTTP provider.
+class ContextBudget : public testing::Test {
+ protected:
+  ModelServer model;
+  agent::ProviderConfig config;
+  agent::ContextUsage context;
+  std::vector<agent::Message> messages;
+  std::vector<std::string> events;
+  agent::RuntimeHooks hooks;
+  ContextBudget() {
+    config.base_url = model.URL();
+    config.auth = agent::ProviderAuth::None;
+    config.model = "fixture";
+    config.context_limit_tokens = 200000;
+    hooks.authorize_context = [](const auto&) {};
+    hooks.checkpoint = [](const auto&) {};
+    hooks.event = [this](const auto& event) { events.push_back(event.kind); };
+  }
+  auto Add(std::string text, std::string role = "user") -> void {
+    agent::ContentBlock block;
+    block.text = std::move(text);
+    agent::Message message;
+    message.role = std::move(role);
+    message.content.push_back(std::move(block));
+    messages.push_back(std::move(message));
+  }
+  auto Run(std::string_view system = "system",
+           const std::vector<agent::ToolSpec>& tools = {}) -> void {
+    const auto result = agent::Runtime().Run(config, system, messages, tools,
+                                             {}, hooks, &context);
+    ASSERT_EQ(result.outcome, agent::RunOutcome::Finished) << result.error;
+  }
+  auto Compacted() -> bool {
+    return std::find(events.begin(), events.end(), "compacted") != events.end();
+  }
+};
+
+TEST_F(ContextBudget, ConsecutiveRequestsHaveByteIdenticalCachedPrefixes) {
+  for (const auto api : {agent::ProviderAPI::AnthropicMessages,
+                         agent::ProviderAPI::OpenAIResponses}) {
+    config.api = api;
+    messages.clear();
+    context = {};
+    Add("Keep the original request and its stable identifiers.");
+    for (int step = 1; step <= 2; ++step) {
+      const auto id = "stable-call-" + std::to_string(step);
+      if (api == agent::ProviderAPI::AnthropicMessages) {
+        model.Queue(AnthropicTool(id, "read", "{}"));
+      } else {
+        const auto item = "{\"type\":\"function_call\",\"id\":\"fc_" + id +
+                          "\",\"call_id\":\"" + id +
+                          "\",\"name\":\"read\",\"arguments\":\"{}\"}";
+        model.Queue(
+            "event: response.output_item.added\ndata: "
+            "{\"type\":\"response.output_item.added\",\"output_index\":0,"
+            "\"item\":" +
+            item +
+            "}\n\nevent: response.completed\ndata: "
+            "{\"type\":\"response.completed\",\"response\":{\"output\":[" +
+            item + "]}}\n\n");
+      }
+    }
+    model.Queue(api == agent::ProviderAPI::AnthropicMessages
+                    ? AnthropicText("done")
+                    : ResponsesText("done"));
+    hooks.execute_tool = [](const auto&, auto) {
+      return agent::ToolResult{"stable result", false, {}, {}};
+    };
+    const auto start = model.Requests().size();
+    Run("stable system", {{"z_read", "last", "{}"}, {"read", "read", "{}"}});
+    const auto requests = model.Requests();
+    ASSERT_EQ(requests.size(), start + 3);
+    for (size_t step = start; step < start + 2; ++step) {
+      const auto first = agent::json::Object(requests[step]);
+      const auto second = agent::json::Object(requests[step + 1]);
+      const auto field =
+          api == agent::ProviderAPI::AnthropicMessages ? "messages" : "input";
+      const auto prefix = agent::json::Get(first, field);
+      const auto marker = agent::json::Quote(field) + ":" + prefix;
+      const auto at = requests[step].find(marker);
+      ASSERT_NE(at, std::string::npos);
+      const auto end = at + marker.size() - 1;
+      EXPECT_EQ(requests[step + 1].substr(0, end),
+                requests[step].substr(0, end));
+      for (const auto* key : {"tools", "system", "instructions", "model"})
+        EXPECT_EQ(agent::json::Get(first, key), agent::json::Get(second, key));
+      if (api == agent::ProviderAPI::AnthropicMessages)
+        EXPECT_EQ(agent::json::Text(
+                      agent::json::Object(first.at("cache_control")), "type"),
+                  "ephemeral");
+    }
+  }
+}
+
+TEST_F(ContextBudget, ProviderCatalogPreservesReportedWindowsAndMissingValues) {
+  model.QueueHTTP(R"({"data":[{"id":"reported","max_input_tokens":1000000},{"id":"absent"},{"id":"null","max_input_tokens":null}]})");
+  const auto catalog = agent::ListModels(config, {});
+  ASSERT_EQ(catalog.size(), 3u);
+  EXPECT_EQ(catalog[0].context_window_tokens, 1000000u);
+  EXPECT_EQ(catalog[1].context_window_tokens, 0u);
+  EXPECT_EQ(catalog[2].context_window_tokens, 0u);
+}
+
+TEST_F(ContextBudget, ChatGPTCatalogUsesTheAccountsActiveWindow) {
+  config.auth = agent::ProviderAuth::ChatGPT;
+  config.credential = "TEST_TOKEN";
+  model.QueueHTTP(R"({"models":[{"slug":"gpt-6.1-sol","display_name":"Sol","visibility":"list","context_window":500000,"max_context_window":1050000},{"slug":"other","visibility":"list","context_window":null,"max_context_window":272000},{"slug":"hidden","visibility":"hide","context_window":1000000}]})");
+  const auto catalog = agent::ListModels(config, {});
+  ASSERT_EQ(catalog.size(), 2u);
+  EXPECT_EQ(catalog[0].id, "gpt-6.1-sol");
+  EXPECT_EQ(catalog[0].context_window_tokens, 500000u);
+  EXPECT_EQ(catalog[1].context_window_tokens, 272000u);
+}
+
+TEST_F(ContextBudget, EscapedBytesDoNotTriggerCompactionAndUsageSurvivesTurns) {
+  // Quoted tool/code-like text exceeds the old 180KB storage threshold.
+  std::string quoted;
+  for (int i = 0; i < 30000; ++i) quoted += "\"\\\n";
+  for (int i = 0; i < 6; ++i) Add(quoted.substr(0, 15000));
+  ASSERT_GT(agent::SerializeMessages(messages).size(), 180000u);
+  model.Queue(AnthropicText(std::string(110000, 'a'), 1000));
+  Run();
+  ASSERT_FALSE(Compacted());
+  // A full-text estimate now exceeds the budget. The measured request plus
+  // only its appended assistant/user messages still fits comfortably.
+  Add("continue");
+  model.Queue(AnthropicText("done", 5000));
+  Run();
+  EXPECT_FALSE(Compacted());
+  EXPECT_EQ(model.Requests().size(), 2u);
+  EXPECT_EQ(context.input_tokens, 5000u);
+}
+
+TEST_F(ContextBudget,
+       SummaryKeepsCompleteRecentJapaneseResultsWithoutStreamingIt) {
+  config.context_limit_tokens = 2000;
+  Add("read");
+  auto stream = AnthropicTool("call-1", "read", "{}");
+  const auto at = stream.find("\"input_tokens\":12");
+  ASSERT_NE(at, std::string::npos);
+  stream.replace(at, std::string("\"input_tokens\":12").size(),
+                 "\"input_tokens\":1500");
+  model.Queue(stream);
+  model.Queue(AnthropicText("INTERNAL_HANDOFF"));
+  model.Queue(AnthropicText("done"));
+  std::string text;
+  for (int i = 0; i < 250; ++i) text += "実験";
+  hooks.execute_tool = [&](const auto&, auto) {
+    return agent::ToolResult{text, false, {}, {}};
+  };
+  std::string visible;
+  hooks.event = [&](const auto& event) {
+    events.push_back(event.kind);
+    if (event.kind == "text") visible += event.text;
+  };
+  Run("system", {{"read", "read", "{}"}});
+  ASSERT_TRUE(Compacted());
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 3u);
+  EXPECT_EQ(visible, "done");
+  EXPECT_EQ(JsonString(requests[2], "/messages/2/content/0/content"), text);
+  EXPECT_EQ(messages[2].content[0].text, text);
+  const auto summary = agent::json::Object(requests[1]);
+  const auto normal = agent::json::Object(requests[0]);
+  EXPECT_EQ(summary.at("system"), normal.at("system"));
+  EXPECT_EQ(summary.at("tools"), normal.at("tools"));
+  EXPECT_NE(requests[1].find("Want:"), std::string::npos);
+}
+
+TEST_F(ContextBudget, ReportedInputPlusNewMessagesCompactsBeforeRefusal) {
+  for (int i = 0; i < 6; ++i) Add("earlier decision");
+  model.Queue(AnthropicText(std::string(2000, 'x'), 199000));
+  Run();
+  ASSERT_FALSE(Compacted());
+  Add("continue");
+  model.Queue(AnthropicText("handoff", 3000));
+  model.Queue(AnthropicText("done", 4000));
+  Run();
+  ASSERT_TRUE(Compacted());
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 3u);
+  EXPECT_NE(requests[1].find(
+                "Create a short handoff for the next model continuation"),
+            std::string::npos);
+  EXPECT_EQ(context.input_tokens, 4000u);  // Summary usage is not the baseline.
+}
+
+TEST_F(ContextBudget,
+       JapaneseWithoutUsageIsConservativeAndCountsSystemAndTools) {
+  config.context_limit_tokens = 10000;
+  std::string japanese;
+  for (int i = 0; i < 300; ++i) japanese += "実験";
+  EXPECT_EQ(agent::EstimateTextTokens(japanese), japanese.size());
+  for (int i = 0; i < 6; ++i) Add(japanese);
+  model.Queue(AnthropicText("handoff"));
+  model.Queue(AnthropicText("done", 0));
+  Run();
+  EXPECT_TRUE(Compacted());
+  ASSERT_EQ(model.Requests().size(), 2u);
+  // A restored transcript has no valid request baseline. System/tools also
+  // occupy the window, even though SerializeMessages omits both of them.
+  context = {};
+  events.clear();
+  for (int i = 0; i < 3; ++i) Add(japanese);
+  model.Queue(AnthropicText("handoff"));
+  model.Queue(AnthropicText("done"));
+  Run(std::string(1500, 's'), {{"tool", std::string(1500, 't'), "{}"}});
+  EXPECT_TRUE(Compacted());
+}
+
+TEST_F(ContextBudget,
+       MissingUsageFitsAndModelChangesInvalidateMeasuredBaseline) {
+  config.context_limit_tokens = 10000;
+  for (int i = 0; i < 6; ++i) Add(std::string(1000, 'x'));
+  model.Queue(AnthropicText("first", 0));
+  Run();
+  EXPECT_FALSE(Compacted());
+  EXPECT_EQ(context.input_tokens, 0u);
+  Add("continue");
+  model.Queue(AnthropicText("second", 1));
+  Run();
+  config.model = "another-model";
+  Add("continue");
+  model.Queue(AnthropicText("handoff"));
+  model.Queue(AnthropicText("done"));
+  Run(std::string(6000, 's'));
+  EXPECT_TRUE(Compacted());
+}
+
+TEST_F(ContextBudget,
+       OldResultsMoveInBatchesAndTheLatestResultAndRecordSurvive) {
+  config.context_limit_tokens = 100000;
+  Add("inspect all records");
+  for (int i = 1; i <= 15; ++i) {
+    auto stream = AnthropicTool("inspect-" + std::to_string(i), "inspect",
+                                "{\"card\":\"a\"}");
+    const std::string marker = "\"input_tokens\":12";
+    stream.replace(stream.find(marker), marker.size(), "\"input_tokens\":0");
+    model.Queue(std::move(stream));
+  }
+  model.Queue(AnthropicText("done", 0));
+  hooks.execute_tool = [](const auto& call, auto) {
+    return agent::ToolResult{
+        call.id + " HEAD " + std::string(40000, 'x') + " TAIL " + call.id,
+        false,
+        {},
+        {}};
+  };
+  Run("system", {{"inspect", "Inspect", "{}"}});
+  EXPECT_FALSE(Compacted());
+  EXPECT_GT(context.omitted_before, 0u);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 16u);
+  size_t rewrites = 0;
+  for (size_t i = 1; i < requests.size(); ++i) {
+    const auto latest =
+        JsonString(requests[i],
+                   "/messages/" + std::to_string(2 * i) + "/content/0/content");
+    EXPECT_TRUE(latest.ends_with("TAIL inspect-" + std::to_string(i)));
+    const auto before =
+        agent::json::Get(agent::json::Object(requests[i - 1]), "messages");
+    const auto after =
+        agent::json::Get(agent::json::Object(requests[i]), "messages");
+    if (!after.starts_with(before.substr(0, before.size() - 1))) ++rewrites;
+  }
+  EXPECT_GT(rewrites, 0u);
+  EXPECT_LT(rewrites, 7u);  // Rewriting each step would defeat prefix caching.
+  const auto omitted =
+      JsonString(requests.back(), "/messages/2/content/0/content");
+  EXPECT_NE(omitted.find("inspect {\"card\":\"a\"}"), std::string::npos);
+  EXPECT_NE(omitted.find("tool_result_read"), std::string::npos);
+  for (const auto& message : messages)
+    for (const auto& block : message.content)
+      if (block.type == "tool_result") EXPECT_GT(block.text.size(), 40000u);
+  const auto cut = context.omitted_before;
+  Add("continue");
+  model.Queue(AnthropicText("continued", 0));
+  Run("system", {{"inspect", "Inspect", "{}"}});
+  EXPECT_EQ(context.omitted_before, cut);
+}
+
+TEST_F(ContextBudget, CompactionKeepsRecentTokensAndReplaysSignedThinking) {
+  config.context_limit_tokens = 100000;
+  config.effort = "max";
+  for (int i = 0; i < 6; ++i) Add(std::string(10000, 'x'));
+  for (int i = 0; i < 30; ++i) Add(std::string(180, 'r'));
+  messages[1].role = "assistant";
+  messages[1].provider_content =
+      R"([{"type":"thinking","thinking":"retained reasoning","signature":"signed-block"},{"type":"text","text":"original answer"}])";
+  const auto original = agent::SerializeMessages(messages);
+  std::string visible;
+  hooks.event = [&](const auto& event) {
+    events.push_back(event.kind);
+    if (event.kind == "text" || event.kind == "toolInput")
+      visible += event.text;
+  };
+  model.Queue(AnthropicText("INTERNAL_HANDOFF"));
+  agent::Runtime().Compact(config, "unchanged system", messages,
+                           {{"inspect", "Inspect", "{}"}}, {}, hooks, &context);
+  EXPECT_TRUE(Compacted());
+  EXPECT_TRUE(visible.empty());
+  EXPECT_GT(messages.size(), 20u);  // Many small recent messages, not four.
+  EXPECT_TRUE(messages.front().context_summary);
+  EXPECT_EQ(messages.back().content[0].text, std::string(180, 'r'));
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 1u);
+  EXPECT_NE(requests[0].find("signed-block"), std::string::npos);
+  EXPECT_NE(requests[0].find("unchanged system"), std::string::npos);
+  EXPECT_NE(requests[0].find("\"name\":\"inspect\""), std::string::npos);
+  EXPECT_NE(requests[0].find("Want:"), std::string::npos);
+  EXPECT_EQ(JsonUInt(requests[0], "/max_tokens"), 2048u);
+  EXPECT_EQ(JsonString(requests[0], "/output_config/effort"), "max");
+  // A failed continuation leaves the durable transcript untouched.
+  const auto saved = agent::SerializeMessages(messages);
+  model.QueueHTTP(R"({"error":{"message":"fixture refusal"}})", 400);
+  EXPECT_THROW(
+      agent::Runtime().Compact(config, "unchanged system", messages,
+                               {{"inspect", "Inspect", "{}"}}, {}, hooks),
+      agent::ProviderError);
+  EXPECT_EQ(agent::SerializeMessages(messages), saved);
+  EXPECT_NE(original.find("signed-block"), std::string::npos);
+}
+
+TEST_F(ContextBudget, OverLimitConversationSummarizesOnlyTheFittingPast) {
+  config.context_limit_tokens = 128000;
+  for (int i = 0; i < 3; ++i) Add(std::string(20000, 'p'));
+  agent::ContentBlock call;
+  call.type = "tool_use";
+  call.id = "past-call";
+  call.name = "inspect";
+  messages.push_back(
+      {"assistant",
+       {call},
+       {},
+       R"([{"type":"thinking","thinking":"past reasoning","signature":"past-signature"},{"type":"tool_use","id":"past-call","name":"inspect","input":{}}])",
+       agent::ProviderAPI::AnthropicMessages});
+  call.type = "tool_result";
+  call.text = "past result";
+  messages.push_back(
+      {"user", {call}, {}, {}, agent::ProviderAPI::AnthropicMessages});
+  const auto recent = "LATEST_REQUEST " + std::string(80000, 'r');
+  Add(recent);
+  std::jthread provider([&](std::stop_token stop) {
+    size_t next = 1;
+    while (!stop.stop_requested()) {
+      if (!model.WaitForRequests(next, std::chrono::milliseconds(100)))
+        continue;
+      const auto request = model.Requests()[next++ - 1];
+      // A real provider refuses the old whole-conversation summary too.
+      if (request.size() >= config.context_limit_tokens)
+        model.QueueHTTP(R"({"error":{"message":"prompt is too long"}})", 400);
+      else if (request.find("Create a short handoff") != std::string::npos)
+        model.Queue(AnthropicText("Want: continue. Done: past inspection."));
+      else
+        model.Queue(AnthropicText("done"));
+    }
+  });
+  const auto result =
+      agent::Runtime().Run(config, "system", messages,
+                           {{"inspect", "Inspect", "{}"}}, {}, hooks, &context);
+  provider.request_stop();
+  provider.join();
+  ASSERT_EQ(result.outcome, agent::RunOutcome::Finished) << result.error;
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 2u);
+  EXPECT_LT(requests[0].size(), config.context_limit_tokens);
+  EXPECT_LT(requests[1].size(), config.context_limit_tokens);
+  EXPECT_EQ(requests[0].find("LATEST_REQUEST"), std::string::npos);
+  EXPECT_NE(requests[0].find("past-signature"), std::string::npos);
+  EXPECT_EQ(JsonString(requests[0], "/messages/3/content/1/id"), "past-call");
+  EXPECT_EQ(JsonString(requests[0], "/messages/4/content/0/tool_use_id"),
+            "past-call");
+  EXPECT_EQ(messages[1].content[0].text, recent);
+  EXPECT_EQ(JsonString(requests[1], "/messages/1/content/0/text"), recent);
+}
+
+TEST_F(ContextBudget, BoundedSummariesKeepParallelResultsWithSignedThinking) {
+  config.context_limit_tokens = 10000;
+  Add(std::string(5000, 'p'));
+  agent::ContentBlock first, second;
+  first.type = second.type = "tool_use";
+  first.id = "first";
+  second.id = "second";
+  first.name = second.name = "inspect";
+  const auto thinking =
+      "[{\"type\":\"thinking\",\"thinking\":\"" + std::string(4500, 't') +
+      R"(","signature":"parallel-signature"},{"type":"tool_use","id":"first","name":"inspect","input":{}},{"type":"tool_use","id":"second","name":"inspect","input":{}}])";
+  messages.push_back({"assistant",
+                      {first, second},
+                      {},
+                      thinking,
+                      agent::ProviderAPI::AnthropicMessages});
+  first.type = second.type = "tool_result";
+  first.text = second.text = std::string(1000, 'x');
+  for (const auto& block : {first, second})
+    messages.push_back(
+        {"user", {block}, {}, {}, agent::ProviderAPI::AnthropicMessages});
+  Add(std::string(6000, 'r'));
+  model.Queue(AnthropicText("first handoff"));
+  model.Queue(AnthropicText("second handoff"));
+  model.Queue(AnthropicText("done"));
+  Run("system", {{"inspect", "Inspect", "{}"}});
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 3u);
+  EXPECT_EQ(requests[0].find("parallel-signature"), std::string::npos);
+  EXPECT_NE(requests[1].find("parallel-signature"), std::string::npos);
+  EXPECT_EQ(JsonString(requests[1], "/messages/1/content/1/id"), "first");
+  EXPECT_EQ(JsonString(requests[1], "/messages/1/content/2/id"), "second");
+  EXPECT_EQ(JsonString(requests[1], "/messages/2/content/0/tool_use_id"),
+            "first");
+  EXPECT_EQ(JsonString(requests[1], "/messages/3/content/0/tool_use_id"),
+            "second");
+  for (const auto& request : requests)
+    EXPECT_LT(request.size(), config.context_limit_tokens);
+  EXPECT_EQ(messages[1].content[0].text, std::string(6000, 'r'));
+}
+
+TEST_F(ContextBudget, OneOversizedMessageFailsClearlyWithoutSendingOrRetrying) {
+  config.context_limit_tokens = 10000;
+  Add("Earlier history cannot make an oversized new request fit.");
+  Add(std::string(12000, 'x'));
+  const auto original = agent::SerializeMessages(messages);
+  const auto result =
+      agent::Runtime().Run(config, "system", messages, {}, {}, hooks, &context);
+  EXPECT_EQ(result.outcome, agent::RunOutcome::Failed);
+  EXPECT_EQ(result.error, "the conversation no longer fits the model's context");
+  EXPECT_TRUE(model.Requests().empty());
+  EXPECT_EQ(agent::SerializeMessages(messages), original);
+}
+
+TEST_F(ContextBudget, OversizedToolExchangeFailsAfterCappingWithoutRetrying) {
+  config.context_limit_tokens = 10000;
+  agent::ContentBlock call;
+  call.type = "tool_use";
+  call.id = "large-result";
+  call.name = "inspect";
+  messages.push_back({"assistant", {call}, {}, {},
+                      agent::ProviderAPI::AnthropicMessages});
+  call.type = "tool_result";
+  call.text = std::string(100000, 'x');
+  messages.push_back({"user", {call}, {}, {},
+                      agent::ProviderAPI::AnthropicMessages});
+  const auto original = agent::SerializeMessages(messages);
+  const auto result = agent::Runtime().Run(
+      config, "system", messages, {{"inspect", "Inspect", "{}"}}, {}, hooks,
+      &context);
+  EXPECT_EQ(result.outcome, agent::RunOutcome::Failed);
+  EXPECT_EQ(result.error, "the conversation no longer fits the model's context");
+  EXPECT_TRUE(model.Requests().empty());
+  EXPECT_EQ(agent::SerializeMessages(messages), original);
+}
+
+TEST(HostContextWindow, CatalogWinsAndEveryDefaultHasAModelWindow) {
+  TemporaryDirectory directory;
+  EXPECT_EQ(
+      host::Models::ContextWindowTokens(directory.path, "openai", "unknown"),
+      128000u);
+  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "openai",
+                                              "gpt-6.1-sol"),
+            1050000u);
+  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "anthropic",
+                                              "claude-sonnet-5-5"),
+            1000000u);
+  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "anthropic",
+                                              "claude-opus-4-5-20251101"),
+            200000u);
+  const auto embedded = agent::json::Object(std::string_view(
+      reinterpret_cast<const char*>(tsugumi_agent_settings), tsugumi_agent_settings_size));
+  const auto options = agent::json::Object(agent::json::Get(embedded, "modelOptions"));
+  const auto connections = agent::json::Object(agent::json::Get(options, "connections"));
+  for (const auto& [provider, raw] : connections)
+    for (const auto& group : agent::json::Array(
+             agent::json::Get(agent::json::Object(raw), "effort")))
+      for (const auto& id : agent::json::Array(
+               agent::json::Get(agent::json::Object(group), "models"))) {
+        const auto name = agent::json::String(id);
+        EXPECT_GT(host::Models::ContextWindowTokens(directory.path, provider, name),
+                  128000u) << name;
+      }
+  host::HostStore home(directory.path);
+  auto& db = home.db;
+  auto insert = db.prepare("INSERT INTO model_lists VALUES(?,?,?)");
+  insert.bind(1, "fixture")
+      .bind(2, host::Models::CatalogConnection("fixture", "desktop"))
+      .bind(3, R"([{"id":"fixture-model","contextWindowTokens":100000}])")
+      .run();
+  auto secrets = std::make_unique<MemorySecrets>();
+  secrets->values["desktop:anthropic"] = "TEST_KEY";
+  secrets->values["desktop:openai"] = "TEST_KEY";
+  host::Settings settings(
+      directory.path, [](const auto&, const auto&) {},
+      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      std::move(secrets), host::Settings::KeyStorage::Host);
+  EXPECT_EQ(settings.Resolve({}).context_limit_tokens,
+            1000000u - 32768u - 50000u);
+  EXPECT_EQ(settings.Resolve({{"provider_id", Quote("openai")}}).context_limit_tokens,
+            1050000u - 32768u - 52500u);
+  EXPECT_EQ(settings.Resolve({{"provider_id", Quote("openai")},
+                              {"model", Quote("unknown")}}).context_limit_tokens,
+            128000u - 32768u - 6400u);
+  auto catalog = db.prepare("INSERT INTO model_lists VALUES(?,?,?)");
+  catalog.bind(1, "anthropic")
+      .bind(2, host::Models::CatalogConnection("anthropic", "desktop"))
+      .bind(3, R"([{"id":"claude-sonnet-5-5","contextWindowTokens":100000}])")
+      .run();
+  EXPECT_EQ(settings.Resolve({}).context_limit_tokens,
+            100000u - 32768u - 5000u);
+  const auto config = settings.Resolve(
+      {{"provider_id", Quote("fixture")}, {"model", Quote("fixture-model")}});
+  EXPECT_EQ(config.context_limit_tokens, 100000u - 32768u - 5000u);
+  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "fixture",
+                                              "fixture-model"),
+            100000u);
+}
+
+TEST(HostContextWindow, ReportedWindowsBelongToTheSelectedConnection) {
+  TemporaryDirectory directory;
+  host::HostStore home(directory.path);
+  auto secrets = std::make_unique<MemorySecrets>();
+  secrets->values["desktop:anthropic"] = "TEST_KEY";
+  host::Settings settings(
+      directory.path, [](const auto&, const auto&) {},
+      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      std::move(secrets), host::Settings::KeyStorage::Host);
+  for (const auto* provider : {"anthropic", "chatgpt"})
+    for (const auto* profile : {"desktop", "web"})
+      for (const auto* account : {"first", "second"}) {
+        const auto window =
+            std::string_view(account) == "first" ? 1000000u : 128000u;
+        auto insert = home.db.prepare("INSERT INTO model_lists VALUES(?,?,?)");
+        insert.bind(1, provider)
+            .bind(2, host::Models::CatalogConnection(provider, profile, account,
+                                                     account))
+            .bind(3, "[{\"id\":\"shared-model\",\"contextWindowTokens\":" +
+                         std::to_string(window) + "}]")
+            .run();
+        EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, provider,
+                                                    "shared-model", profile,
+                                                    account, account),
+                  window);
+      }
+  for (const auto* account : {"second", "first", "second"}) {
+    const auto window =
+        std::string_view(account) == "first" ? 1000000u : 128000u;
+    EXPECT_EQ(settings
+                  .Resolve({{"provider_id", Quote("anthropic")},
+                            {"model", Quote("shared-model")},
+                            {"key_profile", Quote(account)}})
+                  .context_limit_tokens,
+              window - 32768u - window / 20);
+  }
+  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "anthropic",
+                                              "shared-model", "other", "first",
+                                              "first"),
+            128000u);
+  EXPECT_EQ(host::Models::CatalogConnection("chatgpt", "desktop"),
+            host::Models::CatalogConnection("chatgpt", "desktop", "desktop"));
+  EXPECT_EQ(host::Models::StoredChatGPTModels(directory.path),
+            std::vector<std::string>{"shared-model"});
+}
+
 }  // namespace
 }  // namespace tsugumi::test

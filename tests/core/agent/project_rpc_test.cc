@@ -1,12 +1,14 @@
 // Scenarios exercise only the public Agent RPC through the shipped client.
-#include "project_fixture.hh"
-#include "agent/json.hh"
-#include "util/crypto.hh"
-
 #include <unistd.h>
+
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+
+#include "agent/json.hh"
+#include "agent/context.hh"
+#include "util/crypto.hh"
+#include "project_fixture.hh"
 
 #ifndef __APPLE__
 #include <sys/socket.h>
@@ -148,7 +150,7 @@ TEST_F(AgentProjectFixture, LargeReadsReachTheModelAsContiguousJsonPages) {
   const auto requests = model.Requests();
   ASSERT_EQ(requests.size(), 2u);
   const auto result = JsonString(requests[1], "/messages/2/content/0/content");
-  ASSERT_LT(result.size(), 60000u);
+  ASSERT_LE(result.size(), agent::kToolResultBytes);
   EXPECT_EQ(JsonString(result, "/reply"), "FileContent");
   const auto data = JsonString(result, "/value/bytes");
   ASSERT_FALSE(data.empty());
@@ -156,6 +158,22 @@ TEST_F(AgentProjectFixture, LargeReadsReachTheModelAsContiguousJsonPages) {
   EXPECT_EQ(JsonString(result, "/value/next_offset"), std::to_string(32 + data.size()));
   EXPECT_EQ(JsonString(result, "/value/size_bytes"), "300000");
   EXPECT_FALSE(JsonBool(result, "/value/eof"));
+  EXPECT_EQ(result.find("Omitted bytes"), std::string::npos);
+  EXPECT_NE(JsonString(result, "/value/hint").find("next_offset"), std::string::npos);
+  const auto next = JsonString(result, "/value/next_offset");
+  model.Queue(AnthropicTool("next-page", "project_file_read",
+      "{\"path\":\"definitions/data/src/large.txt\",\"offset\":" + Quote(next) + "}"));
+  model.Queue(AnthropicText("Continued the read."));
+  ASSERT_TRUE(Send(conversation, "Continue the page.", "turn-2").Code().empty());
+  WaitUntilIdle(conversation);
+  const auto continued = JsonString(model.Requests().back(), "/messages/6/content/0/content");
+  ASSERT_LE(continued.size(), agent::kToolResultBytes);
+  EXPECT_EQ(JsonString(continued, "/value/offset"), next);
+  const auto more = JsonString(continued, "/value/bytes");
+  EXPECT_FALSE(more.empty());
+  EXPECT_EQ(more, std::string(more.size(), '"'));
+  EXPECT_EQ(JsonString(continued, "/value/next_offset"),
+            std::to_string(std::stoull(next) + more.size()));
 }
 
 TEST_F(AgentProjectFixture, HelperShellCannotReadParentOrSiblingScratchByAnyPath) {
@@ -935,7 +953,7 @@ TEST_F(AgentProjectFixture,
 }
 
 TEST_F(AgentProjectFixture,
-       AContextRefusalShrinksToolResultsBeforeAskingAgain) {
+       AContextRefusalShrinksOnlyTheModelViewBeforeAskingAgain) {
   ModelServer model;
   model.Queue(AnthropicTool("inspect-large-result", "project_inspect", "{}"));
   model.QueueHTTP(R"({"error":{"message":"prompt is too long"}})", 400);
@@ -948,20 +966,139 @@ TEST_F(AgentProjectFixture,
         R"({"description":)" + Quote(std::string(50000, 'x')) + "}");
   StartProject();
   const auto conversation = Conversation("context-refusal");
-  Grant(conversation);
+  const auto grant = Grant(conversation);
   ASSERT_TRUE(Send(conversation, "Inspect the long metadata result.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(3));
   EXPECT_NE(
       WaitUntilIdle(conversation).find("The smaller context was accepted."),
       std::string::npos);
   const auto requests = model.Requests();
-  EXPECT_LT(requests[2].size(), requests[1].size() - 20000);
-  EXPECT_NE(requests[2].find("Cut to fit the model context"),
-            std::string::npos);
-  EXPECT_NE(Events(conversation).View().find("compacted"), std::string::npos);
-  // The full public receipt stays available after fitting the model context.
+  EXPECT_LE(JsonString(requests[1], "/messages/2/content/0/content").size(),
+            20480u);
+  EXPECT_LE(JsonString(requests[2], "/messages/2/content/0/content").size(),
+            10240u);
+  EXPECT_LT(requests[2].size(), requests[1].size() - 9000);
+  EXPECT_NE(requests[2].find("Omitted bytes"), std::string::npos);
+  EXPECT_EQ(Events(conversation).View().find("compacted"), std::string::npos);
+  // The full public receipt stays available even when the model sees a page.
   EXPECT_NE(Get(conversation).View().find(std::string(50000, 'x')),
             std::string::npos);
+  const auto page = Tool(
+      conversation, "tool_result_read",
+      R"({"call_id":"inspect-large-result","offset":"24000","limit_bytes":1024})");
+  ASSERT_TRUE(page.Code().empty());
+  const auto saved = JsonString(page.View(), "/text");
+  EXPECT_EQ(JsonString(saved, "/offset"), "24000");
+  EXPECT_EQ(JsonString(saved, "/next_offset"), "25024");
+  EXPECT_EQ(JsonString(saved, "/text"), std::string(1024, 'x'));
+  // Saved output still requires the original grant.
+  Revoke(grant);
+  EXPECT_EQ(Tool(conversation, "tool_result_read",
+                 R"({"call_id":"inspect-large-result"})")
+                .Code(),
+            "permission_denied");
+}
+
+TEST_F(AgentProjectFixture, HelpersRereadOnlyTheirOwnFilteredResults) {
+  ModelServer model;
+  model.Queue(AnthropicTool("parent-read", "project_file_read",
+                            R"({"path":"skills/secret.txt"})"));
+  model.Queue(AnthropicTool(
+      "delegate-reader", "delegate",
+      R"({"tasks":[{"name":"reader","instruction":"Inspect and reread only your own result.","read_cards":[],"write_cards":[],"run_cards":[]}]})"));
+  model.Queue(AnthropicTool("guess-parent", "tool_result_read",
+                            R"({"call_id":"parent-read"})"));
+  model.Queue(AnthropicTool("own-inspect", "project_inspect", "{}"));
+  model.Queue(AnthropicTool("own-reread", "tool_result_read",
+                            R"({"call_id":"own-inspect","limit_bytes":100})"));
+  model.Queue(AnthropicText("Helper report."));
+  model.Queue(AnthropicText("Done."));
+  Configure(model);
+  Write(directory.path / "project/skills/secret.txt",
+        "PARENT_ONLY_PRIVATE_RESULT");
+  StartProject();
+  const auto conversation = Conversation("helper-result-read");
+  Grant(conversation);
+  ASSERT_TRUE(Send(conversation, "Read and delegate.").Code().empty());
+  const auto state = WaitUntilIdle(conversation);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 7u);
+  EXPECT_TRUE(JsonBool(requests[3], "/messages/2/content/0/is_error"));
+  EXPECT_NE(JsonString(requests[3], "/messages/2/content/0/content")
+                .find("No saved tool result"),
+            std::string::npos);
+  EXPECT_FALSE(JsonBool(requests[5], "/messages/6/content/0/is_error"));
+  const auto page = JsonString(requests[5], "/messages/6/content/0/content");
+  const auto own = JsonString(requests[4], "/messages/4/content/0/content");
+  EXPECT_EQ(JsonString(page, "/text"), own.substr(0, 100));
+  for (size_t i = 2; i <= 5; ++i)
+    EXPECT_EQ(requests[i].find("PARENT_ONLY_PRIVATE_RESULT"),
+              std::string::npos);
+  EXPECT_NE(state.find("PARENT_ONLY_PRIVATE_RESULT"), std::string::npos);
+}
+
+TEST_F(AgentProjectFixture,
+       HelperCompactionKeepsItsFullTraceAndHidesTheSummary) {
+  ModelServer model;
+  // Keep the instruction shorter than the two bounded file pages so the
+  // first complete exchange is archived. The second reply's measured usage
+  // triggers compaction, independently of the smaller send-time file cap.
+  const auto instruction =
+      "Read the two records and report. " +
+      std::string(agent::kToolResultBytes / 8, 'i');
+  model.Queue(AnthropicTool(
+      "delegate-long-reader", "delegate",
+      "{\"tasks\":[{\"name\":\"reader\",\"instruction\":" + Quote(instruction) +
+          ",\"read_cards\":[\"a\"],\"write_cards\":[],\"run_cards\":[]}]}"));
+  model.Queue(AnthropicTool("helper-read-one", "project_file_read",
+                            R"({"path":"definitions/a/src/one.txt"})"));
+  auto second = AnthropicTool("helper-read-two", "project_file_read",
+                              R"({"path":"definitions/a/src/two.txt"})");
+  const std::string marker = "\"input_tokens\":12";
+  second.replace(second.find(marker), marker.size(), "\"input_tokens\":99000");
+  model.Queue(std::move(second));
+  model.Queue(AnthropicText("INTERNAL_HELPER_HANDOFF"));
+  model.Queue(AnthropicTool(
+      "helper-reload-one", "tool_result_read",
+      R"({"call_id":"helper-read-one","offset":"0","limit_bytes":100})"));
+  model.Queue(AnthropicText("Both records inspected."));
+  model.Queue(AnthropicText("The helper finished."));
+  Configure(model, "fixture", 100000);
+  Write(directory.path / "project/definitions/a/_card.json",
+        R"({"template":"draft"})");
+  const auto one = "FIRST_HELPER_RECORD " + std::string(48000, 'a');
+  const auto two = "SECOND_HELPER_RECORD " + std::string(48000, 'b');
+  Write(directory.path / "project/definitions/a/src/one.txt", one);
+  Write(directory.path / "project/definitions/a/src/two.txt", two);
+  StartProject();
+  const auto conversation = Conversation("helper-compaction-trace");
+  Grant(conversation);
+  ASSERT_TRUE(Send(conversation, "Delegate the reads.").Code().empty());
+  const auto state = WaitUntilIdle(conversation);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 7u);
+  EXPECT_NE(requests[3].find("Create a short handoff"), std::string::npos);
+  EXPECT_EQ(Events(conversation).View().find("INTERNAL_HELPER_HANDOFF"),
+            std::string::npos);
+  EXPECT_NE(state.find(one), std::string::npos);
+  EXPECT_NE(state.find(two), std::string::npos);
+  const auto visible =
+      JsonString(state, "/conversation/helpers/0/messages/2/content/0/content");
+  EXPECT_NE(visible.find(one), std::string::npos);
+  EXPECT_EQ(visible.find("INTERNAL_HELPER_HANDOFF"), std::string::npos);
+
+  // The old first exchange is absent from the active model context. Reading
+  // it must use this helper's archived, filtered result, with the same grant.
+  EXPECT_EQ(requests[4].find("helper-read-one"), std::string::npos);
+  const auto page = JsonString(requests[5], "/messages/4/content/0/content");
+  EXPECT_EQ(JsonString(page, "/text"), visible.substr(0, 100));
+  EXPECT_EQ(JsonString(page, "/next_offset"), "100");
+  EXPECT_EQ(JsonString(page, "/total_bytes"), std::to_string(visible.size()));
+  EXPECT_FALSE(JsonBool(page, "/eof"));
+  const auto report = JsonString(requests[6], "/messages/2/content/0/content");
+  EXPECT_EQ(JsonString(report, "/0/report"), "Both records inspected.");
+  EXPECT_EQ(report.find("FIRST_HELPER_RECORD"), std::string::npos);
+  EXPECT_EQ(report.find("INTERNAL_HELPER_HANDOFF"), std::string::npos);
 }
 
 TEST_F(AgentProjectFixture,
@@ -1294,6 +1431,45 @@ TEST_F(AgentProjectFixture, ModelShellCommandsAndResultsAppearInToolHistory) {
   EXPECT_NE(events.find("shell-history-output"), std::string::npos);
   ASSERT_EQ(model.Requests().size(), 2u);
   EXPECT_NE(model.Requests()[1].find("ProjectShellResult"), std::string::npos);
+}
+
+TEST_F(AgentProjectFixture, LargeShellOutputIsShapedOnceWithAUsableContinuation) {
+  if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
+  StartProject(true);
+  const auto conversation = Conversation("large-shell-continuation");
+  for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
+                      Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
+    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+  ModelServer model;
+  model.Queue(AnthropicTool("large-shell", "project_shell",
+      R"({"command":"printf 'SHELL_HEAD%0300000dSHELL_TAIL' 0"})"));
+  model.Queue(AnthropicTool("shell-continuation", "tool_result_read",
+      R"({"call_id":"large-shell","offset":"12000","limit_bytes":1024})"));
+  model.Queue(AnthropicText("Read the saved output."));
+  Configure(model);
+  ASSERT_TRUE(Send(conversation, "Produce and examine large output.").Code().empty());
+  WaitUntilIdle(conversation);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 3u);
+  const auto shell = JsonString(requests[1], "/messages/2/content/0/content");
+  ASSERT_LE(shell.size(), agent::kToolResultBytes);
+  ASSERT_EQ(JsonString(shell, "/reply"), "ProjectShellResult") << shell;
+  EXPECT_EQ(shell.find("Omitted bytes"), std::string::npos);
+  const auto output = JsonString(shell, "/value/stdout_bytes");
+  EXPECT_TRUE(output.starts_with("SHELL_HEAD"));
+  EXPECT_TRUE(output.ends_with("SHELL_TAIL"));
+  EXPECT_EQ(JsonString(shell, "/value/stdout_size"), "300020");
+  EXPECT_EQ(JsonUInt(shell, "/value/stdout_head_bytes") +
+            JsonUInt(shell, "/value/stdout_tail_bytes"), output.size());
+  const auto hint = JsonString(shell, "/value/hint");
+  EXPECT_NE(hint.find("tool_result_read"), std::string::npos);
+  EXPECT_NE(hint.find("large-shell"), std::string::npos);
+  EXPECT_FALSE(JsonString(shell, "/value/full_output_path").empty());
+  const auto continuation = JsonString(requests[2], "/messages/4/content/0/content");
+  ASSERT_LE(continuation.size(), agent::kToolResultBytes);
+  EXPECT_EQ(JsonString(continuation, "/offset"), "12000");
+  EXPECT_EQ(JsonString(continuation, "/next_offset"), "13024");
+  EXPECT_EQ(JsonString(continuation, "/text"), std::string(1024, '0'));
 }
 
 TEST_F(AgentProjectFixture, CancellingTheConversationStopsItsShellCommand) {

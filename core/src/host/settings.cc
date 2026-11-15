@@ -17,6 +17,7 @@
 #include <thread>
 
 #include "agent/wire.hh"
+#include "host/models.hh"
 #include "util/crypto.hh"
 #include "util/sqlite.hh"
 
@@ -260,6 +261,7 @@ auto Defaults() -> j::Members {
 }
 }  // namespace
 struct Settings::State {
+  std::filesystem::path directory;
   sql::Db db;
   std::unique_ptr<SecretStore> secrets;
   Import import;
@@ -284,7 +286,8 @@ struct Settings::State {
   State(const std::filesystem::path& dir, Import i, Token t, Forget f,
         std::unique_ptr<SecretStore> store, KeyStorage key_storage,
         Models model_list)
-      : db((dir / "host-settings.sqlite").string()),
+      : directory(dir),
+        db((dir / "host-settings.sqlite").string()),
         secrets(std::move(store)),
         import(std::move(i)),
         token(std::move(t)),
@@ -1043,13 +1046,12 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
                                   : id == "chatgpt" ? "agent.model.chatgpt"
                                                     : "agent.model");
   c.max_tokens = 32768;
-  c.context_limit = 180000;
+  uint32_t input_limit_tokens = 0;
   if (id == "fixture") {
     c.base_url =
         "http://127.0.0.1:" +
         std::to_string(j::UInt(j::Get(values, "agent.fixturePort"), 8765));
     c.model = "fixture";
-    c.context_limit = 6000;
   }
   auto q = s.db.prepare("SELECT json FROM providers WHERE profile=? AND id=?");
   q.bind(1, profile).bind(2, id);
@@ -1057,7 +1059,7 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
     const auto v = j::Object(q.text(0));
     if (!j::Text(v, "baseURL").empty()) c.base_url = j::Text(v, "baseURL");
     if (!j::Text(v, "model").empty()) c.model = j::Text(v, "model");
-    c.context_limit = j::UInt(j::Get(v, "contextLimit"), c.context_limit);
+    input_limit_tokens = j::UInt(j::Get(v, "contextLimit"), input_limit_tokens);
     c.max_tokens = j::UInt(j::Get(v, "maxTokens"), c.max_tokens);
   }
   if (!j::Text(selection, "model").empty())
@@ -1113,6 +1115,19 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
       return get(client, stale);
     };
   }
+  const auto window = host::Models::ContextWindowTokens(
+      s.directory, id, c.model, profile, j::Text(selection, "account_profile"),
+      j::Text(selection, "key_profile"));
+  const auto margin =
+      window / 20;  // Reserve 5% for estimation/protocol overhead.
+  if (c.max_tokens >= window - margin)
+    throw std::runtime_error(
+        "The reply token limit leaves no model input room");
+  c.context_limit_tokens = window - c.max_tokens - margin;
+  // An explicit input budget may lower the model budget, never enlarge it.
+  if (input_limit_tokens)
+    c.context_limit_tokens =
+        std::min(c.context_limit_tokens, input_limit_tokens);
   return c;
 }
 }  // namespace tsugumi::host

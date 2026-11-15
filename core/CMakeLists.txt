@@ -162,6 +162,7 @@ add_library(tsugumi_host_core STATIC
   src/agent/providers.cc
   src/agent/store.cc
   src/agent/runtime.cc
+  src/agent/context.cc
   src/agent/tool_images.cc
   src/agent/wire.cc
   src/agent/presentation.cc
@@ -201,6 +202,7 @@ add_library(tsugumi_host_core STATIC
   src/host/layout_place.cc
   src/host/layout_wires.cc
   src/host/layout_service.cc
+  src/host/layout_observer.cc
   src/host/layout_saving.cc
   src/host/projects.cc
   src/host/execution_broker.cc

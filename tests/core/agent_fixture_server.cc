@@ -332,9 +332,12 @@ auto JsonUInt(std::string_view json, std::string_view pointer) -> uint64_t {
   return value.value();
 }
 
-auto AnthropicText(std::string_view text) -> std::string {
+auto AnthropicText(std::string_view text, uint64_t input_tokens)
+    -> std::string {
   return Event(
-             R"({"type":"message_start","message":{"usage":{"input_tokens":12}}})") +
+             "{\"type\":\"message_start\",\"message\":{\"usage\":{\"input_"
+             "tokens\":" +
+             std::to_string(input_tokens) + "}}}") +
          Event(
              R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})") +
          Event(

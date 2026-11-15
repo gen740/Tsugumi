@@ -220,10 +220,9 @@ extension ProjectSession {
 
   /// A new Card from a template, with its own definition folder.
   @discardableResult
-  /// `clearOfOthers`: at the nearest place where it covers nothing (a Card put
-  /// on the canvas without the user aiming it at this very spot).
+  /// `automaticPlacement`: omit coordinates so the host supplies a free place.
   func addCard(template t: DefinitionTemplate, in scope: [String], at point: CGPoint, name: String? = nil,
-               clearOfOthers: Bool = false) async throws -> CardKey {
+               automaticPlacement: Bool = false) async throws -> CardKey {
     let id = try await newCardId(name ?? t.baseName, in: scope)
     let k = key(scope + [id]), template = try await prepareTemplate(t.rawValue, id)
     let definition = DefinitionDraft(mergeJSON: try JSONValue.parse(template.definition))
@@ -233,45 +232,9 @@ extension ProjectSession {
       s.setCardDefinition(k, definition)
       for file in template.files { s.putSource(dir + file.path, file.text) }
       s.updateMeta(k) { $0["name"] = .string(name ?? t.baseName) }
-      s.setPosition(k, clearOfOthers ? s.freeSpot(near: point, for: k, in: scope) : point)
+      if !automaticPlacement { s.setPosition(k, point) }
     }
     return k
-  }
-
-  /// The nearest place to `point` where a Card covers no other Card, output
-  /// frame or sticky note: `point` itself when it is free, else on rings
-  /// around it. On the grid when the grid is on. The web's Scene.freeSpot is
-  /// the same search.
-  func freeSpot(near point: CGPoint, for k: CardKey, in scope: [String]) -> CGPoint {
-    let prefs = AppPreferences.shared
-    let step = prefs.showGrid ? prefs.gridSize : 20
-    let start = prefs.showGrid ? CGPoint(x: snapToGrid(point.x, step), y: snapToGrid(point.y, step)) : point
-    let size = geometry(k).size
-    let margin = 16.0
-    let others = cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }.filter { $0 != k }
-    let taken = others.map { CGRect(origin: placedPosition($0), size: geometry($0).size) }
-      + framedCards(in: scope).filter { $0 != k }.map { displayRect($0, origin: placedPosition($0)) }
-      + notes(in: scope).map(noteRect)
-    func free(_ p: CGPoint) -> Bool {
-      let r = CGRect(origin: p, size: size).insetBy(dx: -margin, dy: -margin)
-      return !taken.contains { r.intersects($0) }
-    }
-    if free(start) { return start }
-    for ring in 1...200 {
-      var spots: [(dx: Int, dy: Int)] = []
-      for i in -ring...ring { spots += [(i, -ring), (i, ring)] }
-      for i in (1 - ring)..<ring { spots += [(-ring, i), (ring, i)] }
-      // Nearest first; among equals, the same order on the Mac and on the web.
-      spots.sort { a, b in
-        let da = a.dx * a.dx + a.dy * a.dy, db = b.dx * b.dx + b.dy * b.dy
-        return da != db ? da < db : a.dy != b.dy ? a.dy > b.dy : a.dx > b.dx
-      }
-      for s in spots {
-        let p = CGPoint(x: start.x + Double(s.dx) * step, y: start.y + Double(s.dy) * step)
-        if free(p) { return p }
-      }
-    }
-    return start
   }
 
   /// Copies a Card's definition folder (settings and every file) into a
