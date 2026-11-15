@@ -1,12 +1,20 @@
-// Shared authentication and failure vocabulary for the Host and Agent services.
+// Shared authentication, access and result vocabulary for the Host and Agent services.
 namespace Tsugumi.Service;
 table HelloRequest { token:string (required); client_id:string (required); protocol:uint = 1; }
 table HelloResult { protocol:uint = 1; server_id:string (required); principal:string (required); }
 table Failure { code:string (required); message:string (required); request_id:string; }
 table Acknowledgement { accepted:bool; revoked:bool; }
-// Secret input is accepted only by the human-only Host ProviderSet request.
-table ProviderInput { endpoint:string; api_key:string; model:string; max_tokens:uint = 16384; context_limit:uint = 600000; }
 // Ordinary calls identify a stored provider and a conversation's model choice.
 // purpose: guide/summary asks the host to choose provider/model from settings;
 // model and use_choices are then ignored. key_profile names platform memory keys.
 table ProviderSelection { profile:string (required); provider_id:string; account_profile:string; key_profile:string; model:string; use_choices:bool; purpose:string; }
+
+enum Access:ubyte { Read, Write, Run, CardPermissions, Shell, HelperScope }
+
+enum GrantScope:ubyte { Conversation, Server }
+
+table Usage { input_tokens:ulong; output_tokens:ulong; cache_read_tokens:ulong; cache_write_tokens:ulong; }
+
+table TextResult { text:string; usage:Usage; }
+
+table PermissionKind { id:string (required); label:string (required); icon:string (required); }

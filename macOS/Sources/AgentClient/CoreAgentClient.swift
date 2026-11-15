@@ -285,9 +285,9 @@ public actor CoreAgentClient {
     return result
   }
 
-  public func permissionKinds(language: String) async throws -> [Tsugumi_Host_PermissionKindT] {
+  public func permissionKinds(language: String) async throws -> [Tsugumi_Service_PermissionKindT] {
     let result = try await call("PermissionKindsRequest", ["language": language])
-    return result["kinds"] as? [Tsugumi_Host_PermissionKindT] ?? []
+    return result["kinds"] as? [Tsugumi_Service_PermissionKindT] ?? []
   }
 
   public func writeTemplate(name: String, id: String) async throws -> (definition: String, files: [(path: String, text: String)]) {
@@ -369,7 +369,7 @@ public actor CoreAgentClient {
 
   public func provisionKey(_ key: String?, id: String) async throws {
     var fields: [String: Any] = ["profile": keyProfile, "id": id, "ephemeral": true, "source": "keychain", "remove": key == nil]
-    if let key { let input = Tsugumi_Service_ProviderInputT(); input.apiKey = key; fields["provider"] = input }
+    if let key { let input = Tsugumi_Host_ProviderInputT(); input.apiKey = key; fields["provider"] = input }
     _ = try await call("ProviderSetRequest", fields)
   }
 

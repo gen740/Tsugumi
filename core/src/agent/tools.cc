@@ -421,7 +421,7 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
   auto cache = std::make_shared<std::map<std::string, std::string>>();
   return [this, project, conversation, stop, revision, authorization,
           cache](const std::string& path) {
-    access_service.Require(project, conversation, A::Access::Read, true, stop,
+    access_service.Require(project, conversation, Tsugumi::Service::Access::Read, true, stop,
                            "Read helper Card context", authorization);
     if (const auto found = cache->find(path); found != cache->end())
       return found->second;
@@ -640,7 +640,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
                   "Select a project before using project tools");
   const auto authorization =
       boundary ? boundary->authorization() : std::string{};
-  access_service.Require(project, conversation, A::Access::Read, wait, stop,
+  access_service.Require(project, conversation, Tsugumi::Service::Access::Read, wait, stop,
                          "Read project content", authorization);
   if (boundary) {
     if (!boundary->scoped() &&
@@ -692,16 +692,16 @@ auto Tools::ExecuteTool(const std::string& conversation,
       (!execution && (spec->mutating || spec->approval_required)) ||
       call.name == "card_id";
   if (changes_project)
-    access_service.Require(project, conversation, A::Access::Write, wait, stop,
+    access_service.Require(project, conversation, Tsugumi::Service::Access::Write, wait, stop,
                            "Change project content", authorization);
   if (execution)
-    access_service.Require(project, conversation, A::Access::Run, wait, stop,
+    access_service.Require(project, conversation, Tsugumi::Service::Access::Run, wait, stop,
                            "Execute or cancel project work", authorization);
   if (c.role == "guide" && (changes_project || execution))
     throw Failure("permission_denied", "The guide cannot change projects");
   if (call.name == "project_shell")
     access_service.Require(
-        project, conversation, A::Access::Shell, wait, stop,
+        project, conversation, Tsugumi::Service::Access::Shell, wait, stop,
         "Execute shell commands as the project user inside its VM. "
         "Commands diagnose and read; project files are read-only. Command: " +
             json::Text(args, "command"),
@@ -718,7 +718,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
                       "The user has not registered this attached folder");
       folder_resource = folder.text(0);
     }
-    access_service.Require(folder_resource, conversation, A::Access::Read, wait,
+    access_service.Require(folder_resource, conversation, Tsugumi::Service::Access::Read, wait,
                            stop, "Read the user-selected attached folder", {});
   }
   for (const auto* field :
@@ -906,14 +906,14 @@ auto Tools::ExecuteTool(const std::string& conversation,
     std::lock_guard lock(mutex);
     if (!access_service.HasGrant(
             authorization.empty() ? project : authorization, conversation,
-            A::Access::Read))
+            Tsugumi::Service::Access::Read))
       throw Failure("permission_denied",
                     "Access was revoked while the operation was running");
     conversations->RememberResource(
         conversation, authorization.empty() ? project : authorization);
     if (!folder_resource.empty()) {
       if (!access_service.HasGrant(folder_resource, conversation,
-                                   A::Access::Read))
+                                   Tsugumi::Service::Access::Read))
         throw Failure("permission_denied",
                       "Folder access was revoked while reading");
       conversations->RememberResource(conversation, folder_resource);
@@ -1028,7 +1028,7 @@ auto Tools::Hooks(const std::string& id, bool helper,
     if (!access_service.HasGrant(boundary && !boundary->authorization().empty()
                                      ? boundary->authorization()
                                      : q.text(3),
-                                 id, A::Access::Read))
+                                 id, Tsugumi::Service::Access::Read))
       return ToolResult{"Project access has been revoked", true, {}, {}};
     if (q.text(0) == "completed")
       return ToolOutput(

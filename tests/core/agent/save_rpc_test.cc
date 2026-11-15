@@ -14,7 +14,7 @@ TEST_F(AgentProjectFixture,
   StartProject();
   const auto conversation = Conversation("save-policy");
   Grant(conversation);
-  Grant(conversation, A::GrantScope::Conversation, A::Access::Write);
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
   auto inspect = [&] {
     return json::Object(json::Get(
         json::Object(JsonString(Inspect(conversation).View(), "/text")),

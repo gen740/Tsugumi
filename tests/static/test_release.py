@@ -60,8 +60,9 @@ def test_credentials_are_host_only_inputs_and_absent_from_model_selection_and_re
     assert "profile:string (required)" in selection
     for secret in ("api_key", "access_token", "refresh_token", "credential", "endpoint"):
         assert secret not in selection
-    assert "api_key:string" in re.search(r"table ProviderInput \{([^}]+)\}", common).group(1)
-    assert "provider:Tsugumi.Service.ProviderInput" in host
+    assert "api_key:string" in re.search(r"table ProviderInput \{([^}]+)\}", host).group(1)
+    assert "provider:ProviderInput" in host
+    assert "ProviderInput" not in common and "ProviderInput" not in agent
     assert "provider:Tsugumi.Service.ProviderSelection" in agent
     replies = re.search(r"union ReplyPayload \{([^}]+)\}", host).group(1)
     assert "ProviderInput" not in replies and "CredentialToken" not in replies

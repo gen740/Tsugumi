@@ -5,8 +5,61 @@ import XCTest
 @testable import TsugumiAgentClient
 
 final class ServiceWireTests: XCTestCase {
+  func testSeparateContractsMatchSharedFlatcGoldens() throws {
+    let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+      .appendingPathComponent("../../../../tests/fixtures/service-contract.json").standardizedFileURL
+    let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+    func bytes(_ hex: String) -> Data {
+      let chars = Array(hex)
+      return Data(stride(from: 0, to: chars.count, by: 2).map { UInt8(String(chars[$0...$0 + 1]), radix: 16)! })
+    }
+    for c in try XCTUnwrap(fixture["requests"] as? [[String: Any]]) {
+      let method = try XCTUnwrap(c["method"] as? String), host = try XCTUnwrap(c["host"] as? Bool)
+      var fields = try XCTUnwrap(c["fields"] as? [String: Any])
+      if let raw = fields["provider"] as? [String: Any] {
+        let provider = Tsugumi_Service_ProviderSelectionT()
+        provider.profile = try XCTUnwrap(raw["profile"] as? String)
+        provider.purpose = raw["purpose"] as? String
+        fields["provider"] = provider
+      }
+      XCTAssertEqual(ServiceWire.hostMethod(method, fields), host, method)
+      let encoded = try ServiceWire.encode(method, fields: fields, id: 7, host: host)
+      let golden = bytes(try XCTUnwrap(c["hex"] as? String))
+      func object(_ data: Data) throws -> [UInt8] {
+        var builder = FlatBufferBuilder(initialSize: 256)
+        var b = ByteBuffer(data: data)
+        if host {
+          let m: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &b, fileId: "TSH1")
+          var native: Tsugumi_Host_MessageT? = Tsugumi_Host_MessageT(m)
+          builder.finish(offset: Tsugumi_Host_Message.pack(&builder, obj: &native))
+          return builder.sizedByteArray
+        }
+        let m: Tsugumi_Agent_Message = try getCheckedRoot(byteBuffer: &b, fileId: "TSA1")
+        var native: Tsugumi_Agent_MessageT? = Tsugumi_Agent_MessageT(m)
+        builder.finish(offset: Tsugumi_Agent_Message.pack(&builder, obj: &native))
+        return builder.sizedByteArray
+      }
+      // Decode the same fields with the generated object API on both paths.
+      XCTAssertEqual(try object(encoded), try object(golden), method)
+      XCTAssertThrowsError(try ServiceWire.encode(method, fields: fields, id: 7, host: !host))
+    }
+    for c in try XCTUnwrap(fixture["replies"] as? [[String: Any]]) {
+      let host = try XCTUnwrap(c["host"] as? Bool)
+      let decoded = try ServiceWire.decode(bytes(try XCTUnwrap(c["hex"] as? String)), host: host)
+      if let expected = c["expect"] as? [String] {
+        XCTAssertEqual(decoded["value"] as? [String], expected)
+      } else {
+        let expected = try XCTUnwrap(c["expect"] as? [String: Any])
+        for (key, value) in expected {
+          XCTAssertEqual(try JSONSerialization.data(withJSONObject: [decoded[key] ?? NSNull()], options: [.sortedKeys]),
+            try JSONSerialization.data(withJSONObject: [value], options: [.sortedKeys]), key)
+        }
+      }
+    }
+  }
+
   func testHostOwnsPurposeAndKeyPolicyWire() throws {
-    let input = Tsugumi_Service_ProviderInputT(); input.apiKey = "memory-key"
+    let input = Tsugumi_Host_ProviderInputT(); input.apiKey = "memory-key"
     let bytes = try ServiceWire.encode("ProviderSetRequest", fields: ["profile": "client", "id": "anthropic",
       "provider": input, "ephemeral": true, "source": "keychain"], id: 1, host: true)
     var buffer = ByteBuffer(data: bytes)

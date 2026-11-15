@@ -57,6 +57,10 @@ struct Reply {
     if (H::MessageBufferHasIdentifier(bytes.data())) {
       const auto *r = HostValue();
       switch (r->value_type()) {
+      case H::ReplyPayload::DemoPaths:
+        return test::View(r->value_as_DemoPaths());
+      case H::ReplyPayload::TextResult:
+        return test::View(r->value_as_TextResult());
       case H::ReplyPayload::HelloResult:
         return test::View(r->value_as_HelloResult());
       case H::ReplyPayload::Acknowledgement:
@@ -101,8 +105,6 @@ struct Reply {
       return test::View(r->value_as_AccessResult());
     case A::ReplyPayload::AccessList:
       return test::View(r->value_as_AccessList());
-    case A::ReplyPayload::DemoList:
-      return test::View(r->value_as_DemoList()->paths());
     case A::ReplyPayload::TextResult:
       return test::View(r->value_as_TextResult());
     default:
@@ -279,8 +281,8 @@ class AgentFixture : public ::testing::Test {
   }
 
   auto Grant(const std::string& conversation,
-             A::GrantScope scope = A::GrantScope::Conversation,
-             A::Access access = A::Access::Read) -> std::string {
+             Tsugumi::Service::GrantScope scope = Tsugumi::Service::GrantScope::Conversation,
+             Tsugumi::Service::Access access = Tsugumi::Service::Access::Read) -> std::string {
     auto ask =
         Call(*external, A::RequestPayload::AccessRequest, [&](Builder& b) {
           return A::CreateAccessRequest(
@@ -313,12 +315,12 @@ class AgentFixture : public ::testing::Test {
                  uint32_t context_limit = 600000) -> void {
     auto reply =
         Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
-          Tsugumi::Service::ProviderInputT config;
+          Tsugumi::Host::ProviderInputT config;
           config.endpoint = model.URL();
           config.model = "fixture-model";
           config.max_tokens = 1024;
           config.context_limit = context_limit;
-          const auto p = Tsugumi::Service::ProviderInput::Pack(b, &config);
+          const auto p = Tsugumi::Host::ProviderInput::Pack(b, &config);
           return H::CreateProviderSetRequest(b, b.CreateString("desktop"),
                                              b.CreateString(provider), p)
               .Union();
@@ -326,11 +328,11 @@ class AgentFixture : public ::testing::Test {
     if (!reply.Code().empty())
       throw std::runtime_error("cannot configure external model fixture");
     reply = Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
-      Tsugumi::Service::ProviderInputT key;
+      Tsugumi::Host::ProviderInputT key;
       key.api_key = "FIXTURE_API_KEY";
       return H::CreateProviderSetRequest(
                  b, b.CreateString("desktop"), b.CreateString(provider),
-                 Tsugumi::Service::ProviderInput::Pack(b, &key), false, true)
+                 Tsugumi::Host::ProviderInput::Pack(b, &key), false, true)
           .Union();
     });
     if (!reply.Code().empty())

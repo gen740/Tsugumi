@@ -81,8 +81,8 @@ TEST_F(AgentFixture, ProjectProtocolCannotBeUsedOnTheAgentSocket) {
   EXPECT_TRUE(result.error);
   EXPECT_TRUE(agent.Alive());
   EXPECT_TRUE(
-      Call(*external, A::RequestPayload::DemoListRequest,
-           [](Builder& b) { return A::CreateDemoListRequest(b).Union(); })
+      Call(*external, A::RequestPayload::ToolCatalogRequest,
+           [](Builder& b) { return A::CreateToolCatalogRequest(b).Union(); })
           .Code()
           .empty());
 }
@@ -195,17 +195,29 @@ TEST_F(AgentFixture,
 }
 
 TEST_F(AgentFixture, BundledDemosAreReadableButSymlinksAndTraversalAreNot) {
+  const auto conversation = Conversation("demo-references");
+  const auto listed = Tool(conversation, "demo_list", "{}");
+  ASSERT_TRUE(listed.Code().empty());
+  EXPECT_NE(listed.Value()->value_as_ToolResult()->text()->str().find("ja/example.json"), std::string::npos);
+  const auto tool = Tool(conversation, "demo_read", R"({"path":"ja/example.json"})");
+  ASSERT_TRUE(tool.Code().empty());
+  EXPECT_NE(tool.Value()->value_as_ToolResult()->text()->str().find("BUNDLED_DEMO"), std::string::npos);
+  const auto paths = Call(*host, H::RequestPayload::DemoListRequest, [](Builder& b) {
+    return H::CreateDemoListRequest(b).Union();
+  });
+  ASSERT_NE(paths.HostValue()->value_as_DemoPaths(), nullptr);
+  EXPECT_NE(paths.View().find("ja/example.json"), std::string::npos);
   const auto good =
-      Call(*external, A::RequestPayload::DemoReadRequest, [](Builder& b) {
-        return A::CreateDemoReadRequest(b, b.CreateString("ja/example.json"))
+      Call(*host, H::RequestPayload::DemoReadRequest, [](Builder& b) {
+        return H::CreateDemoReadRequest(b, b.CreateString("ja/example.json"))
             .Union();
       });
   EXPECT_NE(good.View().find("BUNDLED_DEMO"), std::string::npos);
   for (const auto* path : {"../private.json", "escape.json", "/private.json"}) {
     SCOPED_TRACE(path);
     const auto reply =
-        Call(*external, A::RequestPayload::DemoReadRequest, [&](Builder& b) {
-          return A::CreateDemoReadRequest(b, b.CreateString(path)).Union();
+        Call(*host, H::RequestPayload::DemoReadRequest, [&](Builder& b) {
+          return H::CreateDemoReadRequest(b, b.CreateString(path)).Union();
         });
     EXPECT_FALSE(reply.Code().empty());
     EXPECT_EQ(std::string(reinterpret_cast<const char*>(reply.bytes.data()),

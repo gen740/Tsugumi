@@ -21,8 +21,8 @@ struct Versions {
   Versions(sql::Db& db, ProjectRegistry& registry, Settings& settings,
            agent::Tools& tools, agent::Turns& turns,
            std::function<std::string(std::string)> scrub);
-  auto HandleAgent(const RequestIn& request, bool human,
-                   std::unique_lock<std::recursive_mutex>& lock) -> std::string;
+  auto Note(const RequestIn& request, bool human,
+            std::unique_lock<std::recursive_mutex>& lock) -> std::string;
   auto HandleHost(const RequestIn& request, bool human,
                   std::unique_lock<std::recursive_mutex>& lock) -> std::string;
   sql::Db& db;

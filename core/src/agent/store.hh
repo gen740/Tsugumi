@@ -31,7 +31,7 @@ struct ConversationStore {
 
   using Scrub = std::function<std::string(std::string)>;
   using HasGrant = std::function<bool(const std::string&, const std::string&,
-                                      Tsugumi::Agent::Access)>;
+                                      Tsugumi::Service::Access)>;
   using IsRunning = std::function<bool(const std::string&)>;
   ConversationStore(host::StateGate& gate, sql::Db& home,
                     host::ProjectRegistry& registry, Scrub scrub,
