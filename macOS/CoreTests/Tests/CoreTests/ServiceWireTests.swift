@@ -58,6 +58,27 @@ final class ServiceWireTests: XCTestCase {
     }
   }
 
+  func testAttachmentIsOneHostRequestWithReadyEndpointAndResources() throws {
+    let bytes = try ServiceWire.encode("AttachFoldersRequest", fields: ["project": "/project", "folders": [String]()], id: 1, host: true)
+    var buffer = ByteBuffer(data: bytes)
+    let message: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
+    let input = try XCTUnwrap((Tsugumi_Host_MessageT(message).payload?.value as? Tsugumi_Host_RequestT)?.value?.value as? Tsugumi_Host_AttachFoldersRequestT)
+    XCTAssertEqual(input.project, "/project")
+    XCTAssertTrue(input.folders.isEmpty)
+    let state = Tsugumi_Host_EnvironmentStateT()
+    state.project = "/project"; state.key = "key"; state.phase = .ready
+    state.endpoint = "ws://localhost:123/rpc"; state.projectId = "project"; state.serverInstanceId = "new-instance"
+    let folder = Tsugumi_Host_FolderAttachmentT()
+    folder.folder = "/data"; folder.resource = "folder:project:data"
+    let attached = Tsugumi_Host_AttachedFoldersT()
+    attached.state = state; attached.folders = [folder]
+    let reply = try ServiceWire.decode(hostReply(attached, type: .attachedfolders), host: true)
+    let ready = try XCTUnwrap(reply["state"] as? [String: Any])
+    XCTAssertEqual(ready["server_instance_id"] as? String, "new-instance")
+    XCTAssertEqual(ready["phase"] as? Tsugumi_Host_EnvironmentPhase, .ready)
+    XCTAssertEqual(reply["folders"] as? [[String: String]], [["folder": "/data", "resource": "folder:project:data"]])
+  }
+
   func testRuntimeResetConfirmationAndReportSurviveTheAdapter() throws {
     let runtime = Tsugumi_Host_HostRuntimeT()
     runtime.vmState = "stopped"

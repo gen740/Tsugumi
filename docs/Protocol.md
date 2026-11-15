@@ -551,6 +551,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `ExecutionProjectRevokeRequest` | `project_id: string` (required) |
 | `RegisterProjectRequest` | `project_id: string` (required), `endpoint: string` (required), `token: string`, `title: string`, `path: string` |
 | `RegisterFolderRequest` | `project_id: string` (required), `resource_id: string` (required), `folder: string` (required), `title: string` |
+| `AttachFoldersRequest` | `project: string` (required), `folders: [string]` |
 | `SkillsListRequest` | `project_path: string`, `folders: [string]`, `conversation_id: string` |
 | `ModelsListRequest` | `provider_id: string` (required), `refresh: bool`, `profile: string`, `account_profile: string`, `key_profile: string` |
 | `HostProjectDefaultsRequest` | None |
@@ -581,4 +582,4 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `DemoReadRequest` | `path: string` (required) |
 | `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `profile: string` (required), `language: string` (required), `anthropic_key_profile: string`, `openai_key_profile: string` |
 
-Reply variants: `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`.
+Reply variants: `VersionComments`, `HelloResult`, `Acknowledgement`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectFiles`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ModelList`, `Failure`, `LayoutProposal`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `DocumentSubgraph`, `DocumentMerge`, `DocumentCopy`, `DocumentConnect`, `DocumentTemplate`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`.

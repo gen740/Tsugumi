@@ -1,4 +1,3 @@
-import CryptoKit
 import FlatBuffers
 import Foundation
 import Observation
@@ -135,36 +134,26 @@ final class ChatController {
 
   /// Share a batch with one restart, then register each folder independently.
   /// Only registered folders are offered to the Agent; a failed attempt is retryable.
-  func attach(folders urls: [URL]) async {
-    guard !attaching else { return }
+  @discardableResult
+  func attach(folders urls: [URL]) async -> Bool {
+    guard !attaching else { return false }
     var paths: [String] = []
     for url in urls {
       let path = url.standardizedFileURL.path
       if folderResources[path] == nil && !paths.contains(path) { paths.append(path) }
     }
-    guard !paths.isEmpty else { return }
+    guard !paths.isEmpty else { return true }
     attaching = true
     defer { attaching = false }
     do {
-      for path in paths {
-        var directory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &directory), directory.boolValue else {
-          throw CocoaError(.fileReadNoSuchFile, userInfo: [NSFilePathErrorKey: path])
-        }
-      }
-      try await session.environments.addFolders(session.identity, paths)
-      guard session.connected, let project = try await RPCToolTransport(session: session).project() else {
-        throw RPCError.disconnected
-      }
-      for path in paths {
-        let resource = "folder:\(project.id):" + SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
-        _ = try await CoreHostClient.shared.call("RegisterFolderRequest", ["project_id": project.id,
-          "resource_id": resource, "folder": path, "title": (path as NSString).lastPathComponent])
-        folderResources[path] = resource
-        if !folders.contains(path) { folders.append(path) }
+      let attached = try await session.attachFolders(paths)
+      for item in attached {
+        folderResources[item.folder] = item.resource
+        if !folders.contains(item.folder) { folders.append(item.folder) }
       }
       status = nil
-    } catch { status = String(describing: error) }
+      return true
+    } catch { status = String(format: String(localized: "フォルダを添付できませんでした: %@"), String(describing: error)); return false }
   }
 
   /// No longer offered to the Agent, which refuses it from now on (the share
@@ -399,10 +388,9 @@ final class ChatController {
       folders: AppPreferences.shared.skillFolders.filter(\.enabled).map(\.path), conversationID: conversationID).skills
   }
 
-  private func attachSkillFolders(_ selected: [Skill]) async {
-    for folder in Set(selected.map(\.attachmentFolder)) where !folder.isEmpty {
-      if folderResources[folder] == nil { await attach(folders: [URL(fileURLWithPath: folder)]) }
-    }
+  private func attachSkillFolders(_ selected: [Skill]) async -> Bool {
+    let folders = Set(selected.map(\.attachmentFolder)).filter { !$0.isEmpty && folderResources[$0] == nil }
+    return await attach(folders: folders.sorted().map { URL(fileURLWithPath: $0) })
   }
 
   func addReference(_ r: Reference) {
@@ -437,7 +425,10 @@ final class ChatController {
       await stopping?.value
       do {
         skills = try await loadSkillMetadata(conversationID: agent.id)
-        await attachSkillFolders(skills.filter { Set(used.map(\.name)).contains($0.name) })
+        guard await attachSkillFolders(skills.filter { Set(used.map(\.name)).contains($0.name) }) else {
+          events(.error(status ?? String(describing: RPCError.disconnected)))
+          return
+        }
         await CorePreferences.shared.reload()
         await agent.setProvider(provider)
         // Only resource identifiers leave the UI; core reads after authorization.

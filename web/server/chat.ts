@@ -1,7 +1,7 @@
 import type { AccessGroup } from '../src/shared/chatPresentation'
 // Chat, Agent and the settings it needs (skill folders, model connection,
 // API key) for the host server. Routes are merged into the server's table.
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { modelChoices } from '../src/shared/agentShared'
@@ -177,18 +177,6 @@ async function chatGPTState() {
   return { accounts: await chatgpt().accounts(), signingIn: chatgpt().signingIn, outcome: signInOutcome, usageURL: USAGE_URL }
 }
 
-/** Attached folders as sent by the page: existing folders of this host. */
-function cleanFolders(v: unknown): string[] {
-  if (!Array.isArray(v)) return []
-  return [...new Set(v.filter((f): f is string => typeof f === 'string' && path.isAbsolute(f)).map((f) => path.resolve(f)))].filter((f) => {
-    try {
-      return fs.statSync(f).isDirectory()
-    } catch {
-      return false
-    }
-  })
-}
-
 // ---- The guide -----------------------------------------------------------------
 
 // The guide bird in the bottom-right corner: one conversation for the whole
@@ -322,7 +310,7 @@ async function withAccess<T>(project: string, session: string, run: () => Promis
 
 class ChatHost {
   private conversations = new Map<string, RemoteAgent>()
-  constructor(readonly project: string, readonly key: string) {}
+  constructor(readonly project: string) {}
 
   async agent(id: string): Promise<RemoteAgent> {
     let a = this.conversations.get(id)
@@ -341,20 +329,9 @@ class ChatHost {
     return a
   }
 
-  async attach(folder: string) {
-    return (await this.attachFolders([folder]))[0].resource
-  }
-
   async attachFolders(folders: string[]) {
-    await ctx.envs.attachFolders(this.project, this.key, folders)
-    const project = await core.project(this.project)
-    const attached: { folder: string; resource: string }[] = []
-    for (const folder of folders) {
-      const resource = `folder:${project}:${createHash('sha256').update(folder).digest('hex')}`
-      await core.user.call('RegisterFolderRequest', { project_id: project, resource_id: resource, folder, title: path.basename(folder) })
-      attached.push({ folder, resource })
-    }
-    return attached
+    try { return await ctx.envs.attachFolders(this.project, folders) }
+    catch (error) { throw new Error(L('フォルダを添付できませんでした: {0}', (error as Error).message)) }
   }
 
   async detachFolder(folder: string) {
@@ -364,7 +341,7 @@ class ChatHost {
   async attachSkillFolders(names: string[], conversationId: string) {
     const skills = (await skillsFor(this.project, conversationId)).filter((s) => names.includes(s.name))
     const folders = new Set(skills.map((s) => s.attachment_folder).filter((s): s is string => !!s))
-    for (const folder of folders) await this.attach(folder)
+    if (folders.size) await this.attachFolders([...folders])
   }
 
   events(id: string) {
@@ -411,7 +388,7 @@ const chats = new Map<string, ChatHost>()
 function chatFor(dir: string): ChatHost {
   const { key, real } = projectKey(dir)
   let chat = chats.get(key)
-  if (!chat) { chat = new ChatHost(real, key); chats.set(key, chat) }
+  if (!chat) { chat = new ChatHost(real); chats.set(key, chat) }
   return chat
 }
 
@@ -635,11 +612,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/chat/delete': async (b) => { await chatFor(projectDir(b.path)).delete(String(b.session)); return { ok: true } },
   'POST /api/chat/folders': async (b) => {
     if (!Array.isArray(b.selected) || !b.selected.length) throw ctx.httpError(400, 'Select at least one folder.')
-    // Validate the entire selection before sharing anything or restarting the VM.
-    for (const folder of b.selected) {
-      if (!cleanFolders([folder]).length) throw ctx.httpError(400, L('フォルダが見つかりません: {0}', folder))
-    }
-    const folders = cleanFolders(b.selected)
+    const folders = b.selected.map(String)
     const host = chatFor(projectDir(b.path))
     return { folders: await host.attachFolders(folders) }
   },

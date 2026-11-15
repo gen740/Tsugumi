@@ -37,10 +37,17 @@ def test_failed_or_killed_command_leaves_no_private_storage(tmp_path, monkeypatc
     monkeypatch.setattr(runner, 'processes', dict)
     monkeypatch.setattr(runner, 'shared_entries', set)
     monkeypatch.setenv('TSUGUMI_HOST_STATE', '/must-not-use-personal-state')
+    monkeypatch.setenv('TSUGUMI_TEST_NO_SECRET_STORE', '0')
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'must-not-inherit')
+    monkeypatch.setenv('OPENAI_API_KEY', 'must-not-inherit')
     result = tmp_path / 'environment.json'
     code = f'''import os,sys,json,pathlib
 assert 'TSUGUMI_HOST_STATE' not in os.environ
-keys = ['TMPDIR','TSUGUMI_SUPPORT_DIR','TSUGUMI_SOCKET_DIR','TSUGUMI_RUN_SCRATCH_DIR','XDG_CACHE_HOME']
+assert os.environ['TSUGUMI_TEST_NO_SECRET_STORE'] == '1'
+assert 'ANTHROPIC_API_KEY' not in os.environ
+assert 'OPENAI_API_KEY' not in os.environ
+assert os.environ['HOME'] == os.environ['CFFIXED_USER_HOME'] == os.environ['USERPROFILE']
+keys = ['TMPDIR','TSUGUMI_SUPPORT_DIR','TSUGUMI_SOCKET_DIR','TSUGUMI_RUN_SCRATCH_DIR','XDG_CACHE_HOME','HOME']
 pathlib.Path({str(result)!r}).write_text(json.dumps({{k:os.environ[k] for k in keys}}))
 pathlib.Path(os.environ['TSUGUMI_RUN_SCRATCH_DIR']).mkdir()
 {ending}

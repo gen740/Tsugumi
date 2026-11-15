@@ -9,7 +9,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   static func request(_ method: String, _ fields: [String: Any], host: Bool) throws -> (UInt8, NativeObject) {
     if host {
       switch method {
@@ -110,6 +110,11 @@ enum ServiceWire {
         e.scripted = f["scripted"] as? Bool ?? true; e.expectedStep = f["expected_step"] as? String
         v.event = e
         return (Tsugumi_Host_RequestPayload.guideadvancerequest.rawValue, v)
+      case "AttachFoldersRequest":
+        let v = Tsugumi_Host_AttachFoldersRequestT()
+        v.project = fields["project"] as? String ?? ""
+        v.folders = (fields["folders"] as? [String] ?? []).map(Optional.some)
+        return (Tsugumi_Host_RequestPayload.attachfoldersrequest.rawValue, v)
       case "EnvironmentRequest":
         let v = Tsugumi_Host_EnvironmentRequestT()
         v.project = fields["project"] as? String ?? ""
@@ -526,6 +531,10 @@ enum ServiceWire {
       if let card = v.card { out["card"] = card }
       return out
     case let v as Tsugumi_Host_ModelSelectionT: return ["provider": v.provider]
+    case let v as Tsugumi_Host_AttachedFoldersT:
+      return ["state": try view(v.state), "folders": try v.folders.compactMap { try $0.map(view) }] as [String: Any]
+    case let v as Tsugumi_Host_FolderAttachmentT:
+      return ["folder": v.folder, "resource": v.resource]
     case let v as Tsugumi_Host_EnvironmentStateT:
       return ["project": v.project, "key": v.key, "phase": v.phase, "endpoint": v.endpoint ?? "", "token": v.token ?? "",
         "project_id": v.projectId ?? "", "server_instance_id": v.serverInstanceId ?? "", "control_dir": v.controlDir ?? "",

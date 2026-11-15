@@ -140,7 +140,13 @@ def run(arguments):
     env.pop('TSUGUMI_HOST_STATE', None)
     for key in ('TMPDIR', 'TMP', 'TEMP', 'TSUGUMI_SOCKET_DIR'):
         env[key] = str(root)
+    home = root / 'home'
+    home.mkdir(mode=0o700)
+    for key in ('ANTHROPIC_API_KEY', 'OPENAI_API_KEY'):
+        env.pop(key, None)
     env.update(TSUGUMI_TEST_RUN_ROOT=str(root),
+               TSUGUMI_TEST_NO_SECRET_STORE='1',
+               HOME=str(home), CFFIXED_USER_HOME=str(home), USERPROFILE=str(home),
                TSUGUMI_SUPPORT_DIR=str(root / 'support'),
                TSUGUMI_RUN_SCRATCH_DIR=str(root / 'scratch'),
                XDG_CACHE_HOME=str(root / 'cache'), XDG_CONFIG_HOME=str(root / 'config'),

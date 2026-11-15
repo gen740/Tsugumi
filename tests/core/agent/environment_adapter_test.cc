@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <utility>
 
 #include "../agent_fixture_server.hh"
 #include "host/environment.hh"
@@ -18,6 +19,7 @@ class HelperDouble final : public host::EnvironmentProcess {
   std::atomic<int> launches = 0;
   std::atomic<int> signals = 0;
   bool fail = false;
+  bool fail_once = false;
   bool guest = false;
   bool verify = true;
   bool die = false;
@@ -36,7 +38,8 @@ class HelperDouble final : public host::EnvironmentProcess {
       accepted = load_host_requirements(launch.project);
       if (change_requirements && !accepted.folders.empty()) accepted.folders.front()->write = true;
     }
-    if (fail) throw std::runtime_error("helper could not run the process");
+    if (fail || std::exchange(fail_once, false))
+      throw std::runtime_error("helper could not run the process");
     const auto control = std::find(launch.arguments.begin(),
                                    launch.arguments.end(), "--control-dir");
     if (control == launch.arguments.end())
@@ -263,6 +266,80 @@ TEST(EnvironmentAdapterTest, HostUsesCoreRequirementsAndDoesNotRescanUnacceptedF
   input.action = H::EnvironmentAction::Stop;
   service.Handle(input);
 }
+TEST(EnvironmentAdapterTest, AttachWaitsForTheGuestAndRollsBackFailedBatches) {
+  TemporaryDirectory directory;
+  const auto project = directory.path / "project";
+  Write(
+      project / "tsugumi.json",
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  auto helper = std::make_shared<HelperDouble>();
+  helper->guest = true;
+  AuthorizationDouble authorization;
+  host::EnvironmentOptions options;
+  options.directory = directory.path / "environments";
+  options.socket_directory = directory.path / "sockets";
+  options.process = helper;
+  host::Environments service(
+      options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
+  H::EnvironmentRequestT start;
+  start.project = project.string();
+  start.action = H::EnvironmentAction::Start;
+  ASSERT_EQ(service.Handle(start).phase, H::EnvironmentPhase::Ready);
+  std::vector<std::string> registered;
+  const auto commit = [&](const auto& state, const auto& folders) {
+    EXPECT_EQ(state.phase, H::EnvironmentPhase::Ready);
+    EXPECT_TRUE(helper->running);
+    EXPECT_EQ(helper->received.folders, state.folders);
+    registered = folders;
+  };
+  H::AttachFoldersRequestT attach;
+  attach.project = project.string();
+  for (int i = 0; i < 3; ++i) {
+    const auto folder = (directory.path / std::to_string(i)).string();
+    std::filesystem::create_directory(folder);
+    attach.folders = {folder, folder};
+    const auto state = service.Attach(attach, commit);
+    EXPECT_EQ(registered, std::vector<std::string>{folder});
+    EXPECT_EQ(state.folders.size(), static_cast<size_t>(i + 1));
+    EXPECT_EQ(helper->launches, i + 2);
+    // A retry registers the existing share without restarting again.
+    registered.clear();
+    service.Attach(attach, commit);
+    EXPECT_EQ(registered, std::vector<std::string>{folder});
+    EXPECT_EQ(helper->launches, i + 2);
+  }
+  const auto original = service.Handle(start).folders;
+  const auto extra = (directory.path / "extra").string();
+  std::filesystem::create_directory(extra);
+  attach.folders = {extra, (directory.path / "missing").string()};
+  EXPECT_THROW(service.Attach(attach, commit), std::runtime_error);
+  EXPECT_EQ(service.Handle(start).folders, original);
+  EXPECT_EQ(helper->launches, 4);
+  attach.folders = {extra};
+  EXPECT_THROW(service.Attach(attach,
+                              [](const auto&, const auto&) {
+                                throw std::runtime_error("registration failed");
+                              }),
+               std::runtime_error);
+  EXPECT_EQ(service.Handle(start).folders, original);
+  EXPECT_EQ(helper->received.folders, original);
+  EXPECT_TRUE(helper->running);
+  // A transient restart failure restores a ready environment and old shares.
+  helper->fail_once = true;
+  EXPECT_THROW(service.Attach(attach, commit), std::runtime_error);
+  EXPECT_TRUE(helper->running);
+  EXPECT_EQ(service.Handle(start).folders, original);
+  // A permanent startup failure still restores the persisted folder set.
+  helper->fail = true;
+  EXPECT_THROW(service.Attach(attach, commit), std::runtime_error);
+  helper->fail = false;
+  EXPECT_EQ(service.Handle(start).folders, original);
+  service.Attach(attach, commit);
+  EXPECT_EQ(registered, std::vector<std::string>{extra});
+  start.action = H::EnvironmentAction::Stop;
+  service.Handle(start);
+}
+
 TEST(EnvironmentAdapterTest, StartupRequirementsMustMatchTheAcceptedCoreDocument) {
   TemporaryDirectory directory;
   const auto project = directory.path / "project", data = directory.path / "data";

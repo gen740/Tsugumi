@@ -424,6 +424,7 @@ EN = {
 "描く": "Draw",
 "Agent の発言とツールの結果を、数秒ごとに小さなモデル（%@、接続先: %@）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。": "Every few seconds the Agent's words and tool results are sent to a small model (%@, via %@) to be summarized and shown in the Tsugumi's speech bubble on the canvas. This uses tokens besides the Agent's. When off, the bubble shows only short lines made from tool calls.",
 "フォルダを添付しますか？": "Attach the folder?",
+"フォルダを添付できませんでした: %@": "Could not attach folders: %@",
 "添付（環境を再起動）": "Attach (restarts the environment)",
 "「%@」を読み取り専用で実行環境に共有し、Agent が読めるようにします。Agent が読んだファイルの中身は、接続先（%@）に送られます。共有のため実行環境を再起動します（実行中の Run は止まります）。": "“%@” is shared read-only with the environment so that the Agent can read it. What the Agent reads is sent to the model provider (%@). Sharing restarts the environment (a running Run stops).",
 "チャットに添付するフォルダ（中身は Agent が読み、接続先に送られます）": "A folder to attach to the chat (the Agent reads it and its contents are sent to the provider)",

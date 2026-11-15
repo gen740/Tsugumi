@@ -368,7 +368,7 @@ export class ChatController extends Observable {
 
   async attach(folders: string[]) {
     if (!folders.length) return
-    const r = await api<{ folders: { folder: string; resource: string }[] }>('/api/chat/folders', { ...this.base, selected: [...new Set(folders)], folders: this.folders })
+    const r = await this.session.withEnvironmentChange(() => api<{ folders: { folder: string; resource: string }[] }>('/api/chat/folders', { ...this.base, selected: [...new Set(folders)] }))
     for (const item of r.folders) this.folderResources.set(item.folder, item.resource)
     this.folders = [...new Set([...this.folders, ...r.folders.map(item => item.folder)])]
     this.changed()

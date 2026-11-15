@@ -14,6 +14,7 @@ import { VersionCommentsRequestT } from '../src/gen/tsugumi/host/version-comment
 import { RuntimeAction } from '../src/gen/tsugumi/host/runtime-action'
 import { TerminalAction } from '../src/gen/tsugumi/host/terminal-action'
 import { HostTerminalRequestT } from '../src/gen/tsugumi/host/host-terminal-request'
+import { AttachFoldersRequestT } from '../src/gen/tsugumi/host/attach-folders-request'
 import { EnvironmentRequestT } from '../src/gen/tsugumi/host/environment-request'
 import { EnvironmentAction } from '../src/gen/tsugumi/host/environment-action'
 import { HostRuntimeRequestT } from '../src/gen/tsugumi/host/host-runtime-request'
@@ -136,6 +137,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
       return new GuideAdvanceRequestT(v.session_id, v.language, new GuideInputT(e.kind, e.text, e.project, e.demo, e.title,
         e.connected, e.active, e.run, e.state, e.scripted ?? true, e.expected_step))
     }
+    case 'AttachFoldersRequest': return new AttachFoldersRequestT(v.project, v.folders ?? [])
     case 'EnvironmentRequest': return new EnvironmentRequestT(v.project, enumValue(EnvironmentAction, v.action), v.origins ?? [], v.folders ?? [], v.archive_incompatible_history)
     case 'HostRuntimeRequest': return new HostRuntimeRequestT(enumValue(RuntimeAction, v.action), v.project_id, v.project, v.command)
     case 'HostTerminalRequest': return new HostTerminalRequestT(v.project, enumValue(TerminalAction, v.action), BigInt(v.session ?? 0), v.rows ?? 24, v.cols ?? 80, v.data ?? [])
