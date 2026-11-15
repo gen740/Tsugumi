@@ -13,7 +13,7 @@ struct HostServiceTrait: SuiteTrait, TestTrait, TestScoping {
   func provideScope(for test: Test, testCase: Test.Case?,
                     performing function: @Sendable () async throws -> Void) async throws {
     await HostServiceLock.shared.acquire()
-    let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/tmp").appendingPathComponent("hs-\(UUID().uuidString.prefix(8))")
+    let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/tmp").appendingPathComponent("hs-\(UUID().uuidString.prefix(6))")
     let environment = await HostServiceEnvironment()
     do {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

@@ -51,7 +51,7 @@ pathlib.Path(os.environ['TSUGUMI_RUN_SCRATCH_DIR']).mkdir()
     assert not root.exists()
     assert all(Path(value).is_relative_to(root) for value in env.values())
     # Longest native project socket under this run's broker fits macOS.
-    nested = root / 'hs-12345678/support/chat-12345678'
+    nested = root / 'hs-123456/support/chat-123456'
     assert len(str(nested / ('e-' + 'a' * 16) / 'env' / ('b' * 16) / 's').encode()) < 104
     assert len(str(nested / ('v-' + 'a' * 24 + '.sock')).encode()) < 104
 

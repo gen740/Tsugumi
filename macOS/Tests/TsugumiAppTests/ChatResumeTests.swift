@@ -12,7 +12,7 @@ import TsugumiRPC
 @MainActor
 @Suite(.serialized, .hostService) struct ChatResumeTests {
   @MainActor final class Fixture {
-    let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/tmp").appendingPathComponent("chat-\(UUID().uuidString.prefix(8))")
+    let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/tmp").appendingPathComponent("chat-\(UUID().uuidString.prefix(6))")
     let conversationID = UUID().uuidString.lowercased()
     var core = Process()
     let model = Process()
