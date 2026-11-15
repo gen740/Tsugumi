@@ -123,12 +123,14 @@ import TsugumiRPC
       return session
     }
 
-    /// The VM launcher creates read-only shares; this host fixture uses the
-    /// daemon's equivalent allowlist, separate from the Agent's access grants.
-    func shareFolders(_ folders: [URL]) throws {
-      let daemon = try #require(daemon)
-      let data = try JSONSerialization.data(withJSONObject: ["folders": folders.map { $0.standardizedFileURL.path }])
-      try data.write(to: daemon.dir.appendingPathComponent("control/attached.json"))
+    /// Transfer this test's project to the production host environment manager.
+    func useManagedEnvironment() async throws {
+      await session.close()
+      daemon?.stop()
+      let managed = try ProjectIdentity(url: #require(project))
+      let session = ProjectSession(identity: managed, environments: self.session.environments)
+      sessions.insert(session, at: 0)
+      session.start()
     }
 
     func makeChat() -> ChatController {
@@ -165,6 +167,7 @@ import TsugumiRPC
     func stop() async {
       for chat in chats { chat.detach() }
       for session in sessions { await session.close() }
+      for session in sessions where session.endpointOverride == nil { try? await session.environments.stop(session.identity) }
       // Let the UI's detach tasks release their socket observations before
       // terminating the isolated daemon and restoring the environment.
       try? await Task.sleep(for: .milliseconds(100))
@@ -285,7 +288,7 @@ import TsugumiRPC
         try FileManager.default.createDirectory(at: folder.appendingPathComponent("nested"), withIntermediateDirectories: true)
         try Data(text.utf8).write(to: folder.appendingPathComponent("nested/note.txt"))
       }
-      t.session.start()
+      try await t.useManagedEnvironment()
       try await SyncTests.connected(t.session)
       let chat = t.makeChat()
       try await until("the chat is ready") { chat.currentId == t.conversationID }
@@ -298,8 +301,8 @@ import TsugumiRPC
       #expect(try await t.session.environments.attachedFolders(t.session.identity) == paths)
       await chat.attach(folders: [first, second])
       #expect(chat.folders == paths, "Repeated attachment does not duplicate either folder")
-      try t.shareFolders([first, second])
-      let project = try #require(t.session.endpointOverride?.projectId)
+      #expect(t.session.connected)
+      let project = try #require(t.session.projectId)
       let resources = paths.map { path in
         "folder:\(project):" + SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
       }

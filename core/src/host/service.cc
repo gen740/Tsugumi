@@ -483,6 +483,41 @@ struct Service::State {
     if (r->value_as_HostVersionGraphRequest() ||
         r->value_as_HostVersionDiffRequest())
       return versions->HandleHost(request, human, lock);
+    if (const auto* attach = r->value_as_AttachFoldersRequest()) {
+      Human(human);
+      auto input = std::unique_ptr<H::AttachFoldersRequestT>(attach->UnPack());
+      lock.unlock();
+      if (!environments)
+        throw Failure("unavailable", "Environment service is not running");
+      H::AttachedFoldersT result;
+      auto state = environments->Attach(
+          *input, [&](const auto& ready, const auto& folders) {
+            std::lock_guard registration_lock(mutex);
+            sql::Transaction transaction(db);
+            for (const auto& folder : folders) {
+              auto item = std::make_unique<H::FolderAttachmentT>();
+              item->folder = folder;
+              item->resource = "folder:" + ready.project_id + ":" +
+                               crypto::sha256_hex(folder);
+              H::RegisterFolderRequestT registration;
+              registration.project_id = ready.project_id;
+              registration.resource_id = item->resource;
+              registration.folder = folder;
+              registration.title =
+                  std::filesystem::path(folder).filename().string();
+              flatbuffers::FlatBufferBuilder builder;
+              builder.Finish(
+                  H::RegisterFolderRequest::Pack(builder, &registration));
+              registry.RegisterFolder(
+                  *flatbuffers::GetRoot<H::RegisterFolderRequest>(
+                      builder.GetBufferPointer()));
+              result.folders.push_back(std::move(item));
+            }
+            transaction.commit();
+          });
+      result.state = std::make_unique<H::EnvironmentStateT>(std::move(state));
+      return wire::HostReply(request.request_id, result);
+    }
     if (const auto* environment = r->value_as_EnvironmentRequest()) {
       auto input =
           std::unique_ptr<H::EnvironmentRequestT>(environment->UnPack());

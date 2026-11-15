@@ -541,7 +541,7 @@
  "フィールドを読めません: {0}": "Cannot read a field: {0}",
  "フォルダ": "Folders",
  "フォルダ ディレクトリ": "folder directory",
- "フォルダが見つかりません: {0}": "Folder not found: {0}",
+ "フォルダを添付できませんでした: {0}": "Could not attach folders: {0}",
  "フォルダはありません": "No folders",
  "フォルダを添付…": "Attach a folder…",
  "フォルダを添付しますか？": "Attach the folder?",

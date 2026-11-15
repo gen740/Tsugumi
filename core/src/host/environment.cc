@@ -587,6 +587,74 @@ auto Environments::Terminal(const H::HostTerminalRequestT& request)
   }
   return impl_->options.process->Terminal(input);
 }
+auto Environments::Attach(
+    const H::AttachFoldersRequestT& request,
+    const std::function<void(const State&, const std::vector<std::string>&)>&
+        commit) -> State {
+  if (impl_->shutdown.stop_requested())
+    throw std::runtime_error("Host service is stopping");
+  std::vector<std::string> selected;
+  for (const auto& value : request.folders) {
+    const auto path = std::filesystem::path(value).lexically_normal();
+    if (!path.is_absolute() || !std::filesystem::is_directory(path))
+      throw std::runtime_error("Folder not found: " + value);
+    const auto folder = path.string();
+    if (std::find(selected.begin(), selected.end(), folder) == selected.end())
+      selected.push_back(folder);
+  }
+  if (selected.empty()) throw std::runtime_error("Select at least one folder");
+  auto entry = impl_->EntryFor(request.project);
+  std::lock_guard lock(entry->mutex);
+  entry->state.project = std::filesystem::canonical(request.project).string();
+  impl_->CheckDeath(*entry);
+  if (!entry->pid) impl_->ReadReady(*entry);
+  const auto original = entry->folders;
+  const bool was_ready = entry->state.phase == H::EnvironmentPhase::Ready;
+  if (was_ready)
+    entry->requirements = impl_->options.process->Requirements(entry->state);
+  const auto previous_mounts =
+      entry->mounted.empty() ? impl_->Plan(*entry).mounts : entry->mounted;
+  auto folders = original;
+  for (const auto& folder : selected)
+    if (std::find(folders.begin(), folders.end(), folder) == folders.end())
+      folders.push_back(folder);
+  PrivateDirectory(
+      std::filesystem::path(entry->state.control_dir).parent_path());
+  PrivateDirectory(entry->state.control_dir);
+  H::EnvironmentRequestT start;
+  start.project = entry->state.project;
+  start.origins = entry->origins;
+  try {
+    impl_->WriteFolders(*entry, folders);
+    if (was_ready && impl_->options.process->Guest() &&
+        impl_->Plan(*entry).mounts != previous_mounts)
+      impl_->Stop(*entry);
+    impl_->Start(*entry, start);
+    if (entry->state.phase != H::EnvironmentPhase::Ready)
+      throw std::runtime_error(entry->state.message);
+    commit(entry->state, selected);
+    return entry->state;
+  } catch (const std::exception& error) {
+    auto message = std::string("Could not attach folders: ") + error.what();
+    try {
+      impl_->WriteFolders(*entry, original);
+      if (impl_->options.process->Guest() && entry->pid &&
+          impl_->Plan(*entry).mounts != entry->mounted)
+        impl_->Stop(*entry);
+      if (!was_ready && entry->pid) impl_->Stop(*entry);
+      if (was_ready) {
+        impl_->Start(*entry, start);
+        if (entry->state.phase != H::EnvironmentPhase::Ready)
+          throw std::runtime_error(entry->state.message);
+      }
+      impl_->Notify(*entry);
+    } catch (const std::exception& recovery) {
+      message += "; could not restore the environment: " +
+                 std::string(recovery.what());
+    }
+    throw std::runtime_error(message);
+  }
+}
 auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
   if (impl_->shutdown.stop_requested())
     throw std::runtime_error("Host service is stopping");

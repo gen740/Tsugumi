@@ -592,6 +592,7 @@
 "フォルダはありません" = "No folders";
 "フォルダを添付…" = "Attach a folder…";
 "フォルダを添付しますか？" = "Attach the folder?";
+"フォルダを添付できませんでした: %@" = "Could not attach folders: %@";
 "フォルダを追加…" = "Add Folder…";
 "フォルダ名に使えない文字が含まれているか、名前が空です。" = "The folder name is empty or contains invalid characters.";
 "フローの方向が正しくありません。" = "The flow direction is invalid.";

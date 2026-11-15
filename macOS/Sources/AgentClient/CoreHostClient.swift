@@ -206,7 +206,7 @@ public actor CoreHostClient {
     let data: Data
     do {
       data = try await withCheckedThrowingContinuation { continuation in
-        transport.call(frame, timeout: .seconds(["EnvironmentRequest", "HostRuntimeRequest"].contains(method) ? 3600 : 120), continuation: continuation)
+        transport.call(frame, timeout: .seconds(["EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest"].contains(method) ? 3600 : 120), continuation: continuation)
       }
     } catch RPCError.disconnected {
       // The pending reply can fail before the close observer reaches this
