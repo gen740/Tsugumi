@@ -25,7 +25,7 @@ nonisolated func onMainWhileMenuTracks(_ body: @escaping @MainActor @Sendable ()
   DispatchQueue.main.async { once.run() }
 }
 
-/// Refreshes the open menu from agentd. Catalog persistence and empty-refresh
+/// Refreshes the open menu from hostd. Catalog persistence and empty-refresh
 /// handling are owned by the service; only UI scheduling lives here.
 @MainActor
 final class ModelListRefresher {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds dist/tsugumi-macos-arm64.tar.gz and its checksum, what cli/install.sh
-# installs on a Mac: the server of web/ with Node.js, agentd and OpenSSL,
+# installs on a Mac: the server of web/ with Node.js, hostd and OpenSSL,
 # tsugumi-vmhost, the shared
 # VM's boot disk and the source the VM builds Tsugumi from (the same two as the
 # app: dist/tsugumi-vm, macOS/Container/vm-source.txt).
@@ -21,7 +21,7 @@ vm="$dist/tsugumi-vm"
 # The Web UI, built from the pinned packages.
 nix develop "$repo" -c bash -c "cd '$repo/web' && npm ci --ignore-scripts && npm run gen && npm run build"
 
-"$repo/macOS/tools/build-agent.sh"
+"$repo/macOS/tools/build-host.sh"
 
 # As for the app: Apple's toolchain in a clean environment, only flatc from Nix.
 flatc_bin="$("$repo/macOS/tools/flatc-bin.sh")"
@@ -45,13 +45,13 @@ tar -xzf "$cache/$node_tar" -C "$tree/bin" --strip-components=2 "node-v$NODE_VER
 tar -xzf "$cache/$node_tar" -C "$tree/licenses" --strip-components=1 "node-v$NODE_VERSION-darwin-arm64/LICENSE"
 mv "$tree/licenses/LICENSE" "$tree/licenses/node.LICENSE"
 
-cp "$bin/tsugumi-vmhost" "$repo/build-host/core/tsugumi-agentd" "$tree/bin/"
+cp "$bin/tsugumi-vmhost" "$repo/build-host/core/tsugumi-hostd" "$tree/bin/"
 cp "$repo/build-host/Frameworks/"*.dylib "$tree/Frameworks/"
 
 for library in "$tree/Frameworks/"*.dylib; do
   codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" "$library"
 done
-codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" "$tree/bin/tsugumi-agentd"
+codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" "$tree/bin/tsugumi-hostd"
 codesign --force --sign "${TSUGUMI_CODESIGN_IDENTITY:--}" --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$tree/bin/tsugumi-vmhost"
 
 # The server finds these from web/dist/server.js, as in the repository.

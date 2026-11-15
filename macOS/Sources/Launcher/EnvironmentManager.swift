@@ -29,12 +29,12 @@ public enum EnvironmentStage: String, Sendable, CaseIterable {
   }
 }
 
-/// Presentation and file-descriptor adapter for agentd's environment service.
+/// Presentation and file-descriptor adapter for hostd's environment service.
 public actor EnvironmentManager {
   public nonisolated let support: URL
   public nonisolated let vm: HostRuntimeSnapshot
   public nonisolated let resources: VMResources
-  private let client: CoreAgentClient
+  private let client: CoreHostClient
   private let runtimeArguments: [String]
   private var token: UUID?
   private var states: [String: EnvironmentState] = [:]
@@ -46,7 +46,7 @@ public actor EnvironmentManager {
   public init(support: URL? = nil, image: VMImage? = VMImage.find(), resources: VMResources = .default) {
     let support = support ?? AppChannel.current.supportDirectory
     self.support = support; self.resources = resources
-    client = CoreAgentClient(support: support)
+    client = CoreHostClient(support: support)
     runtimeArguments = HostRuntimeConfiguration.arguments(support: support, image: image, resources: resources)
     vm = HostRuntimeSnapshot(directory: support.appendingPathComponent("vm"))
   }

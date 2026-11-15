@@ -24,8 +24,8 @@ TEST_F(AgentFixture, AgentWorkAnimationDefaultsOnAndPersistsAsABoolean) {
   host.reset();
   human.reset();
   external.reset();
-  agent.Stop();
-  StartAgent();
+  service.Stop();
+  StartHost();
   EXPECT_EQ(animation(SettingsGet(*host)), "false");
 }
 TEST_F(AgentFixture, HelperSettingsAreValidatedSharedAndPersisted) {
@@ -58,8 +58,8 @@ TEST_F(AgentFixture, HelperSettingsAreValidatedSharedAndPersisted) {
   host.reset();
   human.reset();
   external.reset();
-  agent.Stop();
-  StartAgent();
+  service.Stop();
+  StartHost();
   EXPECT_EQ(value(SettingsGet(*host), "agent.helperParallelism"), "1");
   EXPECT_EQ(value(SettingsGet(*host), "agent.allowUnscopedHelpers"), "true");
 }
@@ -153,8 +153,8 @@ TEST_F(AgentFixture,
   host.reset();
   human.reset();
   external.reset();
-  agent.Stop();
-  StartAgent();
+  service.Stop();
+  StartHost();
   const auto status =
       Call(*host, H::RequestPayload::ProviderStatusRequest, [](Builder& b) {
         return H::CreateProviderStatusRequest(b, b.CreateString("desktop"),
@@ -164,7 +164,7 @@ TEST_F(AgentFixture,
   EXPECT_EQ(status.HostValue()->value_as_ProviderStatus()->configured(),
             !ephemeral);
   EXPECT_EQ(Bytes(status).find(key), std::string::npos);
-  EXPECT_EQ(Read(directory.path / "agent.log").find(key), std::string::npos);
+  EXPECT_EQ(Read(directory.path / "host.log").find(key), std::string::npos);
   EXPECT_FALSE(SettingsPatch(*host, "desktop", {{"agent.secret", Quote(key)}})
                    .Code()
                    .empty());
@@ -223,7 +223,7 @@ TEST_F(
         "NEW_REFRESH_SENTINEL", "CODE_SENTINEL"}) {
     EXPECT_EQ(Bytes(signout).find(secret), std::string::npos);
     EXPECT_EQ(Events(one).View().find(secret), std::string::npos);
-    EXPECT_EQ(Read(directory.path / "agent.log").find(secret),
+    EXPECT_EQ(Read(directory.path / "host.log").find(secret),
               std::string::npos);
   }
 }
@@ -270,7 +270,7 @@ TEST_F(AgentFixture, RefreshErrorsCannotEchoCredentialsToRepliesEventsOrLogs) {
   EXPECT_EQ(result.find("REFRESH_SENTINEL"), std::string::npos);
   EXPECT_EQ(Events(conversation).View().find("REFRESH_SENTINEL"),
             std::string::npos);
-  EXPECT_EQ(Read(directory.path / "agent.log").find("REFRESH_SENTINEL"),
+  EXPECT_EQ(Read(directory.path / "host.log").find("REFRESH_SENTINEL"),
             std::string::npos);
 }
 TEST_F(AgentFixture, FailedRemoteRevocationStillDeletesTheLocalCredential) {
@@ -296,7 +296,7 @@ TEST_F(AgentFixture, FailedRemoteRevocationStillDeletesTheLocalCredential) {
   ASSERT_EQ(ListSize(status->accounts()), 1u);
   EXPECT_FALSE(status->accounts()->Get(0)->signed_in());
   EXPECT_EQ(Bytes(signout).find("REFRESH_SENTINEL"), std::string::npos);
-  EXPECT_EQ(Read(directory.path / "agent.log").find("REFRESH_SENTINEL"),
+  EXPECT_EQ(Read(directory.path / "host.log").find("REFRESH_SENTINEL"),
             std::string::npos);
 }
 TEST_F(AgentFixture, AppAndWebAccountProfilesRemainSeparate) {

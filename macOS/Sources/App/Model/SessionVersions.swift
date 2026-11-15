@@ -10,13 +10,13 @@ extension ProjectSession {
     guard rpc != nil else { return }
     do {
       guard let project = try await RPCToolTransport(session: self).project() else { return }
-      versionGraph = try await CoreAgentClient.shared.versionGraph(project: project.id, language: AppPreferences.Language.running.rawValue)
+      versionGraph = try await CoreHostClient.shared.versionGraph(project: project.id, language: AppPreferences.Language.running.rawValue)
     } catch { versionGraph = nil }
   }
 
   func versionDiff(commit: String, from: String?) async throws -> Tsugumi_Host_VersionDiffT {
     guard let project = try await RPCToolTransport(session: self).project() else { throw RPCError.disconnected }
-    return try await CoreAgentClient.shared.versionDiff(project: project.id, commit: commit, from: from)
+    return try await CoreHostClient.shared.versionDiff(project: project.id, commit: commit, from: from)
   }
 
   func loadVersionCanvas(_ commit: String) async {
@@ -31,17 +31,17 @@ extension ProjectSession {
       request.wires = raw.wires.compactMap { w in w.map { w in
         let value = Tsugumi_Host_VersionCanvasWireT(); value.from = w.from; value.to = w.to; return value
       } }
-      versionCanvases[commit] = try await CoreAgentClient.shared.layoutCall(.versioncanvasrequest, request)
+      versionCanvases[commit] = try await CoreHostClient.shared.layoutCall(.versioncanvasrequest, request)
     } catch { notice = String(describing: error) }
   }
 
   func loadVersionComments(_ commit: String) async throws {
     guard versionComments[commit] == nil else { return }
     guard let project = try await RPCToolTransport(session: self).project() else { return }
-    versionComments[commit] = try await CoreAgentClient.shared.versionComments(project: project.id, commit: commit)
+    versionComments[commit] = try await CoreHostClient.shared.versionComments(project: project.id, commit: commit)
   }
 
-  /// Ask agentd for the note to display. It owns policy, generation and storage.
+  /// Ask hostd for the note to display. It owns policy, generation and storage.
   func loadVersionNote(_ commit: String) async {
     guard rpc != nil else { return }
     let request = UUID()
@@ -58,7 +58,7 @@ extension ProjectSession {
       try await loadVersionComments(commit)
       await CorePreferences.shared.reload()
       guard let project = try await RPCToolTransport(session: self).project() else { return }
-      let note = try await CoreAgentClient.shared.versionNote(project: project.id, commit: commit,
+      let note = try await CoreHostClient.shared.versionNote(project: project.id, commit: commit,
         language: AppPreferences.Language.running.rawValue)
       if versionNoteRequests[commit] == request { versionNotes[commit] = note }
     } catch {

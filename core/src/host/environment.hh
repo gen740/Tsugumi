@@ -50,7 +50,7 @@ struct EnvironmentLaunch {
 };
 
 // The platform adapter only runs, probes and stops a process. Readiness,
-// registration, permissions and the environment's lifetime belong to agentd.
+// registration, permissions and the environment's lifetime belong to hostd.
 class EnvironmentProcess {
  public:
   virtual ~EnvironmentProcess() = default;

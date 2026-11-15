@@ -10,7 +10,7 @@ final class TerminalPipe: @unchecked Sendable {
   private let lock = NSLock()
   private let output = DispatchQueue(label: "app.tsugumi.terminal-output")
   private var closed = false
-  init(client: CoreAgentClient, session: UInt64, ended: @escaping @Sendable () -> Void) throws {
+  init(client: CoreHostClient, session: UInt64, ended: @escaping @Sendable () -> Void) throws {
     var pair: [Int32] = [-1, -1]
     guard socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0 else { throw LauncherError.notReady("cannot create terminal bridge") }
     local = pair[0]; remote = pair[1]

@@ -71,7 +71,7 @@ def registered_remote(monkeypatch, resource_limits):
             self.wfile.write(R.frame(R.reply(R.ReplyBody.Catalog, R.CatalogT(
                 services=[R.TargetT(id="cluster", available=True, capabilities=caps)]))))
 
-    with tempfile.TemporaryDirectory(prefix="tsg-broker-") as directory:
+    with tempfile.TemporaryDirectory(prefix="tsugumi-broker-") as directory:
         endpoint = str(Path(directory) / "socket")
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", "unix:" + endpoint)
         capability = Path(directory) / "capability"

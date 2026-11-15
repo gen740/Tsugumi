@@ -1,7 +1,7 @@
 import { mockHostSettings } from './hostSettingsFixture'
 import assert from 'node:assert/strict'
 import { chatRoutes } from '../server/chat'
-import { CoreAgentHost } from '../server/coreAgent'
+import { CoreHost } from '../server/coreHost'
 import { ModelListRefresher } from '../src/model/modelLists'
 
 const tick = () => new Promise((r) => setTimeout(r, 0))
@@ -34,10 +34,10 @@ const tick = () => new Promise((r) => setTimeout(r, 0))
 // The HTTP adapter shows the service's catalog and does not persist a second copy.
 {
   process.env.ANTHROPIC_API_KEY = 'test-a'
-  const original = CoreAgentHost.prototype.models
-  const stored = CoreAgentHost.prototype.storedModels
-  CoreAgentHost.prototype.models = async () => [{ id: 'a', name: 'Model A' }]
-  CoreAgentHost.prototype.storedModels = async (id) => id === 'chatgpt' ? [{ id: 'g', name: 'GPT' }] : []
+  const original = CoreHost.prototype.models
+  const stored = CoreHost.prototype.storedModels
+  CoreHost.prototype.models = async () => [{ id: 'a', name: 'Model A' }]
+  CoreHost.prototype.storedModels = async (id) => id === 'chatgpt' ? [{ id: 'g', name: 'GPT' }] : []
   try {
     const restoreSettings = mockHostSettings()
     const routes = chatRoutes({
@@ -48,8 +48,8 @@ const tick = () => new Promise((r) => setTimeout(r, 0))
     assert.deepEqual(result, { models: ['a'], modelNames: { g: 'GPT' } })
     restoreSettings()
   } finally {
-    CoreAgentHost.prototype.models = original
-    CoreAgentHost.prototype.storedModels = stored
+    CoreHost.prototype.models = original
+    CoreHost.prototype.storedModels = stored
     delete process.env.ANTHROPIC_API_KEY
   }
 }

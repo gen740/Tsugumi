@@ -62,8 +62,8 @@ TEST_F(AgentProjectFixture,
   human.reset();
   external.reset();
   host.reset();
-  agent.Stop();
-  StartAgent();
+  service.Stop();
+  StartHost();
   EXPECT_EQ(Tool(conversation, "project_save", args, "saved").View(),
             saved.View());
   const auto initialized = ApprovedTool(conversation, "version_init", "{}");

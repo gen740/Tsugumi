@@ -38,7 +38,7 @@ let package = Package(
     .package(url: "https://github.com/mgriebling/SwiftMath.git", exact: "1.7.3"),
   ],
   targets: [
-    // macOS adapters for the core-owned Agent service.
+    // macOS adapters for the shared host service.
     .target(
       name: "TsugumiAgentClient",
       dependencies: ["TsugumiRPC", .product(name: "FlatBuffers", package: "flatbuffers")],
@@ -65,7 +65,7 @@ let package = Package(
       dependencies: ["TsugumiLauncher"],
       path: "Sources/VMCtl",
       swiftSettings: [.swiftLanguageMode(.v5)]),
-    // The signed VM adapter driven by agentd;
+    // The signed VM adapter driven by hostd;
     // needs the virtualization entitlement.
     .executableTarget(
       name: "TsugumiVMHost",

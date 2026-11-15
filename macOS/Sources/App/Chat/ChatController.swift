@@ -38,7 +38,7 @@ func availableSkills(project: URL? = nil, folders: [String], conversationID: Str
   var fields: [String: Any] = ["folders": folders]
   if let conversationID { fields["conversation_id"] = conversationID }
   if let project { fields["project_path"] = project.standardizedFileURL.path }
-  let value = try await CoreAgentClient.shared.call("SkillsListRequest", fields)
+  let value = try await CoreHostClient.shared.call("SkillsListRequest", fields)
   let skills = (value["skills"] as? [[String: Any]] ?? []).filter { ($0["status"] as? String) == "ready" && (project != nil || ($0["path"] as? String) != "builtin:demo") }.map { s in
     let path = s["path"] as? String ?? ""
     if path == "builtin:demo" { return ChatController.demoSkill }
@@ -155,7 +155,7 @@ final class ChatController {
       }
       for path in paths {
         let resource = "folder:\(project.id):" + SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
-        _ = try await CoreAgentClient.shared.call("RegisterFolderRequest", ["project_id": project.id,
+        _ = try await CoreHostClient.shared.call("RegisterFolderRequest", ["project_id": project.id,
           "resource_id": resource, "folder": path, "title": (path as NSString).lastPathComponent])
         folderResources[path] = resource
         if !folders.contains(path) { folders.append(path) }
@@ -173,9 +173,9 @@ final class ChatController {
     Task {
       do {
         if let resource {
-          let access = try await CoreAgentClient.shared.call("AccessListRequest")
+          let access = try await CoreHostClient.shared.call("AccessListRequest")
           for grant in access["grants"] as? [[String: Any]] ?? [] where grant["project_id"] as? String == resource && grant["active"] as? Bool == true {
-            if let id = grant["id"] as? String { _ = try await CoreAgentClient.shared.call("AccessRevokeRequest", ["grant_id": id]) }
+            if let id = grant["id"] as? String { _ = try await CoreHostClient.shared.call("AccessRevokeRequest", ["grant_id": id]) }
           }
         }
         try await session.environments.removeFolders(session.identity, [path])
@@ -237,7 +237,7 @@ final class ChatController {
     Task {
       do {
         guard let project = try await RPCToolTransport(session: session).project() else { return }
-        let value = try await CoreAgentClient.shared.call("ConversationListRequest", ["project_id": project.id])
+        let value = try await CoreHostClient.shared.call("ConversationListRequest", ["project_id": project.id])
         sessions = (value["value"] as? [[String: Any]] ?? []).compactMap { item in
           guard let id = item["id"] as? String else { return nil }
           return SessionInfo(id: id, title: item["title"] as? String ?? String(localized: "新しい会話"),
@@ -377,7 +377,7 @@ final class ChatController {
   func delete(_ id: String) {
     Task {
       do {
-        _ = try await CoreAgentClient.shared.call("ConversationDeleteRequest", ["conversation_id": id])
+        _ = try await CoreHostClient.shared.call("ConversationDeleteRequest", ["conversation_id": id])
         if id == currentId { currentId = "" }
         refreshSessions()
       } catch { status = String(describing: error) }
@@ -387,7 +387,7 @@ final class ChatController {
   func search(_ text: String) async -> [SearchHit] {
     guard !text.isEmpty else { return [] }
     guard let project = try? await RPCToolTransport(session: session).project(),
-      let result = try? await CoreAgentClient.shared.call("ConversationSearchRequest", ["text": text, "project_id": project.id]) else { return [] }
+      let result = try? await CoreHostClient.shared.call("ConversationSearchRequest", ["text": text, "project_id": project.id]) else { return [] }
     return (result["value"] as? [[String: Any]] ?? []).compactMap { item in
       guard let session = item["session"] as? String else { return nil }
       return SearchHit(session: session, title: item["title"] as? String ?? "", snippet: item["snippet"] as? String ?? "")
@@ -471,7 +471,7 @@ final class ChatController {
   /// Replies to tap and buttons Tsugumi offered with its last answer (guide_show).
   private(set) var choices: [String] = []
   private(set) var offered: [GuideAction] = []
-  /// Without a model connection: Tsugumi's fixed reply from agentd to what
+  /// Without a model connection: Tsugumi's fixed reply from hostd to what
   /// was asked or what the app noted, with its choices and buttons.
   func showScripted(asked: String?, reply: String, shown: GuideShow) {
     if let asked { items.append(Item(role: "user", text: asked)) }
@@ -886,7 +886,7 @@ enum AgentSettings {
   }
 
   static func guide() async -> ProviderConfig {
-    do { return selected(try await CoreAgentClient.shared.modelSelection("guide")) }
+    do { return selected(try await CoreHostClient.shared.modelSelection("guide")) }
     catch {
       var config = current()
       config.purpose = "guide"

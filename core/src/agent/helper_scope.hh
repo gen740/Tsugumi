@@ -10,7 +10,7 @@
 namespace tsugumi::agent {
 
 // An exact set of permanent Card paths. A container never grants its children.
-// The reader is private to agentd: resolving a nested path must not disclose
+// The reader is private to hostd: resolving a nested path must not disclose
 // the enclosing project's document to the helper.
 class HelperScope {
 public:

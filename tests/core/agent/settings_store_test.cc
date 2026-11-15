@@ -344,14 +344,14 @@ TEST_F(HostPolicyTest, LinuxEnvironmentOverridesStoredKeyWithoutReplacingIt) {
   Open(host::Settings::KeyStorage::Host);
   secrets->values["desktop:anthropic"] = "STORED_KEY";
   EXPECT_TRUE(Status().configured);
-  EXPECT_EQ(Status().storage, "agentd");
+  EXPECT_EQ(Status().storage, "hostd");
   EXPECT_EQ(Resolve().credential, "STORED_KEY");
   Provision("env", "ENV_KEY");
   EXPECT_EQ(Status().source, "env");
   EXPECT_EQ(Resolve().credential, "ENV_KEY");
   EXPECT_EQ(secrets->values["desktop:anthropic"], "STORED_KEY");
   Provision("env");
-  EXPECT_EQ(Status().source, "agentd");
+  EXPECT_EQ(Status().source, "hostd");
   EXPECT_EQ(Resolve().credential, "STORED_KEY");
 }
 TEST_F(HostPolicyTest, GuideAndSummaryUseSettingsAndHostCatalog) {

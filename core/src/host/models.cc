@@ -26,7 +26,7 @@ Models::Models(sql::Db& db, Settings& settings, std::stop_token stop,
 auto Models::StoredChatGPTModels(const std::filesystem::path& state_dir)
     -> std::vector<std::string> {
   std::vector<std::string> models;
-  sql::Db model_db((state_dir / "agent.sqlite").string(), true);
+  sql::Db model_db((state_dir / "host.sqlite").string(), true);
   auto q =
       model_db.prepare("SELECT models FROM model_lists WHERE id='chatgpt'");
   if (q.step())

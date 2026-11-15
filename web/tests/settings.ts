@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import { chatRoutes, type ChatContext } from '../server/chat'
-import { CoreAgentHost } from '../server/coreAgent'
+import { CoreHost } from '../server/coreHost'
 
 // Exercise the browser -> Web host revision boundary without a listener.
 // Standalone Web uses one profile; desktop Web shares connection settings but
 // retains its own skill folders. Both must patch only what the screen edited.
-const original = { settings: CoreAgentHost.prototype.getSettings, environment: CoreAgentHost.prototype.provisionEnvironment }
+const original = { settings: CoreHost.prototype.getSettings, environment: CoreHost.prototype.provisionEnvironment }
 const defaults = { 'agent.provider': 'anthropic', 'agent.model': 'old', 'agent.skillFolders': [], 'app.language': 'ja', 'agent.helperParallelism': 4, 'agent.allowUnscopedHelpers': false }
 try {
   for (const desktop of [false, true]) {
@@ -15,8 +15,8 @@ try {
       if (!profiles.has(profile)) profiles.set(profile, { revision: 0, values: { ...defaults } })
       return profiles.get(profile)!
     }
-    CoreAgentHost.prototype.provisionEnvironment = async () => {}
-    CoreAgentHost.prototype.getSettings = async function (profile: string) {
+    CoreHost.prototype.provisionEnvironment = async () => {}
+    CoreHost.prototype.getSettings = async function (profile: string) {
       this.user.call = async <T = any>(method: string, fields: any = {}): Promise<T> => {
         if (method === 'ModelSelectionRequest') return { provider: { providerId: 'anthropic', model: 'host-summary-model' } } as T
         if (method === 'ModelsListRequest') return [] as T
@@ -49,7 +49,7 @@ try {
     assert.equal(state(connection).values['agent.model'], 'new')
   }
 } finally {
-  CoreAgentHost.prototype.getSettings = original.settings
-  CoreAgentHost.prototype.provisionEnvironment = original.environment
+  CoreHost.prototype.getSettings = original.settings
+  CoreHost.prototype.provisionEnvironment = original.environment
 }
 console.log('Host settings: profile sharing, combined patches and stale revisions passed')

@@ -37,8 +37,8 @@ struct ApplicationSettings: View {
     /// Where each pane's values are kept, said on the pane.
     var storage: String {
       switch self {
-      case .appearance: return String(localized: "この Mac の外観設定と、このホストの agentd の Agent 表示設定")
-      case .api: return String(localized: "このホスト（設定は agentd、API キーは macOS Keychain）")
+      case .appearance: return String(localized: "この Mac の外観設定と、このホストの hostd の Agent 表示設定")
+      case .api: return String(localized: "このホスト（設定は hostd、API キーは macOS Keychain）")
       case .connections: return String(localized: "表示のみ（開いているプロジェクトの接続先）")
       case .binaryCaches: return String(localized: "この Mac の共有実行環境（全プロジェクト）")
       default: return String(localized: "このアプリ（この Mac のユーザー設定）")
@@ -275,7 +275,7 @@ private struct AppearanceSettings: View {
         Slider(value: $prefs.gridSize, in: 10...60, step: 5) { Text("グリッド間隔 \(Int(prefs.gridSize))") }
         Toggle("実行中の接続線を動かす", isOn: $prefs.animateLines)
         Toggle("Agent の作業をアニメーションで表示", isOn: $animateWork)
-          .help("オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの agentd に保存します。")
+          .help("オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの hostd に保存します。")
         Picker("作業中の Agent", selection: $prefs.agentAvatar) {
           ForEach(AgentAvatar.allCases) { Text($0.label).tag($0) }
         }
@@ -704,7 +704,7 @@ private struct APIKeySection: View {
     }
     .onAppear {
       refresh()
-      Task { refresh(); models = (try? await CoreAgentClient.shared.storedModels(id).map(\.id)) ?? [] }
+      Task { refresh(); models = (try? await CoreHostClient.shared.storedModels(id).map(\.id)) ?? [] }
     }
   }
 

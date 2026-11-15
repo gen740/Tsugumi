@@ -3,7 +3,7 @@ import Darwin
 import Foundation
 
 /// Private adapter transport, used by the signed helper and its byte bridges.
-/// App and Web clients use agentd Host requests.
+/// App and Web clients use hostd Host requests.
 public enum VMHostIPC {
   public static func socketPath(support: URL) -> String {
     let canonical = realpath(support.path, nil).map { pointer in

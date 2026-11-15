@@ -166,29 +166,29 @@ class AgentFixture : public ::testing::Test {
           R"({"secret":"PRIVATE_OUTSIDE_DEMO"})");
     std::filesystem::create_symlink(directory.path / "private.json",
                                     directory.path / "demos/escape.json");
-    StartAgent();
+    StartHost();
   }
 
   auto TearDown() -> void override {
     host.reset();
     external.reset();
     human.reset();
-    agent.Stop();
+    service.Stop();
   }
 
-  std::vector<std::string> extra_agent_arguments;
+  std::vector<std::string> extra_host_arguments;
 
-  auto StartAgent() -> void {
-    std::filesystem::remove(directory.path / "state/agent.ready");
-    std::vector<std::string> arguments{TSUGUMI_AGENT_BINARY, "--state-dir",
+  auto StartHost() -> void {
+    std::filesystem::remove(directory.path / "state/host.ready");
+    std::vector<std::string> arguments{TSUGUMI_HOST_BINARY, "--state-dir",
          (directory.path / "state").string(), "--unix",
          (directory.path / "agent.sock").string(), "--socket-dir", (directory.path / "broker").string(),
          "--usage-scratch-dir", (directory.path / "run-scratch").string(), "--demos-dir",
          (directory.path / "demos").string(), "--listen", "127.0.0.1:0"};
-    arguments.insert(arguments.end(), extra_agent_arguments.begin(), extra_agent_arguments.end());
-    agent.Start(arguments, directory.path / "agent.log");
-    ready = Readiness(agent, directory.path / "state/agent.ready",
-                      directory.path / "agent.log");
+    arguments.insert(arguments.end(), extra_host_arguments.begin(), extra_host_arguments.end());
+    service.Start(arguments, directory.path / "host.log");
+    ready = Readiness(service, directory.path / "state/host.ready",
+                      directory.path / "host.log");
     human = Connect(true);
     external = Connect(false);
     host = ConnectHost();
@@ -396,11 +396,11 @@ class AgentFixture : public ::testing::Test {
     } while (std::chrono::steady_clock::now() < deadline);
     throw std::runtime_error("Agent did not finish:\n" +
                              Events(conversation, true).View() + "\n" +
-                             Read(directory.path / "agent.log"));
+                             Read(directory.path / "host.log"));
   }
 
   TemporaryDirectory directory;
-  ChildProcess agent;
+  ChildProcess service;
   std::string ready;
   std::string project_id;
   std::unique_ptr<client::Connection> host;

@@ -4,7 +4,7 @@ import SwiftUI
 import TsugumiAgentClient
 import TsugumiRPC
 
-/// A UI snapshot of agentd's settings. Revisions are applied by the service;
+/// A UI snapshot of hostd's settings. Revisions are applied by the service;
 /// failed edits are shown and the snapshot is read again, never blindly retried.
 @MainActor @Observable
 final class CorePreferences {
@@ -17,7 +17,7 @@ final class CorePreferences {
   @ObservationIgnored private var pending: Task<Void, Never>?
   init() {
     Task { [weak self] in
-      _ = await CoreAgentClient.shared.observeHost { [weak self] event in
+      _ = await CoreHostClient.shared.observeHost { [weak self] event in
         guard event["type"] as? String == "SettingsChanged", event["profile"] as? String == "desktop" else { return }
         Task { @MainActor [weak self] in await self?.reload() }
       }
@@ -30,16 +30,16 @@ final class CorePreferences {
   }
   private func loadSnapshot() async {
     do {
-      let value = try await CoreAgentClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
+      let value = try await CoreHostClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
       revision = (value["revision"] as? NSNumber)?.uint64Value ?? 0
       values = Dictionary(uniqueKeysWithValues: (value["values"] as? [[String: String]] ?? []).compactMap { item in
         guard let key = item["key"], let raw = item["value_json"], let data = raw.data(using: .utf8),
           let decoded = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) else { return nil }
         return (key, decoded)
       })
-      summarySelection = try await CoreAgentClient.shared.modelSelection("summary")
+      summarySelection = try await CoreHostClient.shared.modelSelection("summary")
       for config in [ProviderConfig.anthropic, .openAI, .chatGPT] {
-        _ = try await CoreAgentClient.shared.usable(config)
+        _ = try await CoreHostClient.shared.usable(config)
       }
       AppPreferences.shared.syncHostSettings()
     } catch { self.error = String(describing: error) }
@@ -61,7 +61,7 @@ final class CorePreferences {
       await previous?.value
       guard generation == editGeneration else { return }
       do {
-        _ = try await CoreAgentClient.shared.call("SettingsUpdateRequest", ["profile": "desktop", "revision": NSNumber(value: revision),
+        _ = try await CoreHostClient.shared.call("SettingsUpdateRequest", ["profile": "desktop", "revision": NSNumber(value: revision),
           "changes": [["key": key, "value_json": raw]]])
         error = nil
       } catch { editGeneration += 1; self.error = String(describing: error) }

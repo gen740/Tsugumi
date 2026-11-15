@@ -127,7 +127,7 @@ or ask the Agent to change the layout. Showing the Agent's saves or run outputs
 never rearranges the canvas. A new Card is placed when it is created.
 
 **Settings → Appearance → Animate the Agent’s work** is on by default and is stored
-in agentd with the host's Agent settings (shared by the Mac app and its Web UI).
+in hostd with the host's Agent settings (shared by the Mac app and its Web UI).
 On the Mac, it stages saved Cards becoming code and threads their wires in sequence.
 Turn it off to show saved Cards and wires immediately, while the work marker follows
 the latest activity. The Web UI already shows saved Cards and wires immediately;

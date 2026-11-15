@@ -436,8 +436,8 @@ final class ServiceWireTests: XCTestCase {
     failure.message = "Ask first"
     failure.requestId = "permission-1"
     XCTAssertThrowsError(try ServiceWire.decode(reply(failure, type: .failure), host: false)) { error in
-      XCTAssertEqual((error as? CoreAgentFailure)?.code, "grant_required")
-      XCTAssertEqual((error as? CoreAgentFailure)?.requestID, "permission-1")
+      XCTAssertEqual((error as? CoreHostFailure)?.code, "grant_required")
+      XCTAssertEqual((error as? CoreHostFailure)?.requestID, "permission-1")
     }
   }
 

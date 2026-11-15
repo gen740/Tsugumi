@@ -99,8 +99,8 @@ import TsugumiRPC
     defer { daemon.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     // Exercise the native Host requests; only Card ids stay deterministic.
-    s.prepareSubgraph = { try await CoreAgentClient.shared.makeSubgraph(project: $0, cards: $1, id: $2) }
-    s.prepareCopy = { try await CoreAgentClient.shared.copyDocuments(state: $0, paths: $1, from: $2, to: $3, name: $4) }
+    s.prepareSubgraph = { try await CoreHostClient.shared.makeSubgraph(project: $0, cards: $1, id: $2) }
+    s.prepareCopy = { try await CoreHostClient.shared.copyDocuments(state: $0, paths: $1, from: $2, to: $3, name: $4) }
     s.endpointOverride = daemon.endpoint
     s.start()
     do {

@@ -29,7 +29,7 @@ runCommand "tsugumi-${lib.fileContents ../VERSION}"
         ]
       } \
       --set-default TSUGUMID ${tsugumid}/bin/tsugumid \
-      --set-default TSUGUMI_AGENTD ${tsugumid}/bin/tsugumi-agentd \
+      --set-default TSUGUMI_HOSTD ${tsugumid}/bin/tsugumi-hostd \
       --set-default TSUGUMI_WORKER ${tsugumid}/bin/tsugumi-worker \
       --set-default TSUGUMI_SDK_DIR ${tsugumid}/share/tsugumi/sdk
   ''

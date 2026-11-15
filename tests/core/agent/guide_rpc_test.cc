@@ -255,7 +255,7 @@ TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
 class GuideFixture : public AgentFixture {
 protected:
   auto SetUp() -> void override {
-    // agentd resolves $demo against its installed catalog, never a client list.
+    // hostd resolves $demo against its installed catalog, never a client list.
     for (const auto &language : {"ja", "en"})
       Write(directory.path / "demos" / language / "index.json",
             ReadResource(std::filesystem::path("demos") / language /
@@ -421,8 +421,8 @@ TEST_F(GuideFixture, ProgressScopePersistsAndLiveStepResumesAfterRestart) {
   host.reset();
   human.reset();
   external.reset();
-  agent.Stop();
-  StartAgent();
+  service.Stop();
+  StartHost();
   s = GuideGet(*host);
   EXPECT_TRUE(s.setup_done);
   EXPECT_TRUE(s.demo_answered);

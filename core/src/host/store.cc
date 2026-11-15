@@ -4,8 +4,8 @@
 
 namespace tsugumi::host {
 HostStore::HostStore(const std::filesystem::path& directory)
-    : db((directory / "agent.sqlite").string()) {
-  ::chmod((directory / "agent.sqlite").c_str(), 0600);
+    : db((directory / "host.sqlite").string()) {
+  ::chmod((directory / "host.sqlite").c_str(), 0600);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
   db.exec(
       "CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, endpoint "

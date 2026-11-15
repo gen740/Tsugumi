@@ -4,7 +4,7 @@ import Testing
 @testable import TsugumiAgentClient
 @testable import TsugumiApp
 
-/// The environment and CoreAgentClient.shared select one host for this process.
+/// The environment and CoreHostClient.shared select one host for this process.
 /// Every test that reaches it (including through a session save) must hold this
 /// scope until its sessions and fixture services have stopped.
 struct HostServiceTrait: SuiteTrait, TestTrait, TestScoping {
@@ -17,7 +17,7 @@ struct HostServiceTrait: SuiteTrait, TestTrait, TestScoping {
     let environment = await HostServiceEnvironment()
     do {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-      await environment.install(state: directory.appendingPathComponent("support/agent-core"), support: directory.appendingPathComponent("support"), waitForHome: false, selectState: false)
+      await environment.install(state: directory.appendingPathComponent("support/host-core"), support: directory.appendingPathComponent("support"), waitForHome: false, selectState: false)
       // Home's startup must finish in the current environment before a fixture
       // can replace it. This also joins startup triggered by an AppModel test.
       await AppModel.shared.initialRefresh?.value
@@ -58,7 +58,7 @@ private actor HostServiceLock {
 /// Used only while holding .hostService. Invalidate both sockets on each swap
 /// so the next call connects to the service selected by the new environment.
 @MainActor final class HostServiceEnvironment {
-  private let previousState = ProcessInfo.processInfo.environment["TSUGUMI_AGENT_STATE"]
+  private let previousState = ProcessInfo.processInfo.environment["TSUGUMI_HOST_STATE"]
   private let previousSupport = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"]
   private let previousSocket = ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"]
   private let previousScratch = ProcessInfo.processInfo.environment["TSUGUMI_RUN_SCRATCH_DIR"]
@@ -66,9 +66,9 @@ private actor HostServiceLock {
 
   func install(state: URL, support: URL, waitForHome: Bool = true, selectState: Bool = true) async {
     if waitForHome { await AppModel.shared.initialRefresh?.value }
-    await CoreAgentClient.shared.disconnect()
-    if selectState { setenv("TSUGUMI_AGENT_STATE", state.path, 1) }
-    else { unsetenv("TSUGUMI_AGENT_STATE") }
+    await CoreHostClient.shared.disconnect()
+    if selectState { setenv("TSUGUMI_HOST_STATE", state.path, 1) }
+    else { unsetenv("TSUGUMI_HOST_STATE") }
     setenv("TSUGUMI_SUPPORT_DIR", support.path, 1)
     // Sockets are bound in this folder as it is, so it has to exist.
     try? FileManager.default.createDirectory(at: state.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -79,11 +79,11 @@ private actor HostServiceLock {
   }
 
   func restore() async {
-    await CoreAgentClient.shared.disconnect()
+    await CoreHostClient.shared.disconnect()
     // Read the current lock winner, including a service a reconnect started
     // after the fixture's original Process exited. Never inspect real support.
     if let state = installedState,
-       let data = try? Data(contentsOf: state.appendingPathComponent("agent.ready")),
+       let data = try? Data(contentsOf: state.appendingPathComponent("host.ready")),
        let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
        let pid = record["pid"] as? Int32, pid > 1, pid != getpid() {
       kill(pid, SIGTERM)
@@ -92,8 +92,8 @@ private actor HostServiceLock {
       if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
     }
     installedState = nil
-    if let previousState { setenv("TSUGUMI_AGENT_STATE", previousState, 1) }
-    else { unsetenv("TSUGUMI_AGENT_STATE") }
+    if let previousState { setenv("TSUGUMI_HOST_STATE", previousState, 1) }
+    else { unsetenv("TSUGUMI_HOST_STATE") }
     if let previousSupport { setenv("TSUGUMI_SUPPORT_DIR", previousSupport, 1) }
     else { unsetenv("TSUGUMI_SUPPORT_DIR") }
     if let previousSocket { setenv("TSUGUMI_SOCKET_DIR", previousSocket, 1) }

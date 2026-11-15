@@ -67,7 +67,7 @@ def stop_services(root, group=None):
     # discovery records, including hosts whose command has no state argument.
     recorded = set()
     for directory, _, files in os.walk(root, followlinks=False):
-        for name in ('agent.ready', 'server.ready', 'server.json'):
+        for name in ('host.ready', 'server.ready', 'server.json'):
             if name in files and not (Path(directory) / name).is_symlink():
                 try:
                     recorded.add(int(json.loads((Path(directory) / name).read_text())['pid']))
@@ -78,7 +78,7 @@ def stop_services(root, group=None):
         return {pid for pid, command in processes().items()
                 if pid != os.getpid() and (own in command or
                     (pid in recorded and any(binary in command for binary in
-                     ('tsugumi-agentd', 'tsugumid', 'server.js', 'tsugumi-vmctl', 'tsugumi-vmhost'))) or
+                     ('tsugumi-hostd', 'tsugumid', 'server.js', 'tsugumi-vmctl', 'tsugumi-vmhost'))) or
                     (any(name in command for name in ('server.js', 'mcp.js', 'model_fixture.py',
                         'test-binary-cache.py', 'tsugumi_document_edit_driver')) and marked_service_process(pid, root)))}
     pending = set()
@@ -133,11 +133,11 @@ def run(arguments):
     before = shared_entries()
     # /var/tmp is disk-backed on Linux; /tmp can be tmpfs. Resolve macOS aliases
     # because invocation scratch rejects symbolic links in every parent.
-    root = Path(tempfile.mkdtemp(prefix='tsg-', dir=Path('/tmp' if sys.platform == 'darwin' else '/var/tmp').resolve()))
+    root = Path(tempfile.mkdtemp(prefix='tsugumi-', dir=Path('/tmp' if sys.platform == 'darwin' else '/var/tmp').resolve()))
     env = dict(os.environ)
     # Keep explicit per-client support directories usable; the default service
     # is isolated by SUPPORT_DIR, without forcing all clients onto one state.
-    env.pop('TSUGUMI_AGENT_STATE', None)
+    env.pop('TSUGUMI_HOST_STATE', None)
     for key in ('TMPDIR', 'TMP', 'TEMP', 'TSUGUMI_SOCKET_DIR'):
         env[key] = str(root)
     env.update(TSUGUMI_TEST_RUN_ROOT=str(root),

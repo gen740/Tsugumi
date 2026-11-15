@@ -31,10 +31,10 @@ from tsugumi_client import RpcFailure, path, text
 
 
 class Gateway(socketserver.UnixStreamServer):
-    """Double of agentd's local broker, not its TLS worker connection.
+    """Double of hostd's local broker, not its TLS worker connection.
 
     Keep partial/lost replies at the core-facing boundary so these tests still
-    exercise core deadlines, shutdown and durable recovery. Real agentd/TLS
+    exercise core deadlines, shutdown and durable recovery. Real hostd/TLS
     authentication is covered by the broker RPC and remote integration suites.
     """
     instance = "1" * 64
@@ -202,7 +202,7 @@ def wait_for_state(client, run_id, expected, card_state=None, timeout=15):
 
 @pytest.fixture
 def remote_gateway(monkeypatch):
-    with tempfile.TemporaryDirectory(prefix="tsg-remote-", dir="/tmp") as directory:
+    with tempfile.TemporaryDirectory(prefix="tsugumi-remote-", dir="/tmp") as directory:
         endpoint = str(Path(directory) / "broker")
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", "unix:" + endpoint)
         capability = secrets.token_hex(32)

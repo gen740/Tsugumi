@@ -388,8 +388,7 @@ def test_uninstall_rejects_unknown_options_without_deleting(machine):
 def vm_server(tmp_path):
     support = tmp_path / "support"
     support.mkdir()
-    state = tmp_path / "agent-core"
-    state.mkdir()
+    state = tmp_path / "host-core"
     prefs = state / "host-settings.sqlite"
     project = tmp_path / "project"
     write_project(project)
@@ -438,7 +437,7 @@ def test_recent_projects_are_owned_by_the_host_core(vm_server):
     assert api(port, cookie, "GET", "/api/status")["recents"] == []
     before = time.time()
     api(port, cookie, "POST", "/api/project/open", {"path": str(project)})
-    saved = json.loads((tmp / "agent-core" / "recent-projects.json").read_text())
+    saved = json.loads((tmp / "host-core" / "recent-projects.json").read_text())
     assert saved[0]["path"] == str(project.resolve())
     assert abs(saved[0]["openedAt"] / 1000 - before) < 30
     assert api(port, cookie, "GET", "/api/status")["recents"] == saved
@@ -465,7 +464,7 @@ def core_settings(root: Path, changes: dict | None = None):
     from Tsugumi.Host.SettingsGetRequest import SettingsGetRequestT
     from Tsugumi.Host.SettingsUpdateRequest import SettingsUpdateRequestT
 
-    ready = json.loads((root / "agent-core/agent.ready").read_text())
+    ready = json.loads((root / "host-core/host.ready").read_text())
     with socket.socket(socket.AF_UNIX) as peer:
         peer.settimeout(10)
         peer.connect(ready["host_socket"])
@@ -572,9 +571,9 @@ def test_core_settings_reads_past_settings_changed_without_a_socket(tmp_path, mo
             del self.pending[:count]
             return data
 
-    state = tmp_path / "agent-core"
+    state = tmp_path / "host-core"
     state.mkdir()
-    (state / "agent.ready").write_text(json.dumps({"host_socket": "unused-host-socket", "user_token": "fixture"}))
+    (state / "host.ready").write_text(json.dumps({"host_socket": "unused-host-socket", "user_token": "fixture"}))
     monkeypatch.setattr(socket, "socket", Peer)
     assert core_settings(tmp_path, {"agent.model": "changed"}) == (8, {"agent.model": "changed"})
 
@@ -582,7 +581,7 @@ def test_core_settings_reads_past_settings_changed_without_a_socket(tmp_path, mo
 @needs_server
 def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
     root, _, prefs, port, cookie = vm_server
-    # Start agentd, then act as the app through Host RPC.
+    # Start hostd, then act as the app through Host RPC.
     api(port, cookie, "GET", "/api/settings")
     revision, before = core_settings(root, {
         "agent.provider": "openai", "agent.model.openai": "from-the-app",

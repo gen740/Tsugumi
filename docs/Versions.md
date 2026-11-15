@@ -23,7 +23,7 @@ Each time a run ends, one JSON record is appended to the note of that run's comm
 
 Automatic commit messages are JSON records with `tsugumi: "commit"`, `kind` (`create`, `run`, `checkout`) and a Card ID. User-written messages and imported demo messages remain opaque text. Neither writing nor reading a project RPC selects a language; `SessionHello` has no language field.
 
-The host service (`tsugumi-agentd`) turns these records into Japanese or English on each request, so the same saved commit and run can be read in either language later. The Mac app and Web UI use `HostVersionGraphRequest`; the Agent uses the same host presentation logic. For example, a run can read `whole: load, bands ×3, rgb` or `全体: load、bands ×3、rgb`. No model is used for this presentation.
+The host service (`tsugumi-hostd`) turns these records into Japanese or English on each request, so the same saved commit and run can be read in either language later. The Mac app and Web UI use `HostVersionGraphRequest`; the Agent uses the same host presentation logic. For example, a run can read `whole: load, bands ×3, rgb` or `全体: load、bands ×3、rgb`. No model is used for this presentation.
 
 - **Where it started**: `whole` (a run from a trigger or a Workflow), `from <Card>` (that Card and downstream), `only <Card>`. When any Card that ran used saved inputs from an earlier run, `(with saved inputs)` is added.
 - **Cards that ran**: the Cards actually invoked. One invoked several times gets `×count`. The trigger of a whole run is not included.
@@ -57,7 +57,7 @@ In the Mac app, open it with "Version History…" (⌥⌘Y) in the Workflow menu
 
 ## Version notes
 
-Choose **Change record** or **Agent summary** beside the version history. This setting applies to all projects in the current host settings profile and is stored in `tsugumi-agentd` (`versions.noteMode`). Change record is the default.
+Choose **Change record** or **Agent summary** beside the version history. This setting applies to all projects in the current host settings profile and is stored in `tsugumi-hostd` (`versions.noteMode`). Change record is the default.
 
 - **Change record**: the project core compares the full version tree with its first parent, without a model. It lists Cards added or removed and changes to their definitions, source, parameters and wiring, as neutral kinds of change. The host renders these facts in the requesting app's language. Workflow settings are listed separately. The host shows at most six entries and the remaining count; the record keeps all entries. It contains no source text or parameter values. All files under a Card's `src/` count as source inputs, including assets and languages outside the model-diff allowlist. Changes to `layout.json` and files under `data/` are excluded.
 - **Agent summary**: the Agent writes one short sentence from the code and settings diff. The diff goes to the model provider and uses tokens. It can contain mistakes; the diff and run records are the evidence. This is different from the mechanical run summary above.

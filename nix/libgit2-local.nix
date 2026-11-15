@@ -1,4 +1,4 @@
-# libgit2 for the Mac app's host service (`tsugumi-agentd`), which only reads
+# libgit2 for the Mac app's host service (`tsugumi-hostd`), which only reads
 # a project's repository on the local disk: a static library with no network
 # transport, so the app bundle carries no dylib for it and nothing from the
 # Nix store. zlib, the regex engine (PCRE) and the HTTP parser (llhttp, which

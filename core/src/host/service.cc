@@ -11,7 +11,6 @@
 
 #include "agent/approvals.hh"
 #include "agent/helpers.hh"
-#include "agent/host.hh"
 #include "agent/providers.hh"
 #include "agent/store.hh"
 #include "agent/tools.hh"
@@ -51,7 +50,6 @@ using agent::Approvals;
 using agent::Cancelled;
 using agent::ConversationStore;
 using agent::Helpers;
-using agent::HostOptions;
 using agent::Providers;
 using agent::Tools;
 using agent::Turns;
@@ -403,7 +401,7 @@ struct Service::State {
   auto Handle(const RequestIn& request, bool human) -> std::string {
     const auto* r = A::GetMessage(request.frame->data())->payload_as_Request();
     std::unique_lock lock(mutex);
-    if (stopping) throw Failure("unavailable", "Agent service is stopping");
+    if (stopping) throw Failure("unavailable", "Host service is stopping");
     switch (r->value_type()) {
       case A::RequestPayload::ConfigureRequest: {
         Human(human);
@@ -637,7 +635,7 @@ struct Service::State {
   }
 };
 
-Service::Service(agent::HostOptions options)
+Service::Service(HostOptions options)
     : state_(std::make_unique<State>(std::move(options))) {}
 Service::~Service() { Shutdown(); }
 auto Service::Attach(Server* server, Server* host_server) -> void {

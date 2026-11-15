@@ -38,12 +38,12 @@ assert.ok(!calls.some((c) => !c.fields.ephemeral && c.fields.provider?.api_key =
 console.log('Platform keys: attribute-only status, cached refusals, stdin, memory provisioning and Keychain failure passed')
 
 const envCalls: any[] = []
-const env = new ProviderKeys(async <T>(_method: string, fields: any): Promise<T> => { envCalls.push(fields); return { storage: 'agentd', source: 'env' } as T },
+const env = new ProviderKeys(async <T>(_method: string, fields: any): Promise<T> => { envCalls.push(fields); return { storage: 'hostd', source: 'env' } as T },
   'web:env:test', 'linux', async () => { throw new Error('non-Mac must not call security') }, { ANTHROPIC_API_KEY: 'ENV_SENTINEL' })
 assert.equal(await env.source('anthropic', 'standalone'), 'env')
 await env.provision('anthropic')
 assert.equal(envCalls.at(-1).provider.api_key, 'ENV_SENTINEL')
-assert.equal(await env.save('anthropic', 'DISK_SENTINEL', 'standalone'), 'agentd')
+assert.equal(await env.save('anthropic', 'DISK_SENTINEL', 'standalone'), 'hostd')
 assert.ok(envCalls.some((c) => c.profile === 'standalone' && !c.ephemeral && c.provider?.api_key === 'DISK_SENTINEL'))
 await env.delete('anthropic', 'standalone')
 assert.equal(envCalls.at(-1).provider.api_key, 'ENV_SENTINEL', 'deleting a stored key preserves ENV precedence')

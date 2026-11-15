@@ -14,15 +14,15 @@ extension ChatResumeTests {
     let support = dir.appendingPathComponent("test-support")
     try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
     let identity = try ProjectIdentity(url: dir)
-    // Model agentd's public Host contract; the UI never speaks to VMHost.
+    // Model hostd's public Host contract; the UI never speaks to VMHost.
     let socket = VMHostIPC.socketPath(support: support)
     let listener = try VMHostIPC.listen(path: socket)
     defer { Darwin.close(listener); unlink(socket) }
-    let state = support.appendingPathComponent("agent-core")
+    let state = support.appendingPathComponent("host-core")
     try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true)
     try JSONSerialization.data(withJSONObject: ["protocol": 1, "pid": getpid(),
       "unix_socket": socket, "host_socket": socket, "user_token": "fixture"])
-      .write(to: state.appendingPathComponent("agent.ready"))
+      .write(to: state.appendingPathComponent("host.ready"))
     let host = Task {
       try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[Bool], Error>) in
         Thread.detachNewThread {
@@ -38,7 +38,7 @@ extension ChatResumeTests {
             }
             let hello = Tsugumi_Service_HelloResultT()
             hello.serverId = "history-fixture"; hello.principal = "user"
-            // CoreAgentClient authenticates both its Agent and Host connections.
+            // CoreHostClient authenticates both its Agent and Host connections.
             let agent = try acceptPeer()
             defer { Darwin.close(agent) }
             guard let agentBytes = try VMHostIPC.read(agent) else { throw POSIXError(.EPROTO) }

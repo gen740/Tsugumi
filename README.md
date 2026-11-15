@@ -194,6 +194,8 @@ This idea starts from research and extends to turning research decisions into te
 
 ## Documentation
 
+For remote execution, start `tsugumi-workerd` on a Linux remote worker machine ([installation and registration](docs/RemoteExecution.md)).
+
 [User guides](docs/README.md) · [Repository map](AGENTS.md#map) · [Tests](tests/README.md) · [Releasing](RELEASING.md) · [Documentation site](docs/site/README.md)
 
 ## License

@@ -7,7 +7,7 @@
 //   start <project folder>   -> ready <id> <ws url> <control folder> | error <message>
 //   stop <project folder>    -> stopped | error <message>
 //   delete <project folder>  -> deleted | error <message>
-//   vm <request>             -> ok <reply> | error <message> (explicit supervisor diagnosis via agentd)
+//   vm <request>             -> ok <reply> | error <message> (explicit supervisor diagnosis via hostd)
 //   sh <id> <command>        -> the command's terminal output, then "exit <status>"
 //                               (runs in the project's terminal environment)
 //   quit                     -> stops every project and the VM, then exits

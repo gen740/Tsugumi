@@ -1,4 +1,4 @@
-// A window's consent, usage and short-lived presentation. Agentd decides when
+// A window's consent, usage and short-lived presentation. Hostd decides when
 // work needs another summary and what conversation content to send.
 import { L } from '../i18n'
 

@@ -159,7 +159,7 @@ TEST_F(AgentProjectFixture, ConversationsCannotMoveBetweenCopiedProjects) {
   EXPECT_EQ(request->project_id()->str(), original);
   EXPECT_EQ(request->id()->str(), pending.RequestId());
   // Even after restart, the stopped conversation and its request stay in A.
-  human.reset(); external.reset(); host.reset(); agent.Stop(); StartAgent();
+  human.reset(); external.reset(); host.reset(); service.Stop(); StartHost();
   project_id = "copy-b";
   EXPECT_EQ(Call(*human, A::RequestPayload::ConversationCreateRequest, [&](Builder& b) {
     return A::CreateConversationCreateRequest(b, b.CreateString(conversation), b.CreateString(project_id)).Union();
@@ -473,7 +473,7 @@ TEST_F(AgentProjectFixture,
 }
 
 TEST_F(AgentProjectFixture,
-       ConversationAndApprovedAccessSurviveAnAgentServerRestart) {
+       ConversationAndApprovedAccessSurviveAHostServiceRestart) {
   ModelServer model;
   model.Queue(AnthropicText("This conversation is durable."));
   Configure(model);
@@ -485,8 +485,8 @@ TEST_F(AgentProjectFixture,
   WaitUntilIdle(conversation);
   external.reset();
   human.reset();
-  agent.Stop();
-  StartAgent();
+  service.Stop();
+  StartHost();
   EXPECT_NE(Get(conversation).View().find("This conversation is durable."),
             std::string::npos);
   EXPECT_NE(Inspect(conversation).View().find("PRIVATE_PROJECT_SENTINEL"),
@@ -661,8 +661,8 @@ TEST_F(AgentProjectFixture,
   EXPECT_FALSE(JsonBool(receipt, "/isError"));
   external.reset();
   human.reset();
-  agent.Stop();
-  StartAgent();
+  service.Stop();
+  StartHost();
   EXPECT_EQ(replay(arguments).View(), receipt);
   EXPECT_EQ(JsonString(JsonString(Inspect(conversation).View(), "/text"),
                        "/value/rev"),

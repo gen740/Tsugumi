@@ -1,6 +1,6 @@
-"""Opt-in execution against a disposable Linux daemon.
+"""Opt-in execution against a disposable Linux tsugumi-workerd.
 
-Set TSUGUMI_REMOTE_TEST_DAEMON to start a packaged daemon on loopback.
+Set TSUGUMI_REMOTE_TEST_DAEMON to start packaged tsugumi-workerd on loopback.
 For a daemon already running, set TSUGUMI_REMOTE_TEST_ENDPOINT and
 TSUGUMI_REMOTE_TEST_PUBLIC_KEY_FILE, plus TSUGUMI_REMOTE_TEST_AUTHORIZED_KEYS
 pointing to that worker's dedicated writable authorized-keys file.
@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import socket
+import tempfile
 import subprocess
 import time
 from pathlib import Path
@@ -52,7 +53,7 @@ def remote_daemon(tmp_path, request):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
     if not binary:
         if getattr(request, "param", None):
-            pytest.skip("worker settings tests require a disposable packaged daemon")
+            pytest.skip("worker settings tests require a disposable packaged tsugumi-workerd")
         endpoint = os.environ.get("TSUGUMI_REMOTE_TEST_ENDPOINT")
         key_file = os.environ.get("TSUGUMI_REMOTE_TEST_PUBLIC_KEY_FILE")
         if not endpoint or not key_file:
@@ -66,7 +67,12 @@ def remote_daemon(tmp_path, request):
     state = tmp_path / "daemon-state"
     state.mkdir(mode=0o700)
     env = {**os.environ, "TSUGUMI_REMOTE_STATE_DIR": str(state)}
+    # The listener's private socket defaults to a path inside its state folder,
+    # which under pytest's temporary folder can exceed the socket path limit.
+    sockets = tempfile.TemporaryDirectory(prefix="w-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
+    request.addfinalizer(sockets.cleanup)
     command = [binary, "--host", "127.0.0.1", "--port", str(port),
+               "--socket", str(Path(sockets.name) / "w.sock"),
                *getattr(request, "param", ())]
     key_file = tmp_path / "worker-public-key"
     key_file.write_bytes(subprocess.check_output([binary, "--public-key"], env=env))

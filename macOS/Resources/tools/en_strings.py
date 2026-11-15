@@ -31,6 +31,7 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+    'ホストの状態フォルダ「%@」は別のバージョンの Tsugumi で作成されました。このフォルダを移動または改名して退避し、Tsugumi を起動し直してください。': 'The host state folder "%@" was written by another version of Tsugumi. Move or rename this folder to set it aside, then start Tsugumi again.',
     '各 wire の実ポート名を指定してください（ポート欄）。': 'Specify the real port for every wire in Ports.',
     'Draft を手動で実装': 'Implement Draft by hand',
     '定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。': 'Apply saves the definition and real wire endpoints together. For a code Card, also create its sources and output schema.',
@@ -90,16 +91,16 @@ EN = {
     '会話の圧縮': 'Compacting the conversation',
     '再開': 'Resume',
 "一覧を読み込めませんでした": "Could not load the list",
-"この Mac の外観設定と、このホストの agentd の Agent 表示設定": "Appearance on this Mac; Agent presentation in agentd on this host",
+"この Mac の外観設定と、このホストの hostd の Agent 表示設定": "Appearance on this Mac; Agent presentation in hostd on this host",
 "Agent の作業をアニメーションで表示": "Animate the Agent’s work",
-"オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの agentd に保存します。": "When off, saved Cards and wires appear immediately. The work marker, thought summaries and source streaming continue. This setting is stored in agentd on this host.",
+"オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの hostd に保存します。": "When off, saved Cards and wires appear immediately. The work marker, thought summaries and source streaming continue. This setting is stored in hostd on this host.",
 "実行環境の状態を確認できませんでした": "Could not check the execution environment",
 "実行環境の状態を確認しています…": "Checking the execution environment…",
 "実行環境からの状態の応答が不正です。": "The execution environment returned an invalid status reply.",
-'agentd（このホストの所有者だけが読み書きできます）': 'agentd (readable and writable only by this host’s owner)',
-'agentd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。': 'Saved in agentd. The key is not stored in Cards, projects, settings or logs.',
-'このホスト（設定は agentd、API キーは macOS Keychain）': 'This host (settings in agentd; API keys in the macOS Keychain)',
-'サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は agentd が行います。トークンは Card やプロジェクト・設定・ログには残りません。': 'Sign in in your browser. agentd receives the result on 127.0.0.1, validates it and stores the tokens. Tokens are not stored in Cards, projects, settings or logs.',
+'hostd（このホストの所有者だけが読み書きできます）': 'hostd (readable and writable only by this host’s owner)',
+'hostd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。': 'Saved in hostd. The key is not stored in Cards, projects, settings or logs.',
+'このホスト（設定は hostd、API キーは macOS Keychain）': 'This host (settings in hostd; API keys in the macOS Keychain)',
+'サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は hostd が行います。トークンは Card やプロジェクト・設定・ログには残りません。': 'Sign in in your browser. hostd receives the result on 127.0.0.1, validates it and stores the tokens. Tokens are not stored in Cards, projects, settings or logs.',
 
     '保持したファイルの内容がありません（scratch は保持履歴ではありません）。': 'The kept file content is missing (scratch is separate from retained history).',
     '保持したファイル: %@': 'Kept file: %@',
