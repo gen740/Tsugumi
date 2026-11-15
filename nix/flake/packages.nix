@@ -16,6 +16,7 @@ in
     let
       core = pkgs.callPackage ../core.nix { inherit cardNixpkgs hosq; };
       ci-core = pkgs.callPackage ../core-tests.nix { inherit core hosq; };
+      libgit2-local = pkgs.callPackage ../libgit2-local.nix { };
       client-wasm = pkgs.callPackage ../client-wasm.nix { };
       web = pkgs.callPackage ../web.nix { inherit client-wasm; };
       kernel = pkgs.callPackage ../../macOS/Container/kernel.nix { };
@@ -23,7 +24,12 @@ in
     in
     {
       packages = {
-        inherit ci-core client-wasm web;
+        inherit
+          ci-core
+          client-wasm
+          libgit2-local
+          web
+          ;
         site-player = web.sitePlayer;
         ci-python = pkgs.callPackage ../ci-python.nix { };
         default = core;
