@@ -17,8 +17,8 @@ class NativeContract : public testing::Test {
   std::string directory;
 
   void SetUp() override {
-    char pattern[] = "/tmp/tsugumi-native-contract-XXXXXX";
-    ASSERT_NE(::mkdtemp(pattern), nullptr);
+    auto pattern = (std::filesystem::temp_directory_path() / "tn-XXXXXX").string();
+    ASSERT_NE(::mkdtemp(pattern.data()), nullptr);
     directory = pattern;
     ASSERT_TRUE(schema.Parse("namespace sample; table Output { value:string (required); } root_type Output;"));
     ASSERT_TRUE(schema.ParseJson("{\"value\":\"ok\"}"));
@@ -122,9 +122,8 @@ TEST_F(NativeContract, ReportRejectionCanBeHandledByTheCard) {
   EXPECT_EQ(finish_outputs_impl(nullptr), 0);
 }
 TEST_F(NativeContract, RequiredOutputFailurePrecedesPostRun) {
-  char directory[] = "/tmp/tsugumi-contract-XXXXXX";
-  ASSERT_NE(::mkdtemp(directory), nullptr);
-  const std::string base = directory;
+  const std::string base = directory + "/contract";
+  std::filesystem::create_directories(base);
   write_text(base + "/body", ":\n");
   write_text(base + "/post", "printf '%s' \"$TSUGUMI_FAILED\" > " + base + "/failed\n");
   Options options;

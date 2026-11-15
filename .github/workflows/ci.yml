@@ -43,7 +43,7 @@ jobs:
       # Tests that read only files of the repository (tests/static, marked
       # "static"): the same pytest as the Python environments, nothing else.
       - name: Static tests
-        run: nix shell --inputs-from . nixpkgs#python3Packages.pytest -c pytest -q -m static tests/static
+        run: nix shell --inputs-from . nixpkgs#python3Packages.pytest -c python3 tests/run-isolated.py pytest -q -m static tests/static
 
   platform:
     name: Platform (${{ matrix.system }})

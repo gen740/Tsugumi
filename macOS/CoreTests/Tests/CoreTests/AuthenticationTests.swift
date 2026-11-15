@@ -63,7 +63,7 @@ import TsugumiRPC
 }
 
 private final class AuthenticationFixture {
-  let directory = URL(fileURLWithPath: "/tmp/tsugumi-auth-\(UUID().uuidString.prefix(8))")
+  let directory = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/tmp").appendingPathComponent("auth-\(UUID().uuidString.prefix(8))")
   let port: Int
   private let provider = Process()
   private let daemon = Process()
@@ -81,7 +81,16 @@ private final class AuthenticationFixture {
     setenv("TSUGUMI_AGENT_STATE", state.path, 1)
     daemon.executableURL = ProcessInfo.processInfo.environment["TSUGUMI_AGENTD"].map { URL(fileURLWithPath: $0) }
       ?? build.appendingPathComponent("core/tsugumi-agentd")
-    daemon.arguments = ["--state-dir", state.path, "--unix", directory.appendingPathComponent("agent.sock").path,
+    // Run scratch refuses a path through a symbolic link, and
+    // `resolvingSymlinksInPath` removes `/private`, which puts `/tmp` back.
+    let canonical = realpath(directory.path, nil).map { pointer -> String in
+      defer { free(pointer) }
+      return String(cString: pointer)
+    } ?? directory.path
+    daemon.arguments = ["--state-dir", state.path,
+                        "--socket-dir", directory.appendingPathComponent("b").path,
+                        "--usage-scratch-dir", URL(fileURLWithPath: canonical).appendingPathComponent("scratch").path,
+                        "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--demos-dir", root.appendingPathComponent("demos").path]
     daemon.standardOutput = FileHandle.nullDevice
     daemon.standardError = FileHandle.nullDevice
@@ -108,6 +117,7 @@ private final class AuthenticationFixture {
       let deadline = Date().addingTimeInterval(5)
       while process.isRunning && Date() < deadline { usleep(20_000) }
       if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+      process.waitUntilExit()
     }
     if let previousState { setenv("TSUGUMI_AGENT_STATE", previousState, 1) }
     else { unsetenv("TSUGUMI_AGENT_STATE") }

@@ -12,8 +12,6 @@ namespace stdfs = std::filesystem;
 WorkerPool::WorkerPool(stdfs::path scratch_root, WorkerLimits limits) : root_(std::move(scratch_root)), limits_(limits) {
   std::error_code ec;
   stdfs::remove_all(root_, ec);  // left by an earlier tsugumid of this project
-  stdfs::create_directories(root_);
-  stdfs::permissions(root_, stdfs::perms::owner_all, ec);
   reaper_ = std::thread([this] { reaper(); });
 }
 
@@ -36,6 +34,8 @@ WorkerPool::~WorkerPool() {
 std::unique_ptr<WorkerProc> WorkerPool::spawn(WorkerSpawn sp) {
   {
     std::lock_guard<std::mutex> l(mu_);
+    stdfs::create_directories(root_);
+    stdfs::permissions(root_, stdfs::perms::owner_all);
     sp.scratch = (root_ / ("w" + std::to_string(++seq_))).string();
   }
   if (std::this_thread::get_id() == reaper_.get_id()) return std::make_unique<WorkerProc>(sp);

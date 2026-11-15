@@ -15,6 +15,7 @@ import signal
 import stat
 import subprocess
 import threading
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -30,13 +31,20 @@ pytestmark = pytest.mark.skipif(not shutil.which("node") or not MCP.exists() or 
                                 reason="needs node, web/dist (cd web && npm run build) and tsugumid")
 
 
+_socket_directories = {}
+
 def isolated_environment(root: Path, **values) -> dict:
     """Keep resident services and credentials inside this test's own folder."""
+    if root not in _socket_directories:
+        _socket_directories[root] = tempfile.TemporaryDirectory(
+            prefix="tsg-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
     env = dict(os.environ)
     for key in ("TSUGUMI_VMHOST", "TSUGUMI_VM_IMAGE", "TSUGUMI_VM_SOURCE"):
         env.pop(key, None)
     env.update(TSUGUMI_AGENT_STATE=str(root / "agent-core"),
                TSUGUMI_SUPPORT_DIR=str(root / "support"),
+               TSUGUMI_RUN_SCRATCH_DIR=str(root.resolve() / "run-scratch"),
+               TSUGUMI_SOCKET_DIR=_socket_directories[root].name,
                TSUGUMI_AGENTD=os.environ.get("TSUGUMI_AGENTD", str(BUILD / "core" / "tsugumi-agentd")),
                TSUGUMI_RPC_CLIENT=os.environ.get("TSUGUMI_RPC_CLIENT", str(BUILD / "client" / "tsugumi-rpc")),
                TSUGUMID=str(TSUGUMID),
@@ -47,13 +55,35 @@ def isolated_environment(root: Path, **values) -> dict:
 
 def stop_resident_services(root: Path):
     """A UI close intentionally leaves core alive; fixture teardown owns it."""
-    for name in ("agent.ready", "server.ready"):
+    pids = set()
+    for name in ("agent.ready", "server.ready", "server.json"):
         for ready in root.rglob(name):
+            if ready.is_symlink():
+                continue
             try:
-                record = json.loads(ready.read_text())
-                os.kill(record["pid"], signal.SIGTERM)
+                pid = int(json.loads(ready.read_text())["pid"])
+                if pid > 1 and pid != os.getpid():
+                    pids.add(pid)
+                    os.kill(pid, signal.SIGTERM)
             except (FileNotFoundError, ProcessLookupError, KeyError):
                 pass
+    deadline = time.monotonic() + 5
+    while pids and time.monotonic() < deadline:
+        for pid in tuple(pids):
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                pids.remove(pid)
+        if pids:
+            time.sleep(0.02)
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    directory = _socket_directories.pop(root, None)
+    if directory:
+        directory.cleanup()
 
 
 def page_post(port: int, cookie: str, route: str, body: dict) -> dict:

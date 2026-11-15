@@ -84,6 +84,7 @@ TEST(EnvironmentAdapterTest, CoreOwnsReadinessAndKeepsTheProcessAfterShutdown) {
   host::EnvironmentOptions options;
   options.directory = directory.path / "environments";
   options.socket_directory = directory.path / "sockets";
+  options.run_scratch_directory = directory.path / "run-scratch";
   options.process = helper;
   std::atomic<int> registrations = 0;
   host::Environments service(
@@ -97,6 +98,14 @@ TEST(EnvironmentAdapterTest, CoreOwnsReadinessAndKeepsTheProcessAfterShutdown) {
   input.action = H::EnvironmentAction::Start;
   auto ready = service.Handle(input);
   EXPECT_EQ(ready.phase, H::EnvironmentPhase::Ready);
+  for (const auto* option : {"--run-scratch-dir", "--scratch-dir"}) {
+    const auto found = std::find(helper->received.arguments.begin(), helper->received.arguments.end(), option);
+    ASSERT_NE(found, helper->received.arguments.end());
+    ASSERT_NE(std::next(found), helper->received.arguments.end());
+    const auto relative = std::filesystem::path(*std::next(found)).lexically_relative(directory.path);
+    EXPECT_FALSE(relative.empty());
+    EXPECT_NE(*relative.begin(), "..");
+  }
   EXPECT_TRUE(helper->received.authorization.available);
   EXPECT_FALSE(Read(helper->received.authorization.capability_file).empty());
   EXPECT_GE(registrations.load(), 1);
@@ -116,6 +125,7 @@ TEST(EnvironmentAdapterTest, HelperFailureRevokesAuthorizationAndCanBeRetried) {
   host::EnvironmentOptions options;
   options.directory = directory.path / "environments";
   options.socket_directory = directory.path / "sockets";
+  options.run_scratch_directory = directory.path / "run-scratch";
   options.process = helper;
   host::Environments service(
       options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
@@ -155,6 +165,7 @@ TEST(EnvironmentAdapterTest,
     host::EnvironmentOptions options;
     options.directory = directory.path / "environments";
     options.socket_directory = directory.path / "sockets";
+    options.run_scratch_directory = directory.path / "run-scratch";
     options.start_timeout = std::chrono::milliseconds(1);
     options.process = helper;
     host::Environments service(
@@ -205,6 +216,7 @@ TEST(EnvironmentAdapterTest, HostUsesCoreRequirementsAndDoesNotRescanUnacceptedF
   host::EnvironmentOptions options;
   options.directory = directory.path / "environments";
   options.socket_directory = directory.path / "sockets";
+  options.run_scratch_directory = directory.path / "run-scratch";
   options.process = helper;
   host::Environments service(
       options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
@@ -266,6 +278,7 @@ TEST(EnvironmentAdapterTest, StartupRequirementsMustMatchTheAcceptedCoreDocument
   host::EnvironmentOptions options;
   options.directory = directory.path / "environments";
   options.socket_directory = directory.path / "sockets";
+  options.run_scratch_directory = directory.path / "run-scratch";
   options.process = helper;
   host::Environments service(options, authorization.Bind(), [](const auto&) {}, [](const auto&) {});
   H::EnvironmentRequestT input;
@@ -293,6 +306,7 @@ TEST(EnvironmentAdapterTest, FolderMutationsSurviveStartsAndServiceRecreation) {
   host::EnvironmentOptions options;
   options.directory = directory.path / "environments";
   options.socket_directory = directory.path / "sockets";
+  options.run_scratch_directory = directory.path / "run-scratch";
   auto helper = std::make_shared<HelperDouble>();
   options.process = helper;
   AuthorizationDouble authorization;

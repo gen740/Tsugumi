@@ -21,7 +21,7 @@ step() { printf '\n== %s\n' "$1"; }
 step "Static tests"
 # The same pytest as ci.yml's Static checks job.
 nix "${nix_flags[@]}" shell --inputs-from . nixpkgs#python3Packages.pytest -c \
-  pytest -q -m static -p no:cacheprovider tests/static
+  python3 tests/run-isolated.py pytest -q -m static -p no:cacheprovider tests/static
 
 if $run_nix; then
   system=$(nix "${nix_flags[@]}" eval --raw --impure --expr builtins.currentSystem)

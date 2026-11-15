@@ -171,7 +171,7 @@ export class CoreAgentHost {
     return this.starting ??= (async () => {
       fs.mkdirSync(this.state, { recursive: true, mode: 0o700 })
       const log = fs.openSync(path.join(this.state, 'agent.log'), 'a', 0o600)
-      const socketDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-agent-'))
+      const socketDir = fs.mkdtempSync(path.join(process.env.TSUGUMI_SOCKET_DIR ?? '/tmp', 'tsugumi-agent-'))
       fs.chmodSync(socketDir, 0o700)
       const child = spawn(this.binary, ['--state-dir', this.state, '--unix', path.join(socketDir, 'agent.sock'),
         '--listen', '127.0.0.1:0', '--demos-dir', this.demoRoot, ...(this.envs.agentArguments ?? [])], { detached: true, stdio: ['ignore', log, log] })

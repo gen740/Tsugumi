@@ -7,14 +7,14 @@ framing, process ownership, value decoding and fault controls live in the harnes
 ```sh
 nix develop -c cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
 nix develop -c cmake --build build --target tsugumid-mock
-nix develop -c python3 -m pytest tests/core -q -m "not environment" --core-report
+nix develop -c python3 tests/run-isolated.py python3 -m pytest tests/core -q -m "not environment" --core-report
 ```
 
 `--core-report` prints behavior statements with `PASS`, `FAIL`, or `KNOWN BUG`.
 CTest also runs this suite as `core_rpc`:
 
 ```sh
-nix develop -c ctest --test-dir build -R '^core_rpc$' --output-on-failure
+nix develop -c python3 tests/run-isolated.py ctest --test-dir build -R '^core_rpc$' --output-on-failure
 ```
 
 The socket-free `tsugumi_worker_staging_tests` executable exercises the production
@@ -141,5 +141,5 @@ CTest's `core_rpc` runs the deterministic suite; CI runs the environment suite
 separately with:
 
 ```sh
-nix develop -c python3 -m pytest tests/core/integration -q --core-report
+nix develop -c python3 tests/run-isolated.py python3 -m pytest tests/core/integration -q --core-report
 ```

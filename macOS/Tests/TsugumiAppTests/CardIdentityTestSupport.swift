@@ -13,6 +13,10 @@ import Foundation
     let process = Process(), input = Pipe(), output = Pipe(), error = Pipe()
     process.executableURL = binary
     process.standardInput = input; process.standardOutput = output; process.standardError = error
+    defer {
+      try? input.fileHandleForWriting.close()
+      if process.isRunning { process.terminate(); process.waitUntilExit() }
+    }
     try process.run()
     try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: ["projectJson": project, "cards": cards, "id": id]))
     try input.fileHandleForWriting.close()
@@ -69,6 +73,10 @@ import Foundation
   let process = Process(), input = Pipe(), output = Pipe(), error = Pipe()
   process.executableURL = binary
   process.standardInput = input; process.standardOutput = output; process.standardError = error
+  defer {
+    try? input.fileHandleForWriting.close()
+    if process.isRunning { process.terminate(); process.waitUntilExit() }
+  }
   try process.run()
   try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: ["baseJson": base, "oursJson": ours, "theirsJson": theirs]))
   try input.fileHandleForWriting.close()
@@ -91,6 +99,10 @@ import Foundation
   let process = Process(), input = Pipe(), output = Pipe(), error = Pipe()
   process.executableURL = binary
   process.standardInput = input; process.standardOutput = output; process.standardError = error
+  defer {
+    try? input.fileHandleForWriting.close()
+    if process.isRunning { process.terminate(); process.waitUntilExit() }
+  }
   try process.run()
   try input.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: fields))
   try input.fileHandleForWriting.close()

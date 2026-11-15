@@ -183,7 +183,9 @@ extension ChatResumeTests {
   #expect(building != cancelled)
 }
 
-@MainActor @Test func executionHistoryRefreshesAfterARunWithoutStandardOutput() async throws {
+// Its project service and its save live in the host scope's storage, which
+// another test's scope would otherwise select and remove under it.
+@MainActor @Test(.hostService) func executionHistoryRefreshesAfterARunWithoutStandardOutput() async throws {
   let dir = try SyncTests.project()
   let daemon = try SyncTests.Daemon(project: dir)
   defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }

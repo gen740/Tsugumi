@@ -123,11 +123,11 @@ class VMProcess final : public EnvironmentProcess {
  public:
   explicit VMProcess(VMProcessOptions options) : options_(std::move(options)) {
     std::filesystem::create_directories(options_.support);
-    path_ = "/tmp/tsugumi-vmhost-" + std::to_string(::getuid()) + "-" +
-            crypto::sha256_hex(
-                std::filesystem::canonical(options_.support).string())
-                .substr(0, 24) +
-            ".sock";
+    const auto* root = std::getenv("TSUGUMI_SOCKET_DIR");
+    const auto prefix = root ? std::string("v-")
+                             : "tsugumi-vmhost-" + std::to_string(::getuid()) + "-";
+    path_ = (std::filesystem::path(root ? root : "/tmp") /
+             (prefix + crypto::sha256_hex(std::filesystem::canonical(options_.support).string()).substr(0, 24) + ".sock")).string();
   }
   ~VMProcess() override { Shutdown(); }
   auto Shutdown() -> void override {

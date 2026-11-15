@@ -37,6 +37,14 @@ class RunScratch : public ::testing::Test {
   std::filesystem::path base;
 };
 
+TEST_F(RunScratch, ValidatingAnUnopenedProjectDoesNotCreateItsScratch) {
+  const auto root = base / "project";
+  EXPECT_EQ(disk_scratch_path(root / "runs"), root / "runs");
+  EXPECT_FALSE(std::filesystem::exists(root));
+  EXPECT_EQ(private_disk_scratch(root / "runs"), root / "runs");
+  EXPECT_TRUE(std::filesystem::is_directory(root / "runs"));
+}
+
 TEST_F(RunScratch, IsPrivateAndDoesNotFollowLinks) {
   const auto directory = private_disk_scratch(base / "project");
   struct stat st{};
@@ -45,6 +53,7 @@ TEST_F(RunScratch, IsPrivateAndDoesNotFollowLinks) {
   EXPECT_EQ(st.st_mode & 0777, 0700);
   std::filesystem::create_directory_symlink(directory, base / "link");
   EXPECT_THROW(private_disk_scratch(base / "link" / "child"), std::runtime_error);
+  EXPECT_THROW(disk_scratch_path(base / "link" / "child"), std::runtime_error);
   EXPECT_FALSE(std::filesystem::exists(directory / "child"));
 }
 

@@ -82,6 +82,7 @@ auto NativeEnvironmentProcess(
 struct EnvironmentOptions {
   std::filesystem::path directory;
   std::filesystem::path socket_directory;
+  std::filesystem::path run_scratch_directory;
   std::filesystem::path tsugumid;
   std::filesystem::path worker;
   std::filesystem::path sdk;
