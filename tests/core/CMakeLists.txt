@@ -105,8 +105,8 @@ add_dependencies(tsugumi_rpc_cli_tests tsugumi-rpc tsugumid-mock)
 gtest_discover_tests(tsugumi_rpc_cli_tests TEST_PREFIX "core_rpc_cli." DISCOVERY_MODE PRE_TEST
   PROPERTIES TIMEOUT 30)
 
-add_executable(tsugumi_remote_result_tests remote_result_test.cc shell_test.cc collect_value_test.cc display_module_test.cc version_files_test.cc cache_usage_test.cc history_copy_test.cc module_source_test.cc card_identity_test.cc metadata_test.cc layout_boundary_test.cc doubles/nix_eval.cc remote_execution_test.cc host_requirements_test.cc)
-target_include_directories(tsugumi_remote_result_tests PRIVATE ${_core_headers})
+add_executable(tsugumi_remote_result_tests remote_result_test.cc shell_test.cc collect_value_test.cc display_module_test.cc version_files_test.cc cache_usage_test.cc history_copy_test.cc module_source_test.cc card_identity_test.cc metadata_test.cc layout_boundary_test.cc doubles/nix_eval.cc remote_execution_test.cc remote_lifetime_test.cc host_requirements_test.cc)
+target_include_directories(tsugumi_remote_result_tests PRIVATE ${_core_headers} ${_workerd_headers})
 target_link_libraries(tsugumi_remote_result_tests PRIVATE tsugumi_core GTest::gtest_main)
 target_compile_options(tsugumi_remote_result_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 gtest_discover_tests(tsugumi_remote_result_tests TEST_PREFIX "core_remote." DISCOVERY_MODE PRE_TEST

@@ -48,18 +48,18 @@ still follows the normal product selection rules.
 ### Remote comparison
 
 Supply an already-running remote-worker endpoint and an already-running Host
-(`tsugumi-agentd`). The script starts neither of those services. Configure mutual
+(`tsugumi-hostd`). The script starts neither of those services. Configure mutual
 TLS first as in [Remote execution](../../docs/RemoteExecution.md): the worker must
 already trust **this Host's** public key. The worker's public pin is also required.
 Use a Host from the same revision; a separate benchmark Host avoids unrelated
-activity affecting measurements. Its `agent.ready` contains the authenticated
+activity affecting measurements. Its `host.ready` contains the authenticated
 Host socket and broker endpoint. For example:
 
 ```sh
 nix develop -c python3 tests/bench/run.py --build-type Release -n 5 \
   --remote-endpoint tls://worker.example:8765 \
   --remote-worker-key 'ed25519:PASTE_COMPLETE_WORKER_SPKI' \
-  --remote-host-ready /absolute/path/to/host-state/agent.ready \
+  --remote-host-ready /absolute/path/to/host-state/host.ready \
   --out /tmp/local-and-remote-baseline.json
 ```
 

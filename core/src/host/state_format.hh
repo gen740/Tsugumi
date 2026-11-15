@@ -7,9 +7,9 @@
 namespace tsugumi::host {
 // One version for all persistent host state. Raise it and update the digest
 // when changing the tables covered by tests/static/test_host_state_format.py.
-inline constexpr int kStateFormat = 2;
+inline constexpr int kStateFormat = 3;
 inline constexpr std::string_view kStateSchemaDigest =
-    "88fa29a5b12668e8f0b0013d550e2d248dd480f2327e47bf2202a65b0e09ca13";
+    "f3ba088919ac2f53e7dd79be22a593108cfa5415d7d899700b0e9e1a4ccef887";
 
 class StateFormatError final : public std::runtime_error {
  public:

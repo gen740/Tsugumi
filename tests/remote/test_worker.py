@@ -1,10 +1,11 @@
-"""Black-box admission, scoping and recovery against tsugumi-workerd.
+"""Black-box admission, scoping and core lifetimes against tsugumi-workerd.
 
 The socket-free C++ suite covers journal races and protocol verification. This
 suite runs on the Linux CI runner, outside the build sandbox.
 """
 import concurrent.futures
 import hashlib
+import json
 import os
 import ssl
 import socket
@@ -24,6 +25,7 @@ class Worker:
         self.root = root
         self.identity = TLS.identity(root)
         self.scope = "c" * 64
+        self.core_life_id = "e" * 64
         with socket.socket() as temporary:
             temporary.bind(("127.0.0.1", 0))
             self.port = temporary.getsockname()[1]
@@ -77,7 +79,7 @@ class Worker:
     def call(self, kind, body, *, job=None, scoped=True, unix=False, identity=None, **routing):
         fields = {}
         if scoped:
-            fields.update(serverId=self.caps.serverId, projectScope=self.scope)
+            fields.update(serverId=self.caps.serverId, projectScope=self.scope, coreLifeId=self.core_life_id)
             if kind != R.RequestBody.ProbeRequest:
                 fields["instanceId"] = self.instance
         fields.update(routing)
@@ -100,11 +102,12 @@ class Worker:
         assert response.bodyType == R.ReplyBody.Ack
         return digest
 
-    def spec(self, digest, timeout=30):
+    def spec(self, digest, timeout=30, interval=15, missed=0):
         return R.pack(R.JobSpecT(system=self.caps.nativeSystem,
             derivation="/nix/store/00000000000000000000000000000000-test.drv",
             output="/nix/store/00000000000000000000000000000000-test", invocationSha256=digest,
-            inputBlobs=[digest], timeoutSeconds=timeout, logLimitBytes=8 << 20))
+            inputBlobs=[digest], timeoutSeconds=timeout, logLimitBytes=8 << 20,
+            heartbeatIntervalSeconds=interval, missedHeartbeats=missed))
 
 
 @pytest.fixture
@@ -120,7 +123,7 @@ def worker(tmp_path):
 
 
 def test_probe_authentication_unix_and_private_state(worker):
-    assert worker.caps.workerContract == 4 and worker.caps.maxJobs == 1
+    assert worker.caps.workerContract == 6 and worker.caps.maxJobs == 1
     assert worker.caps.nativeSystem in (b"aarch64-linux", b"x86_64-linux")
     stranger = TLS.identity(worker.root, "stranger")
     with pytest.raises((ssl.SSLError, OSError, EOFError)):
@@ -200,7 +203,8 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
     assert result.returncode != 0
 
 
-def test_global_cap_adopts_survivors_and_expires_queued_jobs(tmp_path):
+@pytest.mark.parametrize("end", ["cancel", "listener_expiry", "supervisor_expiry"])
+def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path, end):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_RAW_WORKER")
     if not binary:
         pytest.skip("needs the raw C++ executable for a controlled namespace launcher")
@@ -214,7 +218,10 @@ def test_global_cap_adopts_survivors_and_expires_queued_jobs(tmp_path):
     peer = Worker(tmp_path, binary, env={**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"]})
     jobs = [str(n) * 64 for n in (4, 5, 6)]
     fingerprints = {}
+    expired = False
     def state(job):
+        if expired:
+            return json.loads((peer.state / "projects" / peer.scope / "jobs" / job / "state").read_text())["state"]
         return peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=job).body.state
     def wait(job, expected):
         deadline = time.monotonic() + 10
@@ -226,7 +233,7 @@ def test_global_cap_adopts_survivors_and_expires_queued_jobs(tmp_path):
     try:
         for i, job in enumerate(jobs):
             digest = peer.upload(job, b"staged input")
-            spec = peer.spec(digest, timeout=1 if i == 2 else 60)
+            spec = peer.spec(digest, timeout=1 if i == 2 else 60, interval=15, missed=3)
             fingerprints[job] = hashlib.sha256(spec).hexdigest()
             accepted = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
             assert accepted.bodyType == R.ReplyBody.JobStatus
@@ -236,9 +243,31 @@ def test_global_cap_adopts_survivors_and_expires_queued_jobs(tmp_path):
         peer.restart()
         assert state(jobs[0]) == R.JobState.Running and state(jobs[1]) == R.JobState.Queued
         wait(jobs[2], R.JobState.Failed)
-        peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprints[jobs[0]]), job=jobs[0])
-        wait(jobs[0], R.JobState.Cancelled)
-        wait(jobs[1], R.JobState.Running)
+        if end == "cancel":
+            peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprints[jobs[0]]), job=jobs[0])
+            wait(jobs[0], R.JobState.Cancelled)
+            wait(jobs[1], R.JobState.Running)
+        else:
+            if end == "supervisor_expiry":
+                peer.process.kill()
+                peer.process.wait(timeout=5)
+                peer.log.close()
+            lease = peer.state / "projects" / peer.scope / "cores" / peer.core_life_id
+            expired_lease = lease.with_suffix(".expired")
+            expired_lease.write_text("0")
+            expired_lease.replace(lease)  # deterministic expiry, no wall-clock timeout sleep
+            expired = True
+            wait(jobs[0], R.JobState.Cancelled)
+            if end == "supervisor_expiry":
+                peer.start()
+            peer.core_life_id = "f" * 64
+            peer.call(R.RequestBody.ProbeRequest, R.ProbeRequestT())
+            wait(jobs[1], R.JobState.Cancelled)
+            for job in jobs[:2]:
+                blobs = peer.state / "projects" / peer.scope / "jobs" / job / "blobs"
+                assert list(blobs.iterdir()), "ordinary cancellation must retain verified blobs"
+            refused = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=jobs[0])
+            assert refused.bodyType == R.ReplyBody.Failure
     finally:
         for job, fingerprint in fingerprints.items():
             peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprint), job=job)
@@ -246,6 +275,90 @@ def test_global_cap_adopts_survivors_and_expires_queued_jobs(tmp_path):
             if job in fingerprints:
                 wait(job, R.JobState.Cancelled)
         peer.close()
+
+
+def test_never_heartbeat_orphan_times_out_kills_child_and_reuses_slot(tmp_path):
+    """A running orphan keeps Card timeout enforcement even without heartbeats."""
+    binary = os.environ.get("TSUGUMI_REMOTE_TEST_RAW_WORKER")
+    if not binary:
+        pytest.skip("needs the raw C++ executable for a controlled namespace launcher")
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    child_pid = tmp_path / "child.pid"
+    launcher = tools / "unshare"
+    launcher.write_text('#!/bin/sh\nfor arg do test "$arg" != --check-namespace || exit 0; done\n'
+                        'echo $$ > "$TEST_CHILD_PID"\necho partial-log\nexec sleep 120\n')
+    launcher.chmod(0o755)
+    peer = Worker(tmp_path, binary, env={**os.environ,
+        "PATH": str(tools) + os.pathsep + os.environ["PATH"], "TEST_CHILD_PID": str(child_pid)})
+    first, second = "7" * 64, "8" * 64
+    directory = peer.state / "projects" / peer.scope / "jobs" / first
+
+    def wait_for(check, message):
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if check():
+                return
+            time.sleep(0.05)
+        raise AssertionError(message)
+
+    def record(job):
+        return json.loads((peer.state / "projects" / peer.scope / "jobs" / job / "state").read_text())
+
+    def child():
+        try:
+            return int(child_pid.read_text())
+        except (FileNotFoundError, ValueError):
+            return None  # The launcher may still be writing its PID file.
+
+    pid = None
+    fingerprints = {}
+    try:
+        digest = peer.upload(first, b"orphan input")
+        spec = peer.spec(digest, timeout=5, interval=1, missed=0)
+        fingerprints[first] = hashlib.sha256(spec).hexdigest()
+        accepted = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=first)
+        assert accepted.body.state == R.JobState.Queued
+        # From acceptance to timeout there are no further core requests at all.
+        wait_for(lambda: child() is not None and
+                 record(first)["state"] == R.JobState.Running,
+                 "orphan never started its child")
+        pid = child()
+        assert os.path.exists(f"/proc/{pid}"), "child must be alive before the deadline"
+        assert record(first)["missed_heartbeats"] == 0
+        # Exercise the supervisor's deadline independently of the listener tick.
+        peer.process.kill()
+        peer.process.wait(timeout=5)
+        peer.log.close()
+        wait_for(lambda: record(first)["state"] == R.JobState.Failed, "orphan did not time out")
+        assert record(first)["diagnostic"] == "timed out after 5 s"
+        wait_for(lambda: not os.path.exists(f"/proc/{pid}"), "timed-out child survived")
+        assert (directory / "blobs" / digest).read_bytes() == b"orphan input"
+        assert "partial-log" in (directory / "work" / "adapter.log").read_text()
+        peer.start()
+        # A new life cannot collect the old result, but can use the freed slot.
+        peer.core_life_id = "f" * 64
+        peer.call(R.RequestBody.ProbeRequest, R.ProbeRequestT())
+        digest = peer.upload(second, b"next input")
+        spec = peer.spec(digest, timeout=30, interval=1, missed=0)
+        fingerprints[second] = hashlib.sha256(spec).hexdigest()
+        peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=second)
+        wait_for(lambda: record(second)["state"] == R.JobState.Running and
+                 child() not in (None, pid), "execution slot was not reused")
+        peer.call(R.RequestBody.CancelRequest,
+                  R.CancelRequestT(fingerprint=hashlib.sha256(spec).hexdigest()), job=second)
+        wait_for(lambda: record(second)["state"] == R.JobState.Cancelled, "cleanup did not stop next job")
+        assert "partial-log" in (directory / "work" / "adapter.log").read_text()
+    finally:
+        try:
+            if peer.process.poll() is not None:
+                peer.start()
+            for job, fingerprint in fingerprints.items():
+                peer.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprint), job=job)
+                wait_for(lambda: record(job)["state"] in (R.JobState.Failed, R.JobState.Cancelled),
+                         "test cleanup did not stop its supervisor")
+        finally:
+            peer.close()
 
 
 def test_bounded_frames_and_single_listener(worker):

@@ -7,7 +7,6 @@
 #include <iterator>
 #include <set>
 #include <sstream>
-#include <flatbuffers/reflection.h>
 
 #include "module_source.hh"
 #include "tsugumi/protocol/worker_generated.h"
@@ -27,28 +26,6 @@ constexpr uint64_t kMaxBlobBytes = uint64_t{64} << 30;
 constexpr uint64_t kMaxManifestBytes = uint64_t{8} << 20;
 constexpr uint64_t kMaxWorkerBytes = uint64_t{16} << 20;
 constexpr size_t kMaxInputBlobs = 1024;
-
-struct PortJson {
-  schema::t::String<"name"> name;
-  schema::t::Uint64<"kind"> kind;
-  schema::t::Bool<"optional"> optional;
-  schema::t::String<"bfbs"> bfbs;
-  schema::t::String<"root_type"> root_type;
-};
-
-struct RecordedInputJson {
-  schema::t::Field<"port", schema::Obj<PortJson>> port;
-  schema::t::String<"bytes"> bytes;
-  schema::t::String<"artifact_id"> artifact_id;
-};
-
-struct RecoveryJson {
-  schema::t::Array<"outputs", schema::Obj<PortJson>> outputs;
-  schema::t::Array<"inputs", schema::Obj<RecordedInputJson>> inputs;
-  schema::t::Array<"sources", schema::Obj<schema::InputSourceJson>> sources;
-  schema::t::Bool<"record_io"> record_io;
-  schema::t::String<"artifact_output"> artifact_output;
-};
 
 auto upload(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
             const std::string& instance, const std::string& job_id, const std::string& bytes, const std::atomic<bool>& cancel) -> std::string {
@@ -88,71 +65,6 @@ auto log_result(const stdfs::path& path, const WorkerProc::LogSink& log) -> void
 
 }  // namespace
 
-auto remote_recovery_contract(const Node& node, const std::vector<Value>& inputs,
-                              const std::vector<InputSourceData>& sources) -> std::string {
-  RecoveryJson contract;
-  *contract.record_io = node.settings.record_io;
-  *contract.artifact_output = node.settings.retain_artifact ? node.settings.artifact_output.value_or("") : "";
-  *contract.outputs = std::vector<PortJson>{};
-  *contract.inputs = std::vector<RecordedInputJson>{};
-  *contract.sources = std::vector<schema::InputSourceJson>{};
-  const auto encode = [](const types::PortType& value) {
-    if (!value.type) throw std::runtime_error("unresolved external port type");
-    PortJson port;
-    *port.name = value.name;
-    *port.kind = static_cast<uint64_t>(value.kind);
-    *port.optional = value.optional;
-    *port.bfbs = crypto::base64(value.type->bfbs);
-    *port.root_type = value.type->root_type;
-    return port;
-  };
-  for (const auto& output : node.outputs) contract.outputs->push_back(encode(output));
-  if (node.settings.record_io) for (const auto& input : inputs) {
-    RecordedInputJson value;
-    *value.port = encode({input.name, input.kind, false, input.type});
-    *value.bytes = crypto::base64(input.bytes);
-    *value.artifact_id = input.artifact_id.value_or("");
-    contract.inputs->push_back(std::move(value));
-  }
-  for (const auto& input : sources) {
-    schema::InputSourceJson source;
-    *source.port = input.port;
-    *source.card = path_key(input.card);
-    *source.invocation = input.invocation;
-    contract.sources->push_back(std::move(source));
-  }
-  return schema::encode(contract);
-}
-
-auto remote_recovery_contract(const std::string& encoded) -> RemoteRecoveryContract {
-  RecoveryJson contract;
-  if (schema::decode(encoded, contract)) throw std::runtime_error("invalid saved remote output contract");
-  RemoteRecoveryContract result{{}, {}, {}, *contract.record_io, *contract.artifact_output};
-  const auto decode = [](const PortJson& port) -> types::PortType {
-    auto type = std::make_shared<types::Type>();
-    if (!crypto::base64_decode(*port.bfbs, type->bfbs)) throw std::runtime_error("invalid saved remote schema");
-    flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(type->bfbs.data()), type->bfbs.size());
-    if (!reflection::VerifySchemaBuffer(verifier)) throw std::runtime_error("invalid saved remote schema");
-    type->root_type = *port.root_type;
-    type->hash = crypto::sha256_hex(type->bfbs);
-    if (!type->root() || *port.kind < 1 || *port.kind > 3) throw std::runtime_error("invalid saved remote port");
-    return {*port.name, static_cast<PortKind>(*port.kind), *port.optional, std::move(type)};
-  };
-  for (const auto& port : *contract.outputs) result.outputs.push_back(decode(port));
-  for (const auto& input : *contract.inputs) {
-    auto port = decode(*input.port);
-    std::string bytes;
-    if (!crypto::base64_decode(*input.bytes, bytes) || !types::verify(*port.type, bytes))
-      throw std::runtime_error("invalid saved remote input value");
-    std::optional<std::string> artifact;
-    if (!input.artifact_id->empty()) artifact = *input.artifact_id;
-    result.inputs.push_back({std::move(port.name), port.kind, std::move(port.type), std::move(bytes), std::move(artifact)});
-  }
-  for (const auto& source : *contract.sources)
-    result.sources.push_back({*source.port, path_from_key(*source.card), *source.invocation});
-  return result;
-}
-
 auto stage_remote_archive(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
                           const std::string& instance, const std::string& job_id, const stdfs::path& archive,
                           const std::atomic<bool>& cancel) -> std::string {
@@ -171,7 +83,8 @@ auto stage_remote_archive(const RemoteJobClient& client, const std::string& serv
 auto stage_remote_invocation(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
                              const std::string& instance, const std::string& job_id, const std::string& project_id,
                              const std::vector<stdfs::path>& file_roots, const std::string& archive_digest,
-                             const ExecutionRequest& request) -> std::string {
+                             const ExecutionRequest& request,
+                             uint32_t heartbeat_interval_seconds, uint32_t missed_heartbeats) -> std::string {
   remote::InvocationJson invocation;
   *invocation.project_id = project_id;
   *invocation.network = request.node.settings.network;
@@ -247,6 +160,8 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
   const auto invocation_digest = upload(client, service, server_id, instance, job_id, schema::encode(invocation), request.cancel);
   blobs.insert(invocation_digest);
   R::JobSpecT job;
+  job.heartbeat_interval_seconds = heartbeat_interval_seconds;
+  job.missed_heartbeats = missed_heartbeats;
   job.input_blobs.assign(blobs.begin(), blobs.end());
   job.invocation_sha256 = invocation_digest;
   job.system = request.build.derivation.system;

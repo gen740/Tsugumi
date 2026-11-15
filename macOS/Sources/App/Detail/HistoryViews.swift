@@ -55,7 +55,6 @@ struct CardExecutionView: View {
   @State private var loaded = false
   @State private var invocationsRunId: String?
   @State private var comparing = false
-  @State private var cancelling = false
 
   enum Filter: String, CaseIterable, Identifiable {
     case all, succeeded, failed
@@ -278,18 +277,8 @@ struct CardExecutionView: View {
           if let job = s.executionJobId, !job.isEmpty {
             LabeledContent("ジョブ ID", value: job).textSelection(.enabled)
             if r.run.status.failure?.kind == .interrupted {
-              Text("Tsugumi の再起動後は、このジョブの結果を回収します。下流の Card は改めて実行してください。")
+              Text("Tsugumi の再起動により、この実行は中断されました。結果は回収されません。必要な Card を改めて実行してください。")
                 .font(.caption).foregroundStyle(.secondary)
-              if [.queued, .running, .disconnected].contains(s.executionState), let runId, r.run.status.runId == runId, let rpc = session.rpc {
-                Button("この実行の未完了ジョブを取り消す", role: .destructive) {
-                  cancelling = true
-                  Task {
-                    defer { cancelling = false }
-                    do { _ = try await rpc.cancel(runId: runId); error = nil }
-                    catch { self.error = String(describing: error) }
-                  }
-                }.disabled(cancelling)
-              }
             }
           }
           if let cpu = s.executionResources?.cpuMillis { LabeledContent("CPU 上限（ミリコア）", value: String(cpu)) }

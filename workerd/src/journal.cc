@@ -26,6 +26,9 @@ struct StateJson {
   schema::t::Uint64<"pid"> pid;
   schema::t::Uint64<"start"> start;
   schema::t::String<"boot"> boot;
+  schema::t::String<"core_life_id"> core_life_id;
+  schema::t::Uint64<"heartbeat_interval_seconds"> heartbeat_interval_seconds;
+  schema::t::Uint64<"missed_heartbeats"> missed_heartbeats;
 };
 struct Fd {
   int value;
@@ -102,6 +105,7 @@ Journal::Journal(stdfs::path root) : root_(std::move(root)) {
   private_directory(root_);
   private_directory(root_ / "jobs");
   private_directory(root_ / "locks");
+  private_directory(root_ / "cores");
   instance_ = identity(root_, "instance_id");
 }
 auto Journal::job_path(std::string_view job) const -> stdfs::path {
@@ -138,7 +142,10 @@ auto Journal::read(const stdfs::path& directory) const -> Record {
           *s.deadline,
           *s.pid,
           *s.start,
-          *s.boot};
+          *s.boot,
+          *s.core_life_id,
+          static_cast<uint32_t>(*s.heartbeat_interval_seconds),
+          static_cast<uint32_t>(*s.missed_heartbeats)};
 }
 auto Journal::write(const stdfs::path& directory, const Record& r) const
     -> void {
@@ -153,6 +160,9 @@ auto Journal::write(const stdfs::path& directory, const Record& r) const
   *s.pid = r.pid;
   *s.start = r.start;
   *s.boot = r.boot;
+  *s.core_life_id = r.core_life_id;
+  *s.heartbeat_interval_seconds = r.heartbeat_interval_seconds;
+  *s.missed_heartbeats = r.missed_heartbeats;
   fs::write_atomic(directory / "state", schema::encode(s), 0600);
 }
 auto Journal::status(std::string_view job) const -> Record {
@@ -163,7 +173,56 @@ auto Journal::status(std::string_view job) const -> Record {
 auto Journal::spec(std::string_view job) const -> std::string {
   return bounded_file(job_path(job) / "spec.fb", kMaxSpec);
 }
-auto Journal::put(std::string_view job, const R::PutBlobRequestT& c) -> void {
+auto Journal::touch_core(std::string_view core, uint64_t now) -> void {
+  check_id(core);
+  // Serialize renewals across carriers. Cancel the expired life's jobs before
+  // renewal, even if its reconnect arrives before the next listener tick.
+  Fd lock{::open((root_ / "cores" / (std::string(core) + ".lock")).c_str(),
+                 O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600)};
+  if (lock.value < 0 || ::flock(lock.value, LOCK_EX) != 0)
+    throw std::runtime_error("cannot lock core lease");
+  const auto path = root_ / "cores" / core;
+  for (const auto& job : jobs())
+    if (status(job).core_life_id == core) expire_core(job, now);
+  fs::write_atomic(path, std::to_string(now), 0600);
+}
+
+auto Journal::require_owner(std::string_view job, std::string_view core) const
+    -> void {
+  check_id(core);
+  const auto state = status(job);
+  if (!state.core_life_id.empty() && state.core_life_id != core)
+    throw Error(R::ErrorCode::Rejected, "job belongs to another core life");
+}
+
+auto Journal::expire_core(std::string_view job, uint64_t now) -> void {
+  locked(job, [&](const auto& dir) {
+    auto state = read(dir);
+    if (state.core_life_id.empty() || terminal(state.state) ||
+        state.state == R::JobState::Uploading || !state.missed_heartbeats)
+      return;
+    check_id(state.core_life_id);
+    const auto lease = fs::read_file(root_ / "cores" / state.core_life_id);
+    if (lease) {
+      const auto last = std::stoull(*lease);
+      constexpr auto grace = static_cast<uint64_t>(kHeartbeatGrace.count());
+      // Divide instead of multiplying two uint32 settings and milliseconds.
+      if (now < last || now - last < grace ||
+          (now - last - grace) / 1000 / state.heartbeat_interval_seconds <
+                            state.missed_heartbeats) return;
+    }
+    // Use precisely the ordinary cancellation transition and data policy.
+    state.state = state.state == R::JobState::Running ||
+                          state.state == R::JobState::Cancelling
+                      ? R::JobState::Cancelling
+                      : R::JobState::Cancelled;
+    write(dir, state);
+  });
+}
+
+auto Journal::put(std::string_view job, const R::PutBlobRequestT& c,
+                  std::string_view core) -> void {
+  check_id(core);
   check_id(c.digest);
   if (c.total > kMaxBlob || c.bytes.size() > kChunkBytes ||
       c.offset > c.total || c.bytes.size() > c.total - c.offset ||
@@ -171,6 +230,9 @@ auto Journal::put(std::string_view job, const R::PutBlobRequestT& c) -> void {
     throw Error(R::ErrorCode::Invalid, "invalid blob chunk bounds");
   locked(job, [&](const auto& dir) {
     auto state = read(dir);
+    if (!state.core_life_id.empty() && state.core_life_id != core)
+      throw Error(R::ErrorCode::Rejected, "job belongs to another core life");
+    state.core_life_id = core;
     if (state.state != R::JobState::Missing &&
         state.state != R::JobState::Uploading)
       throw Error(R::ErrorCode::Rejected, "job no longer accepts uploads");
@@ -262,11 +324,15 @@ auto Journal::get(std::string_view job, const R::GetBlobRequestT& r) const
   });
   return result;
 }
-auto Journal::submit(std::string_view job, std::string_view bytes) -> Record {
+auto Journal::submit(std::string_view job, std::string_view bytes,
+                     std::string_view core) -> Record {
+  check_id(core);
   const auto fingerprint = crypto::sha256_hex(bytes);
   Record result;
   locked(job, [&](const auto& dir) {
     result = read(dir);
+    if (!result.core_life_id.empty() && result.core_life_id != core)
+      throw Error(R::ErrorCode::Rejected, "job belongs to another core life");
     if (result.state != R::JobState::Missing &&
         result.state != R::JobState::Uploading) {
       if (result.fingerprint != fingerprint)
@@ -283,6 +349,9 @@ auto Journal::submit(std::string_view job, std::string_view bytes) -> Record {
     fs::write_atomic(dir / "spec.fb", bytes, 0600);
     result = {};
     result.state = R::JobState::Queued;
+    result.core_life_id = core;
+    result.heartbeat_interval_seconds = s->heartbeat_interval_seconds;
+    result.missed_heartbeats = s->missed_heartbeats;
     result.fingerprint = fingerprint;
     result.deadline = now_ms() + uint64_t{s->timeout_seconds} * 1000;
     write(dir, result);

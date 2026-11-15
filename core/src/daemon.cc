@@ -240,7 +240,7 @@ int run_daemon(int argc, char** argv) {
   service.attach(&server);
   try {
     server.start();
-    service.recover_remote_jobs();
+    service.start_remote_cleanup();
   } catch (const std::exception& e) {
     log::error(std::string("cannot start the RPC server: ") + e.what());
     return 7;
