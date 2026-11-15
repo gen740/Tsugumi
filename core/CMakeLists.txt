@@ -153,10 +153,17 @@ add_library(tsugumi_agent_core STATIC
   ${CMAKE_CURRENT_BINARY_DIR}/tsugumi_rpc_bfbs.cc
   src/agent/catalog.cc
   src/agent/provider.cc
+  src/agent/providers.cc
+  src/agent/store.cc
   src/agent/runtime.cc
   src/agent/tool_images.cc
   src/agent/wire.cc
   src/agent/host.cc
+  src/host/state_gate.cc
+  src/host/store.cc
+  src/host/credentials.cc
+  src/host/demo_references.cc
+  src/host/registry.cc
   src/host/attached_folder.cc
   src/host/format.cc
   src/host/version_text.cc
