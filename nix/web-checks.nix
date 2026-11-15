@@ -15,6 +15,8 @@ runCommand "tsugumi-web-checks"
         ../web/scripts/test.mjs
         ../web/tests
         ../tests/fixtures
+        ../agent/Shared/system-prompt.md
+        ../agent/Shared/mcp-transport.md
       ];
     };
   }

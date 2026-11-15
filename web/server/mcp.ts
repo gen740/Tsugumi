@@ -10,7 +10,7 @@ import { ServerInfo, webDataDir, serverBuild, runningServer, serverRequest } fro
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
-import { INSTRUCTIONS } from './mcpInstructions'
+import { INITIAL_INSTRUCTIONS, INSTRUCTIONS } from './mcpInstructions'
 
 const OPEN_TOOL = {
   name: 'tsugumi_open',
@@ -129,7 +129,7 @@ async function handle(m: { id?: unknown; method?: string; params?: any }) {
         protocolVersion: VERSIONS.includes(m.params?.protocolVersion) ? m.params.protocolVersion : VERSIONS[0],
         capabilities: { tools: {} },
         serverInfo: { name: 'tsugumi', version: '0' },
-        instructions: INSTRUCTIONS,
+        instructions: INITIAL_INSTRUCTIONS,
       })
     case 'ping':
       return reply(m.id, {})
