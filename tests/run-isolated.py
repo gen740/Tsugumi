@@ -113,6 +113,10 @@ def remove_private_tree(root):
         # to this invocation; never apply permission repair to escaped paths.
         if Path(path).is_symlink():
             raise error[1]
+        # Removing an entry needs a writable parent (a Nix store in the tree
+        # is read-only all the way down).
+        if Path(path) != Path(root):
+            os.chmod(Path(path).parent, 0o700)
         os.chmod(path, 0o700)
         if function in (os.unlink, os.rmdir):
             function(path)

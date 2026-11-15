@@ -47,7 +47,8 @@ broker_endpoint = ""
 processes = {}
 controls = {}
 mutex = threading.Lock()
-sockets = Path(tempfile.mkdtemp(prefix="vh-"))
+# The host starts this helper with the system temporary folder, not the test run's.
+sockets = Path(tempfile.mkdtemp(prefix="vh-", dir=socket_root))
 
 def text(value):
     return value.decode() if isinstance(value, bytes) else value
