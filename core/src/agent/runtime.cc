@@ -9,8 +9,76 @@
 #include <set>
 #include <utility>
 
+#include "util/crypto.hh"
+
 namespace tsugumi::agent {
+auto EstimateTextTokens(std::string_view text) -> uint64_t {
+  // One UTF-8 byte per token is deliberately conservative, including Japanese
+  // and arbitrary tool/code text. Four bytes/token can undercount non-Latin
+  // text badly. Count the actual text, not JSON escaping or display metadata.
+  constexpr uint64_t kBytesPerToken = 1;
+  return (text.size() + kBytesPerToken - 1) / kBytesPerToken;
+}
+
+auto EstimateMessageTokens(const Message& message) -> uint64_t {
+  uint64_t tokens = 16;  // Role and message framing.
+  for (const auto& block : message.content) {
+    tokens += 16 + EstimateTextTokens(block.text) +
+              EstimateTextTokens(block.id) + EstimateTextTokens(block.name);
+    if (block.type == "tool_use") tokens += EstimateTextTokens(block.input);
+    for (const auto& image : block.images)
+      tokens += EstimateTextTokens(image.data);
+    for (const auto& source : block.sources)
+      tokens +=
+          EstimateTextTokens(source.url) + EstimateTextTokens(source.title);
+  }
+  // Signed thinking and server-tool blocks are replayed too. They overlap
+  // content; do not count a second copy of the assistant's visible text.
+  return std::max(tokens, 16 + EstimateTextTokens(message.provider_content));
+}
+
 namespace {
+auto Snapshot(const ProviderConfig& config, std::string_view system,
+              const std::vector<Message>& messages,
+              const std::vector<ToolSpec>& tools) -> ContextUsage {
+  std::string request = config.base_url + "\n" + config.model + "\n" +
+                        std::to_string(static_cast<int>(config.api)) + "\n" +
+                        std::to_string(config.web_search) + "\n" +
+                        std::string(system);
+  for (const auto& tool : tools)
+    request +=
+        "\n" + tool.name + "\n" + tool.description + "\n" + tool.input_schema;
+  return {.input_tokens = 0,
+          .message_count = messages.size(),
+          .prefix_hash = crypto::sha256_hex(SerializeMessages(messages)),
+          .request_hash = crypto::sha256_hex(request)};
+}
+
+auto InputTokens(const ProviderConfig& config, std::string_view system,
+                 const std::vector<Message>& messages,
+                 const std::vector<ToolSpec>& tools,
+                 const ContextUsage& context) -> uint64_t {
+  if (context.input_tokens && context.message_count <= messages.size()) {
+    const std::vector<Message> prefix(
+        messages.begin(),
+        messages.begin() + static_cast<std::ptrdiff_t>(context.message_count));
+    const auto snapshot = Snapshot(config, system, prefix, tools);
+    if (snapshot.prefix_hash == context.prefix_hash &&
+        snapshot.request_hash == context.request_hash) {
+      auto tokens = context.input_tokens;
+      for (size_t i = context.message_count; i < messages.size(); ++i)
+        tokens += EstimateMessageTokens(messages[i]);
+      return tokens;
+    }
+  }
+  uint64_t tokens = 16 + EstimateTextTokens(system);
+  for (const auto& tool : tools)
+    tokens += 16 + EstimateTextTokens(tool.name) +
+              EstimateTextTokens(tool.description) +
+              EstimateTextTokens(tool.input_schema);
+  for (const auto& message : messages) tokens += EstimateMessageTokens(message);
+  return tokens;
+}
 
 auto CheckCancelled(std::stop_token stop) -> void {
   if (stop.stop_requested()) throw Cancelled();
@@ -70,18 +138,21 @@ auto ContextOverflow(std::string reason) -> bool {
   return false;
 }
 
-auto FitToolResults(std::vector<Message>& messages, size_t room) -> bool {
+auto FitToolResults(std::vector<Message>& messages, size_t room_tokens)
+    -> bool {
   size_t count = 0;
   for (const auto& message : messages)
     for (const auto& block : message.content)
       if (block.type == "tool_result") ++count;
   if (!count) return false;
-  const auto cap = std::max(size_t{200}, room / count);
+  const auto cap = std::max(size_t{200}, room_tokens / count);
   bool changed = false;
   for (auto& message : messages) {
     for (auto& block : message.content) {
-      if (block.type != "tool_result" || block.text.size() <= cap) continue;
-      size_t end = cap;
+      if (block.type != "tool_result" || EstimateTextTokens(block.text) <= cap)
+        continue;
+      // Convert the token budget back to bytes with the same estimator.
+      size_t end = std::min(block.text.size(), cap);
       while (end &&
              (static_cast<unsigned char>(block.text[end]) & 0xc0) == 0x80)
         --end;
@@ -267,7 +338,10 @@ auto ValidateHooks(const RuntimeHooks& hooks) -> void {
 auto Runtime::Run(const ProviderConfig& config, std::string_view system,
                   std::vector<Message>& messages,
                   const std::vector<ToolSpec>& tools, std::stop_token stop,
-                  const RuntimeHooks& hooks) const -> RunResult {
+                  const RuntimeHooks& hooks, ContextUsage* context) const
+    -> RunResult {
+  ContextUsage local_context;
+  if (!context) context = &local_context;
   RunResult result;
   try {
     ValidateHooks(hooks);
@@ -291,10 +365,12 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
     uint32_t context_refusals = 0;
     for (uint32_t step = 0; step < options_.max_steps; ++step) {
       CheckCancelled(stop);
-      if (options_.compact && config.context_limit > 0 &&
-          SerializeMessages(messages).size() > config.context_limit) {
+      if (options_.compact && config.context_limit_tokens > 0 &&
+          InputTokens(config, system, messages, tools, *context) >=
+              config.context_limit_tokens) {
         try {
           Compact(config, messages, stop, hooks);
+          *context = {};
         } catch (const ProviderError&) {
           // An optional summary failure must not prevent a request that can
           // still fit. A provider context refusal below triggers forced
@@ -310,6 +386,7 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
         }
       }
       ModelReply reply;
+      auto request_context = Snapshot(config, system, messages, tools);
       try {
         reply = ModelTurn(config, system, messages, tools, stop, hooks,
                           options_.max_retries);
@@ -319,9 +396,10 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
         if (!options_.compact || ++context_refusals > 3)
           throw std::runtime_error(
               "the conversation no longer fits the model's context");
+        *context = {};
         auto smaller = config;
-        smaller.context_limit =
-            std::max(400u, config.context_limit >> context_refusals);
+        smaller.context_limit_tokens =
+            std::max(400u, config.context_limit_tokens >> context_refusals);
         try {
           Compact(smaller, messages, stop, hooks);
         } catch (const ProviderError& summary_error) {
@@ -331,6 +409,8 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
       }
       CheckCancelled(stop);
       AddUsage(result.usage, reply.usage);
+      request_context.input_tokens = reply.usage.input_tokens;
+      *context = std::move(request_context);
       if (reply.stop_reason == "max_tokens" ||
           reply.stop_reason == "model_context_window_exceeded") {
         if (++cut_replies > options_.max_cut_replies)
@@ -457,7 +537,8 @@ auto Runtime::Compact(const ProviderConfig& config,
   while (cut > 0 && IsResults(messages[cut])) --cut;
   std::vector<Message> kept(messages.begin() + static_cast<std::ptrdiff_t>(cut),
                             messages.end());
-  const auto room = std::max(size_t{200}, size_t{config.context_limit} / 2);
+  const auto room =
+      std::max(size_t{200}, size_t{config.context_limit_tokens} / 2);
   const bool fitted = FitToolResults(kept, room);
   if (cut == 0 && !fitted) return;
   Emit(hooks, {"compacting", {}, {}, {}, true, 0, {}});

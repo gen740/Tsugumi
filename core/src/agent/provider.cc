@@ -995,14 +995,28 @@ auto StreamReply(const ProviderConfig& config, std::string_view system,
 }
 
 auto ListModels(const ProviderConfig& config, std::stop_token stop)
-    -> std::vector<std::pair<std::string, std::string>> {
+    -> std::vector<ModelInfo> {
   const auto body = WithCredential(config, [&](std::string_view credential) {
     return Request(config, "v1/models", std::nullopt, stop, {}, credential);
   });
-  std::vector<std::pair<std::string, std::string>> models;
-  for (const auto& item : Items(Parse(body), "/data")) {
-    const auto id = String(item, "/id");
-    if (!id.empty()) models.emplace_back(id, String(item, "/display_name", id));
+  std::vector<ModelInfo> models;
+  const bool plan = config.auth == ProviderAuth::ChatGPT;
+  const auto catalog = Parse(body);
+  for (const auto& item : Items(catalog, plan ? "/models" : "/data")) {
+    if (plan && String(item, "/visibility") != "list") continue;
+    const auto id = String(item, plan ? "/slug" : "/id");
+    // Anthropic reports max_input_tokens; the ChatGPT account catalog reports
+    // its active context_window (or max_context_window when no active window
+    // is specified). The public OpenAI API-key catalog reports neither.
+    const auto nullable_number = [&](std::string_view field) {
+      return Raw(item, field) == "null" ? uint64_t{0} : Number(item, field);
+    };
+    auto window = nullable_number(plan ? "/context_window" : "/max_input_tokens");
+    if (plan && !window) window = nullable_number("/max_context_window");
+    if (!id.empty())
+      models.push_back({id, String(item, "/display_name", id),
+                        static_cast<uint32_t>(std::min<uint64_t>(
+                            window, std::numeric_limits<uint32_t>::max()))});
   }
   return models;
 }

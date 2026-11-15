@@ -1,9 +1,17 @@
 // The service uses the same explicit input/reply tables with a secret-store
-// double. No platform Keychain, credential file or listener is involved.
+// double. No platform Keychain or credential file is involved. Context-budget
+// scenarios below use an external streaming HTTP fixture.
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include "../agent_fixture_server.hh"
+#include "agent/runtime.hh"
+#include "host/models.hh"
 #include "host/settings.hh"
+
+extern const unsigned char tsugumi_agent_settings[];
+extern const unsigned long tsugumi_agent_settings_size;
 
 namespace tsugumi::test {
 namespace {
@@ -397,5 +405,230 @@ TEST_F(HostPolicyTest, GuideAndSummaryUseSettingsAndHostCatalog) {
   Set("agent.provider", "fixture");
   EXPECT_EQ(service->ModelSelection("desktop", "summary").model, "fixture");
 }
+
+// These requests use the real runtime and external streaming HTTP provider.
+class ContextBudget : public testing::Test {
+ protected:
+  ModelServer model;
+  agent::ProviderConfig config;
+  agent::ContextUsage context;
+  std::vector<agent::Message> messages;
+  std::vector<std::string> events;
+  agent::RuntimeHooks hooks;
+  ContextBudget() {
+    config.base_url = model.URL();
+    config.auth = agent::ProviderAuth::None;
+    config.model = "fixture";
+    config.context_limit_tokens = 200000;
+    hooks.authorize_context = [](const auto&) {};
+    hooks.checkpoint = [](const auto&) {};
+    hooks.event = [this](const auto& event) { events.push_back(event.kind); };
+  }
+  auto Add(std::string text, std::string role = "user") -> void {
+    agent::ContentBlock block;
+    block.text = std::move(text);
+    agent::Message message;
+    message.role = std::move(role);
+    message.content.push_back(std::move(block));
+    messages.push_back(std::move(message));
+  }
+  auto Run(std::string_view system = "system",
+           const std::vector<agent::ToolSpec>& tools = {}) -> void {
+    const auto result = agent::Runtime().Run(config, system, messages, tools,
+                                             {}, hooks, &context);
+    ASSERT_EQ(result.outcome, agent::RunOutcome::Finished) << result.error;
+  }
+  auto Compacted() -> bool {
+    return std::find(events.begin(), events.end(), "compacted") != events.end();
+  }
+};
+
+TEST_F(ContextBudget, ProviderCatalogPreservesReportedWindowsAndMissingValues) {
+  model.QueueHTTP(R"({"data":[{"id":"reported","max_input_tokens":1000000},{"id":"absent"},{"id":"null","max_input_tokens":null}]})");
+  const auto catalog = agent::ListModels(config, {});
+  ASSERT_EQ(catalog.size(), 3u);
+  EXPECT_EQ(catalog[0].context_window_tokens, 1000000u);
+  EXPECT_EQ(catalog[1].context_window_tokens, 0u);
+  EXPECT_EQ(catalog[2].context_window_tokens, 0u);
+}
+
+TEST_F(ContextBudget, ChatGPTCatalogUsesTheAccountsActiveWindow) {
+  config.auth = agent::ProviderAuth::ChatGPT;
+  config.credential = "TEST_TOKEN";
+  model.QueueHTTP(R"({"models":[{"slug":"gpt-6.1-sol","display_name":"Sol","visibility":"list","context_window":500000,"max_context_window":1050000},{"slug":"other","visibility":"list","context_window":null,"max_context_window":272000},{"slug":"hidden","visibility":"hide","context_window":1000000}]})");
+  const auto catalog = agent::ListModels(config, {});
+  ASSERT_EQ(catalog.size(), 2u);
+  EXPECT_EQ(catalog[0].id, "gpt-6.1-sol");
+  EXPECT_EQ(catalog[0].context_window_tokens, 500000u);
+  EXPECT_EQ(catalog[1].context_window_tokens, 272000u);
+}
+
+TEST_F(ContextBudget, EscapedBytesDoNotTriggerCompactionAndUsageSurvivesTurns) {
+  // Quoted tool/code-like text exceeds the old 180KB storage threshold.
+  std::string quoted;
+  for (int i = 0; i < 30000; ++i) quoted += "\"\\\n";
+  for (int i = 0; i < 6; ++i) Add(quoted.substr(0, 15000));
+  ASSERT_GT(agent::SerializeMessages(messages).size(), 180000u);
+  model.Queue(AnthropicText(std::string(110000, 'a'), 1000));
+  Run();
+  ASSERT_FALSE(Compacted());
+  // A full-text estimate now exceeds the budget. The measured request plus
+  // only its appended assistant/user messages still fits comfortably.
+  Add("continue");
+  model.Queue(AnthropicText("done", 5000));
+  Run();
+  EXPECT_FALSE(Compacted());
+  EXPECT_EQ(model.Requests().size(), 2u);
+  EXPECT_EQ(context.input_tokens, 5000u);
+}
+
+TEST_F(ContextBudget, AddedToolResultsUseTheTokenBudgetAndKeepValidJapanese) {
+  config.context_limit_tokens = 2000;
+  Add("read");
+  auto stream = AnthropicTool("call-1", "read", "{}");
+  const auto at = stream.find("\"input_tokens\":12");
+  ASSERT_NE(at, std::string::npos);
+  stream.replace(at, std::string("\"input_tokens\":12").size(),
+                 "\"input_tokens\":1500");
+  model.Queue(stream);
+  model.Queue(AnthropicText("done"));
+  hooks.execute_tool = [](const auto&, auto) {
+    std::string text;
+    for (int i = 0; i < 250; ++i) text += "実験";
+    return agent::ToolResult{std::move(text), false, {}, {}};
+  };
+  Run("system", {{"read", "read", "{}"}});
+  ASSERT_TRUE(Compacted());
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 2u);
+  EXPECT_NE(requests[1].find("Cut to fit the model context"), std::string::npos);
+  const auto fitted = JsonString(requests[1], "/messages/2/content/0/content");
+  EXPECT_LT(agent::EstimateTextTokens(fitted), 1500u);
+  std::string expected;
+  for (int i = 0; i < 166; ++i) expected += "実験";
+  expected += "実\n[Cut to fit the model context; request a smaller page.]";
+  EXPECT_EQ(fitted, expected);
+}
+
+TEST_F(ContextBudget, ReportedInputPlusNewMessagesCompactsBeforeRefusal) {
+  for (int i = 0; i < 6; ++i) Add("earlier decision");
+  model.Queue(AnthropicText(std::string(2000, 'x'), 199000));
+  Run();
+  ASSERT_FALSE(Compacted());
+  Add("continue");
+  model.Queue(AnthropicText("handoff", 3000));
+  model.Queue(AnthropicText("done", 4000));
+  Run();
+  ASSERT_TRUE(Compacted());
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 3u);
+  EXPECT_NE(requests[1].find("Summarize the quoted earlier conversation"),
+            std::string::npos);
+  EXPECT_EQ(context.input_tokens, 4000u);  // Summary usage is not the baseline.
+}
+
+TEST_F(ContextBudget,
+       JapaneseWithoutUsageIsConservativeAndCountsSystemAndTools) {
+  config.context_limit_tokens = 10000;
+  std::string japanese;
+  for (int i = 0; i < 300; ++i) japanese += "実験";
+  EXPECT_EQ(agent::EstimateTextTokens(japanese), japanese.size());
+  for (int i = 0; i < 6; ++i) Add(japanese);
+  model.Queue(AnthropicText("handoff"));
+  model.Queue(AnthropicText("done", 0));
+  Run();
+  EXPECT_TRUE(Compacted());
+  ASSERT_EQ(model.Requests().size(), 2u);
+  // A restored transcript has no valid request baseline. System/tools also
+  // occupy the window, even though SerializeMessages omits both of them.
+  context = {};
+  events.clear();
+  model.Queue(AnthropicText("handoff"));
+  model.Queue(AnthropicText("done"));
+  Run(std::string(1500, 's'), {{"tool", std::string(1500, 't'), "{}"}});
+  EXPECT_TRUE(Compacted());
+}
+
+TEST_F(ContextBudget,
+       MissingUsageFitsAndModelChangesInvalidateMeasuredBaseline) {
+  config.context_limit_tokens = 10000;
+  for (int i = 0; i < 6; ++i) Add(std::string(1000, 'x'));
+  model.Queue(AnthropicText("first", 0));
+  Run();
+  EXPECT_FALSE(Compacted());
+  EXPECT_EQ(context.input_tokens, 0u);
+  Add("continue");
+  model.Queue(AnthropicText("second", 1));
+  Run();
+  config.model = "another-model";
+  Add("continue");
+  model.Queue(AnthropicText("handoff"));
+  model.Queue(AnthropicText("done"));
+  Run(std::string(6000, 's'));
+  EXPECT_TRUE(Compacted());
+}
+
+TEST(HostContextWindow, CatalogWinsAndEveryDefaultHasAModelWindow) {
+  TemporaryDirectory directory;
+  EXPECT_EQ(
+      host::Models::ContextWindowTokens(directory.path, "openai", "unknown"),
+      128000u);
+  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "openai",
+                                              "gpt-6.1-sol"),
+            1050000u);
+  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "anthropic",
+                                              "claude-sonnet-5-5"),
+            1000000u);
+  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "anthropic",
+                                              "claude-opus-4-5-20251101"),
+            200000u);
+  const auto embedded = agent::json::Object(std::string_view(
+      reinterpret_cast<const char*>(tsugumi_agent_settings), tsugumi_agent_settings_size));
+  const auto options = agent::json::Object(agent::json::Get(embedded, "modelOptions"));
+  const auto connections = agent::json::Object(agent::json::Get(options, "connections"));
+  for (const auto& [provider, raw] : connections)
+    for (const auto& group : agent::json::Array(
+             agent::json::Get(agent::json::Object(raw), "effort")))
+      for (const auto& id : agent::json::Array(
+               agent::json::Get(agent::json::Object(group), "models"))) {
+        const auto name = agent::json::String(id);
+        EXPECT_GT(host::Models::ContextWindowTokens(directory.path, provider, name),
+                  128000u) << name;
+      }
+  sql::Db db((directory.path / "host.sqlite").string());
+  db.exec(
+      "CREATE TABLE model_lists(id TEXT PRIMARY KEY, models TEXT NOT NULL)");
+  auto insert = db.prepare("INSERT INTO model_lists VALUES(?,?)");
+  insert.bind(1, "fixture")
+      .bind(2, R"([{"id":"fixture-model","contextWindowTokens":100000}])")
+      .run();
+  auto secrets = std::make_unique<MemorySecrets>();
+  secrets->values["desktop:anthropic"] = "TEST_KEY";
+  secrets->values["desktop:openai"] = "TEST_KEY";
+  host::Settings settings(
+      directory.path, [](const auto&, const auto&) {},
+      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      std::move(secrets), host::Settings::KeyStorage::Host);
+  EXPECT_EQ(settings.Resolve({}).context_limit_tokens,
+            1000000u - 32768u - 50000u);
+  EXPECT_EQ(settings.Resolve({{"provider_id", Quote("openai")}}).context_limit_tokens,
+            1050000u - 32768u - 52500u);
+  EXPECT_EQ(settings.Resolve({{"provider_id", Quote("openai")},
+                              {"model", Quote("unknown")}}).context_limit_tokens,
+            128000u - 32768u - 6400u);
+  auto catalog = db.prepare("INSERT INTO model_lists VALUES(?,?)");
+  catalog.bind(1, "anthropic")
+      .bind(2, R"([{"id":"claude-sonnet-5-5","contextWindowTokens":100000}])")
+      .run();
+  EXPECT_EQ(settings.Resolve({}).context_limit_tokens,
+            100000u - 32768u - 5000u);
+  const auto config = settings.Resolve(
+      {{"provider_id", Quote("fixture")}, {"model", Quote("fixture-model")}});
+  EXPECT_EQ(config.context_limit_tokens, 6000u);  // Fixture's explicit budget.
+  EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "fixture",
+                                              "fixture-model"),
+            100000u);
+}
+
 }  // namespace
 }  // namespace tsugumi::test

@@ -54,7 +54,7 @@ TEST_F(ModelsFixture,
        RefreshPersistsDisplayNamesAndEmptyOrFailedRefreshKeepsThem) {
   ModelServer provider;
   provider.QueueHTTP(
-      R"({"data":[{"id":"model-a","display_name":"Model A"},{"id":"model-b"}]})");
+      R"({"data":[{"id":"model-a","display_name":"Model A","max_input_tokens":1000000},{"id":"model-b","max_input_tokens":null}]})");
   const auto fresh = Models("anthropic", &provider);
   ASSERT_TRUE(fresh.Code().empty());
   EXPECT_EQ(JsonString(fresh.View(), "/0/name"), "Model A");

@@ -80,7 +80,8 @@ class ModelServer {
   bool released_ = false;
 };
 
-auto AnthropicText(std::string_view text) -> std::string;
+auto AnthropicText(std::string_view text, uint64_t input_tokens = 12)
+    -> std::string;
 auto AnthropicTool(std::string_view id, std::string_view name,
                    std::string_view arguments) -> std::string;
 auto ResponsesText(std::string_view text) -> std::string;

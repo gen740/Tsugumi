@@ -7,7 +7,9 @@ namespace Tsugumi.Host;
 // Every optional list in this contract is empty when its vector is omitted.
 
 // Secret input is accepted only by the human-only Host ProviderSet request.
-table ProviderInput { endpoint:string; api_key:string; model:string; max_tokens:uint = 16384; context_limit:uint = 600000; }
+// context_limit is an optional input-token budget (0 selects the model budget).
+// The host reserves max_tokens and a margin from the model context window.
+table ProviderInput { endpoint:string; api_key:string; model:string; max_tokens:uint = 16384; context_limit:uint = 0; }
 
 // Host settings are patched against a revision, never overwritten blindly.
 table Setting { key:string (required); value_json:string (required); }

@@ -1,6 +1,7 @@
 // A model/tool loop, with all effects mediated by the owning core service.
 #pragma once
 
+#include <cstddef>
 #include <functional>
 #include <optional>
 #include <stop_token>
@@ -65,12 +66,25 @@ struct RunResult {
   std::string error;
 };
 
+// Ephemeral baseline for the last normal model request in one conversation.
+// Restarts intentionally fall back to estimation, never cumulative UI usage.
+struct ContextUsage {
+  uint64_t input_tokens = 0;
+  size_t message_count = 0;
+  std::string prefix_hash;
+  std::string request_hash;
+};
+
+auto EstimateTextTokens(std::string_view text) -> uint64_t;
+auto EstimateMessageTokens(const Message& message) -> uint64_t;
+
 class Runtime {
  public:
   explicit Runtime(RuntimeOptions options = {}) : options_(options) {}
   auto Run(const ProviderConfig& config, std::string_view system,
            std::vector<Message>& messages, const std::vector<ToolSpec>& tools,
-           std::stop_token stop, const RuntimeHooks& hooks) const -> RunResult;
+           std::stop_token stop, const RuntimeHooks& hooks,
+           ContextUsage* context = nullptr) const -> RunResult;
   auto Compact(const ProviderConfig& config, std::vector<Message>& messages,
                std::stop_token stop, const RuntimeHooks& hooks) const -> void;
 

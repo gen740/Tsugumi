@@ -520,13 +520,34 @@ TEST_F(AgentFixture, AnEmptyModelReplyDoesNotPreventTheNextConversationTurn) {
   EXPECT_EQ(model.Requests()[1].find("\"content\":[]"), std::string::npos);
 }
 
+TEST_F(AgentFixture, LargeSerializedConversationUsesReportedTokensAcrossTurns) {
+  ModelServer model;
+  std::string answer;
+  for (int i = 0; i < 8000; ++i) answer += "\"\\\n";
+  for (int i = 0; i < 3; ++i) model.Queue(AnthropicText(answer, 1000));
+  model.Queue(AnthropicText("The conversation continued without compaction.", 2000));
+  Configure(model);
+  const auto conversation = Conversation("token-context");
+  for (int turn = 1; turn <= 3; ++turn) {
+    ASSERT_TRUE(Send(conversation, "Continue.", "turn-" + std::to_string(turn))
+                    .Code().empty());
+    WaitUntilIdle(conversation);
+  }
+  ASSERT_GT(Get(conversation).View().size(), 180000u);
+  ASSERT_TRUE(Send(conversation, "Keep working.", "turn-4").Code().empty());
+  EXPECT_NE(WaitUntilIdle(conversation).find("continued without compaction"),
+            std::string::npos);
+  EXPECT_EQ(model.Requests().size(), 4u);
+  EXPECT_EQ(Events(conversation).View().find("compacted"), std::string::npos);
+}
+
 TEST_F(AgentFixture,
        AutomaticCompactionKeepsTheArchiveAndContinuesTheConversation) {
   ModelServer model;
   const auto earlier = "FIRST_LONG_ANSWER " + std::string(1500, 'a');
   model.Queue(AnthropicText(earlier));
   model.Queue(AnthropicText("SECOND_LONG_ANSWER " + std::string(1500, 'b')));
-  model.Queue(AnthropicText("THIRD_LONG_ANSWER " + std::string(1500, 'c')));
+  model.Queue(AnthropicText("THIRD_LONG_ANSWER " + std::string(1500, 'c'), 3500));
   model.Queue(
       AnthropicText("Earlier decisions were retained in a brief summary."));
   model.Queue(AnthropicText("The fourth turn continued after compaction."));
