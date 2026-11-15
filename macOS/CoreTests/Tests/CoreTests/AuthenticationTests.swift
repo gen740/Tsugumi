@@ -81,9 +81,15 @@ private final class AuthenticationFixture {
     setenv("TSUGUMI_HOST_STATE", state.path, 1)
     daemon.executableURL = ProcessInfo.processInfo.environment["TSUGUMI_HOSTD"].map { URL(fileURLWithPath: $0) }
       ?? build.appendingPathComponent("core/tsugumi-hostd")
+    // Run scratch refuses a path through a symbolic link, and
+    // `resolvingSymlinksInPath` removes `/private`, which puts `/tmp` back.
+    let canonical = realpath(directory.path, nil).map { pointer -> String in
+      defer { free(pointer) }
+      return String(cString: pointer)
+    } ?? directory.path
     daemon.arguments = ["--state-dir", state.path,
                         "--socket-dir", directory.appendingPathComponent("b").path,
-                        "--usage-scratch-dir", directory.resolvingSymlinksInPath().appendingPathComponent("scratch").path,
+                        "--usage-scratch-dir", URL(fileURLWithPath: canonical).appendingPathComponent("scratch").path,
                         "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--demos-dir", root.appendingPathComponent("demos").path]
     daemon.standardOutput = FileHandle.nullDevice

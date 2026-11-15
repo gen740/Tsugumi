@@ -173,9 +173,15 @@ def run(arguments):
                 signal.signal(sig, handler)
         escaped = sorted(shared_entries() - before)
         if escaped:
-            print('Tests left files outside their private directory (not deleted):\n  ' +
+            # New entries cannot be attributed to this run where other work
+            # shares the machine, so only a dedicated one (CI, a Nix build)
+            # fails on them; elsewhere they are reported.
+            dedicated = bool(os.environ.get('CI') or os.environ.get('NIX_BUILD_TOP'))
+            print(('Tests left' if dedicated else 'Appeared during the tests (possibly other work):') +
+                  ' files outside their private directory (not deleted):\n  ' +
                   '\n  '.join(escaped), file=sys.stderr)
-            status = 1
+            if dedicated:
+                status = 1
     return status if status >= 0 else 128 - status
 
 

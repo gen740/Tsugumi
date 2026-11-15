@@ -236,8 +236,8 @@ def test_unreadable_scratch_is_listed_and_explicitly_deletable(core_factory, tmp
     (locked / "private").chmod(0)
     try:
         client = core_factory(mocked_builds=True, args=["--run-scratch-dir", str(scratch)]).connect()
-        # Startup also lists its empty recovery folder.
-        expected = {f"runs/{locked.name}", f"runs/{other.name}", "recovery"}
+        # Startup creates nothing in run scratch, so only these are listed.
+        expected = {f"runs/{locked.name}", f"runs/{other.name}"}
         usage = usage_when(client, lambda u: {text(p.path) for p in current(u).runScratch} == expected)
         folders = {text(p.path): p for p in current(usage).runScratch}
         assert folders[f"runs/{locked.name}"].sizeUnknown

@@ -64,6 +64,7 @@ def test_escape_fails_and_names_the_path_without_deleting_it(tmp_path, monkeypat
     snapshot = runner.shared_entries
     monkeypatch.setattr(runner, 'shared_entries', lambda: snapshot([shared], scratch))
     escaped = shared / 'unprefixed-escape'
+    monkeypatch.setenv('CI', 'true')
     assert runner.run([sys.executable, '-c', f'from pathlib import Path; Path({str(escaped)!r}).mkdir()']) == 1
     assert str(escaped) in capsys.readouterr().err
     assert escaped.is_dir()
