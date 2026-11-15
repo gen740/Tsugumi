@@ -83,6 +83,25 @@ TEST_F(RunScratch, MeasurementsRetainAllRunsAndDeletionDoesNotFollowLinks) {
   EXPECT_TRUE(remove_run_scratch(old));  // retry after a partial operation is harmless
 }
 
+// Stopping the service joins the usage thread. A walk that cannot be
+// interrupted makes the stop last as long as every project's scratch.
+TEST_F(RunScratch, ACancelledMeasurementStopsWalking) {
+  for (int run = 0; run < 8; ++run) {
+    const auto folder = base / "runs" / crypto::uuid4();
+    std::filesystem::create_directories(folder);
+    for (int file = 0; file < 8; ++file) std::ofstream(folder / std::to_string(file)) << "value";
+  }
+  std::filesystem::create_directory(base / "recovery");
+  int asked = 0;
+  EXPECT_EQ(measure_run_scratch(base, [&] { return ++asked, false; }).size(), 9);
+  const int entries = asked;
+  EXPECT_GE(entries, 8 * 8);
+  asked = 0;
+  const auto partial = measure_run_scratch(base, [&] { return ++asked > 3; });
+  EXPECT_EQ(asked, 4);  // Never asked again, and nothing read, after the answer.
+  EXPECT_LT(partial.size(), 9);
+}
+
 TEST_F(RunScratch, UnreadableFolderStaysListedAndCanBeRemoved) {
   if (::geteuid() == 0) GTEST_SKIP() << "Permission denial requires a non-root user";
   const auto locked = base / "runs" / crypto::uuid4();

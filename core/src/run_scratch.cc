@@ -52,15 +52,19 @@ auto default_run_scratch(const std::filesystem::path& project) -> std::filesyste
   return user / crypto::sha256_hex(project.string()).substr(0, 16);
 }
 
-auto measure_run_scratch(const std::filesystem::path& root) -> std::vector<RunScratchUsage> {
+auto measure_run_scratch(const std::filesystem::path& root, const std::function<bool()>& cancelled)
+    -> std::vector<RunScratchUsage> {
   namespace fs = std::filesystem;
   std::vector<RunScratchUsage> result;
+  bool stop = false;
+  const auto stopped = [&] { return stop || (cancelled && (stop = cancelled())); };
   const auto measure = [&](const fs::path& path) {
     uint64_t bytes = 0;
     RunScratchUsage usage{path.lexically_relative(root).generic_string(), std::nullopt};
     try {
       if (fs::is_directory(fs::symlink_status(path)))
         for (const auto& entry : fs::recursive_directory_iterator(path)) {
+          if (stopped()) return;
           if (fs::is_regular_file(entry.symlink_status())) bytes += entry.file_size();
         }
       usage.bytes = bytes;
@@ -70,7 +74,11 @@ auto measure_run_scratch(const std::filesystem::path& root) -> std::vector<RunSc
     result.push_back(std::move(usage));
   };
   if (fs::is_directory(fs::symlink_status(root / "runs")))
-    for (const auto& entry : fs::directory_iterator(root / "runs")) measure(entry.path());
+    for (const auto& entry : fs::directory_iterator(root / "runs")) {
+      if (stopped()) return result;
+      measure(entry.path());
+    }
+  if (stopped()) return result;
   if (fs::exists(fs::symlink_status(root / "recovery"))) measure(root / "recovery");
   std::sort(result.begin(), result.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
   return result;
