@@ -49,7 +49,8 @@ import TsugumiRPC
     queue.append(ChatController.PermissionPrompt(raw: ["second"]) { answered["second"] = $0 })
     #expect(queue.first?.raw == ["first"] && answered.isEmpty)
     let first = queue.first!.id
-    queue.answer(first, allow: true)
+    // A kind the client does not know is never selected by default: the person picks it.
+    queue.answer(first, allow: true, selected: ["first"])
     #expect(answered["first"] == ["first"] && answered["second"] == nil)
     #expect(queue.first?.raw == ["second"])
     queue.answer(first, allow: true)
