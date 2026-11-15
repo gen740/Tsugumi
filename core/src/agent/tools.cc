@@ -244,7 +244,7 @@ auto Tools::RememberBase(const std::string& project,
         RawProjectCall(project, method, json::Encode(query), stop));
     const auto value = json::Object(json::Get(reply, "value", "{}"));
     if (json::Text(reply, "reply") == "Failure")
-      throw Failure(json::Text(value, "kind"), json::Text(value, "message"));
+      throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
     return value;
   });
   StoreBase(project, base);
@@ -279,7 +279,7 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
         RawProjectCall(project, method, json::Encode(query), stop));
     const auto value = json::Object(json::Get(reply, "value", "{}"));
     if (json::Text(reply, "reply") == "Failure")
-      throw Failure(json::Text(value, "kind"), json::Text(value, "message"));
+      throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
     return value;
   };
   std::optional<AgentSave> prepared;
@@ -407,13 +407,23 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
     args.erase("name");
   }
   host::RestrictAgentRequest(name, args);
-  auto result = RawProjectCall(project, name, json::Encode(args), stop);
   if (name == "project_inspect") {
-    const auto reply = json::Object(result);
-    if (json::Text(reply, "reply") == "ProjectSnapshot")
-      RememberBase(project, json::Object(json::Get(reply, "value", "{}")),
-                   stop);
+    const auto inspection = host::InspectForSave(
+        [&](const auto& method, const auto& query) {
+          const auto reply = json::Object(RawProjectCall(
+              project, method, json::Encode(query), stop));
+          const auto value = json::Object(json::Get(reply, "value", "{}"));
+          if (json::Text(reply, "reply") == "Failure")
+            throw Failure(json::Text(value, "kind"),
+                          json::Text(value, "diagnostic"));
+          return value;
+        });
+    StoreBase(project, inspection.base);
+    return json::Encode(json::Members{
+        {"reply", json::Quote("ProjectSnapshot")},
+        {"value", json::Encode(inspection.snapshot)}});
   }
+  auto result = RawProjectCall(project, name, json::Encode(args), stop);
   if (name == "version_graph") {
     auto envelope = json::Object(result);
     if (json::Text(envelope, "reply") == "VersionGraph") {

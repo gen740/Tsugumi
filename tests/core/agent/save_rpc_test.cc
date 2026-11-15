@@ -249,6 +249,27 @@ TEST_F(AgentProjectFixture,
 
 namespace tsugumi::test {
 namespace {
+TEST_F(AgentProjectFixture, InspectionPreservesCoreFailureDiagnostics) {
+  const auto nested = directory.path / "project/externals/storage";
+  Write(nested / "tsugumi.json",
+        R"({"name":"Nested","canvas":{"cards":[],"connections":[]}})");
+  const auto definition = nested / "definitions/child/_card.json";
+  Write(definition, R"({"template":"draft"})");
+  StartProject();
+  const auto conversation = Conversation("inspect-diagnostic");
+  Grant(conversation);
+  ASSERT_TRUE(Inspect(conversation).Code().empty());
+  // The confirmed snapshot still has the old hash. Reading its external
+  // definition must fail with the core's diagnostic, not an empty message.
+  Write(definition, R"({"template":"draft","network":true})");
+  const auto refused = Inspect(conversation);
+  ASSERT_EQ(refused.Code(), "external_change");
+  ASSERT_NE(refused.Failure(), nullptr);
+  EXPECT_NE(refused.Failure()->message()->str().find(
+                "externals/storage/definitions/child/_card.json"),
+            std::string::npos);
+}
+
 TEST_F(AgentProjectFixture, ReturnedSaveRevisionIsACompleteMergeBase) {
   Write(directory.path / "project/definitions/new/_card.json",
         R"({"template":"draft"})");
