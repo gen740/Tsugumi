@@ -91,6 +91,8 @@ linux_in_container() {
 }
 
 mac_job() {
+  step "Build-tool plugin warnings"
+  bash macOS/tools/check-plugin-warnings.sh
   step "Build or fetch the native runtime and public RPC tests"
   nix --extra-experimental-features 'nix-command flakes' build .#ci-core --out-link build-ci
   step "Public Agent RPC tests"

@@ -8,6 +8,7 @@
 #include <string>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #include "agent/provider.hh"
 #include "host/state_gate.hh"
@@ -33,6 +34,10 @@ struct Helpers {
           Turns& turns, host::Access& access, Dependencies dependencies);
   auto HelperResult(const std::string& output, const std::string& conversation,
                     const std::string& call, size_t task) -> std::string;
+  // The messages a compaction took out of a helper's context.
+  static auto Displaced(const std::vector<Message>& previous,
+                        const std::vector<Message>& saved)
+      -> std::vector<Message>;
   auto RunHelper(const std::string& conversation,
                  const std::string& parent_call, size_t index,
                  const std::string& task, std::stop_token stop,

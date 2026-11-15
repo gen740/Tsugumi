@@ -12,7 +12,7 @@ const { ChatController, CONTEXT_FULL_TEXT } = await import('../src/model/chat')
 
 const chat = () => {
   const c = Object.create(ChatController.prototype) as any
-  Object.assign(c, { items: [], notes: [], choices: [], offered: [], busy: false, stopping: false, turn: 0, transition: Promise.resolve(), session: { dir: '/p' }, currentId: 's', writers: new Map(), team: { endAll() {} } })
+  Object.assign(c, { items: [], notes: [], choices: [], offered: [], busy: false, canContinue: false, stopping: false, turn: 0, transition: Promise.resolve(), session: { dir: '/p' }, currentId: 's', displayedId: 's', reload: 0, contentRevision: 0, writers: new Map(), team: { endAll() {} } })
   c.changed = () => {}
   c.refreshAfterTurn = () => {}
   return c
@@ -142,20 +142,15 @@ assert.equal(c.status, STOPPED)
 
 console.log('chat stopped behavior: passed')
 
-// Results belong to tool-use IDs, including across the archive boundary and
-// when an unrelated/missing result appears between two completed calls.
+// The UI consumes the host's already matched results without reinterpreting IDs.
+const row = (id: string, role: string, text: string) => ({ id, kind: 'text', role, text })
+const tool = (id: string, args: string, result: string, state: string) => ({ id, kind: 'tool', name: 'project_save', arguments: args, result, state })
 {
   const c = chat()
-  c.load({ archive: [{ role: 'assistant', content: [
-    { type: 'tool_use', id: 'save-a', name: 'project_save', input: 'A' },
-    { type: 'tool_use', id: 'save-b', name: 'project_save', input: 'B' },
-  ] }], messages: [{ role: 'user', content: [
-    { type: 'tool_result', tool_use_id: 'unknown', content: 'ignored', is_error: false },
-    { type: 'tool_result', tool_use_id: 'save-a', content: 'A rejected', is_error: true },
-    { type: 'tool_result', tool_use_id: 'save-b', content: 'B saved', is_error: false },
-  ] }], usage: {} })
+  c.load({ rows: [tool('a', 'A', 'A rejected', 'failed'), tool('b', 'B', 'B saved', 'completed')] })
   assert.deepEqual(c.items.map((i: any) => [i.text, i.tool.ok]), [['A\n→ A rejected', false], ['B\n→ B saved', true]])
 }
+
 {
   const beforeFetch = globalThis.fetch
   const answers: any[] = []
@@ -193,6 +188,7 @@ for (const acknowledgeFirst of [false, true]) {
     }
     if (url === '/api/chat/sessions') return { ok: true, json: async () => [] } as Response
     return { ok: true, json: async () => ({ conversation: {
+      id: 's', rows: [row('user-0', 'user', 'hello interrupted'), tool('pending', '{}', 'The tool was not replayed', 'failed'), row('user-1', 'user', sent.display), row('answer', 'assistant', 'Finished')],
       archive: [], usage: {}, messages: [
         { role: 'user', content: [{ type: 'text', text: 'hello interrupted' }] },
         { role: 'assistant', content: [{ type: 'tool_use', id: 'pending', name: 'project_inspect', input: '{}' }] },
@@ -200,7 +196,7 @@ for (const acknowledgeFirst of [false, true]) {
         { role: 'user', display: sent.display, content: [{ type: 'text', text: 'hello instead\n[Selected Card IDs; read their content only through authorized tools]\n[Selected display IDs]' }] },
         { role: 'assistant', content: [{ type: 'text', text: 'Finished' }] },
       ],
-    } }) } as Response
+    }, busy: false, provider: {} }) } as Response
   }) as typeof fetch
   try {
     const c = chat()

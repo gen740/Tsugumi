@@ -429,6 +429,7 @@ export class ProjectSession extends Observable {
   openTransport: (url: string) => Promise<Transport> = webSocketTransport
   /** The waits between tries to reach a tsugumid that has just started (ms). */
   connectRetryDelays = [200, 400, 800, 1600, 2000]
+  private connectionEpoch?: symbol
   private client?: RPCClient
   private subscription?: string
   private lastSeq = 0n
@@ -436,6 +437,7 @@ export class ProjectSession extends Observable {
   endpoint?: string
   readyFile?: string
   private reconnecting = false
+  private environmentChange?: Promise<unknown>
 
   // Confirmed document (owned by core)
   rev = 0n
@@ -704,17 +706,19 @@ export class ProjectSession extends Observable {
 
   private async openConnection(route: '/api/env/start' | '/api/env/archive-history' = '/api/env/start') {
     if (this.closed) return
+    const epoch = this.connectionEpoch = Symbol()
     this.connectionMessage = undefined
     this.changed()
     try {
       const env = await api<EnvPublicState>(route, { path: this.dir })
+      if (epoch !== this.connectionEpoch || this.closed) return
       this.environment = env
       this.changed()
       if (env.state !== 'ready') return
       const c = await this.reach(env.endpoint!, env.token)
       this.displayGeometries = await this.layoutHost.displayGeometry()
       const opened = await c.open(this.viewId)
-      if (this.closed) {
+      if (this.closed || epoch !== this.connectionEpoch) {
         c.close()
         return
       }
@@ -742,6 +746,7 @@ export class ProjectSession extends Observable {
       this.changed()
       await Promise.all([this.refreshVisibleDisplays(), this.restoreCardStates(c)])
     } catch (e) {
+      if (epoch !== this.connectionEpoch || this.closed) return
       this.connected = false
       this.connectionFailed = e instanceof Unreached
       this.connectionMessage = errorText(e instanceof Unreached ? e.cause : e)
@@ -770,7 +775,7 @@ export class ProjectSession extends Observable {
 
   /** Reconnects after a lost connection: Hello -> Open -> re-read state. */
   reconnect() {
-    if (this.reconnecting) return
+    if (this.closed || this.reconnecting || this.environmentChange) return
     this.reconnecting = true
     this.environment = { state: 'reconnecting' }
     const old = this.client
@@ -779,14 +784,40 @@ export class ProjectSession extends Observable {
     this.connected = false
     this.changed()
     void (async () => {
-      for (let attempt = 0; attempt < 20; attempt++) {
-        if (this.closed) break
-        await this.openConnection()
-        if (this.connected || (this.environment.state === 'failed' && this.environment.historyVersionMismatch)) break
-        await sleep(Math.min(5000, 250 * (attempt + 1)))
-      }
+      // The host Start request joins a restart and answers only when ready or
+      // failed; a fixed number of browser retries cannot budget VM startup.
+      if (!this.closed && !this.environmentChange) await this.openConnection()
       this.reconnecting = false
     })()
+  }
+
+  /** Pause this view while hostd changes shares and restarts the environment. */
+  async withEnvironmentChange<T>(operation: () => Promise<T>): Promise<T> {
+    while (this.environmentChange) { try { await this.environmentChange } catch {} }
+    if (this.closed) throw new Error(L('接続していません'))
+    const run = (async () => {
+      let completed: { value: T } | undefined
+      this.connectionEpoch = Symbol()
+      const old = this.client
+      this.client = undefined
+      old?.close()
+      this.connected = false
+      this.environment = { state: 'starting', message: L('tsugumid の応答を待っています') }
+      this.changed()
+      try {
+        const value = await operation()
+        completed = { value }
+        await this.openConnection()
+        if (!this.connected) throw new Error(this.connectionMessage ?? L('接続していません'))
+        return value
+      } catch (error) {
+        if (!this.connected) await this.openConnection()
+        if (completed && this.connected) return completed.value
+        throw error
+      }
+    })()
+    this.environmentChange = run
+    try { return await run } finally { if (this.environmentChange === run) this.environmentChange = undefined }
   }
 
   async restartEnvironment() {

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { projectAccessLabel } from '../src/shared/agentShared'
+import { helperScopeLabel } from '../src/shared/agentShared'
 
 const page = globalThis as Record<string, any>
 page.document ??= { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
@@ -12,7 +12,7 @@ globalThis.fetch = (async (url, init) => {
   let value: unknown = {}
   if (url === '/api/chat/sessions') value = [{ id: 'scope-chat', title: 'Chat', updatedAt: 0, messages: 0 }]
   if (url === '/api/skills') value = [{ name: 'review', path: 'builtin:review', scoped: true, scope: ['read'] }]
-  if (url === '/api/chat/conversation') value = { conversation: { messages: [], archive: [], helpers: [], usage: {} } }
+  if (url === '/api/chat/conversation') value = { conversation: { id: 'scope-chat', rows: [], messages: [], archive: [], helpers: [], usage: {} } }
   if (url === '/api/chat/send') send = JSON.parse(String(init!.body))
   return { ok: true, json: async () => value } as Response
 }) as typeof fetch
@@ -27,13 +27,16 @@ try {
   assert.equal(send.scopedSkill, 'review')
   assert.equal(send.text, '$review', 'The client never inserts a Skill body or manufactures scope sets')
   const task = { name: 'review', skill_path: 'builtin:review', read_cards: ['outer/a', 'b'], write_cards: [], run_cards: [] }
-  const label = projectAccessLabel('project_access helper_scope\n' + JSON.stringify({ task }))
+  const label = helperScopeLabel('project_access helper_scope\n' + JSON.stringify({ task }))
   assert.match(label, /read: outer\/a, b/)
   assert.match(label, /write: —/)
   assert.match(label, /run: —/)
   const internal = chat as any
-  internal.load({ messages: [], archive: [], helpers: [{ call_id: 'turn', task: 0, state: 'completed', messages: [{ role: 'assistant', content: [{ type: 'text', text: 'Read only: finding' }] }] }], usage: {} })
+  internal.load({ rows: [{ id: 'turn:0', kind: 'helper', name: 'review', state: 'completed', text: 'Read only: finding', instruction: 'Review the selected Cards', scopeJa: '読む: outer/a, b, 変更: なし, 実行: なし', scopeEn: 'Read: outer/a, b, Change: none, Run: none', children: [] }] })
   assert.equal(chat.items[0].role, 'helper')
-  assert.match(chat.items[0].trace!, /Read only: finding/)
+  assert.equal(chat.items[0].helper, 'review')
+  assert.match(chat.items[0].text, /Read only: finding/)
+  assert.match(chat.items[0].presentation!.scopeEn, /Run: none/)
+  assert.equal(chat.items[0].presentation!.instruction, 'Review the selected Cards')
 } finally { chat.close(); globalThis.fetch = originalFetch }
 console.log('scoped Skills: exact user selection, one scope description and durable helper trace passed')

@@ -8,6 +8,12 @@ export type KeyedProvider = 'anthropic' | 'openai'
 const providers = { anthropic: { name: 'Anthropic', env: 'ANTHROPIC_API_KEY' }, openai: { name: 'OpenAI', env: 'OPENAI_API_KEY' } }
 const service = 'app.tsugumi.agent'
 const run: Run = (command, args, input) => new Promise((resolve) => {
+  // HOME does not isolate the login Keychain. A test may inject a fake runner,
+  // but the OS runner never accesses the store in an isolated test process.
+  if (process.env.TSUGUMI_TEST_RUN_ROOT !== undefined || process.env.TSUGUMI_TEST_NO_SECRET_STORE === '1') {
+    resolve({ code: 1, out: '' })
+    return
+  }
   const child = execFile(command, args, (error, stdout) => resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, out: stdout.trim() }))
   child.stdin?.on('error', () => {})
   if (input !== undefined) child.stdin?.end(input)

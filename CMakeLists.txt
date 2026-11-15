@@ -16,7 +16,7 @@ option(TSUGUMI_BUILD_CORE "Build tsugumid and the Card worker" ON)
 option(TSUGUMI_BUILD_TESTS "Build core RPC tests" ON)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-  add_compile_options(-Wall -Wextra -Wno-unused-parameter)
+  add_compile_options(-Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 endif()
 
 find_program(TSUGUMI_FLATC flatc REQUIRED)

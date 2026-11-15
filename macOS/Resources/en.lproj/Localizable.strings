@@ -3,9 +3,7 @@
 " · 成果物 " = " · artifact ";
 " · 未配置" = " · not placed";
 " ほか %lld" = " and %lld more";
-" 実行 %@ の結果はまだ確かめていません。" = " The result of run %@ has not been checked yet.";
 "#%llu · %@ · %lld 件" = "#%llu · %@ · %lld items";
-"%@\n%@\n許可する操作: %@\n有効期間: %@" = "%@\n%@\nAllowed action: %@\nDuration: %@";
 "%@ · %@ · %lld 枚" = "%@ · %@ · %lld Cards";
 "%@ · %lld 件" = "%@ · %lld messages";
 "%@ · コメントを%@: %@" = "%@ · comment %@: %@";
@@ -40,7 +38,6 @@
 "%lld 件のモデルを取得しました。" = "Fetched %lld models.";
 "%lld 件を削除し、%@ を解放しました。" = "Deleted %lld and freed %@.";
 "%lld 分前" = "%lld min ago";
-"%lld 手の上限で中断しました。「続ける」で続きから再開できます。" = "Stopped at the limit of %lld steps. “Continue” goes on from there.";
 "%lld 日前" = "%lld days ago";
 "%lld 時間前" = "%lld h ago";
 "%lld 枚が実行中" = "%lld running";
@@ -594,6 +591,7 @@
 "フォルダはありません" = "No folders";
 "フォルダを添付…" = "Attach a folder…";
 "フォルダを添付しますか？" = "Attach the folder?";
+"フォルダを添付できませんでした: %@" = "Could not attach folders: %@";
 "フォルダを追加…" = "Add Folder…";
 "フォルダ名に使えない文字が含まれているか、名前が空です。" = "The folder name is empty or contains invalid characters.";
 "フローの方向が正しくありません。" = "The flow direction is invalid.";
@@ -685,6 +683,7 @@
 "中断" = "Interrupted";
 "中止" = "Cancel";
 "互換性のない履歴を退避して、プロジェクトを開きます。退避先にだけある記録はアプリでは表示できません。 外部で実行中のジョブは実行先で継続し、新しい履歴には引き継がれません。" = "Archive the incompatible history and open the project. Records kept only in the archive will be unavailable in the app. Running remote jobs continue on the execution host and will be unavailable in the new history.";
+"今すぐ再起動" = "Restart now";
 "今すぐ確認" = "Check Now";
 "今の定義と追加パスの内容に名前を付けて残します（git の tag）。" = "Name the current definitions and additional version paths (a Git tag).";
 "今の定義と追加パスは版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。" = "The current definitions and additional version paths are committed before opening this version. Changing them and running starts a new branch.";
@@ -705,6 +704,7 @@
 "会話を圧縮" = "Compact Conversation";
 "会話を圧縮しています…" = "Compacting the conversation…";
 "会話を表示中" = "Conversation open";
+"会話を読み込んでいます…" = "Loading conversation…";
 "会話を閉じます" = "Closes the conversation";
 "位置" = "Position";
 "何が起きたか" = "What happened";
@@ -712,6 +712,7 @@
 "作成" = "Create";
 "作成先は空ではありません。空のフォルダか新しい名前を選んでください。" = "The destination is not empty. Choose an empty folder or a new name.";
 "作成場所を選ぶ…" = "Choose Location…";
+"作業中" = "Working";
 "作業中の Agent" = "The Agent at work";
 "使い方の質問に答えます" = "Answers your questions about the app";
 "使うモデル" = "Model provider";
@@ -803,6 +804,7 @@
 "再確認" = "Check Again";
 "再試行" = "Retry";
 "再試行してください。" = "Please try again.";
+"再試行で成功" = "Succeeded on retry";
 "再試行中: %@" = "Retrying: %@";
 "再読込" = "Reload";
 "再起動して %@ に更新" = "Restart to Update to %@";
@@ -901,6 +903,7 @@
 "呼び出し" = "Invocation";
 "呼び出し #%llu" = "Invocation #%llu";
 "呼び出し %llu · 成功 %llu · 失敗 %llu" = "Invocations %llu · succeeded %llu · failed %llu";
+"呼び出しが記録されると表示します。" = "Details will appear when an invocation is recorded.";
 "呼び出しなし" = "No invocations";
 "呼び出しの記録を待っています" = "Waiting for invocation records";
 "呼び出しの記録を読み込めませんでした" = "The invocation record could not be read";
@@ -986,6 +989,7 @@
 "実行の結果" = "Run Results";
 "実行の記録を見ています" = "Reading the run's record";
 "実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。" = "Deletes runs' records, values and logs, and each run's files (artifacts and the like, .tsugumi/runs/<run>), both in the VM and in .tsugumi/runs.sqlite. The last input (to run a Card alone again) stays. Scratch belonging to the selected runs is also deleted. Not while a run is going on.";
+"実行の詳細" = "Run details";
 "実行を停止" = "Stop Run";
 "実行を止めています" = "Stopping the run";
 "実行を比較" = "Compare Runs";
@@ -1094,7 +1098,6 @@
 "所要時間" = "Duration";
 "手分けして進めています" = "Splitting the work among helpers";
 "手分けして進めました" = "Split the work among helpers";
-"手数の上限で止まりました" = "Stopped at the step limit";
 "折りたたみを切り替える" = "Toggle Collapse";
 "折りたたむ" = "Collapse";
 "折りたたむ（実行には影響しません）" = "Collapse (does not affect runs)";
@@ -1103,6 +1106,7 @@
 "拡大して表示" = "Show Enlarged";
 "指定した日時より前に終わった実行" = "Runs that ended before a date";
 "指摘をコメントに残す" = "Keep finding as comment";
+"指示の全文" = "Full instructions";
 "掃除" = "Clean";
 "掃除できませんでした: " = "Could not clean: ";
 "探す" = "Search";
@@ -1271,7 +1275,6 @@
 "種類" = "Kind";
 "稼働中" = "Running";
 "空の実行リスト" = "Empty execution list";
-"答えをまとめきれませんでした。聞き方を変えてもう一度どうぞ。" = "Could not put an answer together. Please try asking another way.";
 "範囲を指定しないヘルパーを許可する" = "Allow unscoped helpers";
 "終える" = "End";
 "終わりました" = "Finished";
@@ -1310,6 +1313,8 @@
 "表示中" = "Shown";
 "表示中の Card" = "Cards Shown";
 "表示中のファイルを削除" = "Delete the file shown";
+"表示言語は再起動後に変わります。これからプロジェクトに書く記録には、すでに新しい言語が使われます。実行中の処理は再起動しても続きます。" = "The display language will change after a restart. New records written into the project already use the new language. Ongoing runs will continue through the restart.";
+"表示言語を変えるには再起動が必要です" = "Restart required to change the display language";
 "複製" = "Duplicate";
 "複製できませんでした: " = "Could not duplicate: ";
 "複製を作る場所を選んでください（保存済みの内容を複製します）" = "Choose where to make the copy (the saved contents are copied)";
@@ -1343,6 +1348,7 @@
 "詳細を閉じる" = "Close details";
 "認証情報はこの Mac のアプリ用ファイル（0600）に保存し、VM の Nix daemon だけに渡します。プロジェクトや実行記録には含めません。" = "Credentials are stored in a private application file on this Mac (0600) and provided only to the VM’s Nix daemon. They are excluded from project files and run history.";
 "認証（非公開キャッシュ）" = "Authentication (Private Caches)";
+"読み取った内容は接続先のモデルに送信される場合があります。" = "Read content may be sent to the connected model.";
 "読み取り専用" = "Read only";
 "読み取り専用で共有しています。Agent だけが読みます。" = "Shared read-only. Only the Agent reads it.";
 "読み直す" = "Reload";
@@ -1364,7 +1370,6 @@
 "送信" = "Send";
 "送信（Return）" = "Send (Return)";
 "送信（⌘Return）" = "Send (⌘Return)";
-"途中で止まっています" = "Stopped partway";
 "途中の Card を直したら、保存された入力でそこから試し直せるよ" = "Changed a Card midway? Run again from there with the saved inputs.";
 "進行中" = "In progress";
 "進行中の実行を表示" = "Show Active Run";

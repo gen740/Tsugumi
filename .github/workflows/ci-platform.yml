@@ -303,7 +303,9 @@ jobs:
           key: swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('macOS/Package.resolved', 'macOS/CoreTests/Package.resolved', 'macOS/Package.swift', 'macOS/CoreTests/Package.swift', 'flake.lock') }}-${{ steps.toolchain.outputs.runtime }}-${{ hashFiles('macOS/Sources/**', 'macOS/Tests/**', 'macOS/CoreTests/Tests/**', 'macOS/Resources/**', 'macOS/Plugins/**', 'agent/Shared/**', 'protocol/**', 'client/include/**') }}
           restore-keys: |
             swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('macOS/Package.resolved', 'macOS/CoreTests/Package.resolved', 'macOS/Package.swift', 'macOS/CoreTests/Package.swift', 'flake.lock') }}-
-      - name: Swift platform adapters
+      - name: Build-tool plugin warnings
+        run: bash macOS/tools/check-plugin-warnings.sh
+      - name: Swift platform adapter tests
         run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path macOS/CoreTests'
       - name: Build the application help
         run: nix run .#build-doc
