@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <stdexcept>
@@ -96,7 +97,11 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
       }))
     throw std::runtime_error("mock build needs confirmed definition sources inside the evaluation area");
 
-  fs::write_atomic(impl_->control / "full-evaluations", std::to_string(++impl_->full_evaluations), 0600);
+  // Test-only observation of full Card evaluations, including store hits.
+  // The core serializes this adapter on the Nix lane. Publish before returning
+  // so a completed RPC run is also a barrier for readers of this counter.
+  fs::write_atomic(impl_->control / "full-evaluations",
+                   std::to_string(++impl_->full_evaluations), 0600);
 
   BuildPlan plan;
   const auto source = fs::read_beneath(call.definition_dir, "mock-build.json");
