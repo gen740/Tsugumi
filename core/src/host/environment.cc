@@ -439,8 +439,10 @@ struct Environments::Impl {
       }
       launch.log = control / "server.log";
       launch.authorization = Authorize(entry);
-      entry.pid = options.process->Launch(launch);
+      // Recorded before the launch: a launch that fails after the process has
+      // started (its reply was lost) leaves a process holding these mounts.
       entry.mounted = launch.mounts;
+      entry.pid = options.process->Launch(launch);
       entry.child = true;
       Stage(entry, "waiting for tsugumid to become ready");
       const auto deadline =
@@ -468,6 +470,23 @@ struct Environments::Impl {
       if (entry.pid) Stop(entry);
       Failed(entry, error.what(),
              dynamic_cast<const EnvironmentFailure*>(&error));
+    }
+  }
+  // A guest launch whose reply was lost may have left a process this entry
+  // holds no pid for. Adopt it once it is ready, or learn that nothing runs,
+  // so that the caller can judge its mounts and stop it.
+  auto Rediscover(Entry& entry) -> void {
+    if (entry.pid || !options.process->Guest()) return;
+    const auto deadline =
+        std::chrono::steady_clock::now() + options.start_timeout;
+    while (!shutdown.stop_requested() && !ReadReady(entry)) {
+      try {
+        options.process->GuardStart(entry.state.key);
+        return;
+      } catch (const EnvironmentFailure&) {
+        if (std::chrono::steady_clock::now() >= deadline) throw;
+      }
+      std::this_thread::sleep_for(50ms);
     }
   }
   auto Stop(Entry& entry) -> void {
@@ -638,6 +657,7 @@ auto Environments::Attach(
     auto message = std::string("Could not attach folders: ") + error.what();
     try {
       impl_->WriteFolders(*entry, original);
+      impl_->Rediscover(*entry);
       if (impl_->options.process->Guest() && entry->pid &&
           impl_->Plan(*entry).mounts != entry->mounted)
         impl_->Stop(*entry);

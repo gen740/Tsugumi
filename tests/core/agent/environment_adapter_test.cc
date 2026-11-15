@@ -20,6 +20,8 @@ class HelperDouble final : public host::EnvironmentProcess {
   std::atomic<int> signals = 0;
   bool fail = false;
   bool fail_once = false;
+  // The process starts, but the helper's answer never arrives.
+  bool lose_reply_once = false;
   bool guest = false;
   bool verify = true;
   bool die = false;
@@ -49,7 +51,15 @@ class HelperDouble final : public host::EnvironmentProcess {
         R"({"protocol":1,"pid":42,"endpoint":"ws://localhost:1/rpc","token":"fixture","project_id":"project","server_instance_id":"instance","unix_socket":"fixture"})");
     Write(launch.log, log);
     running = !die;
+    if (std::exchange(lose_reply_once, false))
+      throw std::runtime_error("helper reply was lost");
     return 42;
+  }
+  auto GuardStart(const std::string&) -> void override {
+    if (guest && running)
+      throw host::EnvironmentFailure(
+          "A resident project process cannot be authenticated",
+          "Stop the environment and retry.", "");
   }
   auto Poll(int64_t, bool) -> std::optional<int> override {
     return running ? std::nullopt : std::optional<int>(0);
@@ -329,6 +339,23 @@ TEST(EnvironmentAdapterTest, AttachWaitsForTheGuestAndRollsBackFailedBatches) {
   EXPECT_THROW(service.Attach(attach, commit), std::runtime_error);
   EXPECT_TRUE(helper->running);
   EXPECT_EQ(service.Handle(start).folders, original);
+  // The guest started with the new share but the helper's answer was lost:
+  // the process found afterwards holds the attempted mounts, not the old ones,
+  // so it is stopped and the project starts again with the original set.
+  const auto original_mounts = helper->received.mounts;
+  auto launches = helper->launches.load();
+  auto signals = helper->signals.load();
+  helper->lose_reply_once = true;
+  EXPECT_THROW(service.Attach(attach, commit), std::runtime_error);
+  EXPECT_EQ(helper->launches, launches + 2);
+  EXPECT_EQ(helper->signals, signals + 2);
+  EXPECT_TRUE(helper->running);
+  EXPECT_EQ(helper->received.mounts, original_mounts);
+  EXPECT_EQ(helper->received.folders, original);
+  const auto restored = service.Handle(start);
+  EXPECT_EQ(restored.phase, H::EnvironmentPhase::Ready);
+  EXPECT_EQ(restored.folders, original);
+  EXPECT_EQ(helper->launches, launches + 2);
   // A permanent startup failure still restores the persisted folder set.
   helper->fail = true;
   EXPECT_THROW(service.Attach(attach, commit), std::runtime_error);
