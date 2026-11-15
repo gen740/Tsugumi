@@ -1,14 +1,15 @@
 import AppKit
 import Foundation
 import Testing
+import TsugumiTestSupport
 @testable import TsugumiApp
 @testable import TsugumiLauncher
 @testable import TsugumiRPC
 
 @MainActor @Test func csharpCreationUsesTheSharedScaffold() async throws {
-  let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("csharp-ui-\(UUID().uuidString)")
-  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  let dir = testTemporaryDirectory.appendingPathComponent("csharp-ui-\(UUID().uuidString)")
   defer { try? FileManager.default.removeItem(at: dir) }
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let document = #"{"name":"csharp","canvas":{"cards":[],"connections":[]}}"#
   try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
   let session = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))

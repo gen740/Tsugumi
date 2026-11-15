@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import SwiftUI
 import Testing
+import TsugumiTestSupport
 @testable import TsugumiApp
 import TsugumiAgentClient
 import TsugumiLauncher
@@ -57,11 +58,15 @@ import TsugumiRPC
 
 /// The tour's copy is recognised whichever spelling of its folder a window has.
 @Test func theTourFolderIsTheSameThroughLinks() async throws {
-  let name = "tsugumi-guide-\(UUID().uuidString)"
-  try FileManager.default.createDirectory(atPath: "/private/tmp/\(name)", withIntermediateDirectories: true)
-  defer { try? FileManager.default.removeItem(atPath: "/private/tmp/\(name)") }
-  #expect(GuideController.same("/tmp/\(name)/", URL(fileURLWithPath: "/private/tmp/\(name)")))
-  #expect(!GuideController.same("/tmp/\(name)-copy", URL(fileURLWithPath: "/private/tmp/\(name)")))
+  let directory = testTemporaryDirectory.appendingPathComponent("tsugumi-guide-\(UUID().uuidString)")
+  defer { try? FileManager.default.removeItem(at: directory) }
+  try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+  let target = directory.appendingPathComponent("target")
+  let link = directory.appendingPathComponent("link")
+  try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+  try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+  #expect(GuideController.same(link.path + "/", target))
+  #expect(!GuideController.same(link.path + "-copy", target))
 }
 
 /// By a Card the bird goes with the Canvas, within limits; what is not on a
@@ -82,9 +87,9 @@ import TsugumiRPC
 /// A Card on the real canvas tells the stage the canvas's zoom: without it the
 /// bird would stand at its full size whatever the zoom.
 @MainActor @Test(.hostService) func aCardOnTheCanvasTellsTheBirdItsZoom() async throws {
-  let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("guide-zoom-\(UUID().uuidString.prefix(8))")
-  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  let dir = testTemporaryDirectory.appendingPathComponent("guide-zoom-\(UUID().uuidString.prefix(8))")
   defer { try? FileManager.default.removeItem(at: dir) }
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let document = #"{"name": "t", "canvas": {"cards": [], "connections": []}}"#
   try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
   let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))

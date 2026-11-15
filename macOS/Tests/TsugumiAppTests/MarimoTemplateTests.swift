@@ -2,12 +2,13 @@ import Foundation
 import Testing
 import TsugumiLauncher
 import TsugumiRPC
+import TsugumiTestSupport
 @testable import TsugumiApp
 
 @MainActor @Test func marimoTemplateCreatesEditableNotebookWithRetainedResult() async throws {
-  let dir = FileManager.default.temporaryDirectory.appendingPathComponent("marimo-\(UUID().uuidString)")
-  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  let dir = testTemporaryDirectory.appendingPathComponent("marimo-\(UUID().uuidString)")
   defer { try? FileManager.default.removeItem(at: dir) }
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let document = #"{"name":"test","canvas":{"cards":[],"connections":[]}}"#
   try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
   let session = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
