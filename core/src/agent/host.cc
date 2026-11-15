@@ -1162,7 +1162,8 @@ struct Host::State {
     specs.push_back(
         {"document_connect", "Prepare a scope's connection edit, replacing an input wire and "
          "inserting or extending a fork when needed. state_json contains project, layout and "
-         "definitions; ports contains current visible port names for Draft '+' gestures. "
+         "definitions. Draft wire ends use an empty port (UI '+' gestures attach to the Card); "
+         "they accept any number of wires without adding ports or forks. "
          "If needs_fork is true, obtain a new Card id and repeat with fork_id. Otherwise save "
          "the returned state_json together with project_save. This tool writes nothing.",
          R"({"type":"object","properties":{"state_json":{"type":"string"},"from_card":{"type":"string"},"from_port":{"type":"string"},"to_card":{"type":"string"},"to_port":{"type":"string"},"fork_id":{"type":"string"}},"required":["state_json","from_card","from_port","to_card","to_port"],"additionalProperties":false})"});

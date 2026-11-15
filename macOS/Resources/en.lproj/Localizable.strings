@@ -131,6 +131,7 @@
 "Draft の名前" = "Draft name";
 "Draft の実装は、チャットから Agent に頼めるよ" = "Ask the Agent in the chat to implement a Draft.";
 "Draft を AI に実装させる" = "Have the AI implement a Draft";
+"Draft を手動で実装" = "Implement Draft by hand";
 "Draft を置いて線でつなぐと、まず処理の流れだけを描けるよ" = "Place Drafts and wire them up to sketch the flow before writing any code.";
 "Draft（未実装の計画）" = "Draft (plan, not implemented)";
 "Fast mode: ChatGPT プランでは選べません（指定が拒否されることがあるため）" = "Fast mode: not available on the ChatGPT plan (the setting can be refused)";
@@ -250,6 +251,7 @@
 "tsugumi.json を含むフォルダを選んでください" = "Choose a folder that contains tsugumi.json";
 "tsugumid に再接続できませんでした" = "Could not reconnect to tsugumid";
 "tsugumid の応答を待っています" = "Waiting for tsugumid to answer";
+"wire の再接続" = "Rebind wires";
 "worker の状態を残す" = "Keep the worker's state";
 "⌘Return で送信" = "⌘Return sends";
 "⌘Return で送信（Return で改行）" = "⌘Return sends (Return for a new line)";
@@ -762,6 +764,7 @@
 "入出力を記録" = "Record I/O";
 "入力" = "Inputs";
 "入力 " = "Input ";
+"入力 wire には実入力ポート、出力 wire には実出力ポートを指定します。候補が一つでも指定が必要です。" = "Name a real input for each incoming wire and a real output for each outgoing wire, even when there is only one candidate.";
 "入力が届きません" = "Inputs do not arrive";
 "入力が届くたび" = "Each time an input arrives";
 "入力の型は接続元の出力から決まります（_inputs.fbs は生成され、手で書きません）。" = "An input's type comes from the output it is connected to (_inputs.fbs is generated, never written by hand).";
@@ -875,6 +878,7 @@
 "右下に表示中（%@）" = "Shown at the bottom right (%@)";
 "右下のツグミが、使い方の質問に答えたりデモを案内したりします。" = "Tsugumi at the bottom right answers your questions and gives demo tours.";
 "各 Card の最後の呼び出しを比較します。記録や現在の Workflow は変更しません。" = "Compare the last invocation of each Card. Records and the current Workflow stay unchanged.";
+"各 wire の実ポート名を指定してください（ポート欄）。" = "Specify the real port for every wire in Ports.";
 "合流" = "Merge";
 "合計は容量不明のフォルダを除きます。" = "The total excludes folders with unknown sizes.";
 "合計（共有パスは一度だけ計上）" = "Total (shared paths counted once)";
@@ -952,11 +956,13 @@
 "完了" = "Done";
 "定番のデモを見る" = "See the Standard Demo";
 "定義" = "Definition";
+"定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。" = "Apply saves the definition and real wire endpoints together. For a code Card, also create its sources and output schema.";
 "定義とソースを削除" = "Delete the definition and its sources";
 "定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。" = "Definitions are versioned automatically. List additional project-relative files or folders, one per line (no wildcards). This applies when a run starts and to Keep as Version. .tsugumi/, .git/ and symbolic links are excluded.";
 "定義をこのプロジェクトの definitions にコピーして Card を置きます" = "Copies the definition into this project's definitions and places the Card";
 "定義を持たない Card には追加コンテキストを置けません。" = "A Card without a definition cannot hold extra context.";
 "定義を選んでください" = "Choose a definition";
+"実ポート名" = "Real port name";
 "実行" = "Run";
 "実行 #%llu" = "Invocation #%llu";
 "実行 %lld 回（成功 %lld・失敗 %lld）· 最後: %@" = "%lld runs (%lld succeeded, %lld failed) · last: %@";

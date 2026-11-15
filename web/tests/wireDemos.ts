@@ -48,9 +48,8 @@ function node(dir: string, id: string): CardNodeData {
     default: throw new Error(`template ${def.template}`)
   }
   if (def?.language === undefined) {
-    const outs = [...typed, ...named(meta?.outputs).filter((o) => !typed.some((t) => t.name === o.name))]
     const untitled = /^draft(-[0-9]+)?$/.test(id)
-    return { ...blank, kind: 'draft', summary: meta?.content || blank.summary, untitled, inputs: declared, outputs: outs }
+    return { ...blank, kind: 'draft', summary: meta?.content || blank.summary, untitled, inputs: [], outputs: [] }
   }
   return { ...blank, kind: 'code', inputs: declared, outputs: typed }
 }
@@ -89,7 +88,7 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
   const cardRect = (id: string): Rect => ({ ...place(id), ...geos.get(id)!.size })
   const port = (id: string, p: string, output: boolean): Pt => {
     const list = output ? datas.get(id)!.outputs : datas.get(id)!.inputs
-    assert.ok(list.some((x) => x.name === p), `${name}: ${id} has no ${output ? 'output' : 'input'} ${p}`)
+    assert.ok(datas.get(id)!.kind === 'draft' ? p === '' : list.some((x) => x.name === p), `${name}: ${id} has no ${output ? 'output' : 'input'} ${p}`)
     const o = place(id), q = geos.get(id)!.port(p, output)
     return { x: o.x + q.x, y: o.y + q.y }
   }

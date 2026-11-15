@@ -230,7 +230,7 @@ export class Scene {
       const px = bar.x + (bar.width * (i + 1)) / (list.length + 1)
       const c = str(get(v, 'card')), p = str(get(v, 'port'))
       const t = (output ? resolved?.outputs : resolved?.inputs)?.find((x) => x.name === name)?.rootType
-      return { name, point: { x: px, y: output ? bar.y : bar.y + bar.height }, inner: c && p ? [key([...this.scope, c]), p] : undefined, type: t }
+      return { name, point: { x: px, y: output ? bar.y : bar.y + bar.height }, inner: c && p !== undefined ? [key([...this.scope, c]), p] : undefined, type: t }
     })
     return { top, bottom, inputs: ports(ins, top, false), outputs: ports(outs, bottom, true) }
   }
@@ -247,7 +247,7 @@ export class Scene {
     const ends: { a: Pt; b: Pt; wire: Omit<RoutedWire, 'd' | 'pts'> }[] = []
     s.connections(this.scope).forEach((c, i) => {
       const fc = str(get(c, 'from', 'card')), fp = str(get(c, 'from', 'port')), tc = str(get(c, 'to', 'card')), tp = str(get(c, 'to', 'port'))
-      if (!fc || !fp || !tc || !tp) return
+      if (!fc || fp === undefined || !tc || tp === undefined) return
       const fk = key([...this.scope, fc]), tk = key([...this.scope, tc])
       ends.push({ a: this.portWorld(fk, fp, true), b: this.portWorld(tk, tp, false), wire: {
         connection: i, style: i === this.selectedConnection ? 'selected' : this.style(fk, fp, tk),

@@ -57,3 +57,31 @@ def test_the_english_guide_script_is_the_japanese_one_translated():
 
     same(ja, en, "")
     assert not problems, problems
+
+
+def test_draft_contract_has_portless_ends_and_atomic_explicit_rebinding():
+    prompt = (ROOT / "agent/Shared/system-prompt.md").read_text()
+    request = json.loads((ROOT / "agent/Shared/agent.json").read_text())["draftRequest"]["text"]
+    schema = (ROOT / "protocol/tsugumi.fbs").read_text()
+    assert '{"card": "<id>", "port": ""}' in prompt
+    for text in [prompt, request, schema]:
+        assert "SetProject" in text
+        assert "incoming" in text and "outgoing" in text
+        assert "same" in text
+        assert "single" in text or "only one" in text or "exactly one" in text
+    assert "provisional ports" not in request
+
+
+def test_draft_demos_use_only_empty_draft_ends_in_both_languages():
+    for lang in ["ja", "en"]:
+        for project in (ROOT / "demos" / lang).glob("*-draft/tsugumi.json"):
+            drafts = set()
+            for file in project.parent.glob("definitions/*/_card.json"):
+                definition = json.loads(file.read_text())
+                if definition.get("template") == "draft":
+                    drafts.add(file.parent.name)
+                    assert "inputs" not in definition, file
+            for wire in json.loads(project.read_text())["canvas"]["connections"]:
+                for side in ["from", "to"]:
+                    if wire[side]["card"] in drafts:
+                        assert wire[side]["port"] == "", (project, wire)

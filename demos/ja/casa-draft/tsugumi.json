@@ -24,27 +24,27 @@
         },
         "to": {
           "card": "load",
-          "port": "start"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "load",
-          "port": "events"
+          "port": ""
         },
         "to": {
           "card": "bands",
-          "port": "input"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "bands",
-          "port": "images"
+          "port": ""
         },
         "to": {
           "card": "rgb",
-          "port": "input"
+          "port": ""
         }
       }
     ]

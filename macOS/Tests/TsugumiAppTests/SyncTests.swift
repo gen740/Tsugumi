@@ -655,8 +655,7 @@ import TsugumiAgentClient
     #expect(!FileManager.default.fileExists(atPath: folder.path))
   }
 
-  /// A Draft's wires make its ports and take them away, and what is written on
-  /// its Card is kept, under a new name too.
+  /// Comments stay on their Card, with authorship and resolution history.
   @Test func commentsAreSavedOnTheirCardWithWhoDidWhat() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
@@ -708,6 +707,7 @@ import TsugumiAgentClient
     #expect(s.comments(k).map(\.text) == ["軸に名前を"])
   }
 
+  /// Draft wires attach to the Card itself; its content and name survive saving.
   @Test func aDraftIsWiredAndWrittenOnTheCanvas() async throws {
     let dir = try Self.project()
     let d = try Daemon(project: dir)
@@ -730,22 +730,22 @@ import TsugumiAgentClient
     #expect(ports(a) == [[], []])
 
     try await s.connect(from: (a, CardGeometry.newPort), to: (b, CardGeometry.newPort), in: [])
-    #expect(wires() == ["p.out>q.in"])
-    #expect(ports(a) == [[], ["out"]] && ports(b) == [["in"], []])
+    #expect(wires() == ["p.>q."])
+    #expect(ports(a) == [[], []] && ports(b) == [[], []])
     let c = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 600, y: 0), name: "r")
     try await s.connect(from: (a, CardGeometry.newPort), to: (c, CardGeometry.newPort), in: [])
     try await s.connect(from: (c, CardGeometry.newPort), to: (b, CardGeometry.newPort), in: [])
-    #expect(ports(a) == [[], ["out", "out2"]] && ports(b) == [["in", "in2"], []])
+    #expect(ports(a) == [[], []] && ports(b) == [[], []])
     #expect(s.connections(in: []).count == 3, "no fork, nothing replaced")
 
-    // The core agrees (no unknown_port), and takes the ports away with the wires.
+    // The core agrees: no ports are created, even with many wires.
     await s.save()
     #expect(!s.dirty, "\(s.saveError ?? "")")
     for k in [a, b, c] {
       #expect(!(s.resolution[k]?.diagnostics ?? []).contains { $0.message.contains("port") }, "\(k)")
     }
     s.removeConnection(at: 0, in: [])
-    #expect(ports(a) == [[], ["out2"]] && ports(b) == [["in2"], []])
+    #expect(ports(a) == [[], []] && ports(b) == [[], []])
     s.disconnect(c, inputs: false, in: [])
     #expect(ports(b) == [[], []])
 
@@ -777,7 +777,7 @@ import TsugumiAgentClient
     #expect(kept == b && s.displayName(b) == "日本語" && s.instance(b) != nil)
     try await s.renameCard(c, to: "日本語")
     #expect(s.displayName(c) == s.displayName(b) && b != c)
-    #expect(wires() == ["p.out2>r.in"])
+    #expect(wires() == ["p.>r."])
     #expect(s.cardNameProblem(b, " \n ") != nil)
     // An overlong name is still refused without changing the Card.
     let overlong = String(repeating: "あ", count: 1366)

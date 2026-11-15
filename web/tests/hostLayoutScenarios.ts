@@ -62,8 +62,7 @@ const make = async () => {
   const ports = (names: string[]) => names.map(name => ({ name, kind: D.PortKind.value, optional: false }))
   session.resolution.set('source', { path: ['source'], inputs: [], outputs: ports(['a', 'b']), diagnostics: [] })
   session.resolution.set('left', { path: ['left'], inputs: ports(['in']), outputs: [], diagnostics: [] })
-  session.updateCard('right', d => d.set('inputs', parse('[{"name":"in"}]')))
-  await session.connect(['source', 'a'], ['right', 'in'], [])
+  await session.connect(['source', 'a'], ['right', ''], [])
   await session.connect(['source', 'b'], ['left', 'in'], [])
   return session
 }
@@ -88,6 +87,8 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
   assert.equal(s.undoStack.length, was.steps + 1)
   assert.equal(serialize(s.project), was.project)
   assert.equal(measured!.cards[0].reorderable, true)
+  assert.equal(measured!.wires[0].toPort, '', 'layout keeps Draft wire ends')
+  assert.deepEqual(measured!.cards.find(c => c.id === 'right')!.inputs.map(p => p.name), [''], 'an unnamed geometric anchor locates the wire')
   assert.equal(measured!.frames[0].width, 320)
   assert.deepEqual(s.position('source'), { x: 20, y: 40 })
   assert.equal(dbl(get(s.displayFrame('source'), 'width')), 320)

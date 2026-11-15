@@ -128,49 +128,32 @@ TEST(DocumentConnect, SecondWireInsertsForkAndLaterWiresExtendIt) {
                 .at("pkgsPath"),
             json::Quote("pinned"));
 }
-TEST(DocumentConnect,
-     InputReplacementDropsUnheldDraftPortAndKeepsBoundaryPort) {
+TEST(DocumentConnect, InputReplacementKeepsDraftDefinitionsUnchanged) {
   const std::string state =
-      R"({"project":{"canvas":{"cards":[{"id":"old"},{"id":"new"},{"id":"dest"}],"connections":[{"from":{"card":"old","port":"out"},"to":{"card":"dest","port":"in"}}]}},"definitions":{"old":{"card":{"template":"draft"},"meta":{"outputs":[{"name":"out"}]}},"new":{"card":{"template":"trigger"}},"dest":{"card":{}}}})";
+      R"({"project":{"canvas":{"cards":[{"id":"old"},{"id":"new"},{"id":"dest"}],"connections":[{"from":{"card":"old","port":""},"to":{"card":"dest","port":"in"}}]}},"definitions":{"old":{"card":{"template":"draft"},"meta":{"content":"planned"}},"new":{"card":{"template":"trigger"}},"dest":{"card":{"language":"python"}}}})";
   const auto replaced = ConnectDocuments(state, "new", "out", "dest", "in", "");
   EXPECT_EQ(ConnectionWires(replaced.state_json),
             (std::set<std::string>{"new.out>dest.in"}));
-  const auto old = json::Object(
-      json::Object(json::Object(replaced.state_json).at("definitions"))
-          .at("old"));
-  EXPECT_FALSE(json::Object(old.at("meta")).contains("outputs"));
-  auto scope = json::Object(state), project = json::Object(scope.at("project"));
-  project["boundary"] = R"({"outputs":{"public":{"card":"old","port":"out"}}})";
-  scope["project"] = json::Encode(project);
-  const auto kept =
-      ConnectDocuments(json::Encode(scope), "new", "out", "dest", "in", "");
-  EXPECT_TRUE(
-      json::Object(
-          json::Object(
-              json::Object(json::Object(kept.state_json).at("definitions"))
-                  .at("old"))
-              .at("meta"))
-          .contains("outputs"));
+  EXPECT_EQ(Normalized(json::Object(replaced.state_json).at("definitions")),
+            Normalized(json::Object(state).at("definitions")));
 }
-TEST(DocumentConnect, DraftGestureNamesNewPortsAndReusesDeclaredUnwiredPorts) {
+TEST(DocumentConnect,
+     DraftGesturesKeepMultipleIncomingAndOutgoingWiresPortless) {
   const std::string state =
-      R"({"project":{"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}},"definitions":{"a":{"card":{"template":"draft"}},"b":{"card":{"template":"draft"}}}})";
+      R"({"project":{"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"c"}],"connections":[]}},"definitions":{"a":{"card":{"template":"draft"}},"b":{"card":{"template":"draft"}},"c":{"card":{"template":"draft"}}}})";
   const auto first = ConnectDocuments(state, "a", "+", "b", "+", "");
   EXPECT_EQ(ConnectionWires(first.state_json),
-            (std::set<std::string>{"a.out>b.in"}));
+            (std::set<std::string>{"a.>b."}));
   const auto second =
-      ConnectDocuments(first.state_json, "a", "+", "b", "+", "");
-  EXPECT_EQ(ConnectionWires(second.state_json),
-            (std::set<std::string>{"a.out>b.in", "a.out2>b.in2"}));
-  auto scope = json::Object(state);
-  scope["ports"] = R"({"a":{"outputs":["typed"]},"b":{"inputs":["planned"]}})";
-  const auto reused =
-      ConnectDocuments(json::Encode(scope), "a", "+", "b", "+", "");
-  EXPECT_EQ(ConnectionWires(reused.state_json),
-            (std::set<std::string>{"a.typed>b.planned"}));
-  const auto meaningful = ConnectDocuments(state, "a", "counts", "b", "+", "");
-  EXPECT_EQ(ConnectionWires(meaningful.state_json),
-            (std::set<std::string>{"a.counts>b.counts"}));
+      ConnectDocuments(first.state_json, "a", "+", "c", "+", "");
+  EXPECT_FALSE(second.needs_fork);
+  const auto third =
+      ConnectDocuments(second.state_json, "c", "+", "b", "+", "");
+  EXPECT_FALSE(third.needs_fork);
+  EXPECT_EQ(ConnectionWires(third.state_json),
+            (std::set<std::string>{"a.>b.", "a.>c.", "c.>b."}));
+  EXPECT_EQ(Normalized(json::Object(third.state_json).at("definitions")),
+            Normalized(json::Object(state).at("definitions")));
   EXPECT_THROW(ConnectDocuments(state, "missing", "out", "b", "+", ""),
                std::runtime_error);
 }

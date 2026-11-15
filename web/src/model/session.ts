@@ -2728,7 +2728,6 @@ export class ProjectSession extends Observable {
       g.set('cards', (arr(g.get('cards')) ?? []).filter((c) => !ids.has(str(get(c, 'id')) ?? '')))
       g.set('connections', (arr(g.get('connections')) ?? []).filter((c) => !cut.includes(c)))
     })
-    x.dropDraftPorts(cut, scope)
     if (prefix) {
       // Boundary ports of removed Cards go too.
       x.updateExternal(prefix, (e) => {
@@ -2793,44 +2792,12 @@ export class ProjectSession extends Observable {
     })
   }
 
-  /** Whether a wire of the scope ends at this port. */
-  portWired(k: CardKey, port: string, output: boolean, scope: string[]): boolean {
-    const id = path(k).pop()
-    const side = output ? 'from' : 'to'
-    return this.connections(scope).some((c) => str(get(c, side, 'card')) === id && str(get(c, side, 'port')) === port)
-  }
-
-  /** After wires are gone: a Draft's port goes with its last wire. */
-  private dropDraftPorts(removed: J[], scope: string[]) {
-    const held = (k: CardKey, port: string, output: boolean) => {
-      if (this.portWired(k, port, output, scope)) return true
-      // Inside a Card in Card, the outer Card's boundary may name it.
-      const side = get(scope.length ? this.boundary(key(scope)) : undefined, output ? 'outputs' : 'inputs')
-      return isObj(side) && side.entries().some(([, e]) => str(get(e, 'card')) === path(k).pop() && str(get(e, 'port')) === port)
-    }
-    const without = (list: J | undefined, port: string) => {
-      const rest = (arr(list) ?? []).filter((p) => str(get(p, 'name')) !== port)
-      return rest.length ? rest : undefined
-    }
-    for (const c of removed) {
-      for (const [side, output] of [['from', true], ['to', false]] as const) {
-        const id = str(get(c, side, 'card')), port = str(get(c, side, 'port'))
-        if (!id || !port) continue
-        const k = key([...scope, id])
-        if (!this.instance(k) || this.kind(k) !== 'draft' || held(k, port, output)) continue
-        if (!output) this.updateCard(k, (d) => d.set('inputs', without(d.get('inputs'), port)))
-        this.updateMeta(k, (m) => m.set(output ? 'outputs' : 'inputs', without(m.get(output ? 'outputs' : 'inputs'), port)))
-      }
-    }
-  }
-
   removeConnection(index: number, scope: string[]) {
     this.edit((x) => {
       const conns = [...x.connections(scope)]
       if (index >= conns.length) return
-      const [removed] = conns.splice(index, 1)
+      conns.splice(index, 1)
       x.updateGraph(scope, (g) => g.set('connections', conns))
-      x.dropDraftPorts([removed], scope)
     })
   }
 
@@ -2839,7 +2806,6 @@ export class ProjectSession extends Observable {
     if (!list.length) return
     this.edit((x) => {
       x.updateGraph(scope, (g) => g.set('connections', (arr(g.get('connections')) ?? []).filter((c) => !list.some((l) => jeq(l, c)))))
-      x.dropDraftPorts(list, scope)
     })
   }
 
@@ -2849,7 +2815,6 @@ export class ProjectSession extends Observable {
     this.edit((x) => {
       const removed = x.connections(scope).filter((c) => (str(get(c, inputs ? 'to' : 'from', 'card')) ?? '') === id)
       x.updateGraph(scope, (g) => g.set('connections', (arr(g.get('connections')) ?? []).filter((c) => !removed.includes(c))))
-      x.dropDraftPorts(removed, scope)
     })
   }
 
@@ -3190,12 +3155,13 @@ export class ProjectSession extends Observable {
     const cards = ids.map((id) => {
       const k = key([...scope, id]), g = this.geometry(k)
       const ports = (names: string[], output: boolean) => names.map((name) => ({ name, ...g.port(name, output) }))
-      return { id, ...this.placedPosition(k), ...g.size, reorderable: ['code', 'draft', 'input', 'subgraph'].includes(this.kind(k)),
-        inputs: ports(g.inputs, false), outputs: ports(g.outputs, true) }
+      return { id, ...this.placedPosition(k), ...g.size, reorderable: ['code', 'input', 'subgraph'].includes(this.kind(k)),
+        // Unnamed visual anchors locate Draft wires without declaring Card ports.
+        inputs: ports(this.kind(k) === 'draft' ? [''] : g.inputs, false), outputs: ports(this.kind(k) === 'draft' ? [''] : g.outputs, true) }
     })
     const wires = this.connections(scope).flatMap((c) => {
       const from = str(get(c, 'from', 'card')), fromPort = str(get(c, 'from', 'port')), to = str(get(c, 'to', 'card')), toPort = str(get(c, 'to', 'port'))
-      return from && fromPort && to && toPort ? [{ from, fromPort, to, toPort }] : []
+      return from && fromPort !== undefined && to && toPort !== undefined ? [{ from, fromPort, to, toPort }] : []
     })
     // A frame without a place of its own is drawn beside its Card.
     const frames = ids.flatMap((id) => {
@@ -3491,8 +3457,8 @@ export class ProjectSession extends Observable {
       inputs: [{ name: 'in', typeName: r?.inputs.find((p) => p.name === 'in')?.rootType, note: note('inputs', 'in') }],
       outputs: [{ name: 'out', typeName: r?.outputs.find((p) => p.name === 'out')?.rootType, note: note('outputs', 'out') }],
     }
-    // A Draft's ports change with its wires, before they are resolved again.
-    const draft = this.kind(k) === 'draft'
+    const draft = definitionKind(def) === 'draft'
+    if (draft) return { inputs: [], outputs: [] }
     if (definition === undefined && r && !draft) {
       return {
         inputs: r.inputs.map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('inputs', p.name) })),
@@ -3504,16 +3470,7 @@ export class ProjectSession extends Observable {
       const n = str(get(i, 'name'))
       return n ? [{ name: n, typeName: r?.inputs.find((p) => p.name === n)?.rootType, optional: bool(get(i, 'optional')) ?? false, note: note('inputs', n) }] : []
     })
-    // A Draft's resolved outputs beyond the declared ones are those of its _outputs.fbs.
-    const dir = draft ? this.definitionDir(k) : undefined
-    const typed = !draft || (dir !== undefined && this.hasSource(dir + '_outputs.fbs'))
-    const outs: PortData[] = (typed ? r?.outputs ?? [] : []).map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('outputs', p.name) }))
-    if (draft || !outs.length) {
-      for (const o of arr(get(m, 'outputs')) ?? []) {
-        const n = str(get(o, 'name'))
-        if (n && !outs.some((p) => p.name === n)) outs.push({ name: n, typeName: r?.outputs.find((p) => p.name === n)?.rootType, note: str(get(o, 'description')) })
-      }
-    }
+    const outs: PortData[] = (r?.outputs ?? []).map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('outputs', p.name) }))
     return { inputs: ins, outputs: outs }
   }
 
@@ -3675,7 +3632,7 @@ export class ProjectSession extends Observable {
   }
 
   nodeData(k: CardKey, opts: { definition?: J; meta?: J; collapsed?: boolean; outputs?: PortData[] } = {}): CardNodeData {
-    const kind = this.kind(k)
+    const kind = opts.definition === undefined ? this.kind(k) : definitionKind(opts.definition)
     const state = this.cardStates.get(k)
     const batch = this.executionBatch(k)
     const executionList = batch?.executionList === true

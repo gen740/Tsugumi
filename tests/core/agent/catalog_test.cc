@@ -17,6 +17,33 @@ extern const unsigned char tsugumi_rpc_bfbs[];
 namespace tsugumi::agent {
 namespace {
 
+TEST(AgentCatalog, DraftSaveDescriptionReachesTheModelAndPreservesEmptyEnds) {
+  const Catalog catalog;
+  const auto* tool = catalog.Find("project_save");
+  ASSERT_NE(tool, nullptr);
+  EXPECT_NE(tool->spec.description.find("Drafts have no ports"),
+            std::string::npos);
+  EXPECT_NE(tool->spec.description.find("single possible port must be stated"),
+            std::string::npos);
+  const auto request = catalog.Request(
+      "project_save",
+      R"({"base_rev":0,"op_id":"save","origin":"agent","changes":[{"value_type":"SetProject","value":{"json":"{\"canvas\":{\"connections\":[{\"from\":{\"card\":\"plan\",\"port\":\"\"},\"to\":{\"card\":\"next\",\"port\":\"in\"}}]}}"}}]})",
+      1);
+  const auto* save = Tsugumi::RPC::GetMessage(request.data())
+                         ->payload_as_Request()
+                         ->value_as_ProjectSaveRequest();
+  ASSERT_NE(save, nullptr);
+  const auto* project = save->changes()->Get(0)->value_as_SetProject();
+  ASSERT_NE(project, nullptr);
+  const auto canvas =
+      json::Object(json::Get(json::Object(project->json()->str()), "canvas"));
+  const auto wire =
+      json::Object(json::Array(json::Get(canvas, "connections")).front());
+  const auto from = json::Object(json::Get(wire, "from"));
+  EXPECT_TRUE(from.contains("port"));
+  EXPECT_EQ(json::Text(from, "port"), "");
+}
+
 TEST(AgentCatalog, EveryEntryInBothListsExistsInTheProjectRequestUnion) {
   const auto settings = json::Object(
       std::string_view(reinterpret_cast<const char *>(tsugumi_agent_settings),

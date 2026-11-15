@@ -301,9 +301,9 @@ def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
     c = env([card("start", "trigger"), card("src", "msg"), card("f", "fork"), card("out", "sink"), card("plan", "plan"),
              card("after", "sink")],
             [conn("start", "out", "src", "start"), conn("src", "msg", "f", "in"), conn("f", "out1", "out", "in"),
-             conn("f", "out2", "plan", "data"),
-             conn("plan", "summary", "after", "in")], defs)
-    # The Draft's ports come from _meta.json (names and purposes only).
+             conn("f", "out2", "plan", ""),
+             conn("plan", "", "after", "in")], defs)
+    # Metadata descriptions do not create ports on the Draft.
     snap = c.call("ProjectInspectRequest")
     meta = {"description": "Summarize", "content": "Input: messages. Output: the word count. Count the words.",
             "inputs": [{"name": "data", "description": "messages"}],
@@ -311,7 +311,7 @@ def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
     res = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
         change("PutDefinition", id="plan", cardJson=json.dumps(defs["plan"]), metaJson=json.dumps(meta))])
     plan = next(r for r in res.delta.resolution if [text(s) for s in r.card.segments] == ["plan"])
-    assert [text(p.name) for p in plan.outputs] == ["summary"]
+    assert [text(p.name) for p in plan.outputs] == []
     run_id, st = run_and_wait(c, "start", timeout=10)
     # The implemented part ran; the Draft and the Card that needs its output did not.
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)

@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <iomanip>
 #include <optional>
-#include <regex>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -454,52 +453,17 @@ auto ConnectDocuments(const std::string &state, const std::string &from_card,
     const auto end = json::Object(json::Get(json::Object(wire), side));
     return json::Text(end, "card") == card && json::Text(end, "port") == port;
   };
-  const auto wired = [&](const std::string &id, const std::string &port,
-                         bool output) {
-    return std::ranges::any_of(wires, [&](const auto &wire) {
-      return matches(wire, output ? "from" : "to", id, port);
-    });
+  // Draft gestures attach to the Card itself and never declare ports.
+  const auto endpoint_port = [&](const std::string &id,
+                                 const std::string &port) {
+    if (kind(id) == "draft")
+      return std::string{};
+    if (port == "+")
+      throw std::runtime_error("Only a Draft accepts a Card endpoint gesture");
+    return port;
   };
-  // Resolved port names are screen facts supplied with the scope, including
-  // typed Draft outputs that have not been written into metadata.
-  const auto ports = json::Object(json::Get(scope, "ports", "{}"));
-  const auto draft_port = [&](const std::string &id, const std::string &port,
-                              bool output, const std::string &other) {
-    if (port != "+")
-      return port;
-    if (kind(id) != "draft")
-      throw std::runtime_error("Only a Draft accepts a new port gesture");
-    const auto part = output ? "meta" : "card";
-    const auto list = output ? "outputs" : "inputs";
-    auto doc = document(id, part);
-    auto notes = json::Array(json::Get(doc, list, "[]"));
-    std::vector<std::string> names;
-    if (ports.contains(id))
-      for (const auto &name :
-           json::Array(json::Get(json::Object(ports.at(id)), list, "[]")))
-        names.push_back(json::String(name));
-    else
-      for (const auto &note : notes)
-        names.push_back(json::Text(json::Object(note), "name"));
-    for (const auto &name : names)
-      if (!wired(id, name, output))
-        return name;
-    const std::string base =
-        std::regex_match(other, std::regex("[A-Za-z_][A-Za-z0-9_]*")) &&
-                !std::regex_match(other, std::regex("(in|out)[0-9]*"))
-            ? other
-        : output ? "out"
-                 : "in";
-    auto name = base;
-    for (size_t n = 2; std::ranges::find(names, name) != names.end(); ++n)
-      name = base + std::to_string(n);
-    notes.push_back(json::Encode(json::Members{{"name", json::Quote(name)}}));
-    doc[list] = json::Encode(notes);
-    put(id, part, doc);
-    return name;
-  };
-  const auto fp = draft_port(from_card, from_port, true, to_port);
-  const auto tp = draft_port(to_card, to_port, false, fp);
+  const auto fp = endpoint_port(from_card, from_port);
+  const auto tp = endpoint_port(to_card, to_port);
   const auto wire = [](const std::string &f, const std::string &p,
                        const std::string &to) {
     return json::Encode(json::Members{{"from", Endpoint(f, p)}, {"to", to}});
@@ -537,7 +501,7 @@ auto ConnectDocuments(const std::string &state, const std::string &from_card,
       taken.push_back(w);
   auto source_card = from_card, source_port = fp;
   Tsugumi::Host::DocumentConnectT result;
-  if (!taken.empty()) {
+  if (!taken.empty() && kind(from_card) != "draft") {
     const auto next =
         taken.size() == 1
             ? json::Text(json::Object(json::Get(json::Object(taken[0]), "to")),
@@ -606,50 +570,11 @@ auto ConnectDocuments(const std::string &state, const std::string &from_card,
       source_port = branch(fork_id, to_card);
     }
   }
-  std::vector<std::string> replaced;
-  for (const auto &w : wires)
-    if (matches(w, "to", to_card, tp))
-      replaced.push_back(w);
-  std::erase_if(wires,
-                [&](const auto &w) { return matches(w, "to", to_card, tp); });
+  // Real inputs accept one wire; a Draft can receive any number.
+  if (kind(to_card) != "draft")
+    std::erase_if(wires,
+                  [&](const auto &w) { return matches(w, "to", to_card, tp); });
   wires.push_back(wire(source_card, source_port, Endpoint(to_card, tp)));
-  // Replacing an input also releases the old Draft output, unless the
-  // external's public boundary or another wire still holds that port.
-  for (const auto &w : replaced) {
-    for (const auto &[side, output] :
-         {std::pair{"from", true}, {"to", false}}) {
-      const auto end = json::Object(json::Get(json::Object(w), side));
-      const auto id = json::Text(end, "card"), port = json::Text(end, "port");
-      if (!has_card(id) || kind(id) != "draft" || wired(id, port, output))
-        continue;
-      const auto list = output ? "outputs" : "inputs";
-      const auto boundary = json::Object(json::Get(project, "boundary", "{}"));
-      bool held = false;
-      for (const auto &[name, ref] :
-           json::Object(json::Get(boundary, list, "{}"))) {
-        (void)name;
-        const auto target = json::Object(ref);
-        held |= json::Text(target, "card") == id &&
-                json::Text(target, "port") == port;
-      }
-      if (held)
-        continue;
-      for (const auto *part : {"card", "meta"}) {
-        if (output && std::string_view(part) == "card")
-          continue;
-        auto doc = document(id, part);
-        auto notes = json::Array(json::Get(doc, list, "[]"));
-        std::erase_if(notes, [&](const auto &note) {
-          return json::Text(json::Object(note), "name") == port;
-        });
-        if (notes.empty())
-          doc.erase(list);
-        else
-          doc[list] = json::Encode(notes);
-        put(id, part, doc);
-      }
-    }
-  }
   graph["cards"] = json::Encode(cards);
   graph["connections"] = json::Encode(wires);
   project["canvas"] = json::Encode(graph);

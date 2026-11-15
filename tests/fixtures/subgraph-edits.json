@@ -1,26 +1,26 @@
 [
   {
-    "projectJson": "{\n  \"name\": \"t\",\n  \"canvas\": {\n    \"cards\": [\n      {\n        \"id\": \"start\"\n      },\n      {\n        \"id\": \"log\"\n      },\n      {\n        \"id\": \"plan\"\n      }\n    ],\n    \"connections\": [\n      {\n        \"from\": {\n          \"card\": \"start\",\n          \"port\": \"out\"\n        },\n        \"to\": {\n          \"card\": \"plan\",\n          \"port\": \"in\"\n        }\n      },\n      {\n        \"from\": {\n          \"card\": \"plan\",\n          \"port\": \"out\"\n        },\n        \"to\": {\n          \"card\": \"log\",\n          \"port\": \"in\"\n        }\n      }\n    ]\n  }\n}\n",
+    "projectJson": "{\n  \"name\": \"t\",\n  \"canvas\": {\n    \"cards\": [\n      {\n        \"id\": \"start\"\n      },\n      {\n        \"id\": \"log\"\n      },\n      {\n        \"id\": \"plan\"\n      }\n    ],\n    \"connections\": [\n      {\n        \"from\": {\n          \"card\": \"start\",\n          \"port\": \"out\"\n        },\n        \"to\": {\n          \"card\": \"plan\",\n          \"port\": \"\"\n        }\n      },\n      {\n        \"from\": {\n          \"card\": \"plan\",\n          \"port\": \"\"\n        },\n        \"to\": {\n          \"card\": \"log\",\n          \"port\": \"in\"\n        }\n      }\n    ]\n  }\n}\n",
     "cards": [
       "plan"
     ],
     "id": "sub",
     "reply": {
-      "externalJson": "{\"boundary\":{\"inputs\":{\"plan_in\":{\n          \"card\": \"plan\",\n          \"port\": \"in\"\n        }},\"outputs\":{\"plan_out\":{\n          \"card\": \"plan\",\n          \"port\": \"out\"\n        }}},\"canvas\":{\"cards\":[{\n        \"id\": \"plan\"\n      }],\"connections\":[]},\"name\":\"sub\"}",
-      "projectJson": "{\"canvas\":{\"cards\":[{\n        \"id\": \"start\"\n      },{\n        \"id\": \"log\"\n      },{\"id\":\"sub\"}],\"connections\":[{\"from\":{\n          \"card\": \"start\",\n          \"port\": \"out\"\n        },\"to\":{\"card\":\"sub\",\"port\":\"plan_in\"}},{\"from\":{\"card\":\"sub\",\"port\":\"plan_out\"},\"to\":{\n          \"card\": \"log\",\n          \"port\": \"in\"\n        }}]},\"name\":\"t\"}",
-      "linkJson": "{\"external\":\"sub\"}"
+      "externalJson": "{\"boundary\":{\"inputs\":{\"plan_\":{\n          \"card\": \"plan\",\n          \"port\": \"\"\n        }},\"outputs\":{\"plan_\":{\n          \"card\": \"plan\",\n          \"port\": \"\"\n        }}},\"canvas\":{\"cards\":[{\n        \"id\": \"plan\"\n      }],\"connections\":[]},\"name\":\"sub\"}",
+      "linkJson": "{\"external\":\"sub\"}",
+      "projectJson": "{\"canvas\":{\"cards\":[{\n        \"id\": \"start\"\n      },{\n        \"id\": \"log\"\n      },{\"id\":\"sub\"}],\"connections\":[{\"from\":{\n          \"card\": \"start\",\n          \"port\": \"out\"\n        },\"to\":{\"card\":\"sub\",\"port\":\"plan_\"}},{\"from\":{\"card\":\"sub\",\"port\":\"plan_\"},\"to\":{\n          \"card\": \"log\",\n          \"port\": \"in\"\n        }}]},\"name\":\"t\"}"
     }
   },
   {
-    "projectJson": "{\n  \"name\": \"t\",\n  \"canvas\": {\n    \"cards\": [\n      {\n        \"id\": \"source\"\n      },\n      {\n        \"id\": \"left\"\n      },\n      {\n        \"id\": \"right\"\n      }\n    ],\n    \"connections\": [\n      {\n        \"from\": {\n          \"card\": \"source\",\n          \"port\": \"a\"\n        },\n        \"to\": {\n          \"card\": \"right\",\n          \"port\": \"in\"\n        }\n      },\n      {\n        \"from\": {\n          \"card\": \"source\",\n          \"port\": \"b\"\n        },\n        \"to\": {\n          \"card\": \"left\",\n          \"port\": \"in\"\n        }\n      }\n    ]\n  }\n}\n",
+    "projectJson": "{\n  \"name\": \"t\",\n  \"canvas\": {\n    \"cards\": [\n      {\n        \"id\": \"source\"\n      },\n      {\n        \"id\": \"left\"\n      },\n      {\n        \"id\": \"right\"\n      }\n    ],\n    \"connections\": [\n      {\n        \"from\": {\n          \"card\": \"source\",\n          \"port\": \"a\"\n        },\n        \"to\": {\n          \"card\": \"right\",\n          \"port\": \"\"\n        }\n      },\n      {\n        \"from\": {\n          \"card\": \"source\",\n          \"port\": \"b\"\n        },\n        \"to\": {\n          \"card\": \"left\",\n          \"port\": \"in\"\n        }\n      }\n    ]\n  }\n}\n",
     "cards": [
       "source"
     ],
     "id": "sub",
     "reply": {
       "externalJson": "{\"boundary\":{\"inputs\":{},\"outputs\":{\"source_a\":{\n          \"card\": \"source\",\n          \"port\": \"a\"\n        },\"source_b\":{\n          \"card\": \"source\",\n          \"port\": \"b\"\n        }}},\"canvas\":{\"cards\":[{\n        \"id\": \"source\"\n      }],\"connections\":[]},\"name\":\"sub\"}",
-      "projectJson": "{\"canvas\":{\"cards\":[{\n        \"id\": \"left\"\n      },{\n        \"id\": \"right\"\n      },{\"id\":\"sub\"}],\"connections\":[{\"from\":{\"card\":\"sub\",\"port\":\"source_a\"},\"to\":{\n          \"card\": \"right\",\n          \"port\": \"in\"\n        }},{\"from\":{\"card\":\"sub\",\"port\":\"source_b\"},\"to\":{\n          \"card\": \"left\",\n          \"port\": \"in\"\n        }}]},\"name\":\"t\"}",
-      "linkJson": "{\"external\":\"sub\"}"
+      "linkJson": "{\"external\":\"sub\"}",
+      "projectJson": "{\"canvas\":{\"cards\":[{\n        \"id\": \"left\"\n      },{\n        \"id\": \"right\"\n      },{\"id\":\"sub\"}],\"connections\":[{\"from\":{\"card\":\"sub\",\"port\":\"source_a\"},\"to\":{\n          \"card\": \"right\",\n          \"port\": \"\"\n        }},{\"from\":{\"card\":\"sub\",\"port\":\"source_b\"},\"to\":{\n          \"card\": \"left\",\n          \"port\": \"in\"\n        }}]},\"name\":\"t\"}"
     }
   },
   {

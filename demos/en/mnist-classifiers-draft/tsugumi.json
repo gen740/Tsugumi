@@ -78,17 +78,17 @@
         },
         "to": {
           "card": "knn",
-          "port": "data"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "knn",
-          "port": "result"
+          "port": ""
         },
         "to": {
           "card": "compare",
-          "port": "knn"
+          "port": ""
         }
       },
       {
@@ -98,17 +98,17 @@
         },
         "to": {
           "card": "logistic",
-          "port": "data"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "logistic",
-          "port": "result"
+          "port": ""
         },
         "to": {
           "card": "compare",
-          "port": "logistic"
+          "port": ""
         }
       },
       {
@@ -118,17 +118,17 @@
         },
         "to": {
           "card": "svm",
-          "port": "data"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "svm",
-          "port": "result"
+          "port": ""
         },
         "to": {
           "card": "compare",
-          "port": "svm"
+          "port": ""
         }
       },
       {
@@ -138,17 +138,17 @@
         },
         "to": {
           "card": "forest",
-          "port": "data"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "forest",
-          "port": "result"
+          "port": ""
         },
         "to": {
           "card": "compare",
-          "port": "forest"
+          "port": ""
         }
       },
       {
@@ -158,17 +158,17 @@
         },
         "to": {
           "card": "boosting",
-          "port": "data"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "boosting",
-          "port": "result"
+          "port": ""
         },
         "to": {
           "card": "compare",
-          "port": "boosting"
+          "port": ""
         }
       },
       {
@@ -178,17 +178,17 @@
         },
         "to": {
           "card": "mlp",
-          "port": "data"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "mlp",
-          "port": "result"
+          "port": ""
         },
         "to": {
           "card": "compare",
-          "port": "mlp"
+          "port": ""
         }
       },
       {
@@ -198,17 +198,17 @@
         },
         "to": {
           "card": "cnn",
-          "port": "data"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "cnn",
-          "port": "result"
+          "port": ""
         },
         "to": {
           "card": "compare",
-          "port": "cnn"
+          "port": ""
         }
       },
       {
@@ -218,7 +218,7 @@
         },
         "to": {
           "card": "compare",
-          "port": "data"
+          "port": ""
         }
       }
     ]

@@ -36,8 +36,8 @@ extension ProjectSession {
     func note(_ list: String, _ name: String) -> String? {
       m?[list]?.array?.first { $0["name"]?.string == name }?["description"]?.string
     }
-    // A Draft's ports change with its wires, before they are resolved again.
-    let draft = kind(k) == .draft
+    let draft = def == nil || def?["template"]?.string == "draft"
+    if draft { return ([], []) }
     if kind(k) == .collect {
       let r = resolution[k]
       return ([PortData(name: "in", typeName: r?.inputs.first { $0.name == "in" }?.rootType, note: note("inputs", "in"))],
@@ -56,16 +56,7 @@ extension ProjectSession {
       return PortData(name: n, typeName: resolution[k]?.inputs.first { $0.name == n }?.rootType,
                       optional: i["optional"]?.bool ?? false, note: note("inputs", n))
     }
-    // A Draft's resolved outputs beyond the declared ones are those of its _outputs.fbs.
-    let typed = !draft || definitionDir(k).map { hasSource($0 + "_outputs.fbs") } ?? false
-    var outs = typed ? resolution[k]?.outputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("outputs", $0.name)) } ?? [] : []
-    if draft || outs.isEmpty {
-      for o in m?["outputs"]?.array ?? [] {
-        if let n = o["name"]?.string, !outs.contains(where: { $0.name == n }) {
-          outs.append(PortData(name: n, typeName: resolution[k]?.outputs.first { $0.name == n }?.rootType, note: o["description"]?.string))
-        }
-      }
-    }
+    let outs = resolution[k]?.outputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("outputs", $0.name)) } ?? []
     return (ins, outs)
   }
 
@@ -221,7 +212,10 @@ extension ProjectSession {
 
   func nodeData(_ k: CardKey, definition: JSONValue? = nil, meta: JSONValue? = nil,
                 collapsed: Bool? = nil, outputs: [PortData]? = nil) -> CardNodeData {
-    let kind = self.kind(k)
+    let kind: CardKind
+    if let definition {
+      kind = definition["template"]?.string.flatMap(CardKind.init(rawValue:)) ?? (definition["language"] == nil ? .draft : .code)
+    } else { kind = self.kind(k) }
     let state = cardStates[k]
     let batch = executionBatch(k)
     let executionList = batch?.executionList == true

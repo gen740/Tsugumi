@@ -42,13 +42,58 @@ final class CardEditorModel {
 
   /// The Card's definition folder name (its id).
   var definitionId: String? { path(cardKey).last }
-  var kind: CardKind { session.kind(cardKey) }
+  var kind: CardKind {
+    if session.kind(cardKey) == .subgraph { return .subgraph }
+    if let t = definition?["template"]?.string, let k = CardKind(rawValue: t) { return k }
+    return definition?["language"] == nil ? .draft : .code
+  }
   var exists: Bool { session.instance(cardKey) != nil }
   private var prefix: String { session.definitionDir(cardKey) ?? "" }
 
   var unapplied: Bool {
     definition != baseDefinition || meta != baseMeta || !removed.isEmpty || !created.isEmpty ||
       texts.contains { baseTexts[$0.key] != $0.value }
+  }
+
+  var rebindings: [String: String] = [:]
+  struct DraftEnd: Identifiable {
+    var id: String
+    var label: String
+    var side: String
+    var index: Int?
+    var boundary: String?
+  }
+  /// Incident wires and boundary ends. No port is selected implicitly.
+  var draftEnds: [DraftEnd] {
+    guard session.kind(cardKey) == .draft, kind != .draft, let id = path(cardKey).last else { return [] }
+    let scope = Array(path(cardKey).dropLast())
+    var ends: [DraftEnd] = []
+    for (index, c) in session.connections(in: scope).enumerated() {
+      for side in ["from", "to"] where c[side]?["card"]?.string == id {
+        let label = "\(c["from"]?["card"]?.string ?? "").\(c["from"]?["port"]?.string ?? "") → \(c["to"]?["card"]?.string ?? "").\(c["to"]?["port"]?.string ?? "")"
+        ends.append(DraftEnd(id: "\(index):\(side):\(c.serialized(pretty: false))", label: label, side: side, index: index))
+      }
+    }
+    let boundary = scope.isEmpty ? nil : session.boundary(key(scope))
+    for side in ["inputs", "outputs"] {
+      for (name, ep) in boundary?[side]?.object ?? [] where ep["card"]?.string == id {
+        ends.append(DraftEnd(id: "\(side):\(name):\(ep.serialized(pretty: false))", label: "\(side).\(name) → \(id)", side: side, boundary: name))
+      }
+    }
+    return ends
+  }
+
+  func implementAs(_ value: String) {
+    if ["python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia"].contains(value) {
+      definition = .object([("language", .string(value))])
+    } else { definition = .object([("template", .string(value))]) }
+    if value == "input" || value == "switch" {
+      definition?["params"] = .array([.object([("name", .string("value")), ("type", .string(value == "input" ? "double" : "bool")), ("data", value == "input" ? .number("0") : .bool(false))])])
+      if value == "input", let outputsPath, !files.contains(outputsPath) {
+        createFile("_outputs.fbs", text: "namespace card;\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n")
+      }
+    }
+    if value == "merge" { definition?["inputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
   }
 
   /// Source files of the definition (documents excluded), with local changes.
@@ -88,6 +133,7 @@ final class CardEditorModel {
     generation += 1
     removed = []
     created = []
+    rebindings = [:]
     message = nil
     conflicts = []
     revisionEdit.reload(session.rev)
@@ -269,6 +315,11 @@ final class CardEditorModel {
     applying = true
     defer { applying = false }
     await follow(whileApplying: true)
+    let ends = draftEnds, bindings = rebindings
+    guard !ends.contains(where: { bindings[$0.id]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true }) else {
+      message = String(localized: "各 wire の実ポート名を指定してください（ポート欄）。")
+      return false
+    }
     let def = definition, m = meta, k = cardKey
     let sentTexts = texts, sentCreated = created
     let changedTexts = texts.filter { baseTexts[$0.key] != $0.value || created.contains($0.key) }
@@ -284,6 +335,23 @@ final class CardEditorModel {
         d.card = card
         d.meta = m
         s.setCardDefinition(k, d)
+      }
+      let scope = Array(path(k).dropLast())
+      if ends.contains(where: { $0.index != nil }) {
+        s.updateGraph(scope) { g in
+          var conns = g["connections"]?.array ?? []
+          for e in ends {
+            if let i = e.index { conns[i][e.side]?["port"] = .string(bindings[e.id]!.trimmingCharacters(in: .whitespacesAndNewlines)) }
+          }
+          g["connections"] = .array(conns)
+        }
+      }
+      if ends.contains(where: { $0.boundary != nil }), let prefix = s.projectPrefix(scope) {
+        s.updateExternal(prefix) { ext in
+          for e in ends {
+            if let name = e.boundary { ext.project["boundary"]?[e.side]?[name]?["port"] = .string(bindings[e.id]!.trimmingCharacters(in: .whitespacesAndNewlines)) }
+          }
+        }
       }
       for (p, t) in changedTexts {
         s.putSource(p, t)
@@ -362,7 +430,7 @@ struct CardSettingsEditor: View {
     switch m.kind {
     case .code: return CardEditorCategory.allCases
     case .input: return [.general, .comments, .source, .ports, .executions, .artifacts, .context]
-    case .draft: return [.general, .comments, .ports, .context]
+    case .draft: return [.general, .comments, .context]
     case .subgraph: return [.general, .comments, .ports, .executions]
     default: return [.general, .comments, .ports, .executions, .artifacts, .context]
     }
@@ -556,6 +624,14 @@ private struct GeneralCategory: View {
           TextField("内容", text: metaString("content"), prompt: Text("何を受け取り、何を出し、どう処理するかを書きます"), axis: .vertical)
             .lineLimit(6...16)
         }
+      }
+      if model.session.kind(model.cardKey) == .draft {
+        Section {
+          Picker("種類", selection: Binding(get: { model.definition?["template"]?.string ?? model.definition?["language"]?.string ?? "draft" }, set: { model.implementAs($0) })) {
+            ForEach(["draft", "python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia", "input", "switch", "trigger", "fork", "branch", "merge", "collect"], id: \.self) { Text($0).tag($0) }
+          }
+        } header: { Text("Draft を手動で実装") }
+          footer: { Text("定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。") }
       }
       if model.kind != .switchCard, let params = model.definition?["params"]?.array, !params.isEmpty {
         Section("パラメータ") {
@@ -889,8 +965,23 @@ private struct PortsCategory: View {
   var body: some View {
     let r = model.session.resolution[model.cardKey]
     Form {
+      if !model.draftEnds.isEmpty {
+        Section {
+          ForEach(model.draftEnds) { e in
+            let output = e.side == "from" || e.side == "outputs"
+            LabeledContent {
+              TextField("実ポート名", text: Binding(get: { model.rebindings[e.id] ?? "" }, set: { model.rebindings[e.id] = $0 }))
+            } label: {
+              Text(output ? "出力ポート" : "入力ポート")
+              Text(e.label).font(.caption).textSelection(.enabled)
+            }
+          }
+        } header: { Text("wire の再接続") }
+          footer: { Text("入力 wire には実入力ポート、出力 wire には実出力ポートを指定します。候補が一つでも指定が必要です。") }
+      }
+
       Section {
-        if model.definition != nil, [.code, .draft, .merge].contains(model.kind) {
+        if model.definition != nil, [.code, .merge].contains(model.kind) {
           let inputs = model.definition?["inputs"]?.array ?? []
           ForEach(inputs.indices, id: \.self) { i in
             let name = inputs[i]["name"]?.string ?? ""
@@ -944,7 +1035,7 @@ private struct PortsCategory: View {
     .formStyle(.grouped)
   }
 
-  /// Port purpose kept in _meta.json (also after a Draft is implemented).
+  /// Descriptions of an implemented Card's ports, kept in _meta.json.
   private func note(_ list: String, _ name: String) -> Binding<String> {
     portNote(model, list, name)
   }

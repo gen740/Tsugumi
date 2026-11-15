@@ -1,11 +1,3 @@
 {
-  "template": "draft",
-  "inputs": [
-    {
-      "name": "rmarkdown"
-    },
-    {
-      "name": "quarto"
-    }
-  ]
+  "template": "draft"
 }

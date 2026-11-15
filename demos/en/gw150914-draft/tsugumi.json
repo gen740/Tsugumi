@@ -24,27 +24,27 @@
         },
         "to": {
           "card": "load",
-          "port": "start"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "load",
-          "port": "data"
+          "port": ""
         },
         "to": {
           "card": "whiten",
-          "port": "data"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "whiten",
-          "port": "whitened"
+          "port": ""
         },
         "to": {
           "card": "chirp",
-          "port": "whitened"
+          "port": ""
         }
       }
     ]

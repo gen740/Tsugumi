@@ -250,7 +250,8 @@ class Builder {
       if (*t == "allInputs" || *t == "eachInput") s.any_mode = *t == "eachInput";
       else n.diags.push_back(diag(n.path, "invalid_setting", "trigger must be allInputs or eachInput"));
     }
-    if (const auto* ins = schema::get(d.inputs)) {
+    if (const auto* ins = schema::get(d.inputs);
+        ins && n.kind != Template::Draft) {
       std::set<std::string> seen;
       for (const auto& in : *ins) {
         const auto* name = schema::get(in.name);
@@ -509,31 +510,9 @@ class Builder {
           n.outputs = {{"out", PortKind::FlatBuffer, false, nullptr}};
           break;
         case Template::Draft:
-          // A Draft can be wired before it is implemented: its outputs are the
-          // typed ones of _outputs.fbs and the names in _meta.json (a wire drawn
-          // from the Draft adds one there), carrying an empty message until
-          // implemented.
-          load_catalog(n);
-          if (def && def->meta_json) {
-            // Provisional Draft ports remain an explicit owner decision. Ignore
-            // every other field, including malformed presentation fields.
-            schema::v::Mapping<schema::v::String, schema::Json> meta;
-            if (!schema::decode(*def->meta_json, meta))
-              for (const auto& [key, value] : meta.value()) {
-                if (key != "outputs") continue;
-                schema::v::Array<schema::Json> outputs;
-                if (schema::decode(value, outputs)) continue;
-                for (const auto& output : outputs.value()) {
-                  schema::v::Mapping<schema::v::String, schema::Json> port;
-                  if (schema::decode(output, port)) continue;
-                  for (const auto& [field, v] : port.value()) {
-                    schema::v::String name;
-                    if (field == "name" && !schema::decode(v, name) && valid_id(name.value()) && !n.output(name.value()))
-                      n.outputs.push_back({name.value(), PortKind::FlatBuffer, true, types::empty_type()});
-                  }
-                }
-              }
-          }
+          // Draft wires end on the Card itself. Neither metadata nor a schema
+          // declares ports until the Card is implemented.
+          n.input_defs.clear();
           n.exec_diags.push_back(diag(n.path, "draft", "draft cards are not implemented and cannot run"));
           break;
         case Template::Subgraph:
@@ -585,8 +564,11 @@ class Builder {
   }
 
   // Resolves an endpoint through subgraph boundaries down to a leaf node.
-  std::optional<std::pair<size_t, std::string>> leaf(CardPath path, std::string port, bool output,
-                                                     const CardPath& report_on) {
+  std::optional<std::pair<size_t, std::string>> leaf(CardPath path,
+                                                     std::string port,
+                                                     bool output,
+                                                     const CardPath& report_on,
+                                                     const std::string& wire) {
     for (int guard = 0; guard < 32; ++guard) {
       auto it = res_->index.find(path_key(path));
       if (it == res_->index.end()) return std::nullopt;
@@ -600,14 +582,17 @@ class Builder {
           if (name == port) ep = &e;
       if (!ep) {
         n.diags.push_back(diag(n.path, "unknown_port",
-                               std::string("subgraph has no boundary ") + (output ? "output " : "input ") + port));
+                               wire + ": subgraph has no boundary " +
+                                   (output ? "output " : "input ") + port));
         return std::nullopt;
       }
       path.push_back(ep->card->value());
       port = ep->port->value();
       if (!res_->index.count(path_key(path))) {
         n.diags.push_back(diag(n.path, "unknown_card",
-                               "boundary " + port + " points to unknown card " + path_key(path)));
+                               wire + ": boundary " + port +
+                                   " points to unknown card " +
+                                   path_key(path)));
         return std::nullopt;
       }
     }
@@ -631,18 +616,32 @@ class Builder {
       CardPath to = e.scope;
       from.push_back(e.from);
       to.push_back(e.to);
-      auto src = leaf(from, e.from_port, true, from);
-      auto dst = leaf(to, e.to_port, false, to);
+      const auto wire = "wire " + path_key(from) + "." + e.from_port + " -> " +
+                        path_key(to) + "." + e.to_port;
+      auto src = leaf(from, e.from_port, true, from, wire);
+      auto dst = leaf(to, e.to_port, false, to, wire);
       if (!src || !dst) continue;
       Node& sn = res_->nodes[src->first];
       Node& dn = res_->nodes[dst->first];
       bool ok = true;
-      if (!sn.output(src->second)) {
-        sn.diags.push_back(diag(sn.path, "unknown_port", "no output port " + src->second));
+      if (sn.kind == Template::Draft ? !src->second.empty()
+                                     : !sn.output(src->second)) {
+        sn.diags.push_back(
+            diag(sn.path, "unknown_port",
+                 wire + ": " +
+                     (sn.kind == Template::Draft
+                          ? "Draft output end must have an empty port"
+                          : "no output port " + src->second)));
         ok = false;
       }
-      if (!dn.input(dst->second)) {
-        dn.diags.push_back(diag(dn.path, "unknown_port", "no input port " + dst->second));
+      if (dn.kind == Template::Draft ? !dst->second.empty()
+                                     : !dn.input(dst->second)) {
+        dn.diags.push_back(
+            diag(dn.path, "unknown_port",
+                 wire + ": " +
+                     (dn.kind == Template::Draft
+                          ? "Draft input end must have an empty port"
+                          : "no input port " + dst->second)));
         ok = false;
       }
       if (ok) res_->edges.push_back({src->first, src->second, dst->first, dst->second});
@@ -655,6 +654,10 @@ class Builder {
       if (count < 2) continue;
       CardPath from = std::get<0>(k);
       from.push_back(std::get<1>(k));
+      auto source = res_->index.find(path_key(from));
+      if (source != res_->index.end() &&
+          res_->nodes[source->second].kind == Template::Draft)
+        continue;
       std::string msg = "output " + std::get<2>(k) + " has " + std::to_string(count) +
                         " wires; an output feeds one input (send a value to several Cards through a fork Card)";
       auto it = res_->index.find(path_key(from));
@@ -676,26 +679,54 @@ class Builder {
 
   void resolve_types() {
     std::set<std::pair<size_t, std::string>> mismatch_reported;
-    for (size_t pass = 0; pass <= res_->nodes.size() + 1; ++pass) {
-      bool changed = false;
-      for (const auto& e : res_->edges) {
-        auto* src = out_port(res_->nodes[e.from], e.from_port);
-        auto* dst = in_port(res_->nodes[e.to], e.to_port);
-        if (!src || !dst || !src->type) continue;
-        if (!dst->type) {
-          dst->type = src->type;
-          dst->kind = src->kind;
-          changed = true;
-        } else if (dst->type != src->type && !types::compatible(*dst->type, *src->type) &&
-                   mismatch_reported.insert({e.to, e.to_port}).second) {
-          auto& dn = res_->nodes[e.to];
-          dn.diags.push_back(diag(dn.path, "type_mismatch",
-                                  "input " + e.to_port + " receives incompatible types " +
-                                      dst->type->root_type + " and " + src->type->root_type));
+    // Resolve real producers first. Draft placeholders must neither constrain
+    // a real producer nor replace a type that can be derived without a Draft.
+    for (const bool include_drafts : {false, true}) {
+      for (size_t pass = 0; pass <= res_->nodes.size() + 1; ++pass) {
+        bool changed = false;
+        for (const auto& e : res_->edges) {
+          if (res_->nodes[e.to].kind == Template::Draft) continue;
+          const bool from_draft = res_->nodes[e.from].kind == Template::Draft;
+          if (from_draft && !include_drafts) continue;
+          types::PortType draft{"", PortKind::FlatBuffer, true,
+                                types::empty_type()};
+          auto* src =
+              from_draft ? &draft : out_port(res_->nodes[e.from], e.from_port);
+          auto* dst = in_port(res_->nodes[e.to], e.to_port);
+          if (!src || !dst || !src->type) continue;
+          const bool provisional = from_draft || provisional_outputs_.contains(
+                                                     {e.from, e.from_port});
+          if (!dst->type) {
+            dst->type = src->type;
+            dst->kind = src->kind;
+            if (provisional) provisional_inputs_.insert({e.to, e.to_port});
+            changed = true;
+          } else if (!provisional && dst->type != src->type &&
+                     !types::compatible(*dst->type, *src->type) &&
+                     mismatch_reported.insert({e.to, e.to_port}).second) {
+            auto& dn = res_->nodes[e.to];
+            dn.diags.push_back(diag(
+                dn.path, "type_mismatch",
+                "input " + e.to_port + " receives incompatible types " +
+                    dst->type->root_type + " and " + src->type->root_type));
+          }
         }
+        for (size_t i = 0; i < res_->nodes.size(); ++i) {
+          auto& n = res_->nodes[i];
+          if (!derive(n)) continue;
+          changed = true;
+          bool provisional = false;
+          for (const auto& input : n.inputs) {
+            // A Branch's output type follows value, not condition.
+            if (n.kind == Template::Branch && input.name != "value") continue;
+            provisional |= provisional_inputs_.contains({i, input.name});
+          }
+          if (provisional)
+            for (const auto& output : n.outputs)
+              provisional_outputs_.insert({i, output.name});
+        }
+        if (!changed) break;
       }
-      for (auto& n : res_->nodes) changed |= derive(n);
-      if (!changed) break;
     }
     for (auto& n : res_->nodes) {
       if (n.is_virtual) continue;
@@ -829,7 +860,8 @@ class Builder {
       }
       if (n.kind == Template::Branch) {
         const auto* c = n.input("condition");
-        if (c && c->type && !types::is_condition(*c->type))
+        if (c && c->type && !provisional_inputs_.contains({i, "condition"}) &&
+            !types::is_condition(*c->type))
           n.diags.push_back(diag(n.path, "invalid_condition",
                                  "branch condition must be a message with value:bool, got " +
                                      c->type->root_type));
@@ -1005,6 +1037,8 @@ class Builder {
   std::shared_ptr<Resolution> res_;
   std::vector<RawEdge> raw_;
   std::set<std::string> derive_failed_;
+  std::set<std::pair<size_t, std::string>> provisional_inputs_;
+  std::set<std::pair<size_t, std::string>> provisional_outputs_;
 };
 
 }  // namespace
