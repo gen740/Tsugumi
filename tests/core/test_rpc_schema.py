@@ -21,9 +21,12 @@ from tsugumi_client import RpcFailure, change, new_id, text
     '{"maxRuns":18446744073709551616}',
     '{"sandbox":true} trailing',
     '{"sandbox":null}',
+    '{"filesystem":true}',
+    '{"filesystem":false}',
 ], ids=["duplicate-field", "nested-duplicate-field", "invalid-utf8", "truncated-utf8",
         "not-a-number", "infinity", "boolean-as-string", "negative-run-limit",
-        "fractional-run-limit", "overflowing-run-limit", "trailing-text", "null-boolean"])
+        "fractional-run-limit", "overflowing-run-limit", "trailing-text", "null-boolean",
+        "removed-filesystem-on", "removed-filesystem-off"])
 def test_invalid_card_documents_are_rejected_without_a_save(client, raw):
     """Invalid card fields are rejected without changing the saved project."""
     before = client.call("ProjectInspectRequest")
@@ -81,3 +84,23 @@ def test_core_stores_opaque_layout_unchanged(client, case):
     after = client.call("ProjectInspectRequest")
     assert after.rev == before.rev + 1
     assert text(after.layoutJson) == raw
+
+
+def test_card_settings_round_trip(client):
+    """Execution settings survive a save and inspect without a filesystem switch."""
+    settings = {
+        "language": "bash", "inputs": [{"name": "data", "optional": True}],
+        "params": [{"name": "limit", "type": "double", "data": 2.5}],
+        "trigger": "eachInput", "maxRuns": 3,
+        "timeoutSeconds": 120, "buildTimeoutSeconds": 240,
+        "recordIO": True, "retainArtifact": True, "artifactOutput": "report",
+        "sandbox": True, "network": False, "reuseWorker": False,
+        "executionService": "local", "hostFolders": [],
+    }
+    before = client.call("ProjectInspectRequest")
+    saved = client.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:test",
+                        changes=[change("PutDefinition", id="work", cardJson=json.dumps(settings))])
+    assert saved.rev == before.rev + 1
+    after = client.call("ProjectInspectRequest")
+    definition = next(item for item in after.definitions if text(item.id) == "work")
+    assert json.loads(text(definition.cardJson)) == settings

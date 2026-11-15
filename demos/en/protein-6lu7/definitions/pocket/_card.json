@@ -5,7 +5,6 @@
       "name": "atoms"
     }
   ],
-  "filesystem": true,
   "params": [
     {
       "name": "cutoff",

@@ -13,7 +13,7 @@ params:
 
 R chunks read typed input messages through `params$tsugumi$inputs$data`, Card parameters through `params$tsugumi$params`, and File/Directory input paths through `params$tsugumi$paths$data`. Environment port names become lower-case keys, matching the generated templates. Integers beyond R's exact double range are strings, as in the R JSON adapter. Do not convert them to doubles if exact identity matters.
 
-The ordinary Card settings control inputs, params, execution deadlines, network and filesystem access. `default.nix` selects the entry and dependencies:
+The ordinary Card settings control inputs, params, execution deadlines, network access and sandbox isolation. `default.nix` selects the entry and dependencies:
 
 ```nix
 { pkgs, inputs, params }: {

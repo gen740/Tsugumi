@@ -178,7 +178,7 @@ def test_values_cross_r_and_julia_and_each_display_arrives(project):
                  "nix": R_NIX, "outputs": NUMBERS, "src": {"main.R": R_MAKE}},
         "double": {"card": {"language": "julia", "inputs": [{"name": "numbers"}]},
                    "nix": JULIA_NIX, "outputs": NUMBERS, "src": {"main.jl": JULIA_DOUBLE}},
-        "report": {"card": {"language": "r", "inputs": [{"name": "numbers"}], "filesystem": True,
+        "report": {"card": {"language": "r", "inputs": [{"name": "numbers"}],
                             "retainArtifact": True, "artifactOutput": "report"},
                    "nix": R_NIX, "outputs": REPORT, "src": {"main.R": R_REPORT}},
     }, [("start", "out", "make", "start"), ("make", "numbers", "double", "numbers"), ("double", "numbers", "report", "numbers")])

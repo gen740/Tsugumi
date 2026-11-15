@@ -6,6 +6,5 @@
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "archive",
-  "filesystem": true
+  "artifactOutput": "archive"
 }

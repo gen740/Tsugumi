@@ -5,7 +5,6 @@
       "name": "dataset"
     }
   ],
-  "filesystem": true,
   "retainArtifact": true,
   "artifactOutput": "subset",
   "params": [

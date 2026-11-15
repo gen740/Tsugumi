@@ -54,7 +54,6 @@ struct Settings {
   bool record_io = false;
   bool retain_artifact = false;
   std::optional<std::string> artifact_output;
-  bool filesystem = false;
   bool sandbox = true;
   bool reuse_worker = false;
   bool network = false;

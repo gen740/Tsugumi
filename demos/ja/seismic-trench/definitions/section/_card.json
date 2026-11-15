@@ -5,7 +5,6 @@
       "name": "data"
     }
   ],
-  "filesystem": true,
   "params": [
     {
       "name": "lat_min",
