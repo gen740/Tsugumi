@@ -80,3 +80,13 @@ def test_the_vm_gets_every_source_the_core_package_reads():
     missing = sorted(path for path in read
                      if not any(path == entry or path.startswith(entry + "/") for entry in shared))
     assert not missing, f"add to macOS/Container/vm-source.txt: {missing}"
+
+
+def test_the_core_test_package_gets_every_fixture_its_build_installs():
+    """tests/core/CMakeLists.txt installs fixtures from tests/fixtures; one that
+    nix/core-tests.nix does not list fails only in the Nix build."""
+    import re
+    wanted = set(re.findall(r"fixtures/([A-Za-z0-9_.-]+\.json)", (ROOT / "tests/core/CMakeLists.txt").read_text()))
+    listed = set(re.findall(r"\.\./tests/fixtures/([A-Za-z0-9_.-]+)", (ROOT / "nix/core-tests.nix").read_text()))
+    missing = sorted(wanted - listed)
+    assert not missing, f"add to nix/core-tests.nix: {missing}"
