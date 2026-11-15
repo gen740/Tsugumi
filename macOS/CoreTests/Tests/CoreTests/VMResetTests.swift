@@ -1,10 +1,11 @@
 import Foundation
 import XCTest
+import TsugumiTestSupport
 @testable import TsugumiLauncher
 
 final class VMResetTests: XCTestCase {
   func testAppliesTheHostsKeepListAndReportsActualEntries() throws {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let directory = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     for name in ["history.img", "store.img", ".lock", "operator-chosen.img"] {
@@ -19,7 +20,7 @@ final class VMResetTests: XCTestCase {
   }
 
   func testDiscardFlagAndEmptyKeepListAreAppliedLiterally() throws {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let directory = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
     defer { try? FileManager.default.removeItem(at: directory) }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     try Data("history".utf8).write(to: directory.appendingPathComponent("history.img"))
@@ -32,7 +33,7 @@ final class VMResetTests: XCTestCase {
   }
 
   func testMissingDirectoryHasNothingToReport() throws {
-    let report = try VMReset.apply(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), keepFiles: [], discardOtherFiles: true)
+    let report = try VMReset.apply(directory: testTemporaryDirectory.appendingPathComponent(UUID().uuidString), keepFiles: [], discardOtherFiles: true)
     XCTAssertTrue(report.kept.isEmpty)
     XCTAssertTrue(report.discarded.isEmpty)
   }

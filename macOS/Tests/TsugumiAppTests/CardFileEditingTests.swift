@@ -3,6 +3,7 @@ import Testing
 import TsugumiAgentClient
 import TsugumiLauncher
 import TsugumiRPC
+import TsugumiTestSupport
 @testable import TsugumiApp
 
 @MainActor @Suite(.hostService) struct CardFileEditingTests {
@@ -10,8 +11,9 @@ import TsugumiRPC
 
   @Test func copyReadsCheckContentAcrossUnrelatedSaves() async throws {
     let dir = try SyncTests.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let daemon = try SyncTests.Daemon(project: dir)
-    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { daemon.stop() }
     let client = RPCClient(endpoint: daemon.endpoint.url)
     _ = try await client.connect(token: daemon.endpoint.token, clientId: UUID(), expectedProjectId: nil)
     let source = "definitions/a/data.bin"
@@ -45,8 +47,9 @@ import TsugumiRPC
   // Use the same real-project/daemon setup as the neighbouring SyncTests.
   @Test func failedReadAbortsConversionAndDuplicationWithoutAnyEdits() async throws {
     let dir = try SyncTests.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let daemon = try SyncTests.Daemon(project: dir)
-    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { daemon.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = daemon.endpoint
     s.start()
@@ -64,8 +67,9 @@ import TsugumiRPC
 
   @Test func copiedBytesSurviveSaveUndoAndImmediateRedo() async throws {
     let dir = try SyncTests.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let daemon = try SyncTests.Daemon(project: dir)
-    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { daemon.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = daemon.endpoint
     s.start()
@@ -85,9 +89,9 @@ import TsugumiRPC
   }
 
   @Test func conversionAndCopiesKeepBinaryFilesAndNestedDocuments() async throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("card-files-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let dir = testTemporaryDirectory.appendingPathComponent("card-files-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: dir) }
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let document = #"{"name":"test","pkgsPath":"https://example.test/pinned#sha256-pin","nixSources":[{"name":"science","type":"flake","ref":"github:org/science/revision?narHash=sha256-pin","overrides":{"tool":{"override":{"flag":true}}}}],"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}}"#
     try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
     for id in ["a", "b"] {

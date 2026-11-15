@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TsugumiTestSupport
 @testable import TsugumiApp
 @testable import TsugumiLauncher
 
@@ -39,16 +40,16 @@ private func release(tag: String, draft: Bool = false, prerelease: Bool = false,
   #expect(UpdateCheck.checksum(in: h, for: "Tsugumi.zip") == h)
   #expect(UpdateCheck.checksum(in: "\(h)  Other.zip", for: "Tsugumi.zip") == nil)
   #expect(UpdateCheck.checksum(in: "abc  Tsugumi.zip", for: "Tsugumi.zip") == nil)
-  let file = FileManager.default.temporaryDirectory.appendingPathComponent("tsugumi-sha-\(UUID().uuidString)")
-  try Data("abc".utf8).write(to: file)
+  let file = testTemporaryDirectory.appendingPathComponent("tsugumi-sha-\(UUID().uuidString)")
   defer { try? FileManager.default.removeItem(at: file) }
+  try Data("abc".utf8).write(to: file)
   #expect(try UpdateCheck.sha256(of: file) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
 }
 
 @Test func onlyTheReleaseOfTheSameAppAndVersionIsInstalled() throws {
-  let app = FileManager.default.temporaryDirectory.appendingPathComponent("tsugumi-update-\(UUID().uuidString)/Tsugumi.app")
-  try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents"), withIntermediateDirectories: true)
+  let app = testTemporaryDirectory.appendingPathComponent("tsugumi-update-\(UUID().uuidString)/Tsugumi.app")
   defer { try? FileManager.default.removeItem(at: app.deletingLastPathComponent()) }
+  try FileManager.default.createDirectory(at: app.appendingPathComponent("Contents"), withIntermediateDirectories: true)
   func write(_ info: [String: String]) throws {
     try (info as NSDictionary).write(to: app.appendingPathComponent("Contents/Info.plist"))
   }

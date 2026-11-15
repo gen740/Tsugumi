@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+import TsugumiTestSupport
 @testable import TsugumiApp
 @testable import TsugumiLauncher
 @testable import TsugumiRPC
@@ -22,12 +23,13 @@ import Testing
   }
 
   @Test func untangleAndArrangePreserveConnectionsAndUndoInOneStep() async throws {
-    let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("untangle-\(UUID().uuidString)")
+    let dir = testTemporaryDirectory.appendingPathComponent("untangle-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: dir) }
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let document = #"{"name":"untangle","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}}"#
     try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
     let daemon = try SyncTests.Daemon(project: dir)
-    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { daemon.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = daemon.endpoint
     s.start()
