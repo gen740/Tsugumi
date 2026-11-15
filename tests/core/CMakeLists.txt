@@ -178,8 +178,9 @@ target_link_libraries(tsugumi_native_contract_tests PRIVATE tsugumi_worker_proto
   flatbuffers::flatbuffers GTest::gtest_main Threads::Threads ${CMAKE_DL_LIBS})
 gtest_discover_tests(tsugumi_native_contract_tests TEST_PREFIX "native_contract." DISCOVERY_MODE PRE_TEST)
 
-add_executable(tsugumi_execution_service_tests execution_service_test.cc doubles/nix_eval.cc)
+add_executable(tsugumi_execution_service_tests execution_service_test.cc worker_execution_test.cc doubles/nix_eval.cc)
 target_include_directories(tsugumi_execution_service_tests PRIVATE ${_core_headers})
+target_compile_options(tsugumi_execution_service_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
 target_link_libraries(tsugumi_execution_service_tests PRIVATE tsugumi_core GTest::gtest_main)
 target_compile_definitions(tsugumi_execution_service_tests PRIVATE
   TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
