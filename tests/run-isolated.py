@@ -106,7 +106,20 @@ def stop_services(root, group=None):
     raise RuntimeError(f'Test services did not stop: {sorted(pending)}')
 
 
+def detach_mounts(root):
+    # Xcode attaches a downloaded toolchain image under the private HOME
+    # (Library/Developer/DVTDownloads/.../mounts): a read-only volume that
+    # cannot be removed as files.
+    if sys.platform != 'darwin':
+        return
+    listing = subprocess.run(['/sbin/mount'], capture_output=True, text=True).stdout
+    points = [line.split(' on ', 1)[1].rsplit(' (', 1)[0] for line in listing.splitlines() if ' on ' in line]
+    for point in sorted((p for p in points if Path(p).is_relative_to(root)), key=len, reverse=True):
+        subprocess.run(['/usr/bin/hdiutil', 'detach', point, '-force'], capture_output=True)
+
+
 def remove_private_tree(root):
+    detach_mounts(root)
     def retry(function, path, error):
         if isinstance(error[1], FileNotFoundError):
             return
