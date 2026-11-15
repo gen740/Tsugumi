@@ -25,6 +25,18 @@
 
 namespace tsugumi::host {
 namespace H = Tsugumi::Host;
+namespace {
+auto TerminalAccount() -> NativeTerminals::Account {
+  passwd user{};
+  passwd* found = nullptr;
+  std::vector<char> buffer(16384);
+  if (::getpwuid_r(::getuid(), &user, buffer.data(), buffer.size(), &found) ||
+      !found)
+    throw std::runtime_error("Cannot determine the terminal account");
+  return {user.pw_dir, user.pw_name,
+          user.pw_shell[0] ? user.pw_shell : "/bin/bash"};
+}
+}  // namespace
 struct NativeTerminals::Impl {
   struct Session {
     int fd = -1;
@@ -46,14 +58,17 @@ struct NativeTerminals::Impl {
     }
   };
   Output output;
+  AccountLookup account;
   std::mutex mutex;
   std::map<uint64_t, std::shared_ptr<Session>> sessions;
   uint64_t next = 0;
   bool stopping = false;
-  explicit Impl(Output value) : output(std::move(value)) {}
+  Impl(Output value, AccountLookup lookup)
+      : output(std::move(value)),
+        account(lookup ? std::move(lookup) : TerminalAccount) {}
 };
-NativeTerminals::NativeTerminals(Output output)
-    : impl_(std::make_unique<Impl>(std::move(output))) {}
+NativeTerminals::NativeTerminals(Output output, AccountLookup account)
+    : impl_(std::make_unique<Impl>(std::move(output), std::move(account))) {}
 NativeTerminals::~NativeTerminals() { Shutdown(); }
 auto NativeTerminals::Shutdown() -> void {
   std::map<uint64_t, std::shared_ptr<Impl::Session>> sessions;
@@ -98,18 +113,13 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
     ::fcntl(slave, F_SETFD, FD_CLOEXEC);
     // Only terminal identity crosses into the shell; no service credentials,
     // provider keys, execution capabilities or arbitrary host environment.
-    passwd user{};
-    passwd* found = nullptr;
-    std::vector<char> buffer(16384);
-    if (::getpwuid_r(::getuid(), &user, buffer.data(), buffer.size(), &found) ||
-        !found)
-      throw std::runtime_error("Cannot determine the terminal account");
-    const std::string home = user.pw_dir;
+    const auto user = s.account();
+    const auto& home = user.home;
     std::vector<std::string> values = {
         "HOME=" + home,
-        "USER=" + std::string(user.pw_name),
-        "LOGNAME=" + std::string(user.pw_name),
-        "SHELL=" + std::string(user.pw_shell[0] ? user.pw_shell : "/bin/bash"),
+        "USER=" + user.name,
+        "LOGNAME=" + user.name,
+        "SHELL=" + user.shell,
         "TMPDIR=/tmp",
         "LANG=C.UTF-8",
         "PATH=" + home +
@@ -121,12 +131,9 @@ auto NativeTerminals::Handle(const H::HostTerminalRequestT& request)
     std::vector<char*> environment;
     for (auto& value : values) environment.push_back(value.data());
     environment.push_back(nullptr);
-    const char* shell = "/bin/bash";
-    // Skip login profiles and interactive rc files: they can rewrite or extend
-    // the explicit environment even though execve inherits nothing.
-    char* const args[] = {
-        const_cast<char*>(shell), const_cast<char*>("--noprofile"),
-        const_cast<char*>("--norc"), const_cast<char*>("-i"), nullptr};
+    const char* shell = user.shell.c_str();
+    char* const args[] = {const_cast<char*>(shell), const_cast<char*>("-l"),
+                          nullptr};
     const auto pid = ::fork();
     if (pid == 0) {
       ::setsid();

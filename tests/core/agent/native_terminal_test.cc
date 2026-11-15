@@ -1,8 +1,6 @@
 #include "host/native_terminal.hh"
 
 #include <gtest/gtest.h>
-#include <pwd.h>
-#include <unistd.h>
 
 #include <chrono>
 #include <condition_variable>
@@ -18,16 +16,33 @@ namespace tsugumi::test {
 namespace H = Tsugumi::Host;
 TEST(NativeTerminalTest, HostOwnsPtyInputResizeCloseAndStripsSecrets) {
   TemporaryDirectory directory;
+  const auto home = directory.path / "empty home";
+  std::filesystem::create_directory(home);
+  const auto shell = directory.path / "login-shell";
+  // Capture the environment at the exec boundary, before system profiles can
+  // rewrite it. This account shell then starts a normal Bash login session.
+  Write(shell,
+        "#!/bin/bash\n"
+        "printf '\\0PASSED\\0'\n"
+        "for name in $(compgen -e); do "
+        "printf '%s=%s\\0' \"$name\" \"${!name}\"; done\n"
+        "printf '\\0END\\0'\n"
+        "exec /bin/bash \"$@\"\n");
+  std::filesystem::permissions(shell, std::filesystem::perms::owner_all);
+  const host::NativeTerminals::Account account{home.string(), "terminal-user",
+                                               shell.string()};
   std::mutex mutex;
   std::condition_variable changed;
   std::string output;
   bool closed = false;
-  host::NativeTerminals service([&](const H::HostTerminalDataT& event) {
-    std::lock_guard lock(mutex);
-    output.append(event.data.begin(), event.data.end());
-    closed |= event.closed;
-    changed.notify_all();
-  });
+  host::NativeTerminals service(
+      [&](const H::HostTerminalDataT& event) {
+        std::lock_guard lock(mutex);
+        output.append(event.data.begin(), event.data.end());
+        closed |= event.closed;
+        changed.notify_all();
+      },
+      [account] { return account; });
   const std::vector<std::string> names = {
       "HOME",
       "USER",
@@ -65,14 +80,6 @@ TEST(NativeTerminalTest, HostOwnsPtyInputResizeCloseAndStripsSecrets) {
       }
     }
   } restore{names, previous};
-  passwd user{};
-  passwd* found = nullptr;
-  std::vector<char> buffer(16384);
-  ASSERT_EQ(
-      ::getpwuid_r(::getuid(), &user, buffer.data(), buffer.size(), &found), 0);
-  ASSERT_NE(found, nullptr);
-  const std::string home = user.pw_dir;
-  const std::string username = user.pw_name;
   // Exercise spaces, '=' in values and the /tmp alias used on macOS.
   const auto project = directory.path / "terminal project=1";
   std::filesystem::create_directory(project);
@@ -90,7 +97,9 @@ TEST(NativeTerminalTest, HostOwnsPtyInputResizeCloseAndStripsSecrets) {
       "unset HISTFILE; printf '\\0BEGIN\\0'; "
       "for name in $(compgen -e); do "
       "printf '%s=%s\\0' \"$name\" \"${!name}\"; done; "
-      "printf 'size=%s\\0' \"$(stty size)\"; printf '\\0END\\0'; exit\n";
+      "printf 'size=%s\\0' \"$(stty size)\"; "
+      "shopt -q login_shell; printf 'login=%s\\0' \"$?\"; "
+      "printf '\\0END\\0'; exit\n";
   request.data.assign(command.begin(), command.end());
   service.Handle(request);
   {
@@ -100,46 +109,84 @@ TEST(NativeTerminalTest, HostOwnsPtyInputResizeCloseAndStripsSecrets) {
     EXPECT_EQ(output.find("MUST_NOT_CROSS"), output.npos);
     // Actual NUL bytes distinguish command output from echoed/readline-wrapped
     // input and prompts, even in a narrow PTY. Split only at the first '='.
-    const auto begin = output.find(std::string("\0BEGIN\0", 7));
-    ASSERT_NE(begin, output.npos);
-    const auto end = output.find(std::string("\0END\0", 5), begin + 7);
-    ASSERT_NE(end, output.npos);
-    std::istringstream records(output.substr(begin + 7, end - begin - 7));
-    std::map<std::string, std::string> actual;
-    std::string record;
-    while (std::getline(records, record, '\0')) {
-      const auto separator = record.find('=');
-      ASSERT_NE(separator, record.npos) << record;
-      const auto inserted = actual
-                                .emplace(record.substr(0, separator),
-                                         record.substr(separator + 1))
-                                .second;
-      EXPECT_TRUE(inserted) << record;
-    }
+    const auto read_environment = [&](const std::string& marker) {
+      std::map<std::string, std::string> result;
+      const auto begin = output.find(marker);
+      EXPECT_NE(begin, output.npos);
+      if (begin == output.npos) return result;
+      const auto end =
+          output.find(std::string("\0END\0", 5), begin + marker.size());
+      EXPECT_NE(end, output.npos);
+      if (end == output.npos) return result;
+      std::istringstream records(
+          output.substr(begin + marker.size(), end - begin - marker.size()));
+      std::string record;
+      while (std::getline(records, record, '\0')) {
+        const auto separator = record.find('=');
+        EXPECT_NE(separator, record.npos) << record;
+        if (separator == record.npos) continue;
+        EXPECT_TRUE(result
+                        .emplace(record.substr(0, separator),
+                                 record.substr(separator + 1))
+                        .second)
+            << record;
+      }
+      return result;
+    };
+    auto passed = read_environment(std::string("\0PASSED\0", 8));
+    auto actual = read_environment(std::string("\0BEGIN\0", 7));
     std::map<std::string, std::string> expected = {
-        {"HOME", home},
-        {"USER", username},
-        {"LOGNAME", username},
-        {"SHELL", user.pw_shell[0] ? user.pw_shell : "/bin/bash"},
+        {"HOME", home.string()},
+        {"USER", account.name},
+        {"LOGNAME", account.name},
+        {"SHELL", shell.string()},
         {"TMPDIR", "/tmp"},
         {"LANG", "C.UTF-8"},
-        {"PATH",
-         home + "/.nix-profile/bin:/nix/var/nix/profiles/default/bin:"
-                "/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin"},
         {"TERM", "xterm-256color"},
         {"COLORTERM", "truecolor"},
         {"TSUGUMI_PROJECT", project.string()},
-        // Bash itself exports these; they are not inherited from agentd.
-        {"PWD", project.string()},
-        {"SHLVL", "1"},
-        {"size", "31 23"}};
-    for (const auto* name : {"HOME", "TMPDIR", "TSUGUMI_PROJECT", "PWD"}) {
-      ASSERT_TRUE(actual.contains(name)) << name;
-      actual.at(name) = std::filesystem::canonical(actual.at(name)).string();
+        {"PWD", project.string()}};
+    for (const auto* name :
+         {"HOME", "SHELL", "TMPDIR", "TSUGUMI_PROJECT", "PWD"}) {
+      ASSERT_TRUE(passed.contains(name)) << name;
+      passed.at(name) = std::filesystem::canonical(passed.at(name)).string();
       expected.at(name) =
           std::filesystem::canonical(expected.at(name)).string();
     }
-    EXPECT_EQ(actual, expected);
+    for (const auto& [name, value] : expected) {
+      ASSERT_TRUE(passed.contains(name)) << name;
+      EXPECT_EQ(passed.at(name), value) << name;
+    }
+    // Check the host's PATH in order; extra entries are allowed. Profiles may
+    // extend or reorder PATH later (for example macOS path_helper).
+    ASSERT_TRUE(passed.contains("PATH"));
+    std::istringstream paths(passed.at("PATH"));
+    const std::vector<std::string> expected_paths = {
+        (home / ".nix-profile/bin").string(),
+        "/nix/var/nix/profiles/default/bin",
+        "/run/current-system/sw/bin",
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin"};
+    auto next = expected_paths.begin();
+    std::string path;
+    while (std::getline(paths, path, ':') && next != expected_paths.end()) {
+      if (std::filesystem::weakly_canonical(path) ==
+          std::filesystem::weakly_canonical(*next))
+        ++next;
+    }
+    EXPECT_EQ(next, expected_paths.end());
+    // System profiles may export more variables. Only the poisoned host values
+    // must be absent, both at exec and after normal login startup files ran.
+    for (const auto* environment : {&passed, &actual}) {
+      for (const auto& [name, value] : *environment)
+        EXPECT_EQ(value.find("MUST_NOT_CROSS"), value.npos) << name;
+    }
+    ASSERT_TRUE(actual.contains("size"));
+    EXPECT_EQ(actual.at("size"), "31 23");
+    ASSERT_TRUE(actual.contains("login"));
+    EXPECT_EQ(actual.at("login"), "0");
   }
   request.action = H::TerminalAction::Close;
   EXPECT_NO_THROW(service.Handle(request));
