@@ -81,6 +81,7 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -132,9 +133,17 @@ std::vector<std::string> split(const std::string& s) {
 bool write_file(const std::string& path, const std::string& text) {
   int fd = ::open(path.c_str(), O_WRONLY | O_CLOEXEC);
   if (fd < 0) return false;
-  bool ok = ::write(fd, text.data(), text.size()) == static_cast<ssize_t>(text.size());
+  ssize_t count;
+  do { count = ::write(fd, text.data(), text.size()); } while (count < 0 && errno == EINTR);
+  bool ok = count == static_cast<ssize_t>(text.size());
+  const int error = count < 0 ? errno : EIO;
   ::close(fd);
+  if (!ok) errno = error;
   return ok;
+}
+
+auto system_error(const char* operation, const std::string& path) -> std::string {
+  return std::string("error ") + operation + " " + path + ": " + std::strerror(errno);
 }
 
 std::string read_line(int fd) {
@@ -150,7 +159,18 @@ std::string read_line(int fd) {
 
 void reply(int fd, const std::string& text) {
   std::string line = text + "\n";
-  (void)!::write(fd, line.data(), line.size());
+  size_t offset = 0;
+  while (offset < line.size()) {
+    const auto count = ::write(fd, line.data() + offset, line.size() - offset);
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) {
+      // A disconnected caller cannot receive another error reply. The request
+      // has already run; report the transport failure on the VM console.
+      logf("cannot write reply: %s", std::strerror(count < 0 ? errno : EIO));
+      return;
+    }
+    offset += static_cast<size_t>(count);
+  }
 }
 
 // ---- projects ----
@@ -242,7 +262,7 @@ const std::string kRoots = "/nix/var/nix/gcroots/tsugumi/projects";
 // Only malformed entries go. A build result may be a computation someone kept.
 void prepare_project_roots() {
   fs::create_directories(kRoots);
-  ::chown(kRoots.c_str(), 0, 0);
+  if (::chown(kRoots.c_str(), 0, 0) != 0) throw std::runtime_error(system_error("chown", kRoots));
   ::chmod(kRoots.c_str(), 0755);
   std::error_code ec;
   for (const auto& e : fs::directory_iterator(kRoots, ec)) {
@@ -410,10 +430,10 @@ int project_main(void* arg) {
   if (::mount("binfmt_misc", "/proc/sys/fs/binfmt_misc", "binfmt_misc", MS_NOSUID | MS_NODEV | MS_NOEXEC | MS_RDONLY,
               nullptr) != 0)
     ::dprintf(2, "vmd child: binfmt_misc: %s\n", std::strerror(errno));
-  ::sethostname(a->name.c_str(), a->name.size());
-  ::chown("/tmp/home", a->uid, a->uid);
+  if (::sethostname(a->name.c_str(), a->name.size()) != 0) die("sethostname");
+  if (::chown("/tmp/home", a->uid, a->uid) != 0) die("chown /tmp/home");
   drop_to(a->uid);
-  ::chdir("/project");
+  if (::chdir("/project") != 0) die("chdir /project");
   ::execve(a->av[0], a->av.data(), a->ev.data());
   die("exec tsugumid");
   return 127;
@@ -467,7 +487,7 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
   }
   ::mkdir(roots.c_str(), 0755);
   if (::lstat(roots.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode)) return "error cannot create the build root folder";
-  ::lchown(roots.c_str(), pr.uid, pr.uid);
+  if (::lchown(roots.c_str(), pr.uid, pr.uid) != 0) return system_error("lchown", roots);
   ::chmod(roots.c_str(), 0755);
   ::utimensat(AT_FDCWD, roots.c_str(), nullptr, AT_SYMLINK_NOFOLLOW);  // last use, shown in settings
   fs::create_directories(kScratch);
@@ -479,12 +499,12 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
   }
   ::mkdir(scratch.c_str(), 0700);
   if (::lstat(scratch.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode)) return "error cannot create run scratch";
-  ::lchown(scratch.c_str(), pr.uid, pr.uid);
+  if (::lchown(scratch.c_str(), pr.uid, pr.uid) != 0) return system_error("lchown", scratch);
   ::chmod(scratch.c_str(), 0700);
   // Run history on its own disk, readable by this project only; kept until
   // the project's data is deleted (never by age).
   std::string hist = history_dir(id);
-  ::chown(kHistory.c_str(), 0, 0);
+  if (::chown(kHistory.c_str(), 0, 0) != 0) return system_error("chown", kHistory);
   ::chmod(kHistory.c_str(), 0700);
   if (::lstat(hist.c_str(), &rst) == 0 && !S_ISDIR(rst.st_mode)) {
     std::error_code ec;
@@ -492,7 +512,7 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
   }
   ::mkdir(hist.c_str(), 0700);
   if (::lstat(hist.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode)) return "error cannot create the run history folder";
-  ::lchown(hist.c_str(), pr.uid, pr.uid);
+  if (::lchown(hist.c_str(), pr.uid, pr.uid) != 0) return system_error("lchown", hist);
   ::chmod(hist.c_str(), 0700);
   // The folder of tsugumid's socket: nothing of the project listens on the
   // VM's loopback (Cards allowed the network share it), and other projects'
@@ -506,7 +526,7 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
   }
   ::mkdir(rpc.c_str(), 0700);
   if (::lstat(rpc.c_str(), &rst) != 0 || !S_ISDIR(rst.st_mode)) return "error cannot create the rpc folder";
-  ::lchown(rpc.c_str(), pr.uid, pr.uid);
+  if (::lchown(rpc.c_str(), pr.uid, pr.uid) != 0) return system_error("lchown", rpc);
   ::chmod(rpc.c_str(), 0700);
   std::string cg = cgroup_dir(id);
   fs::create_directories(cg);
@@ -553,8 +573,23 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
     ::close(sync[1]);
     return std::string("error clone: ") + std::strerror(errno);
   }
-  write_file(cg + "/cgroup.procs", std::to_string(pid));
-  (void)!::write(sync[1], "x", 1);
+  if (!write_file(cg + "/cgroup.procs", std::to_string(pid))) {
+    const auto error = system_error("write", cg + "/cgroup.procs");
+    // The child inherited both pipe ends, so closing ours alone cannot wake
+    // its read. Stop it without releasing it into an unconfigured cgroup.
+    ::kill(pid, SIGKILL);
+    ::close(sync[1]);
+    return error;
+  }
+  ssize_t count;
+  do { count = ::write(sync[1], "x", 1); } while (count < 0 && errno == EINTR);
+  if (count != 1) {
+    if (count == 0) errno = EIO;
+    const auto error = system_error("write cgroup release pipe for", id);
+    ::kill(pid, SIGKILL);
+    ::close(sync[1]);
+    return error;
+  }
   ::close(sync[1]);
   pr.pid = pid;
   pr.running = true;
@@ -725,10 +760,15 @@ void shell(int conn, const std::string& id, int rows, int cols) {
     for (int fd : nsfd)
       if (::setns(fd, 0) != 0) die("setns");
     // Into the project's cgroup, so stopping the project ends its terminals too.
-    if (int fd = ::open(procs.c_str(), O_WRONLY | O_CLOEXEC); fd >= 0) {
-      (void)!::write(fd, "0", 1);
-      ::close(fd);
+    int fd = ::open(procs.c_str(), O_WRONLY | O_CLOEXEC);
+    if (fd < 0) die(procs.c_str());
+    ssize_t count;
+    do { count = ::write(fd, "0", 1); } while (count < 0 && errno == EINTR);
+    if (count != 1) {
+      if (count == 0) errno = EIO;
+      die(procs.c_str());
     }
+    ::close(fd);
     pid_t inner = ::fork();
     if (inner != 0) {
       int st = 0;
@@ -742,7 +782,7 @@ void shell(int conn, const std::string& id, int rows, int cols) {
     ::dup2(slave, 2);
     if (slave > 2) ::close(slave);
     drop_to(uid);
-    ::chdir("/project");
+    if (::chdir("/project") != 0) die("chdir /project");
     ::execve(av[0], av.data(), ev.data());
     die("exec bash");
   }

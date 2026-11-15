@@ -300,12 +300,12 @@ struct WritingPanel: View {
 
   /// Points at scale 1: scaled with the canvas only as far as stays readable
   /// (the bubble beside it does not scale at all).
-  static let size = CGSize(width: 300, height: 112)
+  nonisolated static let size = CGSize(width: 300, height: 112)
   static let minimumZoom = 0.5
   /// Not when the Agent is hidden, and not where its lines would be too small to read.
   static func shows(avatar: AgentAvatar, zoom: Double) -> Bool { avatar != .none && zoom >= minimumZoom }
-  static let gap: CGFloat = 8
-  static let lines = 5
+  nonisolated static let gap: CGFloat = 8
+  nonisolated static let lines = 5
   /// The window's bars float over the canvas here.
   static let margins = NSEdgeInsets(top: 52, left: 12, bottom: 48, right: 12)
 

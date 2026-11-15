@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import TsugumiKeychainUI
 import TsugumiRPC
 
 /// A page a web search found or a reply cites.
@@ -242,8 +243,8 @@ final class KeychainStore {
     guard mayAsk == 0 else { return nil }
     var out: CFTypeRef?
     let status = run("SecItemCopyMatching(without asking)") {
-      SecKeychainSetUserInteractionAllowed(false)
-      defer { SecKeychainSetUserInteractionAllowed(true) }
+      TsugumiSetKeychainInteractionAllowed(false)
+      defer { TsugumiSetKeychainInteractionAllowed(true) }
       return SecItemCopyMatching(q as CFDictionary, &out)
     }
     guard status == errSecSuccess, let d = out as? Data else { return nil }

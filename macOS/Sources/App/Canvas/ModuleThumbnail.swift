@@ -356,8 +356,11 @@ final class ModuleThumbnails {
     release = Task {
       try? await Task.sleep(for: .seconds(20))
       if !Task.isCancelled, !working {
-        web?.evaluateJavaScript("document.querySelector('iframe')?.remove()", completionHandler: nil)
+        // Retire this view before suspending: a new job must not reuse a view
+        // whose iframe is being removed by the asynchronous teardown.
+        let retiring = web
         web = nil
+        _ = try? await retiring?.evaluateJavaScript("document.querySelector('iframe')?.remove()")
       }
     }
   }

@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 
@@ -76,25 +77,22 @@ pid_t spawn(const Spec& spec) {
     for (int fd = 3; fd < (max > 0 ? max : 65536); ++fd)
       if (!keep(fd)) ::close(fd);
 #endif
-    if (!spec.cwd.empty() && ::chdir(spec.cwd.c_str()) != 0) {
-      int e = errno;
-      (void)::write(err_pipe[1], &e, sizeof e);
+    auto fail = [&](const char* operation, const char* path) {
+      const int error = errno;
+      ::dprintf(STDERR_FILENO, "%s %s: %s\n", operation, path, std::strerror(error));
+      ssize_t count;
+      do { count = ::write(err_pipe[1], &error, sizeof error); } while (count < 0 && errno == EINTR);
+      // The child must exit even if the parent can no longer receive errno.
+      if (count != sizeof error)
+        ::dprintf(STDERR_FILENO, "cannot report child setup error: %s\n",
+                  std::strerror(count < 0 ? errno : EIO));
       ::_exit(127);
-    }
-    if (spec.gid && ::setgid(*spec.gid) != 0) {
-      int e = errno;
-      (void)::write(err_pipe[1], &e, sizeof e);
-      ::_exit(127);
-    }
-    if (spec.uid && ::setuid(*spec.uid) != 0) {
-      int e = errno;
-      (void)::write(err_pipe[1], &e, sizeof e);
-      ::_exit(127);
-    }
+    };
+    if (!spec.cwd.empty() && ::chdir(spec.cwd.c_str()) != 0) fail("chdir", spec.cwd.c_str());
+    if (spec.gid && ::setgid(*spec.gid) != 0) fail("setgid", "");
+    if (spec.uid && ::setuid(*spec.uid) != 0) fail("setuid", "");
     ::execve(argv[0], argv.data(), envp.data());
-    int e = errno;
-    (void)::write(err_pipe[1], &e, sizeof e);
-    ::_exit(127);
+    fail("execve", argv[0]);
   }
   ::close(err_pipe[1]);
   ::setpgid(pid, pid);
