@@ -5,6 +5,7 @@
 
 #include "host/comments.hh"
 #include "host/document_edits.hh"
+#include "host/failure.hh"
 #include "host/layout_saving.hh"
 #include "util/crypto.hh"
 
@@ -102,6 +103,20 @@ auto CaptureSaveBase(const json::Members& snapshot, const SaveRead& read)
     base.files[path] = std::move(text);
   }
   return base;
+}
+
+auto InspectForSave(const SaveRead& read) -> SaveInspection {
+  for (int attempt = 0; attempt < 8; ++attempt) {
+    try {
+      auto snapshot = read("project_inspect", {});
+      auto base = CaptureSaveBase(snapshot, read);
+      return {std::move(snapshot), std::move(base)};
+    } catch (const Failure& error) {
+      if (error.code != "revision_conflict") throw;
+    }
+  }
+  throw Failure("revision_conflict",
+                "Project kept changing during inspection; inspect again");
 }
 
 auto AdvanceSaveBase(const SaveBase& base, const json::Members& result,

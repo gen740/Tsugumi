@@ -149,6 +149,7 @@ endif()
 # Storage, Skill reads, environment adapters and thought timing need no sockets.
 add_executable(tsugumi_host_settings_tests agent/store_test.cc host/components_test.cc host/state_format_test.cc host/service_contract_test.cc agent/document_edits_test.cc agent/version_text_test.cc agent/format_test.cc agent/catalog_test.cc agent/attached_folder_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc host/layout_test.cc host/layout_service_test.cc agent_fixture_server.cc agent/helper_scope_test.cc agent/native_terminal_test.cc agent/native_environment_test.cc agent/project_files_test.cc)
 target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
+target_sources(tsugumi_host_settings_tests PRIVATE host/save_inspection_test.cc)
 target_compile_definitions(tsugumi_host_settings_tests PRIVATE
   TSUGUMI_SERVICE_FIXTURES="${_test_guide_root}/tests/fixtures/service-contract.json"
   TSUGUMI_SUBGRAPH_FIXTURES="${_test_guide_root}/tests/fixtures/subgraph-edits.json"
