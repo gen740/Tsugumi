@@ -111,12 +111,9 @@ TEST(DocumentConnect, SecondWireInsertsForkAndLaterWiresExtendIt) {
   EXPECT_EQ(ConnectionWires(second.state_json),
             (std::set<std::string>{"start.out>fork.in", "fork.a>a.in",
                                    "fork.b>b.in"}));
-  const auto pos = json::Object(
-      json::Object(json::Object(json::Object(second.state_json).at("layout"))
-                       .at("cards"))
-          .at("fork"));
-  EXPECT_DOUBLE_EQ(std::stod(pos.at("x")), 300);
-  EXPECT_DOUBLE_EQ(std::stod(pos.at("y")), 60);
+  // Every newly inserted Card follows the host's missing-place rule on save.
+  EXPECT_EQ(json::Object(second.state_json).at("layout"),
+            json::Object(state).at("layout"));
   const auto third =
       ConnectDocuments(second.state_json, "start", "out", "c", "in", "");
   EXPECT_FALSE(third.needs_fork);

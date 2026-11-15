@@ -620,6 +620,8 @@ final class ProjectSession {
     Task { [weak self] in await self?.connect(archiveIncompatibleHistory: true) }
   }
 
+  var displayGeometries: Tsugumi_Host_DisplayGeometriesT?
+
   private func connect(archiveIncompatibleHistory: Bool = false, endpoint: Endpoint? = nil) async {
     guard !closed else { return }
     connectionMessage = nil
@@ -633,6 +635,8 @@ final class ProjectSession {
       try Task.checkCancellation()
       let c = try await reach(ep)
       if Task.isCancelled || closed { await c.close(); return }
+      displayGeometries = try await CoreHostClient.shared.layoutCall(
+        .displaygeometryrequest, Tsugumi_Host_DisplayGeometryRequestT())
       let opened = try await c.open(viewId: viewId)
       if Task.isCancelled || closed { await c.close(); return }
       client = c

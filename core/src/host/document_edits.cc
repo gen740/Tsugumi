@@ -1,7 +1,6 @@
 #include "host/document_edits.hh"
 
 #include <algorithm>
-#include <iomanip>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -120,9 +119,9 @@ auto Merge(const Value &base, const Value &ours, const Value &theirs,
     return theirs;
   if (Equal(theirs, base) || Equal(theirs, ours))
     return ours;
-  if (base && ours && theirs && base->starts_with('{') &&
+  if ((!base || base->starts_with('{')) && ours && theirs &&
       ours->starts_with('{') && theirs->starts_with('{')) {
-    const auto b = json::Object(*base), o = json::Object(*ours),
+    const auto b = json::Object(base.value_or("{}")), o = json::Object(*ours),
                t = json::Object(*theirs);
     auto order = OrderedMembers(*theirs);
     for (const auto &entry : OrderedMembers(*ours))
@@ -529,33 +528,6 @@ auto ConnectDocuments(const std::string &state, const std::string &from_card,
       fork["card"] = json::Encode(fork_card);
       fork["meta"] = R"({"name":"fork"})";
       definitions[fork_id] = json::Encode(fork);
-      auto layout = json::Object(json::Get(scope, "layout", "{}"));
-      auto places = json::Object(json::Get(layout, "cards", "{}"));
-      const auto position = [&](const std::string &id,
-                                const std::string &axis) {
-        return std::stod(
-            json::Get(json::Object(json::Get(places, id, "{}")), axis, "0"));
-      };
-      const auto first = json::Text(
-          json::Object(json::Get(json::Object(taken[0]), "to")), "card");
-      json::Members point;
-      for (const auto *axis : {"x", "y"}) {
-        std::ostringstream number;
-        number << std::setprecision(17)
-               << (position(from_card, axis) + position(first, axis)) / 2;
-        point[axis] = number.str();
-      }
-      std::erase_if(places, [&](const auto &entry) {
-        return entry.first == fork_id || entry.first.starts_with(fork_id + "/");
-      });
-      places[fork_id] = json::Encode(point);
-      layout["cards"] = json::Encode(places);
-      if (layout.contains("displays")) {
-        auto displays = json::Object(layout.at("displays"));
-        displays.erase(fork_id);
-        layout["displays"] = json::Encode(displays);
-      }
-      scope["layout"] = json::Encode(layout);
       std::erase_if(wires, [&](const auto &w) {
         return std::ranges::find(taken, w) != taken.end();
       });
@@ -583,6 +555,10 @@ auto ConnectDocuments(const std::string &state, const std::string &from_card,
   scope.erase("ports");
   result.state_json = json::Encode(scope);
   return result;
+}
+
+auto DocumentsEqual(const std::string& a, const std::string& b) -> bool {
+  return Canonical(a) == Canonical(b);
 }
 
 auto MergeDocuments(const std::string &base, const std::string &ours,

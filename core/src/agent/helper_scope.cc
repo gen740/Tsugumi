@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "host/document_edits.hh"
 #include "util/fs.hh"
 
 namespace tsugumi::agent {
@@ -135,6 +136,10 @@ auto HelperScope::File(const std::string &path, bool writing,
                        const Reader &read) const -> void {
   if (!fs::valid_relative_path(path))
     Deny("invalid file path");
+  if (!writing && (path == "tsugumi.json" || path.ends_with("/tsugumi.json"))) {
+    (void)ProjectPrefix(path, read);
+    return;
+  }
   for (const auto &card : writing ? writes_ : reads_) {
     std::string root;
     try {
@@ -192,6 +197,251 @@ auto HelperScope::Created(const std::string &id,
   runs_.insert(card);
   created_[card] = project_path + "definitions/" + id;
 }
+auto HelperScope::ProjectPrefix(const std::string& path,
+                                const Reader& read) const -> std::string {
+  if (path == "tsugumi.json") return "";
+  for (const auto& card : reads_) {
+    const auto root = Root(card, read);
+    const auto at = root.rfind("definitions/");
+    if (root.substr(0, at) + "tsugumi.json" == path) {
+      const auto slash = card.rfind('/');
+      return slash == std::string::npos ? "" : card.substr(0, slash + 1);
+    }
+  }
+  Deny("project document outside readable Cards");
+  return "";
+}
+auto HelperScope::SafeCollision(const std::string& message,
+                                const Reader& read) const -> bool {
+  const std::string prefix = "Concurrent edit conflicts at ";
+  if (!message.starts_with(prefix)) return false;
+  const auto end = message.find("; inspect and re-apply", prefix.size());
+  if (end == std::string::npos) return false;
+  auto cards = reads_;
+  cards.insert(writes_.begin(), writes_.end());
+  auto escape = [](const std::string& path) {
+    std::string out;
+    for (const auto c : path)
+      out += c == '/' ? "~1" : c == '~' ? "~0" : std::string(1, c);
+    return out;
+  };
+  size_t begin = prefix.size();
+  do {
+    const auto comma = std::min(message.find(", ", begin), end);
+    const auto collision = message.substr(begin, comma - begin);
+    bool visible = false;
+    for (const auto& card : cards) {
+      const auto root = Root(card, read);
+      const auto at = root.rfind("definitions/");
+      const auto id = card.substr(
+          card.rfind('/') == std::string::npos ? 0 : card.rfind('/') + 1);
+      const auto document = root.substr(0, at) + "tsugumi.json";
+      for (const auto& r : {root, escape(root)})
+        visible = visible || collision.starts_with(r + '/') ||
+                  collision.starts_with('/' + r + '~') || collision == r + '/';
+      visible = visible || collision == root + '/';
+      for (const auto& p : {document, escape(document)}) {
+        visible = visible ||
+                  collision.starts_with(p + "/canvas/connections input " + id +
+                                        ':') ||
+                  collision.starts_with('/' + p + "/canvas/cards/" + id) ||
+                  collision.starts_with(p + "/canvas/cards/" + id);
+      }
+    }
+    if (!visible) return false;
+    if (comma == end) return true;
+    begin = comma + 2;
+  } while (begin < end);
+  return false;
+}
+
+auto HelperScope::CheckBindings(const Reader& before, const Reader& now) const
+    -> void {
+  auto resolved = *this;
+  resolved.created_.clear();
+  for (const auto& card : writes_)
+    if (resolved.Root(card, before, true) != resolved.Root(card, now, true))
+      Deny("changed container binding for " + card);
+}
+
+auto HelperScope::Graph(const std::string& text,
+                        const std::string& prefix) const -> std::string {
+  const auto project = json::Object(text);
+  auto visible = json::Members{};
+  for (const auto* key : {"name", "pkgsPath"})
+    if (project.contains(key)) visible[key] = project.at(key);
+  const auto canvas = json::Object(json::Get(project, "canvas", "{}"));
+  std::vector<std::string> cards, wires;
+  for (const auto& raw : json::Array(json::Get(canvas, "cards", "[]")))
+    if (reads_.contains(prefix + json::Text(json::Object(raw), "id")))
+      cards.push_back(raw);
+  for (const auto& raw : json::Array(json::Get(canvas, "connections", "[]"))) {
+    const auto w = json::Object(raw);
+    if (reads_.contains(
+            prefix +
+            json::Text(json::Object(json::Get(w, "from", "{}")), "card")) &&
+        reads_.contains(
+            prefix +
+            json::Text(json::Object(json::Get(w, "to", "{}")), "card")))
+      wires.push_back(raw);
+  }
+  if (project.contains("boundary")) {
+    json::Members boundary;
+    const auto original = json::Object(project.at("boundary"));
+    for (const auto* side : {"inputs", "outputs"}) {
+      json::Members ports;
+      for (const auto& [name, raw] :
+           json::Object(json::Get(original, side, "{}")))
+        if (reads_.contains(prefix + json::Text(json::Object(raw), "card")))
+          ports[name] = raw;
+      boundary[side] = json::Encode(ports);
+    }
+    visible["boundary"] = json::Encode(boundary);
+  }
+  visible["canvas"] = json::Encode(json::Members{
+      {"cards", json::Encode(cards)}, {"connections", json::Encode(wires)}});
+  return json::Encode(visible);
+}
+
+auto HelperScope::ExpandSave(json::Members args, const Reader& read) const
+    -> json::Members {
+  if (!scoped_) return args;
+  auto changes = json::Array(json::Get(args, "changes", "[]"));
+  for (auto& raw : changes) {
+    auto change = json::Object(raw);
+    const auto type = json::Text(change, "value_type");
+    auto value = json::Object(json::Get(change, "value", "{}"));
+    const auto path =
+        type == "SetProject" ? "tsugumi.json" : json::Text(value, "path");
+    if (type != "SetProject" &&
+        !(type == "PutSource" && path.ends_with("/tsugumi.json")))
+      continue;
+    std::string logical;
+    if (path != "tsugumi.json") {
+      bool found = false;
+      for (const auto& card : writes_) {
+        const auto root = Root(card, read, true);
+        const auto end = root.rfind("definitions/");
+        if (root.substr(0, end) + "tsugumi.json" != path) continue;
+        const auto slash = card.rfind('/');
+        logical = slash == std::string::npos ? "" : card.substr(0, slash + 1);
+        found = true;
+        break;
+      }
+      if (!found) Deny("graph outside assigned Cards");
+    }
+    const auto original = read(path);
+    auto full = json::Object(original);
+    auto before = json::Object(Graph(original, logical));
+    const auto bytes = type == "SetProject" ? json::Text(value, "json")
+                                            : json::Text(value, "bytes");
+    auto after = json::Object(bytes);
+    const auto bg = json::Object(json::Get(before, "canvas", "{}"));
+    const auto ag = json::Object(json::Get(after, "canvas", "{}"));
+    if (before.contains("boundary") || after.contains("boundary")) {
+      const auto bb = json::Object(json::Get(before, "boundary", "{}"));
+      const auto ab = json::Object(json::Get(after, "boundary", "{}"));
+      auto boundary = json::Object(json::Get(full, "boundary", "{}"));
+      for (const auto* side : {"inputs", "outputs"}) {
+        const auto bp = json::Object(json::Get(bb, side, "{}")),
+                   ap = json::Object(json::Get(ab, side, "{}"));
+        if (bp.size() != ap.size()) Deny("changing boundary port names");
+        auto ports = json::Object(json::Get(boundary, side, "{}"));
+        for (const auto& [name, raw] : ap) {
+          if (!bp.contains(name)) Deny("adding a boundary port");
+          if (!host::DocumentsEqual(bp.at(name), raw)) {
+            Require(logical + json::Text(json::Object(bp.at(name)), "card"),
+                    true);
+            Require(logical + json::Text(json::Object(raw), "card"), true);
+            ports[name] = raw;
+          }
+        }
+        boundary[side] = json::Encode(ports);
+      }
+      if (bb.size() != ab.size()) Deny("changing boundary fields");
+      full["boundary"] = json::Encode(boundary);
+      before.erase("boundary");
+      after.erase("boundary");
+    }
+    before.erase("canvas");
+    after.erase("canvas");
+    if (!host::DocumentsEqual(json::Encode(before), json::Encode(after)))
+      Deny("project-wide fields");
+    auto bfields = bg, afields = ag;
+    for (const auto* key : {"cards", "connections"}) {
+      bfields.erase(key);
+      afields.erase(key);
+    }
+    if (!host::DocumentsEqual(json::Encode(bfields), json::Encode(afields)))
+      Deny("project-wide canvas fields");
+    const auto records = [](const std::string& text) {
+      json::Members out;
+      for (const auto& c : json::Array(text)) {
+        const auto id = json::Text(json::Object(c), "id");
+        if (!out.emplace(id, c).second) Deny("duplicate Card " + id);
+      }
+      return out;
+    };
+    const auto bc = records(json::Get(bg, "cards", "[]")),
+               ac = records(json::Get(ag, "cards", "[]"));
+    for (const auto& [id, c] : ac) {
+      if (!bc.contains(id)) {
+        if (!created_.contains(logical + id))
+          Deny("adding an unreserved Card " + logical + id);
+        if (json::Object(c) != json::Members{{"id", json::Quote(id)}})
+          Deny("new Card fields");
+      } else if (!host::DocumentsEqual(bc.at(id), c))
+        Require(logical + id, true);
+    }
+    for (const auto& [id, ignored] : bc) {
+      (void)ignored;
+      if (!ac.contains(id)) Require(logical + id, true);
+    }
+    const auto bw = json::Array(json::Get(bg, "connections", "[]"));
+    const auto aw = json::Array(json::Get(ag, "connections", "[]"));
+    auto check_wire = [&](const std::string& wire) {
+      const auto w = json::Object(wire);
+      bool writable = false;
+      for (const auto* side : {"from", "to"}) {
+        const auto id =
+            logical +
+            json::Text(json::Object(json::Get(w, side, "{}")), "card");
+        if (!reads_.contains(id) && !writes_.contains(id))
+          Deny("wire endpoint " + id);
+        writable = writable || writes_.contains(id);
+      }
+      if (!writable) Deny("wire between read-only Cards");
+    };
+    for (const auto& w : aw)
+      if (std::find(bw.begin(), bw.end(), w) == bw.end()) check_wire(w);
+    for (const auto& w : bw)
+      if (std::find(aw.begin(), aw.end(), w) == aw.end()) check_wire(w);
+    auto graph = json::Object(json::Get(full, "canvas", "{}"));
+    std::vector<std::string> cards, wires;
+    for (const auto& c : json::Array(json::Get(graph, "cards", "[]"))) {
+      const auto id = json::Text(json::Object(c), "id");
+      if (!bc.contains(id))
+        cards.push_back(c);
+      else if (ac.contains(id))
+        cards.push_back(ac.at(id));
+    }
+    for (const auto& [id, c] : ac)
+      if (!bc.contains(id)) cards.push_back(c);
+    for (const auto& w : json::Array(json::Get(graph, "connections", "[]")))
+      if (std::find(bw.begin(), bw.end(), w) == bw.end()) wires.push_back(w);
+    wires.insert(wires.end(), aw.begin(), aw.end());
+    graph["cards"] = json::Encode(cards);
+    graph["connections"] = json::Encode(wires);
+    full["canvas"] = json::Encode(graph);
+    value[type == "SetProject" ? "json" : "bytes"] =
+        json::Quote(json::Encode(full));
+    change["value"] = json::Encode(value);
+    raw = json::Encode(change);
+  }
+  args["changes"] = json::Encode(changes);
+  return args;
+}
+
 auto HelperScope::Check(const std::string &tool, const json::Members &args,
                         const Reader &read) const -> void {
   if (!scoped_)
@@ -214,11 +464,14 @@ auto HelperScope::Check(const std::string &tool, const json::Members &args,
     return;
   }
   if (tool == "project_save") {
+    (void)ExpandSave(args, read);
     for (const auto &raw : json::Array(json::Get(args, "changes", "[]"))) {
       const auto change = json::Object(raw);
       const auto type = json::Text(change, "value_type");
       const auto value = json::Object(json::Get(change, "value", "{}"));
-      if (type == "PutDefinition" || type == "RemoveDefinition") {
+      if (type == "SetProject") {
+        continue;
+      } else if (type == "PutDefinition" || type == "RemoveDefinition") {
         const auto id = json::Text(value, "id");
         Require(id, true);
         const auto old_link = read(Root(id, read, true) + "/_link.json");
@@ -228,7 +481,9 @@ auto HelperScope::Check(const std::string &tool, const json::Members &args,
           Deny("changing a container link");
       } else if (type == "PutSource" || type == "PatchSource" ||
                  type == "RemoveSource") {
-        File(json::Text(value, "path"), true, read);
+        const auto path = json::Text(value, "path");
+        if (type == "PutSource" && path.ends_with("/tsugumi.json")) continue;
+        File(path, true, read);
       } else {
         Deny(
             "project-wide save (the parent handles canvas and layout changes)");
@@ -329,6 +584,57 @@ auto HelperScope::CheckPlan(const std::string &result, bool executing) const
         Require(Card(raw), false);
     }
 }
+auto HelperScope::SaveResult(const std::string& result,
+                             const Reader& read) const -> std::string {
+  auto envelope = json::Object(result);
+  if (json::Text(envelope, "reply") != "SaveResult") return result;
+  auto value = json::Object(json::Get(envelope, "value", "{}"));
+  if (value.contains("delta") && value.at("delta") != "null") {
+    auto delta = json::Object(value.at("delta"));
+    auto snapshot = delta;
+    snapshot["definitions"] = json::Get(delta, "definitions_upsert", "[]");
+    snapshot["sources"] = json::Get(delta, "sources_upsert", "[]");
+    const auto filtered = json::Object(json::Get(
+        json::Object(Inspect(json::Encode(json::Members{
+                                 {"reply", json::Quote("ProjectSnapshot")},
+                                 {"value", json::Encode(snapshot)}}),
+                             read)),
+        "value"));
+    delta["definitions_upsert"] = json::Get(filtered, "definitions", "[]");
+    delta["sources_upsert"] = json::Get(filtered, "sources", "[]");
+    delta["resolution"] = json::Get(filtered, "resolution", "[]");
+    delta["diagnostics"] = "[]";
+    if (delta.contains("project_json"))
+      delta["project_json"] = filtered.at("project_json");
+    delta.erase("layout_json");
+    for (const auto* field : {"definitions_removed", "sources_removed"}) {
+      std::vector<std::string> kept;
+      for (const auto& raw : json::Array(json::Get(delta, field, "[]"))) {
+        const auto id = json::String(raw);
+        try {
+          if (std::string_view(field) == "sources_removed")
+            File(id, false, read);
+          else
+            Require(id, false);
+          kept.push_back(raw);
+        } catch (const std::exception&) {
+        }
+      }
+      delta[field] = json::Encode(kept);
+    }
+    value["delta"] = json::Encode(delta);
+  }
+  if (value.contains("comments")) {
+    std::vector<std::string> kept;
+    for (const auto& raw : json::Array(value.at("comments")))
+      if (reads_.contains(json::Text(json::Object(raw), "card")))
+        kept.push_back(raw);
+    value["comments"] = json::Encode(kept);
+  }
+  envelope["value"] = json::Encode(value);
+  return json::Encode(envelope);
+}
+
 auto HelperScope::Inspect(const std::string &result, const Reader &read) const
     -> std::string {
   if (!scoped_)
@@ -385,27 +691,8 @@ auto HelperScope::Inspect(const std::string &result, const Reader &read) const
   filtered["diagnostics"] = "[]";
   filtered["layout_json"] = json::Quote("{}");
   filtered["run"] = "{}";
-  auto project = json::Object(json::Text(snapshot, "project_json", "{}"));
-  json::Members visible;
-  for (const auto *key : {"name", "pkgsPath"})
-    if (project.contains(key))
-      visible[key] = project.at(key);
-  std::vector<std::string> cards, wires;
-  const auto canvas = json::Object(json::Get(project, "canvas", "{}"));
-  for (const auto &raw : json::Array(json::Get(canvas, "cards", "[]")))
-    if (reads_.contains(json::Text(json::Object(raw), "id")))
-      cards.push_back(raw);
-  for (const auto &raw : json::Array(json::Get(canvas, "connections", "[]"))) {
-    const auto wire = json::Object(raw);
-    if (reads_.contains(
-            json::Text(json::Object(json::Get(wire, "from", "{}")), "card")) &&
-        reads_.contains(
-            json::Text(json::Object(json::Get(wire, "to", "{}")), "card")))
-      wires.push_back(raw);
-  }
-  visible["canvas"] = json::Encode(json::Members{
-      {"cards", json::Encode(cards)}, {"connections", json::Encode(wires)}});
-  filtered["project_json"] = json::Quote(json::Encode(visible));
+  filtered["project_json"] =
+      json::Quote(Graph(json::Text(snapshot, "project_json", "{}"), ""));
   envelope["value"] = json::Encode(filtered);
   return json::Encode(envelope);
 }

@@ -1,9 +1,11 @@
 #include "host/layout_saving.hh"
 
+#include <algorithm>
 #include <map>
 #include <set>
 
 #include "agent/json.hh"
+#include "host/layout.hh"
 #include "host/layout_service.hh"
 #include "util/crypto.hh"
 
@@ -78,6 +80,112 @@ auto IsExternalDocument(std::string_view path, std::string_view name) -> bool {
   return external && path == name;
 }
 
+auto CompleteLayout(const std::string& project, const std::string& text,
+                    const LayoutRead& read) -> std::string {
+  ValidateLayout(text);
+  auto doc = json::Object(text);
+  auto positions = json::Object(json::Get(doc, "cards", "{}"));
+  const auto graph =
+      json::Object(json::Get(json::Object(project), "canvas", "{}"));
+  layout::Scene scene;
+  scene.top_to_bottom = json::Text(doc, "flow", "topToBottom") == "topToBottom";
+  std::vector<std::string> missing;
+  auto number = [](const json::Members& value, const std::string& key,
+                   double fallback) {
+    return value.contains(key) ? std::stod(value.at(key)) : fallback;
+  };
+  const auto displays = json::Object(json::Get(doc, "displays", "{}"));
+  const auto geometry = DefaultDisplayGeometry(scene.top_to_bottom);
+  const auto other_geometry = DefaultDisplayGeometry(!scene.top_to_bottom);
+  for (const auto& raw : json::Array(json::Get(graph, "cards", "[]"))) {
+    const auto id = json::Text(json::Object(raw), "id");
+    const auto position = json::Object(json::Get(positions, id, "{}"));
+    if (!positions.contains(id)) missing.push_back(id);
+    // A host reservation is independent of a window's zoom and grid. Leave
+    // room for the normal expanded Card; Arrange uses measured UI geometry.
+    size_t params = 0, ports = 0;
+    if (read)
+      if (const auto file = read("definitions/" + id + "/_card.json")) {
+        const auto definition = json::Object(file->text);
+        params = json::Array(json::Get(definition, "params", "[]")).size();
+        ports = json::Array(json::Get(definition, "inputs", "[]")).size();
+      }
+    std::set<std::string> incoming, outgoing;
+    for (const auto& raw_wire :
+         json::Array(json::Get(graph, "connections", "[]"))) {
+      const auto wire = json::Object(raw_wire);
+      for (const auto* side : {"from", "to"}) {
+        const auto end = json::Object(json::Get(wire, side, "{}"));
+        if (json::Text(end, "card") == id)
+          (std::string_view(side) == "from" ? outgoing : incoming)
+              .insert(json::Text(end, "port"));
+      }
+    }
+    ports = std::max({ports, incoming.size(), outgoing.size()});
+    const double width =
+        std::max(320.0, 64.0 * static_cast<double>(ports) + 24);
+    const double height = 240 + 26.0 * static_cast<double>(params) +
+                          30.0 * static_cast<double>(ports);
+    // A default frame follows the measured Card edge in each UI. Our Card
+    // reservation bounds normal UI sizes, so reserve the whole envelope from
+    // the Card origin through that frame, including smaller/folded Cards.
+    // Reserve it before any run too: placement must not depend on run history.
+    const bool default_frame = !displays.contains(id);
+    auto reserve = [&](const auto& d, bool horizontal) {
+      return horizontal ? d.anchor_x * width + d.x + d.width
+                        : d.anchor_y * height + d.y + d.height;
+    };
+    // Without a saved direction, windows may infer a flow or use their own
+    // preference. Reserve both possible default frames in that case.
+    const double reserved_width =
+        default_frame
+            ? std::max(
+                  {width, reserve(geometry, true),
+                   doc.contains("flow") ? 0 : reserve(other_geometry, true)})
+            : width;
+    const double reserved_height =
+        default_frame
+            ? std::max(
+                  {height, reserve(geometry, false),
+                   doc.contains("flow") ? 0 : reserve(other_geometry, false)})
+            : height;
+    scene.cards.push_back({id,
+                           number(position, "x", 0),
+                           number(position, "y", 0),
+                           reserved_width,
+                           reserved_height,
+                           {},
+                           {},
+                           false});
+  }
+  if (missing.empty()) return text;
+  for (const auto& raw : json::Array(json::Get(graph, "connections", "[]"))) {
+    const auto w = json::Object(raw);
+    const auto from = json::Object(json::Get(w, "from", "{}"));
+    const auto to = json::Object(json::Get(w, "to", "{}"));
+    scene.wires.push_back({json::Text(from, "card"), json::Text(from, "port"),
+                           json::Text(to, "card"), json::Text(to, "port")});
+  }
+  for (const auto& [id, raw] : json::Object(json::Get(doc, "displays", "{}"))) {
+    const auto b = json::Object(raw);
+    if (!json::Bool(json::Get(b, "hidden")))
+      scene.frames.push_back({id, number(b, "x", 0), number(b, "y", 0),
+                              number(b, "width", 320),
+                              number(b, "height", 240)});
+  }
+  for (const auto& raw : json::Array(json::Get(doc, "notes", "[]"))) {
+    const auto b = json::Object(raw);
+    scene.notes.push_back({json::Text(b, "id"), number(b, "x", 0),
+                           number(b, "y", 0), number(b, "width", 240),
+                           number(b, "height", 160)});
+  }
+  for (const auto& p : layout::place_missing(scene, missing).cards)
+    positions[p.id] = json::Encode(
+        json::Members{{"x", std::to_string(p.x)}, {"y", std::to_string(p.y)}});
+  doc["cards"] = json::Encode(positions);
+  return json::Encode(doc);
+}
+
 auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read)
     -> std::string {
   auto args = json::Object(arguments);
@@ -88,11 +196,19 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read)
     bool source;
   };
   std::map<std::string, Edit> projects, layouts;
+  std::map<std::string, LayoutFile> pending;
   std::set<std::string> deleted_layouts;
   for (size_t i = 0; i < changes.size(); ++i) {
     const auto change = json::Object(changes[i]);
     const auto type = json::Text(change, "value_type");
     const auto value = json::Object(json::Get(change, "value", "{}"));
+    if (type == "PutDefinition" && !json::Text(value, "card_json").empty())
+      pending["definitions/" + json::Text(value, "id") + "/_card.json"] = {
+          json::Text(value, "card_json"), {}};
+    if (type == "PutSource" &&
+        json::Text(value, "path").ends_with("/_card.json"))
+      pending[json::Text(value, "path")] = {Bytes(json::Get(value, "bytes")),
+                                            {}};
     if (type == "SetProject")
       projects[""] = {i, json::Text(value, "json"), false};
     if (type == "SetLayout")
@@ -119,31 +235,39 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read)
   }
   for (const auto& [prefix, project] : projects) {
     const auto previous = read(prefix + "tsugumi.json");
-    if (!previous || deleted_layouts.contains(prefix)) continue;
-    const auto before = CardIds(previous->text), after = CardIds(project.text);
+    if (deleted_layouts.contains(prefix)) continue;
+    const auto before =
+        previous ? CardIds(previous->text) : std::set<std::string>{};
+    const auto after = CardIds(project.text);
     std::set<std::string> removed;
     for (const auto& id : before)
       if (!after.contains(id)) removed.insert(id);
-    if (removed.empty()) continue;
     if (!layouts.contains(prefix)) {
       const auto file = read(prefix + "layout.json");
-      if (!file) continue;
+
       const auto i = changes.size();
       const auto value =
           project.source
               ? json::Members{{"path", json::Quote(prefix + "layout.json")},
-                              {"bytes", json::Quote(file->text)},
-                              {"base_hash",
-                               file->hash ? json::Quote(*file->hash) : "null"}}
-              : json::Members{{"json", json::Quote(file->text)}};
+                              {"bytes", json::Quote(file ? file->text : "{}")},
+                              {"base_hash", file && file->hash
+                                                ? json::Quote(*file->hash)
+                                                : "null"}}
+              : json::Members{{"json", json::Quote(file ? file->text : "{}")}};
       changes.push_back(json::Encode(json::Members{
           {"value_type",
            json::Quote(project.source ? "PutSource" : "SetLayout")},
           {"value", json::Encode(value)}}));
-      layouts[prefix] = {i, file->text, project.source};
+      layouts[prefix] = {i, file ? file->text : "{}", project.source};
     }
     auto& layout = layouts.at(prefix);
-    layout.text = ValidateLayout(layout.text, removed);
+    layout.text = CompleteLayout(
+        project.text, ValidateLayout(layout.text, removed),
+        [&](const std::string& path) -> std::optional<LayoutFile> {
+          const auto file = prefix + path;
+          if (pending.contains(file)) return pending.at(file);
+          return read(file);
+        });
   }
   for (const auto& [prefix, layout] : layouts) {
     ValidateLayout(layout.text);

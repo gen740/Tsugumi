@@ -126,48 +126,9 @@ export class Scene {
 
   /** Output frame of a Card: saved place, or beside the Card. */
   frameRect(k: CardKey): Rect {
-    const o = this.origin(k)
-    const f = this.session.displayFrame(k)
-    const g = this.geometry(k)
-    const width = dbl(get(f, 'width')) ?? 320, height = dbl(get(f, 'height')) ?? 170
-    const fx = dbl(get(f, 'x')), fy = dbl(get(f, 'y'))
-    const r = this.flow === 'topToBottom'
-      ? { x: fx ?? o.x + g.size.width + 40, y: fy ?? o.y, width, height }
-      : { x: fx ?? o.x, y: fy ?? o.y + g.height + 30, width, height }
+    const r = this.session.displayRect(k, this.origin(k))
     const m = this.drag.cards
     return m?.frames?.has(k) && !this.session.frameFollowsCard(k, m.keys) ? { ...r, x: r.x + m.dx, y: r.y + m.dy } : r
-  }
-
-  /** The nearest place to `point` where the Card `k` covers no other Card,
-   *  output frame or sticky note: `point` itself when it is free, else on rings
-   *  around it. On the grid when the grid is on. The Mac's freeSpot is the same search. */
-  freeSpot(point: Pt, k: CardKey): Pt {
-    const step = prefs.showGrid ? prefs.gridSize : 20
-    const start = prefs.showGrid ? { x: snapToGrid(point.x, step), y: snapToGrid(point.y, step) } : point
-    const size = this.geometry(k).size
-    const margin = 16
-    const taken = [
-      ...this.cardKeys.filter((c) => c !== k).map((c) => this.cardRect(c)),
-      ...this.outputKeys.filter((c) => c !== k).map((c) => this.frameRect(c)),
-      ...this.session.notes(this.scope).map((n) => noteRect(n)),
-    ]
-    const free = (p: Pt) => {
-      const r = { x: p.x - margin, y: p.y - margin, width: size.width + 2 * margin, height: size.height + 2 * margin }
-      return !taken.some((t) => intersects(r, t))
-    }
-    if (free(start)) return start
-    for (let ring = 1; ring <= 200; ring++) {
-      const spots: { dx: number; dy: number }[] = []
-      for (let i = -ring; i <= ring; i++) spots.push({ dx: i, dy: -ring }, { dx: i, dy: ring })
-      for (let i = 1 - ring; i < ring; i++) spots.push({ dx: -ring, dy: i }, { dx: ring, dy: i })
-      // Nearest first; among equals, the same order on the Mac and on the web.
-      spots.sort((a, b) => (a.dx * a.dx + a.dy * a.dy) - (b.dx * b.dx + b.dy * b.dy) || b.dy - a.dy || b.dx - a.dx)
-      for (const s of spots) {
-        const p = { x: start.x + s.dx * step, y: start.y + s.dy * step }
-        if (free(p)) return p
-      }
-    }
-    return start
   }
 
   /** What a marquee (world units) touches. */
@@ -573,7 +534,7 @@ export class CanvasController extends Observable implements CanvasOverlay {
   /** A Card put on the canvas without being aimed at this very spot: where it covers nothing. */
   private addClear(t: DefinitionTemplate, at: Pt): Promise<CardKey> {
     const scope = this.tab.scope
-    return this.session.addCard(t, scope, at, undefined, (k) => new Scene(this.session, scope).freeSpot(at, k))
+    return this.session.addCard(t, scope, at, undefined, true)
   }
 
   /** G: the selected Cards become a group; a selection that is one group's Cards is ungrouped. */

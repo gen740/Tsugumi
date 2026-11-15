@@ -310,6 +310,8 @@ Catalog::Catalog() {
           tool.spec.name == "artifact_list" || tool.spec.name == "run_environments" ||
           tool.spec.name == "run_environment_paths")
         tool.spec.description += " Agent default limit is 8; continue with the returned cursor or next_offset.";
+      if (tool.spec.name == "project_save")
+        tool.spec.description += " " + json::Text(settings, "saveNote");
       tool.approval_required = std::string_view(list) == "approvalRequests";
       if (tool.approval_required)
         tool.spec.description +=

@@ -35,13 +35,19 @@ class DelegateContractTests(unittest.TestCase):
                           "delegate needs 2 to 8", "takes 2 to 8 tasks"):
                 with self.subTest(stale=stale):
                     self.assertNotIn(stale, text)
-        # A helper's read and write sets are enforced by the core now.
+        # Exact helper sets are enforced by the host.
         for stale in ("Helpers may read the whole project", "not an enforced write boundary"):
             with self.subTest(stale=stale):
                 self.assertNotIn(stale, prompt)
         self.assertIn('"read_cards"', prompt)
         self.assertIn('"write_cards"', prompt)
-        self.assertIn("The core does not retry these failures for helpers", prompt)
+        self.assertIn("The host merges disjoint concurrent saves", prompt)
+        self.assertIn("Do not send coordinates for new Cards", prompt)
+        self.assertIn("all incident endpoints are in scope", prompt)
+        self.assertIn("own card_id reservations", shared["delegateTool"]["description"])
+        self.assertNotIn("and its place in SetLayout", prompt)
+        self.assertIn("without SetLayout coordinates", shared["saveNote"])
+        self.assertIn("input wire or delete/change", shared["saveNote"])
 
 
 if __name__ == "__main__":

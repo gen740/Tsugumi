@@ -12,6 +12,7 @@
 #include "agent/helper_scope.hh"
 #include "agent/runtime.hh"
 #include "agent/store.hh"
+#include "host/save.hh"
 #include "host/state_gate.hh"
 #include "server.hh"
 
@@ -48,6 +49,16 @@ struct Tools {
         Providers& providers, host::Settings& settings,
         host::DemoReferences& demos, Turns& turns, std::stop_source& shutdown,
         host::Access& access, Dependencies dependencies);
+  auto RememberBase(const std::string& project, const json::Members& snapshot,
+                    std::stop_token stop) -> host::SaveBase;
+  auto StoreBase(const std::string& project, const host::SaveBase& base)
+      -> void;
+  auto SaveProject(const std::string& project, json::Members args,
+                   std::stop_token stop,
+                   const std::function<void(const host::SaveBase&)>& check = {}) -> std::string;
+  auto SavedBase(const std::string& project, const std::string& rev)
+      -> host::SaveBase;
+  std::recursive_mutex save_mutex;
   auto Specs(bool guide = false) -> std::vector<ToolSpec>;
   auto PrepareLayoutSave(const std::string& project, const std::string& args,
                          std::stop_token stop) -> std::string;

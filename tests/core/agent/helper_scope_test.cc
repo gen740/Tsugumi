@@ -230,3 +230,139 @@ TEST(HelperScope, WriteDoesNotGrantRunAndReadRunDoesNotGrantWrite) {
 }
 } // namespace
 } // namespace tsugumi::agent
+
+namespace tsugumi::agent {
+namespace {
+TEST(HelperGraphScope, AddsOnlyOwnedCardsAndKeepsTheHiddenGraph) {
+  HelperScope scope(
+      json::Object(R"({"read_cards":["up"],"write_cards":[],"run_cards":[]})"));
+  const HelperScope::Reader read = [](const std::string& path) -> std::string {
+    if (path == "tsugumi.json")
+      return R"({"name":"P","secret":"keep","canvas":{"cards":[{"id":"up"},{"id":"hidden"}],"connections":[{"from":{"card":"hidden","port":"out"},"to":{"card":"up","port":"in"}}]}})";
+    return "";
+  };
+  scope.Created("mine", "", read);
+  auto project = json::Object(scope.Graph(read("tsugumi.json"), ""));
+  project["canvas"] =
+      R"({"cards":[{"id":"up"},{"id":"mine"}],"connections":[{"from":{"card":"up","port":"out"},"to":{"card":"mine","port":"in"}}]})";
+  auto args = [&](const std::string& doc) {
+    return json::Members{
+        {"changes",
+         json::Encode(std::vector<std::string>{json::Encode(json::Members{
+             {"value_type", json::Quote("SetProject")},
+             {"value",
+              json::Encode(json::Members{{"json", json::Quote(doc)}})}})})}};
+  };
+  EXPECT_NO_THROW(
+      scope.Check("project_save", args(json::Encode(project)), read));
+  const auto expanded = scope.ExpandSave(args(json::Encode(project)), read);
+  const auto value = json::Object(
+      json::Get(json::Object(json::Array(expanded.at("changes"))[0]), "value"));
+  const auto full = json::Object(json::Text(value, "json"));
+  EXPECT_EQ(json::Text(full, "secret"), "keep");
+  const auto graph = json::Object(full.at("canvas"));
+  EXPECT_EQ(json::Array(graph.at("cards")).size(), 3u);
+  EXPECT_EQ(json::Array(graph.at("connections")).size(), 2u);
+  auto canvas = json::Object(project.at("canvas"));
+  canvas["cards"] = R"([{"id":"up"},{"id":"not-mine"}])";
+  project["canvas"] = json::Encode(canvas);
+  EXPECT_THROW(scope.Check("project_save", args(json::Encode(project)), read),
+               std::runtime_error);
+  canvas["cards"] = R"([{"id":"up"},{"id":"mine"}])";
+  canvas["connections"] =
+      R"([{"from":{"card":"hidden","port":"out"},"to":{"card":"mine","port":"in"}}])";
+  project["canvas"] = json::Encode(canvas);
+  EXPECT_THROW(scope.Check("project_save", args(json::Encode(project)), read),
+               std::runtime_error);
+  project["pkgsPath"] = json::Quote("changed");
+  EXPECT_THROW(scope.Check("project_save", args(json::Encode(project)), read),
+               std::runtime_error);
+}
+TEST(HelperGraphScope, ReadOnlyWiresAndSiblingReservationsAreRefused) {
+  HelperScope scope(json::Object(
+      R"({"read_cards":["a","b"],"write_cards":[],"run_cards":[]})"));
+  const HelperScope::Reader read = [](const std::string& path) -> std::string {
+    return path == "tsugumi.json"
+               ? R"({"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})"
+               : "";
+  };
+  const auto graph =
+      R"({"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"b","port":"in"}}]}})";
+  const auto args = json::Members{
+      {"changes",
+       json::Encode(std::vector<std::string>{json::Encode(json::Members{
+           {"value_type", json::Quote("SetProject")},
+           {"value",
+            json::Encode(json::Members{{"json", json::Quote(graph)}})}})})}};
+  EXPECT_THROW(scope.Check("project_save", args, read), std::runtime_error);
+}
+TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
+  const HelperScope::Reader read = [](const std::string& path) -> std::string {
+    if (path == "tsugumi.json")
+      return R"({"canvas":{"cards":[{"id":"outer"}],"connections":[]}})";
+    if (path == "definitions/outer/_link.json")
+      return R"({"external":"storage"})";
+    if (path == "externals/storage/tsugumi.json")
+      return R"({"boundary":{"inputs":{"visible":{"card":"draft","port":""},"hidden":{"card":"secret","port":"in"}},"outputs":{}},"canvas":{"cards":[{"id":"draft"},{"id":"secret"}],"connections":[]}})";
+    return "";
+  };
+  HelperScope scope(json::Object(
+      R"({"read_cards":["outer/draft"],"write_cards":["outer/draft"],"run_cards":[]})"));
+  scope.Created("mine", "externals/storage/", read);
+  EXPECT_NO_THROW(scope.Check(
+      "project_file_read",
+      {{"path", json::Quote("externals/storage/tsugumi.json")}}, read));
+  auto graph = json::Object(
+      scope.Graph(read("externals/storage/tsugumi.json"), "outer/"));
+  EXPECT_EQ(json::Encode(graph).find("secret"), std::string::npos);
+  graph["boundary"] =
+      R"({"inputs":{"visible":{"card":"draft","port":"real"}},"outputs":{}})";
+  auto canvas = json::Object(graph.at("canvas"));
+  canvas["cards"] = R"([{"id":"draft"},{"id":"mine"}])";
+  graph["canvas"] = json::Encode(canvas);
+  const auto args = json::Members{
+      {"changes",
+       json::Encode(std::vector<std::string>{json::Encode(json::Members{
+           {"value_type", json::Quote("PutSource")},
+           {"value",
+            json::Encode(json::Members{
+                {"path", json::Quote("externals/storage/tsugumi.json")},
+                {"bytes", json::Quote(json::Encode(graph))}})}})})}};
+  EXPECT_NO_THROW(scope.Check("project_save", args, read));
+  const auto saved = scope.ExpandSave(args, read);
+  const auto value = json::Object(
+      json::Get(json::Object(json::Array(saved.at("changes"))[0]), "value"));
+  EXPECT_NE(json::Text(value, "bytes").find("secret"), std::string::npos);
+  const HelperScope::Reader changed =
+      [&](const std::string& path) -> std::string {
+    return path == "definitions/outer/_link.json"
+               ? R"({"external":"elsewhere"})"
+               : read(path);
+  };
+  EXPECT_THROW(scope.CheckBindings(read, changed), std::runtime_error);
+}
+}  // namespace
+}  // namespace tsugumi::agent
+
+namespace tsugumi::agent {
+namespace {
+TEST(HelperGraphScope,
+     SaveReceiptFiltersOtherHelpersCardsAndCollisionMessages) {
+  HelperScope scope(json::Object(
+      R"({"read_cards":["mine"],"write_cards":["mine"],"run_cards":[]})"));
+  const auto result =
+      R"({"reply":"SaveResult","value":{"rev":"2","delta":{"project_json":"{\"canvas\":{\"cards\":[{\"id\":\"mine\"},{\"id\":\"SECRET\"}],\"connections\":[]}}","layout_json":"SECRET","definitions_upsert":[],"sources_upsert":[],"resolution":[{"card":{"segments":["mine"]},"diagnostics":[]},{"card":{"segments":["SECRET"]}}],"diagnostics":[{"message":"SECRET"}]}}})";
+  const auto filtered = scope.SaveResult(result, kRead);
+  EXPECT_EQ(filtered.find("SECRET"), std::string::npos);
+  EXPECT_NE(filtered.find("mine"), std::string::npos);
+  EXPECT_TRUE(scope.SafeCollision(
+      "Concurrent edit conflicts at "
+      "/definitions~1mine~1_card.json/timeoutSeconds; inspect and re-apply",
+      kRead));
+  EXPECT_FALSE(scope.SafeCollision(
+      "Concurrent edit conflicts at "
+      "/definitions~1SECRET~1_card.json/timeoutSeconds; inspect and re-apply",
+      kRead));
+}
+}  // namespace
+}  // namespace tsugumi::agent
