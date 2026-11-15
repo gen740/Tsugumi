@@ -4,6 +4,8 @@
 #include <cstdint>
 
 namespace tsugumi::workerd {
+inline constexpr uint32_t kMaxWorkerFrameBytes = 16u << 20;
+
 // Both workers use little-endian uint32 framing, independently of the carrier.
 auto inline encode_length(uint32_t size) -> std::array<char, 4> {
   std::array<char, 4> bytes{};

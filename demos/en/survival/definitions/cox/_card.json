@@ -7,7 +7,6 @@
   ],
   "retainArtifact": true,
   "artifactOutput": "fit",
-  "filesystem": true,
   "params": [
     {
       "name": "covariates",

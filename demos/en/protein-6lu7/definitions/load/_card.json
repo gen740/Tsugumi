@@ -5,7 +5,6 @@
       "name": "start"
     }
   ],
-  "filesystem": true,
   "network": true,
   "params": [
     {

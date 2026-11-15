@@ -126,6 +126,10 @@ class NixRunner {
   std::filesystem::path sdk_dir_;
   std::mutex eval_mu_;
   std::unique_ptr<NixEvaluator> evaluator_;
+  // Serialized by the Nix lane. Retain at most one evaluation per Card,
+  // capped at 256 Cards; edits replace entries, and deleted Cards are pruned.
+  std::map<std::string, std::pair<EvaluationKey, NixResult>> evaluations_;
+  uint64_t full_evaluations_ = 0;
   std::mutex dirs_mu_;
   std::set<std::string> written_;
   std::mutex lane_mu_;

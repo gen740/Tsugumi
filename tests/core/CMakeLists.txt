@@ -178,8 +178,9 @@ target_link_libraries(tsugumi_native_contract_tests PRIVATE tsugumi_worker_proto
   flatbuffers::flatbuffers GTest::gtest_main Threads::Threads ${CMAKE_DL_LIBS})
 gtest_discover_tests(tsugumi_native_contract_tests TEST_PREFIX "native_contract." DISCOVERY_MODE PRE_TEST)
 
-add_executable(tsugumi_execution_service_tests execution_service_test.cc doubles/nix_eval.cc)
+add_executable(tsugumi_execution_service_tests execution_service_test.cc worker_execution_test.cc doubles/nix_eval.cc)
 target_include_directories(tsugumi_execution_service_tests PRIVATE ${_core_headers})
+target_compile_options(tsugumi_execution_service_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
 target_link_libraries(tsugumi_execution_service_tests PRIVATE tsugumi_core GTest::gtest_main)
 target_compile_definitions(tsugumi_execution_service_tests PRIVATE
   TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
@@ -189,4 +190,14 @@ gtest_discover_tests(tsugumi_execution_service_tests TEST_PREFIX "native_executi
 
 if(TSUGUMI_INSTALLED_CORE)
   install(TARGETS tsugumi_native_contract_tests tsugumi_execution_service_tests RUNTIME DESTINATION libexec/tsugumi-tests)
+endif()
+
+# Embedded evaluator checks build tiny text derivations, never start a worker.
+add_executable(tsugumi_definition_evaluation_tests definition_evaluation_test.cc)
+target_include_directories(tsugumi_definition_evaluation_tests PRIVATE ${_core_headers})
+target_link_libraries(tsugumi_definition_evaluation_tests PRIVATE tsugumi_core tsugumi_nix_eval GTest::gtest_main)
+target_compile_options(tsugumi_definition_evaluation_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
+gtest_discover_tests(tsugumi_definition_evaluation_tests TEST_PREFIX "definition_evaluation." DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 120)
+if(TSUGUMI_INSTALLED_CORE)
+  install(TARGETS tsugumi_definition_evaluation_tests RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()

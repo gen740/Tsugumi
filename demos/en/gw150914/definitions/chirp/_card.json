@@ -5,7 +5,6 @@
       "name": "whitened"
     }
   ],
-  "filesystem": true,
   "params": [
     {
       "name": "nperseg",

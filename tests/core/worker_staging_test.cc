@@ -13,7 +13,7 @@
 #include <system_error>
 #include <thread>
 
-#include "util/staging.hh"
+#include "tsugumi/workerd/staging.hh"
 #include "util/sparse.hh"
 
 namespace {

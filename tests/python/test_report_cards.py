@@ -48,14 +48,14 @@ def report_project(root, extension, source=REPORT):
                  'nix': '''{ pkgs, inputs, params }: { run = ''
                    printf '%s' '{"numbers":{"values":[1,2,3],"big":9007199254740993}}' > "$TSUGUMI_OUTPUT"
                  ''; }'''},
-        'report': {'card': {'language': 'r', 'inputs': [{'name': 'data'}], 'filesystem': True,
+        'report': {'card': {'language': 'r', 'inputs': [{'name': 'data'}],
                            'recordIO': True, 'retainArtifact': True, 'artifactOutput': 'report',
                            'params': [{'name': 'scale', 'type': 'double', 'data': 2}]},
                    'outputs': OUTPUTS,
                    'nix': '{ pkgs, inputs, params }: { run = inputs.tsugumi.reportCard { src = ./src; entry = "report.' + extension + '"; }; }',
                    'src': {'report.' + extension: source,
                            'badge.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="24"><rect width="80" height="24" fill="green"/></svg>'}},
-        'read': {'card': {'language': 'bash', 'inputs': [{'name': 'report'}], 'filesystem': True},
+        'read': {'card': {'language': 'bash', 'inputs': [{'name': 'report'}]},
                  'nix': '''{ pkgs, inputs, params }: { run = ''
                    test -s "$DIR_REPORT/index.html"
                    printf '%s' '{"text":"saved report"}' > "$TSUGUMI_REPORT"
@@ -157,9 +157,6 @@ stopifnot(readLines(file.path(params$tsugumi$paths$folder, "data.txt")) == "file
 ```\n'''
     report_project(root, extension, source)
     definition = root / 'definitions/data'
-    card = json.loads((definition / '_card.json').read_text())
-    card['filesystem'] = True
-    (definition / '_card.json').write_text(json.dumps(card))
     (definition / '_outputs.fbs').write_text(NUMBERS.replace('table Outputs {', '''table Path { value:string; }
 table Outputs { file:Path (required, tsugumi:"file"); folder:Path (required, tsugumi:"directory");'''))
     (definition / 'default.nix').write_text('''{ pkgs, inputs, params }: { run = ''

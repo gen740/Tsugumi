@@ -89,13 +89,16 @@ def registered_remote(monkeypatch, resource_limits):
 
 @pytest.mark.parametrize("resource_limits,settings,message", [
     (False, {"executionService": "cluster"}, None),
+    (False, {"executionService": "cluster", "hostFolders": []}, None),
+    (False, {"executionService": "cluster", "hostFolders": [{"path": "/data", "name": "data"}]},
+     "no worker reuse or host folders"),
     (True, {"executionService": "local", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}},
      "requires an external execution service"),
     (True, {"executionService": "cluster", "system": NATIVE.split("-")[0] + "-linux",
       "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, None),
     (True, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, None),
     (False, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, None),
-], ids=["unlimited", "local-resources", "wrong-system", "remote-native", "unsupported-limits"])
+], ids=["unlimited", "empty-host-folders", "nonempty-host-folders", "local-resources", "wrong-system", "remote-native", "unsupported-limits"])
 def test_external_service_validation_keeps_cached_capabilities_advisory(
         project, core_factory, registered_remote, resource_limits, settings, message):
     """The catalog describes services; live capabilities are checked during prepare."""

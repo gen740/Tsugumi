@@ -667,7 +667,6 @@ private struct GeneralCategory: View {
               Label("外部の実行サービスでは worker の状態を残せません。", systemImage: "exclamationmark.triangle")
                 .font(.caption)
             }
-            toggle("filesystem", label: "作業・出力領域を使う", fallback: false)
             toggle("sandbox", label: "ファイルアクセスを制限", fallback: true)
               .disabled(remote && model.definition?["sandbox"]?.bool != false)
             if remote && model.definition?["sandbox"]?.bool == false {
@@ -679,7 +678,7 @@ private struct GeneralCategory: View {
         if model.kind == .code {
           Section {
             toggle("network", label: "ネットワークへのアクセスを許可する", fallback: false)
-              .help("オフ（デフォルト）: preRun・run・postRun のどれからも外へ通信できません。")
+              .help("オフ（デフォルト）: ファイルアクセスの制限がオンなら、preRun・run・postRun の外部通信を禁止します。")
             HostFoldersEditor(model: model, remote: remote)
           } header: {
             Label("Experimental", systemImage: "flask")

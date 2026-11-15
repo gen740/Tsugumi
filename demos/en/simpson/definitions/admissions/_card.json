@@ -6,6 +6,5 @@
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "admissions",
-  "filesystem": true
+  "artifactOutput": "admissions"
 }

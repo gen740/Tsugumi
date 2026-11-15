@@ -8,7 +8,6 @@
       "name": "ciao"
     }
   ],
-  "filesystem": true,
   "params": [
     {
       "name": "red_min_ev",

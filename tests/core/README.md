@@ -27,10 +27,15 @@ symlinks or host bytes. Undeclared staging entries are ignored. CI runs it on
 macOS and Linux; it can also be built without Nix or generated bindings:
 
 ```sh
-c++ -std=c++20 -Wall -Wextra -Werror -pthread -I core/src \
-  core/src/util/staging.cc tests/core/worker_staging_test.cc -o /tmp/worker-staging-tests
+c++ -std=c++20 -Wall -Wextra -Werror -pthread -I core/src -I workerd/include \
+  workerd/src/staging.cc tests/core/worker_staging_test.cc -o /tmp/worker-staging-tests
 /tmp/worker-staging-tests
 ```
+
+`tsugumi_execution_service_tests` also tests both shared output-delivery modes
+without a Card process, alongside native resident-transfer execution. See the
+[worker boundary comparison](../../workerd/README.md) for the preserved behavior
+of each carrier.
 
 `tests/python/test_demo_marimo.py::test_notebook_passes_typed_result_and_keeps_snapshot`
 additionally exercises the real Nix source modes, notebook subprocess, staged
@@ -142,4 +147,53 @@ separately with:
 
 ```sh
 nix develop -c python3 tests/run-isolated.py python3 -m pytest tests/core/integration -q --core-report
+```
+
+## Card definition evaluation
+
+`integration/test_definition_evaluation.py` uses the embedded Nix evaluator and
+real workers. It compares stdout, recorded environment identities and worker
+reuse after an input edit and reversion. SDK cases edit a private copy at the
+same path, both with a resident daemon and after restart. A second target
+system requires an advertised runnable system; that case skips otherwise.
+The resident SDK cases are strict xfails: the next run retains the old stdout
+or view bundle, environment identity and resident worker. Restart cases pass;
+the defect concerns a mutable SDK path, not an immutable Nix store deployment.
+Flake cases serve pinned fixtures over local HTTPS and need Nix, openssl and
+downloads. The second nixpkgs pin is fixed, never resolved from a moving branch.
+
+`test_definition_evaluation_economy.py` counts complete evaluator entries through
+the existing test-only Nix adapter. Its strict xfails specify cross-run reuse
+of full Card evaluation; the control distinguishes a store hit from skipped
+evaluation. A fresh execution still has to happen: the resident worker double
+reports invocation counts 1 then 2. No test reuses a previous run's data or uses
+elapsed time to infer evaluation counts.
+
+The counter assumes each entry to `NixEvaluator::evaluate` performs full Card
+evaluation. The real implementation applies and forces the entry and manifest
+there, including on ordinary repeated Run requests. Build-cache flags and stage
+durations cannot distinguish this work. The adapter publishes its integer before
+returning, so the completed run RPC is the reader's barrier. This instrument
+detects repeated evaluation; it does not prevent it or measure Nix's internal
+thunk forcing. If the evaluator later splits full and light operations, move
+the counter to the full operation. No production API or behavior is added.
+
+Restricted Card evaluation is not `pureEval`: `getEnv` is masked and outside
+reads are rejected, but `currentTime` and `currentSystem` remain available.
+The economy cases therefore do not establish that arbitrary Card Nix is pure,
+or justify a cache policy for those ambient inputs. The SDK path is also a real
+evaluation input; a version-number-only edit is not an artificial cache key.
+
+Build the real daemon/worker and updated double, then run from the checkout:
+
+```sh
+nix build -o ./build-ci .#ci-core
+./build-ci/bin/tsugumi-test-env python3 -m pytest -q --core-report \
+  tests/core/test_definition_evaluation_economy.py \
+  tests/core/integration/test_definition_evaluation.py
+# Diagnose strict xfails instead of hiding their assertion failures:
+./build-ci/bin/tsugumi-test-env python3 -m pytest -q --runxfail \
+  tests/core/test_definition_evaluation_economy.py
+./build-ci/bin/tsugumi-test-env python3 -m pytest -q --runxfail \
+  tests/core/integration/test_definition_evaluation.py -k 'sdk and resident'
 ```

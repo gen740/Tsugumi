@@ -218,7 +218,7 @@ def test_successful_call_ignores_undeclared_special_entries(core_factory, tmp_pa
                       'mkdir "$stage/nested"; ' + create + '; done; '
                       'echo safe > "$TSUGUMI_OUTPUT_DIR/result"; '
                       'printf \'{"doc":{"value":"%s/result"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-                      outputs=FILE_FBS, filesystem=True, recordIO=True)
+                      outputs=FILE_FBS, recordIO=True)
     write(tmp_path / "p", {"copy": definition}, [card("copy", "copy")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     run_id, st = run_and_wait(c, "copy")

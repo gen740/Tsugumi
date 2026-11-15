@@ -88,7 +88,6 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
   remote::InvocationJson invocation;
   *invocation.project_id = project_id;
   *invocation.network = request.node.settings.network;
-  *invocation.filesystem = request.node.settings.filesystem;
   *invocation.implementation_index = request.build.implementation_index;
   auto& files = *invocation.files;
   auto& dirs = *invocation.directories;
