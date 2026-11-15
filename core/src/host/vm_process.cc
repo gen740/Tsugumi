@@ -177,12 +177,6 @@ class VMProcess final : public EnvironmentProcess {
           "A resident project process cannot be authenticated",
           "Stop the environment and retry.", "");
   }
-  auto Shares(const EnvironmentLaunch& launch) -> void override {
-    V::SharesT shares;
-    shares.key = launch.key;
-    shares.mounts = Mounts(launch);
-    Call(std::move(shares));
-  }
   auto Runtime(const H::HostRuntimeRequestT& request)
       -> H::HostRuntimeT override {
     if (request.action == H::RuntimeAction::CleanupStore ||

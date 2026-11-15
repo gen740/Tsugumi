@@ -565,7 +565,8 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
 
   /// Gives the project a slot (its own virtiofs device, `tsugumi-<slot>`)
   /// sharing `entries` (name -> folder); the same slot again for a project
-  /// that has one.
+  /// that has one. Only before the guest mounts the slot: the guest cannot
+  /// reach the folders it had open once the device's share is replaced.
   public func attach(_ projectId: String, _ entries: [String: URL], readOnly: Set<String> = []) async throws -> Int {
     let slot: Int? = lock.withLock {
       if let s = slots[projectId] { return s }

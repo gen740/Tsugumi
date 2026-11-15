@@ -23,11 +23,7 @@ class HelperDouble final : public host::EnvironmentProcess {
   bool die = false;
   bool change_requirements = false;
   std::string log;
-  host::EnvironmentLaunch shares;
   auto Guest() const -> bool override { return guest; }
-  auto Shares(const host::EnvironmentLaunch& value) -> void override {
-    shares = value;
-  }
   Tsugumi::RPC::ProjectHostRequirementsT accepted;
   auto Requirements(const H::EnvironmentStateT&) -> Tsugumi::RPC::ProjectHostRequirementsT override {
     return accepted;
@@ -231,21 +227,27 @@ TEST(EnvironmentAdapterTest, HostUsesCoreRequirementsAndDoesNotRescanUnacceptedF
   EXPECT_FALSE(mounts[2].read_only);
   EXPECT_EQ(mounts[3].path, chat.string());
   EXPECT_TRUE(mounts[3].read_only);
-  // A disk edit not accepted by the running core must not alter its mounts.
+  // A disk edit not accepted by the running core must not alter its mounts,
+  // and a start of a ready project leaves the running guest's folders alone.
   Write(project / "externals/x/definitions/b/_card.json", "unaccepted broken JSON");
-  input.action = H::EnvironmentAction::RemoveFolders;
-  input.folders = {chat.string()};
-  service.Handle(input);
-  EXPECT_EQ(helper->shares.mounts.size(), 3u);
+  EXPECT_EQ(service.Handle(input).phase, H::EnvironmentPhase::Ready);
   EXPECT_EQ(helper->launches, 1);
-  EXPECT_FALSE(helper->shares.mounts[2].read_only);
+  EXPECT_EQ(helper->signals, 0);
   Write(project / "externals/x/definitions/b/_card.json",
         "{\"hostFolders\":[{\"name\":\"data\",\"path\":" + Quote(data.string()) + ",\"write\":true}]}");
-  input.action = H::EnvironmentAction::AddFolders;
+  // A guest keeps the folders of its start: any other set starts it again.
+  input.action = H::EnvironmentAction::RemoveFolders;
   input.folders = {chat.string()};
   service.Handle(input);
   EXPECT_EQ(helper->launches, 2);
   EXPECT_EQ(helper->signals, 1);
+  ASSERT_EQ(helper->received.mounts.size(), 3u);
+  EXPECT_FALSE(helper->received.mounts[2].read_only);
+  input.action = H::EnvironmentAction::AddFolders;
+  service.Handle(input);
+  EXPECT_EQ(helper->launches, 3);
+  EXPECT_EQ(helper->signals, 2);
+  ASSERT_EQ(helper->received.mounts.size(), 4u);
   input.action = H::EnvironmentAction::Stop;
   service.Handle(input);
 }

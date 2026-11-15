@@ -358,15 +358,12 @@ struct Environments::Impl {
       const auto previous = entry.mounted.empty() ? Plan(entry).mounts : entry.mounted;
       entry.requirements = options.process->Requirements(entry.state);
       const auto next = Plan(entry);
-      // New share names need a new guest mount namespace. Permission changes
-      // to existing shares are applied by the helper without restarting.
-      const bool added = std::ranges::any_of(next.mounts, [&](const auto& mount) {
-        return std::ranges::find(previous, mount.name, &EnvironmentMount::name) == previous.end();
-      });
-      if (options.process->Guest() && added) {
+      // The guest keeps the folders of its start: replacing the shares of a
+      // running project leaves it with files it can no longer reach, so a
+      // different plan starts the project again.
+      if (options.process->Guest() && next.mounts != previous) {
         Stop(entry);
       } else {
-        if (options.process->Guest()) options.process->Shares(next);
         entry.mounted = next.mounts;
         Authorize(entry);
         Notify(entry);
@@ -615,12 +612,6 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
       PrivateDirectory(
           std::filesystem::path(entry->state.control_dir).parent_path());
       PrivateDirectory(entry->state.control_dir);
-      const bool added = std::any_of(
-          request.folders.begin(), request.folders.end(),
-          [&](const auto& folder) {
-            return std::find(entry->folders.begin(), entry->folders.end(),
-                             folder) == entry->folders.end();
-          });
       const auto previous = entry->mounted.empty() ? impl_->Plan(*entry).mounts : entry->mounted;
       if (entry->state.phase == H::EnvironmentPhase::Ready)
         entry->requirements = impl_->options.process->Requirements(entry->state);
@@ -633,21 +624,14 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
           folders.push_back(folder);
       }
       impl_->WriteFolders(*entry, folders);
-      const auto next = impl_->Plan(*entry);
-      const bool new_mount = std::ranges::any_of(next.mounts, [&](const auto& mount) {
-        return std::ranges::find(previous, mount.name, &EnvironmentMount::name) == previous.end();
-      });
+      // A running guest sees the folders of its start (see Start).
       if (impl_->options.process->Guest() &&
-          entry->state.phase == H::EnvironmentPhase::Ready) {
-        if ((added && request.action == H::EnvironmentAction::AddFolders) || new_mount) {
-          impl_->Stop(*entry);
-          H::EnvironmentRequestT restart = request;
-          restart.origins = entry->origins;
-          impl_->Start(*entry, restart);
-        } else {
-          impl_->options.process->Shares(next);
-          entry->mounted = next.mounts;
-        }
+          entry->state.phase == H::EnvironmentPhase::Ready &&
+          impl_->Plan(*entry).mounts != previous) {
+        impl_->Stop(*entry);
+        H::EnvironmentRequestT restart = request;
+        restart.origins = entry->origins;
+        impl_->Start(*entry, restart);
       }
       impl_->Notify(*entry);
       break;

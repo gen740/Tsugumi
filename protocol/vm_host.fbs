@@ -9,8 +9,7 @@ table Mount { name:string (required); path:string (required); read_only:bool; }
 table Run { key:string (required); mounts:[Mount]; origins:[string]; cpus:uint; host_name:string (required); archive_incompatible_history:bool; }
 enum ProcessAction:ubyte { Poll, Stop }
 table ProcessRequest { key:string (required); action:ProcessAction; }
-table Shares { key:string (required); mounts:[Mount]; }
-union RequestPayload { Watch, Boot, Run, ProcessRequest, Shares, HostRuntimeRequest:Tsugumi.Host.HostRuntimeRequest, HostTerminalRequest:Tsugumi.Host.HostTerminalRequest }
+union RequestPayload { Watch, Boot, Run, ProcessRequest, HostRuntimeRequest:Tsugumi.Host.HostRuntimeRequest, HostTerminalRequest:Tsugumi.Host.HostTerminalRequest }
 table Request { value:RequestPayload; }
 table Process { pid:long; running:bool; endpoint:string; }
 table Failure { message:string (required); recovery:string; log:string; }

@@ -17,6 +17,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdlib>
+#include <set>
 #include <stdexcept>
 
 #include "service.hh"
@@ -204,10 +205,12 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
                                        "/",
                                        "/"};
     if (hide_credentials) {
-      isolation.insert(isolation.end(),
-                       {"--tmpfs", "/tmp", "--tmpfs", "/var/tmp"});
-      if (shared_tmp != "/tmp" && shared_tmp != "/var/tmp")
-        isolation.insert(isolation.end(), {"--tmpfs", shared_tmp});
+      // Only what exists: there is nothing to hide in a missing directory,
+      // and bubblewrap cannot create one under a read-only root.
+      for (const auto& shared :
+           std::set<std::string>{"/tmp", "/var/tmp", shared_tmp})
+        if (std::filesystem::is_directory(shared))
+          isolation.insert(isolation.end(), {"--tmpfs", shared});
     }
     for (const auto& path : hidden)
       isolation.insert(isolation.end(), {"--tmpfs", path});

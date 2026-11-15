@@ -266,8 +266,6 @@ func serve(_ message: Tsugumi_VMHost_MessageT, _ peer: Peer) async throws {
   case let request as Tsugumi_VMHost_ProcessRequestT:
     if request.action == .stop { try await driver.stop(request.key) }
     peer.emit(encode(try await driver.process(request.key), reply: .process, id: id))
-  case let request as Tsugumi_VMHost_SharesT:
-    _ = try await driver.shares(request.key, request.mounts); peer.emit(encode(Tsugumi_Service_AcknowledgementT(), reply: .acknowledgement, id: id))
   case let request as Tsugumi_Host_HostRuntimeRequestT:
     peer.emit(encode(try await driver.operation(request), reply: .hostruntime, id: id))
     if request.action == .reset { unlink(socketPath); exit(0) }

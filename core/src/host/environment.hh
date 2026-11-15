@@ -61,7 +61,6 @@ class EnvironmentProcess {
     return Verify(ready) ? std::optional<int64_t>(ready.pid) : std::nullopt;
   }
   virtual auto GuardStart(const std::string&) -> void {}
-  virtual auto Shares(const EnvironmentLaunch&) -> void {}
   virtual auto Requirements(const Tsugumi::Host::EnvironmentStateT& ready)
       -> Tsugumi::RPC::ProjectHostRequirementsT;
   virtual auto Runtime(const Tsugumi::Host::HostRuntimeRequestT&)
