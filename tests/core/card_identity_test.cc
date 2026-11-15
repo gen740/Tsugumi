@@ -65,6 +65,7 @@ TEST(CardIdentity,
   Server server({}, &service);
   service.attach(&server);
   service.open();
+  EXPECT_FALSE(std::filesystem::exists(options.run_scratch_dir));
 
   namespace R = Tsugumi::RPC;
   R::ProjectSaveRequestT save;

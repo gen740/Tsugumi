@@ -38,6 +38,7 @@ clangStdenv.mkDerivation {
       ../agent/Shared/guide-script.json
       ../agent/Shared/guide-script.en.json
       ../demos
+      ../tests/run-isolated.py
       ../tests/fixtures/subgraph-edits.json
       ../tests/fixtures/merge-contract.json
       (lib.fileset.fileFilter (
@@ -85,26 +86,11 @@ clangStdenv.mkDerivation {
     ln -s ${core.testSupport}/python "$out/share/tsugumi/python"
     ln -s ${core}/lib "$out/lib"
     ln -s ${core}/include "$out/include"
+    cp ${../tests/run-isolated.py} "$out/libexec/tsugumi-tests/run-isolated.py"
     cat > "$out/libexec/tsugumi-tests/run-command" <<'EOF'
     #!${bash}/bin/bash
     set -euo pipefail
-    if [ "$#" -eq 0 ]; then
-      echo 'Usage: tsugumi-test-env COMMAND [ARGUMENT...]' >&2
-      exit 2
-    fi
-    # Tests never use the person's own application data. A client that starts
-    # the host service by itself would otherwise use the real support folder
-    # (settings, sign-in, conversations) and leave a service running on it.
-    if [ -z "''${TSUGUMI_SUPPORT_DIR:-}" ]; then
-      TSUGUMI_SUPPORT_DIR="$(mktemp -d "''${TMPDIR:-/tmp}/tsugumi-test-support.XXXXXX")"
-      export TSUGUMI_SUPPORT_DIR
-      status=0
-      "$@" || status=$?
-      pkill -TERM -f "tsugumi-agentd --state-dir $TSUGUMI_SUPPORT_DIR" 2>/dev/null || true
-      rm -rf "$TSUGUMI_SUPPORT_DIR"
-      exit "$status"
-    fi
-    exec "$@"
+    exec python3 "$(dirname "$0")/run-isolated.py" "$@"
     EOF
     chmod +x "$out/libexec/tsugumi-tests/run-command"
     makeWrapper "$out/libexec/tsugumi-tests/run-command" "$out/bin/tsugumi-test-env" \

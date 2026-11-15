@@ -11,7 +11,9 @@ public enum VMHostIPC {
       return String(cString: pointer)
     } ?? support.standardizedFileURL.path
     let digest = SHA256.hash(data: Data(canonical.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
-    return "/private/tmp/tsugumi-vmhost-\(geteuid())-\(digest).sock"
+    let selected = ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"]
+    let prefix = selected == nil ? "tsugumi-vmhost-\(geteuid())-" : "v-"
+    return URL(fileURLWithPath: selected ?? "/private/tmp").appendingPathComponent("\(prefix)\(digest).sock").path
   }
 
   private static func address(_ path: String) throws -> sockaddr_un {

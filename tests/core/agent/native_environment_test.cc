@@ -12,7 +12,8 @@ TEST(NativeEnvironment, StartsWithOnlyRuntimeEnvironmentAndScopedBroker) {
   const std::vector<std::string> helper_names = {
       "TSUGUMI_VM_X86", "TSUGUMI_VM_CMDLINE", "TSUGUMI_PY_BINDINGS",
       "TSUGUMID",       "TSUGUMI_WORKER",     "TSUGUMI_SDK_DIR",
-      "HOST_LOG",       "HOST_BUSY",          "HOST_PID"};
+      "HOST_LOG",       "HOST_BUSY",          "HOST_PID", "TSUGUMI_SOCKET_DIR"};
+  const std::vector<std::string> storage_names = {"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"};
   std::vector<std::string> names = {
       "OPENAI_API_KEY",
       "ANTHROPIC_API_KEY",
@@ -30,6 +31,7 @@ TEST(NativeEnvironment, StartsWithOnlyRuntimeEnvironmentAndScopedBroker) {
       "TSUGUMI_EXECUTION_BROKER",
       "TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE"};
   names.insert(names.end(), helper_names.begin(), helper_names.end());
+  names.insert(names.end(), storage_names.begin(), storage_names.end());
   std::vector<std::optional<std::string>> previous;
   for (const auto &name : names) {
     const char *value = std::getenv(name.c_str());
@@ -51,6 +53,8 @@ TEST(NativeEnvironment, StartsWithOnlyRuntimeEnvironmentAndScopedBroker) {
   } restore{names, previous};
   for (const auto &name : helper_names)
     ASSERT_EQ(::setenv(name.c_str(), "runtime-option", 1), 0);
+  for (const auto& name : storage_names)
+    ASSERT_EQ(::setenv(name.c_str(), directory.path.c_str(), 1), 0);
   host::EnvironmentLaunch launch;
   launch.arguments = {"/usr/bin/env"};
   launch.log = directory.path / "environment";
@@ -67,6 +71,8 @@ TEST(NativeEnvironment, StartsWithOnlyRuntimeEnvironmentAndScopedBroker) {
       ASSERT_EQ(status, 0);
       const auto output = Read(launch.log);
       EXPECT_EQ(output.find("host-secret"), std::string::npos);
+      for (const auto& name : storage_names)
+        EXPECT_NE(output.find(name + "=" + directory.path.string() + "\n"), std::string::npos);
       EXPECT_NE(output.find("PATH="), std::string::npos);
       EXPECT_NE(output.find("HOME="), std::string::npos);
       EXPECT_NE(output.find("LANG=C.UTF-8"), std::string::npos);

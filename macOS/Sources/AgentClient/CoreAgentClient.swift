@@ -114,7 +114,8 @@ public actor CoreAgentClient {
     }
     if let existing = read() { return existing }
     try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-    let directory = URL(fileURLWithPath: "/private/tmp", isDirectory: true).appendingPathComponent("tsugumi-agent-\(UUID().uuidString)")
+    let socketRoot = ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/private/tmp"
+    let directory = URL(fileURLWithPath: socketRoot, isDirectory: true).appendingPathComponent("tsugumi-agent-\(UUID().uuidString.prefix(8))")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let daemon = Process()
     daemon.executableURL = try executable("tsugumi-agentd", environment: "TSUGUMI_AGENTD", component: "core")

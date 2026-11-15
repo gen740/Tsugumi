@@ -43,7 +43,7 @@ class Daemon:
         self.project = project
         self.args = list(args or [])
         # Unix socket paths are short-limited; keep them under /tmp-like dirs.
-        self.sock_dir = Path(tempfile.mkdtemp(prefix="tsg-"))
+        self.sock_dir = Path(tempfile.mkdtemp(prefix="tsg-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))).resolve()
         self.unix = str(self.sock_dir / "s")
         self.control = self.sock_dir / "control"
         self.env = env or {}
@@ -51,7 +51,16 @@ class Daemon:
         self.ready: dict = {}
 
     def start(self, expect_exit: bool = False, timeout: float = 20.0) -> "Daemon":
-        args = [str(TSUGUMID), "--project", str(self.project), "--unix", self.unix,
+        try:
+            return self._start(expect_exit, timeout)
+        except BaseException:
+            self.cleanup()
+            raise
+
+    def _start(self, expect_exit: bool = False, timeout: float = 20.0) -> "Daemon":
+        args = [str(TSUGUMID), "--scratch-dir", str(self.sock_dir / "scratch"),
+                "--run-scratch-dir", str(self.sock_dir / "run-scratch"),
+                "--project", str(self.project), "--unix", self.unix,
                 "--control-dir", str(self.control), "--worker", str(WORKER),
                 "--sdk-dir", str(SDK), "--allow-missing-origin"]
         args += self.args
@@ -109,26 +118,32 @@ def project(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def daemon(project: Path):
-    d = Daemon(project).start()
-    yield d
-    d.cleanup()
+    d = Daemon(project)
+    try:
+        d.start()
+        yield d
+    finally:
+        d.cleanup()
 
 
 class SharedVM:
     """The app's shared VM driven through tsugumi-vmctl: one per test session,
-    with its Nix store kept in TSUGUMI_TEST_VM_SUPPORT (build/test-vm) so
-    downloads survive test runs. macOS/tools/build-vmctl.sh builds and signs it."""
+    with private disposable storage. macOS/tools/build-vmctl.sh builds and signs it."""
 
     _instance: "SharedVM | None" = None
 
     def __init__(self):
         import atexit
         vmctl = os.environ.get("TSUGUMI_VMCTL", str(ROOT / "macOS" / ".build" / "debug" / "tsugumi-vmctl"))
-        support = Path(os.environ.get("TSUGUMI_TEST_VM_SUPPORT", BUILD / "test-vm"))
+        self.directory = tempfile.TemporaryDirectory(prefix="vm-")
+        support = Path(self.directory.name)
         support.mkdir(parents=True, exist_ok=True)
         self.console = support / "vmctl-console.log"
-        self.proc = subprocess.Popen([vmctl, "--support", str(support), "--console"], stdin=subprocess.PIPE,
-                                     stdout=subprocess.PIPE, stderr=open(self.console, "a"), text=True, bufsize=1)
+        env = dict(os.environ, TSUGUMI_SOCKET_DIR=str(support),
+                   TSUGUMI_RUN_SCRATCH_DIR=str(support.resolve() / "scratch"))
+        with self.console.open("a") as log:
+            self.proc = subprocess.Popen([vmctl, "--support", str(support), "--console"], stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE, stderr=log, text=True, bufsize=1, env=env)
         # Its answers are read by a thread so that every wait has a deadline.
         self.lines: queue.Queue = queue.Queue()
         threading.Thread(target=self._pump, daemon=True).start()
@@ -174,6 +189,17 @@ class SharedVM:
                 self.proc.wait(timeout=60)
             except Exception:
                 self.proc.kill()
+                self.proc.wait()
+        self.proc.stdin.close()
+        self.proc.stdout.close()
+        # The controller stops the VM, but its host and signed helper are
+        # resident services. Reuse the runner's ownership-scoped cleanup.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("test_runner_cleanup", ROOT / "tests/run-isolated.py")
+        cleanup = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cleanup)
+        cleanup.stop_services(Path(self.directory.name))
+        self.directory.cleanup()
 
 
 class VMEnv:

@@ -4,6 +4,10 @@ Run commands from the repository root. Build instructions are in [Installing and
 
 Run `tests/check-fast.sh` before every push: the static tests (`tests/static`: tests that only read files of the repository, which CI runs first in its own job) and the Web UI Nix check, including the generated demo player (`--no-nix` skips it). Run the platform checks with `tests/ci-local.sh`. On macOS this runs the Mac checks locally and the Linux checks in Docker or OrbStack. Use `tests/ci-local.sh mac` or `tests/ci-local.sh linux` for one platform, and `tests/ci-local.sh agent` for the public Agent RPC fixtures.
 
+Every test command must run through `build-ci/bin/tsugumi-test-env` (already used by CI and `ci-local.sh`). With a CMake build, use `python3 tests/run-isolated.py COMMAND ...`, for example `python3 tests/run-isolated.py ctest --test-dir build --output-on-failure` or `python3 tests/run-isolated.py /usr/bin/swift test --package-path macOS`. The runner creates short private temporary, support, cache, socket and disk scratch roots, stops services before removing them even on command failure or termination, and fails with the names of new entries left in the shared temporary/scratch roots. It only lists shared entry names; it neither traverses real project scratch nor deletes escaped data. Concurrent app activity creating entries in those roots is also reported, so run the check without unrelated starts. Killing the runner itself with SIGKILL cannot execute cleanup.
+
+Hosts can select storage with `TSUGUMI_SOCKET_DIR` (a short existing directory for local sockets) and `TSUGUMI_RUN_SCRATCH_DIR` (an absolute disk-backed path without symlink parents). `agentd --socket-dir` selects its stable broker/environment socket directory, and `--usage-scratch-dir` selects the shared run scratch root. Direct project services accept `--scratch-dir` for evaluator work and `--run-scratch-dir` for invocation data. Run data in production is still retained until explicitly deleted; opening a never-run project does not create its run scratch folder.
+
 The CI definitions are [ci.yml](../.github/workflows/ci.yml), [ci-platform.yml](../.github/workflows/ci-platform.yml) and the reusable [docs.yml](../.github/workflows/docs.yml). [tests/ci/select_jobs.py](ci/select_jobs.py) selects consumers from PR merge-base diffs or push before/after diffs; static tests always run first and block heavier jobs on failure.
 
 Prose and `README.md` run the documentation build/tests; `docs/features.md` also runs prompt contracts, and `docs/CardGuide.md` runs its SDK examples and player consumers. Web, SDK, shared UI and demos run Web/player checks and documentation; demos also run SDK, Guide RPC and Swift tests. Native core/worker changes run runtime consumers on both Linux architectures and macOS; client changes also run Web/player checks. Swift changes run Mac tests; CLI/plugin changes run adapter tests (CLI also selects Mac tests). Build prerequisites follow each selected job. Site tooling also runs Swift help tests.
@@ -29,18 +33,18 @@ CI runs deterministic core RPC and Agent tests on Linux and macOS. SDK and Web c
 The large demo runs are opt-in; CI collects them but leaves `TSUGUMI_TEST_DEMO_RUNS` unset. Run them explicitly in the development environment:
 
 ```sh
-TSUGUMI_TEST_DEMO_RUNS=1 nix develop -c python3 -m pytest -q tests/python/test_demo_*.py
+TSUGUMI_TEST_DEMO_RUNS=1 nix develop -c python3 tests/run-isolated.py python3 -m pytest -q tests/python/test_demo_*.py
 ```
 
 The shared-VM suites also require an explicit opt-in on an Apple silicon Mac with the VM image installed. Build the signed controller first, then run:
 
 ```sh
 macOS/tools/build-vmctl.sh
-TSUGUMI_TEST_CONTAINER=1 nix develop -c python3 -m pytest -q \
+TSUGUMI_TEST_CONTAINER=1 nix develop -c python3 tests/run-isolated.py python3 -m pytest -q \
   tests/python/test_shared_vm.py tests/python/test_cards_container.py tests/python/test_workers.py
 ```
 
-`TSUGUMI_TEST_VM_SUPPORT` selects the persistent test VM support directory (default: `build/test-vm`); `TSUGUMI_VM_X86=qemu` selects QEMU instead of Rosetta for x86_64 Linux Cards. These VM suites do not run in CI.
+The VM support directory and its store are disposable and removed at session end. `TSUGUMI_VM_X86=qemu` selects QEMU instead of Rosetta for x86_64 Linux Cards. These VM suites do not run in CI.
 
 `tests/core/agent/environment_rpc_test.cc` exercises Host environment requests against agentd and an external fake `tsugumid` with authenticated project RPC. It covers readiness/registration, concurrent starts and aliases, process death and retry, resident-process adoption, explicit history recovery, folder withdrawal, stop and broker capability revocation. `environment_adapter_test.cc` supplies a narrow helper double to the same lifecycle service. The RPC scenarios use Unix sockets; the helper-double scenarios run without sockets. Neither launches a VM or invokes Nix. Build `tsugumi_agent_rpc_tests` and `tsugumi_host_settings_tests`; run them with `--gtest_filter='EnvironmentFixture.*'` and `--gtest_filter='EnvironmentAdapterTest.*'`, respectively. The CLI start/origins/failure scenarios in `tests/python/test_cli.py` run the Web host through agentd against `vm_helper_double.py`, a private FlatBuffers adapter with a native project daemon. `test_web_server.py` verifies environment residency and stop/restart through the same Host requests. `web/tests/environmentHost.ts` and Swift `ServiceWireTests` check request encoding, events and omitted vectors without sockets. Mount selection and folder withdrawal are tested with the C++ helper double; Swift keeps no second mount-selection implementation.
 

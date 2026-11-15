@@ -392,15 +392,9 @@ struct Environments::Impl {
         std::filesystem::remove(control / file);
       std::filesystem::remove(sockets / "s");
       const auto roots = options.directory.parent_path() / "build-roots";
-      // Disk-backed, and without a symbolic link on the way: the project
-      // service refuses a scratch path that passes through one.
-#ifdef __APPLE__
-      const std::filesystem::path temporary = "/private/var/tmp";
-#else
-      const std::filesystem::path temporary = "/var/tmp";
-#endif
-      const auto scratch =
-          temporary / ("tsugumi-scratch-" + std::to_string(::getuid()));
+      const auto scratch = options.run_scratch_directory.empty()
+                               ? fs::run_scratch_root()
+                               : options.run_scratch_directory;
       if (options.process->Guest() && !entry.requirements)
         entry.requirements = load_host_requirements(entry.state.project);
       auto launch = Plan(entry);
@@ -429,6 +423,13 @@ struct Environments::Impl {
           roots.string(),
           "--usage-scratch-dir",
           scratch.string()};
+      // Temporaries stay in the system's temporary folder unless the caller
+      // selected its own run storage; then they go beside the control files.
+      if (!options.run_scratch_directory.empty() ||
+          std::getenv("TSUGUMI_RUN_SCRATCH_DIR")) {
+        launch.arguments.push_back("--scratch-dir");
+        launch.arguments.push_back((control / "scratch").string());
+      }
       if (request.archive_incompatible_history)
         launch.arguments.push_back("--archive-incompatible-history");
       for (const auto& origin : request.origins) {

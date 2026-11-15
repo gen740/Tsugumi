@@ -53,11 +53,16 @@ class NativeProcess final : public EnvironmentProcess {
         "PATH=" + home +
             "/.nix-profile/bin:/nix/var/nix/profiles/default/bin:"
             "/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin"};
+    // These are filesystem locations, not credentials. Preserve the host's
+    // explicit XDG storage layout when starting a project or VM helper.
+    for (const auto* name : {"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"})
+      if (const auto* value = std::getenv(name))
+        environment.push_back(std::string(name) + "=" + value);
     if (launch.vm_helper) {
       for (const auto *name :
            {"TSUGUMI_VM_X86", "TSUGUMI_VM_CMDLINE", "TSUGUMI_PY_BINDINGS",
             "TSUGUMID", "TSUGUMI_WORKER", "TSUGUMI_SDK_DIR", "HOST_LOG",
-            "HOST_BUSY", "HOST_PID"}) {
+            "HOST_BUSY", "HOST_PID", "TSUGUMI_SOCKET_DIR"}) {
         if (const auto *value = std::getenv(name))
           environment.push_back(std::string(name) + "=" + value);
       }

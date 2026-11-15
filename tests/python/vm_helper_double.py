@@ -34,7 +34,9 @@ try:
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 except BlockingIOError:
     sys.exit(0)
-endpoint = Path("/tmp") / ("tsugumi-vmhost-%d-%s.sock" % (os.getuid(), hashlib.sha256(str(support).encode()).hexdigest()[:24]))
+socket_root = os.environ.get("TSUGUMI_SOCKET_DIR")
+socket_prefix = "v-" if socket_root else f"tsugumi-vmhost-{os.getuid()}-"
+endpoint = Path(socket_root or "/tmp") / f"{socket_prefix}{hashlib.sha256(str(support).encode()).hexdigest()[:24]}.sock"
 endpoint.unlink(missing_ok=True)
 listener = socket.socket(socket.AF_UNIX)
 listener.bind(str(endpoint))
@@ -45,7 +47,7 @@ broker_endpoint = ""
 processes = {}
 controls = {}
 mutex = threading.Lock()
-sockets = Path(tempfile.mkdtemp(prefix="tsugumi-helper-double-"))
+sockets = Path(tempfile.mkdtemp(prefix="vh-"))
 
 def text(value):
     return value.decode() if isinstance(value, bytes) else value
@@ -106,7 +108,8 @@ def serve(peer):
                         controls[key] = mounts["control"]
                         # Match vmd: native clients (including agentd's readiness
                         # check) have no Origin; browsers still need an allowed one.
-                        arguments = [os.environ["TSUGUMID"], "--project", str(mounts["project"]), "--control-dir", str(mounts["control"]),
+                        arguments = [os.environ["TSUGUMID"], "--scratch-dir", str(mounts["control"] / "scratch"),
+                                     "--run-scratch-dir", str(mounts["control"].resolve() / "run-scratch"), "--project", str(mounts["project"]), "--control-dir", str(mounts["control"]),
                                      "--unix", str(sockets / key), "--listen", "127.0.0.1:0", "--allow-missing-origin", "--worker", os.environ["TSUGUMI_WORKER"], "--sdk-dir", os.environ["TSUGUMI_SDK_DIR"]]
                         for origin in request.origins or []:
                             arguments.extend(["--allow-origin", text(origin)])

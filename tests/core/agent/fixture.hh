@@ -180,7 +180,8 @@ class AgentFixture : public ::testing::Test {
     std::filesystem::remove(directory.path / "state/agent.ready");
     std::vector<std::string> arguments{TSUGUMI_AGENT_BINARY, "--state-dir",
          (directory.path / "state").string(), "--unix",
-         (directory.path / "agent.sock").string(), "--demos-dir",
+         (directory.path / "agent.sock").string(), "--socket-dir", (directory.path / "broker").string(),
+         "--usage-scratch-dir", (directory.path / "run-scratch").string(), "--demos-dir",
          (directory.path / "demos").string(), "--listen", "127.0.0.1:0"};
     arguments.insert(arguments.end(), extra_agent_arguments.begin(), extra_agent_arguments.end());
     agent.Start(arguments, directory.path / "agent.log");

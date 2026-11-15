@@ -40,6 +40,7 @@ struct Options {
   stdfs::path gcroots_dir;
   stdfs::path history_dir;
   stdfs::path run_scratch_dir;
+  stdfs::path scratch_dir;
   stdfs::path usage_roots_dir;
   stdfs::path usage_scratch_dir;
   stdfs::path usage_file;
@@ -56,7 +57,7 @@ void usage() {
                "                [--allow-origin ORIGIN]... [--allow-missing-origin] [--sdk-dir DIR]\n"
                "                [--worker PATH] [--cpus N] [--gcroots-dir DIR] [--history-dir DIR]\n"
                "                [--archive-incompatible-history]\n"
-               "                [--run-scratch-dir DIR] [--usage-roots-dir DIR] [--usage-scratch-dir DIR]\n"
+               "                [--scratch-dir DIR] [--run-scratch-dir DIR] [--usage-roots-dir DIR] [--usage-scratch-dir DIR]\n"
                "                [--usage-file FILE]\n"
                "                [--host-folders DIR] [--substituters-file FILE]\n");
 }
@@ -87,6 +88,7 @@ std::optional<Options> parse(int argc, char** argv) {
     else if (a == "--gcroots-dir") o.gcroots_dir = next();
     else if (a == "--history-dir") o.history_dir = next();
     else if (a == "--run-scratch-dir") o.run_scratch_dir = next();
+    else if (a == "--scratch-dir") o.scratch_dir = next();
     else if (a == "--usage-roots-dir") o.usage_roots_dir = next();
     else if (a == "--usage-scratch-dir") o.usage_scratch_dir = next();
     else if (a == "--usage-file") o.usage_file = next();
@@ -179,6 +181,7 @@ int run_daemon(int argc, char** argv) {
   so.gcroots_dir = opt.gcroots_dir;
   so.history_dir = opt.history_dir;
   so.run_scratch_dir = opt.run_scratch_dir;
+  so.scratch_dir = opt.scratch_dir;
   so.usage_roots_dir = opt.usage_roots_dir;
   so.usage_scratch_dir = opt.usage_scratch_dir;
   so.usage_file = opt.usage_file;
@@ -186,6 +189,15 @@ int run_daemon(int argc, char** argv) {
   so.host_folders = opt.host_folders;
   so.project_shell = opt.project_shell;
   so.substituters_file = opt.substituters_file;
+  if (!so.scratch_dir.empty()) {
+    // Evaluator downloads and subprocess temporaries belong to the selected
+    // work area too, rather than a second implicit global temporary root.
+    const auto temporary = so.scratch_dir / "tmp";
+    stdfs::create_directories(temporary);
+    const auto resolved = stdfs::canonical(temporary).string();
+    if (::setenv("TMPDIR", resolved.c_str(), 1) != 0)
+      throw std::runtime_error("cannot select evaluator temporary directory");
+  }
   // Block termination signals before threads start; they are taken with sigwait.
   sigset_t set;
   sigemptyset(&set);

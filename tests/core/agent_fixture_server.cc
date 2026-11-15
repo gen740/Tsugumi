@@ -14,6 +14,7 @@
 #include <charconv>
 #include <csignal>
 #include <cstring>
+#include <cstdlib>
 #include <fstream>
 #include <hosq/hosq.hh>
 #include <hosq/json/compact_writer.hh>
@@ -111,7 +112,7 @@ auto ChildProcess::Stop(bool crash) -> void {
 
 TemporaryDirectory::TemporaryDirectory() {
   // Keep Unix socket names below sockaddr_un.sun_path on macOS.
-  std::string pattern = "/tmp/tsugumi-agent-XXXXXX";
+  std::string pattern = (std::filesystem::path(std::getenv("TSUGUMI_SOCKET_DIR") ? std::getenv("TSUGUMI_SOCKET_DIR") : "/tmp") / "ta-XXXXXX").string();
   if (!::mkdtemp(pattern.data()))
     throw std::runtime_error("cannot create temporary project");
   path = pattern;

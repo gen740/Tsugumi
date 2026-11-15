@@ -38,6 +38,7 @@ def host(tmp_path):
         state = tmp_path / "state"
         with (tmp_path / "agent.log").open("w") as log:
             proc = subprocess.Popen([str(AGENT), "--state-dir", str(state), "--unix", short + "/s",
+                                     "--socket-dir", short + "/b", "--usage-scratch-dir", str(tmp_path.resolve() / "scratch"),
                                      "--demos-dir", str(demos), "--no-websocket"], stdout=log, stderr=log)
         try:
             deadline = time.monotonic() + 10

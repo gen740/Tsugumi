@@ -36,9 +36,13 @@ class Worker:
                         "--port", str(self.port), "--max-jobs", "1", *extra]
         self.env = env
         self.process = None
-        self.start()
-        self.caps = self.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False).body
-        self.instance = self.call(R.RequestBody.ProbeRequest, R.ProbeRequestT()).body.instanceId
+        try:
+            self.start()
+            self.caps = self.call(R.RequestBody.ProbeRequest, R.ProbeRequestT(), scoped=False).body
+            self.instance = self.call(R.RequestBody.ProbeRequest, R.ProbeRequestT()).body.instanceId
+        except BaseException:
+            self.close()
+            raise
 
     def start(self):
         self.log = (self.root / "worker.log").open("ab")
@@ -57,7 +61,11 @@ class Worker:
     def close(self):
         if self.process and self.process.poll() is None:
             self.process.terminate()
-            self.process.wait(timeout=20)
+            try:
+                self.process.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=5)
         self.log.close()
 
     def restart(self):
