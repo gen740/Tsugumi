@@ -142,7 +142,6 @@ struct CardDefinition {
   Opt<"recordIO", v::Bool> record_io;
   Opt<"retainArtifact", v::Bool> retain_artifact;
   Opt<"artifactOutput", v::String> artifact_output;
-  Opt<"filesystem", v::Bool> filesystem;
   Opt<"sandbox", v::Bool> sandbox;
   Opt<"reuseWorker", v::Bool> reuse_worker;  // Keep worker state across invocations and runs. Default false.
   Opt<"network", v::Bool> network;           // Experimental, default false

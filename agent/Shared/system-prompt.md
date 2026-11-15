@@ -152,8 +152,8 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
         '';
       }
   * File and folder outputs: declare attribute "tsugumi"; in _outputs.fbs and mark the port (required, tsugumi:
-    "file") or (required, tsugumi: "directory"); its table has one field value:string holding the path. Set
-    "filesystem": true in _card.json and write under run.output_directory. demos/en/report/definitions/generate:
+    "file") or (required, tsugumi: "directory"); its table has one field value:string holding the path. Write
+    outputs under run.output_directory. demos/en/report/definitions/generate:
       attribute "tsugumi";
       namespace report;
       table CsvFile { value:string; }
@@ -167,7 +167,7 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
         def main(inputs, report, run):
             path = inputs.input("events", EventsFile).Value().decode()  # a File input is a path
             low = inputs.params.low                    # param "low"
-            out_dir = run.output_directory             # with "filesystem": true
+            out_dir = run.output_directory
             b = tsugumi.builder(); p = b.CreateString(out_dir)
             images_out.Start(b); images_out.AddValue(b, p)
             report.text(f"Input: {path}; lower bound: {low}")
@@ -213,7 +213,7 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
     {"source":"inputs.data.source","factor":"param.factor"}. Supply every variable of an overridden cell.
     The adapter calls tsugumi.notebook.bindings and run once, then returns
     {"value":{"value":values[selected]},"report":{"value":str(folder)}} against _outputs.fbs
-    (numeric value and report Directory, filesystem/retainArtifact enabled). Notebook cells do not emit ports.
+    (numeric value and report Directory, retainArtifact enabled). Notebook cells do not emit ports.
     Interactive sessions are separate (#267).
   * C++: sources are `#include <card.hh>` and `auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output` with one member per
     port (inputs.<port>, Output's ports are std::optional); visualization is

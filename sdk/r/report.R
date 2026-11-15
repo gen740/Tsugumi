@@ -64,7 +64,7 @@ if (closing < 0L) {
 }
 writeLines(enc2utf8(rendered), html, useBytes = TRUE)
 destination <- file.path(Sys.getenv("TSUGUMI_OUTPUT_DIR"), "report")
-if (!nzchar(Sys.getenv("TSUGUMI_OUTPUT_DIR"))) stop("report Card requires filesystem access")
+if (!nzchar(Sys.getenv("TSUGUMI_OUTPUT_DIR"))) stop("report Card requires a File or Directory output port")
 dir.create(destination, recursive = TRUE)
 # Preserve source, parameter provenance and related assets with the rendered HTML.
 if (!all(file.copy(list.files(work, all.files = TRUE, no.. = TRUE, full.names = TRUE), destination,

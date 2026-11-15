@@ -272,7 +272,6 @@ class Builder {
     timeout(n, "buildTimeoutSeconds", schema::get(d.build_timeout_seconds), s.build_timeout_seconds);
     boolean(d.record_io, s.record_io);
     boolean(d.retain_artifact, s.retain_artifact);
-    boolean(d.filesystem, s.filesystem);
     boolean(d.sandbox, s.sandbox);
     boolean(d.reuse_worker, s.reuse_worker);
     boolean(d.network, s.network);
@@ -285,8 +284,9 @@ class Builder {
         s.execution_service = *v;
     }
     const bool remote = s.execution_service != kLocalExecutionService;
+    const auto* host_folders = schema::get(d.host_folders);
     if (remote && (!s.sandbox || s.reuse_worker || s.timeout_seconds.value_or(3600) > 604800 ||
-                   schema::get(d.host_folders)))
+                   (host_folders && !host_folders->empty())))
       n.diags.push_back(diag(n.path, "invalid_setting",
           "external execution requires sandbox, no worker reuse or host folders, and a timeout of at most seven days"));
     if (const auto* resources = schema::get(d.execution_resources)) {

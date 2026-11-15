@@ -9,6 +9,5 @@
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "report",
-  "filesystem": true
+  "artifactOutput": "report"
 }

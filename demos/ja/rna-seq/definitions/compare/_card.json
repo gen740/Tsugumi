@@ -10,7 +10,6 @@
   ],
   "retainArtifact": true,
   "artifactOutput": "agreement",
-  "filesystem": true,
   "params": [
     {
       "name": "fdr",

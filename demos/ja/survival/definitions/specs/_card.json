@@ -7,7 +7,6 @@
   ],
   "retainArtifact": true,
   "artifactOutput": "specifications",
-  "filesystem": true,
   "params": [
     {
       "name": "exposure",

@@ -160,8 +160,8 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
     workers_.release(worker_card, key, std::move(lease.worker), reuse);
   };
   try {
-    // Folders: without filesystem: true, work/ and tmp/ are the worker's own
-    // (local, emptied between calls); only declared File/Directory outputs
+    // work/ and tmp/ are the worker's own (local, emptied between calls);
+    // only declared File/Directory outputs
     // are copied into the invocation's out/ for downstream Cards/artifacts.
     bool needs_out = false;
     for (const auto& o : node.outputs) needs_out |= o.kind != PortKind::FlatBuffer;
