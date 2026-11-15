@@ -24,6 +24,8 @@ const show = (nativeSystem: string, systems: string[]) => {
 }
 
 const linux = show('aarch64-linux', ['aarch64-linux', 'x86_64-linux'])
+assert.doesNotMatch(linux, /作業・出力領域を使う/)
+assert.match(linux, /ファイルアクセスの制限がオンなら、preRun・run・postRun の外部通信を禁止します。/)
 assert.match(linux, /Linux \(aarch64-linux\)/)
 assert.match(linux, /この実行環境の既定（aarch64-linux）/)
 assert.match(linux, /<option value="x86_64-linux">/)

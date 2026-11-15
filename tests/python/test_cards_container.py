@@ -107,8 +107,7 @@ def test_shell_step_contract(env):
             'echo \'{"out":{"value":7}}\' > "$TSUGUMI_OUTPUT"',
             # preRun and postRun never see the Card inputs.
             inputs=["in"], pre='test -z "${JSON_IN+x}" && mkdir -p sub && cd sub && export FROM_PRE=yes',
-            post='test -z "${JSON_IN+x}" && test "$TSUGUMI_FAILED" = 0 && test "$TSUGUMI_OUTPUTS" = out',
-            filesystem=True),
+            post='test -z "${JSON_IN+x}" && test "$TSUGUMI_FAILED" = 0 && test "$TSUGUMI_OUTPUTS" = out'),
         "small": bash('test "$(jq .value "$JSON_IN")" = 7 && echo \'{"out":{"value":8}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"]),
         "postfail": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', post="exit 3"),
         "runfail": bash("exit 4", post='test "$TSUGUMI_FAILED" = 1'),

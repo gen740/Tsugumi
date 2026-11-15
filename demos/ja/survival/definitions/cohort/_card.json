@@ -7,7 +7,6 @@
   ],
   "retainArtifact": true,
   "artifactOutput": "cohort",
-  "filesystem": true,
   "params": [
     {
       "name": "age_min",

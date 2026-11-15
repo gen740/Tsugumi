@@ -5,7 +5,6 @@
       "name": "detrended"
     }
   ],
-  "filesystem": true,
   "params": [
     {
       "name": "window_hours",

@@ -77,3 +77,16 @@ def test_the_mnist_draft_is_work_for_helpers_that_meets_again():
         assert "assert" in content, card
         if card != "compare":
             assert contract in " ".join(content.split()), card
+
+
+@pytest.mark.parametrize("language", ["ja", "en"])
+def test_demo_definitions_and_history_use_current_card_settings(language):
+    """A restored demo revision must be as loadable as the current definitions."""
+    root = ROOT / "demos" / language
+    for file in root.rglob("_card.json"):
+        assert "filesystem" not in json.loads(file.read_text()), file
+    for file in root.rglob(".tsugumi-history.json"):
+        for commit in json.loads(file.read_text())["commits"]:
+            for name, content in commit.get("files", {}).items():
+                if name.endswith("/_card.json") and content is not None:
+                    assert "filesystem" not in json.loads(content), (file, name)

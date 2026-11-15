@@ -524,7 +524,7 @@ def test_remote_transfers_only_declared_outputs(project, core_factory, remote_br
               'mkfifo "$TSUGUMI_TMP_DIR/undeclared-fifo"; '
               'printf \'{"doc":{"value":"%s/%s"}}\' "$TSUGUMI_OUTPUT_DIR" "$result" > "$TSUGUMI_OUTPUT"')
     definition = bash(script, outputs=schema, executionService="remote-test", recordIO=True,
-                      filesystem=True, timeoutSeconds=600)
+                      timeoutSeconds=600)
     write(project, {"copy": definition}, [card("copy", "copy")], [])
     scratch = tmp_path / "scratch"
     c = core_factory(args=["--run-scratch-dir", str(scratch)]).connect()
