@@ -50,7 +50,13 @@ auto RequestMessages(const std::vector<Message>& messages,
                      "; " + reference + "]";
         block.images.clear();
       } else {
-        block.text = ClipMiddle(block.text, result_limit, reference);
+        const auto& call = calls[block.id];
+        if (!block.is_error &&
+            (call.name == "project_shell" || call.name == "project_file_read" ||
+             call.name == "attached_folder_read"))
+          block.text = FileResultForModel(block.text, result_limit, reference);
+        else
+          block.text = ClipMiddle(block.text, result_limit, reference);
       }
     }
   }

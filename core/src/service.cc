@@ -328,8 +328,10 @@ auto Service::execution_diagnostic(const Node& node, const std::vector<RemoteTar
 void Service::shutdown() {
   remote_jobs_.stop();
   {
-    std::lock_guard lock(shell_mu_);
+    std::lock_guard lock(cancellations_mu_);
     shell_stopping_ = true;
+    // Accepted saves drain with the mutation lane. Only a peer disconnect
+    // cancels its save; stopping the service must not discard accepted edits.
     for (const auto& [key, cancelled] : shell_cancellations_) cancelled->store(true);
   }
   if (shell_lane_) shell_lane_->stop();
@@ -453,8 +455,10 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
 
 void Service::disconnected(ConnId conn) {
   {
-    std::lock_guard lock(shell_mu_);
+    std::lock_guard lock(cancellations_mu_);
     for (const auto& [key, cancelled] : shell_cancellations_)
+      if (key.first == conn) cancelled->store(true);
+    for (const auto& [key, cancelled] : save_cancellations_)
       if (key.first == conn) cancelled->store(true);
   }
   std::lock_guard<std::mutex> l(subs_mu_);
@@ -462,7 +466,19 @@ void Service::disconnected(ConnId conn) {
 }
 
 void Service::on_lane(Lane& lane, RequestIn req, void (Service::*fn)(RequestIn&)) {
+  const auto key = std::make_pair(req.conn, req.request_id);
+  if (fn == &Service::save) {
+    req.cancelled = std::make_shared<std::atomic<bool>>(false);
+    std::lock_guard lock(cancellations_mu_);
+    save_cancellations_[key] = req.cancelled;
+  }
   bool ok = lane.submit([this, req, fn](bool expired) mutable {
+    auto cleanup = [this, &req](void*) {
+      if (!req.cancelled) return;
+      std::lock_guard lock(cancellations_mu_);
+      save_cancellations_.erase({req.conn, req.request_id});
+    };
+    std::unique_ptr<void, decltype(cleanup)> guard(this, cleanup);
     if (expired) return fail(req, FailureData::make(FailureKind::timeout, "the request waited longer than 30 s and was not executed"));
     try {
       (this->*fn)(req);
@@ -473,7 +489,13 @@ void Service::on_lane(Lane& lane, RequestIn req, void (Service::*fn)(RequestIn&)
       fail(req, FailureData::make(FailureKind::internal_error, e.what()));
     }
   });
-  if (!ok) fail(req, FailureData::make(FailureKind::busy, "the request queue is full"));
+  if (!ok) {
+    if (req.cancelled) {
+      std::lock_guard lock(cancellations_mu_);
+      save_cancellations_.erase(key);
+    }
+    fail(req, FailureData::make(FailureKind::busy, "the request queue is full"));
+  }
 }
 
 void Service::dispatch(RequestIn req) {
@@ -971,6 +993,11 @@ void Service::save(RequestIn& req) {
   std::string digest = request_digest(req.request());
   if (replay_or_join(req, op_id, "save", digest)) return;
   try {
+    auto check_cancelled = [&] {
+      if (req.cancelled && req.cancelled->load())
+        throw Failed(FailureKind::cancelled, "the save was cancelled before committing");
+    };
+    check_cancelled();
     require_mutation(r->base_rev(), r->op_id());
     auto changes = decode_changes(r->changes());
     auto base = store_->current();
@@ -978,6 +1005,22 @@ void Service::save(RequestIn& req) {
       FailureData f = FailureData::make(FailureKind::revision_conflict, "the document changed since base_rev");
       f.current_rev = base->rev;
       throw Failed(f);
+    }
+    if (r->transfers()) for (const auto* transfer : *r->transfers()) {
+      ChangeIn change{};
+      change.kind = ChangeIn::Kind::PutSource;
+      change.path = transfer->path()->str();
+      if (transfer->base_hash()) change.base_hash = transfer->base_hash()->str();
+      auto root = transfer->source_root() ? std::filesystem::path(transfer->source_root()->str()) : opts_.root;
+      if (!root.is_absolute()) throw Failed(FailureKind::invalid_path, "transfer root must be absolute");
+      std::optional<std::string> expected;
+      if (transfer->expected_hash()) expected = transfer->expected_hash()->str();
+      try {
+        change.file = store_->stage_file(root, transfer->from()->str(), expected, check_cancelled);
+      } catch (const fs::Error& error) {
+        throw Failed(FailureKind::invalid_path, error.what());
+      }
+      changes.push_back(std::move(change));
     }
     auto staged = store_->stage(changes, op_id, r->origin()->str());
     if (opts_.fault == "save_throws") throw std::runtime_error("injected: not a Failed");
@@ -998,7 +1041,7 @@ void Service::save(RequestIn& req) {
       auto sr = save_result(b, d, *base);
       receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
       return receipt;
-    });
+    }, check_cancelled);
     if (staged.delta.doc) scheduler_->document_changed(*base, *staged.delta.doc);
     reply(req, receipt_reply(req.request_id, receipt, false));
     if (staged.delta.doc) publish_delta(staged.delta);

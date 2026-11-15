@@ -92,24 +92,28 @@ auto ReadAttachedFolder(const std::filesystem::path& root,
     std::sort(names.begin(), names.end());
     for (const auto& name : names) bytes += name + "\n";
   } else if (S_ISREG(status.st_mode)) {
-    constexpr size_t kFileLimit = 16u << 20;
-    if (status.st_size < 0 ||
-        static_cast<uint64_t>(status.st_size) > kFileLimit)
-      throw Failure("limit_exceeded", "Attached file exceeds 16 MiB");
-    char buffer[8192];
-    while (true) {
-      const auto count = ::read(file.value, buffer, sizeof buffer);
+    if (status.st_size < 0)
+      throw Failure("invalid_path", "Invalid attached file size");
+    const auto size = static_cast<uint64_t>(status.st_size);
+    const auto begin = std::min(offset, size);
+    bytes.resize(std::min(limit, size - begin));
+    size_t position = 0;
+    while (position < bytes.size()) {
+      const auto count = ::pread(file.value, bytes.data() + position,
+                                  bytes.size() - position, begin + position);
+      if (count < 0 && errno == EINTR) continue;
       if (count < 0) throw Failure("not_found", "Cannot read attached file");
       if (!count) break;
-      if (bytes.size() + static_cast<size_t>(count) > kFileLimit)
-        throw Failure("limit_exceeded", "Attached file exceeds 16 MiB");
-      bytes.append(buffer, count);
+      position += static_cast<size_t>(count);
     }
+    bytes.resize(position);
   } else {
     throw Failure("invalid_path", "Attached path must be a file or directory");
   }
-  const auto begin = std::min<uint64_t>(offset, bytes.size());
-  const auto page = bytes.substr(begin, limit);
+  const auto size = S_ISREG(status.st_mode)
+                        ? static_cast<uint64_t>(status.st_size) : bytes.size();
+  const auto begin = std::min<uint64_t>(offset, size);
+  const auto page = S_ISREG(status.st_mode) ? bytes : bytes.substr(begin, limit);
   const auto encoded =
       text::valid_utf8(page) && page.find('\0') == std::string::npos
           ? json::Quote(page)
@@ -124,10 +128,11 @@ auto ReadAttachedFolder(const std::filesystem::path& root,
                             ? root.filename().string()
                             : std::filesystem::path(path).filename().string())},
            {"bytes", encoded},
+           {"shell_path", json::Quote("attached/" + crypto::sha256_hex(root.string()).substr(0, 16) + "/")},
            {"offset", json::Quote(std::to_string(offset))},
-           {"size_bytes", json::Quote(std::to_string(bytes.size()))},
+           {"size_bytes", json::Quote(std::to_string(size))},
            {"next_offset", json::Quote(std::to_string(begin + page.size()))},
-           {"eof", begin + page.size() == bytes.size() ? "true" : "false"},
-           {"hash", json::Quote(crypto::sha256_hex(bytes))}})}});
+           {"eof", begin + page.size() == size ? "true" : "false"},
+           {"hint", json::Quote("Use project_copy to move this file without reading it; use project_shell to examine large files.")}})}});
 }
 }  // namespace tsugumi::host

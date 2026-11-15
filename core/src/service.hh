@@ -214,9 +214,10 @@ class Service : public RequestSink {
   std::unique_ptr<Lane> mutation_lane_;
   std::unique_ptr<Lane> read_pool_;
   std::unique_ptr<Lane> shell_lane_;
-  std::mutex shell_mu_;
+  std::mutex cancellations_mu_;
   bool shell_stopping_ = false;
   std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::atomic<bool>>> shell_cancellations_;
+  std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::atomic<bool>>> save_cancellations_;
   Server* server_ = nullptr;
 
   std::mutex ops_mu_;

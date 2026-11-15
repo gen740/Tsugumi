@@ -172,7 +172,7 @@ auto Helpers::RunHelper(const std::string& conversation,
                                        {"name", json::Quote(name)},
                                        {"index", std::to_string(index)},
                                        {"event", R"({"kind":"checkpoint"})"}}));
-  auto boundary = std::make_shared<HelperScope>(spec, authorization);
+  auto boundary = std::make_shared<HelperScope>(spec, authorization, scope);
   boundary->identity = scope;
   const auto read = tools->HelperReader(conversation, stop, {}, authorization);
   // Receipt ownership survives both interruption and transcript compaction.

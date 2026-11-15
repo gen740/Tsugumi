@@ -169,6 +169,7 @@ add_library(tsugumi_host_core STATIC
   src/agent/save_policy.cc
   src/agent/helpers.cc
   src/agent/approvals.cc
+  src/agent/tools_files.cc
   src/agent/tools.cc
   src/agent/turns.cc
   src/host/access.cc

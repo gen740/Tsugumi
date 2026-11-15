@@ -725,7 +725,7 @@ auto Turns::Handle(const RequestIn& request, bool human,
       cancelled.bind(1, id).run();
       if (auto found = jobs.find(id); found != jobs.end())
         found->second->request_stop();
-      dependencies.cancel_shells(id);
+      dependencies.cancel_file_tools(id);
       changed.notify_all();
       return wire::AgentReply(request.request_id, S::AcknowledgementT{});
     }

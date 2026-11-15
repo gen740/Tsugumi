@@ -53,7 +53,8 @@ auto Set(const json::Members &task, const std::string &field)
 }
 } // namespace
 
-HelperScope::HelperScope(const json::Members& task, std::string authorization)
+HelperScope::HelperScope(const json::Members& task, std::string authorization,
+                         std::string scratch_identity)
     : depth_(json::UInt(json::Get(task, "depth", "0"))),
       count_(json::UInt(json::Get(task, "count", "0"))),
       scoped_(task.contains("read_cards") && task.contains("write_cards") &&
@@ -61,7 +62,8 @@ HelperScope::HelperScope(const json::Members& task, std::string authorization)
       reads_(Set(task, "read_cards")),
       writes_(Set(task, "write_cards")),
       runs_(Set(task, "run_cards")),
-      authorization_(std::move(authorization)) {}
+      authorization_(std::move(authorization)),
+      scratch_identity_(std::move(scratch_identity)) {}
 
 auto HelperScope::Validate(const json::Members &task, bool allow_unscoped)
     -> void {
@@ -470,6 +472,8 @@ auto HelperScope::Check(const std::string &tool, const json::Members &args,
                         const Reader &read) const -> void {
   if (!scoped_)
     return;
+  if (tool == "project_copy" || tool == "project_shell" || tool == "attached_folder_read")
+    return;  // Tools::FileOperation checks each materialized source/destination.
   if (tool == "project_inspect" || tool == "output_types" ||
       tool == "project_file_format")
     return;

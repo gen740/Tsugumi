@@ -170,6 +170,8 @@ struct JournalFile {
   t::String<"p"> path;
   t::Bool<"delete"> remove;
   t::String<"c"> content_b64;
+  t::String<"blob"> blob;
+  t::String<"hash"> hash;
 };
 
 struct JournalRecord {

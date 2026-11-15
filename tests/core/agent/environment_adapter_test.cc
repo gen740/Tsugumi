@@ -252,6 +252,10 @@ TEST(EnvironmentAdapterTest, HostUsesCoreRequirementsAndDoesNotRescanUnacceptedF
   EXPECT_FALSE(mounts[2].read_only);
   EXPECT_EQ(mounts[3].path, chat.string());
   EXPECT_TRUE(mounts[3].read_only);
+  ASSERT_EQ(ready.attached_roots.size(), 1u);
+  EXPECT_EQ(ready.attached_roots[0]->host_path, chat.string());
+  EXPECT_EQ(ready.attached_roots[0]->execution_path,
+            "/run/tsugumi/chat/" + mounts[3].name.substr(5));
   // A disk edit not accepted by the running core must not alter its mounts,
   // and a start of a ready project leaves the running guest's folders alone.
   Write(project / "externals/x/definitions/b/_card.json", "unaccepted broken JSON");
@@ -440,6 +444,47 @@ TEST(EnvironmentAdapterTest, FolderMutationsSurviveStartsAndServiceRecreation) {
   EXPECT_EQ(service->Handle(request).folders, std::vector<std::string>{b});
   request.folders = {a};
   EXPECT_EQ(service->Handle(request).folders, std::vector<std::string>{b});
+  request.action = H::EnvironmentAction::Stop;
+  service->Handle(request);
+}
+TEST(EnvironmentAdapterTest,
+     GuestAttachedRootUsesTheMountEvenWhenTheHostPathExists) {
+  TemporaryDirectory directory;
+  Write(directory.path / "project/tsugumi.json",
+        R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  auto process = std::make_shared<HelperDouble>();
+  process->guest = true;
+  host::EnvironmentOptions options;
+  options.directory = directory.path / "environments";
+  options.socket_directory = directory.path / "sockets";
+  options.process = process;
+  AuthorizationDouble authorization;
+  const auto make = [&] {
+    return std::make_unique<host::Environments>(
+        options, authorization.Bind(), [](const auto &) {},
+        [](const auto &) {});
+  };
+  auto service = make();
+  H::EnvironmentRequestT request;
+  request.project = (directory.path / "project").string();
+  request.action = H::EnvironmentAction::AddFolders;
+  request.folders = {"/etc"};
+  service->Handle(request);
+  request.action = H::EnvironmentAction::Start;
+  const auto ready = service->Handle(request);
+  ASSERT_EQ(ready.phase, H::EnvironmentPhase::Ready) << ready.message;
+  ASSERT_EQ(ready.attached_roots.size(), 1u);
+  const auto execution_path = ready.attached_roots[0]->execution_path;
+  EXPECT_EQ(ready.attached_roots[0]->host_path, "/etc");
+  EXPECT_TRUE(execution_path.starts_with("/run/tsugumi/chat/"));
+  EXPECT_NE(execution_path, "/etc");
+  service.reset();
+  service = make();
+  request.action = H::EnvironmentAction::State;
+  const auto restored = service->Handle(request);
+  ASSERT_EQ(restored.phase, H::EnvironmentPhase::Ready);
+  ASSERT_EQ(restored.attached_roots.size(), 1u);
+  EXPECT_EQ(restored.attached_roots[0]->execution_path, execution_path);
   request.action = H::EnvironmentAction::Stop;
   service->Handle(request);
 }

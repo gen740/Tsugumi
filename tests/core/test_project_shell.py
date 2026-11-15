@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import os
 import time
+from pathlib import Path
 
 import pytest
 
@@ -169,3 +170,21 @@ def test_shell_read_only_is_explicit(shell_daemon, project, writable):
         else:
             assert target.read_text() == "original"
     assert (project / "new-directory").exists() == writable
+
+
+def test_output_cap_keeps_head_tail_and_total_size(shell_daemon):
+    result = shell(shell_daemon.connect(), "printf beginning; head -c 300000 /dev/zero; printf ending")
+    output = bytes(result.stdoutBytes)
+    assert len(output) == 262144
+    assert output.startswith(b"beginning") and output.endswith(b"ending")
+    assert result.stdoutTruncated and result.stdoutSize == 300015
+
+
+def test_full_output_is_kept_outside_the_bounded_reply(shell_daemon, project):
+    output = project / ".tsugumi/shell-output"
+    result = shell(shell_daemon.connect(), "printf begin; head -c 300000 /dev/zero; printf end", outputPrefix=".tsugumi/shell-output")
+    complete = Path(str(output) + ".stdout").read_bytes()
+    assert complete == b"begin" + b"\0" * 300000 + b"end"
+    assert result.stdoutSize == len(complete)
+    assert bytes(result.stdoutBytes) == complete[:131072] + complete[-131072:]
+    assert Path(str(output) + ".stderr").read_bytes() == b""

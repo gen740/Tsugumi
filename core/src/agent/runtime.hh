@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "agent/context.hh"
 #include "agent/provider.hh"
 
 namespace tsugumi::agent {
@@ -73,7 +74,7 @@ struct ContextUsage {
   std::string prefix_hash;
   std::string request_hash;
   size_t omitted_before = 0;
-  size_t result_limit = 20 * 1024;
+  size_t result_limit = kToolResultBytes;
 };
 
 auto EstimateTextTokens(std::string_view text) -> uint64_t;

@@ -5,6 +5,7 @@
 #include <memory>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -65,6 +66,10 @@ struct Tools {
   auto ProjectCall(const std::string& project, const std::string& name,
                    const std::string& arguments, std::stop_token stop = {})
       -> std::string;
+  auto FileOperation(const std::string& conversation, const std::string& project,
+                     const std::string& name, json::Members& args,
+                     const std::string& operation, HelperScope* boundary,
+                     std::stop_token stop, std::vector<std::string>& resources) -> std::string;
   auto AnnotateSave(const std::string& operation, const std::string& result)
       -> std::string;
   auto RawProjectCall(const std::string& project, const std::string& name,
@@ -99,10 +104,10 @@ struct Tools {
   host::Access& access_service;
   Dependencies dependencies;
   Catalog catalog;
-  struct ShellCall {
+  struct FileCall {
     std::string project;
     std::shared_ptr<std::stop_source> stop;
   };
-  std::map<std::pair<std::string, std::string>, ShellCall> shell_calls;
+  std::map<std::pair<std::string, std::string>, FileCall> file_calls;
 };
 }  // namespace tsugumi::agent

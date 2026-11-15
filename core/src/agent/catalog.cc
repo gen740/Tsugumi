@@ -61,7 +61,9 @@ auto Docs(
 const std::set<std::string> kOwnedFields{"origin", "op_id",
                                          "approved_permissions", "run_ids",
                                          "restrict_to_run_ids", "check_permissions",
-                                         "read_only", "hide_credentials", "no_project_socket"};
+                                         "read_only", "hide_credentials", "no_project_socket",
+                                         "transfers", "working_directory", "writable_paths", "mounts",
+                                         "output_prefix", "workspace_only", "protected_paths"};
 
 auto OwnOperationId(const reflection::Object &object) -> bool {
   const auto name = object.name()->str();
@@ -327,7 +329,7 @@ Catalog::Catalog() {
     const auto name = json::Text(tool, "name");
     if (Find(name)) throw std::runtime_error("duplicate host tool: " + name);
     tools_.push_back({{name, json::Text(tool, "description"),
-                       json::Get(tool, "inputSchema")}, name, false, false, false});
+                       json::Get(tool, "inputSchema")}, name, false, json::Bool(json::Get(tool, "mutating", "false")), false});
   }
 }
 

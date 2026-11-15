@@ -7,7 +7,11 @@
 
 namespace tsugumi::agent {
 inline constexpr size_t kToolResultBytes = 20 * 1024;
-inline constexpr size_t kResultPageBytes = 2048;
+inline constexpr size_t kResultPageBytes = kToolResultBytes / 10;
+
+// File pages and shell head/tail budgets share the general send-time cap.
+auto FileResultForModel(std::string_view raw, size_t limit,
+                        std::string_view reference) -> std::string;
 
 // The marker is included in the byte budget. Boundaries preserve UTF-8.
 auto ClipMiddle(std::string_view text, size_t limit, std::string_view reference)

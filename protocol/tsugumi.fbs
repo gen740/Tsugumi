@@ -296,6 +296,18 @@ table CardIdResult {
   id:string (id: 0, required);
 }
 
+// Core streams a local file into a private durable file, hashes it and applies
+// it through the normal save. The host chooses roots and authorizes access.
+table SourceTransfer {
+  path:string (required);
+  from:string (required);
+  base_hash:string;
+  /// Absent means the project root. Otherwise an absolute host-selected root.
+  source_root:string;
+  /// Confirmed source hash, when copying from another Card.
+  expected_hash:string;
+}
+
 /// -> SaveResult. Apply all changes in one transaction at base_rev.
 /// Drafts have no ports: use {"card":"<id>","port":""} for each Draft wire end,
 /// with any number in or out. Implementing one requires SetProject in this same
@@ -307,13 +319,15 @@ table ProjectSaveRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);
   origin:string (id: 2, required);
-  changes:[DocumentChange] (id: 3, required);
+  changes:[DocumentChange] (id: 3);
   /// Permission widenings explicitly approved by the caller, as named by
   /// approval_required.
   approved_permissions:[string] (id: 4);
   /// Compare the proposed permissions with the accepted document and reject
   /// every widening absent from approved_permissions, regardless of origin.
   check_permissions:bool (id: 5);
+  /// Local file references; source bytes never travel through the RPC frame.
+  transfers:[SourceTransfer] (id: 6);
 }
 
 /// -> SaveResult. Takes external edits of the allowed area into the document.
@@ -483,6 +497,7 @@ table ProjectFileStatRequest {
 }
 
 /// -> FileContent. offset = 0, limit_bytes = 262144 (1..1 MiB).
+/// Use project_copy to move bytes, or project_shell to examine large files.
 table ProjectFileReadRequest {
   path:string (id: 0, required);
   /// Omitted: the latest revision.
@@ -542,10 +557,14 @@ table RunCancelRequest { run_id:string (id: 0, required); }
 /// and run events, including runs with recorded values and retained artifacts.
 table RunStatusRequest { run_id:string (id: 0); }
 
-/// -> ProjectShellResult. Runs in the project VM as the project user, with the
-/// project directory as cwd. Available only when the isolated project launcher enables it.
+table ShellMount { path:string (required); name:string (required); project_relative:bool; writable:bool; }
+
+/// -> ProjectShellResult. Runs as the project user in a staged Card source view.
+/// Host selects readable/writable Cards; successful edits use a validated Agent save.
+/// Read-granted folders are read-only at attached/<SHA-256(path)[0:16]>; scratch/ persists.
+/// Structural documents, contract schemas and .tsugumi are not shell-editable. Available only when the isolated project launcher enables it.
 /// timeout_ms defaults to 10000 and must be between 1 and 30000. Each output
-/// stream is capped at 262144 bytes. Disconnecting cancels the process group.
+/// stream returns at most 262144 bytes (head and tail), with total sizes and saved full output. Disconnecting cancels the process group.
 /// An operation ID is never executed twice, even after an interrupted daemon.
 /// Isolation is selected explicitly and applied independently of origin.
 /// A requested isolation mechanism that is unavailable fails closed.
@@ -560,6 +579,18 @@ table ProjectShellRequest {
   /// Block Unix socket connections (except macOS name resolution). On macOS,
   /// also block local IP endpoints, session Mach services and outside signals.
   no_project_socket:bool (id: 5);
+  /// Explicit workspace relative to the project root; absent uses the project.
+  working_directory:string (id: 6);
+  /// Writable subtrees relative to working_directory, with a read-only root.
+  writable_paths:[string] (id: 7);
+  /// Read-only mounts at attached/<name>; native paths or VM chat shares.
+  mounts:[ShellMount] (id: 8);
+  /// Persist full stdout/stderr below this project-relative prefix.
+  output_prefix:string (id: 9);
+  /// Hide the original project while exposing only the workspace.
+  workspace_only:bool (id: 10);
+  /// Read-only files inside writable subtrees (including reserved placeholders).
+  protected_paths:[string] (id: 11);
 }
 
 table ProjectShellResult {
@@ -571,6 +602,9 @@ table ProjectShellResult {
   timed_out:bool (id: 5);
   stdout_truncated:bool (id: 6);
   stderr_truncated:bool (id: 7);
+  stdout_size:uint64 (id: 8);
+  stderr_size:uint64 (id: 9);
+  output_prefix:string (id: 10);
 }
 
 /// -> RunPage, newest accepted first.

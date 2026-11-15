@@ -139,7 +139,25 @@ struct Environments::Impl {
     }
     return entry;
   }
-  auto Notify(Entry& entry) -> void { changed(entry.state); }
+  auto Notify(Entry& entry) -> void {
+    entry.state.attached_roots.clear();
+    if (entry.state.phase == H::EnvironmentPhase::Ready) {
+      for (const auto& mount : entry.mounted) {
+        if (!mount.name.starts_with("chat-")) continue;
+        auto root = std::make_unique<H::AttachedRootT>();
+        root->host_path = mount.path;
+        root->execution_path = "/run/tsugumi/chat/" + mount.name.substr(5);
+        entry.state.attached_roots.push_back(std::move(root));
+      }
+      if (!options.process->Guest()) for (const auto& folder : entry.folders) {
+        auto root = std::make_unique<H::AttachedRootT>();
+        root->host_path = folder;
+        root->execution_path = folder;
+        entry.state.attached_roots.push_back(std::move(root));
+      }
+    }
+    changed(entry.state);
+  }
   auto Stage(const Entry& entry, const std::string& stage) -> void {
     H::EnvironmentProgressT event;
     event.project = entry.state.project;
@@ -279,6 +297,20 @@ struct Environments::Impl {
       if (!handle || (entry.pid && entry.pid != *handle) ||
           !Alive(*handle, entry.child))
         return false;
+      if (options.process->Guest() && entry.mounted.empty()) {
+        // Restore actual shares after a hostd restart, never guess from paths
+        // currently present in either filesystem.
+        const auto saved = fs::read_file(
+            std::filesystem::path(entry.state.control_dir) / "mounted-folders.json");
+        if (!saved) return false;
+        std::vector<EnvironmentMount> mounted;
+        for (const auto& raw : json::Array(*saved)) {
+          const auto mount = json::Object(raw);
+          mounted.push_back({json::Text(mount, "name"), json::Text(mount, "path"),
+                             json::Bool(json::Get(mount, "read_only"))});
+        }
+        entry.mounted = std::move(mounted);
+      }
       entry.pid = *handle;
       ready.phase = H::EnvironmentPhase::Ready;
       ready.message.clear();
@@ -439,6 +471,12 @@ struct Environments::Impl {
       }
       launch.log = control / "server.log";
       launch.authorization = Authorize(entry);
+      std::vector<std::string> mounted;
+      for (const auto& mount : launch.mounts)
+        mounted.push_back(json::Encode(json::Members{
+            {"name", json::Quote(mount.name)}, {"path", json::Quote(mount.path)},
+            {"read_only", mount.read_only ? "true" : "false"}}));
+      fs::write_atomic(control / "mounted-folders.json", json::Encode(mounted), 0600);
       // Recorded before the launch: a launch that fails after the process has
       // started (its reply was lost) leaves a process holding these mounts.
       entry.mounted = launch.mounts;

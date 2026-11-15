@@ -145,7 +145,16 @@ TEST(HostComponents,
   ready.endpoint = "ws://localhost:1/rpc";
   ready.unix_socket = "/tmp/project.sock";
   ready.token = "capability";
+  auto attached = std::make_unique<Tsugumi::Host::AttachedRootT>();
+  attached->host_path = "/etc";
+  attached->execution_path = (directory.path / "mounted-mac-etc").string();
+  const auto mounted = attached->execution_path;
+  ready.attached_roots.push_back(std::move(attached));
   registry.RegisterReady(ready);
+  EXPECT_EQ(registry.AttachedRoot("project", "/etc"), mounted);
+  host::ProjectRegistry restored(gate, store.db, {});
+  EXPECT_EQ(restored.AttachedRoot("project", "/etc"), mounted);
+  EXPECT_THROW(registry.AttachedRoot("project", "/unmounted"), host::Failure);
   EXPECT_EQ(registry.Lookup("project").endpoint, "unix:/tmp/project.sock");
   EXPECT_EQ(registry.Lookup("project").token, "capability");
   EXPECT_EQ(registry.Root("project"), root);

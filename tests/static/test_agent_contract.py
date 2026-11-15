@@ -95,3 +95,20 @@ def test_file_output_instructions_do_not_require_a_card_permission():
         assert 'tsugumi: "file"' in source, name
         assert 'tsugumi: "directory"' in source, name
         assert "run.output_directory" in source, name
+
+
+def test_file_tools_move_bytes_without_reading_and_explain_bounded_views():
+    shared = json.loads((ROOT / "agent/Shared/agent.json").read_text())
+    tools = {tool["name"]: tool for tool in shared["hostTools"]}
+    copy = tools["project_copy"]
+    assert copy["mutating"]
+    assert set(copy["inputSchema"]["properties"]["source"]["enum"]) == {"attached", "card", "scratch"}
+    assert "maxItems" not in copy["inputSchema"]["properties"]["files"]
+    assert "bytes" not in copy["inputSchema"]["properties"]
+    assert "base_rev" in copy["inputSchema"]["required"]
+    prompt = (ROOT / "agent/Shared/system-prompt.md").read_text()
+    assert "never read and retype" in prompt
+    assert "no copy-specific byte cap" in prompt and "256 KiB" in prompt and "1 MiB" in prompt
+    assert "head and tail" in prompt and "scratch/" in prompt
+    assert "exact write set" in prompt and "failure/cancellation saves nothing" in prompt
+    assert "16 MiB" not in tools["attached_folder_read"]["description"]

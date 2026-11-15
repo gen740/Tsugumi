@@ -364,6 +364,32 @@ TEST(HelperGraphScope,
       "/definitions~1SECRET~1_card.json/timeoutSeconds; inspect and re-apply",
       kRead));
 }
+TEST(HelperCapability, NarrowedChildrenCannotRegainAnAncestorsSets) {
+  const auto ancestor = json::Object(
+      R"({"depth":3,"count":4,"read_cards":["a","b"],"write_cards":["a","b"],"run_cards":["a","b"]})");
+  auto task = json::Object(
+      R"({"depth":2,"count":3,"read_cards":["a"],"write_cards":["a"],"run_cards":["a"]})");
+  HelperScope outer(ancestor, "authorization", "outer-scratch");
+  EXPECT_NO_THROW(outer.CheckChild(task));
+  HelperScope parent(task, "authorization", "parent-scratch");
+  EXPECT_EQ(parent.authorization(), "authorization");
+  EXPECT_EQ(parent.scratch_identity(), "parent-scratch");
+  EXPECT_EQ(parent.depth(), 2u);
+  EXPECT_EQ(parent.count(), 3u);
+  task["depth"] = "1";
+  EXPECT_NO_THROW(parent.CheckChild(task));
+  HelperScope child(task, "authorization", "child-scratch");
+  task["depth"] = "0";
+  EXPECT_NO_THROW(child.CheckChild(task));
+  for (const auto* field : {"read_cards", "write_cards", "run_cards"}) {
+    auto widened = task;
+    widened[field] = R"(["b"])";
+    EXPECT_THROW(parent.CheckChild(widened), std::runtime_error);
+    EXPECT_THROW(child.CheckChild(widened), std::runtime_error);
+  }
+  EXPECT_THROW(child.CheckChild({}), std::runtime_error);
+}
+
 TEST(HelperCapability, DefaultsCannotSpawnAndChildrenCannotWidenDepthOrSets) {
   auto task = json::Object(
       R"({"read_cards":["a"],"write_cards":["b"],"run_cards":["c"]})");

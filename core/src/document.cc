@@ -10,6 +10,13 @@ namespace tsugumi {
 
 namespace stdfs = std::filesystem;
 
+SourceFile::~SourceFile() {
+  if (!journaled) {
+    std::error_code ec;
+    stdfs::remove(path, ec);
+  }
+}
+
 std::string path_key(const CardPath& p) {
   std::string out;
   for (size_t i = 0; i < p.size(); ++i) {
@@ -379,9 +386,11 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
     for (const auto& f : listing.files) {
       std::string rel = std::string(area) + "/" + f;
       if (!Document::is_source_area(rel)) continue;
-      auto data = fs::read_file_or_throw(root / rel);
-      if (Document::is_card_meta_file(rel)) check_meta_json(data);
-      doc->sources[rel] = SourceEntry{crypto::sha256_hex(data), data.size()};
+      if (Document::is_card_meta_file(rel)) check_meta_json(fs::read_file_or_throw(root / rel));
+      crypto::Sha256 hash;
+      const auto size = fs::stream_beneath(root, rel, UINT64_MAX,
+                                          [&](std::string_view chunk) { hash.update(chunk); });
+      doc->sources[rel] = SourceEntry{hash.finish_hex(), size};
     }
   }
   check_structure(*doc);

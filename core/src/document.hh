@@ -115,9 +115,20 @@ std::string execution_fingerprint(const Document& doc, const std::function<std::
 constexpr const char* kEmptyLayout = "{}";
 
 // One file system operation produced by a transaction.
+// A private streamed file. Failed staging removes it; after a durable journal
+// intent it must survive until recovery or the durable commit marker.
+struct SourceFile {
+  std::filesystem::path path;
+  std::string hash;
+  uint64_t size = 0;
+  bool journaled = false;
+  ~SourceFile();
+};
+
 struct FileOp {
   std::string path;                    // project relative
-  std::optional<std::string> content;  // nullopt = delete
+  std::optional<std::string> content;
+  std::shared_ptr<SourceFile> file = {};  // neither content nor file = delete
 };
 
 }  // namespace tsugumi
