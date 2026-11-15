@@ -175,7 +175,9 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
           " (subpath \"/private/var/tmp\") (subpath " +
           quote(shared_tmp) + "))";
     if (!view.hidden_root.empty()) {
-      profile += "(deny file-read*)";
+      // Every process reads the root directory itself while it starts, and
+      // aborts without it. Its data alone does not let a command list it.
+      profile += "(deny file-read*)(allow file-read-data (literal \"/\"))";
       for (const auto* runtime : {"/usr/bin", "/usr/sbin", "/usr/lib", "/usr/share", "/bin", "/sbin", "/Library/Apple/System", "/System", "/dev", "/private/etc/ssl", "/private/etc/resolv.conf", "/private/etc/hosts"})
         profile += "(allow file-read* (subpath " + quote(runtime) + "))";
       for (const auto& runtime : runtime_store)

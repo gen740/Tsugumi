@@ -1407,7 +1407,13 @@ TEST_F(AgentProjectFixture, ShellOriginAndApprovalsCannotBeSuppliedByTheModel) {
 
 TEST_F(AgentProjectFixture, ShellHidesControlCredentialsAndCannotSendDirectRPC) {
   if (::geteuid() == 0) GTEST_SKIP() << "Shell commands require an unprivileged project user";
+  // A command sees only its own workspace and the tools on the project's
+  // PATH, so that is where the probe (this binary) has to be found.
+  const auto probe = std::filesystem::canonical(::testing::internal::GetArgvs().front());
+  const std::string inherited = std::getenv("PATH") ? std::getenv("PATH") : "";
+  ASSERT_EQ(::setenv("PATH", (probe.parent_path().string() + ":" + inherited).c_str(), 1), 0);
   StartProject(true);
+  ASSERT_EQ(::setenv("PATH", inherited.c_str(), 1), 0);
   const auto conversation = Conversation("shell-isolation");
   for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write, Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
     Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
@@ -1416,9 +1422,6 @@ TEST_F(AgentProjectFixture, ShellHidesControlCredentialsAndCannotSendDirectRPC) 
     for (const auto c : value) result += c == '\'' ? "'\\''" : std::string(1, c);
     return result + "'";
   };
-  const auto probe = directory.path / "project/rpc-probe";
-  std::filesystem::copy_file(
-      std::filesystem::absolute(::testing::internal::GetArgvs().front()), probe);
   auto socket = JsonString(project_ready, "/unix_socket");
 #ifndef __APPLE__
   // A filesystem alias in the readable project defeats path hiding alone.
@@ -1443,8 +1446,9 @@ TEST_F(AgentProjectFixture, ShellHidesControlCredentialsAndCannotSendDirectRPC) 
     return JsonString(result.View(), "/text");
   };
   const auto private_tmp = run(
-      "test ! -r ../project-control/server.ready && test ! -r control-alias && "
-      "test ! -r " + quote(marker.string()) +
+      "test ! -r " + quote((directory.path / "project-control/server.ready").string()) +
+      " && test ! -r " + quote((directory.path / "project/control-alias").string()) +
+      " && test ! -r " + quote(marker.string()) +
       " && printf private > \"$TMPDIR/diagnostic\" && cat \"$TMPDIR/diagnostic\"");
   EXPECT_NE(private_tmp.find("\"exit_code\":0"), std::string::npos) << private_tmp;
   EXPECT_EQ(JsonString(private_tmp, "/value/stdout_bytes"), "private");
@@ -1454,7 +1458,7 @@ TEST_F(AgentProjectFixture, ShellHidesControlCredentialsAndCannotSendDirectRPC) 
       "TSUGUMI_SHELL_PROBE_ENDPOINT=" + quote("unix:" + socket) +
       " TSUGUMI_SHELL_PROBE_PROJECT=" + quote(project_id) +
       " TSUGUMI_SHELL_PROBE_TOKEN=" + quote(JsonString(project_ready, "/token")) +
-      " ./rpc-probe --gtest_filter=AgentShellProbe.DirectProjectRequest");
+      " " + quote(probe.filename().string()) + " --gtest_filter=AgentShellProbe.DirectProjectRequest");
   EXPECT_NE(result.find("\"exit_code\":0"), std::string::npos) << result;
   EXPECT_NE(JsonString(result, "/value/stdout_bytes").find("DIRECT_RPC_BLOCKED"), std::string::npos);
 }

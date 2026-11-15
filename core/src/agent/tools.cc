@@ -362,8 +362,12 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
   client::Connection connection(transport_options);
   std::stop_callback cancelled(stop, [&connection] { connection.Close(); });
   if (stop.stop_requested()) throw Cancelled();
-  if (auto error = connection.Start().get())
+  // Cancelling closes the connection, also while it is still being set up:
+  // that is a cancelled call, not an unreachable project.
+  if (auto error = connection.Start().get()) {
+    if (stop.stop_requested()) throw Cancelled();
     throw Failure("unavailable", error.message);
+  }
   auto hello =
       connection
           .Call([&](uint64_t id) {
@@ -379,6 +383,7 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
                                  b.GetBufferPointer() + b.GetSize());
           })
           .get();
+  if (stop.stop_requested()) throw Cancelled();
   if (hello.error) throw Failure("unavailable", hello.error.message);
   const auto* reply = R::GetMessage(hello.bytes.data())->payload_as_Reply();
   if (!reply || reply->value_type() != R::ReplyPayload::HelloResult)
