@@ -52,7 +52,7 @@ export interface Environments {
   stop(dir: string): Promise<void>
   stopAll(): Promise<void[]>
   /** The folders a project's chats may read now. */
-  attachFolders(dir: string, key: string, folders: string[]): void | Promise<void>
+  attachFolders(dir: string, folders: string[]): Promise<{ folder: string; resource: string }[]>
   removeFolders(dir: string, folders: string[]): Promise<void>
   attachedFolders(dir: string): Promise<string[]>
   list(): { key: string; project: string; state: EnvState }[]
@@ -153,8 +153,11 @@ export class EnvironmentManager implements Environments {
   start(dir: string, archive = false) { return this.call(dir, 'Start', archive) }
   async stop(dir: string) { await this.call(dir, 'Stop') }
   stopAll() { return Promise.all([...this.envs.values()].map((entry) => this.stop(entry.project))) }
-  async attachFolders(dir: string, _key: string, folders: string[]) {
-    await this.request('EnvironmentRequest', { project: this.env(dir).project, action: 'AddFolders', folders })
+  async attachFolders(dir: string, folders: string[]) {
+    const entry = this.env(dir)
+    const reply = await this.request('AttachFoldersRequest', { project: entry.project, folders })
+    this.adopt(entry, reply.state)
+    return reply.folders as { folder: string; resource: string }[]
   }
   async removeFolders(dir: string, folders: string[]) {
     await this.request('EnvironmentRequest', { project: this.env(dir).project, action: 'RemoveFolders', folders })

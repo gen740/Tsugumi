@@ -191,11 +191,20 @@ private struct GeneralSettings: View {
   var body: some View {
     @Bindable var prefs = prefs
     Form {
-      // Explanations on hover, not as text under each control.
+      // A pending language change stays visible after dismissing the notice.
       Picker("言語", selection: $prefs.language) {
         ForEach(AppPreferences.Language.allCases) { Text($0.label).tag($0) }
       }
       .help("言語の変更はアプリの再起動後に反映されます。プロジェクトの git に書く実行の記録もこの言語になります。")
+      if prefs.languageRestart.pending {
+        let text = LanguageRestartText(language: prefs.language)
+        VStack(alignment: .leading, spacing: 6) {
+          Text(verbatim: text.title).fontWeight(.semibold)
+          Text(verbatim: text.message).foregroundStyle(.secondary)
+          Button { Updater.shared.restart() } label: { Text(verbatim: text.now) }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+      }
       Stepper("並列実行数: \(prefs.maxConcurrency)", value: $prefs.maxConcurrency, in: 1...64)
         .help("別々の Card を同時に実行する上限です（同じ Card は常に直列）。次の実行から使われます。")
       Picker("チャットの送信キー", selection: $prefs.sendKey) {

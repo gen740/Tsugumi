@@ -1,3 +1,4 @@
+import type { ChatRow, AccessGroup } from '../src/shared/chatPresentation'
 // Presentation DTOs and schema reflection. Agent execution lives in core.
 import { BaseType, BFBS, Field } from '../src/shared/bfbs'
 import { AGENT } from '../src/shared/agentShared'
@@ -146,6 +147,7 @@ export interface Conversation {
   /** Messages replaced by the summary when the context was compacted. */
   archive: ChatMessage[]
   tools: ToolRecord[]
+  rows: ChatRow[]
   helpers?: { call_id: string; task: number; messages: ChatMessage[]; state: string }[]
   /** inputTokens: context of the last request (uncached, cache read and cache
    *  written); the cache counts add up over the conversation. */
@@ -155,6 +157,7 @@ export interface Conversation {
 
 
 export type AgentEvent =
+  | { kind: 'presentation'; rows: ChatRow[] }
   | { kind: 'modelAccepted' }
   | { kind: 'text'; text: string }
   | { kind: 'toolStarted'; id: string; name: string; arguments: string }
@@ -169,13 +172,10 @@ export type AgentEvent =
   | { kind: 'discardText' }
   | { kind: 'error'; message: string }
   | { kind: 'finished' }
-  /** The turn used its steps (model replies with tool calls) without
-   *  finishing; `unconfirmedRun` is a run it started and never saw end. */
-  | { kind: 'stepLimit'; steps: number; unconfirmedRun?: string }
   /** What a helper started by `delegate` does (its own events). */
   | { kind: 'helperStarted'; text: string }
   | { kind: 'helper'; name: string; event: AgentEvent }
-  | { kind: 'permission'; id: string; asked: string[]; from?: string }
+  | { kind: 'permission'; id: string; asked: string[]; groups?: AccessGroup[]; from?: string }
   | { kind: 'permissionAnswered'; id: string }
 
 // ---- Provider ------------------------------------------------------------------

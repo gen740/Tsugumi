@@ -123,7 +123,7 @@ export function CardNodeView(p: CardNodeProps) {
       )}
       {[...data.inputs.map((x) => [x, false] as const), ...data.outputs.map((x) => [x, true] as const)].map(([port, output]) => {
         const pt = g.port(port.name, output)
-        const mark = Math.max(6, s(8)), hit = Math.max(16, s(18))
+        const mark = g.shape === 'card' ? Math.max(6, s(8)) : s(8), hit = g.portHitSize(z)
         const condition = !output && data.kind === 'branch' && port.name === 'condition'
         return (
           <div key={(output ? 'o:' : 'i:') + port.name} className={`cv-port${p.onPortDown ? ' connectable' : ''}`}

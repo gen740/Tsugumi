@@ -9,7 +9,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   private static func heartbeatSetting(_ fields: [String: Any], _ key: String, default fallback: UInt32, minimum: UInt32) throws -> UInt32 {
     guard let raw = fields[key] else { return fallback }
     guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
@@ -119,6 +119,11 @@ enum ServiceWire {
         e.scripted = f["scripted"] as? Bool ?? true; e.expectedStep = f["expected_step"] as? String
         v.event = e
         return (Tsugumi_Host_RequestPayload.guideadvancerequest.rawValue, v)
+      case "AttachFoldersRequest":
+        let v = Tsugumi_Host_AttachFoldersRequestT()
+        v.project = fields["project"] as? String ?? ""
+        v.folders = (fields["folders"] as? [String] ?? []).map(Optional.some)
+        return (Tsugumi_Host_RequestPayload.attachfoldersrequest.rawValue, v)
       case "EnvironmentRequest":
         let v = Tsugumi_Host_EnvironmentRequestT()
         v.project = fields["project"] as? String ?? ""
@@ -465,6 +470,15 @@ enum ServiceWire {
     }
   }
 
+  static func chatRow(_ v: Tsugumi_Agent_ChatRowT) -> ChatRow {
+    ChatRow(id: v.id ?? "", kind: v.kind ?? "", role: v.role ?? "", text: v.text ?? "",
+      name: v.name ?? "", arguments: v.arguments ?? "", result: v.result ?? "", state: v.state ?? "",
+      archived: v.archived, summaryJa: v.summaryJa ?? "", summaryEn: v.summaryEn ?? "",
+      scopeJa: v.scopeJa ?? "", scopeEn: v.scopeEn ?? "", instruction: v.instruction ?? "",
+      failed: v.failed, recovered: v.recovered, links: v.links.compactMap { $0.map { .init(title: $0.title ?? "", url: $0.url ?? "") } },
+      children: v.children.compactMap { $0.map(chatRow) })
+  }
+
   static func conversation(_ v: Tsugumi_Agent_ConversationT) throws -> Conversation {
     func messages(_ values: [Tsugumi_Agent_ModelMessageT?]) throws -> [ChatMessage] {
       try values.compactMap { v in
@@ -474,6 +488,7 @@ enum ServiceWire {
       }
     }
     var result = Conversation()
+    result.rows = v.rows.compactMap { $0.map(chatRow) }
     result.id = v.id
     result.title = v.title ?? ""
     result.updatedAt = Date(timeIntervalSince1970: Double(v.updatedAt) / 1000)
@@ -527,6 +542,10 @@ enum ServiceWire {
       if let card = v.card { out["card"] = card }
       return out
     case let v as Tsugumi_Host_ModelSelectionT: return ["provider": v.provider]
+    case let v as Tsugumi_Host_AttachedFoldersT:
+      return ["state": try view(v.state), "folders": try v.folders.compactMap { try $0.map(view) }] as [String: Any]
+    case let v as Tsugumi_Host_FolderAttachmentT:
+      return ["folder": v.folder, "resource": v.resource]
     case let v as Tsugumi_Host_EnvironmentStateT:
       return ["project": v.project, "key": v.key, "phase": v.phase, "endpoint": v.endpoint ?? "", "token": v.token ?? "",
         "project_id": v.projectId ?? "", "server_instance_id": v.serverInstanceId ?? "", "control_dir": v.controlDir ?? "",
@@ -619,6 +638,7 @@ enum ServiceWire {
       out["name"] = v.name
       out["ok"] = v.ok
       out["index"] = Int(v.index)
+      out["groups"] = v.groups.compactMap { $0 }
       out["asked"] = v.asked
       out["event"] = try v.event.map { try view($0) }
       return out
@@ -630,6 +650,7 @@ enum ServiceWire {
     case let v as Tsugumi_Agent_EventsPageT:
       var out: [String: Any] = [:]
       out["events"] = try v.events.compactMap { try $0.map { try view($0) } }
+      if v.hasRows { out["rows"] = v.rows.compactMap { $0.map(chatRow) } }
       out["next_seq"] = v.nextSeq
       out["busy"] = v.busy
       return out
@@ -658,6 +679,7 @@ enum ServiceWire {
       return out
     case let v as Tsugumi_Agent_AccessEntryT:
       var out: [String: Any] = [:]
+      out["groups"] = v.groups.compactMap { $0 }
       out["asked"] = v.asked
       out["id"] = v.id
       out["project_id"] = v.projectId

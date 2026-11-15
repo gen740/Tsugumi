@@ -59,8 +59,8 @@ export const birdColor = (tint: number, dark: boolean) => {
 /** The main Agent's colour while it has helpers out: gold, to tell it apart. */
 export const leadColor = (dark: boolean) => (dark ? 'rgb(250, 204, 89)' : 'rgb(184, 133, 13)')
 
-export type BirdOutcome = 'done' | 'failed' | 'stopped' | 'limit'
-const OUTCOME_LINE: Record<BirdOutcome, string> = { done: L('できました'), failed: L('うまくいきませんでした'), stopped: L('止めました'), limit: L('途中で止まっています') }
+export type BirdOutcome = 'done' | 'failed' | 'stopped'
+const OUTCOME_LINE: Record<BirdOutcome, string> = { done: L('できました'), failed: L('うまくいきませんでした'), stopped: L('止めました') }
 
 interface Scene { card: string; line: string; start: number; received: number }
 export interface BirdPlace extends Pt { flying: boolean; facing: 1 | -1 }
@@ -231,9 +231,6 @@ export class HelperTeam {
       }
       case 'finished':
         b.ended('done', now)
-        break
-      case 'stepLimit':
-        b.ended('limit', now)
         break
       case 'error':
         b.ended(e.message === 'cancelled' ? 'stopped' : 'failed', now)

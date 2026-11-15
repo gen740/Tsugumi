@@ -1,6 +1,8 @@
 #include "agent/wire.hh"
 
+
 #include "agent/json.hh"
+#include "agent/presentation.hh"
 
 namespace tsugumi::agent::wire {
 namespace A = Tsugumi::Agent;
@@ -61,6 +63,14 @@ auto Conversation(std::string_view stored) -> A::ConversationT {
   out.title = json::Text(o, "title");
   out.updated_at = json::UInt(json::Get(o, "updatedAt"));
   out.messages = Messages(json::Get(o, "messages", "[]"));
+  if (const auto text = json::Text(o, "streaming"); !text.empty()) {
+    auto streamed = std::make_unique<A::ModelMessageT>();
+    streamed->role = "assistant";
+    streamed->content_json =
+        json::Encode(std::vector<std::string>{json::Encode(json::Members{
+            {"type", json::Quote("text")}, {"text", json::Quote(text)}})});
+    out.messages.push_back(std::move(streamed));
+  }
   out.archive = Messages(json::Get(o, "archive", "[]"));
   out.summary = json::Text(o, "summary");
   out.usage = std::make_unique<Tsugumi::Service::UsageT>(Usage(json::Get(o, "usage", "{}")));
@@ -81,13 +91,28 @@ auto Conversation(std::string_view stored) -> A::ConversationT {
     auto helper = std::make_unique<A::HelperT>();
     helper->call_id = json::Text(h, "call_id");
     helper->task = json::UInt(json::Get(h, "task"));
-    helper->messages = Messages(json::Get(h, "messages", "[]"));
+    // What compaction took out of the helper's context stays readable: the
+    // earlier messages come first, then the ones the model still holds.
+    helper->messages = Messages(json::Get(h, "archive", "[]"));
+    for (auto& message : Messages(json::Get(h, "messages", "[]")))
+      helper->messages.push_back(std::move(message));
+    if (const auto text = json::Text(h, "streaming"); !text.empty()) {
+      auto streamed = std::make_unique<A::ModelMessageT>();
+      streamed->role = "assistant";
+      streamed->content_json =
+          json::Encode(std::vector<std::string>{json::Encode(json::Members{
+              {"type", json::Quote("text")}, {"text", json::Quote(text)}})});
+      helper->messages.push_back(std::move(streamed));
+    }
     const auto result = json::Get(h, "result", "null");
     if (result != "null")
       helper->result_json = result;
     helper->state = json::Text(h, "state");
+    helper->spec_json = json::Get(h, "spec", "{}");
+    helper->anchor = json::UInt(json::Get(h, "anchor"));
     out.helpers.push_back(std::move(helper));
   }
+  out.rows = Presentation(out);
   return out;
 }
 auto Event(std::string_view stored) -> A::EventT {
@@ -103,6 +128,7 @@ auto Event(std::string_view stored) -> A::EventT {
   out.index = json::UInt(json::Get(o, "index"));
   for (const auto &raw : json::Array(json::Get(o, "asked", "[]")))
     out.asked.push_back(json::String(raw));
+  out.groups = AccessGroups(out.asked);
   if (o.contains("event"))
     out.event = std::make_unique<A::EventT>(Event(json::Get(o, "event")));
   return out;

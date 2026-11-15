@@ -95,8 +95,8 @@ const noWriter = () => undefined
   team.start([{ name: 'c', cards: ['x'] }, { name: 'd', cards: ['y'] }], 300)
   team.note('c', { kind: 'error', message: 'broken' }, 301)
   assert.equal(team.bird('c')!.line(301 + T.scene)?.text, 'うまくいきませんでした')
-  team.note('d', { kind: 'stepLimit' }, 301)
-  assert.equal(team.bird('d')!.line(301 + T.scene)?.text, '途中で止まっています')
+  team.note('d', { kind: 'error', message: 'cancelled' }, 301)
+  assert.equal(team.bird('d')!.line(301 + T.scene)?.text, '止めました')
   // The main Agent's turn ended while one seems at work (its events were lost): none stays.
   team.start([{ name: 'e', cards: ['x'] }], 400)
   team.endAll('stopped', 401)
@@ -157,7 +157,7 @@ assert.equal(leadColor(true), 'rgb(250, 204, 89)')
 // The chat's events drive them: delegate brings the birds out, a helper's events move its own.
 {
   const c = Object.create(ChatController.prototype) as any
-  Object.assign(c, { items: [], notes: [], choices: [], offered: [], busy: true, session: { dir: '/p' }, currentId: 's', writers: new Map() })
+  Object.assign(c, { items: [], notes: [], choices: [], offered: [], busy: true, session: { dir: '/p' }, currentId: 's', contentRevision: 0, writers: new Map() })
   c.team = new HelperTeam((who: string) => c.writers.get(who))
   c.changed = () => {}
   c.refreshAfterTurn = () => {}
@@ -166,6 +166,8 @@ assert.equal(leadColor(true), 'rgb(250, 204, 89)')
     { name: 'knn', cards: ['knn'], instruction: 'x' }, { name: 'mlp', cards: ['mlp'], instruction: 'y' }, { cards: ['nameless'] },
   ] }) })
   assert.deepEqual(c.team.birds.map((b: any) => b.name), ['knn', 'mlp'])
+  const task = (name: string, state = 'running', children: any[] = []) => ({ id: name, kind: 'helper', name, state, children })
+  c.handle({ kind: 'presentation', rows: [task('knn'), task('mlp')] })
   assert.deepEqual(c.items.filter((i: any) => i.role === 'helper').map((i: any) => i.helper), ['knn', 'mlp'])
   // What a helper writes is its own: its panel, and its bird at that Card.
   const delta = JSON.stringify({ changes: [{ value: { path: 'definitions/knn2/m.py', bytes: 'import os' } }] })
@@ -176,7 +178,8 @@ assert.equal(leadColor(true), 'rgb(250, 204, 89)')
   assert.equal(c.team.bird('mlp').card(now + 0.5), 'mlp')
   c.handle({ kind: 'helper', name: 'mlp', event: { kind: 'toolStarted', name: 'project_inspect', arguments: '{}' } })
   assert.equal(c.team.bird('mlp').line(now + T.scene + 0.5)?.text, 'プロジェクトを見ています')
-  assert.equal(c.items.find((i: any) => i.helper === 'mlp').tool.name, 'project_inspect')
+  c.handle({ kind: 'presentation', rows: [task('knn'), task('mlp', 'running', [{ id: 'inspect', kind: 'step', children: [{ id: 'call', kind: 'tool', name: 'project_inspect', state: 'running' }] }])] })
+  assert.equal(c.items.find((i: any) => i.helper === 'mlp').presentation.children[0].children[0].name, 'project_inspect')
   c.handle({ kind: 'helper', name: 'mlp', event: { kind: 'finished' } })
   assert.ok(!c.team.bird('mlp').working)
   assert.ok(c.team.bird('knn').working)

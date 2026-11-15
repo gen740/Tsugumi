@@ -22,22 +22,23 @@ try {
   const manager = new EnvironmentManager({ tsugumid: '/daemon', worker: '/worker', sdkDir: '/sdk' }, root,
     () => ['http://localhost:8780'], async <T>(method: string, fields: any): Promise<T> => {
       calls.push({ method, fields })
-      return { project: root, key: manager.list()[0].key,
+      const state = { project: root, key: manager.list()[0].key,
         phase: fields.action === 'Stop' ? EnvironmentPhase.Stopped : failure ? EnvironmentPhase.Failed : EnvironmentPhase.Ready,
         endpoint: 'ws://localhost:1/rpc', token: 't', project_id: 'project', readyFile: '/ready',
-        controlDir: '/control', message: 'fixture failure', recovery: 'Retry the virtual machine' } as T
+        controlDir: '/control', message: 'fixture failure', recovery: 'Retry the virtual machine' }
+      return (method === 'AttachFoldersRequest' ? { state, folders: [{ folder: '/one', resource: 'folder:project:one' }] } : state) as T
     }, (handler) => { receive = handler; return () => true })
   assert.equal((await manager.start(root)).state, 'ready')
   assert.deepEqual(calls[0], { method: 'EnvironmentRequest', fields: { project: fs.realpathSync(root), action: 'Start',
     origins: ['http://localhost:8780'], archive_incompatible_history: false } })
-  await manager.attachFolders(root, manager.list()[0].key, ['/one'])
-  assert.deepEqual(calls.at(-1)!.fields, { project: fs.realpathSync(root), action: 'AddFolders', folders: ['/one'] })
+  assert.deepEqual(await manager.attachFolders(root, ['/one']), [{ folder: '/one', resource: 'folder:project:one' }])
+  assert.deepEqual(calls.at(-1)!.fields, { project: fs.realpathSync(root), folders: ['/one'] })
   await manager.removeFolders(root, ['/one'])
   assert.equal(calls.at(-1)!.fields.action, 'RemoveFolders')
   assert.deepEqual(await manager.attachedFolders(root), [])
   await manager.start(root, true)
   assert.equal(calls.at(-1)!.fields.archive_incompatible_history, true)
-  assert.deepEqual(calls.map((call) => call.method), Array(5).fill('EnvironmentRequest'))
+  assert.deepEqual(calls.map((call) => call.method), ['EnvironmentRequest', 'AttachFoldersRequest', 'EnvironmentRequest', 'EnvironmentRequest', 'EnvironmentRequest'])
   receive({ type: 'EnvironmentStopped', value: { state: { key: manager.list()[0].key, phase: EnvironmentPhase.Stopped } } })
   assert.equal(manager.list()[0].state.state, 'stopped')
   failure = true
@@ -50,6 +51,10 @@ try {
   assert.equal(request.value.project, fs.realpathSync(root))
   assert.deepEqual(request.value.folders, [])
   assert.deepEqual(request.value.origins, [])
+  const attach = encodeRequest('AttachFoldersRequest', { project: fs.realpathSync(root), folders: [] }, 2n, true)
+  const attachment = Message.getRootAsMessage(new fb.ByteBuffer(attach)).unpack().payload as any
+  assert.equal(attachment.value.project, fs.realpathSync(root))
+  assert.deepEqual(attachment.value.folders, [], 'An omitted vector is an empty batch, never a malformed frame')
   // Direct endpoint registration must also carry the host folder for project conversations.
   const registration = encodeRequest('RegisterProjectRequest', { project_id: 'project',
     endpoint: 'ws://localhost:1/rpc', token: 't', title: 'Project', path: fs.realpathSync(root) }, 2n, true)
