@@ -8,6 +8,8 @@
 #include "host/environment.hh"
 #include "host/vm_process.hh"
 
+namespace tsugumi::host { class Service; }
+
 namespace tsugumi::agent {
 
 struct HostOptions {
@@ -33,8 +35,7 @@ public:
   auto host_disconnected(ConnId connection) -> void;
 
 private:
-  struct State;
-  std::unique_ptr<State> state_;
+  std::unique_ptr<host::Service> state_;
 };
 
 auto RunHost(int argc, char **argv) -> int;
