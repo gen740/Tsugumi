@@ -174,6 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           a.messageText = String(localized: "保存できなかったため終了しませんでした")
           a.informativeText = "\(failed.scopeName([])): \(failed.saveError ?? "")"
           a.runModal()
+          Updater.shared.cancelRelaunch()
           return
         }
         self.editsSettled = true
@@ -184,6 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       editsSettled = true
       return nil
     default:
+      Updater.shared.cancelRelaunch()
       return .terminateCancel
     }
   }

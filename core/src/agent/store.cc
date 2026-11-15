@@ -77,6 +77,7 @@ auto CreateConversationTables(sql::Db& db) -> void {
       "CREATE TABLE IF NOT EXISTS helpers(conversation TEXT NOT NULL, "
       "parent_call TEXT NOT NULL, task INTEGER NOT NULL, digest TEXT NOT "
       "NULL, messages TEXT NOT NULL, result TEXT NOT NULL, state TEXT "
+      "NOT NULL, spec TEXT NOT NULL, anchor INTEGER NOT NULL, archive TEXT "
       "NOT NULL, PRIMARY KEY(conversation,parent_call,task))");
   db.exec(
       "CREATE TABLE IF NOT EXISTS pending_sends(conversation TEXT "
@@ -320,18 +321,47 @@ auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
   stats.bind(1, c.id);
   const auto usage_json =
       stats.step() ? stats.text(0) : R"({"inputTokens":0,"outputTokens":0})";
+  std::string streaming;
+  std::map<std::pair<std::string, uint32_t>, std::string> helper_streams;
+  auto events = ConversationDatabase(c.id).prepare(
+      "SELECT json FROM events WHERE conversation=? AND seq>coalesce("
+      "(SELECT max(seq) FROM events WHERE conversation=? AND "
+      "json_extract(json,'$.kind') IN ('checkpoint','finished')),0) ORDER BY "
+      "seq");
+  events.bind(1, c.id).bind(2, c.id);
+  while (events.step()) {
+    auto event = json::Object(events.text(0));
+    auto* tail = &streaming;
+    if (json::Text(event, "kind") == "helper") {
+      tail = &helper_streams[{json::Text(event, "id"),
+                              json::UInt(json::Get(event, "index"))}];
+      event = json::Object(json::Get(event, "event", "{}"));
+    }
+    const auto kind = json::Text(event, "kind");
+    if (kind == "text")
+      *tail += json::Text(event, "text");
+    else if (kind == "checkpoint" || kind == "discardText" ||
+             kind == "finished")
+      tail->clear();
+  }
   std::vector<std::string> helpers;
   auto helper = ConversationDatabase(c.id).prepare(
-      "SELECT parent_call,task,messages,result,state FROM helpers "
-      "WHERE conversation=? ORDER BY rowid");
+      "SELECT parent_call,task,messages,result,state,spec,anchor,archive FROM "
+      "helpers WHERE conversation=? ORDER BY rowid");
   helper.bind(1, c.id);
   while (helper.step())
     helpers.push_back(json::Encode(json::Members{
         {"call_id", json::Quote(helper.text(0))},
         {"task", std::to_string(helper.i64(1))},
         {"messages", helper.text(2)},
+        {"archive", helper.text(7)},
         {"result", helper.text(3).empty() ? "null" : helper.text(3)},
-        {"state", json::Quote(helper.text(4))}}));
+        {"state", json::Quote(helper.text(4))},
+        {"spec", helper.text(5)},
+        {"anchor", std::to_string(helper.i64(6))},
+        {"streaming",
+         json::Quote(helper_streams[{
+             helper.text(0), static_cast<uint32_t>(helper.i64(1))}])}}));
   std::vector<std::string> tools;
   auto q = ConversationDatabase(c.id).prepare(
       "SELECT id,result,error,state FROM receipts WHERE "
@@ -385,6 +415,7 @@ auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
       {"summary", summary.empty() ? "null" : json::Quote(summary)},
       {"tools", json::Encode(tools)},
       {"helpers", json::Encode(helpers)},
+      {"streaming", json::Quote(streaming)},
       {"usage", usage_json}});
 }
 
@@ -565,6 +596,10 @@ auto ConversationStore::Events(const A::EventsRequest& request, bool human)
     event->seq = result.next_seq;
     event->event = std::make_unique<A::EventT>(wire::Event(q.text(1)));
     result.events.push_back(std::move(event));
+  }
+  if (!result.events.empty()) {
+    result.has_rows = true;
+    result.rows = wire::Conversation(ConversationJson(c)).rows;
   }
   return result;
 }

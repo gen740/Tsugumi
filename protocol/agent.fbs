@@ -52,11 +52,23 @@ table Request { value:RequestPayload; }
 // Content blocks are the provider/model's open-ended JSON data, not envelopes.
 table ModelMessage { role:string; content_json:string; display:string; context_summary:bool; provider_content_json:string; provider_api:string; }
 table ToolRecord { id:string; name:string; arguments_json:string; op_id:string; state:string; result_json:string; is_error:bool; }
-table Helper { call_id:string; task:uint; messages:[ModelMessage]; result_json:string; state:string; }
+table Helper { call_id:string; task:uint; spec_json:string; anchor:uint; messages:[ModelMessage]; result_json:string; state:string; }
+// Host-built presentation shared by live observation and restored history.
+// A row is text (role), step, tool or helper. Children preserve causal order.
+table ChatLink { title:string; url:string; }
+table ChatRow {
+  id:string; kind:string; role:string; text:string; name:string;
+  arguments:string; result:string; state:string; archived:bool;
+  summary_ja:string; summary_en:string; scope_ja:string; scope_en:string;
+  instruction:string; failed:uint; recovered:uint;
+  links:[ChatLink]; children:[ChatRow];
+}
+table AccessLine { request:string; operation:string; scope:string; needed_now:bool; }
+table AccessGroup { title:string; path:string; display_path:string; scope:string; lines:[AccessLine]; }
 table Conversation {
   id:string (required); title:string; updated_at:long;
   messages:[ModelMessage]; archive:[ModelMessage]; summary:string;
-  tools:[ToolRecord]; helpers:[Helper]; usage:Tsugumi.Service.Usage;
+  tools:[ToolRecord]; helpers:[Helper]; rows:[ChatRow]; usage:Tsugumi.Service.Usage;
 }
 // Core-recorded operation at interruption, not inferred from transcript by clients.
 // kind: preparing, model, tool, compact. Tool details identify the in-flight call.
@@ -73,17 +85,17 @@ table SearchResult { matches:[SearchMatch]; }
 table Event {
   kind:string (required); text:string; message:string; input_json:string;
   id:string; name:string; ok:bool = true; index:uint;
-  asked:[string]; event:Event;
+  asked:[string]; groups:[AccessGroup]; event:Event;
 }
 table SequencedEvent { seq:ulong; event:Event (required); }
-table EventsPage { events:[SequencedEvent]; next_seq:ulong; busy:bool; }
+table EventsPage { events:[SequencedEvent]; next_seq:ulong; busy:bool; rows:[ChatRow]; has_rows:bool; }
 // A tool's input schema is an open-ended JSON Schema document.
 table Tool { name:string; description:string; input_schema_json:string; }
 table ToolCatalog { tools:[Tool]; }
 table Image { media_type:string; data:string; }
 table ToolResult { text:string; is_error:bool; images:[Image]; }
 table AccessResult { id:string (required); }
-table AccessEntry { id:string; project_id:string; conversation_id:string; access:Tsugumi.Service.Access; scope:Tsugumi.Service.GrantScope; reason:string; state:string; asked:[string]; }
+table AccessEntry { id:string; project_id:string; conversation_id:string; access:Tsugumi.Service.Access; scope:Tsugumi.Service.GrantScope; reason:string; state:string; asked:[string]; groups:[AccessGroup]; }
 table Grant { id:string; project_id:string; conversation_id:string; access:Tsugumi.Service.Access; active:bool; }
 table AccessList { requests:[AccessEntry]; grants:[Grant]; }
 union ReplyPayload {

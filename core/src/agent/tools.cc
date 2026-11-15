@@ -998,7 +998,9 @@ auto Tools::Hooks(const std::string& id, bool helper,
     access_service.AuthorizeContext(id, messages);
   };
   hooks.checkpoint = [this, id](const auto& messages) {
+    std::lock_guard lock(mutex);
     conversations->SaveMessages(id, messages);
+    dependencies.event(id, R"({"kind":"checkpoint"})");
   };
   hooks.execute_tool = [this, id, helper, boundary](const ToolCall& call,
                                                     std::stop_token stop) {

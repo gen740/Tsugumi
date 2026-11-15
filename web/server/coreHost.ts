@@ -1,3 +1,4 @@
+import type { ChatRow } from '../src/shared/chatPresentation'
 // Platform adapter for the core-owned services. The browser keeps the HTTP/SSE
 // API; service credentials and binary socket connections stay in this host.
 import { spawn } from 'node:child_process'
@@ -94,7 +95,7 @@ class Connection {
       const timer = setTimeout(() => {
         this.waiting.delete(requestId)
         reject(new Error('Service request timed out'))
-      }, method === 'EnvironmentRequest' || method === 'HostRuntimeRequest' ? 3_600_000 : 120_000)
+      }, method === 'EnvironmentRequest' || method === 'AttachFoldersRequest' || method === 'HostRuntimeRequest' ? 3_600_000 : 120_000)
       timer.unref()
       this.waiting.set(requestId, { resolve, reject, timer })
       this.socket!.write(frame)
@@ -295,7 +296,7 @@ export class RemoteAgent {
   private changing = 0
 
   constructor(readonly host: CoreHost, readonly id: string, readonly project?: string, readonly role = 'worker') {
-    this.conversation = { id, messages: [], archive: [], tools: [], usage: { inputTokens: 0, outputTokens: 0 }, updatedAt: Date.now() }
+    this.conversation = { id, rows: [], messages: [], archive: [], tools: [], usage: { inputTokens: 0, outputTokens: 0 }, updatedAt: Date.now() }
   }
 
   async open() {
@@ -309,6 +310,7 @@ export class RemoteAgent {
   }
 
   private adopt(result: RemoteConversation) {
+    if (result.conversation.id !== this.id) throw new Error('The host returned a different conversation')
     this.conversation = result.conversation
     this.busy = result.busy
     this.resumable = result.resumable === true
@@ -331,12 +333,13 @@ export class RemoteAgent {
   private async poll(identity: number) {
     try {
       while (this.observing && identity === this.observationID) {
-        const result = await this.host.user.call<{ events: { seq: bigint; event: AgentEvent }[]; next_seq: bigint; busy: boolean }>(
+        const result = await this.host.user.call<{ events: { seq: bigint; event: AgentEvent }[]; next_seq: bigint; busy: boolean; rows: ChatRow[]; hasRows: boolean }>(
           'EventsRequest', { conversation_id: this.id, after_seq: this.seq })
         if (identity !== this.observationID) return
         if (result.events.some((e) => e.event.kind === 'finished')) await this.refresh()
         if (identity !== this.observationID) return
         for (const e of result.events) { this.seq = e.seq > this.seq ? e.seq : this.seq; this.listener?.(e.event) }
+        if (result.hasRows) this.listener?.({ kind: 'presentation', rows: result.rows })
         this.seq = result.next_seq > this.seq ? result.next_seq : this.seq
         const wasBusy = this.busy
         this.busy = result.busy

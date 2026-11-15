@@ -325,7 +325,7 @@ final class UIScript {
           let deadline = Date().addingTimeInterval((Double(w.count > 1 ? w[1] : "30") ?? 30) * 60)
           try? await Task.sleep(for: .seconds(2))
           while chat.busy && Date() < deadline { try? await Task.sleep(for: .seconds(2)) }
-          say("chat busy=\(chat.busy) limit=\(chat.stoppedAtLimit) status=\(chat.status ?? "-")")
+          say("chat busy=\(chat.busy) continuable=\(chat.canContinue) status=\(chat.status ?? "-")")
         }
       case "continue":
         if let s = session { AppModel.shared.chat(for: s).continueWork() }

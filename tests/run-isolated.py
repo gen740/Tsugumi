@@ -106,7 +106,20 @@ def stop_services(root, group=None):
     raise RuntimeError(f'Test services did not stop: {sorted(pending)}')
 
 
+def detach_mounts(root):
+    # Xcode attaches a downloaded toolchain image under the private HOME
+    # (Library/Developer/DVTDownloads/.../mounts): a read-only volume that
+    # cannot be removed as files.
+    if sys.platform != 'darwin':
+        return
+    listing = subprocess.run(['/sbin/mount'], capture_output=True, text=True).stdout
+    points = [line.split(' on ', 1)[1].rsplit(' (', 1)[0] for line in listing.splitlines() if ' on ' in line]
+    for point in sorted((p for p in points if Path(p).is_relative_to(root)), key=len, reverse=True):
+        subprocess.run(['/usr/bin/hdiutil', 'detach', point, '-force'], capture_output=True)
+
+
 def remove_private_tree(root):
+    detach_mounts(root)
     def retry(function, path, error):
         if isinstance(error[1], FileNotFoundError):
             return
@@ -140,7 +153,13 @@ def run(arguments):
     env.pop('TSUGUMI_HOST_STATE', None)
     for key in ('TMPDIR', 'TMP', 'TEMP', 'TSUGUMI_SOCKET_DIR'):
         env[key] = str(root)
+    home = root / 'home'
+    home.mkdir(mode=0o700)
+    for key in ('ANTHROPIC_API_KEY', 'OPENAI_API_KEY'):
+        env.pop(key, None)
     env.update(TSUGUMI_TEST_RUN_ROOT=str(root),
+               TSUGUMI_TEST_NO_SECRET_STORE='1',
+               HOME=str(home), CFFIXED_USER_HOME=str(home), USERPROFILE=str(home),
                TSUGUMI_SUPPORT_DIR=str(root / 'support'),
                TSUGUMI_RUN_SCRATCH_DIR=str(root / 'scratch'),
                XDG_CACHE_HOME=str(root / 'cache'), XDG_CONFIG_HOME=str(root / 'config'),

@@ -1,7 +1,7 @@
 // The chat of one project: several conversations (sessions), each an Agent
 // run by the host server with its own persisted transcript.
 import { api, onServerEvent } from '../api'
-import { toolSummary } from '../shared/agentShared'
+import type { ChatRow, AccessGroup } from '../shared/chatPresentation'
 import { uuid } from '../shared/rpc'
 import type { AppModel } from './app'
 import { guide, GuideAction, type GuideShow, parseShow } from './guide'
@@ -23,7 +23,7 @@ export interface ChatItem {
    *  tool call (text: the arguments) and how its work ended. */
   helper?: string
   ended?: string
-  trace?: string
+  presentation?: ChatRow
 }
 
 export interface SessionInfo {
@@ -99,6 +99,8 @@ interface Message {
 }
 
 interface Conversation {
+  id: string
+  rows: ChatRow[]
   helpers?: { call_id: string; task: number; messages: Message[]; state: string }[]
   tools?: { id: string; name: string; result?: string; isError: boolean; state: string }[]
   messages: Message[]
@@ -118,24 +120,30 @@ export class ChatController extends Observable {
   private stopping = false
   private transition: Promise<unknown> = Promise.resolve()
   private turn = 0
+  private reload = 0
+  private contentRevision = 0
+  loading = false
+  private displayedId = ''
+  get ready() { return !this.loading && !!this.currentId && this.displayedId === this.currentId }
   /** A save of the Agent waiting for the user: what it would give Cards. */
   /** A save waiting for the user's approval: of this chat's Agent, or of
    *  Claude Code (from) working on the project through the plugin. */
-  private permissions: { id: string; asked: string[]; from?: string }[] = []
+  private permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string }[] = []
   get permission() { return this.permissions?.[0] }
-  private enqueuePermission(p: { id: string; asked: string[]; from?: string }) {
+  private enqueuePermission(p: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string }) {
     this.permissions ??= []
     if (!this.permissions.some(x => x.id === p.id)) this.permissions.push(p)
   }
   private removePermission(id: string) { this.permissions = (this.permissions ?? []).filter(p => p.id !== id) }
+  loadError?: string
   status?: string
   failed = false
   /** The last turn stopped at the ChatGPT plan's usage limit ("Manage usage"). */
   usageLimited = false
   /** The last turn could not make the conversation fit the model's context. */
   contextFull = false
-  /** The last turn stopped at the step limit and can go on. */
-  stoppedAtLimit = false
+  /** A stopped turn can be continued explicitly. */
+  canContinue = false
   interrupted = false
   interruptedOperation?: InterruptedOperation
   sessions: SessionInfo[] = []
@@ -183,6 +191,8 @@ export class ChatController extends Observable {
   /** The project was left: this chat hears nothing more. */
   close() {
     this.providerRefresh++
+    this.turn++
+    this.reload++
     this.thoughts.close()
     this.offEvents()
     this.permissions = []
@@ -195,7 +205,8 @@ export class ChatController extends Observable {
   }
 
   private async init() {
-    await this.refreshSessions()
+    const turn = this.turn
+    if (!await this.refreshSessions() || turn !== this.turn) return
     this.select(this.sessions[0]?.id ?? uuid())
     void this.reloadSkills()
   }
@@ -205,25 +216,44 @@ export class ChatController extends Observable {
   async refreshSessions() {
     try {
       this.sessions = await api<SessionInfo[]>('/api/chat/sessions', { path: this.session.dir })
-    } catch {}
-    this.changed()
+      this.changed()
+      return true
+    } catch (e) { this.status = L('エラー: {0}', (e as Error).message ?? e); this.changed(); return false }
   }
 
   /** Reads the open conversation again (its turn keeps running on the server). */
   private async reread(id: string) {
+    const request = ++this.reload, turn = this.turn, revision = this.contentRevision
     try {
-      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; permission: { id: string; asked: string[] } | null }>(
-        '/api/chat/conversation', { ...this.base, folders: this.folders })
-      if (this.currentId !== id) return
-      this.busy = r.busy
-      this.adoptInterruption(r)
-      if (r.permission) this.enqueuePermission(r.permission)
-      this.usage = r.conversation.usage
-      this.provider = r.provider
-      this.load(r.conversation)
+      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; permission: { id: string; asked: string[]; groups?: AccessGroup[] } | null }>(
+        '/api/chat/conversation', { path: this.session.dir, session: id, folders: this.folders })
+      if (this.currentId !== id || request !== this.reload || turn !== this.turn) return
+      // An observation received after the read began is newer than this snapshot.
+      if (revision === this.contentRevision) {
+        if (r.conversation.id !== id) throw new Error('The host returned a different conversation')
+        const items = r.conversation.rows.map(presentedItem)
+        this.items = items
+        this.busy = r.busy
+        this.adoptInterruption(r)
+        if (r.permission) this.enqueuePermission(r.permission)
+        this.usage = r.conversation.usage
+        this.provider = r.provider
+      }
+      if (this.status === this.loadError) this.status = undefined
+      this.loadError = undefined
+      this.displayedId = id
+      this.loading = false
       this.changed()
-    } catch {}
+    } catch (e) {
+      if (this.currentId !== id || request !== this.reload || turn !== this.turn) return
+      this.loading = false
+      this.status = L('エラー: {0}', (e as Error).message ?? e)
+      this.loadError = this.status
+      this.changed()
+    }
   }
+
+  retryLoad() { if (this.currentId) this.select(this.currentId); else void this.init() }
 
   select(id: string) {
     this.turn++
@@ -232,38 +262,24 @@ export class ChatController extends Observable {
     this.failed = false
     this.usageLimited = false
     this.contextFull = false
-    this.stoppedAtLimit = false
+    this.canContinue = false
     this.interrupted = false
     this.interruptedOperation = undefined
     if (this.available) this.status = undefined
     this.permissions = []
+    this.loadError = undefined
     this.currentId = id
-    this.items = []
+    this.loading = true
     this.changed()
-    if (!this.available) return
-    // Opening only reads the core snapshot.
-    void api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; permission: { id: string; asked: string[] } | null }>('/api/chat/conversation', { ...this.base, folders: this.folders })
-      .then((r) => {
-        if (this.currentId !== id) return
-        if (r.permission) this.enqueuePermission(r.permission)
-        this.usage = r.conversation.usage
-        this.provider = r.provider
-        this.busy = r.busy
-        this.adoptInterruption(r)
-        this.load(r.conversation)
-        this.changed()
-      })
-      .catch((e) => {
-        this.status = String(e.message ?? e)
-        this.changed()
-      })
+    if (!this.available) { this.loading = false; return }
+    void this.reread(id)
   }
 
   private adoptInterruption(r: { resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean }) {
     const wasInterrupted = this.interrupted
     this.interrupted = r.resumable === true
     this.interruptedOperation = r.interruptedOperation
-    this.stoppedAtLimit = !this.interrupted && r.continuable === true
+    this.canContinue = !this.interrupted && r.continuable === true
     if (this.interrupted) {
       this.failed = false
       this.usageLimited = false
@@ -277,50 +293,13 @@ export class ChatController extends Observable {
   }
 
   resume() {
-    if (!this.available || !this.interrupted || this.busy) return
+    if (!this.ready || !this.available || !this.interrupted || this.busy) return
     this.begin()
     void this.request('/api/chat/resume', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
   }
 
   private load(c: Conversation) {
-    const out: ChatItem[] = []
-    const tools = new Map<string, ChatItem>()
-    const all = [...c.archive, ...c.messages]
-    all.forEach((m, i) => {
-      const archived = i < c.archive.length
-      // A request the app wrote for the model shows as its short form.
-      if (m.display) {
-        out.push({ id: uuid(), role: m.role, text: m.display, archived })
-        return
-      }
-      for (const b of m.content) {
-        if (b.type === 'text') out.push({ id: uuid(), role: m.role, text: b.text ?? '', archived })
-        else if (b.type === 'tool_use') {
-          const item: ChatItem = { id: uuid(), role: 'tool', text: b.input ?? '', tool: { name: b.name ?? '' }, archived }
-          out.push(item)
-          if (b.id) tools.set(b.id, item)
-        }
-        else if (b.type === 'web_search') {
-          const sources = (b.sources ?? []).map((s) => (s.title ? `${s.title} — ${s.url}` : s.url)).join('\n')
-          out.push({ id: uuid(), role: 'tool', text: `${JSON.stringify({ query: b.query ?? '' })}\n→ ${b.error ? `failed: ${b.error}` : sources || 'no results'}`, tool: { name: 'web_search', ok: !b.error }, archived })
-        }
-        else if (b.type === 'tool_result') {
-          const j = b.tool_use_id ? tools.get(b.tool_use_id) : undefined
-          if (j) {
-            j.tool!.ok = !b.is_error
-            j.text += '\n→ ' + toolSummary(b.content ?? '')
-          }
-        }
-      }
-    })
-    for (const record of c.tools ?? []) if (record.name === 'operation_approval') {
-      out.push({ id: record.id, role: 'tool', text: record.result ?? '', tool: { name: record.name, ok: record.state === 'pending' ? undefined : !record.isError } })
-    }
-    for (const helper of c.helpers ?? []) {
-      const text = helper.messages.map(m => m.content.map(b => b.type === 'text' ? b.text : JSON.stringify(b)).join('\n')).join('\n\n')
-      out.push({ id: `helper:${helper.call_id}:${helper.task}`, role: 'helper', helper: helper.messages[0]?.content.find(b => b.type === 'text')?.type === 'text' ? text.split('\n')[0].slice(0, 80) : helper.call_id, text: '', trace: text, ended: helper.state })
-    }
-    this.items = out
+    this.items = c.rows.map(presentedItem)
   }
 
   newSession() {
@@ -389,7 +368,7 @@ export class ChatController extends Observable {
 
   async attach(folders: string[]) {
     if (!folders.length) return
-    const r = await api<{ folders: { folder: string; resource: string }[] }>('/api/chat/folders', { ...this.base, selected: [...new Set(folders)], folders: this.folders })
+    const r = await this.session.withEnvironmentChange(() => api<{ folders: { folder: string; resource: string }[] }>('/api/chat/folders', { ...this.base, selected: [...new Set(folders)] }))
     for (const item of r.folders) this.folderResources.set(item.folder, item.resource)
     this.folders = [...new Set([...this.folders, ...r.folders.map(item => item.folder)])]
     this.changed()
@@ -413,12 +392,13 @@ export class ChatController extends Observable {
   // ---- Conversation --------------------------------------------------------------
 
   send(text: string, selection: CardKey[] = [], scopedSkill?: string) {
-    if (!text.trim() || !this.available) return
+    if (!this.ready || !text.trim() || !this.available) return
     // No model connection: Tsugumi answers from its script.
     if (guide.scripted && !this.busy) return guide.answerScripted(text.trim(), this)
     if (this.skillsIn(text).some((s) => s.name === 'demo')) this.demoMode = true
     const refs = [...this.references, ...selection.filter((k) => !this.references.some((r) => r.kind === 'card' && r.card === k)).map((card) => ({ kind: 'card' as const, card }))]
     const shown = text + (refs.length ? '\n📎 ' + refs.map(r => refLabel(r, k => this.session.displayPath(path(k)))).join(', ') : '')
+    this.contentRevision++
     this.items = [...this.items, { id: uuid(), role: 'user', text: shown }]
     this.references = []
     this.begin()
@@ -428,7 +408,7 @@ export class ChatController extends Observable {
 
   /** Sends a request the app wrote for the model; the chat shows `display`. */
   private sendRequest(display: string, prompt: string) {
-    if (!this.available) return
+    if (!this.ready || !this.available) return
     this.items = [...this.items, { id: uuid(), role: 'user', text: display }]
     this.begin()
     void this.request('/api/chat/send', { ...this.base, text: prompt, display, skillNames: this.demoMode ? ['demo'] : [] }).catch((e) => this.fail(e))
@@ -454,15 +434,15 @@ export class ChatController extends Observable {
       if (this.turn === turn) void this.refreshProvider()
     }).catch(() => {})
     this.stopping = true
-    this.stoppedAtLimit = true
+    this.canContinue = true
     this.busy = false
     this.status = L('回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。')
     this.changed()
   }
 
-  /** Goes on after the step limit stopped the Agent. */
+  /** Continues work only when the person asks. */
   continueWork() {
-    if (!this.available) return
+    if (!this.ready || !this.available) return
     this.items = [...this.items, { id: uuid(), role: 'user', text: L('（止まったところから続けます）') }]
     this.begin()
     void this.request('/api/chat/continue', { ...this.base, folders: this.folders }).catch((e) => this.fail(e))
@@ -536,7 +516,7 @@ export class ChatController extends Observable {
     this.failed = false
     this.usageLimited = false
     this.contextFull = false
-    this.stoppedAtLimit = false
+    this.canContinue = false
     this.status = undefined
     this.changed()
   }
@@ -599,7 +579,7 @@ export class ChatController extends Observable {
       case 'finished':
         this.writer(who).ended(true, now)
         return false
-      case 'discardText': case 'retrying': case 'error': case 'stepLimit':
+      case 'discardText': case 'retrying': case 'error':
         this.writer(who).ended(false, now)
         return false
     }
@@ -610,30 +590,19 @@ export class ChatController extends Observable {
     if (this.noteWriting('', e)) return
     if (e.kind === 'helper' && this.noteWriting(e.name, e.event)) return
     switch (e.kind) {
+      case 'presentation':
+        this.contentRevision++
+        this.items = e.rows.map(presentedItem)
+        break
       case 'modelAccepted':
         void this.refreshProvider()
         break
-      case 'discardText': {
-        // The reply is asked again: what it had streamed goes.
-        const last = this.items[this.items.length - 1]
-        if (last && last.role === 'assistant' && !last.tool) this.items = this.items.slice(0, -1)
-        break
-      }
       case 'permission':
-        this.enqueuePermission({ id: e.id, asked: e.asked, from: e.from })
+        this.enqueuePermission({ id: e.id, asked: e.asked, groups: e.groups, from: e.from })
         break
       case 'permissionAnswered':
         this.removePermission(e.id)
         break
-      case 'text': {
-        const last = this.items[this.items.length - 1]
-        if (last && last.role === 'assistant' && !last.tool) {
-          this.items = [...this.items.slice(0, -1), { ...last, text: last.text + e.text }]
-        } else {
-          this.items = [...this.items, { id: uuid(), role: 'assistant', text: e.text }]
-        }
-        break
-      }
       case 'toolStarted':
         if (e.name === 'guide_show') {
           // The bird flies and speaks; the chat keeps the choices under the answer.
@@ -646,7 +615,6 @@ export class ChatController extends Observable {
           if (shown.endTour) this.demoMode = false
           break
         }
-        this.items = [...this.items, { id: uuid(), role: 'tool', text: e.arguments, tool: { name: e.name } }]
         // The bird flies to the Card the Agent works on (in demo mode guide_show moves it instead).
         if (!this.demoMode) guide.chatWork(e.name, e.arguments)
         if (e.name === 'delegate') this.startHelpers(e.arguments)
@@ -657,14 +625,6 @@ export class ChatController extends Observable {
       case 'helper':
         this.handleHelper(e.name, e.event)
         break
-      case 'toolFinished': {
-        const i = this.items.map((x) => x.role === 'tool' && x.tool?.name === e.name && x.tool?.ok === undefined).lastIndexOf(true)
-        if (i >= 0) {
-          const it = this.items[i]
-          this.items = [...this.items.slice(0, i), { ...it, tool: { name: e.name, ok: e.ok }, text: it.text + '\n→ ' + e.summary }, ...this.items.slice(i + 1)]
-        }
-        break
-      }
       case 'compacting':
         // The next reply waits for it (over a minute with a long conversation).
         this.status = COMPACTING
@@ -700,7 +660,7 @@ export class ChatController extends Observable {
         this.refreshAfterTurn()
         break
       case 'finished':
-        if (this.failed || this.stoppedAtLimit) {
+        if (this.failed || this.canContinue) {
           this.refreshAfterTurn()
           break
         }
@@ -714,17 +674,7 @@ export class ChatController extends Observable {
         this.refreshAfterTurn()
         queueMicrotask(() => this.flushNotes())
         break
-      case 'stepLimit':
-        this.stopping = false
-        guide.chatTurnEnded(this, this.lastReply)
-        guide.chatWorkEnded()
-        this.team.endAll('limit', Date.now() / 1000)
-        this.busy = false
-        this.stoppedAtLimit = true
-        this.status = L('{0} 手の上限で中断しました。「続ける」で続きから再開できます。', e.steps)
-          + (e.unconfirmedRun ? L(' 実行 {0} の結果はまだ確かめていません。', String(e.unconfirmedRun).slice(0, 8)) : '')
-        this.refreshAfterTurn()
-        break
+
     }
     this.changed()
   }
@@ -741,44 +691,24 @@ export class ChatController extends Observable {
     }))
     this.team.start(named, Date.now() / 1000)
     guide.team = this.team
-    this.items = [...this.items, ...named.map((t) => ({ id: uuid(), role: 'helper', text: '', helper: t.name }))]
   }
 
   /** What a helper does: its bird and its row. */
   private handleHelper(name: string, e: any) {
     this.team.note(name, e, Date.now() / 1000)
-    const i = this.items.map((x) => x.role === 'helper' && x.helper === name).lastIndexOf(true)
-    if (i < 0) return
-    const it = this.items[i]
-    let next: ChatItem | undefined
-    if (e.kind === 'toolStarted') next = { ...it, tool: { name: e.name }, text: e.arguments }
-    else if (e.kind === 'toolFinished' && it.tool?.name === e.name) next = { ...it, tool: { name: e.name, ok: e.ok } }
-    else if (e.kind === 'finished') next = { ...it, ended: L('終わりました') }
-    else if (e.kind === 'stepLimit') next = { ...it, ended: L('手数の上限で止まりました') }
-    else if (e.kind === 'error') next = { ...it, ended: e.message === 'cancelled' ? L('止めました') : L('エラー: {0}', e.message) }
-    if (next) this.items = [...this.items.slice(0, i), next, ...this.items.slice(i + 1)]
+
   }
 
-  private reloadCurrent() {
-    const id = this.currentId
-    void api<{ conversation: Conversation; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean }>('/api/chat/conversation', { path: this.session.dir, session: id }).then((r) => {
-      if (this.currentId !== id) return
-      this.load(r.conversation)
-      this.changed()
-    }).catch(() => {})
-  }
+  private reloadCurrent() { void this.reread(this.currentId) }
 
   private refreshAfterTurn() {
-    const id = this.currentId, turn = this.turn
-    const refresh = ++this.providerRefresh
-    void api<{ conversation: Conversation; provider: ProviderInfo; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean }>('/api/chat/conversation', { path: this.session.dir, session: id }).then((r) => {
-      if (this.currentId !== id || this.turn !== turn) return
-      this.load(r.conversation)
-      this.adoptInterruption(r)
-      this.usage = r.conversation.usage
-      if (refresh === this.providerRefresh) this.provider = r.provider
-      this.changed()
-      void this.refreshSessions()
-    }).catch(() => {})
+    void this.reread(this.currentId).then(() => this.refreshSessions())
   }
+}
+
+function presentedItem(row: ChatRow): ChatItem {
+  return { id: row.id, role: row.kind === 'text' ? row.role : row.kind, text: row.kind === 'tool' ? row.arguments + (row.result ? '\n→ ' + row.result : '') : row.text,
+    archived: row.archived, helper: row.kind === 'helper' ? row.name : undefined,
+    tool: row.kind === 'tool' ? { name: row.name, ok: row.state === 'running' ? undefined : row.state === 'completed' } : undefined,
+    ended: row.kind === 'helper' && row.state !== 'running' ? row.state : undefined, presentation: row }
 }

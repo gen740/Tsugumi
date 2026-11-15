@@ -409,9 +409,9 @@ final class GuideController {
     if let agent { return agent }
     let a = Agent(id: "guide", transport: GuideTransport(), provider: AgentSettings.current(), role: .guide)
     Task {
-      await a.setApprover { asked in
+      await a.setApprover { asked, groups in
         guard let session = await GuideController.shared.readSession else { return [] }
-        return await AppModel.shared.chat(for: session).approve(asked)
+        return await AppModel.shared.chat(for: session).approve(asked, groups: groups)
       }
     }
     agent = a
@@ -542,7 +542,7 @@ final class GuideController {
       if let last = items.last, last.role == "assistant" { items.removeLast() }
     case .retrying(let s):
       status = String(localized: "再試行中: \(s)")
-    case .modelAccepted, .compacting, .compacted, .helper, .helperStarted:
+    case .presentation, .modelAccepted, .compacting, .compacted, .helper, .helperStarted:
       break
     case .finished:
       ended()
@@ -552,9 +552,6 @@ final class GuideController {
     case .interrupted:
       ended()
       queued = []
-    case .stepLimit:
-      ended()
-      status = String(localized: "答えをまとめきれませんでした。聞き方を変えてもう一度どうぞ。")
     case .error(let s):
       ended()
       bubble = nil

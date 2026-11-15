@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import Darwin
 import Foundation
 import FlatBuffers
@@ -212,4 +214,125 @@ extension ChatResumeTests {
   #expect(history.runs.first??.status.runId == after.runId)
   #expect(history.runs.first??.status.state == .succeeded)
   await session.close()
+}
+
+/// These hosts stay offscreen: no application launch, activation or saved settings.
+@MainActor @Suite(.serialized) struct ExecutionHistoryLayoutTests {
+  @Test(arguments: [860.0, 760.0, 620.0], ["ja", "en"])
+  func panesUseTheAvailableCardWindow(width: Double, language: String) async throws {
+    NSApplication.shared.setActivationPolicy(.prohibited)
+    var frames: [String: NSView] = [:]
+    var controlFrames: [String: CGRect] = [:]
+    func probe(_ name: String) -> HistoryLayoutProbe {
+      HistoryLayoutProbe { frames[name] = $0 }
+    }
+    let header = ExecutionHistoryDetailHeader(detail: .constant(.packages)) {
+      ExecutionHistoryInvocationPicker(invocations: Self.invocations, selection: .constant(2))
+      Text("×3").fixedSize()
+      Button {} label: { Image(systemName: "chevron.left") }
+      Button {} label: { Image(systemName: "chevron.right") }
+    }
+    let host = NSHostingView(rootView:
+      HStack(spacing: 0) {
+        Color.clear.frame(width: 161)
+        ExecutionHistoryPanes {
+          List {
+            ExecutionHistoryRunRow(run: Self.run, target: String(repeating: "nustar_pipeline – RCW 86 / ", count: 12))
+          }.background(probe("runs"))
+        } detail: {
+          VStack(spacing: 0) {
+            header.background(probe("header"))
+              .overlayPreferenceValue(ExecutionHistoryControlBounds.self) { anchors in
+                GeometryReader { geometry in
+                  Color.clear.preference(key: HistoryMeasuredBounds.self, value: anchors.mapValues { geometry[$0] })
+                }
+              }
+              .onPreferenceChange(HistoryMeasuredBounds.self) { controlFrames = $0 }
+            Color.clear
+          }.background(probe("detail"))
+        }
+      }.environment(\.locale, Locale(identifier: language))
+    )
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 500),
+                          styleMask: [.borderless], backing: .buffered, defer: true)
+    window.contentView = host
+    defer { window.contentView = nil }
+    for _ in 0..<5 {
+      host.layoutSubtreeIfNeeded()
+      try await Task.sleep(for: .milliseconds(20))
+    }
+    func rect(_ name: String) throws -> CGRect {
+      let view = try #require(frames[name])
+      return view.convert(view.bounds, to: host)
+    }
+    let runs = try rect("runs"), detail = try rect("detail"), headerRect = try rect("header")
+    for rect in [runs, detail, headerRect] {
+      #expect(rect.minX >= 160 && rect.maxX <= width + 1)
+      #expect(rect.minY >= -1 && rect.maxY <= 501)
+    }
+    #expect(Set(controlFrames.keys) == ["label", "invocation", "tabs"])
+    for rect in controlFrames.values {
+      #expect(rect.minX >= -1 && rect.maxX <= headerRect.width + 1, "A history control is clipped")
+      #expect(rect.height <= 30, "A history control must stay on one line")
+    }
+    #expect(headerRect.height <= 64, "The invocation label must not become a column of characters")
+    #expect(detail.height >= 280, "The controls must leave room for the invocation's content")
+    if width >= 801 {
+      #expect(runs.maxX <= detail.minX + 1)
+      #expect(runs.height >= 490, "The history must take the height, not leave it above a toolbar")
+    } else {
+      #expect(runs.width >= width - 162 && runs.height <= 160)
+      #expect(detail.width >= width - 162)
+    }
+  }
+
+  @Test(arguments: [180.0, 320.0, 420.0], [0, 3])
+  func headerFitsWithoutClipping(width: Double, invocationCount: Int) async throws {
+    NSApplication.shared.setActivationPolicy(.prohibited)
+    let host = NSHostingView(rootView:
+      ExecutionHistoryDetailHeader(detail: .constant(.packages)) {
+        if invocationCount == 0 {
+          Label("呼び出しの記録を待っています", systemImage: "clock").lineLimit(1)
+        } else {
+          ExecutionHistoryInvocationPicker(invocations: Self.invocations, selection: .constant(2))
+        }
+      }.frame(width: width)
+    )
+    host.layoutSubtreeIfNeeded()
+    #expect(host.fittingSize.width <= width + 1)
+    #expect(host.fittingSize.height <= 64)
+  }
+
+  private static var run: Tsugumi_RPC_RunSummaryT {
+    let run = Tsugumi_RPC_RunSummaryT()
+    run.status.state = .running
+    run.status.acceptedAt = 1794755053000
+    return run
+  }
+
+  private static var invocations: [Tsugumi_RPC_InvocationSummaryT] {
+    (1...3).map { number in
+      let item = Tsugumi_RPC_InvocationSummaryT()
+      item.invocation = UInt64(number); item.state = .succeeded; item.durationMs = 12345
+      item.batchIndex = UInt32(number); item.batchSize = 3
+      return item
+    }
+  }
+}
+
+private struct HistoryLayoutProbe: NSViewRepresentable {
+  let capture: (NSView) -> Void
+  func makeNSView(context: Context) -> NSView {
+    let view = NSView()
+    capture(view)
+    return view
+  }
+  func updateNSView(_ view: NSView, context: Context) {}
+}
+
+private struct HistoryMeasuredBounds: PreferenceKey {
+  static var defaultValue: [String: CGRect] { [:] }
+  static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+    value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+  }
 }

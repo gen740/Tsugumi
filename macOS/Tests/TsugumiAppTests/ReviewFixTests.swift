@@ -1,45 +1,30 @@
 import Foundation
 import Testing
 @testable import TsugumiApp
-import TsugumiAgentClient
+@testable import TsugumiAgentClient
 import TsugumiLauncher
 import TsugumiRPC
 
 @MainActor struct ReviewFixTests {
-  @Test func aRecordedReplacementKeepsTheUsersDisplayAfterPreparation() {
-    var conversation = Conversation()
-    conversation.messages = [
-      ChatMessage(role: "user", content: [.text("hello interrupted")]),
-      ChatMessage(role: "assistant", content: [.toolUse(id: "pending", name: "project_inspect", input: "{}")]),
-      ChatMessage(role: "user", content: [.toolResult(toolUseId: "pending", content: "The tool was not replayed", isError: true)]),
-      ChatMessage(role: "user", content: [.text("hello instead")], display: "hello instead"),
-    ]
-    let accepted = ChatController.restoredItems(conversation)
-    // Preparation changes model input, but every subsequent snapshot must
-    // preserve exactly the text the optimistic row showed.
-    conversation.messages[3] = ChatMessage(role: "user", content: [.text("hello instead\n[Selected Card IDs]\ncard-id")], display: "hello instead")
-    conversation.messages.append(ChatMessage(role: "assistant", content: [.text("Finished")]))
-    let completed = ChatController.restoredItems(conversation)
-    #expect(accepted.filter { $0.role == "user" }.map(\.text) == ["hello interrupted", "hello instead"])
-    #expect(completed.filter { $0.role == "user" }.map(\.text) == ["hello interrupted", "hello instead"])
-    #expect(completed[1].tool?.ok == false)
-    #expect(completed.last?.text == "Finished")
-  }
-
-  @Test func restoredToolResultsFollowIDsAcrossArchive() {
-    var conversation = Conversation()
-    conversation.archive = [ChatMessage(role: "assistant", content: [
-      .toolUse(id: "a", name: "project_save", input: "A"),
-      .toolUse(id: "b", name: "project_save", input: "B"),
-    ])]
-    conversation.messages = [ChatMessage(role: "user", content: [
-      .toolResult(toolUseId: "missing", content: "ignore", isError: false),
-      .toolResult(toolUseId: "a", content: "A rejected", isError: true),
-      .toolResult(toolUseId: "b", content: "B saved", isError: false),
-    ])]
+  @Test func restoredRowsDrawTheHostProjectionWithoutReorderingOrParsing() throws {
+    let host = Tsugumi_Agent_ConversationT()
+    host.id = "conversation"
+    let step = Tsugumi_Agent_ChatRowT(); step.id = "step"; step.kind = "step"
+    step.summaryJa = "2 件の操作"; step.summaryEn = "2 operations"; step.failed = 1
+    let failure = Tsugumi_Agent_ChatRowT(); failure.id = "a"; failure.kind = "tool"
+    failure.name = "project_save"; failure.arguments = "A"; failure.result = "A rejected"; failure.state = "failed"
+    let success = Tsugumi_Agent_ChatRowT(); success.id = "b"; success.kind = "tool"
+    success.name = "project_save"; success.arguments = "B"; success.result = "B saved"; success.state = "completed"
+    step.children = [failure, success]
+    let answer = Tsugumi_Agent_ChatRowT(); answer.id = "answer"; answer.kind = "text"; answer.role = "assistant"; answer.text = "Finished"
+    host.rows = [step, answer]
+    let conversation = try ServiceWire.conversation(host)
     let items = ChatController.restoredItems(conversation)
-    #expect(items.map(\.text) == ["A\n→ A rejected", "B\n→ B saved"])
-    #expect(items[0].tool?.ok == false && items[1].tool?.ok == true)
+    #expect(items.map(\.id) == ["step", "answer"])
+    #expect(items[0].presentation?.children.map(\.id) == ["a", "b"])
+    #expect(items[0].presentation?.failed == 1)
+    #expect(items[0].presentation?.children[0].result == "A rejected")
+    #expect(items.last?.text == "Finished")
   }
 
   @Test func approvalsWaitInOrderAndReleaseEveryCaller() {

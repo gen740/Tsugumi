@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { RemoteAgent, type CoreHost } from '../server/coreHost'
 
 const operation = { kind: 'tool', id: 'call-7', name: 'project_save', arguments: '{"changes":[]}' }
-const conversation = { id: 's', messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }], archive: [], tools: [], usage: { inputTokens: 0, outputTokens: 0 }, updatedAt: 0 }
+const conversation = { id: 's', rows: [], messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }], archive: [], tools: [], usage: { inputTokens: 0, outputTokens: 0 }, updatedAt: 0 }
 const snapshot = { conversation, busy: false, resumable: true, continuable: true, interruptedOperation: operation, event_seq: 7n }
 const calls: { method: string; fields: any }[] = []
 const host = { user: { async call(method: string, fields: any) { calls.push({ method, fields }); return snapshot } } } as unknown as CoreHost
@@ -33,7 +33,7 @@ globalThis.fetch = (async (url: string, init: RequestInit) => {
 }) as typeof fetch
 try {
   const c = Object.create(ChatController.prototype) as any
-  Object.assign(c, { items: [], notes: [], choices: [], offered: [], busy: false, turn: 0, available: true,
+  Object.assign(c, { items: [], notes: [], choices: [], offered: [], busy: false, turn: 0, reload: 0, contentRevision: 0, available: true,
     transition: Promise.resolve(), session: { dir: '/p' }, currentId: '', folders: [], changed() {} })
   c.select('s')
   await new Promise(resolve => setTimeout(resolve, 0))
@@ -44,7 +44,7 @@ try {
   assert.equal(c.failed, false)
   assert.equal(c.busy, false)
   assert.equal(c.interrupted, true)
-  assert.equal(c.stoppedAtLimit, false)
+  assert.equal(c.canContinue, false)
   assert.match(c.status, /project_save.*call-7.*changes/)
   c.resume()
   await new Promise(resolve => setTimeout(resolve, 0))

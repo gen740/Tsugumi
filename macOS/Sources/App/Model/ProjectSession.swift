@@ -308,6 +308,8 @@ final class ProjectSession {
   /// The one reconnection in progress (a gap and a lost connection reported
   /// together start it once).
   @ObservationIgnored private var reconnectTask: Task<Void, Never>?
+  @ObservationIgnored private var attachmentTask: Task<[(folder: String, resource: String)], Error>?
+  @ObservationIgnored private var attachmentID: UUID?
   @ObservationIgnored private var observerToken: UUID?
   private(set) var projectId: String?
 
@@ -618,17 +620,21 @@ final class ProjectSession {
     Task { [weak self] in await self?.connect(archiveIncompatibleHistory: true) }
   }
 
-  private func connect(archiveIncompatibleHistory: Bool = false) async {
+  private func connect(archiveIncompatibleHistory: Bool = false, endpoint: Endpoint? = nil) async {
+    guard !closed else { return }
     connectionMessage = nil
     do {
       let ep: Endpoint
-      if let o = endpointOverride {
+      if let o = endpoint ?? endpointOverride {
         ep = o
       } else {
         ep = try await environments.start(identity, archiveIncompatibleHistory: archiveIncompatibleHistory)
       }
+      try Task.checkCancellation()
       let c = try await reach(ep)
+      if Task.isCancelled || closed { await c.close(); return }
       let opened = try await c.open(viewId: viewId)
+      if Task.isCancelled || closed { await c.close(); return }
       client = c
       ModuleSources.register(c)
       projectId = ep.projectId
@@ -700,7 +706,7 @@ final class ProjectSession {
   /// checked against the revision it was based on, so a change made
   /// elsewhere meanwhile is a conflict, never overwritten).
   func reconnect() {
-    guard reconnectTask == nil else { return }
+    guard !closed, attachmentTask == nil, reconnectTask == nil else { return }
     environment = .reconnecting
     listenTask?.cancel()
     reconnectTask = Task {
@@ -708,16 +714,62 @@ final class ProjectSession {
       await client?.close()
       client = nil
       setConnected(false)
-      for attempt in 0..<20 {
-        if Task.isCancelled { return }
-        await connect()
-        if connected { return }
-        if case .incompatibleHistory = environment { return }
-        try? await Task.sleep(for: .milliseconds(min(5000, 250 * (attempt + 1))))
-      }
-      // Given up: a problem page with its retry, never a loading card forever.
+      // Hostd's Start waits for the current environment transition, including
+      // a guest restart caused by another chat or client. Only reach() retries
+      // the socket after hostd has confirmed readiness.
+      if Task.isCancelled { return }
+      await connect()
+      if connected || Task.isCancelled { return }
+      if case .incompatibleHistory = environment { return }
+      if case .failed = environment { return }
+      // A completed host start/connection failure remains explicitly retryable.
       environment = .failed(message: String(localized: "tsugumid に再接続できませんでした") + (connectionMessage.map { ": \($0)" } ?? ""),
                             recovery: String(localized: "「再試行」で接続し直します。未保存の変更は保持しています。"), log: "")
+    }
+  }
+
+  /// Hostd owns sharing, restart, readiness and registration. Suspend the old
+  /// listener before asking, then open this view on the returned new endpoint.
+  func attachFolders(_ paths: [String]) async throws -> [(folder: String, resource: String)] {
+    // Several chats/windows share this session; each opens it only after the
+    // preceding attachment has finished reconnecting its view.
+    let previous = attachmentTask
+    let id = UUID()
+    let task = Task {
+      if let previous { _ = try? await previous.value }
+      guard !closed else { throw RPCError.disconnected }
+      return try await performAttachFolders(paths)
+    }
+    attachmentID = id
+    attachmentTask = task
+    defer { if attachmentID == id { attachmentTask = nil; attachmentID = nil } }
+    return try await task.value
+  }
+
+  private func performAttachFolders(_ paths: [String]) async throws -> [(folder: String, resource: String)] {
+    listenTask?.cancel()
+    let reconnecting = reconnectTask
+    reconnecting?.cancel()
+    await reconnecting?.value
+    reconnectTask = nil
+    await client?.close()
+    client = nil
+    setConnected(false)
+    environment = .starting(EnvironmentStage.connecting.rawValue)
+    var registered: [(folder: String, resource: String)]?
+    do {
+      let (endpoint, folders) = try await environments.attachFolders(identity, paths)
+      registered = folders
+      await connect(endpoint: endpoint)
+      guard connected else { throw RPCError.disconnected }
+      return folders
+    } catch {
+      // Recover this view after either a host rollback or a transient failure
+      // to reach its ready endpoint. A completed registration stays successful
+      // when the replacement connection has recovered.
+      if !connected { await connect() }
+      if connected, let registered { return registered }
+      throw error
     }
   }
 

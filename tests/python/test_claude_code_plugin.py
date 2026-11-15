@@ -50,7 +50,25 @@ def isolated_environment(root: Path, **values) -> dict:
                TSUGUMID=str(TSUGUMID),
                ANTHROPIC_API_KEY="fixture-no-network", OPENAI_API_KEY="fixture-no-network")
     env.update(values)
+    # Callers may supply fixture values, never re-enable the real secret store.
+    env.update(TSUGUMI_TEST_NO_SECRET_STORE='1',
+               TSUGUMI_TEST_RUN_ROOT=os.environ.get('TSUGUMI_TEST_RUN_ROOT', str(root.resolve())))
+    home = root / 'home'
+    home.mkdir(exist_ok=True)
+    env.update(HOME=str(home), CFFIXED_USER_HOME=str(home), USERPROFILE=str(home))
     return env
+
+
+def test_web_environment_cannot_enable_the_real_secret_store(tmp_path):
+    env = isolated_environment(tmp_path, TSUGUMI_TEST_NO_SECRET_STORE="0",
+                               TSUGUMI_TEST_RUN_ROOT="/must-not-use-personal-state")
+    try:
+        assert env["TSUGUMI_TEST_NO_SECRET_STORE"] == "1"
+        assert env["TSUGUMI_TEST_RUN_ROOT"] == os.environ["TSUGUMI_TEST_RUN_ROOT"]
+        assert Path(env["HOME"]).is_relative_to(tmp_path)
+        assert env["HOME"] == env["CFFIXED_USER_HOME"] == env["USERPROFILE"]
+    finally:
+        _socket_directories.pop(tmp_path).cleanup()
 
 
 def stop_resident_services(root: Path):
