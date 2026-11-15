@@ -898,6 +898,7 @@
 "呼び出し" = "Invocation";
 "呼び出し #%llu" = "Invocation #%llu";
 "呼び出し %llu · 成功 %llu · 失敗 %llu" = "Invocations %llu · succeeded %llu · failed %llu";
+"呼び出しが記録されると表示します。" = "Details will appear when an invocation is recorded.";
 "呼び出しなし" = "No invocations";
 "呼び出しの記録を待っています" = "Waiting for invocation records";
 "呼び出しの記録を読み込めませんでした" = "The invocation record could not be read";
@@ -983,6 +984,7 @@
 "実行の結果" = "Run Results";
 "実行の記録を見ています" = "Reading the run's record";
 "実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、VM 内と .tsugumi/runs.sqlite の両方から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。" = "Deletes runs' records, values and logs, and each run's files (artifacts and the like, .tsugumi/runs/<run>), both in the VM and in .tsugumi/runs.sqlite. The last input (to run a Card alone again) stays. Scratch belonging to the selected runs is also deleted. Not while a run is going on.";
+"実行の詳細" = "Run details";
 "実行を停止" = "Stop Run";
 "実行を止めています" = "Stopping the run";
 "実行を比較" = "Compare Runs";
