@@ -272,6 +272,18 @@ struct DisplaySnapshot {
 @MainActor
 @Observable
 final class ProjectSession {
+  var projectTrust: Int?
+  func refreshProjectTrust() async throws {
+    let result = try await CoreHostClient.shared.call("ProjectTrustRequest", ["path": identity.url.path])
+    projectTrust = result["decision"] as? Int ?? 0
+  }
+  func setProjectTrust(_ trusted: Bool) async {
+    do {
+      let result = try await CoreHostClient.shared.call("ProjectTrustRequest", ["path": identity.url.path, "decision": UInt8(trusted ? 1 : 2)])
+      projectTrust = result["decision"] as? Int ?? 0
+    } catch { connectionMessage = String(describing: error) }
+  }
+
   /// Replaceable RPC boundary for embedded sessions and tests.
   var prepareSubgraph: (String, [String], String) async throws -> (project: String, external: String, link: String) = {
     try await CoreHostClient.shared.makeSubgraph(project: $0, cards: $1, id: $2)
@@ -626,6 +638,7 @@ final class ProjectSession {
     guard !closed else { return }
     connectionMessage = nil
     do {
+      try await refreshProjectTrust()
       let ep: Endpoint
       if let o = endpoint ?? endpointOverride {
         ep = o

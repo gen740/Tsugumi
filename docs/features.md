@@ -206,7 +206,7 @@ Tsugumi uses Claude's models and features by choosing the one that fits each job
 | Make, fix, run and check Cards | Tool use in the Messages API. The tools are generated from the RPC contract (`protocol/tsugumi.fbs`) for the explicit `requests` allow list in `agent/Shared/agent.json` | [Tools and the RPC](#tools-and-the-rpc), `core/src/agent/catalog.cc`, `tests/core/agent/` |
 | A model sized to the job | Implementing Cards uses the model the user chooses (default `claude-sonnet-5-5`, with effort and, on models that offer it, Fast mode selectable). With an Anthropic API key, the guide's conversation, the summaries of the thinking of the bird on the Canvas and opt-in Agent version summaries use the small `claude-haiku-5-5` (other providers use a small model of their own or the Agent's model) | [Connecting to models](#connecting-to-models), `modelOptions` in `agent/Shared/agent.json`, [Version notes](Versions.md#version-notes) |
 | Judging from the figures a run makes (multimodal) | `run_record` passes the images a Card displayed (charts, RGB images and so on) to the model as images. The same in the app, the Web UI and the Claude Code plugin | `core/src/agent/tool_images.cc`, `web/server/mcp.ts`, `tests/core/agent/project_rpc_test.cc` |
-| Implementing independent Drafts at the same time (subagents) | `delegate` takes 1 to 8 tasks, uses the user’s concurrent-helper setting (default 4; 1 is sequential), and returns their messages and errors | [Splitting the work](#splitting-the-work-delegate), `tests/core/agent/project_rpc_test.cc` |
+| Implementing independent Drafts at the same time (subagents) | `delegate` starts tasks with depth/count capabilities and exact Card sets, and returns their reports and errors | [Splitting the work](#splitting-the-work-delegate), `tests/core/agent/project_rpc_test.cc` |
 | Guiding through a fixed procedure (Skills) | The built-in Skill `$demo` (`agent/Shared/demo-skill.md`) guides through a demo, and Skills the user adds are loaded too | [Skills and conversations](#skills-and-conversations), [the guide](#the-thrush-chat-and-guide) |
 | Showing work in progress | Tool arguments are received by streaming (`eager_input_streaming`), and the Card's code is shown on the Canvas as it is written | [The Agent on the Canvas](#the-agent-on-the-canvas), `core/src/agent/provider.cc` |
 | Making long work faster and cheaper | Prompt caching on the system prompt and the tool definitions | `core/src/agent/provider.cc` |
@@ -247,7 +247,7 @@ See the [RPC contract](Protocol.md) and [Agent permission boundary](security.md#
 
 Independent Drafts can be implemented by helper Agents. Try the [Dynamical systems gallery](Demos.md#dynamical-systems-gallery-dynamics-draft).
 
-In either UI’s Agent settings, choose 1–8 concurrent helpers and whether to allow unscoped helpers. Unscoped helpers are off by default so each helper’s work has a boundary a person can follow. The parent supplies separate `read_cards`, `write_cards` and `run_cards` arrays of exact permanent Card paths (`outer/step` includes only that Card). Inspection, files, saves, runs, records and logs enforce those boundaries in hostd; a container does not grant its children. A helper’s new `card_id` reservation grants it all three access kinds. Helpers may add their own reserved Cards and edit wires whose endpoints are in their read/write sets and which touch a writable Card. The host preserves the hidden graph, places Cards without coordinates, and merges disjoint saves against their inspected revision. Conflicting fields, input endpoints and delete/change edits are refused with collision paths. The parent handles project-wide settings, layout edits, container-link changes and tools that cannot identify a Card. A helper may implement a Draft and rebind its wires in one save when all incident endpoints are assigned; otherwise the parent finishes that transaction.
+In either UI’s Agent settings, choose whether to allow unscoped helpers. Each spawned sub-agent receives its own depth/count capability; the main Agent has no spawn limit. Unscoped helpers are off by default so each helper’s work has a boundary a person can follow. The parent supplies separate `read_cards`, `write_cards` and `run_cards` arrays of exact permanent Card paths (`outer/step` includes only that Card). Inspection, files, saves, runs, records and logs enforce those boundaries in hostd; a container does not grant its children. A helper’s new `card_id` reservation grants it all three access kinds. Helpers may add their own reserved Cards and edit wires whose endpoints are in their read/write sets and which touch a writable Card. The host preserves the hidden graph, places Cards without coordinates, and merges disjoint saves against their inspected revision. Conflicting fields, input endpoints and delete/change edits are refused with collision paths. The parent handles project-wide settings, layout edits, container-link changes and tools that cannot identify a Card. A helper may implement a Draft and rebind its wires in one save when all incident endpoints are assigned; otherwise the parent finishes that transaction.
 
 Helper usage adds to the conversation’s usage. A shortened delegate result says so and identifies its full trace in the conversation’s existing helper records.
 
@@ -263,7 +263,7 @@ A Skill with front matter `scope: [read]`, `scope: [read, run]` or another inlin
 
 The bundled `$review` reads permissions alongside their apparent uses, sources of nondeterminism, resident-worker state and the build/run boundary. `$rerun-compare` reads and reruns selected Cards under the same conditions, comparing output content using the existing run comparison rules; incomplete retained data remains unknown. They contain natural-language instructions, with Japanese and English text, rather than language-specific analysers. Findings cite `card:outer/step?file=src%2Fmain.py&lines=12-18`, which opens those source lines, and state whether they were only read or run and observed. Keep individual findings with **Keep finding as comment**; those comments carry `finding: true` and are excluded from generation requests. Nothing rechecks, resolves or deletes them automatically. Each helper's trace remains expandable in the conversation after reconnecting.
 
-The host-side `tsugumi-hostd` discovers Skills, parses their metadata and reports unreadable or oversized files through `SkillsListRequest` in `protocol/host.fbs`. The app and Web host keep folder selection, completion and menus; they send selected Skill names. The service resolves every matching name in source order and reads the contents beneath registered host roots only after Read access is granted. A Skill must be smaller than 512 KiB. Discovery does not grant access to use its contents in a model prompt.
+The host-side `tsugumi-hostd` discovers Skills, parses their metadata and reports unreadable or oversized files through `SkillsListRequest` in `protocol/host.fbs`. The app and Web host keep folder selection, completion and menus; they send selected Skill names. For names supplied by Tsugumi, one Skill wins: the trusted project’s `skills/` folder, then the person’s registered folders (the last matching source wins), then the built-in Skill. Other duplicate names retain source order. The service reads contents beneath registered host roots only after Read access is granted. A Skill must be smaller than 512 KiB. Discovery does not grant access to use its contents in a model prompt.
 
 `ModelsListRequest` reads or refreshes the service's persisted catalog for each connection. Both clients use its `name` display field. An empty refresh leaves the stored catalog intact; a failed refresh does not change it. Clients retain only a presentation snapshot for rendering an open menu.
 
@@ -284,3 +284,26 @@ The clients draw anchors, position and animate the bird, open panels and perform
 ## 10. Demos
 
 [Choose a bundled demo and try a change](Demos.md). Use [Open a Copy](Usage.md#creating-and-copying-projects) to edit it.
+
+### Automatic Skills and project trust
+
+The built-in `helpers` Skill applies without `$helpers`. It says to delegate only
+when the person asks, how to scope independent work and what a sub-agent returns.
+A same-name override inherits automatic application. Other Skills can declare
+`always: true` in their front matter to apply without being named.
+
+The first opening on a machine asks “Do you trust this project?” once. The host
+remembers the answer by canonical project folder, shared by Mac and Web, and the
+project’s General settings can change it. Projects created here and copies of
+bundled demos are trusted automatically. An untrusted project still opens for
+reading; its Skills cannot override built-ins or apply automatically, while a
+Skill explicitly selected by `$name` remains available with normal Read access.
+Trust concerns Skill instructions; it grants no Card read, write or run access.
+
+Each spawned sub-agent receives `depth` and `count`, defaulting to 0/0. A leaf
+cannot spawn. Otherwise it can spawn at most `count` children over its lifetime,
+with each child’s depth strictly lower and its exact read/write/run Card sets
+contained in the parent’s corresponding sets. The main Agent has no such cap.
+The host records consumption across retries and checkpoints. Unscoped helpers
+still require the separate permission setting. Nested tasks appear under their
+parent in the host-authored conversation presentation.

@@ -93,7 +93,7 @@ struct Service::State {
                    return conversations ? conversations->OpenedPath(project)
                                         : std::nullopt;
                  }),
-        host_projects(options.state_dir, options.demos_dir),
+        host_projects(options.state_dir, options.demos_dir, &db),
         demo_references(options.demos_dir),
         guide(options.state_dir, options.demos_dir),
         requests(4, 128, std::chrono::seconds(30)),
@@ -579,7 +579,6 @@ struct Service::State {
         const auto* result = H::GetMessage(reply.data())->payload_as_Reply();
         const auto* snapshot = result ? result->value_as_Settings() : nullptr;
         lock.lock();
-        helpers->helpers_changed.notify_all();
         if (snapshot) {
           H::SettingsChangedT changed;
           changed.profile =
@@ -677,6 +676,7 @@ struct Service::State {
         registry.RegisterFolder(*r->value_as_RegisterFolderRequest());
         return wire::HostReply(request.request_id, S::AcknowledgementT{});
       }
+      case H::RequestPayload::ProjectTrustRequest:
       case H::RequestPayload::SkillsListRequest:
         return skills_service->Handle(request, human, lock);
       case H::RequestPayload::ModelsListRequest:

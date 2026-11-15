@@ -252,7 +252,6 @@ auto Defaults() -> j::Members {
           {"agent.fastModel", j::Quote("")},
           {"agent.webSearch", "false"},
           {"agent.animateWork", "true"},
-          {"agent.helperParallelism", "4"},
           {"agent.allowUnscopedHelpers", "false"},
           {"agent.permissions.allowed", "[]"},
           {"agent.skillFolders", "[]"},
@@ -747,11 +746,6 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                 j::String(value) != "openai" && j::String(value) != "chatgpt" &&
                 j::String(value) != "fixture")
               throw std::runtime_error("Unknown provider");
-            if (key == "agent.helperParallelism" &&
-                (value != std::to_string(j::UInt(value)) ||
-                 j::UInt(value) < 1 || j::UInt(value) > 8))
-              throw std::runtime_error(
-                  "Helper parallelism must be an integer from 1 to 8");
             if (key == "agent.fixturePort" &&
                 (j::UInt(value) < 1 || j::UInt(value) > 65535))
               throw std::runtime_error("Invalid fixture port");
@@ -919,12 +913,10 @@ auto Settings::Redact(std::string text) -> std::string {
   for (const auto& [_, secret] : s.ephemeral) remove(secret);
   return text;
 }
-auto Settings::HelperPolicy(const std::string &profile)
-    -> std::pair<size_t, bool> {
+auto Settings::AllowUnscopedHelpers(const std::string& profile) -> bool {
   std::lock_guard lock(state_->mutex);
   const auto values = state_->Values(profile).second;
-  return {j::UInt(j::Get(values, "agent.helperParallelism"), 4),
-          j::Bool(j::Get(values, "agent.allowUnscopedHelpers"))};
+  return j::Bool(j::Get(values, "agent.allowUnscopedHelpers"));
 }
 
 auto Settings::Language(const std::string& profile) -> std::string {

@@ -2,12 +2,12 @@
 
 #include <algorithm>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <set>
 #include <sstream>
 
 #include "agent/helper_scope.hh"
-
 #include "util/fs.hh"
 
 #ifdef __APPLE__
@@ -19,6 +19,10 @@
 #include <unicode/unistr.h>
 #endif
 
+extern const unsigned char tsugumi_agent_helpers_skill[];
+extern const unsigned long tsugumi_agent_helpers_skill_size;
+extern const unsigned char tsugumi_agent_demo_skill[];
+extern const unsigned long tsugumi_agent_demo_skill_size;
 extern const unsigned char tsugumi_agent_review_skill[];
 extern const unsigned long tsugumi_agent_review_skill_size;
 extern const unsigned char tsugumi_agent_rerun_compare_skill[];
@@ -291,6 +295,8 @@ auto Scan(const fs::path &folder, H::SkillsListT &out) -> void {
             if (end != lines.end()) {
               body = end - lines.begin() + 1;
               for (auto line = lines.begin() + 1; line != end; ++line) {
+                if (line->starts_with("always:"))
+                  skill->always = TrimWhitespace(line->substr(7)) == "true";
                 if (line->starts_with("name:"))
                   skill->name =
                       Normalize(CleanName(TrimWhitespace(line->substr(5))));
@@ -405,6 +411,12 @@ auto SelectScopedSkill(const H::SkillsListT &catalog,
 }
 
 auto BundledSkill(const std::string &path) -> std::string {
+  if (path == "builtin:helpers")
+    return {reinterpret_cast<const char*>(tsugumi_agent_helpers_skill),
+            tsugumi_agent_helpers_skill_size};
+  if (path == "builtin:demo")
+    return {reinterpret_cast<const char*>(tsugumi_agent_demo_skill),
+            tsugumi_agent_demo_skill_size};
   if (path == "builtin:review")
     return {reinterpret_cast<const char *>(tsugumi_agent_review_skill),
             tsugumi_agent_review_skill_size};
@@ -434,8 +446,16 @@ auto SkillNameKey(std::string_view name) -> std::string {
   return Normalize(RepairUTF8(name));
 }
 
-auto ListSkills(const fs::path &project,
-                const std::vector<std::string> &folders) -> H::SkillsListT {
+auto ProjectTrusted(sql::Db& db, const fs::path& path) -> bool {
+  if (path.empty()) return false;
+  auto query = db.prepare("SELECT decision FROM project_trust WHERE path=?");
+  query.bind(1, fs::weakly_canonical(path).string());
+  return query.step() && query.i64(0) == 1;
+}
+
+auto ListSkills(const fs::path& project,
+                const std::vector<std::string>& folders, bool trusted)
+    -> H::SkillsListT {
   H::SkillsListT out;
   {
     auto demo = std::make_unique<H::SkillT>();
@@ -453,12 +473,52 @@ auto ListSkills(const fs::path &project,
       skill->description = name;
       out.skills.push_back(std::move(skill));
     }
-    if (!project.empty())
-      Scan(project / "skills", out);
+    auto helpers = std::make_unique<H::SkillT>();
+    helpers->name = "helpers";
+    helpers->path = "builtin:helpers";
+    helpers->description = "How to delegate when the person asks";
+    helpers->status = "ready";
+    helpers->always = true;
+    out.skills.push_back(std::move(helpers));
   }
+  if (!project.empty()) Scan(project / "skills", out);
   for (const auto &folder : folders)
     Scan(fs::path(folder).lexically_normal(), out);
+  // Registered folders are ordered; the last matching source wins. Project
+  // sources outrank registered sources, which outrank built-ins.
+  std::set<std::string> builtins;
+  for (const auto& skill : out.skills)
+    if (skill->path.starts_with("builtin:")) builtins.insert(skill->name);
+  std::map<std::string, std::string> winners;
+  std::map<std::string, int> priorities;
+  for (const auto& skill : out.skills) {
+    const bool in_project =
+        !project.empty() &&
+        skill->source_folder == (project / "skills").string();
+    const int priority = in_project                            ? 2
+                         : skill->path.starts_with("builtin:") ? 0
+                                                               : 1;
+    if (builtins.contains(skill->name) && (!in_project || trusted) &&
+        (!winners.contains(skill->name) ||
+         priority >= priorities[skill->name])) {
+      winners[skill->name] = skill->path;
+      priorities[skill->name] = priority;
+    }
+  }
+  std::erase_if(out.skills, [&](const auto& skill) {
+    const bool in_project =
+        !project.empty() &&
+        skill->source_folder == (project / "skills").string();
+    return builtins.contains(skill->name) && (!in_project || trusted) &&
+           winners[skill->name] != skill->path;
+  });
   for (auto &skill : out.skills) {
+    const bool in_project =
+        !project.empty() &&
+        skill->source_folder == (project / "skills").string();
+    if (skill->name == "helpers" && (!in_project || trusted))
+      skill->always = true;
+    if (in_project && !trusted) skill->always = false;
     if (skill->path.starts_with("builtin:"))
       continue;
     if (project.empty() ||

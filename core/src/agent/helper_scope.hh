@@ -45,13 +45,18 @@ public:
                const Reader &read) -> void;
   auto CheckPlan(const std::string &result, bool executing) const -> void;
   auto scoped() const -> bool { return scoped_; }
+  auto depth() const -> uint64_t { return depth_; }
+  auto count() const -> uint64_t { return count_; }
+  auto CheckChild(const json::Members& task) const -> void;
+  std::string identity;
 
-private:
+ private:
   auto Require(const std::string &card, bool writing) const -> void;
   auto File(const std::string &path, bool writing, const Reader &read) const
       -> void;
   auto Root(const std::string &card, const Reader &read,
             bool writing = false) const -> std::string;
+  uint64_t depth_, count_;
   bool scoped_;
   std::set<std::string> reads_, writes_, runs_;
   std::string authorization_;

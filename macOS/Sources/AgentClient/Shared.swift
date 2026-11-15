@@ -248,33 +248,6 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   "cards"), so never write those fields, and the result of your save lists what it did to the comments. When a Card is
   split, a comment moves with its id to the part it is about. Inside a Card in Card, _meta.json is a source of that
   Card's external (PutSource).
-- Independent pieces of work (three or more Drafts with no wire between them, for example) can go to helpers:
-  delegate {"tasks": [{"name": "<short>", "instruction": "<task and context>", "read_cards": ["<id or outer/id>"], "write_cards": ["<id or outer/id>"], "run_cards": ["<id or outer/id>"]}]} starts one helper per task:
-  1 to 8 tasks with unique nonempty names and nonempty instructions. The user's application setting limits
-  concurrent helpers (default 4; 1 means sequential). All three exact Card sets
-  are enforced by the host; assigning a container does not include its children. Include upstream Cards it
-  needs to read in read_cards, and Cards it may change in write_cards, and Cards it may execute in run_cards. Empty sets permit no existing
-  Cards. New Cards reserved by card_id are automatically readable, writable and runnable by their creator. Omit the
-  sets only when the person enabled unscoped helpers. A scoped helper may add its own card_id reservations
-  and edit wires whose endpoints are in its read/write sets and which touch a writable Card. It starts from
-  its scoped project_json; the host preserves the hidden graph. For a nested project, read its tsugumi.json
-  with project_file_read and save it with PutSource and the returned base_hash. Project-wide settings, layout
-  and container-link changes stay with the parent. A scoped helper may implement a Draft and save its definition,
-  sources and explicit wire rebindings together when all incident endpoints are in scope. Otherwise it prepares
-  sources while leaving template "draft", and returns the definition and rebindings for the parent to save.
-  A helper must not save an implemented definition while its wires still have empty ends. Inspection shows only readable Cards; file reads, records and logs obey the same
-  boundary. Runs must keep their complete plan inside run_cards (and its inspected records inside read_cards). Helper usage adds to this conversation.
-  Shortened results say so and identify the full helper trace that the person can open in this conversation.
-  Before delegating, implement what they all need (the Cards upstream of theirs); run it first only when they need its results to
-  write their Cards. Assign separate Cards to avoid overwriting each other's work.
-  Each helper receives these system rules and starts with only its instruction as a user message, not the parent
-  conversation or an automatically read project snapshot. Include the Card ids, the user's requirements and shared
-  decisions, and ask it to read the definitions, _meta.json, wires and upstream Cards it needs. No warm-up is automatic.
-  Unless a helper needs run results to write its Cards, ask it to save and validate its assigned targets without running, then run once from
-  the trigger after all helpers report. If a tool returns busy, wait for the active run to finish before retrying;
-  on revision_conflict, inspect again and re-apply. The host merges disjoint concurrent saves; it never silently chooses a colliding edit.
-  Afterwards check each Card with run_record, fix or finish what a helper left, and report to the user. Do the
-  work yourself when it is small or the pieces depend on each other.
 - Folders the user attached to the conversation are read with attached_folder_read {"folder": "<its path>",
   "path": "<relative path, empty for the folder itself>"} (a folder lists its entries); only those folders.
 - 64 bit integers are decimal strings. Explain results briefly in the user's language: the language of the
@@ -414,7 +387,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
     "root": "the root workflow",
     "child": "the child workflow {scope}",
     "card": "- {key} (definition {definition}): {description}\n  content: {content}\n  context: {context}",
-    "text": "Implement these Draft Cards in {where}, matching each one's description, content and the existing connections, and keeping the Card ids. Drafts have no ports: their wire ends use port \"\". In the same project_save as each implementation, send SetProject rebinding every incoming wire to a real input and every outgoing wire to a real output; also rebind boundary endpoints. State each port explicitly even when only one is possible. Ends on remaining Drafts stay empty. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: with keep_meta, fill_description if it has none and fill_context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). The rules hold what Python, C++ and bash Cards need, so start writing; read a reference only for what they do not cover.\nWrite and save all of them first, upstream first. Then check them once with project_validate, fix what it reports, run the workflow once from its trigger Card and confirm each Card's result with run_record. Run earlier only when what you write next needs something you can learn only from a run. When three or more of them do not depend on each other (no wire between them), hand those to helpers (delegate, one Draft each), with concurrency from the person's setting, once the Cards they need are implemented. Give each helper all incident endpoints in its read/write sets so it can save the implementation and explicit rebindings together. When that would exceed its scope, it leaves template draft while preparing sources and returns the intended definition and rebindings for the parent. At the end, report what each Card does and what the run produced.\n{list}"
+    "text": "Implement these Draft Cards in {where}, matching each one's description, content and the existing connections, and keeping the Card ids. Drafts have no ports: their wire ends use port \"\". In the same project_save as each implementation, send SetProject rebinding every incoming wire to a real input and every outgoing wire to a real output; also rebind boundary endpoints. State each port explicitly even when only one is possible. Ends on remaining Drafts stay empty. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: with keep_meta, fill_description if it has none and fill_context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). The rules hold what Python, C++ and bash Cards need, so start writing; read a reference only for what they do not cover.\nWrite and save all of them first, upstream first. Then check them once with project_validate, fix what it reports, run the workflow once from its trigger Card and confirm each Card's result with run_record. Run earlier only when what you write next needs something you can learn only from a run. At the end, report what each Card does and what the run produced.\n{list}"
   },
   "commentRequest": {
     "card": "- {key} (definition {definition}):\n{comments}",
@@ -423,7 +396,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
   },
   "delegateTool": {
     "name": "delegate",
-    "description": "Starts 1 to 8 independent helper tasks. The application setting limits concurrent helpers (default 4; 1 runs them sequentially). Each gets the same tools except delegate. Supply read_cards, write_cards and run_cards as separate exact sets of permanent Card paths, e.g. [\"outer/step\"], with no implicit descendants. Empty sets are allowed. The host enforces all three sets, including inspection, files, saves, execution plans, records and logs. Newly reserved card_id Cards belong to their creator for reading, writing and running. Helpers may add their own card_id reservations and save wires with both endpoints in their read/write sets and at least one writable endpoint. Start from the scoped project_json; the host preserves hidden Cards and merges disjoint concurrent saves. The host supplies new Card positions. Helpers may implement a Draft with all its incident endpoints in scope, saving explicit port rebindings in the same transaction; otherwise return the final definition and rebindings to the parent. Project-wide settings, layout edits, container-link changes and tools without a Card boundary go to the parent. Omitting all three sets works only when the user enables unscoped helpers (off by default). Returns the last assistant report (up to 8 KiB) and errors, with conversation_id, call_id and task identifying the full helper trace in the conversation. Helper usage counts toward the conversation.",
+    "description": "Spawn sub-agents with instructions and exact read_cards, write_cards and run_cards sets (no implicit descendants). Optional depth and count are nonnegative integers, default 0/0. A sub-agent can spawn at most count children over its lifetime, each at depth <= its own depth - 1 and within its Card sets. The main Agent is unlimited. Unscoped helpers require the user permission setting. Returns a short report, errors and the full trace location. See the helpers Skill for when and how to delegate.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,
@@ -434,7 +407,6 @@ the result; do not require confirmations of checks or a detailed explanation of 
         "tasks": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 8,
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -469,8 +441,19 @@ the result; do not require confirmations of checks or a detailed explanation of 
                 "description": "Exact permanent Card paths this helper may change, including nested paths such as outer/step. No implicit descendants; supply all three sets. Empty means none."
               },
               "run_cards": {
-                "type": "array", "items": { "type": "string" },
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
                 "description": "Exact permanent Card paths this helper may execute, prepare or cancel. Every Card in a run plan must be assigned; write does not imply run. Supply all three sets; empty means none."
+              },
+              "depth": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 0
               }
             }
           }

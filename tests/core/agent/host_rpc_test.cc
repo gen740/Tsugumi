@@ -113,6 +113,13 @@ TEST_F(HostProjectsFixture, CreatesPinnedDocumentsInNewAndExactlyEmptyFolders) {
       });
   ASSERT_TRUE(Create("new", "leftToRight").Code().empty());
   const auto folder = directory.path / "new";
+  const auto trust =
+      Call(*host, H::RequestPayload::ProjectTrustRequest, [&](Builder& b) {
+        return H::CreateProjectTrustRequest(b, b.CreateString(folder.string()))
+            .Union();
+      });
+  EXPECT_EQ(trust.HostValue()->value_as_ProjectTrust()->decision(),
+            H::ProjectTrustDecision::Trusted);
   EXPECT_EQ(JsonString(Read(folder / "tsugumi.json"), "/pkgsPath"),
             JsonString(defaults.View(), "/nixpkgsPin"));
   EXPECT_EQ(JsonString(Read(folder / "layout.json"), "/flow"), "leftToRight");
@@ -181,6 +188,16 @@ TEST_F(HostProjectsFixture,
             (std::filesystem::canonical(directory.path) / "sample").string());
   EXPECT_EQ(JsonString(second.View(), "/path"),
             (std::filesystem::canonical(directory.path) / "sample-2").string());
+  for (const auto* name : {"sample", "sample-2"}) {
+    const auto trust =
+        Call(*host, H::RequestPayload::ProjectTrustRequest, [&](Builder& b) {
+          return H::CreateProjectTrustRequest(
+                     b, b.CreateString((directory.path / name).string()))
+              .Union();
+        });
+    EXPECT_EQ(trust.HostValue()->value_as_ProjectTrust()->decision(),
+              H::ProjectTrustDecision::Trusted);
+  }
   EXPECT_EQ(copy("missing").Code(), "demo_not_found");
   const auto duplicate = Call(
       *host, H::RequestPayload::HostProjectDuplicateRequest, [&](Builder &b) {
@@ -191,6 +208,15 @@ TEST_F(HostProjectsFixture,
             .Union();
       });
   ASSERT_TRUE(duplicate.Code().empty());
+  const auto duplicate_trust =
+      Call(*host, H::RequestPayload::ProjectTrustRequest, [&](Builder& b) {
+        return H::CreateProjectTrustRequest(
+                   b, b.CreateString((directory.path / "duplicate").string()))
+            .Union();
+      });
+  EXPECT_EQ(duplicate_trust.HostValue()->value_as_ProjectTrust()->decision(),
+            H::ProjectTrustDecision::Unknown);
+
   for (const auto *name : {"sample", "duplicate"}) {
     const auto dest = directory.path / name;
     EXPECT_FALSE(std::filesystem::exists(dest / ".tsugumi"));

@@ -94,23 +94,8 @@ auto Helpers::RunHelper(const std::string& conversation,
     }
   }
   std::lock_guard helper_lock(*gate);
-  {
-    std::unique_lock lock(mutex);
-    if (!helpers_changed.wait(lock, stop, [&] {
-          return active_helpers[profile] <
-                 host_settings->HelperPolicy(profile).first;
-        }))
-      throw Cancelled();
-    ++active_helpers[profile];
-  }
-  const auto release = [this, profile](void*) {
-    std::lock_guard lock(mutex);
-    --active_helpers[profile];
-    helpers_changed.notify_all();
-  };
-  std::unique_ptr<void, decltype(release)> slot(this, release);
   const auto spec = json::Object(task);
-  HelperScope::Validate(spec, host_settings->HelperPolicy(profile).second);
+  HelperScope::Validate(spec, host_settings->AllowUnscopedHelpers(profile));
   const auto name = json::Text(spec, "name");
   const auto digest = crypto::sha256_hex(task);
   const auto scope =
@@ -142,7 +127,10 @@ auto Helpers::RunHelper(const std::string& conversation,
           "; write_cards=" + json::Get(spec, "write_cards", "null") +
           "; run_cards=" + json::Get(spec, "run_cards", "null") +
           ". Exact permanent Card paths; no implicit descendants. null means "
-          "unscoped.";
+          "unscoped. Spawn capability: depth=" +
+          json::Get(spec, "depth", "0") +
+          "; count=" + json::Get(spec, "count", "0") +
+          " children over your lifetime. The host enforces this capability.";
       instruction.resource_ids = authorization.empty()
                                      ? conversations->Resources(conversation)
                                      : std::vector<std::string>{authorization};
@@ -185,6 +173,7 @@ auto Helpers::RunHelper(const std::string& conversation,
                                        {"index", std::to_string(index)},
                                        {"event", R"({"kind":"checkpoint"})"}}));
   auto boundary = std::make_shared<HelperScope>(spec, authorization);
+  boundary->identity = scope;
   const auto read = tools->HelperReader(conversation, stop, {}, authorization);
   // Receipt ownership survives both interruption and transcript compaction.
   std::vector<std::string> owned_receipts;
@@ -273,11 +262,23 @@ auto Helpers::RunHelper(const std::string& conversation,
                                    {"event", R"({"kind":"checkpoint"})"}}));
   };
   auto tools = this->tools->Specs();
-  std::erase_if(tools,
-                [](const auto& tool) { return tool.name == "delegate"; });
-  const auto result =
-      Runtime()
-          .Run(config, Turns::System(), messages, tools, stop, hooks);
+  if (!boundary->depth())
+    std::erase_if(tools,
+                  [](const auto& tool) { return tool.name == "delegate"; });
+  std::string trusted_project;
+  const auto automatic =
+      turns->SkillContent(conversation, {}, true, stop, &trusted_project);
+  const auto authorize = hooks.authorize_context;
+  hooks.authorize_context = [this, authorize, automatic,
+                             trusted_project](const auto& context) {
+    turns->RequireSkillTrust(trusted_project);
+    auto with_skills = context;
+    with_skills.push_back(
+        {"user", {automatic}, {}, {}, ProviderAPI::AnthropicMessages});
+    authorize(with_skills);
+  };
+  const auto result = Runtime().Run(config, Turns::System() + automatic.text,
+                                    messages, tools, stop, hooks);
   std::string output;
   {
     std::lock_guard lock(mutex);

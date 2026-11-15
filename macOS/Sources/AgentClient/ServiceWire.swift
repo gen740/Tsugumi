@@ -9,7 +9,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "AttachFoldersRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ProjectTrustRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   private static func heartbeatSetting(_ fields: [String: Any], _ key: String, default fallback: UInt32, minimum: UInt32) throws -> UInt32 {
     guard let raw = fields[key] else { return fallback }
     guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
@@ -242,6 +242,11 @@ enum ServiceWire {
         v.folder = fields["folder"] as? String ?? ""
         v.title = fields["title"] as? String
         return (Tsugumi_Host_RequestPayload.registerfolderrequest.rawValue, v)
+      case "ProjectTrustRequest":
+        let v = Tsugumi_Host_ProjectTrustRequestT()
+        v.path = fields["path"] as? String ?? ""
+        v.decision = Tsugumi_Host_ProjectTrustDecision(rawValue: fields["decision"] as? UInt8 ?? 0) ?? .unknown
+        return (Tsugumi_Host_RequestPayload.projecttrustrequest.rawValue, v)
       case "SkillsListRequest":
         let v = Tsugumi_Host_SkillsListRequestT()
         v.conversationId = fields["conversation_id"] as? String
@@ -787,9 +792,11 @@ enum ServiceWire {
       out["revoked"] = v.revoked
       out["accounts"] = try v.accounts.compactMap { try $0.map { try view($0) } }
       return out
+    case let v as Tsugumi_Host_ProjectTrustT:
+      return ["decision": Int(v.decision.rawValue)]
     case let v as Tsugumi_Host_SkillT:
       return ["name": v.name, "description": v.description ?? "", "path": v.path,
-              "source_folder": v.sourceFolder ?? "", "attachment_folder": v.attachmentFolder ?? "", "status": v.status, "scoped": v.scoped, "scope": v.scope]
+              "source_folder": v.sourceFolder ?? "", "attachment_folder": v.attachmentFolder ?? "", "status": v.status, "scoped": v.scoped, "scope": v.scope, "always": v.always]
     case let v as Tsugumi_Host_SkillFolderT:
       return ["path": v.path, "status": v.status]
     case let v as Tsugumi_Host_SkillsListT:

@@ -53,11 +53,15 @@ auto Set(const json::Members &task, const std::string &field)
 }
 } // namespace
 
-HelperScope::HelperScope(const json::Members &task, std::string authorization)
-    : scoped_(task.contains("read_cards") && task.contains("write_cards") &&
+HelperScope::HelperScope(const json::Members& task, std::string authorization)
+    : depth_(json::UInt(json::Get(task, "depth", "0"))),
+      count_(json::UInt(json::Get(task, "count", "0"))),
+      scoped_(task.contains("read_cards") && task.contains("write_cards") &&
               task.contains("run_cards")),
-      reads_(Set(task, "read_cards")), writes_(Set(task, "write_cards")),
-      runs_(Set(task, "run_cards")), authorization_(std::move(authorization)) {}
+      reads_(Set(task, "read_cards")),
+      writes_(Set(task, "write_cards")),
+      runs_(Set(task, "run_cards")),
+      authorization_(std::move(authorization)) {}
 
 auto HelperScope::Validate(const json::Members &task, bool allow_unscoped)
     -> void {
@@ -70,7 +74,27 @@ auto HelperScope::Validate(const json::Members &task, bool allow_unscoped)
   if (!task.contains("read_cards") && !allow_unscoped)
     throw std::runtime_error("Unscoped helpers are disabled; supply "
                              "read_cards, write_cards and run_cards");
+  for (const auto* key : {"depth", "count"}) {
+    const auto value = json::Get(task, key, "0");
+    if (value != std::to_string(json::UInt(value)))
+      throw std::runtime_error(
+          "Helper capability must be a nonnegative integer");
+  }
   HelperScope scope(task);
+}
+auto HelperScope::CheckChild(const json::Members& task) const -> void {
+  const HelperScope child(task);
+  if (!depth_ || child.depth_ >= depth_)
+    Deny("child depth exceeds the parent's capability");
+  if (!scoped_) return;
+  if (!child.scoped_ ||
+      !std::includes(reads_.begin(), reads_.end(), child.reads_.begin(),
+                     child.reads_.end()) ||
+      !std::includes(writes_.begin(), writes_.end(), child.writes_.begin(),
+                     child.writes_.end()) ||
+      !std::includes(runs_.begin(), runs_.end(), child.runs_.begin(),
+                     child.runs_.end()))
+    Deny("child Card sets exceed the parent's sets");
 }
 auto HelperScope::Require(const std::string &card, bool writing) const -> void {
   if (!(writing ? writes_ : reads_).contains(card))

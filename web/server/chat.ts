@@ -59,7 +59,6 @@ interface Settings {
   webSearch: boolean
   /** Hostd chooses how to produce version notes. */
   versionNoteMode: 'mechanical' | 'agent'
-  helperParallelism: number
   allowUnscopedHelpers: boolean
   animateAgentWork: boolean
   /** The UI's language (the desktop app's too, on a Mac): the page's strings, the
@@ -71,7 +70,7 @@ interface Settings {
 const SHARED_KEYS: Record<string, string> = {
   provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
   effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort', allowedPermissions: 'agent.permissions.allowed',
-  helperParallelism: 'agent.helperParallelism', allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
+  allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
   animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
 }
 const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }
@@ -235,13 +234,13 @@ async function guideState() {
 
 // ---- Skills ----------------------------------------------------------------------
 
-interface Skill { name: string; description: string; path: string; source: string; source_folder: string; attachment_folder?: string; status: string; scoped?: boolean; scope?: string[] }
+interface Skill { name: string; description: string; path: string; source: string; source_folder: string; attachment_folder?: string; status: string; always?: boolean; scoped?: boolean; scope?: string[] }
 interface SkillListing { skills: Skill[]; folders: { path: string; status: string }[] }
 
 async function skillMetadata(project?: string, folders = settings().skillFolders.filter((f) => f.enabled).map((f) => f.path), conversationId?: string): Promise<SkillListing> {
   const result = await core.user.call<SkillListing>('SkillsListRequest', { project_path: project, folders, conversation_id: conversationId })
   return { ...result, skills: result.skills.map((s) => ({ ...s,
-    description: s.path === 'builtin:demo' ? L('ツグミが画面を飛び回って、デモや画面の使い方を案内します') : s.description,
+    description: s.path === 'builtin:demo' ? L('ツグミが画面を飛び回って、デモや画面の使い方を案内します') : s.path === 'builtin:helpers' ? L('依頼されたときの手分けの進め方') : s.description,
     source: s.path.startsWith('builtin:') ? 'Tsugumi' : s.source_folder === (project && path.join(project, 'skills')) ? L('プロジェクト') : path.basename(s.source_folder),
   })) }
 }
@@ -339,7 +338,7 @@ class ChatHost {
   }
 
   async attachSkillFolders(names: string[], conversationId: string) {
-    const skills = (await skillsFor(this.project, conversationId)).filter((s) => names.includes(s.name))
+    const skills = (await skillsFor(this.project, conversationId)).filter((s) => s.always || names.includes(s.name))
     const folders = new Set(skills.map((s) => s.attachment_folder).filter((s): s is string => !!s))
     if (folders.size) await this.attachFolders([...folders])
   }

@@ -99,8 +99,11 @@ table AttachedFolders { state:EnvironmentState (required); folders:[FolderAttach
 table RegisterFolderRequest { project_id:string (required); resource_id:string (required); folder:string (required); title:string; }
 // Listing metadata never grants permission to put a skill in a prompt.
 // conversation_id records ordered sources for that send; omission only previews.
+enum ProjectTrustDecision:ubyte { Unknown, Trusted, Untrusted }
+table ProjectTrustRequest { path:string (required); decision:ProjectTrustDecision; }
+table ProjectTrust { decision:ProjectTrustDecision; }
 table SkillsListRequest { project_path:string; folders:[string]; conversation_id:string; }
-table Skill { name:string (required); description:string; path:string (required); source_folder:string; attachment_folder:string; status:string (required); scope:[string]; scoped:bool; }
+table Skill { name:string (required); description:string; path:string (required); source_folder:string; attachment_folder:string; status:string (required); scope:[string]; scoped:bool; always:bool; }
 table SkillFolder { path:string (required); status:string (required); }
 table SkillsList { skills:[Skill]; folders:[SkillFolder]; }
 // provider_id keeps the existing per-connection catalogs. Only refresh needs
@@ -414,7 +417,7 @@ union RequestPayload {
   VersionCommentsRequest,
   GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
-  RegisterProjectRequest, RegisterFolderRequest, AttachFoldersRequest, SkillsListRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectReadRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest,
+  RegisterProjectRequest, RegisterFolderRequest, AttachFoldersRequest, SkillsListRequest, ProjectTrustRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectReadRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest,
   LayoutArrangeRequest, LayoutUntangleRequest, LayoutValidateRequest, VersionCanvasRequest,
   FileFormatRequest, HostVersionGraphRequest, HostVersionDiffRequest,
   DocumentSubgraphRequest, DocumentMergeRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest,
@@ -426,7 +429,7 @@ union ReplyPayload {
   VersionComments,
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   GuideState, EnvironmentState, AttachedFolders, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectFiles, ProjectInfo, ProjectLocation, RecentProject,
-  RecentList, DemoList, SkillsList, ModelList, Failure:Tsugumi.Service.Failure,
+  RecentList, DemoList, SkillsList, ProjectTrust, ModelList, Failure:Tsugumi.Service.Failure,
   LayoutProposal, LayoutValidated, VersionCanvas,
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds,

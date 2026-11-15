@@ -416,6 +416,20 @@ class Unreached extends Error {
 type Notification = Parameters<NonNullable<RPCClient['onNotification']>>[0]
 
 export class ProjectSession extends Observable {
+  projectTrust: number | undefined
+  async refreshProjectTrust() {
+    const result = await api<{ decision: number }>('/api/project/trust', { path: this.dir })
+    this.projectTrust = result.decision
+    this.changed()
+  }
+  async setProjectTrust(trusted: boolean) {
+    try {
+      const result = await api<{ decision: number }>('/api/project/trust', { path: this.dir, decision: trusted ? 1 : 2 })
+      this.projectTrust = result.decision
+    } catch (error) { this.connectionMessage = errorText(error) }
+    this.changed()
+  }
+
   readonly viewId: string
   readonly origin: string
 
@@ -710,6 +724,7 @@ export class ProjectSession extends Observable {
     this.connectionMessage = undefined
     this.changed()
     try {
+      await this.refreshProjectTrust()
       const env = await api<EnvPublicState>(route, { path: this.dir })
       if (epoch !== this.connectionEpoch || this.closed) return
       this.environment = env

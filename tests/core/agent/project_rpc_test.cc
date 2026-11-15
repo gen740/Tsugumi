@@ -711,7 +711,7 @@ TEST_F(AgentProjectFixture,
   ASSERT_TRUE(model.WaitForRequests(1));
   WaitUntilIdle(conversation);
   const auto request = model.Requests()[0];
-  EXPECT_NE(request.find("User-selected bundled demo skill"),
+  EXPECT_NE(request.find("[Skill demo]"),
             std::string::npos);
   EXPECT_EQ(request.find("PRIVATE_PROJECT_SENTINEL"), std::string::npos);
   EXPECT_EQ(Inspect(conversation).Code(), "grant_required");

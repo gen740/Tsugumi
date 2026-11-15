@@ -8,6 +8,9 @@ HostStore::HostStore(const std::filesystem::path& directory)
   ::chmod((directory / "host.sqlite").c_str(), 0600);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
   db.exec(
+      "CREATE TABLE IF NOT EXISTS project_trust(path TEXT PRIMARY KEY, "
+      "decision INTEGER NOT NULL)");
+  db.exec(
       "CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, endpoint "
       "TEXT NOT NULL, token TEXT NOT NULL, title TEXT NOT NULL);"
       "CREATE TABLE IF NOT EXISTS folders(id TEXT PRIMARY KEY, project TEXT "

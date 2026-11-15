@@ -1,6 +1,6 @@
-#include <gtest/gtest.h>
-
 #include "agent/helper_scope.hh"
+
+#include <gtest/gtest.h>
 
 namespace tsugumi::agent {
 namespace {
@@ -363,6 +363,32 @@ TEST(HelperGraphScope,
       "Concurrent edit conflicts at "
       "/definitions~1SECRET~1_card.json/timeoutSeconds; inspect and re-apply",
       kRead));
+}
+TEST(HelperCapability, DefaultsCannotSpawnAndChildrenCannotWidenDepthOrSets) {
+  auto task = json::Object(
+      R"({"read_cards":["a"],"write_cards":["b"],"run_cards":["c"]})");
+  HelperScope defaults(task);
+  EXPECT_EQ(defaults.depth(), 0u);
+  EXPECT_EQ(defaults.count(), 0u);
+  EXPECT_THROW(defaults.CheckChild(task), std::runtime_error);
+  task["depth"] = "2";
+  task["count"] = "3";
+  HelperScope parent(task);
+  EXPECT_EQ(parent.count(), 3u);
+  EXPECT_THROW(parent.CheckChild(task), std::runtime_error);
+  task["depth"] = "1";
+  EXPECT_NO_THROW(parent.CheckChild(task));
+  for (const auto* access : {"read_cards", "write_cards", "run_cards"}) {
+    auto child = task;
+    child[access] = R"(["outside"])";
+    EXPECT_THROW(parent.CheckChild(child), std::runtime_error);
+  }
+  auto unscoped = json::Object(R"({"depth":0,"count":0})");
+  EXPECT_THROW(parent.CheckChild(unscoped), std::runtime_error);
+  for (const auto* invalid : {"-1", "1.5", "true", "\"1\""}) {
+    task["depth"] = invalid;
+    EXPECT_THROW(HelperScope::Validate(task, false), std::runtime_error);
+  }
 }
 }  // namespace
 }  // namespace tsugumi::agent

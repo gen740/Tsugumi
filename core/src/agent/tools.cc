@@ -818,18 +818,17 @@ auto Tools::ExecuteTool(const std::string& conversation,
     return {"Guidance sent to connected interfaces", false, {}, {}};
   }
   if (call.name == "delegate") {
-    if (helper || c.role == "guide")
-      return {"Helpers cannot delegate", true, {}, {}};
+    if (c.role == "guide") return {"Guide cannot delegate", true, {}, {}};
     auto tasks = json::Array(json::Get(args, "tasks", "[]"));
-    if (tasks.empty() || tasks.size() > 8)
-      return {"Provide between one and eight tasks", true, {}, {}};
+    if (tasks.empty()) return {"Provide at least one task", true, {}, {}};
     const auto policy =
-        host_settings->HelperPolicy(providers->Profile(conversation));
+        host_settings->AllowUnscopedHelpers(providers->Profile(conversation));
     std::set<std::string> names;
     for (const auto& task : tasks) {
       const auto spec = json::Object(task);
       try {
-        HelperScope::Validate(spec, policy.second);
+        HelperScope::Validate(spec, policy);
+        if (boundary) boundary->CheckChild(spec);
       } catch (const std::exception& error) {
         throw Failure("invalid_request", error.what());
       }
@@ -841,21 +840,57 @@ auto Tools::ExecuteTool(const std::string& conversation,
             "invalid_request",
             "Each helper needs a unique name and a nonempty instruction");
     }
-    std::vector<std::string> results(tasks.size());
-    for (size_t offset = 0; offset < tasks.size(); offset += policy.first) {
-      if (stop.stop_requested()) throw Cancelled();
-      std::vector<std::future<std::string>> pending;
-      for (size_t i = offset; i < std::min(tasks.size(), offset + policy.first);
-           ++i)
-        pending.push_back(std::async(
-            std::launch::async,
-            [this, conversation, id = call.id, i, task = tasks[i], stop] {
-              return dependencies.run_helper(conversation, id, i, task, stop,
-                                             {});
-            }));
-      for (size_t i = 0; i < pending.size(); ++i)
-        results[offset + i] = pending[i].get();
+    if (boundary) {
+      std::lock_guard lock(mutex);
+      auto& database = conversations->ConversationDatabase(conversation);
+      sql::Transaction transaction(database);
+      auto previous = database.prepare(
+          "SELECT digest FROM helper_delegations WHERE "
+          "conversation=? AND parent=? AND call=?");
+      previous.bind(1, conversation)
+          .bind(2, boundary->identity)
+          .bind(3, call.id);
+      const auto digest = crypto::sha256_hex(call.arguments);
+      if (previous.step()) {
+        if (previous.text(0) != digest)
+          throw Failure("conflict",
+                        "Delegation ID reused with different tasks");
+      } else {
+        auto used = database.prepare(
+            "SELECT COALESCE(SUM(count),0) FROM helper_delegations WHERE "
+            "conversation=? AND parent=?");
+        used.bind(1, conversation).bind(2, boundary->identity);
+        used.step();
+        const auto total = used.u64(0);
+        if (total > boundary->count() ||
+            tasks.size() > boundary->count() - total)
+          throw Failure("permission_denied",
+                        "Helper lifetime child count exhausted");
+        auto reserve = database.prepare(
+            "INSERT INTO helper_delegations VALUES(?,?,?,?,?)");
+        reserve.bind(1, conversation)
+            .bind(2, boundary->identity)
+            .bind(3, call.id)
+            .bind(4, static_cast<uint64_t>(tasks.size()))
+            .bind(5, digest)
+            .run();
+      }
+      transaction.commit();
     }
+    std::vector<std::future<std::string>> pending;
+    for (size_t i = 0; i < tasks.size(); ++i) {
+      if (stop.stop_requested()) throw Cancelled();
+      pending.push_back(std::async(
+          std::launch::async,
+          [this, conversation, id = call.id, i, task = tasks[i], stop,
+           authorization =
+               boundary ? boundary->authorization() : std::string{}] {
+            return dependencies.run_helper(conversation, id, i, task, stop,
+                                           authorization);
+          }));
+    }
+    std::vector<std::string> results;
+    for (auto& future : pending) results.push_back(future.get());
     std::lock_guard lock(mutex);
     return {json::Encode(results),
             false,
@@ -873,7 +908,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
                          wait, stop, "Read project content", authorization);
   if (boundary) {
     if (!boundary->scoped() &&
-        !host_settings->HelperPolicy(providers->Profile(conversation)).second)
+        !host_settings->AllowUnscopedHelpers(providers->Profile(conversation)))
       throw Failure("permission_denied",
                     "Unscoped helpers are disabled; ask the parent for "
                     "explicit read_cards, write_cards and run_cards");

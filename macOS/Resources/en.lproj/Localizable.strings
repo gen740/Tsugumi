@@ -46,7 +46,6 @@
 "%llu 件の実行を削除し、%@ を解放しました。" = "Deleted %llu runs and freed %@.";
 "0 は無期限です。スリープ中も実行を継続するには 0 を指定してください。" = "0 means never. Use 0 to keep jobs running while this computer sleeps.";
 "0 秒" = "0 s";
-"1 にすると、ヘルパーは順番に動きます。" = "Set to 1 to run helpers sequentially.";
 "100% で表示" = "Actual Size";
 "100% に戻す" = "Reset to 100%";
 "1〜4294967295 秒で指定してください。" = "Enter 1 to 4294967295 seconds.";
@@ -322,6 +321,8 @@
 "このプロジェクトの設定（設定ウインドウの「このプロジェクト」）" = "This project's settings (“This project” in the settings window)";
 "このプロジェクトの過去の scratch" = "Past scratch in this project";
 "このプロジェクトを git のリポジトリにすると、実行するたびにその版が残り、いつでも前の版から始め直せます。" = "Make this project a git repository: every run keeps its version, and you can start again from any earlier one.";
+"このプロジェクトを信頼しますか？" = "Do you trust this project?";
+"このプロジェクトを信頼する" = "Trust this project";
 "このプロジェクト全体のコピーを Card in Card として置きます" = "Places a copy of this whole project as a Card in Card";
 "このプロジェクト（%@/layout.json）" = "This project (%@/layout.json)";
 "このプロジェクト（%@/tsugumi.json）" = "This project (%@/tsugumi.json)";
@@ -723,6 +724,7 @@
 "依存 package" = "Packages";
 "依存 package は実行時に記録されたものだけを表示します。現在の Nix 定義からは求めません。" = "Packages are shown only as recorded when the Card ran. They are not derived from the current Nix definition.";
 "依存パスを検索" = "Search dependencies";
+"依頼されたときの手分けの進め方" = "How to delegate when asked";
 "保存" = "Save";
 "保存されていない変更があります" = "There are unsaved changes";
 "保存した入力" = "Saved input";
@@ -753,6 +755,9 @@
 "保持したファイル: %@" = "Kept file: %@";
 "保持したファイルの内容がありません（scratch は保持履歴ではありません）。" = "The kept file content is missing (scratch is separate from retained history).";
 "保持する出力" = "Output to retain";
+"信頼しない" = "Don't trust";
+"信頼する" = "Trust";
+"信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。" = "Trusting allows this project’s Skills to apply automatically and override built-in Skills. You can still open and read an untrusted project and use its Skills explicitly by name.";
 "値" = "Value";
 "停止" = "Stop";
 "停止までの連続未受信回数" = "Consecutive missed heartbeats before stopping";
@@ -890,7 +895,6 @@
 "同じ名前があります" = "That name is taken";
 "同じ版です" = "Same version";
 "同じ環境です" = "Same environment";
-"同時に動かすヘルパーの数" = "Concurrent helpers";
 "同期できません" = "Cannot sync";
 "名前" = "Name";
 "名前と内容を書く" = "Write name and content";

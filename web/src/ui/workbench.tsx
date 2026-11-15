@@ -124,6 +124,9 @@ export function WorkflowTabs({ workspace, session, onSwitchProject }: { workspac
   }, [guide.highlight])
   return (
     <div className="window workflow-window">
+      {session.projectTrust === 0 && <Confirm title={L('このプロジェクトを信頼しますか？')}
+        message={L('信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。')} confirm={L('信頼する')}
+        onConfirm={() => void session.setProjectTrust(true)} onCancel={() => void session.setProjectTrust(false)} cancel={L('信頼しない')} dismissOnConfirm={false} />}
       {workspace.showSidebar && tab && (
         <SidePane side="left" storageKey="tsugumi.sidebar.width" initial={250} min={200} max={380} className="sidebar-pane">
           <div className="sidebar-top">

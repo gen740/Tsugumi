@@ -65,7 +65,8 @@ try {
     assert.equal(session.environment.historyVersionMismatch?.found, 'pending')
     session.archiveHistoryAndStart()
     session.archiveHistoryAndStart()
-    assert.deepEqual(routes, ['/api/env/start', '/api/env/archive-history'])
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.deepEqual(routes, ['/api/project/trust', '/api/env/start', '/api/project/trust', '/api/env/archive-history'])
     session.dispose()
   }
 } finally {

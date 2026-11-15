@@ -58,6 +58,11 @@ struct Turns {
   auto Summarize(const std::string& id, const ProviderConfig& config,
                  const std::string& instruction, std::vector<Message> messages)
       -> std::string;
+  auto SkillContent(const std::string& id,
+                    const std::vector<std::string>& names, bool automatic,
+                    std::stop_token stop,
+                    std::string* trusted_project = nullptr) -> ContentBlock;
+  auto RequireSkillTrust(const std::string& path) -> void;
   auto PrepareSend(const Tsugumi::Agent::ConversationSendRequest* p,
                    std::stop_token stop, std::string& task,
                    std::string& authorization) -> ContentBlock;

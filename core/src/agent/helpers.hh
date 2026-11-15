@@ -52,10 +52,8 @@ struct Helpers {
   Turns* turns;
   host::Access& access_service;
   Dependencies dependencies;
-  std::map<std::string, size_t> active_helpers;
   std::map<std::tuple<std::string, std::string, size_t>,
            std::weak_ptr<std::mutex>>
       helper_gates;
-  std::condition_variable_any helpers_changed;
 };
 }  // namespace tsugumi::agent

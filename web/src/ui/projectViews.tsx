@@ -320,6 +320,9 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           <Section footer={L('定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。')}>
             <Row label={L('版に含める追加パス')}><TextField value={versionPaths} onChange={setVersionPaths} multiline rows={5} style={{ width: 320 }} /></Row>
           </Section>
+          <Section footer={L('信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。')}>
+            <Row label={L('このプロジェクトを信頼する')}><Toggle checked={session.projectTrust === 1} onChange={(trusted) => void session.setProjectTrust(trusted)} /></Row>
+          </Section>
           <NixSourceSettings session={session} />
           <Section>
             <Value label={L('場所')} value={session.dir} />

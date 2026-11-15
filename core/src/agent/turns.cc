@@ -209,6 +209,82 @@ auto Turns::Summarize(const std::string& id, const ProviderConfig& config,
            {"outputTokens", std::to_string(result.usage.output_tokens)}})}});
 }
 
+auto Turns::SkillContent(const std::string& id,
+                         const std::vector<std::string>& requested,
+                         bool automatic, std::stop_token stop,
+                         std::string* trusted_project) -> ContentBlock {
+  std::unique_lock lock(mutex);
+  const auto c = conversations->GetConversation(id);
+  auto root = db.prepare("SELECT path FROM project_paths WHERE id=?");
+  root.bind(1, c.project);
+  const auto path = root.step() ? root.text(0) : "";
+  auto sources = db.prepare(
+      "SELECT folders FROM skill_catalogs WHERE conversation=? AND path=?");
+  sources.bind(1, id).bind(2, path);
+  std::vector<std::string> folders;
+  if (sources.step())
+    for (const auto& item : json::Array(sources.text(0)))
+      folders.push_back(json::String(item));
+  const auto catalog =
+      host::ListSkills(path, folders, host::ProjectTrusted(db, path));
+  std::set<std::string> names;
+  for (const auto& name : requested) names.insert(host::SkillNameKey(name));
+  const auto selected = names;
+  ContentBlock result;
+  for (const auto& skill : catalog.skills) {
+    if (automatic ? !skill->always : !selected.contains(skill->name)) continue;
+    names.erase(skill->name);
+    if (automatic && trusted_project &&
+        skill->source_folder ==
+            (std::filesystem::path(path) / "skills").string())
+      *trusted_project = path;
+    if (skill->status != "ready")
+      throw Failure("unavailable", "The selected Skill is " + skill->status);
+    std::string bytes;
+    if (skill->path.starts_with("builtin:")) {
+      bytes = host::BundledSkill(skill->path);
+    } else {
+      const bool in_project =
+          !path.empty() &&
+          fs::valid_relative_path(std::filesystem::path(skill->path)
+                                      .lexically_relative(path)
+                                      .string());
+      std::string resource = c.project;
+      if (!in_project) {
+        auto folder =
+            db.prepare("SELECT id FROM folders WHERE project=? AND path=?");
+        folder.bind(1, c.project).bind(2, skill->source_folder);
+        if (!folder.step())
+          throw Failure("permission_denied",
+                        "The user has not attached this Skill folder");
+        resource = folder.text(0);
+      }
+      lock.unlock();
+      access_service.Require(resource, id, S::Access::Read, true, stop,
+                             "Read the Skill " + skill->name);
+      bytes = host::ReadSkill(in_project ? path : skill->source_folder,
+                              skill->path);
+      lock.lock();
+      if (!access_service.HasGrant(resource, id, S::Access::Read))
+        throw Failure("permission_denied",
+                      "Skill access was revoked while reading");
+      result.resource_ids.push_back(resource);
+    }
+    result.text += "\n[Skill " + skill->name + "]\n" + bytes;
+  }
+  if (!automatic && !names.empty())
+    throw Failure("invalid_request", "Unknown selected Skill");
+  return result;
+}
+
+auto Turns::RequireSkillTrust(const std::string& path) -> void {
+  if (path.empty()) return;
+  std::lock_guard lock(mutex);
+  if (!host::ProjectTrusted(db, path))
+    throw Failure("permission_denied",
+                  "Project Skill trust was revoked; start a new turn");
+}
+
 auto Turns::PrepareSend(const A::ConversationSendRequest* p,
                         std::stop_token stop, std::string& task,
                         std::string& authorization) -> ContentBlock {
@@ -235,7 +311,8 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
     if (sources.step())
       for (const auto& item : json::Array(sources.text(0)))
         folders.push_back(json::String(item));
-    const auto skills = host::ListSkills(project_path, folders);
+    const auto skills = host::ListSkills(
+        project_path, folders, host::ProjectTrusted(db, project_path));
     std::vector<std::string> names, cards;
     if (p->skill_names())
       for (const auto* name : *p->skill_names()) names.push_back(name->str());
@@ -289,66 +366,14 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
       text += "\n" + display->str();
   }
   if (p->skill_names() && p->skill_names()->size()) {
-    auto root = db.prepare("SELECT path FROM project_paths WHERE id=?");
-    root.bind(1, c.project);
-    const auto project_path = root.step() ? root.text(0) : "";
-    auto sources = db.prepare(
-        "SELECT folders FROM skill_catalogs WHERE conversation=? AND path=?");
-    sources.bind(1, c.id).bind(2, project_path);
-    std::vector<std::string> folders;
-    if (sources.step())
-      for (const auto& item : json::Array(sources.text(0)))
-        folders.push_back(json::String(item));
-    const auto catalog = host::ListSkills(project_path, folders);
-    std::set<std::string> names;
-    for (const auto* name : *p->skill_names())
-      names.insert(host::SkillNameKey(name->string_view()));
-    const auto requested_names = names;
-    // Preserve all same-name matches in catalog order, including a custom
-    // demo. The bundled demo also works for project-free guide conversations.
-    if (names.contains("demo")) {
-      text += "\n[User-selected bundled demo skill]\n";
-      text.append(reinterpret_cast<const char*>(tsugumi_agent_demo_skill),
-                  tsugumi_agent_demo_skill_size);
-      names.erase("demo");
-    }
-    for (const auto& skill : catalog.skills) {
-      if (skill->path == "builtin:demo" ||
-          !requested_names.contains(skill->name))
-        continue;
-      names.erase(skill->name);
-      if (skill->status != "ready")
-        throw Failure(
-            skill->status == "too_large" ? "limit_exceeded" : "unavailable",
-            "The selected skill is " + skill->status);
-      const auto relative =
-          std::filesystem::path(skill->path).lexically_relative(project_path);
-      const bool in_project = fs::valid_relative_path(relative.string());
-      std::string resource = c.project;
-      std::filesystem::path read_root = project_path;
-      if (!in_project) {
-        auto folder =
-            db.prepare("SELECT id FROM folders WHERE project=? AND path=?");
-        folder.bind(1, c.project).bind(2, skill->source_folder);
-        if (!folder.step())
-          throw Failure("permission_denied",
-                        "The user has not attached this skill folder");
-        resource = folder.text(0);
-        read_root = skill->source_folder;
-      }
-      require(resource, c.id, Tsugumi::Service::Access::Read, true, stop,
-              "Read the selected skill " + skill->name);
-      lock.unlock();
-      const auto bytes = host::ReadSkill(read_root, skill->path);
-      lock.lock();
-      if (!access_service.HasGrant(resource, c.id, Tsugumi::Service::Access::Read))
-        throw Failure("permission_denied",
-                      "Skill access was revoked while reading");
-      text += "\n[User-selected skill " + skill->name + "]\n" + bytes;
-      resources.push_back(resource);
-    }
-    if (!names.empty())
-      throw Failure("invalid_request", "Unknown selected skill");
+    std::vector<std::string> names;
+    for (const auto* name : *p->skill_names()) names.push_back(name->str());
+    lock.unlock();
+    const auto selected = SkillContent(c.id, names, false, stop);
+    lock.lock();
+    text += selected.text;
+    resources.insert(resources.end(), selected.resource_ids.begin(),
+                     selected.resource_ids.end());
   }
   if (p->intent()) text += "\n[User action] " + p->intent()->str();
   if (p->attached_resources()) {
@@ -530,6 +555,19 @@ auto Turns::Start(const std::string& id, const std::string& turn,
           RecordOperation(id,
                           action == A::Action::Compact ? "compact" : "model");
           auto hooks = dependencies.hooks(id);
+          std::string trusted_project;
+          const auto automatic =
+              SkillContent(id, {}, true, stop, &trusted_project);
+          const auto authorize = hooks.authorize_context;
+          hooks.authorize_context = [this, authorize, automatic,
+                                     trusted_project](const auto& context) {
+            RequireSkillTrust(trusted_project);
+            auto with_skills = context;
+            with_skills.push_back(
+                {"user", {automatic}, {}, {}, ProviderAPI::AnthropicMessages});
+            authorize(with_skills);
+          };
+          const auto system = System(role == "guide") + automatic.text;
           if (!task.empty()) {
             dependencies.event(id, json::Encode(json::Members{
                                        {"kind", json::Quote("helperStarted")},
@@ -566,15 +604,14 @@ auto Turns::Start(const std::string& id, const std::string& turn,
               pending.bind(1, id).run();
             }
           } else if (action == A::Action::Compact) {
-            Runtime().Compact(config, System(role == "guide"), messages,
+            Runtime().Compact(config, system, messages,
                               dependencies.specs(role == "guide"), stop, hooks,
                               context.get());
             *context = {};
           } else {
-            const auto result =
-                Runtime().Run(config, System(role == "guide"), messages,
-                              dependencies.specs(role == "guide"), stop, hooks,
-                              context.get());
+            const auto result = Runtime().Run(
+                config, system, messages, dependencies.specs(role == "guide"),
+                stop, hooks, context.get());
             if (result.outcome == RunOutcome::Cancelled)
               final_state = "cancelled";
             else if (result.outcome == RunOutcome::Failed)

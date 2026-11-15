@@ -562,7 +562,6 @@ private struct APISettings: View {
   @HostStorage("agent.model.openai") private var openAIModel = ProviderConfig.openAI.model
   @HostStorage("agent.fixturePort") private var port = 8765
   @HostStorage(AgentSettings.webSearchKey) private var webSearch = false
-  @HostStorage("agent.helperParallelism") private var helperParallelism = 4
   @HostStorage("agent.allowUnscopedHelpers") private var allowUnscopedHelpers = false
 
   var body: some View {
@@ -601,11 +600,6 @@ private struct APISettings: View {
           .font(.caption).foregroundStyle(.secondary)
       }
       Section {
-        Picker("同時に動かすヘルパーの数", selection: $helperParallelism) {
-          ForEach(1...8, id: \.self) { Text(String($0)).tag($0) }
-        }
-        Text("1 にすると、ヘルパーは順番に動きます。")
-          .font(.caption).foregroundStyle(.secondary)
         Toggle("範囲を指定しないヘルパーを許可する", isOn: $allowUnscopedHelpers)
       } header: {
         Text("ヘルパー")

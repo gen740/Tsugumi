@@ -7,10 +7,12 @@
 #include <vector>
 
 #include "tsugumi/protocol/host_generated.h"
+#include "util/sqlite.hh"
 
 namespace tsugumi::host {
 
-// Presentation metadata only; a missing/unreadable manifest falls back to the folder name.
+// Presentation metadata only; a missing/unreadable manifest falls back to the
+// folder name.
 auto ProjectDisplayName(const std::filesystem::path& folder) -> std::string;
 
 struct ProjectFailure : std::runtime_error {
@@ -23,8 +25,10 @@ struct ProjectFailure : std::runtime_error {
 // writer; its lifetime state-directory lock also excludes other daemons.
 class Projects {
  public:
-  Projects(std::filesystem::path state, std::filesystem::path demos)
-      : registry_(std::move(state) / "recent-projects.json"),
+  Projects(std::filesystem::path state, std::filesystem::path demos,
+           sql::Db* db = nullptr)
+      : db_(db),
+        registry_(std::move(state) / "recent-projects.json"),
         demos_(std::move(demos)) {}
   static auto Handles(Tsugumi::Host::RequestPayload type) -> bool;
   auto Handle(const Tsugumi::Host::Request &request, uint64_t id)
@@ -34,6 +38,7 @@ private:
   auto Apply(const Tsugumi::Host::Request &request) -> std::string;
   auto Catalog(const std::string& language) const -> std::vector<std::string>;
   auto Recents() const -> std::vector<std::string>;
+  sql::Db* db_;
   std::filesystem::path registry_;
   std::filesystem::path demos_;
 };

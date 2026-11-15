@@ -253,6 +253,13 @@ auto Projects::Handle(const A::Request &request, uint64_t id) -> std::string {
   if (const auto* read = request.value_as_HostProjectReadRequest())
     return agent::wire::HostReply(id, ReadProject(*read));
   const auto raw = Apply(request);
+  if (db_ &&
+      (request.value_type() == A::RequestPayload::HostProjectCreateRequest ||
+       request.value_type() == A::RequestPayload::HostDemoCopyRequest)) {
+    auto trust =
+        db_->prepare("INSERT OR REPLACE INTO project_trust VALUES(?,1)");
+    trust.bind(1, json::Text(json::Object(raw), "path")).run();
+  }
   auto reply = [id](auto value) {
     return agent::wire::HostReply(id, std::move(value));
   };

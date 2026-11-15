@@ -398,7 +398,7 @@ TEST(AgentPresentation, TasksOfADelegateThatEndedInAnErrorAreNotLeftQueued) {
       R"({"id":"s","messages":[
     {"role":"assistant","content":[{"type":"tool_use","id":"many","name":"delegate","input":"{\"tasks\":[)" +
       tasks + R"(]}"}]},
-    {"role":"user","content":[{"type":"tool_result","tool_use_id":"many","is_error":true,"content":"Provide between one and eight tasks"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"many","is_error":true,"content":"Supply read_cards, write_cards and run_cards"}]},
     {"role":"assistant","content":[{"type":"text","text":"Refused."}]}]})");
   ASSERT_EQ(refused.rows.size(), 2u);
   const auto& step = *refused.rows[0];

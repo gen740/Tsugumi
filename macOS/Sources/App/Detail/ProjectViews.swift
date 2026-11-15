@@ -305,6 +305,10 @@ private struct GeneralProjectSettings: View {
           Text("定義は自動で版に残ります。追加で残すファイルやフォルダを、プロジェクトからの相対パスで 1 行に 1 つ指定します（ワイルドカードなし）。実行開始と「版として残す」の両方に適用します。.tsugumi/ と .git/、シンボリックリンクは含みません。")
             .font(.caption).foregroundStyle(.secondary)
         }
+        Toggle("このプロジェクトを信頼する", isOn: Binding(get: { session.projectTrust == 1 }, set: { trusted in
+          Task { await session.setProjectTrust(trusted) }
+        }))
+        Text("信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。").font(.caption).foregroundStyle(.secondary)
         LabeledContent("場所", value: session.identity.url.path)
         NixSourceSettings(session: session)
       }

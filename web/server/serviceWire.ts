@@ -1,3 +1,4 @@
+import { ProjectTrustRequestT } from '../src/gen/tsugumi/host/project-trust-request'
 import { FileFormatRequestT } from '../src/gen/tsugumi/host/file-format-request'
 import { HostVersionGraphRequestT } from '../src/gen/tsugumi/host/host-version-graph-request'
 import { HostVersionDiffRequestT } from '../src/gen/tsugumi/host/host-version-diff-request'
@@ -166,6 +167,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'HelloRequest': return new HHelloRequest(v.token, v.client_id, v.protocol)
     case 'RegisterProjectRequest': return new HRegisterProjectRequest(v.project_id, v.endpoint, v.token, v.title, v.path)
     case 'RegisterFolderRequest': return new HRegisterFolderRequest(v.project_id, v.resource_id, v.folder, v.title)
+    case 'ProjectTrustRequest': return new ProjectTrustRequestT(v.path, v.decision ?? 0)
     case 'SkillsListRequest': return new HSkillsListRequest(v.project_path, v.folders, v.conversation_id)
     case 'ModelsListRequest': return new HModelsListRequest(v.provider_id, v.refresh, v.profile, v.account_profile, v.key_profile)
     case 'HostProjectReadRequest': return new HostProjectReadRequestT(v.path, v.file_index ?? 0, BigInt(v.offset ?? 0))

@@ -6,7 +6,7 @@ import { CoreHost } from '../server/coreHost'
 // Standalone Web uses one profile; desktop Web shares connection settings but
 // retains its own skill folders. Both must patch only what the screen edited.
 const original = { settings: CoreHost.prototype.getSettings, environment: CoreHost.prototype.provisionEnvironment }
-const defaults = { 'agent.provider': 'anthropic', 'agent.model': 'old', 'agent.skillFolders': [], 'app.language': 'ja', 'agent.helperParallelism': 4, 'agent.allowUnscopedHelpers': false }
+const defaults = { 'agent.provider': 'anthropic', 'agent.model': 'old', 'agent.skillFolders': [], 'app.language': 'ja', 'agent.allowUnscopedHelpers': false }
 try {
   for (const desktop of [false, true]) {
     const profiles = new Map<string, { revision: number; values: Record<string, unknown> }>()
@@ -37,10 +37,9 @@ try {
     const url = new URL('http://fixture')
     const connection = desktop ? 'desktop' : 'web:/settings-test'
     const revision = { [connection]: 0, 'web:/settings-test': 0 }
-    const result: any = await routes['POST /api/settings']({ revision, model: 'new', helperParallelism: 1, allowUnscopedHelpers: true, skillFolders: [{ path: '/skills', enabled: true }] }, url)
+    const result: any = await routes['POST /api/settings']({ revision, model: 'new', allowUnscopedHelpers: true, skillFolders: [{ path: '/skills', enabled: true }] }, url)
     assert.equal(writes.length, desktop ? 2 : 1)
     assert.equal(state(connection).values['agent.model'], 'new')
-    assert.equal(state(connection).values['agent.helperParallelism'], 1)
     assert.equal(state(connection).values['agent.allowUnscopedHelpers'], true)
     assert.deepEqual(state('web:/settings-test').values['agent.skillFolders'], [{ path: '/skills', enabled: true }])
     if (desktop) assert.deepEqual(state('desktop').values['agent.skillFolders'], [])

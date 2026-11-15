@@ -43,7 +43,7 @@ class Settings {
   auto Handle(const Tsugumi::Host::Request& request, uint64_t id)
       -> std::string;
   auto Redact(std::string text) -> std::string;
-  auto HelperPolicy(const std::string &profile) -> std::pair<size_t, bool>;
+  auto AllowUnscopedHelpers(const std::string& profile) -> bool;
   auto Language(const std::string& profile) -> std::string;
   auto VersionNoteMode(const std::string& profile) -> std::string;
   auto VersionNoteProvider(const std::string& profile, const std::string& anthropic_keys,

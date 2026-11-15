@@ -27,10 +27,134 @@ class SkillsFixture : public AgentProjectFixture {
         });
   }
 };
+TEST_F(SkillsFixture, TrustIsUnknownUntilAnsweredAndPersistsAcrossHostRestart) {
+  Write(directory.path / "project/tsugumi.json", "{}");
+  auto trust = [&](H::ProjectTrustDecision decision =
+                       H::ProjectTrustDecision::Unknown) {
+    return Call(*host, H::RequestPayload::ProjectTrustRequest, [&](Builder& b) {
+      return H::CreateProjectTrustRequest(
+                 b, b.CreateString((directory.path / "project").string()),
+                 decision)
+          .Union();
+    });
+  };
+  EXPECT_EQ(trust().HostValue()->value_as_ProjectTrust()->decision(),
+            H::ProjectTrustDecision::Unknown);
+  EXPECT_EQ(trust(H::ProjectTrustDecision::Untrusted)
+                .HostValue()
+                ->value_as_ProjectTrust()
+                ->decision(),
+            H::ProjectTrustDecision::Untrusted);
+  host.reset();
+  human.reset();
+  external.reset();
+  service.Stop();
+  StartHost();
+  EXPECT_EQ(trust().HostValue()->value_as_ProjectTrust()->decision(),
+            H::ProjectTrustDecision::Untrusted);
+  EXPECT_EQ(trust().HostValue()->value_as_ProjectTrust()->decision(),
+            H::ProjectTrustDecision::Untrusted);
+  EXPECT_EQ(trust(H::ProjectTrustDecision::Trusted)
+                .HostValue()
+                ->value_as_ProjectTrust()
+                ->decision(),
+            H::ProjectTrustDecision::Trusted);
+}
+
+TEST_F(SkillsFixture, AutomaticSkillsReachTheModelOnlyFromTrustedProjects) {
+  ModelServer model;
+  Configure(model);
+  Write(directory.path / "project/skills/helpers.md", "PROJECT_HELPERS_POLICY");
+  Write(directory.path / "project/skills/automatic.md",
+        "---\nalways: true\n---\nPROJECT_AUTOMATIC_POLICY");
+  StartProject();
+  const auto untrusted = Conversation("untrusted-skills");
+  Grant(untrusted);
+  model.Queue(AnthropicText("Untrusted project opened."));
+  ASSERT_TRUE(Send(untrusted, "Read this project.").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(1));
+  WaitUntilIdle(untrusted);
+  EXPECT_NE(model.Requests()[0].find("Do not split work among sub-agents"),
+            std::string::npos);
+  EXPECT_EQ(model.Requests()[0].find("PROJECT_HELPERS_POLICY"),
+            std::string::npos);
+  EXPECT_EQ(model.Requests()[0].find("PROJECT_AUTOMATIC_POLICY"),
+            std::string::npos);
+  model.Queue(AnthropicText("The explicitly named Skill applied."));
+  ASSERT_TRUE(
+      Call(*external, A::RequestPayload::ConversationSendRequest,
+           [&](Builder& b) {
+             return A::CreateConversationSendRequest(
+                        b, b.CreateString(untrusted),
+                        b.CreateString("explicit-skill"),
+                        b.CreateString("$helpers"), 0, 0,
+                        b.CreateVector(std::vector{b.CreateString("helpers")}))
+                 .Union();
+           })
+          .Code()
+          .empty());
+  ASSERT_TRUE(model.WaitForRequests(2));
+  WaitUntilIdle(untrusted);
+  EXPECT_NE(model.Requests()[1].find("PROJECT_HELPERS_POLICY"),
+            std::string::npos);
+
+  ASSERT_TRUE(
+      Call(*host, H::RequestPayload::ProjectTrustRequest,
+           [&](Builder& b) {
+             return H::CreateProjectTrustRequest(
+                        b,
+                        b.CreateString((directory.path / "project").string()),
+                        H::ProjectTrustDecision::Trusted)
+                 .Union();
+           })
+          .Code()
+          .empty());
+  const auto trusted = Conversation("trusted-skills");
+  Grant(trusted);
+  model.Queue(AnthropicText("Trusted Skills applied."));
+  ASSERT_TRUE(Send(trusted, "Read this project.").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(3));
+  WaitUntilIdle(trusted);
+  EXPECT_EQ(model.Requests()[2].find("Do not split work among sub-agents"),
+            std::string::npos);
+  EXPECT_NE(model.Requests()[2].find("PROJECT_HELPERS_POLICY"),
+            std::string::npos);
+  EXPECT_NE(model.Requests()[2].find("PROJECT_AUTOMATIC_POLICY"),
+            std::string::npos);
+}
+
+TEST_F(SkillsFixture, RevokingTrustStopsFurtherAutomaticProjectSkillRequests) {
+  ModelServer model;
+  Configure(model);
+  Write(directory.path / "project/skills/helpers.md", "PROJECT_POLICY");
+  StartProject();
+  auto decide = [&](H::ProjectTrustDecision decision) {
+    return Call(*host, H::RequestPayload::ProjectTrustRequest, [&](Builder& b) {
+      return H::CreateProjectTrustRequest(
+                 b, b.CreateString((directory.path / "project").string()),
+                 decision)
+          .Union();
+    });
+  };
+  ASSERT_TRUE(decide(H::ProjectTrustDecision::Trusted).Code().empty());
+  const auto conversation = Conversation("revoke-skill-trust");
+  Grant(conversation);
+  model.Queue(AnthropicTool("list-demos", "demo_list", "{}"), true);
+  ASSERT_TRUE(
+      Send(conversation, "Read the available examples.").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(1));
+  ASSERT_TRUE(decide(H::ProjectTrustDecision::Untrusted).Code().empty());
+  model.Release();
+  WaitUntilIdle(conversation);
+  EXPECT_NE(Events(conversation).View().find("trust was revoked"),
+            std::string::npos);
+  EXPECT_EQ(model.Requests().size(), 1u);
+}
+
 TEST_F(SkillsFixture, NoProjectStillHasDemoAndMissingFoldersHaveStatus) {
   const auto empty = List({}, false);
   ASSERT_TRUE(empty.Code().empty());
-  EXPECT_EQ(ListSize(empty.HostValue()->value_as_SkillsList()->skills()), 3u);
+  EXPECT_EQ(ListSize(empty.HostValue()->value_as_SkillsList()->skills()), 4u);
   EXPECT_EQ(ListSize(empty.HostValue()->value_as_SkillsList()->folders()), 0u);
   const auto missing =
       List({(directory.path / "missing").string()}, false, true);
@@ -48,14 +172,14 @@ TEST_F(SkillsFixture, FrontMatterFallbackNamesAndSwiftSortOrder) {
   Write(root / "notes.txt", "ignored");
   const auto reply = List();
   const auto* list = reply.HostValue()->value_as_SkillsList()->skills();
-  ASSERT_EQ(ListSize(list), 6u);
+  ASSERT_EQ(ListSize(list), 7u);
   EXPECT_EQ(list->Get(0)->path()->str(), "builtin:demo");
-  EXPECT_EQ(list->Get(3)->name()->str(), "B");  // Swift <, not localeCompare.
-  EXPECT_EQ(list->Get(3)->description()->str(), "Explain runs");
-  EXPECT_EQ(list->Get(4)->name()->str(), "Card-review-");
-  EXPECT_EQ(list->Get(4)->description()->str(), "Review outputs");
-  EXPECT_EQ(list->Get(5)->name()->str(), "c");
-  EXPECT_EQ(list->Get(5)->description()->str(), "---");
+  EXPECT_EQ(list->Get(4)->name()->str(), "B");  // Swift <, not localeCompare.
+  EXPECT_EQ(list->Get(4)->description()->str(), "Explain runs");
+  EXPECT_EQ(list->Get(5)->name()->str(), "Card-review-");
+  EXPECT_EQ(list->Get(5)->description()->str(), "Review outputs");
+  EXPECT_EQ(list->Get(6)->name()->str(), "c");
+  EXPECT_EQ(list->Get(6)->description()->str(), "---");
   EXPECT_EQ(
       std::string(reply.bytes.begin(), reply.bytes.end()).find("BODY_SENTINEL"),
       std::string::npos);
@@ -71,13 +195,13 @@ TEST_F(SkillsFixture, SwiftUnicodeNamesWhitespaceAndCRLFBehavior) {
         "---\nname: bad" + std::string("\xff", 1) + "name\n---\nbody");
   const auto reply = List();
   const auto* skills = reply.HostValue()->value_as_SkillsList()->skills();
-  ASSERT_EQ(ListSize(skills), 6u);
-  EXPECT_EQ(skills->Get(3)->name()->str(), "é-Ⅳ-¼--");
-  EXPECT_EQ(skills->Get(3)->description()->str(), "Review");
-  EXPECT_EQ(skills->Get(4)->name()->str(), "b");
-  EXPECT_EQ(skills->Get(4)->description()->str(),
+  ASSERT_EQ(ListSize(skills), 7u);
+  EXPECT_EQ(skills->Get(4)->name()->str(), "é-Ⅳ-¼--");
+  EXPECT_EQ(skills->Get(4)->description()->str(), "Review");
+  EXPECT_EQ(skills->Get(5)->name()->str(), "b");
+  EXPECT_EQ(skills->Get(5)->description()->str(),
             "---\r\nname: ignored\r\n---\r\nbody");
-  EXPECT_EQ(skills->Get(5)->name()->str(), "bad-name");
+  EXPECT_EQ(skills->Get(6)->name()->str(), "bad-name");
 }
 
 TEST_F(SkillsFixture, StrictSizeBoundaryAndUnreadableFilesAndFolders) {
@@ -96,11 +220,11 @@ TEST_F(SkillsFixture, StrictSizeBoundaryAndUnreadableFilesAndFolders) {
   ASSERT_TRUE(reply.Code().empty());
   const auto* result = reply.HostValue()->value_as_SkillsList();
   const auto* list = result->skills();
-  ASSERT_EQ(ListSize(list), 7u);
-  EXPECT_EQ(list->Get(3)->status()->str(), "ready");
-  EXPECT_EQ(list->Get(4)->status()->str(), "too_large");
+  ASSERT_EQ(ListSize(list), 8u);
+  EXPECT_EQ(list->Get(4)->status()->str(), "ready");
   EXPECT_EQ(list->Get(5)->status()->str(), "too_large");
-  EXPECT_EQ(list->Get(6)->status()->str(), "unreadable");
+  EXPECT_EQ(list->Get(6)->status()->str(), "too_large");
+  EXPECT_EQ(list->Get(7)->status()->str(), "unreadable");
   EXPECT_EQ(result->folders()->Get(1)->status()->str(), "unreadable");
 }
 TEST_F(SkillsFixture,
@@ -116,13 +240,14 @@ TEST_F(SkillsFixture,
   std::filesystem::create_symlink(first / "same.md", first / "file-link.md");
   const auto reply = List({first.string(), second.string()});
   const auto* list = reply.HostValue()->value_as_SkillsList()->skills();
-  ASSERT_EQ(ListSize(list), 8u);
-  EXPECT_EQ(list->Get(3)->source_folder()->str(), root.string());
-  EXPECT_EQ(list->Get(4)->path()->str(), (first / "file-link.md").string());
-  EXPECT_EQ(list->Get(5)->name()->str(), "real");
-  EXPECT_EQ(list->Get(6)->name()->str(), "same");
-  EXPECT_EQ(list->Get(7)->source_folder()->str(), second.string());
+  ASSERT_EQ(ListSize(list), 9u);
+  EXPECT_EQ(list->Get(4)->source_folder()->str(), root.string());
+  EXPECT_EQ(list->Get(5)->path()->str(), (first / "file-link.md").string());
+  EXPECT_EQ(list->Get(6)->name()->str(), "real");
+  EXPECT_EQ(list->Get(7)->name()->str(), "same");
+  EXPECT_EQ(list->Get(8)->source_folder()->str(), second.string());
 }
+
 TEST_F(SkillsFixture,
        NamesSelectEveryCollisionAndSourcesBelongToTheConversation) {
   ModelServer model;
@@ -143,7 +268,7 @@ TEST_F(SkillsFixture,
   ASSERT_EQ(inside.HostValue()
                 ->value_as_SkillsList()
                 ->skills()
-                ->Get(3)
+                ->Get(4)
                 ->attachment_folder(),
             nullptr);
   Grant(one);
@@ -242,7 +367,9 @@ TEST_F(AgentProjectFixture,
 TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
   ModelServer model;
   model.Queue(AnthropicTool("try-write", "project_save", R"({"base_rev":0,"changes":[{"value_type":"RemoveDefinition","value":{"id":"selected"}}]})"));
-  model.Queue(AnthropicText("Read only: [source](card:selected?file=src%2Fmain.py&lines=1-2) uses a clock."));
+  model.Queue(AnthropicText(
+      "Read only: [source](card:selected?file=src%2Fmain.py&lines=1-2) uses a "
+      "clock."));
   Configure(model);
   StartProject();
   Write(directory.path / "project/skills/inspect.md", "---\nname: inspect\nscope: [read]\n---\nINSPECT_SKILL_SENTINEL");

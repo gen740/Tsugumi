@@ -75,6 +75,11 @@ auto CreateConversationTables(sql::Db& db) -> void {
       "provider TEXT NOT NULL, model TEXT NOT NULL, effort TEXT NOT NULL, fast "
       "INTEGER NOT NULL)");
   db.exec(
+      "CREATE TABLE IF NOT EXISTS helper_delegations(conversation TEXT NOT "
+      "NULL, "
+      "parent TEXT NOT NULL, call TEXT NOT NULL, count INTEGER NOT NULL, "
+      "digest TEXT NOT NULL, PRIMARY KEY(conversation,parent,call))");
+  db.exec(
       "CREATE TABLE IF NOT EXISTS helpers(conversation TEXT NOT NULL, "
       "parent_call TEXT NOT NULL, task INTEGER NOT NULL, digest TEXT NOT "
       "NULL, messages TEXT NOT NULL, result TEXT NOT NULL, state TEXT "
@@ -514,7 +519,8 @@ auto ConversationStore::Delete(const std::string& id) -> void {
     sql::Transaction tx(store);
     for (const auto* table :
          {"events", "receipts", "turns", "model_bindings", "archives", "usage",
-          "conversation_resources", "helpers", "pending_sends"}) {
+          "conversation_resources", "helpers", "helper_delegations",
+          "pending_sends"}) {
       auto q = store.prepare(std::string("DELETE FROM ") + table +
                              " WHERE conversation=?");
       q.bind(1, id).run();

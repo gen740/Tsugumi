@@ -353,15 +353,15 @@ export function Sheet({ children, onClose, width, backdropCloses = true }: { chi
 }
 
 /** confirmationDialog: a destructive choice with an explanation. */
-export function Confirm({ title, message, confirm, onConfirm, onCancel }: { title: string; message?: string; confirm: string; onConfirm: () => void; onCancel: () => void }) {
+export function Confirm({ title, message, confirm, onConfirm, onCancel, cancel, dismissOnConfirm = true }: { title: string; message?: string; confirm: string; onConfirm: () => void; onCancel: () => void; cancel?: string; dismissOnConfirm?: boolean }) {
   return (
     <Sheet onClose={onCancel} width={420}>
       <div className="confirm">
         <div className="confirm-title">{title}</div>
         {message && <div className="secondary">{message}</div>}
         <div className="row end gap8">
-          <Button onClick={onCancel}>{L('キャンセル')}</Button>
-          <Button kind="danger" onClick={() => { onCancel(); onConfirm() }}>{confirm}</Button>
+          <Button onClick={onCancel}>{cancel ?? L('キャンセル')}</Button>
+          <Button kind="danger" onClick={() => { if (dismissOnConfirm) onCancel(); onConfirm() }}>{confirm}</Button>
         </div>
       </div>
     </Sheet>

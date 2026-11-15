@@ -28,6 +28,25 @@ auto SkillsService::Handle(const RequestIn& request, bool human,
     -> std::string {
   const auto* r = H::GetMessage(request.frame->data())->payload_as_Request();
   Human(human);
+  if (const auto* trust = r->value_as_ProjectTrustRequest()) {
+    const auto path = std::filesystem::canonical(trust->path()->str()).string();
+    if (!std::filesystem::is_regular_file(std::filesystem::path(path) /
+                                          "tsugumi.json"))
+      throw Failure("invalid_request", "Choose a project folder");
+    if (trust->decision() > H::ProjectTrustDecision::MAX)
+      throw Failure("invalid_request", "Unknown project trust decision");
+    if (trust->decision() != H::ProjectTrustDecision::Unknown) {
+      auto save =
+          db.prepare("INSERT OR REPLACE INTO project_trust VALUES(?,?)");
+      save.bind(1, path).bind(2, static_cast<int>(trust->decision())).run();
+    }
+    H::ProjectTrustT result;
+    auto query = db.prepare("SELECT decision FROM project_trust WHERE path=?");
+    query.bind(1, path);
+    if (query.step())
+      result.decision = static_cast<H::ProjectTrustDecision>(query.i64(0));
+    return wire::HostReply(request.request_id, std::move(result));
+  }
   const auto* p = r->value_as_SkillsListRequest();
   std::vector<std::string> folders;
   if (p->folders())
@@ -39,7 +58,7 @@ auto SkillsService::Handle(const RequestIn& request, bool human,
                         : std::filesystem::path(p->project_path()->str())
                               .lexically_normal()
                               .string();
-  if (!Text(p->conversation_id()).empty() && !path.empty()) {
+  if (!Text(p->conversation_id()).empty()) {
     std::vector<std::string> encoded;
     for (const auto& folder : folders) encoded.push_back(json::Quote(folder));
     auto q = db.prepare("INSERT OR REPLACE INTO skill_catalogs VALUES(?,?,?)");
@@ -48,7 +67,9 @@ auto SkillsService::Handle(const RequestIn& request, bool human,
         .bind(3, json::Encode(encoded))
         .run();
   }
+  const auto trusted = ProjectTrusted(db, path);
   lock.unlock();
-  return wire::HostReply(request.request_id, host::ListSkills(path, folders));
+  return wire::HostReply(request.request_id,
+                         host::ListSkills(path, folders, trusted));
 }
 }  // namespace tsugumi::host

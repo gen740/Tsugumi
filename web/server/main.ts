@@ -280,6 +280,7 @@ const routes: Record<string, Handler> = {
     startBuild()
     return setupStatus()
   },
+  'POST /api/project/trust': (b) => hostRequest('ProjectTrustRequest', { path: projectDir(b.path), decision: b.decision }),
   'POST /api/project/open': async (b) => {
     const recent = await hostRequest('HostRecentRememberRequest', { path: b.path })
     return { path: recent.path, key: projectKey(recent.path).key, name: recent.name }

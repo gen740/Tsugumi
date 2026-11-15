@@ -566,7 +566,7 @@ TEST_F(AgentFixture, DisplaySurvivesPreparationAndTheCompletedSnapshot) {
   EXPECT_EQ(JsonString(preparing, "/conversation/messages/2/display"),
             "A short request");
   EXPECT_NE(JsonString(preparing, "/conversation/messages/2/content/0/text")
-                .find("[User-selected bundled demo skill]"),
+                .find("[Skill demo]"),
             std::string::npos);
   const auto during = Get(conversation);
   EXPECT_EQ(ListSize(during.Value()
@@ -924,27 +924,28 @@ TEST_F(AgentFixture, AHelpersCompactionKeepsItsEarlierOperationsReadable) {
             std::string::npos);
 }
 
-TEST_F(AgentFixture, OversizedDelegationsAreRefusedBeforeStartingAnyHelper) {
+TEST_F(AgentFixture, MainAgentMaySpawnMoreThanEightTasksWithAnyDepth) {
   ModelServer model;
+  Configure(model);
+  const auto conversation = Conversation("unlimited-main");
   std::string tasks = "{\"tasks\":[";
   for (int i = 0; i < 9; ++i) {
     if (i) tasks += ',';
-    tasks += "{\"name\":\"helper-" + std::to_string(i) +
-             "\",\"instruction\":\"Do a bounded "
-             "task.\",\"read_cards\":[],\"write_cards\":[]}";
+    tasks += "{\"name\":\"child-" + std::to_string(i) +
+             "\",\"instruction\":\"Return.\",\"read_cards\":[],\"write_cards\":"
+             "[],\"run_cards\":[],\"depth\":100,\"count\":100}";
+    model.Queue(AnthropicText("Done."));
   }
   tasks += "]}";
-  model.Queue(AnthropicTool("oversized-delegation", "delegate", tasks));
-  model.Queue(AnthropicText("The oversized delegation was refused."));
-  Configure(model);
-  const auto conversation = Conversation("bounded-delegation");
-  ASSERT_TRUE(Send(conversation, "Start the helpers.").Code().empty());
-  ASSERT_TRUE(model.WaitForRequests(2));
-  EXPECT_NE(
-      WaitUntilIdle(conversation).find("The oversized delegation was refused."),
-      std::string::npos);
-  EXPECT_EQ(model.Requests().size(), 2u);
-  EXPECT_TRUE(JsonBool(model.Requests()[1], "/messages/2/content/0/is_error"));
+  ASSERT_TRUE(
+      Tool(conversation, "delegate", tasks, "unlimited").Code().empty());
+  EXPECT_EQ(model.Requests().size(), 9u);
+  EXPECT_EQ(ListSize(Get(conversation)
+                         .Value()
+                         ->value_as_ConversationResult()
+                         ->conversation()
+                         ->helpers()),
+            9u);
 }
 
 TEST_F(AgentFixture,
@@ -1030,18 +1031,13 @@ TEST_F(AgentFixture, HelpersRequireScopeUnlessThePersonAllowsUnscopedWork) {
   EXPECT_EQ(model.Requests().size(), 1u);
 }
 
-TEST_F(AgentFixture, HelpersShareTheParallelLimitAcrossDelegateCalls) {
+TEST_F(AgentFixture, MainAgentStartsAllTasksAcrossDelegateCalls) {
   // One watchdog for both cases, including held requests and their cleanup.
   const auto deadline = std::chrono::steady_clock::now() + 20s;
-  for (const auto limit : {1, 2}) {
+  for (const auto limit : {4}) {
     SCOPED_TRACE(limit);
     ModelServer model;
     Configure(model);
-    ASSERT_TRUE(
-        SettingsPatch(*host, "desktop",
-                      {{"agent.helperParallelism", std::to_string(limit)}})
-            .Code()
-            .empty());
     const auto conversation =
         Conversation("helper-parallel-" + std::to_string(limit));
     model.Queue(AnthropicText("First helper completed."), true);
@@ -1111,15 +1107,7 @@ TEST_F(AgentFixture, HelpersShareTheParallelLimitAcrossDelegateCalls) {
     };
     ASSERT_EQ(wait_started(static_cast<size_t>(limit)),
               static_cast<size_t>(limit))
-        << "Waiting for helpers to acquire the shared profile limit";
-    if (limit == 1) {
-      ASSERT_TRUE(
-          SettingsPatch(*host, "desktop", {{"agent.helperParallelism", "2"}})
-              .Code()
-              .empty());
-      ASSERT_EQ(wait_started(2), 2u)
-          << "Settings update did not wake the helper waiting for a slot";
-    }
+        << "Waiting for all helpers to start";
     model.Release();
     const auto finish = [&](std::future<client::Result>& pending,
                             const char* batch) -> Reply {
@@ -1143,6 +1131,83 @@ TEST_F(AgentFixture, HelpersShareTheParallelLimitAcrossDelegateCalls) {
         JsonUInt(Get(conversation).View(), "/conversation/usage/inputTokens"),
         48u);
   }
+}
+
+TEST_F(AgentFixture,
+       SubAgentLifetimeCountIsEnforcedAndNestedTasksStayUnderParent) {
+  ModelServer model;
+  Configure(model);
+  const auto conversation = Conversation("nested-capabilities");
+  const std::string child =
+      R"({"tasks":[{"name":"child","instruction":"Return a result.","read_cards":[],"write_cards":[],"run_cards":[]}]})";
+  model.Queue(AnthropicTool("first-child", "delegate", child));
+  model.Queue(AnthropicText("Child finished."));
+  auto refused = child;
+  refused.replace(refused.find("child"), 5, "refused");
+  model.Queue(AnthropicTool("second-child", "delegate", refused));
+  model.Queue(AnthropicText("Parent finished after the count refusal."));
+  const auto reply = Tool(
+      conversation, "delegate",
+      R"({"tasks":[{"name":"parent","instruction":"Delegate twice.","read_cards":[],"write_cards":[],"run_cards":[],"depth":1,"count":1}]})",
+      "start-parent");
+  ASSERT_TRUE(reply.Code().empty()) << reply.View();
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 4u);
+  EXPECT_NE(requests.back().find("lifetime child count exhausted"),
+            std::string::npos);
+  const auto saved = Get(conversation);
+  const auto* value =
+      saved.Value()->value_as_ConversationResult()->conversation();
+  ASSERT_EQ(ListSize(value->helpers()), 2u);
+  std::function<size_t(
+      const flatbuffers::Vector<flatbuffers::Offset<A::ChatRow>>*, size_t)>
+      count;
+  count = [&](const auto* rows, size_t level) -> size_t {
+    size_t found = 0;
+    if (rows)
+      for (const auto* row : *rows) {
+        if (row->kind()->str() == "helper" && row->name()->str() == "child") {
+          EXPECT_GT(level, 0u);
+          ++found;
+        }
+        found += count(row->children(), level + 1);
+      }
+    return found;
+  };
+  EXPECT_EQ(count(value->rows(), 0), 1u);
+  // A retry of the same parent task returns its receipt without spawning again.
+  ASSERT_TRUE(
+      Tool(
+          conversation, "delegate",
+          R"({"tasks":[{"name":"parent","instruction":"Delegate twice.","read_cards":[],"write_cards":[],"run_cards":[],"depth":1,"count":1}]})",
+          "start-parent")
+          .Code()
+          .empty());
+  EXPECT_EQ(model.Requests().size(), 4u);
+}
+
+TEST_F(AgentFixture, DefaultSubAgentCannotDelegateEvenIfTheModelCallsIt) {
+  ModelServer model;
+  Configure(model);
+  const auto conversation = Conversation("leaf-capability");
+  model.Queue(AnthropicTool(
+      "forbidden-child", "delegate",
+      R"({"tasks":[{"name":"forbidden","instruction":"Return.","read_cards":[],"write_cards":[],"run_cards":[]}]})"));
+  model.Queue(AnthropicText("The leaf returned."));
+  ASSERT_TRUE(
+      Tool(
+          conversation, "delegate",
+          R"({"tasks":[{"name":"leaf","instruction":"Try delegating.","read_cards":[],"write_cards":[],"run_cards":[]}]})",
+          "start-leaf")
+          .Code()
+          .empty());
+  EXPECT_EQ(model.Requests().size(), 2u);
+  EXPECT_EQ(ListSize(Get(conversation)
+                         .Value()
+                         ->value_as_ConversationResult()
+                         ->conversation()
+                         ->helpers()),
+            1u);
 }
 
 TEST_F(AgentFixture, ShortenedHelperResultsPointToFullTraceAndSumUsageOnce) {

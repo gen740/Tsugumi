@@ -54,6 +54,12 @@ struct WorkflowTabs: View {
       }
     }
     .tsugumiLoading(EnvironmentOverlay.loading(session))
+    .alert("このプロジェクトを信頼しますか？", isPresented: Binding(get: { session.projectTrust == 0 }, set: { _ in })) {
+      Button("信頼する") { Task { await session.setProjectTrust(true) } }
+      Button("信頼しない", role: .cancel) { Task { await session.setProjectTrust(false) } }
+    } message: {
+      Text("信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。")
+    }
     .sheet(item: Binding(get: { model.chat(for: session).permissionPrompt }, set: { _ in })) { prompt in
       PermissionPromptView(prompt: prompt) { allow, always, selected in
         model.chat(for: session).answerPermissions(id: prompt.id, allow: allow, always: always, selected: selected)

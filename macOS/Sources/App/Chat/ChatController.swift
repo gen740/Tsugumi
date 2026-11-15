@@ -27,6 +27,7 @@ struct Skill: Identifiable, Hashable {
   let source: String
   let sourceFolder: String
   let attachmentFolder: String
+  var always = false
   var scoped = false
   var scope: [String] = []
 }
@@ -43,7 +44,7 @@ func availableSkills(project: URL? = nil, folders: [String], conversationID: Str
     if path == "builtin:demo" { return ChatController.demoSkill }
     let folder = s["source_folder"] as? String ?? ""
     let source = path.hasPrefix("builtin:") ? "Tsugumi" : folder == project?.appendingPathComponent("skills").path ? String(localized: "プロジェクト") : URL(fileURLWithPath: folder).lastPathComponent
-    return Skill(name: s["name"] as? String ?? "", description: s["description"] as? String ?? "", path: path, source: source, sourceFolder: folder, attachmentFolder: s["attachment_folder"] as? String ?? "", scoped: s["scoped"] as? Bool ?? false, scope: s["scope"] as? [String] ?? [])
+    return Skill(name: s["name"] as? String ?? "", description: path == "builtin:helpers" ? String(localized: "依頼されたときの手分けの進め方") : s["description"] as? String ?? "", path: path, source: source, sourceFolder: folder, attachmentFolder: s["attachment_folder"] as? String ?? "", always: s["always"] as? Bool ?? false, scoped: s["scoped"] as? Bool ?? false, scope: s["scope"] as? [String] ?? [])
   }
   let missing = (value["folders"] as? [[String: String]] ?? []).filter { $0["status"] != "ready" }.compactMap { $0["path"] }
   return (skills, missing)
@@ -425,7 +426,7 @@ final class ChatController {
       await stopping?.value
       do {
         skills = try await loadSkillMetadata(conversationID: agent.id)
-        guard await attachSkillFolders(skills.filter { Set(used.map(\.name)).contains($0.name) }) else {
+        guard await attachSkillFolders(skills.filter { $0.always || Set(used.map(\.name)).contains($0.name) }) else {
           events(.error(status ?? String(describing: RPCError.disconnected)))
           return
         }

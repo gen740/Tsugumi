@@ -250,6 +250,15 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
                json::Bool(json::Get(block, "is_error")))
         failed_calls.insert(json::Text(block, "tool_use_id"));
     }
+  std::set<std::string> nested_calls;
+  for (const auto& parent : conversation.helpers) {
+    const auto scope = crypto::sha256_hex(parent->call_id + ":" +
+                                          std::to_string(parent->task)) +
+                       ":";
+    for (const auto& child : conversation.helpers)
+      if (child->call_id.starts_with(scope))
+        nested_calls.insert(child->call_id);
+  }
   const auto taskRow = [&](const A::HelperT& task) {
     auto row = std::make_unique<A::ChatRowT>();
     const auto spec = ObjectOrEmpty(task.spec_json);
@@ -299,7 +308,8 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
   };
   if (!helper)
     for (const auto& task : conversation.helpers)
-      if (task->anchor == 0 && !model_calls.contains(task->call_id)) {
+      if (task->anchor == 0 && !model_calls.contains(task->call_id) &&
+          !nested_calls.contains(task->call_id)) {
         rows.push_back(taskRow(*task));
         placed.insert({task->call_id, task->task});
       }
@@ -388,7 +398,8 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
                                                 : "completed";
         children.push_back(std::move(a));
       }
-      if (!helper) {
+      {
+        const auto parent_call = prefix.empty() ? call : prefix + call;
         std::map<uint32_t, const A::HelperT*> tasks;
         std::vector<std::unique_ptr<A::HelperT>> queued;
         // A delegate that ended in an error starts no further task. One
@@ -396,7 +407,7 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
         // stopped before reaching the rest.
         const bool started = std::ranges::any_of(
             conversation.helpers,
-            [&](const auto& task) { return task->call_id == call; });
+            [&](const auto& task) { return task->call_id == parent_call; });
         if (calls[call]->name == "delegate") {
           const auto args = ObjectOrEmpty(calls[call]->arguments);
           try {
@@ -407,7 +418,7 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
               if (!json::Text(spec, "name").empty() &&
                   !json::Text(spec, "instruction").empty()) {
                 auto task = std::make_unique<A::HelperT>();
-                task->call_id = call;
+                task->call_id = parent_call;
                 task->task = index;
                 task->spec_json = raw;
                 task->state = !failed_calls.contains(call) ? "queued"
@@ -422,7 +433,7 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
           }
         }
         for (const auto& task : conversation.helpers)
-          if (task->call_id == call) tasks[task->task] = task.get();
+          if (task->call_id == parent_call) tasks[task->task] = task.get();
         for (const auto& [index, task] : tasks) {
           try {
             children.push_back(taskRow(*task));
@@ -449,7 +460,8 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
             !placed.contains({task->call_id, task->task})) {
           // A direct Skill helper has no delegate call; its anchor is the user
           // message.
-          if (!model_calls.contains(task->call_id)) {
+          if (!model_calls.contains(task->call_id) &&
+              !nested_calls.contains(task->call_id)) {
             rows.push_back(taskRow(*task));
             placed.insert({task->call_id, task->task});
           }

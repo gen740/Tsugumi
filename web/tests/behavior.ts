@@ -78,6 +78,7 @@ await import("./marimoTemplate")
 
 await import("./sessionRestore")
 await import("./sessionConnect")
+await import("./projectTrust")
 
 await import("./perchScale")
 await import("./demoReplay")
