@@ -525,7 +525,7 @@ std::string start_project(const std::string& id, int cpus, const std::string& na
                "--cpus", std::to_string(cpus), "--allow-missing-origin",
                "--gcroots-dir", kRoots + "/" + id, "--history-dir", "/history",
                "--run-scratch-dir", "/scratch", "--usage-file", kUsage,
-               "--host-folders", "/run/tsugumi/host", "--chat-folders", "/run/tsugumi/chat", "--project-shell"};
+               "--host-folders", "/run/tsugumi/host", "--project-shell"};
   if (archive_history) args.argv.push_back("--archive-incompatible-history");
   // The binary caches of this VM's nix-daemon, for the run records. A project
   // cannot read the daemon's settings (they sit beside the caches' credentials

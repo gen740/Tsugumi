@@ -11,7 +11,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 
 Layout proposals, layout schema validation and minimap placement belong to the host service ([protocol/host.fbs](../protocol/host.fbs)). Saving clients remove deleted Card references. The project core carries layout objects and opaque view JSON without interpreting presentation fields.
 
-There are 50 requests.
+There are 49 requests.
 
 ## Connection
 
@@ -40,9 +40,9 @@ There are 50 requests.
 | [`ProjectHostRequirements`](#projecthostrequirements) | ProjectHostRequirements | Reads the accepted document, never the disk. |
 | [`CardId`](#cardid) | CardIdResult | Reserves a permanent identifier for a new Card without changing the document revision. Supply a caller-derived stem (1..123 ASCII identifier characters); use the returned id in the canvas, paths and wires. Each call reserves a fresh id; save the definition and canvas with project_save. |
 | [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. |
-| [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. Every permission widening requires explicit approval, regardless of origin. |
+| [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. Permission comparison is selected explicitly, independently of origin. |
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
-| [`ProjectShell`](#projectshell) | ProjectShellResult | Runs in the project VM as the project user, with the project directory as cwd. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream is capped at 262144 bytes. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Agent use requires explicit Shell access in addition to Read, Write and Run. With origin "agent", project files are read-only, using bubblewrap on Linux and Seatbelt on macOS; only diagnostic temporary files are writable. Isolation unavailable means the request is refused. Shell commands are for diagnosis and reads. Analysis runs in Cards; Agent edits go through ProjectSave. A person's UI terminal is a separate writable path. |
+| [`ProjectShell`](#projectshell) | ProjectShellResult | Runs in the project VM as the project user, with the project directory as cwd. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream is capped at 262144 bytes. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Isolation is selected explicitly and applied independently of origin. A requested isolation mechanism that is unavailable fails closed. |
 | [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Only while no run or SDK job is active. |
 | [`ProjectCacheUsage`](#projectcacheusage) |  | Cached shared-store measurement; never triggers a store traversal on the RPC lane. |
 | [`RunScratchDelete`](#runscratchdelete) | RunScratchDeleteResult | Deletes only the listed scratch folders from the usage report. Refuses active runs, pending remote results and the latest run. |
@@ -83,7 +83,8 @@ No fields.
 | `op_id` | `string` | yes |  |
 | `origin` | `string` | yes |  |
 | `changes` | `[DocumentChange]` | yes |  |
-| `approved_permissions` | `[string]` |  | The Card permissions this save widens that the user approved, each as an `approval_required` failure names it. Set by the client after asking the user, never by a model; a save from a model (origin "agent") is rejected unless every widening is listed. |
+| `approved_permissions` | `[string]` |  | Permission widenings explicitly approved by the caller, as named by approval_required. |
+| `check_permissions` | `bool` |  | Compare the proposed permissions with the accepted document and reject every widening absent from approved_permissions, regardless of origin. |
 
 ### ProjectReload
 
@@ -92,7 +93,8 @@ No fields.
 | `base_rev` | `uint64` |  |  |
 | `op_id` | `string` | yes |  |
 | `origin` | `string` | yes |  |
-| `approved_permissions` | `[string]` |  | The widenings named by approval_required that the user approved. Set by the client after asking the user, never by a model. |
+| `approved_permissions` | `[string]` |  | Permission widenings explicitly approved by the caller, as named by approval_required. |
+| `check_permissions` | `bool` |  | Reject widenings absent from approved_permissions when true. |
 
 ### ProjectValidate
 
@@ -110,7 +112,9 @@ No fields.
 | `op_id` | `string` | yes |  |
 | `command` | `string` | yes |  |
 | `timeout_ms` | `uint32` |  |  |
-| `origin` | `string` | yes |  |
+| `read_only` | `bool` |  | Make the filesystem read-only except private diagnostic scratch. |
+| `hide_credentials` | `bool` |  | Hide the control directory, home credentials and shared temporary files. |
+| `no_project_socket` | `bool` |  | Block Unix socket connections (except macOS name resolution). On macOS, also block local IP endpoints, session Mach services and outside signals. |
 
 ### ProjectCacheClear
 
@@ -143,7 +147,6 @@ No fields.
 | [`ProjectFileStat`](#projectfilestat) | SourceInfo |  |
 | [`ProjectFileRead`](#projectfileread) | FileContent | offset = 0, limit_bytes = 262144 (1..1 MiB). |
 | [`ProjectFileFormat`](#projectfileformat) | ProjectFileFormatResult | Never changes the document. |
-| [`AttachedFolderRead`](#attachedfolderread) | FileContent | Reads a folder of the Mac attached to a chat (read-only, shared with this project only): a file's bytes, or for a folder its entries as text, one per line (folders end with "/"). `folder` is the attached folder's path on the Mac; `path` is relative to it ("" = itself). |
 
 ### ProjectFileList
 
@@ -180,15 +183,6 @@ No fields.
 | `path` | `string` | yes |  |
 | `text` | `string` | yes |  |
 | `language` | `FormatLanguage` |  |  |
-
-### AttachedFolderRead
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `folder` | `string` | yes |  |
-| `path` | `string` | yes |  |
-| `offset` | `uint64` |  |  |
-| `limit_bytes` | `uint32` |  |  |
 
 ## Card SDKs and types
 

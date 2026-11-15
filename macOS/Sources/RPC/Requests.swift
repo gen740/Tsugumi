@@ -39,12 +39,14 @@ public extension RPCClient {
     return try await call(.cardidrequest, r)
   }
 
-  func save(baseRev: UInt64, opId: UUID, origin: String, changes: [Tsugumi_RPC_DocumentChangeT]) async throws -> Tsugumi_RPC_SaveResultT {
+  func save(baseRev: UInt64, opId: UUID, origin: String, changes: [Tsugumi_RPC_DocumentChangeT], checkPermissions: Bool = false, approvedPermissions: [String] = []) async throws -> Tsugumi_RPC_SaveResultT {
     let r = Tsugumi_RPC_ProjectSaveRequestT()
     r.baseRev = baseRev
     r.opId = opId.uuidString.lowercased()
     r.origin = origin
     r.changes = changes
+    r.checkPermissions = checkPermissions
+    r.approvedPermissions = approvedPermissions
     return try await call(.projectsaverequest, r)
   }
 
@@ -54,6 +56,7 @@ public extension RPCClient {
     r.opId = opId.uuidString.lowercased()
     r.origin = origin
     r.approvedPermissions = approvedPermissions
+    r.checkPermissions = true
     return try await call(.projectreloadrequest, r)
   }
 

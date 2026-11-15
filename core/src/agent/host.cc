@@ -27,6 +27,8 @@
 #include "agent/thought_schedule.hh"
 #include "agent/tool_images.hh"
 #include "agent/wire.hh"
+#include "host/agent_policy.hh"
+#include "host/attached_folder.hh"
 #include "host/environment.hh"
 #include "host/layout_service.hh"
 #include "host/layout_saving.hh"
@@ -1249,7 +1251,7 @@ struct Host::State {
       args["stem"] = json::Quote(host::CardStem(json::Text(args, "name")));
       args.erase("name");
     }
-    if (name == "project_save" && json::Text(args, "origin") == "agent") {
+    if (name == "project_save") {
       const auto operation = json::Text(args, "op_id");
       std::optional<host::AgentSave> prepared;
       {
@@ -1282,6 +1284,7 @@ struct Host::State {
       if (args.contains("approved_permissions")) prepared->arguments["approved_permissions"] = args.at("approved_permissions");
       args = std::move(prepared->arguments);
     }
+    host::RestrictAgentRequest(name, args);
     auto result = RawProjectCall(project, name, json::Encode(args), stop);
     if (name == "version_graph") {
       auto envelope = json::Object(result);
@@ -1852,7 +1855,8 @@ struct Host::State {
       Require(folder_resource, conversation, A::Access::Read, wait, stop,
               "Read the user-selected attached folder");
     }
-    for (const auto *field : {"origin", "approved_permissions"})
+    for (const auto *field : {"origin", "approved_permissions", "check_permissions",
+                              "read_only", "hide_credentials", "no_project_socket"})
       args.erase(field);
     if (call.name == "run_history_delete") {
       args.erase("run_ids");
@@ -1952,7 +1956,13 @@ struct Host::State {
     } else {
       if (stop.stop_requested())
         throw Cancelled();
-      if (spec->host) {
+      if (call.name == "attached_folder_read") {
+        try {
+          result = host::ReadAttachedFolder(json::Text(args, "folder"), args);
+        } catch (const host::FolderReadFailure& error) {
+          throw Failure(error.code, error.what());
+        }
+      } else if (spec->host) {
         const auto bytes = catalog.HostRequest(call.name, json::Encode(args), 1);
         try {
           result = catalog.HostReply(host::LayoutHandle(*H::GetMessage(bytes.data())->payload_as_Request(), 1));

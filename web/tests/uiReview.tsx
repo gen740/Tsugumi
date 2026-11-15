@@ -110,6 +110,7 @@ for (const allow of [true, false]) {
     const request = message.payload as R.RequestT
     assert.equal(request.valueType, RequestPayload.ProjectReloadRequest)
     const r = request.value as R.ProjectReloadRequestT
+    assert.equal(r.checkPermissions, true)
     calls.push(r)
     let reply: R.ReplyT
     if (calls.length === 1) reply = new R.ReplyT(R.ReplyPayload.Failure, Object.assign(new D.FailureT(), {

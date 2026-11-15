@@ -266,8 +266,8 @@ export class RPCClient {
   inspect() {
     return this.call<R.ProjectSnapshotT>(RequestPayload.ProjectInspectRequest, new R.ProjectInspectRequestT())
   }
-  save(baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[]) {
-    return this.call<R.SaveResultT>(RequestPayload.ProjectSaveRequest, Object.assign(new R.ProjectSaveRequestT(), { baseRev, opId, origin, changes }))
+  save(baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[], checkPermissions = false, approvedPermissions: string[] = []) {
+    return this.call<R.SaveResultT>(RequestPayload.ProjectSaveRequest, Object.assign(new R.ProjectSaveRequestT(), { baseRev, opId, origin, changes, checkPermissions, approvedPermissions }))
   }
   /** Generates the Card's contracts (_inputs.fbs, _outputs.fbs, _params.fbs)
    *  for one revision and returns the file list when ready. */
@@ -297,7 +297,7 @@ export class RPCClient {
       Object.assign(new R.ProjectValidateRequestT(), { mode: D.ValidateMode.executable, changes: changes ?? [] }))
   }
   reload(baseRev: bigint, opId: string, origin: string, approvedPermissions: string[] = []) {
-    return this.call<R.SaveResultT>(RequestPayload.ProjectReloadRequest, Object.assign(new R.ProjectReloadRequestT(), { baseRev, opId, origin, approvedPermissions }))
+    return this.call<R.SaveResultT>(RequestPayload.ProjectReloadRequest, Object.assign(new R.ProjectReloadRequestT(), { baseRev, opId, origin, approvedPermissions, checkPermissions: true }))
   }
   operation(opId: string) {
     return this.call<R.OperationResultT>(RequestPayload.OperationGetRequest, Object.assign(new R.OperationGetRequestT(), { opId }))

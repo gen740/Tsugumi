@@ -346,7 +346,6 @@ the result; do not require confirmations of checks or a detailed explanation of 
     "ArtifactReadRequest",
     "LogRangeRequest",
     "OutputTypesRequest",
-    "AttachedFolderReadRequest",
     "VersionGraphRequest",
     "VersionCanvasRequest",
     "VersionDiffRequest",
@@ -358,6 +357,21 @@ the result; do not require confirmations of checks or a detailed explanation of 
     "ModuleReadRequest",
     "ProjectCacheUsageRequest"
   ],
+  "hostTools": [{
+    "name": "attached_folder_read",
+    "description": "Read a user-registered attached host folder after its Read grant. Returns FileContent: file bytes or sorted directory entries (directories end in /). Paths stay beneath the registered root; symbolic links are refused. Files are limited to 16 MiB, directory listings to 5000 entries and pages to 1 MiB.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "folder": { "type": "string" },
+        "path": { "type": "string" },
+        "offset": { "type": "string", "pattern": "^[0-9]+$" },
+        "limit_bytes": { "type": "integer" }
+      },
+      "required": ["folder", "path"],
+      "additionalProperties": false
+    }
+  }],
   "hostRequests": ["LayoutArrangeRequest", "LayoutUntangleRequest", "LayoutValidateRequest"],
   "approvalRequests": [
     "RunHistoryDeleteRequest",
@@ -367,7 +381,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
     "VersionInitRequest",
     "VersionMarkRequest"
   ],
-  "agentFields": ["op_id", "origin", "approved_permissions"],
+  "agentFields": ["op_id", "origin", "approved_permissions", "check_permissions", "read_only", "hide_credentials", "no_project_socket"],
   "notForModels": { "ProjectValidateRequest": ["changes"] },
   "draftRequest": {
     "root": "the root workflow",
