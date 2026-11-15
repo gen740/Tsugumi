@@ -1,3 +1,4 @@
+import type { AccessGroup } from '../src/shared/chatPresentation'
 // Chat, Agent and the settings it needs (skill folders, model connection,
 // API key) for the host server. Routes are merged into the server's table.
 import { createHash, randomUUID } from 'node:crypto'
@@ -272,14 +273,14 @@ async function modelCatalogs() {
 interface PermissionWait {
   project: string
   session: string
-  asked: string[]
+  asked: string[]; groups?: AccessGroup[]
   resolve: (allow: boolean) => void
 }
 const permissionWaits = new Map<string, PermissionWait>()
 const EXTERNAL_SESSION = 'external'
 
 async function answerPermission(id: string, allow: boolean, selected?: string[]) {
-  const access = await core.user.call<{ requests: { id: string; asked: string[] }[] }>('AccessListRequest')
+  const access = await core.user.call<{ requests: { id: string; asked: string[]; groups?: AccessGroup[] }[] }>('AccessListRequest')
   const asked = access.requests.find(r => r.id === id)?.asked ?? []
   let neededAllowed = allow
   const additional: string[] = []
@@ -306,13 +307,13 @@ async function withAccess<T>(project: string, session: string, run: () => Promis
     try { return await run() } catch (error) {
       if (!(error instanceof CoreHostError) || error.code !== 'grant_required' || !error.requestId) throw error
       const id = error.requestId
-      const access = await core.user.call<{ requests: { id: string; asked: string[] }[] }>('AccessListRequest')
+      const access = await core.user.call<{ requests: { id: string; asked: string[]; groups?: AccessGroup[] }[] }>('AccessListRequest')
       const request = access.requests.find(r => r.id === id)
       if (!request) throw error
       const allowed = new Promise<boolean>((resolve) => {
         const asked = request.asked
-        permissionWaits.set(id, { project, session, asked, resolve })
-        ctx.broadcast({ type: 'chat', project, session, event: { kind: 'permission', id, asked, from } })
+        permissionWaits.set(id, { project, session, asked, groups: request.groups, resolve })
+        ctx.broadcast({ type: 'chat', project, session, event: { kind: 'permission', id, asked, groups: request.groups, from } })
       })
       if (!await allowed) throw new CoreHostError('permission_denied', L('プロジェクトへのアクセスは許可されませんでした。'))
     }
@@ -418,15 +419,15 @@ function chatFor(dir: string): ChatHost {
 export function cancelChats(dir: string) { chats.get(projectKey(dir).key)?.detach() }
 
 async function showExternalAccess(requestId: string, fallback?: string) {
-  const access = await core.user.call<{ requests: { id: string; project_id: string; asked: string[]; state: string }[] }>('AccessListRequest')
+  const access = await core.user.call<{ requests: { id: string; project_id: string; asked: string[]; groups?: AccessGroup[]; state: string }[] }>('AccessListRequest')
   const request = access.requests.find((r) => r.id === requestId && r.state === 'pending')
   if (!request) return
   const project = core.projectFolder(request.project_id) ?? fallback
   if (!project) return
   const asked = request.asked
-  permissionWaits.set(requestId, { project, session: EXTERNAL_SESSION, asked, resolve: () => {} })
+  permissionWaits.set(requestId, { project, session: EXTERNAL_SESSION, asked, groups: request.groups, resolve: () => {} })
   ctx.broadcast({ type: 'chat', project, session: EXTERNAL_SESSION,
-    event: { kind: 'permission', id: requestId, asked, from: 'Claude Code' } })
+    event: { kind: 'permission', id: requestId, asked, groups: request.groups, from: 'Claude Code' } })
 }
 
 async function externalAPI(name: string, args: unknown, project?: string) {
@@ -569,7 +570,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const host = chatFor(projectDir(b.path))
     const a = await host.agent(String(b.session))
     const [wait] = [...waitingFor(host.project, a.id), ...waitingFor(host.project, EXTERNAL_SESSION)]
-    const access = await core.user.call<{ requests: { id: string; state: string; asked: string[] }[] }>('AccessListRequest', { conversation_id: a.id })
+    const access = await core.user.call<{ requests: { id: string; state: string; asked: string[]; groups?: AccessGroup[] }[] }>('AccessListRequest', { conversation_id: a.id })
     const pending = access.requests.find((r) => r.state === 'pending')
     let info = await providerInfo()
     if (a.busy && a.modelBinding) {
@@ -579,7 +580,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
         api: p.providerId === 'chatgpt' || p.providerId === 'openai' ? 'openAIResponses' : 'anthropicMessages' }
     }
     return { conversation: a.conversation, busy: a.busy, resumable: a.resumable, interruptedOperation: a.interruptedOperation, continuable: a.continuable, provider: info,
-      permission: pending ? { id: pending.id, asked: pending.asked } : wait ? { id: wait[0], asked: wait[1].asked } : null }
+      permission: pending ? { id: pending.id, asked: pending.asked, groups: pending.groups } : wait ? { id: wait[0], asked: wait[1].asked, groups: wait[1].groups } : null }
   },
   'POST /api/chat/send': async (b) => {
     const { host, a } = await turnAgent(b)

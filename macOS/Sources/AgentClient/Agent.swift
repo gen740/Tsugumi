@@ -31,6 +31,29 @@ public struct ToolRecord: Codable, Equatable {
   }
 }
 
+/// Presentation assembled by hostd from structured messages and task records.
+public struct ChatRow: Codable, Equatable, Sendable, Identifiable {
+  public var id: String
+  public var kind: String
+  public var role: String
+  public var text: String
+  public var name: String
+  public var arguments: String
+  public var result: String
+  public var state: String
+  public var archived: Bool
+  public var summaryJa: String
+  public var summaryEn: String
+  public var scopeJa: String
+  public var scopeEn: String
+  public var instruction: String
+  public var failed: UInt32
+  public var recovered: UInt32
+  public struct Link: Codable, Equatable, Sendable { public var title: String; public var url: String }
+  public var links: [Link]
+  public var children: [ChatRow]
+}
+
 /// A snapshot of a conversation persisted by the core Agent service.
 public struct HelperTrace: Codable, Equatable {
   public var call: String
@@ -48,12 +71,13 @@ public struct Conversation: Codable, Equatable {
   public var archive: [ChatMessage] = []
   public var tools: [ToolRecord] = []
   public var helpers: [HelperTrace] = []
+  public var rows: [ChatRow] = []
   public var usage = Usage()
   public var summary: String?  // compacted history
 
   public init() {}
 
-  enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, archive, tools, helpers, usage, summary }
+  enum CodingKeys: String, CodingKey { case id, title, updatedAt, messages, archive, tools, helpers, rows, usage, summary }
 
   public init(from d: Decoder) throws {
     let c = try d.container(keyedBy: CodingKeys.self)
@@ -64,6 +88,7 @@ public struct Conversation: Codable, Equatable {
     archive = try c.decodeIfPresent([ChatMessage].self, forKey: .archive) ?? []
     tools = try c.decode([ToolRecord].self, forKey: .tools)
     helpers = try c.decodeIfPresent([HelperTrace].self, forKey: .helpers) ?? []
+    rows = try c.decodeIfPresent([ChatRow].self, forKey: .rows) ?? []
     usage = try c.decode(Usage.self, forKey: .usage)
     summary = try c.decodeIfPresent(String.self, forKey: .summary)
   }
@@ -76,6 +101,7 @@ public struct Conversation: Codable, Equatable {
 
 public enum AgentEvent: Sendable {
   /// The core snapshot now contains the model accepted for this turn.
+  case presentation([ChatRow])
   case modelAccepted
   case text(String)
   /// A piece of a tool call's arguments as the model writes them; the call
@@ -94,9 +120,6 @@ public enum AgentEvent: Sendable {
   case finished
   /// Observation found a core-owned interruption; work stays stopped.
   case interrupted
-  /// The turn used its steps (model replies with tool calls) without
-  /// finishing; `unconfirmedRun` is a run it started and never saw end.
-  case stepLimit(steps: Int, unconfirmedRun: String?)
   /// What a helper started by `delegate` does (its own events).
   case helperStarted(String)
   indirect case helper(name: String, event: AgentEvent)
@@ -107,7 +130,7 @@ public enum AgentEvent: Sendable {
 /// tools, persistence and authorization run behind the Agent socket.
 public actor Agent {
   public enum Role: String, Sendable { case worker, guide }
-  public typealias Approver = @Sendable ([String]) async -> Set<String>
+  public typealias Approver = @Sendable ([String], [Tsugumi_Agent_AccessGroupT]) async -> Set<String>
   public let id: String
   public private(set) var conversation = Conversation()
   private let transport: ToolTransport
@@ -163,7 +186,11 @@ public actor Agent {
   }
 
   private func adopt(_ result: [String: Any]) throws {
-    if let value = result["conversation"] as? Tsugumi_Agent_ConversationT { conversation = try ServiceWire.conversation(value) }
+    guard let value = result["conversation"] as? Tsugumi_Agent_ConversationT, value.id == id else {
+      throw CoreHostFailure(code: "invalid_reply", message: "The host returned a different conversation", requestID: nil)
+    }
+    let snapshot = try ServiceWire.conversation(value)
+    conversation = snapshot
     busy = result["busy"] as? Bool ?? false
     resumable = result["resumable"] as? Bool ?? false
     canContinue = result["continuable"] as? Bool ?? false
@@ -230,7 +257,7 @@ public actor Agent {
   }
 
   public func retry(events: @escaping @Sendable (AgentEvent) -> Void) { action("Retry", events) }
-  public func continueAfterLimit(events: @escaping @Sendable (AgentEvent) -> Void) { action("Continue", events) }
+  public func continueWork(events: @escaping @Sendable (AgentEvent) -> Void) { action("Continue", events) }
   public func compact(events: @escaping @Sendable (AgentEvent) -> Void) { action("Compact", events) }
   public func resume(events: @escaping @Sendable (AgentEvent) -> Void) { action("Resume", events) }
   public func observe(events: @escaping @Sendable (AgentEvent) -> Void) {
@@ -267,7 +294,7 @@ public actor Agent {
         for request in access["requests"] as? [[String: Any]] ?? [] where request["state"] as? String == "pending" {
           guard let requestID = request["id"] as? String else { continue }
           guard let asked = request["asked"] as? [String] else { continue }
-          _ = try await answerAccess(requestID, asked: asked)
+          _ = try await answerAccess(requestID, asked: asked, groups: request["groups"] as? [Tsugumi_Agent_AccessGroupT] ?? [])
         }
         while !Task.isCancelled {
           let result = try await AgentObservation.read { try await self.request("EventsRequest", ["conversation_id": self.id, "after_seq": self.sequence]) }
@@ -277,7 +304,7 @@ public actor Agent {
             guard let event = item["event"] as? [String: Any] else { continue }
             if event["kind"] as? String == "permission", let request = event["id"] as? String {
               let asked = event["asked"] as? [String] ?? ["project_access Project content"]
-              _ = try await answerAccess(request, asked: asked)
+              _ = try await answerAccess(request, asked: asked, groups: event["groups"] as? [Tsugumi_Agent_AccessGroupT] ?? [])
             } else if let event = Self.event(event) {
               if case .finished = event { try await AgentObservation.read { try await self.refresh() } }
               try Task.checkCancellation()
@@ -285,6 +312,7 @@ public actor Agent {
               else { events(event) }
             }
           }
+          if let rows = result["rows"] as? [ChatRow] { events(.presentation(rows)) }
           sequence = max(sequence, result["next_seq"] as? UInt64 ?? sequence)
           busy = result["busy"] as? Bool ?? false
           if !busy {
@@ -308,7 +336,7 @@ public actor Agent {
     }
   }
 
-  private func answerAccess(_ request: String, asked: [String]) async throws -> Bool {
+  private func answerAccess(_ request: String, asked: [String], groups: [Tsugumi_Agent_AccessGroupT]) async throws -> Bool {
     if let answer = answeredAccess[request] { return answer }
     let access = try await self.request("AccessListRequest", ["conversation_id": id])
     if let state = (access["requests"] as? [[String: Any]])?.first(where: { $0["id"] as? String == request })?["state"] as? String,
@@ -317,7 +345,7 @@ public actor Agent {
       return state == "allowed"
     }
     guard let approver else { throw CancellationError() }
-    let answer = await approver(asked)
+    let answer = await approver(asked, groups)
     try Task.checkCancellation()
     var allowed = Set(asked).isSubset(of: answer)
     var additional: [String] = []
@@ -332,7 +360,7 @@ public actor Agent {
       _ = try await self.request("AccessResolveRequest", ["request_id": request, "allow": allowed, "also_allow": additional])
     } catch let error as CoreHostFailure where error.code == "conflict" {
       // A human in another UI already answered; read the authoritative outcome.
-      return try await answerAccess(request, asked: asked)
+      return try await answerAccess(request, asked: asked, groups: groups)
     }
     answeredAccess[request] = allowed
     return allowed
@@ -353,7 +381,6 @@ public actor Agent {
     case "discardText": return .discardText
     case "error": return .error(value["message"] as? String ?? text)
     case "finished", "cancelled": return .finished
-    case "stepLimit": return .stepLimit(steps: value["steps"] as? Int ?? 0, unconfirmedRun: value["unconfirmedRun"] as? String)
     case "helperStarted": return .helperStarted(text)
     case "helper":
       guard let nested = value["event"] as? [String: Any], let event = event(nested) else { return nil }

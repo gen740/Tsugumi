@@ -33,6 +33,42 @@ TEST_F(AgentFixture, ConversationSnapshotReportsTheAcceptedModelAcrossHostEditsA
   human.reset(); external.reset(); host.reset(); service.Stop(); StartHost();
   check();
 }
+TEST_F(AgentFixture,
+       MainAndHelperPassTheirFormerStepLimitsAndStillStopOnRequest) {
+  for (const bool helper : {false, true}) {
+    ModelServer model;
+    if (helper)
+      model.Queue(AnthropicTool(
+          "delegate-long", "delegate",
+          R"({"tasks":[{"name":"Long review","instruction":"Keep inspecting until stopped.","read_cards":[],"write_cards":[],"run_cards":[]}]})"));
+    const size_t count = helper ? 18 : 53;
+    for (size_t i = 0; i < count; ++i)
+      model.Queue(
+          AnthropicTool("long-" + std::to_string(i), "demo_list", "{}"));
+    model.Queue(AnthropicText("Must be cancelled"), true);
+    Configure(model);
+    const auto conversation =
+        Conversation(helper ? "long-helper" : "long-main");
+    ASSERT_TRUE(Send(conversation, "Continue inspecting until I stop you.")
+                    .Code()
+                    .empty());
+    ASSERT_TRUE(model.WaitForRequests(count + (helper ? 2 : 1), 20s));
+    const auto began = std::chrono::steady_clock::now();
+    ASSERT_TRUE(Call(*external, A::RequestPayload::ConversationCancelRequest,
+                     [&](Builder& b) {
+                       return A::CreateConversationCancelRequest(
+                                  b, b.CreateString(conversation))
+                           .Union();
+                     })
+                    .Code()
+                    .empty());
+    const auto stopped = WaitUntilIdle(conversation);
+    EXPECT_LT(std::chrono::steady_clock::now() - began, 2s);
+    EXPECT_EQ(stopped.find("Must be cancelled"), std::string::npos);
+    EXPECT_FALSE(JsonBool(stopped, "/busy"));
+    model.Release();
+  }
+}
 namespace R = Tsugumi::RPC;
 
 TEST_F(AgentFixture, UnixAndWebSocketExposeTheSameAgentProtocol) {

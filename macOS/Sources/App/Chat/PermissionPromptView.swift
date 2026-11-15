@@ -15,20 +15,22 @@ enum ProjectAccessLabel {
         access + ": " + ((task[access + "_cards"] as? [String] ?? []).joined(separator: ", "))
       }.joined(separator: "\n")
     }
-    guard let data = String(request.dropFirst("project_access ".count)).data(using: .utf8),
-          let v = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return request }
-    let action: String
-    switch v["access"] as? String {
-    case "Read": action = String(localized: "内容の読み取り")
-    case "Write": action = String(localized: "内容の変更")
-    case "Run": action = String(localized: "Card の実行")
-    case "CardPermissions": action = String(localized: "Card の権限の変更")
-    case "Shell": action = String(localized: "シェルコマンドの実行")
-    default: action = String(localized: "アクセス")
-    }
-    let duration = (v["scope"] as? String) == "Server" ? String(localized: "取り消すまで") : String(localized: "この会話の間")
-    return String(format: String(localized: "%@\n%@\n許可する操作: %@\n有効期間: %@"), v["title"] as? String ?? "", v["path"] as? String ?? "", action, duration)
+    return request
   }
+}
+
+private func accessOperation(_ name: String) -> String {
+  switch name {
+  case "Read": return String(localized: "内容の読み取り")
+  case "Write": return String(localized: "内容の変更")
+  case "Run": return String(localized: "Card の実行")
+  case "CardPermissions": return String(localized: "Card の権限の変更")
+  case "Shell": return String(localized: "シェルコマンドの実行")
+  default: return name
+  }
+}
+private func accessDuration(_ name: String) -> String {
+  name == "Server" ? String(localized: "取り消すまで") : String(localized: "この会話の間")
 }
 
 /// Shows core-owned access requests and approvals for a single operation.
@@ -53,8 +55,8 @@ struct PermissionPromptView: View {
     VStack(alignment: .leading, spacing: 12) {
       Label(reload ? "外部の変更が Card の権限を広げます" : prompt.operation != nil ? "Agent がこの操作の承認を求めています" : prompt.access.isEmpty ? "Agent が Card の権限を広げようとしています" : "Agent がアクセスの許可を求めています", systemImage: "hand.raised")
         .font(.headline)
-      Text(reload ? "表示された権限を許可して、外部の変更を読み込みますか？" : prompt.operation != nil ? "表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。" : prompt.access.isEmpty ? "許可すると、この保存が行われます。許可しなければ何も保存されず、Agent には理由を説明するよう伝えます。" : "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。")
-        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      if prompt.groups.isEmpty { Text(reload ? "表示された権限を許可して、外部の変更を読み込みますか？" : prompt.operation != nil ? "表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。" : prompt.access.isEmpty ? "許可すると、この保存が行われます。許可しなければ何も保存されず、Agent には理由を説明するよう伝えます。" : "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。")
+        .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
       VStack(alignment: .leading, spacing: 6) {
         if let operation = prompt.operation {
           ScrollView {
@@ -62,17 +64,37 @@ struct PermissionPromptView: View {
               .frame(maxWidth: .infinity, alignment: .leading)
           }.frame(maxHeight: 360)
         }
-        ForEach(prompt.operation == nil ? prompt.access : [], id: \.self) { request in
+        ForEach(Array(prompt.groups.enumerated()), id: \.offset) { _, group in
+          VStack(alignment: .leading, spacing: 6) {
+            Text(group.title ?? "").font(.callout.weight(.semibold))
+            HStack(alignment: .firstTextBaseline) {
+              Text(group.displayPath ?? "").help(group.path ?? "").textSelection(.enabled)
+              if let scope = group.scope, !scope.isEmpty {
+                Text(accessDuration(scope)).fontWeight(scope == "Server" ? .bold : .regular)
+              }
+            }.font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            ForEach(Array(group.lines.compactMap { $0 }.enumerated()), id: \.offset) { _, line in
+              let request = line.request ?? ""
+              Toggle(isOn: Binding(get: { selected.contains(request) }, set: { on in
+                if on { selected.insert(request) } else { selected.remove(request) }
+              })) {
+                HStack(alignment: .firstTextBaseline) {
+                  Text(accessOperation(line.operation ?? "")).fixedSize(horizontal: false, vertical: true)
+                  if line.neededNow { Text("今の操作に必要").font(.caption).foregroundStyle(.secondary) }
+                  if (group.scope ?? "").isEmpty {
+                    Text(accessDuration(line.scope ?? "")).font(.caption).fontWeight(line.scope == "Server" ? .bold : .regular)
+                  }
+                }
+              }.toggleStyle(.checkbox)
+            }
+          }
+        }
+        ForEach(prompt.operation == nil ? prompt.access.filter { request in
+          !prompt.groups.contains { group in group.lines.contains { $0?.request == request } }
+        } : [], id: \.self) { request in
           Toggle(isOn: Binding(get: { selected.contains(request) }, set: { on in
             if on { selected.insert(request) } else { selected.remove(request) }
-          })) {
-            VStack(alignment: .leading) {
-              Text(ProjectAccessLabel.text(request)).textSelection(.enabled)
-              if ProjectAccessLabel.neededNow(request) {
-                Text("今の操作に必要").font(.caption).foregroundStyle(.secondary)
-              }
-            }
-          }.toggleStyle(.checkbox)
+          })) { Text(ProjectAccessLabel.text(request)).fixedSize(horizontal: false, vertical: true).textSelection(.enabled) }.toggleStyle(.checkbox)
         }
         ForEach(prompt.requests) { r in
           Toggle(isOn: Binding(get: { selected.contains(r.raw) }, set: { on in
@@ -91,6 +113,9 @@ struct PermissionPromptView: View {
       .padding(10)
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+      if !prompt.groups.isEmpty {
+        Text("読み取った内容は接続先のモデルに送信される場合があります。").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      }
       VStack(alignment: .leading, spacing: 4) {
         if !kinds.isEmpty {
           Text("今後は確認しない（設定の「API」でいつでも変えられます）").font(.caption).foregroundStyle(.secondary)

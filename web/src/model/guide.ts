@@ -571,10 +571,6 @@ export class GuideController extends Observable {
         this.ended()
         this.flush()
         break
-      case 'stepLimit':
-        this.ended()
-        this.status = L('答えをまとめきれませんでした。聞き方を変えてもう一度どうぞ。')
-        break
       case 'error':
         this.ended()
         this.bubble = undefined

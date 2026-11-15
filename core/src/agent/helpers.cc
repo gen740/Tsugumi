@@ -136,16 +136,39 @@ auto Helpers::RunHelper(const std::string& conversation,
           {"user", {instruction}, {}, {}, ProviderAPI::AnthropicMessages});
       auto insert =
           conversations->ConversationDatabase(conversation)
-              .prepare("INSERT INTO helpers VALUES(?,?,?,?,?,'','running')");
+              .prepare(
+                  "INSERT INTO helpers VALUES(?,?,?,?,?,'','running',?,?)");
       insert.bind(1, conversation)
           .bind(2, parent_call)
           .bind(3, static_cast<int>(index))
           .bind(4, digest)
           .bind(5, dependencies.scrub(SerializeMessages(messages)))
+          .bind(6, dependencies.scrub(task))
+          .bind(
+              7,
+              static_cast<int>(
+                  json::Array(
+                      json::Get(
+                          json::Object(conversations->ConversationJson(
+                              conversations->GetConversation(conversation))),
+                          "archive", "[]"))
+                      .size() +
+                  std::ranges::count_if(
+                      ParseMessages(conversations->GetConversation(conversation)
+                                        .messages),
+                      [](const auto& message) {
+                        return !message.context_summary;
+                      })))
           .run();
     }
     config = providers->ForConversation(conversation);
   }
+  dependencies.event(conversation, json::Encode(json::Members{
+                                       {"kind", json::Quote("helper")},
+                                       {"id", json::Quote(parent_call)},
+                                       {"name", json::Quote(name)},
+                                       {"index", std::to_string(index)},
+                                       {"event", R"({"kind":"checkpoint"})"}}));
   auto boundary = std::make_shared<HelperScope>(spec, authorization);
   const auto read = tools->HelperReader(conversation, stop, {}, authorization);
   // Receipt ownership survives both interruption and transcript compaction.
@@ -174,12 +197,15 @@ auto Helpers::RunHelper(const std::string& conversation,
     call.id = scope + call.id;
     return reconcile(call);
   };
-  hooks.event = [this, conversation, name](const RuntimeEvent& e) {
+  hooks.event = [this, conversation, name, parent_call,
+                 index](const RuntimeEvent& e) {
     dependencies.event(
         conversation,
         json::Encode(json::Members{
             {"kind", json::Quote("helper")},
             {"name", json::Quote(name)},
+            {"id", json::Quote(parent_call)},
+            {"index", std::to_string(index)},
             {"event", json::Encode(json::Members{
                           {"kind", json::Quote(e.kind)},
                           {"text", json::Quote(e.text)},
@@ -208,12 +234,18 @@ auto Helpers::RunHelper(const std::string& conversation,
         .bind(4, static_cast<int>(index))
         .run();
     tx.commit();
+    dependencies.event(
+        conversation,
+        json::Encode(json::Members{{"kind", json::Quote("helper")},
+                                   {"id", json::Quote(parent_call)},
+                                   {"index", std::to_string(index)},
+                                   {"event", R"({"kind":"checkpoint"})"}}));
   };
   auto tools = this->tools->Specs();
   std::erase_if(tools,
                 [](const auto& tool) { return tool.name == "delegate"; });
   const auto result =
-      Runtime({.max_steps = 15})
+      Runtime()
           .Run(config, Turns::System(), messages, tools, stop, hooks);
   const auto output = json::Encode(json::Members{
       {"name", json::Quote(name)},

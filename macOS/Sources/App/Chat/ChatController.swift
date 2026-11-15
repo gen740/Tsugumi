@@ -56,7 +56,7 @@ func availableSkills(project: URL? = nil, folders: [String], conversationID: Str
 @Observable
 final class ChatController {
   struct Item: Identifiable {
-    let id = UUID()
+    var id = UUID().uuidString
     var role: String
     var text: String
     var tool: (name: String, ok: Bool?)?
@@ -65,7 +65,7 @@ final class ChatController {
     /// call (text: the arguments) and how its work ended (nil: working).
     var helper: String?
     var ended: String?
-    var trace: String?
+    var presentation: ChatRow?
   }
 
   struct SessionInfo: Identifiable, Hashable {
@@ -104,14 +104,17 @@ final class ChatController {
   /// "Draw thoughts": the Agent's thinking in one line for the canvas.
   let thoughts: ThoughtSummarizer
   private(set) var items: [Item] = []
-  /// The last turn stopped at the step limit and can go on.
-  private(set) var stoppedAtLimit = false
+  /// A stopped turn can be continued explicitly.
+  private(set) var canContinue = false
 
   /// Shows a sample exchange without calling a model (UI script `chatsample`).
   func showSample(question: String, answer: String) {
     items.append(Item(role: "user", text: question))
     items.append(Item(role: "assistant", text: answer))
   }
+  private var displayedId = ""
+  var ready: Bool { !loading && !currentId.isEmpty && displayedId == currentId }
+  private(set) var loading = false
   private(set) var busy = false
   private(set) var status: String?
   private(set) var failed = false
@@ -219,11 +222,18 @@ final class ChatController {
 
   /// `directory` and `connection`: where its conversations are and what it
   /// answers with, instead of the app's (tests).
-  init(session: ProjectSession, directory: URL? = nil, connection: @escaping @MainActor () -> ProviderConfig = AgentSettings.chat) {
+  init(session: ProjectSession, directory: URL? = nil, restoring previous: ChatController? = nil, connection: @escaping @MainActor () -> ProviderConfig = AgentSettings.chat) {
     self.session = session
     self.connection = connection
     thoughts = ThoughtSummarizer(presence: session.presence)
     dir = directory ?? AppChannel.current.supportDirectory.appendingPathComponent("agent/\(session.identity.id)", isDirectory: true)
+    if let previous {
+      items = previous.items
+      sessions = previous.sessions
+      currentId = previous.currentId
+      displayedId = previous.displayedId
+      if !currentId.isEmpty { select(currentId) }
+    }
     refreshSessions()
     reloadSkills()
   }
@@ -255,35 +265,43 @@ final class ChatController {
     opening?.cancel()
     opening = nil
     answer += 1
+    let selection = answer
     busy = false
     failed = false
     usageLimited = false
     status = nil
     interrupted = false
     interruptedOperation = nil
-    stoppedAtLimit = false
+    canContinue = false
     demoMode = false
+    loading = true
     currentId = id
     thoughts.conversationID = id
     let agent = Agent(id: id, transport: RPCToolTransport(session: session), provider: provider)
     self.agent = agent
-    items = []
     modelBinding = nil
     // (the approver holds the controller weakly: the Agent outlives no window)
-    let approver: Agent.Approver = { [weak self] asked in await self?.approve(asked) ?? [] }
+    let approver: Agent.Approver = { [weak self] asked, groups in await self?.approve(asked, groups: groups) ?? [] }
     opening = Task {
       await previous?.detach()
       await agent.setApprover(approver)
-      do { try await agent.open() } catch { self.status = String(describing: error); return }
+      do { try await agent.open() } catch {
+        guard !Task.isCancelled, self.agent === agent, selection == answer else { return }
+        loading = false
+        self.status = String(describing: error)
+        return
+      }
       let conv = await agent.conversation
-      guard !Task.isCancelled else { return }
+      guard !Task.isCancelled, self.agent === agent, selection == answer else { return }
       usage = conv.usage
       modelBinding = await agent.modelBinding
       await adoptInterruption(agent)
-      guard !Task.isCancelled, self.agent === agent else { return }
+      guard !Task.isCancelled, self.agent === agent, selection == answer else { return }
+      loading = false
+      displayedId = id
       load(conv)
       if await agent.hasUnfinishedWork {
-        guard !Task.isCancelled, self.agent === agent else { return }
+        guard !Task.isCancelled, self.agent === agent, selection == answer else { return }
         let events = begin()
         await agent.observe(events: events)
       }
@@ -298,7 +316,7 @@ final class ChatController {
     let wasInterrupted = self.interrupted
     self.interrupted = interrupted
     interruptedOperation = operation
-    stoppedAtLimit = !interrupted && continuable
+    canContinue = !interrupted && continuable
     if interrupted {
       failed = false
       usageLimited = false
@@ -316,7 +334,7 @@ final class ChatController {
 
   /// Only the Resume control calls this method.
   func resume() {
-    guard interrupted, !busy, let agent else { return }
+    guard ready, interrupted, !busy, let agent else { return }
     let events = begin()
     Task {
       await CorePreferences.shared.reload()
@@ -328,45 +346,14 @@ final class ChatController {
   private func load(_ conv: Conversation) { items = Self.restoredItems(conv) }
 
   static func restoredItems(_ conv: Conversation) -> [Item] {
-    var out: [Item] = []
-    var tools: [String: Int] = [:]
-    for (i, m) in conv.fullHistory.enumerated() {
-      let archived = i < conv.archive.count
-      if let d = m.display {
-        out.append(Item(role: m.role, text: d, archived: archived))
-        continue
-      }
-      for b in m.content {
-        switch b {
-        case .text(let t): out.append(Item(role: m.role, text: t, archived: archived))
-        case .toolUse(let id, let n, let a):
-          tools[id] = out.count
-          out.append(Item(role: "tool", text: a, tool: (n, nil), archived: archived))
-        case .toolResult(let id, let c, let e, _):
-          if let j = tools[id] {
-            out[j].tool?.ok = !e
-            out[j].text += "\n→ " + Agent.toolSummary(c)
-          }
-        case .webSearch(let s):
-          out.append(Item(role: "tool", text: s.arguments + "\n→ " + s.summary, tool: ("web_search", s.error == nil), archived: archived))
-        }
-      }
-    }
-    for record in conv.tools where record.name == "operation_approval" {
-      out.append(Item(role: "tool", text: record.result ?? "", tool: (record.name, record.state == .pending ? nil : !record.isError)))
-    }
-    for helper in conv.helpers {
-      let trace = helper.messages.flatMap(\.content).map { block -> String in
-        switch block {
-        case .text(let text): return text
-        case .toolUse(_, let name, let args): return name + "\n" + args
-        case .toolResult(_, let text, _, _): return text
-        case .webSearch(let search): return search.summary
-        }
-      }.joined(separator: "\n\n")
-      out.append(Item(role: "helper", text: "", helper: helper.messages.first?.content.compactMap { if case .text(let text) = $0 { return String(text.prefix(80)) }; return nil }.first ?? helper.call, ended: helper.state, trace: trace))
-    }
-    return out
+    conv.rows.map(Self.presentedItem)
+  }
+
+  static func presentedItem(_ row: ChatRow) -> Item {
+    Item(id: row.id, role: row.kind == "text" ? row.role : row.kind, text: row.kind == "tool" ? row.arguments + (row.result.isEmpty ? "" : "\n→ " + row.result) : row.text,
+      tool: row.kind == "tool" ? (row.name, row.state == "running" ? nil : row.state == "completed") : nil,
+      archived: row.archived, helper: row.kind == "helper" ? row.name : nil,
+      ended: row.kind == "helper" && row.state != "running" ? row.state : nil, presentation: row)
   }
 
   func newSession() {
@@ -431,13 +418,13 @@ final class ChatController {
   // MARK: - Conversation
 
   func send(_ text: String, selection: [CardKey] = [], scopedSkill: String? = nil) {
-    guard !attaching, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+    guard !loading, !attaching, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
     // No model connection: Tsugumi answers from its script (a connection of this chat's own, as in tests, is used).
     if GuideController.shared.scripted, provider.auth != .none, !busy {
       GuideController.shared.answerScripted(text, chat: self)
       return
     }
-    guard let agent else { return }
+    guard ready, let agent else { return }
     let used = skills(in: text)
     if used.contains(where: { $0.name == "demo" }) { demoMode = true }
     let refs = references + selection.filter { k in !references.contains(.card(k)) }.map { Reference.card($0) }
@@ -535,6 +522,7 @@ final class ChatController {
   struct PermissionPrompt: Identifiable {
     let id = UUID()
     let raw: [String]
+    var groups: [Tsugumi_Agent_AccessGroupT] = []
     var requests: [CardPermission.Request] { raw.compactMap(CardPermission.Request.init) }
     var operation: String? {
       guard let request = raw.first(where: { $0.contains("operation_approval\n") }),
@@ -574,9 +562,9 @@ final class ChatController {
 
   /// The widenings the user approves: those of the kinds allowed without
   /// asking at once, the others when asked (nothing when declined).
-  func approve(_ asked: [String]) async -> Set<String> {
+  func approve(_ asked: [String], groups: [Tsugumi_Agent_AccessGroupT] = []) async -> Set<String> {
     return await withCheckedContinuation { continuation in
-      permissionQueue.append(PermissionPrompt(raw: asked) { continuation.resume(returning: $0) })
+      permissionQueue.append(PermissionPrompt(raw: asked, groups: groups) { continuation.resume(returning: $0) })
     }
   }
 
@@ -618,14 +606,14 @@ final class ChatController {
       await CorePreferences.shared.reload()
     }
     busy = false
-    stoppedAtLimit = true
+    canContinue = true
     session.presence.turnEnded(.stopped)
     status = String(localized: "回答を停止しました。受理済みの実行は止まりません（実行の停止は Canvas の「停止」）。")
   }
 
-  /// Goes on after the step limit stopped the Agent.
+  /// Continues work only when the person asks.
   func continueWork() {
-    guard let agent else { return }
+    guard ready, let agent else { return }
     items.append(Item(role: "user", text: String(localized: "（止まったところから続けます）")))
     let events = begin()
     let stopping = self.stopping
@@ -633,12 +621,12 @@ final class ChatController {
       await stopping?.value
       await CorePreferences.shared.reload()
       await agent.setProvider(provider)
-      await agent.continueAfterLimit(events: events)
+      await agent.continueWork(events: events)
     }
   }
 
   func retry() {
-    guard let agent else { return }
+    guard ready, let agent else { return }
     let events = begin()
     let stopping = self.stopping
     Task {
@@ -650,7 +638,7 @@ final class ChatController {
   }
 
   func compact() {
-    guard let agent else { return }
+    guard ready, let agent else { return }
     let events = begin()
     status = String(localized: "会話を圧縮しています…")
     let stopping = self.stopping
@@ -665,6 +653,7 @@ final class ChatController {
   /// An answer begins; what it reports goes to the returned closure.
   private func begin() -> @Sendable (AgentEvent) -> Void {
     answer += 1
+    turnAccepted = false
     modelBinding = nil
     choices = []
     offered = []
@@ -675,7 +664,7 @@ final class ChatController {
     failed = false
     usageLimited = false
     contextFull = false
-    stoppedAtLimit = false
+    canContinue = false
     status = nil
     session.presence.name = { [weak session] k in session?.nodeData(k).title ?? k }
     session.presence.turnStarted()
@@ -704,13 +693,13 @@ final class ChatController {
       return (n, t["cards"]?.array?.compactMap(\.string) ?? [])
     }
     session.startHelpers(list)
-    for t in list { items.append(Item(role: "helper", text: "", helper: t.name)) }
+
   }
 
   /// What a helper does: its bird and its row.
   private func handleHelper(_ name: String, _ e: AgentEvent) {
     let bird = session.helperPresence(name)
-    let row = items.lastIndex { $0.role == "helper" && $0.helper == name }
+
     switch e {
     case .toolInput(let index, let tool, let delta):
       bird.toolInput(index: index, tool: tool, delta: delta)
@@ -719,19 +708,12 @@ final class ChatController {
     case .toolStarted(_, let tool, let args):
       bird.doing(PresenceEvents.activity(tool: tool))
       showOnCanvas(tool: tool, arguments: args, bird: bird)
-      if let row { items[row].tool = (tool, nil); items[row].text = args }
     case .toolFinished(_, let tool, let ok, _):
       if PresenceEvents.writesSources(tool: tool) { bird.toolInputEnded(ok: ok) }
-      if let row, items[row].tool?.name == tool { items[row].tool?.ok = ok }
     case .finished:
       bird.turnEnded(.done)
-      if let row { items[row].ended = String(localized: "終わりました") }
-    case .stepLimit:
-      bird.turnEnded(.limit)
-      if let row { items[row].ended = String(localized: "手数の上限で止まりました") }
     case .error(let s):
       bird.turnEnded(s == "cancelled" ? .stopped : .failed)
-      if let row { items[row].ended = s == "cancelled" ? String(localized: "止めました") : String(localized: "エラー: \(s)") }
     default:
       break
     }
@@ -740,30 +722,28 @@ final class ChatController {
   /// The answer the chat shows. One stopped or left behind may still be ending:
   /// its text and its end are no longer this chat's (it goes on with the newer
   /// one, which would be shown as stopped). What its tools did still counts.
-  @ObservationIgnored private var answer = 0
+  @ObservationIgnored private(set) var answer = 0
+  @ObservationIgnored private var contentRevision = 0
+  @ObservationIgnored private var turnAccepted = false
 
-  private func handle(_ e: AgentEvent, of number: Int) {
-    if number != answer {
-      switch e {
-      case .modelAccepted, .text, .discardText, .retrying, .compacting, .compacted, .error, .finished, .interrupted, .stepLimit: return
-      default: break
-      }
-    }
+  func handle(_ e: AgentEvent, of number: Int) {
+    guard number == answer else { return }
     switch e {
+    case .presentation(let rows):
+      contentRevision += 1
+      displayedId = currentId
+      loading = false
+      items = rows.map(Self.presentedItem)
     case .modelAccepted:
+      turnAccepted = true
       guard let agent else { return }
       Task {
         let binding = await agent.modelBinding
         guard number == answer, self.agent === agent else { return }
         modelBinding = binding
       }
-    case .text(let t):
+    case .text:
       session.presence.doing(String(localized: "考えています"))
-      if let last = items.last, last.role == "assistant", last.tool == nil {
-        items[items.count - 1].text += t
-      } else {
-        items.append(Item(role: "assistant", text: t))
-      }
     case .helperStarted(let task):
       startHelpers("{\"tasks\":[" + task + "]}")
     case .helper(let name, let event):
@@ -782,16 +762,11 @@ final class ChatController {
     case .toolFinished(_, "guide_show", _, _):
       break
     case .toolStarted(_, let name, let args):
-      items.append(Item(role: "tool", text: args, tool: (name, nil)))
       if name == "delegate" { startHelpers(args) }
       session.presence.doing(PresenceEvents.activity(tool: name))
       showOnCanvas(tool: name, arguments: args)
-    case .toolFinished(_, let name, let ok, let summary):
+    case .toolFinished(_, let name, let ok, _):
       if PresenceEvents.writesSources(tool: name) { session.presence.toolInputEnded(ok: ok) }
-      if let i = items.lastIndex(where: { $0.role == "tool" && $0.tool?.name == name && $0.tool?.ok == nil }) {
-        items[i].tool = (name, ok)
-        items[i].text += "\n→ " + summary
-      }
     case .compacting:
       // The next reply waits for it (over a minute with a long conversation).
       status = String(localized: "会話を圧縮しています…")
@@ -799,7 +774,6 @@ final class ChatController {
       // Earlier messages were summarized for the model; the whole text stays
       // in the conversation, so nothing is announced.
       status = nil
-      reloadCurrent()
     case .retrying(let s):
       // The reply is asked again from its beginning.
       session.presence.toolInputEnded(ok: false)
@@ -807,8 +781,8 @@ final class ChatController {
     case .discardText:
       // The reply is asked again: what it had streamed goes.
       session.presence.toolInputEnded(ok: false)
-      if let last = items.last, last.role == "assistant", last.tool == nil { items.removeLast() }
     case .error(let s):
+      loading = false
       GuideController.shared.chatTurnEnded(self, reply: lastReply)
       if s == "cancelled" { notes = [] }
       busy = false
@@ -826,7 +800,7 @@ final class ChatController {
       session.presence.turnEnded(.stopped)
       refreshAfterTurn()
     case .finished:
-      if failed || stoppedAtLimit {
+      if failed || canContinue {
         refreshAfterTurn()
         return
       }
@@ -837,43 +811,33 @@ final class ChatController {
       session.presence.turnEnded()
       refreshAfterTurn()
       flushNotes()
-    case .stepLimit(let steps, let run):
-      GuideController.shared.chatTurnEnded(self, reply: lastReply)
-      busy = false
-      session.presence.turnEnded(.limit)
-      stoppedAtLimit = true
-      status = String(localized: "\(steps) 手の上限で中断しました。「続ける」で続きから再開できます。")
-        + (run.map { String(localized: " 実行 \(String($0.prefix(8))) の結果はまだ確かめていません。") } ?? "")
-      refreshAfterTurn()
-    }
-  }
 
-  private func reloadCurrent() {
-    guard let agent else { return }
-    let number = answer
-    Task {
-      let conversation = await agent.conversation
-      guard number == answer else { return }
-      load(conversation)
-      usage = conversation.usage
-      modelBinding = await agent.modelBinding
     }
   }
 
   private func refreshAfterTurn() {
+    // A rejected send has no replacement in the host; keep the typed message.
+    guard turnAccepted else { return }
     guard let agent else { return }
-    let number = answer
+    let number = answer, revision = contentRevision
     Task {
-      await CorePreferences.shared.reload()
-      let conversation = await agent.conversation
-      guard number == answer else { return }
-      await adoptInterruption(agent)
-      load(conversation)
-      usage = conversation.usage
-      modelBinding = await agent.modelBinding
-      refreshSessions()
+      do {
+        try await agent.refresh()
+        let conversation = await agent.conversation
+        guard number == answer, self.agent === agent else { return }
+        await adoptInterruption(agent)
+        guard number == answer, self.agent === agent else { return }
+        if revision == contentRevision { load(conversation) }
+        usage = conversation.usage
+        modelBinding = await agent.modelBinding
+        refreshSessions()
+      } catch {
+        guard number == answer, self.agent === agent else { return }
+        status = String(describing: error)
+      }
     }
   }
+
 }
 
 @MainActor

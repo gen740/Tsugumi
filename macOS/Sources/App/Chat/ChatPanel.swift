@@ -148,7 +148,8 @@ struct ChatPanel: View {
       ScrollViewReader { proxy in
         ScrollView {
           LazyVStack(alignment: .leading, spacing: 12) {
-            if chat.items.isEmpty {
+            if chat.loading { ProgressView("会話を読み込んでいます…").controlSize(.small) }
+            if chat.items.isEmpty && !chat.loading {
               VStack(alignment: .leading, spacing: 6) {
                 Text(GuideController.shared.connected ? String(localized: "ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。")
                                                        : String(localized: "Workflow の相談・生成・編集を依頼できます。")).font(.callout)
@@ -217,8 +218,9 @@ struct ChatPanel: View {
           } else if chat.contextFull {
             Button("新しい会話") { chat.newSession() }.controlSize(.small).buttonStyle(.borderedProminent)
           } else if chat.failed { Button("再試行") { chat.retry() }.controlSize(.small) }
+          if !chat.ready && !chat.loading { Button("再読込") { chat.select(chat.currentId) }.controlSize(.small) }
           if chat.interrupted && !chat.busy { Button("再開") { chat.resume() }.controlSize(.small) }
-          if chat.stoppedAtLimit && !chat.busy { Button("続ける") { chat.continueWork() }.controlSize(.small) }
+          if chat.canContinue && !chat.busy { Button("続ける") { chat.continueWork() }.controlSize(.small) }
         }
         .padding(.horizontal, 12).padding(.vertical, 5)
       }
@@ -241,6 +243,9 @@ struct ChatPanel: View {
   }
 
   private var currentStep: String {
+    if let step = chat.items.last(where: { $0.presentation?.kind == "step" && $0.presentation?.state == "running" })?.presentation {
+      return AppPreferences.Language.running == .en ? step.summaryEn : step.summaryJa
+    }
     if let t = chat.items.last(where: { $0.role == "tool" && $0.tool?.ok == nil }), let name = t.tool?.name {
       return ToolStep(name: name, args: t.text).running
     }
@@ -486,12 +491,8 @@ struct ChatPanel: View {
       .opacity(item.archived ? 0.6 : 1)
     case "tool":
       ToolRow(item: item, tab: tab, session: session).opacity(item.archived ? 0.6 : 1)
-    case "helper":
-      if let trace = item.trace {
-        DisclosureGroup {
-          ScrollView { Text(trace).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 400)
-        } label: { HelperRow(item: item, tint: 1) }
-      } else { HelperRow(item: item, tint: session.helperPresences.first { $0.label == item.helper }?.tint ?? 1) }
+    case "step", "helper":
+      if let row = item.presentation { StructuredChatRow(row: row, tab: tab, session: session) }
     case "note":
       Label(item.text, systemImage: "rectangle.compress.vertical").font(.caption).foregroundStyle(.secondary)
         .frame(maxWidth: .infinity)
@@ -514,7 +515,7 @@ struct ChatPanel: View {
 
   private func send() {
     let text = input
-    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !chat.busy, !chat.attaching, session.connected else { return }
+    guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !chat.busy, chat.ready, !chat.attaching, session.connected else { return }
     chat.send(text)
     input = ""
     skillQuery = nil
@@ -722,29 +723,55 @@ struct ToolStep {
 
 /// A helper at work (delegate): its name in its bird's colour and what it
 /// does now, or how its work ended.
-private struct HelperRow: View {
-  let item: ChatController.Item
-  let tint: Int
-
-  var body: some View {
-    let step = item.tool.map { ToolStep(name: $0.name, args: item.text) }
-    HStack(spacing: 6) {
-      Circle().fill(PresenceColor.of(tint)).frame(width: 7, height: 7)
-      Text(item.helper ?? "").font(.caption.weight(.semibold)).foregroundStyle(PresenceColor.of(tint))
-      Group {
-        if let ended = item.ended {
-          Text(ended)
-        } else if let step, let t = item.tool {
-          Text(t.ok == nil ? step.running : step.done + (t.ok! ? "" : String(localized: "：失敗")))
-        } else {
-          Text("考えています…")
-        }
-      }
-      .font(.caption).foregroundStyle(item.tool?.ok == false && item.ended == nil ? .red : .secondary).lineLimit(1)
-      Spacer()
-      if item.ended == nil { ProgressView().controlSize(.mini) }
+private struct StructuredChatRow: View {
+  let row: ChatRow
+  let tab: WorkflowTab?
+  let session: ProjectSession
+  private var english: Bool { AppPreferences.Language.running == .en }
+  private var state: String {
+    switch row.state {
+    case "queued": return String(localized: "待機中")
+    case "running": return String(localized: "作業中")
+    case "completed": return String(localized: "終わりました")
+    case "interrupted": return String(localized: "止めました")
+    default: return String(localized: "失敗")
     }
-    .padding(.leading, 10)
+  }
+  var body: some View {
+    VStack(alignment: .leading, spacing: 6) {
+      if row.kind == "step" || row.kind == "helper" {
+        DisclosureGroup {
+          VStack(alignment: .leading, spacing: 8) {
+            ForEach(row.children) { child in StructuredChatRow(row: child, tab: tab, session: session) }
+            if !row.instruction.isEmpty {
+              DisclosureGroup("指示の全文") {
+                Text(row.instruction).font(.caption).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+              }
+            }
+          }.padding(.leading, 8)
+        } label: {
+          if row.kind == "step" { Text(english ? row.summaryEn : row.summaryJa).font(.caption).foregroundStyle(row.failed > 0 ? .red : .secondary) }
+          else { Text(row.name + " · " + state + (english ? row.summaryEn : row.summaryJa)).font(.caption.weight(.semibold)).foregroundStyle(row.failed > 0 ? .red : .primary) }
+        }
+        if row.kind == "helper" {
+          Text(english ? row.scopeEn : row.scopeJa).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+          if !row.text.isEmpty { ChatMarkdown(text: row.text).modifier(EvidenceMarkup(text: row.text, session: session, tab: tab)) }
+        }
+        // Unresolved failures remain visible even when the step is folded.
+        ForEach(row.children.filter { $0.kind == "tool" && $0.state == "failed" }) { failure in
+          Text(failure.name + ": " + failure.result).font(.caption).foregroundStyle(.red).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+        }
+      } else if row.kind == "tool" {
+        ToolRow(item: ChatController.presentedItem(row), tab: tab, session: session)
+        if row.state == "recovered" { Text("再試行で成功").font(.caption).foregroundStyle(.secondary) }
+      } else {
+        ChatMarkdown(text: row.text).modifier(EvidenceMarkup(text: row.text, session: session, tab: tab))
+      }
+      if !row.links.isEmpty {
+        let text = row.links.map { "[\($0.title)](\($0.url))" }.joined(separator: " · ")
+        ChatMarkdown(text: text).modifier(EvidenceMarkup(text: text, session: session, tab: tab))
+      }
+    }.opacity(row.archived ? 0.6 : 1)
   }
 }
 
@@ -769,6 +796,7 @@ struct ToolRow: View {
 
   var body: some View {
     let step = ToolStep(name: item.tool?.name ?? "", args: item.text, display: { session.displayPath(path($0)) })
+    let title = item.presentation.map { AppPreferences.Language.running == .en ? $0.summaryEn : $0.summaryJa } ?? ""
     VStack(alignment: .leading, spacing: 4) {
       HStack(spacing: 5) {
         Group {
@@ -778,7 +806,7 @@ struct ToolRow: View {
           }
         }
         .frame(width: 14)
-        Text(item.tool?.ok == nil ? step.running : step.done + (item.tool!.ok! ? "" : String(localized: "：失敗")))
+        Text(!title.isEmpty ? title : item.tool?.ok == nil ? step.running : step.done + (item.tool!.ok! ? "" : String(localized: "：失敗")))
           .font(.caption).foregroundStyle(item.tool?.ok == false ? .red : .secondary).lineLimit(1)
         if let k = step.card, let tab, session.instance(k) != nil {
           Button("Card を表示") {

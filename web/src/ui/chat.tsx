@@ -7,12 +7,11 @@ import { canvasFor } from '../model/canvas'
 import { ModelListRefresher } from '../model/modelLists'
 import { ChatController, ChatItem, refLabel, SearchHit, Skill, USAGE_URL } from '../model/chat'
 import { chatFollowsAfterScroll } from '../model/chatFollow'
-import { birdColor } from '../model/helperBirds'
 import { useObserve } from '../model/observable'
 import { permissionCatalog, defaultPermissionSelection, parsePermission, permissionInfo } from '../model/permissions'
 import { isMac, prefs } from '../model/prefs'
 import { CardKey, commentChange, errorText, key, path, ProjectSession } from '../model/session'
-import { AGENT, modelOptions, savedComments, projectAccessLabel, projectAccessNeededNow } from '../shared/agentShared'
+import { AGENT, modelOptions, savedComments, helperScopeLabel, projectAccessNeededNow } from '../shared/agentShared'
 import { WorkflowTab } from '../model/workspace'
 import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner, TextField, Toggle } from './controls'
 import { Icon } from './icons'
@@ -22,7 +21,8 @@ import { EvidenceContext, evidenceLink } from './evidence'
 import { ChatChoices, GuideNest } from './guide'
 import { guide } from '../model/guide'
 import { FolderPicker } from './sidebar'
-import { L } from '../i18n'
+import { L, language } from '../i18n'
+import type { ChatRow, AccessGroup } from '../shared/chatPresentation'
 
 export function ChatPanel({ session, chat, detached, tab }: { session: ProjectSession; chat: ChatController; detached: boolean; tab?: WorkflowTab }) {
   useObserve(chat, session, tab, prefs)
@@ -62,12 +62,12 @@ export function PermissionHost({ session }: { session: ProjectSession }) {
   const chat = app.chat(session)
   useObserve(chat)
   const p = chat.permission
-  return p ? <PermissionPrompt key={p.id} asked={p.asked} from={p.from} onAnswer={(allow, always, selected) => chat.answerPermission(allow, always, p.id, selected)} /> : null
+  return p ? <PermissionPrompt key={p.id} asked={p.asked} groups={p.groups} from={p.from} onAnswer={(allow, always, selected) => chat.answerPermission(allow, always, p.id, selected)} /> : null
 }
 
 /** Presents core-owned access and operation requests. Operations have no
  *  standing approval option. Return allows and Esc declines. */
-export function PermissionPrompt({ asked, from, reload = false, onAnswer }: { asked: string[]; from?: string; reload?: boolean; onAnswer: (allow: boolean, always: string[], selected?: string[]) => void }) {
+export function PermissionPrompt({ asked, groups = [], from, reload = false, onAnswer }: { asked: string[]; groups?: AccessGroup[]; from?: string; reload?: boolean; onAnswer: (allow: boolean, always: string[], selected?: string[]) => void }) {
   useObserve(permissionCatalog)
   useEffect(() => { void permissionCatalog.load() }, [])
   const who = from ?? 'Agent'
@@ -91,8 +91,9 @@ export function PermissionPrompt({ asked, from, reload = false, onAnswer }: { as
     <Sheet width={460} onClose={() => onAnswer(false, [])} backdropCloses={false}>
       <div className="sheet-body permission-prompt">
         <div className="title2"><Icon name="hand.raised" /> {reload ? L('外部の変更が Card の権限を広げます') : operation ? L('{0} がこの操作の承認を求めています', who) : access.length ? L('{0} がアクセスの許可を求めています', who) : L('{0} が Card の権限を広げようとしています', who)}</div>
-        <p className="secondary">{reload ? L('表示された権限を許可して、外部の変更を読み込みますか？') : operation ? L('表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。') : access.length ? L('表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。') : L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>
-        <PermissionRequests asked={asked} selected={selected} onSelect={(request, on) => setSelected(on ? [...selected, request] : selected.filter(r => r !== request))} />
+        {!groups.length && <p className="secondary">{reload ? L('表示された権限を許可して、外部の変更を読み込みますか？') : operation ? L('表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。') : access.length ? L('表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。') : L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>}
+        <PermissionRequests asked={asked} groups={groups} selected={selected} onSelect={(request, on) => setSelected(on ? [...selected, request] : selected.filter(r => r !== request))} />
+        {!!groups.length && <p className="secondary caption">{L('読み取った内容は接続先のモデルに送信される場合があります。')}</p>}
         {!!kinds.length && <div className="secondary small">{L('今後は確認しない（設定の「API」でいつでも変えられます）')}</div>}
         {kinds.map((k) => (
           <Toggle key={k.kind} kind="checkbox" label={k.label} checked={always.includes(k.kind)}
@@ -108,7 +109,7 @@ export function PermissionPrompt({ asked, from, reload = false, onAnswer }: { as
 }
 
 /** The exact widenings listed before approval, shared by reload and Agent saves. */
-export function PermissionRequests({ asked, selected, onSelect }: { asked: string[]; selected?: string[]; onSelect?: (request: string, on: boolean) => void }) {
+export function PermissionRequests({ asked, groups = [], selected, onSelect }: { asked: string[]; groups?: AccessGroup[]; selected?: string[]; onSelect?: (request: string, on: boolean) => void }) {
   useObserve(permissionCatalog)
   const requests = asked.map(parsePermission).filter(r => r !== undefined)
   const operation = asked.find(r => r.includes('operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
@@ -118,11 +119,18 @@ export function PermissionRequests({ asked, selected, onSelect }: { asked: strin
           {operation && <li><pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 360, overflow: 'auto' }}>{operation.split('\n').map((line) => {
             try { return JSON.stringify(JSON.parse(line), null, 2) } catch { return line }
           }).join('\n')}</pre></li>}
-          {!operation && access.map((r) => <li key={r}>
-            {onSelect ? <label style={{ whiteSpace: 'pre-wrap' }}><input type="checkbox" checked={selected?.includes(r) ?? false}
-              onChange={e => onSelect(r, e.target.checked)} /> {projectAccessLabel(r)}
-              {projectAccessNeededNow(r) && <div className="secondary small">{L('今の操作に必要')}</div>}
-            </label> : <div style={{ whiteSpace: 'pre-wrap' }}>{projectAccessLabel(r)}</div>}
+          {!operation && groups.map((g, i) => <li key={i} style={{ display: 'block' }}>
+            <strong>{g.title}</strong>
+            <div className="caption secondary" title={g.path}>{g.displayPath}{g.scope && <> · <span style={{ fontWeight: g.scope === 'Server' ? 700 : undefined }}>{accessDuration(g.scope)}</span></>}</div>
+            {g.lines.map(line => <label key={line.request} style={{ display: 'flex', alignItems: 'baseline', gap: 8, whiteSpace: 'normal', marginTop: 6 }}>
+              {onSelect && <input type="checkbox" checked={selected?.includes(line.request) ?? false} onChange={e => onSelect(line.request, e.target.checked)} />}
+              <span>{accessOperation(line.operation)}</span>
+              {line.neededNow && <span className="secondary caption">{L('今の操作に必要')}</span>}
+              {!g.scope && <span className="caption" style={{ fontWeight: line.scope === 'Server' ? 700 : undefined }}>{accessDuration(line.scope)}</span>}
+            </label>)}
+          </li>)}
+          {!operation && access.filter(r => !groups.some(g => g.lines.some(l => l.request === r))).map(r => <li key={r}>
+            <label style={{ whiteSpace: 'pre-wrap' }}>{onSelect && <input type="checkbox" checked={selected?.includes(r) ?? false} onChange={e => onSelect(r, e.target.checked)} />}{helperScopeLabel(r)}</label>
           </li>)}
           {requests.map((r) => (
             <li key={r.raw}>
@@ -243,7 +251,8 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
     <>
       <div className="chat-scroll" ref={scroll}>
         <div className="chat-column" ref={column}>
-          {chat.items.length === 0 && (
+          {chat.loading && <div className="caption secondary"><Spinner small /> {L('会話を読み込んでいます…')}</div>}
+          {chat.items.length === 0 && !chat.loading && (
             <div className="chat-intro">
               <div className="callout">{guide.connected ? L('ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。') : L('Workflow の相談・生成・編集を依頼できます。')}</div>
               <div className="caption secondary">{L('Card を右クリックして参照に追加、$ で Skill を選べます。')}</div>
@@ -270,8 +279,9 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
             ? <Button small kind="prominent" onClick={() => window.open(USAGE_URL, '_blank', 'noopener,noreferrer')}>Manage usage</Button>
             : chat.contextFull ? <Button small kind="prominent" onClick={() => chat.newSession()}>{L('新しい会話')}</Button>
             : chat.failed && <Button small onClick={() => chat.retry()}>{L('再試行')}</Button>}
+          {(chat.loadError || !chat.ready) && !chat.loading && <Button small onClick={() => chat.retryLoad()}>{L('再読込')}</Button>}
           {chat.interrupted && !chat.busy && <Button small onClick={() => chat.resume()}>{L('再開')}</Button>}
-          {chat.stoppedAtLimit && !chat.busy && <Button small onClick={() => chat.continueWork()}>{L('続ける')}</Button>}
+          {chat.canContinue && !chat.busy && <Button small onClick={() => chat.continueWork()}>{L('続ける')}</Button>}
         </div>
       )}
       <ChatChoices chat={chat} session={session} tab={tab} />
@@ -282,6 +292,8 @@ function Conversation({ session, chat, tab }: { session: ProjectSession; chat: C
 
 /** What the agent is doing right now (no internal reasoning, only the step). */
 function currentStep(items: ChatItem[]): string {
+  const step = [...items].reverse().find(x => x.presentation?.kind === 'step' && x.presentation.state === 'running')?.presentation
+  if (step) return language() === 'en' ? step.summaryEn : step.summaryJa
   const t = [...items].reverse().find((x) => x.role === 'tool' && x.tool?.ok === undefined)
   if (t?.tool) return toolStep(t.tool.name, t.text).running
   if (items[items.length - 1]?.role === 'assistant') return L('回答を書いています…')
@@ -295,8 +307,8 @@ function Row({ item, streaming, session, tab }: { item: ChatItem; streaming: boo
       return <div className="chat-user-row" style={{ opacity: op }}><div className="chat-user selectable">{item.text}</div></div>
     case 'tool':
       return <div style={{ opacity: op }}><ToolRow item={item} session={session} tab={tab} /></div>
-    case 'helper':
-      return <HelperRow item={item} color={birdColor(app.chat(session).team.tint(item.helper ?? ''), prefs.dark)} />
+    case 'step': case 'helper':
+      return item.presentation ? <StructuredRow row={item.presentation} session={session} tab={tab} /> : null
     case 'note':
       return <div className="chat-note caption secondary"><Icon name="rectangle.compress.vertical" size={11} />{item.text}</div>
     default:
@@ -517,7 +529,7 @@ function Composer({ session, chat, tab }: { session: ProjectSession; chat: ChatC
           <span className="caption2 tertiary" title={L('直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 {0}、キャッシュに書いた量 {1}', chat.usage.cacheReadTokens ?? 0, chat.usage.cacheWriteTokens ?? 0)}>{Math.floor(chat.usage.inputTokens / 1000)}k</span>
           {chat.busy
             ? <button type="button" className="send-button" onClick={() => chat.cancel()} title={L('回答を停止（Workflow の実行は止まりません）')} aria-label={L('回答を停止')}><Icon name="stop.circle.fill" size={22} /></button>
-            : <button type="button" className="send-button" disabled={!input.trim() || attaching || !session.connected || !chat.available} onClick={send}
+            : <button type="button" className="send-button" disabled={!chat.ready || !input.trim() || attaching || !session.connected || !chat.available} onClick={send}
                 title={prefs.sendKey === 'returnKey' ? L('送信（Return）') : L('送信（{0}Return）', cmd)} aria-label={L('送信')}><Icon name="arrow.up.circle.fill" size={22} /></button>}
         </div>
       </div>
@@ -604,22 +616,31 @@ export function toolStep(name: string, args: string, display = (k: CardKey) => k
   return { card, running: running + t + '…', done: done + t }
 }
 
-/** A helper at work (delegate): its name and what it does now, or how its
- *  work ended. */
-function HelperRow({ item, color }: { item: ChatItem; color: string }) {
-  const step = item.tool ? toolStep(item.tool.name, item.text) : undefined
-  const ok = item.tool?.ok
-  const text = item.ended ?? (step ? (ok === undefined ? step.running : step.done + (ok ? '' : L('：失敗'))) : L('考えています…'))
-  const row = (
-    <div className="helper-row">
-      <span className="helper-dot" style={{ background: color }} />
-      <span className="caption" style={{ fontWeight: 600, color }}>{item.helper}</span>
-      <span className="caption ellipsis" style={{ color: ok === false && !item.ended ? 'var(--red)' : 'var(--secondary)' }}>{text}</span>
-      <span className="spacer" />
-      {!item.ended && <Spinner small />}
-    </div>
-  )
-  return item.trace ? <details><summary>{row}</summary><pre className="selectable wrap-pre">{item.trace}</pre></details> : row
+function accessOperation(name: string): string {
+  return name === 'Read' ? L('内容の読み取り') : name === 'Write' ? L('内容の変更') : name === 'Run' ? L('Card の実行')
+    : name === 'CardPermissions' ? L('Card の権限の変更') : name === 'Shell' ? L('シェルコマンドの実行') : name
+}
+function accessDuration(name: string): string { return name === 'Server' ? L('取り消すまで') : L('この会話の間') }
+function taskState(state: string): string {
+  return state === 'queued' ? L('待機中') : state === 'running' ? L('作業中') : state === 'completed' ? L('終わりました') : state === 'interrupted' ? L('止めました') : L('失敗')
+}
+function StructuredRow({ row, session, tab }: { row: ChatRow; session: ProjectSession; tab?: WorkflowTab }) {
+  const en = language() === 'en'
+  const grouped = row.kind === 'step' || row.kind === 'helper'
+  const tool: ChatItem = { presentation: row, id: row.id, role: 'tool', text: row.arguments + (row.result ? '\n→ ' + row.result : ''), tool: { name: row.name, ok: row.state === 'running' ? undefined : row.state === 'completed' } }
+  return <div className="chat-structure" style={{ opacity: row.archived ? .6 : 1 }}>
+    {grouped ? <>
+      <details><summary className="caption" style={{ color: row.failed ? 'var(--red)' : undefined }}>
+        {row.kind === 'step' ? (en ? row.summaryEn : row.summaryJa) : `${row.name} · ${taskState(row.state)}${en ? row.summaryEn : row.summaryJa}`}
+      </summary><div style={{ paddingLeft: 12 }}>
+        {row.children.map(child => <StructuredRow key={child.id} row={child} session={session} tab={tab} />)}
+        {row.instruction && <details><summary className="caption">{L('指示の全文')}</summary><div className="selectable wrap-pre caption">{row.instruction}</div></details>}
+      </div></details>
+      {row.kind === 'helper' && <><div className="caption secondary">{en ? row.scopeEn : row.scopeJa}</div>{row.text && <ChatMarkdown text={row.text} />}</>}
+      {row.children.filter(c => c.kind === 'tool' && c.state === 'failed').map(c => <div key={c.id} className="caption selectable wrap-pre" style={{ color: 'var(--red)' }}>{c.name}: {c.result}</div>)}
+    </> : row.kind === 'tool' ? <><ToolRow item={tool} session={session} tab={tab} />{row.state === 'recovered' && <div className="caption secondary">{L('再試行で成功')}</div>}</> : <ChatMarkdown text={row.text} />}
+    {!!row.links.length && <Markdown text={row.links.map(l => `[${l.title}](${l.url})`).join(' · ')} renderLink={evidenceLink} />}
+  </div>
 }
 
 /** A search's details with its sources as links (only http and https). */
@@ -632,6 +653,7 @@ function Linked({ text }: { text: string }) {
 function ToolRow({ item, session, tab }: { item: ChatItem; session: ProjectSession; tab?: WorkflowTab }) {
   const [open, setOpen] = useState(false)
   const step = toolStep(item.tool?.name ?? '', item.text, k => session.displayPath(path(k)))
+  const title = item.presentation && (language() === 'en' ? item.presentation.summaryEn : item.presentation.summaryJa)
   const ok = item.tool?.ok
   return (
     <div className="chat-tool">
@@ -640,7 +662,7 @@ function ToolRow({ item, session, tab }: { item: ChatItem; session: ProjectSessi
           {ok === undefined ? <Spinner small /> : <Icon name={ok ? 'checkmark.circle' : 'xmark.circle.fill'} style={{ color: ok ? 'var(--secondary)' : 'var(--red)' }} />}
         </span>
         <span className="caption ellipsis" style={{ color: ok === false ? 'var(--red)' : 'var(--secondary)' }}>
-          {ok === undefined ? step.running : step.done + (ok ? '' : L('：失敗'))}
+          {title || (ok === undefined ? step.running : step.done + (ok ? '' : L('：失敗')))}
         </span>
         {step.card && tab && session.instance(step.card) && (
           <button type="button" className="link caption" onClick={() => {
