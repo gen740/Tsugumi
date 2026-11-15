@@ -1796,6 +1796,11 @@ void Scheduler::recover_interrupted() {
         rec.summary = std::move(*summary);
         if (rec.summary.environment_id.empty()) rec.summary.environment_id = st.text(2);
         rec.summary.state = CardState::failed;
+        rec.summary.ended_at = r->status.ended_at;
+        if (rec.summary.started_at)
+          rec.summary.duration_ms = static_cast<uint64_t>(
+              std::max<int64_t>(0, *rec.summary.ended_at - *rec.summary.started_at));
+        stage_close(rec.summary, StageOutcome::failed);
         auto remote = db.prepare(
             "SELECT job_id FROM remote_jobs WHERE run_id=? AND card=? AND "
             "invocation=?");

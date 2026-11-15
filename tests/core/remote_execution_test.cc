@@ -67,6 +67,9 @@ TEST(RemoteExecutionLifetime,
         invocation.card = {"work"};
         invocation.invocation = 1;
         invocation.state = CardState::running;
+        invocation.started_at = now_ms() - 1000;
+        invocation.stages.push_back(
+            {Phase::execute, StageOutcome::running, *invocation.started_at, std::nullopt});
         if (id != local_run) {
           invocation.execution_service = "unreachable-worker";
           invocation.execution_job_id = crypto::sha256_hex(id);
@@ -93,6 +96,14 @@ TEST(RemoteExecutionLifetime,
       const auto record = History::invocation(db, id, {"work"}, 1);
       ASSERT_TRUE(record);
       EXPECT_EQ(record->summary.state, CardState::failed);
+      ASSERT_TRUE(record->summary.started_at);
+      ASSERT_TRUE(record->summary.ended_at);
+      EXPECT_EQ(record->summary.ended_at, run->status.ended_at);
+      EXPECT_EQ(record->summary.duration_ms,
+                *record->summary.ended_at - *record->summary.started_at);
+      ASSERT_EQ(record->summary.stages.size(), 1);
+      EXPECT_EQ(record->summary.stages.back().outcome, StageOutcome::failed);
+      EXPECT_TRUE(record->summary.stages.back().end);
       ASSERT_TRUE(record->summary.failure);
       EXPECT_EQ(record->summary.failure->to_bytes(),
                 run->status.failure->to_bytes());

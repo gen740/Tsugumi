@@ -465,6 +465,8 @@ def test_core_restart_interrupts_the_external_job(running_job, outage, completed
     client = daemon.connect()
     assert client.call("RunStatusRequest", runId=run_id).state == RunState.failed
     interrupted = wait_for_state(client, run_id, RemoteExecutionState.interrupted, CardState.failed)
+    assert interrupted.endedAt is not None
+    assert interrupted.durationMs == max(0, interrupted.endedAt - interrupted.startedAt)
     assert text(interrupted.executionJobId) == job_id
     assert interrupted.failure.kind == FailureKind.interrupted
     assert text(interrupted.failure.diagnostic) == "tsugumid restarted while the run was active"
@@ -518,6 +520,8 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
     daemon.restart()
     client = daemon.connect()
     interrupted = wait_for_state(client, run_id, RemoteExecutionState.interrupted, CardState.failed)
+    assert interrupted.endedAt is not None
+    assert interrupted.durationMs == max(0, interrupted.endedAt - interrupted.startedAt)
     assert text(interrupted.executionJobId) == job_id
     assert interrupted.failure.kind == FailureKind.interrupted
     assert gateway.download_count == 0 and gateway.submit_count == 1
