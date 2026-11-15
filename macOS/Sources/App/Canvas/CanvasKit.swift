@@ -907,11 +907,11 @@ struct CanvasDots: View {
 /// The content's closures are those of when the key last changed, so the key
 /// names everything they depend on that is not read when they are called.
 /// Without a key it is drawn again every time.
-struct Settled<Key: Equatable, Content: View>: View, Equatable {
+struct Settled<Key: Equatable, Content: View>: View, @MainActor Equatable {
   let key: Key?
   @ViewBuilder let content: () -> Content
 
-  nonisolated static func == (a: Self, b: Self) -> Bool { a.key != nil && a.key == b.key }
+  static func == (a: Self, b: Self) -> Bool { a.key != nil && a.key == b.key }
 
   var body: some View { content() }
 }

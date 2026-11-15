@@ -1,9 +1,15 @@
 #include "shell.hh"
 
 #include <gtest/gtest.h>
+#include <fcntl.h>
 #include <sys/wait.h>
+#include <unistd.h>
+
+#include <cerrno>
+#include <cstring>
 
 #include "util/fs.hh"
+#include "util/process.hh"
 
 namespace tsugumi::shell {
 namespace {
@@ -40,6 +46,24 @@ TEST_F(ShellTest, UnrestrictedRequestCanWriteAndReadControl) {
   EXPECT_EQ(WEXITSTATUS(output.status), 0);
   EXPECT_EQ(output.streams[0], "secret");
   EXPECT_EQ(fs::read_file(root / "note"), "changed");
+}
+TEST_F(ShellTest, ChildSetupFailuresReportTheOperationPathAndErrno) {
+  const auto diagnostic = root / "setup-error";
+  const auto missing = (root / "missing").string();
+  for (const bool missing_cwd : {true, false}) {
+    const int fd = ::open(diagnostic.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    ASSERT_GE(fd, 0);
+    proc::Spec spec;
+    spec.argv = {missing};
+    spec.cwd = missing_cwd ? missing : root.string();
+    spec.stderr_fd = fd;
+    EXPECT_THROW(proc::spawn(spec), std::runtime_error);
+    ::close(fd);
+    const auto text = fs::read_file_or_throw(diagnostic);
+    EXPECT_NE(text.find(missing_cwd ? "chdir " : "execve "), std::string::npos);
+    EXPECT_NE(text.find(missing), std::string::npos);
+    EXPECT_NE(text.find(std::strerror(ENOENT)), std::string::npos);
+  }
 }
 TEST_F(ShellTest, ReadOnlyIsIndependentOfCredentialHiding) {
   const auto output = Run("cat control/token; cat '" + shared_note.string() +
