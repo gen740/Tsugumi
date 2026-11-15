@@ -245,7 +245,7 @@ auto RemoteJobClient::catalog() const -> std::vector<RemoteTarget> {
     if (!t->capabilities) throw BrokerDisconnected("missing target capabilities");
     const auto& c = *t->capabilities;
     targets.push_back({t->id, c.native_system, c.systems, c.server_id,
-                      t->available && c.worker_contract == workerd::kContract, c.resource_limits, c.max_jobs});
+                      t->available, c.resource_limits, c.max_jobs});
   }
   return targets;
 }

@@ -27,7 +27,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(tsugumi-remote-worker src/remote_main.cc src/invocation.cc)
   target_compile_definitions(tsugumi-remote-worker PRIVATE _GNU_SOURCE)
   target_include_directories(tsugumi-remote-worker PRIVATE ${PROJECT_SOURCE_DIR}/core/src)
-  target_link_libraries(tsugumi-remote-worker PRIVATE tsugumi_core tsugumi_workerd_support tsugumi_remote_store)
+  target_link_libraries(tsugumi-remote-worker PRIVATE tsugumi_core tsugumi_nix_eval tsugumi_workerd_support tsugumi_remote_store)
   install(TARGETS tsugumi-remote-worker RUNTIME DESTINATION bin)
 endif()
 

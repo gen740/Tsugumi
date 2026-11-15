@@ -28,6 +28,7 @@ find_package(CURL REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SQLITE3 REQUIRED IMPORTED_TARGET sqlite3)
 pkg_check_modules(LIBGIT2 REQUIRED IMPORTED_TARGET libgit2)
+pkg_check_modules(NIX REQUIRED IMPORTED_TARGET nix-expr nix-store nix-fetchers nix-flake nix-util)
 add_library(hosq INTERFACE)
 target_include_directories(hosq SYSTEM INTERFACE ${HOSQ_INCLUDE_DIR})
 
@@ -52,11 +53,22 @@ set_target_properties(tsugumi_peer_tls PROPERTIES
   IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_peer_tls.a"
   INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include/tsugumi-core")
 target_link_libraries(tsugumi_peer_tls INTERFACE OpenSSL::SSL tsugumi_workerd_support)
+add_library(tsugumi_document STATIC IMPORTED)
+set_target_properties(tsugumi_document PROPERTIES
+  IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_document.a"
+  INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include/tsugumi-core")
+target_link_libraries(tsugumi_document INTERFACE tsugumi_json flatbuffers::flatbuffers
+  Threads::Threads tsugumi_workerd_support)
+add_library(tsugumi_nix_eval STATIC IMPORTED)
+set_target_properties(tsugumi_nix_eval PROPERTIES
+  IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_nix_eval.a")
+target_link_libraries(tsugumi_nix_eval INTERFACE "$<LINK_ONLY:PkgConfig::NIX>" "$<LINK_ONLY:Threads::Threads>")
 add_library(tsugumi_core STATIC IMPORTED)
 set_target_properties(tsugumi_core PROPERTIES
   IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_core.a"
   INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include")
-target_link_libraries(tsugumi_core INTERFACE tsugumi_workerd_support tsugumi_json flatbuffers::flatbuffers
+# As in-tree, users choose either tsugumi_nix_eval or the evaluator double.
+target_link_libraries(tsugumi_core INTERFACE tsugumi_document tsugumi_workerd_support tsugumi_json flatbuffers::flatbuffers
   PkgConfig::SQLITE3 PkgConfig::LIBGIT2 Threads::Threads)
 if(NOT APPLE)
   pkg_check_modules(CRYPTO REQUIRED IMPORTED_TARGET libcrypto)
@@ -74,7 +86,7 @@ set_target_properties(tsugumi_agent_core PROPERTIES
   IMPORTED_LOCATION "${TSUGUMI_CORE_TEST_SUPPORT}/lib/libtsugumi_agent_core.a"
   INTERFACE_INCLUDE_DIRECTORIES "${TSUGUMI_CORE_TEST_SUPPORT}/include/tsugumi-core;${TSUGUMI_CORE_TEST_SUPPORT}/include")
 target_link_libraries(tsugumi_agent_core INTERFACE tsugumi_json flatbuffers::flatbuffers
-  Threads::Threads tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls PkgConfig::SQLITE3)
+  Threads::Threads tsugumi_document tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls PkgConfig::SQLITE3)
 if(APPLE)
   target_link_libraries(tsugumi_agent_core INTERFACE "-framework CoreFoundation")
 else()

@@ -1,5 +1,5 @@
 #include "graph.hh"
-#include "collect_value.hh"
+#include "collect_type.hh"
 #include "nix_refs.hh"
 
 #include <map>

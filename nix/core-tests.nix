@@ -57,6 +57,11 @@ clangStdenv.mkDerivation {
     curl
     gtest
     openssl
+    nix.libs.nix-expr
+    nix.libs.nix-store
+    nix.libs.nix-fetchers
+    nix.libs.nix-flake
+    nix.libs.nix-util
   ]
   ++ lib.optionals clangStdenv.hostPlatform.isLinux [ icu ];
   cmakeFlags = [

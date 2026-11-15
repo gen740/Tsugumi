@@ -11,7 +11,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 
 Layout proposals, layout schema validation and minimap placement belong to the host service ([protocol/host.fbs](../protocol/host.fbs)). Saving clients remove deleted Card references. The project core carries layout objects and opaque view JSON without interpreting presentation fields.
 
-There are 45 requests.
+There are 46 requests.
 
 ## Connection
 
@@ -36,6 +36,7 @@ There are 45 requests.
 | [`ProjectOpen`](#projectopen) | OpenResult | Creates (or replaces) the connection's subscription. |
 | [`ProjectClose`](#projectclose) | Ack | Ends only the given subscription. Unknown ids are acknowledged. |
 | [`ProjectInspect`](#projectinspect) | ProjectSnapshot | No subscription, build or reload. |
+| [`ProjectHostRequirements`](#projecthostrequirements) | ProjectHostRequirements | Reads the accepted document, never the disk. |
 | [`CardId`](#cardid) | CardIdResult | Reserves a permanent identifier for a new Card without changing the document revision. Supply a caller-derived stem (1..123 ASCII identifier characters); use the returned id in the canvas, paths and wires. Each call reserves a fresh id; save the definition and canvas with project_save. |
 | [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. |
 | [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. Permission comparison is selected explicitly, independently of origin. |
@@ -59,6 +60,10 @@ There are 45 requests.
 | `subscription_id` | `string` | yes |  |
 
 ### ProjectInspect
+
+No fields.
+
+### ProjectHostRequirements
 
 No fields.
 

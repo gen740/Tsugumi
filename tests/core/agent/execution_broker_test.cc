@@ -110,7 +110,7 @@ class WorkerPeer {
             c.native_system = "x86_64-linux";
             c.systems = {c.native_system};
             c.max_jobs = 4;
-            c.resource_limits = true;
+            c.resource_limits = resource_limits;
             c.worker_contract = contract;
             respond(W::reply(std::move(c)));
           } else if (auto* put = q->body.AsPutBlobRequest()) {
@@ -152,6 +152,11 @@ class WorkerPeer {
     std::lock_guard lock(mutex_);
     server = std::move(value);
   }
+  auto SetResourceLimits(bool value) -> void {
+    std::lock_guard lock(mutex_);
+    resource_limits = value;
+  }
+  bool resource_limits = true;
   std::string server = std::string(64, 'b');
   uint32_t contract = W::kContract;
 
@@ -180,11 +185,11 @@ class BrokerFixture : public AgentFixture {
                           ->str());
   }
   auto Put(std::string key = {}, std::string id = "worker",
-           std::string endpoint = {}, bool verify = true) -> Reply {
+           std::string endpoint = {}, bool verify = true, std::string name = "Test worker") -> Reply {
     return Call(
         *host, H::RequestPayload::ExecutionServicePutRequest, [&](Builder& b) {
           return H::CreateExecutionServicePutRequest(
-                     b, b.CreateString(id), b.CreateString("Test worker"),
+                     b, b.CreateString(id), b.CreateString(name),
                      b.CreateString(
                          endpoint.empty()
                              ? "unix:" +
@@ -421,31 +426,66 @@ TEST_F(BrokerFixture, UnlistedHostKeyIsRejectedDuringTheWorkerHandshake) {
   EXPECT_FALSE(Put().Code().empty());
   EXPECT_EQ(worker->Requests().size(), before);
 }
-TEST_F(
-    BrokerFixture,
-    ReplacedAndRemovedRegistrationsInvalidateExistingCapabilitiesBeforeDialing) {
+TEST_F(BrokerFixture, RenameVerificationAndUnrelatedEditsPreserveProjectAuthorization) {
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");
+  const auto background = Authorize("background-project");
+  ASSERT_TRUE(Put({}, "worker", {}, false, "Renamed").Code().empty());
   ASSERT_TRUE(Put().Code().empty());
+  ASSERT_TRUE(Put({}, "other").Code().empty());
+  auto removed = Call(*host, H::RequestPayload::ExecutionServiceRemoveRequest, [](Builder& b) {
+    return H::CreateExecutionServiceRemoveRequest(b, b.CreateString("other")).Union();
+  });
+  ASSERT_TRUE(removed.Code().empty());
+  Restart();
+  for (const auto& grant : {capability, background}) {
+    auto response = Broker(R::ProbeRequestT{}, grant);
+    ASSERT_NE(response->payload.AsReply()->body.AsCapabilities(), nullptr);
+  }
+  EXPECT_EQ(Authorize("project"), capability);
+}
+TEST_F(BrokerFixture, ChangedRegistrationInvalidatesOnlyItsServiceBeforeDialing) {
+  ASSERT_TRUE(Put().Code().empty());
+  ASSERT_TRUE(Put({}, "other").Code().empty());
+  const auto capability = Authorize("project");
+  ASSERT_TRUE(Put({}, "other", "unix:/tmp/changed-worker.sock", false).Code().empty());
+  auto response = Broker(R::ProbeRequestT{}, capability);
+  ASSERT_NE(response->payload.AsReply()->body.AsCapabilities(), nullptr);
+  ASSERT_TRUE(Put({}, "worker", "unix:/tmp/changed-worker.sock", false).Code().empty());
   auto count = worker->Requests().size();
   auto replaced = Broker(R::ProbeRequestT{}, capability);
   ASSERT_NE(replaced->payload.AsReply()->body.AsFailure(), nullptr);
-  EXPECT_EQ(replaced->payload.AsReply()->body.AsFailure()->code,
-            R::ErrorCode::RegistrationChanged);
-  EXPECT_EQ(worker->Requests().size(), count);
-  const auto fresh = Authorize("project");
-  const auto removed = Call(
-      *host, H::RequestPayload::ExecutionServiceRemoveRequest, [](Builder& b) {
-        return H::CreateExecutionServiceRemoveRequest(b,
-                                                      b.CreateString("worker"))
-            .Union();
-      });
-  ASSERT_TRUE(removed.Code().empty());
-  auto refused = Broker(R::ProbeRequestT{}, fresh);
-  EXPECT_EQ(refused->payload.AsReply()->body.AsFailure()->code,
-            R::ErrorCode::RegistrationChanged);
+  EXPECT_EQ(replaced->payload.AsReply()->body.AsFailure()->code, R::ErrorCode::RegistrationChanged);
   EXPECT_EQ(worker->Requests().size(), count);
 }
+TEST_F(BrokerFixture, RemovedAndReaddedRegistrationDoesNotReviveOldGrant) {
+  ASSERT_TRUE(Put().Code().empty());
+  const auto capability = Authorize("project");
+  auto removed = Call(*host, H::RequestPayload::ExecutionServiceRemoveRequest, [](Builder& b) {
+    return H::CreateExecutionServiceRemoveRequest(b, b.CreateString("worker")).Union();
+  });
+  ASSERT_TRUE(removed.Code().empty());
+  auto response = Broker(R::ProbeRequestT{}, capability);
+  EXPECT_EQ(response->payload.AsReply()->body.AsFailure()->code, R::ErrorCode::RegistrationChanged);
+  ASSERT_TRUE(Put().Code().empty());
+  response = Broker(R::ProbeRequestT{}, capability);
+  EXPECT_EQ(response->payload.AsReply()->body.AsFailure()->code, R::ErrorCode::RegistrationChanged);
+}
+TEST_F(BrokerFixture, ProbeRefreshesCapabilitiesWithoutReregistrationOrReauthorization) {
+  worker->SetResourceLimits(false);
+  ASSERT_TRUE(Put().Code().empty());
+  const auto capability = Authorize("project");
+  worker->SetResourceLimits(true);
+  auto response = Broker(R::ProbeRequestT{}, capability);
+  ASSERT_NE(response->payload.AsReply()->body.AsCapabilities(), nullptr);
+  EXPECT_TRUE(response->payload.AsReply()->body.AsCapabilities()->resource_limits);
+  auto listed = List();
+  EXPECT_TRUE(listed.HostValue()->value_as_ExecutionServices()->services()->Get(0)->capabilities()->resource_limits());
+  worker->SetResourceLimits(false);
+  response = Broker(R::ProbeRequestT{}, capability);
+  EXPECT_FALSE(response->payload.AsReply()->body.AsCapabilities()->resource_limits);
+}
+
 }  // namespace
 }  // namespace tsugumi::test
 

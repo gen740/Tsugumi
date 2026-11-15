@@ -172,41 +172,66 @@ class NativeProcess final : public EnvironmentProcess {
 };
 }  // namespace
 
-auto VerifyEnvironmentEndpoint(const Tsugumi::Host::EnvironmentStateT& ready)
-    -> bool {
+namespace {
+auto ReadProjectRequirements(const Tsugumi::Host::EnvironmentStateT& ready)
+    -> Tsugumi::RPC::ProjectHostRequirementsT {
   namespace R = Tsugumi::RPC;
+  client::Options options;
+  options.endpoint = ready.unix_socket.empty() ? ready.endpoint
+                                               : "unix:" + ready.unix_socket;
+  options.connect_timeout = 500ms;
+  client::Connection connection(options);
+  if (connection.Start().get()) throw std::runtime_error("Cannot connect to project core");
+  auto response =
+      connection
+          .Call(
+              [&](uint64_t id) {
+                flatbuffers::FlatBufferBuilder b;
+                auto hello = R::CreateSessionHelloRequest(
+                    b, 1, b.CreateString(crypto::uuid4()),
+                    b.CreateString(ready.project_id),
+                    b.CreateString(ready.token));
+                auto request = R::CreateRequest(
+                    b, R::RequestPayload::SessionHelloRequest, hello.Union());
+                R::FinishMessageBuffer(
+                    b, R::CreateMessage(b, id, R::Payload::Request,
+                                        request.Union()));
+                return client::Bytes(b.GetBufferPointer(),
+                                     b.GetBufferPointer() + b.GetSize());
+              },
+              500ms)
+          .get();
+  if (response.error) throw std::runtime_error("Project handshake failed");
+  const auto* reply =
+      R::GetMessage(response.bytes.data())->payload_as_Reply();
+  const auto* hello = reply ? reply->value_as_HelloResult() : nullptr;
+  if (!hello || hello->project_id()->str() != ready.project_id ||
+      hello->server_instance_id()->str() != ready.server_instance_id)
+    throw std::runtime_error("Project identity changed");
+  auto result = connection.Call([](uint64_t id) {
+    flatbuffers::FlatBufferBuilder b;
+    auto value = R::CreateProjectHostRequirementsRequest(b);
+    auto request = R::CreateRequest(b, R::RequestPayload::ProjectHostRequirementsRequest, value.Union());
+    R::FinishMessageBuffer(b, R::CreateMessage(b, id, R::Payload::Request, request.Union()));
+    return client::Bytes(b.GetBufferPointer(), b.GetBufferPointer() + b.GetSize());
+  }, 500ms).get();
+  if (result.error) throw std::runtime_error("Cannot read project host requirements");
+  const auto* value = R::GetMessage(result.bytes.data())->payload_as_Reply();
+  const auto* requirements = value ? value->value_as_ProjectHostRequirements() : nullptr;
+  if (!requirements) throw std::runtime_error("Missing project host requirements");
+  Tsugumi::RPC::ProjectHostRequirementsT out;
+  requirements->UnPackTo(&out);
+  return out;
+}
+}  // namespace
+auto EnvironmentProcess::Requirements(const Tsugumi::Host::EnvironmentStateT& ready)
+    -> Tsugumi::RPC::ProjectHostRequirementsT {
+  return ReadProjectRequirements(ready);
+}
+auto VerifyEnvironmentEndpoint(const Tsugumi::Host::EnvironmentStateT& ready) -> bool {
   try {
-    client::Options options;
-    options.endpoint = ready.unix_socket.empty() ? ready.endpoint
-                                                 : "unix:" + ready.unix_socket;
-    options.connect_timeout = 500ms;
-    client::Connection connection(options);
-    if (connection.Start().get()) return false;
-    auto response =
-        connection
-            .Call(
-                [&](uint64_t id) {
-                  flatbuffers::FlatBufferBuilder b;
-                  auto hello = R::CreateSessionHelloRequest(
-                      b, 1, b.CreateString(crypto::uuid4()),
-                      b.CreateString(ready.project_id),
-                      b.CreateString(ready.token));
-                  auto request = R::CreateRequest(
-                      b, R::RequestPayload::SessionHelloRequest, hello.Union());
-                  R::FinishMessageBuffer(
-                      b, R::CreateMessage(b, id, R::Payload::Request,
-                                          request.Union()));
-                  return client::Bytes(b.GetBufferPointer(),
-                                       b.GetBufferPointer() + b.GetSize());
-                },
-                500ms)
-            .get();
-    if (response.error) return false;
-    const auto* reply =
-        R::GetMessage(response.bytes.data())->payload_as_Reply();
-    const auto* hello = reply ? reply->value_as_HelloResult() : nullptr;
-    return hello && hello->project_id()->str() == ready.project_id &&
-           hello->server_instance_id()->str() == ready.server_instance_id;
+    ReadProjectRequirements(ready);
+    return true;
   } catch (...) {
     return false;
   }

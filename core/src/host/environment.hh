@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "tsugumi/protocol/host_generated.h"
+#include "tsugumi/protocol/tsugumi_generated.h"
 
 namespace tsugumi::host {
 
@@ -34,6 +35,7 @@ struct EnvironmentMount {
   std::string name;
   std::string path;
   bool read_only = false;
+  auto operator==(const EnvironmentMount&) const -> bool = default;
 };
 struct EnvironmentLaunch {
   std::string key, project, control;
@@ -60,6 +62,8 @@ class EnvironmentProcess {
   }
   virtual auto GuardStart(const std::string&) -> void {}
   virtual auto Shares(const EnvironmentLaunch&) -> void {}
+  virtual auto Requirements(const Tsugumi::Host::EnvironmentStateT& ready)
+      -> Tsugumi::RPC::ProjectHostRequirementsT;
   virtual auto Runtime(const Tsugumi::Host::HostRuntimeRequestT&)
       -> Tsugumi::Host::HostRuntimeT;
   virtual auto Terminal(const Tsugumi::Host::HostTerminalRequestT&)
