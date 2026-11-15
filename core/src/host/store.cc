@@ -27,6 +27,10 @@ HostStore::HostStore(const std::filesystem::path& directory)
       "NOT NULL, "
       "snapshot TEXT NOT NULL, files TEXT NOT NULL, PRIMARY KEY(project,rev))");
   db.exec(
+      "CREATE TABLE IF NOT EXISTS ui_saves(project TEXT NOT NULL, operation "
+      "TEXT NOT NULL, digest TEXT NOT NULL, arguments TEXT NOT NULL, "
+      "response BLOB NOT NULL, PRIMARY KEY(project,operation))");
+  db.exec(
       "CREATE TABLE IF NOT EXISTS save_preparations(operation TEXT PRIMARY "
       "KEY, arguments TEXT NOT NULL, comments TEXT NOT NULL)");
   db.exec(

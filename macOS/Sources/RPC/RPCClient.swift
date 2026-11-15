@@ -20,7 +20,7 @@ public struct RPCFailure: Error, CustomStringConvertible, Sendable {
   public let currentRev: UInt64?
   public let retryAfterMs: UInt32?
 
-  init(_ f: Tsugumi_Data_FailureT) {
+  public init(_ f: Tsugumi_Data_FailureT) {
     kind = f.kind
     var a: [String: String] = [:]
     for kv in f.args { if let kv { a[kv.key] = kv.value } }

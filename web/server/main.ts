@@ -255,6 +255,7 @@ const routes: Record<string, Handler> = {
   'GET /api/runtime': () => hostRequest('HostRuntimeRequest'),
   'POST /api/runtime/reset': () => hostRequest('HostRuntimeRequest', { action: 'Reset' }),
   'GET /api/permission-kinds': () => hostRequest('PermissionKindsRequest', { language: language() }),
+  'POST /api/document/save': (b) => hostRequest('UISaveRequest', b),
   'POST /api/document/merge': (b) => hostRequest('DocumentMergeRequest', b),
   'POST /api/document/template': (b) => hostRequest('DocumentTemplateRequest', b),
   'POST /api/document/connect': (b) => hostRequest('DocumentConnectRequest', b),
