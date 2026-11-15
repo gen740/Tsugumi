@@ -23,10 +23,11 @@ import TsugumiRPC
     private var chats: [ChatController] = []
     private var port = 0
     private var servicePID: Int32?
+    private var helperPID: URL { directory.appendingPathComponent("vmhost.pid") }
 
     var session: ProjectSession { sessions[0] }
 
-    func start(slow: Double, options: [String]) async throws {
+    func start(slow: Double, options: [String], managed: Bool) async throws {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       let state = directory.appendingPathComponent("state")
       await environment.install(state: state, support: directory.appendingPathComponent("support"))
@@ -39,6 +40,7 @@ import TsugumiRPC
                         "--usage-scratch-dir", canonicalDirectory(directory).appendingPathComponent("scratch").path,
                         "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--demos-dir", SyncTests.root.appendingPathComponent("demos").path]
+      if managed { try useHelperDouble() }
       core.standardOutput = FileHandle.nullDevice
       core.standardError = FileHandle.nullDevice
       try core.run()
@@ -123,6 +125,26 @@ import TsugumiRPC
       return session
     }
 
+    /// The Mac app's host service starts projects through its VM helper, whose
+    /// `tsugumid` accepts the app's connection (a native client sends no
+    /// Origin); one started by the host service itself is for browsers and
+    /// refuses it. The helper double keeps that contract without booting a VM.
+    private func useHelperDouble() throws {
+      let environment = ProcessInfo.processInfo.environment
+      let python = try #require((environment["PATH"] ?? "").split(separator: ":")
+        .map { URL(fileURLWithPath: String($0)).appendingPathComponent("python3").path }
+        .first { FileManager.default.isExecutableFile(atPath: $0) }, "python3 runs the VM helper double")
+      let source = try String(contentsOf: SyncTests.root.appendingPathComponent("tests/python/vm_helper_double.py"), encoding: .utf8)
+      let helper = directory.appendingPathComponent("vmhost")
+      try Data("#!\(python)\n\(source)".utf8).write(to: helper)
+      try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+      let support = directory.appendingPathComponent("support")
+      core.arguments = (core.arguments ?? []) + ["--vmhost", helper.path, "--vm-support", support.path,
+                                                 "--vm-image", "/image", "--vm-source", "/source"]
+      core.environment = environment.merging(["HOST_LOG": directory.appendingPathComponent("vmhost.log").path,
+        "HOST_BUSY": directory.appendingPathComponent("vmhost.busy").path, "HOST_PID": helperPID.path]) { _, value in value }
+    }
+
     /// Transfer this test's project to the production host environment manager.
     func useManagedEnvironment() async throws {
       await session.close()
@@ -187,6 +209,13 @@ import TsugumiRPC
         process.waitUntilExit()
       }
       daemon?.stop()
+      // The helper double outlives the host service, as the VM helper does.
+      if let text = try? String(contentsOf: helperPID, encoding: .utf8), let pid = Int32(text), pid > 1 {
+        kill(pid, SIGTERM)
+        let deadline = Date().addingTimeInterval(5)
+        while kill(pid, 0) == 0, Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+        if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+      }
       try? await Task.sleep(for: .milliseconds(100))
       await environment.restore()
       if let project { try? FileManager.default.removeItem(at: project) }
@@ -194,11 +223,11 @@ import TsugumiRPC
     }
   }
 
-  func withFixture(slow: Double = 0.05, options: [String] = [],
+  func withFixture(slow: Double = 0.05, options: [String] = [], managed: Bool = false,
                    _ body: (Fixture) async throws -> Void) async throws {
     let fixture = Fixture()
     do {
-      try await fixture.start(slow: slow, options: options)
+      try await fixture.start(slow: slow, options: options, managed: managed)
       try await body(fixture)
       await fixture.stop()
     } catch {
@@ -281,7 +310,7 @@ import TsugumiRPC
   }
 
   @Test func multipleAttachedFoldersRemainDistinctAndReadableAfterSending() async throws {
-    try await withFixture { t in
+    try await withFixture(managed: true) { t in
       let first = t.directory.appendingPathComponent("first/data")
       let second = t.directory.appendingPathComponent("second/data")
       for (folder, text) in [(first, "first folder"), (second, "second folder")] {
