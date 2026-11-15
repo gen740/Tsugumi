@@ -8,6 +8,7 @@
 #include "host/failure.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
+#include "util/text.hh"
 
 namespace tsugumi::agent {
 namespace {
@@ -49,11 +50,83 @@ auto Value(const std::string& result) -> json::Members {
 }
 }  // namespace
 
+// Keep these file tool results below Runtime's 60,000-byte text cap, including
+// JSON escaping/base64. The durable receipt retains the full RPC page/output.
+auto FileResultForModel(std::string_view raw) -> std::string {
+  auto envelope = json::Object(raw);
+  const auto reply = json::Text(envelope, "reply");
+  if (reply != "ProjectShellResult" && reply != "FileContent")
+    return std::string(raw);
+  auto value = json::Object(json::Get(envelope, "value", "{}"));
+  auto bytes = [](const std::string& encoded) {
+    if (encoded.starts_with('"')) return json::String(encoded);
+    std::string decoded;
+    if (!crypto::base64_decode(json::Text(json::Object(encoded), "base64"), decoded))
+      throw std::runtime_error("Invalid file result bytes");
+    return decoded;
+  };
+  auto encode = [](const std::string& data) {
+    return text::valid_utf8(data) && data.find('\0') == std::string::npos
+        ? json::Quote(data)
+        : json::Encode(json::Members{{"base64", json::Quote(crypto::base64(data))}});
+  };
+  for (const auto* field : {"bytes", "stdout_bytes", "stderr_bytes"}) {
+    if (!value.contains(field)) continue;
+    const auto original = bytes(value.at(field));
+    size_t count = original.size();
+    std::string encoded = value.at(field);
+    const bool shell = reply == "ProjectShellResult";
+    size_t head = count, tail = 0;
+    while (encoded.size() > 18000) {
+      count /= 2;
+      head = shell ? count / 2 : count;
+      tail = shell ? count - head : 0;
+      // Keep text reads contiguous and do not split a UTF-8 codepoint.
+      if (!shell && text::valid_utf8(original))
+        while (head && (static_cast<unsigned char>(original[head]) & 0xc0) == 0x80) --head;
+      encoded = encode(original.substr(0, head) + original.substr(original.size() - tail));
+    }
+    value[field] = encoded;
+    if (head + tail == original.size()) continue;
+    if (shell) {
+      const auto prefix = std::string(field).substr(0, 6);
+      value[prefix + "_truncated"] = "true";
+      value[prefix + "_head_bytes"] = std::to_string(head);
+      value[prefix + "_tail_bytes"] = std::to_string(tail);
+    } else {
+      const auto offset = json::Get(value, "offset", "0");
+      const auto begin = json::UInt(json::String(offset, offset));
+      value["next_offset"] = json::Quote(std::to_string(begin + head));
+      value["eof"] = "false";
+    }
+  }
+  envelope["value"] = json::Encode(value);
+  if (json::Encode(envelope).size() > 58000 && reply == "ProjectShellResult") {
+    // A save can have thousands of changed files. Keep its outcome and totals
+    // here; project_inspect exposes the complete manifest without output loss.
+    const auto files = json::Array(json::Get(value, "changed_files", "[]"));
+    value["changed_files_count"] = std::to_string(files.size());
+    value["changed_files"] = "[]";
+    if (value.contains("save")) {
+      const auto save = json::Object(value.at("save"));
+      json::Members summary;
+      for (const auto* key : {"rev", "execution_rev", "op_id", "replayed"})
+        if (save.contains(key)) summary[key] = save.at(key);
+      value["save"] = json::Encode(summary);
+    }
+    value["hint"] = json::Quote("Use project_inspect for the complete changed-file manifest.");
+    envelope["value"] = json::Encode(value);
+  }
+  return json::Encode(envelope);
+}
+
 auto Tools::FileOperation(const std::string& conversation,
                           const std::string& project, const std::string& name,
                           json::Members& args, const std::string& operation,
                           HelperScope* boundary, std::stop_token stop,
                           std::vector<std::string>& resources) -> std::string {
+  auto check_cancelled = [&] { if (stop.stop_requested()) throw Cancelled(); };
+  check_cancelled();
   if (name == "project_copy" && !args.contains("base_rev"))
     throw Failure("invalid_request",
                   "project_copy requires base_rev from project_inspect");
@@ -97,7 +170,9 @@ auto Tools::FileOperation(const std::string& conversation,
     root = registry.Root(project);
   }
   const auto private_path =
-      ".tsugumi/agent-files/" + crypto::sha256_hex(conversation);
+      ".tsugumi/agent-files/" + crypto::sha256_hex(conversation) +
+      (boundary && !boundary->scratch_identity().empty()
+           ? "/helpers/" + crypto::sha256_hex(boundary->scratch_identity()) : "");
   const auto scratch_path = private_path + "/scratch";
   std::filesystem::create_directories(root / scratch_path);
   std::map<std::string, std::string> hashes;
@@ -121,8 +196,8 @@ auto Tools::FileOperation(const std::string& conversation,
   std::vector<std::string> transfers, removals, summaries;
   auto stage = [&](const std::string& path, const std::string& from,
                    const std::string& source_root = "",
-                   const std::string& fallback_root = "",
                    const std::string& expected_hash = "") {
+    check_cancelled();
     if (!SourcePath(path))
       throw Failure("permission_denied",
                     "Destination must be a Card source file: " + path);
@@ -134,7 +209,6 @@ auto Tools::FileOperation(const std::string& conversation,
     json::Members transfer{{"path", json::Quote(path)},
                            {"from", json::Quote(from)}};
     if (!source_root.empty()) transfer["source_root"] = json::Quote(source_root);
-    if (!fallback_root.empty()) transfer["fallback_root"] = json::Quote(fallback_root);
     if (!expected_hash.empty()) transfer["expected_hash"] = json::Quote(expected_hash);
     if (hashes.contains(path)) transfer["base_hash"] = json::Quote(hashes.at(path));
     transfers.push_back(json::Encode(transfer));
@@ -160,12 +234,13 @@ auto Tools::FileOperation(const std::string& conversation,
       check(to, true);
       if (source == "attached") {
         const auto folder = json::Text(args, "folder");
-        stage(to, from, folder, "/run/tsugumi/chat/" + crypto::sha256_hex(folder).substr(0, 16));
+        std::lock_guard lock(mutex);
+        stage(to, from, registry.AttachedRoot(project, folder));
       } else if (source == "card") {
         check(from, false);
         if (!hashes.contains(from))
           throw Failure("not_found", "Not a confirmed Card source: " + from);
-        stage(to, from, "", "", hashes.at(from));
+        stage(to, from, "", hashes.at(from));
       } else if (source == "scratch") {
         if (!fs::valid_relative_path(from)) throw Failure("invalid_path", "Invalid scratch path: " + from);
         stage(to, scratch_path + '/' + from);
@@ -211,7 +286,7 @@ auto Tools::FileOperation(const std::string& conversation,
       // of both the model context and a whole-file host buffer.
       crypto::Sha256 digest;
       fs::copy_beneath(root, path, work / path,
-                       [&](std::string_view chunk) { digest.update(chunk); });
+                       [&](std::string_view chunk) { check_cancelled(); digest.update(chunk); });
       if (digest.finish_hex() != hash)
         throw Failure("external_change",
                       "Reload external edits before running shell: " + path);
@@ -250,8 +325,7 @@ auto Tools::FileOperation(const std::string& conversation,
         const auto tag = crypto::sha256_hex(folder).substr(0, 16);
         std::filesystem::create_directories(work / "attached" / tag);
         mounts.push_back(json::Encode(json::Members{
-            {"path", json::Quote(folder)},
-            {"fallback_path", json::Quote("/run/tsugumi/chat/" + tag)},
+            {"path", json::Quote(registry.AttachedRoot(project, folder))},
             {"name", json::Quote("attached/" + tag)}}));
         folder_resources.push_back(folders.text(0));
         resources.push_back(folders.text(0));
@@ -317,6 +391,7 @@ auto Tools::FileOperation(const std::string& conversation,
         seen.insert(path);
         crypto::Sha256 digest;
         fs::stream_beneath(work, path, UINT64_MAX, [&](std::string_view chunk) {
+          check_cancelled();
           digest.update(chunk);
         });
         if (initial.contains(path) && initial.at(path) == digest.finish_hex())

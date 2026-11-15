@@ -17,7 +17,7 @@ public:
   // Missing files return an empty string; transport/revision errors throw.
   using Reader = std::function<std::string(const std::string &)>;
   explicit HelperScope(const json::Members &task,
-                       std::string authorization = {});
+                       std::string authorization = {}, std::string scratch_identity = {});
   auto authorization() const -> const std::string & { return authorization_; }
   auto RequireRun(const std::string &card) const -> void;
   auto Ran(const std::string &run_id, const std::string &card) -> void;
@@ -34,6 +34,7 @@ public:
                const Reader &read) -> void;
   auto CheckPlan(const std::string &result, bool executing) const -> void;
   auto scoped() const -> bool { return scoped_; }
+  auto scratch_identity() const -> const std::string& { return scratch_identity_; }
 
 private:
   auto Require(const std::string &card, bool writing) const -> void;
@@ -44,6 +45,7 @@ private:
   bool scoped_;
   std::set<std::string> reads_, writes_, runs_;
   std::string authorization_;
+  std::string scratch_identity_;
   std::map<std::string, std::string> runs_started_;
   std::map<std::string, std::string> created_;
 };

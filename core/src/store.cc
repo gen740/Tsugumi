@@ -798,10 +798,12 @@ Store::Staged Store::stage_reload(const std::string& op_id, const std::string& o
 }
 
 void Store::commit(Staged& st, const std::string& kind, const std::string& digest,
-                   const std::function<std::string(const Delta*)>& make_receipt) {
+                   const std::function<std::string(const Delta*)>& make_receipt,
+                   const std::function<void()>& check_cancelled) {
   if (halted_)
     throw Failed(FailureKind::persistence_failed,
                  "changes are halted after a persistence failure; restart to recover");
+  check_cancelled();
   auto base = current();
   if (!st.effective) {
     // Receipt only: no revision change, no notification. A reload may still
@@ -814,6 +816,7 @@ void Store::commit(Staged& st, const std::string& kind, const std::string& diges
     }
     st.doc = nullptr;
     Receipt r{st.delta.op_id, kind, digest, make_receipt(nullptr)};
+    check_cancelled();
     record_receipt(r);
     return;
   }
@@ -834,6 +837,7 @@ void Store::commit(Staged& st, const std::string& kind, const std::string& diges
   std::string receipt = make_receipt(&st.delta);
 
   auto intent = journal_payload("txn", doc->rev, doc->execution_rev, st.delta.op_id, kind, digest, receipt, st.ops);
+  check_cancelled();
   // Mark before appending: even a failed append/fsync may have persisted the
   // intent. Recovery owns these files until the commit marker is durable.
   for (const auto& op : st.ops) if (op.file) op.file->journaled = true;

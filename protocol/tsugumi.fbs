@@ -304,8 +304,6 @@ table SourceTransfer {
   base_hash:string;
   /// Absent means the project root. Otherwise an absolute host-selected root.
   source_root:string;
-  /// Mounted equivalent when source_root does not exist in the project VM.
-  fallback_root:string;
   /// Confirmed source hash, when copying from another Card.
   expected_hash:string;
 }
@@ -559,7 +557,7 @@ table RunCancelRequest { run_id:string (id: 0, required); }
 /// and run events, including runs with recorded values and retained artifacts.
 table RunStatusRequest { run_id:string (id: 0); }
 
-table ShellMount { path:string (required); name:string (required); fallback_path:string; project_relative:bool; writable:bool; }
+table ShellMount { path:string (required); name:string (required); project_relative:bool; writable:bool; }
 
 /// -> ProjectShellResult. Runs as the project user in a staged Card source view.
 /// Host selects readable/writable Cards; successful edits use a validated Agent save.

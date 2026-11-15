@@ -52,11 +52,12 @@ auto Set(const json::Members &task, const std::string &field)
 }
 } // namespace
 
-HelperScope::HelperScope(const json::Members &task, std::string authorization)
+HelperScope::HelperScope(const json::Members &task, std::string authorization, std::string scratch_identity)
     : scoped_(task.contains("read_cards") && task.contains("write_cards") &&
               task.contains("run_cards")),
       reads_(Set(task, "read_cards")), writes_(Set(task, "write_cards")),
-      runs_(Set(task, "run_cards")), authorization_(std::move(authorization)) {}
+      runs_(Set(task, "run_cards")), authorization_(std::move(authorization)),
+      scratch_identity_(std::move(scratch_identity)) {}
 
 auto HelperScope::Validate(const json::Members &task, bool allow_unscoped)
     -> void {

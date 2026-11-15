@@ -450,7 +450,7 @@ auto Service::dispatch_shell(RequestIn req) -> void {
   const auto key = std::make_pair(req.conn, req.request_id);
   auto cancelled = std::make_shared<std::atomic<bool>>(false);
   {
-    std::lock_guard lock(shell_mu_);
+    std::lock_guard lock(cancellations_mu_);
     if (shell_stopping_) {
       fail(req, FailureData::make(FailureKind::cancelled,
                                   "the project is stopping"));
@@ -473,11 +473,11 @@ auto Service::dispatch_shell(RequestIn req) -> void {
     } catch (const std::exception& error) {
       fail(req, FailureData::make(FailureKind::internal_error, error.what()));
     }
-    std::lock_guard lock(shell_mu_);
+    std::lock_guard lock(cancellations_mu_);
     shell_cancellations_.erase(key);
   });
   if (!accepted) {
-    std::lock_guard lock(shell_mu_);
+    std::lock_guard lock(cancellations_mu_);
     shell_cancellations_.erase(key);
     fail(req, FailureData::make(FailureKind::busy,
                                 "the shell request queue is full"));
@@ -549,7 +549,6 @@ auto Service::project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
     if (request->mounts()) for (const auto* mount : *request->mounts()) {
       auto source = mount->project_relative() ? opts_.root / mount->path()->str()
                                                : std::filesystem::path(mount->path()->str());
-      if (!std::filesystem::exists(source) && mount->fallback_path()) source = mount->fallback_path()->str();
       source = std::filesystem::canonical(source);
       const auto target = path_in_view(mount->name()->str());
 #ifdef __APPLE__

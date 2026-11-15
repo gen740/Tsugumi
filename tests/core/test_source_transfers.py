@@ -31,7 +31,8 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def test_300_mb_attached_file_has_identical_hash_and_bounded_peak_memory(project, core_factory, tmp_path):
+@pytest.mark.parametrize("replacement", [False, True])
+def test_300_mb_attached_file_has_identical_hash_and_bounded_peak_memory(project, core_factory, tmp_path, replacement):
     """A 300 MB file crosses no frame and neither save nor reopen buffers it."""
     setup(project)
     attached = tmp_path / "attached"
@@ -45,6 +46,13 @@ def test_300_mb_attached_file_has_identical_hash_and_bounded_peak_memory(project
             output.write(part)
             remaining -= len(part)
     expected = digest(source)
+    if replacement:
+        import shutil
+        shutil.copyfile(source, project / "definitions/data/input.csv")
+        # A different new hash ensures this is an effective replacement.
+        with source.open("r+b") as output:
+            output.write(b"NEW")
+        expected = digest(source)
     daemon = core_factory()
     daemon.stop()
     wrapper = tmp_path / "measure-core"
@@ -63,7 +71,8 @@ sys.exit(child.returncode)
     daemon.binary = wrapper
     daemon.start()
     client = daemon.connect()
-    result = save(client, [transfer(source)])
+    fields = {"baseHash": digest(project / "definitions/data/input.csv")} if replacement else {}
+    result = save(client, [transfer(source, **fields)])
     assert result.rev == 1
     assert text(result.delta.origin) == "agent"
     assert text(result.delta.sourcesUpsert[0].hash) == expected
@@ -140,7 +149,7 @@ def test_confirmed_source_conflict_leaves_no_destination(project, core_factory, 
     assert not list((project / ".tsugumi/document-files").iterdir())
 
 
-def test_vm_mounted_source_root_and_more_than_1000_files(project, core_factory, tmp_path):
+def test_host_selected_source_root_and_more_than_1000_files(project, core_factory, tmp_path):
     setup(project)
     mounted = tmp_path / "mounted"
     mounted.mkdir()
@@ -148,7 +157,7 @@ def test_vm_mounted_source_root_and_more_than_1000_files(project, core_factory, 
     source.write_bytes(b"mounted data")
     client = core_factory().connect()
     transfers = [make("SourceTransfer", path=f"definitions/data/{i}.csv", from_="data.csv",
-                      sourceRoot=str(tmp_path / "absent-on-vm"), fallbackRoot=str(mounted))
+                      sourceRoot=str(mounted))
                  for i in range(1001)]
     result = save(client, transfers)
     assert result.rev == 1
@@ -207,3 +216,64 @@ def test_store_document_limit_reports_bytes_limit_and_attached_alternative(proje
     assert error.value.kind == "resource_limit"
     assert str(len(encoded) + 2) in str(error.value)  # layout.json is {}.
     assert "8388608" in str(error.value) and "hostFolders" in str(error.value)
+
+
+@pytest.mark.parametrize("suffix", ["", "/", "/."])
+def test_replaced_attached_root_is_not_followed(project, core_factory, tmp_path, suffix):
+    setup(project)
+    granted = tmp_path / "granted"
+    granted.mkdir()
+    outside = tmp_path / "other-project"
+    outside.mkdir()
+    (outside / "private.csv").write_text("private")
+    client = core_factory().connect()
+    granted.rmdir()
+    granted.symlink_to(outside, target_is_directory=True)
+    item = make("SourceTransfer", path="definitions/data/private.csv", from_="private.csv",
+                sourceRoot=str(granted) + suffix)
+    with pytest.raises(RpcFailure) as error:
+        save(client, [item])
+    assert error.value.kind == "invalid_path"
+    assert client.call("ProjectInspectRequest").rev == 0
+    assert not (project / "definitions/data/private.csv").exists()
+
+
+@pytest.mark.parametrize("shell_changes", [False, True])
+def test_disconnect_during_streamed_save_discards_all_changes(project, core_factory, tmp_path, shell_changes):
+    """Both copy and successful-shell imports use this public cancellable save."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    setup(project)
+    source = (project / ".tsugumi/agent-files/test/commands/success/data.bin"
+              if shell_changes else tmp_path / "attached/data.bin")
+    source.parent.mkdir(parents=True)
+    with source.open("wb") as output:
+        output.truncate(512 << 20)
+    daemon = core_factory()
+    caller, observer = daemon.connect(), daemon.connect()
+    operation = new_id()
+    staging = project / ".tsugumi/document-files"
+    with ThreadPoolExecutor(max_workers=1) as threads:
+        pending = threads.submit(caller.call, "ProjectSaveRequest", baseRev=0, opId=operation,
+                                 origin="agent", changes=[], transfers=[transfer(source)])
+        deadline = time.monotonic() + 10
+        while not staging.exists() or not list(staging.iterdir()):
+            assert not pending.done(), "save completed before cancellation was observed"
+            assert time.monotonic() < deadline
+            time.sleep(0.001)
+        caller.close()
+        with pytest.raises((ConnectionError, OSError)):
+            pending.result(timeout=3)
+    from Tsugumi.Data.OperationState import OperationState
+    deadline = time.monotonic() + 15
+    while True:
+        outcome = observer.call("OperationGetRequest", opId=operation)
+        if outcome.state == OperationState.completed:
+            break
+        assert time.monotonic() < deadline, "disconnected save never reached a terminal receipt"
+        time.sleep(0.01)
+    assert observer.call("ProjectInspectRequest").rev == 0
+    from Tsugumi.Data.FailureKind import FailureKind
+    assert outcome.receipt.result.kind == FailureKind.cancelled
+    assert not (project / "definitions/data/input.csv").exists()
+    assert not list(staging.iterdir())

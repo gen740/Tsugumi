@@ -5,6 +5,7 @@
 #include <memory>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -23,6 +24,7 @@ namespace tsugumi::host {
 struct Access;
 }
 namespace tsugumi::agent {
+auto FileResultForModel(std::string_view raw) -> std::string;
 struct Providers;
 struct Turns;
 struct Tools {
@@ -90,10 +92,10 @@ struct Tools {
   host::Access& access_service;
   Dependencies dependencies;
   Catalog catalog;
-  struct ShellCall {
+  struct FileCall {
     std::string project;
     std::shared_ptr<std::stop_source> stop;
   };
-  std::map<std::pair<std::string, std::string>, ShellCall> shell_calls;
+  std::map<std::pair<std::string, std::string>, FileCall> file_calls;
 };
 }  // namespace tsugumi::agent

@@ -1,6 +1,7 @@
 // Scenarios exercise only the public Agent RPC through the shipped client.
 #include "project_fixture.hh"
 #include "agent/json.hh"
+#include "util/crypto.hh"
 
 #include <unistd.h>
 #include <cstdlib>
@@ -16,6 +17,209 @@
 
 namespace tsugumi::test {
 namespace {
+
+class CancelledCopy : public AgentProjectFixture,
+                      public ::testing::WithParamInterface<bool> {};
+TEST_P(CancelledCopy, StopOrDisconnectCancelsThePublicCopyBeforeItCommits) {
+  namespace json = tsugumi::agent::json;
+  Write(directory.path / "project/definitions/data/_card.json", R"({"template":"draft"})");
+  StartProject();
+  const auto conversation = Conversation("cancel-copy");
+  Grant(conversation);
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  const auto folder = directory.path / "attached";
+  Write(folder / "large.csv", "x");
+  std::filesystem::resize_file(folder / "large.csv", 512u << 20);
+  ASSERT_TRUE(Call(*host, H::RequestPayload::RegisterFolderRequest, [&](Builder& b) {
+    return H::CreateRegisterFolderRequest(b, b.CreateString(project_id), b.CreateString("folder:cancel"), b.CreateString(folder.string())).Union();
+  }).Code().empty());
+  const auto args = json::Encode(json::Members{{"source", Quote("attached")},
+      {"folder", Quote(folder.string())}, {"base_rev", Quote("0")},
+      {"files", R"([{"from":"large.csv","to":"definitions/data/large.csv"}])"}});
+  const auto pending_grant = Tool(conversation, "project_copy", args);
+  ASSERT_EQ(pending_grant.Code(), "grant_required");
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(pending_grant.RequestId()), true).Union();
+  }).Code().empty());
+  auto copying = std::async(std::launch::async, [&] { return Tool(conversation, "project_copy", args); });
+  const auto staging = directory.path / "project/.tsugumi/document-files";
+  const auto deadline = std::chrono::steady_clock::now() + 10s;
+  while (!std::filesystem::exists(staging) || std::filesystem::is_empty(staging)) {
+    ASSERT_EQ(copying.wait_for(0ms), std::future_status::timeout);
+    ASSERT_LT(std::chrono::steady_clock::now(), deadline);
+    std::this_thread::sleep_for(1ms);
+  }
+  if (GetParam()) {
+    external->Close();
+    EXPECT_THROW(copying.get(), std::runtime_error);
+    external = Connect(false);
+  } else {
+    ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationCancelRequest, [&](Builder& b) {
+      return A::CreateConversationCancelRequest(b, b.CreateString(conversation)).Union();
+    }).Code().empty());
+    EXPECT_EQ(copying.get().Code(), "cancelled");
+  }
+  const auto stopped = std::chrono::steady_clock::now() + 15s;
+  while (!std::filesystem::is_empty(staging)) {
+    ASSERT_LT(std::chrono::steady_clock::now(), stopped);
+    std::this_thread::sleep_for(1ms);
+  }
+  EXPECT_EQ(JsonString(JsonString(Inspect(conversation).View(), "/text"), "/value/rev"), "0");
+  EXPECT_FALSE(std::filesystem::exists(directory.path / "project/definitions/data/large.csv"));
+  EXPECT_TRUE(std::filesystem::is_empty(staging));
+}
+
+INSTANTIATE_TEST_SUITE_P(PublicFileCancellation, CancelledCopy, ::testing::Bool());
+
+TEST_F(AgentProjectFixture, StopDuringSuccessfulShellImportDiscardsTheSources) {
+  Write(directory.path / "project/definitions/edit/_card.json", R"({"template":"draft"})");
+  StartProject(true);
+  const auto conversation = Conversation("cancel-shell-import");
+  for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
+                      Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
+    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+  auto saving = std::async(std::launch::async, [&] {
+    return Tool(conversation, "project_shell",
+        R"({"command":"dd if=/dev/zero of=definitions/edit/huge.bin bs=1048576 count=0 seek=128 2>/dev/null"})");
+  });
+  const auto staging = directory.path / "project/.tsugumi/document-files";
+  const auto deadline = std::chrono::steady_clock::now() + 20s;
+  while (!std::filesystem::exists(staging) || std::filesystem::is_empty(staging)) {
+    if (saving.wait_for(0ms) == std::future_status::ready) {
+      FAIL() << "The successful isolated shell could not reach import: " << saving.get().View();
+      return;
+    }
+    ASSERT_LT(std::chrono::steady_clock::now(), deadline);
+    std::this_thread::sleep_for(1ms);
+  }
+  ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationCancelRequest, [&](Builder& b) {
+    return A::CreateConversationCancelRequest(b, b.CreateString(conversation)).Union();
+  }).Code().empty());
+  EXPECT_EQ(saving.get().Code(), "cancelled");
+  const auto stopped = std::chrono::steady_clock::now() + 15s;
+  while (!std::filesystem::is_empty(staging)) {
+    ASSERT_LT(std::chrono::steady_clock::now(), stopped);
+    std::this_thread::sleep_for(1ms);
+  }
+  EXPECT_EQ(JsonString(JsonString(Inspect(conversation).View(), "/text"), "/value/rev"), "0");
+  EXPECT_FALSE(std::filesystem::exists(directory.path / "project/definitions/edit/huge.bin"));
+}
+
+TEST_F(AgentProjectFixture, CopyRefusesAnAttachedRootReplacedAfterItsReadGrant) {
+  Write(directory.path / "project/definitions/data/_card.json", R"({"template":"draft"})");
+  StartProject();
+  const auto conversation = Conversation("replaced-root");
+  Grant(conversation);
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  const auto folder = directory.path / "attached";
+  Write(folder / "data.csv", "allowed");
+  Write(directory.path / "other-project/data.csv", "PRIVATE");
+  ASSERT_TRUE(Call(*host, H::RequestPayload::RegisterFolderRequest, [&](Builder& b) {
+    return H::CreateRegisterFolderRequest(b, b.CreateString(project_id), b.CreateString("folder:replace"), b.CreateString(folder.string())).Union();
+  }).Code().empty());
+  const auto args = "{\"source\":\"attached\",\"folder\":" + Quote(folder.string()) + R"(,"base_rev":"0","files":[{"from":"data.csv","to":"definitions/data/copied.csv"}]})";
+  const auto pending = Tool(conversation, "project_copy", args);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(pending.RequestId()), true).Union();
+  }).Code().empty());
+  std::filesystem::rename(folder, directory.path / "previous-attached");
+  std::filesystem::create_directory_symlink(directory.path / "other-project", folder);
+  const auto copied = Tool(conversation, "project_copy", args);
+  ASSERT_TRUE(copied.Code().empty()) << copied.View();
+  EXPECT_TRUE(JsonBool(copied.View(), "/isError"));
+  EXPECT_EQ(JsonString(JsonString(copied.View(), "/text"), "/value/kind"), "invalid_path");
+  EXPECT_FALSE(std::filesystem::exists(directory.path / "project/definitions/data/copied.csv"));
+}
+
+TEST_F(AgentProjectFixture, LargeReadsReachTheModelAsContiguousJsonPages) {
+  const auto source = directory.path / "project/definitions/data/src/large.txt";
+  Write(directory.path / "project/definitions/data/_card.json", R"({"template":"draft"})");
+  Write(source, std::string(300000, '"'));
+  StartProject();
+  const auto conversation = Conversation("model-read-page");
+  Grant(conversation);
+  ModelServer model;
+  model.Queue(AnthropicTool("page", "project_file_read", R"({"path":"definitions/data/src/large.txt","offset":"32","limit_bytes":262144})"));
+  model.Queue(AnthropicText("Read a bounded page."));
+  Configure(model);
+  ASSERT_TRUE(Send(conversation, "Read the source page.").Code().empty());
+  WaitUntilIdle(conversation);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 2u);
+  const auto result = JsonString(requests[1], "/messages/2/content/0/content");
+  ASSERT_LT(result.size(), 60000u);
+  EXPECT_EQ(JsonString(result, "/reply"), "FileContent");
+  const auto data = JsonString(result, "/value/bytes");
+  ASSERT_FALSE(data.empty());
+  EXPECT_EQ(data, std::string(data.size(), '"'));
+  EXPECT_EQ(JsonString(result, "/value/next_offset"), std::to_string(32 + data.size()));
+  EXPECT_EQ(JsonString(result, "/value/size_bytes"), "300000");
+  EXPECT_FALSE(JsonBool(result, "/value/eof"));
+}
+
+TEST_F(AgentProjectFixture, HelperShellCannotReadParentOrSiblingScratchByAnyPath) {
+  Write(directory.path / "project/definitions/own/_card.json", R"({"template":"draft"})");
+  StartProject(true);
+  const auto conversation = Conversation("private-helper-shell");
+  for (auto access : {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Write,
+                      Tsugumi::Service::Access::Run, Tsugumi::Service::Access::Shell})
+    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+  const auto root = directory.path / "project/.tsugumi/agent-files" / crypto::sha256_hex(conversation);
+  Write(root / "scratch/secret", "PARENT_SCRATCH_SENTINEL");
+  const auto sibling = root / "helpers" / crypto::sha256_hex(crypto::sha256_hex("sibling:0") + ":") / "scratch/secret";
+  Write(sibling, "SIBLING_SCRATCH_SENTINEL");
+  ModelServer model;
+  const auto command = "printf HELPER_SHELL_STARTED; cat scratch/secret; cat " + (root / "scratch/secret").string() + "; cat " + sibling.string();
+  model.Queue(AnthropicTool("scratch", "project_shell", "{\"command\":" + Quote(command) + "}"));
+  model.Queue(AnthropicText("Checked scratch."));
+  Configure(model);
+  ASSERT_TRUE(Tool(conversation, "delegate",
+      R"({"tasks":[{"name":"shell","instruction":"Inspect scratch.","read_cards":[],"write_cards":[],"run_cards":[]}]})",
+      "private-shell").Code().empty());
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 2u);
+  const auto result = JsonString(requests[1], "/messages/2/content/0/content");
+  EXPECT_EQ(JsonString(result, "/reply"), "ProjectShellResult") << result;
+  EXPECT_EQ(requests[1].find("PARENT_SCRATCH_SENTINEL"), std::string::npos);
+  EXPECT_EQ(requests[1].find("SIBLING_SCRATCH_SENTINEL"), std::string::npos);
+  EXPECT_EQ(JsonString(result, "/value/stdout_bytes"), "HELPER_SHELL_STARTED");
+  EXPECT_EQ(JsonUInt(result, "/value/exit_code"), 1u);
+}
+
+TEST_F(AgentProjectFixture, HelpersCannotCopyParentOrSiblingScratch) {
+  namespace json = tsugumi::agent::json;
+  Write(directory.path / "project/definitions/own/_card.json", R"({"template":"draft"})");
+  StartProject();
+  const auto conversation = Conversation("private-helper-scratch");
+  Grant(conversation);
+  Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
+  const auto private_root = directory.path / "project/.tsugumi/agent-files" / crypto::sha256_hex(conversation);
+  Write(private_root / "scratch/parent.csv", "PARENT_PRIVATE");
+  const auto identity = crypto::sha256_hex("scratch-helper-a:0") + ":";
+  Write(private_root / "helpers" / crypto::sha256_hex(identity) / "scratch/own.csv", "HELPER_PRIVATE");
+  ModelServer model;
+  model.Queue(AnthropicTool("parent", "project_copy",
+      R"({"source":"scratch","base_rev":"0","files":[{"from":"parent.csv","to":"definitions/own/leaked-parent.csv"}]})"));
+  model.Queue(AnthropicTool("own", "project_copy",
+      R"({"source":"scratch","base_rev":"0","files":[{"from":"own.csv","to":"definitions/own/own.csv"}]})"));
+  model.Queue(AnthropicText("first helper done"));
+  Configure(model);
+  const auto task = R"({"tasks":[{"name":"private","instruction":"Copy only available files.","read_cards":[],"write_cards":["own"],"run_cards":[]}]})";
+  ASSERT_TRUE(Tool(conversation, "delegate", task, "scratch-helper-a").Code().empty());
+  EXPECT_FALSE(std::filesystem::exists(directory.path / "project/definitions/own/leaked-parent.csv"));
+  EXPECT_EQ(Read(directory.path / "project/definitions/own/own.csv"), "HELPER_PRIVATE");
+  model.Queue(AnthropicTool("sibling", "project_copy",
+      R"({"source":"scratch","base_rev":"1","files":[{"from":"own.csv","to":"definitions/own/leaked-sibling.csv"}]})"));
+  model.Queue(AnthropicText("second helper done"));
+  ASSERT_TRUE(Tool(conversation, "delegate", task, "scratch-helper-b").Code().empty());
+  EXPECT_FALSE(std::filesystem::exists(directory.path / "project/definitions/own/leaked-sibling.csv"));
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 5u);
+  EXPECT_TRUE(JsonBool(requests[1], "/messages/2/content/0/is_error"));
+  EXPECT_FALSE(JsonBool(requests[2], "/messages/4/content/0/is_error"));
+  EXPECT_TRUE(JsonBool(requests[4], "/messages/2/content/0/is_error"));
+}
 
 TEST_F(AgentProjectFixture, DirectAttachedFolderToolsNeedRegistrationAndTheirOwnReadGrant) {
   StartProject();
@@ -733,16 +937,19 @@ TEST_F(AgentProjectFixture,
 TEST_F(AgentProjectFixture,
        AContextRefusalShrinksToolResultsBeforeAskingAgain) {
   ModelServer model;
-  model.Queue(AnthropicTool("read-large-result", "project_file_read",
-                            R"({"path":"skills/long.txt"})"));
+  model.Queue(AnthropicTool("inspect-large-result", "project_inspect", "{}"));
   model.QueueHTTP(R"({"error":{"message":"prompt is too long"}})", 400);
   model.Queue(AnthropicText("The smaller context was accepted."));
   Configure(model, "fixture", 80000);
-  Write(directory.path / "project/skills/long.txt", std::string(50000, 'x'));
+  // Exercise generic context fitting with a large inspect result: bounded
+  // model-facing file pages intentionally no longer fill this much context.
+  Write(directory.path / "project/definitions/long/_card.json", R"({"template":"draft"})");
+  Write(directory.path / "project/definitions/long/_meta.json",
+        R"({"description":)" + Quote(std::string(50000, 'x')) + "}");
   StartProject();
   const auto conversation = Conversation("context-refusal");
   Grant(conversation);
-  ASSERT_TRUE(Send(conversation, "Read the long result.").Code().empty());
+  ASSERT_TRUE(Send(conversation, "Inspect the long metadata result.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(3));
   EXPECT_NE(
       WaitUntilIdle(conversation).find("The smaller context was accepted."),
@@ -752,7 +959,7 @@ TEST_F(AgentProjectFixture,
   EXPECT_NE(requests[2].find("Cut to fit the model context"),
             std::string::npos);
   EXPECT_NE(Events(conversation).View().find("compacted"), std::string::npos);
-  // The full public receipt stays available even when the model sees a page.
+  // The full public receipt stays available after fitting the model context.
   EXPECT_NE(Get(conversation).View().find(std::string(50000, 'x')),
             std::string::npos);
 }

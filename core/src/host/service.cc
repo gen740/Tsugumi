@@ -127,7 +127,7 @@ struct Service::State {
                             const auto& raw) { Event(id, raw); },
             .cancel =
                 [this](const auto& project, const auto& conversation) {
-                  for (const auto& [key, call] : tools->shell_calls)
+                  for (const auto& [key, call] : tools->file_calls)
                     if (call.project == project &&
                         (conversation.empty() || key.first == conversation))
                       call.stop->request_stop();
@@ -152,9 +152,9 @@ struct Service::State {
                   return helpers->RunHelper(id, call, index, task, stop,
                                             authorization);
                 },
-            .cancel_shells =
+            .cancel_file_tools =
                 [this](const auto& id) {
-                  for (const auto& [key, source] : tools->shell_calls)
+                  for (const auto& [key, source] : tools->file_calls)
                     if (key.first == id) source.stop->request_stop();
                 }});
     tools = std::make_unique<Tools>(
@@ -315,6 +315,7 @@ struct Service::State {
   bool stopping = false;
   Lane requests;
   Lane tool_requests;
+  std::map<ConnId, std::stop_source> connection_stops;
   Lane terminal_requests;
 
   auto EnvironmentChanged(const H::EnvironmentStateT& state) -> void {
@@ -692,8 +693,10 @@ auto Service::hello(const RequestIn& request) -> std::pair<std::string, bool> {
     std::lock_guard lock(state_->mutex);
     if (host)
       state_->events->host_connections.insert(request.conn);
-    else
+    else {
       state_->events->principals[request.conn] = human;
+      state_->connection_stops.try_emplace(request.conn);
+    }
   }
   S::HelloResultT result;
   result.server_id = state_->options.server_id;
@@ -708,6 +711,7 @@ auto Service::dispatch(RequestIn request) -> void {
   if (!host) {
     std::lock_guard lock(state_->mutex);
     human = state_->events->principals.at(request.conn);
+    request.connection_stop = state_->connection_stops.at(request.conn).get_token();
   }
   auto* server = host ? state_->events->host_server : state_->server;
   const auto fail = host ? HostFailed : Failed;
@@ -747,6 +751,12 @@ auto Service::dispatch(RequestIn request) -> void {
                                      "Service request queue is full", {}));
 }
 auto Service::disconnected(ConnId connection) -> void {
+  std::lock_guard lock(state_->mutex);
+  if (auto stop = state_->connection_stops.find(connection);
+      stop != state_->connection_stops.end()) {
+    stop->second.request_stop();
+    state_->connection_stops.erase(stop);
+  }
   state_->events->Disconnected(connection);
 }
 auto Service::host_disconnected(ConnId connection) -> void {

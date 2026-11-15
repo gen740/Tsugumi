@@ -1115,6 +1115,25 @@ auto Tools::Hooks(const std::string& id, bool helper,
       }
     };
   }
+  // Only model-facing file results are resized. External RPC callers and the
+  // durable receipts retain the original pages and full bounded shell output.
+  auto for_model = [](const ToolCall& call, ToolResult result) {
+    if (!result.is_error && (call.name == "project_shell" ||
+        call.name == "project_file_read" || call.name == "attached_folder_read"))
+      result.text = FileResultForModel(result.text);
+    return result;
+  };
+  const auto execute = hooks.execute_tool;
+  hooks.execute_tool = [execute, for_model](const ToolCall& call, std::stop_token stop) {
+    return for_model(call, execute(call, stop));
+  };
+  const auto reconcile = hooks.reconcile_tool;
+  hooks.reconcile_tool = [reconcile, for_model](const ToolCall& call) -> std::optional<ToolResult> {
+    auto result = reconcile(call);
+    if (result) *result = for_model(call, std::move(*result));
+    return result;
+  };
+
   return hooks;
 }
 
@@ -1146,25 +1165,27 @@ auto Tools::Handle(const RequestIn& request, bool human,
                           p->arguments_json()->str()};
       std::shared_ptr<std::stop_source> shell_stop;
       const auto shell_key = std::make_pair(id, call.id);
-      if (call.name == "project_shell") {
-        if (shell_calls.contains(shell_key))
-          throw Failure("busy", "This shell tool call is already running");
+      if (call.name == "project_shell" || call.name == "project_copy") {
+        if (file_calls.contains(shell_key))
+          throw Failure("busy", "This file tool call is already running");
         shell_stop = std::make_shared<std::stop_source>();
-        shell_calls.emplace(
+        file_calls.emplace(
             shell_key,
-            ShellCall{project.empty()
+            FileCall{project.empty()
                           ? conversations->GetConversation(id).project
                           : project,
                       shell_stop});
       }
       lock.unlock();
       // External plugins use the same conversation cancellation and visible
-      // tool history as model-issued shell calls.
+      // tool history as model-issued file calls.
       auto execute = [&]() -> ToolResult {
         if (!shell_stop)
           return ExecuteTool(id, project, call, false, shutdown.get_token());
         std::stop_callback stop(shutdown.get_token(),
                                 [shell_stop] { shell_stop->request_stop(); });
+        std::stop_callback disconnected(request.connection_stop,
+                                        [shell_stop] { shell_stop->request_stop(); });
         auto event = [&](const char* kind, const std::string& text, bool ok) {
           dependencies.event(id, json::Encode(json::Members{
                                      {"kind", json::Quote(kind)},
@@ -1181,12 +1202,12 @@ auto Tools::Handle(const RequestIn& request, bool human,
               ExecuteTool(id, project, call, false, shell_stop->get_token());
           event("toolFinished", result.text, !result.is_error);
           std::lock_guard guard(mutex);
-          shell_calls.erase(shell_key);
+          file_calls.erase(shell_key);
           return result;
         } catch (const std::exception& error) {
           event("toolFinished", error.what(), false);
           std::lock_guard guard(mutex);
-          shell_calls.erase(shell_key);
+          file_calls.erase(shell_key);
           throw;
         }
       };

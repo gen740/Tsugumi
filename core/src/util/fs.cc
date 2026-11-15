@@ -184,9 +184,9 @@ void remove_file_durable(const stdfs::path& p) {
 }
 
 std::optional<std::string> file_sha256(const stdfs::path& p) {
-  auto data = read_file(p);
-  if (!data) return std::nullopt;
-  return crypto::sha256_hex(*data);
+  std::error_code error;
+  if (!stdfs::exists(p, error) && !error) return std::nullopt;
+  return sha256_file(p);
 }
 
 bool resolves_inside(const stdfs::path& root, const stdfs::path& p) {
@@ -229,7 +229,10 @@ namespace {
 // An fd of `rel` below `root`, walking each component with O_NOFOLLOW.
 int open_beneath(const stdfs::path& root, const stdfs::path& rel, int flags) {
   if (rel.is_absolute()) throw Error("file path must be relative to its root");
-  int dir = ::open(root.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  auto directory = root.lexically_normal();
+  while (directory != directory.root_path() && directory.filename().empty())
+    directory = directory.parent_path();
+  int dir = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   if (dir < 0) throw Error("open " + root.string() + ": " + std::strerror(errno));
   std::vector<std::string> parts;
   for (const auto& c : rel.lexically_normal())

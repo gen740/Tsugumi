@@ -37,7 +37,7 @@ struct Turns {
                               const std::string&, std::stop_token,
                               const std::string&)>
         run_helper;
-    std::function<void(const std::string&)> cancel_shells;
+    std::function<void(const std::string&)> cancel_file_tools;
   };
   Turns(host::StateGate& gate, sql::Db& db, ConversationStore& conversations,
         Providers& providers, host::Settings& settings,

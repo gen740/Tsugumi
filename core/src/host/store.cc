@@ -40,6 +40,8 @@ HostStore::HostStore(const std::filesystem::path& directory)
   db.exec(
       "CREATE TABLE IF NOT EXISTS environment_projects(key TEXT PRIMARY KEY, "
       "project TEXT NOT NULL);"
+      "CREATE TABLE IF NOT EXISTS project_attached_roots(project TEXT NOT NULL, "
+      "path TEXT NOT NULL, execution_path TEXT NOT NULL, PRIMARY KEY(project,path));"
       "CREATE TABLE IF NOT EXISTS project_paths(id TEXT PRIMARY KEY, path "
       "TEXT NOT NULL);"
       "CREATE TABLE IF NOT EXISTS skill_catalogs(conversation TEXT PRIMARY "

@@ -146,7 +146,7 @@ auto Helpers::RunHelper(const std::string& conversation,
     }
     config = providers->ForConversation(conversation);
   }
-  auto boundary = std::make_shared<HelperScope>(spec, authorization);
+  auto boundary = std::make_shared<HelperScope>(spec, authorization, scope);
   const auto read = tools->HelperReader(conversation, stop, {}, authorization);
   // Receipt ownership survives both interruption and transcript compaction.
   std::vector<std::string> owned_receipts;

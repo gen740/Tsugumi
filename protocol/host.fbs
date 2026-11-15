@@ -43,6 +43,8 @@ table EnvironmentRequest {
   folders:[string];
   archive_incompatible_history:bool;
 }
+// Host-selected attached roots in the running project environment.
+table AttachedRoot { host_path:string (required); execution_path:string (required); }
 table EnvironmentState {
   project:string (required);
   key:string (required);
@@ -62,6 +64,7 @@ table EnvironmentState {
   startup_error_json:string;
   execution_scope_unavailable:bool;
   folders:[string];
+  attached_roots:[AttachedRoot];
 }
 table EnvironmentProgress { project:string (required); key:string (required); stage:string (required); fraction:double = null; preparing:bool; }
 table EnvironmentStopped { state:EnvironmentState (required); }

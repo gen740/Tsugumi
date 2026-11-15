@@ -109,7 +109,8 @@ class Store {
   // `make_receipt` callback receives the delta (with final revision numbers)
   // and returns the OperationReceipt bytes. Publishes the new document.
   void commit(Staged& staged, const std::string& kind, const std::string& digest,
-              const std::function<std::string(const Delta*)>& make_receipt);
+              const std::function<std::string(const Delta*)>& make_receipt,
+              const std::function<void()>& check_cancelled = [] {});
   // Stores a terminal receipt without changing the document.
   void record_receipt(const Receipt& r);
 
