@@ -20,8 +20,9 @@ from pathlib import Path
 
 def shared_entries(temporary_roots=None, scratch_root=None):
     uid = os.getuid()
-    roots = temporary_roots or {Path('/tmp').resolve(), Path('/var/tmp').resolve(),
-                                Path(tempfile.gettempdir()).resolve()}
+    # Not the per-user temporary folder of macOS: system services create
+    # entries there at any time, which cannot be told from a test's.
+    roots = temporary_roots or {Path('/tmp').resolve(), Path('/var/tmp').resolve()}
     scratch = scratch_root or Path('/var/tmp').resolve() / f'tsugumi-scratch-{uid}'
     entries = set()
     for root in roots:
