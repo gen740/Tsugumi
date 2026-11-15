@@ -571,10 +571,39 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   try {
     call.root_dir = gcroots_dir();
     call.root_prefix = prefix;
-    res = evaluator().evaluate(call);
+    // Paths in args name content-addressed sources, generated contracts/Nix
+    // params, and the transitive upstream definitions and flake products.
+    // The evaluator validates its settings epoch and observed filesystem reads.
+    const auto key = call.evaluation_key();
+    const auto card = path_key(node.path);
+    std::erase_if(evaluations_, [&](const auto& item) {
+      return std::none_of(graph.nodes.begin(), graph.nodes.end(), [&](const auto& n) {
+        return path_key(n.path) == item.first;
+      });
+    });
+    auto found = evaluations_.find(card);
+    if (call.on_phase) call.on_phase(false);
+    if (found != evaluations_.end() && found->second.first == key && evaluator().reuse(call, found->second.second)) {
+      res = found->second.second;
+      if (res.implementation_count > call.max_implementations)
+        throw NixImplementationLimit("input and run list expansion exceeds 256 combinations");
+      res.built = false;
+      res.root.clear();
+    } else {
+      evaluations_.erase(card);
+      log::info("Card full evaluation " + std::to_string(++full_evaluations_));
+      res = evaluator().evaluate(call);
+    }
     if (!req.transport) throw std::runtime_error("execution target has no derivation transport");
     evaluator().make_available(call, *req.transport, res.derivation);
     if (req.target.kind == WorkerKind::native) res = evaluator().realise_native(call, std::move(res));
+    std::erase_if(evaluations_, [&](const auto& item) {
+      return item.second.second.evaluation_epoch != res.evaluation_epoch;
+    });
+    if (res.evaluation_epoch) {
+      if (evaluations_.size() >= 256 && !evaluations_.contains(card)) evaluations_.erase(evaluations_.begin());
+      evaluations_[card] = {key, res};
+    }
   } catch (const NixInterrupted& e) {
     if (e.timed_out)
       throw Failed(FailureKind::timeout, e.what(), {{"timeout_seconds", std::to_string(req.timeout_seconds.value_or(0))}});

@@ -46,6 +46,7 @@ add_library(tsugumi_core STATIC
   src/nix.cc
   src/run_scratch.cc
   src/cache_usage.cc
+  src/worker_condition.cc
   src/collect_value.cc
   src/execution_service.cc
   src/remote_job.cc
@@ -69,6 +70,8 @@ target_link_libraries(tsugumi_core PUBLIC tsugumi_document tsugumi_protocol tsug
 # Embed the shared worker engine once in the installed core archive. It uses
 # neutral value/wire helpers supplied by its caller, never scheduler/service APIs.
 target_link_libraries(tsugumi_core PRIVATE tsugumi_worker_runtime)
+set_source_files_properties(src/worker_condition.cc PROPERTIES
+  COMPILE_OPTIONS "-Wall;-Wextra;-Werror;-Wformat=2;-Wimplicit-fallthrough")
 if(NOT APPLE)
   target_link_libraries(tsugumi_core PRIVATE PkgConfig::CRYPTO)
 endif()

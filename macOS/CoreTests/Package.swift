@@ -17,6 +17,7 @@ let package = Package(
       name: "CoreTests",
       dependencies: [
         .product(name: "FlatBuffers", package: "flatbuffers"),
+        .product(name: "TsugumiTestSupport", package: "macOS"),
         .product(name: "TsugumiRPC", package: "macOS"),
         .product(name: "TsugumiLauncher", package: "macOS"),
         .product(name: "TsugumiAgentClient", package: "macOS"),

@@ -15,6 +15,7 @@ let package = Package(
     .executable(name: "tsugumi-vmctl", targets: ["TsugumiVMCtl"]),
     .executable(name: "tsugumi-vmhost", targets: ["TsugumiVMHost"]),
     .library(name: "TsugumiRPC", targets: ["TsugumiRPC"]),
+    .library(name: "TsugumiTestSupport", targets: ["TsugumiTestSupport"]),
     // For the core tests (CoreTests/, a package of their own without the app).
     .library(name: "TsugumiLauncher", targets: ["TsugumiLauncher"]),
   ],
@@ -117,11 +118,12 @@ let package = Package(
       exclude: ["Resources/TreeSitter/SOURCES.md"],
       resources: [.copy("Resources/TreeSitter")],
       swiftSettings: [.swiftLanguageMode(.v5)]),
+    .target(name: "TsugumiTestSupport", path: "Tests/Support"),
     // The app's own logic. The model, RPC, Agent and launcher tests are the
     // package CoreTests/ (they build without the app).
     .testTarget(
       name: "TsugumiAppTests",
-      dependencies: ["TsugumiRPC", "TsugumiLauncher", "TsugumiApp", "TsugumiAgentClient"],
+      dependencies: ["TsugumiRPC", "TsugumiLauncher", "TsugumiApp", "TsugumiAgentClient", "TsugumiTestSupport"],
       path: "Tests/TsugumiAppTests",
       swiftSettings: [.swiftLanguageMode(.v5)]),
   ]

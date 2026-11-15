@@ -34,9 +34,22 @@ if(NOT TSUGUMI_INSTALLED_CORE)
     ENVIRONMENT "TSUGUMI_BUILD_DIR=${PROJECT_BINARY_DIR};TSUGUMI_PY_BINDINGS=${TSUGUMI_GEN_DIR}/python;TSUGUMI_MOCK_DAEMON=$<TARGET_FILE:tsugumid-mock>;TSUGUMID=$<TARGET_FILE:tsugumid>;TSUGUMI_WORKER=$<TARGET_FILE:tsugumi-worker>")
 endif()
 
+find_package(GTest CONFIG REQUIRED)
+include(GoogleTest)
+# The worker condition seam is independent of services and scheduling.
+add_executable(tsugumi_worker_condition_tests worker_condition_test.cc)
+target_include_directories(tsugumi_worker_condition_tests PRIVATE ${_core_headers})
+target_link_libraries(tsugumi_worker_condition_tests PRIVATE tsugumi_core GTest::gtest_main)
+target_compile_options(tsugumi_worker_condition_tests PRIVATE
+  -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
+gtest_discover_tests(tsugumi_worker_condition_tests TEST_PREFIX "worker_condition."
+  DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 30)
+if(TSUGUMI_INSTALLED_CORE)
+  install(TARGETS tsugumi_worker_condition_tests RUNTIME DESTINATION libexec/tsugumi-tests)
+endif()
+
 # Product client -> real Agent/core sockets -> controlled external model.
 # These scenarios neither include nor link private core implementation APIs.
-find_package(GTest CONFIG REQUIRED)
 if(TSUGUMI_INSTALLED_CORE)
   set(_test_environment_daemon ${CMAKE_INSTALL_PREFIX}/libexec/tsugumi-tests/tsugumi-environment-daemon-double)
   # Nix build sources are temporary; installed tests own their guide fixtures.
@@ -70,7 +83,6 @@ add_executable(tsugumi-environment-daemon-double doubles/environment_daemon.cc)
 target_link_libraries(tsugumi-environment-daemon-double PRIVATE tsugumi_host_core)
 target_compile_options(tsugumi-environment-daemon-double PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 add_dependencies(tsugumi_agent_rpc_tests tsugumi-hostd tsugumid-mock tsugumi-environment-daemon-double)
-include(GoogleTest)
 gtest_discover_tests(tsugumi_agent_rpc_tests TEST_PREFIX "core_agent." DISCOVERY_MODE PRE_TEST
   TEST_FILTER "-RealEnvironmentFixture.AuthenticatesTheRealProjectServiceBeforeReady"
   PROPERTIES TIMEOUT 30)
@@ -178,4 +190,14 @@ gtest_discover_tests(tsugumi_execution_service_tests TEST_PREFIX "native_executi
 
 if(TSUGUMI_INSTALLED_CORE)
   install(TARGETS tsugumi_native_contract_tests tsugumi_execution_service_tests RUNTIME DESTINATION libexec/tsugumi-tests)
+endif()
+
+# Embedded evaluator checks build tiny text derivations, never start a worker.
+add_executable(tsugumi_definition_evaluation_tests definition_evaluation_test.cc)
+target_include_directories(tsugumi_definition_evaluation_tests PRIVATE ${_core_headers})
+target_link_libraries(tsugumi_definition_evaluation_tests PRIVATE tsugumi_core tsugumi_nix_eval GTest::gtest_main)
+target_compile_options(tsugumi_definition_evaluation_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
+gtest_discover_tests(tsugumi_definition_evaluation_tests TEST_PREFIX "definition_evaluation." DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 120)
+if(TSUGUMI_INSTALLED_CORE)
+  install(TARGETS tsugumi_definition_evaluation_tests RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()
