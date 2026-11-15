@@ -38,6 +38,8 @@ clangStdenv.mkDerivation {
       ../agent/Shared/guide-script.json
       ../agent/Shared/guide-script.en.json
       ../demos
+      ../tests/fixtures/subgraph-edits.json
+      ../tests/fixtures/merge-contract.json
       (lib.fileset.fileFilter (
         file: file.name == "CMakeLists.txt" || file.hasExt "cmake" || file.hasExt "cc" || file.hasExt "hh"
       ) ../tests/core)
@@ -57,6 +59,11 @@ clangStdenv.mkDerivation {
     curl
     gtest
     openssl
+    nix.libs.nix-expr
+    nix.libs.nix-store
+    nix.libs.nix-fetchers
+    nix.libs.nix-flake
+    nix.libs.nix-util
   ]
   ++ lib.optionals clangStdenv.hostPlatform.isLinux [ icu ];
   cmakeFlags = [

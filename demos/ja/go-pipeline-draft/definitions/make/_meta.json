@@ -1,16 +1,4 @@
 {
   "description": "Python で整数を作る",
-  "inputs": [
-    {
-      "name": "start",
-      "description": "Start signal"
-    }
-  ],
-  "outputs": [
-    {
-      "name": "out",
-      "description": "Integer value"
-    }
-  ],
-  "content": "Python で整数 7 を out の戻り値として返す。型は namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;"
+  "content": "Python で整数 7 を out の戻り値として返す。型は namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;\n\n入力の意図:\n- start: Start signal\n\n出力の意図:\n- out: Integer value"
 }

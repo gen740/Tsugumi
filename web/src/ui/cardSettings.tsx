@@ -6,11 +6,11 @@
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { app } from '../model/app'
-import { cloneDef, merge3 } from '../model/merge'
+import { cloneDef } from '../model/merge'
 import { Observable, useObserve } from '../model/observable'
 import { OutputCatalogResult, parseOutputCatalog } from '../model/outputCatalog'
 import { prefs } from '../model/prefs'
-import { CardComment, CardKey, commentDone, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
+import { CardComment, CardKey, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../shared/bfbs'
 import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, serialize, str } from '../shared/json'
@@ -70,7 +70,7 @@ export class CardEditorModel extends Observable {
     return path(this.cardKey).pop()
   }
   get kind() {
-    return this.session.kind(this.cardKey)
+    return this.session.kind(this.cardKey) === 'subgraph' ? 'subgraph' : definitionKind(this.definition)
   }
   get exists() {
     return this.session.instance(this.cardKey) !== undefined
@@ -82,6 +82,41 @@ export class CardEditorModel extends Observable {
   get unapplied(): boolean {
     return !jeq(this.definition, this.baseDefinition) || !jeq(this.meta, this.baseMeta) || this.removed.size > 0 || this.created.size > 0 ||
       [...this.texts].some(([k, v]) => this.baseTexts.get(k) !== v)
+  }
+
+  rebindings = new Map<string, string>()
+
+  /** Incident wires and boundary ends; every choice starts empty. */
+  get draftEnds() {
+    if (this.session.kind(this.cardKey) !== 'draft' || this.kind === 'draft') return []
+    const scope = path(this.cardKey).slice(0, -1), id = path(this.cardKey).pop()
+    const ends: { id: string; label: string; side: string; index?: number; boundary?: string }[] = []
+    this.session.connections(scope).forEach((c, index) => {
+      for (const side of ['from', 'to']) if (str(get(c, side, 'card')) === id) {
+        const label = `${str(get(c, 'from', 'card'))}.${str(get(c, 'from', 'port'))} → ${str(get(c, 'to', 'card'))}.${str(get(c, 'to', 'port'))}`
+        ends.push({ id: `${index}:${side}:${serialize(c, false)}`, label, side, index })
+      }
+    })
+    const boundary = scope.length ? this.session.boundary(key(scope)) : undefined
+    for (const side of ['inputs', 'outputs']) {
+      const ports = get(boundary, side)
+      if (isObj(ports)) for (const [name, ep] of ports.entries()) if (str(get(ep, 'card')) === id)
+        ends.push({ id: `${side}:${name}:${serialize(ep, false)}`, label: `${side}.${name} → ${id}`, side, boundary: name })
+    }
+    return ends
+  }
+
+  implementAs(value: string) {
+    if (value === 'draft') this.definition = obj([['template', 'draft']])
+    else if (['python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia'].includes(value)) this.definition = obj([['language', value]])
+    else this.definition = obj([['template', value]])
+    if (value === 'input' || value === 'switch') {
+      this.setSetting('params', [obj([['name', 'value'], ['type', value === 'input' ? 'double' : 'bool'], ['data', value === 'input' ? new JNum('0') : false]])])
+      if (value === 'input' && this.outputsPath && !this.files.includes(this.outputsPath))
+        this.createFile('_outputs.fbs', 'namespace card;\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n')
+    }
+    if (value === 'merge') this.setSetting('inputs', [obj([['name', 'a']]), obj([['name', 'b']])])
+    this.changed()
   }
 
   /** Source files of the definition (documents excluded), with local changes. */
@@ -125,6 +160,7 @@ export class CardEditorModel extends Observable {
     this.generation++
     this.removed = new Set()
     this.created = new Set()
+    this.rebindings.clear()
     this.message = undefined
     this.conflicts = []
     this.revisionEdit.reload(this.session.rev)
@@ -132,29 +168,25 @@ export class CardEditorModel extends Observable {
   }
 
   /** Takes in what changed elsewhere since the copy was taken. */
-  follow() {
-    if (this.applying) return
+  async follow(whileApplying = false) {
+    if (this.applying && !whileApplying) return
     const defNow = this.session.cardDefinition(this.cardKey), metaNow = this.session.cardMeta(this.cardKey)
-    const clashes = (base: J | undefined, ours: J | undefined, theirs: J | undefined, file: string): string[] => {
-      if (jeq(ours, base) || jeq(theirs, base) || jeq(ours, theirs)) return []
-      const ks = (v: J | undefined) => (isObj(v) ? v.keys() : [])
-      const keys = [...new Set([...ks(base), ...ks(ours), ...ks(theirs)])].sort()
-      return keys.filter((k) => !jeq(get(base, k), get(ours, k)) && !jeq(get(base, k), get(theirs, k)) && !jeq(get(ours, k), get(theirs, k)))
-        .map((k) => `${file}: ${k}`)
-    }
+    const definition = clone(this.definition), meta = clone(this.meta), revision = this.session.rev
+    const pair = (d: J | undefined, m: J | undefined) => { const v = obj(); v.set('definition', d); v.set('meta', m); return v }
     const found: string[] = []
     let any = false
-    if (!jeq(defNow, this.baseDefinition)) {
-      found.push(...clashes(this.baseDefinition, this.definition, defNow, '_card.json'))
-      this.definition = clone(merge3(this.baseDefinition, this.definition, defNow))
-      this.baseDefinition = clone(defNow)
-      any = true
-    }
-    if (!jeq(metaNow, this.baseMeta)) {
-      found.push(...clashes(this.baseMeta, this.meta, metaNow, '_meta.json'))
-      this.meta = clone(merge3(this.baseMeta, this.meta, metaNow))
-      this.baseMeta = clone(metaNow)
-      any = true
+    if (!jeq(defNow, this.baseDefinition) || !jeq(metaNow, this.baseMeta)) {
+      try {
+        const reply = await this.session.mergeValues(pair(this.baseDefinition, this.baseMeta), pair(definition, meta), pair(defNow, metaNow))
+        if (revision !== this.session.rev || !jeq(definition, this.definition) || !jeq(meta, this.meta) ||
+          !jeq(defNow, this.session.cardDefinition(this.cardKey)) || !jeq(metaNow, this.session.cardMeta(this.cardKey))) return
+        found.push(...reply.conflicts)
+        this.definition = get(reply.value, 'definition')
+        this.meta = get(reply.value, 'meta')
+        this.baseDefinition = clone(defNow)
+        this.baseMeta = clone(metaNow)
+        any = true
+      } catch (error) { this.revisionEdit.error = errorText(error); this.changed(); return }
     }
     for (const p of [...this.texts.keys()]) {
       if (this.loads.get(p)?.state !== 'loaded' || this.created.has(p)) continue
@@ -333,9 +365,17 @@ export class CardEditorModel extends Observable {
       this.changed()
       return false
     }
-    this.follow()
     this.applying = true
     this.changed()
+    await this.follow(true)
+    const ends = this.draftEnds
+    if (ends.some(e => !this.rebindings.get(e.id)?.trim())) {
+      this.message = L('各 wire の実ポート名を指定してください（ポート欄）。')
+      this.applying = false
+      this.changed()
+      return false
+    }
+    const bindings = new Map(this.rebindings)
     const def = clone(this.definition), m = clone(this.meta), k = this.cardKey, prefix = this.prefix
     const sentTexts = new Map(this.texts), sentCreated = new Set(this.created)
     const changedTexts = [...this.texts].filter(([p, v]) => this.baseTexts.get(p) !== v || this.created.has(p))
@@ -348,6 +388,20 @@ export class CardEditorModel extends Observable {
       // A Card in Card has no settings of its own, but a _meta.json like any other.
       const card = d.link === undefined && def !== undefined ? def : d.card
       if (!current || !jeq(card, d.card) || !jeq(m, d.meta)) x.setCardDefinition(k, { ...cloneDef(d), card: clone(card), meta: clone(m) })
+      const scope = path(k).slice(0, -1)
+      if (ends.some(e => e.index !== undefined)) x.updateGraph(scope, g => {
+        const conns = arr(g.get('connections')) ?? []
+        for (const e of ends) if (e.index !== undefined) {
+          const ep = get(conns[e.index], e.side)
+          if (isObj(ep)) ep.set('port', bindings.get(e.id)!.trim())
+        }
+      })
+      if (ends.some(e => e.boundary !== undefined)) x.updateExternal(x.projectPrefix(scope)!, ext => {
+        for (const e of ends) if (e.boundary !== undefined) {
+          const ep = get(ext.project, 'boundary', e.side, e.boundary)
+          if (isObj(ep)) ep.set('port', bindings.get(e.id)!.trim())
+        }
+      })
       for (const [p, t] of changedTexts) {
         x.putSource(p, t)
         // Saved against the version this editor read (a file changed on both
@@ -361,15 +415,16 @@ export class CardEditorModel extends Observable {
         if (h && !clashing.has(p.slice(prefix.length))) x.sourceBases.set(p, h)
       }
     })
-    this.applying = false
-    if (!ok) { this.changed(); return false }
+    if (!ok) { this.applying = false; this.changed(); return false }
     const laterDef = clone(this.definition), laterMeta = clone(this.meta)
     const laterTexts = new Map(this.texts), laterRemoved = new Set(this.removed), laterCreated = new Set(this.created)
     const savedCurrent = this.revisionEdit.savedRev === session.rev
     // Reload the confirmed base, then put only edits made after Send back on it.
     this.reload(false)
-    this.definition = clone(merge3(def, laterDef, this.definition))
-    this.meta = clone(merge3(m, laterMeta, this.meta))
+    this.definition = laterDef
+    this.meta = laterMeta
+    this.baseDefinition = def
+    this.baseMeta = m
     for (const [p, t] of laterTexts) {
       const sent = sentTexts.get(p)
       if (savedCurrent || t !== sent) {
@@ -384,6 +439,8 @@ export class CardEditorModel extends Observable {
     this.removed = new Set([...laterRemoved].filter(p => !gone.includes(p)))
     this.created = new Set([...laterCreated].filter(p => !sentCreated.has(p)))
     for (const p of sentTexts.keys()) if (!laterTexts.has(p) && !gone.includes(p)) this.removed.add(p)
+    await this.follow(true)
+    this.applying = false
     this.message = L('適用しました。')
     this.changed()
     return true
@@ -394,7 +451,7 @@ function categories(m: CardEditorModel): CardEditorCategory[] {
   switch (m.kind) {
     case 'code': return ['general', 'comments', 'nix', 'source', 'ports', 'executions', 'artifacts', 'context']
     case 'input': return ['general', 'comments', 'source', 'ports', 'executions', 'artifacts', 'context']
-    case 'draft': return ['general', 'comments', 'ports', 'context']
+    case 'draft': return ['general', 'comments', 'context']
     case 'subgraph': return ['general', 'comments', 'ports', 'executions']
     default: return ['general', 'comments', 'ports', 'executions', 'artifacts', 'context']
   }
@@ -418,7 +475,7 @@ export function CardSettingsEditor({ session, card, initial, onClose }: { sessio
   }, [card])
   // What changes elsewhere while the window is open is taken in at once.
   const token = model.followToken
-  useEffect(() => model.follow(), [token, model])
+  useEffect(() => { void model.follow() }, [token, model])
 
   if (!model.exists && !model.unapplied) {
     return <Empty title={L('Card が見つかりません')} icon="questionmark.square.dashed" description={L('{0} は削除されたか、まだ保存されていません。', model.cardKey)} />
@@ -665,6 +722,11 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
           </Row>
         )}
       </Section>
+      {model.session.kind(model.cardKey) === 'draft' && <Section title={L('Draft を手動で実装')} footer={L('定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。')}>
+        <Row label={L('種類')}><Select value={str(get(def, 'template')) ?? str(get(def, 'language')) ?? 'draft'} onChange={v => model.implementAs(v)} options={
+          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'switch', 'trigger', 'fork', 'branch', 'merge', 'collect'].map(value => ({ value, label: value }))
+        } /></Row>
+      </Section>}
       {kind !== 'switch' && params.length > 0 && (
         <Section title={L('パラメータ')}>
           {params.map((_, i) => <ParamRow key={i} model={model} index={i} />)}
@@ -893,7 +955,7 @@ function portNote(model: CardEditorModel, list: string, name: string): { value: 
 function PortsCategory({ model }: { model: CardEditorModel }) {
   const r = model.session.resolution.get(model.cardKey)
   const def = model.definition
-  const editable = def !== undefined && ['code', 'draft', 'merge'].includes(model.kind)
+  const editable = def !== undefined && ['code', 'merge'].includes(model.kind)
   const inputs = arr(get(def, 'inputs')) ?? []
   const editInputs = (fn: (a: J[]) => void) => {
     const a = inputs.map((x) => clone(x))
@@ -903,6 +965,11 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
   const keepable = (r?.outputs ?? []).filter((p) => p.kind === D.PortKind.File || p.kind === D.PortKind.Directory)
   return (
     <Form>
+      {model.draftEnds.length > 0 && <Section title={L('wire の再接続')} footer={L('入力 wire には実入力ポート、出力 wire には実出力ポートを指定します。候補が一つでも指定が必要です。')}>
+        {model.draftEnds.map(e => <Row key={e.id} label={`${e.side === 'from' || e.side === 'outputs' ? L('出力ポート') : L('入力ポート')}: ${e.label}`}>
+          <TextField value={model.rebindings.get(e.id) ?? ''} placeholder={L('実ポート名')} onChange={v => { model.rebindings.set(e.id, v); model.changed() }} />
+        </Row>)}
+      </Section>}
       <Section title={L('入力ポート')} footer={L('入力の型は接続元の出力から決まります（_inputs.fbs は生成され、手で書きません）。')}>
         {editable ? (
           <>
@@ -1316,13 +1383,13 @@ function SourceCategory({ model, only }: { model: CardEditorModel; only?: string
     if (!rpc || source === undefined || formatting) return
     setFormatting(true)
     try {
-      const r = await rpc.format(p, source)
+      const r = await api<{ text: string; diagnostics: { offset?: string; message: string }[] }>('/api/file/format', { path: p, text: source })
       if (!r.diagnostics.length) {
         model.setText(p, s(r.text))
         setFormatMessage(L('整形しました'))
         setFormatMarkers([])
       } else {
-        setFormatMarkers(r.diagnostics.map((d) => ({ offset: d.offset ?? 0n, message: s(d.message) })))
+        setFormatMarkers(r.diagnostics.map((d) => ({ offset: BigInt(d.offset ?? 0), message: s(d.message) })))
         setFormatMessage(L('構文エラーがあります（テキストは変更していません）'))
       }
     } catch (e) {
@@ -1390,7 +1457,7 @@ function SourceCategory({ model, only }: { model: CardEditorModel; only?: string
     )
   } else if (shown && model.files.includes(shown)) {
     const markers = [
-      ...(session.resolution.get(model.cardKey)?.diagnostics ?? []).filter((d) => d.path === shown).map((d) => ({ offset: d.offset ?? 0n, message: d.message })),
+      ...(session.resolution.get(model.cardKey)?.diagnostics ?? []).filter((d) => d.path === shown).map((d) => ({ offset: BigInt(d.offset ?? 0), message: d.message })),
       ...formatMarkers,
     ]
     const text = model.loadedText(shown)

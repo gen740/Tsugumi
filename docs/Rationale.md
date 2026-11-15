@@ -36,7 +36,7 @@ You do not read the AI's report and believe it; you go straight to the place you
 
 As in the [README's example](../README.md#what-we-want-to-ask-of-ai-should-be-simple), what you want may be simple enough to draw as three boxes, yet asking in prose turns into long instructions and long reports. With ten steps, branches and merges, writing out in prose which output goes to which input is harder still, and even the writer cannot see what is missing or contradictory.
 
-- A **Draft** is a Card with only a name and "what it does", not yet implemented. Press `E` to place one and write it; wire it up and its ports follow the wires.
+- A **Draft** is a Card with only a name and "what it does", not yet implemented. Press `E` to place one and write it; wire it directly to other Cards without declaring ports.
 - The diagram of Drafts is the specification: press "Generate Cards" at the top right to have the Agent implement it.
 - After implementation, output types decide the input types downstream, and a mismatched wire shows up as a diagnostic before anything runs.
 - One output carries one wire. To send a value to several Cards it goes through a fork Card, so the distribution is visible on the diagram as a Card too.

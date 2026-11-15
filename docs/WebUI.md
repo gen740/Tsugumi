@@ -39,7 +39,7 @@ The installed Mac command uses the release app's support directory by default:
 
 The helper holds `vm/vm.lock`. The VM remains resident when the Web host or app disconnects. Explicit Host runtime shutdown stops it. Use matching app and CLI versions with a shared support directory.
 
-**On Linux**, agentd starts a native `tsugumid` per project; Cards use bubblewrap (`nix/cli.nix`). Web data defaults to `~/.local/share/tsugumi-web`; settings and saved provider keys are in agentd's owner-only store. The terminal uses a host shell through `node-pty`.
+**On Linux**, agentd starts a native `tsugumid` per project; Cards use bubblewrap (`nix/cli.nix`). Web data defaults to `~/.local/share/tsugumi-web`; settings and saved provider keys are in agentd's owner-only store. The terminal uses a host shell through agentd's HostTerminal RPC; agentd owns its PTY and forwards input, resize and output.
 
 **On Windows**, `tsugumi.cmd` runs the Linux distribution inside WSL2 (`cli/install.ps1`). The server detects `WSL_DISTRO_NAME` and opens the Windows browser. WSL localhost forwarding exposes the Web host and project ports to that browser.
 
@@ -69,7 +69,7 @@ nix develop --command npm --prefix web run gen
 npm --prefix web run build
 ```
 
-The terminal's `node-pty` is a native module. On macOS, a prebuilt one is in the distribution; on Linux it is built during `npm install` (needs a C++ compiler and Python). If it cannot be built, `npm install` and the Web UI still work, and opening the terminal shows the reason.
+Terminals on both platforms use the HostTerminal RPC. The Web host only forwards input and output; no native Node addon is needed.
 
 ```bash
 node web/dist/server.js --open

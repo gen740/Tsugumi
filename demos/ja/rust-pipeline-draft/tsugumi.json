@@ -24,27 +24,27 @@
         },
         "to": {
           "card": "make",
-          "port": "start"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "make",
-          "port": "out"
+          "port": ""
         },
         "to": {
           "card": "scale",
-          "port": "number"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "scale",
-          "port": "out"
+          "port": ""
         },
         "to": {
           "card": "check",
-          "port": "number"
+          "port": ""
         }
       }
     ]

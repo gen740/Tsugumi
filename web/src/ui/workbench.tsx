@@ -1,3 +1,4 @@
+import { RevisionEditNotice } from './revisionEdit'
 // Tabs of one project (the root workflow and opened child workflows) and the
 // workbench of the active tab: the sidebar, the canvas with the log/timeline/
 // terminal panel under it, and the chat beside it. While the environment
@@ -391,6 +392,7 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
   const [showSync, setShowSync] = useState(false)
   const [showIssues, setShowIssues] = useState(false)
   const [confirmDiscard, setConfirmDiscard] = useState(false)
+  useEffect(() => { if (session.mergeEdit.conflictRev !== undefined) setShowSync(true) }, [session.mergeEdit.conflictRev])
   const syncRef = useRef<HTMLButtonElement>(null)
   const issueRef = useRef<HTMLButtonElement>(null)
   const st = session.runStatus?.state ?? D.RunState.idle
@@ -424,13 +426,15 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
           </StatusButton>
         </span>
         {session.reloadApproval && <PermissionPrompt reload asked={session.reloadApproval.permissions}
-          onAnswer={allow => void session.answerReloadApproval(allow)} />}
+          onAnswer={(allow, _, selected) => void session.answerReloadApproval(allow, selected ?? [])} />}
         <Popover open={showSync} onClose={() => setShowSync(false)} anchor={syncRef} width={440}>
           <div className="popover-body">
             <div className="headline">{L('保存・同期')}</div>
             <Value label={L('確定 revision')} value={String(session.rev)} />
             <Value label={L('実行 revision')} value={String(session.executionRev)} />
             {sync.kind === 'failed' && <div className="selectable wrap-pre" style={{ color: 'var(--red)' }}>{sync.message}</div>}
+            <RevisionEditNotice edit={session.mergeEdit} text={() => session.draftSummary()}
+              overwrite={() => session.resolveMergeConflict()} reload={() => session.discardDraft()} />
             <div className="callout secondary">{L('変更は操作するたびに保存されます。チャットや別のウインドウでの変更もすぐに反映されます。')}</div>
             <div className="row gap8 wrap">
               {session.saveError !== undefined && (

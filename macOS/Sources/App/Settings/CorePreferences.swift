@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import SwiftUI
 import TsugumiAgentClient
+import TsugumiRPC
 
 /// A UI snapshot of agentd's settings. Revisions are applied by the service;
 /// failed edits are shown and the snapshot is read again, never blindly retried.
@@ -10,6 +11,7 @@ final class CorePreferences {
   static let shared = CorePreferences()
   private var values: [String: Any] = [:]
   private var revision: UInt64 = 0
+  private(set) var summarySelection: Tsugumi_Service_ProviderSelectionT?
   private var editGeneration = 0
   private(set) var error: String?
   @ObservationIgnored private var pending: Task<Void, Never>?
@@ -35,6 +37,10 @@ final class CorePreferences {
           let decoded = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) else { return nil }
         return (key, decoded)
       })
+      summarySelection = try await CoreAgentClient.shared.modelSelection("summary")
+      for config in [ProviderConfig.anthropic, .openAI, .chatGPT] {
+        _ = try await CoreAgentClient.shared.usable(config)
+      }
       AppPreferences.shared.syncHostSettings()
     } catch { self.error = String(describing: error) }
   }

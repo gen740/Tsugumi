@@ -106,7 +106,7 @@ S decode_doc(const std::string& what, const std::string& text) {
 }
 
 void check_endpoint(const schema::Endpoint& ep, const std::string& where) {
-  if (!ep.card->has_value() || !ep.port->has_value() || ep.port->value().empty())
+  if (!ep.card->has_value() || !ep.port->has_value())
     invalid(where + " needs card and port");
 }
 

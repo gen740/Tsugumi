@@ -31,6 +31,14 @@ public struct CoreAgentFailure: LocalizedError, CustomStringConvertible, Sendabl
 public final class ModelCatalogSnapshot: @unchecked Sendable {
   public static let shared = ModelCatalogSnapshot()
   private let lock = NSLock()
+  private var availability: [String: Bool] = [:]
+  public func usable(_ id: String) -> Bool {
+    lock.lock(); defer { lock.unlock() }
+    return availability[id] ?? false
+  }
+  fileprivate func showAvailability(_ id: String, _ usable: Bool) {
+    lock.lock(); defer { lock.unlock() }; availability[id] = usable
+  }
   private var catalogs: [String: [(id: String, name: String)]] = [:]
   public func models(_ id: String) -> [(id: String, name: String)] {
     lock.lock(); defer { lock.unlock() }
@@ -244,18 +252,103 @@ public actor CoreAgentClient {
   public func provider(_ config: ProviderConfig, asking: Bool = true) async throws -> Tsugumi_Service_ProviderSelectionT {
     let value = Tsugumi_Service_ProviderSelectionT()
     value.model = config.model
+    value.purpose = config.purpose
     value.useChoices = config.usesChoices
     value.profile = "desktop"
     value.providerId = config.connection
     value.accountProfile = "desktop"
     if config.auth == .apiKey {
-      guard let key = asking ? Keychain.load(account: config.name) : Keychain.loadWithoutAsking(account: config.name) else {
-        throw CoreAgentFailure(code: "credentials", message: "No API key for \(config.name)", requestID: nil)
-      }
+      let key = asking ? Keychain.load(account: config.name) : Keychain.loadWithoutAsking(account: config.name)
       try await provisionKey(key, id: config.connection)
       value.keyProfile = keyProfile
     }
     return value
+  }
+
+  public func format(path: String, text: String) async throws -> Tsugumi_Host_FileFormatResultT {
+    let reply = try await call("FileFormatRequest", ["path": path, "text": text])
+    guard let result = reply["result"] as? Tsugumi_Host_FileFormatResultT else { throw CoreAgentFailure(code: "protocol", message: "Missing format result", requestID: nil) }
+    return result
+  }
+
+  public func versionGraph(project: String, language: String) async throws -> Tsugumi_RPC_VersionGraphT {
+    let reply = try await call("HostVersionGraphRequest", ["project": project, "language": language])
+    guard let result = reply["result"] as? Tsugumi_RPC_VersionGraphT else { throw CoreAgentFailure(code: "protocol", message: "Missing version graph", requestID: nil) }
+    return result
+  }
+
+  public func versionDiff(project: String, commit: String, from: String?) async throws -> Tsugumi_Host_VersionDiffT {
+    var fields: [String: Any] = ["project": project, "commit": commit]
+    if let from { fields["from_commit"] = from }
+    let reply = try await call("HostVersionDiffRequest", fields)
+    guard let result = reply["result"] as? Tsugumi_Host_VersionDiffT else { throw CoreAgentFailure(code: "protocol", message: "Missing version diff", requestID: nil) }
+    return result
+  }
+
+  public func permissionKinds(language: String) async throws -> [Tsugumi_Host_PermissionKindT] {
+    let result = try await call("PermissionKindsRequest", ["language": language])
+    return result["kinds"] as? [Tsugumi_Host_PermissionKindT] ?? []
+  }
+
+  public func writeTemplate(name: String, id: String) async throws -> (definition: String, files: [(path: String, text: String)]) {
+    let result = try await call("DocumentTemplateRequest", ["name": name, "id": id])
+    guard let definition = result["definitionJson"] as? String else {
+      throw CoreAgentFailure(code: "invalid_reply", message: "Missing Card template", requestID: nil)
+    }
+    return (definition, (result["files"] as? [Tsugumi_Host_DocumentTemplateFileT] ?? []).map { ($0.path, $0.text) })
+  }
+
+  public func connectDocuments(state: String, from: (String, String), to: (String, String), forkId: String?) async throws -> (state: String, insertedId: String, needsFork: Bool) {
+    var fields: [String: Any] = ["state_json": state, "from_card": from.0, "from_port": from.1, "to_card": to.0, "to_port": to.1]
+    fields["fork_id"] = forkId
+    let result = try await call("DocumentConnectRequest", fields)
+    guard let state = result["stateJson"] as? String else {
+      throw CoreAgentFailure(code: "invalid_reply", message: "Missing connection edit", requestID: nil)
+    }
+    return (state, result["insertedId"] as? String ?? "", result["needsFork"] as? Bool ?? false)
+  }
+
+  public func copyDocuments(state: String, paths: [String], from: String, to: String, name: String?) async throws -> (edits: String, files: [(from: String, to: String)]) {
+    var fields: [String: Any] = ["state_json": state, "paths": paths, "from": from, "to": to]
+    fields["name"] = name
+    let result = try await call("DocumentCopyRequest", fields)
+    guard let edits = result["editsJson"] as? String else {
+      throw CoreAgentFailure(code: "invalid_reply", message: "Missing copy edits", requestID: nil)
+    }
+    return (edits, (result["files"] as? [Tsugumi_Host_DocumentFileCopyT] ?? []).map { ($0.from, $0.to) })
+  }
+
+  public func mergeDocuments(base: String, ours: String, theirs: String) async throws -> (merged: String, conflicts: [String]) {
+    let result = try await call("DocumentMergeRequest", ["base_json": base, "ours_json": ours, "theirs_json": theirs])
+    guard let merged = result["mergedJson"] as? String else {
+      throw CoreAgentFailure(code: "invalid_reply", message: "Missing merged documents", requestID: nil)
+    }
+    return (merged, result["conflicts"] as? [String] ?? [])
+  }
+
+  public func makeSubgraph(project: String, cards: [String], id: String) async throws -> (project: String, external: String, link: String) {
+    let result = try await call("DocumentSubgraphRequest", ["project_json": project, "cards": cards, "id": id])
+    guard let project = result["projectJson"] as? String, let external = result["externalJson"] as? String, let link = result["linkJson"] as? String else {
+      throw CoreAgentFailure(code: "invalid_reply", message: "Missing subgraph documents", requestID: nil)
+    }
+    return (project, external, link)
+  }
+
+  public func modelSelection(_ purpose: String) async throws -> Tsugumi_Service_ProviderSelectionT {
+    let reply = try await call("ModelSelectionRequest", ["profile": "desktop", "purpose": purpose])
+    guard let selected = reply["provider"] as? Tsugumi_Service_ProviderSelectionT else {
+      throw CoreAgentFailure(code: "protocol", message: "Invalid host model selection", requestID: nil)
+    }
+    return selected
+  }
+
+  public func usable(_ config: ProviderConfig) async throws -> Bool {
+    let selected = try await provider(config, asking: false)
+    let reply = try await call("ProviderStatusRequest", ["profile": "desktop", "id": config.connection,
+      "key_profile": selected.keyProfile ?? ""])
+    let usable = reply["configured"] as? Bool ?? false
+    ModelCatalogSnapshot.shared.showAvailability(config.connection, usable)
+    return usable
   }
 
   public func versionComments(project: String, commit: String) async throws -> [Tsugumi_Host_VersionCommentT] {
@@ -275,7 +368,7 @@ public actor CoreAgentClient {
   }
 
   public func provisionKey(_ key: String?, id: String) async throws {
-    var fields: [String: Any] = ["profile": keyProfile, "id": id, "ephemeral": true, "remove": key == nil]
+    var fields: [String: Any] = ["profile": keyProfile, "id": id, "ephemeral": true, "source": "keychain", "remove": key == nil]
     if let key { let input = Tsugumi_Service_ProviderInputT(); input.apiKey = key; fields["provider"] = input }
     _ = try await call("ProviderSetRequest", fields)
   }

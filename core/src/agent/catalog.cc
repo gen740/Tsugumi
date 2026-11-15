@@ -276,6 +276,8 @@ auto Catalog::shared() const -> json::Members {
 }
 
 Catalog::Catalog() {
+  tools_.push_back({{"project_file_format", "Format editor text without changing files. The host supplies fixed formatters.",
+    R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"language":{"type":"string","enum":["json","cpp","python","nix","bash","fbs"]}},"required":["path","text"],"additionalProperties":false})"}, "FileFormatRequest", false, false, false});
   const auto settings = json::Object(
       std::string_view(reinterpret_cast<const char *>(tsugumi_agent_settings),
                        tsugumi_agent_settings_size));

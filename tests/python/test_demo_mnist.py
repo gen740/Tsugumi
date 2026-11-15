@@ -167,7 +167,19 @@ def test_the_finished_cards_fit_the_draft_demo(tmp_path):
             changes.append(change("PutDefinition", id=card, cardJson=json.dumps(body), keepMeta=True))
             for f in ["default.nix", "_outputs.fbs", "src/main.py"]:
                 changes.append(change("PutSource", path=f"definitions/{card}/{f}", bytes=list((finished / card / f).read_bytes())))
-        c.call("ProjectSaveRequest", baseRev=c.call("ProjectInspectRequest").rev, opId=new_id(), origin="test", changes=changes)
+        snap = c.call("ProjectInspectRequest")
+        project = json.loads(text(snap.projectJson))
+        # Implement each Draft and explicitly bind all its wire ends in one save.
+        for wire in project["canvas"]["connections"]:
+            source, target = wire["from"], wire["to"]
+            if source["card"] in MODELS:
+                source["port"] = "result"
+            if target["card"] in MODELS:
+                target["port"] = "data"
+            elif target["card"] == "compare":
+                target["port"] = source["card"] if source["card"] in MODELS else "data"
+        changes.append(change("SetProject", json=json.dumps(project)))
+        c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test", changes=changes)
         run_id = start_run(c, ["start"])
         succeeded(c, run_id)
         scores = leaderboard(c, run_id)

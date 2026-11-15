@@ -121,7 +121,7 @@ import Testing
   // Every stage keeps its own icon, also while running (no generic check marks).
   #expect(Set(Stage.allCases.map(\.symbol)).count == Stage.allCases.count)
   #expect(Stage.build.activeSymbol == "hammer.fill" && Stage.evaluate.activeSymbol == "snowflake")
-  #expect(Stage.build.logStream == .build && Stage.execute.logStream == .stdout && Stage.save.logStream == .journal)
+  #expect(Stage.build.logStream == .build && Stage.execute.logStream == .standardOutput && Stage.save.logStream == .journal)
 }
 
 @Test func runTextCountsFromTheFirstInvocation() {
@@ -168,7 +168,7 @@ import Testing
   #expect(!s.isDraftWire(from: start, to: log), "between Cards with code")
   #expect(!s.isDraftWire(from: start, to: nil), "from a Card with code to the bar")
 
-  // Code written for the Draft: its wires are solid again, without any other change.
+  // Once the Card is implemented, endpoint styling becomes solid.
   s.updateCard(draft) { (card: inout JSONValue) in card = .object([("language", .string("python"))]) }
   #expect(s.kind(draft) == .code)
   #expect(!s.isDraftWire(from: draft, to: log))
@@ -185,9 +185,14 @@ import Testing
 /// The thumbnails decide the same from a demo's Cards, whatever it is drawing.
 @MainActor @Test func aThumbnailDotsADraftsWires() async throws {
   let card = { (id: String, kind: String) in
-    "{\"id\": \"\(id)\", \"kind\": \"\(kind)\", \"x\": 0, \"y\": 0, \"inputs\": [{\"name\": \"in\"}], \"outputs\": [{\"name\": \"out\"}], \"params\": [], \"permissions\": []}"
+    let inputs = kind == "draft" ? "[]" : #"[{"name":"in"}]"#
+    let outputs = kind == "draft" ? "[]" : #"[{"name":"out"}]"#
+    return "{\"id\": \"\(id)\", \"kind\": \"\(kind)\", \"x\": 0, \"y\": 0, \"inputs\": \(inputs), \"outputs\": \(outputs), \"params\": [], \"permissions\": []}"
   }
-  let wire = { (a: String, b: String) in "{\"from\": \"\(a)\", \"fromPort\": \"out\", \"to\": \"\(b)\", \"toPort\": \"in\"}" }
+  let wire = { (a: String, b: String) in
+    let fromPort = a == "d" ? "" : "out", toPort = b == "d" ? "" : "in"
+    return "{\"from\": \"\(a)\", \"fromPort\": \"\(fromPort)\", \"to\": \"\(b)\", \"toPort\": \"\(toPort)\"}"
+  }
   let json = """
     {"flow": "topToBottom", "draftOnly": true, "frames": {}, "steps": [], "final": {}, "outputs": {},
      "cards": [\(card("a", "code")), \(card("b", "code")), \(card("d", "draft"))],
@@ -197,18 +202,18 @@ import Testing
   #expect(scene.wires.map(\.dotted) == [false, true, true])
 }
 
-@Test func aDraftOffersItsNextPortAndOpensWhileWritten() {
+@Test func aDraftOffersCardAttachmentsAndOpensWhileWritten() {
   var data = CardNodeData(title: "x", kind: .draft, summary: "plan", inputs: [], outputs: [])
   let empty = CardGeometry(data, flow: .topToBottom)
   #expect(empty.newPortPoint(output: true) == CGPoint(x: CardGeometry.width / 2, y: empty.height))
   #expect(empty.port(CardGeometry.newPort, output: false) == CGPoint(x: CardGeometry.width / 2, y: 0))
   data.outputs = [PortData(name: "out")]
   let wired = CardGeometry(data, flow: .topToBottom)
-  // The port is where the wire started; wires do not change the size of a Draft.
+  // Even supplied port declarations are ignored: Draft wires use Card anchors.
   #expect(wired.port("out", output: true) == CGPoint(x: CardGeometry.width / 2, y: wired.height))
-  #expect(wired.newPortPoint(output: true) == nil, "a side with a port starts its wires from it")
+  #expect(wired.newPortPoint(output: true) == empty.newPortPoint(output: true), "attachment remains available for more wires")
   #expect(wired.height == empty.height)
-  // Across a left-to-right flow: the middle of the side; several around it.
+  // Across a left-to-right flow: the same anchor at the middle of the side.
   let right = CardGeometry(data, flow: .leftToRight)
   #expect(right.port("out", output: true) == CGPoint(x: CardGeometry.width, y: right.height / 2))
   #expect(right.newPortPoint(output: false) == CGPoint(x: 0, y: right.height / 2))
@@ -636,8 +641,30 @@ func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
   #expect(session.definitionDrafts[card]?.card["language"]?.string == language)
   #expect(try await session.sourceText("definitions/\(card)/default.nix").contains("\(language)Card"))
   #expect(try await session.sourceText("definitions/\(card)/\(source)").contains(entry))
-  session.undo()
+  await session.undo()
   #expect(session.definitionDrafts[card] == nil)
+}
+
+
+@MainActor @Test func draftImplementationListsWiresWithoutInventingPorts() throws {
+  let dir = try SyncTests.project()
+  defer { try? FileManager.default.removeItem(at: dir) }
+  let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
+  let document = try JSONValue.parse(#"{"canvas":{"cards":[{"id":"plan"},{"id":"start"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}}"#)
+  session.project = document
+  session.definitionEdits["plan"] = DefinitionDraft(card: try JSONValue.parse(#"{"template":"draft"}"#))
+  session.definitionEdits["next"] = DefinitionDraft(card: try JSONValue.parse(#"{"template":"draft"}"#))
+  let editor = CardEditorModel(session: session, cardKey: "plan")
+  #expect(session.portData("plan").inputs.isEmpty && session.portData("plan").outputs.isEmpty)
+  #expect(editor.draftEnds.isEmpty)
+  editor.implementAs("fork")
+  #expect(editor.kind == .fork && editor.draftEnds.count == 2)
+  #expect(editor.draftEnds.map(\.side) == ["to", "from"])
+  #expect(editor.rebindings.isEmpty)
+  editor.rebindings[editor.draftEnds[0].id] = "in"
+  #expect(editor.rebindings[editor.draftEnds[1].id] == nil, "The output still needs an explicit choice")
+  #expect(session.kind("plan") == .draft)
+  #expect(session.connections(in: []) == document["canvas"]?["connections"]?.array)
 }
 
 

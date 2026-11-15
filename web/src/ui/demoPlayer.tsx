@@ -384,6 +384,7 @@ export function Canvas({ data, frame, base, compact, selected, onSelect, motion,
   const point = (id: string, port: string, output: boolean): Pt => {
     const p = byId.get(id)
     if (!p) return { x: 0, y: 0 }
+    // An empty Draft endpoint uses the Card's side anchor in this geometry.
     const at = p.geometry.port(port, output)
     return { x: p.doc.x + at.x, y: p.doc.y + at.y }
   }

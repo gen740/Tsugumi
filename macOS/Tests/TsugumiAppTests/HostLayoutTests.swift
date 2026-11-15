@@ -34,10 +34,12 @@ import Testing
     try await SyncTests.connected(s)
     s.layout = try JSONValue.parse(#"{"flow":"topToBottom"}"#)
     for (id, x, y, ins, outs) in [("source", 200.0, 0.0, [], ["a", "b"]), ("left", 0, 300, ["in"], []), ("right", 500, 300, ["in"], [])] {
-      _ = try await s.addCard(template: id == "left" ? .python : .draft, in: [], at: CGPoint(x: x, y: y), name: id)
+      _ = try await s.addCard(template: .python, in: [], at: CGPoint(x: x, y: y), name: id)
       func ports(_ names: [String]) -> JSONValue { .array(names.map { .object([("name", .string($0))]) }) }
       s.updateCard(id) { $0["inputs"] = ports(ins) }
-      s.setCardDefinition(id, DefinitionDraft(card: s.cardDefinition(id)!, meta: .object([("outputs", ports(outs))])))
+      if !outs.isEmpty {
+        s.putSource("definitions/\(id)/_outputs.fbs", "namespace layout; table Value { value:double; } table Outputs { " + outs.map { "\($0):Value;" }.joined(separator: " ") + " } root_type Outputs;")
+      }
     }
     try await s.connect(from: ("source", "a"), to: ("right", "in"), in: [])
     try await s.connect(from: ("source", "b"), to: ("left", "in"), in: [])
@@ -50,30 +52,30 @@ import Testing
     #expect(s.project == graph && s.definitionEdits == definitions)
     #expect(s.position("source") == CGPoint(x: 200, y: 0))
     #expect(s.undoStack.count == steps + 1)
-    s.undo()
+    await s.undo()
     #expect(s.layout == before)
     #expect(s.geometry("source").outputs == ["a", "b"])
     await s.arrange([])
     #expect(s.undoStack.count == steps + 1)
     #expect(s.project == graph && s.definitionEdits == definitions)
-    s.undo()
+    await s.undo()
     #expect(s.layout == before)
     await s.moveSelection(cards: ["left"], notes: [], frames: [], by: CGSize(width: 1000, height: 0), snap: nil).value
     #expect(s.position("left") == CGPoint(x: 1000, y: 300))
     #expect(s.geometry("source").outputs == ["a", "b"])
-    s.undo()
+    await s.undo()
     #expect(s.layout == before)
 
     await s.untangle([])
     await s.moveSelection(cards: ["left"], notes: [], frames: [], by: CGSize(width: 1000, height: 0), snap: nil).value
     #expect(s.geometry("source").outputs == ["a", "b"])
-    s.undo()
+    await s.undo()
     #expect(s.geometry("source").outputs == ["b", "a"])
     #expect(s.hasPortOrder("source"))
     s.resetPortOrder(["source"])
     #expect(s.geometry("source").outputs == ["a", "b"])
     #expect(!s.hasPortOrder("source"))
-    s.undo()
+    await s.undo()
     #expect(s.geometry("source").outputs == ["b", "a"])
     await s.close()
   }

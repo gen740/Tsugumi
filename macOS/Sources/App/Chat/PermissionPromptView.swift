@@ -75,13 +75,17 @@ struct PermissionPromptView: View {
           }.toggleStyle(.checkbox)
         }
         ForEach(prompt.requests) { r in
-          HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: r.kind.symbol).frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
-              Text("\(r.card): \(r.kind.label)")
-              if let f = r.folder { Text(f).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled) }
+          Toggle(isOn: Binding(get: { selected.contains(r.raw) }, set: { on in
+            if on { selected.insert(r.raw) } else { selected.remove(r.raw) }
+          })) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+              Image(systemName: r.kind.symbol).frame(width: 18)
+              VStack(alignment: .leading, spacing: 1) {
+                Text("\(r.card): \(r.kind.label)")
+                if let f = r.folder { Text(f).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled) }
+              }
             }
-          }
+          }.toggleStyle(.checkbox)
         }
       }
       .padding(10)
@@ -105,5 +109,6 @@ struct PermissionPromptView: View {
     .padding(20)
     .frame(width: 440)
     .interactiveDismissDisabled()
+    .task { await PermissionCatalog.shared.load() }
   }
 }

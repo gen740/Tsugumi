@@ -162,9 +162,11 @@ try {
       if (method === 'AccessListRequest') return { requests: [] } as any
       if (method === 'ProviderSetRequest') {
         assert.equal(fields.ephemeral, true)
-        assert.equal(fields.provider.api_key, 'test-key')
+        if (fields.source === 'env') assert.equal(fields.provider.api_key, 'test-key')
+        else { assert.equal(fields.source, 'keychain'); assert.equal(fields.remove, true) }
         return { configured: true } as any
       }
+      if (method === 'ModelSelectionRequest') return { provider: { providerId: 'anthropic', model: 'host-summary-model' } } as any
       assert.equal(method, 'ConversationSummarizeRequest')
       forwarded = fields
       return reply('reading') as any
@@ -180,7 +182,7 @@ try {
   restoreSettings()
   assert.deepEqual(result, reply('reading'))
   assert.equal(forwarded.conversation_id, 'web-thoughts')
-  assert.equal(forwarded.provider.model, 'claude-haiku-5-5')
+  assert.equal(forwarded.provider.model, 'host-summary-model')
   assert.equal(JSON.stringify(result).includes('test-key'), false)
 } finally {
   Object.assign(RemoteAgent.prototype, original)

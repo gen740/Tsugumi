@@ -1,4 +1,5 @@
 #include "scheduler.hh"
+#include "version_record.hh"
 
 #include <algorithm>
 #include <cstring>
@@ -206,9 +207,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     return summary_.status;
   }
 
-  std::string note_summary() {
+  std::string note_record() {
     std::lock_guard<std::mutex> l(mu_);
-    return note_summary_;
+    return note_record_;
   }
 
   RunStatusData request_cancel(bool interrupted) {
@@ -1091,7 +1092,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     s.state = out.failure ? (was_cancel ? CardState::cancelled : CardState::failed) : CardState::succeeded;
     s.failure = out.failure;
     if (out.failure && out.failure->diagnostic)
-      card_log(node.path, w.invocation, LogStream::stderr, "tsugumi: " + std::string(failure_kind_name(out.failure->kind)) +
+      card_log(node.path, w.invocation, LogStream::standard_error, "tsugumi: " + std::string(failure_kind_name(out.failure->kind)) +
                                                               ": " + *out.failure->diagnostic + "\n");
     InvocationRecordData rec;
     rec.summary = s;
@@ -1485,7 +1486,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         const auto* t = flatbuffers::GetAnyRoot(reinterpret_cast<const uint8_t*>(c->bytes.data()));
         bool cond = flatbuffers::GetAnyFieldI(*t, *f) != 0;
         p.outputs.push_back({cond ? "a" : "b", v->kind, v->type, v->bytes, {}});
-        card_log(node.path, s.invocation, LogStream::stdout, std::string("branch -> ") + (cond ? "a" : "b") + "\n");
+        card_log(node.path, s.invocation, LogStream::standard_output, std::string("branch -> ") + (cond ? "a" : "b") + "\n");
         break;
       }
       case Template::Collect:
@@ -1575,42 +1576,32 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   // One line for the note of the run's commit, from what this run did rather
   // than what it planned. Failure messages and logs stay out of git, as the
   // outputs do: they are in the run's record.
-  std::string describe(const std::vector<CardState>& final) const {
-    const auto& res = *doc_->resolution;
-    const Node* target = res.find(p_.card);
-    const bool whole = p_.card.empty() || (p_.propagate && target && target->kind == Template::Trigger);
-    std::vector<std::string> ran;
-    std::vector<std::string> failed;
-    std::vector<std::string> never;
-    bool saved = false;
-    const bool en = p_.english;
+  auto record(const std::vector<CardState>& final) const -> std::string {
+    const auto* target = doc_->resolution->find(p_.card);
+    version_record::Run record;
+    *record.whole = p_.card.empty() || (p_.propagate && target && target->kind == Template::Trigger);
+    *record.card = path_key(p_.card);
+    *record.propagate = p_.propagate;
     for (const auto& n : nodes_) {
       if (!n.in_targets || n.node->is_virtual) continue;
-      const std::string key = path_key(n.node->path);
-      // The trigger of a whole run only starts it.
-      if (n.recorded_invocations > 0 && !(whole && n.node->kind == Template::Trigger)) {
-        ran.push_back(n.recorded_invocations > 1 ? key + " ×" + std::to_string(n.recorded_invocations) : key);
-        saved |= n.saved_inputs;
+      const auto key = path_key(n.node->path);
+      if (n.recorded_invocations > 0 && !(*record.whole && n.node->kind == Template::Trigger)) {
+        version_record::Count count;
+        *count.card = key;
+        *count.count = n.recorded_invocations;
+        record.ran->push_back(std::move(count));
+        *record.saved_inputs |= n.saved_inputs;
       }
-      if (n.last_failure && n.last_failure->kind != FailureKind::cancelled)
-        failed.push_back(key + (en ? " (" : "（") + failure_kind_name(n.last_failure->kind) + (en ? ")" : "）"));
-      else if (n.activations == 0 && (final[n.idx] == CardState::blocked || final[n.idx] == CardState::cancelled))
-        never.push_back(key);
+      if (n.last_failure && n.last_failure->kind != FailureKind::cancelled) {
+        version_record::Failure failure;
+        *failure.card = key;
+        *failure.kind = failure_kind_name(n.last_failure->kind);
+        record.failed->push_back(std::move(failure));
+      } else if (n.activations == 0 && (final[n.idx] == CardState::blocked || final[n.idx] == CardState::cancelled)) {
+        record.never->push_back(key);
+      }
     }
-    auto names = [en](const std::vector<std::string>& v) {
-      constexpr size_t kShown = 6;
-      std::string s;
-      for (size_t i = 0; i < std::min(v.size(), kShown); ++i) s += (i ? (en ? ", " : "、") : "") + v[i];
-      if (v.size() > kShown) s += (en ? " and " + std::to_string(v.size() - kShown) + " more" : " ほか " + std::to_string(v.size() - kShown));
-      return s;
-    };
-    std::string out = en ? (whole ? "whole" : (p_.propagate ? "from " : "only ") + path_key(p_.card))
-                         : (whole ? "全体" : path_key(p_.card) + (p_.propagate ? " から" : " だけ"));
-    if (saved) out += en ? " (with saved inputs)" : "（保存済みの入力で）";
-    if (!ran.empty()) out += ": " + names(ran);
-    if (!failed.empty()) out += (en ? " / failed: " : " / 失敗: ") + names(failed);
-    if (!never.empty()) out += (en ? " / not run: " : " / 未実行: ") + names(never);
-    return out;
+    return schema::encode(record);
   }
 
   void finalize() {
@@ -1683,7 +1674,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       std::lock_guard<std::mutex> l(mu_);
       finishing_ = true;
       sum = summary_;
-      note_summary_ = describe(final);
+      note_record_ = record(final);
     }
     auto& st = sum.status;
     if (cancel_ && interrupted_) {
@@ -1744,7 +1735,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   DocumentPtr doc_;
   RunParams p_;
   RunSummaryData summary_;
-  std::string note_summary_;  // what ran (describe), for the commit's note
+  std::string note_record_;  // neutral run facts, for the commit's note
   std::string run_id_;
   stdfs::path run_dir_;
   std::thread thread_;
@@ -2203,7 +2194,7 @@ void Scheduler::finished(RunExec* exec) {
     // The run thread finishes on its own; reap it off the callback thread.
     reapers_.emplace_back([this, done] {
       done->join();
-      svc_.note_run_end(done->status(), done->note_summary());
+      svc_.note_run_end(done->status(), done->note_record());
     });
   }
 }

@@ -18,7 +18,7 @@ s.confirmedProject = s.project
 s.layout = parse('{}')
 s.confirmedLayout = s.layout
 s.scheduleSave = () => {} // no tsugumid here
-s.confirmedDefinitions.set('code', { card: parse('{"template":"card"}') })
+s.confirmedDefinitions.set('code', parse('{"template":"card"}'))
 for (const p of ['definitions/code/_outputs.fbs', 'definitions/code/src/main.py', 'definitions/other/keep.txt']) {
   s.sources.set(p, { path: p, hash: 'h', size: 1n })
 }

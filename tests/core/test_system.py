@@ -92,14 +92,13 @@ def registered_remote(monkeypatch, resource_limits):
     (True, {"executionService": "local", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}},
      "requires an external execution service"),
     (True, {"executionService": "cluster", "system": NATIVE.split("-")[0] + "-linux",
-      "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, "does not support system"),
+      "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, None),
     (True, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, None),
-    (False, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}},
-     "cannot enforce resource limits"),
+    (False, {"executionService": "cluster", "executionResources": {"cpuMillis": 500, "memoryBytes": 2 ** 28}}, None),
 ], ids=["unlimited", "local-resources", "wrong-system", "remote-native", "unsupported-limits"])
-def test_external_service_validation_uses_host_catalog(
+def test_external_service_validation_keeps_cached_capabilities_advisory(
         project, core_factory, registered_remote, resource_limits, settings, message):
-    """The service's advertised system and resource rules apply before accepting a run."""
+    """The catalog describes services; live capabilities are checked during prepare."""
     definition = {"language": "bash", "_outputs": MSG_FBS,
                   "_nix": '{ pkgs, inputs, params }: { run = "true"; }', **settings}
     write(project, {"work": definition}, [card("work", "work")], [])

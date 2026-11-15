@@ -64,7 +64,7 @@ auto with_bars(const Scene& scene, std::vector<Card>& cards,
                       width * static_cast<double>(i + 1) /
                           static_cast<double>(bar.ends.size() + 1),
                       output ? 0.0 : 40.0});
-      if (!e.card.empty() && !e.port.empty())
+      if (!e.card.empty())
         wires.push_back(output ? Wire{e.card, e.port, id, e.name}
                                : Wire{id, e.name, e.card, e.port});
     }

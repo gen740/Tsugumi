@@ -1,3 +1,4 @@
+import { cardIds } from './cardIds'
 import { CardNodeView } from '../src/ui/cardNode'
 import assert from 'node:assert/strict'
 import { Builder, ByteBuffer } from 'flatbuffers'
@@ -16,7 +17,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 function session() {
-  const s = new ProjectSession('/p', 'k', 'p')
+  const s = cardIds(new ProjectSession('/p', 'k', 'p'))
   s.connected = true
   s.scheduleSave = () => {}
   s.project = parse('{"name":"base","canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"b","port":"in"}}]}}')
@@ -132,7 +133,7 @@ for (const allow of [true, false]) {
   const html = renderToStaticMarkup(<PermissionRequests asked={s.reloadApproval!.permissions} />)
   assert.match(html, /a:/); assert.match(html, /b:/)
   assert.doesNotMatch(html, /今後は確認しない/)
-  await s.answerReloadApproval(allow)
+  await s.answerReloadApproval(allow, asked)
   assert.equal(calls.length, allow ? 2 : 1)
   assert.equal(s.reloadApproval, undefined)
   assert.equal(s.saveError, undefined)
@@ -161,9 +162,9 @@ assert.equal(runMark(new R.RunStatusT()), undefined)
     return new R.SaveResultT()
   } } as never
   await s.reloadExternal()
-  await s.answerReloadApproval(true)
+  await s.answerReloadApproval(true, [...s.reloadApproval!.permissions])
   assert.deepEqual(s.reloadApproval?.permissions, ['network a', 'sandbox_off b'])
-  await s.answerReloadApproval(true)
+  await s.answerReloadApproval(true, [...s.reloadApproval!.permissions])
   assert.deepEqual(approvals, [[], ['network a'], ['network a', 'sandbox_off b']])
   assert.equal(s.reloadApproval, undefined)
 }
@@ -208,3 +209,29 @@ console.log('owner UI review: delayed connect, in-flight edits, inline revision,
   assert.equal(s.nodeData('a').runMark, undefined)
 }
 console.log('display provenance survives another branch: passed')
+
+// Reload approval must send only the rows the person selected, including
+// future permission ids. Unrecognized kinds remain visible and unchecked.
+{
+  const { permissionCatalog, parsePermission, permissionInfo, defaultPermissionSelection } = await import('../src/model/permissions')
+  const previous = permissionCatalog.kinds
+  permissionCatalog.kinds = [{ kind: 'execution_service', label: 'Host supplied execution label', icon: 'server.rack' }]
+  const asked = ['execution_service a remote-west', 'future_permission b exact target']
+  assert.equal(parsePermission(asked[1])?.kind, 'future_permission')
+  assert.equal(permissionInfo('future_permission').label, 'future_permission')
+  assert.deepEqual(defaultPermissionSelection(asked), [asked[0]])
+  const html = renderToStaticMarkup(<PermissionRequests asked={asked} selected={[asked[0]]} onSelect={() => {}} />)
+  assert.match(html, /Host supplied execution label/)
+  assert.match(html, /remote-west/)
+  assert.match(html, /future_permission/)
+  assert.match(html, /exact target/)
+  assert.equal((html.match(/checked=""/g) ?? []).length, 1)
+  const s = session(), approvals: string[][] = []
+  s.reloadApproval = { baseRev: 7n, permissions: asked }
+  s.client = { reload: async (_base: bigint, _op: string, _origin: string, approved: string[]) => {
+    approvals.push(approved); return new R.SaveResultT()
+  } } as never
+  await s.answerReloadApproval(true, [asked[0]])
+  assert.deepEqual(approvals, [[asked[0]]])
+  permissionCatalog.kinds = previous
+}

@@ -1,0 +1,8 @@
+{
+  "_card.json": "{\n  \"language\": \"go\",\n  \"inputs\": [\n    {\n      \"name\": \"in\"\n    }\n  ]\n}\n",
+  "default.nix": "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"go\" ]; };\nin { run = inputs.tsugumi.goCard { inherit sdk; src = ./src; }; }\n",
+  "_outputs.fbs": "namespace @NAMESPACE@;\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n",
+  "src/card.go": "package main\n\nimport \"tsugumi\"\n\nfunc run(inputs tsugumi.Inputs, report *tsugumi.Report) (tsugumi.Output, error) {\n\tif err := report.Text(\"hello\"); err != nil {\n\t\treturn tsugumi.Output{}, err\n\t}\n\treturn tsugumi.Output{Out: &tsugumi.OutputOut{Value: \"hello\"}}, nil\n}\n\nfunc onRunStart(inputs tsugumi.Inputs) error { return nil }\n",
+  "src/go.mod": "module tsugumi-card\n\ngo 1.26\n\nrequire tsugumi v0.0.0\n\nreplace tsugumi => ./tsugumi\n",
+  "src/go.sum": ""
+}

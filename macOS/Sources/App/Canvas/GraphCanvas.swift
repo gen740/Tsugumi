@@ -1202,26 +1202,19 @@ struct GraphCanvas: View {
   private func finishConnect(from: (CardKey, String), at pt: CGPoint) {
     pending = nil
     guard session.isEditable, let to = wireTarget(at: pt, output: false, except: from.0) else { return }
-    session.performCardEdit { try await session.connect(from: wireStart(from, output: true), to: to, in: tab.scope) }
+    session.performCardEdit { try await session.connect(from: from, to: to, in: tab.scope) }
   }
 
   private func finishConnect(toInput to: (CardKey, String), at pt: CGPoint) {
     pending = nil
     guard session.isEditable, let from = wireTarget(at: pt, output: true, except: to.0) else { return }
-    session.performCardEdit { try await session.connect(from: from, to: wireStart(to, output: false), in: tab.scope) }
+    session.performCardEdit { try await session.connect(from: from, to: to, in: tab.scope) }
   }
 
-  /// Another wire from a Draft's port is another port.
-  private func wireStart(_ end: (CardKey, String), output: Bool) -> (CardKey, String) {
-    session.kind(end.0) == .draft && session.portWired(end.0, end.1, output: output, in: tab.scope) ? (end.0, CardGeometry.newPort) : end
-  }
-
-  /// Where a dropped wire ends. A Draft takes it anywhere on the Card: a port
-  /// of its own that has no wire, or a new one (never replacing another wire).
+  /// A dropped wire attaches anywhere on a Draft Card.
   private func wireTarget(at pt: CGPoint, output: Bool, except: CardKey) -> (CardKey, String)? {
     if let near = nearestPort(at: pt, output: output, except: except) {
-      let taken = session.kind(near.0) == .draft && session.portWired(near.0, near.1, output: output, in: tab.scope)
-      return taken ? (near.0, CardGeometry.newPort) : near
+      return near
     }
     let w = world(pt)
     let margin = 18 / camera.zoom + 6

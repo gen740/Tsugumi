@@ -63,7 +63,7 @@ def test_runs_commit_note_and_branch(tmp_path, core_factory):
     assert st.state == RunState.succeeded and not st.commit
     init = c.call("VersionInitRequest", opId=new_id(), origin="test")
     first = text(init.commit)
-    assert text(graph(c).commits[0].message) == "プロジェクトを作成"
+    assert text(graph(c).commits[0].message) == '{"tsugumi":"commit","kind":"create","card":""}'
     g = graph(c)
     assert g.enabled and text(g.head) == first and not g.dirty
     # A run after a change commits it; a run without one shares the commit.
@@ -175,14 +175,14 @@ def test_a_demo_history_becomes_its_versions(tmp_path, core_factory):
     assert not by["別の文を試す"].runs[0].summary  # the history file gives none
     assert src_text(c) == "final"
     parent = next(entry for entry in graph(c).commits if text(entry.message) == "計画")
-    assert "tried" in text(c.call("VersionDiffRequest", commit=text(parent.id)).text)
 
 
 
-def test_the_casa_demo_carries_its_trials(tmp_path, core_factory):
+@pytest.mark.parametrize("language", ["ja", "en"])
+def test_the_casa_demo_carries_its_trials(tmp_path, core_factory, language):
     """The Cas A project exposes its trials and can return to its original Drafts."""
     root = tmp_path / "casa"
-    shutil.copytree(ROOT / "demos" / "ja" / "casa", root)
+    shutil.copytree(ROOT / "demos" / language / "casa", root)
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     c.call("VersionInitRequest", opId=new_id(), origin="test")
@@ -193,26 +193,47 @@ def test_the_casa_demo_carries_its_trials(tmp_path, core_factory):
     assert "failed" in states and states.count("succeeded") >= 5
     by_id = {text(x.id): x for x in g.commits}
     head = by_id[text(g.head)]
-    assert text(head.message).startswith("CIAO を固定") and not (head.tags or [])
+    assert text(head.message).startswith("CIAO を固定" if language == "ja" else "Pin CIAO") and not (head.tags or [])
     spectrum = by_id[text(head.parents[0])]
-    assert text(spectrum.message).startswith("spectrum を追加")
+    assert text(spectrum.message).startswith("spectrum を追加" if language == "ja" else "Add spectrum")
     adopted = by_id[text(spectrum.parents[0])]
     assert [text(t) for t in adopted.tags] == ["rgb-v1"]
     assert all(text(run.state) != "failed" for run in head.runs or [])
     # The versions before CIAO are as they were: no Card of it, bands without dmcopy.
     assert "ciao" not in [text(card.id) for card in c.call("VersionCanvasRequest", commit=text(spectrum.id)).cards]
-    assert any(text(entry.message).startswith("青の帯域") and any(text(run.state) == "failed" for run in entry.runs or []) for entry in g.commits)
+    assert any(text(entry.message).startswith("青の帯域" if language == "ja" else "Try starting the blue band")
+               and any(text(run.state) == "failed" for run in entry.runs or []) for entry in g.commits)
     # Going back to the plan gives the Drafts.
     plan = next(x for x in g.commits if not (x.parents or []))
     rev = c.call("ProjectInspectRequest").rev
     c.call("VersionCheckoutRequest", baseRev=rev, opId=new_id(), origin="test", commit=text(plan.id))
     snap = c.call("ProjectInspectRequest")
     assert all(json.loads(text(d.cardJson)).get("template") in ("draft", "trigger") for d in snap.definitions)
+    drafts = {text(d.id) for d in snap.definitions if json.loads(text(d.cardJson)).get("template") == "draft"}
+    assert drafts == {"load", "bands", "rgb"}
+    for d in snap.definitions:
+        if text(d.id) in drafts:
+            assert json.loads(text(d.cardJson)) == {"template": "draft"}
+            meta = json.loads(text(d.metaJson))
+            assert not meta.get("inputs") and not meta.get("outputs")
+    for card in snap.resolution:
+        if text(card.card.segments[0]) in drafts:
+            assert not card.inputs and not card.outputs
+    assert json.loads(text(snap.projectJson))["canvas"]["connections"] == [
+        {"from": {"card": "start", "port": "out"}, "to": {"card": "load", "port": ""}},
+        {"from": {"card": "load", "port": ""}, "to": {"card": "bands", "port": ""}},
+        {"from": {"card": "bands", "port": ""}, "to": {"card": "rgb", "port": ""}},
+    ]
+    # Returning to the implemented tip restores its real ports and exact document.
+    c.call("VersionCheckoutRequest", baseRev=snap.rev, opId=new_id(), origin="test", commit=text(head.id))
+    restored = c.call("ProjectInspectRequest")
+    assert json.loads(text(restored.projectJson)) == json.loads((ROOT / "demos" / language / "casa" / "tsugumi.json").read_text())
+    assert not graph(c).dirty
 
 
 
-def summary_of(c, st) -> str:
-    """Read the completed run's summary from the public version graph."""
+def summary_of(c, st) -> dict:
+    """Read complete language-neutral facts from the public version graph."""
     commit = text(st.commit)
     deadline = time.monotonic() + 10.0
     while True:
@@ -221,7 +242,13 @@ def summary_of(c, st) -> str:
             break
         time.sleep(0.1)
     run = next(r for r in runs if text(r.runId) == text(st.runId))
-    return text(run.summary)
+    return json.loads(text(run.summary))
+
+
+def run_facts(*, whole=False, card="", propagate=True, saved=False, ran=(), failed=(), never=()):
+    return {"whole": whole, "card": card, "propagate": propagate, "saved_inputs": saved,
+            "ran": [{"card": c, "count": n} for c, n in ran],
+            "failures": [{"card": c, "kind": k} for c, k in failed], "never": list(never)}
 
 
 def test_a_run_note_says_what_ran(tmp_path, core_factory):
@@ -243,26 +270,26 @@ def test_a_run_note_says_what_ran(tmp_path, core_factory):
     # and the Cards after it never run.
     _, st = run_and_wait(c, "both")
     assert st.state == RunState.failed
-    assert summary_of(c, st) == "both から / 失敗: both（input_missing） / 未実行: sink"
+    assert summary_of(c, st) == run_facts(card="both", failed=[("both", "input_missing")], never=["sink"])
     # The whole Workflow: the trigger is no step of its own, and the merge
     # and what follows ran once per branch.
     set_text(c, "second")
     _, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded
     whole = text(st.commit)
-    assert summary_of(c, st) == "全体: src、split、both ×2、sink ×2"
+    assert summary_of(c, st) == run_facts(whole=True, card="start", ran=[("src",1),("split",1),("both",2),("sink",2)])
     # A Card and what follows it, then one Card alone, on the saved inputs.
     _, st = run_and_wait(c, "split")
-    assert summary_of(c, st) == "split から（保存済みの入力で）: split、both ×2、sink ×2"
+    assert summary_of(c, st) == run_facts(card="split", saved=True, ran=[("split",1),("both",2),("sink",2)])
     _, st = run_and_wait(c, "sink", propagate=False)
-    assert summary_of(c, st) == "sink だけ（保存済みの入力で）: sink"
+    assert summary_of(c, st) == run_facts(card="sink", propagate=False, saved=True, ran=[("sink",1)])
     # Runs without a change share the commit: each has its own line.
     assert len(notes(c, whole, 3)) == 3
 
 
 
-def test_a_run_is_recorded_in_the_language_of_the_connection_that_started_it(tmp_path, core_factory):
-    """Version messages and run summaries use the initiating connection's language."""
+def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
+    """Every connection reads the same complete, neutral facts."""
     root = tmp_path / "p"
     write(root,
           defs={"trigger": {"template": "trigger"},
@@ -274,25 +301,25 @@ def test_a_run_is_recorded_in_the_language_of_the_connection_that_started_it(tmp
           conns=[conn("src", "msg", "split", "in"), conn("split", "out1", "both", "a"),
                  conn("split", "out2", "both", "b"), conn("both", "out", "sink", "in")])
     daemon = core_factory(project_root=root)
-    c = daemon.connect(language="en")
+    c = daemon.connect()
     c.call("VersionInitRequest", opId=new_id(), origin="test")
-    assert text(graph(c).commits[0].message) == "Create the project"
+    assert text(graph(c).commits[0].message) == '{"tsugumi":"commit","kind":"create","card":""}'
     _, st = run_and_wait(c, "both")
-    assert summary_of(c, st) == "from both / failed: both (input_missing) / not run: sink"
+    assert summary_of(c, st) == run_facts(card="both", failed=[("both", "input_missing")], never=["sink"])
     set_text(c, "second")
     _, st = run_and_wait(c, "start")
-    assert summary_of(c, st) == "whole: src, split, both ×2, sink ×2"
-    assert text(next(entry for entry in graph(c).commits if text(entry.id) == text(st.commit)).message) == "Run: start"
+    assert summary_of(c, st) == run_facts(whole=True, card="start", ran=[("src",1),("split",1),("both",2),("sink",2)])
+    assert text(next(entry for entry in graph(c).commits if text(entry.id) == text(st.commit)).message) == '{"tsugumi":"commit","kind":"run","card":"start"}'
     _, st = run_and_wait(c, "split")
-    assert summary_of(c, st) == "from split (with saved inputs): split, both ×2, sink ×2"
+    assert summary_of(c, st) == run_facts(card="split", saved=True, ran=[("split",1),("both",2),("sink",2)])
     _, st = run_and_wait(c, "sink", propagate=False)
-    assert summary_of(c, st) == "only sink (with saved inputs): sink"
+    assert summary_of(c, st) == run_facts(card="sink", propagate=False, saved=True, ran=[("sink",1)])
     # Another connection, in Japanese, on the same project.
     j = daemon.connect()
     set_text(j, "third")
     _, st = run_and_wait(j, "start")
-    assert summary_of(j, st) == "全体: src、split、both ×2、sink ×2"
-    assert text(next(entry for entry in graph(j).commits if text(entry.id) == text(st.commit)).message) == "実行: start"
+    assert summary_of(j, st) == run_facts(whole=True, card="start", ran=[("src",1),("split",1),("both",2),("sink",2)])
+    assert text(next(entry for entry in graph(j).commits if text(entry.id) == text(st.commit)).message) == '{"tsugumi":"commit","kind":"run","card":"start"}'
 
 
 
@@ -308,13 +335,13 @@ def test_a_run_note_names_a_card_that_ran_and_failed(tmp_path, core_factory):
     _, st = run_and_wait(c, "feed")
     assert st.state == RunState.failed
     summary = summary_of(c, st)
-    assert summary == "feed から: feed、split、both ×2、sink / 失敗: both（execution_limit）", summary
+    assert summary == run_facts(card="feed", ran=[("feed",1),("split",1),("both",2),("sink",1)], failed=[("both","execution_limit")]), summary
     assert any(text(run.state) == "failed" for run in notes(c, text(st.commit), 1))
 
 
 
-def test_a_long_run_summary_stays_short(tmp_path, core_factory):
-    """A large Workflow keeps its run summary short."""
+def test_a_long_run_record_keeps_all_cards(tmp_path, core_factory):
+    """Only the host may shorten a run record for display."""
     root = tmp_path / "p"
     builtin_project(root, extra_cards=[card(f"more{i}", "source") for i in range(8)])
     daemon = core_factory(project_root=root)
@@ -322,7 +349,7 @@ def test_a_long_run_summary_stays_short(tmp_path, core_factory):
     c.call("VersionInitRequest", opId=new_id(), origin="test")
     _, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded
-    assert summary_of(c, st).endswith(" ほか 4")
+    assert len(summary_of(c, st)["ran"]) == 10
 
 
 
@@ -358,8 +385,8 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
 
 
 
-def test_a_version_has_its_canvas_diff_and_summary(tmp_path, core_factory):
-    """Version diffs omit data files and each version retains its own summary."""
+def test_a_version_has_its_canvas_and_neutral_change_record(tmp_path, core_factory):
+    """Each version retains its canvas and value-free change kinds."""
     root = tmp_path / "p"
     builtin_project(root, text="first",
                     extra_cards=[card("later", "source")])
@@ -371,10 +398,6 @@ def test_a_version_has_its_canvas_diff_and_summary(tmp_path, core_factory):
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     first = text(c.call("VersionInitRequest", opId=new_id(), origin="test").commit)
-    # Everything in the first version, but only what a summary may read.
-    whole = text(c.call("VersionDiffRequest", commit=first).text)
-    assert "print('code one')" in whole and '"text"' in whole
-    assert "patient" not in whole and "secret" not in whole and "values.csv" not in whole
     # No saved positions: columns by depth, and only real wires.
     canvas = c.call("VersionCanvasRequest", commit=first)
     at = {text(k.id): None for k in canvas.cards}
@@ -388,21 +411,13 @@ def test_a_version_has_its_canvas_diff_and_summary(tmp_path, core_factory):
     c.call("ProjectReloadRequest", opId=new_id(), origin="test", baseRev=c.call("ProjectInspectRequest").rev)
     _, st = run_and_wait(c, "start")
     second = text(st.commit)
-    change = c.call("VersionDiffRequest", commit=second)
-    assert '"second"' in text(change.text) and "first" in text(change.text) and "patient" not in text(change.text)
-    assert "layout.json" not in text(change.text) and not change.truncated
     placed = json.loads(text(c.call("VersionCanvasRequest", commit=second).layoutJson))["cards"]
     assert placed["src"]["y"] == 7 and placed["out"]["x"] == 200
-    # The summary: on the commit, in its own note, and replaced when written again.
-    factual = c.call("VersionNoteRequest", commit=second, language="ja")
-    assert text(factual.text) == "変更: src (パラメータ)"
-    assert not factual.agentSummary
-    assert git(root, "notes", "--ref=tsugumi-record-ja", "show", second).strip() == text(factual.text)
-    assert text(c.call("VersionNoteRequest", commit=second, language="en").text) == "Changed src (parameters)"
-    for words in ("一度目", "failed が出ないように直した"):
-        c.call("VersionNoteStoreRequest", opId=new_id(), origin="test", commit=second, summary=words)
-    got = c.call("VersionNoteRequest", commit=second, language="ja")
-    assert text(got.agentSummary) == "failed が出ないように直した"
+    # Core records neutral kinds without parameter or source values.
+    factual = c.call("VersionNoteRequest", commit=second)
+    record = json.loads(text(factual.recordJson))
+    assert record == {"added": [], "removed": [], "changed": [{"card": "src", "kinds": ["parameters"]}], "workflow": False}
+    assert json.loads(git(root, "notes", "--ref=tsugumi-record", "show", second)) == record
     notes(c, second, 1)
     assert all(text(run.state) == "succeeded" for run in notes(c, second, 1))
     # A commit that is not there is refused, and nothing is kept.
@@ -427,15 +442,6 @@ def test_compare_runs_keeps_parameters_and_diffs_the_selected_versions(tmp_path,
     run3, third = run_and_wait(c, "src")
     before = c.call("ProjectInspectRequest")
     head = text(graph(c).head)
-    direct = c.call("VersionDiffRequest", commit=text(third.commit), fromCommit=text(first.commit))
-    patch = text(direct.text)
-    assert '"first"' in patch and '"third"' in patch and '"intermediate"' not in patch
-    assert not text(c.call("VersionDiffRequest", commit=head, fromCommit=head).text)
-    assert text(graph(c).head) == head
-    assert c.call("ProjectInspectRequest").rev == before.rev
-    with pytest.raises(RpcFailure) as failure:
-        c.call("VersionDiffRequest", commit=head, fromCommit="0" * 40)
-    assert failure.value.kind == "not_found"
     set_text(c, "current document")
 
     def check(client):

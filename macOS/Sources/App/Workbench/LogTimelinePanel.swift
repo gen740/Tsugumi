@@ -113,8 +113,8 @@ struct RunLogView: View {
     VStack(alignment: .leading, spacing: 4) {
       HStack {
         Picker("", selection: $stream) {
-          Text("stdout").tag(Tsugumi_Data_LogStream.stdout)
-          Text("stderr").tag(Tsugumi_Data_LogStream.stderr)
+          Text("stdout").tag(Tsugumi_Data_LogStream.standardOutput)
+          Text("stderr").tag(Tsugumi_Data_LogStream.standardError)
           Text("journal").tag(Tsugumi_Data_LogStream.journal)
         }
         .pickerStyle(.segmented).frame(width: 240).labelsHidden()
@@ -155,7 +155,7 @@ struct RunLogView: View {
       return String(localized: "この実行では、この Card はまだ動いていません。")
     }
     switch stream {
-    case .stderr: return String(localized: "stderr への出力はありません（Nix 評価・build のログもここに出ます）。")
+    case .standardError: return String(localized: "stderr への出力はありません（Nix 評価・build のログもここに出ます）。")
     case .journal: return String(localized: "記録された段階の出来事はありません。")
     default: return String(localized: "stdout への出力はありません。")
     }

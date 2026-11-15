@@ -11,7 +11,7 @@ The RPCs by which the UI, the Web and the Agent talk to `tsugumid`, generated fr
 
 Layout proposals, layout schema validation and minimap placement belong to the host service ([protocol/host.fbs](../protocol/host.fbs)). Saving clients remove deleted Card references. The project core carries layout objects and opaque view JSON without interpreting presentation fields.
 
-There are 48 requests.
+There are 46 requests.
 
 ## Connection
 
@@ -28,7 +28,6 @@ There are 48 requests.
 | `expected_project_id` | `string` |  |  |
 | `token` | `string` |  |  |
 | `min_protocol` | `uint32` |  |  |
-| `language` | `string` |  | The client's language ("ja" or "en"; anything else is Japanese). What tsugumid writes into the project's git for the runs this connection starts (the commit message, the run's note) is in it. |
 
 ## Projects and saving
 
@@ -37,8 +36,9 @@ There are 48 requests.
 | [`ProjectOpen`](#projectopen) | OpenResult | Creates (or replaces) the connection's subscription. |
 | [`ProjectClose`](#projectclose) | Ack | Ends only the given subscription. Unknown ids are acknowledged. |
 | [`ProjectInspect`](#projectinspect) | ProjectSnapshot | No subscription, build or reload. |
+| [`ProjectHostRequirements`](#projecthostrequirements) | ProjectHostRequirements | Reads the accepted document, never the disk. |
 | [`CardId`](#cardid) | CardIdResult | Reserves a permanent identifier for a new Card without changing the document revision. Supply a caller-derived stem (1..123 ASCII identifier characters); use the returned id in the canvas, paths and wires. Each call reserves a fresh id; save the definition and canvas with project_save. |
-| [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. |
+| [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. Drafts have no ports: use {"card":"<id>","port":""} for each Draft wire end, with any number in or out. Implementing one requires SetProject in this same save rebinding every incoming end to a real input and every outgoing end to a real output (and boundary endpoints in its project's tsugumi.json). Even a single possible port must be stated. Ends on remaining Drafts stay empty. A non-existent port on a non-Draft Card is validation_failed, naming the wire. |
 | [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. Permission comparison is selected explicitly, independently of origin. |
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
 | [`ProjectShell`](#projectshell) | ProjectShellResult | Runs in the project VM as the project user, with the project directory as cwd. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream is capped at 262144 bytes. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Isolation is selected explicitly and applied independently of origin. A requested isolation mechanism that is unavailable fails closed. |
@@ -60,6 +60,10 @@ There are 48 requests.
 | `subscription_id` | `string` | yes |  |
 
 ### ProjectInspect
+
+No fields.
+
+### ProjectHostRequirements
 
 No fields.
 
@@ -141,7 +145,6 @@ No fields.
 | [`ProjectFileList`](#projectfilelist) | SourcePage | depth = 0 (0..8), include_directories = false, limit = 100. |
 | [`ProjectFileStat`](#projectfilestat) | SourceInfo |  |
 | [`ProjectFileRead`](#projectfileread) | FileContent | offset = 0, limit_bytes = 262144 (1..1 MiB). |
-| [`ProjectFileFormat`](#projectfileformat) | ProjectFileFormatResult | Never changes the document. |
 
 ### ProjectFileList
 
@@ -170,14 +173,6 @@ No fields.
 | `if_hash` | `string` |  |  |
 | `offset` | `uint64` |  |  |
 | `limit_bytes` | `uint32` |  |  |
-
-### ProjectFileFormat
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `path` | `string` | yes |  |
-| `text` | `string` | yes |  |
-| `language` | `FormatLanguage` |  |  |
 
 ## Card SDKs and types
 
@@ -431,9 +426,7 @@ No fields.
 | [`VersionCheckout`](#versioncheckout) | SaveResult | Starts from a version: what is saved now is committed, then the project's files become those of `commit` and the document is read again (like ProjectReload). Only while no run is active. |
 | [`VersionGraph`](#versiongraph) | VersionGraph, newest first |  |
 | [`VersionCanvas`](#versioncanvas) | VersionCanvas: raw layout, definition kinds and connections of a version | The host service interprets these for a minimap. |
-| [`VersionDiff`](#versiondiff) | VersionDiff: what a version changed from another version (its first parent by default), in the text a summary is written from | Only code and settings: never data files. |
-| [`VersionNote`](#versionnote) | VersionNote | Core-generated mechanical record and the saved Agent note. The host Agent service chooses which to return to the UI. Mechanical records are kept in refs/notes/tsugumi-record-{ja,en}. |
-| [`VersionNoteStore`](#versionnotestore) | VersionResult | The host Agent service stores the generated note in refs/notes/tsugumi-summary. Clients request notes from agentd. |
+| [`VersionNote`](#versionnote) | VersionNote | Neutral facts, cached in refs/notes/tsugumi-record. |
 
 ### VersionInit
 
@@ -472,28 +465,11 @@ No fields.
 | --- | --- | --- | --- |
 | `commit` | `string` | yes |  |
 
-### VersionDiff
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `commit` | `string` | yes |  |
-| `from_commit` | `string` |  | Compare from this version; absent means the first parent of commit. |
-
 ### VersionNote
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `commit` | `string` | yes |  |
-| `language` | `string` | yes |  |
-
-### VersionNoteStore
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `op_id` | `string` | yes |  |
-| `origin` | `string` | yes |  |
-| `commit` | `string` | yes |  |
-| `summary` | `string` | yes |  |
 
 ## Notifications
 

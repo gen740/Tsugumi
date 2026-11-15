@@ -73,7 +73,7 @@ TEST_P(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
   EXPECT_TRUE(std::ranges::any_of(logs, [](const auto& entry) {
     return entry.first == LogStream::journal && entry.second.find("1-byte limit") != std::string::npos;
   }));
-  EXPECT_FALSE(std::ranges::any_of(logs, [](const auto& entry) { return entry.first == LogStream::stdout; }));
+  EXPECT_FALSE(std::ranges::any_of(logs, [](const auto& entry) { return entry.first == LogStream::standard_output; }));
   summary.invocation = 2;
   const auto result = execution.run(request);
   ASSERT_FALSE(result.outcome.failure);

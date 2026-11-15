@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "agent/json.hh"
+#include "host_requirements.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
 
@@ -44,6 +45,8 @@ struct Environments::Impl {
     std::atomic<bool> starting = false;
     std::atomic<uint64_t> start_generation = 0;
     State state;
+    std::optional<Tsugumi::RPC::ProjectHostRequirementsT> requirements;
+    std::vector<EnvironmentMount> mounted;
     std::vector<std::string> folders;
     std::vector<std::string> origins;
     int64_t pid = 0;
@@ -129,6 +132,7 @@ struct Environments::Impl {
         } catch (const std::exception&) {
         }
       }
+      entry->state.folders = entry->folders;
       // A State query may rediscover a resident daemon after agentd restarts.
     }
     return entry;
@@ -298,6 +302,7 @@ struct Environments::Impl {
         std::filesystem::path(entry.state.control_dir) / "attached.json",
         json::Encode(json::Members{{"folders", Strings(folders)}}), 0600);
     entry.folders = folders;
+    entry.state.folders = folders;
   }
   auto Plan(const Entry& entry) -> EnvironmentLaunch {
     EnvironmentLaunch launch;
@@ -308,36 +313,12 @@ struct Environments::Impl {
     launch.folders = entry.folders;
     launch.mounts = {{"project", launch.project, false},
                      {"control", launch.control, false}};
-    std::map<std::string, bool> host_folders;
-    std::function<void(const std::filesystem::path&, int)> scan =
-        [&](const auto& root, int depth) {
-          std::error_code error;
-          for (const auto& dir : std::filesystem::directory_iterator(
-                   root / "definitions", error)) {
-            try {
-              const auto raw = fs::read_file(dir.path() / "_card.json");
-              if (!raw) continue;
-              const auto card = json::Object(*raw);
-              for (const auto& value :
-                   json::Array(json::Get(card, "hostFolders", "[]"))) {
-                const auto folder = json::Object(value);
-                const auto path = json::Text(folder, "path");
-                if (path.starts_with("/") &&
-                    std::filesystem::is_directory(path))
-                  host_folders[path] = host_folders[path] ||
-                                       json::Bool(json::Get(folder, "write"));
-              }
-            } catch (const std::exception&) {
-            }
-          }
-          if (depth >= 15) return;
-          error.clear();
-          for (const auto& dir :
-               std::filesystem::directory_iterator(root / "externals", error))
-            scan(dir.path(), depth + 1);
-        };
     if (options.process->Guest()) {
-      scan(entry.state.project, 0);
+      std::map<std::string, bool> host_folders;
+      if (entry.requirements)
+        for (const auto& folder : entry.requirements->folders)
+          if (std::filesystem::is_directory(folder->path))
+            host_folders[folder->path] = host_folders[folder->path] || folder->write;
       for (const auto& [path, write] : host_folders)
         launch.mounts.push_back(
             {"host-" + crypto::sha256_hex(path).substr(0, 16), path, !write});
@@ -371,12 +352,23 @@ struct Environments::Impl {
     fs::write_atomic(
         std::filesystem::path(entry.state.control_dir) / "origins.json",
         json::Encode(json::Members{{"origins", Strings(entry.origins)}}), 0600);
-    WriteFolders(entry, request.folders);
+    WriteFolders(entry, entry.folders);
     CheckDeath(entry);
     if (ReadReady(entry)) {
-      Authorize(entry);
-      Notify(entry);
-      return;
+      const auto previous = entry.mounted.empty() ? Plan(entry).mounts : entry.mounted;
+      entry.requirements = options.process->Requirements(entry.state);
+      const auto next = Plan(entry);
+      // The guest keeps the folders of its start: replacing the shares of a
+      // running project leaves it with files it can no longer reach, so a
+      // different plan starts the project again.
+      if (options.process->Guest() && next.mounts != previous) {
+        Stop(entry);
+      } else {
+        entry.mounted = next.mounts;
+        Authorize(entry);
+        Notify(entry);
+        return;
+      }
     }
     // A previously known process with an unresponsive endpoint still owns the
     // project. Do not spawn a second one or destroy its control files.
@@ -408,6 +400,8 @@ struct Environments::Impl {
 #endif
       const auto scratch =
           temporary / ("tsugumi-scratch-" + std::to_string(::getuid()));
+      if (options.process->Guest() && !entry.requirements)
+        entry.requirements = load_host_requirements(entry.state.project);
       auto launch = Plan(entry);
       launch.archive = request.archive_incompatible_history;
       launch.arguments = {
@@ -443,6 +437,7 @@ struct Environments::Impl {
       launch.log = control / "server.log";
       launch.authorization = Authorize(entry);
       entry.pid = options.process->Launch(launch);
+      entry.mounted = launch.mounts;
       entry.child = true;
       Stage(entry, "waiting for tsugumid to become ready");
       const auto deadline =
@@ -451,6 +446,12 @@ struct Environments::Impl {
              std::chrono::steady_clock::now() < deadline) {
         if (CheckDeath(entry)) return;
         if (ReadReady(entry)) {
+          auto accepted = options.process->Requirements(entry.state);
+          const auto& planned = launch.mounts;
+          entry.requirements = std::move(accepted);
+          const auto required = Plan(entry).mounts;
+          if (options.process->Guest() && planned != required)
+            throw std::runtime_error("Host requirements changed during startup; retry the environment");
           Notify(entry);
           return;
         }
@@ -578,7 +579,7 @@ auto Environments::Terminal(const H::HostTerminalRequestT& request)
     const auto ready = Handle(state);
     if (ready.phase != H::EnvironmentPhase::Ready)
       throw std::runtime_error("The project's environment is not running");
-    input.project = ready.key;
+    input.project = impl_->options.process->Guest() ? ready.key : ready.project;
   }
   return impl_->options.process->Terminal(input);
 }
@@ -600,38 +601,46 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
   entry->state.project = std::filesystem::canonical(request.project).string();
   switch (request.action) {
     case H::EnvironmentAction::Start:
+      if (entry->state.phase != H::EnvironmentPhase::Ready) entry->requirements.reset();
       impl_->Start(*entry, request);
       break;
     case H::EnvironmentAction::Stop:
       impl_->Stop(*entry);
       break;
-    case H::EnvironmentAction::Folders: {
+    case H::EnvironmentAction::AddFolders:
+    case H::EnvironmentAction::RemoveFolders: {
       PrivateDirectory(
           std::filesystem::path(entry->state.control_dir).parent_path());
       PrivateDirectory(entry->state.control_dir);
-      const bool added = std::any_of(
-          request.folders.begin(), request.folders.end(),
-          [&](const auto& folder) {
-            return std::find(entry->folders.begin(), entry->folders.end(),
-                             folder) == entry->folders.end();
-          });
-      impl_->WriteFolders(*entry, request.folders);
-      if (impl_->options.process->Guest() &&
-          entry->state.phase == H::EnvironmentPhase::Ready) {
-        if (added) {
-          impl_->Stop(*entry);
-          H::EnvironmentRequestT restart = request;
-          restart.origins = entry->origins;
-          impl_->Start(*entry, restart);
-        } else
-          impl_->options.process->Shares(impl_->Plan(*entry));
+      const auto previous = entry->mounted.empty() ? impl_->Plan(*entry).mounts : entry->mounted;
+      if (entry->state.phase == H::EnvironmentPhase::Ready)
+        entry->requirements = impl_->options.process->Requirements(entry->state);
+      auto folders = entry->folders;
+      for (const auto& folder : request.folders) {
+        const auto found = std::find(folders.begin(), folders.end(), folder);
+        if (request.action == H::EnvironmentAction::RemoveFolders) {
+          if (found != folders.end()) folders.erase(found);
+        } else if (found == folders.end())
+          folders.push_back(folder);
       }
+      impl_->WriteFolders(*entry, folders);
+      // A running guest sees the folders of its start (see Start).
+      if (impl_->options.process->Guest() &&
+          entry->state.phase == H::EnvironmentPhase::Ready &&
+          impl_->Plan(*entry).mounts != previous) {
+        impl_->Stop(*entry);
+        H::EnvironmentRequestT restart = request;
+        restart.origins = entry->origins;
+        impl_->Start(*entry, restart);
+      }
+      impl_->Notify(*entry);
       break;
     }
     case H::EnvironmentAction::State:
       if (!impl_->CheckDeath(*entry)) {
         if (!entry->pid) {
           if (impl_->ReadReady(*entry)) {
+            entry->requirements = impl_->options.process->Requirements(entry->state);
             impl_->Authorize(*entry);
             impl_->Notify(*entry);
           } else if (entry->state.phase == H::EnvironmentPhase::Stopped) {
@@ -647,6 +656,7 @@ auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
     default:
       throw std::runtime_error("Unknown environment action");
   }
+  entry->state.folders = entry->folders;
   return entry->state;
 }
 }  // namespace tsugumi::host

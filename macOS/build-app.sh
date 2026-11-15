@@ -73,6 +73,7 @@ for b in "$bin"/*.bundle; do cp -R "$b" "$app/Contents/Resources/"; done
 math_fonts="$app/Contents/Resources/SwiftMath_SwiftMath.bundle/Contents/Resources/mathFonts.bundle"
 [ -f "$math_fonts/latinmodern-math.otf" ]
 find "$math_fonts" -type f ! -name 'latinmodern-math.*' ! -name LICENSE ! -name GUST-FONT-LICENSE.txt -delete
+cp -R "$repo/build-host/Resources/formatters" "$app/Contents/Resources/formatters"
 cp -R "$repo/demos" "$app/Contents/Resources/demos"
 # The common isolated frame host. Modules and libraries come from tsugumid over RPC.
 mods="$app/Contents/Resources/modules"
@@ -149,6 +150,9 @@ if [ "$channel" = dev ] && [ -n "${TSUGUMI_CODESIGN_IDENTITY:-}" ]; then
 fi
 for library in "$app/Contents/Frameworks/"*.dylib; do
   codesign --force --sign "$identity" "$library" >/dev/null
+done
+for tool in "$app/Contents/Resources/formatters/"*; do
+  codesign --force --sign "$identity" "$tool" >/dev/null
 done
 codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-agentd" >/dev/null
 codesign --force --sign "$identity" --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app/Contents/MacOS/tsugumi-vmhost" >/dev/null

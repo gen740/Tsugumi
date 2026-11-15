@@ -129,6 +129,7 @@ public struct ProviderConfig: Codable, Equatable, Sendable {
   public var effort: String?
   public var fast = false
   public var usesChoices = false
+  public var purpose: String?
 
   public init(name: String, model: String, auth: Auth, api: API = .anthropicMessages) {
     self.name = name
@@ -234,7 +235,7 @@ public enum Keychain {
 /// Platform secret storage and explicit, memory-only provisioning. Settings,
 /// provider interpretation and OAuth remain in agentd.
 public enum ProviderCredentials {
-  public static func exists(account: String) -> Bool { Keychain.exists(account: account) }
+  public static func exists(account: String) -> Bool { ModelCatalogSnapshot.shared.usable(account == "OpenAI" ? "openai" : "anthropic") }
   public static func save(_ secret: String, account: String) async throws {
     try Keychain.save(secret, account: account)
     try await CoreAgentClient.shared.provisionKey(secret, id: account == "OpenAI" ? "openai" : "anthropic")

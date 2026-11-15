@@ -25,6 +25,8 @@ for (const draft of [false, true]) {
   assert.ok(copy)
   copy.apply(s)
   assert.deepEqual(s.sourceEdits.get(`definitions/${copy.id}/src/blob.bin`), bytes, `definition copy (draft=${draft})`)
+  s.externals.set('externals/sub/', { project: parse('{"canvas":{"cards":[{"id":"a"}],"connections":[]}}'),
+    layout: parse('{}'), definitions: new Map([['a', s.definitionDrafts.get('a')!]]) })
   const external = 'externals/sub/definitions/a/src/blob.bin'
   if (draft) s.sourceEdits.set(external, bytes)
   else s.sources.set(external, { hash: 'hash', size: 3n })
@@ -37,7 +39,7 @@ for (const draft of [false, true]) {
   s.sources.set(p, { hash: 'hash', size: 3n })
   s.edit((x) => x.removeSource(p))
   await (s as any).fillUndoSources()
-  s.undo()
+  await s.undo()
   assert.deepEqual(s.sourceEdits.get(p), bytes, 'undo restores bytes')
   let sent: any[] = []
   s.client = { save: async (_rev: unknown, _op: unknown, _origin: unknown, changes: any[]) => { sent = changes; throw Error('captured') } } as any

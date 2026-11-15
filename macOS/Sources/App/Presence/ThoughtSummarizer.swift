@@ -51,27 +51,13 @@ final class ThoughtSummarizer {
   /// local fixture has none: plain lines only; on the ChatGPT plan, the
   /// small speech model).
   static func config() -> ProviderConfig? {
-    var c = AgentSettings.current()
-    guard c.auth != .none else { return nil }
-    let d = CorePreferences.shared
-    if c.auth == .chatGPT {
-      c.model = AgentSettings.chatGPTSpeechModel
-      return c
-    }
-    switch c.api {
-    case .anthropicMessages: c.model = d.string(forKey: "agent.thoughtModel").flatMap { $0.isEmpty ? nil : $0 } ?? "claude-haiku-5-5"
-    case .openAIResponses: c.model = d.string(forKey: "agent.thoughtModel.openai").flatMap { $0.isEmpty ? nil : $0 } ?? c.model
-    }
-    return c
+    guard let selected = CorePreferences.shared.summarySelection, selected.providerId != "fixture" else { return nil }
+    return AgentSettings.selected(selected)
   }
 
   static func summarize(conversationID: String, config: ProviderConfig, usage: @escaping (Usage) -> Void) async throws -> String {
     let client = CoreAgentClient.shared
-    var config = config
-    if config.auth == .chatGPT {
-      _ = try? await client.storedModels("chatgpt")
-      config.model = AgentSettings.chatGPTSpeechModel
-    }
+    let config = AgentSettings.selected(try await client.modelSelection("summary"))
     let value = try await client.call("ConversationSummarizeRequest", ["conversation_id": conversationID,
       "provider": try await client.provider(config)])
     if let counts = value["usage"], let data = try? JSONSerialization.data(withJSONObject: counts),

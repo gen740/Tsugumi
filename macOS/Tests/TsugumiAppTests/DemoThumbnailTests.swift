@@ -16,21 +16,61 @@ private func scene(_ id: String) throws -> DemoScene {
   return DemoScene(try JSONDecoder().decode(DemoPlayerData.self, from: bytes), images: root)
 }
 
-/// Every demo of Home has the site's data, and it reads: its wires end on real
-/// ports, and its images are there.
+/// Every demo of Home has the site's data: wires name real ports, or attach
+/// directly to a Draft with an empty port name, and its images are there.
 @Test func everyDemoHasAThumbnail() throws {
   let ids = try demoIds()
   #expect(!ids.isEmpty)
   for id in ids {
     let s = try scene(id)
     #expect(!s.placed.isEmpty, "\(id) has no Cards")
-    let ports = Dictionary(s.placed.map { ($0.card.id, $0.card) }, uniquingKeysWith: { a, _ in a })
+    let cards = Dictionary(s.placed.map { ($0.card.id, $0.card) }, uniquingKeysWith: { a, _ in a })
+    for c in s.data.cards where c.kind == "draft" {
+      #expect(c.inputs.isEmpty && c.outputs.isEmpty, "\(id): \(c.id) has no ports")
+    }
     for w in s.data.wires {
-      #expect(ports[w.from]?.outputs.contains { $0.name == w.fromPort } == true, "\(id): \(w.from).\(w.fromPort)")
-      #expect(ports[w.to]?.inputs.contains { $0.name == w.toPort } == true, "\(id): \(w.to).\(w.toPort)")
+      let from = try #require(cards[w.from]), to = try #require(cards[w.to])
+      #expect(from.kind == "draft" ? w.fromPort.isEmpty : !w.fromPort.isEmpty && from.outputs.contains { $0.name == w.fromPort }, "\(id): \(w.from).\(w.fromPort)")
+      #expect(to.kind == "draft" ? w.toPort.isEmpty : !w.toPort.isEmpty && to.inputs.contains { $0.name == w.toPort }, "\(id): \(w.to).\(w.toPort)")
     }
     for shown in s.shown {
       if case .image = shown.output { #expect(shown.image != nil, "\(id): the image of \(shown.id)") }
+    }
+  }
+}
+
+/// The real Draft demos use Card attachments in both flow directions. Check
+/// the drawn path, so accepting an empty port cannot hide a misplaced wire.
+@Test func thumbnailWiresMeetDraftCards() throws {
+  for id in try demoIds() {
+    let original = try scene(id).data
+    guard original.cards.contains(where: { $0.kind == "draft" }) else { continue }
+    for flow in ["topToBottom", "leftToRight"] {
+      var data = original
+      data.flow = flow
+      let s = DemoScene(data)
+      let cards = Dictionary(uniqueKeysWithValues: s.placed.map { ($0.card.id, $0) })
+      #expect(s.wires.count == data.wires.count)
+      for w in s.wires {
+        var start: CGPoint?, end: CGPoint?
+        w.path.forEach { element in
+          switch element {
+          case .move(to: let p): if start == nil { start = p }; end = p
+          case .line(to: let p), .quadCurve(to: let p, control: _), .curve(to: let p, control1: _, control2: _): end = p
+          case .closeSubpath: break
+          }
+        }
+        for (id, output, point) in [(w.wire.from, true, start), (w.wire.to, false, end)] {
+          let p = try #require(cards[id])
+          guard p.card.kind == "draft" else { continue }
+          let r = p.outline
+          let expected = flow == "topToBottom"
+            ? CGPoint(x: r.midX, y: output ? r.maxY : r.minY)
+            : CGPoint(x: output ? r.maxX : r.minX, y: r.midY)
+          #expect(try #require(point) == expected, "\(id): \(flow), output=\(output)")
+          #expect(w.dotted)
+        }
+      }
     }
   }
 }

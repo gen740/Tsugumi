@@ -131,8 +131,8 @@ final class AppPreferences {
   @ObservationIgnored private let d = UserDefaults.standard
 
   /// The app's language: Japanese unless English is chosen, whatever the
-  /// system's. It is also what tsugumid writes into a project's git (the
-  /// SessionHello's language, RPCClient) and the Web UI's on this Mac.
+  /// system's. The host uses it to present neutral Git records and shares it
+  /// with the Web UI on this Mac.
   enum Language: String, CaseIterable, Identifiable {
     case ja, en
     var id: String { rawValue }

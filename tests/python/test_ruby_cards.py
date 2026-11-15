@@ -346,7 +346,7 @@ def test_ruby_load_errors_are_structured(ruby_project, source, message):
     c = connect({'ruby': ruby(source)})
     rid, status = run_and_wait(c, 'ruby', timeout=600)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.worker_failed
-    log = c.call('LogRangeRequest', runId=rid, card=path('ruby'), stream=LogStream.stderr, limitBytes=65536)
+    log = c.call('LogRangeRequest', runId=rid, card=path('ruby'), stream=LogStream.standard_error, limitBytes=65536)
     assert message in text(status.failure.diagnostic) + text(log.text)
 
 
@@ -359,7 +359,7 @@ end''', outputs=NUMBERS)
     c = connect({'ruby': card})
     rid, status = run_and_wait(c, 'ruby', timeout=600)
     assert status.state == RunState.failed
-    log = c.call('LogRangeRequest', runId=rid, card=path('ruby'), stream=LogStream.stderr, limitBytes=65536)
+    log = c.call('LogRangeRequest', runId=rid, card=path('ruby'), stream=LogStream.standard_error, limitBytes=65536)
     assert 'vale' in text(status.failure.diagnostic) + text(log.text)
 
 

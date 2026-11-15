@@ -165,7 +165,7 @@ async function providerDisplay(id: ProviderId): Promise<ProviderConfig> {
 /** What the page may know of the connection (no key, no token). */
 async function providerInfo() {
   const p = await chatProvider()
-  const thought = await guideProvider()
+  const thought = await purposeProvider('summary')
   return { name: p.name, model: p.model, api: p.api, remote: p.auth !== 'none', plan: p.auth === 'chatgpt', effort: p.effort, fast: !!p.fast,
            thoughtModel: thought.auth === 'none' ? undefined : thought.model,
            modelNames: p.auth === 'chatgpt' ? (await modelCatalogs()).modelNames : {} }
@@ -215,32 +215,24 @@ async function guide(): Promise<RemoteAgent> {
   return guideAgent
 }
 
-/** The guide's connection: the Agent's, with a small model: claude-haiku-5-5
- *  on Anthropic, and on the ChatGPT plan the model Tsugumi speaks with:
- *  gpt-6.1-luna when the account offers it, else its newest luna (the plan
- *  refuses models it does not offer). OpenAI keeps the Agent's. Demo tours are
- *  led by the chat, with the chat's model. */
-async function guideProvider(): Promise<ProviderConfig> {
-  const p = await provider(), id = settings().provider
-  if (id === 'chatgpt') return { ...p, model: speechModel((await core.storedModels('chatgpt')).map((m) => m.id), p.model) }
-  return id === 'anthropic' ? { ...p, model: 'claude-haiku-5-5' } : p
+/** The host chooses the guide/summary model from settings and its catalog. */
+async function purposeProvider(purpose: 'guide' | 'summary'): Promise<ProviderConfig> {
+  const value = await core.user.call<{ provider: { providerId: ProviderId; model: string } }>('ModelSelectionRequest', { profile: settingsProfile(), purpose })
+  return { ...await providerFor(value.provider.providerId), model: value.provider.model, purpose }
 }
 
-export function speechModel(offered: string[], fallback: string): string {
-  const preferred = 'gpt-6.1-luna'
-  if (offered.includes(preferred)) return preferred
-  const version = (m: string) => (m.match(/\d+/g) ?? []).map(Number)
-  const newer = (a: number[], b: number[]) => { for (let i = 0; i < Math.max(a.length, b.length); i++) if ((a[i] ?? -1) !== (b[i] ?? -1)) return (a[i] ?? -1) > (b[i] ?? -1); return false }
-  return offered.filter((m) => m.includes('luna')).reduce<string | undefined>((best, m) => (!best || newer(version(m), version(best)) ? m : best), undefined) ?? fallback
-}
+async function guideProvider(): Promise<ProviderConfig> { return purposeProvider('guide') }
 
 /** Whether the chosen provider can be used: a key (Anthropic, OpenAI), a
  *  signed-in ChatGPT plan, or the local fixture. */
 async function guideAvailable(): Promise<boolean> {
-  const s = settings()
-  if (s.provider === 'fixture') return true
-  if (s.provider === 'chatgpt') return (await chatgpt().accounts()).some((a) => a.active && a.signedIn && a.planEnabled)
-  return !!(await keySource(s.provider))
+  const p = await provider()
+  const selected = await core.provider(p)
+  const status = await core.user.call<{ configured: boolean }>('ProviderStatusRequest', {
+    profile: p.auth === 'chatgpt' ? selected.account_profile ?? selected.profile : selected.profile,
+    id: selected.provider_id, key_profile: selected.key_profile,
+  })
+  return status.configured
 }
 
 // The relay fixes the guide session to this Web host; tabs never own progress.
@@ -329,7 +321,6 @@ async function withAccess<T>(project: string, session: string, run: () => Promis
 
 class ChatHost {
   private conversations = new Map<string, RemoteAgent>()
-  private folders = new Set<string>()
   constructor(readonly project: string, readonly key: string) {}
 
   async agent(id: string): Promise<RemoteAgent> {
@@ -349,13 +340,12 @@ class ChatHost {
     return a
   }
 
-  async attach(folder: string, existing: string[] = []) {
-    return (await this.attachFolders([folder], existing))[0].resource
+  async attach(folder: string) {
+    return (await this.attachFolders([folder]))[0].resource
   }
 
-  async attachFolders(folders: string[], existing: string[] = []) {
-    for (const value of [...existing, ...folders]) this.folders.add(value)
-    await ctx.envs.attachFolders(this.project, this.key, [...this.folders])
+  async attachFolders(folders: string[]) {
+    await ctx.envs.attachFolders(this.project, this.key, folders)
     const project = await core.project(this.project)
     const attached: { folder: string; resource: string }[] = []
     for (const folder of folders) {
@@ -367,8 +357,7 @@ class ChatHost {
   }
 
   async detachFolder(folder: string) {
-    this.folders.delete(folder)
-    await ctx.envs.attachFolders(this.project, this.key, [...this.folders])
+    await ctx.envs.removeFolders(this.project, [folder])
   }
 
   async attachSkillFolders(names: string[], conversationId: string) {
@@ -502,6 +491,15 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     await patchSettings(b ?? {}, b?.revision ?? { ...revisions })
     return { ...settings(), revision: { ...revisions }, ...await modelCatalogs(), chatProvider: await providerInfo() }
   },
+  'POST /api/file/format': (b) => core.user.call('FileFormatRequest', { path: String(b.path), text: String(b.text) }),
+  'POST /api/versions/graph': async (b) => {
+    const project = await core.project(projectDir(b.path))
+    return core.user.call('HostVersionGraphRequest', { project, language: settings().language })
+  },
+  'POST /api/versions/diff': async (b) => {
+    const project = await core.project(projectDir(b.path))
+    return core.user.call('HostVersionDiffRequest', { project, commit: String(b.commit), from_commit: b.from })
+  },
   'POST /api/versions/comments': async (b) => {
     const project = await core.project(projectDir(b.path))
     return core.user.call('VersionCommentsRequest', { project, commit: String(b.commit) })
@@ -601,7 +599,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/chat/thoughts': async (b) => {
     const a = await chatFor(projectDir(b.path)).agent(String(b.session))
-    return core.summarize(a.id, await guideProvider())
+    return core.summarize(a.id, await purposeProvider('summary'))
   },
   'POST /api/chat/resume': async (b) => {
     const { host, a } = await turnAgent(b)
@@ -642,7 +640,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     }
     const folders = cleanFolders(b.selected)
     const host = chatFor(projectDir(b.path))
-    return { folders: await host.attachFolders(folders, cleanFolders(b.folders)) }
+    return { folders: await host.attachFolders(folders) }
   },
   'POST /api/chat/folder/detach': async (b) => {
     const project = projectDir(b.path)

@@ -95,13 +95,13 @@ class Daemon:
             self.stop()
             raise
 
-    def connect(self, *, websocket=False, unix=None, language=None):
+    def connect(self, *, websocket=False, unix=None):
         if websocket:
             c = Client(ws=self.ready["endpoint"], origin="http://rpc.test")
         else:
             c = Client(unix=unix or self.unix)
         self.clients.append(c)
-        c.hello(token=self.ready["token"] if websocket else None, language=language)
+        c.hello(token=self.ready["token"] if websocket else None)
         return c
 
     def diagnostics(self):

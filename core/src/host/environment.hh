@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "tsugumi/protocol/host_generated.h"
+#include "tsugumi/protocol/tsugumi_generated.h"
 
 namespace tsugumi::host {
 
@@ -34,6 +35,7 @@ struct EnvironmentMount {
   std::string name;
   std::string path;
   bool read_only = false;
+  auto operator==(const EnvironmentMount&) const -> bool = default;
 };
 struct EnvironmentLaunch {
   std::string key, project, control;
@@ -59,7 +61,8 @@ class EnvironmentProcess {
     return Verify(ready) ? std::optional<int64_t>(ready.pid) : std::nullopt;
   }
   virtual auto GuardStart(const std::string&) -> void {}
-  virtual auto Shares(const EnvironmentLaunch&) -> void {}
+  virtual auto Requirements(const Tsugumi::Host::EnvironmentStateT& ready)
+      -> Tsugumi::RPC::ProjectHostRequirementsT;
   virtual auto Runtime(const Tsugumi::Host::HostRuntimeRequestT&)
       -> Tsugumi::Host::HostRuntimeT;
   virtual auto Terminal(const Tsugumi::Host::HostTerminalRequestT&)
@@ -72,7 +75,9 @@ class EnvironmentProcess {
       -> bool = 0;
 };
 
-auto NativeEnvironmentProcess() -> std::shared_ptr<EnvironmentProcess>;
+auto NativeEnvironmentProcess(
+    std::function<void(const Tsugumi::Host::HostTerminalDataT&)> terminal = {})
+    -> std::shared_ptr<EnvironmentProcess>;
 
 struct EnvironmentOptions {
   std::filesystem::path directory;

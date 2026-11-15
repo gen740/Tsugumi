@@ -65,7 +65,7 @@ enum SmokeTest {
           default: return d.summary
           }
         }
-        s.undo()
+        await s.undo()
         await s.save()
         report["undo_save_rev"] = s.rev
         var ok = s.saveError == nil
@@ -83,7 +83,7 @@ enum SmokeTest {
         report["layout_extras"] = s.saveError ?? "ok"
         ok = ok && s.saveError == nil && s.confirmedLayout["groups"] != nil
 
-        // A Draft's declared outputs can be wired before it is implemented.
+        // Metadata does not create Draft ports; wires attach to the Card itself.
         let dk = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 0, y: 600), name: "smoke-draft")
         let draft = path(dk)[0]
         s.edit { s in
@@ -91,9 +91,17 @@ enum SmokeTest {
           meta["outputs"] = .array([.object([("name", .string("summary")), ("description", .string("the result in words"))])])
           s.setCardDefinition(key([draft]), DefinitionDraft(card: s.definitions[draft] ?? .object([]), meta: meta))
         }
+        let next = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 600), name: "smoke-next")
+        try await s.connect(from: (dk, CardGeometry.newPort), to: (next, CardGeometry.newPort), in: [])
         await s.save()
         report["draft_outputs"] = s.resolution[dk]?.outputs.map(\.name) ?? []
-        ok = ok && s.saveError == nil && s.resolution[dk]?.outputs.map(\.name) == ["summary"]
+        let draftWire = s.connections(in: []).contains { c in
+          c["from"]?["card"]?.string == draft && c["from"]?["port"]?.string == ""
+            && c["to"]?["card"]?.string == path(next)[0] && c["to"]?["port"]?.string == ""
+        }
+        report["draft_wire"] = draftWire
+        ok = ok && s.saveError == nil && s.resolution[dk]?.outputs.isEmpty == true
+          && s.resolution[next]?.inputs.isEmpty == true && draftWire
 
         // Another client saves while this window edits: both changes stay.
         if case .ready(let ep) = s.environment {

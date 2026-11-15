@@ -10,7 +10,7 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **Card** | A unit of processing, with input and output ports and settings ([Cards and Workflows](features.md#2-cards-and-workflows)) |
 | **Code Card** | A Card whose environment is defined in `default.nix` and whose processing is in `src/` or its Nix `run` script ([Your first Card](CardGuide.md)) |
 | **Built-in Card** | A Card without code, such as a Trigger, Input, Fork, Branch, Merge or Collect |
-| **Draft** | An unimplemented Card with only a name and content. Wire Drafts up to draw a plan (their ports follow the wires) and have the Agent implement them |
+| **Draft** | An unimplemented Card with only a name and content. Wire Drafts up to draw a plan (they have no ports) and have the Agent implement them |
 | **Card in Card (child Workflow)** | A Card with a Workflow inside. From outside it looks like one Card; open it to go inside |
 | **Definition** | The folder `definitions/<id>/` that is a Card's substance. One per Card |
 | **Port** | A Card's input or output. Output types are written in `_outputs.fbs`; input types are derived from the connected outputs |

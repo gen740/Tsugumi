@@ -1,5 +1,15 @@
+import { FileFormatRequestT } from '../src/gen/tsugumi/host/file-format-request'
+import { HostVersionGraphRequestT } from '../src/gen/tsugumi/host/host-version-graph-request'
+import { HostVersionDiffRequestT } from '../src/gen/tsugumi/host/host-version-diff-request'
+import { DocumentTemplateRequestT } from '../src/gen/tsugumi/host/document-template-request'
+import { DocumentConnectRequestT } from '../src/gen/tsugumi/host/document-connect-request'
+import { DocumentCopyRequestT } from '../src/gen/tsugumi/host/document-copy-request'
+import { DocumentMergeRequestT } from '../src/gen/tsugumi/host/document-merge-request'
+import { PermissionKindsRequestT } from '../src/gen/tsugumi/host/permission-kinds-request'
+import { DocumentSubgraphRequestT } from '../src/gen/tsugumi/host/document-subgraph-request'
 import * as H from '../src/gen/tsugumi/host'
 import { sceneRequest } from '../src/shared/hostLayout'
+import { ModelSelectionRequestT } from '../src/gen/tsugumi/host/model-selection-request'
 import { VersionCommentsRequestT } from '../src/gen/tsugumi/host/version-comments-request'
 import { RuntimeAction } from '../src/gen/tsugumi/host/runtime-action'
 import { TerminalAction } from '../src/gen/tsugumi/host/terminal-action'
@@ -89,7 +99,7 @@ function enumValue(e: any, value: unknown): number {
 }
 function provider(v: any): ProviderSelectionT | null {
   if (!v) return null
-  return new ProviderSelectionT(v.profile, v.provider_id, v.account_profile, v.key_profile, v.model, v.use_choices)
+  return new ProviderSelectionT(v.profile, v.provider_id, v.account_profile, v.key_profile, v.model, v.use_choices, v.purpose)
 }
 function providerInput(v: any): ProviderInputT | null {
   return v ? new ProviderInputT(v.endpoint, v.api_key, v.model, v.max_tokens, v.context_limit) : null
@@ -100,12 +110,22 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
+    case 'FileFormatRequest': return new FileFormatRequestT(v.path, v.text)
+    case 'HostVersionGraphRequest': return new HostVersionGraphRequestT(v.project, v.language, v.limit ?? 500)
+    case 'HostVersionDiffRequest': return new HostVersionDiffRequestT(v.project, v.commit, v.from_commit)
+    case 'PermissionKindsRequest': return new PermissionKindsRequestT(v.language)
+    case 'DocumentTemplateRequest': return new DocumentTemplateRequestT(v.name, v.id)
+    case 'DocumentConnectRequest': return new DocumentConnectRequestT(v.state_json, v.from_card, v.from_port, v.to_card, v.to_port, v.fork_id)
+    case 'DocumentCopyRequest': return new DocumentCopyRequestT(v.state_json, v.paths ?? [], v.from, v.to, v.name)
+    case 'DocumentMergeRequest': return new DocumentMergeRequestT(v.base_json, v.ours_json, v.theirs_json)
+    case 'DocumentSubgraphRequest': return new DocumentSubgraphRequestT(v.project_json, v.cards ?? [], v.id)
     case 'LayoutArrangeRequest': return new H.LayoutArrangeRequestT(sceneRequest(v.scene))
     case 'LayoutUntangleRequest': return new H.LayoutUntangleRequestT(sceneRequest(v.scene), v.around)
     case 'LayoutValidateRequest': return new H.LayoutValidateRequestT(v.json, v.removedCards)
     case 'VersionCanvasRequest': return new H.VersionCanvasRequestT(v.layoutJson,
       v.cards.map((c: any) => new H.VersionCanvasCardT(c.id, 0, 0, c.kind, c.fan)),
       v.wires.map((w: any) => new H.VersionCanvasWireT(w.from, w.to)))
+    case 'ModelSelectionRequest': return new ModelSelectionRequestT(v.profile, v.purpose)
     case 'VersionCommentsRequest': return new VersionCommentsRequestT(v.project, v.commit)
     case 'GuideGetRequest': return new GuideGetRequestT(v.session_id, v.language)
     case 'GuideAdvanceRequest': {
@@ -118,8 +138,8 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'HostTerminalRequest': return new HostTerminalRequestT(v.project, enumValue(TerminalAction, v.action), BigInt(v.session ?? 0), v.rows ?? 24, v.cols ?? 80, v.data ?? [])
     case 'SettingsGetRequest': return new HSettingsGetRequest(v.profile)
     case 'SettingsUpdateRequest': return new HSettingsUpdateRequest(v.profile, BigInt(v.revision ?? 0), (v.changes ?? []).map((s: any) => new SettingT(s.key, s.value_json)), v.client)
-    case 'ProviderSetRequest': return new HProviderSetRequest(v.profile, v.id, providerInput(v.provider), v.remove, v.ephemeral)
-    case 'ProviderStatusRequest': return new HProviderStatusRequest(v.profile, v.id)
+    case 'ProviderSetRequest': return new HProviderSetRequest(v.profile, v.id, providerInput(v.provider), v.remove, v.ephemeral, v.source)
+    case 'ProviderStatusRequest': return new HProviderStatusRequest(v.profile, v.id, v.key_profile)
     case 'SignInBeginRequest': return new HSignInBeginRequest(v.profile, v.client_id, v.consent, v.issuer, v.resource)
     case 'SignInActionRequest': return new HSignInActionRequest(v.profile, v.attempt_id, v.action, v.client_id)
     case 'SignInStatusRequest': return new HSignInStatusRequest(v.profile, v.attempt_id)

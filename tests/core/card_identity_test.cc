@@ -20,7 +20,7 @@ TEST(CardIdentity, MetadataIsNonComputationalOnlyAtDefinitionPaths) {
 }
 
 TEST(CardIdentity,
-     SavingWiredDraftsResolvesPortsAndSerializesTheSavedDocument) {
+     SavingWiredDraftsSerializesTheSavedDocumentWithoutPorts) {
   const auto root =
       std::filesystem::canonical(std::filesystem::temp_directory_path()) /
       ("wired-draft-" + crypto::uuid4());
@@ -56,7 +56,7 @@ TEST(CardIdentity,
   };
   R::SetProjectT project;
   project.json =
-      R"({"name":"test","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"p"},{"id":"q"},{"id":"r"}],"connections":[{"from":{"card":"p","port":"out"},"to":{"card":"q","port":"in"}},{"from":{"card":"p","port":"out2"},"to":{"card":"r","port":"in"}},{"from":{"card":"r","port":"out"},"to":{"card":"q","port":"in2"}}]}})";
+      R"({"name":"test","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"p"},{"id":"q"},{"id":"r"}],"connections":[{"from":{"card":"p","port":""},"to":{"card":"q","port":""}},{"from":{"card":"p","port":""},"to":{"card":"r","port":""}},{"from":{"card":"r","port":""},"to":{"card":"q","port":""}}]}})";
   add(std::move(project));
   auto definition = [&](const char* id, const char* card, const char* meta) {
     R::PutDefinitionT def;
@@ -67,12 +67,9 @@ TEST(CardIdentity,
   };
   definition(
       "p", R"({"template":"draft"})",
-      R"({"name":"p","content":"count words","outputs":[{"name":"out"},{"name":"out2"}]})");
-  definition("q",
-             R"({"template":"draft","inputs":[{"name":"in"},{"name":"in2"}]})",
-             R"({"name":"日本語"})");
-  definition("r", R"({"template":"draft","inputs":[{"name":"in"}]})",
-             R"({"name":"r","outputs":[{"name":"out"}]})");
+      R"({"name":"p","content":"count words"})");
+  definition("q", R"({"template":"draft"})", R"({"name":"日本語"})");
+  definition("r", R"({"template":"draft"})", R"({"name":"r"})");
   R::SetLayoutT layout;
   const std::string layout_json =
       R"({"cards":{"p":{"x":0,"y":0},"q":{"x":300,"y":0},"r":{"x":600,"y":0}}})";
@@ -106,11 +103,25 @@ TEST(CardIdentity,
   ASSERT_NE(doc->resolution, nullptr);
   ASSERT_NE(doc->resolution->find({"p"}), nullptr);
   ASSERT_NE(doc->resolution->find({"q"}), nullptr);
-  EXPECT_NE(doc->resolution->find({"p"})->output("out2"), nullptr);
-  EXPECT_NE(doc->resolution->find({"q"})->input("in2"), nullptr);
+  for (const auto* id : {"p", "q", "r"}) {
+    const auto* node = doc->resolution->find({id});
+    ASSERT_NE(node, nullptr);
+    EXPECT_TRUE(node->inputs.empty());
+    EXPECT_TRUE(node->outputs.empty());
+    EXPECT_TRUE(node->diags.empty());
+  }
   EXPECT_EQ(doc->resolution->find({"q"})->path, (CardPath{"q"}));
   EXPECT_EQ(doc->definitions.at("q").meta_json, R"({"name":"日本語"})");
   EXPECT_EQ(doc->resolution->edges.size(), 3u);
+  std::set<std::pair<std::string, std::string>> wires;
+  for (const auto& edge : doc->resolution->edges) {
+    EXPECT_TRUE(edge.from_port.empty());
+    EXPECT_TRUE(edge.to_port.empty());
+    wires.emplace(doc->resolution->nodes[edge.from].path[0],
+                  doc->resolution->nodes[edge.to].path[0]);
+  }
+  EXPECT_EQ(wires, (std::set<std::pair<std::string, std::string>>{
+                       {"p", "q"}, {"p", "r"}, {"r", "q"}}));
   EXPECT_EQ(doc->layout_json, layout_json);
 }
 

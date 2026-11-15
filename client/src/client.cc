@@ -10,15 +10,7 @@
 
 #include "tsugumi/protocol/agent_generated.h"
 #include "tsugumi/protocol/host_generated.h"
-// musl exposes these C streams as macros; the wire schema uses the same names
-// as scoped enum values. Keep the workaround local to generated declarations.
-#pragma push_macro("stdout")
-#pragma push_macro("stderr")
-#undef stdout
-#undef stderr
 #include "tsugumi/protocol/tsugumi_generated.h"
-#pragma pop_macro("stderr")
-#pragma pop_macro("stdout")
 
 namespace tsugumi::client {
 namespace {

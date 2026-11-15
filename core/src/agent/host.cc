@@ -29,13 +29,18 @@
 #include "agent/wire.hh"
 #include "host/agent_policy.hh"
 #include "host/attached_folder.hh"
+#include "host/document_edits.hh"
+#include "host/templates.hh"
+#include "host/permission_kinds.hh"
 #include "host/environment.hh"
+#include "host/projects.hh"
+#include "host/format.hh"
+#include "host/version_text.hh"
 #include "host/layout_service.hh"
 #include "host/layout_saving.hh"
 #include "host/save.hh"
 #include "host/execution_broker.hh"
 #include "host/guide.hh"
-#include "host/projects.hh"
 #include "host/settings.hh"
 #include "host/skills.hh"
 #include "lanes.hh"
@@ -259,7 +264,18 @@ struct Host::State {
         [this](const std::string& id, std::string_view stale) {
           return AccessToken(id, stale);
         },
-        [this](const std::string& id) { return ForgetCredential(id); });
+        [this](const std::string& id) { return ForgetCredential(id); }, nullptr,
+        host::Settings::kKeyStorage,
+        [this] {
+          std::vector<std::string> models;
+          sql::Db model_db((options.state_dir / "agent.sqlite").string(), true);
+          auto q = model_db.prepare(
+              "SELECT models FROM model_lists WHERE id='chatgpt'");
+          if (q.step())
+            for (const auto& row : json::Array(q.text(0)))
+              models.push_back(json::Text(json::Object(row), "id"));
+          return models;
+        });
     CreateConversationTables(db);
     db.exec("UPDATE turns SET state='interrupted' WHERE state='running'");
     if (!options.broker_socket.empty())
@@ -275,6 +291,12 @@ struct Host::State {
       options.vm.terminal = [this](const H::HostTerminalDataT& value) { std::lock_guard lock(mutex); HostEvent(wire::HostEvent(value)); };
       options.environment.process = host::VMEnvironmentProcess(options.vm);
     }
+    if (!options.environment.process)
+      options.environment.process = host::NativeEnvironmentProcess(
+          [this](const H::HostTerminalDataT& value) {
+            std::lock_guard lock(mutex);
+            HostEvent(wire::HostEvent(value));
+          });
     if (execution_broker)
       environments = std::make_unique<host::Environments>(options.environment,
           host::EnvironmentAuthorization{
@@ -1149,6 +1171,40 @@ struct Host::State {
                      tool.spec.name != "view_save"))
         specs.push_back(tool.spec);
     specs.push_back(
+        {"document_template", "Get the initial definition and all source files for a new Card "
+         "from the host's ui/templates catalog. name is the template id and id is the new Card "
+         "identifier. Save definition_json and the returned files under definitions/<id>/, "
+         "together with the canvas instance, in one project_save. This tool writes nothing.",
+         R"({"type":"object","properties":{"name":{"type":"string"},"id":{"type":"string"}},"required":["name","id"],"additionalProperties":false})"});
+    specs.push_back(
+        {"document_connect", "Prepare a scope's connection edit, replacing an input wire and "
+         "inserting or extending a fork when needed. state_json contains project, layout and "
+         "definitions. Draft wire ends use an empty port (UI '+' gestures attach to the Card); "
+         "they accept any number of wires without adding ports or forks. "
+         "If needs_fork is true, obtain a new Card id and repeat with fork_id. Otherwise save "
+         "the returned state_json together with project_save. This tool writes nothing.",
+         R"({"type":"object","properties":{"state_json":{"type":"string"},"from_card":{"type":"string"},"from_port":{"type":"string"},"to_card":{"type":"string"},"to_port":{"type":"string"},"fork_id":{"type":"string"}},"required":["state_json","from_card","from_port","to_card","to_port"],"additionalProperties":false})"});
+    specs.push_back(
+        {"document_copy", "Prepare a definition or external copy from the current document state. "
+         "from and to are project-relative folders ending in /. paths lists current source files. "
+         "Returns edits_json (definition folders and external documents) and file mappings. "
+         "Read and keep every mapped source byte before applying any change, then save the "
+         "documents and bytes together with project_save. This tool writes nothing.",
+         R"({"type":"object","properties":{"state_json":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"from":{"type":"string"},"to":{"type":"string"},"name":{"type":"string"}},"required":["state_json","paths","from","to"],"additionalProperties":false})"});
+    specs.push_back(
+        {"document_merge", "Prepare a three-way merge of unsaved document states. "
+         "Returns merged_json and conflict paths; show conflicts to the person "
+         "before saving their choice with project_save. This tool writes nothing.",
+         R"({"type":"object","properties":{"base_json":{"type":"string"},"ours_json":{"type":"string"},"theirs_json":{"type":"string"}},"required":["base_json","ours_json","theirs_json"],"additionalProperties":false})"});
+    specs.push_back(
+        {"document_make_subgraph",
+         "Prepare a Card in Card edit from the current affected tsugumi.json. "
+         "Returns project_json, external_json and link_json; move the selected "
+         "definition folders and their external folders unchanged under "
+         "externals/<id>/, then save all changes together with project_save. "
+         "This tool writes nothing.",
+         R"({"type":"object","properties":{"project_json":{"type":"string"},"cards":{"type":"array","items":{"type":"string"}},"id":{"type":"string"}},"required":["project_json","cards","id"],"additionalProperties":false})"});
+    specs.push_back(
         {"demo_list", "List bundled read-only demo references",
          R"({"type":"object","properties":{},"additionalProperties":false})"});
     specs.push_back(
@@ -1164,6 +1220,14 @@ struct Host::State {
                        json::Get(definition, "inputSchema", "{}")});
     }
     return specs;
+  }
+  auto ProjectRoot(const std::string& project) -> std::filesystem::path {
+    std::lock_guard lock(mutex);
+    ProjectFor(project);
+    auto path = db.prepare("SELECT path FROM project_paths WHERE id=?");
+    path.bind(1, project);
+    if (!path.step() || path.text(0).empty()) throw Failure("not_found", "Project path is not registered");
+    return path.text(0);
   }
   // Read the exact revision being saved; never clean up a newer client's
   // layout.
@@ -1247,6 +1311,27 @@ struct Host::State {
   auto ProjectCall(const std::string& project, const std::string& name,
                    const std::string& arguments, std::stop_token stop = {}) -> std::string {
     auto args = json::Object(arguments);
+    if (name == "project_file_format") {
+      H::FileFormatRequestT request;
+      request.path = json::Text(args, "path");
+      request.text = json::Text(args, "text");
+      const auto language = json::Text(args, "language");
+      bool known = language.empty();
+      for (auto value : Tsugumi::Data::EnumValuesFormatLanguage())
+        if (language == Tsugumi::Data::EnumNameFormatLanguage(value)) { request.language = value; known = true; }
+      if (!known) throw Failure("unsupported", "Unknown formatting language");
+      auto formatted = host::Format(request);
+      std::vector<std::string> diagnostics;
+      for (const auto& d : formatted.diagnostics) {
+        json::Members diag{{"severity", json::Quote("error")}, {"code", json::Quote(d->code)}, {"message", json::Quote(d->message)}, {"path", json::Quote(d->path)}};
+        if (d->offset) diag["offset"] = json::Quote(std::to_string(*d->offset));
+        diagnostics.push_back(json::Encode(diag));
+      }
+      return json::Encode(json::Members{{"reply", json::Quote("FileFormatResult")},
+        {"value", json::Encode(json::Members{{"text", json::Quote(formatted.text)}, {"diagnostics", json::Encode(diagnostics)}})}});
+    }
+    const bool english = json::Text(args, "language") == "en";
+    if (name == "version_graph") args.erase("language");
     if (name == "card_id") {
       args["stem"] = json::Quote(host::CardStem(json::Text(args, "name")));
       args.erase("name");
@@ -1296,8 +1381,8 @@ struct Host::State {
           path.bind(1, project);
           if (path.step()) root = path.text(0);
         }
+        auto graph = host::PresentGraph(json::Object(json::Get(envelope, "value", "{}")), english);
         if (!root.empty()) {
-          auto graph = json::Object(json::Get(envelope, "value", "{}"));
           auto commits = json::Array(json::Get(graph, "commits", "[]"));
           for (auto& raw : commits) {
             auto commit = json::Object(raw);
@@ -1305,9 +1390,9 @@ struct Host::State {
             raw = json::Encode(commit);
           }
           graph["commits"] = json::Encode(commits);
-          envelope["value"] = json::Encode(graph);
-          result = json::Encode(envelope);
         }
+        envelope["value"] = json::Encode(graph);
+        result = json::Encode(envelope);
       }
     }
     return result;
@@ -1325,7 +1410,7 @@ struct Host::State {
     return json::Encode(envelope);
   }
   auto RawProjectCall(const std::string &project, const std::string &name,
-                   const std::string &arguments, std::stop_token stop = {})
+                   const std::string &arguments, std::stop_token stop = {}, std::string* raw = nullptr)
       -> std::string {
     Project endpoint;
     {
@@ -1382,6 +1467,7 @@ struct Host::State {
       throw Cancelled();
     if (result.error)
       throw Failure("outcome_unknown", result.error.message);
+    if (raw) raw->assign(reinterpret_cast<const char*>(result.bytes.data()), result.bytes.size());
     return catalog.Reply({reinterpret_cast<const char *>(result.bytes.data()),
                           result.bytes.size()});
   }
@@ -1712,6 +1798,55 @@ struct Host::State {
     const auto project =
         requested_project.empty() ? c.project : requested_project;
     auto args = json::Object(call.arguments);
+    if (call.name == "document_template") {
+      const auto edit = host::WriteTemplate(json::Text(args, "name"), json::Text(args, "id"));
+      std::vector<std::string> files;
+      for (const auto &file : edit.files)
+        files.push_back(json::Encode(json::Members{{"path", json::Quote(file->path)}, {"text", json::Quote(file->text)}}));
+      return {json::Encode(json::Members{{"definition_json", json::Quote(edit.definition_json)},
+          {"files", json::Encode(files)}}), false, {}, {}};
+    }
+    if (call.name == "document_connect") {
+      const auto edit = host::ConnectDocuments(json::Text(args, "state_json"),
+          json::Text(args, "from_card"), json::Text(args, "from_port"),
+          json::Text(args, "to_card"), json::Text(args, "to_port"), json::Text(args, "fork_id"));
+      return {json::Encode(json::Members{{"state_json", json::Quote(edit.state_json)},
+          {"inserted_id", json::Quote(edit.inserted_id)},
+          {"needs_fork", edit.needs_fork ? "true" : "false"}}), false, {}, {}};
+    }
+    if (call.name == "document_copy") {
+      std::vector<std::string> paths;
+      for (const auto &path : json::Array(json::Get(args, "paths", "[]")))
+        paths.push_back(json::String(path));
+      const auto edit = host::CopyDocuments(json::Text(args, "state_json"), paths,
+          json::Text(args, "from"), json::Text(args, "to"), json::Text(args, "name"));
+      std::vector<std::string> files;
+      for (const auto &file : edit.files)
+        files.push_back(json::Encode(json::Members{{"from", json::Quote(file->from)},
+                                                   {"to", json::Quote(file->to)}}));
+      return {json::Encode(json::Members{{"edits_json", json::Quote(edit.edits_json)},
+                  {"files", json::Encode(files)}}), false, {}, {}};
+    }
+    if (call.name == "document_merge") {
+      const auto edit = host::MergeDocuments(json::Text(args, "base_json"),
+          json::Text(args, "ours_json"), json::Text(args, "theirs_json"));
+      std::vector<std::string> conflicts;
+      for (const auto& path : edit.conflicts) conflicts.push_back(json::Quote(path));
+      return {json::Encode(json::Members{{"merged_json", json::Quote(edit.merged_json)},
+                  {"conflicts", json::Encode(conflicts)}}), false, {}, {}};
+    }
+    if (call.name == "document_make_subgraph") {
+      std::vector<std::string> cards;
+      for (const auto& card : json::Array(json::Get(args, "cards", "[]")))
+        cards.push_back(json::String(card));
+      const auto edit = host::MakeSubgraph(json::Text(args, "project_json"), cards,
+                                           json::Text(args, "id"));
+      return {json::Encode(json::Members{
+                  {"project_json", json::Quote(edit.project_json)},
+                  {"external_json", json::Quote(edit.external_json)},
+                  {"link_json", json::Quote(edit.link_json)}}),
+              false, {}, {}};
+    }
     if (call.name == "demo_list")
       return {DemoList(), false, {}, {}};
     if (call.name == "demo_read")
@@ -1956,6 +2091,7 @@ struct Host::State {
     } else {
       if (stop.stop_requested())
         throw Cancelled();
+      if (call.name == "version_graph") args["language"] = json::Quote(host_settings->Language(HelperProfile(conversation)));
       if (call.name == "attached_folder_read") {
         try {
           result = host::ReadAttachedFolder(json::Text(args, "folder"), args);
@@ -2622,8 +2758,11 @@ struct Host::State {
     case A::RequestPayload::ConfigureRequest: {
       Human(human);
       const auto *p = r->value_as_ConfigureRequest();
-      GetConversation(p->conversation_id()->str());
-      const auto raw = wire::SelectionJson(*p->provider());
+      const auto conversation = GetConversation(p->conversation_id()->str());
+      auto selection = json::Object(wire::SelectionJson(*p->provider()));
+      if (conversation.role == "guide")
+        selection["purpose"] = json::Quote("guide");
+      const auto raw = json::Encode(selection);
       auto q = db.prepare("INSERT OR REPLACE INTO providers VALUES(?,?)");
       q.bind(1, p->conversation_id()->str()).bind(2, raw).run();
       return wire::AgentReply(request.request_id, S::AcknowledgementT{});
@@ -3113,6 +3252,7 @@ struct Host::State {
       if (!gate) { gate = std::make_shared<std::mutex>(); weak = gate; }
       lock.unlock();
       std::lock_guard note_lock(*gate);
+      const auto root = ProjectRoot(project);
       const auto call = [&](const std::string& name, const std::string& args) {
         const auto reply = json::Object(ProjectCall(project, name, args));
         const auto value = json::Object(json::Get(reply, "value", "{}"));
@@ -3122,18 +3262,20 @@ struct Host::State {
       };
       const auto note = call(
           "version_note", json::Encode(json::Members{
-              {"commit", json::Quote(commit)}, {"language", json::Quote(english ? "en" : "ja")}}));
+              {"commit", json::Quote(commit)}}));
+      const auto factual = host::ChangeText(json::Text(note, "record_json"), english);
+      const auto saved_summary = host::ReadSummary(root, commit, english);
       A::TextResultT result;
       if (host_settings->VersionNoteMode(profile) == "mechanical") {
-        result.text = json::Text(note, "text");
-      } else if (!json::Text(note, "agent_summary").empty()) {
-        result.text = json::Text(note, "agent_summary");
+        result.text = factual;
+      } else if (!saved_summary.empty()) {
+        result.text = saved_summary;
       } else {
-        const auto body = call("version_diff",
-            json::Encode(json::Members{{"commit", json::Quote(commit)}}));
+        const auto diff = host::VersionDiff(root, commit);
+        const json::Members body{{"text", json::Quote(diff.text)}, {"truncated", diff.truncated ? "true" : "false"}};
         // Layout-only and data-only versions have no model input.
         if (json::Text(body, "text").empty()) {
-          result.text = json::Text(note, "text");
+          result.text = factual;
         } else {
           auto config = host_settings->VersionNoteProvider(profile, anthropic_keys, openai_keys);
           if (config.auth == ProviderAuth::ChatGPT)
@@ -3162,10 +3304,7 @@ struct Host::State {
           while (!result.text.empty() && result.text.back() == ' ') result.text.pop_back();
           if (result.text.empty())
             throw Failure("unavailable", english ? "The model returned no summary." : "モデルが文を返しませんでした。");
-          call("version_note_store",
-              json::Encode(json::Members{{"op_id", json::Quote(crypto::uuid4())},
-                  {"origin", json::Quote("agent")}, {"commit", json::Quote(commit)},
-                  {"summary", json::Quote(result.text)}}));
+          host::StoreSummary(root, commit, english, result.text);
         }
       }
       return wire::AgentReply(request.request_id, std::move(result));
@@ -3175,9 +3314,17 @@ struct Host::State {
       auto p = r->value_as_ConversationSummarizeRequest();
       const auto id = p->conversation_id()->str();
       auto c = GetConversation(id);
-      auto config = p->provider()
-                        ? ModelConfig(wire::SelectionJson(*p->provider()))
-                        : Provider(id);
+      auto selection = p->provider()
+                           ? json::Object(wire::SelectionJson(*p->provider()))
+                           : json::Members{};
+      if (!p->provider()) {
+        auto stored =
+            db.prepare("SELECT json FROM providers WHERE conversation=?");
+        stored.bind(1, id);
+        if (stored.step()) selection = json::Object(stored.text(0));
+      }
+      selection["purpose"] = json::Quote("summary");
+      auto config = host_settings->Resolve(selection);
       auto messages = ParseMessages(c.messages);
       const auto thought = ThoughtsFor(id);
       if (config.auth == ProviderAuth::None ||
@@ -3210,6 +3357,30 @@ struct Host::State {
     std::unique_lock lock(mutex);
     if (stopping)
       throw Failure("unavailable", "Host service is stopping");
+    if (const auto* format = r->value_as_FileFormatRequest()) {
+      auto input = std::unique_ptr<H::FileFormatRequestT>(format->UnPack());
+      lock.unlock();
+      return wire::HostReply(request.request_id, host::Format(*input));
+    }
+    if (const auto* graph = r->value_as_HostVersionGraphRequest()) {
+      const auto project = graph->project()->str();
+      const bool english = Text(graph->language()) == "en";
+      const auto limit = graph->limit();
+      ProjectFor(project);
+      lock.unlock();
+      std::string bytes;
+      RawProjectCall(project, "version_graph", json::Encode(json::Members{{"limit", std::to_string(limit)}}), {}, &bytes);
+      const auto* reply = R::GetMessage(bytes.data())->payload_as_Reply();
+      if (!reply || !reply->value_as_VersionGraph()) throw Failure("unavailable", "Cannot read version graph");
+      auto result = std::unique_ptr<R::VersionGraphT>(reply->value_as_VersionGraph()->UnPack());
+      host::PresentGraph(*result, english);
+      return wire::HostReply(request.request_id, std::move(*result));
+    }
+    if (const auto* diff = r->value_as_HostVersionDiffRequest()) {
+      const auto project = diff->project()->str(), commit = diff->commit()->str(), from = Text(diff->from_commit());
+      lock.unlock();
+      return wire::HostReply(request.request_id, host::VersionDiff(ProjectRoot(project), commit, from));
+    }
     if (const auto* environment = r->value_as_EnvironmentRequest()) {
       auto input = std::unique_ptr<H::EnvironmentRequestT>(environment->UnPack());
       lock.unlock();
@@ -3266,6 +3437,41 @@ struct Host::State {
     if (host::Projects::Handles(r->value_type()))
       return host_projects.Handle(*r, request.request_id);
     switch (r->value_type()) {
+    case H::RequestPayload::PermissionKindsRequest: {
+      const auto* p = r->value_as_PermissionKindsRequest();
+      return wire::HostReply(request.request_id, host::PermissionKinds(Text(p->language())));
+    }
+    case H::RequestPayload::DocumentTemplateRequest: {
+      const auto *p = r->value_as_DocumentTemplateRequest();
+      return wire::HostReply(request.request_id, host::WriteTemplate(p->name()->str(), p->id()->str()));
+    }
+    case H::RequestPayload::DocumentConnectRequest: {
+      const auto *p = r->value_as_DocumentConnectRequest();
+      return wire::HostReply(request.request_id, host::ConnectDocuments(
+          p->state_json()->str(), p->from_card()->str(), p->from_port()->str(),
+          p->to_card()->str(), p->to_port()->str(), Text(p->fork_id())));
+    }
+    case H::RequestPayload::DocumentCopyRequest: {
+      const auto *p = r->value_as_DocumentCopyRequest();
+      std::vector<std::string> paths;
+      if (p->paths())
+        for (const auto *path : *p->paths()) paths.push_back(path->str());
+      return wire::HostReply(request.request_id, host::CopyDocuments(
+          p->state_json()->str(), paths, p->from()->str(), p->to()->str(), Text(p->name())));
+    }
+    case H::RequestPayload::DocumentMergeRequest: {
+      const auto* p = r->value_as_DocumentMergeRequest();
+      return wire::HostReply(request.request_id, host::MergeDocuments(
+          p->base_json()->str(), p->ours_json()->str(), p->theirs_json()->str()));
+    }
+    case H::RequestPayload::DocumentSubgraphRequest: {
+      const auto* p = r->value_as_DocumentSubgraphRequest();
+      std::vector<std::string> cards;
+      if (p->cards())
+        for (const auto* card : *p->cards()) cards.push_back(card->str());
+      return wire::HostReply(request.request_id,
+          host::MakeSubgraph(p->project_json()->str(), cards, p->id()->str()));
+    }
     case H::RequestPayload::VersionCommentsRequest: {
       Human(human);
       const auto* p = r->value_as_VersionCommentsRequest();

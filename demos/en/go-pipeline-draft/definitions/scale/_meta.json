@@ -1,16 +1,4 @@
 {
   "description": "Multiply the owned value in Go",
-  "inputs": [
-    {
-      "name": "number",
-      "description": "Integer value"
-    }
-  ],
-  "outputs": [
-    {
-      "name": "out",
-      "description": "Integer value"
-    }
-  ],
-  "content": "Implement in Go. Multiply number.value by the uint64 parameter factor (default 3), display the product, and return out. Copy the pinned Go module scaffold from demos/en/go-pipeline/definitions/scale. Use namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;"
+  "content": "Implement in Go. Multiply number.value by the uint64 parameter factor (default 3), display the product, and return out. Copy the pinned Go module scaffold from demos/en/go-pipeline/definitions/scale. Use namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;\n\nPlanned inputs:\n- number: Integer value\n\nPlanned outputs:\n- out: Integer value"
 }

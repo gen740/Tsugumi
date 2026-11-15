@@ -31,6 +31,12 @@ def specifiers(s: str) -> list[str]:
     return [spec for _, spec in sorted(found)]
 
 EN = {
+    '各 wire の実ポート名を指定してください（ポート欄）。': 'Specify the real port for every wire in Ports.',
+    'Draft を手動で実装': 'Implement Draft by hand',
+    '定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。': 'Apply saves the definition and real wire endpoints together. For a code Card, also create its sources and output schema.',
+    'wire の再接続': 'Rebind wires',
+    '入力 wire には実入力ポート、出力 wire には実出力ポートを指定します。候補が一つでも指定が必要です。': 'Name a real input for each incoming wire and a real output for each outgoing wire, even when there is only one candidate.',
+    '実ポート名': 'Real port name',
 "ファイル「%@」を読み込めませんでした: %@": "Could not read file “%@”: %@",
 'プロジェクトを再読込しています': 'Reloading the project',
 'プロジェクトを再読込': 'Reloaded the project',
@@ -321,11 +327,6 @@ EN = {
 "チャットを閉じる（%@）": "Close the chat (%@)",
 "チャットを開く（%@）": "Open the chat (%@)",
 "Draft のため実行しない": "Not run: a Draft",
-"ネットワークへのアクセス": "Network access",
-"隔離（sandbox）なしで実行": "Run without isolation (sandbox)",
-"Mac のフォルダを読む": "Read folders of the Mac",
-"Mac のフォルダに書く": "Write to folders of the Mac",
-"外部の Nix ソースを読む": "Read a Nix source from outside",
 "外部ソース": "External sources",
 "失敗したので結果はありません": "It failed, so there is no result",
 "上流の Card が失敗したので実行していません": "Not run, because a Card upstream failed",

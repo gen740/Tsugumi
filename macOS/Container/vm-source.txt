@@ -10,6 +10,7 @@ cmake
 core
 client
 agent/Shared
+ui/templates
 sdk
 workerd
 protocol

@@ -17,6 +17,33 @@ extern const unsigned char tsugumi_rpc_bfbs[];
 namespace tsugumi::agent {
 namespace {
 
+TEST(AgentCatalog, DraftSaveDescriptionReachesTheModelAndPreservesEmptyEnds) {
+  const Catalog catalog;
+  const auto* tool = catalog.Find("project_save");
+  ASSERT_NE(tool, nullptr);
+  EXPECT_NE(tool->spec.description.find("Drafts have no ports"),
+            std::string::npos);
+  EXPECT_NE(tool->spec.description.find("single possible port must be stated"),
+            std::string::npos);
+  const auto request = catalog.Request(
+      "project_save",
+      R"({"base_rev":0,"op_id":"save","origin":"agent","changes":[{"value_type":"SetProject","value":{"json":"{\"canvas\":{\"connections\":[{\"from\":{\"card\":\"plan\",\"port\":\"\"},\"to\":{\"card\":\"next\",\"port\":\"in\"}}]}}"}}]})",
+      1);
+  const auto* save = Tsugumi::RPC::GetMessage(request.data())
+                         ->payload_as_Request()
+                         ->value_as_ProjectSaveRequest();
+  ASSERT_NE(save, nullptr);
+  const auto* project = save->changes()->Get(0)->value_as_SetProject();
+  ASSERT_NE(project, nullptr);
+  const auto canvas =
+      json::Object(json::Get(json::Object(project->json()->str()), "canvas"));
+  const auto wire =
+      json::Object(json::Array(json::Get(canvas, "connections")).front());
+  const auto from = json::Object(json::Get(wire, "from"));
+  EXPECT_TRUE(from.contains("port"));
+  EXPECT_EQ(json::Text(from, "port"), "");
+}
+
 TEST(AgentCatalog, EveryEntryInBothListsExistsInTheProjectRequestUnion) {
   const auto settings = json::Object(
       std::string_view(reinterpret_cast<const char *>(tsugumi_agent_settings),
@@ -44,15 +71,12 @@ TEST(AgentCatalog, InternalVersionNoteRequestsAreNotTools) {
     EXPECT_THROW(catalog.Request(name, "{}", 1), std::runtime_error);
   }
   const auto read = EncodeProjectRequest(
-      "version_note", R"({"commit":"abc","language":"en"})", 7);
+      "version_note", R"({"commit":"abc"})", 7);
   EXPECT_EQ(Tsugumi::RPC::GetMessage(read.data())->request_id(), 7u);
   EXPECT_NE(Tsugumi::RPC::GetMessage(read.data())->payload_as_Request()
                 ->value_as_VersionNoteRequest(), nullptr);
-  const auto write = EncodeProjectRequest(
-      "version_note_store",
-      R"({"op_id":"operation","origin":"agent","commit":"abc","summary":"Note"})", 8);
-  EXPECT_NE(Tsugumi::RPC::GetMessage(write.data())->payload_as_Request()
-                ->value_as_VersionNoteStoreRequest(), nullptr);
+  EXPECT_THROW(EncodeProjectRequest("version_note_store", "{}", 8), std::runtime_error);
+  EXPECT_THROW(EncodeProjectRequest("project_file_format", "{}", 8), std::runtime_error);
   EXPECT_THROW(EncodeProjectRequest("version_summary", "{}", 1), std::runtime_error);
 }
 
@@ -73,6 +97,7 @@ TEST(AgentCatalog, ExposesExactlyTheSharedRequestList) {
   }
   for (const auto& raw : json::Array(json::Get(settings, "hostTools", "[]")))
     ASSERT_TRUE(expected.insert(json::Text(json::Object(raw), "name")).second);
+  expected.insert("FileFormatRequest");
   ASSERT_FALSE(approval.empty());
   const Catalog catalog;
   std::set<std::string> actual;

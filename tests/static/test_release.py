@@ -66,3 +66,16 @@ def test_credentials_are_host_only_inputs_and_absent_from_model_selection_and_re
     replies = re.search(r"union ReplyPayload \{([^}]+)\}", host).group(1)
     assert "ProviderInput" not in replies and "CredentialToken" not in replies
     assert "CredentialTokenRequest" not in host
+
+
+def test_the_vm_gets_every_source_the_core_package_reads():
+    """The VM builds the core from the paths in vm-source.txt; a path nix/core.nix
+    reads that is not among them fails only on a real first boot."""
+    import re
+    shared = (ROOT / "macOS/Container/vm-source.txt").read_text().split()
+    shared = [entry for entry in shared if not entry.startswith("#")]
+    read = set(re.findall(r"\.\./([A-Za-z0-9_./-]+)", (ROOT / "nix/core.nix").read_text()))
+    read.discard(".")  # `root = ../.` is the base the paths are relative to
+    missing = sorted(path for path in read
+                     if not any(path == entry or path.startswith(entry + "/") for entry in shared))
+    assert not missing, f"add to macOS/Container/vm-source.txt: {missing}"

@@ -30,33 +30,33 @@
         },
         "to": {
           "card": "aggregate",
-          "port": "start"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "rmarkdown",
-          "port": "report"
+          "port": ""
         },
         "to": {
           "card": "archive",
-          "port": "rmarkdown"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "quarto",
-          "port": "report"
+          "port": ""
         },
         "to": {
           "card": "archive",
-          "port": "quarto"
+          "port": ""
         }
       },
       {
         "from": {
           "card": "aggregate",
-          "port": "data"
+          "port": ""
         },
         "to": {
           "card": "share",
@@ -70,7 +70,7 @@
         },
         "to": {
           "card": "rmarkdown",
-          "port": "data"
+          "port": ""
         }
       },
       {
@@ -80,7 +80,7 @@
         },
         "to": {
           "card": "quarto",
-          "port": "data"
+          "port": ""
         }
       }
     ]

@@ -1033,3 +1033,31 @@ placeholder with the `got: sha256-…` hash of the downloaded `.gem` files from
 the Card's build log. Keep both files with the Card and repeat the hash step
 when either changes. The locked gems are installed offline, including native
 extensions that use libraries supplied through `buildInputs`.
+
+### Draft wire ends and implementation
+
+A Draft (`_card.json` with `"template": "draft"`) has no input or output ports,
+including when `_meta.json` contains port descriptions or `_outputs.fbs` exists.
+A connection attaches directly to the Draft with `{"card":"plan","port":""}`.
+The `port` field is required; the empty string is reserved for Draft ends.
+Any number of wires can enter or leave a Draft, including wires between Drafts.
+A real Card's endpoint still names an existing input or output. The other end's
+port name and the Draft's content explain the planned connection.
+
+Draft ends carry the Empty type, do not constrain type checking, and never
+prevent saving because of their type. Drafts and Cards requiring their results
+do not run; independent implemented paths run as before.
+
+When implementing a Draft, explicitly rebind **every** incoming wire to a real
+input and every outgoing wire to a real output in the **same save** as the new
+definition. Include `SetProject` in `project_save`; inside a Card in Card, update
+its project's `tsugumi.json` and any boundary endpoints too. Ends on other Drafts
+stay empty. A single possible port is still an explicit choice. A save leaving
+a wire on a non-existent port of a real Card fails with `validation_failed`
+and names the wire. No endpoint is inferred or migrated.
+
+In Mac and Web Card settings, choose **Implement Draft by hand** under General,
+edit the definition's inputs, sources and output schema, and fill **Rebind wires**
+under Ports before Apply. Each wire starts with an empty choice. Apply saves the
+implementation and the selected endpoints together; a rejection leaves the
+working copy open for correction.

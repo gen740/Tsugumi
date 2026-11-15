@@ -589,8 +589,8 @@
      "type": "string",
      "enum": [
       "unspecified",
-      "stdout",
-      "stderr",
+      "standard_output",
+      "standard_error",
       "journal",
       "build"
      ]

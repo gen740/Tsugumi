@@ -437,9 +437,9 @@ void WorkerProc::terminate() {
 void WorkerProc::read_logs(bool drain) {
   std::lock_guard<std::mutex> l(log_mu_);
   char buf[16384];
-  for (auto [fd, stream] : {std::pair{out_fd_, LogStream::stdout}, std::pair{err_fd_, LogStream::stderr}}) {
+  for (auto [fd, stream] : {std::pair{out_fd_, LogStream::standard_output}, std::pair{err_fd_, LogStream::standard_error}}) {
     if (fd < 0) continue;
-    auto& dec = stream == LogStream::stdout ? out_dec_ : err_dec_;
+    auto& dec = stream == LogStream::standard_output ? out_dec_ : err_dec_;
     while (true) {
       ssize_t r = ::read(fd, buf, sizeof buf);
       if (r <= 0) break;

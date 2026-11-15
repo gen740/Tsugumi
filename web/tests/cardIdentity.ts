@@ -1,3 +1,4 @@
+import { hostEdits } from './cardIds'
 import assert from 'node:assert/strict'
 import { Builder, ByteBuffer } from 'flatbuffers'
 import { R, RPCClient, RequestPayload, s as text } from '../src/shared/rpc'
@@ -18,7 +19,7 @@ const allocator = new RPCClient({ close() {}, async call(frame) {
   builder.finish(reply.pack(builder), 'TSG1')
   return builder.asUint8Array().slice()
 } })
-const session = new ProjectSession('/p', 'k', 'p')
+const session = hostEdits(new ProjectSession('/p', 'k', 'p'))
 session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
 session.confirmedProject = clone(session.project)
 session.layout = parse('{}')

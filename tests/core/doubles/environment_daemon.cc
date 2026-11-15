@@ -21,6 +21,7 @@ class Daemon final : public tsugumi::RequestSink {
   std::string token = tsugumi::crypto::random_token(16);
   std::string instance = tsugumi::crypto::uuid4();
   std::string project;
+  tsugumi::Server* server = nullptr;
   auto hello(const tsugumi::RequestIn& request)
       -> std::pair<std::string, bool> override {
     const auto* input = request.request()->value_as_SessionHelloRequest();
@@ -43,7 +44,14 @@ class Daemon final : public tsugumi::RequestSink {
     return {{reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()},
             true};
   }
-  auto dispatch(tsugumi::RequestIn) -> void override {}
+  auto dispatch(tsugumi::RequestIn request) -> void override {
+    if (!request.request()->value_as_ProjectHostRequirementsRequest()) return;
+    flatbuffers::FlatBufferBuilder b;
+    auto value = R::CreateProjectHostRequirements(b);
+    auto reply = R::CreateReply(b, R::ReplyPayload::ProjectHostRequirements, value.Union());
+    R::FinishMessageBuffer(b, R::CreateMessage(b, request.request_id, R::Payload::Reply, reply.Union()));
+    server->reply(request.conn, {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()});
+  }
   auto disconnected(tsugumi::ConnId) -> void override {}
 };
 }  // namespace
@@ -106,6 +114,7 @@ auto main(int argc, char** argv) -> int {
   options.tcp_host = "127.0.0.1";
   options.tcp_port = 0;
   tsugumi::Server server(options, &daemon);
+  daemon.server = &server;
   server.start();
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
   fs::write_atomic(

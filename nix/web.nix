@@ -74,14 +74,10 @@ buildNpmPackage {
   installPhase = ''
     runHook preInstall
     share=$out/share/tsugumi
-    mkdir -p $share/web/node_modules $share/agent $testSupport
+    mkdir -p $share/web $share/agent $testSupport
     cp -R web/dist $share/web/dist
     cp -R demos flake.lock VERSION $share/
     cp -R sdk $share/sdk
-    # Native addon installation remains part of the Node package build. Keep
-    # its platform binaries beside the server for runtime module resolution.
-    cp -RL web/node_modules/node-pty $share/web/node_modules/
-    find $share/web/node_modules/node-pty -type f -name spawn-helper -exec chmod a+x {} +
     # Checks reuse installation and generated bindings, without putting the
     # development tools in the distributed Web output's runtime closure.
     cp -R web/node_modules $testSupport/node_modules

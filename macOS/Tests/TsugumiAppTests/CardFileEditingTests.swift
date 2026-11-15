@@ -1,10 +1,11 @@
 import Foundation
 import Testing
+import TsugumiAgentClient
 import TsugumiLauncher
 import TsugumiRPC
 @testable import TsugumiApp
 
-@MainActor struct CardFileEditingTests {
+@MainActor @Suite(.hostService) struct CardFileEditingTests {
   let binary = Data([0, 255, 128, 195, 40, 10])
 
   @Test func copyReadsCheckContentAcrossUnrelatedSaves() async throws {
@@ -61,37 +62,75 @@ import TsugumiRPC
     #expect(s.docState() == before && s.sourceEdits == edits && s.sourceRemovals == removed && s.undoStack.count == undos)
   }
 
-  @Test func conversionAndCopiesKeepBinaryFilesNixSourcesAndNestedDocuments() async throws {
+  @Test func copiedBytesSurviveSaveUndoAndImmediateRedo() async throws {
+    let dir = try SyncTests.project()
+    let daemon = try SyncTests.Daemon(project: dir)
+    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
+    s.endpointOverride = daemon.endpoint
+    s.start()
+    try await SyncTests.connected(s)
+    s.sourceEdits["definitions/a/data.bin"] = binary
+    let made = try #require(await s.duplicate(["a"], in: []).first)
+    let target = try #require(s.definitionDir(made)) + "data.bin"
+    await s.save()
+    for _ in 0..<100 where s.dirty { try await Task.sleep(for: .milliseconds(20)) }
+    #expect(s.sourceEdits[target] == nil)
+    await s.undo()
+    #expect(s.instance(made) == nil)
+    await s.redo()
+    #expect(s.instance(made) != nil)
+    #expect(try await s.rpcBytes(target) == binary)
+    await s.close()
+  }
+
+  @Test func conversionAndCopiesKeepBinaryFilesAndNestedDocuments() async throws {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("card-files-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
     let document = #"{"name":"test","pkgsPath":"https://example.test/pinned#sha256-pin","nixSources":[{"name":"science","type":"flake","ref":"github:org/science/revision?narHash=sha256-pin","overrides":{"tool":{"override":{"flag":true}}}}],"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}}"#
     try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
+    for id in ["a", "b"] {
+      let definition = dir.appendingPathComponent("definitions/\(id)")
+      try FileManager.default.createDirectory(at: definition, withIntermediateDirectories: true)
+      try Data(#"{"language":"bash"}"#.utf8).write(to: definition.appendingPathComponent("_card.json"))
+    }
+    let daemon = try SyncTests.Daemon(project: dir)
+    defer { daemon.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
-    s.project = try JSONValue.parse(document)
-    s.definitionEdits["a"] = DefinitionDraft(card: try JSONValue.parse(#"{"language":"bash"}"#))
-    s.definitionEdits["b"] = DefinitionDraft(card: .object([]), link: try JSONValue.parse(#"{"external":"child"}"#))
-    s.sourceEdits["definitions/a/data.bin"] = binary
-    for prefix in ["externals/child/", "externals/child/externals/grand/"] {
-      s.externalEdits[prefix] = ExternalProject(project: try JSONValue.parse(#"{"name":"inner","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}}"#), layout: .object([]), definitions: [:])
-      s.sourceEdits[prefix + "asset.bin"] = binary
+    // Exercise the native Host requests; only Card ids stay deterministic.
+    s.prepareSubgraph = { try await CoreAgentClient.shared.makeSubgraph(project: $0, cards: $1, id: $2) }
+    s.prepareCopy = { try await CoreAgentClient.shared.copyDocuments(state: $0, paths: $1, from: $2, to: $3, name: $4) }
+    s.endpointOverride = daemon.endpoint
+    s.start()
+    do {
+      try await SyncTests.connected(s)
+      s.definitionEdits["a"] = DefinitionDraft(card: try JSONValue.parse(#"{"language":"bash"}"#))
+      s.definitionEdits["b"] = DefinitionDraft(card: .object([]), link: try JSONValue.parse(#"{"external":"child"}"#))
+      s.sourceEdits["definitions/a/data.bin"] = binary
+      for prefix in ["externals/child/", "externals/child/externals/grand/"] {
+        s.externalEdits[prefix] = ExternalProject(project: try JSONValue.parse(#"{"name":"inner","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}}"#), layout: .object([]), definitions: [:])
+        s.sourceEdits[prefix + "asset.bin"] = binary
+      }
+      let before = s.undoStack.count
+      let nested = try #require(await s.makeSubgraph(["a", "b"], in: []), "\(s.notice ?? "")")
+      #expect(nested == "sub" && s.undoStack.count == before + 1)
+      #expect(s.external("externals/sub/") != nil)
+      for p in ["definitions/a/data.bin", "externals/child/asset.bin", "externals/child/externals/grand/asset.bin"] {
+        #expect(s.sourceEdits["externals/sub/" + p] == binary)
+      }
+      #expect(s.external("externals/sub/externals/child/externals/grand/") != nil)
+      let copies = await s.duplicate(["sub/a"], in: ["sub"])
+      let copy = try #require(copies.first)
+      #expect(s.sourceEdits["externals/sub/definitions/\(path(copy).last!)/data.bin"] == binary)
+      // Rename keeps the permanent identifier and all inner file bytes.
+      try await s.renameCard("sub/a", to: "renamed")
+      #expect(s.displayName("sub/a") == "renamed")
+      #expect(try await s.rpcBytes("externals/sub/definitions/a/data.bin") == binary)
+    } catch {
+      await s.close()
+      throw error
     }
-    let before = s.undoStack.count
-    let nested = try #require(await s.makeSubgraph(["a", "b"], in: []))
-    #expect(nested == "sub" && s.undoStack.count == before + 1)
-    let child = try #require(s.external("externals/sub/"))
-    #expect(child.project["nixSources"] == s.project["nixSources"])
-    #expect(child.project["pkgsPath"] == s.project["pkgsPath"])
-    for p in ["definitions/a/data.bin", "externals/child/asset.bin", "externals/child/externals/grand/asset.bin"] {
-      #expect(s.sourceEdits["externals/sub/" + p] == binary)
-    }
-    #expect(s.external("externals/sub/externals/child/externals/grand/") != nil)
-    let copies = await s.duplicate(["sub/a"], in: ["sub"])
-    let copy = try #require(copies.first)
-    #expect(s.sourceEdits["externals/sub/definitions/\(path(copy).last!)/data.bin"] == binary)
-    // Rename keeps the permanent identifier and all inner file bytes.
-    do { try await s.renameCard("sub/a", to: "renamed") } catch { /* No core confirms this presentation fixture. */ }
-    #expect(s.displayName("sub/a") == "renamed")
-    #expect(s.sourceEdits["externals/sub/definitions/a/data.bin"] == binary)
+    await s.close()
   }
 }

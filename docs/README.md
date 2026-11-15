@@ -37,6 +37,7 @@ Start from the document that fits what you want to read. To read with moving fig
 | --- | --- |
 | [Versions.md](Versions.md) | Versions: the project's git, each run's version and result (git notes), the version tree and "Start from This Version" |
 | [security.md](security.md) | What is and is not protected, the four isolation boundaries (VM, project, Card, RPC), API keys, where data is kept, and known limitations |
+| [HostPresentation.md](HostPresentation.md) | Host formatting tools, deterministic editor support and language-dependent version presentation |
 | [Protocol.md](Protocol.md) | The project RPC requests and notifications (generated from `protocol/tsugumi.fbs`) |
 | [Glossary.md](Glossary.md) | Card, Draft, Run, invocation, version and other terms |
 

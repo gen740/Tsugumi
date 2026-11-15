@@ -180,7 +180,6 @@ public actor RPCClient {
     req.clientId = clientId.uuidString.lowercased()
     req.token = token
     req.expectedProjectId = expectedProjectId
-    req.language = Bundle.main.preferredLocalizations.first?.hasPrefix("en") == true ? "en" : "ja"
     let result: Tsugumi_RPC_HelloResultT = try await call(.sessionhellorequest, req)
     hello = result
     return result

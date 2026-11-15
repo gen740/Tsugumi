@@ -314,7 +314,6 @@ class AgentFixture : public ::testing::Test {
     auto reply =
         Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
           Tsugumi::Service::ProviderInputT config;
-          config.api_key = "FIXTURE_API_KEY";
           config.endpoint = model.URL();
           config.model = "fixture-model";
           config.max_tokens = 1024;
@@ -326,6 +325,16 @@ class AgentFixture : public ::testing::Test {
         });
     if (!reply.Code().empty())
       throw std::runtime_error("cannot configure external model fixture");
+    reply = Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
+      Tsugumi::Service::ProviderInputT key;
+      key.api_key = "FIXTURE_API_KEY";
+      return H::CreateProviderSetRequest(
+                 b, b.CreateString("desktop"), b.CreateString(provider),
+                 Tsugumi::Service::ProviderInput::Pack(b, &key), false, true)
+          .Union();
+    });
+    if (!reply.Code().empty())
+      throw std::runtime_error("cannot provision model fixture key");
     const auto current =
         Call(*host, H::RequestPayload::SettingsGetRequest, [](Builder& b) {
           return H::CreateSettingsGetRequest(b, b.CreateString("desktop"))

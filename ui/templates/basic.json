@@ -1,0 +1,46 @@
+{
+  "draft": {
+    "_card.json": "{\n  \"template\": \"draft\"\n}\n",
+    "_meta.json": "{\n  \"description\": \"\",\n  \"content\": \"\"\n}\n"
+  },
+  "trigger": {
+    "_card.json": "{\n  \"template\": \"trigger\"\n}\n"
+  },
+  "fork": {
+    "_card.json": "{\n  \"template\": \"fork\"\n}\n"
+  },
+  "branch": {
+    "_card.json": "{\n  \"template\": \"branch\"\n}\n"
+  },
+  "collect": {
+    "_card.json": "{\n  \"template\": \"collect\"\n}\n"
+  },
+  "merge": {
+    "_card.json": "{\n  \"template\": \"merge\",\n  \"inputs\": [\n    {\n      \"name\": \"a\"\n    },\n    {\n      \"name\": \"b\"\n    }\n  ]\n}\n"
+  },
+  "input": {
+    "_card.json": "{\n  \"template\": \"input\",\n  \"params\": [\n    {\n      \"name\": \"value\",\n      \"type\": \"double\",\n      \"data\": 0\n    }\n  ]\n}\n",
+    "_outputs.fbs": "namespace @NAMESPACE@;\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n"
+  },
+  "switch": {
+    "_card.json": "{\n  \"template\": \"switch\",\n  \"params\": [\n    {\n      \"name\": \"value\",\n      \"type\": \"bool\",\n      \"data\": false\n    }\n  ]\n}\n"
+  },
+  "python": {
+    "_card.json": "{\n  \"language\": \"python\",\n  \"inputs\": [\n    {\n      \"name\": \"in\"\n    }\n  ]\n}\n",
+    "default.nix": "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; };\nin\n{\n  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };\n}\n",
+    "_outputs.fbs": "namespace @NAMESPACE@;\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n",
+    "src/main.py": "import tsugumi\nimport outputs.out.@NAMESPACE@.Text as out\n\n\ndef main(inputs):\n    b = tsugumi.builder()\n    text = b.CreateString(\"hello\")\n    out.Start(b)\n    out.AddValue(b, text)\n    return {\"out\": tsugumi.message(b, out.End(b))}\n"
+  },
+  "ruby": {
+    "_card.json": "{\n  \"language\": \"ruby\",\n  \"inputs\": [\n    {\n      \"name\": \"in\"\n    }\n  ]\n}\n",
+    "default.nix": "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"ruby\" ]; };\nin\n{\n  run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; };\n}\n",
+    "_outputs.fbs": "namespace @NAMESPACE@;\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n",
+    "src/main.rb": "def main(inputs)\n  { out: { value: \"hello\" } }\nend\n"
+  },
+  "cpp": {
+    "_card.json": "{\n  \"language\": \"cpp\",\n  \"inputs\": [\n    {\n      \"name\": \"in\"\n    }\n  ]\n}\n",
+    "default.nix": "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; };\nin\n{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n",
+    "_outputs.fbs": "namespace @NAMESPACE@;\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n",
+    "src/card.cc": "#include <card.hh>\n\nauto run(const Card::Inputs& inputs) -> Card::Output {\n  Card::Output out;\n  out.out.emplace().value = \"hello\";\n  return out;\n}\n"
+  }
+}

@@ -153,7 +153,7 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
   session: ProjectSession; runId: string; card?: string[]; invocation?: bigint; stream?: D.LogStream; onStream?: (s: D.LogStream) => void
 }) {
   useObserve(session, prefs)
-  const [ownStream, setOwnStream] = useState<D.LogStream>(card ? D.LogStream.stdout : D.LogStream.journal)
+  const [ownStream, setOwnStream] = useState<D.LogStream>(card ? D.LogStream.standard_output : D.LogStream.journal)
   const stream = shownStream ?? ownStream
   const setStream = (v: D.LogStream) => (onStream ? onStream(v) : setOwnStream(v))
   const [log, setLog] = useState('')
@@ -217,7 +217,7 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
     if (error) return L('ログを読み込めませんでした: ') + error
     if (card && runId === session.currentRunId && !session.cardStates.has(key(card))) return L('この実行では、この Card はまだ動いていません。')
     switch (stream) {
-      case D.LogStream.stderr: return L('stderr への出力はありません（Nix 評価・build のログもここに出ます）。')
+      case D.LogStream.standard_error: return L('stderr への出力はありません（Nix 評価・build のログもここに出ます）。')
       case D.LogStream.journal: return L('記録された段階の出来事はありません。')
       default: return L('stdout への出力はありません。')
     }
@@ -227,7 +227,7 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
     <div className="log-view">
       <div className="panel-bar">
         <Segmented<D.LogStream> small value={stream} onChange={setStream} width={240}
-          options={[{ value: D.LogStream.stdout, label: 'stdout' }, { value: D.LogStream.stderr, label: 'stderr' }, { value: D.LogStream.journal, label: 'journal' }]} />
+          options={[{ value: D.LogStream.standard_output, label: 'stdout' }, { value: D.LogStream.standard_error, label: 'stderr' }, { value: D.LogStream.journal, label: 'journal' }]} />
         <span className="caption secondary">{card ? `Card ${session.displayPath(card)}${invocation !== undefined ? ` #${invocation}` : ''}` : L('実行全体')}</span>
         <span className="spacer" />
         <Toggle kind="checkbox" small checked={follow} onChange={setFollow} label={L('末尾を追う')} />
@@ -268,7 +268,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
   const [shownInvocation, setShownInvocation] = useState<bigint>()
   const [logs, setLogs] = useState<Map<D.LogStream, string>>(new Map())
   const [open, setOpen] = useState<Set<string>>(new Set())
-  const [rawStream, setRawStream] = useState<D.LogStream>(D.LogStream.stdout)
+  const [rawStream, setRawStream] = useState<D.LogStream>(D.LogStream.standard_output)
   const [error, setError] = useState<string>()
   const [loaded, setLoaded] = useState(false)
   const busy = useRef({ running: false, again: false })
@@ -334,7 +334,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
       }
       setStages(st)
       const out = new Map<D.LogStream, string>()
-      for (const stream of [D.LogStream.build, D.LogStream.stdout, D.LogStream.stderr, D.LogStream.journal]) {
+      for (const stream of [D.LogStream.build, D.LogStream.standard_output, D.LogStream.standard_error, D.LogStream.journal]) {
         out.set(stream, await readAll(session, runId, card, inv, stream))
       }
       setLogs(out)
@@ -461,9 +461,9 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
                   {g.id === 'execute' && (
                     <>
                       <div className="caption headline secondary">stdout</div>
-                      {logText(logs.get(D.LogStream.stdout) ?? '', L('stdout への出力はありません'))}
+                      {logText(logs.get(D.LogStream.standard_output) ?? '', L('stdout への出力はありません'))}
                       <div className="caption headline secondary">stderr</div>
-                      {logText(logs.get(D.LogStream.stderr) ?? '', L('stderr への出力はありません'))}
+                      {logText(logs.get(D.LogStream.standard_error) ?? '', L('stderr への出力はありません'))}
                     </>
                   )}
                   {g.id === 'save' && (
@@ -486,7 +486,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
           {open.has('raw') && (
             <div className="stage-group-body">
               <Segmented<D.LogStream> small value={rawStream} onChange={setRawStream} width={300}
-                options={[{ value: D.LogStream.stdout, label: 'stdout' }, { value: D.LogStream.stderr, label: 'stderr' }, { value: D.LogStream.build, label: 'build' }, { value: D.LogStream.journal, label: 'journal' }]} />
+                options={[{ value: D.LogStream.standard_output, label: 'stdout' }, { value: D.LogStream.standard_error, label: 'stderr' }, { value: D.LogStream.build, label: 'build' }, { value: D.LogStream.journal, label: 'journal' }]} />
               {logText(logs.get(rawStream) ?? '', L('この stream への出力はありません'))}
             </div>
           )}

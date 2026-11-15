@@ -108,7 +108,7 @@ def test_session_requires_hello_and_negotiates_protocol_and_project(daemon):
         capabilities = {text(capability) for capability in negotiated.capabilities}
         assert {f"display:Display{kind}" for kind in
                 ("Text", "Scalar", "Table", "Image", "PointCloud", "Module")} <= capabilities
-        assert {f"format:{kind}" for kind in ("json", "cpp", "python", "nix", "bash")} <= capabilities
+        assert not any(cap.startswith("format:") for cap in capabilities)
         with pytest.raises(RpcFailure) as error:
             connect().hello(project=new_id())
         assert error.value.kind == "permission_denied"
@@ -273,48 +273,19 @@ def test_view_save_cas(client):
     assert text(opened.snapshot.viewJson) == v
 
 
-def test_validate_and_unsupported_format(client):
-    """Validation requires the requested revision and formatting rejects unsupported languages."""
+def test_validate_revision(client):
+    """Validation requires the requested revision."""
     snap = client.open().snapshot
     v = client.call("ProjectValidateRequest", atRev=snap.rev)
     assert v.valid is True
     with pytest.raises(RpcFailure) as e:
         client.call("ProjectValidateRequest", atRev=snap.rev + 5)
     assert e.value.kind == "revision_conflict"
-    with pytest.raises(RpcFailure) as e:
-        client.call("ProjectFileFormatRequest", path="x.fbs", text="table T {}", language=6)
-    assert e.value.kind == "unsupported"
-
-
-def test_format_is_separate_from_saving(client):
-    """Formatting returns text or diagnostics without saving the project."""
-    import shutil
-    snap = client.open().snapshot
-    r = client.call("ProjectFileFormatRequest", path="definitions/a/_card.json", text='{"a":[1,2],"b":{}}')
-    assert text(r.text) == '{\n  "a": [\n    1,\n    2\n  ],\n  "b": {}\n}\n'
-    bad = client.call("ProjectFileFormatRequest", path="definitions/a/x.json", text='{"a":')
-    assert [text(d.code) for d in bad.diagnostics] == ["syntax_error"] and text(bad.text) == '{"a":'
-    tools = {"cpp": ("clang-format", "x.cc", "int  main( ){return 0;}", None),
-             "python": ("ruff", "x.py", "def f(:\n  pass\n", (1, 7)),
-             "nix": ("nixfmt", "x.nix", "{ a = 1; b = [ 1 2 ]; }", None)}
-    for lang, (tool, name, src, err_pos) in tools.items():
-        if not shutil.which(tool):
-            with pytest.raises(RpcFailure) as e:
-                client.call("ProjectFileFormatRequest", path="definitions/a/" + name, text=src)
-            assert e.value.kind == "unsupported" and tool in str(e.value)
-            continue
-        res = client.call("ProjectFileFormatRequest", path="definitions/a/" + name, text=src)
-        if err_pos:
-            assert [text(d.code) for d in res.diagnostics] == ["syntax_error"]
-            assert res.diagnostics[0].offset is not None
-        else:
-            assert not res.diagnostics and text(res.text) != src
-    assert client.call("ProjectInspectRequest").rev == snap.rev
 
 
 def test_ui_layout_fields_and_draft_outputs(client):
     """Groups, note color/size, collapse and hidden output frames are layout
-    only (no execution change); a Draft can declare provisional outputs."""
+    only (no execution change); a Draft has no ports, even with a schema."""
     snap = client.open().snapshot
     layout = {
         "cards": {"src": {"x": 0, "y": 0, "collapsed": True, "inputOrder": ["b", "a"], "outputOrder": ["out"]}},
@@ -339,8 +310,8 @@ def test_ui_layout_fields_and_draft_outputs(client):
         change("SetProject", json=json.dumps(doc)),
     ])
     plan = next(r for r in res2.delta.resolution if [text(s) for s in r.card.segments] == ["plan"])
-    assert [text(p.name) for p in plan.outputs] == ["summary"], [(text(d.code), text(d.message)) for d in plan.diagnostics]
-    assert [text(p.name) for p in plan.inputs] == ["in"]
+    assert [text(p.name) for p in plan.outputs] == [], [(text(d.code), text(d.message)) for d in plan.diagnostics]
+    assert [text(p.name) for p in plan.inputs] == []
     meta = next(d for d in res2.delta.definitionsUpsert if text(d.id) == "plan")
     assert json.loads(text(meta.metaJson))["context"] == "why"
     v = client.call("ProjectValidateRequest", atRev=res2.rev, targets=[path("plan")])
@@ -470,11 +441,11 @@ def test_run_logs_and_display(project, tmp_path, core_factory):
     rec = c.call("RunRecordRequest", runId=run_id, card=shown)
     assert rec.exists and rec.recordingDisabled is True
     # Read the stdout log in small chunks; never split a character.
-    whole = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout, limitBytes=262144)
+    whole = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output, limitBytes=262144)
     assert text(whole.text) == message + "\n"
     pieces, off = [], 0
     while True:
-        s = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout,
+        s = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output,
                    offset=off, limitBytes=7)
         pieces.append(text(s.text))
         if s.nextOffset == off:
@@ -483,14 +454,14 @@ def test_run_logs_and_display(project, tmp_path, core_factory):
         if off >= s.sizeBytes:
             break
     assert "".join(pieces) == text(whole.text)
-    tail = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout, tail=True, limitBytes=10)
+    tail = c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output, tail=True, limitBytes=10)
     assert text(whole.text).endswith(text(tail.text)) and tail.truncated
     inside = text(whole.text).encode().index("日".encode()) + 1  # inside a 3-byte character
     with pytest.raises(RpcFailure) as e:
-        c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.stdout, offset=inside)
+        c.call("LogRangeRequest", runId=run_id, card=shown, invocation=1, stream=LogStream.standard_output, offset=inside)
     assert e.value.kind == "invalid_range"
     with pytest.raises(RpcFailure):
-        c.call("LogRangeRequest", runId=run_id, stream=LogStream.stdout, tail=True, offset=3)
+        c.call("LogRangeRequest", runId=run_id, stream=LogStream.standard_output, tail=True, offset=3)
     journal = c.call("LogRangeRequest", runId=run_id, stream=LogStream.journal)
     assert text(journal.text)
     history = c.call("RunHistoryRequest")
@@ -527,13 +498,12 @@ def test_an_empty_optional_document_is_not_given(client):
     assert next(d for d in res.delta.definitionsUpsert if text(d.id) == "plan").metaJson is None
 
 
-def test_draft_outputs_are_its_schema_and_its_wires(client):
-    """A wire drawn from a Draft adds an output in _meta.json, also when the
-    Draft already has typed outputs in an _outputs.fbs."""
+def test_draft_has_no_ports_from_schema_metadata_or_wires(client):
+    """Neither schema nor metadata creates ports; wires attach to the Card."""
     snap = client.call("ProjectInspectRequest")
     doc = project_json(snap)
     doc["canvas"]["cards"] += [{"id": "plan"}, {"id": "next"}]
-    doc["canvas"]["connections"].append({"from": {"card": "plan", "port": "out"}, "to": {"card": "next", "port": "in"}})
+    doc["canvas"]["connections"].append({"from": {"card": "plan", "port": ""}, "to": {"card": "next", "port": ""}})
     fbs = 'namespace d;\ntable SummaryValue { value:string; }\ntable Outputs { summary:SummaryValue; }\nroot_type Outputs;\n'
     res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
         change("PutDefinition", id="plan", cardJson=json.dumps({"template": "draft"}),
@@ -543,14 +513,13 @@ def test_draft_outputs_are_its_schema_and_its_wires(client):
         change("SetProject", json=json.dumps(doc)),
     ])
     plan = next(r for r in res.delta.resolution if [text(s) for s in r.card.segments] == ["plan"])
-    assert [text(p.name) for p in plan.outputs] == ["summary", "out"]
+    assert not plan.outputs and not plan.inputs
     codes = [text(d.code) for r in res.delta.resolution for d in r.diagnostics]
     assert "unknown_port" not in codes, codes
 
 
-def test_resolution_follows_meta_and_outputs_not_layout(client):
-    """The resolution is kept across layout-only saves and redone when a
-    Draft's planned outputs (_meta.json) or an _outputs.fbs change."""
+def test_draft_resolution_ignores_meta_schema_and_layout(client):
+    """A Draft remains portless across metadata, schema and layout edits."""
     def ports(res, card):
         r = next(r for r in res.delta.resolution if [text(s) for s in r.card.segments] == [card])
         return [(text(p.name), text(p.rootType) if p.rootType else "") for p in r.outputs]
@@ -561,13 +530,13 @@ def test_resolution_follows_meta_and_outputs_not_layout(client):
     res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
         change("PutDefinition", id="plan", cardJson=draft, metaJson=json.dumps({"description": "d", "outputs": [{"name": "first"}]})),
         change("SetProject", json=json.dumps(doc))])
-    assert [n for n, _ in ports(res, "plan")] == ["first"]
+    assert ports(res, "plan") == []
     res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
                       changes=[change("SetLayout", json=json.dumps({"cards": {"plan": {"x": 5, "y": 5}}}))])
-    assert [n for n, _ in ports(res, "plan")] == ["first"]
+    assert ports(res, "plan") == []
     res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
         change("PutDefinition", id="plan", cardJson=draft, metaJson=json.dumps({"description": "d", "outputs": [{"name": "second"}]}))])
-    assert [n for n, _ in ports(res, "plan")] == ["second"]
+    assert ports(res, "plan") == []
     fbs = "namespace d;\ntable {t} {{ value:string; }}\ntable Outputs {{ summary:{t}; }}\nroot_type Outputs;\n"
     prev = None
     for t in ("One", "Two"):
@@ -575,7 +544,7 @@ def test_resolution_follows_meta_and_outputs_not_layout(client):
         extra = {"baseHash": hashlib.sha256(prev).hexdigest()} if prev else {}
         res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
                           changes=[change("PutSource", path="definitions/plan/_outputs.fbs", bytes=list(body), **extra)])
-        assert ports(res, "plan") == [("summary", "d." + t), ("second", "tsugumi.builtin.Empty")]
+        assert ports(res, "plan") == []
         prev = body
 
 

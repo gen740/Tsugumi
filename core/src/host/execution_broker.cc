@@ -191,6 +191,9 @@ auto ProjectIdentity(const std::string& path) -> std::string {
 struct Entry {
   std::string id, name, endpoint, worker_public_key;
   R::CapabilitiesT capabilities;
+  // Only transport identity changes invalidate a project's grant. Capabilities
+  // are observations of the worker and the name is presentation.
+  std::string generation;
 };
 auto Public(const Entry& entry) -> std::unique_ptr<H::ExecutionServiceT> {
   auto value = std::make_unique<H::ExecutionServiceT>();
@@ -246,19 +249,12 @@ struct ExecutionBroker::State {
         "NULL,"
         "endpoint TEXT NOT NULL,worker_public_key TEXT NOT NULL,capabilities "
         "BLOB NOT "
-        "NULL);"
+        "NULL,generation TEXT NOT NULL);"
         "CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY,identity TEXT "
         "NOT NULL,"
-        "scope TEXT NOT NULL,capability TEXT NOT NULL UNIQUE,generation TEXT "
-        "NOT NULL)");
-    db.exec(
-        "CREATE TABLE IF NOT EXISTS generation(id INTEGER PRIMARY KEY, value "
-        "TEXT NOT NULL)");
-    {
-      auto generation =
-          db.prepare("INSERT OR IGNORE INTO generation VALUES(1,?)");
-      generation.bind(1, crypto::random_token(32)).run();
-    }
+        "scope TEXT NOT NULL,capability TEXT NOT NULL UNIQUE);"
+        "CREATE TABLE IF NOT EXISTS project_services(project TEXT NOT NULL,"
+        "service TEXT NOT NULL,generation TEXT NOT NULL,PRIMARY KEY(project,service))");
     const auto file = state / "execution-scope-key";
     key = ReadKey(file);
     if (key.empty()) {
@@ -306,7 +302,7 @@ struct ExecutionBroker::State {
   }
   auto Entries() -> std::vector<Entry> {
     auto q = db.prepare(
-        "SELECT id,name,endpoint,worker_public_key,capabilities FROM services "
+        "SELECT id,name,endpoint,worker_public_key,capabilities,generation FROM services "
         "ORDER BY id");
     std::vector<Entry> entries;
     while (q.step()) {
@@ -315,7 +311,7 @@ struct ExecutionBroker::State {
       Require(reply && reply->body.AsCapabilities(),
               "Invalid stored worker capabilities");
       entries.push_back({q.text(0), q.text(1), q.text(2), q.text(3),
-                         *reply->body.AsCapabilities()});
+                         *reply->body.AsCapabilities(), q.text(5)});
     }
     return entries;
   }
@@ -385,17 +381,11 @@ struct ExecutionBroker::State {
       {
         std::lock_guard lock(mutex);
         auto q = db.prepare(
-            "SELECT scope,generation FROM projects WHERE capability=?");
+            "SELECT scope,id FROM projects WHERE capability=?");
         q.bind(1, broker->capability);
         if (!q.step())
           throw W::Error(R::ErrorCode::Unauthorized,
                          "Project is not authorized to use this broker");
-        auto generation = db.prepare("SELECT value FROM generation WHERE id=1");
-        generation.step();
-        if (q.text(1) != generation.text(0))
-          throw W::Error(
-              R::ErrorCode::RegistrationChanged,
-              "Execution registrations changed; reauthorize the project");
         request->project_scope = q.text(0);
         auto entries = Entries();
         if (request->body.AsCatalogRequest()) {
@@ -403,8 +393,10 @@ struct ExecutionBroker::State {
           for (const auto& e : entries) {
             auto target = std::make_unique<R::TargetT>();
             target->id = e.id;
-            target->available = !e.capabilities.server_id.empty() &&
-                                e.capabilities.worker_contract == W::kContract;
+            auto grant = db.prepare("SELECT generation FROM project_services WHERE project=? AND service=?");
+            grant.bind(1, q.text(1)).bind(2, e.id);
+            target->available = grant.step() && grant.text(0) == e.generation &&
+                                !e.capabilities.server_id.empty();
             target->capabilities =
                 std::make_unique<R::CapabilitiesT>(e.capabilities);
             catalog.services.push_back(std::move(target));
@@ -414,11 +406,15 @@ struct ExecutionBroker::State {
           const auto found =
               std::ranges::find(entries, request->service, &Entry::id);
           if (found == entries.end() || found->capabilities.server_id.empty() ||
-              found->capabilities.server_id != request->server_id ||
-              found->capabilities.worker_contract != W::kContract)
+              found->capabilities.server_id != request->server_id)
             throw W::Error(
                 R::ErrorCode::RegistrationChanged,
                 "Verify the execution service registration in settings");
+          auto grant = db.prepare("SELECT generation FROM project_services WHERE project=? AND service=?");
+          grant.bind(1, q.text(1)).bind(2, found->id);
+          if (!grant.step() || grant.text(0) != found->generation)
+            throw W::Error(R::ErrorCode::RegistrationChanged,
+                           "Execution service registration changed; reauthorize this project");
           Require(request->body.type != R::RequestBody::NONE,
                   "Missing worker request");
           entry = *found;
@@ -430,11 +426,24 @@ struct ExecutionBroker::State {
         return;
       }
       forwarding = true;
-      Write(fd, Remote(entry, std::move(*request)));
+      const bool probing = request->body.AsProbeRequest() != nullptr;
+      auto response = Remote(entry, std::move(*request));
+      if (probing) {
+        if (const auto* live = response.payload.AsReply()->body.AsCapabilities()) {
+          if (live->server_id != entry.capabilities.server_id)
+            throw W::Error(R::ErrorCode::RegistrationChanged, "Remote worker identity changed");
+          auto cached = *live;
+          cached.instance_id.clear();
+          std::lock_guard lock(mutex);
+          auto update = db.prepare("UPDATE services SET capabilities=? WHERE id=? AND generation=?");
+          update.bind_blob(1, W::encode(W::reply(std::move(cached)))).bind(2, entry.id).bind(3, entry.generation).run();
+        }
+      }
+      Write(fd, std::move(response));
     } catch (const std::exception& e) {
       // A transport interruption after forwarding leaves submit unconfirmed.
-      if (forwarding) return;
       const auto* worker_error = dynamic_cast<const W::Error*>(&e);
+      if (forwarding && !worker_error) return;
       Write(fd, W::failure(
                     worker_error ? worker_error->code : R::ErrorCode::Invalid,
                     e.what()));
@@ -473,6 +482,7 @@ auto ExecutionBroker::Authorize(const std::string &project,
   if (identity.empty()) {
     auto q = state_->db.prepare("DELETE FROM projects WHERE id=?");
     q.bind(1, project).run();
+    state_->db.prepare("DELETE FROM project_services WHERE project=?").bind(1, project).run();
     fs::remove_file_durable(control / "execution-broker-capability");
     H::ExecutionAuthorizationT result;
     result.endpoint = endpoint();
@@ -481,24 +491,18 @@ auto ExecutionBroker::Authorize(const std::string &project,
   }
   const auto scope = Tag(state_->key, std::string("project\0", 8) + identity);
   auto capability = crypto::random_token(32);
-  auto generation =
-      state_->db.prepare("SELECT value FROM generation WHERE id=1");
-  generation.step();
-  const auto version = generation.text(0);
-  auto previous = state_->db.prepare(
-      "SELECT capability,identity,generation FROM projects WHERE id=?");
+  sql::Transaction transaction(state_->db);
+  auto previous = state_->db.prepare("SELECT capability,identity FROM projects WHERE id=?");
   previous.bind(1, project);
-  if (previous.step() && previous.text(1) == identity &&
-      previous.text(2) == version)
-    capability = previous.text(0);
-  auto q =
-      state_->db.prepare("INSERT OR REPLACE INTO projects VALUES(?,?,?,?,?)");
-  q.bind(1, project)
-      .bind(2, identity)
-      .bind(3, scope)
-      .bind(4, capability)
-      .bind(5, version)
-      .run();
+  if (previous.step() && previous.text(1) == identity) capability = previous.text(0);
+  auto q = state_->db.prepare("INSERT OR REPLACE INTO projects VALUES(?,?,?,?)");
+  q.bind(1, project).bind(2, identity).bind(3, scope).bind(4, capability).run();
+  state_->db.prepare("DELETE FROM project_services WHERE project=?").bind(1, project).run();
+  for (const auto& entry : state_->Entries()) {
+    auto grant = state_->db.prepare("INSERT INTO project_services VALUES(?,?,?)");
+    grant.bind(1, project).bind(2, entry.id).bind(3, entry.generation).run();
+  }
+  transaction.commit();
   fs::write_atomic(control / "execution-broker-capability", capability,
                    guest ? 0644 : 0600);
   H::ExecutionAuthorizationT result;
@@ -511,6 +515,7 @@ auto ExecutionBroker::Revoke(const std::string &project) -> void {
   std::lock_guard lock(state_->mutex);
   auto q = state_->db.prepare("DELETE FROM projects WHERE id=?");
   q.bind(1, project).run();
+  state_->db.prepare("DELETE FROM project_services WHERE project=?").bind(1, project).run();
 }
 auto ExecutionBroker::Handles(H::RequestPayload type) -> bool {
   return type == H::RequestPayload::ExecutionServicesRequest ||
@@ -534,7 +539,7 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
                   p->name()->str(),
                   p->endpoint()->str(),
                   p->worker_public_key()->str(),
-                  {}};
+                  {}, crypto::random_token(32)};
       Require(ValidId(entry.id),
               "Invalid execution service ID (local is reserved)");
       Require(
@@ -553,11 +558,11 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
         std::lock_guard lock(state_->mutex);
         for (const auto& e : state_->Entries())
           if (e.id == entry.id) {
-            previous = W::encode(W::reply(e.capabilities)) + e.endpoint +
-                       e.worker_public_key + e.name;
+            previous = e.generation + e.endpoint + e.worker_public_key + e.name;
             if (entry.endpoint == e.endpoint &&
                 entry.worker_public_key == e.worker_public_key)
               entry.capabilities = e.capabilities;
+            entry.generation = e.generation;
           }
       }
       peer_tls::ValidateKey(entry.worker_public_key);
@@ -573,27 +578,30 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
         entry.capabilities = *reply->body.AsCapabilities();
         entry.capabilities.instance_id.clear();
       }
-      const auto caps = W::encode(W::reply(entry.capabilities));
       std::lock_guard lock(state_->mutex);
       std::string current;
       for (const auto& e : state_->Entries())
-        if (e.id == entry.id)
-          current = W::encode(W::reply(e.capabilities)) + e.endpoint +
-                    e.worker_public_key + e.name;
+        if (e.id == entry.id) {
+          current = e.generation + e.endpoint + e.worker_public_key + e.name;
+          if (e.endpoint != entry.endpoint || e.worker_public_key != entry.worker_public_key ||
+              e.capabilities.server_id != entry.capabilities.server_id)
+            entry.generation = crypto::random_token(32);
+          else if (!p->verify())
+            entry.capabilities = e.capabilities;
+        }
+      const auto caps = W::encode(W::reply(entry.capabilities));
       Require(current == previous,
               "Registration changed while verifying; reopen settings");
       sql::Transaction transaction(state_->db);
       auto q = state_->db.prepare(
-          "INSERT OR REPLACE INTO services VALUES(?,?,?,?,?)");
+          "INSERT OR REPLACE INTO services VALUES(?,?,?,?,?,?)");
       q.bind(1, entry.id)
           .bind(2, entry.name)
           .bind(3, entry.endpoint)
           .bind(4, entry.worker_public_key)
           .bind_blob(5, caps)
+          .bind(6, entry.generation)
           .run();
-      auto changed =
-          state_->db.prepare("UPDATE generation SET value=? WHERE id=1");
-      changed.bind(1, crypto::random_token(32)).run();
       transaction.commit();
       return agent::wire::HostReply(id, state_->List());
     }
@@ -603,9 +611,6 @@ auto ExecutionBroker::Handle(const H::Request& request, uint64_t id)
       sql::Transaction transaction(state_->db);
       auto q = state_->db.prepare("DELETE FROM services WHERE id=?");
       q.bind(1, p->id()->str()).run();
-      auto changed =
-          state_->db.prepare("UPDATE generation SET value=? WHERE id=1");
-      changed.bind(1, crypto::random_token(32)).run();
       transaction.commit();
     }
     return agent::wire::HostReply(id, state_->List());

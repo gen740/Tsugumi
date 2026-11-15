@@ -1,6 +1,6 @@
 import { R } from '../src/shared/rpc'
 import { cardIds } from './cardIds'
-// A Draft has no ports to declare: its wires make them and take them away,
+// A Draft has no ports: its wires attach directly to the Card,
 // and it is written on its Card.
 import assert from 'node:assert/strict'
 import type { ProjectSession as Session } from '../src/model/session'
@@ -44,39 +44,41 @@ const ports = (s: Session, k: string) => {
   const a = await s.addCard('draft', [], { x: 0, y: 0 }), b = await s.addCard('draft', [], { x: 300, y: 0 })
   assert.deepEqual(ports(s, a), [[], []], 'a new Draft has no ports')
 
-  // Dropped anywhere on a Draft: both ends get a port.
+  // Dropped anywhere on a Draft: both ends name the Card itself.
   await s.connect([a, NEW_PORT], [b, NEW_PORT], [])
-  assert.deepEqual(wires(s), ['draft.out>draft-2.in'])
-  assert.deepEqual(ports(s, a), [[], ['out']])
-  assert.deepEqual(ports(s, b), [['in'], []])
+  assert.deepEqual(wires(s), ['draft.>draft-2.'])
+  assert.deepEqual(ports(s, a), [[], []])
+  assert.deepEqual(ports(s, b), [[], []])
 
-  // Another wire: another port (no fork, nothing replaced).
+  // More wires attach to the same Card (no fork, nothing replaced).
   const c = await s.addCard('draft', [], { x: 600, y: 0 })
   await s.connect([a, NEW_PORT], [c, NEW_PORT], [])
   await s.connect([c, NEW_PORT], [b, NEW_PORT], [])
-  assert.deepEqual(ports(s, a), [[], ['out', 'out2']])
-  assert.deepEqual(ports(s, b), [['in', 'in2'], []])
+  assert.deepEqual(ports(s, a), [[], []])
+  assert.deepEqual(ports(s, b), [[], []])
   assert.equal(s.connections([]).length, 3)
+  assert.equal(get(s.cardDefinition(a), 'inputs'), undefined)
+  assert.equal(get(s.cardMeta(a), 'outputs'), undefined)
 
-  // A port takes the name of the port at the other end when it says something.
+  // A real port name is never copied onto the Draft.
   const e = await s.addCard('input', [], { x: 0, y: 300 })
   const d = await s.addCard('draft', [], { x: 300, y: 300 })
   await s.connect([e, 'value'], [d, NEW_PORT], [])
-  assert.deepEqual(ports(s, d), [['value'], []])
+  assert.deepEqual(ports(s, d), [[], []])
 
-  // A port goes with its last wire; the other ports stay.
+  // Removing wires leaves definitions and metadata untouched.
   s.removeConnection(0, [])
-  assert.deepEqual(ports(s, a), [[], ['out2']])
-  assert.deepEqual(ports(s, b), [['in2'], []])
+  assert.deepEqual(ports(s, a), [[], []])
+  assert.deepEqual(ports(s, b), [[], []])
   s.disconnect(c, false, [])
   assert.deepEqual(ports(s, b), [[], []])
   s.deleteCards(new Set([e]), [])
   assert.deepEqual(ports(s, d), [[], []])
 
-  // A declared port without a wire is used before a new one is made.
+  // Declared names do not create Draft ports.
   s.updateCard(d, (card) => card.set('inputs', [parse('{"name":"planned"}')]))
-  await s.connect([a, 'out2'], [d, NEW_PORT], [])
-  assert.deepEqual(ports(s, d), [['planned'], []])
+  await s.connect([a, NEW_PORT], [d, NEW_PORT], [])
+  assert.deepEqual(ports(s, d), [[], []])
 }
 
 {
@@ -116,7 +118,7 @@ const ports = (s: Session, k: string) => {
 }
 
 {
-  // A side without a port starts its wire from the middle; a side with one from it; none while collapsed.
+  // Draft wires use the middle of each side; attachments hide while collapsed.
   const s = session()
   const a = await s.addCard('draft', [], { x: 0, y: 0 }), b = await s.addCard('draft', [], { x: 300, y: 0 })
   // The grid has its own test (portGrid.ts).
@@ -126,15 +128,16 @@ const ports = (s: Session, k: string) => {
   assert.deepEqual(empty.port(NEW_PORT, false), { x: CardGeometry.width / 2, y: 0 })
   await s.connect([a, NEW_PORT], [b, NEW_PORT], [])
   const wired = new CardGeometry(offGrid(a), 'topToBottom')
-  assert.deepEqual(wired.port('out', true), { x: CardGeometry.width / 2, y: wired.height }, 'the port is where the wire started')
-  assert.equal(wired.newPort(true), undefined, 'a side with a port starts its wires from it')
-  // Across a left-to-right flow: the middle of the side; several around it.
+  assert.deepEqual(wired.port(NEW_PORT, true), { x: CardGeometry.width / 2, y: wired.height }, 'the port is where the wire started')
+  assert.deepEqual(wired.newPort(true), empty.newPort(true), 'the Card attachment stays available for more wires')
+  // Across a left-to-right flow: the same anchor at the middle of the side.
   const side = new CardGeometry(offGrid(b), 'leftToRight')
-  assert.deepEqual(side.port('in', false), { x: 0, y: side.height / 2 })
+  assert.deepEqual(side.port(NEW_PORT, false), { x: 0, y: side.height / 2 })
   const none = new CardGeometry({ ...offGrid(b), inputs: [] }, 'leftToRight')
   assert.deepEqual(none.newPort(false), { x: 0, y: none.height / 2 })
+  // Supplied port declarations do not create Draft ports or move the anchor.
   const two = new CardGeometry({ ...offGrid(b), inputs: [{ name: 'x' }, { name: 'y' }] }, 'leftToRight')
-  assert.equal((two.port('x', false).y + two.port('y', false).y) / 2, two.height / 2)
+  assert.equal((two.port(NEW_PORT, false).y + two.port(NEW_PORT, false).y) / 2, two.height / 2)
   assert.equal(empty.height, wired.height, 'wires do not change the size of a Draft')
   s.setCollapsed([b], true)
   assert.equal(new CardGeometry(offGrid(b), 'topToBottom').newPort(true), undefined)

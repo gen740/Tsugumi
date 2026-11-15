@@ -1,3 +1,4 @@
+import { PermissionKinds } from '../src/gen/tsugumi/host/permission-kinds'
 import { Settings } from '../src/gen/tsugumi/host/settings'
 import { SignInStatus } from '../src/gen/tsugumi/host/sign-in-status'
 import { Reply as HostReply } from '../src/gen/tsugumi/host/reply'
@@ -80,19 +81,20 @@ console.log('Execution service settings: Host RPC adapters passed')
 
 // C++ object packing omits optional empty vectors. Every Host list reader
 // must return an empty list even when the vector offset is absent on the wire.
-for (const type of [HostReplyPayload.RecentList, HostReplyPayload.DemoList, HostReplyPayload.ModelList, HostReplyPayload.ExecutionServices]) {
+for (const type of [HostReplyPayload.RecentList, HostReplyPayload.DemoList, HostReplyPayload.ModelList, HostReplyPayload.ExecutionServices, HostReplyPayload.PermissionKinds]) {
   const b = new fb.Builder()
   let value: fb.Offset
   switch (type) {
     case HostReplyPayload.RecentList: value = RecentList.createRecentList(b, 0); break
     case HostReplyPayload.DemoList: value = DemoList.createDemoList(b, 0); break
     case HostReplyPayload.ModelList: value = ModelList.createModelList(b, 0); break
+    case HostReplyPayload.PermissionKinds: value = PermissionKinds.createPermissionKinds(b, 0); break
     default: value = ExecutionServices.createExecutionServices(b, 0, b.createString('ed25519:fixture'))
   }
   const reply = HostReply.createReply(b, type, value)
   HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
   const decoded = decodeReply(b.asUint8Array(), true).value
-  assert.deepEqual(type === HostReplyPayload.ExecutionServices ? decoded.services : decoded, [])
+  assert.deepEqual(type === HostReplyPayload.ExecutionServices ? decoded.services : type === HostReplyPayload.PermissionKinds ? decoded.kinds : decoded, [])
 }
 console.log('Host list readers: omitted vectors are empty')
 
@@ -168,4 +170,81 @@ assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call
   const value = (message.payload as any).value
   assert.equal(value.allow, true)
   assert.deepEqual(value.alsoAllow, [1])
+}
+
+// Formatting and version presentation are Host operations, independently of the core PATH/language.
+{
+  for (const [method, fields] of [
+    ['FileFormatRequest', { path: 'x.json', text: '{"a":1}' }],
+    ['HostVersionGraphRequest', { project: 'p', language: 'en' }],
+    ['HostVersionDiffRequest', { project: 'p', commit: 'next', from_commit: 'before' }],
+  ] as const) {
+    assert.equal(hostMethod(method), true)
+    const frame = encodeRequest(method, fields, 7n, true)
+    const request = HostMessage.getRootAsMessage(new fb.ByteBuffer(frame)).unpack()
+    const value = (request.payload as any).value
+    for (const [key, field] of Object.entries(fields)) assert.equal(value[key === 'from_commit' ? 'fromCommit' : key], field)
+    assert.throws(() => encodeRequest(method, fields, 7n, false), /Unknown Agent/)
+  }
+  const { FileFormatResult } = await import('../src/gen/tsugumi/host/file-format-result')
+  const b = new fb.Builder()
+  const formatted = FileFormatResult.createFileFormatResult(b, b.createString('{}\n'), 0)
+  const reply = HostReply.createReply(b, HostReplyPayload.FileFormatResult, formatted)
+  HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 7n, HostPayload.Reply, reply))
+  assert.deepEqual(decodeReply(b.asUint8Array(), true).value, { text: '{}\n', diagnostics: [] })
+}
+console.log('Host formatting and version presentation adapters: passed')
+
+// Pure document edits and the permission catalog use typed Host requests.
+{
+  const { DocumentSubgraphRequestT } = await import('../src/gen/tsugumi/host/document-subgraph-request')
+  const { PermissionKindsRequestT } = await import('../src/gen/tsugumi/host/permission-kinds-request')
+  const bytes = encodeRequest('DocumentSubgraphRequest', { project_json: '{"canvas":{}}', cards: ['a'], id: 'sub' }, high, true)
+  const message = HostMessage.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
+  const value = (message.payload as any).value as InstanceType<typeof DocumentSubgraphRequestT>
+  assert.ok(value instanceof DocumentSubgraphRequestT)
+  assert.equal(value.projectJson, '{"canvas":{}}')
+  assert.deepEqual(value.cards, ['a'])
+  assert.equal(value.id, 'sub')
+  const catalog = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('PermissionKindsRequest', { language: 'en' }, 9n, true))).unpack()
+  assert.ok((catalog.payload as any).value instanceof PermissionKindsRequestT)
+  assert.equal((catalog.payload as any).value.language, 'en')
+}
+
+{
+  const { DocumentMergeRequestT } = await import('../src/gen/tsugumi/host/document-merge-request')
+  const { DocumentMerge } = await import('../src/gen/tsugumi/host/document-merge')
+  const frame = encodeRequest('DocumentMergeRequest', { base_json: '{}', ours_json: '{"n":2}', theirs_json: '{}' }, 1n, true)
+  const request = HostMessage.getRootAsMessage(new fb.ByteBuffer(frame)).unpack().payload as any
+  assert.ok(request.value instanceof DocumentMergeRequestT)
+  assert.equal(request.value.oursJson, '{"n":2}')
+  const b = new fb.Builder()
+  const json = b.createString('{}')
+  const result = DocumentMerge.createDocumentMerge(b, json, 0)
+  const reply = HostReply.createReply(b, HostReplyPayload.DocumentMerge, result)
+  const message = HostMessage.createMessage(b, 1n, HostPayload.Reply, reply)
+  b.finish(message, 'TSH1')
+  assert.deepEqual(decodeReply(b.asUint8Array(), true).value.conflicts, [])
+}
+
+// Every new operation uses the Host envelope, including omitted file vectors.
+{
+  const { DocumentCopyRequestT } = await import('../src/gen/tsugumi/host/document-copy-request')
+  const { DocumentCopy } = await import('../src/gen/tsugumi/host/document-copy')
+  const copy = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('DocumentCopyRequest', { state_json: '{}', from: 'externals/a/', to: 'externals/b/' }, high, true))).unpack().payload as any
+  assert.ok(copy.value instanceof DocumentCopyRequestT)
+  assert.deepEqual(copy.value.paths, [])
+  assert.equal(copy.value.to, 'externals/b/')
+  const b = new fb.Builder(), json = b.createString('{}')
+  const value = DocumentCopy.createDocumentCopy(b, json, 0)
+  const reply = HostReply.createReply(b, HostReplyPayload.DocumentCopy, value)
+  const root = HostMessage.createMessage(b, 1n, HostPayload.Reply, reply)
+  b.finish(root, 'TSH1')
+  assert.deepEqual(decodeReply(b.asUint8Array(), true).value.files, [])
+  const connect = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('DocumentConnectRequest', { state_json: '{}', from_card: 'a', from_port: '+', to_card: 'b', to_port: 'in' }, 2n, true))).unpack().payload as any
+  assert.equal(connect.value.fromPort, '+')
+  assert.equal(connect.value.forkId, null)
+  const template = HostMessage.getRootAsMessage(new fb.ByteBuffer(encodeRequest('DocumentTemplateRequest', { name: 'python', id: 'new-card' }, 3n, true))).unpack().payload as any
+  assert.equal(template.value.name, 'python')
+  assert.equal(template.value.id, 'new-card')
 }

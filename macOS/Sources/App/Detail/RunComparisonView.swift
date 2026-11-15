@@ -226,7 +226,7 @@ struct RunComparisonView: View {
   @State private var right: String
   @State private var rows: [ComparedRunRow]?
   @State private var error: String?
-  @State private var diff: Tsugumi_RPC_VersionDiffT?
+  @State private var diff: Tsugumi_Host_VersionDiffT?
   @State private var diffError: String?
   @State private var attempt = 0
 
@@ -306,7 +306,7 @@ struct RunComparisonView: View {
     }
     if !from.isEmpty, !to.isEmpty, from != to {
       do {
-        let result = try await rpc.versionDiff(commit: to, fromCommit: from)
+        let result = try await session.versionDiff(commit: to, from: from)
         guard !Task.isCancelled else { return }
         diff = result
       } catch {

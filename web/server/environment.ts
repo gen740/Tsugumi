@@ -53,6 +53,8 @@ export interface Environments {
   stopAll(): Promise<void[]>
   /** The folders a project's chats may read now. */
   attachFolders(dir: string, key: string, folders: string[]): void | Promise<void>
+  removeFolders(dir: string, folders: string[]): Promise<void>
+  attachedFolders(dir: string): Promise<string[]>
   list(): { key: string; project: string; state: EnvState }[]
 }
 
@@ -64,7 +66,7 @@ export function projectKey(dir: string): { key: string; real: string } {
   return { key: createHash('sha256').update(inode).digest('hex').slice(0, 16), real }
 }
 
-interface Env { key: string; project: string; state: EnvState; folders: string[]; control?: string }
+interface Env { key: string; project: string; state: EnvState; control?: string }
 
 export class EnvironmentManager implements Environments {
   private envs = new Map<string, Env>()
@@ -84,7 +86,7 @@ export class EnvironmentManager implements Environments {
   private env(dir: string): Env {
     const { key, real } = projectKey(dir)
     let entry = this.envs.get(key)
-    if (!entry) this.envs.set(key, entry = { key, project: real, state: { state: 'stopped' }, folders: [] })
+    if (!entry) this.envs.set(key, entry = { key, project: real, state: { state: 'stopped' } })
     entry.project = real
     if (!this.observing) {
       this.observing = true
@@ -144,7 +146,7 @@ export class EnvironmentManager implements Environments {
   private async call(dir: string, action: string, archive = false): Promise<EnvState> {
     const entry = this.env(dir)
     const state = await this.request('EnvironmentRequest', { project: entry.project, action,
-      origins: this.origins(), folders: entry.folders, archive_incompatible_history: archive })
+      origins: this.origins(), archive_incompatible_history: archive })
     return this.adopt(entry, state)
   }
   state(dir: string) { return this.call(dir, 'State') }
@@ -152,8 +154,13 @@ export class EnvironmentManager implements Environments {
   async stop(dir: string) { await this.call(dir, 'Stop') }
   stopAll() { return Promise.all([...this.envs.values()].map((entry) => this.stop(entry.project))) }
   async attachFolders(dir: string, _key: string, folders: string[]) {
-    this.env(dir).folders = folders
-    await this.call(dir, 'Folders')
+    await this.request('EnvironmentRequest', { project: this.env(dir).project, action: 'AddFolders', folders })
+  }
+  async removeFolders(dir: string, folders: string[]) {
+    await this.request('EnvironmentRequest', { project: this.env(dir).project, action: 'RemoveFolders', folders })
+  }
+  async attachedFolders(dir: string): Promise<string[]> {
+    return (await this.request('EnvironmentRequest', { project: this.env(dir).project, action: 'State' })).folders ?? []
   }
   controlDir(key: string) { return this.envs.get(key)?.control ?? path.join(this.vm?.support ?? this.support, this.vm ? 'environments' : 'env', key, 'control') }
   async terminal(dir: string, cols: number, rows: number): Promise<VMTerminal> {

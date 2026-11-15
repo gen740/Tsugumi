@@ -47,6 +47,8 @@ class Gateway(socketserver.UnixStreamServer):
         self.online = True
         self.registered_server = self.server_id
         self.resource_limits = True
+        self.catalog_resource_limits = True
+        self.catalog_contract = 3
         self.probe_overrides = {}
         self.receipts = {}
         self.submit_count = 0
@@ -98,6 +100,8 @@ class Gateway(socketserver.UnixStreamServer):
         caps = R.CapabilitiesT(serverId=self.registered_server, nativeSystem=self.system, systems=[self.system],
                                resourceLimits=self.resource_limits, maxJobs=8, workerContract=4)
         if kind == R.RequestBody.CatalogRequest:
+            caps.resourceLimits = self.catalog_resource_limits
+            caps.workerContract = self.catalog_contract
             caps.nativeSystem = self.catalog_system
             caps.systems = [self.catalog_system]
             return R.reply(R.ReplyBody.Catalog, R.CatalogT(services=[R.TargetT(id="cluster", available=True, capabilities=caps)]))
@@ -255,6 +259,53 @@ def test_incompatible_remote_gateway_prevents_upload(project, remote_gateway, co
     assert remote_gateway.probe_count > 0
     assert not remote_gateway.blobs and remote_gateway.submit_count == 0
 
+
+@pytest.mark.parametrize("catalog_resources,live_resources", [(False, True), (True, False)])
+def test_resource_limits_use_live_worker_not_catalog(project, remote_gateway, core_factory, tmp_path,
+                                                     catalog_resources, live_resources):
+    remote_gateway.catalog_resource_limits = catalog_resources
+    remote_gateway.resource_limits = live_resources
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
+                   executionResources={"cpuMillis": 500, "memoryBytes": 256 << 20})
+    run_id = start_run(client, "work", propagate=False)
+    if live_resources:
+        live = wait_for_state(client, run_id, RemoteExecutionState.running)
+        remote_gateway.finish(text(live.executionJobId))
+        assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+    else:
+        status = wait_run(client, run_id, timeout=10)
+        assert status.state == RunState.failed
+        assert "cannot enforce resource limits" in text(status.failure.diagnostic)
+        assert remote_gateway.submit_count == 0
+    assert remote_gateway.probe_count > 0
+
+
+def test_stale_catalog_contract_does_not_prevent_probe(project, remote_gateway, core_factory, tmp_path):
+    remote_gateway.catalog_contract = 99
+    remote_gateway.resource_limits = False
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster")
+    run_id = start_run(client, "work", propagate=False)
+    live = wait_for_state(client, run_id, RemoteExecutionState.running)
+    assert remote_gateway.probe_count > 0
+    remote_gateway.finish(text(live.executionJobId))
+    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+
+
+def test_explicit_system_is_checked_after_the_live_probe(project, remote_gateway, core_factory, tmp_path):
+    remote_gateway.catalog_system = "x86_64-linux"
+    remote_gateway.system = "aarch64-linux"
+    remote_gateway.resource_limits = False
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+                   executionService="cluster", system="aarch64-linux")
+    run_id = start_run(client, "work", propagate=False)
+    live = wait_for_state(client, run_id, RemoteExecutionState.running)
+    assert text(live.executionSystem) == "aarch64-linux"
+    assert remote_gateway.probe_count > 0
+    remote_gateway.finish(text(live.executionJobId))
+    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
 
 
 def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tmp_path):
@@ -422,7 +473,7 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
         assert len(artifacts) == 1
         saved = client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), limitBytes=1024)
         assert bytes(saved.bytes) == b"retained after shutdown\n"
-        log = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1, stream=LogStream.stdout)
+        log = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
         assert text(log.text) == "one recovered message\n"
         assert gateway.submit_count == 1
     else:

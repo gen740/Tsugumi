@@ -81,7 +81,7 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
   assert.equal(s.undoStack.length, before.undos + 1, 'one edit')
   assert.deepEqual(s.position(far), { x: 5000, y: 0 }, 'what is not selected stays')
 
-  s.undo()
+  await s.undo()
   assert.deepEqual(s.position(near), before.card)
   assert.deepEqual([notePlace(s, note).x, notePlace(s, note).y], [before.note.x, before.note.y])
   assert.equal(dbl(get(s.displayFrame(placed), 'x')), 400, 'one undo brings all back')
@@ -120,7 +120,7 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
   assert.equal(s.note(note), undefined)
   assert.equal(s.undoStack.length, undos + 1)
   assert.equal(tab.selectedNotes.size + tab.selectedFrames.size, 0)
-  s.undo()
+  await s.undo()
   assert.ok(s.note(note), 'one undo brings all back')
   assert.notEqual(bool(get(s.displayFrame(near), 'hidden')), true)
 
@@ -144,7 +144,7 @@ const notePlace = (s: InstanceType<typeof ProjectSession>, id: string) => noteRe
   assert.deepEqual(s.position(offGrid), { x: snapToGrid(3010, 20) + 40, y: snapToGrid(950, 20) + 40 })
   assert.deepEqual([notePlace(s, note).x, notePlace(s, note).y], [was.x + 40, was.y + 40])
   assert.deepEqual([dbl(get(s.displayFrame(framed), 'x')), dbl(get(s.displayFrame(framed), 'y'))], [440, 440])
-  s.undo()
+  await s.undo()
   // Without a Card there is nothing to keep to the grid: they land where dropped.
   cv.moveSelection(new Set(), new Set([note]), new Set([framed]), 33, 47, 20)
   assert.deepEqual([notePlace(s, note).x, notePlace(s, note).y], [was.x + 33, was.y + 47])

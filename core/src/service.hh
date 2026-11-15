@@ -87,7 +87,6 @@ class Service : public RequestSink {
   void dispatch(RequestIn req) override;
   void disconnected(ConnId conn) override;
   // Whether the connection's SessionHello asked for English.
-  bool english(ConnId conn);
 
   static std::vector<std::string> capabilities();
 
@@ -114,7 +113,7 @@ class Service : public RequestSink {
   void schedule_export();
   auto refresh_cache_usage() -> void;
   // A run ended: its result goes to the note of the version it started from.
-  void note_run_end(const RunStatusData& s, const std::string& summary);
+  void note_run_end(const RunStatusData& s, const std::string& record_json);
 
  private:
   void reply(const RequestIn& req, std::string bytes);
@@ -139,17 +138,15 @@ class Service : public RequestSink {
   // Read pool handlers.
   void version_graph(RequestIn& req);
   void version_canvas(RequestIn& req);
-  void version_diff(RequestIn& req);
   void version_note(RequestIn& req);
-  void version_note_store(RequestIn& req);
   void close_project(RequestIn& req);
+  auto project_host_requirements(RequestIn& req) -> void;
   void inspect(RequestIn& req);
   void validate(RequestIn& req);
   void operation_get(RequestIn& req);
   void file_list(RequestIn& req);
   void file_stat(RequestIn& req);
   void file_read(RequestIn& req);
-  void file_format(RequestIn& req);
   void output_types(RequestIn& req);
   void nix_source_resolve(RequestIn& req);
   void sdk_status(RequestIn& req);
@@ -231,7 +228,6 @@ class Service : public RequestSink {
 
   std::mutex subs_mu_;
   std::map<ConnId, std::string> subscriptions_;  // conn -> subscription id
-  std::map<ConnId, bool> english_;              // conn -> its SessionHello's language is English
 
   std::mutex view_mu_;
   std::string cursor_secret_;

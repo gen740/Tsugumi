@@ -22,44 +22,44 @@ export class ProviderKeys {
     private readonly environment = process.env) {
     this.keychain = keychainReader(execute, service)
   }
-  private memory(id: KeyedProvider, key?: string) {
-    return this.call('ProviderSetRequest', { profile: this.memoryProfile, id, ephemeral: true,
+  private memory(id: KeyedProvider, key?: string, source?: string) {
+    return this.call('ProviderSetRequest', { profile: this.memoryProfile, id, ephemeral: true, source,
       remove: !key, provider: key ? { api_key: key } : undefined })
   }
   async provisionEnvironment() {
     for (const id of ['anthropic', 'openai'] as const) {
       const key = this.environment[providers[id].env]
-      if (key) await this.memory(id, key)
+      if (key) await this.memory(id, key, 'env')
     }
   }
-  async provision(id: KeyedProvider): Promise<string | undefined> {
-    const key = this.environment[providers[id].env]
-      || (this.platform === 'darwin' ? await this.keychain.read(providers[id].name) : undefined)
-    await this.memory(id, key)
-    return key ? this.memoryProfile : undefined
+  async provision(id: KeyedProvider): Promise<string> {
+    await this.memory(id, this.environment[providers[id].env], 'env')
+    if (this.platform === 'darwin') await this.memory(id, await this.keychain.read(providers[id].name), 'keychain')
+    return this.memoryProfile
   }
   async source(id: KeyedProvider, profile: string): Promise<'env' | 'keychain' | 'agentd' | undefined> {
-    if (this.environment[providers[id].env]) return 'env'
-    if (this.platform === 'darwin' && await this.keychain.exists(providers[id].name)) return 'keychain'
-    const status = await this.call<{ configured: boolean }>('ProviderStatusRequest', { profile, id })
-    return status.configured ? 'agentd' : undefined
+    await this.provision(id)
+    const status = await this.call<{ source?: 'env' | 'keychain' | 'agentd' }>('ProviderStatusRequest', { profile, id, key_profile: this.memoryProfile })
+    return status.source || undefined
   }
   async save(id: KeyedProvider, raw: string, profile: string): Promise<'keychain' | 'agentd'> {
     const key = raw.trim()
     if (!/^[\x21-\x7e]+$/.test(key) || /["\\]/.test(key)) throw new Error(L('API キーに使えない文字が含まれています。'))
-    if (this.platform === 'darwin') {
+    const policy = await this.call<{ storage: string }>('ProviderStatusRequest', { profile, id, key_profile: this.memoryProfile })
+    if (policy.storage === 'keychain') {
       // Never put the key in argv, stderr or an exception message.
       const result = await this.execute('/usr/bin/security', ['-i'],
         `add-generic-password -U -s "${service}" -a "${providers[id].name}" -w "${key}"\n`)
       this.keychain.forget(providers[id].name)
       if (result.code === 0 && await this.keychain.read(providers[id].name) === key) {
         await this.call('ProviderSetRequest', { profile, id, remove: true })
-        await this.memory(id, this.environment[providers[id].env] || key)
+        await this.provision(id)
         return 'keychain'
       }
+      throw new Error(L('Keychain に API キーを保存できませんでした。'))
     }
     await this.call('ProviderSetRequest', { profile, id, provider: { api_key: key } })
-    await this.memory(id, this.environment[providers[id].env])
+    await this.memory(id, this.environment[providers[id].env], 'env')
     return 'agentd'
   }
   async delete(id: KeyedProvider, profile: string) {
@@ -68,6 +68,7 @@ export class ProviderKeys {
       this.keychain.forget(providers[id].name)
     }
     await this.call('ProviderSetRequest', { profile, id, remove: true })
-    await this.memory(id, this.environment[providers[id].env])
+    await this.memory(id, undefined, 'keychain')
+    await this.memory(id, this.environment[providers[id].env], 'env')
   }
 }

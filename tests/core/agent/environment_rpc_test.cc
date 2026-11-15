@@ -320,13 +320,14 @@ TEST_F(EnvironmentFixture, IncompatibleHistoryRequiresTheExplicitArchiveFlag) {
 TEST_F(EnvironmentFixture, FoldersCanBeWithdrawnAndOmittedVectorsMeanEmpty) {
   const auto folder = directory.path / "attached";
   std::filesystem::create_directory(folder);
-  const auto state =
-      Environment(H::EnvironmentAction::Start, false, {folder.string()});
+  Environment(H::EnvironmentAction::AddFolders, false, {folder.string()});
+  const auto state = Environment(H::EnvironmentAction::Start);
   ASSERT_EQ(state.phase, H::EnvironmentPhase::Ready);
   const auto attached =
       std::filesystem::path(state.control_dir) / "attached.json";
   EXPECT_EQ(JsonString(Read(attached), "/folders/0"), folder.string());
-  const auto withdrawn = Environment(H::EnvironmentAction::Folders);
+  const auto withdrawn = Environment(H::EnvironmentAction::RemoveFolders, false,
+                                     {folder.string()});
   EXPECT_EQ(withdrawn.pid, state.pid);
   EXPECT_EQ(Read(attached), R"({"folders":[]})");
   EXPECT_EQ(LaunchCount(), 1u);

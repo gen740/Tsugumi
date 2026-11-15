@@ -63,7 +63,7 @@ func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) 
     #expect(workspace.logInvocation == invocation)
     let record = try await rpc.record(runId: runId, card: ["a"], invocation: invocation)
     #expect(record.selectedInvocation == invocation)
-    let log = try await rpc.logRange(runId: runId, card: ["a"], invocation: invocation, stream: .stdout)
+    let log = try await rpc.logRange(runId: runId, card: ["a"], invocation: invocation, stream: .standardOutput)
     #expect(log.text.contains("member 0"))
   }
   await session.close()

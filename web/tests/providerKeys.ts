@@ -8,7 +8,7 @@ const commands: { args: string[]; input?: string }[] = []
 let attributes = 'first', secret = 'KEYCHAIN_SENTINEL', present = true, refused = false, saveFails = false
 const keys = new ProviderKeys(async <T>(method: string, fields: any): Promise<T> => {
   calls.push({ method, fields })
-  return { configured: false } as T
+  return { configured: true, source: 'keychain', storage: 'keychain' } as T
 }, 'web:keys:fixture', 'darwin', async (command, args, input) => {
   assert.equal(command, '/usr/bin/security')
   commands.push({ args, input })
@@ -17,10 +17,10 @@ const keys = new ProviderKeys(async <T>(method: string, fields: any): Promise<T>
   return { code: !present || args.includes('-w') && refused ? 1 : 0, out: args.includes('-w') ? secret : attributes }
 }, {})
 assert.equal(await keys.source('anthropic', 'desktop'), 'keychain')
-assert.equal(commands.filter((c) => c.args.includes('-w')).length, 0, 'status never reads a secret')
+assert.equal(commands.filter((c) => c.args.includes('-w')).length, 1, 'availability provisions the key before asking the host')
 await keys.provision('anthropic'); await keys.provision('anthropic')
 assert.equal(commands.filter((c) => c.args.includes('-w')).length, 1)
-assert.ok(calls.every((c) => c.fields.ephemeral === true))
+assert.ok(calls.filter((c) => c.method === 'ProviderSetRequest').every((c) => c.fields.ephemeral === true))
 attributes = 'changed'; refused = true
 await keys.provision('anthropic'); await keys.provision('anthropic')
 assert.equal(commands.filter((c) => c.args.includes('-w')).length, 2, 'a refused read is remembered')
@@ -33,12 +33,12 @@ assert.ok(calls.filter((c) => c.fields.provider).every((c) => c.fields.ephemeral
 await keys.delete('anthropic', 'desktop')
 assert.equal(calls.at(-1)!.fields.remove, true)
 saveFails = true
-assert.equal(await keys.save('anthropic', 'FALLBACK_SENTINEL', 'desktop'), 'agentd')
-assert.ok(calls.some((c) => c.fields.profile === 'desktop' && !c.fields.ephemeral && c.fields.provider?.api_key === 'FALLBACK_SENTINEL'))
-console.log('Platform keys: attribute-only status, cached refusals, stdin, memory provisioning and fallback passed')
+await assert.rejects(() => keys.save('anthropic', 'FALLBACK_SENTINEL', 'desktop'), /Keychain/)
+assert.ok(!calls.some((c) => !c.fields.ephemeral && c.fields.provider?.api_key === 'FALLBACK_SENTINEL'))
+console.log('Platform keys: attribute-only status, cached refusals, stdin, memory provisioning and Keychain failure passed')
 
 const envCalls: any[] = []
-const env = new ProviderKeys(async <T>(_method: string, fields: any): Promise<T> => { envCalls.push(fields); return {} as T },
+const env = new ProviderKeys(async <T>(_method: string, fields: any): Promise<T> => { envCalls.push(fields); return { storage: 'agentd', source: 'env' } as T },
   'web:env:test', 'linux', async () => { throw new Error('non-Mac must not call security') }, { ANTHROPIC_API_KEY: 'ENV_SENTINEL' })
 assert.equal(await env.source('anthropic', 'standalone'), 'env')
 await env.provision('anthropic')

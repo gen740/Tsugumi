@@ -243,6 +243,7 @@ struct DemoScene {
     let byId = Dictionary(placed.map { ($0.card.id, $0) }, uniquingKeysWith: { a, _ in a })
     func port(_ id: String, _ name: String, output: Bool) -> CGPoint {
       guard let p = byId[id] else { return .zero }
+      // An empty Draft endpoint uses the Card's side anchor in this geometry.
       let at = CardGeometry(p.base, flow: flow).port(name, output: output)
       return CGPoint(x: p.rect.minX + at.x, y: p.rect.minY + at.y)
     }

@@ -15,8 +15,8 @@ else()
 endif()
 
 # The real core serves its public RPC. Only the external Nix evaluator is
-# replaced: defining its symbols in the executable keeps the real evaluator's
-# object out of the static library link. This is installed only by ci-core.
+# replaced: these targets compile its double and do not link tsugumi_nix_eval.
+# This is installed only by ci-core.
 add_executable(tsugumid-mock
   ${_core_main}
   doubles/nix_eval.cc)
@@ -84,7 +84,7 @@ add_dependencies(tsugumi_rpc_cli_tests tsugumi-rpc tsugumid-mock)
 gtest_discover_tests(tsugumi_rpc_cli_tests TEST_PREFIX "core_rpc_cli." DISCOVERY_MODE PRE_TEST
   PROPERTIES TIMEOUT 30)
 
-add_executable(tsugumi_remote_result_tests remote_result_test.cc shell_test.cc collect_value_test.cc display_module_test.cc version_note_test.cc version_files_test.cc cache_usage_test.cc history_copy_test.cc module_source_test.cc card_identity_test.cc metadata_test.cc layout_boundary_test.cc doubles/nix_eval.cc)
+add_executable(tsugumi_remote_result_tests remote_result_test.cc shell_test.cc collect_value_test.cc display_module_test.cc version_files_test.cc cache_usage_test.cc history_copy_test.cc module_source_test.cc card_identity_test.cc metadata_test.cc layout_boundary_test.cc doubles/nix_eval.cc remote_execution_test.cc host_requirements_test.cc)
 target_include_directories(tsugumi_remote_result_tests PRIVATE ${_core_headers})
 target_link_libraries(tsugumi_remote_result_tests PRIVATE tsugumi_core GTest::gtest_main)
 target_compile_options(tsugumi_remote_result_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
@@ -122,15 +122,30 @@ if(TSUGUMI_INSTALLED_CORE)
 endif()
 
 # Storage, Skill reads, environment adapters and thought timing need no sockets.
-add_executable(tsugumi_host_settings_tests agent/catalog_test.cc agent/attached_folder_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc host/layout_test.cc host/layout_service_test.cc agent_fixture_server.cc agent/helper_scope_test.cc agent/native_environment_test.cc agent/project_files_test.cc)
+add_executable(tsugumi_host_settings_tests agent/document_edits_test.cc agent/version_text_test.cc agent/format_test.cc agent/catalog_test.cc agent/attached_folder_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc host/layout_test.cc host/layout_service_test.cc agent_fixture_server.cc agent/helper_scope_test.cc agent/native_terminal_test.cc agent/native_environment_test.cc agent/project_files_test.cc)
 target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
+target_compile_definitions(tsugumi_host_settings_tests PRIVATE
+  TSUGUMI_SUBGRAPH_FIXTURES="${_test_guide_root}/tests/fixtures/subgraph-edits.json"
+  TSUGUMI_MERGE_FIXTURES="${_test_guide_root}/tests/fixtures/merge-contract.json")
+if(TSUGUMI_INSTALLED_CORE)
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/subgraph-edits.json ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/merge-contract.json
+    DESTINATION share/tsugumi/guide-tests/tests/fixtures)
+endif()
 target_compile_definitions(tsugumi_host_settings_tests PRIVATE TSUGUMI_LAYOUT_FIXTURES="tests/fixtures")
-target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_agent_core PkgConfig::LIBGIT2 GTest::gtest_main)
+target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_agent_core tsugumi_core PkgConfig::LIBGIT2 GTest::gtest_main)
 target_compile_options(tsugumi_host_settings_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 gtest_discover_tests(tsugumi_host_settings_tests TEST_PREFIX "core_host_settings." DISCOVERY_MODE PRE_TEST
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 if(TSUGUMI_INSTALLED_CORE)
   install(TARGETS tsugumi_host_settings_tests RUNTIME DESTINATION libexec/tsugumi-tests)
+endif()
+
+# Lets native client fixtures exercise the real pure host edit without sockets.
+add_executable(tsugumi_document_edit_driver agent/document_edit_driver.cc)
+target_link_libraries(tsugumi_document_edit_driver PRIVATE tsugumi_agent_core)
+target_compile_options(tsugumi_document_edit_driver PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
+if(TSUGUMI_INSTALLED_CORE)
+  install(TARGETS tsugumi_document_edit_driver RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()
 
 add_executable(tsugumi_native_contract_tests native_contract_test.cc)

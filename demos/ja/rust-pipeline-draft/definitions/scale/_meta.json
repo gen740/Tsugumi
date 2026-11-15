@@ -1,16 +1,4 @@
 {
   "description": "Rust で受け取った値を掛ける",
-  "inputs": [
-    {
-      "name": "number",
-      "description": "Integer value"
-    }
-  ],
-  "outputs": [
-    {
-      "name": "out",
-      "description": "Integer value"
-    }
-  ],
-  "content": "Rust で number.value に uint64 パラメータ factor（既定値 3）を掛け、結果を表示して out に出力する。固定した Cargo 雛形は demos/ja/rust-pipeline/definitions/scale を参照する。型は namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;"
+  "content": "Rust で number.value に uint64 パラメータ factor（既定値 3）を掛け、結果を表示して out に出力する。固定した Cargo 雛形は demos/ja/rust-pipeline/definitions/scale を参照する。型は namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;\n\n入力の意図:\n- number: Integer value\n\n出力の意図:\n- out: Integer value"
 }
