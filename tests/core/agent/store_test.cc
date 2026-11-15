@@ -145,6 +145,112 @@ TEST_F(ConversationStoreTest,
   EXPECT_THROW(store->OwnConversation("owned", false), host::Failure);
 }
 TEST_F(ConversationStoreTest,
+       EqualCountAndGrowingReplacementsArchiveEveryOriginal) {
+  Create("conversation");
+  agent::ContentBlock first;
+  first.text = "original request";
+  agent::ContentBlock result;
+  result.type = "tool_result";
+  result.id = "call";
+  result.text = "FULL_RESULT_BEFORE_SHORTENING";
+  std::vector<agent::Message> messages{
+      {"user", {first}, {}, {}, agent::ProviderAPI::AnthropicMessages},
+      {"user", {result}, {}, {}, agent::ProviderAPI::AnthropicMessages}};
+  store->SaveMessages("conversation", messages);
+  messages.back().content[0].text = "shortened";
+  store->SaveMessages("conversation", messages);  // Same message count.
+  auto summary = messages.front();
+  summary.content[0].text = "summary";
+  summary.context_summary = true;
+  messages.front() = summary;
+  first.text = "next request";
+  messages.push_back(
+      {"user", {first}, {}, {}, agent::ProviderAPI::AnthropicMessages});
+  store->SaveMessages("conversation", messages);  // Count increased.
+  const auto human =
+      store->ConversationJson(store->GetConversation("conversation"));
+  EXPECT_NE(human.find("FULL_RESULT_BEFORE_SHORTENING"), std::string::npos);
+  EXPECT_NE(human.find("original request"), std::string::npos);
+  auto archives =
+      home.db.prepare("SELECT messages FROM archives ORDER BY rowid");
+  ASSERT_TRUE(archives.step());
+  EXPECT_EQ(agent::ParseMessages(archives.text(0)).at(0).content[0].text,
+            "FULL_RESULT_BEFORE_SHORTENING");
+  ASSERT_TRUE(archives.step());
+  EXPECT_EQ(agent::ParseMessages(archives.text(0)).at(0).content[0].text,
+            "original request");
+  EXPECT_FALSE(archives.step());
+}
+
+TEST_F(ConversationStoreTest,
+       RepeatedAssistantAnswersKeepTheExactVisibleOrder) {
+  Create("repeated");
+  std::vector<agent::Message> original;
+  for (int i = 0; i < 4; ++i) {
+    agent::ContentBlock user;
+    user.text = "hello " + std::to_string(i);
+    agent::ContentBlock answer;
+    answer.text = "the same assistant answer";
+    original.push_back(
+        {"user", {user}, {}, {}, agent::ProviderAPI::AnthropicMessages});
+    original.push_back(
+        {"assistant", {answer}, {}, {}, agent::ProviderAPI::AnthropicMessages});
+  }
+  store->SaveMessages("repeated", original);
+  agent::ContentBlock summary;
+  summary.text = "internal handoff";
+  std::vector<agent::Message> compacted{
+      {"user", {summary}, {}, {}, agent::ProviderAPI::AnthropicMessages}};
+  compacted.front().context_summary = true;
+  compacted.insert(compacted.end(), original.begin() + 4, original.end());
+  store->SaveMessages("repeated", compacted);
+  std::vector<agent::Message> visible;
+  auto archived = home.db.prepare(
+      "SELECT messages FROM archives WHERE conversation='repeated' ORDER BY "
+      "rowid");
+  while (archived.step()) {
+    const auto messages = agent::ParseMessages(archived.text(0));
+    visible.insert(visible.end(), messages.begin(), messages.end());
+  }
+  for (const auto& message :
+       agent::ParseMessages(store->GetConversation("repeated").messages))
+    if (!message.context_summary) visible.push_back(message);
+  EXPECT_EQ(agent::SerializeMessages(visible),
+            agent::SerializeMessages(original));
+  EXPECT_EQ(visible.size(), 8u);
+}
+
+TEST_F(ConversationStoreTest, AppendingToolBlocksDoesNotDuplicateHistory) {
+  Create("conversation");
+  agent::ContentBlock block;
+  block.type = "tool_result";
+  block.id = "one";
+  block.text = "first result";
+  std::vector<agent::Message> messages{
+      {"user", {block}, {}, {}, agent::ProviderAPI::AnthropicMessages}};
+  store->SaveMessages("conversation", messages);
+  block.id = "two";
+  messages.back().content.push_back(block);
+  store->SaveMessages("conversation", messages);
+  store->SaveMessages("conversation", messages);
+  auto archives = home.db.prepare("SELECT count(*) FROM archives");
+  ASSERT_TRUE(archives.step());
+  EXPECT_EQ(archives.i64(0), 0);
+  // A failed replacement cannot erase the original or leave a partial archive.
+  home.db.exec(
+      "CREATE TRIGGER fail_save BEFORE UPDATE ON conversations BEGIN "
+      "SELECT RAISE(ABORT,'fixture'); END");
+  EXPECT_THROW(store->SaveMessages("conversation", {}), std::exception);
+  EXPECT_EQ(
+      agent::ParseMessages(store->GetConversation("conversation").messages)
+          .size(),
+      1u);
+  auto count = home.db.prepare("SELECT count(*) FROM archives");
+  ASSERT_TRUE(count.step());
+  EXPECT_EQ(count.i64(0), 0);
+}
+
+TEST_F(ConversationStoreTest,
        KnownConversationsRemainReadableWhileAnotherProjectIsLocked) {
   std::lock_guard lock(gate.mutex);
   Register("known");

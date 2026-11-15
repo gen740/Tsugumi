@@ -7,6 +7,7 @@
 #include <chrono>
 #include <utility>
 
+#include "agent/context.hh"
 #include "agent/json.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
@@ -271,18 +272,13 @@ auto ConversationStore::SaveMessages(const std::string& id,
                                      const std::vector<Message>& messages)
     -> void {
   std::lock_guard lock(gate.mutex);
-  auto before = GetConversation(id);
-  const auto previous = ParseMessages(before.messages);
-  if (messages.size() < previous.size()) {
-    size_t retained = 0;
-    while (retained < messages.size() && retained < previous.size() &&
-           SerializeMessages({messages[messages.size() - retained - 1]}) ==
-               SerializeMessages({previous[previous.size() - retained - 1]}))
-      ++retained;
-    const std::vector<Message> removed(previous.begin(),
-                                       previous.end() - retained);
-    auto archive =
-        ConversationDatabase(id).prepare("INSERT INTO archives VALUES(?,?)");
+  auto& database = ConversationDatabase(id);
+  std::optional<sql::Transaction> transaction;
+  if (sqlite3_get_autocommit(database.get())) transaction.emplace(database);
+  const auto previous = ParseMessages(GetConversation(id).messages);
+  const auto removed = RemovedMessages(previous, messages);
+  if (!removed.empty()) {
+    auto archive = database.prepare("INSERT INTO archives VALUES(?,?)");
     archive.bind(1, id).bind(2, scrub(SerializeMessages(removed))).run();
   }
   for (const auto& message : messages)
@@ -295,6 +291,7 @@ auto ConversationStore::SaveMessages(const std::string& id,
       .bind(2, Now())
       .bind(3, id)
       .run();
+  if (transaction) transaction->commit();
 }
 
 auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
@@ -325,13 +322,24 @@ auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
       "SELECT parent_call,task,messages,result,state FROM helpers "
       "WHERE conversation=? ORDER BY rowid");
   helper.bind(1, c.id);
-  while (helper.step())
+  while (helper.step()) {
+    // Both UIs open Helper.messages. Publish its full human trace here while
+    // Helpers keeps only the active model view in the database's messages.
+    auto trace = helper.text(3).empty()
+                     ? std::vector<Message>{}
+                     : ParseMessages(json::Get(json::Object(helper.text(3)),
+                                               "archive", "[]"));
+    const auto active = ParseMessages(helper.text(2));
+    trace.insert(trace.end(), active.begin(), active.end());
+    std::erase_if(trace,
+                  [](const auto& message) { return message.context_summary; });
     helpers.push_back(json::Encode(json::Members{
         {"call_id", json::Quote(helper.text(0))},
         {"task", std::to_string(helper.i64(1))},
-        {"messages", helper.text(2)},
+        {"messages", SerializeMessages(trace)},
         {"result", helper.text(3).empty() ? "null" : helper.text(3)},
         {"state", json::Quote(helper.text(4))}}));
+  }
   std::vector<std::string> tools;
   auto q = ConversationDatabase(c.id).prepare(
       "SELECT id,result,error,state FROM receipts WHERE "

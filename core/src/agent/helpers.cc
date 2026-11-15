@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "agent/context.hh"
 #include "agent/helper_scope.hh"
 #include "agent/json.hh"
 #include "agent/providers.hh"
@@ -31,37 +32,41 @@ auto Helpers::HelperResult(const std::string& output,
                            const std::string& conversation,
                            const std::string& call, size_t task)
     -> std::string {
-  // Eight results fit below Runtime's 60,000-byte tool-result bound. The
-  // original transcript and full result stay in the existing helper record.
-  if (output.size() <= 7000) return output;
   const auto value = json::Object(output);
-  std::string excerpt;
+  std::string report;
   const auto messages = ParseMessages(json::Get(value, "messages", "[]"));
-  for (auto message = messages.rbegin();
-       message != messages.rend() && excerpt.empty(); ++message)
-    if (message->role == "assistant")
-      for (const auto& block : message->content)
-        if (block.type == "text") {
-          excerpt = Turns::Excerpt(block.text);
-          break;
-        }
-  json::Members shortened{
+  for (auto message = messages.rbegin(); message != messages.rend();
+       ++message) {
+    if (message->role != "assistant") continue;
+    for (const auto& block : message->content)
+      if (block.type == "text") report += block.text;
+    if (!report.empty()) break;
+  }
+  constexpr size_t kReportBytes = 8192;
+  const bool shortened = report.size() > kReportBytes;
+  if (shortened) {
+    const auto marker = "\n[Report clipped; open helper " + conversation + "/" +
+                        call + "/" + std::to_string(task) +
+                        " for the full trace.]";
+    const auto room =
+        kReportBytes > marker.size() ? kReportBytes - marker.size() : 0;
+    size_t end = std::min(report.size(), room);
+    while (end && (static_cast<unsigned char>(report[end]) & 0xc0) == 0x80)
+      --end;
+    report.resize(end);
+    report += marker;
+  }
+  return json::Encode(json::Members{
       {"name", json::Get(value, "name")},
-      {"shortened", "true"},
-      {"notice", json::Quote("Helper result shortened. Open this helper in the "
-                             "conversation for the full messages and result.")},
+      {"shortened", shortened ? "true" : "false"},
+      {"notice",
+       json::Quote("Open this helper in the conversation for the full trace.")},
       {"conversation_id", json::Quote(conversation)},
       {"call_id", json::Quote(call)},
       {"task", std::to_string(task)},
-      {"error", json::Quote(Turns::Excerpt(json::Text(value, "error")))},
-      {"excerpt", json::Quote(excerpt)}};
-  auto result = json::Encode(shortened);
-  if (result.size() > 7000) {
-    shortened.erase("excerpt");
-    shortened.erase("error");
-    result = json::Encode(shortened);
-  }
-  return result;
+      {"error",
+       json::Quote(Turns::Excerpt(json::Text(value, "error"), 0, 1024))},
+      {"report", json::Quote(report)}});
 }
 
 auto Helpers::RunHelper(const std::string& conversation,
@@ -198,6 +203,30 @@ auto Helpers::RunHelper(const std::string& conversation,
       for (const auto& block : message.content)
         for (const auto& resource : block.resource_ids)
           conversations->RememberResource(conversation, resource);
+    auto old = conversations->ConversationDatabase(conversation)
+                   .prepare(
+                       "SELECT messages,result FROM helpers WHERE "
+                       "conversation=? AND parent_call=? AND task=?");
+    old.bind(1, conversation)
+        .bind(2, parent_call)
+        .bind(3, static_cast<int>(index));
+    if (!old.step()) throw Failure("not_found", "Missing helper checkpoint");
+    auto archive = old.text(1).empty()
+                       ? std::vector<Message>{}
+                       : ParseMessages(json::Get(json::Object(old.text(1)),
+                                                 "archive", "[]"));
+    const auto removed = RemovedMessages(ParseMessages(old.text(0)), saved);
+    archive.insert(archive.end(), removed.begin(), removed.end());
+    auto keep = conversations->ConversationDatabase(conversation)
+                    .prepare(
+                        "UPDATE helpers SET result=? WHERE conversation=? "
+                        "AND parent_call=? AND task=?");
+    keep.bind(1, dependencies.scrub(json::Encode(
+                     json::Members{{"archive", SerializeMessages(archive)}})))
+        .bind(2, conversation)
+        .bind(3, parent_call)
+        .bind(4, static_cast<int>(index))
+        .run();
     auto update = conversations->ConversationDatabase(conversation)
                       .prepare(
                           "UPDATE helpers SET messages=? WHERE "
@@ -215,15 +244,32 @@ auto Helpers::RunHelper(const std::string& conversation,
   const auto result =
       Runtime({.max_steps = 15})
           .Run(config, Turns::System(), messages, tools, stop, hooks);
-  const auto output = json::Encode(json::Members{
-      {"name", json::Quote(name)},
-      {"messages", dependencies.scrub(SerializeMessages(messages))},
-      {"error", json::Quote(result.error)}});
+  std::string output;
   {
     std::lock_guard lock(mutex);
     sql::Transaction transaction(
         conversations->ConversationDatabase(conversation));
     turns->AddUsage(conversation, result.usage);
+    auto old = conversations->ConversationDatabase(conversation)
+                   .prepare(
+                       "SELECT result FROM helpers WHERE conversation=? "
+                       "AND parent_call=? AND task=?");
+    old.bind(1, conversation)
+        .bind(2, parent_call)
+        .bind(3, static_cast<int>(index));
+    if (!old.step()) throw Failure("not_found", "Missing helper result");
+    const auto archive = old.text(0).empty()
+                             ? std::vector<Message>{}
+                             : ParseMessages(json::Get(
+                                   json::Object(old.text(0)), "archive", "[]"));
+    auto trace = messages;
+    std::erase_if(trace,
+                  [](const auto& message) { return message.context_summary; });
+    output = json::Encode(json::Members{
+        {"name", json::Quote(name)},
+        {"messages", dependencies.scrub(SerializeMessages(trace))},
+        {"archive", dependencies.scrub(SerializeMessages(archive))},
+        {"error", json::Quote(result.error)}});
     auto update = conversations->ConversationDatabase(conversation)
                       .prepare(
                           "UPDATE helpers SET result=?,state=? WHERE "

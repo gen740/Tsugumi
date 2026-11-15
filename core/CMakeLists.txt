@@ -162,6 +162,7 @@ add_library(tsugumi_host_core STATIC
   src/agent/providers.cc
   src/agent/store.cc
   src/agent/runtime.cc
+  src/agent/context.cc
   src/agent/tool_images.cc
   src/agent/wire.cc
   src/agent/save_policy.cc

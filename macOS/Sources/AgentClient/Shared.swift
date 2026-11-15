@@ -365,6 +365,19 @@ the result; do not require confirmations of checks or a detailed explanation of 
     "ProjectCacheUsageRequest"
   ],
   "hostTools": [{
+    "name": "tool_result_read",
+    "description": "Read the exact saved text of one earlier tool result by call_id. No tool is re-executed. offset is a UTF-8 byte offset (default 0); limit_bytes defaults to 2048 (maximum 2048). Returns text, offset, next_offset, total_bytes and eof. Continue from next_offset. Helpers can read only their own filtered results.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "call_id": { "type": "string" },
+        "offset": { "type": "string", "pattern": "^[0-9]+$" },
+        "limit_bytes": { "type": "integer" }
+      },
+      "required": ["call_id"],
+      "additionalProperties": false
+    }
+  }, {
     "name": "attached_folder_read",
     "description": "Read a user-registered attached host folder after its Read grant. Returns FileContent: file bytes or sorted directory entries (directories end in /). Paths stay beneath the registered root; symbolic links are refused. Files are limited to 16 MiB, directory listings to 5000 entries and pages to 1 MiB.",
     "inputSchema": {
@@ -403,7 +416,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
   },
   "delegateTool": {
     "name": "delegate",
-    "description": "Starts 1 to 8 independent helper tasks. The application setting limits concurrent helpers (default 4; 1 runs them sequentially). Each gets at most 15 model steps and the same tools except delegate. Supply read_cards, write_cards and run_cards as separate exact sets of permanent Card paths, e.g. [\"outer/step\"], with no implicit descendants. Empty sets are allowed. The host enforces all three sets, including inspection, files, saves, execution plans, records and logs. Newly reserved card_id Cards belong to their creator for reading, writing and running. Project-wide operations, canvas/layout edits, container-link changes and tools without a Card boundary go to the parent. Omitting all three sets works only when the user enables unscoped helpers (off by default). Returns messages and errors; a shortened result identifies the full helper trace in the conversation. Helper usage counts toward the conversation.",
+    "description": "Starts 1 to 8 independent helper tasks. The application setting limits concurrent helpers (default 4; 1 runs them sequentially). Each gets at most 15 model steps and the same tools except delegate. Supply read_cards, write_cards and run_cards as separate exact sets of permanent Card paths, e.g. [\"outer/step\"], with no implicit descendants. Empty sets are allowed. The host enforces all three sets, including inspection, files, saves, execution plans, records and logs. Newly reserved card_id Cards belong to their creator for reading, writing and running. Project-wide operations, canvas/layout edits, container-link changes and tools without a Card boundary go to the parent. Omitting all three sets works only when the user enables unscoped helpers (off by default). Returns the last assistant report (up to 8 KiB) and errors, with conversation_id, call_id and task identifying the full helper trace in the conversation. Helper usage counts toward the conversation.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,

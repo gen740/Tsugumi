@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "../agent_fixture_server.hh"
+#include "agent/json.hh"
 #include "agent/runtime.hh"
 #include "host/models.hh"
 #include "host/settings.hh"
@@ -443,6 +444,63 @@ class ContextBudget : public testing::Test {
   }
 };
 
+TEST_F(ContextBudget, ConsecutiveRequestsHaveByteIdenticalCachedPrefixes) {
+  for (const auto api : {agent::ProviderAPI::AnthropicMessages,
+                         agent::ProviderAPI::OpenAIResponses}) {
+    config.api = api;
+    messages.clear();
+    context = {};
+    Add("Keep the original request and its stable identifiers.");
+    for (int step = 1; step <= 2; ++step) {
+      const auto id = "stable-call-" + std::to_string(step);
+      if (api == agent::ProviderAPI::AnthropicMessages) {
+        model.Queue(AnthropicTool(id, "read", "{}"));
+      } else {
+        const auto item = "{\"type\":\"function_call\",\"id\":\"fc_" + id +
+                          "\",\"call_id\":\"" + id +
+                          "\",\"name\":\"read\",\"arguments\":\"{}\"}";
+        model.Queue(
+            "event: response.output_item.added\ndata: "
+            "{\"type\":\"response.output_item.added\",\"output_index\":0,"
+            "\"item\":" +
+            item +
+            "}\n\nevent: response.completed\ndata: "
+            "{\"type\":\"response.completed\",\"response\":{\"output\":[" +
+            item + "]}}\n\n");
+      }
+    }
+    model.Queue(api == agent::ProviderAPI::AnthropicMessages
+                    ? AnthropicText("done")
+                    : ResponsesText("done"));
+    hooks.execute_tool = [](const auto&, auto) {
+      return agent::ToolResult{"stable result", false, {}, {}};
+    };
+    const auto start = model.Requests().size();
+    Run("stable system", {{"z_read", "last", "{}"}, {"read", "read", "{}"}});
+    const auto requests = model.Requests();
+    ASSERT_EQ(requests.size(), start + 3);
+    for (size_t step = start; step < start + 2; ++step) {
+      const auto first = agent::json::Object(requests[step]);
+      const auto second = agent::json::Object(requests[step + 1]);
+      const auto field =
+          api == agent::ProviderAPI::AnthropicMessages ? "messages" : "input";
+      const auto prefix = agent::json::Get(first, field);
+      const auto marker = agent::json::Quote(field) + ":" + prefix;
+      const auto at = requests[step].find(marker);
+      ASSERT_NE(at, std::string::npos);
+      const auto end = at + marker.size() - 1;
+      EXPECT_EQ(requests[step + 1].substr(0, end),
+                requests[step].substr(0, end));
+      for (const auto* key : {"tools", "system", "instructions", "model"})
+        EXPECT_EQ(agent::json::Get(first, key), agent::json::Get(second, key));
+      if (api == agent::ProviderAPI::AnthropicMessages)
+        EXPECT_EQ(agent::json::Text(
+                      agent::json::Object(first.at("cache_control")), "type"),
+                  "ephemeral");
+    }
+  }
+}
+
 TEST_F(ContextBudget, ProviderCatalogPreservesReportedWindowsAndMissingValues) {
   model.QueueHTTP(R"({"data":[{"id":"reported","max_input_tokens":1000000},{"id":"absent"},{"id":"null","max_input_tokens":null}]})");
   const auto catalog = agent::ListModels(config, {});
@@ -482,7 +540,8 @@ TEST_F(ContextBudget, EscapedBytesDoNotTriggerCompactionAndUsageSurvivesTurns) {
   EXPECT_EQ(context.input_tokens, 5000u);
 }
 
-TEST_F(ContextBudget, AddedToolResultsUseTheTokenBudgetAndKeepValidJapanese) {
+TEST_F(ContextBudget,
+       SummaryKeepsCompleteRecentJapaneseResultsWithoutStreamingIt) {
   config.context_limit_tokens = 2000;
   Add("read");
   auto stream = AnthropicTool("call-1", "read", "{}");
@@ -491,23 +550,30 @@ TEST_F(ContextBudget, AddedToolResultsUseTheTokenBudgetAndKeepValidJapanese) {
   stream.replace(at, std::string("\"input_tokens\":12").size(),
                  "\"input_tokens\":1500");
   model.Queue(stream);
+  model.Queue(AnthropicText("INTERNAL_HANDOFF"));
   model.Queue(AnthropicText("done"));
-  hooks.execute_tool = [](const auto&, auto) {
-    std::string text;
-    for (int i = 0; i < 250; ++i) text += "実験";
-    return agent::ToolResult{std::move(text), false, {}, {}};
+  std::string text;
+  for (int i = 0; i < 250; ++i) text += "実験";
+  hooks.execute_tool = [&](const auto&, auto) {
+    return agent::ToolResult{text, false, {}, {}};
+  };
+  std::string visible;
+  hooks.event = [&](const auto& event) {
+    events.push_back(event.kind);
+    if (event.kind == "text") visible += event.text;
   };
   Run("system", {{"read", "read", "{}"}});
   ASSERT_TRUE(Compacted());
   const auto requests = model.Requests();
-  ASSERT_EQ(requests.size(), 2u);
-  EXPECT_NE(requests[1].find("Cut to fit the model context"), std::string::npos);
-  const auto fitted = JsonString(requests[1], "/messages/2/content/0/content");
-  EXPECT_LT(agent::EstimateTextTokens(fitted), 1500u);
-  std::string expected;
-  for (int i = 0; i < 166; ++i) expected += "実験";
-  expected += "実\n[Cut to fit the model context; request a smaller page.]";
-  EXPECT_EQ(fitted, expected);
+  ASSERT_EQ(requests.size(), 3u);
+  EXPECT_EQ(visible, "done");
+  EXPECT_EQ(JsonString(requests[2], "/messages/2/content/0/content"), text);
+  EXPECT_EQ(messages[2].content[0].text, text);
+  const auto summary = agent::json::Object(requests[1]);
+  const auto normal = agent::json::Object(requests[0]);
+  EXPECT_EQ(summary.at("system"), normal.at("system"));
+  EXPECT_EQ(summary.at("tools"), normal.at("tools"));
+  EXPECT_NE(requests[1].find("Want:"), std::string::npos);
 }
 
 TEST_F(ContextBudget, ReportedInputPlusNewMessagesCompactsBeforeRefusal) {
@@ -522,7 +588,8 @@ TEST_F(ContextBudget, ReportedInputPlusNewMessagesCompactsBeforeRefusal) {
   ASSERT_TRUE(Compacted());
   const auto requests = model.Requests();
   ASSERT_EQ(requests.size(), 3u);
-  EXPECT_NE(requests[1].find("Summarize the quoted earlier conversation"),
+  EXPECT_NE(requests[1].find(
+                "Create a short handoff for the next model continuation"),
             std::string::npos);
   EXPECT_EQ(context.input_tokens, 4000u);  // Summary usage is not the baseline.
 }
@@ -543,6 +610,7 @@ TEST_F(ContextBudget,
   // occupy the window, even though SerializeMessages omits both of them.
   context = {};
   events.clear();
+  for (int i = 0; i < 3; ++i) Add(japanese);
   model.Queue(AnthropicText("handoff"));
   model.Queue(AnthropicText("done"));
   Run(std::string(1500, 's'), {{"tool", std::string(1500, 't'), "{}"}});
@@ -566,6 +634,100 @@ TEST_F(ContextBudget,
   model.Queue(AnthropicText("done"));
   Run(std::string(6000, 's'));
   EXPECT_TRUE(Compacted());
+}
+
+TEST_F(ContextBudget,
+       OldResultsMoveInBatchesAndTheLatestResultAndRecordSurvive) {
+  config.context_limit_tokens = 100000;
+  Add("inspect all records");
+  for (int i = 1; i <= 15; ++i) {
+    auto stream = AnthropicTool("inspect-" + std::to_string(i), "inspect",
+                                "{\"card\":\"a\"}");
+    const std::string marker = "\"input_tokens\":12";
+    stream.replace(stream.find(marker), marker.size(), "\"input_tokens\":0");
+    model.Queue(std::move(stream));
+  }
+  model.Queue(AnthropicText("done", 0));
+  hooks.execute_tool = [](const auto& call, auto) {
+    return agent::ToolResult{
+        call.id + " HEAD " + std::string(40000, 'x') + " TAIL " + call.id,
+        false,
+        {},
+        {}};
+  };
+  Run("system", {{"inspect", "Inspect", "{}"}});
+  EXPECT_FALSE(Compacted());
+  EXPECT_GT(context.omitted_before, 0u);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 16u);
+  size_t rewrites = 0;
+  for (size_t i = 1; i < requests.size(); ++i) {
+    const auto latest =
+        JsonString(requests[i],
+                   "/messages/" + std::to_string(2 * i) + "/content/0/content");
+    EXPECT_TRUE(latest.ends_with("TAIL inspect-" + std::to_string(i)));
+    const auto before =
+        agent::json::Get(agent::json::Object(requests[i - 1]), "messages");
+    const auto after =
+        agent::json::Get(agent::json::Object(requests[i]), "messages");
+    if (!after.starts_with(before.substr(0, before.size() - 1))) ++rewrites;
+  }
+  EXPECT_GT(rewrites, 0u);
+  EXPECT_LT(rewrites, 7u);  // Rewriting each step would defeat prefix caching.
+  const auto omitted =
+      JsonString(requests.back(), "/messages/2/content/0/content");
+  EXPECT_NE(omitted.find("inspect {\"card\":\"a\"}"), std::string::npos);
+  EXPECT_NE(omitted.find("tool_result_read"), std::string::npos);
+  for (const auto& message : messages)
+    for (const auto& block : message.content)
+      if (block.type == "tool_result") EXPECT_GT(block.text.size(), 40000u);
+  const auto cut = context.omitted_before;
+  Add("continue");
+  model.Queue(AnthropicText("continued", 0));
+  Run("system", {{"inspect", "Inspect", "{}"}});
+  EXPECT_EQ(context.omitted_before, cut);
+}
+
+TEST_F(ContextBudget, CompactionKeepsRecentTokensAndReplaysSignedThinking) {
+  config.context_limit_tokens = 100000;
+  config.effort = "max";
+  for (int i = 0; i < 6; ++i) Add(std::string(10000, 'x'));
+  for (int i = 0; i < 30; ++i) Add(std::string(180, 'r'));
+  messages[1].role = "assistant";
+  messages[1].provider_content =
+      R"([{"type":"thinking","thinking":"retained reasoning","signature":"signed-block"},{"type":"text","text":"original answer"}])";
+  const auto original = agent::SerializeMessages(messages);
+  std::string visible;
+  hooks.event = [&](const auto& event) {
+    events.push_back(event.kind);
+    if (event.kind == "text" || event.kind == "toolInput")
+      visible += event.text;
+  };
+  model.Queue(AnthropicText("INTERNAL_HANDOFF"));
+  agent::Runtime().Compact(config, "unchanged system", messages,
+                           {{"inspect", "Inspect", "{}"}}, {}, hooks, &context);
+  EXPECT_TRUE(Compacted());
+  EXPECT_TRUE(visible.empty());
+  EXPECT_GT(messages.size(), 20u);  // Many small recent messages, not four.
+  EXPECT_TRUE(messages.front().context_summary);
+  EXPECT_EQ(messages.back().content[0].text, std::string(180, 'r'));
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 1u);
+  EXPECT_NE(requests[0].find("signed-block"), std::string::npos);
+  EXPECT_NE(requests[0].find("unchanged system"), std::string::npos);
+  EXPECT_NE(requests[0].find("\"name\":\"inspect\""), std::string::npos);
+  EXPECT_NE(requests[0].find("Want:"), std::string::npos);
+  EXPECT_EQ(JsonUInt(requests[0], "/max_tokens"), 2048u);
+  EXPECT_EQ(JsonString(requests[0], "/output_config/effort"), "max");
+  // A failed continuation leaves the durable transcript untouched.
+  const auto saved = agent::SerializeMessages(messages);
+  model.QueueHTTP(R"({"error":{"message":"fixture refusal"}})", 400);
+  EXPECT_THROW(
+      agent::Runtime().Compact(config, "unchanged system", messages,
+                               {{"inspect", "Inspect", "{}"}}, {}, hooks),
+      agent::ProviderError);
+  EXPECT_EQ(agent::SerializeMessages(messages), saved);
+  EXPECT_NE(original.find("signed-block"), std::string::npos);
 }
 
 TEST(HostContextWindow, CatalogWinsAndEveryDefaultHasAModelWindow) {

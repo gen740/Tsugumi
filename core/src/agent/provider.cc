@@ -173,12 +173,6 @@ auto AnthropicBlock(const ContentBlock& block) -> std::string {
   return TextBlock(block.type == "web_search" ? SearchText(block) : block.text);
 }
 
-auto OutputLimit(const ProviderConfig& config) -> uint32_t {
-  return config.effort == "xhigh" || config.effort == "max"
-             ? std::max(config.max_tokens, 64000u)
-             : config.max_tokens;
-}
-
 auto MessagesBody(const ProviderConfig& config, std::string_view system,
                   const std::vector<Message>& messages,
                   const std::vector<ToolSpec>& tools) -> std::string {
@@ -198,9 +192,13 @@ auto MessagesBody(const ProviderConfig& config, std::string_view system,
     wired.push_back(
         Encode({{"role", Quote(message.role)}, {"content", Array(content)}}));
   }
+  // Automatic caching covers messages too. Together with the two stable
+  // explicit breakpoints below this uses three of the API's four slots.
+  // Default TTL is five minutes; matching looks back at most 20 blocks.
   Object body{
+      {"cache_control", R"({"type":"ephemeral"})"},
       {"model", Quote(config.model)},
-      {"max_tokens", std::to_string(OutputLimit(config))},
+      {"max_tokens", std::to_string(config.max_tokens)},
       {"stream", "true"},
       {"messages", Array(wired)},
       {"system",
@@ -294,7 +292,7 @@ auto ResponsesBody(const ProviderConfig& config, std::string_view system,
               {"input", ResponsesInput(messages, plan)},
               {"stream", "true"},
               {"store", "false"}};
-  if (!plan) body["max_output_tokens"] = std::to_string(OutputLimit(config));
+  if (!plan) body["max_output_tokens"] = std::to_string(config.max_tokens);
   if (!config.effort.empty())
     body["reasoning"] = Encode({{"effort", Quote(config.effort)}});
   if (config.fast) body["service_tier"] = Quote("fast");

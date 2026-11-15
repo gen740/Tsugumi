@@ -565,7 +565,8 @@ auto Turns::Start(const std::string& id, const std::string& turn,
               pending.bind(1, id).run();
             }
           } else if (action == A::Action::Compact) {
-            Runtime().Compact(config, messages, stop, hooks);
+            Runtime().Compact(config, System(role == "guide"), messages,
+                              dependencies.specs(role == "guide"), stop, hooks, context.get());
             *context = {};
           } else {
             const auto result =

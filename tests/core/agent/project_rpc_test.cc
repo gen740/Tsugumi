@@ -1,11 +1,12 @@
 // Scenarios exercise only the public Agent RPC through the shipped client.
-#include "project_fixture.hh"
-#include "agent/json.hh"
-
 #include <unistd.h>
+
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+
+#include "agent/json.hh"
+#include "project_fixture.hh"
 
 #ifndef __APPLE__
 #include <sys/socket.h>
@@ -494,7 +495,7 @@ TEST_F(AgentProjectFixture,
 }
 
 TEST_F(AgentProjectFixture,
-       AContextRefusalShrinksToolResultsBeforeAskingAgain) {
+       AContextRefusalShrinksOnlyTheModelViewBeforeAskingAgain) {
   ModelServer model;
   model.Queue(AnthropicTool("read-large-result", "project_file_read",
                             R"({"path":"skills/long.txt"})"));
@@ -504,20 +505,124 @@ TEST_F(AgentProjectFixture,
   Write(directory.path / "project/skills/long.txt", std::string(50000, 'x'));
   StartProject();
   const auto conversation = Conversation("context-refusal");
-  Grant(conversation);
+  const auto grant = Grant(conversation);
   ASSERT_TRUE(Send(conversation, "Read the long result.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(3));
   EXPECT_NE(
       WaitUntilIdle(conversation).find("The smaller context was accepted."),
       std::string::npos);
   const auto requests = model.Requests();
-  EXPECT_LT(requests[2].size(), requests[1].size() - 20000);
-  EXPECT_NE(requests[2].find("Cut to fit the model context"),
-            std::string::npos);
-  EXPECT_NE(Events(conversation).View().find("compacted"), std::string::npos);
+  EXPECT_LE(JsonString(requests[1], "/messages/2/content/0/content").size(),
+            20480u);
+  EXPECT_LE(JsonString(requests[2], "/messages/2/content/0/content").size(),
+            10240u);
+  EXPECT_LT(requests[2].size(), requests[1].size() - 9000);
+  EXPECT_NE(requests[2].find("Omitted bytes"), std::string::npos);
+  EXPECT_EQ(Events(conversation).View().find("compacted"), std::string::npos);
   // The full public receipt stays available even when the model sees a page.
   EXPECT_NE(Get(conversation).View().find(std::string(50000, 'x')),
             std::string::npos);
+  const auto page = Tool(
+      conversation, "tool_result_read",
+      R"({"call_id":"read-large-result","offset":"24000","limit_bytes":1024})");
+  ASSERT_TRUE(page.Code().empty());
+  const auto saved = JsonString(page.View(), "/text");
+  EXPECT_EQ(JsonString(saved, "/offset"), "24000");
+  EXPECT_EQ(JsonString(saved, "/next_offset"), "25024");
+  EXPECT_EQ(JsonString(saved, "/text"), std::string(1024, 'x'));
+  // Saved output still requires the original grant.
+  Revoke(grant);
+  EXPECT_EQ(Tool(conversation, "tool_result_read",
+                 R"({"call_id":"read-large-result"})")
+                .Code(),
+            "permission_denied");
+}
+
+TEST_F(AgentProjectFixture, HelpersRereadOnlyTheirOwnFilteredResults) {
+  ModelServer model;
+  model.Queue(AnthropicTool("parent-read", "project_file_read",
+                            R"({"path":"skills/secret.txt"})"));
+  model.Queue(AnthropicTool(
+      "delegate-reader", "delegate",
+      R"({"tasks":[{"name":"reader","instruction":"Inspect and reread only your own result.","read_cards":[],"write_cards":[],"run_cards":[]}]})"));
+  model.Queue(AnthropicTool("guess-parent", "tool_result_read",
+                            R"({"call_id":"parent-read"})"));
+  model.Queue(AnthropicTool("own-inspect", "project_inspect", "{}"));
+  model.Queue(AnthropicTool("own-reread", "tool_result_read",
+                            R"({"call_id":"own-inspect","limit_bytes":100})"));
+  model.Queue(AnthropicText("Helper report."));
+  model.Queue(AnthropicText("Done."));
+  Configure(model);
+  Write(directory.path / "project/skills/secret.txt",
+        "PARENT_ONLY_PRIVATE_RESULT");
+  StartProject();
+  const auto conversation = Conversation("helper-result-read");
+  Grant(conversation);
+  ASSERT_TRUE(Send(conversation, "Read and delegate.").Code().empty());
+  const auto state = WaitUntilIdle(conversation);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 7u);
+  EXPECT_TRUE(JsonBool(requests[3], "/messages/2/content/0/is_error"));
+  EXPECT_NE(JsonString(requests[3], "/messages/2/content/0/content")
+                .find("No saved tool result"),
+            std::string::npos);
+  EXPECT_FALSE(JsonBool(requests[5], "/messages/6/content/0/is_error"));
+  const auto page = JsonString(requests[5], "/messages/6/content/0/content");
+  const auto own = JsonString(requests[4], "/messages/4/content/0/content");
+  EXPECT_EQ(JsonString(page, "/text"), own.substr(0, 100));
+  for (size_t i = 2; i <= 5; ++i)
+    EXPECT_EQ(requests[i].find("PARENT_ONLY_PRIVATE_RESULT"),
+              std::string::npos);
+  EXPECT_NE(state.find("PARENT_ONLY_PRIVATE_RESULT"), std::string::npos);
+}
+
+TEST_F(AgentProjectFixture,
+       HelperCompactionKeepsItsFullTraceAndHidesTheSummary) {
+  ModelServer model;
+  const auto instruction =
+      "Read the two records and report. " + std::string(80000, 'i');
+  model.Queue(AnthropicTool(
+      "delegate-long-reader", "delegate",
+      "{\"tasks\":[{\"name\":\"reader\",\"instruction\":" + Quote(instruction) +
+          ",\"read_cards\":[\"a\"],\"write_cards\":[],\"run_cards\":[]}]}"));
+  model.Queue(AnthropicTool("helper-read-one", "project_file_read",
+                            R"({"path":"definitions/a/src/one.txt"})"));
+  auto second = AnthropicTool("helper-read-two", "project_file_read",
+                              R"({"path":"definitions/a/src/two.txt"})");
+  const std::string marker = "\"input_tokens\":12";
+  second.replace(second.find(marker), marker.size(), "\"input_tokens\":99000");
+  model.Queue(std::move(second));
+  model.Queue(AnthropicText("INTERNAL_HELPER_HANDOFF"));
+  model.Queue(AnthropicText("Both records inspected."));
+  model.Queue(AnthropicText("The helper finished."));
+  Configure(model, "fixture", 100000);
+  Write(directory.path / "project/definitions/a/_card.json",
+        R"({"template":"draft"})");
+  const auto one = "FIRST_HELPER_RECORD " + std::string(48000, 'a');
+  const auto two = "SECOND_HELPER_RECORD " + std::string(48000, 'b');
+  Write(directory.path / "project/definitions/a/src/one.txt", one);
+  Write(directory.path / "project/definitions/a/src/two.txt", two);
+  StartProject();
+  const auto conversation = Conversation("helper-compaction-trace");
+  Grant(conversation);
+  ASSERT_TRUE(Send(conversation, "Delegate the reads.").Code().empty());
+  const auto state = WaitUntilIdle(conversation);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 6u);
+  EXPECT_NE(requests[3].find("Create a short handoff"), std::string::npos);
+  EXPECT_EQ(Events(conversation).View().find("INTERNAL_HELPER_HANDOFF"),
+            std::string::npos);
+  EXPECT_NE(state.find(one), std::string::npos);
+  EXPECT_NE(state.find(two), std::string::npos);
+  const auto visible =
+      JsonString(state, "/conversation/helpers/0/messages/2/content/0/content");
+  EXPECT_NE(visible.find(one), std::string::npos);
+  EXPECT_EQ(visible.find("INTERNAL_HELPER_HANDOFF"), std::string::npos);
+
+  const auto report = JsonString(requests[5], "/messages/2/content/0/content");
+  EXPECT_EQ(JsonString(report, "/0/report"), "Both records inspected.");
+  EXPECT_EQ(report.find("FIRST_HELPER_RECORD"), std::string::npos);
+  EXPECT_EQ(report.find("INTERNAL_HELPER_HANDOFF"), std::string::npos);
 }
 
 TEST_F(AgentProjectFixture,

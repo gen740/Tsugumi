@@ -73,6 +73,8 @@ struct ContextUsage {
   size_t message_count = 0;
   std::string prefix_hash;
   std::string request_hash;
+  size_t omitted_before = 0;
+  size_t result_limit = 20 * 1024;
 };
 
 auto EstimateTextTokens(std::string_view text) -> uint64_t;
@@ -85,8 +87,11 @@ class Runtime {
            std::vector<Message>& messages, const std::vector<ToolSpec>& tools,
            std::stop_token stop, const RuntimeHooks& hooks,
            ContextUsage* context = nullptr) const -> RunResult;
-  auto Compact(const ProviderConfig& config, std::vector<Message>& messages,
-               std::stop_token stop, const RuntimeHooks& hooks) const -> void;
+  auto Compact(const ProviderConfig& config, std::string_view system,
+               std::vector<Message>& messages,
+               const std::vector<ToolSpec>& tools, std::stop_token stop,
+               const RuntimeHooks& hooks, ContextUsage* context = nullptr) const
+      -> void;
 
  private:
   RuntimeOptions options_;

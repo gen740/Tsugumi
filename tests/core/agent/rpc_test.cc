@@ -547,7 +547,8 @@ TEST_F(AgentFixture,
   const auto earlier = "FIRST_LONG_ANSWER " + std::string(1500, 'a');
   model.Queue(AnthropicText(earlier));
   model.Queue(AnthropicText("SECOND_LONG_ANSWER " + std::string(1500, 'b')));
-  model.Queue(AnthropicText("THIRD_LONG_ANSWER " + std::string(1500, 'c'), 3500));
+  model.Queue(
+      AnthropicText("THIRD_LONG_ANSWER " + std::string(1500, 'c'), 3500));
   model.Queue(
       AnthropicText("Earlier decisions were retained in a brief summary."));
   model.Queue(AnthropicText("The fourth turn continued after compaction."));
@@ -572,6 +573,10 @@ TEST_F(AgentFixture,
             std::string::npos);
   EXPECT_EQ(JsonString(state, "/conversation/archive/1/content/0/text"),
             earlier);
+  EXPECT_EQ(Events(conversation)
+                .View()
+                .find("Earlier decisions were retained in a brief summary."),
+            std::string::npos);
   int retained_answers = 0;
   for (const auto* field : {"archive", "messages"}) {
     for (size_t index = 0;; ++index) {
@@ -587,7 +592,7 @@ TEST_F(AgentFixture,
   }
   EXPECT_EQ(retained_answers, 1);
   const auto requests = model.Requests();
-  EXPECT_NE(requests[3].find("Summarize the quoted earlier conversation"),
+  EXPECT_NE(requests[3].find("Create a short handoff for the next model continuation"),
             std::string::npos);
   EXPECT_EQ(requests[4].find(earlier), std::string::npos);
   EXPECT_NE(requests[4].find("Earlier decisions were retained"),
@@ -595,7 +600,7 @@ TEST_F(AgentFixture,
   EXPECT_NE(Events(conversation).View().find("compacted"), std::string::npos);
   const auto found =
       Call(*external, A::RequestPayload::ConversationSearchRequest,
-           [](Builder &b) {
+           [](Builder& b) {
              return A::CreateConversationSearchRequest(
                         b, 0, b.CreateString("first_long_answer"))
                  .Union();
@@ -862,7 +867,10 @@ TEST_F(AgentFixture, ShortenedHelperResultsPointToFullTraceAndSumUsageOnce) {
   EXPECT_EQ(JsonString(result, "/0/conversation_id"), conversation);
   EXPECT_EQ(JsonString(result, "/0/call_id"), "long-helper");
   EXPECT_NE(JsonString(result, "/0/notice").find("full"), std::string::npos);
-  EXPECT_LT(result.size(), 60000u);
+  EXPECT_LE(JsonString(result, "/0/report").size(), 8192u);
+  EXPECT_TRUE(
+      JsonString(result, "/0/report").starts_with(std::string(1000, 'x')));
+  EXPECT_EQ(result.find("FULL_HELPER_TRACE_END"), std::string::npos);
   EXPECT_NE(state.find("FULL_HELPER_TRACE_END"), std::string::npos);
   EXPECT_EQ(
       JsonString(state,

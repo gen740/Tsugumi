@@ -303,6 +303,13 @@ Catalog::Catalog() {
       tool.host = host_schema;
       if (tool.spec.name == "card_id")
         tool.spec.description = "Reserve a permanent Card id from its human name. The host derives a readable stem; core reserves a unique id. Use the id in paths and wires and keep the name in _meta.json.name. project_path selects a nested project.";
+      if (tool.spec.name == "run_value_read" || tool.spec.name == "artifact_read" ||
+          tool.spec.name == "log_range" || tool.spec.name == "module_read")
+        tool.spec.description += " Agent default limit_bytes is 2048; continue with offset. Saved clipped results can be read with tool_result_read by call_id.";
+      if (tool.spec.name == "run_history" || tool.spec.name == "run_invocations" ||
+          tool.spec.name == "artifact_list" || tool.spec.name == "run_environments" ||
+          tool.spec.name == "run_environment_paths")
+        tool.spec.description += " Agent default limit is 8; continue with the returned cursor or next_offset.";
       tool.approval_required = std::string_view(list) == "approvalRequests";
       if (tool.approval_required)
         tool.spec.description +=

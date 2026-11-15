@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <future>
 
+#include "agent/context.hh"
 #include "agent/providers.hh"
 #include "agent/save_policy.hh"
 #include "agent/tool_images.hh"
@@ -421,7 +422,8 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
   auto cache = std::make_shared<std::map<std::string, std::string>>();
   return [this, project, conversation, stop, revision, authorization,
           cache](const std::string& path) {
-    access_service.Require(project, conversation, Tsugumi::Service::Access::Read, true, stop,
+    access_service.Require(project, conversation,
+                           Tsugumi::Service::Access::Read, true, stop,
                            "Read helper Card context", authorization);
     if (const auto found = cache->find(path); found != cache->end())
       return found->second;
@@ -465,7 +467,7 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
 auto Tools::ScopedResult(HelperScope& scope, const ToolCall& call,
                          ToolResult result, const HelperScope::Reader& read)
     -> ToolResult {
-  if (!scope.scoped()) return result;
+  if (!scope.scoped() || call.name == "tool_result_read") return result;
   if (result.is_error) {
     if (catalog.Find(call.name)) {
       const auto envelope = json::Object(result.text);
@@ -502,6 +504,90 @@ auto Tools::ExecuteTool(const std::string& conversation,
   const auto project =
       requested_project.empty() ? c.project : requested_project;
   auto args = json::Object(call.arguments);
+  if (call.name == "tool_result_read") {
+    std::lock_guard lock(mutex);
+    const auto wanted = json::Text(args, "call_id");
+    std::vector<Message> saved;
+    if (helper) {
+      // A helper can reread only its own already-filtered transcript. Raw
+      // project receipts contain fields outside a helper's Card boundary.
+      auto q = conversations->ConversationDatabase(conversation)
+                   .prepare(
+                       "SELECT parent_call,task,messages,result FROM "
+                       "helpers WHERE conversation=?");
+      q.bind(1, conversation);
+      while (q.step()) {
+        const auto scope =
+            crypto::sha256_hex(q.text(0) + ":" + std::to_string(q.i64(1))) +
+            ":";
+        if (!call.id.starts_with(scope)) continue;
+        saved = ParseMessages(q.text(2));
+        if (!q.text(3).empty()) {
+          const auto trace = ParseMessages(
+              json::Get(json::Object(q.text(3)), "archive", "[]"));
+          saved.insert(saved.end(), trace.begin(), trace.end());
+        }
+        break;
+      }
+    } else {
+      saved = ParseMessages(c.messages);
+      auto q = conversations->ConversationDatabase(conversation)
+                   .prepare(
+                       "SELECT messages FROM archives WHERE "
+                       "conversation=? ORDER BY rowid DESC");
+      q.bind(1, conversation);
+      while (q.step()) {
+        const auto trace = ParseMessages(q.text(0));
+        saved.insert(saved.end(), trace.begin(), trace.end());
+      }
+    }
+    for (const auto& message : saved) {
+      for (const auto& block : message.content) {
+        if (block.type != "tool_result" || block.id != wanted) continue;
+        access_service.AuthorizeContext(conversation, {message});
+        const auto offset = json::UInt(json::Get(args, "offset"),
+                                       json::UInt(json::Text(args, "offset")));
+        if (offset > block.text.size())
+          throw Failure("invalid_request", "Result offset exceeds total_bytes");
+        const auto limit = std::clamp(
+            json::UInt(json::Get(args, "limit_bytes"), kResultPageBytes),
+            uint64_t{1}, uint64_t{kResultPageBytes});
+        auto begin = static_cast<size_t>(offset);
+        // Offsets refer to original UTF-8 bytes. Include a crossing character
+        // on this page rather than returning invalid JSON text.
+        while (begin && begin < block.text.size() &&
+               (static_cast<unsigned char>(block.text[begin]) & 0xc0) == 0x80)
+          --begin;
+        auto end = std::min(block.text.size(), begin + static_cast<size_t>(limit));
+        while (end < block.text.size() &&
+               (static_cast<unsigned char>(block.text[end]) & 0xc0) == 0x80)
+          ++end;
+        return {
+            json::Encode(json::Members{
+                {"call_id", json::Quote(wanted)},
+                {"offset", json::Quote(std::to_string(begin))},
+                {"next_offset", json::Quote(std::to_string(end))},
+                {"total_bytes", json::Quote(std::to_string(block.text.size()))},
+                {"eof", end == block.text.size() ? "true" : "false"},
+                {"text", json::Quote(block.text.substr(begin, end - begin))}}),
+            false,
+            {},
+            block.resource_ids};
+      }
+    }
+    throw Failure("not_found", "No saved tool result with this call_id");
+  }
+  // Model-facing defaults belong to the host. UI/core paging is unchanged.
+  if (call.name == "run_value_read" || call.name == "artifact_read" ||
+      call.name == "log_range" || call.name == "module_read") {
+    if (!args.contains("limit_bytes"))
+      args["limit_bytes"] = std::to_string(kResultPageBytes);
+  }
+  if (call.name == "run_history" || call.name == "run_invocations" ||
+      call.name == "artifact_list" || call.name == "run_environments" ||
+      call.name == "run_environment_paths") {
+    if (!args.contains("limit")) args["limit"] = "8";
+  }
   if (call.name == "document_template") {
     const auto edit =
         host::WriteTemplate(json::Text(args, "name"), json::Text(args, "id"));
@@ -640,8 +726,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
                   "Select a project before using project tools");
   const auto authorization =
       boundary ? boundary->authorization() : std::string{};
-  access_service.Require(project, conversation, Tsugumi::Service::Access::Read, wait, stop,
-                         "Read project content", authorization);
+  access_service.Require(project, conversation, Tsugumi::Service::Access::Read,
+                         wait, stop, "Read project content", authorization);
   if (boundary) {
     if (!boundary->scoped() &&
         !host_settings->HelperPolicy(providers->Profile(conversation)).second)
@@ -692,11 +778,13 @@ auto Tools::ExecuteTool(const std::string& conversation,
       (!execution && (spec->mutating || spec->approval_required)) ||
       call.name == "card_id";
   if (changes_project)
-    access_service.Require(project, conversation, Tsugumi::Service::Access::Write, wait, stop,
+    access_service.Require(project, conversation,
+                           Tsugumi::Service::Access::Write, wait, stop,
                            "Change project content", authorization);
   if (execution)
-    access_service.Require(project, conversation, Tsugumi::Service::Access::Run, wait, stop,
-                           "Execute or cancel project work", authorization);
+    access_service.Require(project, conversation, Tsugumi::Service::Access::Run,
+                           wait, stop, "Execute or cancel project work",
+                           authorization);
   if (c.role == "guide" && (changes_project || execution))
     throw Failure("permission_denied", "The guide cannot change projects");
   if (call.name == "project_shell")
@@ -718,8 +806,9 @@ auto Tools::ExecuteTool(const std::string& conversation,
                       "The user has not registered this attached folder");
       folder_resource = folder.text(0);
     }
-    access_service.Require(folder_resource, conversation, Tsugumi::Service::Access::Read, wait,
-                           stop, "Read the user-selected attached folder", {});
+    access_service.Require(folder_resource, conversation,
+                           Tsugumi::Service::Access::Read, wait, stop,
+                           "Read the user-selected attached folder", {});
   }
   for (const auto* field :
        {"origin", "approved_permissions", "check_permissions", "read_only",

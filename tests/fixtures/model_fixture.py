@@ -163,9 +163,14 @@ def system_text(body):
 
 
 def asks_summary(body):
-    """A summary-only request interprets quoted history as data, not a task."""
+    """Detect the appended handoff instruction on the normal request prefix."""
+    messages = body.get("messages", body.get("input", []))
+    last = messages[-1] if messages else {}
+    continuation = any(b.get("text", "").startswith("Create a short handoff for the next model continuation")
+                       for b in blocks(last))
     instruction = body.get("instructions", "") or system_text(body)
-    return not body.get("tools") and re.search(r"\bsummar(?:y|i[sz]\w*)\b", instruction, re.I) is not None
+    return continuation or (not body.get("tools") and
+                            re.search(r"\bsummar(?:y|i[sz]\w*)\b", instruction, re.I) is not None)
 
 
 def unanswered_tool_uses(messages):
