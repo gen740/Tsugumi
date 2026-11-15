@@ -37,7 +37,10 @@ chmod -R u+w "$dest/fonts/latin-modern-math"
 cp "$repo/docs/site/assets/YuseiMagic-OFL.txt" "$dest/fonts/"
 
 # The plot viewer's libraries and what they were built from (web/package-lock.json).
-nix develop "$repo" -c node "$repo/web/scripts/licenses.mjs" "$dest/plot-viewer"
+# The packages come from Nix (the same ones the Web UI is built from), so the
+# build needs no `npm ci` and no web/node_modules.
+web_modules="$(nix build --no-link --print-out-paths "$repo#web.testSupport")"
+TSUGUMI_WEB_MODULES="$web_modules" nix develop "$repo" -c node "$repo/web/scripts/licenses.mjs" "$dest/plot-viewer"
 
 # OpenSSL libraries bundled with the host-side hostd.
 mkdir -p "$dest/openssl"

@@ -112,8 +112,9 @@ import TsugumiRPC
 extension SyncTests {
   @Test func unchangedDraftDoesNotOverwriteAgentAndEditedDraftAsks() async throws {
     let directory = try Self.project()
+    defer { try? FileManager.default.removeItem(at: directory) }
     let daemon = try Daemon(project: directory)
-    defer { daemon.stop(); try? FileManager.default.removeItem(at: directory) }
+    defer { daemon.stop() }
     let session = ProjectSession(identity: try ProjectIdentity(url: directory), environments: EnvironmentManager(image: nil))
     session.endpointOverride = daemon.endpoint
     session.start()

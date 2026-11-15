@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import SwiftUI
 import Testing
+import TsugumiTestSupport
 @testable import TsugumiLauncher
 @testable import TsugumiApp
 @testable import TsugumiRPC
@@ -150,9 +151,9 @@ import Testing
 /// A wire to or from a Draft is dotted until the Draft has code. The web checks
 /// the same (web/tests/draftWires.tsx).
 @MainActor @Test func draftWiresAreDotted() async throws {
-  let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("draft-wires-\(UUID().uuidString.prefix(8))")
-  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  let dir = testTemporaryDirectory.appendingPathComponent("draft-wires-\(UUID().uuidString.prefix(8))")
   defer { try? FileManager.default.removeItem(at: dir) }
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let document = #"{"name": "t", "canvas": {"cards": [], "connections": []}}"#
   try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
   let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
@@ -624,9 +625,9 @@ private final class CountingRuler: LineNumberRuler {
 
 @MainActor @Test(arguments: ["go", "rust", "ruby"])
 func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
-  let dir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("sdk-card-\(UUID())")
-  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  let dir = testTemporaryDirectory.appendingPathComponent("sdk-card-\(UUID())")
   defer { try? FileManager.default.removeItem(at: dir) }
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let document = #"{"name":"sdk","canvas":{"cards":[],"connections":[]}}"#
   try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
   let session = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
@@ -669,9 +670,9 @@ func sdkLanguageScaffoldsAreEditableAndUndoable(language: String) async throws {
 
 
 @MainActor @Test func notebookFailureNavigationKeepsUnsavedSource() throws {
-  let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  let dir = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: dir) }
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   try "{}".write(to: dir.appendingPathComponent("tsugumi.json"), atomically: true, encoding: .utf8)
   let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
   let model = CardEditorModel(session: session, cardKey: "notebook")
