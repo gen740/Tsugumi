@@ -5,6 +5,7 @@
  "再試行で成功": "Succeeded on retry",
  "作業中": "Working",
 
+ "呼び出しが記録されると表示します。": "Details will appear when an invocation is recorded.",
   "ホストの状態フォルダ「{0}」は別のバージョンの Tsugumi で作成されました。このフォルダを移動または改名して退避し、Tsugumi を起動し直してください。": "The host state folder \"{0}\" was written by another version of Tsugumi. Move or rename this folder to set it aside, then start Tsugumi again.",
  "各 wire の実ポート名を指定してください（ポート欄）。": "Specify the real port for every wire in Ports.",
  "Draft を手動で実装": "Implement Draft by hand",

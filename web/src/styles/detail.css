@@ -124,3 +124,19 @@
 .run-comparison .unknown { outline: 1px dashed var(--orange); outline-offset: -1px; border-radius: 5px; }
 .comparison-field { padding: 4px 8px; }
 .comparison-display { display: flex; flex-direction: column; max-height: 400px; min-height: 0; overflow: auto; }
+
+/* History owns its narrow layout; other split views keep their sizing. */
+.execution-history { container-type: inline-size; min-width: 0; }
+.execution-history > .hsplit > .hsplit-pane:first-child { max-width: 280px; }
+.history-detail-header { flex: none; }
+.history-invocation > .select-row { flex: 1; }
+.history-invocation select { min-width: 0; width: 100%; }
+.history-invocation > button, .history-invocation > .caption { flex: none; white-space: nowrap; }
+.history-detail-header .segmented { max-width: 100%; }
+.history-detail-header .segmented button { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@container (max-width: 639px) {
+  .execution-history > .hsplit { flex-direction: column; }
+  .execution-history > .hsplit > .hsplit-pane:first-child { width: 100% !important; max-width: none; height: 35%; max-height: 160px; }
+  .execution-history > .hsplit > .hsplit-pane + .hsplit-pane { border-left: 0; border-top: 1px solid var(--separator); height: 0; }
+  .execution-history > .hsplit > .hsplit-pane > .hsplit-handle { display: none; }
+}

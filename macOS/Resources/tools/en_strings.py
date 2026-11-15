@@ -41,6 +41,8 @@ EN = {
     '表示言語を変えるには再起動が必要です': 'Restart required to change the display language',
     '表示言語は再起動後に変わります。これからプロジェクトに書く記録には、すでに新しい言語が使われます。実行中の処理は再起動しても続きます。': 'The display language will change after a restart. New records written into the project already use the new language. Ongoing runs will continue through the restart.',
     '今すぐ再起動': 'Restart now',
+    "実行の詳細": "Run details",
+    "呼び出しが記録されると表示します。": "Details will appear when an invocation is recorded.",
     'ホストの状態フォルダ「%@」は別のバージョンの Tsugumi で作成されました。このフォルダを移動または改名して退避し、Tsugumi を起動し直してください。': 'The host state folder "%@" was written by another version of Tsugumi. Move or rename this folder to set it aside, then start Tsugumi again.',
     '各 wire の実ポート名を指定してください（ポート欄）。': 'Specify the real port for every wire in Ports.',
     'Draft を手動で実装': 'Implement Draft by hand',

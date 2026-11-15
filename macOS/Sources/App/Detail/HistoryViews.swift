@@ -110,32 +110,31 @@ struct CardExecutionView: View {
 
   private var content: some View {
     VStack(spacing: 0) {
-      HStack { Spacer(); Button("実行を比較") { comparing = true }.disabled(runs.count < 2) }.padding(6)
       if session.runActive, let active = session.currentRunId {
         HStack {
           Label(runId == active ? "進行中の実行を表示しています" : "過去の実行を表示しています。別の実行が進行中です。",
                 systemImage: runId == active ? "play.circle" : "clock.arrow.circlepath")
+            .help(runId == active ? "進行中の実行を表示しています" : "過去の実行を表示しています。別の実行が進行中です。")
           Spacer()
           if runId != active, runs.contains(where: { $0.status.runId == active }) {
-            Button("進行中の実行を表示") { filter = .all; runId = active }
+            Button("進行中の実行を表示") { filter = .all; runId = active }.fixedSize()
           }
         }
-        .font(.callout).padding(8)
+        .font(.callout).lineLimit(1).padding(8).fixedSize(horizontal: false, vertical: true)
         Divider()
       }
-      HSplitView {
+      ExecutionHistoryPanes {
         VStack(spacing: 0) {
           Picker("", selection: $filter) { ForEach(Filter.allCases) { Text($0.title).tag($0) } }
             .pickerStyle(.segmented).labelsHidden().padding(6)
-          List(filtered, id: \.status.runId, selection: $runId) { r in
+          if runs.count > 1 {
             HStack {
-              Image(systemName: r.status.state.symbol).foregroundStyle(r.status.state.color)
-              VStack(alignment: .leading) {
-                Text(formatMillis(r.status.acceptedAt)).font(.callout)
-                if let mark = runMark(r.status) { Text(mark).font(.caption) }
-                Text("\(r.status.state.label) · 対象 \(session.displayPath(r.target.path))").font(.caption).foregroundStyle(.secondary)
-              }
-            }
+              Spacer()
+              Button("実行を比較") { comparing = true }.fixedSize()
+            }.padding(6).fixedSize(horizontal: false, vertical: true)
+          }
+          List(filtered, id: \.status.runId, selection: $runId) { r in
+            ExecutionHistoryRunRow(run: r, target: session.displayPath(r.target.path))
             // The selection is optional: the tag must be too, or a click selects nothing.
             .tag(Optional(r.status.runId))
           }
@@ -145,55 +144,57 @@ struct CardExecutionView: View {
             } else if !loaded { ProgressView() }
           }
         }
-        .frame(minWidth: 220, idealWidth: 260)
+      } detail: {
         VStack(spacing: 0) {
-          if let mark = runMark(record?.run.status ?? runs.first { $0.status.runId == runId }?.status) { Text(mark).font(.caption).padding(6) }
+          if let mark = runMark(record?.run.status ?? runs.first { $0.status.runId == runId }?.status) { Text(mark).font(.caption).lineLimit(1).padding(6) }
           if runId == nil {
             ContentUnavailableView("実行を選んでください", systemImage: "list.bullet.rectangle")
           } else {
-            HStack {
-              Picker("呼び出し", selection: $invocation) {
-                if invocations.isEmpty { Text("呼び出しなし").tag(UInt64?.none) }
-                ForEach(invocations, id: \.invocation) { i in
-                  Text("#\(i.invocation ?? 0) · \(i.state.label)" + batchMember(i)
-                       + (i.durationMs.map { " · \(formatDuration(Double($0) / 1000))" } ?? ""))
-                    .tag(i.invocation)
+            ExecutionHistoryDetailHeader(detail: $detail) {
+              if waitingForInvocation {
+                Label("呼び出しの記録を待っています", systemImage: "clock")
+                  .lineLimit(1).help("呼び出しの記録を待っています")
+              } else {
+                ExecutionHistoryInvocationPicker(invocations: invocations, selection: $invocation)
+                if let batch = selectedBatch, batch.executionList {
+                  Text(verbatim: "×\(batch.invocationCount)").font(.caption.monospaced()).lineLimit(1)
+                }
+                if !cursors.isEmpty || nextCursor != nil {
+                  Button { nextCursor = nil; cursors.removeLast() } label: { Image(systemName: "chevron.left") }
+                    .disabled(cursors.isEmpty).help("前へ").accessibilityLabel(Text("前へ"))
+                  Button {
+                    if let next = nextCursor { nextCursor = nil; cursors.append(next) }
+                  } label: { Image(systemName: "chevron.right") }
+                    .disabled(nextCursor == nil).help("次へ").accessibilityLabel(Text("次へ"))
                 }
               }
-              .frame(maxWidth: 320)
-              if let batch = selectedBatch, batch.executionList {
-                Text(verbatim: "×\(batch.invocationCount)").font(.caption.monospaced())
-              }
-              if !cursors.isEmpty || nextCursor != nil {
-                Button("前へ") { nextCursor = nil; cursors.removeLast() }.disabled(cursors.isEmpty)
-                Button("次へ") {
-                  if let next = nextCursor { nextCursor = nil; cursors.append(next) }
-                }.disabled(nextCursor == nil)
-              }
-              Spacer()
-              Picker("", selection: $detail) { ForEach(Detail.allCases) { Text($0.title).tag($0) } }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 300)
             }
-            .padding(6)
             Divider()
-            switch detail {
-            case .io: ioView
-            case .log:
-              if let runId { StageLogView(session: session, runId: runId, card: path(cardKey), invocation: invocation) }
-            case .packages:
-              // What this invocation ran with, from its record; never the current definition.
-              if record?.exists == false {
-                ContentUnavailableView("この実行では呼び出されていません", systemImage: "circle.dotted")
-              } else if let runId {
-                InvocationPackagesView(session: session, runId: runId, environmentId: record?.record?.summary.environmentId ?? "")
+            if waitingForInvocation && (detail == .io || detail == .packages) {
+              Text("呼び出しが記録されると表示します。")
+                .font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                .help("呼び出しが記録されると表示します。")
+                .padding(10).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+              switch detail {
+              case .io: ioView
+              case .log:
+                if let runId { StageLogView(session: session, runId: runId, card: path(cardKey), invocation: invocation) }
+              case .packages:
+                // What this invocation ran with, from its record; never the current definition.
+                if record?.exists == false {
+                  ContentUnavailableView("この実行では呼び出されていません", systemImage: "circle.dotted")
+                } else if let runId {
+                  InvocationPackagesView(session: session, runId: runId, environmentId: record?.record?.summary.environmentId ?? "")
+                }
+              case .info: infoView
               }
-            case .info: infoView
             }
           }
           if let error { Text(error).font(.caption).foregroundStyle(.red).padding(6) }
         }
-        .frame(minWidth: 380)
       }
+      .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
     .task(id: DetailRefresh(runId: runId, invocation: nil, execution: ExecutionHistoryRefresh(session: session, card: cardKey), cursor: cursors.last, batchRevision: batchRevision)) {
       await loadInvocations()
@@ -203,16 +204,15 @@ struct CardExecutionView: View {
     }
   }
 
+  private var waitingForInvocation: Bool {
+    session.runActive && runId == session.currentRunId && invocations.isEmpty && record?.record == nil
+  }
+
   private var selectedBatch: Tsugumi_RPC_RunBatchT? {
     if let id = invocations.first(where: { $0.invocation == invocation })?.batchActivation {
       return batches.first { $0.activation == id }
     }
     return batches.last
-  }
-
-  private func batchMember(_ summary: Tsugumi_RPC_InvocationSummaryT) -> String {
-    if let index = summary.batchIndex, let size = summary.batchSize { return " · \(index)/\(size)" }
-    return ""
   }
 
   private var filtered: [Tsugumi_RPC_RunSummaryT] {
@@ -371,6 +371,101 @@ struct CardExecutionView: View {
     let next = try? await rpc.record(runId: selectedRun, card: path(cardKey), invocation: selectedInvocation, followLatest: selectedInvocation == nil)
     guard !Task.isCancelled, runId == selectedRun, invocation == selectedInvocation else { return }
     record = next
+  }
+}
+
+struct ExecutionHistoryRunRow: View {
+  let run: Tsugumi_RPC_RunSummaryT
+  let target: String
+
+  var body: some View {
+    HStack {
+      Image(systemName: run.status.state.symbol).foregroundStyle(run.status.state.color)
+      VStack(alignment: .leading) {
+        Text(formatMillis(run.status.acceptedAt)).font(.callout).lineLimit(1)
+        if let mark = runMark(run.status) { Text(mark).font(.caption).lineLimit(1) }
+        Text("\(run.status.state.label) · 対象 \(target)")
+          .font(.caption).foregroundStyle(.secondary).lineLimit(1).help(target)
+      }
+    }
+  }
+}
+
+/// The Card sidebar consumes 161 pt; the remaining pane must also fit at 620 pt.
+struct ExecutionHistoryPanes<Runs: View, Detail: View>: View {
+  @ViewBuilder var runs: () -> Runs
+  @ViewBuilder var detail: () -> Detail
+
+  var body: some View {
+    GeometryReader { geometry in
+      if geometry.size.width >= 640 {
+        HSplitView {
+          runs().frame(minWidth: 220, idealWidth: 240, maxWidth: 280, maxHeight: .infinity)
+          detail().frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+        }
+      } else {
+        VStack(spacing: 0) {
+          runs().frame(height: min(160, geometry.size.height * 0.35))
+          Divider()
+          detail().frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+      }
+    }
+  }
+}
+
+struct ExecutionHistoryInvocationPicker: View {
+  let invocations: [Tsugumi_RPC_InvocationSummaryT]
+  @Binding var selection: UInt64?
+
+  var body: some View {
+    Text("呼び出し").fixedSize().accessibilityHidden(true)
+      .anchorPreference(key: ExecutionHistoryControlBounds.self, value: .bounds) { ["label": $0] }
+    Picker("呼び出し", selection: $selection) {
+      if invocations.isEmpty { Text("呼び出しなし").tag(UInt64?.none) }
+      ForEach(invocations, id: \.invocation) { i in
+        Text("#\(i.invocation ?? 0) · \(i.state.label)"
+             + (i.batchIndex.flatMap { index in i.batchSize.map { " · \(index)/\($0)" } } ?? "")
+             + (i.durationMs.map { " · \(formatDuration(Double($0) / 1000))" } ?? ""))
+          .lineLimit(1).tag(i.invocation)
+      }
+    }
+    .pickerStyle(.menu).labelsHidden().frame(minWidth: 0, maxWidth: 320).help("呼び出し")
+    .anchorPreference(key: ExecutionHistoryControlBounds.self, value: .bounds) { ["invocation": $0] }
+  }
+}
+
+/// Reserve a row for each control group, then use a menu below the tabs' ideal width.
+struct ExecutionHistoryDetailHeader<InvocationControls: View>: View {
+  @Binding var detail: CardExecutionView.Detail
+  @ViewBuilder var invocationControls: () -> InvocationControls
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 4) {
+      HStack(spacing: 6) { invocationControls() }
+        .lineLimit(1)
+      ViewThatFits(in: .horizontal) {
+        tabs.pickerStyle(.segmented).fixedSize()
+        tabs.pickerStyle(.menu)
+      }
+      .anchorPreference(key: ExecutionHistoryControlBounds.self, value: .bounds) { ["tabs": $0] }
+    }
+    .padding(6).fixedSize(horizontal: false, vertical: true)
+  }
+
+  private var tabs: some View {
+    Picker("実行の詳細", selection: $detail) {
+      ForEach(CardExecutionView.Detail.allCases) { Text($0.title).lineLimit(1).tag($0) }
+    }
+    .labelsHidden().help("実行の詳細")
+  }
+}
+
+/// Control bounds let offscreen layout tests inspect SwiftUI and AppKit pickers alike.
+struct ExecutionHistoryControlBounds: PreferenceKey {
+  static var defaultValue: [String: Anchor<CGRect>] { [:] }
+  static func reduce(value: inout [String: Anchor<CGRect>], nextValue: () -> [String: Anchor<CGRect>]) {
+    value.merge(nextValue(), uniquingKeysWith: { _, next in next })
   }
 }
 
