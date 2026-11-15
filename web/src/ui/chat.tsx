@@ -9,7 +9,7 @@ import { ChatController, ChatItem, refLabel, SearchHit, Skill, USAGE_URL } from 
 import { chatFollowsAfterScroll } from '../model/chatFollow'
 import { birdColor } from '../model/helperBirds'
 import { useObserve } from '../model/observable'
-import { PERMISSIONS, parsePermission, permissionInfo } from '../model/permissions'
+import { permissionCatalog, defaultPermissionSelection, parsePermission, permissionInfo } from '../model/permissions'
 import { isMac, prefs } from '../model/prefs'
 import { CardKey, commentChange, errorText, key, path, ProjectSession } from '../model/session'
 import { AGENT, modelOptions, savedComments, projectAccessLabel, projectAccessNeededNow } from '../shared/agentShared'
@@ -68,9 +68,11 @@ export function PermissionHost({ session }: { session: ProjectSession }) {
 /** Presents core-owned access and operation requests. Operations have no
  *  standing approval option. Return allows and Esc declines. */
 export function PermissionPrompt({ asked, from, reload = false, onAnswer }: { asked: string[]; from?: string; reload?: boolean; onAnswer: (allow: boolean, always: string[], selected?: string[]) => void }) {
+  useObserve(permissionCatalog)
+  useEffect(() => { void permissionCatalog.load() }, [])
   const who = from ?? 'Agent'
   const [always, setAlways] = useState<string[]>([])
-  const [selected, setSelected] = useState(() => asked.filter(r => !r.startsWith('project_access ') || projectAccessNeededNow(r)))
+  const [selected, setSelected] = useState(() => defaultPermissionSelection(asked).filter(r => !r.startsWith('project_access ') || projectAccessNeededNow(r)))
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       // A button with the focus answers for itself.
@@ -84,7 +86,7 @@ export function PermissionPrompt({ asked, from, reload = false, onAnswer }: { as
   const requests = asked.map(parsePermission).filter((r) => r !== undefined)
   const operation = asked.find((r) => r.includes('operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
   const access = asked.filter((r) => r.startsWith('project_access '))
-  const kinds = operation || reload ? [] : PERMISSIONS.filter((p) => requests.some((r) => r.kind === p.kind))
+  const kinds = operation || reload ? [] : permissionCatalog.kinds.filter((p) => requests.some((r) => r.kind === p.kind))
   return (
     <Sheet width={460} onClose={() => onAnswer(false, [])} backdropCloses={false}>
       <div className="sheet-body permission-prompt">
@@ -107,6 +109,7 @@ export function PermissionPrompt({ asked, from, reload = false, onAnswer }: { as
 
 /** The exact widenings listed before approval, shared by reload and Agent saves. */
 export function PermissionRequests({ asked, selected, onSelect }: { asked: string[]; selected?: string[]; onSelect?: (request: string, on: boolean) => void }) {
+  useObserve(permissionCatalog)
   const requests = asked.map(parsePermission).filter(r => r !== undefined)
   const operation = asked.find(r => r.includes('operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
   const access = asked.filter(r => r.startsWith('project_access '))
@@ -123,6 +126,8 @@ export function PermissionRequests({ asked, selected, onSelect }: { asked: strin
           </li>)}
           {requests.map((r) => (
             <li key={r.raw}>
+              {onSelect && <input type="checkbox" aria-label={`${r.card}: ${permissionInfo(r.kind).label}`} checked={selected?.includes(r.raw) ?? false}
+                onChange={e => onSelect(r.raw, e.target.checked)} />}
               <Icon name={permissionInfo(r.kind).icon} />
               <div>
                 <div>{r.card}: {permissionInfo(r.kind).label}</div>

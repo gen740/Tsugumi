@@ -36,7 +36,10 @@
           "data": 2
         }
       ]
-    }
+    },
+    "conflicts": [
+      "/params/n/data"
+    ]
   },
   {
     "name": "ordered values keep local reorder",
@@ -55,6 +58,9 @@
     "expect": [
       2,
       1
+    ],
+    "conflicts": [
+      "/"
     ]
   },
   {
@@ -73,6 +79,9 @@
     "expect": [
       1,
       1
+    ],
+    "conflicts": [
+      "/"
     ]
   },
   {

@@ -1,5 +1,6 @@
 // Scenarios exercise only the public Agent RPC through the shipped client.
 #include "project_fixture.hh"
+#include "agent/json.hh"
 
 #include <unistd.h>
 #include <cstdlib>
@@ -44,6 +45,80 @@ TEST_F(AgentProjectFixture, DirectAttachedFolderToolsNeedRegistrationAndTheirOwn
   EXPECT_EQ(Tool(conversation, "attached_folder_read", "{\"folder\":" + Quote(other.string()) + ",\"path\":\"note.txt\"}").Code(), "permission_denied");
 }
 
+TEST_F(AgentFixture, ClientsAndAgentUseTheSameHostDocumentOperations) {
+  namespace json = tsugumi::agent::json;
+  const auto conversation = Conversation("document-edits");
+  const std::string copy_state =
+      R"({"definitions":{"a":{"card":{"template":"draft"}}}})";
+  const auto copy =
+      Call(*host, H::RequestPayload::DocumentCopyRequest, [&](Builder &b) {
+        return H::CreateDocumentCopyRequest(b, b.CreateString(copy_state), 0,
+                                            b.CreateString("definitions/a/"),
+                                            b.CreateString("definitions/b/"))
+            .Union();
+      });
+  ASSERT_TRUE(copy.Code().empty()) << copy.Code();
+  const auto agent_copy =
+      Tool(conversation, "document_copy",
+           json::Encode(json::Members{{"state_json", Quote(copy_state)},
+                                      {"from", Quote("definitions/a/")},
+                                      {"to", Quote("definitions/b/")}}));
+  ASSERT_TRUE(agent_copy.Code().empty()) << agent_copy.Code();
+  const auto copy_reply = json::Object(JsonString(agent_copy.View(), "/text"));
+  EXPECT_EQ(json::Text(copy_reply, "edits_json"),
+            copy.HostValue()->value_as_DocumentCopy()->edits_json()->str());
+  EXPECT_TRUE(json::Array(copy_reply.at("files")).empty());
+
+  const std::string state =
+      R"({"project":{"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}},"definitions":{"a":{"card":{"template":"draft"}},"b":{"card":{"template":"draft"}}}})";
+  const auto connection =
+      Call(*host, H::RequestPayload::DocumentConnectRequest, [&](Builder &b) {
+        return H::CreateDocumentConnectRequest(
+                   b, b.CreateString(state), b.CreateString("a"),
+                   b.CreateString("+"), b.CreateString("b"),
+                   b.CreateString("+"))
+            .Union();
+      });
+  ASSERT_TRUE(connection.Code().empty()) << connection.Code();
+  const auto agent_connection =
+      Tool(conversation, "document_connect",
+           json::Encode(json::Members{{"state_json", Quote(state)},
+                                      {"from_card", Quote("a")},
+                                      {"from_port", Quote("+")},
+                                      {"to_card", Quote("b")},
+                                      {"to_port", Quote("+")}}));
+  ASSERT_TRUE(agent_connection.Code().empty()) << agent_connection.Code();
+  EXPECT_EQ(
+      JsonString(JsonString(agent_connection.View(), "/text"), "/state_json"),
+      connection.HostValue()->value_as_DocumentConnect()->state_json()->str());
+
+  const auto created =
+      Call(*host, H::RequestPayload::DocumentTemplateRequest, [&](Builder &b) {
+        return H::CreateDocumentTemplateRequest(b, b.CreateString("python"),
+                                                b.CreateString("new-card"))
+            .Union();
+      });
+  ASSERT_TRUE(created.Code().empty()) << created.Code();
+  const auto agent_template = Tool(conversation, "document_template",
+                                   R"({"name":"python","id":"new-card"})");
+  ASSERT_TRUE(agent_template.Code().empty()) << agent_template.Code();
+  const auto template_reply =
+      json::Object(JsonString(agent_template.View(), "/text"));
+  const auto *expected = created.HostValue()->value_as_DocumentTemplate();
+  EXPECT_EQ(json::Text(template_reply, "definition_json"),
+            expected->definition_json()->str());
+  ASSERT_EQ(json::Array(template_reply.at("files")).size(),
+            expected->files()->size());
+  for (const auto &raw : json::Array(template_reply.at("files"))) {
+    const auto file = json::Object(raw);
+    bool found = false;
+    for (const auto *entry : *expected->files())
+      found |= entry->path()->str() == json::Text(file, "path") &&
+               entry->text()->str() == json::Text(file, "text");
+    EXPECT_TRUE(found);
+  }
+}
+
 TEST_F(AgentProjectFixture, ConversationsCannotMoveBetweenCopiedProjects) {
   StartProject();
   const auto original = project_id;
@@ -53,16 +128,23 @@ TEST_F(AgentProjectFixture, ConversationsCannotMoveBetweenCopiedProjects) {
   // Another registered project, with an identical title, is still distinct.
   const auto copy = directory.path / "copy-b";
   std::filesystem::create_directories(copy);
-  const auto registered = Call(*host, H::RequestPayload::RegisterProjectRequest, [&](Builder& b) {
-    return H::CreateRegisterProjectRequest(b, b.CreateString("copy-b"),
-        b.CreateString("unix:/unused-copy-b.sock"), b.CreateString("token"),
-        b.CreateString("Private project"), b.CreateString(copy.string())).Union();
-  });
+  const auto registered =
+      Call(*host, H::RequestPayload::RegisterProjectRequest, [&](Builder &b) {
+        return H::CreateRegisterProjectRequest(
+                   b, b.CreateString("copy-b"),
+                   b.CreateString("unix:/unused-copy-b.sock"),
+                   b.CreateString("token"), b.CreateString("Private project"),
+                   b.CreateString(copy.string()))
+            .Union();
+      });
   ASSERT_TRUE(registered.Code().empty());
-  for (const auto& project : {std::string("copy-b"), std::string{}}) {
-    const auto moved = Call(*human, A::RequestPayload::ConversationCreateRequest, [&](Builder& b) {
-      return A::CreateConversationCreateRequest(b, b.CreateString(conversation), b.CreateString(project)).Union();
-    });
+  for (const auto &project : {std::string("copy-b"), std::string{}}) {
+    const auto moved = Call(
+        *human, A::RequestPayload::ConversationCreateRequest, [&](Builder &b) {
+          return A::CreateConversationCreateRequest(
+                     b, b.CreateString(conversation), b.CreateString(project))
+              .Union();
+        });
     EXPECT_EQ(moved.Code(), "conflict");
     EXPECT_EQ(JsonString(Get(conversation, true).View(), "/project_id"), original);
   }

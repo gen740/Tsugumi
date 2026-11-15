@@ -3,28 +3,23 @@ import { layoutHost, H } from '../shared/hostLayout'
 import { VersionCommentT } from '../gen/tsugumi/host/version-comment'
 import { RevisionEdit } from '../ui/revisionEdit'
 import { registerModuleClient, ModuleBlobs } from './moduleSources'
-import { GO_SCAFFOLD } from './go-scaffold'
-import csharpFiles from '../../../ui/templates/csharp.json'
-import reportFiles from '../../../ui/templates/reports.json'
-import { RUST_SCAFFOLD } from './rust-scaffold'
 // One open project: shared by every view showing it. Owns the RPC
 // connection, the confirmed document (from tsugumid), the local draft with
 // undo/redo, run progress, displays and logs. Every edit is saved at once:
 // the draft holds only what is on its way to the core, or what could not be
 // saved (a run in progress, a lost connection).
 import { api, EnvPublicState, onServerEvent } from '../api'
-import { arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../shared/json'
-import { cardPath, Change, D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../shared/rpc'
+import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../shared/json'
+import { cardPath, Change, D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport, sha256Hex } from '../shared/rpc'
 import {
   applicableStages, CardGeometry, CardNodeData, mergeStageStatus, NEW_PORT, orderedPorts, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
   snapToGrid,
 } from './canvasKit'
 import type { LayoutBar, LayoutPortOrder, LayoutProposal, LayoutScene } from './layoutScene'
 import { FigureState, figureMode } from './moduleThumbnails'
-import { cloneDef, cloneExternal, defEq, extEq, merge3, mergeDefinition, mergeExternal } from './merge'
+import { cloneDef, cloneExternal, defEq, extEq, documentStateJSON, readDocumentState } from './merge'
 import { Observable } from './observable'
-import { VisualizationTemplate, visualizationFiles, visualizationTemplates } from './visualizationTemplates'
-import marimoFiles from '../../../ui/templates/marimo.json'
+import { VisualizationTemplate, visualizationTemplates } from './visualizationTemplates'
 import { FlowDirection, prefs } from './prefs'
 import { runMark } from './runMark'
 import { cardPermissions } from './permissions'
@@ -367,7 +362,7 @@ interface Snapshot {
 }
 
 /** The documents as they look with the draft applied (what an undo entry records). */
-interface DocState {
+export interface DocState {
   project: J
   layout: J
   definitions: Map<string, DefinitionDraft>
@@ -982,7 +977,7 @@ export class ProjectSession extends Observable {
       this.externalBases = new Map()
     } else if (this.draftBase?.rev !== this.rev) {
       // Edits kept over a reconnect: merged onto what is there now, then saved.
-      this.rebase()
+      this.scheduleSave()
     }
   }
 
@@ -1050,7 +1045,7 @@ export class ProjectSession extends Observable {
     } else if (!fromSave) {
       // Changed elsewhere (the Agent, another window) while edits are on
       // their way: shown at once, the edits merged on top.
-      this.rebase()
+      this.scheduleSave()
     }
   }
 
@@ -1314,44 +1309,68 @@ export class ProjectSession extends Observable {
     this.changed()
   }
 
-  undo() {
-    const e = this.undoStack.pop()
+  async undo() {
+    const e = this.undoStack.at(-1)
     if (!e) return
-    const inverse = this.revert(e)
-    if (inverse) this.redoStack.push(inverse)
+    const result = await this.revert(e, true)
+    if (result) { this.undoStack.pop(); if (result.inverse) this.redoStack.push(result.inverse) }
     this.changed()
   }
 
-  redo() {
-    const e = this.redoStack.pop()
+  async redo() {
+    const e = this.redoStack.at(-1)
     if (!e) return
-    const inverse = this.revert(e)
-    if (inverse) this.undoStack.push(inverse)
+    const result = await this.revert(e, false)
+    if (result) { this.redoStack.pop(); if (result.inverse) this.undoStack.push(result.inverse) }
     this.changed()
   }
 
   /** Puts back what an entry changed (its `before`), over the current state.
    *  Returns the entry that does it again. */
-  private revert(e: UndoEntry): UndoEntry | undefined {
+  private async revert(e: UndoEntry, undo: boolean): Promise<{ inverse?: UndoEntry } | undefined> {
     const cur = this.docState(), curSnap = this.snapshot()
-    if (!this.dirty) this.draftBase = this.makeBase()
-    this.project = clone(merge3(e.after.project, e.before.project, cur.project) ?? cur.project)
-    this.layout = clone(merge3(e.after.layout, e.before.layout, cur.layout) ?? cur.layout)
-    for (const id of new Set([...e.before.definitions.keys(), ...e.after.definitions.keys()])) {
-      if (defEq(e.before.definitions.get(id), e.after.definitions.get(id))) continue
-      this.setEffectiveDefinition(id, mergeDefinition(e.after.definitions.get(id), e.before.definitions.get(id), cur.definitions.get(id)))
-    }
-    for (const p of new Set([...e.before.externals.keys(), ...e.after.externals.keys()])) {
-      if (extEq(e.before.externals.get(p), e.after.externals.get(p))) continue
-      const b = e.before.externals.get(p)
-      if (b) {
-        if (!this.externalBases.has(p)) this.externalBases.set(p, this.externals.get(p) ?? null)
-        const t = mergeExternal(e.after.externals.get(p), b, cur.externals.get(p))
-        t.removed = false
-        this.externalEdits.set(p, t)
-      } else {
-        this.removeExternal(p)
+    const revision = this.rev
+    let reply: Awaited<ReturnType<ProjectSession['mergeStates']>>
+    const kept = new Map<string, SourceValue>()
+    try {
+      for (const p of e.sourcesBefore.keys()) {
+        let value = this.sourceValue(curSnap, p)
+        if (value.kind === 'confirmed') {
+          const known = e.sourcesAfter.get(p)
+          value = known?.kind === 'text' && await sha256Hex(sourceBytes(known.text)) === this.sources.get(p)?.hash
+            ? known : { kind: 'text', text: await this.copyBytes(p) }
+        }
+        kept.set(p, value)
       }
+      reply = await this.mergeStates(e.after, e.before, cur)
+    }
+    catch (error) { this.saveError = errorText(error); this.changed(); return }
+    if (revision !== this.rev || !snapEq(curSnap, this.snapshot())) return
+    if (reply.conflicts.length) {
+      this.mergeConflict = { rev: revision, snapshot: curSnap, state: cur, apply: () => {
+        const stack = undo ? this.undoStack : this.redoStack
+        if (stack.at(-1) !== e) return
+        const inverse = this.applyRevert(e, cur, curSnap, reply.state, kept)
+        stack.pop()
+        if (inverse) (undo ? this.redoStack : this.undoStack).push(inverse)
+      } }
+      this.mergeEdit.conflict(revision)
+      this.saveError = L('他の変更と重なり保存できませんでした。変更は保持しています。')
+      this.changed()
+      return
+    }
+    return { inverse: this.applyRevert(e, cur, curSnap, reply.state, kept) }
+  }
+
+  private applyRevert(e: UndoEntry, cur: DocState, curSnap: Snapshot, state: DocState, kept: Map<string, SourceValue>): UndoEntry | undefined {
+    if (!this.dirty) this.draftBase = this.makeBase()
+    this.project = state.project
+    this.layout = state.layout
+    for (const id of new Set([...cur.definitions.keys(), ...state.definitions.keys()])) this.setEffectiveDefinition(id, state.definitions.get(id))
+    for (const p of new Set([...cur.externals.keys(), ...state.externals.keys()])) {
+      const ext = state.externals.get(p)
+      if (ext) this.createExternal(p, ext)
+      else this.removeExternal(p)
     }
     for (const [p, v] of e.sourcesBefore) {
       if (v.kind === 'absent') this.removeSource(p)
@@ -1363,10 +1382,7 @@ export class ProjectSession extends Observable {
     this.normalizeExternalEdits()
     this.settleDraftBase()
     if (snapEq(this.snapshot(), curSnap)) return undefined
-    const sb = new Map<string, SourceValue>()
-    for (const p of e.sourcesBefore.keys()) sb.set(p, this.sourceValue(curSnap, p))
-    const inverse: UndoEntry = { before: cur, after: this.docState(), sourcesBefore: sb, sourcesAfter: e.sourcesBefore }
-    if ([...sb.values()].some((v) => v.kind === 'confirmed')) this.unfilled.push(inverse)
+    const inverse: UndoEntry = { before: cur, after: this.docState(), sourcesBefore: kept, sourcesAfter: e.sourcesBefore }
     this.scheduleSave()
     return inverse
   }
@@ -1389,24 +1405,70 @@ export class ProjectSession extends Observable {
 
   /** Moves the draft onto the confirmed state that just arrived: what the
    *  draft changed stays, everything else follows the new state. */
-  private rebase() {
+  prepareMerge(base: string, ours: string, theirs: string): Promise<{ mergedJson: string; conflicts: string[] }> {
+    return api('/api/document/merge', { base_json: base, ours_json: ours, theirs_json: theirs })
+  }
+  async mergeValues(base: J, ours: J, theirs: J) {
+    const reply = await this.prepareMerge(serialize(base), serialize(ours), serialize(theirs))
+    return { value: parse(reply.mergedJson), conflicts: reply.conflicts }
+  }
+  readonly mergeEdit = new RevisionEdit()
+  private mergeConflict?: { rev: bigint; snapshot: Snapshot; state: DocState; apply: () => void }
+
+  private async mergeStates(base: DocState, ours: DocState, theirs: DocState) {
+    const reply = await this.prepareMerge(serialize(documentStateJSON(base)), serialize(documentStateJSON(ours)), serialize(documentStateJSON(theirs)))
+    return { state: readDocumentState(parse(reply.mergedJson)), conflicts: reply.conflicts }
+  }
+
+  resolveMergeConflict() {
+    const pending = this.mergeConflict
+    this.mergeConflict = undefined
+    this.mergeEdit.reload(this.rev)
+    if (pending && pending.rev === this.rev && snapEq(pending.snapshot, this.snapshot()) && jeq(documentStateJSON(pending.state), documentStateJSON(this.docState()))) pending.apply()
+    this.scheduleSave()
+    this.changed()
+  }
+
+  private async rebase(): Promise<boolean> {
     const b = this.draftBase
-    if (!b) return
-    this.project = clone(merge3(b.project, this.project, this.confirmedProject) ?? this.confirmedProject)
-    this.layout = clone(merge3(b.layout, this.layout, this.confirmedLayout) ?? this.confirmedLayout)
-    const theirs = this.confirmedDefinitionDrafts
-    for (const [id, e] of [...this.definitionEdits]) {
-      this.setEffectiveDefinition(id, mergeDefinition(b.definitions.get(id), e.removed ? undefined : e, theirs.get(id)))
+    if (!b) return true
+    const revision = this.rev, sent = this.snapshot(), ours = this.docState()
+    const baseExternals = new Map(this.externals)
+    for (const [p, ext] of this.externalBases) { if (ext) baseExternals.set(p, ext); else baseExternals.delete(p) }
+    const theirs = { project: this.confirmedProject, layout: this.confirmedLayout, definitions: this.confirmedDefinitionDrafts, externals: new Map(this.externals) }
+    const reply = await this.mergeStates({ ...b, externals: baseExternals }, ours, theirs)
+    if (revision !== this.rev || !snapEq(sent, this.snapshot()) || b !== this.draftBase ||
+      !jeq(documentStateJSON(theirs), documentStateJSON({ project: this.confirmedProject, layout: this.confirmedLayout, definitions: this.confirmedDefinitionDrafts, externals: this.externals }))) { this.saveAgain = true; return false }
+    const apply = () => {
+      this.project = reply.state.project
+      this.layout = reply.state.layout
+      for (const id of new Set([...ours.definitions.keys(), ...reply.state.definitions.keys()])) this.setEffectiveDefinition(id, reply.state.definitions.get(id))
+      for (const [p, edit] of sent.externals) {
+        const ext = reply.state.externals.get(p)
+        if (ext) this.externalEdits.set(p, ext)
+        else this.externalEdits.set(p, { ...edit, removed: true })
+        this.externalBases.set(p, theirs.externals.get(p) ?? null)
+      }
+      const hashes = new Map([...this.sources].map(([p, v]) => [p, v.hash]))
+      for (const p of new Set([...this.sourceEdits.keys(), ...this.sourceRemovals])) {
+        const h = b.hashes.get(p)
+        if (h === undefined) hashes.delete(p); else hashes.set(p, h)
+      }
+      this.draftBase = { rev: revision, hashes, project: theirs.project, layout: theirs.layout, definitions: theirs.definitions }
+      this.normalizeExternalEdits()
+      this.settleDraftBase()
     }
-    const hashes = new Map([...this.sources].map(([p, v]) => [p, v.hash]))
-    // Files edited here stay checked against the version they were edited from.
-    for (const p of new Set([...this.sourceEdits.keys(), ...this.sourceRemovals])) {
-      const h = b.hashes.get(p)
-      if (h === undefined) hashes.delete(p)
-      else hashes.set(p, h)
+    if (reply.conflicts.length) {
+      this.mergeConflict = { rev: revision, snapshot: sent, state: ours, apply }
+      this.mergeEdit.conflict(revision)
+      this.saveError = L('他の変更と重なり保存できませんでした。変更は保持しています。')
+      this.changed()
+      return false
     }
-    this.draftBase = { rev: this.rev, hashes, project: this.confirmedProject, layout: this.confirmedLayout, definitions: theirs }
-    this.settleDraftBase()
+    this.mergeConflict = undefined
+    this.mergeEdit.reload(revision)
+    apply()
+    return true
   }
 
   /** Drops every unsaved edit and follows the latest confirmed document
@@ -1431,6 +1493,8 @@ export class ProjectSession extends Observable {
     this.saveAgain = false
     this.conflictRetries = 0
     this.saveError = undefined
+    this.mergeConflict = undefined
+    this.mergeEdit.reload(this.rev)
     this.savingAfterRun = false
     this.changed()
   }
@@ -1514,7 +1578,10 @@ export class ProjectSession extends Observable {
       return
     }
     await this.fillUndoSources()
-    if (this.draftBase && this.draftBase.rev !== this.rev) this.rebase()
+    if (this.mergeConflict) return
+    try {
+      if (!(await this.rebase())) return
+    } catch (error) { this.saveError = errorText(error); this.changed(); return }
     if (!this.dirty) {
       this.saveError = undefined
       return
@@ -1611,7 +1678,7 @@ export class ProjectSession extends Observable {
       for (const [prefix, ours] of [...this.externalEdits].sort(([a], [b]) => a.localeCompare(b))) {
         if (ours.removed) continue
         const theirs = this.externals.get(prefix)
-        const m = mergeExternal(this.externalBases.get(prefix) ?? undefined, ours, theirs)
+        const m = cloneExternal(ours)
         merged.set(prefix, m)
         const now = externalFiles(m), was = theirs ? externalFiles(theirs) : new Map<string, string>()
         for (const [rel, text] of [...now].sort(([a], [b]) => a.localeCompare(b))) {
@@ -1724,9 +1791,9 @@ export class ProjectSession extends Observable {
   /** After a save: the parts sent are confirmed now; edits made while it was
    *  on its way stay in the draft. */
   private forgetSaved(sent: Snapshot, layoutOnly: boolean, merged: Map<string, ExternalProject>) {
-    this.layout = jeq(this.layout, sent.layout) ? clone(this.confirmedLayout) : clone(merge3(sent.layout, this.layout, this.confirmedLayout) ?? this.layout)
+    if (jeq(this.layout, sent.layout)) this.layout = clone(this.confirmedLayout)
     if (!layoutOnly) {
-      this.project = jeq(this.project, sent.project) ? clone(this.confirmedProject) : clone(merge3(sent.project, this.project, this.confirmedProject) ?? this.project)
+      if (jeq(this.project, sent.project)) this.project = clone(this.confirmedProject)
       for (const [id, d] of sent.definitions) if (defEq(this.definitionEdits.get(id), d)) this.definitionEdits.delete(id)
       for (const [p, d] of sent.sources) {
         if (this.sourceEdits.get(p) === d) {
@@ -1764,7 +1831,12 @@ export class ProjectSession extends Observable {
       this.savingAfterRun = false
     }
     // Whatever is left was edited on top of what was just saved.
-    this.draftBase = undefined
+    const current = this.makeBase(), previous = this.draftBase ?? current
+    const definitions = new Map(this.confirmedDefinitionDrafts)
+    for (const [id, d] of sent.definitions) { if (d.removed) definitions.delete(id); else definitions.set(id, d) }
+    this.draftBase = { ...current, project: layoutOnly ? previous.project : sent.project,
+      layout: sent.layout, definitions: layoutOnly ? previous.definitions : definitions,
+      hashes: layoutOnly ? previous.hashes : current.hashes }
     this.settleDraftBase()
   }
 
@@ -1780,11 +1852,11 @@ export class ProjectSession extends Observable {
   reloadApproval?: { baseRev: bigint; permissions: string[] }
   reloadingExternal = false
 
-  async answerReloadApproval(allow: boolean) {
+  async answerReloadApproval(allow: boolean, selected: string[]) {
     const request = this.reloadApproval
     this.reloadApproval = undefined
     this.changed()
-    if (allow && request) await this.reloadExternal(request.permissions, request.baseRev)
+    if (allow && request) await this.reloadExternal(request.permissions.filter(p => selected.includes(p)), request.baseRev)
   }
 
   async reloadExternal(approved: string[] = [], baseRev = this.rev) {
@@ -2358,12 +2430,19 @@ export class ProjectSession extends Observable {
 
   /** A new Card from a template, with its own definition folder. `place` says
    *  where instead of `at`, once the Card's size is known. */
+  prepareTemplate = (name: string, id: string): Promise<{ definitionJson: string; files: { path: string; text: string }[] }> =>
+    api('/api/document/template', { name, id })
+
   async addCard(t: DefinitionTemplate, scope: string[], at: { x: number; y: number }, name?: string, place?: (k: CardKey) => { x: number; y: number }): Promise<CardKey> {
     const id = await this.newCardId(name ?? templateBaseName(t), scope)
-    const k = key([...scope, id])
+    const k = key([...scope, id]), template = await this.prepareTemplate(t, id)
+    const value = parse(template.definitionJson)
+    const definition = { card: get(value, 'card') ?? obj(), meta: get(value, 'meta') }
+    const dir = `${this.projectPrefix(scope) ?? ''}definitions/${id}/`
     this.edit((x) => {
       x.appendCard(id, scope)
-      x.writeTemplate(t, k)
+      x.setCardDefinition(k, definition)
+      for (const file of template.files) x.putSource(dir + file.path, file.text)
       x.updateMeta(k, (m) => m.set('name', name ?? templateBaseName(t)))
       x.setPosition(k, place ? place(k) : at)
     })
@@ -2376,61 +2455,35 @@ export class ProjectSession extends Observable {
   async copyDefinition(prefix: string, id: string, scope: string[], name?: string): Promise<{ id: string; apply: (s: ProjectSession) => void } | undefined> {
     const d = prefix === '' ? this.definitionDrafts.get(id) : this.external(prefix)?.definitions.get(id)
     if (!d) return undefined
-    const dir = `${prefix}definitions/${id}/`
     const newId = await this.newCardId(name ?? str(get(d.meta, 'name')) ?? id, scope)
-    const toPrefix = this.projectPrefix(scope) ?? ''
-    const files = new Map<string, Uint8Array>()
-    for (const p of this.sourcePaths) {
-      if (!p.startsWith(dir)) continue
-      const rel = p.slice(dir.length)
-      if (['_card.json', '_link.json', '_meta.json'].includes(rel)) continue
-      files.set(`${toPrefix}definitions/${newId}/${rel}`, await this.copyBytes(p))
-    }
-    let link = d.link
-    let copy: ExternalCopy | undefined
-    const extName = str(get(link, 'external'))
-    if (extName) {
-      const n = await this.newCardId(extName, scope)
-      copy = await this.copyExternal(`${prefix}externals/${extName}/`, `${toPrefix}externals/${n}/`)
-      link = obj([['external', n]])
-    }
-    // The copy's comments are comments of its own.
-    const meta = clone(d.meta) ?? obj()
-    if (isObj(meta)) meta.set('name', name ?? str(get(d.meta, 'name')) ?? id)
-    if (isObj(meta)) {
-      const comments = arr(meta.get('comments'))
-      if (comments) meta.set('comments', comments.map((c) => {
-        if (isObj(c)) c.set('id', uuid())
-        return c
-      }))
-    }
-    const draft: DefinitionDraft = { card: clone(d.card), meta, link: clone(link) }
-    const newKey = key([...scope, newId])
-    return {
-      id: newId,
-      apply: (sess) => {
-        sess.setCardDefinition(newKey, draft)
-        for (const [p, t] of files) {
-          sess.sourceRemovals.delete(p)
-          sess.sourceEdits.set(p, t)
-        }
-        copy?.apply(sess)
-      },
-    }
+    const to = `${this.projectPrefix(scope) ?? ''}definitions/${newId}/`
+    const copy = await this.copyDocuments(`${prefix}definitions/${id}/`, to, name)
+    const draft = copy.definitions.get(to)
+    if (!draft) throw new Error('Missing copied definition')
+    return { id: newId, apply: (sess) => {
+      sess.setCardDefinition(key([...scope, newId]), draft)
+      copy.apply(sess)
+    } }
   }
 
-  /** Copies the external at `from` (with the externals in it) to the folder `to`. */
-  async copyExternal(from: string, to: string): Promise<ExternalCopy> {
-    const c = new ExternalCopy()
-    const inside = [...this.effectiveExternals].filter(([p]) => p.startsWith(from))
-    for (const [p, e] of inside) c.docs.set(to + p.slice(from.length), cloneExternal(e))
-    for (const p of this.sourcePaths) {
-      if (!p.startsWith(from)) continue
-      // Documents come from the parsed externals; every other file is copied.
-      if (inside.some(([pre]) => p.startsWith(pre) && isDocument(p.slice(pre.length)))) continue
-      c.files.set(to + p.slice(from.length), await this.copyBytes(p))
+  /** Transport and byte retention only; the host chooses every copied path. */
+  prepareCopy = (stateJson: string, paths: string[], from: string, to: string, name?: string): Promise<{ editsJson: string; files: { from: string; to: string }[] }> =>
+    api('/api/document/copy', { state_json: stateJson, paths, from, to, name })
+
+  private async copyDocuments(from: string, to: string, name?: string): Promise<ExternalCopy> {
+    const reply = await this.prepareCopy(serialize(documentStateJSON(this.docState())), [...this.sourcePaths].sort(), from, to, name)
+    const patch = parse(reply.editsJson), copy = new ExternalCopy()
+    const definitions = get(patch, 'definitions'), externals = get(patch, 'externals')
+    if (isObj(definitions)) for (const [dir, d] of definitions.entries()) {
+      copy.definitions.set(dir, { card: get(d, 'card') ?? obj(), meta: get(d, 'meta'), link: get(d, 'link') })
     }
-    return c
+    if (isObj(externals)) copy.docs = readDocumentState(obj([['externals', externals]])).externals
+    for (const file of reply.files) copy.files.set(file.to, await this.copyBytes(file.from))
+    return copy
+  }
+
+  async copyExternal(from: string, to: string): Promise<ExternalCopy> {
+    return this.copyDocuments(from, to)
   }
 
   /** Places a copy of an external (`from`) in a scope as a new Card in Card. */
@@ -2698,49 +2751,45 @@ export class ProjectSession extends Observable {
     })
   }
 
+  prepareConnect = (stateJson: string, from: [string, string], to: [string, string], forkId?: string): Promise<{ stateJson: string; insertedId: string; needsFork: boolean }> =>
+    api('/api/document/connect', { state_json: stateJson, from_card: from[0], from_port: from[1], to_card: to[0], to_port: to[1], fork_id: forkId })
+
+  private connectionState(scope: string[]): J {
+    const prefix = this.projectPrefix(scope)
+    const state = this.docState(), affected = prefix ? state.externals.get(prefix) : state
+    if (!affected) throw new Error('Unknown connection scope')
+    const value = documentStateJSON({ ...affected, externals: new Map() }) as JObj
+    value.set('ports', obj(this.cards(scope).map(c => {
+      const id = str(get(c, 'id'))!, ports = this.portData(key([...scope, id]))
+      return [id, obj([['inputs', ports.inputs.map(p => p.name)], ['outputs', ports.outputs.map(p => p.name)]])]
+    })))
+    return value
+  }
+
   async connect(from: [CardKey, string], to: [CardKey, string], scope: string[]) {
     const fromId = path(from[0]).pop(), toId = path(to[0]).pop()
-    if (!fromId || !toId) return
-    const existing = this.connections(scope).filter((c) => str(get(c, 'from', 'card')) === fromId && str(get(c, 'from', 'port')) === from[1])
-    const next = existing.length === 1 ? str(get(existing[0], 'to', 'card')) : undefined
-    const forkId = existing.length && this.kind(from[0]) !== 'fork' && (!next || this.kind(key([...scope, next])) !== 'fork')
-      ? await this.newCardId('fork', scope) : undefined
-    const valid = (end: [CardKey, string], output: boolean) => {
-      if (!this.instance(end[0]) || key(path(end[0]).slice(0, -1)) !== key(scope)) return false
-      if (forkId === undefined) return true // No suspension: the caller's visible ports are still current.
-      if (end[1] === NEW_PORT) return this.kind(end[0]) === 'draft'
-      const ports = this.portData(end[0])
-      return (output ? ports.outputs : ports.inputs).some(p => p.name === end[1])
+    if (!fromId || !toId || !this.isEditable || [from, to].some(end => !this.instance(end[0]) || key(path(end[0]).slice(0, -1)) !== key(scope))) return
+    const before = this.connectionState(scope), prefix = this.projectPrefix(scope)
+    const current = () => this.isEditable && this.projectPrefix(scope) === prefix && jeq(before, this.connectionState(scope))
+    let reply = await this.prepareConnect(serialize(before), [fromId, from[1]], [toId, to[1]])
+    if (reply.needsFork) {
+      const id = await this.newCardId('fork', scope)
+      if (!current()) return
+      reply = await this.prepareConnect(serialize(before), [fromId, from[1]], [toId, to[1]], id)
     }
-    if (!this.isEditable || !valid(from, true) || !valid(to, false)) return
-    this.edit((x) => {
-      // An end at NEW_PORT makes the Draft's port now.
-      const fromPort = x.draftPort(from, true, to[1], scope)
-      const toPort = x.draftPort(to, false, fromPort, scope)
-      // One wire per output: a value goes to several Cards through a fork Card.
-      // A second wire from an output inserts one (or, from a fork, adds a branch).
-      const taken = x.connections(scope).filter((c) =>
-        str(get(c, 'from', 'card')) === fromId && str(get(c, 'from', 'port')) === fromPort
-        && !(str(get(c, 'to', 'card')) === toId && str(get(c, 'to', 'port')) === toPort))
-      let source: [string, string] = [fromId, fromPort]
-      if (taken.length) {
-        const nextId = taken.length === 1 ? str(get(taken[0], 'to', 'card')) : undefined
-        const next = nextId ? key([...scope, nextId]) : undefined
-        if (x.kind(from[0]) === 'fork') source = [fromId, x.addForkBranch(from[0], toId)]
-        else if (next && nextId && x.kind(next) === 'fork') source = [nextId, x.addForkBranch(next, toId)]  // one more branch of it
-        else {
-          const fork = x.insertFork([fromId, fromPort], taken, scope, forkId!)
-          source = [fork, x.addForkBranch(key([...scope, fork]), toId)]
-        }
+    if (!current()) return
+    const after = readDocumentState(parse(reply.stateJson))
+    this.edit(x => {
+      if (reply.insertedId) {
+        const k = key([...scope, reply.insertedId])
+        x.displays.delete(k); x.cardStates.delete(k)
       }
-      // One connection per input port: a new wire replaces the old one.
-      const replaced = x.connections(scope).filter((c) => str(get(c, 'to', 'card')) === toId && str(get(c, 'to', 'port')) === toPort)
-      x.updateGraph(scope, (g) => {
-        const conns = (arr(g.get('connections')) ?? []).filter((c) => !replaced.includes(c))
-        conns.push(obj([['from', obj([['card', source[0]], ['port', source[1]]])], ['to', obj([['card', toId], ['port', toPort]])]]))
-        g.set('connections', conns)
+      if (prefix === '') {
+        x.project = after.project; x.layout = after.layout
+        for (const [id, d] of after.definitions) x.setEffectiveDefinition(id, d)
+      } else x.updateExternal(prefix!, e => {
+        e.project = after.project; e.layout = after.layout; e.definitions = after.definitions
       })
-      x.dropDraftPorts(replaced, scope)
     })
   }
 
@@ -2749,25 +2798,6 @@ export class ProjectSession extends Observable {
     const id = path(k).pop()
     const side = output ? 'from' : 'to'
     return this.connections(scope).some((c) => str(get(c, side, 'card')) === id && str(get(c, side, 'port')) === port)
-  }
-
-  /** The port a wire's end names. At NEW_PORT: a Draft's port without a wire
-   *  or a new one, named after the port at the wire's other end when that says
-   *  more than "in" or "out". A Draft's ports are declared by its wires. */
-  private draftPort(end: [CardKey, string], output: boolean, other: string, scope: string[]): string {
-    if (end[1] !== NEW_PORT) return end[1]
-    const ports = this.portData(end[0])
-    const names = (output ? ports.outputs : ports.inputs).map((p) => p.name)
-    const free = names.find((n) => !this.portWired(end[0], n, output, scope))
-    if (free) return free
-    const plain = output ? 'out' : 'in'
-    const base = /^[A-Za-z_][A-Za-z0-9_]*$/.test(other) && !/^(in|out)[0-9]*$/.test(other) ? other : plain
-    let name = base
-    for (let n = 2; names.includes(name); n++) name = `${base}${n}`
-    const note = obj([['name', name]])
-    if (output) this.updateMeta(end[0], (m) => m.set('outputs', [...(arr(m.get('outputs')) ?? []), note]))
-    else this.updateCard(end[0], (c) => c.set('inputs', [...(arr(c.get('inputs')) ?? []), note]))
-    return name
   }
 
   /** After wires are gone: a Draft's port goes with its last wire. */
@@ -2792,45 +2822,6 @@ export class ProjectSession extends Observable {
         this.updateMeta(k, (m) => m.set(output ? 'outputs' : 'inputs', without(m.get(output ? 'outputs' : 'inputs'), port)))
       }
     }
-  }
-
-  /** A fork Card after an output: the output's wires (`wires`) now leave the
-   *  fork, a branch each, and the output feeds the fork. Its id. */
-  insertFork(from: [string, string], wires: J[], scope: string[], id: string): string {
-    const k = key([...scope, id])
-    this.appendCard(id, scope)
-    this.writeTemplate('fork', k)
-    this.updateMeta(k, (m) => m.set('name', 'fork'))
-    this.updateCard(k, (c) => c.set('params', [obj([['name', 'branches'], ['type', 'string[]'], ['data', []]])]))
-    // Between the output's Card and the first Card it fed.
-    const a = this.position(key([...scope, from[0]]))
-    const firstId = wires.length ? str(get(wires[0], 'to', 'card')) : undefined
-    const b = firstId ? this.position(key([...scope, firstId])) : { x: a.x + 300, y: a.y }
-    this.setPosition(k, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 })
-    const branches = wires.map((w) => this.addForkBranch(k, str(get(w, 'to', 'card')) ?? 'out'))
-    this.updateGraph(scope, (g) => {
-      const conns = (arr(g.get('connections')) ?? []).filter((c) => !wires.includes(c))
-      wires.forEach((w, i) => conns.push(obj([['from', obj([['card', id], ['port', branches[i]]])], ['to', get(w, 'to') ?? null]])))
-      conns.push(obj([['from', obj([['card', from[0]], ['port', from[1]]])], ['to', obj([['card', id], ['port', 'in']])]]))
-      g.set('connections', conns)
-    })
-    return id
-  }
-
-  /** A new output of a fork Card, named after the Card it will feed. Its name. */
-  addForkBranch(k: CardKey, target: string): string {
-    const params = arr(get(this.cardDefinition(k), 'params')) ?? []
-    const data = arr(get(params.find((p) => str(get(p, 'name')) === 'branches'), 'data'))
-    const branches = data ? data.map((x) => str(x) ?? '') : ['out1', 'out2']
-    const base = target || 'out'
-    let name = base
-    for (let n = 2; branches.includes(name); n++) name = `${base}_${n}`
-    branches.push(name)
-    this.updateCard(k, (c) => {
-      const rest = (arr(c.get('params')) ?? []).filter((p) => str(get(p, 'name')) !== 'branches')
-      c.set('params', [...rest, obj([['name', 'branches'], ['type', 'string[]'], ['data', branches]])])
-    })
-    return name
   }
 
   removeConnection(index: number, scope: string[]) {
@@ -2901,15 +2892,20 @@ export class ProjectSession extends Observable {
     })
   }
 
-  /** Moves the selected Cards into a new Card in Card: a new external project
-   *  with their definitions and the wires between them. Wires crossing the
-   *  selection become its boundary ports, so the graph computes the same. */
+  /** Transport boundary, also used by display/gesture fixtures. */
+  prepareSubgraph = (project: string, cards: string[], id: string): Promise<{ projectJson: string; externalJson: string; linkJson: string }> =>
+    api('/api/document/subgraph', { project_json: project, cards, id })
+
+  /** The host prepares the document edit; this gesture keeps its bytes, layout and undo. */
   async makeSubgraph(keys: Set<CardKey>, scope: string[], name = 'sub'): Promise<CardKey | undefined> {
+    keys = new Set(keys)
+    scope = [...scope]
     const ids = new Set([...keys].map((k) => path(k).pop()!).filter(Boolean))
     const scopePrefix = this.projectPrefix(scope)
-    if (!ids.size || scopePrefix === undefined) return undefined
+    if (!ids.size || scopePrefix === undefined || [...keys].some(k => key(path(k).slice(0, -1)) !== key(scope))) return undefined
     const newId = await this.newCardId(name, scope)
     const newKey = key([...scope, newId])
+    const before = this.docState(), beforeSources = new Map(this.sourceEdits), beforeRemovals = new Set(this.sourceRemovals), beforeManifest = new Map(this.sources)
     const ext = `${scopePrefix}externals/${newId}/`
     // Files of the Cards' definition folders, and of their own externals.
     const files = new Map<string, Uint8Array>()
@@ -2932,6 +2928,21 @@ export class ProjectSession extends Observable {
         }
       }
     } catch (e) { this.cardEditFailed(e); return undefined }
+    const root = clone(scopePrefix === '' ? this.project : this.external(scopePrefix)?.project ?? obj())
+    let transformed: { project: J; external: J; link: J }
+    try {
+      const reply = await this.prepareSubgraph(serialize(root), [...ids].sort(), newId)
+      const project = tryParse(reply.projectJson), external = tryParse(reply.externalJson), link = tryParse(reply.linkJson)
+      if (!project || !external || !link) throw new Error('Missing subgraph documents')
+      transformed = { project, external, link }
+    } catch (e) { this.cardEditFailed(e); return undefined }
+    const current = this.docState()
+    if (!this.isEditable || !jeq(before.project, current.project) || !jeq(before.layout, current.layout)
+      || before.definitions.size !== current.definitions.size || [...before.definitions].some(([k, v]) => !defEq(v, current.definitions.get(k)))
+      || before.externals.size !== current.externals.size || [...before.externals].some(([k, v]) => !extEq(v, current.externals.get(k)))
+      || beforeManifest.size !== this.sources.size || [...beforeManifest].some(([k, v]) => v.hash !== this.sources.get(k)?.hash)
+      || beforeSources.size !== this.sourceEdits.size || [...beforeSources].some(([k, v]) => v !== this.sourceEdits.get(k))
+      || beforeRemovals.size !== this.sourceRemovals.size || [...beforeRemovals].some(k => !this.sourceRemovals.has(k))) return undefined
     this.edit((x) => {
       let cx = 0, cy = 0
       for (const k of keys) {
@@ -2941,54 +2952,9 @@ export class ProjectSession extends Observable {
       }
       cx /= keys.size
       cy /= keys.size
-      const inner: J[] = [], innerConns: J[] = []
-      const inputs: [string, J][] = [], outputs: [string, J][] = []
-      x.updateGraph(scope, (g) => {
-        const outer: J[] = [], outerConns: J[] = []
-        for (const c of arr(g.get('cards')) ?? []) (ids.has(str(get(c, 'id')) ?? '') ? inner : outer).push(c)
-        const portName = (list: [string, J][], card: string, port: string) => {
-          let n = `${card}_${port}`
-          for (let i = 2; list.some(([nn]) => nn === n); i++) n = `${card}_${port}${i}`
-          return n
-        }
-        for (const c of arr(g.get('connections')) ?? []) {
-          const f = str(get(c, 'from', 'card')) ?? '', t = str(get(c, 'to', 'card')) ?? ''
-          const fp = str(get(c, 'from', 'port')) ?? '', tp = str(get(c, 'to', 'port')) ?? ''
-          const fi = ids.has(f), ti = ids.has(t)
-          if (fi && ti) innerConns.push(c)
-          else if (!fi && !ti) outerConns.push(c)
-          else if (!fi && ti) {
-            // One boundary input per inner input port (several wires may share it).
-            const existing = inputs.find(([, v]) => str(get(v, 'card')) === t && str(get(v, 'port')) === tp)?.[0]
-            const n = existing ?? portName(inputs, t, tp)
-            if (!existing) inputs.push([n, obj([['card', t], ['port', tp]])])
-            const nc = clone(c) as JObj
-            nc.set('to', obj([['card', newId], ['port', n]]))
-            outerConns.push(nc)
-          } else {
-            const existing = outputs.find(([, v]) => str(get(v, 'card')) === f && str(get(v, 'port')) === fp)?.[0]
-            const n = existing ?? portName(outputs, f, fp)
-            if (!existing) outputs.push([n, obj([['card', f], ['port', fp]])])
-            const nc = clone(c) as JObj
-            nc.set('from', obj([['card', newId], ['port', n]]))
-            outerConns.push(nc)
-          }
-        }
-        outer.push(obj([['id', newId]]))
-        g.set('cards', outer)
-        g.set('connections', outerConns)
-      })
-      // The external: a project of its own (it also opens on its own).
-      const root = scopePrefix === '' ? x.project : x.external(scopePrefix)?.project ?? obj()
-      const e: ExternalProject = {
-        project: obj([
-          ['name', newId], ['pkgsPath', clone(get(root, 'pkgsPath')) ?? 'tsugumi:default'],
-          ['canvas', obj([['cards', inner], ['connections', innerConns]])],
-          ['boundary', obj([['inputs', new JObj(inputs)], ['outputs', new JObj(outputs)]])],
-        ]),
-        layout: obj(), definitions: new Map(),
-      }
-      if (isObj(e.project)) e.project.set('nixSources', clone(get(root, 'nixSources')))
+      if (scopePrefix === '') x.project = clone(transformed.project)
+      else x.updateExternal(scopePrefix, e => { e.project = clone(transformed.project) })
+      const e: ExternalProject = { project: clone(transformed.external), layout: obj(), definitions: new Map() }
       const extCards: [string, J][] = []
       for (const k of [...keys].sort()) {
         const id = path(k).pop()
@@ -3010,7 +2976,7 @@ export class ProjectSession extends Observable {
       }
       for (const [to, inn] of moved) x.createExternal(to, inn)
       x.createExternal(ext, e)
-      x.setCardDefinition(newKey, { card: obj(), meta: obj([['name', name]]), link: obj([['external', newId]]) })
+      x.setCardDefinition(newKey, { card: obj(), meta: obj([['name', name]]), link: clone(transformed.link) })
       x.updateLayout(scope, (l) => {
         const cards = l.get('cards')
         if (isObj(cards)) for (const kk of cards.keys()) if ([...ids].some((id) => kk === id || kk.startsWith(id + '/'))) cards.set(kk, undefined)
@@ -3346,99 +3312,6 @@ export class ProjectSession extends Observable {
   removeSource(p: string) {
     this.sourceEdits.delete(p)
     if (this.sources.has(p)) this.sourceRemovals.add(p)
-  }
-
-  /** The definition folder of a new Card made from a template (in the draft). */
-  writeTemplate(t: DefinitionTemplate, k: CardKey) {
-    const dir = this.definitionDir(k), id = path(k).pop()
-    if (!dir || !id) return
-    const ns = id.replace(/[-.]/g, '_')
-    const set = (card: J, meta?: J) => this.setCardDefinition(k, { card, meta })
-    if (t.startsWith('visualization_')) {
-      const files = visualizationFiles[t as VisualizationTemplate]
-      set(tryParse(files['_card.json'])!, tryParse(files['_meta.json']))
-      for (const [file, text] of Object.entries(files)) if (file !== '_card.json' && file !== '_meta.json') this.putSource(dir + file, text)
-      return
-    }
-    switch (t) {
-      case 'csharp':
-        set(tryParse(csharpFiles['_card.json'])!)
-        for (const [file, text] of Object.entries(csharpFiles)) if (file !== '_card.json') this.putSource(dir + file, text)
-        break
-      case 'marimo':
-        set(tryParse(marimoFiles['_card.json'])!, tryParse(marimoFiles['_meta.json']))
-        for (const [file, text] of Object.entries(marimoFiles)) if (file !== '_card.json' && file !== '_meta.json') this.putSource(dir + file, text)
-        break
-      case 'report_rmarkdown': case 'report_quarto': {
-        const files = reportFiles[t]
-        set(tryParse(files['_card.json'])!, tryParse(files['_meta.json'])!)
-        for (const [file, text] of Object.entries(files)) if (file !== '_card.json' && file !== '_meta.json') this.putSource(dir + file, text)
-        break
-      }
-      case 'draft':
-        set(obj([['template', 'draft']]), obj([['description', ''], ['content', '']]))
-        break
-      case 'trigger': case 'fork': case 'branch': case 'collect':
-        set(obj([['template', t]]))
-        break
-      case 'merge':
-        set(obj([['template', 'merge'], ['inputs', [obj([['name', 'a']]), obj([['name', 'b']])]]]))
-        break
-      case 'input':
-        set(obj([['template', 'input'], ['params', [obj([['name', 'value'], ['type', 'double'], ['data', num('0')]])]]]))
-        this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n`)
-        break
-      case 'switch':
-        set(obj([['template', 'switch'], ['params', [obj([['name', 'value'], ['type', 'bool'], ['data', false]])]]]))
-        break
-      case 'python':
-        set(obj([['language', 'python'], ['inputs', [obj([['name', 'in']])]]]))
-        this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };\nin\n{\n  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };\n}\n')
-        this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
-        this.putSource(dir + 'src/main.py', `import tsugumi
-import outputs.out.${ns}.Text as out
-
-
-def main(inputs):
-    b = tsugumi.builder()
-    text = b.CreateString("hello")
-    out.Start(b)
-    out.AddValue(b, text)
-    return {"out": tsugumi.message(b, out.End(b))}
-`)
-        break
-      case 'go':
-        set(obj([['language', 'go'], ['inputs', [obj([['name', 'in']])]]]))
-        this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ "go" ]; };\nin { run = inputs.tsugumi.goCard { inherit sdk; src = ./src; }; }\n')
-        this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
-        for (const [name, source] of Object.entries(GO_SCAFFOLD)) this.putSource(dir + 'src/' + name, source)
-        break
-      case 'rust':
-        set(obj([['language', 'rust'], ['inputs', [obj([['name', 'in']])]]]))
-        this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ "rust" ]; };\nin { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }\n')
-        this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
-        for (const [name, source] of Object.entries(RUST_SCAFFOLD)) this.putSource(dir + 'src/' + name, source)
-        break
-      case 'ruby':
-        set(obj([['language', 'ruby'], ['inputs', [obj([['name', 'in']])]]]))
-        this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ "ruby" ]; };\nin\n{\n  run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; };\n}\n')
-        this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
-        this.putSource(dir + 'src/main.rb', 'def main(inputs)\n  { out: { value: "hello" } }\nend\n')
-        break
-      case 'cpp':
-        set(obj([['language', 'cpp'], ['inputs', [obj([['name', 'in']])]]]))
-        this.putSource(dir + 'default.nix', '{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };\nin\n{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n')
-        this.putSource(dir + '_outputs.fbs', `namespace ${ns};\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n`)
-        this.putSource(dir + 'src/card.cc', `#include <card.hh>
-
-auto run(const Card::Inputs& inputs) -> Card::Output {
-  Card::Output out;
-  out.out.emplace().value = "hello";
-  return out;
-}
-`)
-        break
-    }
   }
 
   /** Why a Card that ran has no result to show. */
@@ -3914,6 +3787,7 @@ auto run(const Card::Inputs& inputs) -> Card::Output {
 
 /** An external's documents and files, ready to be written under another folder. */
 export class ExternalCopy {
+  definitions = new Map<string, DefinitionDraft>() // definition folder -> documents
   docs = new Map<string, ExternalProject>() // folder -> documents (the external and the ones in it)
   files = new Map<string, Uint8Array>()
 

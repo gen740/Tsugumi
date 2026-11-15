@@ -84,7 +84,7 @@ const session = (dir = '/p', key = 'k') => {
   assert.deepEqual(put.bytes, Array.from(bytes))
 
   // Taking it back also takes the file back.
-  s.undo()
+  await s.undo()
   assert.equal(s.sourceEdits.has('externals/other/definitions/x/blob.bin'), false)
 }
 

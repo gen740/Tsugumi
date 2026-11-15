@@ -1,3 +1,4 @@
+import { permissionCatalog } from './permissions'
 // Application wide state: setup, the Demos catalog, recent projects, one
 // ProjectSession per project shared by all of its views, and the detail
 // windows (floating inside the page, like the macOS app's own windows).
@@ -59,6 +60,7 @@ export class AppModel extends Observable {
   }
 
   async refresh() {
+    void permissionCatalog.load()
     void agentAppearance.reload()
     try {
       this.status = await api<Status>('/api/status')

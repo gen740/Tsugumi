@@ -17,7 +17,9 @@ import Testing
   #expect(session.cardDefinition(card)?["language"]?.string == "csharp")
   #expect(session.kind(card) == .code)
   let folder = try #require(session.definitionDir(card))
-  for (name, text) in CSharpTemplate.files where name != "_card.json" {
+  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..")
+  let files = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: root.appendingPathComponent("ui/templates/csharp.json")))
+  for (name, text) in files where name != "_card.json" {
     let actual = try await session.sourceText(folder + name)
     #expect(actual == text)
   }

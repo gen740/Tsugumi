@@ -19,7 +19,6 @@ import TsugumiRPC
   #expect(session.cardDefinition(card)?["artifactOutput"]?.string == "report")
   let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..")
   let files = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: root.appendingPathComponent("ui/templates/marimo.json")))
-  #expect(files == MarimoTemplate.files)
   for file in ["src/main.py", "src/notebook.py", "default.nix", "_outputs.fbs"] {
     let bytes = try #require(session.sourceEdits["definitions/\(card)/\(file)"])
     #expect(String(decoding: bytes, as: UTF8.self) == files[file])

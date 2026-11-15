@@ -3,7 +3,6 @@ import AppKit
 import FlatBuffers
 import Foundation
 import TsugumiRPC
-import TsugumiAgentClient
 
 /// What a Card is, for choosing what the canvas and the editor offer.
 enum CardKind: String {
@@ -226,10 +225,13 @@ extension ProjectSession {
   func addCard(template t: DefinitionTemplate, in scope: [String], at point: CGPoint, name: String? = nil,
                clearOfOthers: Bool = false) async throws -> CardKey {
     let id = try await newCardId(name ?? t.baseName, in: scope)
-    let k = key(scope + [id])
+    let k = key(scope + [id]), template = try await prepareTemplate(t.rawValue, id)
+    let definition = DefinitionDraft(mergeJSON: try JSONValue.parse(template.definition))
+    let dir = (projectPrefix(scope) ?? "") + "definitions/\(id)/"
     edit { s in
       s.appendCard(id, in: scope)
-      s.writeTemplate(t, card: k)
+      s.setCardDefinition(k, definition)
+      for file in template.files { s.putSource(dir + file.path, file.text) }
       s.updateMeta(k) { $0["name"] = .string(name ?? t.baseName) }
       s.setPosition(k, clearOfOthers ? s.freeSpot(near: point, for: k, in: scope) : point)
     }
@@ -283,48 +285,22 @@ extension ProjectSession {
   func copyDefinition(prefix: String, id: String, to scope: [String], name: String? = nil) async throws
     -> (id: String, apply: (ProjectSession) -> Void)? {
     guard let d = prefix.isEmpty ? definitionDrafts[id] : external(prefix)?.definitions[id] else { return nil }
-    let dir = prefix + "definitions/\(id)/"
     let newId = try await newCardId(name ?? d.meta?["name"]?.string ?? id, in: scope)
-    let toPrefix = projectPrefix(scope) ?? ""
-    var files: [String: Data] = [:]
-    for p in sourcePaths where p.hasPrefix(dir) {
-      let rel = String(p.dropFirst(dir.count))
-      if ["_card.json", "_link.json", "_meta.json"].contains(rel) { continue }
-      files[toPrefix + "definitions/\(newId)/" + rel] = try await copyBytes(p)
+    let to = (projectPrefix(scope) ?? "") + "definitions/\(newId)/"
+    let copy = try await copyDocuments(from: prefix + "definitions/\(id)/", to: to, name: name)
+    guard let draft = copy.definitions[to] else {
+      throw RPCFailure(kind: .invalidRequest, diagnostic: "Missing copied definition")
     }
-    // A Card in Card's external is copied along (a copy of its own).
-    var link = d.link
-    var ext: ExternalCopy?
-    if let name = link?["external"]?.string {
-      let extName = try await newCardId(name, in: scope)
-      ext = try await copyExternal(from: prefix + "externals/\(name)/", to: toPrefix + "externals/\(extName)/")
-      link = .object([("external", .string(extName))])
-    }
-    // The copy's comments are comments of its own.
-    var meta = d.meta ?? .object([])
-    meta["name"] = .string(name ?? d.meta?["name"]?.string ?? id)
-    if let comments = meta["comments"]?.array {
-      meta["comments"] = .array(comments.map { c in
-        var n = c
-        n["id"] = .string(UUID().uuidString.lowercased())
-        return n
-      })
-    }
-    let draft = DefinitionDraft(card: d.card, meta: meta, link: link)
-    let newKey = key(scope + [newId])
     return (newId, { s in
-      s.setCardDefinition(newKey, draft)
-      for (p, bytes) in files {
-        s.sourceRemovals.remove(p)
-        s.sourceEdits[p] = bytes
-      }
-      ext?.apply(s)
+      s.setCardDefinition(key(scope + [newId]), draft)
+      copy.apply(s)
     })
   }
 
-  /// An external's documents and files, ready to be written under another folder.
+  /// Returned documents and exact bytes, retained by the caller's undo edit.
   struct ExternalCopy {
-    var docs: [String: ExternalProject] = [:]  // folder -> documents (the external and the ones in it)
+    var definitions: [String: DefinitionDraft] = [:]
+    var docs: [String: ExternalProject] = [:]
     var files: [String: Data] = [:]
 
     @MainActor func apply(_ s: ProjectSession) {
@@ -336,18 +312,19 @@ extension ProjectSession {
     }
   }
 
-  /// Copies the external at `from` (with the externals in it) to the folder `to`.
+  /// Transport and byte retention only; the host chooses every copied path.
+  private func copyDocuments(from: String, to: String, name: String? = nil) async throws -> ExternalCopy {
+    let reply = try await prepareCopy(docState().mergeJSON.serialized(), sourcePaths.sorted(), from, to, name)
+    let patch = try JSONValue.parse(reply.edits)
+    var copy = ExternalCopy()
+    for (p, d) in patch["definitions"]?.object ?? [] { copy.definitions[p] = DefinitionDraft(mergeJSON: d) }
+    for (p, e) in patch["externals"]?.object ?? [] { copy.docs[p] = ExternalProject(mergeJSON: e) }
+    for file in reply.files { copy.files[file.to] = try await copyBytes(file.from) }
+    return copy
+  }
+
   func copyExternal(from: String, to: String) async throws -> ExternalCopy {
-    var c = ExternalCopy()
-    let inside = effectiveExternals.filter { $0.key.hasPrefix(from) }
-    for (p, e) in inside { c.docs[to + p.dropFirst(from.count)] = e }
-    for p in sourcePaths where p.hasPrefix(from) {
-      let rel = String(p.dropFirst(from.count))
-      // Documents come from the parsed externals; every other file is copied.
-      if inside.keys.contains(where: { p.hasPrefix($0) && ExternalProject.isDocument(String(p.dropFirst($0.count))) }) { continue }
-      c.files[to + rel] = try await copyBytes(p)
-    }
-    return c
+    try await copyDocuments(from: from, to: to)
   }
 
   /// A file's bytes as the draft sees them.
@@ -643,54 +620,42 @@ extension ProjectSession {
     }
   }
 
+  private func connectionState(_ scope: [String]) -> JSONValue {
+    let state = docState(), prefix = projectPrefix(scope)
+    let affected = prefix.flatMap { state.externals[$0] }
+    var value: JSONValue = .object([
+      ("project", affected?.project ?? state.project), ("layout", affected?.layout ?? state.layout),
+      ("definitions", .object((affected?.definitions ?? state.definitions).sorted { $0.key < $1.key }.map { ($0.key, $0.value.mergeJSON) }))])
+    value["ports"] = .object(cards(in: scope).compactMap { card in
+      guard let id = card["id"]?.string else { return nil }
+      let ports = portData(key(scope + [id]))
+      return (id, .object([("inputs", .array(ports.inputs.map { .string($0.name) })),
+                           ("outputs", .array(ports.outputs.map { .string($0.name) }))]))
+    })
+    return value
+  }
+
   func connect(from: (CardKey, String), to: (CardKey, String), in scope: [String]) async throws {
-    guard let fromId = path(from.0).last, let toId = path(to.0).last else { return }
-    let existing = connections(in: scope).filter { $0["from"]?["card"]?.string == fromId && $0["from"]?["port"]?.string == from.1 }
-    let next = existing.count == 1 ? existing[0]["to"]?["card"]?.string.map { key(scope + [$0]) } : nil
-    let needsFork = !existing.isEmpty && kind(from.0) != .fork && (next.map { kind($0) != .fork } ?? true)
-    let forkId = needsFork ? try await newCardId("fork", in: scope) : nil
-    func valid(_ end: (CardKey, String), output: Bool) -> Bool {
-      guard instance(end.0) != nil, Array(path(end.0).dropLast()) == scope else { return false }
-      if forkId == nil { return true } // No suspension: the caller's visible ports are still current.
-      if end.1 == CardGeometry.newPort { return kind(end.0) == .draft }
-      let ports = portData(end.0)
-      return (output ? ports.outputs : ports.inputs).contains { $0.name == end.1 }
+    guard let fromId = path(from.0).last, let toId = path(to.0).last, isEditable,
+          [from, to].allSatisfy({ instance($0.0) != nil && Array(path($0.0).dropLast()) == scope }) else { return }
+    let before = connectionState(scope), prefix = projectPrefix(scope)
+    func current() -> Bool { isEditable && projectPrefix(scope) == prefix && connectionState(scope) == before }
+    var reply = try await prepareConnect(before.serialized(), (fromId, from.1), (toId, to.1), nil)
+    if reply.needsFork {
+      let id = try await newCardId("fork", in: scope)
+      guard current() else { return }
+      reply = try await prepareConnect(before.serialized(), (fromId, from.1), (toId, to.1), id)
     }
-    guard isEditable, valid(from, output: true), valid(to, output: false) else { return }
+    guard current() else { return }
+    let after = DocState(mergeJSON: try JSONValue.parse(reply.state))
     edit { s in
-      // An end at CardGeometry.newPort makes the Draft's port now.
-      let fromPort = s.draftPort(from, output: true, other: to.1, in: scope)
-      let toPort = s.draftPort(to, output: false, other: fromPort, in: scope)
-      // One wire per output: a value goes to several Cards through a fork Card.
-      // A second wire from an output inserts one (or, from a fork, adds a branch).
-      let taken = s.connections(in: scope).filter {
-        $0["from"]?["card"]?.string == fromId && $0["from"]?["port"]?.string == fromPort
-          && !($0["to"]?["card"]?.string == toId && $0["to"]?["port"]?.string == toPort)
-      }
-      var source = (card: fromId, port: fromPort)
-      if !taken.isEmpty {
-        let next = taken.count == 1 ? taken[0]["to"]?["card"]?.string.map { key(scope + [$0]) } : nil
-        if s.kind(from.0) == .fork {
-          source = (fromId, s.addForkBranch(from.0, for: toId))
-        } else if let next, s.kind(next) == .fork, let forkId = path(next).last {
-          // The output already feeds a fork: one more branch of it.
-          source = (forkId, s.addForkBranch(next, for: toId))
-        } else {
-          let fork = s.insertFork(after: (fromId, fromPort), wires: taken, in: scope, id: forkId!)
-          source = (fork, s.addForkBranch(key(scope + [fork]), for: toId))
-        }
-      }
-      // One connection per input port: a new wire replaces the old one.
-      let replaced = s.connections(in: scope).filter { $0["to"]?["card"]?.string == toId && $0["to"]?["port"]?.string == toPort }
-      s.updateGraph(scope) { g in
-        var conns = (g["connections"]?.array ?? []).filter { !replaced.contains($0) }
-        conns.append(.object([
-          ("from", .object([("card", .string(source.card)), ("port", .string(source.port))])),
-          ("to", .object([("card", .string(toId)), ("port", .string(toPort))])),
-        ]))
-        g["connections"] = .array(conns)
-      }
-      s.dropDraftPorts(replaced, in: scope)
+      if !reply.insertedId.isEmpty { s.forgetResult(key(scope + [reply.insertedId])) }
+      if prefix == "" {
+        s.project = after.project; s.layout = after.layout
+        for (id, d) in after.definitions { s.setEffectiveDefinition(id, d) }
+      } else if let prefix { s.updateExternal(prefix) { e in
+        e.project = after.project; e.layout = after.layout; e.definitions = after.definitions
+      } }
     }
   }
 
@@ -699,30 +664,6 @@ extension ProjectSession {
     let id = path(k).last
     let side = output ? "from" : "to"
     return connections(in: scope).contains { $0[side]?["card"]?.string == id && $0[side]?["port"]?.string == port }
-  }
-
-  /// The port a wire's end names. At CardGeometry.newPort: a Draft's port
-  /// without a wire or a new one, named after the port at the wire's other end
-  /// when that says more than "in" or "out". A Draft's ports are declared by
-  /// its wires.
-  private func draftPort(_ end: (CardKey, String), output: Bool, other: String, in scope: [String]) -> String {
-    guard end.1 == CardGeometry.newPort else { return end.1 }
-    let ports = portData(end.0)
-    let names = (output ? ports.outputs : ports.inputs).map(\.name)
-    if let free = names.first(where: { !portWired(end.0, $0, output: output, in: scope) }) { return free }
-    let says = other.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil
-      && other.range(of: #"^(in|out)[0-9]*$"#, options: .regularExpression) == nil
-    let base = says ? other : output ? "out" : "in"
-    var name = base
-    var n = 2
-    while names.contains(name) { name = "\(base)\(n)"; n += 1 }
-    let note: JSONValue = .object([("name", .string(name))])
-    if output {
-      updateMeta(end.0) { $0["outputs"] = .array(($0["outputs"]?.array ?? []) + [note]) }
-    } else {
-      updateCard(end.0) { $0["inputs"] = .array(($0["inputs"]?.array ?? []) + [note]) }
-    }
-    return name
   }
 
   /// After wires are gone: a Draft's port goes with its last wire.
@@ -747,52 +688,6 @@ extension ProjectSession {
         updateMeta(k) { $0[list] = without($0[list], port) }
       }
     }
-  }
-
-  /// A fork Card after an output: the output's wires (`wires`) now leave the
-  /// fork, a branch each, and the output feeds the fork. Its id.
-  func insertFork(after from: (card: String, port: String), wires: [JSONValue], in scope: [String], id: String) -> String {
-    let k = key(scope + [id])
-    appendCard(id, in: scope)
-    writeTemplate(.fork, card: k)
-    updateMeta(k) { $0["name"] = .string("fork") }
-    updateCard(k) { c in c["params"] = .array([.object([("name", .string("branches")), ("type", .string("string[]")), ("data", .array([]))])]) }
-    // Between the output's Card and the first Card it fed.
-    let a = position(key(scope + [from.card]))
-    let b = wires.first?["to"]?["card"]?.string.map { position(key(scope + [$0])) } ?? CGPoint(x: a.x + 300, y: a.y)
-    setPosition(k, CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2))
-    var branches: [String] = []
-    for w in wires { branches.append(addForkBranch(k, for: w["to"]?["card"]?.string ?? "out")) }
-    updateGraph(scope) { g in
-      var conns = (g["connections"]?.array ?? []).filter { !wires.contains($0) }
-      for (w, branch) in zip(wires, branches) {
-        conns.append(.object([("from", .object([("card", .string(id)), ("port", .string(branch))])), ("to", w["to"] ?? .null)]))
-      }
-      conns.append(.object([
-        ("from", .object([("card", .string(from.card)), ("port", .string(from.port))])),
-        ("to", .object([("card", .string(id)), ("port", .string("in"))])),
-      ]))
-      g["connections"] = .array(conns)
-    }
-    return id
-  }
-
-  /// A new output of a fork Card, named after the Card it will feed. Its name.
-  @discardableResult
-  func addForkBranch(_ k: CardKey, for target: String) -> String {
-    var branches = cardDefinition(k)?["params"]?.array?.first { $0["name"]?.string == "branches" }?["data"]?.array?.compactMap(\.string)
-      ?? ["out1", "out2"]
-    let base = target.isEmpty ? "out" : target
-    var name = base
-    var n = 2
-    while branches.contains(name) { name = "\(base)_\(n)"; n += 1 }
-    branches.append(name)
-    updateCard(k) { c in
-      var params = (c["params"]?.array ?? []).filter { $0["name"]?.string != "branches" }
-      params.append(.object([("name", .string("branches")), ("type", .string("string[]")), ("data", .array(branches.map { .string($0) }))]))
-      c["params"] = .array(params)
-    }
-    return name
   }
 
   func removeConnection(at index: Int, in scope: [String]) {
@@ -866,9 +761,10 @@ extension ProjectSession {
   @discardableResult
   func makeSubgraph(_ keys: Set<CardKey>, in scope: [String], name: String = "sub") async -> CardKey? {
     let ids = Set(keys.compactMap { path($0).last })
-    guard !ids.isEmpty, let scopePrefix = projectPrefix(scope) else { return nil }
+    guard !ids.isEmpty, keys.allSatisfy({ Array(path($0).dropLast()) == scope }), let scopePrefix = projectPrefix(scope) else { return nil }
     guard let newId = try? await newCardId(name, in: scope) else { return nil }
     let newKey = key(scope + [newId])
+    let before = docState(), beforeSources = sourceEdits, beforeRemovals = sourceRemovals, beforeHashes = sources.mapValues(\.hash)
     let ext = scopePrefix + "externals/\(newId)/"
     // Files of the Cards' definition folders, and of their own externals.
     var files: [String: Data] = [:]
@@ -887,59 +783,21 @@ extension ProjectSession {
         }
       }
     } catch { notice = error.localizedDescription; return nil }
+    let root = scopePrefix.isEmpty ? project : (external(scopePrefix)?.project ?? .object([]))
+    let transformed: (project: JSONValue, external: JSONValue, link: JSONValue)
+    do {
+      let reply = try await prepareSubgraph(root.serialized(), ids.sorted(), newId)
+      transformed = (try JSONValue.parse(reply.project), try JSONValue.parse(reply.external), try JSONValue.parse(reply.link))
+    } catch { notice = error.localizedDescription; return nil }
+    guard before == docState(), beforeSources == sourceEdits, beforeRemovals == sourceRemovals, beforeHashes == sources.mapValues(\.hash), isEditable else { return nil }
     edit { s in
       var center = CGPoint.zero
       for k in keys { let p = s.position(k); center.x += p.x; center.y += p.y }
       center.x /= CGFloat(keys.count)
       center.y /= CGFloat(keys.count)
-      var inner: [JSONValue] = [], innerConns: [JSONValue] = []
-      var inputs: [(String, JSONValue)] = [], outputs: [(String, JSONValue)] = []
-      s.updateGraph(scope) { g in
-        let all = g["cards"]?.array ?? []
-        let conns = g["connections"]?.array ?? []
-        var outer: [JSONValue] = [], outerConns: [JSONValue] = []
-        for c in all { if ids.contains(c["id"]?.string ?? "") { inner.append(c) } else { outer.append(c) } }
-        func portName(_ list: [(String, JSONValue)], _ card: String, _ port: String) -> String {
-          var n = "\(card)_\(port)"
-          var i = 2
-          while list.contains(where: { $0.0 == n }) { n = "\(card)_\(port)\(i)"; i += 1 }
-          return n
-        }
-        for c in conns {
-          let f = c["from"]?["card"]?.string ?? "", t = c["to"]?["card"]?.string ?? ""
-          let fp = c["from"]?["port"]?.string ?? "", tp = c["to"]?["port"]?.string ?? ""
-          switch (ids.contains(f), ids.contains(t)) {
-          case (true, true): innerConns.append(c)
-          case (false, false): outerConns.append(c)
-          case (false, true):
-            // One boundary input per inner input port (several wires may share it).
-            let existing = inputs.first { $0.1["card"]?.string == t && $0.1["port"]?.string == tp }?.0
-            let n = existing ?? portName(inputs, t, tp)
-            if existing == nil { inputs.append((n, .object([("card", .string(t)), ("port", .string(tp))]))) }
-            var nc = c
-            nc["to"] = .object([("card", .string(newId)), ("port", .string(n))])
-            outerConns.append(nc)
-          case (true, false):
-            let existing = outputs.first { $0.1["card"]?.string == f && $0.1["port"]?.string == fp }?.0
-            let n = existing ?? portName(outputs, f, fp)
-            if existing == nil { outputs.append((n, .object([("card", .string(f)), ("port", .string(fp))]))) }
-            var nc = c
-            nc["from"] = .object([("card", .string(newId)), ("port", .string(n))])
-            outerConns.append(nc)
-          }
-        }
-        outer.append(.object([("id", .string(newId))]))
-        g["cards"] = .array(outer)
-        g["connections"] = .array(outerConns)
-      }
-      // The external: a project of its own (it also opens on its own).
-      let root = scopePrefix.isEmpty ? s.project : (s.external(scopePrefix)?.project ?? .object([]))
-      var e = ExternalProject(project: .object([
-        ("name", .string(newId)), ("pkgsPath", root["pkgsPath"] ?? .string("tsugumi:default")),
-        ("canvas", .object([("cards", .array(inner)), ("connections", .array(innerConns))])),
-        ("boundary", .object([("inputs", .object(inputs)), ("outputs", .object(outputs))])),
-      ]), layout: .object([]), definitions: [:])
-      e.project["nixSources"] = root["nixSources"]
+      if scopePrefix.isEmpty { s.project = transformed.project }
+      else { s.updateExternal(scopePrefix) { $0.project = transformed.project } }
+      var e = ExternalProject(project: transformed.external, layout: .object([]), definitions: [:])
       var extCards: [(String, JSONValue)] = []
       for k in keys.sorted() {
         guard let id = path(k).last else { continue }
@@ -960,7 +818,7 @@ extension ProjectSession {
       }
       for (to, inner) in moved { s.createExternal(to, inner) }
       s.createExternal(ext, e)
-      s.setCardDefinition(newKey, DefinitionDraft(card: .object([]), meta: .object([("name", .string(name))]), link: .object([("external", .string(newId))])))
+      s.setCardDefinition(newKey, DefinitionDraft(card: .object([]), meta: .object([("name", .string(name))]), link: transformed.link))
       s.updateLayout(of: scope) { l in
         if var cards = l["cards"]?.object {
           cards.removeAll { k, _ in ids.contains(where: { k == $0 || k.hasPrefix($0 + "/") }) }
@@ -1419,96 +1277,6 @@ extension ProjectSession {
   func removeSource(_ p: String) {
     sourceEdits[p] = nil
     if sources[p] != nil { sourceRemovals.insert(p) }
-  }
-
-  /// The definition folder of a new Card made from a template (in the draft).
-  func writeTemplate(_ t: DefinitionTemplate, card k: CardKey) {
-    guard let dir = definitionDir(k), let id = path(k).last else { return }
-    let ns = id.replacingOccurrences(of: "-", with: "_").replacingOccurrences(of: ".", with: "_")
-    func set(_ card: JSONValue, meta: JSONValue? = nil) { setCardDefinition(k, DefinitionDraft(card: card, meta: meta)) }
-    switch t {
-    case .csharp:
-      let files = CSharpTemplate.files
-      set(try! JSONValue.parse(files["_card.json"]!))
-      for (file, text) in files where file != "_card.json" { putSource(dir + file, text) }
-    case .matplotlib, .plotly, .altair:
-      let files = VisualizationTemplates.files(t)!
-      set(try! JSONValue.parse(files["_card.json"]!), meta: try! JSONValue.parse(files["_meta.json"]!))
-      for (file, text) in files where file != "_card.json" && file != "_meta.json" { putSource(dir + file, text) }
-    case .marimo:
-      let files = MarimoTemplate.files
-      set(try! JSONValue.parse(files["_card.json"]!), meta: try! JSONValue.parse(files["_meta.json"]!))
-      for (file, text) in files where file != "_card.json" && file != "_meta.json" { putSource(dir + file, text) }
-    case .report_rmarkdown, .report_quarto:
-      let files = ReportTemplates.files[t.rawValue]!
-      set(try! JSONValue.parse(files["_card.json"]!), meta: try! JSONValue.parse(files["_meta.json"]!))
-      for (file, text) in files where file != "_card.json" && file != "_meta.json" { putSource(dir + file, text) }
-    case .draft:
-      set(.object([("template", .string("draft"))]), meta: .object([("description", .string("")), ("content", .string(""))]))
-    case .trigger, .fork, .branch, .collect:
-      set(.object([("template", .string(t.rawValue))]))
-    case .merge:
-      set(.object([
-        ("template", .string("merge")), ("inputs", .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])])),
-      ]))
-    case .input:
-      set(.object([
-        ("template", .string("input")),
-        ("params", .array([.object([("name", .string("value")), ("type", .string("double")), ("data", .number("0"))])])),
-      ]))
-      putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n")
-    case .switchCard:
-      set(.object([
-        ("template", .string(t.rawValue)),
-        ("params", .array([.object([("name", .string("value")), ("type", .string("bool")), ("data", .bool(false))])])),
-      ]))
-    case .python:
-      set(.object([("language", .string("python")), ("inputs", .array([.object([("name", .string("in"))])]))]))
-      putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; };\nin\n{\n  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };\n}\n")
-      putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
-      putSource(dir + "src/main.py", """
-      import tsugumi
-      import outputs.out.\(ns).Text as out
-
-
-      def main(inputs):
-          b = tsugumi.builder()
-          text = b.CreateString("hello")
-          out.Start(b)
-          out.AddValue(b, text)
-          return {"out": tsugumi.message(b, out.End(b))}
-
-      """)
-    case .go:
-      set(.object([("language", .string("go")), ("inputs", .array([.object([("name", .string("in"))])]))]))
-      putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"go\" ]; };\nin { run = inputs.tsugumi.goCard { inherit sdk; src = ./src; }; }\n")
-      putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
-      for (name, source) in GoScaffold.files { putSource(dir + "src/" + name, source) }
-    case .rust:
-      set(.object([("language", .string("rust")), ("inputs", .array([.object([("name", .string("in"))])]))]))
-      putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"rust\" ]; };\nin { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }\n")
-      putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
-      for (name, source) in RustScaffold.files { putSource(dir + "src/" + name, source) }
-    case .ruby:
-      set(.object([("language", .string("ruby")), ("inputs", .array([.object([("name", .string("in"))])]))]))
-      putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"ruby\" ]; };\nin\n{\n  run = inputs.tsugumi.rubyCard { inherit sdk; src = ./src; };\n}\n")
-      putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
-      putSource(dir + "src/main.rb", "def main(inputs)\n  { out: { value: \"hello\" } }\nend\n")
-    case .cpp:
-      set(.object([("language", .string("cpp")), ("inputs", .array([.object([("name", .string("in"))])]))]))
-      putSource(dir + "default.nix", "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"cpp\" ]; };\nin\n{\n  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };\n}\n")
-      putSource(dir + "_outputs.fbs", "namespace \(ns);\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n")
-      putSource(dir + "src/card.cc", """
-      #include <card.hh>
-
-      auto run(const Card::Inputs& inputs) -> Card::Output {
-        Card::Output out;
-        out.out.emplace().value = "hello";
-        return out;
-      }
-
-      """)
-    }
   }
 
   func clearBuildCache() async throws -> Tsugumi_RPC_ProjectCacheClearResultT {

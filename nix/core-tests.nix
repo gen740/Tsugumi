@@ -38,6 +38,8 @@ clangStdenv.mkDerivation {
       ../agent/Shared/guide-script.json
       ../agent/Shared/guide-script.en.json
       ../demos
+      ../tests/fixtures/subgraph-edits.json
+      ../tests/fixtures/merge-contract.json
       (lib.fileset.fileFilter (
         file: file.name == "CMakeLists.txt" || file.hasExt "cmake" || file.hasExt "cc" || file.hasExt "hh"
       ) ../tests/core)

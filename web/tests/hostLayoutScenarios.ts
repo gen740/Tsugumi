@@ -95,9 +95,9 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
   assert.equal(dbl(get(s.note(note), 'x')), 600)
   assert.deepEqual(s.geometry('source').outputs, ['b', 'a'])
   assert.ok(get(s.layout, 'groups'))
-  s.undo()
+  await s.undo()
   assert.equal(serialize(s.layout), was.layout)
-  s.redo()
+  await s.redo()
   assert.deepEqual(s.geometry('source').outputs, ['b', 'a'])
 }
 
@@ -109,7 +109,7 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
   assert.deepEqual(s.position('source'), at)
   assert.equal(serialize(s.project), was.project)
   assert.equal(s.undoStack.length, was.steps + 1)
-  s.undo()
+  await s.undo()
   assert.equal(serialize(s.layout), was.layout)
 }
 
@@ -124,9 +124,9 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
   assert.equal(s.undoStack.length, was.steps + 1)
   assert.deepEqual(s.geometry('source').outputs, ['b', 'a'])
   const after = serialize(s.layout)
-  s.undo()
+  await s.undo()
   assert.equal(serialize(s.layout), was.layout)
-  s.redo()
+  await s.redo()
   assert.equal(serialize(s.layout), after)
 }
 
@@ -153,7 +153,7 @@ const before = (s: InstanceType<typeof ProjectSession>) => ({ layout: serialize(
   assert.deepEqual(s.position(outer), beforeOuter)
   assert.deepEqual(s.position(outer + '/source'), { x: 40, y: 60 })
   assert.equal(serialize(s.project), was.project)
-  s.undo()
+  await s.undo()
   assert.equal(serialize(s.layout), was.layout)
   assert.deepEqual(s.boundaryPosition([outer], 'outputs'), { x: 333, y: 444 })
 }
@@ -166,7 +166,7 @@ for (const action of ['edit', 'undo', 'disconnect', 'measurement'] as const) {
   s.layoutHost = { layoutUntangle: () => new Promise<LayoutProposal>(r => { resolve = r }) } as never
   const pending = s.untangle([])
   if (action === 'edit') s.edit(x => x.setPosition('left', { x: 999, y: 888 }))
-  if (action === 'undo') s.undo()
+  if (action === 'undo') await s.undo()
   if (action === 'disconnect') s.client = undefined
   if (action === 'measurement') s.displays.set('source', { runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'text', text: 'new frame' } })
   const was = before(s)
@@ -179,7 +179,7 @@ for (const action of ['edit', 'undo', 'disconnect', 'measurement'] as const) {
   let resolve!: (p: LayoutProposal) => void
   s.layoutHost = { layoutUntangle: () => new Promise<LayoutProposal>(r => { resolve = r }) } as never
   const pending = cv.moveSelection(new Set(['left']), new Set(), new Set(), 1000, 0)
-  s.undo()
+  await s.undo()
   const was = before(s)
   resolve(onlyOrders)
   await pending

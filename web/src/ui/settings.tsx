@@ -6,7 +6,7 @@ import { api } from '../api'
 import { app } from '../model/app'
 import { guide } from '../model/guide'
 import { Skill } from '../model/chat'
-import { PERMISSIONS } from '../model/permissions'
+import { permissionCatalog } from '../model/permissions'
 import { useObserve } from '../model/observable'
 import {
   bindingLabel, CANVAS_ONLY, EDITOR_THEME_LABELS, EditorTheme, eventBinding, FLOW_LABELS, FlowDirection, Motion, MOTION_LABELS, prefs,
@@ -455,6 +455,8 @@ function refreshChats(saved = false) {
  *  never sent to this page, tsugumid or Cards, nor written to project files,
  *  settings or logs. */
 function APISettings() {
+  useObserve(permissionCatalog)
+  useEffect(() => { void permissionCatalog.load() }, [])
   const [s, setS] = useState<APIState>()
   const reload = () => api<APIState>('/api/settings').then((v) => {
     setS(v)
@@ -493,7 +495,7 @@ function APISettings() {
       <KeySection id="openai" s={s} reload={reload} update={update} />
       <ChatGPTSettings model={s.chatGPTModel} setModel={(m) => update({ chatGPTModel: m })} inUse={s.provider === 'chatgpt'} />
       <Section title={L('Agent が確認なしに Card に与えてよい権限')}>
-        {PERMISSIONS.map((p) => (
+        {permissionCatalog.kinds.map((p) => (
           <Row key={p.kind} label={<span><Icon name={p.icon} /> {p.label}</span>}>
             <Toggle checked={s.allowedPermissions.includes(p.kind)}
               onChange={(on) => update({ allowedPermissions: on ? [...s.allowedPermissions, p.kind] : s.allowedPermissions.filter((k) => k !== p.kind) })} />

@@ -130,6 +130,16 @@ foreach(language ja en)
     DEPENDS ${PROJECT_SOURCE_DIR}/agent/Shared/${script} ${PROJECT_SOURCE_DIR}/cmake/embed.cmake VERBATIM)
   list(APPEND _agent_prompts ${output})
 endforeach()
+set(_template_files "")
+foreach(name basic visualization reports csharp marimo go rust)
+  list(APPEND _template_files ${PROJECT_SOURCE_DIR}/ui/templates/${name}.json)
+endforeach()
+add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/host_templates.cc
+  COMMAND ${CMAKE_COMMAND} -DINPUT_DIR=${PROJECT_SOURCE_DIR}/ui/templates
+    -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/host_templates.cc
+    -P ${PROJECT_SOURCE_DIR}/cmake/embed_templates.cmake
+  DEPENDS ${_template_files} ${PROJECT_SOURCE_DIR}/cmake/embed_templates.cmake
+    ${PROJECT_SOURCE_DIR}/cmake/embed.cmake VERBATIM)
 add_library(tsugumi_agent_core STATIC
   ${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc
   ${CMAKE_CURRENT_BINARY_DIR}/agent_settings.cc
@@ -153,6 +163,10 @@ add_library(tsugumi_agent_core STATIC
   src/util/process.cc
   src/host/comments.cc
   src/host/save.cc
+  src/host/document_edits.cc
+  src/host/templates.cc
+  ${CMAKE_CURRENT_BINARY_DIR}/host_templates.cc
+  src/host/permission_kinds.cc
   src/agent/helper_scope.cc
   src/host/guide.cc
   src/host/settings.cc

@@ -1,6 +1,12 @@
 import { FileFormatRequestT } from '../src/gen/tsugumi/host/file-format-request'
 import { HostVersionGraphRequestT } from '../src/gen/tsugumi/host/host-version-graph-request'
 import { HostVersionDiffRequestT } from '../src/gen/tsugumi/host/host-version-diff-request'
+import { DocumentTemplateRequestT } from '../src/gen/tsugumi/host/document-template-request'
+import { DocumentConnectRequestT } from '../src/gen/tsugumi/host/document-connect-request'
+import { DocumentCopyRequestT } from '../src/gen/tsugumi/host/document-copy-request'
+import { DocumentMergeRequestT } from '../src/gen/tsugumi/host/document-merge-request'
+import { PermissionKindsRequestT } from '../src/gen/tsugumi/host/permission-kinds-request'
+import { DocumentSubgraphRequestT } from '../src/gen/tsugumi/host/document-subgraph-request'
 import * as H from '../src/gen/tsugumi/host'
 import { sceneRequest } from '../src/shared/hostLayout'
 import { VersionCommentsRequestT } from '../src/gen/tsugumi/host/version-comments-request'
@@ -106,6 +112,12 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'FileFormatRequest': return new FileFormatRequestT(v.path, v.text)
     case 'HostVersionGraphRequest': return new HostVersionGraphRequestT(v.project, v.language, v.limit ?? 500)
     case 'HostVersionDiffRequest': return new HostVersionDiffRequestT(v.project, v.commit, v.from_commit)
+    case 'PermissionKindsRequest': return new PermissionKindsRequestT(v.language)
+    case 'DocumentTemplateRequest': return new DocumentTemplateRequestT(v.name, v.id)
+    case 'DocumentConnectRequest': return new DocumentConnectRequestT(v.state_json, v.from_card, v.from_port, v.to_card, v.to_port, v.fork_id)
+    case 'DocumentCopyRequest': return new DocumentCopyRequestT(v.state_json, v.paths ?? [], v.from, v.to, v.name)
+    case 'DocumentMergeRequest': return new DocumentMergeRequestT(v.base_json, v.ours_json, v.theirs_json)
+    case 'DocumentSubgraphRequest': return new DocumentSubgraphRequestT(v.project_json, v.cards ?? [], v.id)
     case 'LayoutArrangeRequest': return new H.LayoutArrangeRequestT(sceneRequest(v.scene))
     case 'LayoutUntangleRequest': return new H.LayoutUntangleRequestT(sceneRequest(v.scene), v.around)
     case 'LayoutValidateRequest': return new H.LayoutValidateRequestT(v.json, v.removedCards)

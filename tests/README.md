@@ -22,6 +22,8 @@ Prose and `README.md` run the documentation build/tests; `docs/features.md` also
 
 The build generates C++/Python/Swift/TypeScript bindings and BFBS with `flatc`; these stay in build outputs and are not committed.
 
+Web gesture, source retention, template and undo tests call the same pure host document edit implementation through `tsugumi_document_edit_driver`. The Nix Web check compiles that small driver directly. For local `npm --prefix web test`, first build the CMake target `tsugumi_document_edit_driver` and set `TSUGUMI_DOCUMENT_EDIT_DRIVER` to its absolute path (normally `build/tests/core/tsugumi_document_edit_driver`). No daemon or sockets are needed for these tests.
+
 CI runs deterministic core RPC and Agent tests on Linux and macOS. SDK and Web checks run on Linux; Swift and Seatbelt checks run on macOS. Real remote-worker execution runs on x86_64 Linux through `tests/ci-remote-worker.sh`. The socket-free thought scheduler test is part of `tsugumi_host_settings_tests` in the Agent RPC job.
 
 The large demo runs are opt-in; CI collects them but leaves `TSUGUMI_TEST_DEMO_RUNS` unset. Run them explicitly in the development environment:
@@ -53,5 +55,5 @@ For documentation changes, run `nix run .#build-doc` and `nix run .#test-doc`. T
 - `python3 macOS/tools/test-binary-cache.py`: check signed substitution, unknown-key rejection and HTTP authentication with disposable Nix stores and local test servers. The launcher and Linux integration suites also validate the generated VM cache configuration.
 - `tests/ci-remote-worker.sh`: run Cards through agentd's Host RPC and mutual-TLS broker on Linux; requires listeners and Nix builds.
 - `nix develop -c /usr/bin/swift tests/tools/wkwebgpu.swift`: probe WebGPU and adapter availability in an offscreen WKWebView.
-- `python3 sdk/codegen/scaffold_go.py`: synchronize the Swift and TypeScript Go scaffolds after editing `sdk/go/template/` (`--check` verifies them).
-- `python3 sdk/codegen/scaffold_rust.py`: synchronize the Swift and TypeScript Rust scaffolds after editing `sdk/rust/template/` (`--check` verifies them).
+- `python3 sdk/codegen/scaffold_go.py`: synchronize the host Go scaffold in `ui/templates/go.json` after editing `sdk/go/template/` (`--check` verifies them).
+- `python3 sdk/codegen/scaffold_rust.py`: synchronize the host Rust scaffold in `ui/templates/rust.json` after editing `sdk/rust/template/` (`--check` verifies them).

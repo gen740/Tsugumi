@@ -278,6 +278,12 @@ async function updateExecutionServices(method: string, body: unknown) {
 
 type Handler = (b: any, url: URL) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
+  'GET /api/permission-kinds': () => hostRequest('PermissionKindsRequest', { language: language() }),
+  'POST /api/document/merge': (b) => hostRequest('DocumentMergeRequest', b),
+  'POST /api/document/template': (b) => hostRequest('DocumentTemplateRequest', b),
+  'POST /api/document/connect': (b) => hostRequest('DocumentConnectRequest', b),
+  'POST /api/document/copy': (b) => hostRequest('DocumentCopyRequest', b),
+  'POST /api/document/subgraph': (b) => hostRequest('DocumentSubgraphRequest', b),
   'POST /api/layout/arrange': (b) => hostRequest('LayoutArrangeRequest', b),
   'POST /api/layout/untangle': (b) => hostRequest('LayoutUntangleRequest', b),
   'POST /api/layout/validate': (b) => hostRequest('LayoutValidateRequest', b),

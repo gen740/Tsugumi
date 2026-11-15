@@ -3,7 +3,7 @@ import { cardIds } from './cardIds'
 // starts without that Card's result and frame.
 import assert from 'node:assert/strict'
 import type { ProjectSession as Session } from '../src/model/session'
-import { parse } from '../src/shared/json'
+import { parse, num } from '../src/shared/json'
 
 // The session's module reads the page when it loads, and listens to the server.
 const page = globalThis as Record<string, unknown>
@@ -23,10 +23,10 @@ const session = (cards: string[]) => {
 }
 const framed = (s: Session, k: string) => {
   s.updateDisplayFrame(k, (d) => {
-    d.set('x', 700)
-    d.set('y', 700)
-    d.set('width', 300)
-    d.set('height', 200)
+    d.set('x', num(700))
+    d.set('y', num(700))
+    d.set('width', num(300))
+    d.set('height', num(200))
   })
   s.displays.set(k, { runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'text', text: 'old' } })
   s.cardStates.set(k, { state: 2, invocation: 1n, stages: [], cached: false, workerReused: false, sent: new Set(), sentInRun: new Set() })
@@ -63,8 +63,8 @@ const clean = (s: Session, k: string) => {
   assert.equal(k, 'b')
   clean(s, k)
   // Undone: what the layout had is back, the Card gone.
-  s.undo()
-  assert.equal(s.instance('b'), undefined)
+  await s.undo()
+  assert.equal(s.instance('b'), undefined, s.saveError)
   assert.notEqual(s.displayFrame('b'), undefined)
 }
 

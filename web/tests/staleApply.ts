@@ -58,7 +58,7 @@ for (const document of ['definition', 'project']) {
   assert.deepEqual(requests, [2n])
   assert.equal(s.dirty, false, 'the editor save does not leave a stale autosave draft')
   assert.equal(document === 'definition' ? str(get(s.cardDefinition('a'), 'symbol')) : str(get(s.project, 'name')), 'mine')
-  s.undo()
+  await s.undo()
   assert.equal(document === 'definition' ? str(get(s.cardDefinition('a'), 'symbol')) : str(get(s.project, 'name')), 'base', 'editor apply remains undoable')
 }
 
@@ -94,7 +94,7 @@ for (const document of ['definition', 'project']) {
   assert.equal(await m.apply(), false)
   assert.deepEqual(requests, [])
   assert.equal(str(get(m.definition, 'symbol')), 'mine')
-  assert.deepEqual(m.conflicts, ['_card.json: symbol'])
+  assert.deepEqual(m.conflicts, ['/definition/symbol'])
   assert.equal(await m.apply(true), true)
   assert.deepEqual(requests, [1n])
   assert.equal(str(get(s.cardDefinition('a'), 'symbol')), 'mine')
@@ -358,4 +358,28 @@ console.log('note and group edits retain their opening revision: passed')
   revision.keepAndReload(s.inlineDraft!.content, () => s.startDraftEdit('a', revision))
   assert.equal(s.inlineDraft!.revision.keptText, 'keep this text')
   assert.equal(s.inlineDraft!.content, '')
+}
+
+// Two Apply gestures while following remote settings still produce one edit.
+{
+  const { s, requests } = session()
+  const m = new CardEditorModel(s, 'a')
+  m.definition = parse('{"template":"draft","symbol":"mine"}')
+  s.rev = 1n
+  s.confirmedDefinitions.set('a', parse('{"template":"draft","symbol":"base","maxRuns":3}'))
+  const original = s.prepareMerge
+  let release!: () => void
+  let held = false
+  s.prepareMerge = async (...args) => {
+    const reply = await original.apply(s, args)
+    if (held) return reply
+    held = true
+    return new Promise(resolve => { release = () => resolve(reply) })
+  }
+  const first = m.apply()
+  assert.equal(await m.apply(), false)
+  for (let i = 0; i < 20 && !release; i++) await new Promise(resolve => setTimeout(resolve, 0))
+  release()
+  assert.equal(await first, true)
+  assert.deepEqual(requests, [1n])
 }

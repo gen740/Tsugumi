@@ -14,7 +14,6 @@ import TsugumiRPC
   #expect(templates.count == 3)
   let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../..")
   let shared = try JSONDecoder().decode([String: [String: String]].self, from: Data(contentsOf: root.appendingPathComponent("ui/templates/visualization.json")))
-  #expect(VisualizationTemplates.all == shared)
   for template in templates {
     let session = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     session.project = try JSONValue.parse(document)

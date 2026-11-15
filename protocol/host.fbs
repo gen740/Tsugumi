@@ -98,6 +98,41 @@ table HostRecentListRequest {}
 table HostRecentRememberRequest { path:string (required); }
 table HostRecentForgetRequest { paths:[string]; }
 
+// Pure edit of the affected project document. Definition folders and their
+// bytes move unchanged under externals/<id>/ in the caller's single save.
+// Existing scope boundary references are rerouted through the new Card.
+table DocumentSubgraphRequest { project_json:string (required); cards:[string]; id:string (required); }
+table DocumentSubgraph { project_json:string (required); external_json:string (required); link_json:string (required); }
+
+// Copy documents and plan exact byte transfers from the caller's current state.
+// The caller reads every source before applying the returned patch in one edit,
+// and keeps those bytes in that edit for undo/redo, even after an autosave.
+table DocumentFileCopy { from:string (required); to:string (required); }
+table DocumentCopyRequest { state_json:string (required); paths:[string]; from:string (required); to:string (required); name:string; }
+table DocumentCopy { edits_json:string (required); files:[DocumentFileCopy]; }
+
+// Scope state contains project, layout and definitions, plus current visible
+// port names under ports/<card>/{inputs,outputs} for a Draft '+' gesture.
+table DocumentConnectRequest { state_json:string (required); from_card:string (required); from_port:string (required); to_card:string (required); to_port:string (required); fork_id:string; }
+table DocumentConnect { state_json:string (required); inserted_id:string; needs_fork:bool; }
+
+// The host serves the shared ui/templates catalog for a new Card.
+table DocumentTemplateRequest { name:string (required); id:string (required); }
+table DocumentTemplateFile { path:string (required); text:string (required); }
+table DocumentTemplate { definition_json:string (required); files:[DocumentTemplateFile]; }
+
+// Pure three-way merge of document states (project, layout, definitions and
+// externals). Conflicts are paths in that state; the proposed local values
+// must not be saved until the person explicitly chooses them.
+table DocumentMergeRequest { base_json:string (required); ours_json:string (required); theirs_json:string (required); }
+table DocumentMerge { merged_json:string (required); conflicts:[string]; }
+
+// Host policy owns the permission catalog. Unknown ids must still be displayed
+// verbatim by clients, and cannot become standing approvals implicitly.
+table PermissionKindsRequest { language:string; }
+table PermissionKind { id:string (required); label:string (required); icon:string (required); }
+table PermissionKinds { kinds:[PermissionKind]; }
+
 // One app-wide native session ("desktop") or one session per Web host
 // ("web:<support directory>"), shared by every window. Language is presentation.
 // Persisted: setup_done, demo_answered, tour. The live step/run observations
@@ -332,7 +367,8 @@ union RequestPayload {
   ExecutionServicesRequest, ExecutionServicePutRequest, ExecutionServiceRemoveRequest, ExecutionProjectAuthorizeRequest, ExecutionProjectRevokeRequest,
   RegisterProjectRequest, RegisterFolderRequest, SkillsListRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectReadRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest,
   LayoutArrangeRequest, LayoutUntangleRequest, LayoutValidateRequest, VersionCanvasRequest,
-  FileFormatRequest, HostVersionGraphRequest, HostVersionDiffRequest
+  FileFormatRequest, HostVersionGraphRequest, HostVersionDiffRequest,
+  DocumentSubgraphRequest, DocumentMergeRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -341,7 +377,8 @@ union ReplyPayload {
   GuideState, EnvironmentState, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectFiles, ProjectInfo, ProjectLocation, RecentProject,
   RecentList, DemoList, SkillsList, ModelList, Failure:Tsugumi.Service.Failure,
   LayoutProposal, LayoutValidated, VersionCanvas,
-  FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph
+  FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
+  DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

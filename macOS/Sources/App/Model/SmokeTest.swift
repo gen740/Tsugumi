@@ -65,7 +65,7 @@ enum SmokeTest {
           default: return d.summary
           }
         }
-        s.undo()
+        await s.undo()
         await s.save()
         report["undo_save_rev"] = s.rev
         var ok = s.saveError == nil

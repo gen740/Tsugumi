@@ -29,6 +29,9 @@
 #include "agent/wire.hh"
 #include "host/agent_policy.hh"
 #include "host/attached_folder.hh"
+#include "host/document_edits.hh"
+#include "host/templates.hh"
+#include "host/permission_kinds.hh"
 #include "host/environment.hh"
 #include "host/projects.hh"
 #include "host/format.hh"
@@ -1151,6 +1154,39 @@ struct Host::State {
                      tool.spec.name != "view_save"))
         specs.push_back(tool.spec);
     specs.push_back(
+        {"document_template", "Get the initial definition and all source files for a new Card "
+         "from the host's ui/templates catalog. name is the template id and id is the new Card "
+         "identifier. Save definition_json and the returned files under definitions/<id>/, "
+         "together with the canvas instance, in one project_save. This tool writes nothing.",
+         R"({"type":"object","properties":{"name":{"type":"string"},"id":{"type":"string"}},"required":["name","id"],"additionalProperties":false})"});
+    specs.push_back(
+        {"document_connect", "Prepare a scope's connection edit, replacing an input wire and "
+         "inserting or extending a fork when needed. state_json contains project, layout and "
+         "definitions; ports contains current visible port names for Draft '+' gestures. "
+         "If needs_fork is true, obtain a new Card id and repeat with fork_id. Otherwise save "
+         "the returned state_json together with project_save. This tool writes nothing.",
+         R"({"type":"object","properties":{"state_json":{"type":"string"},"from_card":{"type":"string"},"from_port":{"type":"string"},"to_card":{"type":"string"},"to_port":{"type":"string"},"fork_id":{"type":"string"}},"required":["state_json","from_card","from_port","to_card","to_port"],"additionalProperties":false})"});
+    specs.push_back(
+        {"document_copy", "Prepare a definition or external copy from the current document state. "
+         "from and to are project-relative folders ending in /. paths lists current source files. "
+         "Returns edits_json (definition folders and external documents) and file mappings. "
+         "Read and keep every mapped source byte before applying any change, then save the "
+         "documents and bytes together with project_save. This tool writes nothing.",
+         R"({"type":"object","properties":{"state_json":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},"from":{"type":"string"},"to":{"type":"string"},"name":{"type":"string"}},"required":["state_json","paths","from","to"],"additionalProperties":false})"});
+    specs.push_back(
+        {"document_merge", "Prepare a three-way merge of unsaved document states. "
+         "Returns merged_json and conflict paths; show conflicts to the person "
+         "before saving their choice with project_save. This tool writes nothing.",
+         R"({"type":"object","properties":{"base_json":{"type":"string"},"ours_json":{"type":"string"},"theirs_json":{"type":"string"}},"required":["base_json","ours_json","theirs_json"],"additionalProperties":false})"});
+    specs.push_back(
+        {"document_make_subgraph",
+         "Prepare a Card in Card edit from the current affected tsugumi.json. "
+         "Returns project_json, external_json and link_json; move the selected "
+         "definition folders and their external folders unchanged under "
+         "externals/<id>/, then save all changes together with project_save. "
+         "This tool writes nothing.",
+         R"({"type":"object","properties":{"project_json":{"type":"string"},"cards":{"type":"array","items":{"type":"string"}},"id":{"type":"string"}},"required":["project_json","cards","id"],"additionalProperties":false})"});
+    specs.push_back(
         {"demo_list", "List bundled read-only demo references",
          R"({"type":"object","properties":{},"additionalProperties":false})"});
     specs.push_back(
@@ -1744,6 +1780,55 @@ struct Host::State {
     const auto project =
         requested_project.empty() ? c.project : requested_project;
     auto args = json::Object(call.arguments);
+    if (call.name == "document_template") {
+      const auto edit = host::WriteTemplate(json::Text(args, "name"), json::Text(args, "id"));
+      std::vector<std::string> files;
+      for (const auto &file : edit.files)
+        files.push_back(json::Encode(json::Members{{"path", json::Quote(file->path)}, {"text", json::Quote(file->text)}}));
+      return {json::Encode(json::Members{{"definition_json", json::Quote(edit.definition_json)},
+          {"files", json::Encode(files)}}), false, {}, {}};
+    }
+    if (call.name == "document_connect") {
+      const auto edit = host::ConnectDocuments(json::Text(args, "state_json"),
+          json::Text(args, "from_card"), json::Text(args, "from_port"),
+          json::Text(args, "to_card"), json::Text(args, "to_port"), json::Text(args, "fork_id"));
+      return {json::Encode(json::Members{{"state_json", json::Quote(edit.state_json)},
+          {"inserted_id", json::Quote(edit.inserted_id)},
+          {"needs_fork", edit.needs_fork ? "true" : "false"}}), false, {}, {}};
+    }
+    if (call.name == "document_copy") {
+      std::vector<std::string> paths;
+      for (const auto &path : json::Array(json::Get(args, "paths", "[]")))
+        paths.push_back(json::String(path));
+      const auto edit = host::CopyDocuments(json::Text(args, "state_json"), paths,
+          json::Text(args, "from"), json::Text(args, "to"), json::Text(args, "name"));
+      std::vector<std::string> files;
+      for (const auto &file : edit.files)
+        files.push_back(json::Encode(json::Members{{"from", json::Quote(file->from)},
+                                                   {"to", json::Quote(file->to)}}));
+      return {json::Encode(json::Members{{"edits_json", json::Quote(edit.edits_json)},
+                  {"files", json::Encode(files)}}), false, {}, {}};
+    }
+    if (call.name == "document_merge") {
+      const auto edit = host::MergeDocuments(json::Text(args, "base_json"),
+          json::Text(args, "ours_json"), json::Text(args, "theirs_json"));
+      std::vector<std::string> conflicts;
+      for (const auto& path : edit.conflicts) conflicts.push_back(json::Quote(path));
+      return {json::Encode(json::Members{{"merged_json", json::Quote(edit.merged_json)},
+                  {"conflicts", json::Encode(conflicts)}}), false, {}, {}};
+    }
+    if (call.name == "document_make_subgraph") {
+      std::vector<std::string> cards;
+      for (const auto& card : json::Array(json::Get(args, "cards", "[]")))
+        cards.push_back(json::String(card));
+      const auto edit = host::MakeSubgraph(json::Text(args, "project_json"), cards,
+                                           json::Text(args, "id"));
+      return {json::Encode(json::Members{
+                  {"project_json", json::Quote(edit.project_json)},
+                  {"external_json", json::Quote(edit.external_json)},
+                  {"link_json", json::Quote(edit.link_json)}}),
+              false, {}, {}};
+    }
     if (call.name == "demo_list")
       return {DemoList(), false, {}, {}};
     if (call.name == "demo_read")
@@ -3323,6 +3408,41 @@ struct Host::State {
     if (host::Projects::Handles(r->value_type()))
       return host_projects.Handle(*r, request.request_id);
     switch (r->value_type()) {
+    case H::RequestPayload::PermissionKindsRequest: {
+      const auto* p = r->value_as_PermissionKindsRequest();
+      return wire::HostReply(request.request_id, host::PermissionKinds(Text(p->language())));
+    }
+    case H::RequestPayload::DocumentTemplateRequest: {
+      const auto *p = r->value_as_DocumentTemplateRequest();
+      return wire::HostReply(request.request_id, host::WriteTemplate(p->name()->str(), p->id()->str()));
+    }
+    case H::RequestPayload::DocumentConnectRequest: {
+      const auto *p = r->value_as_DocumentConnectRequest();
+      return wire::HostReply(request.request_id, host::ConnectDocuments(
+          p->state_json()->str(), p->from_card()->str(), p->from_port()->str(),
+          p->to_card()->str(), p->to_port()->str(), Text(p->fork_id())));
+    }
+    case H::RequestPayload::DocumentCopyRequest: {
+      const auto *p = r->value_as_DocumentCopyRequest();
+      std::vector<std::string> paths;
+      if (p->paths())
+        for (const auto *path : *p->paths()) paths.push_back(path->str());
+      return wire::HostReply(request.request_id, host::CopyDocuments(
+          p->state_json()->str(), paths, p->from()->str(), p->to()->str(), Text(p->name())));
+    }
+    case H::RequestPayload::DocumentMergeRequest: {
+      const auto* p = r->value_as_DocumentMergeRequest();
+      return wire::HostReply(request.request_id, host::MergeDocuments(
+          p->base_json()->str(), p->ours_json()->str(), p->theirs_json()->str()));
+    }
+    case H::RequestPayload::DocumentSubgraphRequest: {
+      const auto* p = r->value_as_DocumentSubgraphRequest();
+      std::vector<std::string> cards;
+      if (p->cards())
+        for (const auto* card : *p->cards()) cards.push_back(card->str());
+      return wire::HostReply(request.request_id,
+          host::MakeSubgraph(p->project_json()->str(), cards, p->id()->str()));
+    }
     case H::RequestPayload::VersionCommentsRequest: {
       Human(human);
       const auto* p = r->value_as_VersionCommentsRequest();
