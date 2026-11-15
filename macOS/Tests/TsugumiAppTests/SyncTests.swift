@@ -29,7 +29,7 @@ import TsugumiAgentClient
       process.executableURL = env[binary.0].map { URL(fileURLWithPath: $0) } ?? build.appendingPathComponent(binary.1)
       if mockedBuilds { process.environment = env.merging(["TSUGUMI_MOCK_CONTROL": dir.path]) { _, value in value } }
       process.arguments = ["--scratch-dir", dir.appendingPathComponent("scratch").path,
-                           "--run-scratch-dir", dir.resolvingSymlinksInPath().appendingPathComponent("run-scratch").path,
+                           "--run-scratch-dir", canonicalDirectory(dir).appendingPathComponent("run-scratch").path,
                            "--project", project.path, "--unix", dir.appendingPathComponent("s").path,
                            "--control-dir", dir.appendingPathComponent("control").path,
                            "--worker", env["TSUGUMI_WORKER"] ?? build.appendingPathComponent("workerd/tsugumi-worker").path,
@@ -45,6 +45,8 @@ import TsugumiAgentClient
             ready = j
             return
           }
+          // A service that refused its arguments never becomes ready.
+          if !process.isRunning { break }
           Thread.sleep(forTimeInterval: 0.025)
         }
         throw CocoaError(.fileReadNoSuchFile)

@@ -36,7 +36,7 @@ import TsugumiRPC
         ?? build.appendingPathComponent("core/tsugumi-agentd")
       core.arguments = ["--state-dir", state.path,
                         "--socket-dir", directory.appendingPathComponent("b").path,
-                        "--usage-scratch-dir", directory.resolvingSymlinksInPath().appendingPathComponent("scratch").path,
+                        "--usage-scratch-dir", canonicalDirectory(directory).appendingPathComponent("scratch").path,
                         "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--demos-dir", SyncTests.root.appendingPathComponent("demos").path]
       core.standardOutput = FileHandle.nullDevice

@@ -70,8 +70,11 @@ private actor HostServiceLock {
     if selectState { setenv("TSUGUMI_AGENT_STATE", state.path, 1) }
     else { unsetenv("TSUGUMI_AGENT_STATE") }
     setenv("TSUGUMI_SUPPORT_DIR", support.path, 1)
+    // Sockets are bound in this folder as it is, so it has to exist.
+    try? FileManager.default.createDirectory(at: state.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try? FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
     setenv("TSUGUMI_SOCKET_DIR", state.deletingLastPathComponent().path, 1)
-    setenv("TSUGUMI_RUN_SCRATCH_DIR", support.resolvingSymlinksInPath().appendingPathComponent("scratch").path, 1)
+    setenv("TSUGUMI_RUN_SCRATCH_DIR", canonicalDirectory(support).appendingPathComponent("scratch").path, 1)
     installedState = state
   }
 
@@ -98,4 +101,13 @@ private actor HostServiceLock {
     if let previousScratch { setenv("TSUGUMI_RUN_SCRATCH_DIR", previousScratch, 1) }
     else { unsetenv("TSUGUMI_RUN_SCRATCH_DIR") }
   }
+}
+
+/// An existing folder without a symbolic link on the way, as run scratch
+/// requires. `resolvingSymlinksInPath` removes `/private`, which puts the
+/// `/tmp` and `/var` links back into the path.
+func canonicalDirectory(_ url: URL) -> URL {
+  guard let resolved = realpath(url.path, nil) else { return url }
+  defer { free(resolved) }
+  return URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
 }
