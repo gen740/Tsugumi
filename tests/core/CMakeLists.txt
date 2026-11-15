@@ -46,6 +46,9 @@ if(TSUGUMI_INSTALLED_CORE)
     ${CMAKE_CURRENT_SOURCE_DIR}/../../agent/Shared/guide-script.en.json
     DESTINATION share/tsugumi/guide-tests/agent/Shared
     COMPONENT guide-test-resources)
+  install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/service-contract.json
+    DESTINATION share/tsugumi/guide-tests/tests/fixtures
+    COMPONENT guide-test-resources)
   install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../demos
     DESTINATION share/tsugumi/guide-tests
     COMPONENT guide-test-resources)
@@ -69,7 +72,13 @@ target_compile_options(tsugumi-environment-daemon-double PRIVATE -Wall -Wextra -
 add_dependencies(tsugumi_agent_rpc_tests tsugumi-agentd tsugumid-mock tsugumi-environment-daemon-double)
 include(GoogleTest)
 gtest_discover_tests(tsugumi_agent_rpc_tests TEST_PREFIX "core_agent." DISCOVERY_MODE PRE_TEST
+  TEST_FILTER "-RealEnvironmentFixture.AuthenticatesTheRealProjectServiceBeforeReady"
   PROPERTIES TIMEOUT 30)
+# This scenario follows the real environment's startup and cleanup budget.
+gtest_discover_tests(tsugumi_agent_rpc_tests TEST_PREFIX "core_agent." DISCOVERY_MODE PRE_TEST
+  TEST_FILTER "RealEnvironmentFixture.AuthenticatesTheRealProjectServiceBeforeReady"
+  TEST_LIST real_environment_tests
+  PROPERTIES TIMEOUT 120)
 
 add_executable(tsugumi_rpc_cli_tests rpc_cli_test.cc agent_fixture_server.cc)
 target_link_libraries(tsugumi_rpc_cli_tests PRIVATE GTest::gtest_main hosq Threads::Threads)
@@ -122,9 +131,10 @@ if(TSUGUMI_INSTALLED_CORE)
 endif()
 
 # Storage, Skill reads, environment adapters and thought timing need no sockets.
-add_executable(tsugumi_host_settings_tests agent/store_test.cc host/components_test.cc agent/document_edits_test.cc agent/version_text_test.cc agent/format_test.cc agent/catalog_test.cc agent/attached_folder_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc host/layout_test.cc host/layout_service_test.cc agent_fixture_server.cc agent/helper_scope_test.cc agent/native_terminal_test.cc agent/native_environment_test.cc agent/project_files_test.cc)
+add_executable(tsugumi_host_settings_tests agent/store_test.cc host/components_test.cc host/service_contract_test.cc agent/document_edits_test.cc agent/version_text_test.cc agent/format_test.cc agent/catalog_test.cc agent/attached_folder_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc host/layout_test.cc host/layout_service_test.cc agent_fixture_server.cc agent/helper_scope_test.cc agent/native_terminal_test.cc agent/native_environment_test.cc agent/project_files_test.cc)
 target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
 target_compile_definitions(tsugumi_host_settings_tests PRIVATE
+  TSUGUMI_SERVICE_FIXTURES="${_test_guide_root}/tests/fixtures/service-contract.json"
   TSUGUMI_SUBGRAPH_FIXTURES="${_test_guide_root}/tests/fixtures/subgraph-edits.json"
   TSUGUMI_MERGE_FIXTURES="${_test_guide_root}/tests/fixtures/merge-contract.json")
 if(TSUGUMI_INSTALLED_CORE)

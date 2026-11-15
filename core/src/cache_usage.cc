@@ -59,11 +59,14 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
   else
     for (const auto& base : {roots_, scratch_}) {
       if (!stdfs::exists(base)) continue;
-      for (const auto& entry : stdfs::directory_iterator(base))
+      for (const auto& entry : stdfs::directory_iterator(base)) {
+        if (stopping_) return result;
         if (stdfs::is_directory(entry.symlink_status())) ids.insert(entry.path().filename().string());
+      }
     }
   std::vector<std::vector<std::string>> roots;
   for (const auto& id : ids) {
+    if (stopping_) return result;
     const auto folder = single_id_.empty() ? roots_ / id : single_roots_;
     const auto scratch = single_id_.empty() ? scratch_ / id : single_scratch_;
     auto project = std::make_unique<R::ProjectCacheUsageT>();
@@ -95,7 +98,7 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
       uint64_t bytes = 0;
       bool known = true;
       std::string unknown;
-      for (const auto& entry : measure_run_scratch(scratch)) {
+      for (const auto& entry : measure_run_scratch(scratch, [this] { return stopping_.load(); })) {
         auto item = std::make_unique<R::RunScratchUsageT>();
         item->path = entry.path;
         item->bytes = entry.bytes.value_or(0);
@@ -113,6 +116,7 @@ auto CacheUsage::measure() -> R::ProjectCacheUsageResultT {
     }
     result.projects.push_back(std::move(project));
   }
+  if (stopping_) return result;
   try {
     const auto closures = NixEvaluator::rooted_usage(roots);
     std::map<std::string, uint64_t> all;
@@ -160,6 +164,7 @@ auto CacheUsage::loop() -> void {
     } catch (const std::exception& e) {
       next.error = e.what();
     }
+    if (stopping_) return;  // An interrupted measurement is not a result.
     if (!publish_.empty()) {
       try {
         flatbuffers::FlatBufferBuilder builder;

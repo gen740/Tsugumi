@@ -23,11 +23,11 @@ auto View(T value) -> std::string {
   else
     return std::to_string(value);
 }
-inline auto View(A::Access v) -> std::string {
-  return Quote(A::EnumNameAccess(v));
+inline auto View(Tsugumi::Service::Access v) -> std::string {
+  return Quote(Tsugumi::Service::EnumNameAccess(v));
 }
-inline auto View(A::GrantScope v) -> std::string {
-  return Quote(A::EnumNameGrantScope(v));
+inline auto View(Tsugumi::Service::GrantScope v) -> std::string {
+  return Quote(Tsugumi::Service::EnumNameGrantScope(v));
 }
 inline auto
 Object(std::initializer_list<std::pair<std::string, std::string>> fields)
@@ -44,7 +44,7 @@ inline auto View(const Tsugumi::Service::HelloResult *value) -> std::string;
 inline auto View(const Tsugumi::Service::Failure *value) -> std::string;
 inline auto View(const Tsugumi::Service::Acknowledgement *value) -> std::string;
 inline auto View(const A::ModelMessage *value) -> std::string;
-inline auto View(const A::Usage *value) -> std::string;
+inline auto View(const Tsugumi::Service::Usage *value) -> std::string;
 inline auto View(const A::ToolRecord *value) -> std::string;
 inline auto View(const A::Helper *value) -> std::string;
 inline auto View(const A::Conversation *value) -> std::string;
@@ -65,8 +65,8 @@ inline auto View(const A::AccessResult *value) -> std::string;
 inline auto View(const A::AccessEntry *value) -> std::string;
 inline auto View(const A::Grant *value) -> std::string;
 inline auto View(const A::AccessList *value) -> std::string;
-inline auto View(const A::DemoList *value) -> std::string;
-inline auto View(const A::TextResult *value) -> std::string;
+inline auto View(const H::DemoPaths *value) -> std::string;
+inline auto View(const Tsugumi::Service::TextResult *value) -> std::string;
 inline auto View(const H::ProjectDefaults *value) -> std::string;
 inline auto View(const H::ProjectInfo *value) -> std::string;
 inline auto View(const H::ProjectLocation *value) -> std::string;
@@ -122,7 +122,7 @@ inline auto View(const A::ModelMessage *value) -> std::string {
                                : "null"},
        {"providerApi", View(value->provider_api())}});
 }
-inline auto View(const A::Usage *value) -> std::string {
+inline auto View(const Tsugumi::Service::Usage *value) -> std::string {
   if (!value)
     return "null";
   return Object({{"inputTokens", View(value->input_tokens())},
@@ -294,12 +294,12 @@ inline auto View(const A::AccessList *value) -> std::string {
   return Object({{"requests", View(value->requests())},
                  {"grants", View(value->grants())}});
 }
-inline auto View(const A::DemoList *value) -> std::string {
+inline auto View(const H::DemoPaths *value) -> std::string {
   if (!value)
     return "null";
   return Object({{"paths", View(value->paths())}});
 }
-inline auto View(const A::TextResult *value) -> std::string {
+inline auto View(const Tsugumi::Service::TextResult *value) -> std::string {
   if (!value)
     return "null";
   return Object(

@@ -9,7 +9,7 @@ enum ServiceWire {
     return hostMethods.contains(method)
   }
   private static let hostMethods: Set<String> = [
-"ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+"DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
   static func request(_ method: String, _ fields: [String: Any], host: Bool) throws -> (UInt8, NativeObject) {
     if host {
       switch method {
@@ -67,6 +67,20 @@ enum ServiceWire {
         v.cards = (fields["cards"] as? [String] ?? []).map(Optional.some)
         v.id = fields["id"] as? String ?? ""
         return (Tsugumi_Host_RequestPayload.documentsubgraphrequest.rawValue, v)
+      case "DemoListRequest": return (Tsugumi_Host_RequestPayload.demolistrequest.rawValue, Tsugumi_Host_DemoListRequestT())
+      case "DemoReadRequest":
+        let v = Tsugumi_Host_DemoReadRequestT()
+        v.path = fields["path"] as? String ?? ""
+        return (Tsugumi_Host_RequestPayload.demoreadrequest.rawValue, v)
+      case "VersionNoteRequest":
+        let v = Tsugumi_Host_VersionNoteRequestT()
+        v.projectId = fields["project_id"] as? String ?? ""
+        v.commit = fields["commit"] as? String ?? ""
+        v.profile = fields["profile"] as? String ?? "desktop"
+        v.language = fields["language"] as? String ?? "ja"
+        v.anthropicKeyProfile = fields["anthropic_key_profile"] as? String
+        v.openaiKeyProfile = fields["openai_key_profile"] as? String
+        return (Tsugumi_Host_RequestPayload.versionnoterequest.rawValue, v)
       case "ModelSelectionRequest":
         let v = Tsugumi_Host_ModelSelectionRequestT()
         v.profile = fields["profile"] as? String ?? "desktop"
@@ -134,7 +148,7 @@ enum ServiceWire {
         let v = Tsugumi_Host_ProviderSetRequestT()
         v.profile = fields["profile"] as? String ?? "desktop"
         v.id = fields["id"] as? String ?? ""
-        v.provider = fields["provider"] as? Tsugumi_Service_ProviderInputT
+        v.provider = fields["provider"] as? Tsugumi_Host_ProviderInputT
         v.remove = fields["remove"] as? Bool ?? false
         v.ephemeral = fields["ephemeral"] as? Bool ?? false
         v.source = fields["source"] as? String
@@ -269,7 +283,6 @@ enum ServiceWire {
       }
     } else {
       switch method {
-      case "DemoListRequest": return (Tsugumi_Agent_RequestPayload.demolistrequest.rawValue, Tsugumi_Agent_DemoListRequestT())
       case "ToolCatalogRequest": return (Tsugumi_Agent_RequestPayload.toolcatalogrequest.rawValue, Tsugumi_Agent_ToolCatalogRequestT())
       case "HelloRequest":
         let v = Tsugumi_Service_HelloRequestT()
@@ -348,8 +361,8 @@ enum ServiceWire {
         let v = Tsugumi_Agent_AccessRequestT()
         v.projectId = fields["project_id"] as? String ?? ""
         v.conversationId = fields["conversation_id"] as? String
-        v.access = Tsugumi_Agent_Access(rawValue: (fields["access"] as? NSNumber)?.uint8Value ?? (["Read": UInt8(0), "Write": UInt8(1), "Run": UInt8(2), "CardPermissions": UInt8(3), "Shell": UInt8(4)][fields["access"] as? String ?? ""] ?? 0)) ?? .read
-        v.scope = Tsugumi_Agent_GrantScope(rawValue: (fields["scope"] as? NSNumber)?.uint8Value ?? (["Conversation": UInt8(0), "Server": UInt8(1)][fields["scope"] as? String ?? ""] ?? 0)) ?? .conversation
+        v.access = Tsugumi_Service_Access(rawValue: (fields["access"] as? NSNumber)?.uint8Value ?? (["Read": UInt8(0), "Write": UInt8(1), "Run": UInt8(2), "CardPermissions": UInt8(3), "Shell": UInt8(4)][fields["access"] as? String ?? ""] ?? 0)) ?? .read
+        v.scope = Tsugumi_Service_GrantScope(rawValue: (fields["scope"] as? NSNumber)?.uint8Value ?? (["Conversation": UInt8(0), "Server": UInt8(1)][fields["scope"] as? String ?? ""] ?? 0)) ?? .conversation
         v.reason = fields["reason"] as? String
         return (Tsugumi_Agent_RequestPayload.accessrequest.rawValue, v)
       case "AccessResolveRequest":
@@ -357,7 +370,7 @@ enum ServiceWire {
         v.requestId = fields["request_id"] as? String ?? ""
         v.allow = fields["allow"] as? Bool ?? false
         v.alsoAllow = (fields["also_allow"] as? [String] ?? []).compactMap { name in
-          ["Read": Tsugumi_Agent_Access.read, "Write": .write, "Run": .run][name]
+          ["Read": Tsugumi_Service_Access.read, "Write": .write, "Run": .run][name]
         }
         return (Tsugumi_Agent_RequestPayload.accessresolverequest.rawValue, v)
       case "AccessRevokeRequest":
@@ -368,19 +381,6 @@ enum ServiceWire {
         let v = Tsugumi_Agent_AccessListRequestT()
         v.conversationId = fields["conversation_id"] as? String
         return (Tsugumi_Agent_RequestPayload.accesslistrequest.rawValue, v)
-      case "DemoReadRequest":
-        let v = Tsugumi_Agent_DemoReadRequestT()
-        v.path = fields["path"] as? String ?? ""
-        return (Tsugumi_Agent_RequestPayload.demoreadrequest.rawValue, v)
-      case "VersionNoteRequest":
-        let v = Tsugumi_Agent_VersionNoteRequestT()
-        v.projectId = fields["project_id"] as? String ?? ""
-        v.commit = fields["commit"] as? String ?? ""
-        v.profile = fields["profile"] as? String ?? "desktop"
-        v.language = fields["language"] as? String ?? "ja"
-        v.anthropicKeyProfile = fields["anthropic_key_profile"] as? String
-        v.openaiKeyProfile = fields["openai_key_profile"] as? String
-        return (Tsugumi_Agent_RequestPayload.versionnoterequest.rawValue, v)
       case "ConversationSummarizeRequest":
         let v = Tsugumi_Agent_ConversationSummarizeRequestT()
         v.conversationId = fields["conversation_id"] as? String ?? ""
@@ -559,7 +559,7 @@ enum ServiceWire {
       out["accepted"] = v.accepted
       out["revoked"] = v.revoked
       return out
-    case let v as Tsugumi_Agent_UsageT:
+    case let v as Tsugumi_Service_UsageT:
       var out: [String: Any] = [:]
       out["inputTokens"] = v.inputTokens
       out["outputTokens"] = v.outputTokens
@@ -669,9 +669,9 @@ enum ServiceWire {
       out["requests"] = try v.requests.compactMap { try $0.map { try view($0) } }
       out["grants"] = try v.grants.compactMap { try $0.map { try view($0) } }
       return out
-    case let v as Tsugumi_Agent_DemoListT:
+    case let v as Tsugumi_Host_DemoPathsT:
       return v.paths
-    case let v as Tsugumi_Agent_TextResultT:
+    case let v as Tsugumi_Service_TextResultT:
       var out: [String: Any] = [:]
       out["text"] = v.text ?? ""
       out["usage"] = try v.usage.map { try view($0) }

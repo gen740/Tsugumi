@@ -16,7 +16,6 @@
 #include "tsugumi/protocol/tsugumi_generated.h"
 
 namespace tsugumi::host {
-namespace A = Tsugumi::Agent;
 namespace H = Tsugumi::Host;
 namespace R = Tsugumi::RPC;
 namespace json = agent::json;
@@ -52,10 +51,10 @@ Versions::Versions(sql::Db& db, ProjectRegistry& registry, Settings& settings,
       turns(&turns),
       scrub(std::move(scrub)) {}
 
-auto Versions::HandleAgent(const RequestIn& request, bool human,
-                           std::unique_lock<std::recursive_mutex>& lock)
+auto Versions::Note(const RequestIn& request, bool human,
+                    std::unique_lock<std::recursive_mutex>& lock)
     -> std::string {
-  const auto* r = A::GetMessage(request.frame->data())->payload_as_Request();
+  const auto* r = H::GetMessage(request.frame->data())->payload_as_Request();
   Human(human);
   const auto* p = r->value_as_VersionNoteRequest();
   const auto project = p->project_id()->str();
@@ -96,7 +95,7 @@ auto Versions::HandleAgent(const RequestIn& request, bool human,
   const auto factual =
       host::ChangeText(json::Text(note, "record_json"), english);
   const auto saved_summary = host::ReadSummary(root, commit, english);
-  A::TextResultT result;
+  Tsugumi::Service::TextResultT result;
   if (host_settings->VersionNoteMode(profile) == "mechanical") {
     result.text = factual;
   } else if (!saved_summary.empty()) {
@@ -151,13 +150,14 @@ auto Versions::HandleAgent(const RequestIn& request, bool human,
       host::StoreSummary(root, commit, english, result.text);
     }
   }
-  return wire::AgentReply(request.request_id, std::move(result));
+  return wire::HostReply(request.request_id, std::move(result));
 }
 
 auto Versions::HandleHost(const RequestIn& request, bool human,
                           std::unique_lock<std::recursive_mutex>& lock)
     -> std::string {
   const auto* r = H::GetMessage(request.frame->data())->payload_as_Request();
+  if (r->value_as_VersionNoteRequest()) return Note(request, human, lock);
   if (const auto* graph = r->value_as_HostVersionGraphRequest()) {
     const auto project = graph->project()->str();
     const bool english = Text(graph->language()) == "en";

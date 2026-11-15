@@ -261,7 +261,7 @@ auto ConversationStore::RememberResource(const std::string& id,
 
 auto ConversationStore::AuthorizeHistory(const std::string& id) -> void {
   for (const auto& resource : Resources(id))
-    if (!has_grant(resource, id, A::Access::Read))
+    if (!has_grant(resource, id, Tsugumi::Service::Access::Read))
       throw Failure("permission_denied",
                     "Historical content belongs to a resource whose "
                     "permission was revoked");

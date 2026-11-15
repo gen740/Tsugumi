@@ -65,7 +65,7 @@ import TsugumiRPC
         "path": project.standardizedFileURL.path])
       _ = try await CoreAgentClient.shared.call("ConversationCreateRequest", ["conversation_id": conversationID,
         "project_id": endpoint.projectId, "role": "worker"])
-      let provider = Tsugumi_Service_ProviderInputT()
+      let provider = Tsugumi_Host_ProviderInputT()
       provider.endpoint = "http://127.0.0.1:\(port)"
       provider.model = "fixture"
       provider.contextLimit = 6000

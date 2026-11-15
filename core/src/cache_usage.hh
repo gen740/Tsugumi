@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <condition_variable>
 #include <filesystem>
 #include <mutex>
@@ -35,7 +36,9 @@ class CacheUsage {
   std::string single_id_;
   std::mutex mu_;
   std::condition_variable cv_;
-  bool stopping_ = false;
+  // Read by a measurement in progress, so that stopping the service never
+  // waits for a walk over every project's scratch folders.
+  std::atomic<bool> stopping_ = false;
   bool refresh_ = true;
   Tsugumi::RPC::ProjectCacheUsageResultT result_;
   std::thread thread_;

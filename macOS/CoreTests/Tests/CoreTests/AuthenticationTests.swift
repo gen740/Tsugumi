@@ -49,7 +49,7 @@ import TsugumiRPC
     let fixture = try AuthenticationFixture()
     defer { fixture.stop() }
     let client = CoreAgentClient()
-    let p = Tsugumi_Service_ProviderInputT()
+    let p = Tsugumi_Host_ProviderInputT()
     p.apiKey = "NATIVE_SECRET_SENTINEL"
     let reply = try await client.call("ProviderSetRequest", ["profile": "native-test", "id": "anthropic",
       "provider": p, "ephemeral": true, "source": "keychain"])

@@ -6,6 +6,9 @@ include "tsugumi.fbs";
 namespace Tsugumi.Host;
 // Every optional list in this contract is empty when its vector is omitted.
 
+// Secret input is accepted only by the human-only Host ProviderSet request.
+table ProviderInput { endpoint:string; api_key:string; model:string; max_tokens:uint = 16384; context_limit:uint = 600000; }
+
 // Host settings are patched against a revision, never overwritten blindly.
 table Setting { key:string (required); value_json:string (required); }
 table SettingsGetRequest { profile:string (required); }
@@ -14,7 +17,7 @@ table Settings { revision:ulong; values:[Setting]; }
 // ephemeral source: env, keychain, or memory (omitted). The host selects env
 // before keychain before memory, then a stored key on Linux only. On macOS
 // persistent API-key writes are refused; clients save through the login Keychain.
-table ProviderSetRequest { profile:string (required); id:string (required); provider:Tsugumi.Service.ProviderInput; remove:bool; ephemeral:bool; source:string; }
+table ProviderSetRequest { profile:string (required); id:string (required); provider:ProviderInput; remove:bool; ephemeral:bool; source:string; }
 // Availability uses exactly the same key policy as model requests.
 table ProviderStatusRequest { profile:string (required); id:string (required); key_profile:string; }
 // Model choices for guide/summary are read from host settings and catalogs.
@@ -144,8 +147,7 @@ table DocumentMerge { merged_json:string (required); conflicts:[string]; }
 // Host policy owns the permission catalog. Unknown ids must still be displayed
 // verbatim by clients, and cannot become standing approvals implicitly.
 table PermissionKindsRequest { language:string; }
-table PermissionKind { id:string (required); label:string (required); icon:string (required); }
-table PermissionKinds { kinds:[PermissionKind]; }
+table PermissionKinds { kinds:[Tsugumi.Service.PermissionKind]; }
 
 // One app-wide native session ("desktop") or one session per Web host
 // ("web:<support directory>"), shared by every window. Language is presentation.
@@ -375,6 +377,12 @@ table HostVersionDiffRequest { project:string (required); commit:string (require
 table VersionDiff { text:string (required); truncated:bool; }
 table HostVersionGraphRequest { project:string (required); language:string; limit:uint = 500; }
 
+// Reference demos and version notes do not depend on a conversation.
+table DemoListRequest {}
+table DemoReadRequest { path:string (required); }
+table VersionNoteRequest { project_id:string (required); commit:string (required); profile:string (required); language:string (required); anthropic_key_profile:string; openai_key_profile:string; }
+table DemoPaths { paths:[string]; }
+
 union RequestPayload {
   VersionCommentsRequest,
   GuideGetRequest, GuideAdvanceRequest, HelloRequest:Tsugumi.Service.HelloRequest, EnvironmentRequest, HostRuntimeRequest, HostTerminalRequest, SettingsGetRequest, SettingsUpdateRequest, ProviderSetRequest, ProviderStatusRequest, SignInBeginRequest, SignInActionRequest, SignInStatusRequest,
@@ -383,7 +391,8 @@ union RequestPayload {
   LayoutArrangeRequest, LayoutUntangleRequest, LayoutValidateRequest, VersionCanvasRequest,
   FileFormatRequest, HostVersionGraphRequest, HostVersionDiffRequest,
   DocumentSubgraphRequest, DocumentMergeRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest,
-  ModelSelectionRequest
+  ModelSelectionRequest,
+  DemoListRequest, DemoReadRequest, VersionNoteRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -394,7 +403,8 @@ union ReplyPayload {
   LayoutProposal, LayoutValidated, VersionCanvas,
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds,
-  ModelSelection
+  ModelSelection,
+  DemoPaths, TextResult:Tsugumi.Service.TextResult
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

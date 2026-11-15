@@ -60,8 +60,9 @@ def test_credentials_are_host_only_inputs_and_absent_from_model_selection_and_re
     assert "profile:string (required)" in selection
     for secret in ("api_key", "access_token", "refresh_token", "credential", "endpoint"):
         assert secret not in selection
-    assert "api_key:string" in re.search(r"table ProviderInput \{([^}]+)\}", common).group(1)
-    assert "provider:Tsugumi.Service.ProviderInput" in host
+    assert "api_key:string" in re.search(r"table ProviderInput \{([^}]+)\}", host).group(1)
+    assert "provider:ProviderInput" in host
+    assert "ProviderInput" not in common and "ProviderInput" not in agent
     assert "provider:Tsugumi.Service.ProviderSelection" in agent
     replies = re.search(r"union ReplyPayload \{([^}]+)\}", host).group(1)
     assert "ProviderInput" not in replies and "CredentialToken" not in replies
@@ -79,3 +80,13 @@ def test_the_vm_gets_every_source_the_core_package_reads():
     missing = sorted(path for path in read
                      if not any(path == entry or path.startswith(entry + "/") for entry in shared))
     assert not missing, f"add to macOS/Container/vm-source.txt: {missing}"
+
+
+def test_the_core_test_package_gets_every_fixture_its_build_installs():
+    """tests/core/CMakeLists.txt installs fixtures from tests/fixtures; one that
+    nix/core-tests.nix does not list fails only in the Nix build."""
+    import re
+    wanted = set(re.findall(r"fixtures/([A-Za-z0-9_.-]+\.json)", (ROOT / "tests/core/CMakeLists.txt").read_text()))
+    listed = set(re.findall(r"\.\./tests/fixtures/([A-Za-z0-9_.-]+)", (ROOT / "nix/core-tests.nix").read_text()))
+    missing = sorted(wanted - listed)
+    assert not missing, f"add to nix/core-tests.nix: {missing}"

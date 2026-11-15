@@ -41,6 +41,7 @@ clangStdenv.mkDerivation {
       ../tests/run-isolated.py
       ../tests/fixtures/subgraph-edits.json
       ../tests/fixtures/merge-contract.json
+      ../tests/fixtures/service-contract.json
       (lib.fileset.fileFilter (
         file: file.name == "CMakeLists.txt" || file.hasExt "cmake" || file.hasExt "cc" || file.hasExt "hh"
       ) ../tests/core)
