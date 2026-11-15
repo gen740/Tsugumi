@@ -14,6 +14,10 @@ else()
   set(_test_project_schema ${TSUGUMI_GEN_DIR}/bfbs/tsugumi.bfbs)
 endif()
 
+# Also cover the daemon doubles when this directory builds against ci-core.
+add_compile_options(-Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough
+  -Wmissing-designated-field-initializers)
+
 # The real core serves its public RPC. Only the external Nix evaluator is
 # replaced: these targets compile its double and do not link tsugumi_nix_eval.
 # This is installed only by ci-core.

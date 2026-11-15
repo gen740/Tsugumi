@@ -1,4 +1,4 @@
-// swift-tools-version:6.0
+// swift-tools-version:6.2
 // Tsugumi macOS application (SwiftUI UI, RPC client, container launcher).
 import Foundation
 import PackageDescription
@@ -42,37 +42,44 @@ let package = Package(
     // macOS adapters for the shared host service.
     .target(
       name: "TsugumiAgentClient",
-      dependencies: ["TsugumiRPC", .product(name: "FlatBuffers", package: "flatbuffers")],
+      dependencies: ["TsugumiRPC", "TsugumiKeychainUI", .product(name: "FlatBuffers", package: "flatbuffers")],
       path: "Sources/AgentClient",
-      swiftSettings: [.swiftLanguageMode(.v5)]),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)]),
+    // The file-based Keychain has no supported replacement for its UI switch.
+    // The bridge leaves that one deprecated call visible as a warning.
+    .target(
+      name: "TsugumiKeychainUI", path: "Sources/KeychainUI",
+      cSettings: [.treatAllWarnings(as: .error)]),
     // Runs the standard flatc on protocol/*.fbs; output stays in .build.
+    // SwiftPM rejects settings on plugins; build-app and CI typecheck this
+    // target with warnings as errors through tools/check-plugin-warnings.sh.
     .plugin(name: "FlatcPlugin", capability: .buildTool(), path: "Plugins/FlatcPlugin"),
     .systemLibrary(name: "TsugumiClientC", path: "Sources/ClientC"),
     .target(
       name: "TsugumiRPC",
       dependencies: ["TsugumiClientC", .product(name: "FlatBuffers", package: "flatbuffers")],
       path: "Sources/RPC",
-      swiftSettings: [.swiftLanguageMode(.v5)],
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)],
       linkerSettings: [.unsafeFlags(["-L", clientLib]), .linkedLibrary("curl"), .linkedLibrary("c++")],
       plugins: ["FlatcPlugin"]),
     .target(
       name: "TsugumiLauncher",
       dependencies: ["TsugumiAgentClient", "TsugumiRPC", .product(name: "FlatBuffers", package: "flatbuffers")],
       path: "Sources/Launcher",
-      swiftSettings: [.swiftLanguageMode(.v5)]),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)]),
     // Drives the shared VM without the app (tests); needs the virtualization entitlement.
     .executableTarget(
       name: "TsugumiVMCtl",
       dependencies: ["TsugumiLauncher"],
       path: "Sources/VMCtl",
-      swiftSettings: [.swiftLanguageMode(.v5)]),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)]),
     // The signed VM adapter driven by hostd;
     // needs the virtualization entitlement.
     .executableTarget(
       name: "TsugumiVMHost",
       dependencies: ["TsugumiLauncher", "TsugumiRPC", .product(name: "FlatBuffers", package: "flatbuffers")],
       path: "Sources/VMHost",
-      swiftSettings: [.swiftLanguageMode(.v5)]),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)]),
     // Grammars with no Swift package of their own (Sources/Grammars/README.md).
     .target(
       name: "TreeSitterNix", path: "Sources/Grammars/TreeSitterNix",
@@ -117,14 +124,15 @@ let package = Package(
       path: "Sources/App",
       exclude: ["Resources/TreeSitter/SOURCES.md"],
       resources: [.copy("Resources/TreeSitter")],
-      swiftSettings: [.swiftLanguageMode(.v5)]),
-    .target(name: "TsugumiTestSupport", path: "Tests/Support"),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)]),
+    .target(name: "TsugumiTestSupport", path: "Tests/Support",
+            swiftSettings: [.treatAllWarnings(as: .error)]),
     // The app's own logic. The model, RPC, Agent and launcher tests are the
     // package CoreTests/ (they build without the app).
     .testTarget(
       name: "TsugumiAppTests",
       dependencies: ["TsugumiRPC", "TsugumiLauncher", "TsugumiApp", "TsugumiAgentClient", "TsugumiTestSupport"],
       path: "Tests/TsugumiAppTests",
-      swiftSettings: [.swiftLanguageMode(.v5)]),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)]),
   ]
 )

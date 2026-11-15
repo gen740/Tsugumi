@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import TsugumiKeychainUI
 import TsugumiRPC
 
 /// A page a web search found or a reply cites.
@@ -224,8 +225,8 @@ public enum Keychain {
     gate.lock()
     defer { gate.unlock() }
     guard mayAsk == 0 else { return nil }
-    SecKeychainSetUserInteractionAllowed(false)
-    defer { SecKeychainSetUserInteractionAllowed(true) }
+    TsugumiSetKeychainInteractionAllowed(false)
+    defer { TsugumiSetKeychainInteractionAllowed(true) }
     var out: CFTypeRef?
     guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess, let d = out as? Data else { return nil }
     return String(data: d, encoding: .utf8)

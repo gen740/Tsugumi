@@ -51,6 +51,7 @@ swiftenv=(env -i HOME="$HOME" TSUGUMI_CLIENT_LIB_DIR="$repo/build-host/client" P
 # Contents/Resources. The native build system's looks only next to the app
 # and in the build folder, so its app crashes on any other Mac.
 build_opts=(-c release --build-system swiftbuild --arch arm64)
+"${swiftenv[@]}" bash "$repo/macOS/tools/check-plugin-warnings.sh"
 (cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --product Tsugumi)
 (cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --product tsugumi-vmhost)
 bin="$(cd "$repo/macOS" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
