@@ -118,7 +118,7 @@ TEST(AgentCatalog, ExposesExactlyTheSharedRequestList) {
     const auto properties = json::Object(
         json::Get(json::Object(tool->spec.input_schema), "properties"));
     for (const auto *owned : {"origin", "op_id", "approved_permissions", "check_permissions",
-                               "read_only", "hide_credentials", "no_project_socket"})
+                               "read_only", "hide_credentials", "no_project_socket", "transfers", "working_directory", "writable_paths", "mounts", "output_prefix", "workspace_only", "protected_paths"})
       EXPECT_FALSE(properties.contains(owned));
     EXPECT_TRUE(tool->mutating);
     EXPECT_EQ(tool->has_origin, std::string_view(name) != "project_shell");

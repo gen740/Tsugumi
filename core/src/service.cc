@@ -970,6 +970,17 @@ void Service::save(RequestIn& req) {
   try {
     require_mutation(r->base_rev(), r->op_id());
     auto changes = decode_changes(r->changes());
+    uint64_t transferred = 0;
+    if (r->transfers()) for (const auto* transfer : *r->transfers()) {
+      ChangeIn change{};
+      change.kind = ChangeIn::Kind::PutSource;
+      change.path = transfer->path()->str();
+      if (transfer->base_hash()) change.base_hash = transfer->base_hash()->str();
+      fs::stream_beneath(opts_.root, transfer->from()->str(), (12u << 20) - transferred,
+                         [&](std::string_view chunk) { change.bytes.append(chunk); });
+      transferred += change.bytes.size();
+      changes.push_back(std::move(change));
+    }
     auto base = store_->current();
     if (*r->base_rev() != base->rev) {
       FailureData f = FailureData::make(FailureKind::revision_conflict, "the document changed since base_rev");

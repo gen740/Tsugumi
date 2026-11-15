@@ -54,6 +54,10 @@ struct Tools {
   auto ProjectCall(const std::string& project, const std::string& name,
                    const std::string& arguments, std::stop_token stop = {})
       -> std::string;
+  auto FileOperation(const std::string& conversation, const std::string& project,
+                     const std::string& name, json::Members& args,
+                     const std::string& operation, HelperScope* boundary,
+                     std::stop_token stop, std::vector<std::string>& resources) -> std::string;
   auto AnnotateSave(const std::string& operation, const std::string& result)
       -> std::string;
   auto RawProjectCall(const std::string& project, const std::string& name,

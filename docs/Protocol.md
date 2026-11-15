@@ -41,7 +41,7 @@ There are 46 requests.
 | [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. Drafts have no ports: use {"card":"<id>","port":""} for each Draft wire end, with any number in or out. Implementing one requires SetProject in this same save rebinding every incoming end to a real input and every outgoing end to a real output (and boundary endpoints in its project's tsugumi.json). Even a single possible port must be stated. Ends on remaining Drafts stay empty. A non-existent port on a non-Draft Card is validation_failed, naming the wire. |
 | [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. Permission comparison is selected explicitly, independently of origin. |
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
-| [`ProjectShell`](#projectshell) | ProjectShellResult | Runs in the project VM as the project user, with the project directory as cwd. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream is capped at 262144 bytes. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Isolation is selected explicitly and applied independently of origin. A requested isolation mechanism that is unavailable fails closed. |
+| [`ProjectShell`](#projectshell) | ProjectShellResult | Runs as the project user in a staged Card source view. Host selects readable/writable Cards; successful edits use a validated Agent save. Read-granted folders are read-only at attached/<SHA-256(path)[0:16]>; scratch/ persists. Structural documents, contract schemas and .tsugumi are not shell-editable. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream returns at most 262144 bytes (head and tail), with total sizes and saved full output. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Isolation is selected explicitly and applied independently of origin. A requested isolation mechanism that is unavailable fails closed. |
 | [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Only while no run or SDK job is active. |
 | [`ProjectCacheUsage`](#projectcacheusage) |  | Cached shared-store measurement; never triggers a store traversal on the RPC lane. |
 | [`RunScratchDelete`](#runscratchdelete) | RunScratchDeleteResult | Deletes only the listed scratch folders from the usage report. Refuses active runs, pending remote results and the latest run. |
@@ -81,9 +81,10 @@ No fields.
 | `base_rev` | `uint64` |  |  |
 | `op_id` | `string` | yes |  |
 | `origin` | `string` | yes |  |
-| `changes` | `[DocumentChange]` | yes |  |
+| `changes` | `[DocumentChange]` |  |  |
 | `approved_permissions` | `[string]` |  | Permission widenings explicitly approved by the caller, as named by approval_required. |
 | `check_permissions` | `bool` |  | Compare the proposed permissions with the accepted document and reject every widening absent from approved_permissions, regardless of origin. |
+| `transfers` | `[SourceTransfer]` |  | Host-prepared byte transfers, at most 12 MiB together. |
 
 ### ProjectReload
 
@@ -114,6 +115,12 @@ No fields.
 | `read_only` | `bool` |  | Make the filesystem read-only except private diagnostic scratch. |
 | `hide_credentials` | `bool` |  | Hide the control directory, home credentials and shared temporary files. |
 | `no_project_socket` | `bool` |  | Block Unix socket connections (except macOS name resolution). On macOS, also block local IP endpoints, session Mach services and outside signals. |
+| `working_directory` | `string` |  | Explicit workspace relative to the project root; absent uses the project. |
+| `writable_paths` | `[string]` |  | Writable subtrees relative to working_directory, with a read-only root. |
+| `mounts` | `[ShellMount]` |  | Read-only mounts at attached/<name>; native paths or VM chat shares. |
+| `output_prefix` | `string` |  | Persist full stdout/stderr below this project-relative prefix. |
+| `workspace_only` | `bool` |  | Hide the original project while exposing only the workspace. |
+| `protected_paths` | `[string]` |  | Read-only files inside writable subtrees (including reserved placeholders). |
 
 ### ProjectCacheClear
 
@@ -144,7 +151,7 @@ No fields.
 | --- | --- | --- |
 | [`ProjectFileList`](#projectfilelist) | SourcePage | depth = 0 (0..8), include_directories = false, limit = 100. |
 | [`ProjectFileStat`](#projectfilestat) | SourceInfo |  |
-| [`ProjectFileRead`](#projectfileread) | FileContent | offset = 0, limit_bytes = 262144 (1..1 MiB). |
+| [`ProjectFileRead`](#projectfileread) | FileContent | offset = 0, limit_bytes = 262144 (1..1 MiB). Use project_copy to move bytes, or project_shell to examine large files. |
 
 ### ProjectFileList
 

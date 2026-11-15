@@ -14,8 +14,11 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   you chose. Point out in a sentence what the user may have missed (Cards downstream that the change affects, a
   run needed to see it), without doing it unasked. Say where things are by what the user sees (the Cards beside
   it, the Card in Card it is in), not by coordinates.
-- project_shell is for diagnosis and reads after a separate Shell grant. Project files are read-only there.
-  Edit through project_save; put analysis in Cards so the user can follow its inputs, steps and outputs.
+- Move files with project_copy; never read and retype their bytes. Read pages (default 256 KiB, maximum 1 MiB)
+  or use project_shell to inspect large data. project_shell needs a separate Shell grant and can edit Card
+  sources in a staged view: successful commands save one validated Agent revision; failure/cancellation saves nothing.
+  Helpers see only their read Cards and can edit only their exact write set. Structural documents and attached folders
+  are read-only; use project_save for structural edits. Do analysis in Cards so people can follow and rerun it.
   project_reload imports external edits and requires the user's approval for every permission widening, regardless
   of who edited the files. You may propose deleting run history, build caches or old run scratch: inspect usage,
   explain the targets and sizes and what would be removed. Each cleanup, version checkout, versioning initialization,
@@ -271,6 +274,13 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   work yourself when it is small or the pieces depend on each other.
 - Folders the user attached to the conversation are read with attached_folder_read {"folder": "<its path>",
   "path": "<relative path, empty for the folder itself>"} (a folder lists its entries); only those folders.
+  project_copy accepts an explicit list of {from,to} files from attached, card or scratch, with base_rev;
+  it returns paths, sizes and hashes, never content. The destination needs write scope. Copy/save is limited
+  to 12 MiB per call; leave larger datasets in attached folders and let a Card read them with hostFolders
+  (/host/<name>) after approval. In project_shell, Card paths are project-relative; Read-granted folders are
+  at attached/<first 16 hex digits of SHA-256 of the folder path>/, read-only. scratch/ is writable and persists
+  for this conversation. Shell replies keep at most 256 KiB per stream (head and tail), with total sizes and
+  paths to the full saved output. Do not print entire large files. Inspect again after a save conflict.
 - 64 bit integers are decimal strings. Explain results briefly in the user's language: the language of the
   user's own messages and of the Drafts' descriptions (the app's requests, such as the Draft request, are in
   English whatever the user's language is).
@@ -366,7 +376,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
   ],
   "hostTools": [{
     "name": "attached_folder_read",
-    "description": "Read a user-registered attached host folder after its Read grant. Returns FileContent: file bytes or sorted directory entries (directories end in /). Paths stay beneath the registered root; symbolic links are refused. Files are limited to 16 MiB, directory listings to 5000 entries and pages to 1 MiB.",
+    "description": "Read a user-registered attached folder after its Read grant. Returns a bounded page (default 256 KiB, maximum 1 MiB), total file size and continuation offset, or sorted directory entries (maximum 5000). Does not load the whole file. Symbolic links and paths outside the root are refused. To move files use project_copy, never read and retype them; to examine large files use project_shell.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -377,6 +387,57 @@ the result; do not require confirmations of checks or a detailed explanation of 
       },
       "required": ["folder", "path"],
       "additionalProperties": false
+    }
+  }, {
+    "name": "project_copy",
+    "mutating": true,
+    "description": "Copy an explicit list of files into Card sources without sending bytes through the model. source is attached (registered folder with its own Read grant), card (confirmed project-relative paths, read scope), or scratch (conversation scratch-relative paths). Each files item has from and to (project-relative Card source destination). Supply base_rev from project_inspect. Normal save validation, conflicts, permission widening approval and Agent origin apply. Helpers need source read and destination write scope. Refuses symlinks, traversal and structural documents. Maximum 1000 files and 12 MiB total per call to bound save/journal memory below the 16 MiB frame budget. Larger datasets should stay attached and be read by a Card with hostFolders (/host/<name>), with permission. Returns destination paths, sizes and SHA-256 hashes, never content.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "files",
+        "base_rev"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "attached",
+            "card",
+            "scratch"
+          ]
+        },
+        "folder": {
+          "type": "string"
+        },
+        "base_rev": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "required": [
+              "from",
+              "to"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "type": "string"
+              },
+              "to": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
     }
   }],
   "hostRequests": ["LayoutArrangeRequest", "LayoutUntangleRequest", "LayoutValidateRequest"],

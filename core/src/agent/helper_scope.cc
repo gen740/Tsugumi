@@ -196,6 +196,8 @@ auto HelperScope::Check(const std::string &tool, const json::Members &args,
                         const Reader &read) const -> void {
   if (!scoped_)
     return;
+  if (tool == "project_copy" || tool == "project_shell" || tool == "attached_folder_read")
+    return;  // Tools::FileOperation checks each materialized source/destination.
   if (tool == "project_inspect" || tool == "output_types" ||
       tool == "project_file_format")
     return;

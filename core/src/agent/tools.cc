@@ -485,7 +485,8 @@ auto Tools::ScopedResult(HelperScope& scope, const ToolCall& call,
   scope.Completed(call.name, json::Object(call.arguments), result.text, read);
   if (call.name == "project_inspect")
     result.text = scope.Inspect(result.text, read);
-  else if (catalog.Find(call.name))
+  else if (catalog.Find(call.name) && call.name != "project_copy" &&
+           call.name != "project_shell")
     scope.CheckResult(result.text, read);
   return result;
 }
@@ -691,7 +692,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   const bool changes_project =
       (!execution && (spec->mutating || spec->approval_required)) ||
       call.name == "card_id";
-  if (changes_project)
+  if (changes_project || call.name == "project_shell")
     access_service.Require(project, conversation, Tsugumi::Service::Access::Write, wait, stop,
                            "Change project content", authorization);
   if (execution)
@@ -699,15 +700,22 @@ auto Tools::ExecuteTool(const std::string& conversation,
                            "Execute or cancel project work", authorization);
   if (c.role == "guide" && (changes_project || execution))
     throw Failure("permission_denied", "The guide cannot change projects");
-  if (call.name == "project_shell")
+  if (call.name == "project_shell") {
+    const bool english = host_settings->Language(providers->Profile(conversation)) == "en";
+    const std::string reason = english
+        ? "Execute shell commands as the project user in its environment. "
+          "Commands can change writable Card source files through a validated save. "
+          "Attached folders and structural documents are read-only. Command: "
+        : "プロジェクトの実行環境でシェルコマンドを実行します。"
+          "書き込みが許可された Card のソースを編集し、検証して保存できます。"
+          "添付フォルダと構造文書は読み取り専用です。コマンド: ";
     access_service.Require(
         project, conversation, Tsugumi::Service::Access::Shell, wait, stop,
-        "Execute shell commands as the project user inside its VM. "
-        "Commands diagnose and read; project files are read-only. Command: " +
-            json::Text(args, "command"),
-        {});
+        reason + json::Text(args, "command"), {});
+  }
   std::string folder_resource;
-  if (call.name == "attached_folder_read") {
+  if (call.name == "attached_folder_read" ||
+      (call.name == "project_copy" && json::Text(args, "source") == "attached")) {
     {
       std::lock_guard lock(mutex);
       auto folder =
@@ -723,7 +731,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
   }
   for (const auto* field :
        {"origin", "approved_permissions", "check_permissions", "read_only",
-        "hide_credentials", "no_project_socket"})
+        "hide_credentials", "no_project_socket", "transfers", "working_directory",
+        "writable_paths", "mounts", "protected_paths", "workspace_only", "output_prefix"})
     args.erase(field);
   if (call.name == "run_history_delete") {
     args.erase("run_ids");
@@ -813,6 +822,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   // An interrupted mutation can only be resolved by its durable receipt.
   // Reissuing it after a daemon restart may execute it a second time.
   std::string result;
+  std::vector<std::string> file_resources;
   if (interrupted && spec->mutating) {
     result = ProjectCall(
         project, "operation_get",
@@ -830,7 +840,9 @@ auto Tools::ExecuteTool(const std::string& conversation,
     if (call.name == "version_graph")
       args["language"] = json::Quote(
           host_settings->Language(providers->Profile(conversation)));
-    if (call.name == "attached_folder_read") {
+    if (call.name == "project_copy" || call.name == "project_shell") {
+      result = FileOperation(conversation, project, call.name, args, op_id, boundary, stop, file_resources);
+    } else if (call.name == "attached_folder_read") {
       try {
         result = host::ReadAttachedFolder(json::Text(args, "folder"), args);
       } catch (const host::FolderReadFailure& error) {
@@ -846,6 +858,15 @@ auto Tools::ExecuteTool(const std::string& conversation,
       }
     } else {
       result = ProjectCall(project, call.name, json::Encode(args), stop);
+    }
+  }
+  if (call.name == "project_file_read") {
+    auto page = json::Object(result);
+    if (json::Text(page, "reply") == "FileContent") {
+      auto value = json::Object(json::Get(page, "value", "{}"));
+      value["hint"] = json::Quote("Use project_copy to move files without reading them, or project_shell to examine large files. Reads default to 256 KiB; maximum 1 MiB.");
+      page["value"] = json::Encode(value);
+      result = json::Encode(page);
     }
   }
   const auto envelope = json::Object(result);
@@ -884,11 +905,31 @@ auto Tools::ExecuteTool(const std::string& conversation,
         receipt.bind(1, op_id).bind(2, conversation).bind(3, call.id).run();
         tx.commit();
       }
-      result = ProjectCall(project, call.name, json::Encode(args), stop);
+      result = ProjectCall(project, (call.name == "project_copy" || call.name == "project_shell")
+                                        ? "project_save" : call.name, json::Encode(args), stop);
       error = json::Text(json::Object(result), "reply") == "Failure";
     }
   }
   if (call.name == "project_save") result = AnnotateSave(op_id, result);
+  if (call.name == "project_copy" || call.name == "project_shell") {
+    // This also applies to receipt recovery. File operations expose only
+    // their own source changes, never another Card's resolution/diagnostics.
+    auto envelope = json::Object(result);
+    auto value = json::Object(json::Get(envelope, "value", "{}"));
+    auto compact_save = [](json::Members save) {
+      if (save.contains("delta")) {
+        auto delta = json::Object(save.at("delta"));
+        delta.erase("resolution");
+        delta.erase("diagnostics");
+        save["delta"] = json::Encode(delta);
+      }
+      return save;
+    };
+    if (json::Text(envelope, "reply") == "SaveResult") value = compact_save(value);
+    if (value.contains("save")) value["save"] = json::Encode(compact_save(json::Object(value.at("save"))));
+    envelope["value"] = json::Encode(value);
+    result = json::Encode(envelope);
+  }
   if (boundary && boundary->scoped() && call.name == "card_id" && !error) {
     // Keep creation provenance with this helper's existing durable receipt,
     // rather than relying on a tool call remaining in compacted messages.
@@ -909,6 +950,9 @@ auto Tools::ExecuteTool(const std::string& conversation,
             Tsugumi::Service::Access::Read))
       throw Failure("permission_denied",
                     "Access was revoked while the operation was running");
+    for (const auto& resource : file_resources)
+      if (!access_service.HasGrant(resource, conversation, Tsugumi::Service::Access::Read))
+        throw Failure("permission_denied", "Folder access was revoked during the operation");
     conversations->RememberResource(
         conversation, authorization.empty() ? project : authorization);
     if (!folder_resource.empty()) {
@@ -938,6 +982,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   std::vector<std::string> resources{authorization.empty() ? project
                                                            : authorization};
   if (!folder_resource.empty()) resources.push_back(folder_resource);
+  resources.insert(resources.end(), file_resources.begin(), file_resources.end());
   return ToolOutput(result, error, std::move(resources));
 }
 

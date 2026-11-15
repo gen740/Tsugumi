@@ -55,8 +55,11 @@ TEST_F(AttachedFolderTest, RejectsTraversalAndSymlinksAtEveryComponent) {
         << path;
 }
 TEST_F(AttachedFolderTest, BoundsFilesAndPageSizesAndRejectsSpecialFiles) {
-  std::filesystem::resize_file(root / "note.txt", (16u << 20) + 1);
-  EXPECT_THROW(Read({{"path", "\"note.txt\""}}), FolderReadFailure);
+  std::filesystem::resize_file(root / "note.txt", 200u << 20);
+  const auto page = Read({{"path", "\"note.txt\""}});
+  EXPECT_EQ(json::Text(page, "size_bytes"), std::to_string(200u << 20));
+  EXPECT_NE(json::Get(page, "bytes").find("base64"), std::string::npos);
+  EXPECT_EQ(json::Text(page, "next_offset"), "262144");
   ASSERT_EQ(::mkfifo((root / "fifo").c_str(), 0600), 0);
   EXPECT_THROW(Read({{"path", "\"fifo\""}}), FolderReadFailure);
   EXPECT_THROW(Read({{"path", "\"\""}, {"limit_bytes", "1048577"}}),
