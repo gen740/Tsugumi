@@ -1,4 +1,4 @@
-#include "worker_proc.hh"
+#include "tsugumi/workerd/worker_proc.hh"
 
 #include <fcntl.h>
 #include <limits.h>
@@ -10,6 +10,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <stdexcept>
 #include <fstream>
 #include <system_error>
 #ifdef __APPLE__
@@ -17,13 +18,13 @@
 #endif
 
 #include "tsugumi/protocol/worker_generated.h"
-#include "store.hh"
 #include "util/fs.hh"
-#include "util/staging.hh"
+#include "tsugumi/workerd/staging.hh"
 #include "util/text.hh"
 #include "util/log.hh"
 #include "util/process.hh"
 #include "wire.hh"
+#include "tsugumi/workerd/frame.hh"
 
 #ifndef TSUGUMI_BWRAP
 #define TSUGUMI_BWRAP ""
@@ -233,13 +234,13 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     args.push_back(flag);
     args.push_back(path.string());
   };
-  script("--pre", sp.build.pre_run, "pre.sh");
-  if (sp.build.bash) script("--run", *sp.build.bash, "run.sh");
-  script("--post", sp.build.post_run, "post.sh");
-  if (!sp.build.views.empty()) args.insert(args.end(), {"--views", sp.build.views});
-  if (sp.build.package) {
+  script("--pre", sp.program.pre_run, "pre.sh");
+  if (sp.program.bash) script("--run", *sp.program.bash, "run.sh");
+  script("--post", sp.program.post_run, "post.sh");
+  if (!sp.program.views.empty()) args.insert(args.end(), {"--views", sp.program.views});
+  if (sp.program.package) {
     args.push_back("--package");
-    args.push_back(*sp.build.package);
+    args.push_back(*sp.program.package);
   }
   args.push_back("--bash");
   args.push_back(sp.bash);
@@ -528,7 +529,7 @@ WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id,
     while (rbuf.size() >= 4) {
       uint32_t len;
       std::memcpy(&len, rbuf.data(), 4);
-      if (len == 0 || len > kMaxFrameBytes) {
+      if (len == 0 || len > workerd::kMaxWorkerFrameBytes) {
         terminate();
         outcome.failure = FailureData::make(FailureKind::worker_failed, "corrupt frame from worker");
         return outcome;
@@ -595,7 +596,7 @@ WorkerOutcome WorkerProc::call(const std::string& frame, uint64_t call_id,
 }
 
 std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const CardPath& card,
-                              uint64_t invocation, const std::vector<Value>& inputs,
+                              uint64_t invocation, std::span<const Value> inputs,
                               const std::string& params_bfbs, const std::string& params_root,
                               const std::string& params, const std::vector<types::PortType>& outputs,
                               const std::string& work, const std::string& tmp, const std::string& out,
@@ -640,7 +641,7 @@ std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const
   mb.add_value_type(W::WorkerPayload::WorkerCall);
   mb.add_value(call.Union());
   W::FinishWorkerMessageBuffer(b, mb.Finish());
-  if (b.GetSize() > kMaxFrameBytes)
+  if (b.GetSize() > workerd::kMaxWorkerFrameBytes)
     throw Failed(FailureKind::resource_limit, "the worker call exceeds 16 MiB");
   return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
 }

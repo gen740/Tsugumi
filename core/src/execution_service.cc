@@ -1,22 +1,16 @@
 #include "execution_service.hh"
 
-#include <fcntl.h>
-#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
-#include <algorithm>
-#include <cerrno>
 #include <chrono>
-#include <cstring>
-#include <system_error>
 
 #include "history.hh"
 #include "run_scratch.hh"
 #include "service.hh"
 #include "store.hh"
 #include "util/crypto.hh"
-#include "util/staging.hh"
+#include "tsugumi/workerd/worker_execution.hh"
 #include "tsugumi/workerd/log.hh"
 
 namespace tsugumi {
@@ -25,22 +19,6 @@ namespace {
 
 // The unprivileged identity for Card processes.
 constexpr uid_t kCardUid = 65534;
-
-// Open before calling the worker, then traverse relative to this trusted
-// handle. A live Card child may rename entries at any point in the copy.
-class StagingHandle {
- public:
-  explicit StagingHandle(const std::filesystem::path& path)
-      : StagingHandle(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)) {}
-  explicit StagingHandle(int fd) : fd_(fd) {
-    if (fd_ < 0) throw Failed(FailureKind::output_invalid, "cannot open worker staging directory");
-  }
-  ~StagingHandle() { ::close(fd_); }
-  StagingHandle(const StagingHandle&) = delete;
-  auto get() const -> int { return fd_; }
- private:
-  int fd_;
-};
 
 class PreparedNativeExecution final : public PreparedExecution {
  public:
@@ -71,7 +49,6 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   const Node& node = request.node;
   const CardBuild& build = request.build;
   InvocationSummaryData& s = request.summary;
-  ExecutionResult result;
 
   s.environment_id = build.environment.id;
   s.build_cached = build.cached;
@@ -98,7 +75,7 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   // The shell and PATH are the definition's (the manifest's), so they are in
   // the recorded environment and do not change with this build of the core.
   sp.bash = build.shell;
-  sp.build = build;
+  sp.program = {build.package, build.bash, build.pre_run, build.post_run, build.views};
   sp.sandbox = node.settings.sandbox;
   sp.uid = uid;
   sp.gid = uid;
@@ -136,7 +113,6 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
   const bool reuse = node.settings.reuse_worker;
   const auto worker_card = card_key + "|" + std::to_string(build.implementation_index);
   auto lease = workers_.acquire(worker_card, key, sp, reuse);
-  WorkerProc& worker = *lease.worker;
   s.worker_reused = lease.reused;
   if (!lease.replaced.empty() && request.log)
     request.log(LogStream::standard_error, "Resident worker state started fresh: " + lease.replaced + ".\n");
@@ -145,44 +121,33 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
       [sink = request.log](uint64_t stream, const std::string& text) {
         if (sink) sink(static_cast<LogStream>(stream), text);
       }, request.log_limit_bytes);
-  // A transfer/staging error does not discard a living resident's state.
-  // If the call itself throws, its protocol state is unknown: end the worker.
-  bool between_calls = true;
-  auto return_worker = [&] {
-    if (result.outcome.failure) {
-      const auto kind = result.outcome.failure->kind;
-      const std::string reason = kind == FailureKind::cancelled ? "the previous call was cancelled" :
-                                 kind == FailureKind::timeout ? "the previous call exceeded its deadline" :
-                                 worker.alive() ? "the previous call failed" : "the resident worker died";
-      workers_.release(worker_card, key, std::move(lease.worker), false, reason);
-      return;
-    }
-    if (worker.alive()) worker.clear_scratch();
-    workers_.release(worker_card, key, std::move(lease.worker), reuse);
+  workerd::Invocation invocation;
+  invocation.run_id = s.run_id;
+  invocation.card = node.path;
+  invocation.number = s.invocation;
+  invocation.inputs = request.inputs;
+  invocation.outputs = node.outputs;
+  invocation.prepare_params = [&] {
+    const auto ptype = NixRunner::params_type(node);
+    return workerd::InvocationParameters{ptype->bfbs, ptype->root_type,
+        NixRunner::params_buffer(node), NixRunner::params_json(node, false)};
   };
-  try {
-    // work/ and tmp/ are the worker's own (local, emptied between calls);
-    // only declared File/Directory outputs
-    // are copied into the invocation's out/ for downstream Cards/artifacts.
-    bool needs_out = false;
-    for (const auto& o : node.outputs) needs_out |= o.kind != PortKind::FlatBuffer;
-    const std::filesystem::path& dir = request.directory;
-    const std::string work = worker.work_dir();
-    const std::string tmp = worker.tmp_dir();
-    std::string out;
-    if (needs_out) {
-      std::filesystem::path d = dir / "out";
-      std::filesystem::create_directories(d);
-      if (::geteuid() == 0 && worker_uid_on_host() &&
-          ::chown(d.c_str(), kCardUid, kCardUid) != 0)
-        throw Failed(FailureKind::worker_failed,
-                     "chown " + d.string() + ": " + std::strerror(errno));
-      out = d.string();
-    }
-
-    // One fixed read-only mount per worker preserves reuse across input paths.
-    // Copy through the core's no-symlink traversal, not through Card-controlled
-    // links or hard links. Only this invocation's File / Directory bytes enter it.
+  invocation.path = build.path;
+  invocation.worker_binary = sp.worker_binary;
+  invocation.output_directory = request.directory / "out";
+  if (::geteuid() == 0 && worker_uid_on_host()) invocation.output_owner = std::make_pair(kCardUid, kCardUid);
+  invocation.cancel = &request.cancel;
+  if (node.settings.timeout_seconds) invocation.timeout_ms = *node.settings.timeout_seconds * 1000;
+  invocation.deadline_grace = std::chrono::milliseconds(500);
+  invocation.log = [invocation_log](LogStream stream, const std::string& text) {
+    invocation_log->append(static_cast<uint64_t>(stream), text);
+  };
+  invocation.finish_logs = [invocation_log] { invocation_log->finish(); };
+  invocation.display = request.display;
+  invocation.on_timing = [&](int64_t begin, int64_t end) { request.on_timing(begin, end); };
+  // Input storage belongs to the project; only the copied values cross the
+  // worker boundary. A fixed read-only mount preserves resident reuse.
+  invocation.stage_inputs = [&](WorkerProc& worker) {
     auto inputs = request.inputs;
     for (size_t i = 0; i < inputs.size(); ++i) {
       if (request.cancel.load()) throw Failed(FailureKind::cancelled, "staging inputs cancelled");
@@ -191,117 +156,10 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
       std::filesystem::create_directories(destination);
       inputs[i] = service_.keep_file_value(inputs[i], destination, request.cancel);
     }
-
-    const std::string recorded_out = out;
-    if (!out.empty()) {
-      result.out_alias = std::make_pair(worker.out_dir(), out);
-      out = worker.out_dir();
-    }
-
-    auto ptype = NixRunner::params_type(node);
-    std::string params = NixRunner::params_buffer(node);
-    std::vector<std::pair<std::string, std::string>> env = {
-        {"PATH", build.path},
-        {"HOME", work},
-        {"LANG", "C.UTF-8"},
-        {"TSUGUMI_RUN_ID", s.run_id},
-        {"TSUGUMI_CARD", card_key},
-        {"TSUGUMI_INVOCATION", std::to_string(s.invocation)},
-        {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(node, false)},
-        {"TSUGUMI_WORKER", sp.worker_binary},
-    };
-    std::optional<uint64_t> deadline_ms;
-    std::optional<std::chrono::steady_clock::time_point> deadline;
-    if (node.settings.timeout_seconds) {
-      deadline_ms = *node.settings.timeout_seconds * 1000;
-      deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(*deadline_ms + 500);
-    }
-    uint64_t call_id = worker.next_call_id();
-    std::string frame = worker_call_frame(call_id, s.run_id, node.path, s.invocation, inputs,
-                                          ptype->bfbs, ptype->root_type, params, node.outputs, work, tmp, out, env,
-                                          deadline_ms);
-    // Logs and displays of this call belong to this run and invocation.
-    worker.set_logs([invocation_log](LogStream stream, const std::string& text) {
-      invocation_log->append(static_cast<uint64_t>(stream), text);
-    });
-    StagingHandle output_directory(worker.out_dir());
-    int64_t t0 = now_ms();
-    between_calls = false;
-    result.outcome = worker.call(frame, call_id, &request.cancel, deadline, request.display);
-    between_calls = true;
-    worker.set_logs(nullptr);
-    invocation_log->finish();
-    request.on_timing(t0, now_ms());
-    // Forwarded inputs retain their recorded path, not the worker's temporary
-    // staging path. All other output paths go through normal output validation.
-    for (auto& [name, bytes] : result.outcome.outputs) {
-      const auto* port = node.output(name);
-      if (!port || port->kind == PortKind::FlatBuffer || !types::verify(*port->type, bytes)) continue;
-      Value value{name, port->kind, port->type, bytes, {}};
-      for (size_t i = 0; i < inputs.size(); ++i)
-        if (inputs[i].kind == value.kind && path_value(inputs[i]) == path_value(value)) {
-          bytes = with_path(value, *path_value(request.inputs[i])).bytes;
-          break;
-        }
-    }
-
-    if (!result.outcome.failure && !recorded_out.empty()) {
-      // Only declared outputs cross the worker boundary. Work/tmp and unused
-      // output entries are disposable staging, not implicit output trees.
-      for (const auto& [name, bytes] : result.outcome.outputs) {
-        const auto* port = node.output(name);
-        if (!port || port->kind == PortKind::FlatBuffer || !types::verify(*port->type, bytes)) continue;
-        const auto path = path_value(Value{name, port->kind, port->type, bytes, {}});
-        if (!path) continue;  // normal output validation reports malformed paths
-        const std::filesystem::path produced(*path);
-        // Forwarded inputs are outside out and were mapped above.
-        const auto relative = produced.lexically_relative(worker.out_dir());
-        if (relative.empty() || relative.is_absolute() ||
-            std::ranges::any_of(relative, [](const auto& part) { return part == ".."; })) continue;
-        try {
-          fs::copy_staging_output(output_directory.get(), relative,
-                                  std::filesystem::path(recorded_out) / relative,
-                                  port->kind == PortKind::Directory, request.cancel);
-        } catch (const std::exception& error) {
-          if (request.cancel.load()) throw Failed(FailureKind::cancelled, "output transfer cancelled");
-          throw Failed(FailureKind::output_invalid, error.what());
-        }
-      }
-    }
-    if (!result.outcome.failure && request.validate) {
-      try {
-        request.validate(result);
-      } catch (const Failed& error) {
-        // Validation failures are failed calls, rather than transfer errors:
-        // the next invocation must start without this Card's mutated state.
-        result.outcome.failure = error.failure;
-      } catch (...) {
-        workers_.release(worker_card, key, std::move(lease.worker), false, "the previous call failed validation");
-        throw;
-      }
-    }
-    // Dead/cancelled workers are destroyed without inspecting their scratch.
-    // A cleanup error must not replace the failure the Card already reported.
-    try {
-      return_worker();
-    } catch (...) {
-      if (!result.outcome.failure) throw;
-      return result;
-    }
-  } catch (...) {
-    try {
-      if (lease.worker) {
-        if (between_calls) return_worker();
-        else workers_.release(worker_card, key, std::move(lease.worker), false, "the previous call failed");
-      }
-    } catch (...) {
-      // Preserve the original failure if clearing staging also fails.
-    }
-    try { invocation_log->finish(); } catch (...) {}
-    throw;
-  }
-
-  return result;
+    return inputs;
+  };
+  invocation.validate = request.validate;
+  return workerd::run_invocation(workers_, lease, worker_card, key, reuse, invocation);
 }
 
 }  // namespace tsugumi

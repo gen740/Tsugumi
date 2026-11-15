@@ -9,16 +9,17 @@
 
 #include <flatbuffers/reflection.h>
 
-#include "execution_service.hh"
+#include "tsugumi/workerd/worker_execution.hh"
 #include "module_source.hh"
 #include "nix_store.hh"
+#include "nix_eval.hh"
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/protocol.hh"
+#include "tsugumi/workerd/frame.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "util/crypto.hh"
 #include "util/fs.hh"
-#include "util/staging.hh"
 #include "wire.hh"
 
 namespace tsugumi {
@@ -27,7 +28,7 @@ namespace {
 namespace W = Tsugumi::Worker;
 namespace stdfs = std::filesystem;
 
-constexpr uint64_t kWorkerLimit = uint64_t{16} << 20;
+constexpr uint64_t kWorkerLimit = workerd::kMaxWorkerFrameBytes;
 
 auto read(const stdfs::path& path, uint64_t limit) -> std::string {
   if (stdfs::file_size(path) > limit) throw std::runtime_error("remote invocation member is too large");
@@ -72,31 +73,6 @@ auto make_result(const WorkerOutcome& outcome) -> std::string {
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
 }
 
-class StagingHandle {
- public:
-  explicit StagingHandle(const stdfs::path& path)
-      : fd_(::open(path.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)) {
-    if (fd_ < 0) throw Failed(FailureKind::output_invalid, "cannot open remote staging directory");
-  }
-  ~StagingHandle() { ::close(fd_); }
-  StagingHandle(const StagingHandle&) = delete;
-  auto get() const -> int { return fd_; }
- private:
-  int fd_;
-};
-
-// Use the same declared-output traversal, link policy and sparse copier as
-// native execution. The root is pinned before any Card code runs.
-auto copy_output(int source, const stdfs::path& relative, const stdfs::path& destination,
-                 PortKind kind) -> void {
-  const std::atomic<bool> cancel = false;
-  try {
-    fs::copy_staging_output(source, relative, destination, kind == PortKind::Directory, cancel);
-  } catch (const std::exception& error) {
-    throw Failed(FailureKind::output_invalid, error.what());
-  }
-}
-
 auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocation, const stdfs::path& input,
                 const stdfs::path& directory, const stdfs::path& store, const NixResult& env,
                 const WorkerProc::LogSink& log, const WorkerProc::DisplaySink& display) -> WorkerOutcome {
@@ -119,14 +95,13 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
   spawn.bash = *shell;
   spawn.store_path = (store / "nix/store").string();
   spawn.scratch = (directory / "scratch").string();
-  spawn.build.derivation = env.derivation;
-  spawn.build.package = *run->package;
-  spawn.build.bash = *run->bash;
-  if (spawn.build.package.has_value() == spawn.build.bash.has_value())
+  spawn.program.package = *run->package;
+  spawn.program.bash = *run->bash;
+  if (spawn.program.package.has_value() == spawn.program.bash.has_value())
     throw Failed(FailureKind::nix_failed, "remote Card manifest must contain one package or Bash body");
-  spawn.build.pre_run = manifest.pre_run->value_or("");
-  spawn.build.post_run = manifest.post_run->value_or("");
-  spawn.build.views = manifest.views->value_or("");
+  spawn.program.pre_run = manifest.pre_run->value_or("");
+  spawn.program.post_run = manifest.post_run->value_or("");
+  spawn.program.views = manifest.views->value_or("");
   spawn.network = *invocation.network;
   spawn.uid = 65534;
   spawn.gid = 65534;
@@ -153,65 +128,28 @@ auto run_worker(const W::WorkerCall& call, const remote::InvocationJson& invocat
   for (const auto* port : *call.outputs())
     outputs.push_back({port->name()->str(), port->kind(), port->optional().value_or(false),
         type(port->schema_bfbs(), port->root_type())});
-  WorkerProc worker(spawn);
-  const auto out = directory / "result/files/out";
-  const bool needs_out = std::ranges::any_of(outputs, [](const auto& port) { return port.kind != PortKind::FlatBuffer; });
-  const std::string out_alias = worker.out_dir();
-  std::vector<std::pair<std::string, std::string>> environment{
-      {"PATH", *path}, {"HOME", worker.work_dir()}, {"LANG", "C.UTF-8"},
-      {"TSUGUMI_RUN_ID", call.run_id()->str()}, {"TSUGUMI_CARD", spawn.card},
-      {"TSUGUMI_INVOCATION", std::to_string(call.invocation().value_or(0))},
-      {"TSUGUMI_WORKER", spawn.worker_binary},
-  };
+  WorkerPool pool(directory / "scratch", {}, WorkerPoolMode::one_shot);
+  auto lease = pool.acquire(spawn.card, "", spawn, false);
+  workerd::Invocation request;
+  request.run_id = call.run_id()->str();
+  request.card = card;
+  request.number = call.invocation().value_or(0);
+  request.inputs = values;
+  request.outputs = std::move(outputs);
+  request.params.bfbs = bytes(call.params()->schema_bfbs());
+  request.params.root = call.params()->root_type()->str();
+  request.params.bytes = bytes(call.params()->bytes());
+  request.path = *path;
+  request.worker_binary = spawn.worker_binary;
   for (const auto* v : *call.environment())
-    if (v->name()->string_view() == "TSUGUMI_PARAMS_JSON") environment.emplace_back(v->name()->str(), v->value()->str());
-  const auto id = worker.next_call_id();
-  auto frame = worker_call_frame(id, call.run_id()->str(), card, call.invocation().value_or(0), values,
-      bytes(call.params()->schema_bfbs()), call.params()->root_type()->str(), bytes(call.params()->bytes()), outputs,
-      worker.work_dir(), worker.tmp_dir(), needs_out ? out_alias : "", environment, {});
-  worker.set_logs(log);
-  StagingHandle output_directory(worker.out_dir());
-  StagingHandle input_directory(input);
-  auto outcome = worker.call(frame, id, nullptr, {}, display);
-  // Nothing written by the Card can change once we inspect its output tree.
-  worker.terminate();
-  if (outcome.failure) return outcome;
-
-  stdfs::path forwarded;
-  for (auto& [name, data] : outcome.outputs) {
-    const auto port = std::ranges::find(outputs, name, &types::PortType::name);
-    if (port == outputs.end() || !types::verify(*port->type, data))
-      throw Failed(FailureKind::output_invalid, "invalid remote worker output " + name);
-    if (port->kind == PortKind::FlatBuffer) continue;
-    Value value{name, port->kind, port->type, data, {}};
-    const auto actual = path_value(value);
-    if (!actual) throw Failed(FailureKind::output_invalid, "remote output has no path");
-    stdfs::path rel;
-    if (*actual == out_alias) {
-      rel = "out";
-      copy_output(output_directory.get(), ".", out, port->kind);
-    } else if (actual->starts_with(out_alias + "/")) {
-      const auto relative = remote::relative_path(std::string_view(*actual).substr(out_alias.size() + 1));
-      rel = "out" / relative;
-      copy_output(output_directory.get(), relative, out / relative, port->kind);
-    } else if (std::ranges::any_of(values, [&](const Value& in) { return in.kind == port->kind && path_value(in) == actual; })) {
-      if (forwarded.empty()) {
-        forwarded = stdfs::path("out") / (".forwarded-" + crypto::uuid4());
-        if (!stdfs::create_directories(directory / "result/files" / forwarded))
-          throw Failed(FailureKind::output_invalid, "cannot create a private forwarded output directory");
-      }
-      rel = forwarded / std::to_string(port - outputs.begin()) / stdfs::path(*actual).filename();
-      copy_output(input_directory.get(), stdfs::path(*actual).lexically_relative(input),
-                  directory / "result/files" / rel, port->kind);
-    } else {
-      throw Failed(FailureKind::output_invalid, "remote output points outside its output directory");
-    }
-    const auto actual_path = directory / "result/files" / rel;
-    if (!fs::resolves_inside(out, actual_path) && actual_path != out)
-      throw Failed(FailureKind::output_invalid, "remote output escapes its directory");
-    data = with_path(value, rel.generic_string()).bytes;
-  }
-  return outcome;
+    if (v->name()->string_view() == "TSUGUMI_PARAMS_JSON") request.environment.emplace_back(v->name()->str(), v->value()->str());
+  request.output_directory = directory / "result/files/out";
+  request.input_directory = input;
+  request.delivery = workerd::OutputDelivery::transferred_files;
+  request.stop_before_outputs = true;
+  request.log = log;
+  request.display = display;
+  return workerd::run_invocation(pool, lease, spawn.card, "", false, request).outcome;
 }
 
 }  // namespace
