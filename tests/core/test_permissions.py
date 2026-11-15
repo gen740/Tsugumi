@@ -36,8 +36,8 @@ def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory
     body = card_json(c, "src")
     wide = dict(body, network=True, sandbox=False, hostFolders=[{"path": "/data", "name": "data"}])
     try:
-        save(c, [put("src", wide)], origin=origin)
-        raise AssertionError("an agent widened permissions without approval")
+        save(c, [put("src", wide)], origin=origin, check=True)
+        raise AssertionError("a checked save widened permissions without approval")
     except RpcFailure as e:
         assert e.kind == "approval_required", e
         asked = permissions(e)
