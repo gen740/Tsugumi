@@ -216,7 +216,15 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
 #endif
   for (const char* d : {"work", "tmp", "out", "scripts", "home", "inputs"}) std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
   if (::geteuid() == 0 && sp.uid && worker_uid_on_host())
-    for (const char* d : {"work", "tmp", "out", "home"}) ::chown((scratch_ + "/" + d).c_str(), *sp.uid, sp.gid.value_or(*sp.uid));
+    for (const char* d : {"work", "tmp", "out", "home"}) {
+      const auto path = scratch_ + "/" + d;
+      if (::chown(path.c_str(), *sp.uid, sp.gid.value_or(*sp.uid)) != 0) {
+        const int error = errno;
+        for (int fd : {data[0], data[1], control[0], control[1], out[0], out[1], err[0], err[1]}) ::close(fd);
+        throw Failed(FailureKind::worker_failed,
+                     "chown " + path + ": " + std::strerror(error));
+      }
+    }
   std::vector<std::string> args;
   auto script = [&](const char* flag, const std::string& text, const char* name) {
     if (text.empty()) return;

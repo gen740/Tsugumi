@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <system_error>
 
 #include "history.hh"
@@ -172,7 +173,10 @@ auto NativeExecutionService::run(const ExecutionRequest& request) -> ExecutionRe
     if (needs_out) {
       std::filesystem::path d = dir / "out";
       std::filesystem::create_directories(d);
-      if (::geteuid() == 0 && worker_uid_on_host()) ::chown(d.c_str(), kCardUid, kCardUid);
+      if (::geteuid() == 0 && worker_uid_on_host() &&
+          ::chown(d.c_str(), kCardUid, kCardUid) != 0)
+        throw Failed(FailureKind::worker_failed,
+                     "chown " + d.string() + ": " + std::strerror(errno));
       out = d.string();
     }
 
