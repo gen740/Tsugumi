@@ -682,6 +682,8 @@ TEST_F(AgentFixture, HelpersRequireScopeUnlessThePersonAllowsUnscopedWork) {
 }
 
 TEST_F(AgentFixture, HelpersShareTheParallelLimitAcrossDelegateCalls) {
+  // One watchdog for both cases, including held requests and their cleanup.
+  const auto deadline = std::chrono::steady_clock::now() + 20s;
   for (const auto limit : {1, 2}) {
     SCOPED_TRACE(limit);
     ModelServer model;
@@ -698,13 +700,43 @@ TEST_F(AgentFixture, HelpersShareTheParallelLimitAcrossDelegateCalls) {
       model.Queue(AnthropicText("Another helper completed."));
     const std::string tasks =
         R"({"tasks":[{"name":"one","instruction":"First task.","read_cards":[],"write_cards":[],"run_cards":[]},{"name":"two","instruction":"Second task.","read_cards":[],"write_cards":[],"run_cards":[]}]})";
-    auto first = std::async(std::launch::async, [&] {
-      return Tool(conversation, "delegate", tasks, "batch-one");
-    });
-    auto second = std::async(std::launch::async, [&] {
-      return Tool(conversation, "delegate", tasks, "batch-two");
-    });
-    EXPECT_TRUE(model.WaitForRequests(1));
+    bool completed = false;
+    const auto cleanup = [&](void*) {
+      model.Release();
+      // A timed-out client does not cancel an external delegate call. Kill
+      // this fixture's service before destroying the provider, so outstanding
+      // helpers cannot retry against a dead provider during teardown.
+      if (!completed) agent.Stop(true);
+    };
+    std::unique_ptr<void, decltype(cleanup)> guard(this, cleanup);
+    auto delegate = [&](const std::string& operation) {
+      return external->Call(
+          [&](uint64_t id) {
+            Builder b;
+            const auto value = A::CreateToolCallRequest(
+                b, b.CreateString(conversation), b.CreateString(project_id),
+                b.CreateString("delegate"), b.CreateString(tasks),
+                b.CreateString(operation));
+            A::FinishMessageBuffer(
+                b, A::CreateMessage(
+                       b, id, A::Payload::Request,
+                       A::CreateRequest(b, A::RequestPayload::ToolCallRequest,
+                                        value.Union())
+                           .Union()));
+            return client::Bytes(b.GetBufferPointer(),
+                                 b.GetBufferPointer() + b.GetSize());
+          },
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              deadline - std::chrono::steady_clock::now()));
+    };
+    // Native pending calls have non-blocking destructors. std::async futures
+    // join on destruction, including when an assertion abandons the test.
+    auto first = delegate("batch-one");
+    auto second = delegate("batch-two");
+    ASSERT_TRUE(model.WaitForRequests(
+        1, std::chrono::duration_cast<std::chrono::milliseconds>(
+               deadline - std::chrono::steady_clock::now())))
+        << "No helper reached the held provider";
     // The provider holds its first reply. Count started, persisted helpers,
     // rather than HTTP requests: this fixture serves one HTTP peer at a time.
     auto started = [&] {
@@ -714,26 +746,49 @@ TEST_F(AgentFixture, HelpersShareTheParallelLimitAcrossDelegateCalls) {
                           ->conversation()
                           ->helpers());
     };
-    const auto deadline = std::chrono::steady_clock::now() + 2s;
-    while (started() < static_cast<size_t>(limit) &&
-           std::chrono::steady_clock::now() < deadline)
-      std::this_thread::sleep_for(10ms);
-    std::this_thread::sleep_for(100ms);
-    EXPECT_EQ(started(), static_cast<size_t>(limit));
+    auto wait_started = [&](size_t count) {
+      size_t seen = 0;
+      do {
+        try {
+          seen = started();
+        } catch (const std::exception& error) {
+          throw std::runtime_error("Waiting for " + std::to_string(count) +
+                                   " persisted helpers: " + error.what());
+        }
+        if (seen >= count) return seen;
+        std::this_thread::sleep_for(10ms);
+      } while (std::chrono::steady_clock::now() < deadline);
+      return seen;
+    };
+    ASSERT_EQ(wait_started(static_cast<size_t>(limit)),
+              static_cast<size_t>(limit))
+        << "Waiting for helpers to acquire the shared profile limit";
     if (limit == 1) {
-      EXPECT_TRUE(
+      ASSERT_TRUE(
           SettingsPatch(*host, "desktop", {{"agent.helperParallelism", "2"}})
               .Code()
               .empty());
-      const auto raised_deadline = std::chrono::steady_clock::now() + 2s;
-      while (started() < 2 &&
-             std::chrono::steady_clock::now() < raised_deadline)
-        std::this_thread::sleep_for(10ms);
-      EXPECT_EQ(started(), 2u);
+      ASSERT_EQ(wait_started(2), 2u)
+          << "Settings update did not wake the helper waiting for a slot";
     }
     model.Release();
-    EXPECT_TRUE(first.get().Code().empty());
-    EXPECT_TRUE(second.get().Code().empty());
+    const auto finish = [&](std::future<client::Result>& pending,
+                            const char* batch) -> Reply {
+      if (pending.wait_until(deadline) != std::future_status::ready)
+        throw std::runtime_error(
+            std::string(batch) +
+            " did not finish after releasing the provider\n" +
+            Read(directory.path / "agent.log"));
+      auto result = pending.get();
+      if (result.error)
+        throw std::runtime_error(std::string(batch) + ": " +
+                                 result.error.message + "\n" +
+                                 Read(directory.path / "agent.log"));
+      return {std::move(result.bytes)};
+    };
+    ASSERT_TRUE(finish(first, "batch-one").Code().empty());
+    ASSERT_TRUE(finish(second, "batch-two").Code().empty());
+    completed = true;
     EXPECT_EQ(model.Requests().size(), 4u);
     EXPECT_EQ(
         JsonUInt(Get(conversation).View(), "/conversation/usage/inputTokens"),

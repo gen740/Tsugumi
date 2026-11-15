@@ -19,6 +19,7 @@ from tsugumi_client import line_chart_series, RpcFailure, change, new_id, path, 
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
+from Tsugumi.RPC.RunEventValue import RunEventValue
 
 def connect(env):
     c = env.client()
@@ -319,26 +320,51 @@ def test_live_stream_cancel_and_rerun(live):
     c = connect(live)
     opened = c.open()
     c.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("plot")])
+    # Keep the first sample and then wait for cancellation, rather than racing
+    # the demo's 20-second natural completion on a busy runner. The separate
+    # pace test exercises the unmodified sampling delay.
+    source = "definitions/generate/src/card.cc"
+    snap = c.call("ProjectInspectRequest")
+    src = next(s for s in snap.sources if text(s.path) == source)
+    code = bytes(c.call("ProjectFileReadRequest", path=source, atRev=snap.rev).bytes).decode()
+    delay = "while (std::chrono::steady_clock::now() < until)"
+    assert delay in code
+    code = code.replace("  auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(s.interval_ms);\n", "")
+    code = code.replace(delay, "while (s.index > 0)")
+    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
+           changes=[change("PutSource", path=source, bytes=list(code.encode()), baseHash=text(src.hash))])
+    def wait_for_blocked_sample(rid):
+        def card_event(n, card, state):
+            return (n.valueType == NotificationPayload.RunEvent and
+                    text(n.value.runId) == rid and n.value.valueType == RunEventValue.RunCardChanged and
+                    [text(s) for s in n.value.value.invocation.card.segments] == [card] and
+                    n.value.value.invocation.state == state)
+
+        # A displayed value can precede the invocation's saved record. Wait
+        # for that record and for the next generator invocation to be active.
+        c.wait_notification(lambda n: card_event(n, "plot", CardState.succeeded), timeout=60)
+        c.wait_notification(lambda n: card_event(n, "generate", CardState.running) and
+                            n.value.value.invocation.invocation == 2, timeout=60)
+
     rid = start_run(c, ["start"])
     first_display(c, rid)
-    time.sleep(1.0)
-    t0 = time.time()
+    wait_for_blocked_sample(rid)
     st = c.call("RunCancelRequest", runId=rid)
-    assert time.time() - t0 < 0.1
-    assert st.state in (RunState.cancelling, RunState.cancelled)
+    # The reply acknowledges the request before run finalization; it does not
+    # join the worker. The run cannot finish normally past its first sample.
+    assert st.state == RunState.cancelling
     final = wait_run(c, rid, timeout=10)
-    assert final.state == RunState.cancelled and time.time() - t0 < 2.0
+    assert final.state == RunState.cancelled
     xs, calls = live_points(c, rid)
-    assert 0 < calls < 200 and xs  # the last chart is kept
-    # A new run starts the series from the beginning.
+    assert calls == 1 and xs == [0.0]  # the last chart is kept
+    # A new run starts the reused plotting worker's series from the beginning.
     rid2 = start_run(c, ["start"])
-    c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated and
-                        text(n.value.display.runId) == rid2, timeout=60)
     first = c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated and
                                 text(n.value.display.runId) == rid2, timeout=60)
-    assert line_chart_series(first.value.display.value)[0].x[0] == 0.0
-    c.call("RunCancelRequest", runId=rid2)
-    wait_run(c, rid2, timeout=10)
+    assert line_chart_series(first.value.display.value)[0].x == (0.0,)
+    wait_for_blocked_sample(rid2)
+    assert c.call("RunCancelRequest", runId=rid2).state == RunState.cancelling
+    assert wait_run(c, rid2, timeout=10).state == RunState.cancelled
 
 
 def test_crash_marks_run_interrupted_and_recovers(live):
