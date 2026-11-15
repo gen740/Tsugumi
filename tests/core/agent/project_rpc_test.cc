@@ -595,6 +595,9 @@ TEST_F(AgentProjectFixture,
   second.replace(second.find(marker), marker.size(), "\"input_tokens\":99000");
   model.Queue(std::move(second));
   model.Queue(AnthropicText("INTERNAL_HELPER_HANDOFF"));
+  model.Queue(AnthropicTool(
+      "helper-reload-one", "tool_result_read",
+      R"({"call_id":"helper-read-one","offset":"0","limit_bytes":100})"));
   model.Queue(AnthropicText("Both records inspected."));
   model.Queue(AnthropicText("The helper finished."));
   Configure(model, "fixture", 100000);
@@ -610,7 +613,7 @@ TEST_F(AgentProjectFixture,
   ASSERT_TRUE(Send(conversation, "Delegate the reads.").Code().empty());
   const auto state = WaitUntilIdle(conversation);
   const auto requests = model.Requests();
-  ASSERT_EQ(requests.size(), 6u);
+  ASSERT_EQ(requests.size(), 7u);
   EXPECT_NE(requests[3].find("Create a short handoff"), std::string::npos);
   EXPECT_EQ(Events(conversation).View().find("INTERNAL_HELPER_HANDOFF"),
             std::string::npos);
@@ -621,7 +624,15 @@ TEST_F(AgentProjectFixture,
   EXPECT_NE(visible.find(one), std::string::npos);
   EXPECT_EQ(visible.find("INTERNAL_HELPER_HANDOFF"), std::string::npos);
 
-  const auto report = JsonString(requests[5], "/messages/2/content/0/content");
+  // The old first exchange is absent from the active model context. Reading
+  // it must use this helper's archived, filtered result, with the same grant.
+  EXPECT_EQ(requests[4].find("helper-read-one"), std::string::npos);
+  const auto page = JsonString(requests[5], "/messages/4/content/0/content");
+  EXPECT_EQ(JsonString(page, "/text"), visible.substr(0, 100));
+  EXPECT_EQ(JsonString(page, "/next_offset"), "100");
+  EXPECT_EQ(JsonString(page, "/total_bytes"), std::to_string(visible.size()));
+  EXPECT_FALSE(JsonBool(page, "/eof"));
+  const auto report = JsonString(requests[6], "/messages/2/content/0/content");
   EXPECT_EQ(JsonString(report, "/0/report"), "Both records inspected.");
   EXPECT_EQ(report.find("FIRST_HELPER_RECORD"), std::string::npos);
   EXPECT_EQ(report.find("INTERNAL_HELPER_HANDOFF"), std::string::npos);

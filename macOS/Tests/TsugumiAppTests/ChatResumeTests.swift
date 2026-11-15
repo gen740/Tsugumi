@@ -23,10 +23,11 @@ import TsugumiRPC
     private var chats: [ChatController] = []
     private var port = 0
     private var servicePID: Int32?
+    private var helperPID: URL { directory.appendingPathComponent("vmhost.pid") }
 
     var session: ProjectSession { sessions[0] }
 
-    func start(slow: Double, options: [String]) async throws {
+    func start(slow: Double, options: [String], managed: Bool) async throws {
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       let state = directory.appendingPathComponent("state")
       await environment.install(state: state, support: directory.appendingPathComponent("support"))
@@ -39,6 +40,7 @@ import TsugumiRPC
                         "--usage-scratch-dir", canonicalDirectory(directory).appendingPathComponent("scratch").path,
                         "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--demos-dir", SyncTests.root.appendingPathComponent("demos").path]
+      if managed { try useHelperDouble() }
       core.standardOutput = FileHandle.nullDevice
       core.standardError = FileHandle.nullDevice
       try core.run()
@@ -123,12 +125,34 @@ import TsugumiRPC
       return session
     }
 
-    /// The VM launcher creates read-only shares; this host fixture uses the
-    /// daemon's equivalent allowlist, separate from the Agent's access grants.
-    func shareFolders(_ folders: [URL]) throws {
-      let daemon = try #require(daemon)
-      let data = try JSONSerialization.data(withJSONObject: ["folders": folders.map { $0.standardizedFileURL.path }])
-      try data.write(to: daemon.dir.appendingPathComponent("control/attached.json"))
+    /// The Mac app's host service starts projects through its VM helper, whose
+    /// `tsugumid` accepts the app's connection (a native client sends no
+    /// Origin); one started by the host service itself is for browsers and
+    /// refuses it. The helper double keeps that contract without booting a VM.
+    private func useHelperDouble() throws {
+      let environment = ProcessInfo.processInfo.environment
+      let python = try #require((environment["PATH"] ?? "").split(separator: ":")
+        .map { URL(fileURLWithPath: String($0)).appendingPathComponent("python3").path }
+        .first { FileManager.default.isExecutableFile(atPath: $0) }, "python3 runs the VM helper double")
+      let source = try String(contentsOf: SyncTests.root.appendingPathComponent("tests/python/vm_helper_double.py"), encoding: .utf8)
+      let helper = directory.appendingPathComponent("vmhost")
+      try Data("#!\(python)\n\(source)".utf8).write(to: helper)
+      try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+      let support = directory.appendingPathComponent("support")
+      core.arguments = (core.arguments ?? []) + ["--vmhost", helper.path, "--vm-support", support.path,
+                                                 "--vm-image", "/image", "--vm-source", "/source"]
+      core.environment = environment.merging(["HOST_LOG": directory.appendingPathComponent("vmhost.log").path,
+        "HOST_BUSY": directory.appendingPathComponent("vmhost.busy").path, "HOST_PID": helperPID.path]) { _, value in value }
+    }
+
+    /// Transfer this test's project to the production host environment manager.
+    func useManagedEnvironment() async throws {
+      await session.close()
+      daemon?.stop()
+      let managed = try ProjectIdentity(url: #require(project))
+      let session = ProjectSession(identity: managed, environments: self.session.environments)
+      sessions.insert(session, at: 0)
+      session.start()
     }
 
     func makeChat() -> ChatController {
@@ -165,6 +189,7 @@ import TsugumiRPC
     func stop() async {
       for chat in chats { chat.detach() }
       for session in sessions { await session.close() }
+      for session in sessions where session.endpointOverride == nil { try? await session.environments.stop(session.identity) }
       // Let the UI's detach tasks release their socket observations before
       // terminating the isolated daemon and restoring the environment.
       try? await Task.sleep(for: .milliseconds(100))
@@ -184,6 +209,13 @@ import TsugumiRPC
         process.waitUntilExit()
       }
       daemon?.stop()
+      // The helper double outlives the host service, as the VM helper does.
+      if let text = try? String(contentsOf: helperPID, encoding: .utf8), let pid = Int32(text), pid > 1 {
+        kill(pid, SIGTERM)
+        let deadline = Date().addingTimeInterval(5)
+        while kill(pid, 0) == 0, Date() < deadline { try? await Task.sleep(for: .milliseconds(20)) }
+        if kill(pid, 0) == 0 { kill(pid, SIGKILL) }
+      }
       try? await Task.sleep(for: .milliseconds(100))
       await environment.restore()
       if let project { try? FileManager.default.removeItem(at: project) }
@@ -191,11 +223,11 @@ import TsugumiRPC
     }
   }
 
-  func withFixture(slow: Double = 0.05, options: [String] = [],
+  func withFixture(slow: Double = 0.05, options: [String] = [], managed: Bool = false,
                    _ body: (Fixture) async throws -> Void) async throws {
     let fixture = Fixture()
     do {
-      try await fixture.start(slow: slow, options: options)
+      try await fixture.start(slow: slow, options: options, managed: managed)
       try await body(fixture)
       await fixture.stop()
     } catch {
@@ -225,7 +257,7 @@ import TsugumiRPC
       #expect(["preparing", "model"].contains(operation.kind))
       let chat = t.makeChat()
       try await until("the interruption is visible") { chat.interrupted }
-      #expect(!chat.busy && !chat.stoppedAtLimit)
+      #expect(!chat.busy && !chat.canContinue)
       #expect(chat.status?.contains(String(localized: "会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。").components(separatedBy: "%@")[0]) == true)
       let agent = Agent(id: t.conversationID, transport: RPCToolTransport(session: t.session), provider: .fixture)
       try await agent.open()
@@ -278,14 +310,14 @@ import TsugumiRPC
   }
 
   @Test func multipleAttachedFoldersRemainDistinctAndReadableAfterSending() async throws {
-    try await withFixture { t in
+    try await withFixture(managed: true) { t in
       let first = t.directory.appendingPathComponent("first/data")
       let second = t.directory.appendingPathComponent("second/data")
       for (folder, text) in [(first, "first folder"), (second, "second folder")] {
         try FileManager.default.createDirectory(at: folder.appendingPathComponent("nested"), withIntermediateDirectories: true)
         try Data(text.utf8).write(to: folder.appendingPathComponent("nested/note.txt"))
       }
-      t.session.start()
+      try await t.useManagedEnvironment()
       try await SyncTests.connected(t.session)
       let chat = t.makeChat()
       try await until("the chat is ready") { chat.currentId == t.conversationID }
@@ -298,8 +330,8 @@ import TsugumiRPC
       #expect(try await t.session.environments.attachedFolders(t.session.identity) == paths)
       await chat.attach(folders: [first, second])
       #expect(chat.folders == paths, "Repeated attachment does not duplicate either folder")
-      try t.shareFolders([first, second])
-      let project = try #require(t.session.endpointOverride?.projectId)
+      #expect(t.session.connected)
+      let project = try #require(t.session.projectId)
       let resources = paths.map { path in
         "folder:\(project):" + SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
       }
@@ -499,8 +531,50 @@ import TsugumiRPC
     }
   }
 
+  @Test func compactionDoesNotReplaceStreamedRowsWithTheAgentsOlderCache() async throws {
+    try await withFixture(slow: 0) { t in
+      try await t.send("Initial request")
+      _ = try await t.finished()
+      let chat = t.makeChat()
+      try await until("the older snapshot is loaded") { chat.ready }
+      let host = try await t.snapshot()
+      let conversation = try #require(host["conversation"] as? Tsugumi_Agent_ConversationT)
+      let row = try #require(conversation.rows.compactMap { $0 }.last)
+      row.text = "New streamed progress"
+      let snapshot = Tsugumi_Agent_ConversationT(); snapshot.id = t.conversationID; snapshot.rows = [row]
+      let projected = try ServiceWire.conversation(snapshot)
+      chat.handle(.presentation(projected.rows), of: chat.answer)
+      chat.handle(.compacted, of: chat.answer)
+      await Task.yield()
+      await Task.yield()
+      #expect(chat.items.last?.text == "New streamed progress")
+    }
+  }
+
+  @Test func failedAndCancelledSelectionsKeepTheVisibleConversation() async throws {
+    try await withFixture(slow: 0) { t in
+      try await t.send("Keep this conversation")
+      _ = try await t.finished()
+      let chat = t.makeChat()
+      try await until("the conversation is visible") { chat.items.count == 2 }
+      let text = chat.items.map(\.text)
+      chat.select(String(repeating: "x", count: 257))
+      #expect(chat.items.map(\.text) == text, "A pending selection keeps the previous panel")
+      try await until("the failed load reports its error") { !chat.loading && chat.status != nil }
+      #expect(chat.items.map(\.text) == text)
+      #expect(!chat.ready, "Old rows cannot receive a message for the failed selection")
+      chat.select(String(repeating: "x", count: 257))
+      chat.select(t.conversationID)
+      try await until("the cancelled selection is replaced") { chat.ready }
+      #expect(chat.items.map(\.text) == text)
+      #expect(chat.status == nil)
+    }
+  }
+
   @Test func theChatFollowsTheOpenSession() async throws {
     try await withFixture(slow: 0) { t in
+      try await t.send("Keep the selected conversation")
+      _ = try await t.finished()
       let back = try t.makeSession()
       let model = AppModel()
       // Its home refresh talks to this fixture's core; it must not outlive the
@@ -509,9 +583,15 @@ import TsugumiRPC
       let first = model.chat(for: t.session)
       t.keep(first)
       try await until("the first UI is attached") { first.currentId == t.conversationID }
+      try await until("the selected transcript is visible") { first.ready && first.items.count == 2 }
+      let visible = first.items.map(\.text)
+      let project = try #require(t.session.endpointOverride)
+      _ = try await CoreHostClient.shared.call("ConversationCreateRequest", ["conversation_id": UUID().uuidString.lowercased(), "project_id": project.projectId])
       #expect(model.chat(for: t.session) === first)
       let replacement = model.chat(for: back)
       t.keep(replacement)
+      #expect(replacement.currentId == t.conversationID, "Replacing a project session keeps the selected conversation, even when a newer one exists")
+      #expect(replacement.items.map(\.text) == visible, "The panel keeps its content while reconnecting")
       try await until("the replacement UI is attached") { replacement.currentId == t.conversationID }
       #expect(replacement.session === back)
       #expect(replacement !== first)
@@ -532,7 +612,7 @@ import TsugumiRPC
       try await SyncTests.connected(t.session)
       try await Task.sleep(for: .milliseconds(250))
       #expect(!chat.busy && !reply(chat, after: 1))
-      #expect(chat.stoppedAtLimit && !chat.failed)
+      #expect(chat.canContinue && !chat.failed)
     }
   }
 }

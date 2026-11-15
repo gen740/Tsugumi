@@ -513,7 +513,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
       // project receipts contain fields outside a helper's Card boundary.
       auto q = conversations->ConversationDatabase(conversation)
                    .prepare(
-                       "SELECT parent_call,task,messages,result FROM "
+                       "SELECT parent_call,task,messages,archive FROM "
                        "helpers WHERE conversation=?");
       q.bind(1, conversation);
       while (q.step()) {
@@ -523,8 +523,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
         if (!call.id.starts_with(scope)) continue;
         saved = ParseMessages(q.text(2));
         if (!q.text(3).empty()) {
-          const auto trace = ParseMessages(
-              json::Get(json::Object(q.text(3)), "archive", "[]"));
+          const auto trace = ParseMessages(q.text(3));
           saved.insert(saved.end(), trace.begin(), trace.end());
         }
         break;
@@ -1037,7 +1036,9 @@ auto Tools::Hooks(const std::string& id, bool helper,
     access_service.AuthorizeContext(id, messages);
   };
   hooks.checkpoint = [this, id](const auto& messages) {
+    std::lock_guard lock(mutex);
     conversations->SaveMessages(id, messages);
+    dependencies.event(id, R"({"kind":"checkpoint"})");
   };
   hooks.execute_tool = [this, id, helper, boundary](const ToolCall& call,
                                                     std::stop_token stop) {

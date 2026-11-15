@@ -129,9 +129,17 @@ public actor EnvironmentManager {
     let value = try await client.call("EnvironmentRequest", ["project": project.url.path, "action": Tsugumi_Host_EnvironmentAction.state])
     return value["folders"] as? [String] ?? []
   }
-  public func addFolders(_ project: ProjectIdentity, _ paths: [String]) async throws {
+  public func attachFolders(_ project: ProjectIdentity, _ paths: [String]) async throws -> (Endpoint, [(folder: String, resource: String)]) {
     await prepare()
-    _ = try await client.call("EnvironmentRequest", ["project": project.url.path, "action": Tsugumi_Host_EnvironmentAction.addfolders, "folders": paths])
+    let reply = try await client.call("AttachFoldersRequest", ["project": project.url.path, "folders": paths])
+    guard let value = reply["state"] as? [String: Any], case .ready(let endpoint) = adopt(value) else {
+      throw LauncherError.notReady("the attachment did not return a ready environment")
+    }
+    let folders = (reply["folders"] as? [[String: String]] ?? []).compactMap { row -> (folder: String, resource: String)? in
+      guard let folder = row["folder"], let resource = row["resource"] else { return nil }
+      return (folder, resource)
+    }
+    return (endpoint, folders)
   }
   public func removeFolders(_ project: ProjectIdentity, _ paths: [String]) async throws {
     await prepare()

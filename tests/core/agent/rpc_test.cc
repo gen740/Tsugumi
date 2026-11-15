@@ -177,6 +177,42 @@ TEST_F(AgentFixture, ConversationSnapshotReportsTheAcceptedModelAcrossHostEditsA
   human.reset(); external.reset(); host.reset(); service.Stop(); StartHost();
   check();
 }
+TEST_F(AgentFixture,
+       MainAndHelperPassTheirFormerStepLimitsAndStillStopOnRequest) {
+  for (const bool helper : {false, true}) {
+    ModelServer model;
+    if (helper)
+      model.Queue(AnthropicTool(
+          "delegate-long", "delegate",
+          R"({"tasks":[{"name":"Long review","instruction":"Keep inspecting until stopped.","read_cards":[],"write_cards":[],"run_cards":[]}]})"));
+    const size_t count = helper ? 18 : 53;
+    for (size_t i = 0; i < count; ++i)
+      model.Queue(
+          AnthropicTool("long-" + std::to_string(i), "demo_list", "{}"));
+    model.Queue(AnthropicText("Must be cancelled"), true);
+    Configure(model);
+    const auto conversation =
+        Conversation(helper ? "long-helper" : "long-main");
+    ASSERT_TRUE(Send(conversation, "Continue inspecting until I stop you.")
+                    .Code()
+                    .empty());
+    ASSERT_TRUE(model.WaitForRequests(count + (helper ? 2 : 1), 20s));
+    const auto began = std::chrono::steady_clock::now();
+    ASSERT_TRUE(Call(*external, A::RequestPayload::ConversationCancelRequest,
+                     [&](Builder& b) {
+                       return A::CreateConversationCancelRequest(
+                                  b, b.CreateString(conversation))
+                           .Union();
+                     })
+                    .Code()
+                    .empty());
+    const auto stopped = WaitUntilIdle(conversation);
+    EXPECT_LT(std::chrono::steady_clock::now() - began, 2s);
+    EXPECT_EQ(stopped.find("Must be cancelled"), std::string::npos);
+    EXPECT_FALSE(JsonBool(stopped, "/busy"));
+    model.Release();
+  }
+}
 namespace R = Tsugumi::RPC;
 
 TEST_F(AgentFixture, UnixAndWebSocketExposeTheSameAgentProtocol) {
@@ -778,6 +814,114 @@ TEST_F(AgentFixture,
   EXPECT_NE(snippet.find("FIRST_LONG_ANSWER"), std::string::npos);
   EXPECT_LT(snippet.size(), earlier.size());
   EXPECT_EQ(model.Requests().size(), 5u);
+}
+
+TEST_F(AgentFixture, AHelpersCompactionKeepsItsEarlierOperationsReadable) {
+  ModelServer model;
+  model.Queue(AnthropicTool(
+      "compacting-helper", "delegate",
+      R"({"tasks":[{"name":"long","instruction":"Inspect the demos three times.","read_cards":[],"write_cards":[],"run_cards":[]}]})"));
+  // Report usage near the real input budget after the second and third
+  // operations. Token usage, rather than serialized bytes, triggers compaction.
+  const auto full_context_tool = [](const std::string& id) {
+    auto stream = AnthropicTool(id, "demo_list", "{}");
+    const std::string usage = "\"input_tokens\":12";
+    stream.replace(stream.find(usage), usage.size(),
+                   "\"input_tokens\":130000");
+    return stream;
+  };
+  model.Queue(AnthropicTool("inspect-0", "demo_list", "{}"));
+  model.Queue(full_context_tool("inspect-1"));
+  model.Queue(AnthropicText("FIRST_HELPER_SUMMARY"));
+  model.Queue(full_context_tool("inspect-2"));
+  model.Queue(AnthropicText("SECOND_HELPER_SUMMARY"));
+  model.Queue(AnthropicText("The helper inspected three times."));
+  model.Queue(AnthropicText("The parent received the helper's result."));
+  Configure(model, "fixture", 110000);
+  const auto conversation = Conversation("compacting-helper");
+  ASSERT_TRUE(Send(conversation, "Delegate the inspection.").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(8, 20s));
+  const auto state = WaitUntilIdle(conversation);
+  ASSERT_EQ(model.Requests().size(), 8u) << state;
+  ASSERT_NE(model.Requests()[5].find("Create a short handoff for the next model continuation"),
+            std::string::npos);
+  // The model went on without the first call ...
+  EXPECT_EQ(model.Requests()[6].find("inspect-0"), std::string::npos);
+  EXPECT_EQ(JsonString(state, "/conversation/helpers/0/state"), "completed");
+  // ... and a person still reads every operation of the helper, in order,
+  // from the messages the chat's rows are built from.
+  const auto calls = [](const std::string& view) {
+    std::vector<std::string> ids;
+    for (size_t index = 0;; ++index) {
+      const auto message =
+          "/conversation/helpers/0/messages/" + std::to_string(index);
+      try {
+        JsonString(view, message + "/role");
+      } catch (const std::runtime_error&) {
+        break;
+      }
+      if (JsonBool(view, message + "/contextSummary")) continue;
+      try {
+        ids.push_back(JsonString(view, message + "/content/0/id"));
+      } catch (const std::runtime_error&) {
+        // A text or tool result block has no call ID.
+      }
+    }
+    return ids;
+  };
+  const std::vector<std::string> expected{"inspect-0", "inspect-1",
+                                          "inspect-2"};
+  EXPECT_EQ(calls(state), expected) << state;
+  EXPECT_EQ(JsonString(state, "/conversation/helpers/0/messages/0/content/0/text")
+                .find("Inspect the demos three times."),
+            0u);
+  EXPECT_EQ(JsonString(state,
+                       "/conversation/helpers/0/messages/2/content/0/tool_use_id"),
+            "inspect-0");
+  // A restart reads the same messages from what was saved.
+  external.reset();
+  human.reset();
+  service.Stop();
+  StartHost();
+  const auto restored = Get(conversation);
+  EXPECT_EQ(calls(restored.View()), expected);
+  const auto* history =
+      restored.Value()->value_as_ConversationResult()->conversation();
+  // Only the helper compacted. Ordinary parent checkpoints must not archive
+  // copies of its delegate call after provider JSON was scrubbed/reordered.
+  EXPECT_EQ(ListSize(history->archive()), 0u) << restored.View();
+  ASSERT_NE(history->rows(), nullptr);
+  ASSERT_FALSE(history->rows()->empty());
+  const A::ChatRow* step = nullptr;
+  size_t delegate_steps = 0;
+  for (const auto* row : *history->rows()) {
+    if (row->kind()->str() != "step" || !row->children()) continue;
+    for (const auto* child : *row->children()) {
+      if (child->kind()->str() != "tool" || child->name()->str() != "delegate")
+        continue;
+      step = row;
+      ++delegate_steps;
+    }
+  }
+  ASSERT_EQ(delegate_steps, 1u) << restored.View();
+  ASSERT_NE(step, nullptr);
+  const A::ChatRow* helper = nullptr;
+  size_t helper_count = 0;
+  for (const auto* child : *step->children()) {
+    if (child->kind()->str() != "helper") continue;
+    helper = child;
+    ++helper_count;
+  }
+  ASSERT_EQ(helper_count, 1u) << restored.View();
+  ASSERT_NE(helper, nullptr);
+  EXPECT_EQ(helper->name()->str(), "long");
+  EXPECT_EQ(helper->text()->str(), "The helper inspected three times.");
+  EXPECT_EQ(Events(conversation).View().find("FIRST_HELPER_SUMMARY"),
+            std::string::npos);
+  EXPECT_EQ(Events(conversation).View().find("SECOND_HELPER_SUMMARY"),
+            std::string::npos);
+  EXPECT_NE(model.Requests()[7].find("The helper inspected three times."),
+            std::string::npos);
 }
 
 TEST_F(AgentFixture, OversizedDelegationsAreRefusedBeforeStartingAnyHelper) {

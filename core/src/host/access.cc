@@ -3,6 +3,7 @@
 #include <set>
 
 #include "agent/json.hh"
+#include "agent/presentation.hh"
 #include "agent/store.hh"
 #include "agent/wire.hh"
 #include "host/failure.hh"
@@ -355,6 +356,7 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
         entry->asked =
             AccessDescriptions(entry->id, entry->project_id, entry->access,
                                entry->scope, entry->reason);
+        entry->groups = agent::AccessGroups(entry->asked);
         result.requests.push_back(std::move(entry));
       }
       auto g = db.prepare(

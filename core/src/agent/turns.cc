@@ -158,7 +158,7 @@ auto Turns::ConversationResult(uint64_t request_id, const Conversation& c)
   const bool busy = running.contains(c.id);
   const bool resumable = !busy && state == "interrupted";
   const bool continuable =
-      !busy && (resumable || state == "cancelled" || state == "step_limit" ||
+      !busy && (resumable || state == "cancelled" ||
                 state == "failed");
   A::ConversationResultT result;
   result.conversation = std::make_unique<A::ConversationT>(
@@ -567,16 +567,15 @@ auto Turns::Start(const std::string& id, const std::string& turn,
             }
           } else if (action == A::Action::Compact) {
             Runtime().Compact(config, System(role == "guide"), messages,
-                              dependencies.specs(role == "guide"), stop, hooks, context.get());
+                              dependencies.specs(role == "guide"), stop, hooks,
+                              context.get());
             *context = {};
           } else {
             const auto result =
                 Runtime().Run(config, System(role == "guide"), messages,
                               dependencies.specs(role == "guide"), stop, hooks,
                               context.get());
-            if (result.outcome == RunOutcome::StepLimit)
-              final_state = "step_limit";
-            else if (result.outcome == RunOutcome::Cancelled)
+            if (result.outcome == RunOutcome::Cancelled)
               final_state = "cancelled";
             else if (result.outcome == RunOutcome::Failed)
               final_state = "failed";

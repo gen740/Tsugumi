@@ -69,6 +69,15 @@ auto Helpers::HelperResult(const std::string& output,
       {"report", json::Quote(report)}});
 }
 
+auto Helpers::Displaced(const std::vector<Message>& previous,
+                        const std::vector<Message>& saved)
+    -> std::vector<Message> {
+  auto displaced = RemovedMessages(previous, saved);
+  std::erase_if(displaced,
+                [](const auto& message) { return message.context_summary; });
+  return displaced;
+}
+
 auto Helpers::RunHelper(const std::string& conversation,
                         const std::string& parent_call, size_t index,
                         const std::string& task, std::stop_token stop,
@@ -141,16 +150,40 @@ auto Helpers::RunHelper(const std::string& conversation,
           {"user", {instruction}, {}, {}, ProviderAPI::AnthropicMessages});
       auto insert =
           conversations->ConversationDatabase(conversation)
-              .prepare("INSERT INTO helpers VALUES(?,?,?,?,?,'','running')");
+              .prepare(
+                  "INSERT INTO helpers "
+                  "VALUES(?,?,?,?,?,'','running',?,?,'[]')");
       insert.bind(1, conversation)
           .bind(2, parent_call)
           .bind(3, static_cast<int>(index))
           .bind(4, digest)
           .bind(5, dependencies.scrub(SerializeMessages(messages)))
+          .bind(6, dependencies.scrub(task))
+          .bind(
+              7,
+              static_cast<int>(
+                  json::Array(
+                      json::Get(
+                          json::Object(conversations->ConversationJson(
+                              conversations->GetConversation(conversation))),
+                          "archive", "[]"))
+                      .size() +
+                  std::ranges::count_if(
+                      ParseMessages(conversations->GetConversation(conversation)
+                                        .messages),
+                      [](const auto& message) {
+                        return !message.context_summary;
+                      })))
           .run();
     }
     config = providers->ForConversation(conversation);
   }
+  dependencies.event(conversation, json::Encode(json::Members{
+                                       {"kind", json::Quote("helper")},
+                                       {"id", json::Quote(parent_call)},
+                                       {"name", json::Quote(name)},
+                                       {"index", std::to_string(index)},
+                                       {"event", R"({"kind":"checkpoint"})"}}));
   auto boundary = std::make_shared<HelperScope>(spec, authorization);
   const auto read = tools->HelperReader(conversation, stop, {}, authorization);
   // Receipt ownership survives both interruption and transcript compaction.
@@ -179,12 +212,15 @@ auto Helpers::RunHelper(const std::string& conversation,
     call.id = scope + call.id;
     return reconcile(call);
   };
-  hooks.event = [this, conversation, name](const RuntimeEvent& e) {
+  hooks.event = [this, conversation, name, parent_call,
+                 index](const RuntimeEvent& e) {
     dependencies.event(
         conversation,
         json::Encode(json::Members{
             {"kind", json::Quote("helper")},
             {"name", json::Quote(name)},
+            {"id", json::Quote(parent_call)},
+            {"index", std::to_string(index)},
             {"event", json::Encode(json::Members{
                           {"kind", json::Quote(e.kind)},
                           {"text", json::Quote(e.text)},
@@ -205,44 +241,42 @@ auto Helpers::RunHelper(const std::string& conversation,
           conversations->RememberResource(conversation, resource);
     auto old = conversations->ConversationDatabase(conversation)
                    .prepare(
-                       "SELECT messages,result FROM helpers WHERE "
+                       "SELECT messages,archive FROM helpers WHERE "
                        "conversation=? AND parent_call=? AND task=?");
     old.bind(1, conversation)
         .bind(2, parent_call)
         .bind(3, static_cast<int>(index));
     if (!old.step()) throw Failure("not_found", "Missing helper checkpoint");
-    auto archive = old.text(1).empty()
-                       ? std::vector<Message>{}
-                       : ParseMessages(json::Get(json::Object(old.text(1)),
-                                                 "archive", "[]"));
-    const auto removed = RemovedMessages(ParseMessages(old.text(0)), saved);
+    auto archive = ParseMessages(old.text(1));
+    const auto serialized = dependencies.scrub(SerializeMessages(saved));
+    const auto removed =
+        Displaced(ParseMessages(old.text(0)), ParseMessages(serialized));
     archive.insert(archive.end(), removed.begin(), removed.end());
-    auto keep = conversations->ConversationDatabase(conversation)
-                    .prepare(
-                        "UPDATE helpers SET result=? WHERE conversation=? "
-                        "AND parent_call=? AND task=?");
-    keep.bind(1, dependencies.scrub(json::Encode(
-                     json::Members{{"archive", SerializeMessages(archive)}})))
-        .bind(2, conversation)
-        .bind(3, parent_call)
-        .bind(4, static_cast<int>(index))
-        .run();
+    // Archive and replacement are committed together, including equal-sized
+    // replacements. The result remains the helper's final report.
     auto update = conversations->ConversationDatabase(conversation)
                       .prepare(
-                          "UPDATE helpers SET messages=? WHERE "
+                          "UPDATE helpers SET messages=?,archive=? WHERE "
                           "conversation=? AND parent_call=? AND task=?");
-    update.bind(1, dependencies.scrub(SerializeMessages(saved)))
-        .bind(2, conversation)
-        .bind(3, parent_call)
-        .bind(4, static_cast<int>(index))
+    update.bind(1, serialized)
+        .bind(2, dependencies.scrub(SerializeMessages(archive)))
+        .bind(3, conversation)
+        .bind(4, parent_call)
+        .bind(5, static_cast<int>(index))
         .run();
     tx.commit();
+    dependencies.event(
+        conversation,
+        json::Encode(json::Members{{"kind", json::Quote("helper")},
+                                   {"id", json::Quote(parent_call)},
+                                   {"index", std::to_string(index)},
+                                   {"event", R"({"kind":"checkpoint"})"}}));
   };
   auto tools = this->tools->Specs();
   std::erase_if(tools,
                 [](const auto& tool) { return tool.name == "delegate"; });
   const auto result =
-      Runtime({.max_steps = 15})
+      Runtime()
           .Run(config, Turns::System(), messages, tools, stop, hooks);
   std::string output;
   {
@@ -250,25 +284,12 @@ auto Helpers::RunHelper(const std::string& conversation,
     sql::Transaction transaction(
         conversations->ConversationDatabase(conversation));
     turns->AddUsage(conversation, result.usage);
-    auto old = conversations->ConversationDatabase(conversation)
-                   .prepare(
-                       "SELECT result FROM helpers WHERE conversation=? "
-                       "AND parent_call=? AND task=?");
-    old.bind(1, conversation)
-        .bind(2, parent_call)
-        .bind(3, static_cast<int>(index));
-    if (!old.step()) throw Failure("not_found", "Missing helper result");
-    const auto archive = old.text(0).empty()
-                             ? std::vector<Message>{}
-                             : ParseMessages(json::Get(
-                                   json::Object(old.text(0)), "archive", "[]"));
     auto trace = messages;
     std::erase_if(trace,
                   [](const auto& message) { return message.context_summary; });
     output = json::Encode(json::Members{
         {"name", json::Quote(name)},
         {"messages", dependencies.scrub(SerializeMessages(trace))},
-        {"archive", dependencies.scrub(SerializeMessages(archive))},
         {"error", json::Quote(result.error)}});
     auto update = conversations->ConversationDatabase(conversation)
                       .prepare(

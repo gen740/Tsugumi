@@ -468,6 +468,11 @@ export class CardGeometry {
       : { x: output ? this.cardWidth : 0, y: this.grid ? snapToGrid(r.y + r.height / 2, CardGeometry.rowPitch(this.grid)) : r.y + r.height / 2 }
   }
 
+  /** Routing bodies retain room for moving at every zoom. */
+  portHitSize(zoom: number): number {
+    return this.shape === 'card' ? Math.max(16, 18 * zoom) : 12 * zoom
+  }
+
   port(name: string, output: boolean): Pt {
     if (this.draft) {
       const p = this.newPort(output)

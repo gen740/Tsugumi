@@ -27,7 +27,7 @@ struct ToolResult {
 
 struct RuntimeEvent {
   // text, toolInput, toolStarted, toolFinished, retrying, discardText,
-  // compacting, compacted, error, finished, stepLimit, cancelled.
+  // compacting, compacted, error, finished, cancelled.
   std::string kind;
   std::string text;
   std::string id;
@@ -52,13 +52,12 @@ struct RuntimeHooks {
 };
 
 struct RuntimeOptions {
-  uint32_t max_steps = 50;
   uint32_t max_retries = 3;
   uint32_t max_cut_replies = 3;
   bool compact = true;
 };
 
-enum class RunOutcome { Finished, Cancelled, StepLimit, Failed };
+enum class RunOutcome { Finished, Cancelled, Failed };
 
 struct RunResult {
   RunOutcome outcome = RunOutcome::Finished;

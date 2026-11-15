@@ -91,7 +91,7 @@ TEST(AgentContextMeasure, LongToolConversationKeepsEveryVisibleResult) {
   messages.push_back(
       {"user", {instruction}, {}, {}, agent::ProviderAPI::AnthropicMessages});
   const auto result =
-      agent::Runtime({.max_steps = 50})
+      agent::Runtime()
           .Run(config, "system", messages,
                {{"inspect", "Inspect one record.", "{}"}}, {}, hooks);
   scripted.request_stop();

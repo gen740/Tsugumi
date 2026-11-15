@@ -14,17 +14,24 @@ struct StatusBar: View {
   @Environment(\.openWindow) private var openWindow
 
   var body: some View {
-    // Full, compact and minimal layouts: the bar never overlaps itself, and
-    // the run state and the save state stay visible at any width.
+    // All four layouts keep a single line; the last keeps its intrinsic width
+    // even when the canvas offers less room than the icons need.
     ViewThatFits(in: .horizontal) {
       bar(compact: false)
       bar(compact: true)
       HStack(spacing: 8) {
-        runState(short: true)
-        syncState(short: true)
+        runState(short: true).fixedSize()
+        syncState(short: true).fixedSize()
         Spacer(minLength: 4)
-        panelPicker(icons: true)
+        panelPicker.fixedSize()
       }
+      .fixedSize()
+      HStack(spacing: 8) {
+        runState(short: true, icons: true)
+        syncState(short: true, icons: true)
+        panelPicker
+      }
+      .fixedSize()
     }
     .sheet(item: Binding(get: { session.reloadApproval }, set: { session.reloadApproval = $0 })) { request in
       PermissionPromptView(prompt: ChatController.PermissionPrompt(raw: request.permissions, answer: { _ in }),
@@ -57,14 +64,14 @@ struct StatusBar: View {
           .frame(maxWidth: 260)
         Button { session.notice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
       }
-      panelPicker(icons: compact).fixedSize()
+      panelPicker.fixedSize()
     }
     .fixedSize(horizontal: true, vertical: false)
   }
 
   /// Log, timeline and terminal icons: each opens its panel, a second click closes
   /// it, and only the open one is highlighted.
-  private func panelPicker(icons: Bool) -> some View {
+  private var panelPicker: some View {
     HStack(spacing: 2) {
       panelButton(.log, symbol: "text.alignleft", shortcut: .toggleLog)
       panelButton(.timeline, symbol: "chart.bar.xaxis", shortcut: .toggleTimeline)
@@ -86,45 +93,59 @@ struct StatusBar: View {
     .guideTarget(p == .log ? "logs" : p.rawValue)
   }
 
-  private func runState(short: Bool) -> some View {
+  private func runState(short: Bool, icons: Bool = false) -> some View {
     let s = session.runStatus?.state ?? .idle
     return HStack(spacing: 4) {
       Image(systemName: s.symbol).foregroundStyle(s.color)
-      Text(short ? s.label : String(localized: "実行: \(s.label)"))
+      if !icons { Text(short ? s.label : String(localized: "実行: \(s.label)")) }
       if !short, let f = session.runStatus?.failure, s == .failed {
         Text("· \(f.diagnostic ?? String(describing: f.kind))").lineLimit(1).foregroundStyle(.secondary).frame(maxWidth: 260)
       }
     }
+    .lineLimit(1)
     .help(s.label)
-    .accessibilityElement(children: .combine)
+    .accessibilityElement(children: .ignore)
+    .accessibilityLabel(s.label)
   }
 
-  private func syncState(short: Bool) -> some View {
+  private func syncState(short: Bool, icons: Bool = false) -> some View {
     Button { showSync.toggle() } label: {
       HStack(spacing: 4) {
         switch session.syncState {
         case .saved:
           Image(systemName: "checkmark.icloud").foregroundStyle(.green)
-          Text("保存済み")
+          if !icons { Text("保存済み") }
         case .waitingForRun:
           Image(systemName: "clock.arrow.circlepath").foregroundStyle(.orange)
-          Text(short ? String(localized: "実行後に保存") : String(localized: "実行が終わったら保存します"))
+          if !icons { Text(short ? String(localized: "実行後に保存") : String(localized: "実行が終わったら保存します")) }
         case .saving:
           ProgressView().controlSize(.mini)
-          Text("保存中…")
+          if !icons { Text("保存中…") }
         case .failed:
           Image(systemName: "exclamationmark.icloud.fill").foregroundStyle(.red)
-          Text("同期できません")
+          if !icons { Text("同期できません") }
         case .offline:
           Image(systemName: "icloud.slash").foregroundStyle(.secondary)
-          Text("未接続")
+          if !icons { Text("未接続") }
         }
       }
     }
+    .lineLimit(1)
     .buttonStyle(StatusButtonStyle())
-    .help("保存・同期の詳細")
+    .help(syncLabel + " · " + String(localized: "保存・同期の詳細"))
+    .accessibilityLabel(syncLabel)
     .guideTarget("save")
     .popover(isPresented: $showSync, arrowEdge: .top) { syncDetail }
+  }
+
+  private var syncLabel: String {
+    switch session.syncState {
+    case .saved: return String(localized: "保存済み")
+    case .waitingForRun: return String(localized: "実行が終わったら保存します")
+    case .saving: return String(localized: "保存中…")
+    case .failed: return String(localized: "同期できません")
+    case .offline: return String(localized: "未接続")
+    }
   }
 
   /// The saved revision; the project's versions (git) open from it.

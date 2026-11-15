@@ -1,16 +1,20 @@
 import Foundation
 import Testing
+import TsugumiRPC
 @testable import TsugumiApp
 
 @MainActor struct ChatPresentationTests {
-  @Test func accessNamesTheProjectFolderCapabilityAndLifetime() throws {
-    let value = ["title": "Collatz", "path": "/work/copy-b", "access": "Read", "scope": "Conversation", "reason": "Read project content"]
+  @Test func accessGroupsKeepTheHostTargetAndExactChoiceIdentity() throws {
+    let value = ["title": "Collatz", "path": "/work/copy-b", "access": "Read", "scope": "Conversation", "needed_now": true] as [String: Any]
     let data = try JSONSerialization.data(withJSONObject: value)
-    let text = ProjectAccessLabel.text("project_access " + String(decoding: data, as: UTF8.self))
-    #expect(text.contains("Collatz") && text.contains("/work/copy-b"))
-    #expect(text.contains(String(localized: "内容の読み取り")))
-    #expect(text.contains(String(localized: "この会話の間")))
-    #expect(!text.contains("[Conversation]") && !text.contains("Read project content"))
+    let request = "project_access " + String(decoding: data, as: UTF8.self)
+    let line = Tsugumi_Agent_AccessLineT(); line.request = request; line.operation = "Read"; line.scope = "Conversation"; line.neededNow = true
+    let group = Tsugumi_Agent_AccessGroupT(); group.title = "Collatz"; group.path = "/work/copy-b"; group.displayPath = "/work/copy-b"; group.scope = "Conversation"; group.lines = [line]
+    let prompt = ChatController.PermissionPrompt(raw: [request], groups: [group]) { _ in }
+    #expect(prompt.groups.count == 1 && prompt.groups[0].title == "Collatz")
+    #expect(prompt.groups[0].path == "/work/copy-b" && prompt.groups[0].scope == "Conversation")
+    #expect(prompt.groups[0].lines[0]?.request == request)
+    #expect(prompt.defaultSelection == [request])
   }
 
   @Test func scopedSkillPromptNamesOnlyTheDeclaredCardSets() throws {

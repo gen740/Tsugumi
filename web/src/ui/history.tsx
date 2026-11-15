@@ -124,11 +124,13 @@ export function CardExecutionView({ session, cardKey, onOpenSource }: { session:
   const interruptedRunId = s(record?.run?.status?.runId)
   const interruptedRun = !!runId && interruptedRunId === runId && !!summary?.executionJobId &&
     record?.run?.status?.failure?.kind === D.FailureKind.interrupted
+  const waiting = session.runActive && runId === session.currentRunId && !invocations.length && !rec
   return (
-    <HSplit sizes={[260, null]} min={[220, 380]}>
+    <div className="execution-history fill">
+    <HSplit sizes={[240, null]} min={[220, 380]}>
       {[
         <div key="runs" className="col fill">
-          <div className="pad6"><Button disabled={runs.length < 2} onClick={() => setComparing(true)}>{L('実行を比較')}</Button></div>
+          {runs.length > 1 && <div className="pad6"><Button onClick={() => setComparing(true)}>{L('実行を比較')}</Button></div>}
           {comparing && <Sheet width={1200} onClose={() => setComparing(false)}><RunComparisonView session={session} runs={runs} initial={runId} onClose={() => setComparing(false)} /></Sheet>}
           <div className="pad6"><Segmented<Filter> small value={filter} onChange={setFilter} options={[{ value: 'all', label: L('すべて') }, { value: 'succeeded', label: L('成功') }, { value: 'failed', label: L('失敗') }]} /></div>
           <div className="list flex1" role="listbox" aria-label={L('実行')}>
@@ -152,25 +154,27 @@ export function CardExecutionView({ session, cardKey, onOpenSource }: { session:
           {runMark(record?.run ?? runs.find(r => s(r.status?.runId) === runId)) && <div className="caption pad6">{runMark(record?.run ?? runs.find(r => s(r.status?.runId) === runId))}</div>}
           {!runId ? <Empty title={L('実行を選んでください')} icon="list.bullet.rectangle" /> : (
             <>
-              <div className="row gap8 center pad6 border-bottom">
-                <Select label={L('呼び出し')} style={{ maxWidth: 320 }} value={invocation === undefined ? '' : String(invocation)}
-                  onChange={(v) => setInvocation(v ? BigInt(v) : undefined)}
-                  options={invocations.length ? invocations.map((i) => ({
-                    value: String(i.invocation ?? 0n),
-                    label: `#${i.invocation ?? 0n} · ${cardState(i.state).label}` +
-                      (i.batchIndex != null && i.batchSize != null ? ` · ${i.batchIndex}/${i.batchSize}` : '') +
-                      (i.durationMs !== null ? ` · ${formatDuration(Number(i.durationMs) / 1000)}` : ''),
-                  })) : [{ value: '', label: L('呼び出しなし') }]} />
-                {batch?.executionList && <span className="caption mono">×{batch.invocationCount}</span>}
-                {(cursors.length > 0 || nextCursor) && <>
-                  <Button small disabled={!cursors.length} onClick={() => { setNextCursor(undefined); setCursors(cursors.slice(0, -1)) }}>{L('前へ')}</Button>
-                  <Button small disabled={!nextCursor} onClick={() => { if (nextCursor) { setCursors([...cursors, nextCursor]); setNextCursor(undefined) } }}>{L('次へ')}</Button>
-                </>}
-                <span className="spacer" />
-                <Segmented<Detail> small width={300} value={detail} onChange={setDetail} options={[{ value: 'io', label: L('入出力') }, { value: 'log', label: L('ログ') }, { value: 'packages', label: L('依存 package') }, { value: 'info', label: L('情報') }]} />
+              <div className="history-detail-header col gap8 pad6 border-bottom">
+                <div className="history-invocation row gap8 center">
+                  {waiting ? <span className="ellipsis secondary" title={L('呼び出しの記録を待っています')}>{L('呼び出しの記録を待っています')}</span> : <Select label={L('呼び出し')} style={{ maxWidth: 320 }} value={invocation === undefined ? '' : String(invocation)}
+                    onChange={(v) => setInvocation(v ? BigInt(v) : undefined)}
+                    options={invocations.length ? invocations.map((i) => ({
+                      value: String(i.invocation ?? 0n),
+                      label: `#${i.invocation ?? 0n} · ${cardState(i.state).label}` +
+                        (i.batchIndex != null && i.batchSize != null ? ` · ${i.batchIndex}/${i.batchSize}` : '') +
+                        (i.durationMs !== null ? ` · ${formatDuration(Number(i.durationMs) / 1000)}` : ''),
+                    })) : [{ value: '', label: L('呼び出しなし') }]} />}
+                  {batch?.executionList && <span className="caption mono">×{batch.invocationCount}</span>}
+                  {(cursors.length > 0 || nextCursor) && <>
+                    <Button small disabled={!cursors.length} onClick={() => { setNextCursor(undefined); setCursors(cursors.slice(0, -1)) }}>{L('前へ')}</Button>
+                    <Button small disabled={!nextCursor} onClick={() => { if (nextCursor) { setCursors([...cursors, nextCursor]); setNextCursor(undefined) } }}>{L('次へ')}</Button>
+                  </>}
+                </div>
+                <Segmented<Detail> small value={detail} onChange={setDetail} options={[{ value: 'io', label: L('入出力'), help: L('入出力') }, { value: 'log', label: L('ログ'), help: L('ログ') }, { value: 'packages', label: L('依存 package'), help: L('依存 package') }, { value: 'info', label: L('情報'), help: L('情報') }]} />
               </div>
               <div className="flex1 col min0">
-                {detail === 'io' && (rec ? (
+                {waiting && (detail === 'io' || detail === 'packages') && <div className="pad10 secondary ellipsis" title={L('呼び出しが記録されると表示します。')}>{L('呼び出しが記録されると表示します。')}</div>}
+                {detail === 'io' && !waiting && (rec ? (
                   <div className="scroll pad10 col gap8">
                     {(rec.recordIo === false || record?.recordingDisabled) && <span className="label secondary"><Icon name="info.circle" />{L('この Card は入出力を記録していません（設定 > 入出力 > 入出力を記録）。')}</span>}
                     {runMark(record?.run) && <span className="caption">{runMark(record?.run)}</span>}
@@ -184,7 +188,7 @@ export function CardExecutionView({ session, cardKey, onOpenSource }: { session:
                 ) : record?.exists === false ? <Empty title={L('この実行では呼び出されていません')} icon="circle.dotted" /> : <Empty title={L('記録がありません')} icon="tray" />)}
                 {detail === 'log' && <RunLogView session={session} runId={runId} card={path(cardKey)} invocation={invocation} />}
                 {/* What this invocation ran with, from its record; never the current definition. */}
-                {detail === 'packages' && (record?.exists === false ? <Empty title={L('この実行では呼び出されていません')} icon="circle.dotted" />
+                {detail === 'packages' && !waiting && (record?.exists === false ? <Empty title={L('この実行では呼び出されていません')} icon="circle.dotted" />
                   : <InvocationPackages session={session} runId={runId} environmentId={s(rec?.summary?.environmentId)} />)}
                 {detail === 'info' && (record ? (
                   <div className="scroll">
@@ -237,6 +241,7 @@ export function CardExecutionView({ session, cardKey, onOpenSource }: { session:
         </div>,
       ]}
     </HSplit>
+    </div>
   )
 }
 

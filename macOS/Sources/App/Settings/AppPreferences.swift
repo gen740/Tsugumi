@@ -167,7 +167,14 @@ final class AppPreferences {
     var label: String { self == .returnKey ? String(localized: "Return で送信（⇧Return で改行）") : String(localized: "⌘Return で送信（Return で改行）") }
   }
 
-  var language: Language { didSet { CorePreferences.shared.set(language.rawValue, forKey: "app.language"); applyLanguage() } }
+  private(set) var languageRestart: LanguageRestart
+  var language: Language {
+    didSet {
+      CorePreferences.shared.set(language.rawValue, forKey: "app.language")
+      applyLanguage()
+      if languageRestart.select(language) { LanguageRestartNotice.update(languageRestart) }
+    }
+  }
   var maxConcurrency: Int { didSet { d.set(maxConcurrency, forKey: "run.maxConcurrency") } }
   var sendKey: SendKey { didSet { d.set(sendKey.rawValue, forKey: "chat.sendKey") } }
   var theme: Theme { didSet { d.set(theme.rawValue, forKey: "app.theme"); applyTheme() } }
@@ -198,7 +205,9 @@ final class AppPreferences {
   var skillFolders: [SkillFolder] { didSet { saveSkills() } }
 
   init() {
-    language = Language(rawValue: CorePreferences.shared.string(forKey: "app.language") ?? d.stringArray(forKey: "AppleLanguages")?.first ?? "") ?? .ja
+    let selectedLanguage = Language(rawValue: CorePreferences.shared.string(forKey: "app.language") ?? d.stringArray(forKey: "AppleLanguages")?.first ?? "") ?? .ja
+    language = selectedLanguage
+    languageRestart = LanguageRestart(running: selectedLanguage)
     maxConcurrency = d.object(forKey: "run.maxConcurrency") as? Int ?? 4
     sendKey = SendKey(rawValue: d.string(forKey: "chat.sendKey") ?? "") ?? .returnKey
     theme = Theme(rawValue: d.string(forKey: "app.theme") ?? "") ?? .system
@@ -224,6 +233,10 @@ final class AppPreferences {
       skillFolders = []
     }
     applyLanguage()
+    // Do not ask Bundle for a localization before setting AppleLanguages:
+    // first launch must retain the app's Japanese default on an English Mac.
+    languageRestart = LanguageRestart(running: .running)
+    languageRestart.select(language)
   }
 
   func syncHostSettings() {

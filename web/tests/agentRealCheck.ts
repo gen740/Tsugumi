@@ -5,7 +5,7 @@ import path from 'node:path'
 import { chatRoutes, cancelChats, type ChatContext } from '../server/chat'
 import { CoreHost } from '../server/coreHost'
 import { toolStep, PermissionRequests } from '../src/ui/chat'
-import { AGENT, projectAccessLabel, projectAccessNeededNow } from '../src/shared/agentShared'
+import { AGENT, projectAccessNeededNow } from '../src/shared/agentShared'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { createElement } from 'react'
 import EN from '../src/i18n/en.json'
@@ -103,17 +103,16 @@ try {
 
 const tools = [...AGENT.requests, ...AGENT.approvalRequests].map(name => name.replace(/Request$/, '').replace(/[A-Z]/g, (c, index) => (index ? '_' : '') + c.toLowerCase()))
 for (const lang of ['ja', 'en'] as const) {
-  const translate = (key: string, ...values: unknown[]) => {
-    const text = lang === 'en' ? (EN as Record<string, string>)[key] : key
-    assert.ok(text, `Missing ${lang} translation: ${key}`)
-    return text.replace(/\{(\d+)\}/g, (_, index) => String(values[Number(index)]))
-  }
-  const text = projectAccessLabel(asked, translate)
-  assert.ok(text.includes('Collatz') && text.includes(folders[0]))
-  assert.ok(text.includes(lang === 'en' ? 'Read content' : '内容の読み取り'))
-  assert.ok(text.includes(lang === 'en' ? 'For this conversation' : 'この会話の間'))
-  assert.ok(!text.includes('[Conversation]') && !text.includes('Read project content'))
-  assert.ok(renderToStaticMarkup(createElement(PermissionRequests, { asked: pendingAsked })).includes('Collatz'))
+  const choices = [asked, write, run]
+  const groups = [{ title: 'Collatz', path: folders[0], displayPath: folders[0], scope: 'Conversation', lines: choices.map(request => {
+    const fields = JSON.parse(request.slice('project_access '.length))
+    return { request, operation: fields.access, scope: fields.scope, neededNow: fields.needed_now }
+  }) }]
+  const markup = renderToStaticMarkup(createElement(PermissionRequests, { asked: choices, groups }))
+  assert.equal((markup.match(/Collatz/g) ?? []).length, 1, 'The target is drawn once for all operations')
+  assert.ok(markup.includes('内容の読み取り') && markup.includes('内容の変更') && markup.includes('Card の実行'))
+  assert.equal((markup.match(/今の操作に必要/g) ?? []).length, 1)
+  assert.equal((markup.match(/この会話の間/g) ?? []).length, 1)
   for (const name of [...tools, 'demo_list', 'demo_read', 'operation_approval', 'guide_show', 'delegate', 'web_search']) {
     const label = toolStep(name, '{}')
     assert.ok(!label.running.includes(name) && !label.done.includes(name), `${lang}: missing label for ${name}`)

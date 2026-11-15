@@ -91,14 +91,13 @@ final class AgentPresence {
   private(set) var outcome: Outcome = .done
 
   enum Outcome: Equatable {
-    case done, failed, stopped, limit
+    case done, failed, stopped
 
     var line: String {
       switch self {
       case .done: String(localized: "できました")
       case .failed: String(localized: "うまくいきませんでした")
       case .stopped: String(localized: "止めました")
-      case .limit: String(localized: "途中で止まっています")
       }
     }
   }

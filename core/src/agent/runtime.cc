@@ -375,8 +375,6 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
   RunResult result;
   try {
     ValidateHooks(hooks);
-    if (options_.max_steps == 0)
-      throw std::runtime_error("Agent step limit must be positive");
     CheckCancelled(stop);
     Authorize(hooks, messages);
     Reconcile(messages, hooks, stop);
@@ -393,7 +391,7 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
     uint32_t cut_replies = 0;
     uint32_t invalid_replies = 0;
     uint32_t context_refusals = 0;
-    for (uint32_t step = 0; step < options_.max_steps; ++step) {
+    for (uint32_t step = 0; !stop.stop_requested(); ++step) {
       CheckCancelled(stop);
       auto request_messages = ModelView(config, system, messages, tools,
                                         *context, options_.compact);
@@ -544,17 +542,7 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
         throw std::runtime_error(
             "model repeatedly returned malformed tool arguments");
     }
-    result.outcome = RunOutcome::StepLimit;
-    Emit(
-        hooks,
-        {"stepLimit",
-         "The Agent reached its step limit; the conversation can be continued.",
-         {},
-         {},
-         true,
-         options_.max_steps,
-         result.usage});
-    return result;
+    throw Cancelled();
   } catch (const Cancelled&) {
     result.outcome = RunOutcome::Cancelled;
     result.error = "cancelled";

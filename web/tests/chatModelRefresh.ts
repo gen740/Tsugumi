@@ -20,7 +20,7 @@ globalThis.fetch = (async (url, init) => {
   if (url === '/api/skills') value = []
   if (url === '/api/chat/conversation') {
     reads++
-    value = { provider: provider(), busy: !!accepted, conversation: { messages: [], archive: [], usage: {} } }
+    value = { provider: provider(), busy: !!accepted, conversation: { id: 's', rows: [], messages: [], archive: [], usage: {} } }
   }
   if (url === '/api/settings') {
     if (init?.body) selected = JSON.parse(String(init.body)).chatGPTModel ?? selected
@@ -93,3 +93,65 @@ try {
   globalThis.setInterval = originalInterval
 }
 console.log('chat model refresh: presentation, settings stream, local writes and turn boundaries passed without timers')
+
+// Deliberately defer reads to reproduce the blank panel and out-of-order reloads.
+{
+  const original = globalThis.fetch
+  const pending: { resolve(value: any): void; reject(error: Error): void }[] = []
+  const textRow = (text: string) => ({ id: text, kind: 'text', role: 'assistant', text, name: '', arguments: '', result: '', state: '', archived: false, summaryJa: '', summaryEn: '', scopeJa: '', scopeEn: '', instruction: '', failed: 0, recovered: 0, links: [], children: [] })
+  const snapshot = (id: string, text: string) => ({ conversation: { id, rows: text ? [textRow(text)] : [], messages: text ? [{ role: 'assistant', content: [{ type: 'text', text }] }] : [], archive: [], usage: {} }, provider: {}, busy: false })
+  globalThis.fetch = (() => new Promise((resolve, reject) => pending.push({ resolve: value => resolve({ ok: true, json: async () => value } as Response), reject }))) as typeof fetch
+  const c = Object.create(ChatController.prototype) as any
+  Object.assign(c, { session: { dir: '/preserved' }, items: [{ id: 'original', role: 'assistant', text: 'original' }], currentId: 'old', displayedId: 'old', available: true, folders: [], turn: 0, reload: 0, contentRevision: 0, changed() {}, noteWriting() { return false } })
+  try {
+    c.select('next')
+    assert.equal(c.items[0]?.text, 'original', 'switching keeps the visible conversation until its replacement is ready')
+    assert.equal(c.ready, false, 'preserved rows cannot receive messages meant for the pending conversation')
+    pending[0].reject(new Error('read failed'))
+    await flush()
+    assert.equal(c.items[0]?.text, 'original', 'a failed load never clears the conversation')
+    assert.match(c.status, /read failed/)
+
+    c.select('next')
+    c.select('old')
+    pending[2].resolve(snapshot('old', 'restored'))
+    await flush()
+    pending[1].resolve(snapshot('next', 'obsolete'))
+    await flush()
+    assert.equal(c.items[0]?.text, 'restored', 'a cancelled selection cannot replace the current conversation')
+    assert.equal(c.ready, true)
+
+    const reconnect = c.reread('old')
+    c.handle({ kind: 'presentation', rows: [textRow('live progress')] })
+    pending[3].resolve(snapshot('old', ''))
+    await reconnect
+    assert.equal(c.items[0]?.text, 'live progress', 'a reconnect snapshot cannot overwrite newer stream content with an empty list')
+    const failedReconnect = c.reread('old')
+    pending[4].reject(new Error('reconnect failed'))
+    await failedReconnect
+    assert.match(c.status, /reconnect failed/, 'reconnect errors stay visible')
+    assert.equal(c.items[0]?.text, 'live progress')
+
+    const retryRead = c.reread('old')
+    pending[5].resolve(snapshot('old', 'live progress'))
+    await retryRead
+    assert.equal(c.status, undefined, 'a successful read clears its previous loading error')
+
+    c.select('old')
+    c.select('old')
+    pending[7].resolve(snapshot('old', 'latest same ID'))
+    await flush()
+    pending[6].reject(new Error('obsolete error'))
+    await flush()
+    assert.equal(c.status, undefined, 'an obsolete error from a reselected ID cannot overwrite the latest state')
+    assert.equal(c.items[0]?.text, 'latest same ID')
+
+    const listing = c.init()
+    pending[8].reject(new Error('session list failed'))
+    await listing
+    assert.equal(pending.length, 9, 'a failed list must not bind to a newly invented empty conversation')
+    assert.equal(c.items[0]?.text, 'latest same ID')
+    assert.match(c.status, /session list failed/)
+  } finally { globalThis.fetch = original }
+}
+console.log('chat content: pending/failed switches, cancelled loads, stale reconnects, same-ID races and list failures retain history')

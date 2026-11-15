@@ -412,8 +412,8 @@ def vm_server(tmp_path):
                 pass
 
 
-def api(port: int, cookie: str, method: str, route: str, body=None):
-    c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+def api(port: int, cookie: str, method: str, route: str, body=None, *, timeout=10):
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
     c.request(method, route, body=json.dumps(body or {}) if method == "POST" else None,
               headers={"Host": f"127.0.0.1:{port}", "Cookie": cookie, "X-Tsugumi": "1", "Content-Type": "application/json"})
     r = c.getresponse()
@@ -429,6 +429,60 @@ def test_the_page_needs_no_setup_and_may_share_folders(vm_server):
     s = api(port, cookie, "GET", "/api/status")
     assert all(s["setup"][k]["ok"] for k in ("tsugumid", "worker", "sdk"))
     assert s["hostFolders"] is True
+
+
+@needs_server
+def test_attach_restarts_the_guest_registers_and_reconnects_repeatedly(vm_server):
+    # Production hostd, VM process adapter and tsugumid; only the hypervisor is
+    # replaced by the helper. No Card/worker is needed to expose the lost socket.
+    from tsugumi_client import Client, new_id
+
+    root, project, _, port, cookie = vm_server
+    # The HTTP watchdog covers hostd's startup and rollback budgets; it must
+    # not turn a still-running VM transition into an apparent attach failure.
+    def request(method, route, body=None):
+        return api(port, cookie, method, route, body, timeout=240)
+
+    state = request("POST", "/api/env/start", {"path": str(project)})
+    assert state["state"] == "ready", state
+    with Client(ws=state["endpoint"]) as client:
+        previous = client.hello(token=state["token"], project=state["projectId"]).serverInstanceId
+        assert client.open(new_id()) is not None
+    for index in range(3):
+        folder = root / f"attached-{index}"
+        folder.mkdir()
+        (folder / "note.txt").write_text(f"folder {index}")
+        result = request("POST", "/api/chat/folders",
+                     {"path": str(project), "selected": [str(folder), str(folder)]})
+        assert len(result["folders"]) == 1
+        assert result["folders"][0]["folder"] == str(folder)
+        resource = result["folders"][0]["resource"]
+        state = request("POST", "/api/env/start", {"path": str(project)})
+        assert state["state"] == "ready", state
+        # A fresh project session must authenticate and read its snapshot.
+        with Client(ws=state["endpoint"]) as client:
+            hello = client.hello(token=state["token"], project=state["projectId"])
+            assert hello.serverInstanceId != previous
+            previous = hello.serverInstanceId
+            assert client.open(new_id()) is not None
+        # Retrying an existing share returns the same registered identity.
+        retry = request("POST", "/api/chat/folders",
+                    {"path": str(project), "selected": [str(folder)]})
+        assert retry == result
+        for attempt in range(4):
+            read = request("POST", "/api/agent/call", {"path": str(project),
+                       "name": "attached_folder_read", "arguments": {"folder": str(folder), "path": "note.txt"}})
+            if not read.get("isError"):
+                break
+            failure = json.loads(read["text"])
+            assert failure["code"] == "grant_required", read
+            request("POST", "/api/agent/access/resolve", {"id": failure["request_id"], "allow": True})
+        assert not read.get("isError"), read
+        assert json.loads(read["text"])["value"]["bytes"] == f"folder {index}"
+        access = request("POST", "/api/agent/access")
+        assert any(g["project_id"] == resource and g["active"] for g in access["grants"])
+    launches = [json.loads(line) for line in (root / "log").read_text().splitlines()]
+    assert len([item for item in launches if item["op"] == "run"]) == 4
 
 
 @needs_server

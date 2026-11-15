@@ -638,6 +638,12 @@ struct CardGeometry {
                                 : CGPoint(x: output ? cardWidth : 0, y: grid.map { snapToGrid(r.midY, Self.rowPitch($0)) } ?? r.midY)
   }
 
+  /// Routing bodies must keep room for a move even at the minimum zoom.
+  /// A fixed screen-space floor would cover the start's title at 20%.
+  func portHitSize(zoom: CGFloat) -> CGFloat {
+    shape == .card ? max(16, 18 * zoom) : 12 * zoom
+  }
+
   func port(_ name: String, output: Bool) -> CGPoint {
     if draft, let p = newPortPoint(output: output) { return p }
     let list = output ? outputs : inputs
@@ -1032,20 +1038,22 @@ struct CardNodeView: View {
   }
 
   private func hitShape(_ g: CardGeometry, outline: Path) -> Path {
+    // A rotated outline can wind opposite to a port rectangle. Appending
+    // subpaths would then cut holes in their overlap, so take their union.
     var p = outline
     if data.openComments > 0 {
       // The badge sits half outside the outline and must still take the click.
       let badge = max(16, s(18))
-      p.addRect(CGRect(x: outline.boundingRect.maxX - badge, y: outline.boundingRect.minY - badge / 2, width: badge * 1.4, height: badge))
+      p = p.union(Path(CGRect(x: outline.boundingRect.maxX - badge, y: outline.boundingRect.minY - badge / 2, width: badge * 1.4, height: badge)))
     }
-    let hit = max(16, s(18))
+    let hit = g.portHitSize(zoom: z)
     for (list, output) in [(data.inputs, false), (data.outputs, true)] {
       for port in list {
         let pt = g.port(port.name, output: output)
-        p.addRect(CGRect(x: s(pt.x) - hit / 2, y: s(pt.y) - hit / 2, width: hit, height: hit))
+        p = p.union(Path(CGRect(x: s(pt.x) - hit / 2, y: s(pt.y) - hit / 2, width: hit, height: hit)))
       }
       if onPortDrag != nil, paramsEditable, let pt = g.newPortPoint(output: output) {
-        p.addRect(CGRect(x: s(pt.x) - hit / 2, y: s(pt.y) - hit / 2, width: hit, height: hit))
+        p = p.union(Path(CGRect(x: s(pt.x) - hit / 2, y: s(pt.y) - hit / 2, width: hit, height: hit)))
       }
     }
     return p
@@ -1326,8 +1334,8 @@ struct CardNodeView: View {
   /// draws a wire to connect (it takes priority over moving the Card). The
   /// hit area is larger than the mark.
   private func portMarks(_ g: CardGeometry) -> some View {
-    let mark = max(6, s(8))
-    let hit = max(16, s(18))
+    let mark = g.shape == .card ? max(6, s(8)) : s(8)
+    let hit = g.portHitSize(zoom: z)
     return ZStack(alignment: .topLeading) {
       ForEach(data.inputs, id: \.name) { p in
         let pt = g.port(p.name, output: false)
