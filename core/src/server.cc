@@ -175,7 +175,13 @@ void Server::stop() {
 
 void Server::wake() {
   char b = 1;
-  if (wake_w_ >= 0) (void)::write(wake_w_, &b, 1);
+  if (wake_w_ < 0) return;
+  ssize_t count;
+  do { count = ::write(wake_w_, &b, 1); } while (count < 0 && errno == EINTR);
+  // A full nonblocking pipe already wakes the loop; notifications coalesce.
+  if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return;
+  if (count != 1)
+    log::warn("cannot wake server: " + std::string(std::strerror(count < 0 ? errno : EIO)));
 }
 
 void Server::post(Command c) {

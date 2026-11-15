@@ -1,4 +1,4 @@
-// swift-tools-version:6.0
+// swift-tools-version:6.2
 // Platform adapters and launcher tests, built without the app's renderer.
 // Core Agent behavior is tested through public RPC in tests/core.
 //
@@ -23,6 +23,6 @@ let package = Package(
         .product(name: "TsugumiAgentClient", package: "macOS"),
       ],
       path: "Tests/CoreTests",
-      swiftSettings: [.swiftLanguageMode(.v5)]),
+      swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error)]),
   ]
 )

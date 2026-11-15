@@ -79,7 +79,7 @@ class Service : public RequestSink {
 
   void open();  // recovers state; must succeed before the server starts
   void attach(Server* server) { server_ = server; }
-  auto recover_remote_jobs() -> void;
+  auto start_remote_cleanup() -> void;
   void shutdown();  // interrupts runs and stops lanes
   std::string project_id() const { return store_->project_id(); }
 
@@ -105,7 +105,7 @@ class Service : public RequestSink {
                        const std::atomic<bool>& stop) -> Value;
   // The backend that runs the Cards naming execution service `id`.
   auto execution_service(const std::string& id) -> ExecutionService&;
-  // The daemon backend also recovers its jobs.
+  // The remote backend uses the same core lifetime as local execution.
   auto remote_execution() -> RemoteExecutionService&;
   auto remote_targets() const -> std::vector<RemoteTarget>;
   static auto execution_diagnostic(const Node& node, const std::vector<RemoteTarget>& targets) -> std::optional<Diag>;

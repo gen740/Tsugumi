@@ -7,7 +7,6 @@
 
 #include "remote_invocation.hh"
 #include "service.hh"
-#include "run_scratch.hh"
 #include "store.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -29,7 +28,8 @@ auto remote_execution_state(std::string_view state) -> RemoteExecutionState {
   throw BrokerDisconnected("execution gateway returned an unknown job state");
 }
 
-auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job, bool may_submit) -> RemoteJobState {
+auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job)
+    -> RemoteJobState {
   const auto& s = job.invocation;
   const auto fingerprint = crypto::sha256_hex(job.spec);
   RemoteJobState reply;
@@ -39,13 +39,8 @@ auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job, bool m
     reply = client.status(s.execution_service, job.server_id, job.instance, s.execution_job_id);
     if (reply.state == "missing" || reply.state == "uploading") {
       if (job.accepted) return {"interrupted", fingerprint, {}, "the execution service lost a previously accepted job"};
-      if (may_submit) {
-        reply = client.submit(s.execution_service, job.server_id, job.instance, s.execution_job_id, job.spec);
-      } else {
-        reply = client.cancel(s.execution_service, job.server_id, job.instance, s.execution_job_id, fingerprint);
-        if (reply.state == "cancelled")
-          return {"interrupted", fingerprint, {}, "the external submission was not confirmed before the core restarted"};
-      }
+      reply = client.submit(s.execution_service, job.server_id, job.instance,
+                            s.execution_job_id, job.spec);
     }
   }
   if (reply.fingerprint != fingerprint)
@@ -62,16 +57,14 @@ auto remote_failure(const RemoteJobState& result) -> FailureData {
   return FailureData::make(kind, result.error.empty() ? "external job " + result.state : result.error);
 }
 
-auto run_dir_of(Service& service, const std::string& run_id) -> stdfs::path {
-  return service.store().state_dir() / "runs" / run_id;
-}
-
 // An activation whose derivation is exported to `archive` for the target
 // `target` (instance `instance`) to build for `system`.
 class PreparedRemoteExecution final : public PreparedExecution {
  public:
   PreparedRemoteExecution(Service& service, const RemoteJobClient& client, std::string target, std::string system,
-                          std::string server_id, std::string instance, stdfs::path archive)
+                          std::string server_id, std::string instance, stdfs::path archive,
+                          uint32_t heartbeat_interval_seconds,
+                          uint32_t missed_heartbeats)
       : service_(service),
         client_(client),
         target_(std::move(target)),
@@ -79,7 +72,9 @@ class PreparedRemoteExecution final : public PreparedExecution {
         server_id_(std::move(server_id)),
         instance_(std::move(instance)),
         archive_(std::move(archive)),
-        transport_(archive_) {}
+        transport_(archive_),
+        heartbeat_interval_seconds_(heartbeat_interval_seconds),
+        missed_heartbeats_(missed_heartbeats) {}
   PreparedRemoteExecution(const PreparedRemoteExecution&) = delete;
   auto operator=(const PreparedRemoteExecution&) -> PreparedRemoteExecution& = delete;
   ~PreparedRemoteExecution() override {
@@ -92,9 +87,6 @@ class PreparedRemoteExecution final : public PreparedExecution {
   auto stage(const std::atomic<bool>& cancel) -> void override {
     if (cancel.load()) throw Failed(FailureKind::cancelled, "remote staging cancelled");
   }
-  auto cancel_batch(sql::Db& db, const std::string& run, const CardPath& card, uint64_t activation) -> void override {
-    History::cancel_remote_batch(db, run, card, activation);
-  }
   auto execute(const ExecutionRequest& request) -> ExecutionResult override;
 
  private:
@@ -106,6 +98,8 @@ class PreparedRemoteExecution final : public PreparedExecution {
   std::string instance_;
   stdfs::path archive_;
   ArchiveDerivationTransport transport_;
+  uint32_t heartbeat_interval_seconds_;
+  uint32_t missed_heartbeats_;
 };
 
 auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> ExecutionResult {
@@ -118,27 +112,19 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
                                           std::to_string(s.invocation));
   const auto archive_digest = stage_remote_archive(client_, target_, server_id_, instance_, s.execution_job_id, archive_, request.cancel);
   auto spec = stage_remote_invocation(client_, target_, server_id_, instance_, s.execution_job_id, service_.project_id(), service_.file_roots(),
-                                      archive_digest, request);
+                                      archive_digest, request,
+                                      heartbeat_interval_seconds_, missed_heartbeats_);
   if (request.cancel.load()) throw Failed(FailureKind::cancelled, "run cancelled before external submission");
 
   s.execution_system = system_;
   s.execution_resources = settings.execution_resources;
   s.execution_state = RemoteExecutionState::queued;
   s.worker_reused = false;
-  // A detached job can outlive the latest local scratch. Keep its recorded
-  // inputs before submission; the gateway already owns the staged job inputs.
-  auto recorded_inputs = request.inputs;
-  if (settings.record_io)
-    for (auto& value : recorded_inputs)
-      value = service_.keep_file_value(value, run_dir_of(service_, s.run_id) / "values" / path_key(node.path) /
-                                                std::to_string(s.invocation) / "input" / value.name, request.cancel);
-  RemoteJobRecord job{{}, instance_, server_id_, std::move(spec), remote_recovery_contract(node, recorded_inputs, request.sources),
-                      request.directory.lexically_relative(service_.run_scratch() / "runs" / s.run_id).generic_string()};
-  // The job is durable before it can be submitted.
+  RemoteJobRecord job{{}, instance_, server_id_, std::move(spec)};
+  // Cancellation identity is durable before submission; results are never
+  // recovered after restart.
   request.start([&](sql::Db& db) {
     job.invocation = s;
-    // RunCancel sets the flag before its synchronous database update. An
-    // insertion ordered after that update must carry the same intent.
     job.cancel_requested = request.cancel_requested();
     History::put_remote_job(db, job);
   });
@@ -147,14 +133,12 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
   ExecutionResult output;
   while (!request.detach.load()) {
     const auto before = s.execution_state;
-    const bool accepted = job.accepted;
     if (request.cancel_requested() && !job.cancel_requested) {
       job.cancel_requested = true;
-      history.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
     }
     std::optional<RemoteJobState> reply;
     try {
-      reply = poll_remote_job(client_, job, true);
+      reply = poll_remote_job(client_, job);
       s.execution_state = remote_execution_state(reply->state);
     } catch (const BrokerInstanceChanged& error) {
       s.execution_state = RemoteExecutionState::interrupted;
@@ -169,11 +153,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
       s.execution_state = RemoteExecutionState::disconnected;
     }
     if (request.detach.load()) throw ExecutionDetached{};
-    if (s.execution_state != before || job.accepted != accepted) {
-      job.invocation = s;
-      history.write_sync([&](sql::Db& db) { History::put_remote_job(db, job); });
-      request.publish();
-    }
+    if (s.execution_state != before) request.publish();
     if (reply && reply->state == "succeeded") {
       output.logs.clear();
       try {
@@ -214,7 +194,8 @@ auto RemoteExecutionService::prepare(const Node& node, const stdfs::path& direct
   const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
   if (target == targets.end())
     throw Failed(FailureKind::unsupported, "execution service " + settings.execution_service + " is not registered");
-  auto probe = client_.probe(target->id, target->server_id);
+  auto probe = client_.probe(target->id, target->server_id,
+                             target->heartbeat_interval_seconds);
   auto system = settings.system.empty() ? probe.native_system : settings.system;
   if (system.empty()) throw Failed(FailureKind::unsupported, "remote worker system is unknown");
   if (settings.execution_resources && !probe.resource_limits)
@@ -225,105 +206,36 @@ auto RemoteExecutionService::prepare(const Node& node, const stdfs::path& direct
   auto prepared = std::make_unique<PreparedRemoteExecution>(service_, client_, target->id, std::move(system),
                                                             std::move(probe.server_id),
                                                             std::move(probe.instance),
-                                                            directory / (".derivation-" + crypto::uuid4()));
+                                                            directory / (".derivation-" + crypto::uuid4()),
+                                                            target->heartbeat_interval_seconds, target->missed_heartbeats);
   build.target = {WorkerKind::remote, prepared->system()};
   build.transport = &prepared->transport();
   return prepared;
 }
 
-auto RemoteExecutionService::poll_recovered(RemoteJobRecord& job) -> std::optional<RemoteJobState> {
-  auto& inv = job.invocation;
-  std::optional<RemoteJobState> reply;
-  try {
-    reply = poll_remote_job(client_, job, false);
-    inv.execution_state = remote_execution_state(reply->state);
-  } catch (const BrokerInstanceChanged& error) {
-    inv.execution_state = RemoteExecutionState::interrupted;
-    reply = RemoteJobState{"interrupted", {}, {}, error.what()};
-  } catch (const BrokerRequestRejected& error) {
-    inv.execution_state = RemoteExecutionState::failed;
-    reply = RemoteJobState{"failed", {}, {}, error.what()};
-  } catch (const std::exception&) {
-    reply.reset();
-    inv.execution_state = RemoteExecutionState::disconnected;
-  }
-  return reply;
-}
-
-auto RemoteExecutionService::recover(RemoteJobRecord& job, const RemoteJobState& reply, const std::atomic<bool>& stop)
-    -> RecoveredRemoteJob {
-  auto& inv = job.invocation;
-  RecoveredRemoteJob recovered;
-  if (reply.state != "succeeded") {
-    inv.failure = remote_failure(reply);
-    return recovered;
-  }
-  auto& result = recovered.record;
-  try {
-    auto contract = remote_recovery_contract(job.contract);
-    const auto run_dir = run_dir_of(service_, inv.run_id);
-    // Recovery never recreates an older run's scratch. This staging folder is
-    // removed after its recorded files and artifact have been copied.
-    const auto staging = private_disk_scratch(service_.run_scratch() / "recovery") / crypto::uuid4();
-    const auto directory = staging / remote::relative_path(job.directory);
-    struct RemoveStaging {
-      stdfs::path path;
-      ~RemoveStaging() { std::error_code ec; stdfs::remove_all(path, ec); }
-    } remove{staging};
-    auto imported = import_remote_result(client_, inv.execution_service, job.server_id, job.instance, inv.execution_job_id, reply.result_sha256,
-        job.spec, directory, service_.store().state_dir() / "modules", contract.outputs,
-        [&](LogStream stream, const std::string& line) { recovered.logs.emplace_back(stream, line); },
-        [&](DisplayData display) {
-          if (display.run_id == inv.run_id && display.invocation == inv.invocation && display.card == inv.card) {
-            display.card = inv.card;
-            result.display = std::move(display);
-          }
-        }, stop);
-    recovered.environment = std::move(imported.environment);
-    if (!recovered.environment.id.empty()) {
-      inv.environment_id = recovered.environment.id;
-      inv.build_cached = !imported.built;
-    }
-    inv.failure = imported.worker.failure;
-    result.record_io = contract.record_io;
-    result.inputs = std::move(contract.inputs);
-    result.input_sources = std::move(contract.sources);
-    if (!inv.failure) {
-      for (auto& [name, bytes] : imported.worker.outputs) {
-        const auto port = std::ranges::find(contract.outputs, name, &types::PortType::name);
-        Value value{name, port->kind, port->type, std::move(bytes), {}};
-        if (!contract.artifact_output.empty() && name == contract.artifact_output)
-          recovered.artifact = prepare_remote_artifact(run_dir, directory / "out", inv, value);
-        if (result.record_io) {
-          value = service_.keep_file_value(value, run_dir / "values" / path_key(inv.card) /
-                                                        std::to_string(inv.invocation) / "output" / value.name, stop);
-          result.outputs.push_back(std::move(value));
-        }
-      }
-    }
-  } catch (const BrokerDisconnected&) {
-    throw;
-  } catch (const Failed& error) {
-    inv.failure = error.failure;
-  } catch (const std::exception& error) {
-    inv.failure = FailureData::make(FailureKind::output_invalid, error.what());
-  }
-  if (inv.failure) inv.execution_state = RemoteExecutionState::failed;
-  return recovered;
-}
-
 auto RemoteExecutionService::release_completed() -> void {
-  struct Release { std::string job, service, server, instance, fingerprint; };
+  struct Release {
+    std::string job, service, server, instance, fingerprint;
+    bool delete_data;
+  };
   const auto releases = service_.history().read([](sql::Db& db) {
     std::vector<Release> result;
-    auto rows = db.prepare("SELECT job_id,service,server_id,instance,fingerprint FROM remote_releases");
-    while (rows.step()) result.push_back({rows.text(0), rows.text(1), rows.text(2), rows.text(3), rows.text(4)});
+    auto rows = db.prepare("SELECT job_id,service,server_id,instance,fingerprint,delete_data FROM remote_releases");
+    while (rows.step()) result.push_back({rows.text(0), rows.text(1), rows.text(2), rows.text(3), rows.text(4), rows.i64(5) != 0});
     return result;
   });
   for (const auto& r : releases) {
-    try { client_.release(r.service, r.server, r.instance, r.job, r.fingerprint); }
-    catch (const BrokerInstanceChanged&) { /* The original journal no longer exists at this endpoint. */ }
-    catch (const std::exception&) { continue; }
+    try {
+      client_.cancel(r.service, r.server, r.instance, r.job, r.fingerprint);
+      // Cancellation relinquishes execution. Only acknowledged, collected data
+      // may use the separate payload-deleting release; interruption keeps it.
+      if (r.delete_data)
+        client_.release(r.service, r.server, r.instance, r.job, r.fingerprint);
+    } catch (const BrokerInstanceChanged&) { /* The original journal no longer
+                                                exists at this endpoint. */
+    } catch (const std::exception&) {
+      continue;
+    }
     service_.history().write_sync([&](sql::Db& db) {
       db.prepare("DELETE FROM remote_releases WHERE job_id=?").bind(1, r.job).run();
     });
@@ -333,11 +245,13 @@ auto RemoteExecutionService::release_completed() -> void {
 auto prepare_remote_artifact(const stdfs::path& run_dir, const stdfs::path& out_dir,
                              const InvocationSummaryData& inv, Value& value) -> ArtifactData {
   const auto source = path_value(value);
-  if (!source) throw Failed(FailureKind::output_invalid, "recovered artifact has no path");
+  if (!source)
+    throw Failed(FailureKind::output_invalid, "remote artifact has no path");
   const stdfs::path path(*source);
   const auto relative = path.lexically_relative(out_dir);
   if (relative.empty() || *relative.begin() == ".." || !fs::resolves_inside(out_dir, path))
-    throw Failed(FailureKind::output_invalid, "recovered artifact is outside the output directory");
+    throw Failed(FailureKind::output_invalid,
+                 "remote artifact is outside the output directory");
   const auto& id = inv.execution_job_id;
   ArtifactData artifact;
   artifact.artifact_id = id.substr(0, 8) + "-" + id.substr(8, 4) + "-" + id.substr(12, 4) + "-" +
@@ -361,7 +275,9 @@ auto prepare_remote_artifact(const stdfs::path& run_dir, const stdfs::path& out_
   else {
     const auto list = fs::list_beneath(out_dir, relative == "." ? stdfs::path{} : relative);
     if (!list.links.empty() || !list.special.empty() || list.files.size() > 1000)
-      throw Failed(FailureKind::output_invalid, "recovered artifact has symlinks, special files or too many files");
+      throw Failed(
+          FailureKind::output_invalid,
+          "remote artifact has symlinks, special files or too many files");
     for (const auto& directory : list.directories) stdfs::create_directories(destination / directory);
     for (const auto& file : list.files) copy(relative == "." ? stdfs::path(file) : relative / file, file);
   }

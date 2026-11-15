@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <chrono>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -14,7 +15,11 @@ inline constexpr uint32_t kMaxFrame = 2 << 20;
 inline constexpr uint32_t kChunkBytes = 1 << 20;
 inline constexpr uint64_t kMaxBlob = uint64_t{64} << 30;
 inline constexpr uint32_t kMaxSpec = 256 << 10;
-inline constexpr uint32_t kContract = 4;
+inline constexpr uint32_t kContract = 6;
+inline constexpr auto kControlTimeout = std::chrono::seconds(30);
+inline constexpr auto kHeartbeatPollInterval = std::chrono::milliseconds(100);
+// One bounded control round trip plus the sender's scheduling granularity.
+inline constexpr auto kHeartbeatGrace = kControlTimeout + kHeartbeatPollInterval;
 
 struct Error : std::runtime_error {
   R::ErrorCode code;

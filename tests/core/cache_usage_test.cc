@@ -74,7 +74,7 @@ TEST_F(RunScratch, MeasurementsRetainAllRunsAndDeletionDoesNotFollowLinks) {
   std::filesystem::create_directory(outside);
   std::ofstream(outside / "evidence") << "do not delete";
   std::filesystem::create_directory_symlink(outside, old / "link");
-  std::filesystem::create_directory_symlink(outside, base / "recovery");
+  std::filesystem::create_directory_symlink(outside, base / "runs" / "link");
   const auto measured = measure_run_scratch(base);
   ASSERT_EQ(measured.size(), 3);
   uint64_t bytes = 0;
@@ -87,7 +87,7 @@ TEST_F(RunScratch, MeasurementsRetainAllRunsAndDeletionDoesNotFollowLinks) {
   EXPECT_FALSE(std::filesystem::exists(old));
   EXPECT_TRUE(std::filesystem::exists(latest / "output"));
   EXPECT_TRUE(std::filesystem::exists(outside / "evidence"));
-  EXPECT_TRUE(remove_run_scratch(base / "recovery"));
+  EXPECT_TRUE(remove_run_scratch(base / "runs" / "link"));
   EXPECT_TRUE(std::filesystem::exists(outside / "evidence"));
   EXPECT_TRUE(remove_run_scratch(old));  // retry after a partial operation is harmless
 }
@@ -100,15 +100,15 @@ TEST_F(RunScratch, ACancelledMeasurementStopsWalking) {
     std::filesystem::create_directories(folder);
     for (int file = 0; file < 8; ++file) std::ofstream(folder / std::to_string(file)) << "value";
   }
-  std::filesystem::create_directory(base / "recovery");
   int asked = 0;
-  EXPECT_EQ(measure_run_scratch(base, [&] { return ++asked, false; }).size(), 9);
+  EXPECT_EQ(measure_run_scratch(base, [&] { return ++asked, false; }).size(),
+            8);
   const int entries = asked;
   EXPECT_GE(entries, 8 * 8);
   asked = 0;
   const auto partial = measure_run_scratch(base, [&] { return ++asked > 3; });
   EXPECT_EQ(asked, 4);  // Never asked again, and nothing read, after the answer.
-  EXPECT_LT(partial.size(), 9);
+  EXPECT_LT(partial.size(), 8);
 }
 
 TEST_F(RunScratch, UnreadableFolderStaysListedAndCanBeRemoved) {
