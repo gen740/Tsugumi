@@ -48,6 +48,7 @@ add_library(tsugumi_core STATIC
   src/cache_usage.cc
   src/worker_proc.cc
   src/worker_pool.cc
+  src/worker_condition.cc
   src/collect_value.cc
   src/execution_service.cc
   src/remote_job.cc
@@ -68,6 +69,8 @@ target_include_directories(tsugumi_core
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/sdk/include)
 target_link_libraries(tsugumi_core PUBLIC tsugumi_document tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
   PkgConfig::SQLITE3 PkgConfig::LIBGIT2 Threads::Threads tsugumi_workerd_support)
+set_source_files_properties(src/worker_condition.cc PROPERTIES
+  COMPILE_OPTIONS "-Wall;-Wextra;-Werror;-Wformat=2;-Wimplicit-fallthrough")
 if(NOT APPLE)
   target_link_libraries(tsugumi_core PRIVATE PkgConfig::CRYPTO)
 endif()
