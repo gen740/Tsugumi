@@ -401,7 +401,7 @@ std::vector<std::string> Service::capabilities() {
   std::vector<std::string> caps = {
       "SessionHello", "ProjectOpen", "ProjectClose", "ProjectInspect", "ProjectSave",
       "ProjectReload", "ProjectValidate", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "RunHistoryDelete", "OperationGet",
-      "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes", "AttachedFolderRead",
+      "ProjectFileList", "ProjectFileStat", "ProjectFileRead", "ProjectFileFormat", "OutputTypes",
       "CardSDKPrepare", "CardSDKStatus", "RunPlan", "Run", "RunCancel", "RunStatus",
       "ProjectShell", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses", "RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "ArtifactList",
       "ArtifactRead", "ModuleRead", "LogRange", "ViewSetVisible", "ViewSave",
@@ -523,7 +523,6 @@ void Service::dispatch(RequestIn req) {
     case P::ProjectFileFormatRequest: return on_lane(r, std::move(req), &Service::file_format);
     case P::OutputTypesRequest: return on_lane(r, std::move(req), &Service::output_types);
     case P::NixSourceResolveRequest: return on_lane(r, std::move(req), &Service::nix_source_resolve);
-    case P::AttachedFolderReadRequest: return on_lane(r, std::move(req), &Service::attached_folder_read);
     case P::CardSDKStatusRequest: return on_lane(r, std::move(req), &Service::sdk_status);
     case P::RunPlanRequest: return on_lane(r, std::move(req), &Service::run_plan);
     case P::RunCancelRequest: return on_lane(r, std::move(req), &Service::run_cancel);
@@ -968,7 +967,7 @@ auto RequireApprovedPermissions(
       missing.emplace_back("permission", widening);
   if (!missing.empty())
     throw Failed(FailureKind::approval_required,
-                 "this change widens what Cards may do; the user approves it first",
+                 "this change widens permissions absent from approved_permissions",
                  std::move(missing));
 }
 
@@ -998,9 +997,8 @@ void Service::save(RequestIn& req) {
     }
     auto staged = store_->stage(changes, op_id, r->origin()->str());
     if (opts_.fault == "save_throws") throw std::runtime_error("injected: not a Failed");
-    // A model may not widen what Cards may do on its own: the user approves
-    // each widening (the client asks, then lists them).
-    if (r->origin()->str() == "agent" && staged.effective) {
+    // Compare permissions only when the caller requests this mechanism.
+    if (r->check_permissions() && staged.effective) {
       store_->resolve_staged(staged);
       RequireApprovedPermissions(base->resolution.get(), *staged.doc->resolution,
                                  r->approved_permissions());
@@ -1048,7 +1046,7 @@ void Service::reload(RequestIn& req) {
     if (auto active = scheduler_->active_status())
       throw Failed(FailureKind::busy, "a run is in progress", {{"run_id", *active->run_id}});
     auto staged = store_->stage_reload(op_id, r->origin()->str());
-    if (staged.effective) {
+    if (r->check_permissions() && staged.effective) {
       store_->resolve_staged(staged);
       RequireApprovedPermissions(base->resolution.get(), *staged.doc->resolution,
                                  r->approved_permissions());
@@ -1781,57 +1779,6 @@ uint64_t offset_of(const std::string& text, uint64_t line, uint64_t col) {
 }
 
 }  // namespace
-
-// Formatting never changes the document: the text comes and goes in the
-// request/reply only. Formatters are external tools of the environment.
-void Service::attached_folder_read(RequestIn& req) {
-  const auto* r = req.request()->value_as_AttachedFolderReadRequest();
-  std::string folder = r->folder()->str();
-  std::string rel = r->path()->str();
-  if (folder.empty() || folder.front() != '/') throw Failed(FailureKind::invalid_path, "folder must be an absolute path");
-  if (!rel.empty() && !fs::valid_relative_path(rel)) throw Failed(FailureKind::invalid_path, "invalid path " + rel, {{"path", rel}});
-  // On the host every path is reachable: only the folders the launcher listed
-  // as attached (a file RPC cannot change). In the VM only attached folders
-  // are shared at all.
-  if (opts_.chat_folders.empty()) {
-    bool listed = false;
-    if (auto text = fs::read_file(opts_.attached_file)) {
-      schema::Attached a;
-      if (!schema::decode(*text, a))
-        for (const auto& f : *a.folders) listed |= stdfs::path(f).lexically_normal() == stdfs::path(folder).lexically_normal();
-    }
-    if (!listed) throw Failed(FailureKind::not_found, "the folder " + folder + " is not attached here (attach it in the chat)", {{"path", folder}});
-  }
-  stdfs::path root = opts_.chat_folders.empty() ? stdfs::path(folder)
-                                                : opts_.chat_folders / crypto::sha256_hex(folder).substr(0, 16);
-  std::error_code ec;
-  auto base = stdfs::canonical(root, ec);
-  if (ec) throw Failed(FailureKind::not_found, "the folder " + folder + " is not attached here (attach it in the chat)", {{"path", folder}});
-  auto target = stdfs::canonical(rel.empty() ? base : base / rel, ec);
-  if (ec) throw Failed(FailureKind::not_found, rel + " does not exist", {{"path", rel}});
-  // Never outside the attached folder (links included).
-  auto t = target.string();
-  auto b = base.string();
-  if (t != b && !t.starts_with(b + "/")) throw Failed(FailureKind::permission_denied, rel + " leaves the attached folder", {{"path", rel}});
-  uint32_t limit = chunk_limit(r->limit_bytes(), 262144, 1, 1u << 20);
-  std::string bytes;
-  if (stdfs::is_directory(target, ec)) {
-    std::vector<std::string> names;
-    for (const auto& e : stdfs::directory_iterator(target, ec)) {
-      if (names.size() >= 5000) break;
-      names.push_back(e.path().filename().string() + (e.is_directory(ec) ? "/" : ""));
-    }
-    std::sort(names.begin(), names.end());
-    for (const auto& n : names) bytes += n + "\n";
-  } else {
-    auto data = fs::read_file(target);
-    if (!data) throw Failed(FailureKind::not_found, rel + " cannot be read", {{"path", rel}});
-    bytes = std::move(*data);
-  }
-  uint64_t offset = r->offset().value_or(0);
-  reply(req, wire::file_page(req.request_id, target.filename().string(), wire::page_of(bytes, offset, limit), offset,
-                             bytes.size(), crypto::sha256_hex(bytes)));
-}
 
 void Service::nix_source_resolve(RequestIn& req) {
   auto info = nix_->resolve_flake(req.request()->value_as_NixSourceResolveRequest()->ref()->str());

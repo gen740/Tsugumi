@@ -16,6 +16,34 @@
 namespace tsugumi::test {
 namespace {
 
+TEST_F(AgentProjectFixture, DirectAttachedFolderToolsNeedRegistrationAndTheirOwnReadGrant) {
+  StartProject();
+  const auto conversation = Conversation("attached-folder");
+  Grant(conversation);
+  const auto folder = directory.path / "attached";
+  Write(folder / "note.txt", "HOST_FOLDER_SENTINEL");
+  const auto arguments = "{\"folder\":" + Quote(folder.string()) + ",\"path\":\"note.txt\"}";
+  EXPECT_EQ(Tool(conversation, "attached_folder_read", arguments).Code(), "permission_denied");
+  const auto resource = "folder:" + project_id + ":selected";
+  const auto registered = Call(*host, H::RequestPayload::RegisterFolderRequest, [&](Builder& b) {
+    return H::CreateRegisterFolderRequest(b, b.CreateString(project_id), b.CreateString(resource), b.CreateString(folder.string())).Union();
+  });
+  ASSERT_TRUE(registered.Code().empty());
+  const auto pending = Tool(conversation, "attached_folder_read", arguments);
+  ASSERT_EQ(pending.Code(), "grant_required");
+  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+    return A::CreateAccessResolveRequest(b, b.CreateString(pending.RequestId()), true).Union();
+  }).Code().empty());
+  // Reading uses the host's original folder and needs no running project/VM.
+  project.Stop();
+  const auto allowed = Tool(conversation, "attached_folder_read", arguments);
+  ASSERT_TRUE(allowed.Code().empty());
+  EXPECT_EQ(JsonString(JsonString(allowed.View(), "/text"), "/value/bytes"), "HOST_FOLDER_SENTINEL");
+  const auto other = directory.path / "unregistered";
+  Write(other / "note.txt", "UNGRANTED_SENTINEL");
+  EXPECT_EQ(Tool(conversation, "attached_folder_read", "{\"folder\":" + Quote(other.string()) + ",\"path\":\"note.txt\"}").Code(), "permission_denied");
+}
+
 TEST_F(AgentProjectFixture, ConversationsCannotMoveBetweenCopiedProjects) {
   StartProject();
   const auto original = project_id;
@@ -843,7 +871,7 @@ TEST_F(AgentProjectFixture, ShellOriginAndApprovalsCannotBeSuppliedByTheModel) {
   const auto before = Read(directory.path / "project/tsugumi.json");
   const auto result = Tool(
       conversation, "project_shell",
-      R"({"command":"printf forbidden > tsugumi.json","origin":"ui","approved_permissions":["sandbox_off work"]})");
+      R"({"command":"printf forbidden > tsugumi.json","origin":"ui","approved_permissions":["sandbox_off work"],"read_only":false,"hide_credentials":false,"no_project_socket":false})");
   ASSERT_TRUE(result.Code().empty());
   const auto text = JsonString(result.View(), "/text");
   EXPECT_EQ(JsonString(text, "/reply"), "ProjectShellResult");
@@ -918,7 +946,7 @@ TEST_F(AgentProjectFixture,
   const auto document =
       R"({"name":"Permission test","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"work"}],"connections":[]}})";
   auto save = [&](const std::string& body) {
-    return "{\"base_rev\":" + Quote(revision) +
+    return "{\"check_permissions\":false,\"origin\":\"ui\",\"approved_permissions\":[\"network work\"],\"base_rev\":" + Quote(revision) +
         ",\"changes\":[{\"value_type\":\"SetProject\",\"value\":{\"json\":" +
         Quote(document) +
         "}},{\"value_type\":\"PutDefinition\",\"value\":{\"id\":\"work\",\"card_json\":" +

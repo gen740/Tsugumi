@@ -20,6 +20,7 @@
 #include <stdexcept>
 
 #include "service.hh"
+#include "shell.hh"
 #include "util/process.hh"
 
 namespace tsugumi {
@@ -54,14 +55,6 @@ struct Pipe {
   }
 };
 
-struct ShellOutput {
-  std::array<std::string, 2> streams;
-  std::array<bool, 2> truncated{};
-  int status = 0;
-  bool cancelled = false;
-  bool timed_out = false;
-};
-
 // Diagnostic scratch belongs to one command, never to the shared host /tmp.
 struct ShellTemporary {
   std::filesystem::path path;
@@ -73,10 +66,13 @@ struct ShellTemporary {
   }
 };
 
-auto Execute(const std::string& command, const std::string& cwd,
-             uint32_t timeout, const std::atomic<bool>& cancelled, bool agent,
-             const std::filesystem::path& control)
-    -> ShellOutput {
+}  // namespace
+
+auto shell::Execute(const std::string& command, const std::string& cwd,
+                    uint32_t timeout, const std::atomic<bool>& cancelled,
+                    bool read_only, bool hide_credentials,
+                    bool no_project_socket,
+                    const std::filesystem::path& control) -> Output {
   Pipe out;
   Pipe err;
   ShellTemporary temporary;
@@ -85,23 +81,29 @@ auto Execute(const std::string& command, const std::string& cwd,
 #endif
   proc::Spec spec;
   spec.argv = {TSUGUMI_BASH, "--noprofile", "--norc", "-c", command};
-  if (agent) {
-    // A read-only filesystem alone still exposes authenticated RPC and host
-    // credentials. Hide those too, and prevent Unix socket connections even
-    // when a caller knows an endpoint outside the usual control directory.
+  if (read_only || hide_credentials || no_project_socket) {
+    // Each requested isolation mechanism is independent of caller identity.
     const auto root = std::filesystem::canonical(cwd).string();
     std::vector<std::string> hidden;
-    for (const auto& path : {control, std::filesystem::path("/control"),
-                            std::filesystem::path("/run/tsugumi")})
-      if (!path.empty() && std::filesystem::exists(path))
-        hidden.push_back(std::filesystem::canonical(path).string());
+    if (hide_credentials)
+      for (const auto& path : {control, std::filesystem::path("/control"),
+                               std::filesystem::path("/run/tsugumi")})
+        if (!path.empty() && std::filesystem::exists(path))
+          hidden.push_back(std::filesystem::canonical(path).string());
     const char* home = std::getenv("HOME");
-    if (home && *home && std::filesystem::exists(home))
+    if (hide_credentials && home && *home && std::filesystem::exists(home))
       hidden.push_back(std::filesystem::canonical(home).string());
+    const auto shared_tmp =
+        std::filesystem::canonical(std::filesystem::temp_directory_path())
+            .string();
+    auto pattern = shared_tmp + "/tsugumi-shell-XXXXXX";
+    if (!::mkdtemp(pattern.data()))
+      throw std::runtime_error("cannot create Isolated shell scratch");
+    temporary.path = pattern;
 #ifdef __APPLE__
     if (::access("/usr/bin/sandbox-exec", X_OK) != 0)
       throw Failed(FailureKind::permission_denied,
-                   "Agent shell reads require Seatbelt");
+                   "Isolated shell reads require Seatbelt");
     auto quote = [](const std::string& path) {
       std::string out = "\"";
       for (const char c : path) {
@@ -110,35 +112,41 @@ auto Execute(const std::string& command, const std::string& cwd,
       }
       return out + "\"";
     };
-    const auto shared_tmp = std::filesystem::canonical(
-        std::filesystem::temp_directory_path()).string();
-    auto pattern = shared_tmp + "/tsugumi-shell-XXXXXX";
-    if (!::mkdtemp(pattern.data()))
-      throw std::runtime_error("cannot create Agent shell scratch");
-    temporary.path = pattern;
-    std::string profile = "(version 1)(allow default)(deny file-write*)";
+    std::string profile = "(version 1)(allow default)";
+    if (read_only) profile += "(deny file-write*)";
     for (const auto& path : hidden)
       profile += "(deny file-read* (subpath " + quote(path) + "))";
-    profile += "(deny file-read* (subpath \"/private/tmp\")"
-               " (subpath \"/private/var/tmp\") (subpath " + quote(shared_tmp) + "))";
-    profile += "(allow file-read* (subpath " + quote(root) + ") (subpath " + quote(pattern) + "))"
-               "(allow file-write* (subpath " + quote(pattern) + ") (literal \"/dev/null\"))";
+    if (hide_credentials)
+      profile +=
+          "(deny file-read* (subpath \"/private/tmp\")"
+          " (subpath \"/private/var/tmp\") (subpath " +
+          quote(shared_tmp) + "))";
+    profile += "(allow file-read* (subpath " + quote(root) + ") (subpath " +
+               quote(pattern) +
+               "))"
+               "(allow file-write* (subpath " +
+               quote(pattern) + ") (literal \"/dev/null\"))";
     // The control directory remains hidden even if it is under the project.
-    if (!control.empty())
+    if (hide_credentials && !control.empty())
       profile += "(deny file-read* (subpath " +
-                 quote(std::filesystem::weakly_canonical(control).string()) + "))";
-    profile += "(deny network-outbound (remote unix-socket))"
-               "(deny network-outbound (remote ip \"localhost:*\"))"
-               "(allow network-outbound (remote unix-socket (path-literal \"/private/var/run/mDNSResponder\")))"
-               "(deny mach-lookup)"
-               "(allow mach-lookup (global-name \"com.apple.trustd.agent\"))"
-               "(deny signal)(allow signal (target same-sandbox))";
-    spec.argv.insert(spec.argv.begin(), {"/usr/bin/sandbox-exec", "-p", profile});
+                 quote(std::filesystem::weakly_canonical(control).string()) +
+                 "))";
+    if (no_project_socket)
+      profile +=
+          "(deny network-outbound (remote unix-socket))"
+          "(deny network-outbound (remote ip \"localhost:*\"))"
+          "(allow network-outbound (remote unix-socket (path-literal "
+          "\"/private/var/run/mDNSResponder\")))"
+          "(deny mach-lookup)"
+          "(allow mach-lookup (global-name \"com.apple.trustd.agent\"))"
+          "(deny signal)(allow signal (target same-sandbox))";
+    spec.argv.insert(spec.argv.begin(),
+                     {"/usr/bin/sandbox-exec", "-p", profile});
 #else
     const std::string bwrap = TSUGUMI_BWRAP;
     if (bwrap.empty() || ::access(bwrap.c_str(), X_OK) != 0)
       throw Failed(FailureKind::permission_denied,
-                   "Agent shell reads require bubblewrap");
+                   "Isolated shell reads require bubblewrap");
     // Keep external IP networking and private stream pairs, but reject Unix
     // socket creation for abstract and filesystem endpoints on the host.
 #if defined(__aarch64__)
@@ -146,54 +154,77 @@ auto Execute(const std::string& command, const std::string& cwd,
 #elif defined(__x86_64__)
     constexpr auto kArchitecture = AUDIT_ARCH_X86_64;
 #else
-#error Unsupported Agent shell seccomp architecture
+#error Unsupported Isolated shell seccomp architecture
 #endif
-    const sock_filter filter[] = {
-        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, arch)),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, kArchitecture, 1, 0),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
-        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, nr)),
-        // Do not allow x32 syscall numbers to bypass the native syscall check.
-        BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 0x40000000, 0, 1),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+    if (no_project_socket) {
+      const sock_filter filter[] = {
+          BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, arch)),
+          BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, kArchitecture, 1, 0),
+          BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+          BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, nr)),
+          // Do not allow x32 syscall numbers to bypass the native syscall
+          // check.
+          BPF_JUMP(BPF_JMP | BPF_JGE | BPF_K, 0x40000000, 0, 1),
+          BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
 #ifdef __NR_io_uring_setup
-        // io_uring can create/connect sockets without the socket syscall.
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_io_uring_setup, 0, 1),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+          // io_uring can create/connect sockets without the socket syscall.
+          BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_io_uring_setup, 0, 1),
+          BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
 #endif
-        // Stream pairs support local event loops without an endpoint to dial.
-        // Datagram pairs can reconnect/sendto arbitrary host Unix addresses.
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socketpair, 0, 5),
-        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[1])),
-        BPF_STMT(BPF_ALU | BPF_AND | BPF_K,
-                 ~static_cast<unsigned>(SOCK_CLOEXEC | SOCK_NONBLOCK)),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SOCK_STREAM, 1, 0),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socket, 0, 3),
-        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[0])),
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AF_UNIX, 0, 1),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)};
-    socket_filter.emplace();
-    if (::write(socket_filter->write, filter, sizeof filter) !=
-        static_cast<ssize_t>(sizeof filter))
-      throw std::runtime_error("cannot prepare Agent shell socket filter");
-    socket_filter->CloseWriter();
-    spec.fds = {{3, socket_filter->read}};
-    std::vector<std::string> isolation{
-        bwrap, "--unshare-user", "--unshare-pid", "--unshare-ipc",
-        "--die-with-parent", "--new-session", "--cap-drop", "ALL",
-        "--ro-bind", "/", "/", "--tmpfs", "/tmp", "--tmpfs", "/var/tmp"};
+          // Stream pairs support local event loops without an endpoint to dial.
+          // Datagram pairs can reconnect/sendto arbitrary host Unix addresses.
+          BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socketpair, 0, 5),
+          BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[1])),
+          BPF_STMT(BPF_ALU | BPF_AND | BPF_K,
+                   ~static_cast<unsigned>(SOCK_CLOEXEC | SOCK_NONBLOCK)),
+          BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SOCK_STREAM, 1, 0),
+          BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+          BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+          BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, __NR_socket, 0, 3),
+          BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[0])),
+          BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AF_UNIX, 0, 1),
+          BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EPERM),
+          BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)};
+      socket_filter.emplace();
+      if (::write(socket_filter->write, filter, sizeof filter) !=
+          static_cast<ssize_t>(sizeof filter))
+        throw std::runtime_error("cannot prepare Isolated shell socket filter");
+      socket_filter->CloseWriter();
+      spec.fds = {{3, socket_filter->read}};
+    }
+    std::vector<std::string> isolation{bwrap,
+                                       "--unshare-user",
+                                       "--unshare-pid",
+                                       "--unshare-ipc",
+                                       "--die-with-parent",
+                                       "--new-session",
+                                       "--cap-drop",
+                                       "ALL",
+                                       read_only ? "--ro-bind" : "--bind",
+                                       "/",
+                                       "/"};
+    if (hide_credentials) {
+      isolation.insert(isolation.end(),
+                       {"--tmpfs", "/tmp", "--tmpfs", "/var/tmp"});
+      if (shared_tmp != "/tmp" && shared_tmp != "/var/tmp")
+        isolation.insert(isolation.end(), {"--tmpfs", shared_tmp});
+    }
     for (const auto& path : hidden)
       isolation.insert(isolation.end(), {"--tmpfs", path});
-    isolation.insert(isolation.end(), {"--ro-bind", root, root});
+    isolation.insert(isolation.end(),
+                     {read_only ? "--ro-bind" : "--bind", root, root});
     // A control directory inside the project must be covered after root.
-    if (!control.empty())
-      isolation.insert(isolation.end(),
-                       {"--tmpfs", std::filesystem::weakly_canonical(control).string()});
-    isolation.insert(isolation.end(), {"--proc", "/proc", "--dev", "/dev",
-                                       "--seccomp", "3", "--"});
+    if (hide_credentials && !control.empty())
+      isolation.insert(
+          isolation.end(),
+          {"--tmpfs", std::filesystem::weakly_canonical(control).string()});
+    // Only this command's scratch is writable when read_only is selected.
+    // Preserve shared temporary-file reads unless hide_credentials is selected.
+    isolation.insert(isolation.end(), {"--bind", pattern, pattern});
+    isolation.insert(isolation.end(), {"--proc", "/proc", "--dev", "/dev"});
+    if (no_project_socket)
+      isolation.insert(isolation.end(), {"--seccomp", "3"});
+    isolation.push_back("--");
     spec.argv.insert(spec.argv.begin(), isolation.begin(), isolation.end());
 #endif
   }
@@ -204,13 +235,13 @@ auto Execute(const std::string& command, const std::string& cwd,
   // credentials or arbitrary host environment variables to a command.
   spec.env = {std::string("PATH=") +
               (std::getenv("PATH") ? std::getenv("PATH") : "/usr/bin:/bin")};
-  for (const char* key :
-       {"USER", "LANG", "NIX_SSL_CERT_FILE",
-        "SSL_CERT_FILE", "TSUGUMI_PROJECT_ID"})
+  for (const char* key : {"USER", "LANG", "NIX_SSL_CERT_FILE", "SSL_CERT_FILE",
+                          "TSUGUMI_PROJECT_ID"})
     if (const char* value = std::getenv(key))
       spec.env.push_back(std::string(key) + "=" + value);
-  if (agent) {
-    const auto scratch = temporary.path.empty() ? "/tmp" : temporary.path.string();
+  if (hide_credentials || read_only) {
+    const auto scratch =
+        temporary.path.empty() ? "/tmp" : temporary.path.string();
     spec.env.push_back("HOME=" + scratch);
     spec.env.push_back("TMPDIR=" + scratch);
   } else {
@@ -231,7 +262,7 @@ auto Execute(const std::string& command, const std::string& cwd,
   } child{pid};
   out.CloseWriter();
   err.CloseWriter();
-  ShellOutput result;
+  Output result;
   const auto deadline = Clock::now() + std::chrono::milliseconds(timeout);
   std::optional<Clock::time_point> kill_at;
   std::optional<Clock::time_point> drain_until;
@@ -290,6 +321,8 @@ auto Execute(const std::string& command, const std::string& cwd,
   }
   return result;
 }
+
+namespace {
 
 auto ShellReceipt(FBB& b, const std::string& operation, R::ReceiptValue type,
                   flatbuffers::Offset<void> value) -> std::string {
@@ -378,8 +411,9 @@ auto Service::project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
     });
     recorded = true;
     const auto output =
-        Execute(command, opts_.root.string(), timeout, cancelled,
-                request->origin()->str() == "agent", opts_.control_dir);
+        shell::Execute(command, opts_.root.string(), timeout, cancelled,
+                       request->read_only(), request->hide_credentials(),
+                       request->no_project_socket(), opts_.control_dir);
     FBB builder;
     const auto out = builder.CreateVector(
         reinterpret_cast<const uint8_t*>(output.streams[0].data()),

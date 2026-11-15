@@ -60,7 +60,8 @@ auto Docs(
 
 const std::set<std::string> kOwnedFields{"origin", "op_id",
                                          "approved_permissions", "run_ids",
-                                         "restrict_to_run_ids"};
+                                         "restrict_to_run_ids", "check_permissions",
+                                         "read_only", "hide_credentials", "no_project_socket"};
 
 auto OwnOperationId(const reflection::Object &object) -> bool {
   const auto name = object.name()->str();
@@ -309,6 +310,13 @@ Catalog::Catalog() {
       tool.has_origin = object.fields()->LookupByKey("origin") != nullptr;
       tools_.push_back(std::move(tool));
     }
+  }
+  for (const auto& raw : json::Array(json::Get(settings, "hostTools", "[]"))) {
+    const auto tool = json::Object(raw);
+    const auto name = json::Text(tool, "name");
+    if (Find(name)) throw std::runtime_error("duplicate host tool: " + name);
+    tools_.push_back({{name, json::Text(tool, "description"),
+                       json::Get(tool, "inputSchema")}, name, false, false, false});
   }
 }
 

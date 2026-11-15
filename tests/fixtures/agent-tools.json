@@ -700,8 +700,7 @@
  },
  {
   "name": "attached_folder_read",
-  "payloadType": 32,
-  "description": "AttachedFolderRead: -> FileContent. Reads a folder of the Mac attached to a chat (read-only,  shared with this project only): a file's bytes, or for a folder its  entries as text, one per line (folders end with \"/\"). `folder` is the  attached folder's path on the Mac; `path` is relative to it (\"\" = itself).",
+  "description": "Read a user-registered attached host folder after its Read grant. Returns FileContent: file bytes or sorted directory entries (directories end in /). Paths stay beneath the registered root; symbolic links are refused. Files are limited to 16 MiB, directory listings to 5000 entries and pages to 1 MiB.",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -713,18 +712,17 @@
     },
     "offset": {
      "type": "string",
-     "pattern": "^-?[0-9]+$",
-     "description": "64 bit integer as a decimal string"
+     "pattern": "^[0-9]+$"
     },
     "limit_bytes": {
      "type": "integer"
     }
    },
-   "additionalProperties": false,
    "required": [
     "folder",
     "path"
-   ]
+   ],
+   "additionalProperties": false
   },
   "mutating": false
  },

@@ -1,8 +1,4 @@
-"""A save from a model (origin "agent"), or a reload from any origin, that widens
-what a Card may do --
-network, sandbox off, host folders, also inside a Card in Card -- is rejected
-with approval_required naming each widening, and goes through once the client
-lists exactly those as approved. The user's own saves need no approval."""
+"""Permission comparisons and explicit approvals are independent of origin."""
 
 from __future__ import annotations
 
@@ -30,8 +26,9 @@ def put(cid: str, body: dict):
     return change("PutDefinition", id=cid, cardJson=json.dumps(body), keepMeta=True)
 
 
-def test_an_agent_save_widening_permissions_needs_the_users_approval(tmp_path, core_factory):
-    """An agent must obtain approval for every permission it widens."""
+@pytest.mark.parametrize("origin", ["agent", "ui", "external"])
+def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory, origin):
+    """The same checked save requires every widening for all origin labels."""
     root = tmp_path / "p"
     builtin_project(root)
     d = core_factory(project_root=root)
@@ -39,19 +36,19 @@ def test_an_agent_save_widening_permissions_needs_the_users_approval(tmp_path, c
     body = card_json(c, "src")
     wide = dict(body, network=True, sandbox=False, hostFolders=[{"path": "/data", "name": "data"}])
     try:
-        save(c, [put("src", wide)])
-        raise AssertionError("an agent widened permissions without approval")
+        save(c, [put("src", wide)], origin=origin, check=True)
+        raise AssertionError("a checked save widened permissions without approval")
     except RpcFailure as e:
         assert e.kind == "approval_required", e
         asked = permissions(e)
     assert sorted(asked) == ["host_folder_read src /data", "network src", "sandbox_off src"]
     # Approving only part of it is not enough.
     try:
-        save(c, [put("src", wide)], approved=asked[:1])
+        save(c, [put("src", wide)], approved=asked[:1], origin=origin, check=True)
         raise AssertionError("a partly approved widening went through")
     except RpcFailure as e:
         assert e.kind == "approval_required"
-    save(c, [put("src", wide)], approved=asked)
+    save(c, [put("src", wide)], approved=asked, origin=origin, check=True)
     assert card_json(c, "src")["network"] is True
     # Making the folder writable is another widening; narrowing is not.
     writable = dict(wide, hostFolders=[{"path": "/data", "name": "data", "write": True}])
@@ -62,8 +59,8 @@ def test_an_agent_save_widening_permissions_needs_the_users_approval(tmp_path, c
         assert permissions(e) == ["host_folder_write src /data"]
     save(c, [put("src", body)])
     assert "network" not in card_json(c, "src")
-    # The user's own saves are theirs.
-    save(c, [put("src", wide)], origin="ui")
+    # With the same token and origin, explicit comparison off permits widening.
+    save(c, [put("src", wide)], origin=origin, check=False)
 
 
 def test_a_card_in_card_is_checked_too(tmp_path, core_factory):
@@ -145,7 +142,7 @@ def test_reload_checks_every_permission_widening(tmp_path, core_factory, origin,
 
     def reload(approved=()):
         return client.call("ProjectReloadRequest", baseRev=before.rev, opId=new_id(),
-                           origin=origin, **({"approvedPermissions": list(approved)} if approved else {}))
+                           origin=origin, checkPermissions=True, **({"approvedPermissions": list(approved)} if approved else {}))
 
     with pytest.raises(RpcFailure) as rejected:
         reload()
@@ -163,3 +160,24 @@ def test_reload_checks_every_permission_widening(tmp_path, core_factory, origin,
     path.write_text(json.dumps(body))
     before = client.call("ProjectInspectRequest")
     reload()
+
+
+@pytest.mark.parametrize("check", [False, True])
+def test_reload_selects_permission_comparison_explicitly(tmp_path, core_factory, check):
+    root = tmp_path / "project"
+    builtin_project(root)
+    client = core_factory(project_root=root).connect()
+    before = client.call("ProjectInspectRequest")
+    path = root / "definitions/src/_card.json"
+    body = json.loads(path.read_text())
+    body["network"] = True
+    path.write_text(json.dumps(body))
+    def reload():
+        return client.call("ProjectReloadRequest", baseRev=before.rev, opId=new_id(),
+                           origin="same-client", checkPermissions=check)
+    if check:
+        with pytest.raises(RpcFailure) as failure:
+            reload()
+        assert failure.value.kind == "approval_required"
+    else:
+        assert reload().rev == before.rev + 1
