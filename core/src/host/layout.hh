@@ -134,6 +134,12 @@ auto untangle(const Scene& scene, const std::vector<std::string>& around)
 // free room near what they belong to. Positions of the scene are not read.
 auto place(const Scene& scene) -> Proposal;
 
+// Fill only missing places, using the same free-room search as frames/notes.
+// Scene cards with an id in missing have no saved position; all others stay
+// put.
+auto place_missing(const Scene& scene, const std::vector<std::string>& missing)
+    -> Proposal;
+
 // Where the canvas draws each wire (its points), given the Cards and frames in
 // its way: a wire going along the flow whose curve touches no Card stays that
 // curve (sampled), any other takes the cheapest path on a grid of lines beside

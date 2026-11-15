@@ -303,6 +303,8 @@ Catalog::Catalog() {
       tool.host = host_schema;
       if (tool.spec.name == "card_id")
         tool.spec.description = "Reserve a permanent Card id from its human name. The host derives a readable stem; core reserves a unique id. Use the id in paths and wires and keep the name in _meta.json.name. project_path selects a nested project.";
+      if (tool.spec.name == "project_save")
+        tool.spec.description += " " + json::Text(settings, "saveNote");
       tool.approval_required = std::string_view(list) == "approvalRequests";
       if (tool.approval_required)
         tool.spec.description +=

@@ -1113,4 +1113,65 @@ auto place(const Scene& scene) -> Proposal {
   return out;
 }
 
+auto place_missing(const Scene& scene, const std::vector<std::string>& missing)
+    -> Proposal {
+  const bool vertical = scene.top_to_bottom;
+  auto rect = [&](double x, double y, double w, double h) {
+    return vertical ? FlowRect{x, y, w, h} : FlowRect{y, x, h, w};
+  };
+  std::vector<FlowRect> room;
+  std::vector<std::pair<std::string, FlowRect>> placed;
+  auto wanted = [&](const std::string& id) {
+    return std::find(missing.begin(), missing.end(), id) != missing.end();
+  };
+  for (const auto& c : scene.cards)
+    if (!wanted(c.id)) {
+      const auto r = rect(c.x, c.y, c.width, c.height);
+      room.push_back(r);
+      placed.emplace_back(c.id, r);
+    }
+  for (const auto& list : {scene.frames, scene.notes})
+    for (const auto& b : list)
+      room.push_back(rect(b.x, b.y, b.width, b.height));
+  Proposal out;
+  auto pending = missing;
+  while (!pending.empty()) {
+    // Prefer a Card with an already placed neighbour, so a new chain grows
+    // out of its existing graph even when the document lists it backwards.
+    size_t next = 0;
+    std::optional<FlowRect> near;
+    for (size_t i = 0; i < pending.size(); ++i) {
+      for (const auto& w : scene.wires) {
+        const auto other = w.from == pending[i] ? w.to
+                           : w.to == pending[i] ? w.from
+                                                : std::string{};
+        for (const auto& [id, r] : placed)
+          if (id == other) near = near ? union_rect(*near, r) : r;
+      }
+      if (near) {
+        next = i;
+        break;
+      }
+    }
+    const auto id = pending[next];
+    pending.erase(pending.begin() + static_cast<std::ptrdiff_t>(next));
+    const auto c =
+        std::find_if(scene.cards.begin(), scene.cards.end(),
+                     [&](const auto& card) { return card.id == id; });
+    if (c == scene.cards.end()) continue;
+    if (!near) {
+      near = room.empty() ? FlowRect{} : room.front();
+      for (const auto& r : room) near = union_rect(*near, r);
+    }
+    const auto r = place_box(vertical ? c->width : c->height,
+                             vertical ? c->height : c->width, *near, false,
+                             room, {}, scene.snap ? scene.grid : 1);
+    room.push_back(r);
+    placed.emplace_back(id, r);
+    out.cards.push_back(
+        {id, vertical ? r.across : r.along, vertical ? r.along : r.across});
+  }
+  return out;
+}
+
 }  // namespace tsugumi::layout

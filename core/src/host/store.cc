@@ -23,6 +23,10 @@ HostStore::HostStore(const std::filesystem::path& directory)
       "CREATE TABLE IF NOT EXISTS providers(conversation TEXT PRIMARY KEY, "
       "json TEXT NOT NULL);");
   db.exec(
+      "CREATE TABLE IF NOT EXISTS save_bases(project TEXT NOT NULL, rev TEXT "
+      "NOT NULL, "
+      "snapshot TEXT NOT NULL, files TEXT NOT NULL, PRIMARY KEY(project,rev))");
+  db.exec(
       "CREATE TABLE IF NOT EXISTS save_preparations(operation TEXT PRIMARY "
       "KEY, arguments TEXT NOT NULL, comments TEXT NOT NULL)");
   db.exec(

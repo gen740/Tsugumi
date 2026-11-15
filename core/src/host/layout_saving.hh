@@ -13,6 +13,10 @@ struct LayoutFile {
 using LayoutRead = std::function<std::optional<LayoutFile>(const std::string&)>;
 // Only external project documents, never a Card's source file of that name.
 auto IsExternalDocument(std::string_view path, std::string_view name) -> bool;
+// Returns the layout with places for every Card in this workflow. Existing
+// entries (including a person's drop) are preserved byte-for-byte as values.
+auto CompleteLayout(const std::string& project, const std::string& layout,
+                    const LayoutRead& read = {}) -> std::string;
 // The Agent's saving client validates changed layouts and includes deletion
 // cleanup in the same revision/hash-guarded transaction. Reads use that
 // revision.

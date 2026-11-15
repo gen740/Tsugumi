@@ -22,7 +22,10 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   named version and replacement of a version summary needs the person's approval for that call. A decline changes
   nothing; continue without retrying the declined act.
 - project_save takes changes as a list of {"value_type": "SetProject", "value": {"json": "<entire tsugumi.json>"}};
-  SetProject replaces the whole document, so start from the project_json you inspected and change only what is needed.
+  Start from the project_json you inspected and change only what is needed. The host merges a stale base_rev
+  with intervening saves; disjoint edits survive together, and collisions name the affected field or wire.
+  Do not send coordinates for new Cards: the host places every Card without a saved place near its connections,
+  without moving placed Cards. SetLayout is for moves the person requests; arrange/untangle remain explicit tools.
 - Never save edits the user did not ask for, and never save trial content (probes, placeholders, guesses) into the
   user's project. Save what you have written and mean to keep, then check it with project_validate: it resolves the
   latest revision (types, ports, settings, _outputs.fbs). Do that once when the writing is done and before the run,
@@ -68,7 +71,7 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   writing. Runs are slow, and a run after each Card repeats the work before it.
 - Making a Draft (a step the user describes to write later): definitions/<id>/_card.json {"template": "draft"}
   and _meta.json {"description": "<a short summary>", "content": "<what it takes, what it gives and how, in the user's words>"},
-  its {"id"} and connections in SetProject, and its place in SetLayout, in one save. A Draft has no ports:
+  its {"id"} and connections in SetProject, in one save; the host supplies its place. A Draft has no ports:
   every wire end on it is {"card": "<id>", "port": ""}, with any number of wires in or out, including Draft to Draft.
   The other end's real port name carries the meaning. Do not declare Draft inputs, _meta.outputs or _outputs.fbs
   for wiring. A Draft end carries Empty and never blocks a save on type grounds. A Draft and what needs it do not run.
@@ -252,11 +255,14 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   are enforced by the host; assigning a container does not include its children. Include upstream Cards it
   needs to read in read_cards, and Cards it may change in write_cards, and Cards it may execute in run_cards. Empty sets permit no existing
   Cards. New Cards reserved by card_id are automatically readable, writable and runnable by their creator. Omit the
-  sets only when the person enabled unscoped helpers. Project-wide operations and canvas/layout and container-link changes
-  stay with the parent. For a scoped helper implementing a Draft, have it write the implementation's sources
-  while leaving template "draft" in place, then return the intended _card.json and explicit input/output
-  rebindings. The parent saves the final definition and SetProject together; a helper must not save an
-  implemented definition while its wires still have empty ends. Inspection shows only readable Cards; file reads, records and logs obey the same
+  sets only when the person enabled unscoped helpers. A scoped helper may add its own card_id reservations
+  and edit wires whose endpoints are in its read/write sets and which touch a writable Card. It starts from
+  its scoped project_json; the host preserves the hidden graph. For a nested project, read its tsugumi.json
+  with project_file_read and save it with PutSource and the returned base_hash. Project-wide settings, layout
+  and container-link changes stay with the parent. A scoped helper may implement a Draft and save its definition,
+  sources and explicit wire rebindings together when all incident endpoints are in scope. Otherwise it prepares
+  sources while leaving template "draft", and returns the definition and rebindings for the parent to save.
+  A helper must not save an implemented definition while its wires still have empty ends. Inspection shows only readable Cards; file reads, records and logs obey the same
   boundary. Runs must keep their complete plan inside run_cards (and its inspected records inside read_cards). Helper usage adds to this conversation.
   Shortened results say so and identify the full helper trace that the person can open in this conversation.
   Before delegating, implement what they all need (the Cards upstream of theirs); run it first only when they need its results to
@@ -266,7 +272,7 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
   decisions, and ask it to read the definitions, _meta.json, wires and upstream Cards it needs. No warm-up is automatic.
   Unless a helper needs run results to write its Cards, ask it to save and validate its assigned targets without running, then run once from
   the trigger after all helpers report. If a tool returns busy, wait for the active run to finish before retrying;
-  on revision_conflict, inspect again and re-apply. The core does not retry these failures for helpers.
+  on revision_conflict, inspect again and re-apply. The host merges disjoint concurrent saves; it never silently chooses a colliding edit.
   Afterwards check each Card with run_record, fix or finish what a helper left, and report to the user. Do the
   work yourself when it is small or the pieces depend on each other.
 - Folders the user attached to the conversation are read with attached_folder_read {"folder": "<its path>",
@@ -379,6 +385,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
       "additionalProperties": false
     }
   }],
+  "saveNote": "The host merges disjoint edits against intervening saves when base_rev is stale. A collision in a field, input wire or delete/change is refused with its path; inspect and re-apply. New Cards need their definitions and connections, without SetLayout coordinates: the host supplies their places and keeps existing ones.",
   "hostRequests": ["LayoutArrangeRequest", "LayoutUntangleRequest", "LayoutValidateRequest"],
   "approvalRequests": [
     "RunHistoryDeleteRequest",
@@ -394,16 +401,16 @@ the result; do not require confirmations of checks or a detailed explanation of 
     "root": "the root workflow",
     "child": "the child workflow {scope}",
     "card": "- {key} (definition {definition}): {description}\n  content: {content}\n  context: {context}",
-    "text": "Implement these Draft Cards in {where}, matching each one's description, content and the existing connections, and keeping the Card ids. Drafts have no ports: their wire ends use port \"\". In the same project_save as each implementation, send SetProject rebinding every incoming wire to a real input and every outgoing wire to a real output; also rebind boundary endpoints. State each port explicitly even when only one is possible. Ends on remaining Drafts stay empty. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: with keep_meta, fill_description if it has none and fill_context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). The rules hold what Python, C++ and bash Cards need, so start writing; read a reference only for what they do not cover.\nWrite and save all of them first, upstream first. Then check them once with project_validate, fix what it reports, run the workflow once from its trigger Card and confirm each Card's result with run_record. Run earlier only when what you write next needs something you can learn only from a run. When three or more of them do not depend on each other (no wire between them), hand those to helpers (delegate, one Draft each), with concurrency from the person's setting, once the Cards they need are implemented. Scoped helpers leave template draft while preparing sources and return the intended definition and explicit rebindings; the parent saves both together. At the end, report what each Card does and what the run produced.\n{list}"
+    "text": "Implement these Draft Cards in {where}, matching each one's description, content and the existing connections, and keeping the Card ids. Drafts have no ports: their wire ends use port \"\". In the same project_save as each implementation, send SetProject rebinding every incoming wire to a real input and every outgoing wire to a real output; also rebind boundary endpoints. State each port explicitly even when only one is possible. Ends on remaining Drafts stay empty. Each Card's _meta.json keeps what it has word for word and gets what is missing with the save that implements it: with keep_meta, fill_description if it has none and fill_context from what the user asked in this conversation and what the description and content say, stating nothing they did not say (see the rules). Use a built-in Card where it is enough (data already in the project is handed on by an input Card with a File output; see the rules), otherwise a code Card (language, default.nix, sources and _outputs.fbs). The rules hold what Python, C++ and bash Cards need, so start writing; read a reference only for what they do not cover.\nWrite and save all of them first, upstream first. Then check them once with project_validate, fix what it reports, run the workflow once from its trigger Card and confirm each Card's result with run_record. Run earlier only when what you write next needs something you can learn only from a run. When three or more of them do not depend on each other (no wire between them), hand those to helpers (delegate, one Draft each), with concurrency from the person's setting, once the Cards they need are implemented. Give each helper all incident endpoints in its read/write sets so it can save the implementation and explicit rebindings together. When that would exceed its scope, it leaves template draft while preparing sources and returns the intended definition and rebindings for the parent. At the end, report what each Card does and what the run produced.\n{list}"
   },
   "commentRequest": {
     "card": "- {key} (definition {definition}):\n{comments}",
     "comment": "  * {id}: {text}",
-    "text": "The user left comments on these Cards in {where}; do what they ask. By default change the Card a comment is on, keeping its id and wiring. When a comment asks for it, add Cards or split the Card: SetProject for the Cards and connections, SetLayout for their place, in the same save. A Draft among them is implemented as the rules say, following its comments. Read each Card first. The rules hold what Python, C++ and bash Cards need; read a reference only for what they do not cover.\nThe save that does what a comment asks also resolves it: PutDefinition with \"meta_json\" holding the Card's _meta.json, with that comment's \"resolved\": true and a \"resolution\" of one line on what was done, in the user's language (see the rules). Tsugumi records with it which Cards that save changed, so that the user can follow a comment to its Cards. Write and save them all first, check them once with project_validate, then run what changed once and confirm each result with run_record; when a result is not what its comment asks, go on until it is, and correct the resolution. A comment you cannot do stays open: say why in your report. At the end, report what you did for each comment and what the run produced.\n{list}"
+    "text": "The user left comments on these Cards in {where}; do what they ask. By default change the Card a comment is on, keeping its id and wiring. When a comment asks for it, add Cards or split the Card: SetProject for the Cards and connections in the same save; the host supplies new Card positions. A Draft among them is implemented as the rules say, following its comments. Read each Card first. The rules hold what Python, C++ and bash Cards need; read a reference only for what they do not cover.\nThe save that does what a comment asks also resolves it: PutDefinition with \"meta_json\" holding the Card's _meta.json, with that comment's \"resolved\": true and a \"resolution\" of one line on what was done, in the user's language (see the rules). Tsugumi records with it which Cards that save changed, so that the user can follow a comment to its Cards. Write and save them all first, check them once with project_validate, then run what changed once and confirm each result with run_record; when a result is not what its comment asks, go on until it is, and correct the resolution. A comment you cannot do stays open: say why in your report. At the end, report what you did for each comment and what the run produced.\n{list}"
   },
   "delegateTool": {
     "name": "delegate",
-    "description": "Starts 1 to 8 independent helper tasks. The application setting limits concurrent helpers (default 4; 1 runs them sequentially). Each gets at most 15 model steps and the same tools except delegate. Supply read_cards, write_cards and run_cards as separate exact sets of permanent Card paths, e.g. [\"outer/step\"], with no implicit descendants. Empty sets are allowed. The host enforces all three sets, including inspection, files, saves, execution plans, records and logs. Newly reserved card_id Cards belong to their creator for reading, writing and running. Project-wide operations, canvas/layout edits, container-link changes and tools without a Card boundary go to the parent. Omitting all three sets works only when the user enables unscoped helpers (off by default). Returns messages and errors; a shortened result identifies the full helper trace in the conversation. Helper usage counts toward the conversation.",
+    "description": "Starts 1 to 8 independent helper tasks. The application setting limits concurrent helpers (default 4; 1 runs them sequentially). Each gets at most 15 model steps and the same tools except delegate. Supply read_cards, write_cards and run_cards as separate exact sets of permanent Card paths, e.g. [\"outer/step\"], with no implicit descendants. Empty sets are allowed. The host enforces all three sets, including inspection, files, saves, execution plans, records and logs. Newly reserved card_id Cards belong to their creator for reading, writing and running. Helpers may add their own card_id reservations and save wires with both endpoints in their read/write sets and at least one writable endpoint. Start from the scoped project_json; the host preserves hidden Cards and merges disjoint concurrent saves. The host supplies new Card positions. Helpers may implement a Draft with all its incident endpoints in scope, saving explicit port rebindings in the same transaction; otherwise return the final definition and rebindings to the parent. Project-wide settings, layout edits, container-link changes and tools without a Card boundary go to the parent. Omitting all three sets works only when the user enables unscoped helpers (off by default). Returns messages and errors; a shortened result identifies the full helper trace in the conversation. Helper usage counts toward the conversation.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,

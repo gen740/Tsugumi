@@ -2428,12 +2428,11 @@ export class ProjectSession extends Observable {
 
   }
 
-  /** A new Card from a template, with its own definition folder. `place` says
-   *  where instead of `at`, once the Card's size is known. */
+  /** A new Card from a template. Automatic placement leaves coordinates to the host. */
   prepareTemplate = (name: string, id: string): Promise<{ definitionJson: string; files: { path: string; text: string }[] }> =>
     api('/api/document/template', { name, id })
 
-  async addCard(t: DefinitionTemplate, scope: string[], at: { x: number; y: number }, name?: string, place?: (k: CardKey) => { x: number; y: number }): Promise<CardKey> {
+  async addCard(t: DefinitionTemplate, scope: string[], at: { x: number; y: number }, name?: string, automaticPlacement = false): Promise<CardKey> {
     const id = await this.newCardId(name ?? templateBaseName(t), scope)
     const k = key([...scope, id]), template = await this.prepareTemplate(t, id)
     const value = parse(template.definitionJson)
@@ -2444,7 +2443,7 @@ export class ProjectSession extends Observable {
       x.setCardDefinition(k, definition)
       for (const file of template.files) x.putSource(dir + file.path, file.text)
       x.updateMeta(k, (m) => m.set('name', name ?? templateBaseName(t)))
-      x.setPosition(k, place ? place(k) : at)
+      if (!automaticPlacement) x.setPosition(k, at)
     })
     return k
   }

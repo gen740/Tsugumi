@@ -938,7 +938,7 @@ struct GraphCanvas: View {
   func handleAddDraft(_ n: Notification) {
     guard (n.object as? UUID) == tab.id, session.isEditable else { return }
     session.performCardEdit {
-      let k = try await session.addCard(template: .draft, in: tab.scope, at: world(CGPoint(x: size.width / 2, y: size.height / 2)), clearOfOthers: true)
+      let k = try await session.addCard(template: .draft, in: tab.scope, at: world(CGPoint(x: size.width / 2, y: size.height / 2)), automaticPlacement: true)
       tab.selection = [k]
       writeDraft(k)
     }
@@ -1271,7 +1271,7 @@ struct GraphCanvas: View {
   func addBuiltin(_ t: DefinitionTemplate, at w: CGPoint) {
     guard session.isEditable else { return }
     session.performCardEdit {
-      let k = try await session.addCard(template: t, in: tab.scope, at: w, clearOfOthers: true)
+      let k = try await session.addCard(template: t, in: tab.scope, at: w, automaticPlacement: true)
       tab.selection = [k]
       if t == .draft { writeDraft(k) }
     }

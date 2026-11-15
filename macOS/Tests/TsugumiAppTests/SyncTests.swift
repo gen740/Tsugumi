@@ -621,9 +621,8 @@ import TsugumiTestSupport
     #expect(s.displayFrame(b)?["x"]?.double == 400 && s.displayFrame(b)?["y"]?.double == 300)
   }
 
-  /// A new Card put on the canvas covers nothing: not a Card, a frame or a note,
-  /// also when several are put in the same place. A free place is taken as it is.
-  @Test func aNewCardCoversNothing() async throws {
+  /// Automatic additions leave placement to the host; a person's drop is explicit.
+  @Test func aNewCardDelegatesPlacementToTheHost() async throws {
     let dir = try Self.project()
     defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
@@ -632,41 +631,13 @@ import TsugumiTestSupport
     s.endpointOverride = d.endpoint
     s.start()
     try await Self.connected(s)
-    func covers(_ k: CardKey, in scope: [String]) -> [String] {
-      let r = CGRect(origin: s.placedPosition(k), size: s.geometry(k).size)
-      var hit: [String] = []
-      for c in s.cards(in: scope).compactMap({ $0["id"]?.string }).map({ key(scope + [$0]) }) where c != k {
-        if r.intersects(CGRect(origin: s.placedPosition(c), size: s.geometry(c).size)) { hit.append(c) }
-      }
-      for c in s.framedCards(in: scope) where c != k && r.intersects(s.displayRect(c, origin: s.placedPosition(c))) { hit.append("frame \(c)") }
-      for n in s.notes(in: scope) where r.intersects(s.noteRect(n)) { hit.append("note") }
-      return hit
+    let here = CGPoint(x: 4000, y: 4000)
+    for template in [DefinitionTemplate.draft, .draft, .python] {
+      let k = try await s.addCard(template: template, in: [], at: here, automaticPlacement: true)
+      #expect(s.layout["cards"]?[k] == nil, "Automatic additions carry no coordinates")
     }
-    func check(in scope: [String]) async throws {
-      let here = CGPoint(x: 4000, y: 4000)
-      let first = try await s.addCard(template: .draft, in: scope, at: here, clearOfOthers: true)
-      #expect(s.placedPosition(first).x.distance(to: here.x).magnitude < 40, "a free place is taken")
-      let second = try await s.addCard(template: .draft, in: scope, at: here, clearOfOthers: true)
-      let third = try await s.addCard(template: .python, in: scope, at: here, clearOfOthers: true)
-      // Near a frame and a note too.
-      let framed = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 9000, y: 0))
-      s.updateDisplayFrame(framed) {
-        $0["x"] = .real(6000)
-        $0["y"] = .real(6000)
-        $0["width"] = .real(320)
-        $0["height"] = .real(170)
-      }
-      let onFrame = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 6100, y: 6050), clearOfOthers: true)
-      _ = s.addNote(in: scope, at: CGPoint(x: 8000, y: 8000))
-      let onNote = try await s.addCard(template: .draft, in: scope, at: CGPoint(x: 8050, y: 8020), clearOfOthers: true)
-      for k in [first, second, third, onFrame, onNote] { #expect(covers(k, in: scope).isEmpty, "\(k): \(covers(k, in: scope))") }
-      // Aimed at a spot without asking for room: stays there (a drop).
-      let dropped = try await s.addCard(template: .draft, in: scope, at: here)
-      #expect(s.position(dropped) == here)
-    }
-    try await check(in: [])
-    let inner = await s.makeSubgraph([key(["a"])], in: [])
-    try await check(in: path(try #require(inner)))
+    let dropped = try await s.addCard(template: .draft, in: [], at: here)
+    #expect(s.position(dropped) == here)
     await s.save()
     #expect(!s.dirty, "\(s.saveError ?? "")")
   }

@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <memory>
 
 #include "agent/catalog.hh"
@@ -210,6 +211,8 @@ TEST(HostLayout, VersionCanvasFallsBackForMissingOrInvalidLayout) {
 
 TEST(HostLayout, AgentTidyUsesHostContractAndNeverProjectLayoutRequests) {
   const agent::Catalog catalog;
+  ASSERT_NE(catalog.Find("project_save"), nullptr);
+  EXPECT_NE(catalog.Find("project_save")->spec.description.find("without SetLayout coordinates"), std::string::npos);
   const auto* tool = catalog.Find("layout_arrange");
   ASSERT_NE(tool, nullptr);
   EXPECT_TRUE(tool->host);
@@ -291,6 +294,102 @@ TEST(HostLayoutSaving, PatchesAreValidatedAndSourceLookalikesAreUnchanged) {
   EXPECT_FALSE(IsExternalDocument("externals/a/definitions/b/src/layout.json",
                                   "layout.json"));
   EXPECT_FALSE(IsExternalDocument("layout.json", "layout.json"));
+}
+}  // namespace
+}  // namespace tsugumi::host
+
+namespace tsugumi::host {
+namespace {
+TEST(HostCardPlacement, ConnectedIsolatedAndBulkCardsGetFreePlaces) {
+  namespace json = agent::json;
+  const std::string original =
+      R"({"cards":{"fixed":{"x":123,"y":456,"collapsed":true},"other":{"x":1300,"y":456}}})";
+  for (
+      const auto* connections :
+      {"[]",
+       R"([{"from":{"card":"fixed","port":""},"to":{"card":"new","port":""}}])",
+       R"([{"from":{"card":"fixed","port":""},"to":{"card":"new","port":""}},{"from":{"card":"other","port":""},"to":{"card":"new","port":""}}])"}) {
+    std::vector<std::string> cards{R"({"id":"fixed"})", R"({"id":"other"})",
+                                   R"({"id":"new"})"};
+    for (int i = 0; i < 12; ++i)
+      cards.push_back(json::Encode(
+          json::Members{{"id", json::Quote("new" + std::to_string(i))}}));
+    const auto project = json::Encode(json::Members{
+        {"canvas", json::Encode(json::Members{{"cards", json::Encode(cards)},
+                                              {"connections", connections}})}});
+    const auto placed = CompleteLayout(project, original);
+    const auto positions = json::Object(json::Object(placed).at("cards"));
+    EXPECT_EQ(positions.size(), cards.size());
+    EXPECT_EQ(positions.at("fixed"),
+              json::Object(json::Object(original).at("cards")).at("fixed"));
+    EXPECT_EQ(CompleteLayout(project, placed), placed);
+    for (const auto& [id, a] : positions)
+      for (const auto& [other, b] : positions) {
+        if (id >= other) continue;
+        const auto ap = json::Object(a), bp = json::Object(b);
+        const auto dx = std::abs(std::stod(ap.at("x")) - std::stod(bp.at("x")));
+        const auto dy = std::abs(std::stod(ap.at("y")) - std::stod(bp.at("y")));
+        EXPECT_TRUE(dx >= 340 || dy >= 260) << id << " overlaps " << other;
+      }
+  }
+}
+TEST(HostCardPlacement, APersonsDropAndNestedWorkflowAreKeptInTheTransaction) {
+  namespace json = agent::json;
+  const auto args = json::Encode(json::Members{
+      {"changes",
+       json::Encode(std::vector<std::string>{
+           json::Encode(json::Members{
+               {"value_type", json::Quote("PutSource")},
+               {"value",
+                json::Encode(json::Members{
+                    {"path", json::Quote("externals/inner/tsugumi.json")},
+                    {"bytes",
+                     json::Quote(
+                         R"({"canvas":{"cards":[{"id":"dropped"},{"id":"new"}],"connections":[]}})")}})}}),
+           json::Encode(json::Members{
+               {"value_type", json::Quote("PutSource")},
+               {"value",
+                json::Encode(json::Members{
+                    {"path", json::Quote("externals/inner/layout.json")},
+                    {"bytes",
+                     json::Quote(
+                         R"({"cards":{"dropped":{"x":17,"y":29}}})")}})}})})}});
+  const auto saved = json::Object(PrepareLayoutSave(
+      args, [](const std::string&) -> std::optional<LayoutFile> {
+        return std::nullopt;
+      }));
+  const auto changes = json::Array(saved.at("changes"));
+  ASSERT_EQ(changes.size(), 2u);
+  const auto value = json::Object(json::Get(json::Object(changes[1]), "value"));
+  const auto positions =
+      json::Object(json::Object(json::Text(value, "bytes")).at("cards"));
+  EXPECT_EQ(json::Object(positions.at("dropped")).at("x"), "17");
+  EXPECT_EQ(json::Object(positions.at("dropped")).at("y"), "29");
+  EXPECT_TRUE(positions.contains("new"));
+}
+}  // namespace
+}  // namespace tsugumi::host
+
+namespace tsugumi::host {
+namespace {
+TEST(HostCardPlacement, PlacesNearItsNeighbourAndAvoidsSavedFramesAndNotes) {
+  namespace json = agent::json;
+  const auto project =
+      R"({"canvas":{"cards":[{"id":"far"},{"id":"near"},{"id":"new"}],"connections":[{"from":{"card":"near","port":"out"},"to":{"card":"new","port":"in"}}]}})";
+  const auto layout =
+      R"({"cards":{"far":{"x":10000,"y":0},"near":{"x":0,"y":0}},"displays":{"near":{"x":340,"y":0,"width":400,"height":300}},"notes":[{"id":"n","text":"Keep me","x":0,"y":300,"width":300,"height":200}]})";
+  const auto completed = json::Object(CompleteLayout(project, layout));
+  const auto positions = json::Object(completed.at("cards"));
+  const auto p = json::Object(positions.at("new"));
+  const auto x = std::stod(p.at("x")), y = std::stod(p.at("y"));
+  EXPECT_LT(std::abs(x) + std::abs(y), 2000);
+  auto disjoint = [&](double bx, double by, double w, double h) {
+    return x + 320 <= bx || bx + w <= x || y + 270 <= by || by + h <= y;
+  };
+  EXPECT_TRUE(disjoint(340, 0, 400, 300));
+  EXPECT_TRUE(disjoint(0, 300, 300, 200));
+  EXPECT_EQ(completed.at("displays"), json::Object(layout).at("displays"));
+  EXPECT_EQ(completed.at("notes"), json::Object(layout).at("notes"));
 }
 }  // namespace
 }  // namespace tsugumi::host
