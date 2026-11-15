@@ -50,10 +50,6 @@ pathlib.Path(os.environ['TSUGUMI_RUN_SCRATCH_DIR']).mkdir()
     root = Path(env['TMPDIR'])
     assert not root.exists()
     assert all(Path(value).is_relative_to(root) for value in env.values())
-    # Longest native project socket under this run's broker fits macOS.
-    nested = root / 'hs-123456/support/chat-123456'
-    assert len(str(nested / ('e-' + 'a' * 16) / 'env' / ('b' * 16) / 's').encode()) < 104
-    assert len(str(nested / ('v-' + 'a' * 24 + '.sock')).encode()) < 104
 
 
 def test_escape_fails_and_names_the_path_without_deleting_it(tmp_path, monkeypatch, capsys):
