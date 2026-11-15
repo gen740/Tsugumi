@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Native Agent/client use Apple's compiler, SDK, provider HTTPS trust and SQLite.
 # Remote-worker TLS uses the OpenSSL already supplied by the development shell.
-# Nix supplies pinned build tools, FlatBuffers and source-only dependencies.
+# Nix supplies pinned build tools, FlatBuffers and source-only dependencies,
+# and a static libgit2 that only reads local repositories (nix/libgit2-local.nix),
+# found before the core's shared one.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 if [ "${TSUGUMI_AGENT_BUILD_ENV:-}" != 1 ]; then
@@ -17,7 +19,7 @@ run() {
     HOSQ_INCLUDE_DIR="$HOSQ_INCLUDE_DIR" \
     TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV:?}" \
     TSUGUMI_CARD_NIXPKGS_NARHASH="${TSUGUMI_CARD_NIXPKGS_NARHASH:?}" \
-    PKG_CONFIG_PATH="${PKG_CONFIG_PATH:-}" \
+    PKG_CONFIG_PATH="${TSUGUMI_HOST_LIBGIT2_PKGCONFIG:?}:${PKG_CONFIG_PATH:-}" \
     CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-}" "$@"
 }
 run "$cmake_path" --fresh -S "$repo" -B "$repo/build-host" -G Ninja \

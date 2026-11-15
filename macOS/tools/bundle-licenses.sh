@@ -45,3 +45,9 @@ openssl_source="$(nix build --no-link --print-out-paths --inputs-from "$repo" ni
 openssl_license="$(tar -tf "$openssl_source" | grep -E '^[^/]+/LICENSE.txt$')"
 [ -n "$openssl_license" ] || { echo "OpenSSL license is missing" >&2; exit 1; }
 tar -xOf "$openssl_source" "$openssl_license" > "$dest/openssl/LICENSE.txt"
+
+# libgit2, linked statically into the host-side agentd with the zlib, PCRE2,
+# llhttp, xdiff and other sources it contains: COPYING carries all of their notices.
+mkdir -p "$dest/libgit2"
+libgit2_source="$(nix build --no-link --print-out-paths "$repo#libgit2-local.src")"
+cp "$libgit2_source/COPYING" "$dest/libgit2/COPYING"
