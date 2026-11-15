@@ -15,8 +15,8 @@ else()
 endif()
 
 # The real core serves its public RPC. Only the external Nix evaluator is
-# replaced: defining its symbols in the executable keeps the real evaluator's
-# object out of the static library link. This is installed only by ci-core.
+# replaced: these targets compile its double and do not link tsugumi_nix_eval.
+# This is installed only by ci-core.
 add_executable(tsugumid-mock
   ${_core_main}
   doubles/nix_eval.cc)

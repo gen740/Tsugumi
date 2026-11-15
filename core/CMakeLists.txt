@@ -67,7 +67,7 @@ target_include_directories(tsugumi_core
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/sdk/include)
 target_link_libraries(tsugumi_core PUBLIC tsugumi_document tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
-  PkgConfig::SQLITE3 PkgConfig::LIBGIT2 Threads::Threads tsugumi_nix_eval tsugumi_workerd_support)
+  PkgConfig::SQLITE3 PkgConfig::LIBGIT2 Threads::Threads tsugumi_workerd_support)
 if(NOT APPLE)
   target_link_libraries(tsugumi_core PRIVATE PkgConfig::CRYPTO)
 endif()
@@ -86,7 +86,9 @@ target_compile_definitions(tsugumi_core PRIVATE
 
 add_executable(tsugumid src/main.cc)
 target_include_directories(tsugumid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(tsugumid PRIVATE tsugumi_core)
+# Executables choose the evaluator implementation. Tests link their double
+# instead, without relying on a linker's archive extraction or symbol precedence.
+target_link_libraries(tsugumid PRIVATE tsugumi_core tsugumi_nix_eval)
 install(TARGETS tsugumid RUNTIME DESTINATION bin)
 
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc
@@ -209,6 +211,6 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(tsugumi-vmd src/vmd_main.cc)
   target_include_directories(tsugumi-vmd PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-  target_link_libraries(tsugumi-vmd PRIVATE tsugumi_core)
+  target_link_libraries(tsugumi-vmd PRIVATE tsugumi_core tsugumi_nix_eval)
   install(TARGETS tsugumi-vmd RUNTIME DESTINATION bin)
 endif()
