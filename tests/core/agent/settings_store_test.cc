@@ -86,11 +86,11 @@ TEST(HostSettingsStore,
       std::move(memory), host::Settings::KeyStorage::Host);
   const auto put = [&](const std::string& secret) {
     flatbuffers::FlatBufferBuilder b;
-    Tsugumi::Service::ProviderInputT value;
+    Tsugumi::Host::ProviderInputT value;
     value.api_key = secret;
     const auto p = H::CreateProviderSetRequest(
         b, b.CreateString("desktop"), b.CreateString("anthropic"),
-        Tsugumi::Service::ProviderInput::Pack(b, &value));
+        Tsugumi::Host::ProviderInput::Pack(b, &value));
     const auto req =
         H::CreateRequest(b, H::RequestPayload::ProviderSetRequest, p.Union());
     H::FinishMessageBuffer(
@@ -111,11 +111,11 @@ TEST(HostSettingsStore,
   const auto ephemeral = [&](const std::string& profile,
                              const std::string& secret) {
     flatbuffers::FlatBufferBuilder b;
-    Tsugumi::Service::ProviderInputT value;
+    Tsugumi::Host::ProviderInputT value;
     value.api_key = secret;
     const auto p = H::CreateProviderSetRequest(
         b, b.CreateString(profile), b.CreateString("anthropic"),
-        Tsugumi::Service::ProviderInput::Pack(b, &value), false, true);
+        Tsugumi::Host::ProviderInput::Pack(b, &value), false, true);
     const auto req =
         H::CreateRequest(b, H::RequestPayload::ProviderSetRequest, p.Union());
     H::FinishMessageBuffer(
@@ -162,11 +162,11 @@ TEST(HostSettingsStore,
   };
   auto service = make();
   flatbuffers::FlatBufferBuilder b;
-  Tsugumi::Service::ProviderInputT input;
+  Tsugumi::Host::ProviderInputT input;
   input.api_key = key;
   const auto value = H::CreateProviderSetRequest(
       b, b.CreateString("macos:keychain:fixture"), b.CreateString("anthropic"),
-      Tsugumi::Service::ProviderInput::Pack(b, &input), false, true);
+      Tsugumi::Host::ProviderInput::Pack(b, &input), false, true);
   const auto request =
       H::CreateRequest(b, H::RequestPayload::ProviderSetRequest, value.Union());
   H::FinishMessageBuffer(
@@ -291,7 +291,7 @@ class HostPolicyTest : public ::testing::Test {
     request.ephemeral = true;
     request.remove = secret.empty();
     if (!secret.empty()) {
-      request.provider = std::make_unique<Tsugumi::Service::ProviderInputT>();
+      request.provider = std::make_unique<Tsugumi::Host::ProviderInputT>();
       request.provider->api_key = secret;
     }
     ASSERT_NE(Call(std::move(request))->value.AsProviderStatus(), nullptr);
@@ -317,7 +317,7 @@ TEST_F(HostPolicyTest, MacRejectsDiskKeysAndStatusAgreesWithResolution) {
   H::ProviderSetRequestT request;
   request.profile = "desktop";
   request.id = "anthropic";
-  request.provider = std::make_unique<Tsugumi::Service::ProviderInputT>();
+  request.provider = std::make_unique<Tsugumi::Host::ProviderInputT>();
   request.provider->api_key = "REJECTED_DISK_KEY";
   const auto reply = Call(std::move(request));
   ASSERT_NE(reply->value.AsFailure(), nullptr);

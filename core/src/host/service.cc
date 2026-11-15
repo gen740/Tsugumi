@@ -118,7 +118,7 @@ struct Service::State {
         state_gate, db, registry,
         [this](std::string raw) { return Scrub(std::move(raw)); },
         [this](const std::string& resource, const std::string& id,
-               A::Access access) {
+               Tsugumi::Service::Access access) {
           return this->access->HasGrant(resource, id, access);
         },
         [this](const std::string& id) { return turns->running.contains(id); });
@@ -466,20 +466,6 @@ struct Service::State {
       case A::RequestPayload::AccessRevokeRequest:
       case A::RequestPayload::AccessListRequest:
         return access->Handle(request, human);
-      case A::RequestPayload::DemoListRequest: {
-        A::DemoListT result;
-        for (const auto& path : json::Array(demo_references.List()))
-          result.paths.push_back(json::String(path));
-        return wire::AgentReply(request.request_id, std::move(result));
-      }
-      case A::RequestPayload::DemoReadRequest: {
-        A::TextResultT result;
-        result.text =
-            demo_references.Read(r->value_as_DemoReadRequest()->path()->str());
-        return wire::AgentReply(request.request_id, std::move(result));
-      }
-      case A::RequestPayload::VersionNoteRequest:
-        return versions->HandleAgent(request, human, lock);
       case A::RequestPayload::ConversationSummarizeRequest:
         return turns->Handle(request, human, lock);
       default:
@@ -569,6 +555,20 @@ struct Service::State {
     if (host::Projects::Handles(r->value_type()))
       return host_projects.Handle(*r, request.request_id);
     switch (r->value_type()) {
+      case H::RequestPayload::DemoListRequest: {
+        H::DemoPathsT result;
+        for (const auto& path : json::Array(demo_references.List()))
+          result.paths.push_back(json::String(path));
+        return wire::HostReply(request.request_id, std::move(result));
+      }
+      case H::RequestPayload::DemoReadRequest: {
+        Tsugumi::Service::TextResultT result;
+        result.text =
+            demo_references.Read(r->value_as_DemoReadRequest()->path()->str());
+        return wire::HostReply(request.request_id, std::move(result));
+      }
+      case H::RequestPayload::VersionNoteRequest:
+        return versions->HandleHost(request, human, lock);
       case H::RequestPayload::PermissionKindsRequest: {
         const auto* p = r->value_as_PermissionKindsRequest();
         return wire::HostReply(request.request_id,

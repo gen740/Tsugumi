@@ -214,7 +214,7 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
                         std::string& authorization) -> ContentBlock {
   std::unique_lock lock(mutex);
   auto require = [&](const std::string& resource,
-                     const std::string& conversation, A::Access access,
+                     const std::string& conversation, Tsugumi::Service::Access access,
                      bool wait, std::stop_token token,
                      const std::string& reason) {
     lock.unlock();
@@ -251,7 +251,7 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
           json::Encode(json::Members{
               {"task", task}, {"turn", json::Quote(p->turn_id()->str())}});
       const auto request = access_service.RequestAccess(
-          c.project, c.id, A::Access::HelperScope, A::GrantScope::Conversation,
+          c.project, c.id, Tsugumi::Service::Access::HelperScope, Tsugumi::Service::GrantScope::Conversation,
           reason, true);
       for (;;) {
         auto state = db.prepare("SELECT state FROM access_requests WHERE id=?");
@@ -272,7 +272,7 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
   }
   if ((p->selected_cards() && p->selected_cards()->size()) ||
       (p->selected_displays() && p->selected_displays()->size())) {
-    require(c.project, c.id, A::Access::Read, true, stop,
+    require(c.project, c.id, Tsugumi::Service::Access::Read, true, stop,
             "Use selected project references in the conversation");
     resources.push_back(c.project);
   }
@@ -336,12 +336,12 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
         resource = folder.text(0);
         read_root = skill->source_folder;
       }
-      require(resource, c.id, A::Access::Read, true, stop,
+      require(resource, c.id, Tsugumi::Service::Access::Read, true, stop,
               "Read the selected skill " + skill->name);
       lock.unlock();
       const auto bytes = host::ReadSkill(read_root, skill->path);
       lock.lock();
-      if (!access_service.HasGrant(resource, c.id, A::Access::Read))
+      if (!access_service.HasGrant(resource, c.id, Tsugumi::Service::Access::Read))
         throw Failure("permission_denied",
                       "Skill access was revoked while reading");
       text += "\n[User-selected skill " + skill->name + "]\n" + bytes;
@@ -361,7 +361,7 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
                   .project)
         throw Failure("permission_denied",
                       "Attached resource is not registered for this project");
-      require(resource->str(), p->conversation_id()->str(), A::Access::Read,
+      require(resource->str(), p->conversation_id()->str(), Tsugumi::Service::Access::Read,
               true, stop, "Read the attached folder");
       resources.push_back(resource->str());
       text += "\n[User-authorized attached folder] " + folder.text(1);
@@ -604,10 +604,10 @@ auto Turns::Start(const std::string& id, const std::string& turn,
 
 auto Turns::SummaryReply(uint64_t id, std::string_view raw) -> std::string {
   const auto o = json::Object(raw);
-  A::TextResultT result;
+  Tsugumi::Service::TextResultT result;
   result.text = dependencies.scrub(json::Text(o, "text"));
   result.usage =
-      std::make_unique<A::UsageT>(wire::Usage(json::Get(o, "usage", "{}")));
+      std::make_unique<Tsugumi::Service::UsageT>(wire::Usage(json::Get(o, "usage", "{}")));
   return wire::AgentReply(id, std::move(result));
 }
 

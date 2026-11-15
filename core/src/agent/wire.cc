@@ -27,7 +27,7 @@ auto Messages(std::string_view stored)
 }
 } // namespace
 
-auto ProviderJson(const Tsugumi::Service::ProviderInput& p) -> std::string {
+auto ProviderJson(const Tsugumi::Host::ProviderInput& p) -> std::string {
   json::Members values{{"model", json::Quote(Text(p.model()))},
                        {"maxTokens", std::to_string(p.max_tokens())},
                        {"contextLimit", std::to_string(p.context_limit())}};
@@ -45,9 +45,9 @@ auto SelectionJson(const Tsugumi::Service::ProviderSelection& p)
                     {"purpose", json::Quote(Text(p.purpose()))},
                     {"use_choices", p.use_choices() ? "true" : "false"}});
 }
-auto Usage(std::string_view stored) -> A::UsageT {
+auto Usage(std::string_view stored) -> Tsugumi::Service::UsageT {
   const auto o = json::Object(stored);
-  A::UsageT out;
+  Tsugumi::Service::UsageT out;
   out.input_tokens = json::UInt(json::Get(o, "inputTokens"));
   out.output_tokens = json::UInt(json::Get(o, "outputTokens"));
   out.cache_read_tokens = json::UInt(json::Get(o, "cacheReadTokens"));
@@ -63,7 +63,7 @@ auto Conversation(std::string_view stored) -> A::ConversationT {
   out.messages = Messages(json::Get(o, "messages", "[]"));
   out.archive = Messages(json::Get(o, "archive", "[]"));
   out.summary = json::Text(o, "summary");
-  out.usage = std::make_unique<A::UsageT>(Usage(json::Get(o, "usage", "{}")));
+  out.usage = std::make_unique<Tsugumi::Service::UsageT>(Usage(json::Get(o, "usage", "{}")));
   for (const auto &raw : json::Array(json::Get(o, "tools", "[]"))) {
     const auto t = json::Object(raw);
     auto tool = std::make_unique<A::ToolRecordT>();

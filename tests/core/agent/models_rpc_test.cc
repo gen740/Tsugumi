@@ -9,11 +9,11 @@ class ModelsFixture : public AgentFixture {
     if (server) {
       const auto configured =
           Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
-            Tsugumi::Service::ProviderInputT config;
+            Tsugumi::Host::ProviderInputT config;
             config.endpoint = server->URL();
             return H::CreateProviderSetRequest(
                        b, b.CreateString("desktop"), b.CreateString(id),
-                       Tsugumi::Service::ProviderInput::Pack(b, &config))
+                       Tsugumi::Host::ProviderInput::Pack(b, &config))
                 .Union();
           });
       if (!configured.Code().empty())
@@ -22,11 +22,11 @@ class ModelsFixture : public AgentFixture {
     if (server) {
       const auto provisioned =
           Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
-            Tsugumi::Service::ProviderInputT key;
+            Tsugumi::Host::ProviderInputT key;
             key.api_key = "MODEL_KEY_SENTINEL";
             return H::CreateProviderSetRequest(
                        b, b.CreateString("desktop"), b.CreateString(id),
-                       Tsugumi::Service::ProviderInput::Pack(b, &key), false,
+                       Tsugumi::Host::ProviderInput::Pack(b, &key), false,
                        true)
                 .Union();
           });
@@ -36,7 +36,7 @@ class ModelsFixture : public AgentFixture {
     auto connection = websocket ? ConnectHost(true) : nullptr;
     return Call(connection ? *connection : *host,
                 H::RequestPayload::ModelsListRequest, [&](Builder& b) {
-                  Tsugumi::Service::ProviderInputT config;
+                  Tsugumi::Host::ProviderInputT config;
                   if (server) config.endpoint = server->URL();
                   return H::CreateModelsListRequest(b, b.CreateString(id),
                                                     server != nullptr,

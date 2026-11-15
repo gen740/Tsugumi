@@ -267,7 +267,7 @@ TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
       return A::CreateAccessListRequest(b, b.CreateString(conversation)).Union();
     });
     for (const auto* item : *list.Value()->value_as_AccessList()->requests())
-      if (item->access() == A::Access::HelperScope) {
+      if (item->access() == Tsugumi::Service::Access::HelperScope) {
         approval = item->id()->str();
         EXPECT_NE(item->reason()->str().find("selected"), std::string::npos);
         EXPECT_NE(item->reason()->str().find(R"("write_cards":[])"), std::string::npos);

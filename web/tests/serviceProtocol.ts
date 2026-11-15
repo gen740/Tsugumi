@@ -249,6 +249,36 @@ console.log('Host formatting and version presentation adapters: passed')
   assert.equal(template.value.id, 'new-card')
 }
 
+// Flatc goldens are shared with Swift and C++ so union renumbering cannot
+// silently send a moved Host method to the external Agent listener.
+const fs = await import('node:fs')
+const path = await import('node:path')
+const { BFBS } = await import('../src/shared/bfbs')
+const { ToolCatalog } = await import('../server/agent')
+const serviceVectors = JSON.parse(fs.readFileSync(path.join(process.argv[2], 'tests/fixtures/service-contract.json'), 'utf8'))
+for (const c of serviceVectors.requests) {
+  assert.equal(hostMethod(c.method), c.host, c.method)
+  const native = (bytes: Uint8Array) => c.host
+    ? HostMessage.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
+    : Message.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
+  const golden = native(Buffer.from(c.hex, 'hex'))
+  assert.deepEqual(native(encodeRequest(c.method, c.fields, 7n, c.host)), golden, c.method)
+  assert.throws(() => encodeRequest(c.method, c.fields, 7n, !c.host), /Unknown/)
+}
+for (const c of serviceVectors.replies) {
+  const decoded = decodeReply(Buffer.from(c.hex, 'hex'), c.host).value
+  if (Array.isArray(c.expect)) assert.deepEqual(decoded, c.expect)
+  else for (const [key, value] of Object.entries(c.expect)) assert.deepEqual(decoded[key], value)
+}
+const agentSchema = new BFBS(new Uint8Array(fs.readFileSync(path.join(process.argv[2], 'web/src/gen/agent.bfbs'))))
+const agentRequests = agentSchema.enums.find(e => e.name === 'Tsugumi.Agent.RequestPayload')!.values
+  .filter(v => v.value && v.unionType && v.name !== 'HelloRequest').map(v => v.name)
+assert.deepEqual(agentRequests, serviceVectors.agentRequests)
+const externalCatalog = new ToolCatalog(agentSchema, agentRequests, 'Tsugumi.Agent')
+for (const method of ['demo_list', 'demo_read', 'version_note']) assert.equal(externalCatalog.tool(method), undefined)
+for (const method of ['tool_call', 'access', 'conversation_summarize']) assert.ok(externalCatalog.tool(method))
+console.log('Separate Host/Agent contracts: shared goldens, routes and external MCP catalog passed')
+
 // Reset confirmations and the helper's actual file report survive the host adapter.
 {
   const { HostRuntimeT } = await import('../src/gen/tsugumi/host/host-runtime')

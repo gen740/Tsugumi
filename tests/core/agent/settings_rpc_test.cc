@@ -138,11 +138,11 @@ TEST_F(AgentFixture,
 #endif
   const auto set =
       Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
-        Tsugumi::Service::ProviderInputT p;
+        Tsugumi::Host::ProviderInputT p;
         p.api_key = key;
         return H::CreateProviderSetRequest(
                    b, b.CreateString("desktop"), b.CreateString("anthropic"),
-                   Tsugumi::Service::ProviderInput::Pack(b, &p), false,
+                   Tsugumi::Host::ProviderInput::Pack(b, &p), false,
                    ephemeral)
             .Union();
       });

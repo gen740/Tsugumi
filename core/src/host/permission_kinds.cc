@@ -7,7 +7,7 @@ auto PermissionKinds(const std::string& language)
   const bool en = language == "en";
   auto add = [&](const char* id, const char* ja, const char* english,
                  const char* icon) {
-    auto kind = std::make_unique<Tsugumi::Host::PermissionKindT>();
+    auto kind = std::make_unique<Tsugumi::Service::PermissionKindT>();
     kind->id = id;
     kind->label = en ? english : ja;
     kind->icon = icon;

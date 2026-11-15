@@ -31,7 +31,7 @@ import { ExecutionServicePutRequestT } from '../src/gen/tsugumi/host/execution-s
 import { ExecutionServiceRemoveRequestT } from '../src/gen/tsugumi/host/execution-service-remove-request'
 import { ExecutionProjectAuthorizeRequestT } from '../src/gen/tsugumi/host/execution-project-authorize-request'
 import { ExecutionProjectRevokeRequestT } from '../src/gen/tsugumi/host/execution-project-revoke-request'
-import { DemoListRequestT as ADemoListRequest } from '../src/gen/tsugumi/agent/demo-list-request'
+import { DemoListRequestT as HDemoListRequest } from '../src/gen/tsugumi/host/demo-list-request'
 import { ToolCatalogRequestT as AToolCatalogRequest } from '../src/gen/tsugumi/agent/tool-catalog-request'
 import { HostRecentListRequestT as HHostRecentListRequest } from '../src/gen/tsugumi/host/host-recent-list-request'
 import { HostProjectDefaultsRequestT as HHostProjectDefaultsRequest } from '../src/gen/tsugumi/host/host-project-defaults-request'
@@ -46,11 +46,11 @@ import { RequestT as HostRequestT } from '../src/gen/tsugumi/host/request'
 import { RequestPayload as HostRequestPayload } from '../src/gen/tsugumi/host/request-payload'
 import { Payload as HostPayload } from '../src/gen/tsugumi/host/payload'
 import { ProviderSelectionT } from '../src/gen/tsugumi/service/provider-selection'
-import { ProviderInputT } from '../src/gen/tsugumi/service/provider-input'
+import { ProviderInputT } from '../src/gen/tsugumi/host/provider-input'
 import { SkillsListRequestT as HSkillsListRequest } from '../src/gen/tsugumi/host/skills-list-request'
 import { Action } from '../src/gen/tsugumi/agent/action'
-import { Access } from '../src/gen/tsugumi/agent/access'
-import { GrantScope } from '../src/gen/tsugumi/agent/grant-scope'
+import { Access } from '../src/gen/tsugumi/service/access'
+import { GrantScope } from '../src/gen/tsugumi/service/grant-scope'
 import { HelloRequestT as AHelloRequest } from '../src/gen/tsugumi/service/hello-request'
 import { ConfigureRequestT as AConfigureRequest } from '../src/gen/tsugumi/agent/configure-request'
 import { ConversationCreateRequestT as AConversationCreateRequest } from '../src/gen/tsugumi/agent/conversation-create-request'
@@ -67,8 +67,8 @@ import { AccessRequestT as AAccessRequest } from '../src/gen/tsugumi/agent/acces
 import { AccessResolveRequestT as AAccessResolveRequest } from '../src/gen/tsugumi/agent/access-resolve-request'
 import { AccessRevokeRequestT as AAccessRevokeRequest } from '../src/gen/tsugumi/agent/access-revoke-request'
 import { AccessListRequestT as AAccessListRequest } from '../src/gen/tsugumi/agent/access-list-request'
-import { DemoReadRequestT as ADemoReadRequest } from '../src/gen/tsugumi/agent/demo-read-request'
-import { VersionNoteRequestT as AVersionNoteRequest } from '../src/gen/tsugumi/agent/version-note-request'
+import { DemoReadRequestT as HDemoReadRequest } from '../src/gen/tsugumi/host/demo-read-request'
+import { VersionNoteRequestT as HVersionNoteRequest } from '../src/gen/tsugumi/host/version-note-request'
 import { ConversationSummarizeRequestT as AConversationSummarizeRequest } from '../src/gen/tsugumi/agent/conversation-summarize-request'
 import { HelloRequestT as HHelloRequest } from '../src/gen/tsugumi/service/hello-request'
 import { RegisterProjectRequestT as HRegisterProjectRequest } from '../src/gen/tsugumi/host/register-project-request'
@@ -110,6 +110,9 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
+    case 'DemoListRequest': return new HDemoListRequest()
+    case 'DemoReadRequest': return new HDemoReadRequest(v.path)
+    case 'VersionNoteRequest': return new HVersionNoteRequest(v.project_id, v.commit, v.profile, v.language, v.anthropic_key_profile, v.openai_key_profile)
     case 'FileFormatRequest': return new FileFormatRequestT(v.path, v.text)
     case 'HostVersionGraphRequest': return new HostVersionGraphRequestT(v.project, v.language, v.limit ?? 500)
     case 'HostVersionDiffRequest': return new HostVersionDiffRequestT(v.project, v.commit, v.from_commit)
@@ -166,7 +169,6 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'HostRecentForgetRequest': return new HHostRecentForgetRequest(v.paths)
   }
   else switch (method) {
-    case 'DemoListRequest': return new ADemoListRequest()
     case 'ToolCatalogRequest': return new AToolCatalogRequest()
     case 'HelloRequest': return new AHelloRequest(v.token, v.client_id, v.protocol)
     case 'ConfigureRequest': return new AConfigureRequest(provider(v.provider), v.conversation_id)
@@ -184,8 +186,6 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'AccessResolveRequest': return new AAccessResolveRequest(v.request_id, v.allow, (v.also_allow ?? []).map((value: unknown) => enumValue(Access, value)))
     case 'AccessRevokeRequest': return new AAccessRevokeRequest(v.grant_id)
     case 'AccessListRequest': return new AAccessListRequest(v.conversation_id)
-    case 'DemoReadRequest': return new ADemoReadRequest(v.path)
-    case 'VersionNoteRequest': return new AVersionNoteRequest(v.project_id, v.commit, v.profile, v.language, v.anthropic_key_profile, v.openai_key_profile)
     case 'ConversationSummarizeRequest': return new AConversationSummarizeRequest(v.conversation_id, provider(v.provider))
   }
   throw new Error(`Unknown ${host ? 'Host' : 'Agent'} request: ${method}`)

@@ -6,7 +6,7 @@ import TsugumiRPC
 /// Presentation catalog supplied by the host. Missing entries use their id.
 @MainActor @Observable final class PermissionCatalog {
   static let shared = PermissionCatalog()
-  var entries: [Tsugumi_Host_PermissionKindT] = []
+  var entries: [Tsugumi_Service_PermissionKindT] = []
   private var loaded = false
   func load() async {
     guard !loaded else { return }
