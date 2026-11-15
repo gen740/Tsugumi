@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import Testing
 import TsugumiAgentClient
+import TsugumiTestSupport
 @testable import TsugumiApp
 @testable import TsugumiLauncher
 @testable import TsugumiRPC
@@ -96,25 +97,30 @@ import TsugumiAgentClient
 
   /// A project with a trigger and a few Bash sinks (no connections yet).
   static func project() throws -> URL {
-    let p = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("sync-\(UUID().uuidString.prefix(8))")
-    let fm = FileManager.default
-    let cards = ["a", "b", "c", "start"]
-    for id in cards {
-      let d = p.appendingPathComponent("definitions/\(id)")
-      try fm.createDirectory(at: d, withIntermediateDirectories: true)
-      let definition = id == "start" ? #"{"template":"trigger"}"# : sinkCard
-      try Data(definition.utf8).write(to: d.appendingPathComponent("_card.json"))
-      if id != "start" {
-        for (name, contents) in sinkSources {
-          try Data(contents.utf8).write(to: d.appendingPathComponent(name))
+    let p = testTemporaryDirectory.appendingPathComponent("sync-\(UUID().uuidString.prefix(8))")
+    do {
+      let fm = FileManager.default
+      let cards = ["a", "b", "c", "start"]
+      for id in cards {
+        let d = p.appendingPathComponent("definitions/\(id)")
+        try fm.createDirectory(at: d, withIntermediateDirectories: true)
+        let definition = id == "start" ? #"{"template":"trigger"}"# : sinkCard
+        try Data(definition.utf8).write(to: d.appendingPathComponent("_card.json"))
+        if id != "start" {
+          for (name, contents) in sinkSources {
+            try Data(contents.utf8).write(to: d.appendingPathComponent(name))
+          }
         }
       }
+      let list = cards.map { "{\"id\": \"\($0)\"}" }.joined(separator: ", ")
+      try Data("{\"name\": \"sync\", \"pkgsPath\": \"tsugumi:default\", \"canvas\": {\"cards\": [\(list)], \"connections\": []}}".utf8)
+        .write(to: p.appendingPathComponent("tsugumi.json"))
+      try Data("{}".utf8).write(to: p.appendingPathComponent("layout.json"))
+      return p
+    } catch {
+      try? FileManager.default.removeItem(at: p)
+      throw error
     }
-    let list = cards.map { "{\"id\": \"\($0)\"}" }.joined(separator: ", ")
-    try Data("{\"name\": \"sync\", \"pkgsPath\": \"tsugumi:default\", \"canvas\": {\"cards\": [\(list)], \"connections\": []}}".utf8)
-      .write(to: p.appendingPathComponent("tsugumi.json"))
-    try Data("{}".utf8).write(to: p.appendingPathComponent("layout.json"))
-    return p
   }
 
   /// The Agent's read-modify-save. A conflict is handled by the scenario,
@@ -183,8 +189,9 @@ import TsugumiAgentClient
   /// A deleted Card's frame does not come back on a new Card of that name.
   @Test func anAgentRenameKeepsThePlaceFrameAndGroup() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -230,8 +237,9 @@ import TsugumiAgentClient
   /// does not come back on its own (its environment is given back).
   @Test func aClosedSessionLetsGo() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -247,8 +255,9 @@ import TsugumiAgentClient
   /// the whole frame, or the host rejects the layout and nothing can be saved.
   @Test func arrangingAFrameWithoutAPlaceCanBeSaved() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -275,8 +284,9 @@ import TsugumiAgentClient
   /// to what is saved, the Agent's saves included, and saving works again.
   @Test func discardingWhatCannotBeSavedGoesBackAndSavingWorksAgain() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -317,8 +327,9 @@ import TsugumiAgentClient
   /// The refused edit undone: nothing is left to save, so the failure does not stay.
   @Test func undoingWhatCannotBeSavedClearsTheFailure() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -337,8 +348,9 @@ import TsugumiAgentClient
   /// gives the changes up; then it goes back to Home with nothing kept.
   @Test func leavingWithWhatCannotBeSavedAsksAndDiscardingLeaves() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -363,8 +375,9 @@ import TsugumiAgentClient
   /// Arrange changes the layout only, frames and notes too, and is one step of undo.
   @Test func arrangingIsOneUndo() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -405,8 +418,9 @@ import TsugumiAgentClient
   /// together: a frame alone is closed and its Card stays.
   @Test func aMarqueeCatchesNotesAndFramesWhichMoveAndGoWithTheCards() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -502,8 +516,9 @@ import TsugumiAgentClient
 
   @Test func publicRPCNotificationsKeepTheirOrderDuringRunBursts() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let daemon = try Daemon(project: dir)
-    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { daemon.stop() }
     let rpc = RPCClient(endpoint: daemon.endpoint.url)
     _ = try await rpc.connect(token: daemon.endpoint.token, clientId: UUID(), expectedProjectId: nil)
     let opened = try await rpc.open(viewId: UUID())
@@ -560,8 +575,9 @@ import TsugumiAgentClient
   /// through a rename and gets them back when a delete is undone.
   @Test func nameChangesKeepIdentityAndDoNotGiveOtherCardsResults() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
     s.endpointOverride = d.endpoint
     s.start()
@@ -609,8 +625,9 @@ import TsugumiAgentClient
   /// also when several are put in the same place. A free place is taken as it is.
   @Test func aNewCardCoversNothing() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -658,8 +675,9 @@ import TsugumiAgentClient
   /// Card with files on disk and for one whose files were just written.
   @Test func deletingACardWithFilesSaves() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -690,8 +708,9 @@ import TsugumiAgentClient
   /// Comments stay on their Card, with authorship and resolution history.
   @Test func commentsAreSavedOnTheirCardWithWhoDidWhat() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -742,8 +761,9 @@ import TsugumiAgentClient
   /// Draft wires attach to the Card itself; its content and name survive saving.
   @Test func aDraftIsWiredAndWrittenOnTheCanvas() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -823,8 +843,9 @@ import TsugumiAgentClient
 
   @Test func draftCompletionIsJoinedBeforeSwitchingRunningAndClosing() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let model = AppModel.shared
     let s = try model.session(for: dir)
     s.endpointOverride = d.endpoint
@@ -865,8 +886,9 @@ import TsugumiAgentClient
 
   @Test func agentChangesAndUIEditsBothStay() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -919,8 +941,9 @@ import TsugumiAgentClient
   /// owns is the main Agent's.
   @Test func helpersSavesAreDrawnByTheirOwnBirds() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -950,8 +973,9 @@ import TsugumiAgentClient
   /// The returned host graph is saved and undone as one client edit.
   @Test func hostConnectionIsOneSavedUndoEdit() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -989,8 +1013,9 @@ import TsugumiAgentClient
   /// Rejected text is not left in the session for a later autosave to send.
   @Test func staleSettingsApplyNeedsAnExplicitRevisionChoice() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
     s.endpointOverride = d.endpoint
     s.start()
@@ -1034,8 +1059,9 @@ import TsugumiAgentClient
 
   @Test func cardEditorSourceConflictsNeedAnExplicitChoice() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
     s.endpointOverride = d.endpoint
     s.start()
@@ -1072,8 +1098,9 @@ import TsugumiAgentClient
 
   @Test func cardEditorFollowsUntouchedSettings() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -1103,11 +1130,13 @@ import TsugumiAgentClient
   /// Cards are edited from inside, and its definitions are copied as new Cards.
   @Test func importedProjectIsEditedInside() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let other = try Self.project()
+    defer { try? FileManager.default.removeItem(at: other) }
     try FileManager.default.createDirectory(at: other.appendingPathComponent(".tsugumi"), withIntermediateDirectories: true)
     try Data("history".utf8).write(to: other.appendingPathComponent(".tsugumi/runs.sqlite"))
     let d = try Daemon(project: dir)
-    defer { d.stop(); try? FileManager.default.removeItem(at: dir); try? FileManager.default.removeItem(at: other) }
+    defer { d.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = d.endpoint
     s.start()
@@ -1156,8 +1185,9 @@ import TsugumiAgentClient
 extension SyncTests {
   @Test func deletingAWireEndWhileAllocatingAForkDoesNotAddTheWire() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let daemon = try Daemon(project: dir)
-    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { daemon.stop() }
     let s = withTestCardIds(ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil)))
     s.endpointOverride = daemon.endpoint
     s.start()
@@ -1178,10 +1208,11 @@ extension SyncTests {
 
   @Test func cardEditorKeepsTypingAfterSendingSettingsAndSources() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let p = "definitions/a/later.txt"
     try "base".write(to: dir.appendingPathComponent(p), atomically: true, encoding: .utf8)
     let daemon = try Daemon(project: dir)
-    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { daemon.stop() }
     let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
     s.endpointOverride = daemon.endpoint
     s.start()
@@ -1211,8 +1242,9 @@ extension SyncTests {
 
   @Test func inlineValueKeepsItsOpeningRevisionAndSkipsAnUnchangedBlur() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let daemon = try Daemon(project: dir)
-    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { daemon.stop() }
     let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
     s.endpointOverride = daemon.endpoint
     s.start()
@@ -1238,8 +1270,9 @@ extension SyncTests {
 
   @Test func reloadingExternalPermissionWideningCanBeDeclinedOrApproved() async throws {
     let dir = try Self.project()
+    defer { try? FileManager.default.removeItem(at: dir) }
     let daemon = try Daemon(project: dir)
-    defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+    defer { daemon.stop() }
     let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
     s.endpointOverride = daemon.endpoint
     s.start()

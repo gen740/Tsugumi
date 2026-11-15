@@ -187,8 +187,9 @@ extension ChatResumeTests {
 // another test's scope would otherwise select and remove under it.
 @MainActor @Test(.hostService) func executionHistoryRefreshesAfterARunWithoutStandardOutput() async throws {
   let dir = try SyncTests.project()
+  defer { try? FileManager.default.removeItem(at: dir) }
   let daemon = try SyncTests.Daemon(project: dir)
-  defer { daemon.stop(); try? FileManager.default.removeItem(at: dir) }
+  defer { daemon.stop() }
   let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
   session.endpointOverride = daemon.endpoint
   session.start()

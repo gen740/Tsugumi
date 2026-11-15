@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import Testing
 import TsugumiLauncher
+import TsugumiTestSupport
 
 private func cache(_ url: String = "https://cache.example.org/team") -> BinaryCache {
   var value = BinaryCache()
@@ -28,7 +29,7 @@ private func cache(_ url: String = "https://cache.example.org/team") -> BinaryCa
 }
 
 @Test func cacheCredentialsArePrivateAndFrozenUntilNextBoot() throws {
-  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  let root = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: root) }
   let snapshot = root.appendingPathComponent("vm/binary-cache-config")
   var c = cache()
@@ -56,7 +57,7 @@ private func cache(_ url: String = "https://cache.example.org/team") -> BinaryCa
 /// the snapshot is empty, earlier credentials are gone from it, and the reason
 /// is readable.
 @Test func unusableSettingsLeaveAnEmptySnapshotAndAReadableReason() throws {
-  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+  let root = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: root) }
   let snapshot = root.appendingPathComponent("vm/binary-cache-config")
   let settings = root.appendingPathComponent("binary-caches.json")
@@ -94,9 +95,9 @@ private func cache(_ url: String = "https://cache.example.org/team") -> BinaryCa
 /// serves a signed path from a private HTTPS cache in temporary stores, and gets it
 /// only with the generated nix.conf and netrc. Needs nix, python3 and openssl on PATH.
 @Test func nixDownloadsFromAPrivateCacheWithTheGeneratedSnapshot() throws {
-  let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+  let root = testTemporaryDirectory.appendingPathComponent(UUID().uuidString)
   defer { try? FileManager.default.removeItem(at: root) }
+  try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
   let script = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
     .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("tools/test-binary-cache.py")
   let errors = root.appendingPathComponent("stderr")

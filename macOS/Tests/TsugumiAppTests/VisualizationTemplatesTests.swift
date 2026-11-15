@@ -2,12 +2,13 @@ import Foundation
 import Testing
 import TsugumiLauncher
 import TsugumiRPC
+import TsugumiTestSupport
 @testable import TsugumiApp
 
 @MainActor @Test func visualizationTemplatesMakeEditableCardsWithSavedArtifacts() async throws {
-  let dir = FileManager.default.temporaryDirectory.appendingPathComponent("visualization-\(UUID().uuidString)")
-  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  let dir = testTemporaryDirectory.appendingPathComponent("visualization-\(UUID().uuidString)")
   defer { try? FileManager.default.removeItem(at: dir) }
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let document = #"{"name":"test","canvas":{"cards":[],"connections":[]}}"#
   try Data(document.utf8).write(to: dir.appendingPathComponent("tsugumi.json"))
   let templates = DefinitionTemplate.allCases.filter(\.isVisualization)
