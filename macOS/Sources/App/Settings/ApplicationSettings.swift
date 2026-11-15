@@ -767,6 +767,7 @@ private struct EnvironmentStorageSettings: View {
   @State private var message: String?
   @State private var failed = false
   @State private var confirmReset = false
+  @State private var resetConfirmation = ""
   @State private var confirmCleanup = false
 
   var body: some View {
@@ -783,7 +784,16 @@ private struct EnvironmentStorageSettings: View {
         HStack {
           Button("共有 store を掃除…") { confirmCleanup = true }
             .disabled(working)
-          Button("すべての実行環境を初期化…", role: .destructive) { confirmReset = true }
+          Button("すべての実行環境を初期化…", role: .destructive) {
+            working = true
+            Task {
+              do {
+                resetConfirmation = try await model.environments.resetConfirmation(english: AppPreferences.Language.running == .en)
+                confirmReset = !resetConfirmation.isEmpty
+              } catch { failed = true; message = String(describing: error) }
+              working = false
+            }
+          }
             .disabled(working)
           if working { ProgressView().controlSize(.small) }
           if let message {
@@ -804,7 +814,7 @@ private struct EnvironmentStorageSettings: View {
       Button("初期化", role: .destructive) { reset() }
       Button("キャンセル", role: .cancel) {}
     } message: {
-      Text("開いているプロジェクトの実行を止めて VM を停止し、共通の Nix store・VM イメージの展開先・各プロジェクトの control フォルダを削除します（以前の版が Apple container に作った環境も削除します）。VM 内の実行履歴（別のディスク）、プロジェクトの文書・成果物、ホストの /nix/store は削除しません。次に開いたときに作り直します。VM 内の実行履歴は下の「VM 内の実行履歴」で削除できます。")
+      Text(verbatim: resetConfirmation)
     }
   }
 

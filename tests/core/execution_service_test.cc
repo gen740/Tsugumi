@@ -21,7 +21,7 @@ TEST_P(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
     stdfs::path root;
     ~Cleanup() { std::error_code error; stdfs::remove_all(root, error); }
   } cleanup{root};
-  fs::write_atomic(root / "tsugumi.json", R"({"name":"test","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(root / "tsugumi.json", initial_project_json("test"));
   fs::write_atomic(root / "layout.json", "{}");
   ::setenv("TSUGUMI_MOCK_CONTROL", (root / "mock").c_str(), 1);
   ServiceOptions options;

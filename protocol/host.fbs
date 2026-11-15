@@ -76,6 +76,10 @@ table HostRuntime { vm_state:string (required); store_path:string; store_exists:
   virtualization_supported:bool; image_available:bool; image_version:string;
   stage:string; message:string; console:[string]; bytes:ulong; paths:uint;
   histories:[RuntimeHistory]; environments:uint; vm_removed:bool;
+  // Host-authored confirmation of the same policy sent to the VM helper.
+  reset_confirmation_ja:string; reset_confirmation_en:string;
+  // Actual VM-directory entries kept and discarded by the helper.
+  reset_kept_files:[string]; reset_discarded_files:[string];
 }
 table SettingsChanged { profile:string (required); revision:ulong; }
 union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged }

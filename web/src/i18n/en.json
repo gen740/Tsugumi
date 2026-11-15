@@ -1436,5 +1436,8 @@
  "版を記録": "Recorded a version",
  "Keychain に API キーを保存できませんでした。": "Could not save the API key in the Keychain.",
  "Skill を実行": "Run Skill",
- "指摘をコメントに残す": "Keep finding as comment"
+ "指摘をコメントに残す": "Keep finding as comment",
+ "実行環境のデータ": "Execution environment data",
+ "すべての実行環境を初期化…": "Reset all execution environments…",
+ "初期化しました。次に開くときに実行環境を作り直します。": "Reset complete. Environments will be recreated when next opened."
 }

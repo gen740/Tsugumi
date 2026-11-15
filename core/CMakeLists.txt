@@ -78,6 +78,9 @@ set(TSUGUMI_CARD_NIXPKGS_NARHASH "$ENV{TSUGUMI_CARD_NIXPKGS_NARHASH}" CACHE STRI
 set(TSUGUMI_BWRAP "" CACHE FILEPATH "bubblewrap used for sandbox: true Cards")
 # Not a Card's shell: that one, and its PATH, come from the Card's own manifest.
 set(TSUGUMI_BASH "/bin/bash" CACHE FILEPATH "bash of the project shell commands (the Shell RPC)")
+target_compile_definitions(tsugumi_document PRIVATE
+  TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV}"
+  TSUGUMI_CARD_NIXPKGS_NARHASH="${TSUGUMI_CARD_NIXPKGS_NARHASH}")
 target_compile_definitions(tsugumi_core PRIVATE
   TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV}"
   TSUGUMI_CARD_NIXPKGS_NARHASH="${TSUGUMI_CARD_NIXPKGS_NARHASH}"
@@ -193,9 +196,6 @@ else()
   find_package(ICU REQUIRED COMPONENTS uc i18n)
   target_link_libraries(tsugumi_agent_core PRIVATE ICU::uc ICU::i18n)
 endif()
-target_compile_definitions(tsugumi_agent_core PRIVATE
-  TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV}"
-  TSUGUMI_CARD_NIXPKGS_NARHASH="${TSUGUMI_CARD_NIXPKGS_NARHASH}")
 target_include_directories(tsugumi_agent_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_compile_options(tsugumi_agent_core PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 set(TSUGUMI_AGENT_SQLITE_LIBRARY "" CACHE FILEPATH "SQLite library used by the native Agent service")
