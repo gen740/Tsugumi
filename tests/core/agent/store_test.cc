@@ -4,6 +4,7 @@
 #include <algorithm>
 
 #include "../agent_fixture_server.hh"
+#include "agent/helpers.hh"
 #include "agent/wire.hh"
 #include "agent/presentation.hh"
 #include "host/failure.hh"
@@ -279,6 +280,103 @@ TEST(AgentPresentation, DirectSkillTasksStayUnderTheirRequestAndQueuedTasksHaveN
   ASSERT_EQ(queued.rows[0]->children.size(), 2u);
   EXPECT_EQ(queued.rows[0]->children[1]->name, "Queued review");
   EXPECT_EQ(queued.rows[0]->children[1]->state, "queued");
+}
+TEST(AgentPresentation, TasksOfADelegateThatEndedInAnErrorAreNotLeftQueued) {
+  std::string tasks;
+  for (int i = 0; i < 9; ++i)
+    tasks += std::string(i ? "," : "") + R"({\"name\":\"helper-)" +
+             std::to_string(i) +
+             R"(\",\"instruction\":\"Do a bounded task.\",\"read_cards\":[],\"write_cards\":[],\"run_cards\":[]})";
+  // Refused as a whole (over the limit of eight): no task ever started.
+  const auto refused = agent::wire::Conversation(
+      R"({"id":"s","messages":[
+    {"role":"assistant","content":[{"type":"tool_use","id":"many","name":"delegate","input":"{\"tasks\":[)" +
+      tasks + R"(]}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"many","is_error":true,"content":"Provide between one and eight tasks"}]},
+    {"role":"assistant","content":[{"type":"text","text":"Refused."}]}]})");
+  ASSERT_EQ(refused.rows.size(), 2u);
+  const auto& step = *refused.rows[0];
+  ASSERT_EQ(step.children.size(), 10u);
+  EXPECT_EQ(step.children[0]->state, "failed");
+  for (size_t i = 1; i < step.children.size(); ++i) {
+    EXPECT_EQ(step.children[i]->kind, "helper");
+    EXPECT_EQ(step.children[i]->name, "helper-" + std::to_string(i - 1));
+    EXPECT_EQ(step.children[i]->state, "failed");
+  }
+  // One refusal is one failure, and the step is finished.
+  EXPECT_EQ(step.state, "failed");
+  EXPECT_EQ(step.failed, 1u);
+  // A delegate stopped after its first task: the second never started.
+  const auto stopped = agent::wire::Conversation(R"({"id":"s","messages":[
+    {"role":"assistant","content":[{"type":"tool_use","id":"two","name":"delegate","input":"{\"tasks\":[{\"name\":\"first\",\"instruction\":\"Read a\",\"read_cards\":[],\"write_cards\":[],\"run_cards\":[]},{\"name\":\"second\",\"instruction\":\"Read b\",\"read_cards\":[],\"write_cards\":[],\"run_cards\":[]}]}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"two","is_error":true,"content":"Helpers were interrupted."}]}],
+    "helpers":[{"call_id":"two","task":0,"spec":{"name":"first","instruction":"Read a","read_cards":[],"write_cards":[],"run_cards":[]},"state":"interrupted","messages":[{"role":"user","content":[{"type":"text","text":"internal"}]}]}]})");
+  ASSERT_EQ(stopped.rows.size(), 1u);
+  ASSERT_EQ(stopped.rows[0]->children.size(), 3u);
+  EXPECT_EQ(stopped.rows[0]->children[1]->state, "interrupted");
+  EXPECT_EQ(stopped.rows[0]->children[2]->name, "second");
+  EXPECT_EQ(stopped.rows[0]->children[2]->state, "interrupted");
+  EXPECT_EQ(stopped.rows[0]->state, "failed");
+}
+TEST(AgentPresentation, AHelpersCompactedOperationsStayInItsSteps) {
+  // The archive holds what compaction took out of the helper's context: its
+  // instruction and an operation that failed. The summary is not a row.
+  const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
+    {"role":"assistant","content":[{"type":"tool_use","id":"delegate","name":"delegate","input":"{}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"delegate","content":"done"}]}],
+    "helpers":[{"call_id":"delegate","task":0,"spec":{"name":"Long review","instruction":"Review","read_cards":[],"write_cards":[],"run_cards":[]},"state":"completed",
+      "archive":[{"role":"user","content":[{"type":"text","text":"Private prompt and scope"}]},
+        {"role":"assistant","content":[{"type":"tool_use","id":"early","name":"project_file_read","input":"{\"path\":\"a\"}"}]},
+        {"role":"user","content":[{"type":"tool_result","tool_use_id":"early","is_error":true,"content":"early failure"}]}],
+      "messages":[{"role":"user","contextSummary":true,"content":[{"type":"text","text":"Summary of the earlier conversation"}]},
+        {"role":"assistant","content":[{"type":"tool_use","id":"late","name":"project_file_read","input":"{\"path\":\"b\"}"}]},
+        {"role":"user","content":[{"type":"tool_result","tool_use_id":"late","content":"read b"}]},
+        {"role":"assistant","content":[{"type":"text","text":"Reviewed"}]}]}]})");
+  ASSERT_EQ(conversation.rows.size(), 1u);
+  ASSERT_EQ(conversation.rows[0]->children.size(), 2u);
+  const auto& helper = *conversation.rows[0]->children[1];
+  EXPECT_EQ(helper.text, "Reviewed");
+  ASSERT_EQ(helper.children.size(), 2u);
+  const auto& step = *helper.children[0];
+  ASSERT_EQ(step.children.size(), 2u);
+  EXPECT_EQ(step.children[0]->result, "early failure");
+  EXPECT_EQ(step.children[0]->state, "failed");
+  EXPECT_EQ(step.children[1]->result, "read b");
+  EXPECT_EQ(step.failed, 1u);
+  EXPECT_EQ(helper.failed, 1u);
+  EXPECT_EQ(helper.children[1]->text, "Reviewed");
+  // What moves to the archive is exactly what a compaction displaced.
+  const auto message = [](std::string role, std::string type, bool summary = false) {
+    agent::ContentBlock block;
+    block.type = std::move(type);
+    block.text = "text";
+    agent::Message value;
+    value.role = std::move(role);
+    value.content.push_back(std::move(block));
+    value.context_summary = summary;
+    return value;
+  };
+  const std::vector<agent::Message> before{
+      message("user", "text", true), message("assistant", "tool_use"),
+      message("user", "tool_result"), message("assistant", "tool_use"),
+      message("user", "tool_result"), message("assistant", "tool_use"),
+      message("user", "tool_result")};
+  const std::vector<agent::Message> after{
+      message("user", "text", true), message("assistant", "tool_use"),
+      message("user", "tool_result"), message("assistant", "tool_use"),
+      message("user", "tool_result")};
+  const auto displaced = agent::Helpers::Displaced(before, after);
+  ASSERT_EQ(displaced.size(), 2u);
+  EXPECT_EQ(displaced[0].role, "assistant");
+  EXPECT_EQ(displaced[1].content[0].type, "tool_result");
+  // An ordinary save after a compaction displaces nothing, even a shorter one.
+  auto longer = after;
+  longer.push_back(message("assistant", "text"));
+  EXPECT_TRUE(agent::Helpers::Displaced(after, longer).empty());
+  EXPECT_TRUE(agent::Helpers::Displaced(after, after).empty());
+  EXPECT_TRUE(agent::Helpers::Displaced(
+                  before, {before.begin(), before.begin() + 4})
+                  .empty());
 }
 TEST(AgentPresentation, AnotherTargetOrNewUserTurnDoesNotHideFailure) {
   const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[

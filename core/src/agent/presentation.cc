@@ -237,12 +237,18 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
   std::map<std::string, A::ChatRowT*> calls;
   std::set<std::pair<std::string, uint32_t>> placed;
   std::set<std::string> model_calls;
+  // Calls whose result is an error: a task row is built at its call, before
+  // the result is reached below.
+  std::set<std::string> failed_calls;
   for (const auto* message : messages)
     for (const auto& raw : json::Array(
              message->content_json.empty() ? "[]" : message->content_json)) {
       const auto block = json::Object(raw);
       if (json::Text(block, "type") == "tool_use")
         model_calls.insert(json::Text(block, "id"));
+      else if (json::Text(block, "type") == "tool_result" &&
+               json::Bool(json::Get(block, "is_error")))
+        failed_calls.insert(json::Text(block, "tool_use_id"));
     }
   const auto taskRow = [&](const A::HelperT& task) {
     auto row = std::make_unique<A::ChatRowT>();
@@ -385,6 +391,12 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
       if (!helper) {
         std::map<uint32_t, const A::HelperT*> tasks;
         std::vector<std::unique_ptr<A::HelperT>> queued;
+        // A delegate that ended in an error starts no further task. One
+        // refused as a whole failed before any task; one that had started
+        // stopped before reaching the rest.
+        const bool started = std::ranges::any_of(
+            conversation.helpers,
+            [&](const auto& task) { return task->call_id == call; });
         if (calls[call]->name == "delegate") {
           const auto args = ObjectOrEmpty(calls[call]->arguments);
           try {
@@ -398,8 +410,9 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
                 task->call_id = call;
                 task->task = index;
                 task->spec_json = raw;
-                task->state =
-                    calls[call]->state == "failed" ? "failed" : "queued";
+                task->state = !failed_calls.contains(call) ? "queued"
+                              : started                    ? "interrupted"
+                                                           : "failed";
                 tasks[index] = task.get();
                 queued.push_back(std::move(task));
               }
@@ -414,6 +427,15 @@ auto BuildRows(const std::vector<const A::ModelMessageT*>& messages,
           try {
             children.push_back(taskRow(*task));
             placed.insert({task->call_id, index});
+            // The refusal is one failure, counted on the delegate call; its
+            // tasks never ran and add none of their own.
+            if (std::ranges::any_of(queued, [&](const auto& unstarted) {
+                  return unstarted.get() == task;
+                })) {
+              children.back()->failed = 0;
+              children.back()->summary_ja.clear();
+              children.back()->summary_en.clear();
+            }
           } catch (
               const std::exception&) { /* Invalid undeployed tasks are described
                                           by the failed delegate call. */

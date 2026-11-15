@@ -623,6 +623,69 @@ TEST_F(AgentFixture,
   EXPECT_EQ(model.Requests().size(), 5u);
 }
 
+TEST_F(AgentFixture, AHelpersCompactionKeepsItsEarlierOperationsReadable) {
+  ModelServer model;
+  model.Queue(AnthropicTool(
+      "compacting-helper", "delegate",
+      R"({"tasks":[{"name":"long","instruction":"Inspect the demos three times.","read_cards":[],"write_cards":[],"run_cards":[]}]})"));
+  // The context limit is small enough that the helper summarizes whenever
+  // more than four messages have accumulated.
+  model.Queue(AnthropicTool("inspect-0", "demo_list", "{}"));
+  model.Queue(AnthropicTool("inspect-1", "demo_list", "{}"));
+  model.Queue(AnthropicText("FIRST_HELPER_SUMMARY"));
+  model.Queue(AnthropicTool("inspect-2", "demo_list", "{}"));
+  model.Queue(AnthropicText("SECOND_HELPER_SUMMARY"));
+  model.Queue(AnthropicText("The helper inspected three times."));
+  model.Queue(AnthropicText("The parent received the helper's result."));
+  Configure(model, "fixture", 400);
+  const auto conversation = Conversation("compacting-helper");
+  ASSERT_TRUE(Send(conversation, "Delegate the inspection.").Code().empty());
+  ASSERT_TRUE(model.WaitForRequests(8, 20s));
+  const auto state = WaitUntilIdle(conversation);
+  ASSERT_EQ(model.Requests().size(), 8u) << state;
+  ASSERT_NE(model.Requests()[5].find("Summarize the quoted earlier conversation"),
+            std::string::npos);
+  // The model went on without the first call ...
+  EXPECT_EQ(model.Requests()[6].find("inspect-0"), std::string::npos);
+  EXPECT_EQ(JsonString(state, "/conversation/helpers/0/state"), "completed");
+  // ... and a person still reads every operation of the helper, in order,
+  // from the messages the chat's rows are built from.
+  const auto calls = [](const std::string& view) {
+    std::vector<std::string> ids;
+    for (size_t index = 0;; ++index) {
+      const auto message =
+          "/conversation/helpers/0/messages/" + std::to_string(index);
+      try {
+        JsonString(view, message + "/role");
+      } catch (const std::runtime_error&) {
+        break;
+      }
+      if (JsonBool(view, message + "/contextSummary")) continue;
+      try {
+        ids.push_back(JsonString(view, message + "/content/0/id"));
+      } catch (const std::runtime_error&) {
+        // A text or tool result block has no call ID.
+      }
+    }
+    return ids;
+  };
+  const std::vector<std::string> expected{"inspect-0", "inspect-1",
+                                          "inspect-2"};
+  EXPECT_EQ(calls(state), expected) << state;
+  EXPECT_EQ(JsonString(state, "/conversation/helpers/0/messages/0/content/0/text")
+                .find("Inspect the demos three times."),
+            0u);
+  EXPECT_EQ(JsonString(state,
+                       "/conversation/helpers/0/messages/2/content/0/tool_use_id"),
+            "inspect-0");
+  // A restart reads the same messages from what was saved.
+  external.reset();
+  human.reset();
+  service.Stop();
+  StartHost();
+  EXPECT_EQ(calls(Get(conversation).View()), expected);
+}
+
 TEST_F(AgentFixture, OversizedDelegationsAreRefusedBeforeStartingAnyHelper) {
   ModelServer model;
   std::string tasks = "{\"tasks\":[";

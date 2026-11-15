@@ -91,7 +91,11 @@ auto Conversation(std::string_view stored) -> A::ConversationT {
     auto helper = std::make_unique<A::HelperT>();
     helper->call_id = json::Text(h, "call_id");
     helper->task = json::UInt(json::Get(h, "task"));
-    helper->messages = Messages(json::Get(h, "messages", "[]"));
+    // What compaction took out of the helper's context stays readable: the
+    // earlier messages come first, then the ones the model still holds.
+    helper->messages = Messages(json::Get(h, "archive", "[]"));
+    for (auto& message : Messages(json::Get(h, "messages", "[]")))
+      helper->messages.push_back(std::move(message));
     if (const auto text = json::Text(h, "streaming"); !text.empty()) {
       auto streamed = std::make_unique<A::ModelMessageT>();
       streamed->role = "assistant";

@@ -64,6 +64,28 @@ auto Helpers::HelperResult(const std::string& output,
   return result;
 }
 
+auto Helpers::Displaced(const std::vector<Message>& previous,
+                        const std::vector<Message>& saved)
+    -> std::vector<Message> {
+  // A compaction saves a summary followed by the messages it kept, which are
+  // the last ones of the previous save (their tool results may have been
+  // shortened, so they are matched by shape). Any other save displaces nothing.
+  if (saved.empty() || !saved.front().context_summary ||
+      saved.size() - 1 > previous.size())
+    return {};
+  const auto count = previous.size() - (saved.size() - 1);
+  for (size_t i = 1; i < saved.size(); ++i) {
+    const auto& before = previous[count + i - 1];
+    if (before.role != saved[i].role ||
+        before.content.size() != saved[i].content.size())
+      return {};
+  }
+  std::vector<Message> displaced;
+  for (size_t i = 0; i < count; ++i)
+    if (!previous[i].context_summary) displaced.push_back(previous[i]);
+  return displaced;
+}
+
 auto Helpers::RunHelper(const std::string& conversation,
                         const std::string& parent_call, size_t index,
                         const std::string& task, std::stop_token stop,
@@ -137,7 +159,8 @@ auto Helpers::RunHelper(const std::string& conversation,
       auto insert =
           conversations->ConversationDatabase(conversation)
               .prepare(
-                  "INSERT INTO helpers VALUES(?,?,?,?,?,'','running',?,?)");
+                  "INSERT INTO helpers "
+                  "VALUES(?,?,?,?,?,'','running',?,?,'[]')");
       insert.bind(1, conversation)
           .bind(2, parent_call)
           .bind(3, static_cast<int>(index))
@@ -224,14 +247,43 @@ auto Helpers::RunHelper(const std::string& conversation,
       for (const auto& block : message.content)
         for (const auto& resource : block.resource_ids)
           conversations->RememberResource(conversation, resource);
-    auto update = conversations->ConversationDatabase(conversation)
-                      .prepare(
-                          "UPDATE helpers SET messages=? WHERE "
-                          "conversation=? AND parent_call=? AND task=?");
-    update.bind(1, dependencies.scrub(SerializeMessages(saved)))
-        .bind(2, conversation)
-        .bind(3, parent_call)
-        .bind(4, static_cast<int>(index))
+    // Compaction replaces the earlier messages with a summary for the model.
+    // A person still reads the helper's operations and failures from them, so
+    // they move to the archive instead of being overwritten.
+    std::string archive;
+    if (!saved.empty() && saved.front().context_summary) {
+      auto old = conversations->ConversationDatabase(conversation)
+                     .prepare(
+                         "SELECT messages,archive FROM helpers WHERE "
+                         "conversation=? AND parent_call=? AND task=?");
+      old.bind(1, conversation)
+          .bind(2, parent_call)
+          .bind(3, static_cast<int>(index));
+      if (old.step()) {
+        const auto previous = ParseMessages(old.text(0));
+        auto displaced = Displaced(previous, saved);
+        if (!displaced.empty()) {
+          auto earlier = ParseMessages(old.text(1));
+          earlier.insert(earlier.end(),
+                         std::make_move_iterator(displaced.begin()),
+                         std::make_move_iterator(displaced.end()));
+          archive = dependencies.scrub(SerializeMessages(earlier));
+        }
+      }
+    }
+    auto update =
+        conversations->ConversationDatabase(conversation)
+            .prepare(archive.empty()
+                         ? "UPDATE helpers SET messages=? WHERE "
+                           "conversation=? AND parent_call=? AND task=?"
+                         : "UPDATE helpers SET messages=?,archive=? WHERE "
+                           "conversation=? AND parent_call=? AND task=?");
+    int field = 0;
+    update.bind(++field, dependencies.scrub(SerializeMessages(saved)));
+    if (!archive.empty()) update.bind(++field, archive);
+    update.bind(field + 1, conversation)
+        .bind(field + 2, parent_call)
+        .bind(field + 3, static_cast<int>(index))
         .run();
     tx.commit();
     dependencies.event(

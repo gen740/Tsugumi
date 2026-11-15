@@ -77,8 +77,8 @@ auto CreateConversationTables(sql::Db& db) -> void {
       "CREATE TABLE IF NOT EXISTS helpers(conversation TEXT NOT NULL, "
       "parent_call TEXT NOT NULL, task INTEGER NOT NULL, digest TEXT NOT "
       "NULL, messages TEXT NOT NULL, result TEXT NOT NULL, state TEXT "
-      "NOT NULL, spec TEXT NOT NULL, anchor INTEGER NOT NULL, PRIMARY "
-      "KEY(conversation,parent_call,task))");
+      "NOT NULL, spec TEXT NOT NULL, anchor INTEGER NOT NULL, archive TEXT "
+      "NOT NULL, PRIMARY KEY(conversation,parent_call,task))");
   db.exec(
       "CREATE TABLE IF NOT EXISTS pending_sends(conversation TEXT "
       "PRIMARY KEY, turn TEXT NOT NULL, frame BLOB NOT NULL, "
@@ -346,14 +346,15 @@ auto ConversationStore::ConversationJson(const Conversation& c) -> std::string {
   }
   std::vector<std::string> helpers;
   auto helper = ConversationDatabase(c.id).prepare(
-      "SELECT parent_call,task,messages,result,state,spec,anchor FROM helpers "
-      "WHERE conversation=? ORDER BY rowid");
+      "SELECT parent_call,task,messages,result,state,spec,anchor,archive FROM "
+      "helpers WHERE conversation=? ORDER BY rowid");
   helper.bind(1, c.id);
   while (helper.step())
     helpers.push_back(json::Encode(json::Members{
         {"call_id", json::Quote(helper.text(0))},
         {"task", std::to_string(helper.i64(1))},
         {"messages", helper.text(2)},
+        {"archive", helper.text(7)},
         {"result", helper.text(3).empty() ? "null" : helper.text(3)},
         {"state", json::Quote(helper.text(4))},
         {"spec", helper.text(5)},
