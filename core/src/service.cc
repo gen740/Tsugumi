@@ -970,22 +970,29 @@ void Service::save(RequestIn& req) {
   try {
     require_mutation(r->base_rev(), r->op_id());
     auto changes = decode_changes(r->changes());
-    uint64_t transferred = 0;
-    if (r->transfers()) for (const auto* transfer : *r->transfers()) {
-      ChangeIn change{};
-      change.kind = ChangeIn::Kind::PutSource;
-      change.path = transfer->path()->str();
-      if (transfer->base_hash()) change.base_hash = transfer->base_hash()->str();
-      fs::stream_beneath(opts_.root, transfer->from()->str(), (12u << 20) - transferred,
-                         [&](std::string_view chunk) { change.bytes.append(chunk); });
-      transferred += change.bytes.size();
-      changes.push_back(std::move(change));
-    }
     auto base = store_->current();
     if (*r->base_rev() != base->rev) {
       FailureData f = FailureData::make(FailureKind::revision_conflict, "the document changed since base_rev");
       f.current_rev = base->rev;
       throw Failed(f);
+    }
+    if (r->transfers()) for (const auto* transfer : *r->transfers()) {
+      ChangeIn change{};
+      change.kind = ChangeIn::Kind::PutSource;
+      change.path = transfer->path()->str();
+      if (transfer->base_hash()) change.base_hash = transfer->base_hash()->str();
+      auto root = transfer->source_root() ? std::filesystem::path(transfer->source_root()->str()) : opts_.root;
+      if (!root.is_absolute()) throw Failed(FailureKind::invalid_path, "transfer root must be absolute");
+      if (!std::filesystem::exists(root) && transfer->fallback_root()) root = transfer->fallback_root()->str();
+      if (!root.is_absolute()) throw Failed(FailureKind::invalid_path, "transfer root must be absolute");
+      std::optional<std::string> expected;
+      if (transfer->expected_hash()) expected = transfer->expected_hash()->str();
+      try {
+        change.file = store_->stage_file(root, transfer->from()->str(), expected, [] {});
+      } catch (const fs::Error& error) {
+        throw Failed(FailureKind::invalid_path, error.what());
+      }
+      changes.push_back(std::move(change));
     }
     auto staged = store_->stage(changes, op_id, r->origin()->str());
     if (opts_.fault == "save_throws") throw std::runtime_error("injected: not a Failed");

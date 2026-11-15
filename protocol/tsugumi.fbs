@@ -296,9 +296,19 @@ table CardIdResult {
   id:string (id: 0, required);
 }
 
-// A byte transfer beneath the project root. The host stages files privately;
-// core reads without following links and applies them through the same save.
-table SourceTransfer { path:string (required); from:string (required); base_hash:string; }
+// Core streams a local file into a private durable file, hashes it and applies
+// it through the normal save. The host chooses roots and authorizes access.
+table SourceTransfer {
+  path:string (required);
+  from:string (required);
+  base_hash:string;
+  /// Absent means the project root. Otherwise an absolute host-selected root.
+  source_root:string;
+  /// Mounted equivalent when source_root does not exist in the project VM.
+  fallback_root:string;
+  /// Confirmed source hash, when copying from another Card.
+  expected_hash:string;
+}
 
 /// -> SaveResult. Apply all changes in one transaction at base_rev.
 /// Drafts have no ports: use {"card":"<id>","port":""} for each Draft wire end,
@@ -318,7 +328,7 @@ table ProjectSaveRequest {
   /// Compare the proposed permissions with the accepted document and reject
   /// every widening absent from approved_permissions, regardless of origin.
   check_permissions:bool (id: 5);
-  /// Host-prepared byte transfers, at most 12 MiB together.
+  /// Local file references; source bytes never travel through the RPC frame.
   transfers:[SourceTransfer] (id: 6);
 }
 

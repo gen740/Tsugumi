@@ -271,9 +271,9 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
 - Folders the user attached to the conversation are read with attached_folder_read {"folder": "<its path>",
   "path": "<relative path, empty for the folder itself>"} (a folder lists its entries); only those folders.
   project_copy accepts an explicit list of {from,to} files from attached, card or scratch, with base_rev;
-  it returns paths, sizes and hashes, never content. The destination needs write scope. Copy/save is limited
-  to 12 MiB per call; leave larger datasets in attached folders and let a Card read them with hostFolders
-  (/host/<name>) after approval. In project_shell, Card paths are project-relative; Read-granted folders are
+  it returns paths, sizes and hashes, never content. The destination needs write scope. Core streams files
+  directly; definition-store limits apply (10,000 source entries per project), with no copy-specific byte cap.
+  Data may also stay in attached folders and be read by a Card with hostFolders (/host/<name>) after approval. In project_shell, Card paths are project-relative; Read-granted folders are
   at attached/<first 16 hex digits of SHA-256 of the folder path>/, read-only. scratch/ is writable and persists
   for this conversation. Shell replies keep at most 256 KiB per stream (head and tail), with total sizes and
   paths to the full saved output. Do not print entire large files. Inspect again after a save conflict.

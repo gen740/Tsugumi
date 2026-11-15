@@ -53,11 +53,11 @@ TEST_F(AgentProjectFixture, CopyMovesLargeAttachedBytesThroughASaveWithoutConten
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::GrantScope::Conversation, Tsugumi::Service::Access::Write);
   const auto folder = directory.path / "attached";
-  // Twelve MiB of text exceeds the configured 600,000-token model context.
+  // Eighty MiB exceeds both the model context and the 16 MiB RPC frame.
   const std::string marker = "LARGE_COPY_CONTENT_MUST_NOT_ENTER_THE_CONVERSATION";
   std::string content;
-  while (content.size() < (12u << 20)) content += marker;
-  content.resize(12u << 20);
+  while (content.size() < (80u << 20)) content += marker;
+  content.resize(80u << 20);
   Write(folder / "large.csv", content);
   const auto resource = "folder:" + project_id + ":copy";
   ASSERT_TRUE(Call(*host, H::RequestPayload::RegisterFolderRequest, [&](Builder& b) {
@@ -87,7 +87,7 @@ TEST_F(AgentProjectFixture, CopyMovesLargeAttachedBytesThroughASaveWithoutConten
   const auto page = Tool(conversation, "project_file_read", R"({"path":"definitions/data/large.csv"})");
   ASSERT_TRUE(page.Code().empty());
   EXPECT_EQ(JsonString(JsonString(page.View(), "/text"), "/value/next_offset"), "262144");
-  EXPECT_EQ(JsonString(JsonString(page.View(), "/text"), "/value/size_bytes"), "12582912");
+  EXPECT_EQ(JsonString(JsonString(page.View(), "/text"), "/value/size_bytes"), "83886080");
   const auto card_copy = Tool(conversation, "project_copy",
       R"({"source":"card","base_rev":"1","files":[{"from":"definitions/data/large.csv","to":"definitions/data/second.csv"}]})");
   ASSERT_TRUE(card_copy.Code().empty()) << card_copy.View();
@@ -115,7 +115,11 @@ TEST_F(AgentProjectFixture, CopyMovesLargeAttachedBytesThroughASaveWithoutConten
     const auto bad = Tool(conversation, "project_copy", json::Encode(json::Members{
         {"source", "\"attached\""}, {"folder", Quote(folder.string())}, {"base_rev", "\"4\""},
         {"files", "[{\"from\":" + Quote(from) + ",\"to\":\"definitions/data/bad.csv\"}]"}}));
-    EXPECT_FALSE(bad.Code().empty()) << from << bad.View();
+    // The core now opens the source, so path failures arrive as the normal
+    // save's typed tool failure rather than a host-side read exception.
+    ASSERT_TRUE(bad.Code().empty()) << from;
+    EXPECT_TRUE(JsonBool(bad.View(), "/isError")) << from << bad.View();
+    EXPECT_EQ(JsonString(JsonString(bad.View(), "/text"), "/value/kind"), "invalid_path");
     EXPECT_FALSE(std::filesystem::exists(directory.path / "project/definitions/data/bad.csv"));
   }
 }
@@ -148,6 +152,11 @@ TEST_F(AgentProjectFixture, ShellEditsAreAgentSavesAndFailedCommandsDoNotApplySo
     EXPECT_EQ(Read(directory.path / "project/definitions/edit/src/data.txt"), "after\n") << failed.View();
     EXPECT_EQ(Read(directory.path / "project/definitions/edit/_card.json"), R"({"template":"draft"})");
   }
+  const auto large = Tool(conversation, "project_shell",
+      R"({"command":"dd if=/dev/zero of=definitions/edit/large.bin bs=1048576 count=80 2>/dev/null"})");
+  ASSERT_TRUE(large.Code().empty()) << large.View();
+  EXPECT_EQ(std::filesystem::file_size(directory.path / "project/definitions/edit/large.bin"), 80u << 20);
+  EXPECT_EQ(JsonString(JsonString(large.View(), "/text"), "/value/changed_files/0/size_bytes"), "83886080");
 }
 
 TEST_F(AgentProjectFixture, CancelledShellAndConcurrentExternalEditsNeverOverwriteCardSources) {

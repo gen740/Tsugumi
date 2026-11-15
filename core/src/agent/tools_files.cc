@@ -12,7 +12,6 @@
 namespace tsugumi::agent {
 namespace {
 using host::Failure;
-constexpr uint64_t kTransferBytes = 12u << 20;
 const std::set<std::string> kProtected{
     "tsugumi.json", "layout.json", "_card.json",   "_meta.json",
     "_link.json",   "_inputs.fbs", "_outputs.fbs", "_params.fbs"};
@@ -47,30 +46,6 @@ auto Value(const std::string& result) -> json::Members {
   if (json::Text(envelope, "reply") == "Failure")
     throw Failure(json::Text(value, "kind"), json::Text(value, "message"));
   return value;
-}
-auto Summary(const std::string& path, const std::string& bytes) -> std::string {
-  return json::Encode(
-      json::Members{{"path", json::Quote(path)},
-                    {"size_bytes", json::Quote(std::to_string(bytes.size()))},
-                    {"hash", json::Quote(crypto::sha256_hex(bytes))}});
-}
-auto Read(const std::filesystem::path& root, const std::string& path,
-          uint64_t limit = kTransferBytes) -> std::string {
-  std::string bytes;
-  try {
-    fs::stream_beneath(root, path, limit,
-                       [&](std::string_view chunk) { bytes.append(chunk); });
-  } catch (const fs::Error& error) {
-    throw Failure(
-        std::string(error.what()).find("transfer limit") != std::string::npos
-            ? "resource_limit"
-            : "invalid_path",
-        std::string(error.what()) +
-            ". Copy/save is limited to 12 MiB per operation. For larger data, "
-            "let the Card read the attached folder through hostFolders "
-            "(/host/<name>), with the person's permission.");
-  }
-  return bytes;
 }
 }  // namespace
 
@@ -123,14 +98,14 @@ auto Tools::FileOperation(const std::string& conversation,
   }
   const auto private_path =
       ".tsugumi/agent-files/" + crypto::sha256_hex(conversation);
-  const auto staged_path = private_path + "/edits/" + operation;
   const auto scratch_path = private_path + "/scratch";
-  std::filesystem::create_directories(root / staged_path);
   std::filesystem::create_directories(root / scratch_path);
   std::map<std::string, std::string> hashes;
+  std::map<std::string, std::string> source_info;
   for (const auto& raw : json::Array(json::Get(snapshot, "sources", "[]"))) {
     const auto info = json::Object(raw);
     hashes[json::Text(info, "path")] = json::Text(info, "hash");
+    source_info[json::Text(info, "path")] = raw;
   }
   for (const auto& raw :
        json::Array(json::Get(snapshot, "definitions", "[]"))) {
@@ -143,21 +118,11 @@ auto Tools::FileOperation(const std::string& conversation,
       if (!bytes.empty()) hashes[dir + file] = crypto::sha256_hex(bytes);
     }
   }
-  auto confirmed = [&](const std::string& path) {
-    check(path, false);
-    const auto found = hashes.find(path);
-    if (found == hashes.end())
-      throw Failure("not_found", "Not a confirmed Card source: " + path);
-    auto bytes = Read(root, path);
-    if (crypto::sha256_hex(bytes) != found->second)
-      throw Failure(
-          "external_change",
-          "Source changed outside Tsugumi; Reload before retrying: " + path);
-    return bytes;
-  };
   std::vector<std::string> transfers, removals, summaries;
-  uint64_t total = 0;
-  auto stage = [&](const std::string& path, const std::string& bytes) {
+  auto stage = [&](const std::string& path, const std::string& from,
+                   const std::string& source_root = "",
+                   const std::string& fallback_root = "",
+                   const std::string& expected_hash = "") {
     if (!SourcePath(path))
       throw Failure("permission_denied",
                     "Destination must be a Card source file: " + path);
@@ -166,29 +131,22 @@ auto Tools::FileOperation(const std::string& conversation,
         !hashes.contains(card + "/_link.json"))
       throw Failure("not_found", "Destination Card does not exist: " + card);
     check(path, true);
-    if (bytes.size() > kTransferBytes - total)
-      throw Failure("resource_limit",
-                    "Copy/save exceeds 12 MiB per operation. Keep larger data "
-                    "in an attached folder and read it from the Card with "
-                    "hostFolders (/host/<name>).");
-    total += bytes.size();
-    const auto from = staged_path + "/" + std::to_string(transfers.size());
-    fs::write_atomic(root / from, bytes, 0600);
     json::Members transfer{{"path", json::Quote(path)},
                            {"from", json::Quote(from)}};
-    if (hashes.contains(path))
-      transfer["base_hash"] = json::Quote(hashes.at(path));
+    if (!source_root.empty()) transfer["source_root"] = json::Quote(source_root);
+    if (!fallback_root.empty()) transfer["fallback_root"] = json::Quote(fallback_root);
+    if (!expected_hash.empty()) transfer["expected_hash"] = json::Quote(expected_hash);
+    if (hashes.contains(path)) transfer["base_hash"] = json::Quote(hashes.at(path));
     transfers.push_back(json::Encode(transfer));
-    summaries.push_back(Summary(path, bytes));
   };
   json::Members shell_result;
   if (name == "project_copy") {
     const auto source = json::Text(args, "source");
     const auto files = json::Array(json::Get(args, "files", "[]"));
-    if (files.empty() || files.size() > 1000)
+    if (files.empty())
       throw Failure(
           "invalid_request",
-          "Supply an explicit list of 1..1000 files with from and to paths");
+          "Supply a non-empty explicit list of files with from and to paths");
     std::set<std::string> destinations;
     for (const auto& raw : files) {
       if (stop.stop_requested()) throw Cancelled();
@@ -200,14 +158,18 @@ auto Tools::FileOperation(const std::string& conversation,
         throw Failure("permission_denied",
                       "Destination must be a Card source: " + to);
       check(to, true);
-      if (source == "attached")
-        stage(to,
-              Read(json::Text(args, "folder"), from, kTransferBytes - total));
-      else if (source == "card")
-        stage(to, confirmed(from));
-      else if (source == "scratch")
-        stage(to, Read(root / scratch_path, from, kTransferBytes - total));
-      else
+      if (source == "attached") {
+        const auto folder = json::Text(args, "folder");
+        stage(to, from, folder, "/run/tsugumi/chat/" + crypto::sha256_hex(folder).substr(0, 16));
+      } else if (source == "card") {
+        check(from, false);
+        if (!hashes.contains(from))
+          throw Failure("not_found", "Not a confirmed Card source: " + from);
+        stage(to, from, "", "", hashes.at(from));
+      } else if (source == "scratch") {
+        if (!fs::valid_relative_path(from)) throw Failure("invalid_path", "Invalid scratch path: " + from);
+        stage(to, scratch_path + '/' + from);
+      } else
         throw Failure("invalid_request",
                       "source must be attached, card or scratch");
     }
@@ -345,7 +307,7 @@ auto Tools::FileOperation(const std::string& conversation,
     std::set<std::string> seen;
     for (const auto* area : {"definitions", "externals"}) {
       if (!std::filesystem::exists(work / area)) continue;
-      const auto listing = fs::list_beneath(work, area, 10000);
+      const auto listing = fs::list_beneath(work, area);
       if (!listing.links.empty() || !listing.special.empty())
         throw Failure(
             "invalid_path",
@@ -362,7 +324,7 @@ auto Tools::FileOperation(const std::string& conversation,
         if (!SourcePath(path, true))
           throw Failure("permission_denied",
                         "Shell changed a structural file: " + path);
-        stage(path, Read(work, path, kTransferBytes - total));
+        stage(path, work_path + '/' + path);
       }
     }
     for (const auto& [path, hash] : initial)
@@ -419,6 +381,21 @@ auto Tools::FileOperation(const std::string& conversation,
   auto saved = json::Object(
       ProjectCall(project, "project_save", json::Encode(args), stop));
   if (json::Text(saved, "reply") == "Failure") return json::Encode(saved);
+  const auto value = json::Object(json::Get(saved, "value", "{}"));
+  const auto delta = json::Object(json::Get(value, "delta", "{}"));
+  for (const auto& raw : json::Array(json::Get(delta, "sources_upsert", "[]"))) {
+    const auto info = json::Object(raw);
+    source_info[json::Text(info, "path")] = raw;
+  }
+  // The save returns only metadata. Unchanged files retain their inspected
+  // metadata; changed files use the core's hash of the bytes it actually saved.
+  for (const auto& raw : transfers) {
+    const auto path = json::Text(json::Object(raw), "path");
+    const auto info = json::Object(source_info.at(path));
+    summaries.push_back(json::Encode(json::Members{
+        {"path", json::Quote(path)}, {"size_bytes", json::Get(info, "size_bytes")},
+        {"hash", json::Get(info, "hash")}}));
+  }
   if (name == "project_shell") {
     auto output = json::Object(json::Get(shell_result, "value", "{}"));
     output["changed_files"] = json::Encode(summaries);

@@ -84,7 +84,7 @@ No fields.
 | `changes` | `[DocumentChange]` |  |  |
 | `approved_permissions` | `[string]` |  | Permission widenings explicitly approved by the caller, as named by approval_required. |
 | `check_permissions` | `bool` |  | Compare the proposed permissions with the accepted document and reject every widening absent from approved_permissions, regardless of origin. |
-| `transfers` | `[SourceTransfer]` |  | Host-prepared byte transfers, at most 12 MiB together. |
+| `transfers` | `[SourceTransfer]` |  | Local file references; source bytes never travel through the RPC frame. |
 
 ### ProjectReload
 

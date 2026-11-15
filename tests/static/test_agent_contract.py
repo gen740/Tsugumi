@@ -103,12 +103,12 @@ def test_file_tools_move_bytes_without_reading_and_explain_bounded_views():
     copy = tools["project_copy"]
     assert copy["mutating"]
     assert set(copy["inputSchema"]["properties"]["source"]["enum"]) == {"attached", "card", "scratch"}
-    assert copy["inputSchema"]["properties"]["files"]["maxItems"] == 1000
+    assert "maxItems" not in copy["inputSchema"]["properties"]["files"]
     assert "bytes" not in copy["inputSchema"]["properties"]
     assert "base_rev" in copy["inputSchema"]["required"]
     prompt = (ROOT / "agent/Shared/system-prompt.md").read_text()
     assert "never read and retype" in prompt
-    assert "12 MiB" in prompt and "256 KiB" in prompt and "1 MiB" in prompt
+    assert "no copy-specific byte cap" in prompt and "256 KiB" in prompt and "1 MiB" in prompt
     assert "head and tail" in prompt and "scratch/" in prompt
     assert "exact write set" in prompt and "failure/cancellation saves nothing" in prompt
     assert "16 MiB" not in tools["attached_folder_read"]["description"]
