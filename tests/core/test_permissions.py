@@ -44,11 +44,11 @@ def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory
     assert sorted(asked) == ["host_folder_read src /data", "network src", "sandbox_off src"]
     # Approving only part of it is not enough.
     try:
-        save(c, [put("src", wide)], approved=asked[:1], origin=origin)
+        save(c, [put("src", wide)], approved=asked[:1], origin=origin, check=True)
         raise AssertionError("a partly approved widening went through")
     except RpcFailure as e:
         assert e.kind == "approval_required"
-    save(c, [put("src", wide)], approved=asked, origin=origin)
+    save(c, [put("src", wide)], approved=asked, origin=origin, check=True)
     assert card_json(c, "src")["network"] is True
     # Making the folder writable is another widening; narrowing is not.
     writable = dict(wide, hostFolders=[{"path": "/data", "name": "data", "write": True}])
