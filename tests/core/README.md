@@ -27,10 +27,15 @@ symlinks or host bytes. Undeclared staging entries are ignored. CI runs it on
 macOS and Linux; it can also be built without Nix or generated bindings:
 
 ```sh
-c++ -std=c++20 -Wall -Wextra -Werror -pthread -I core/src \
-  core/src/util/staging.cc tests/core/worker_staging_test.cc -o /tmp/worker-staging-tests
+c++ -std=c++20 -Wall -Wextra -Werror -pthread -I core/src -I workerd/include \
+  workerd/src/staging.cc tests/core/worker_staging_test.cc -o /tmp/worker-staging-tests
 /tmp/worker-staging-tests
 ```
+
+`tsugumi_execution_service_tests` also tests both shared output-delivery modes
+without a Card process, alongside native resident-transfer execution. See the
+[worker boundary comparison](../../workerd/README.md) for the preserved behavior
+of each carrier.
 
 `tests/python/test_demo_marimo.py::test_notebook_passes_typed_result_and_keeps_snapshot`
 additionally exercises the real Nix source modes, notebook subprocess, staged

@@ -1,4 +1,4 @@
-#include "worker_pool.hh"
+#include "tsugumi/workerd/worker_pool.hh"
 
 #include <algorithm>
 #include <future>
@@ -9,7 +9,9 @@ namespace tsugumi {
 
 namespace stdfs = std::filesystem;
 
-WorkerPool::WorkerPool(stdfs::path scratch_root, WorkerLimits limits) : root_(std::move(scratch_root)), limits_(limits) {
+WorkerPool::WorkerPool(stdfs::path scratch_root, WorkerLimits limits, WorkerPoolMode mode)
+    : root_(std::move(scratch_root)), limits_(limits), mode_(mode) {
+  if (mode_ == WorkerPoolMode::one_shot) return;
   std::error_code ec;
   stdfs::remove_all(root_, ec);  // left by an earlier tsugumid of this project
   reaper_ = std::thread([this] { reaper(); });
@@ -24,6 +26,9 @@ WorkerPool::~WorkerPool() {
   if (reaper_.joinable()) reaper_.join();
   spawns_.clear();  // anyone still waiting gets broken_promise
   clear();
+  // One-shot scratch belongs to its worker (or, if construction failed, to
+  // the existing job/supervisor cleanup). Do not add a second cleanup owner.
+  if (mode_ == WorkerPoolMode::one_shot) return;
   std::error_code ec;
   stdfs::remove_all(root_, ec);
 }
@@ -32,6 +37,10 @@ WorkerPool::~WorkerPool() {
 // --die-with-parent ends a worker when the *thread* that started it ends, and
 // a run's lanes end with the run while its workers stay resident.
 std::unique_ptr<WorkerProc> WorkerPool::spawn(WorkerSpawn sp) {
+  if (mode_ == WorkerPoolMode::one_shot) {
+    sp.scratch = root_.string();
+    return std::make_unique<WorkerProc>(sp);
+  }
   {
     std::lock_guard<std::mutex> l(mu_);
     stdfs::create_directories(root_);
@@ -101,7 +110,7 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card, const std::string
     std::lock_guard<std::mutex> l(mu_);
     resident_keys_[card] = key;
   }
-  if (!reuse) refill(standby_key, sp);
+  if (!reuse && mode_ == WorkerPoolMode::standby) refill(standby_key, sp);
   return lease;
 }
 

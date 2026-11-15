@@ -1,7 +1,7 @@
 # Security and isolation
 
 This document describes Tsugumi's four trust boundaries (what is isolated from what) and how secrets (the API keys of outside models and the RPC's authentication token) are handled.
-Everything here is based on the current implementation (`core/src/vmd_main.cc`, `core/src/worker_proc.cc`, `core/src/server.cc`, `core/src/host/`, `core/src/agent/`, `macOS/Sources/Launcher/`, `macOS/Sources/AgentClient/Provider.swift`, `web/server/coreHost.ts`).
+Everything here is based on the current implementation (`core/src/vmd_main.cc`, `workerd/src/worker_proc.cc`, `core/src/server.cc`, `core/src/host/`, `core/src/agent/`, `macOS/Sources/Launcher/`, `macOS/Sources/AgentClient/Provider.swift`, `web/server/coreHost.ts`).
 
 ## Summary
 
@@ -102,7 +102,7 @@ Only hostd talks to the signed Mac helper, over the owner-only Unix socket using
 
 ## 4. Card (worker) ⇄ tsugumid
 
-Each Card's code is further run inside a `bubblewrap` sandbox (`core/src/worker_proc.cc`).
+Each Card's code is further run inside a `bubblewrap` sandbox (`workerd/src/worker_proc.cc`).
 
 ### `sandbox: true` (the default)
 
@@ -127,7 +127,7 @@ A setting that relaxes only the restrictions on seeing the file system. Where bu
 
 ### Direct macOS host
 
-The repository's development server can run `tsugumid` directly on a Mac with Seatbelt (`core/src/worker_proc.cc`). This does not separate uids, and `stat` can reveal metadata outside the readable paths. Shared host-folder grants require the VM; a `sandbox: false` Card runs with the host user's permissions.
+The repository's development server can run `tsugumid` directly on a Mac with Seatbelt (`workerd/src/worker_proc.cc`). This does not separate uids, and `stat` can reveal metadata outside the readable paths. Shared host-folder grants require the VM; a `sandbox: false` Card runs with the host user's permissions.
 
 Even with network access, Seatbelt denies this machine's loopback, LAN/VPN addresses and Unix sockets, except the mDNSResponder socket needed for DNS. That exception also permits DNS-SD browsing/advertising. Certificate validation uses `com.apple.trustd.agent`; other Mach services, system proxy settings and user lookup are unavailable.
 

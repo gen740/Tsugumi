@@ -1,4 +1,4 @@
-// Core side of one tsugumi-worker process.
+// Owner side of one tsugumi-worker process.
 #pragma once
 
 #include <sys/types.h>
@@ -8,12 +8,12 @@
 #include <functional>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "model.hh"
-#include "nix.hh"
 
 namespace tsugumi {
 
@@ -28,11 +28,21 @@ class Utf8Decoder {
   std::string pending_;
 };
 
+// Only the realised program enters worker ownership; evaluation, build keys
+// and recorded environments remain with the caller.
+struct WorkerProgram {
+  std::optional<std::string> package;
+  std::optional<std::string> bash;
+  std::string pre_run;
+  std::string post_run;
+  std::string views;
+};
+
 struct WorkerSpawn {
   std::string worker_binary;
   std::string bash;
   std::string store_path = "/nix/store";
-  CardBuild build;
+  WorkerProgram program;
   // The worker's own folder: work/ and tmp/ for Cards without filesystem:
   // true, scripts/ for preRun / a bash run / postRun. Created with the worker
   // and removed when it ends, so it lives as long as the worker.
@@ -125,7 +135,7 @@ class WorkerProc {
 
 // Builds a WorkerMessage{call_id, WorkerCall} frame.
 std::string worker_call_frame(uint64_t call_id, const std::string& run_id, const CardPath& card,
-                              uint64_t invocation, const std::vector<Value>& inputs,
+                              uint64_t invocation, std::span<const Value> inputs,
                               const std::string& params_bfbs, const std::string& params_root,
                               const std::string& params, const std::vector<types::PortType>& outputs,
                               const std::string& work, const std::string& tmp, const std::string& out,
