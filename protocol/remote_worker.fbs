@@ -17,6 +17,8 @@ table JobSpec {
   cpu_millis:ulong; memory_bytes:ulong; timeout_seconds:uint;
   // Core recording policy for combined build/stdout/stderr JSONL bytes.
   log_limit_bytes:ulong;
+  // The registration policy at submission. Zero missed heartbeats means never.
+  heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0;
 }
 // Spec bytes are a FlatBuffer rooted at JobSpec. Keeping the exact buffer
 // makes the fingerprint independent of packing and supports uncertain submits.
@@ -40,10 +42,10 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract; writers explicitly send contract 5.
+  // Zero means no advertised contract; writers explicitly send contract 6.
   worker_contract:uint;
 }
-table Target { id:string (required); available:bool; capabilities:Capabilities (required); }
+table Target { id:string (required); available:bool; capabilities:Capabilities (required); heartbeat_interval_seconds:uint = 15; missed_heartbeats:uint = 0; }
 table Catalog { services:[Target] (required); }
 table BlobChunk { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
 table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; }

@@ -62,7 +62,9 @@ auto remote_failure(const RemoteJobState& result) -> FailureData {
 class PreparedRemoteExecution final : public PreparedExecution {
  public:
   PreparedRemoteExecution(Service& service, const RemoteJobClient& client, std::string target, std::string system,
-                          std::string server_id, std::string instance, stdfs::path archive)
+                          std::string server_id, std::string instance, stdfs::path archive,
+                          uint32_t heartbeat_interval_seconds,
+                          uint32_t missed_heartbeats)
       : service_(service),
         client_(client),
         target_(std::move(target)),
@@ -70,7 +72,9 @@ class PreparedRemoteExecution final : public PreparedExecution {
         server_id_(std::move(server_id)),
         instance_(std::move(instance)),
         archive_(std::move(archive)),
-        transport_(archive_) {}
+        transport_(archive_),
+        heartbeat_interval_seconds_(heartbeat_interval_seconds),
+        missed_heartbeats_(missed_heartbeats) {}
   PreparedRemoteExecution(const PreparedRemoteExecution&) = delete;
   auto operator=(const PreparedRemoteExecution&) -> PreparedRemoteExecution& = delete;
   ~PreparedRemoteExecution() override {
@@ -94,6 +98,8 @@ class PreparedRemoteExecution final : public PreparedExecution {
   std::string instance_;
   stdfs::path archive_;
   ArchiveDerivationTransport transport_;
+  uint32_t heartbeat_interval_seconds_;
+  uint32_t missed_heartbeats_;
 };
 
 auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> ExecutionResult {
@@ -106,7 +112,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request) -> Execut
                                           std::to_string(s.invocation));
   const auto archive_digest = stage_remote_archive(client_, target_, server_id_, instance_, s.execution_job_id, archive_, request.cancel);
   auto spec = stage_remote_invocation(client_, target_, server_id_, instance_, s.execution_job_id, service_.project_id(), service_.file_roots(),
-                                      archive_digest, request);
+                                      archive_digest, request,
+                                      heartbeat_interval_seconds_, missed_heartbeats_);
   if (request.cancel.load()) throw Failed(FailureKind::cancelled, "run cancelled before external submission");
 
   s.execution_system = system_;
@@ -187,7 +194,8 @@ auto RemoteExecutionService::prepare(const Node& node, const stdfs::path& direct
   const auto target = std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
   if (target == targets.end())
     throw Failed(FailureKind::unsupported, "execution service " + settings.execution_service + " is not registered");
-  auto probe = client_.probe(target->id, target->server_id);
+  auto probe = client_.probe(target->id, target->server_id,
+                             target->heartbeat_interval_seconds);
   auto system = settings.system.empty() ? probe.native_system : settings.system;
   if (system.empty()) throw Failed(FailureKind::unsupported, "remote worker system is unknown");
   if (settings.execution_resources && !probe.resource_limits)
@@ -198,7 +206,8 @@ auto RemoteExecutionService::prepare(const Node& node, const stdfs::path& direct
   auto prepared = std::make_unique<PreparedRemoteExecution>(service_, client_, target->id, std::move(system),
                                                             std::move(probe.server_id),
                                                             std::move(probe.instance),
-                                                            directory / (".derivation-" + crypto::uuid4()));
+                                                            directory / (".derivation-" + crypto::uuid4()),
+                                                            target->heartbeat_interval_seconds, target->missed_heartbeats);
   build.target = {WorkerKind::remote, prepared->system()};
   build.transport = &prepared->transport();
   return prepared;

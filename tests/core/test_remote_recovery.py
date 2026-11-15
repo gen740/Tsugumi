@@ -57,6 +57,9 @@ class Gateway(socketserver.UnixStreamServer):
         self.released = set()
         self.core_ids = set()
         self.probe_count = 0
+        self.probe_times = []
+        self.heartbeat_interval = 15
+        self.missed_heartbeats = 0
         self.blobs = set()
         self.blob_contents = {}
         self.specs = {}
@@ -103,18 +106,20 @@ class Gateway(socketserver.UnixStreamServer):
         self.core_ids.add(R.string(q.coreLifeId))
         kind, body = q.bodyType, q.body
         caps = R.CapabilitiesT(serverId=self.registered_server, nativeSystem=self.system, systems=[self.system],
-                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=5)
+                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=6)
         if kind == R.RequestBody.CatalogRequest:
             caps.resourceLimits = self.catalog_resource_limits
             caps.workerContract = self.catalog_contract
             caps.nativeSystem = self.catalog_system
             caps.systems = [self.catalog_system]
-            return R.reply(R.ReplyBody.Catalog, R.CatalogT(services=[R.TargetT(id="cluster", available=True, capabilities=caps)]))
+            return R.reply(R.ReplyBody.Catalog, R.CatalogT(services=[R.TargetT(id="cluster", available=True, capabilities=caps,
+                heartbeatIntervalSeconds=self.heartbeat_interval, missedHeartbeats=self.missed_heartbeats)]))
         assert R.string(q.serverId) == self.server_id
         if R.string(q.serverId) != self.registered_server:
             return R.failure(R.ErrorCode.RegistrationChanged, "execution service was replaced")
         if kind == R.RequestBody.ProbeRequest:
             self.probe_count += 1
+            self.probe_times.append(time.monotonic())
             caps.instanceId = self.instance
             for key, value in self.probe_overrides.items():
                 setattr(caps, key, value)
@@ -314,6 +319,29 @@ def test_explicit_system_is_checked_after_the_live_probe(project, remote_gateway
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     assert text(live.executionSystem) == "aarch64-linux"
     assert remote_gateway.probe_count > 0
+    remote_gateway.finish(text(live.executionJobId))
+    assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
+
+
+@pytest.mark.parametrize("interval,missed", [(1, 3), (2, 0)])
+def test_registered_heartbeat_policy_reaches_job_and_controls_probes(project, remote_gateway, core_factory, tmp_path, interval, missed):
+    remote_gateway.heartbeat_interval = interval
+    remote_gateway.missed_heartbeats = missed
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True, executionService="cluster",
+                   executionResources={"cpuMillis": 500, "memoryBytes": 256 << 20})
+    run_id = start_run(client, "work", propagate=False)
+    live = wait_for_state(client, run_id, RemoteExecutionState.running)
+    spec = remote_gateway.specs[text(live.executionJobId)]
+    assert spec.heartbeatIntervalSeconds == interval
+    assert spec.missedHeartbeats == missed
+    # Ignore the initial synchronous probe and the thread's initial probe.
+    deadline = time.monotonic() + 10
+    while len(remote_gateway.probe_times) < 4 and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert len(remote_gateway.probe_times) >= 4
+    gaps = [b - a for a, b in zip(remote_gateway.probe_times[1:3], remote_gateway.probe_times[2:4])]
+    assert all(interval - 0.1 <= gap <= interval + 1 for gap in gaps), gaps
     remote_gateway.finish(text(live.executionJobId))
     assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
 

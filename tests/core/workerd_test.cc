@@ -10,9 +10,9 @@
 #include <thread>
 
 #include "journal.hh"
+#include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/log_limits.hh"
-#include "tsugumi/protocol/worker_generated.h"
 #include "util/crypto.hh"
 #include "util/fs.hh"
 
@@ -33,7 +33,8 @@ auto rejected(F f) -> void {
   }
   expect(failed, "invalid input was accepted");
 }
-auto spec(const std::string& digest, uint32_t timeout = 60, uint64_t log_limit = 8u << 20) -> std::string {
+auto spec(const std::string& digest, uint32_t timeout = 60, uint64_t log_limit = 8u << 20, uint32_t interval = 15,
+          uint32_t missed = 0) -> std::string {
   R::JobSpecT s;
   s.system = "x86_64-linux";
   s.derivation = "/nix/store/00000000000000000000000000000000-test.drv";
@@ -42,6 +43,8 @@ auto spec(const std::string& digest, uint32_t timeout = 60, uint64_t log_limit =
   s.input_blobs = {digest};
   s.timeout_seconds = timeout;
   s.log_limit_bytes = log_limit;
+  s.heartbeat_interval_seconds = interval;
+  s.missed_heartbeats = missed;
   validate_spec(s);
   flatbuffers::FlatBufferBuilder b;
   b.Finish(R::JobSpec::Pack(b, &s));
@@ -336,13 +339,21 @@ auto journal_test(const stdfs::path& root) -> void {
 auto core_lifetime_test(const stdfs::path& root) -> void {
   Journal journal(root / "lifetimes");
   const std::string core(64, 'a'), replacement(64, 'b');
-  const auto grace = std::chrono::duration_cast<std::chrono::milliseconds>(
-                         kCoreDisconnectTimeout)
-                         .count();
+  constexpr uint32_t interval = 2, missed = 3;
+  constexpr uint64_t grace = uint64_t{interval} * missed * 1000;
   const uint64_t start = now_ms();
   const auto input = chunk("input");
-  const auto bytes = spec(input.digest);
+  rejected([&] { spec(input.digest, 60, 8u << 20, 0, missed); });
+  // The maximum uint32 pair must not overflow expiry arithmetic.
+  const auto maximum = spec(input.digest, 60, 8u << 20, UINT32_MAX, UINT32_MAX);
+  const auto bytes = spec(input.digest, 60, 8u << 20, interval, missed);
   journal.touch_core(core, start);
+  const std::string huge(64, '5');
+  journal.put(huge, input, core);
+  journal.submit(huge, maximum, core);
+  journal.expire_core(huge, start + uint64_t{365} * 24 * 3600 * 1000);
+  expect(journal.status(huge).state == R::JobState::Queued,
+         "maximum settings overflowed the allowance");
   for (const auto& job :
        {std::string(64, '1'), std::string(64, '2'), std::string(64, '3')}) {
     journal.put(job, input, core);
@@ -350,6 +361,18 @@ auto core_lifetime_test(const stdfs::path& root) -> void {
   }
   const std::string queued(64, '1'), running(64, '2');
   expect(journal.claim(running, 10, 1, "boot"), "running lease fixture");
+  journal.expire_core(queued, start + grace - 1);
+  journal.expire_core(running, start + grace - 1);
+  expect(journal.status(queued).state == R::JobState::Queued &&
+             journal.status(running).state == R::JobState::Running,
+         "cancelled before N missed intervals");
+  const std::string unlimited(64, '4'), unlimited_running(64, '6');
+  for (const auto& job : {unlimited, unlimited_running}) {
+    journal.put(job, input, core);
+    journal.submit(job, spec(input.digest), core);
+  }
+  expect(journal.claim(unlimited_running, 11, 1, "boot"), "never running fixture");
+  rejected([&] { journal.submit(queued, spec(input.digest, 60, 8u << 20, 4, missed), core); });
   journal.touch_core(core, start + grace - 1);  // brief network cut, same core
   Journal restarted(root / "lifetimes");
   restarted.expire_core(running, start + grace);
@@ -367,6 +390,11 @@ auto core_lifetime_test(const stdfs::path& root) -> void {
          "orphaned queue was not cancelled");
   expect(restarted.status(running).state == R::JobState::Cancelling,
          "orphaned worker was not cancelled");
+  restarted.expire_core(unlimited, expired + uint64_t{365} * 24 * 3600 * 1000);
+  restarted.expire_core(unlimited_running, expired + uint64_t{365} * 24 * 3600 * 1000);
+  expect(restarted.status(unlimited).state == R::JobState::Queued &&
+             restarted.status(unlimited_running).state == R::JobState::Running,
+         "never policy cancelled a job");
   restarted.touch_core(core, expired);
   expect(restarted.status(queued).state == R::JobState::Cancelled,
          "late reconnect revived an expired job");

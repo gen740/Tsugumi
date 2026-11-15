@@ -11,9 +11,6 @@
 namespace tsugumi::workerd {
 namespace stdfs = std::filesystem;
 
-// One missed 30 s control exchange plus the existing 15 s kill fallback.
-inline constexpr auto kCoreDisconnectTimeout = std::chrono::seconds(45);
-
 struct Record {
   R::JobState state = R::JobState::Missing;
   std::string fingerprint;
@@ -24,6 +21,8 @@ struct Record {
   uint64_t start = 0;
   std::string boot;
   std::string core_life_id;
+  uint32_t heartbeat_interval_seconds = 15;
+  uint32_t missed_heartbeats = 0;
   auto status() const -> R::JobStatusT;
 };
 

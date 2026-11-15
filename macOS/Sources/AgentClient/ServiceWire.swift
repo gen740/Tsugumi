@@ -10,6 +10,15 @@ enum ServiceWire {
   }
   private static let hostMethods: Set<String> = [
 "DemoListRequest", "DemoReadRequest", "VersionNoteRequest", "ModelSelectionRequest", "FileFormatRequest", "HostVersionGraphRequest", "HostVersionDiffRequest", "PermissionKindsRequest", "DocumentTemplateRequest", "DocumentConnectRequest", "DocumentCopyRequest", "DocumentMergeRequest", "DocumentSubgraphRequest", "VersionCommentsRequest", "GuideGetRequest", "GuideAdvanceRequest", "EnvironmentRequest", "HostRuntimeRequest", "HostTerminalRequest", "ExecutionServicesRequest", "ExecutionServicePutRequest", "ExecutionServiceRemoveRequest", "ExecutionProjectAuthorizeRequest", "ExecutionProjectRevokeRequest", "RegisterProjectRequest", "RegisterFolderRequest", "SkillsListRequest", "ModelsListRequest", "SettingsGetRequest", "SettingsUpdateRequest", "ProviderSetRequest", "ProviderStatusRequest", "SignInBeginRequest", "SignInActionRequest", "SignInStatusRequest", "HostProjectDefaultsRequest", "HostProjectReadRequest", "HostProjectInfoRequest", "HostProjectCreateRequest", "HostProjectDuplicateRequest", "HostDemoListRequest", "HostDemoCopyRequest", "HostRecentListRequest", "HostRecentRememberRequest", "HostRecentForgetRequest"]
+  private static func heartbeatSetting(_ fields: [String: Any], _ key: String, default fallback: UInt32, minimum: UInt32) throws -> UInt32 {
+    guard let raw = fields[key] else { return fallback }
+    guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+          let value = UInt32(exactly: number.doubleValue), value >= minimum else {
+      throw CoreAgentFailure(code: "invalid_request", message: "Invalid heartbeat setting: \(key)", requestID: nil)
+    }
+    return value
+  }
+
   static func request(_ method: String, _ fields: [String: Any], host: Bool) throws -> (UInt8, NativeObject) {
     if host {
       switch method {
@@ -187,6 +196,8 @@ enum ServiceWire {
         v.endpoint = fields["endpoint"] as? String ?? ""
         v.workerPublicKey = fields["workerPublicKey"] as? String ?? ""
         v.verify = fields["verify"] as? Bool ?? false
+        v.heartbeatIntervalSeconds = try heartbeatSetting(fields, "heartbeatIntervalSeconds", default: 15, minimum: 1)
+        v.missedHeartbeats = try heartbeatSetting(fields, "missedHeartbeats", default: 0, minimum: 0)
         return (Tsugumi_Host_RequestPayload.executionserviceputrequest.rawValue, v)
       case "ExecutionServiceRemoveRequest":
         let v = Tsugumi_Host_ExecutionServiceRemoveRequestT()
@@ -535,7 +546,7 @@ enum ServiceWire {
     case let v as Tsugumi_Host_ExecutionServicesT:
       return ["services": try v.services.compactMap { try $0.map(view) }, "hostPublicKey": v.hostPublicKey] as [String: Any]
     case let v as Tsugumi_Host_ExecutionServiceT:
-      return ["id": v.id, "name": v.name, "endpoint": v.endpoint, "workerPublicKey": v.workerPublicKey, "capabilities": try view(v.capabilities)] as [String: Any]
+      return ["id": v.id, "name": v.name, "endpoint": v.endpoint, "workerPublicKey": v.workerPublicKey, "heartbeatIntervalSeconds": v.heartbeatIntervalSeconds, "missedHeartbeats": v.missedHeartbeats, "capabilities": try view(v.capabilities)] as [String: Any]
     case let v as Tsugumi_Host_ExecutionCapabilitiesT:
       return ["serverId": v.serverId, "nativeSystem": v.nativeSystem, "systems": v.systems.compactMap { $0 },
               "isolation": v.isolation ?? "pid_namespace", "resourceLimits": v.resourceLimits,

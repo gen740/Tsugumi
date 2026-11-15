@@ -266,9 +266,10 @@ class Daemon {
         (q.body.type != R::RequestBody::ProbeRequest && q.instance_id.empty()))
       throw Error(R::ErrorCode::InstanceChanged,
                   "project journal identity changed");
-    journal->touch_core(q.core_life_id);
-    if (q.body.type == R::RequestBody::ProbeRequest)
+    if (q.body.type == R::RequestBody::ProbeRequest) {
+      journal->touch_core(q.core_life_id);
       return reply(capabilities(journal->instance()));
+    }
     check_id(q.job_id);
     if (q.body.type != R::RequestBody::CancelRequest &&
         q.body.type != R::RequestBody::ReleaseRequest)

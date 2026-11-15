@@ -102,11 +102,12 @@ class Worker:
         assert response.bodyType == R.ReplyBody.Ack
         return digest
 
-    def spec(self, digest, timeout=30):
+    def spec(self, digest, timeout=30, interval=15, missed=0):
         return R.pack(R.JobSpecT(system=self.caps.nativeSystem,
             derivation="/nix/store/00000000000000000000000000000000-test.drv",
             output="/nix/store/00000000000000000000000000000000-test", invocationSha256=digest,
-            inputBlobs=[digest], timeoutSeconds=timeout, logLimitBytes=8 << 20))
+            inputBlobs=[digest], timeoutSeconds=timeout, logLimitBytes=8 << 20,
+            heartbeatIntervalSeconds=interval, missedHeartbeats=missed))
 
 
 @pytest.fixture
@@ -122,7 +123,7 @@ def worker(tmp_path):
 
 
 def test_probe_authentication_unix_and_private_state(worker):
-    assert worker.caps.workerContract == 5 and worker.caps.maxJobs == 1
+    assert worker.caps.workerContract == 6 and worker.caps.maxJobs == 1
     assert worker.caps.nativeSystem in (b"aarch64-linux", b"x86_64-linux")
     stranger = TLS.identity(worker.root, "stranger")
     with pytest.raises((ssl.SSLError, OSError, EOFError)):
@@ -232,7 +233,7 @@ def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path
     try:
         for i, job in enumerate(jobs):
             digest = peer.upload(job, b"staged input")
-            spec = peer.spec(digest, timeout=1 if i == 2 else 60)
+            spec = peer.spec(digest, timeout=1 if i == 2 else 60, interval=15, missed=3)
             fingerprints[job] = hashlib.sha256(spec).hexdigest()
             accepted = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
             assert accepted.bodyType == R.ReplyBody.JobStatus
@@ -254,7 +255,7 @@ def test_global_cap_reconnects_within_one_core_life_and_cancels_orphans(tmp_path
             lease = peer.state / "projects" / peer.scope / "cores" / peer.core_life_id
             expired_lease = lease.with_suffix(".expired")
             expired_lease.write_text("0")
-            expired_lease.replace(lease)  # deterministic expiry, no 45-second sleep
+            expired_lease.replace(lease)  # deterministic expiry, no wall-clock timeout sleep
             expired = True
             wait(jobs[0], R.JobState.Cancelled)
             if end == "supervisor_expiry":

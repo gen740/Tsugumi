@@ -299,3 +299,36 @@ console.log('Separate Host/Agent contracts: shared goldens, routes and external 
   assert.deepEqual(decoded.resetKeptFiles, ['history.img'])
   assert.deepEqual(decoded.resetDiscardedFiles, ['store.img', '.lock'])
 }
+
+// Heartbeat values survive the JSON/binary boundary without integer coercion.
+for (const [interval, missed] of [[15, 0], [2, 3], [0xffffffff, 0xffffffff]]) {
+  const bytes = encodeRequest('ExecutionServicePutRequest', {
+    id: 'compute', name: 'Compute', endpoint: 'tls://worker:8765', workerPublicKey: 'ed25519:test',
+    heartbeatIntervalSeconds: interval, missedHeartbeats: missed,
+  }, 2n, true)
+  const request = HostMessage.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack().payload as any
+  assert.equal(request.value.heartbeatIntervalSeconds, interval)
+  assert.equal(request.value.missedHeartbeats, missed)
+}
+for (const [key, values] of [
+  ['heartbeatIntervalSeconds', [0, -1, 1.5, 0x100000000, NaN, '15', null]],
+  ['missedHeartbeats', [-1, 1.5, 0x100000000, NaN, '0', null]],
+] as const) {
+  for (const value of values) assert.throws(() => encodeRequest('ExecutionServicePutRequest', {
+    id: 'compute', name: 'Compute', endpoint: 'tls://worker:8765', workerPublicKey: 'ed25519:test', [key]: value,
+  }, 2n, true), /Invalid heartbeat setting/)
+}
+
+const { ExecutionServiceT } = await import('../src/gen/tsugumi/host/execution-service')
+const { ExecutionCapabilitiesT } = await import('../src/gen/tsugumi/host/execution-capabilities')
+const { ExecutionServicesT } = await import('../src/gen/tsugumi/host/execution-services')
+{
+  const b = new fb.Builder()
+  const entry = new ExecutionServiceT('compute', 'Compute', 'tls://worker:8765', 'ed25519:test', new ExecutionCapabilitiesT('server', 'x86_64-linux'), 2, 3)
+  const services = new ExecutionServicesT([entry], 'ed25519:host').pack(b)
+  const reply = HostReply.createReply(b, HostReplyPayload.ExecutionServices, services)
+  HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
+  const state = decodeReply(b.asUint8Array(), true).value
+  assert.equal(state.services[0].heartbeatIntervalSeconds, 2)
+  assert.equal(state.services[0].missedHeartbeats, 3)
+}

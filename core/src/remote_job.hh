@@ -24,6 +24,8 @@ struct RemoteTarget {
   bool available = false;
   bool resource_limits = false;
   uint32_t max_jobs = 0;
+  uint32_t heartbeat_interval_seconds = 15;
+  uint32_t missed_heartbeats = 0;
 };
 
 struct RemoteJobState {
@@ -63,7 +65,8 @@ class RemoteJobClient {
   auto enabled() const -> bool { return !endpoint_.empty(); }
   auto stop() -> void { stopped_.store(true); }
   auto catalog() const -> std::vector<RemoteTarget>;
-  auto probe(std::string_view service, std::string_view registered_server) const -> RemoteProbe;
+  auto probe(std::string_view service, std::string_view registered_server,
+             uint32_t heartbeat_interval_seconds) const -> RemoteProbe;
   auto put_blob(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id, std::string_view digest, uint64_t size,
                 std::istream& contents, const std::atomic<bool>* cancel = nullptr) const -> void;
   auto get_blob(std::string_view service, std::string_view server_id, std::string_view instance, std::string_view job_id, std::string_view digest,
@@ -80,7 +83,8 @@ class RemoteJobClient {
  private:
   auto request(Tsugumi::RemoteWorker::RequestT message, const std::atomic<bool>* cancel = nullptr) const
       -> Tsugumi::RemoteWorker::ReplyT;
-  auto keep_alive(std::string_view service, std::string_view server) const
+  auto keep_alive(std::string_view service, std::string_view server,
+                  uint32_t interval) const
       -> void;
   const std::string core_life_id_;
   mutable std::mutex heartbeat_mutex_;

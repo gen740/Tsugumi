@@ -12,8 +12,8 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -209,20 +209,25 @@ RemoteJobClient::~RemoteJobClient() {
 }
 
 auto RemoteJobClient::keep_alive(std::string_view service,
-                                 std::string_view server) const -> void {
+                                 std::string_view server,
+                                 uint32_t interval) const -> void {
   std::lock_guard guard(heartbeat_mutex_);
-  const auto key = std::string(service) + "\n" + std::string(server);
+  if (!interval)
+    throw BrokerRequestRejected("Heartbeat interval must be at least 1 second");
+  const auto key = std::string(service) + "\n" + std::string(server) + "\n" +
+                   std::to_string(interval);
   if (heartbeats_.contains(key)) return;
   heartbeats_.emplace(
       key, std::jthread([this, target = std::string(service),
-                         pinned = std::string(server)] {
+                         pinned = std::string(server), interval] {
         while (!stopped_.load()) {
+          const auto next = Clock::now() + std::chrono::seconds(interval);
           try {
             request(command(R::ProbeRequestT{}, target, pinned));
           } catch (const std::exception&) { /* The execution loop reports
                                                transport/state failures. */
           }
-          for (int i = 0; i < 10 && !stopped_.load(); ++i)
+          while (Clock::now() < next && !stopped_.load())
             std::this_thread::sleep_for(100ms);
         }
       }));
@@ -274,16 +279,18 @@ auto RemoteJobClient::catalog() const -> std::vector<RemoteTarget> {
     if (!t->capabilities) throw BrokerDisconnected("missing target capabilities");
     const auto& c = *t->capabilities;
     targets.push_back({t->id, c.native_system, c.systems, c.server_id,
-                      t->available, c.resource_limits, c.max_jobs});
+                      t->available, c.resource_limits, c.max_jobs,
+                      t->heartbeat_interval_seconds, t->missed_heartbeats});
   }
   return targets;
 }
-auto RemoteJobClient::probe(std::string_view service, std::string_view registered_server) const -> RemoteProbe {
+auto RemoteJobClient::probe(std::string_view service, std::string_view registered_server,
+                            uint32_t heartbeat_interval_seconds) const -> RemoteProbe {
   auto reply = request(command(R::ProbeRequestT{}, service, registered_server));
   const auto& c = checked_capabilities(reply.body.AsCapabilities());
   if (c.server_id != registered_server) throw Failed(FailureKind::unsupported, "The remote worker's server ID changed. Verify the registered endpoint.");
   if (!crypto::is_sha256_hex(c.instance_id)) throw BrokerDisconnected("remote worker did not identify its project journal");
-  keep_alive(service, registered_server);
+  keep_alive(service, registered_server, heartbeat_interval_seconds);
   return {c.native_system, c.instance_id, c.server_id, c.systems, c.resource_limits};
 }
 auto RemoteJobClient::put_blob(std::string_view service, std::string_view server, std::string_view instance,

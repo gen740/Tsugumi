@@ -83,7 +83,8 @@ auto stage_remote_archive(const RemoteJobClient& client, const std::string& serv
 auto stage_remote_invocation(const RemoteJobClient& client, const std::string& service, const std::string& server_id,
                              const std::string& instance, const std::string& job_id, const std::string& project_id,
                              const std::vector<stdfs::path>& file_roots, const std::string& archive_digest,
-                             const ExecutionRequest& request) -> std::string {
+                             const ExecutionRequest& request,
+                             uint32_t heartbeat_interval_seconds, uint32_t missed_heartbeats) -> std::string {
   remote::InvocationJson invocation;
   *invocation.project_id = project_id;
   *invocation.network = request.node.settings.network;
@@ -160,6 +161,8 @@ auto stage_remote_invocation(const RemoteJobClient& client, const std::string& s
   const auto invocation_digest = upload(client, service, server_id, instance, job_id, schema::encode(invocation), request.cancel);
   blobs.insert(invocation_digest);
   R::JobSpecT job;
+  job.heartbeat_interval_seconds = heartbeat_interval_seconds;
+  job.missed_heartbeats = missed_heartbeats;
   job.input_blobs.assign(blobs.begin(), blobs.end());
   job.invocation_sha256 = invocation_digest;
   job.system = request.build.derivation.system;
