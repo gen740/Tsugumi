@@ -134,7 +134,7 @@ struct Environments::Impl {
         }
       }
       entry->state.folders = entry->folders;
-      // A State query may rediscover a resident daemon after agentd restarts.
+      // A State query may rediscover a resident daemon after hostd restarts.
     }
     return entry;
   }
@@ -470,7 +470,7 @@ struct Environments::Impl {
   }
   auto Stop(Entry& entry) -> void {
     RememberSecrets(entry);
-    // State/Stop can be the first operation after an agentd restart.
+    // State/Stop can be the first operation after an hostd restart.
     if (!entry.pid) ReadReady(entry);
     Revoke(entry);
     if (entry.pid && !entry.child && !options.process->Guest() &&

@@ -22,7 +22,7 @@ final class ThoughtSummarizer {
   /// Switched in the chat; asks once before it is first turned on (ChatPanel).
   static var enabled: Bool { CorePreferences.shared.bool(forKey: defaultsKey) }
 
-  /// Polling refreshes this window; eligibility and throttling belong to agentd.
+  /// Polling refreshes this window; eligibility and throttling belong to hostd.
   func turnStarted() {
     task?.cancel()
     let id = conversationID
@@ -56,7 +56,7 @@ final class ThoughtSummarizer {
   }
 
   static func summarize(conversationID: String, config: ProviderConfig, usage: @escaping (Usage) -> Void) async throws -> String {
-    let client = CoreAgentClient.shared
+    let client = CoreHostClient.shared
     let config = AgentSettings.selected(try await client.modelSelection("summary"))
     let value = try await client.call("ConversationSummarizeRequest", ["conversation_id": conversationID,
       "provider": try await client.provider(config)])

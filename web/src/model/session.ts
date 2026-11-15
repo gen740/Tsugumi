@@ -3137,7 +3137,7 @@ export class ProjectSession extends Observable {
   }
 
   /** Lays out a scope's Cards, output frames and notes (layout only, one undo).
-   *  tsugumi-agentd works the layout out (LayoutArrange) from what the canvas draws:
+   *  tsugumi-hostd works the layout out (LayoutArrange) from what the canvas draws:
    *  Cards are placed, ports then take the order that crosses fewer wires, and
    *  the Cards are placed once more for that order. */
   layoutHost = layoutHost
@@ -3148,7 +3148,7 @@ export class ProjectSession extends Observable {
     if (placed) this.edit((x) => x.applyArranged(scope, scene, placed))
   }
 
-  /** What the canvas draws in a scope, for tsugumi-agentd to lay out. Sizes and port
+  /** What the canvas draws in a scope, for tsugumi-hostd to lay out. Sizes and port
    *  positions are those of `CardGeometry`, and Cards are where they are drawn. */
   layoutScene(scope: string[]): LayoutScene {
     const ids = this.cards(scope).map((c) => str(get(c, 'id'))).filter((x): x is string => !!x)
@@ -3187,7 +3187,7 @@ export class ProjectSession extends Observable {
     return { flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, frames, notes, inputs: bar('inputs'), outputs: bar('outputs') }
   }
 
-  /** Asks tsugumi-agentd for a layout. Nothing is saved by asking: what it proposes
+  /** Asks tsugumi-hostd for a layout. Nothing is saved by asking: what it proposes
    *  becomes an edit here, saved and undone like any other. */
   private async proposed(scope: string[], scene: LayoutScene, ask: (c: typeof layoutHost) => Promise<LayoutProposal>): Promise<LayoutProposal | undefined> {
     const client = this.client
@@ -3206,7 +3206,7 @@ export class ProjectSession extends Observable {
     }
   }
 
-  /** A step of an edit: the places tsugumi-agentd proposed for the scene it was sent.
+  /** A step of an edit: the places tsugumi-hostd proposed for the scene it was sent.
    *  What is no longer on the canvas is left out. */
   private applyArranged(scope: string[], scene: LayoutScene, placed: LayoutProposal) {
     const there = new Set(this.cards(scope).map((c) => str(get(c, 'id'))))
@@ -3372,7 +3372,7 @@ export class ProjectSession extends Observable {
     this.changed()
   }
 
-  /** Ask agentd for the displayed note; it owns policy, generation and storage. */
+  /** Ask hostd for the displayed note; it owns policy, generation and storage. */
   async loadVersionComments(commit: string) {
     if (this.versionComments.has(commit)) return
     const value = await api<{ comments: VersionCommentT[] }>('/api/versions/comments', { path: this.dir, commit })

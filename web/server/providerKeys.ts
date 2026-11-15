@@ -37,12 +37,12 @@ export class ProviderKeys {
     if (this.platform === 'darwin') await this.memory(id, await this.keychain.read(providers[id].name), 'keychain')
     return this.memoryProfile
   }
-  async source(id: KeyedProvider, profile: string): Promise<'env' | 'keychain' | 'agentd' | undefined> {
+  async source(id: KeyedProvider, profile: string): Promise<'env' | 'keychain' | 'hostd' | undefined> {
     await this.provision(id)
-    const status = await this.call<{ source?: 'env' | 'keychain' | 'agentd' }>('ProviderStatusRequest', { profile, id, key_profile: this.memoryProfile })
+    const status = await this.call<{ source?: 'env' | 'keychain' | 'hostd' }>('ProviderStatusRequest', { profile, id, key_profile: this.memoryProfile })
     return status.source || undefined
   }
-  async save(id: KeyedProvider, raw: string, profile: string): Promise<'keychain' | 'agentd'> {
+  async save(id: KeyedProvider, raw: string, profile: string): Promise<'keychain' | 'hostd'> {
     const key = raw.trim()
     if (!/^[\x21-\x7e]+$/.test(key) || /["\\]/.test(key)) throw new Error(L('API キーに使えない文字が含まれています。'))
     const policy = await this.call<{ storage: string }>('ProviderStatusRequest', { profile, id, key_profile: this.memoryProfile })
@@ -60,7 +60,7 @@ export class ProviderKeys {
     }
     await this.call('ProviderSetRequest', { profile, id, provider: { api_key: key } })
     await this.memory(id, this.environment[providers[id].env], 'env')
-    return 'agentd'
+    return 'hostd'
   }
   async delete(id: KeyedProvider, profile: string) {
     if (this.platform === 'darwin') {

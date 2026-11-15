@@ -32,17 +32,17 @@ public struct ExecutionServicesState: Codable, Sendable {
   public let hostPublicKey: String
 }
 
-/// Settings adapter only: validation, probing, persistence and secrets live in agentd.
+/// Settings adapter only: validation, probing, persistence and secrets live in hostd.
 public enum ExecutionServices {
   public static func list() async throws -> ExecutionServicesState {
-    try decode(await CoreAgentClient.shared.call("ExecutionServicesRequest"))
+    try decode(await CoreHostClient.shared.call("ExecutionServicesRequest"))
   }
   public static func put(_ value: ExecutionServiceRegistration) async throws -> ExecutionServicesState {
     let fields: [String: Any] = ["id": value.id, "name": value.name, "endpoint": value.endpoint, "workerPublicKey": value.workerPublicKey, "verify": value.verify]
-    return try decode(await CoreAgentClient.shared.call("ExecutionServicePutRequest", fields))
+    return try decode(await CoreHostClient.shared.call("ExecutionServicePutRequest", fields))
   }
   public static func remove(_ id: String) async throws -> ExecutionServicesState {
-    try decode(await CoreAgentClient.shared.call("ExecutionServiceRemoveRequest", ["id": id]))
+    try decode(await CoreHostClient.shared.call("ExecutionServiceRemoveRequest", ["id": id]))
   }
   private static func decode(_ reply: [String: Any]) throws -> ExecutionServicesState {
     try JSONDecoder().decode(ExecutionServicesState.self, from: JSONSerialization.data(withJSONObject: reply))

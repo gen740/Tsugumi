@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import TsugumiApp
+@testable import TsugumiAgentClient
 
 @MainActor private final class HomeReplies {
   var pending: [String: CheckedContinuation<[String: Any], Error>] = [:]
@@ -57,4 +58,15 @@ import Testing
   #expect(!model.homeLoaded && model.recentsError != nil)
   #expect(model.demosLoaded && model.nixpkgsPin == "pin")
   #expect(!model.setupNeeded)
+}
+
+@MainActor @Test func homeShowsHostStateRecoveryInsteadOfAGenericProjectError() async {
+  let message = "The host state folder /private/tmp/host-core was written by another version of Tsugumi. Move or rename this folder, then start Tsugumi again."
+  let model = AppModel(refreshOnInit: false, requestHome: { _, _ in
+    throw CoreHostFailure(code: "state_format", message: message, requestID: nil)
+  })
+  await model.refreshHome()
+  #expect(model.recentsError == message)
+  #expect(model.demosError == message)
+  #expect(model.error == message)
 }

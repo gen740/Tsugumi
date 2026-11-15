@@ -40,12 +40,12 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 
 | Term | Meaning |
 | --- | --- |
-| **`tsugumi-agentd`** | Host service owning Agent runs, settings, Skills, providers, execution authorization and project environment lifecycles ([Architecture](features.md#1-architecture)) |
+| **`tsugumi-hostd`** | Host service owning Agent runs, settings, Skills, providers, execution authorization and project environment lifecycles ([Architecture](features.md#1-architecture)) |
 | **`tsugumid` (the core)** | A process, one per project, that handles the document, the scheduler, Nix evaluation and history |
 | **RPC** | The contract by which the UI, the Web and the Agent talk to `tsugumid` ([Protocol.md](Protocol.md)) |
 | **`op_id`** | The ID of a request that changes something. A resend with the same ID is applied only once |
 | **rev** | The document's revision. A save is based on it, and a save based on an old one is refused as a conflict |
-| **Shared VM** | The one Linux VM that the Mac app and the Mac's `tsugumi` command share. The signed helper holds `vm.lock` and agentd manages its resident project environments ([Architecture](features.md#1-architecture)) |
+| **Shared VM** | The one Linux VM that the Mac app and the Mac's `tsugumi` command share. The signed helper holds `vm.lock` and hostd manages its resident project environments ([Architecture](features.md#1-architecture)) |
 | **`tsugumi-vmd`** | The managing process inside the VM. Starts each project's `tsugumid` with its own uid, namespaces and cgroup |
 | **Worker** | The process that runs a Card's code. Can stay resident across runs ([Worker state](CardGuide.md#worker-state)) |
 | **bubblewrap / Seatbelt** | How Cards are isolated: bubblewrap inside the VM and on Linux, Seatbelt in a Web UI run directly on a Mac from the repository |

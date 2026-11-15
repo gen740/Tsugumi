@@ -393,9 +393,10 @@ extension ProjectSession {
     while true {
       let result: [String: Any]
       do {
-        result = try await CoreAgentClient.shared.call("HostProjectReadRequest",
+        result = try await CoreHostClient.shared.call("HostProjectReadRequest",
           ["path": folder.path, "file_index": fileIndex, "offset": offset])
-      } catch let failure as CoreAgentFailure {
+      } catch let failure as CoreHostFailure {
+        if failure.code == "state_format" { throw failure }
         throw HostProjectError(code: failure.code)
       }
       guard let entries = result["files"] as? [[String: Any]] else {
@@ -1113,10 +1114,10 @@ extension ProjectSession {
       let result: Tsugumi_Host_LayoutProposalT
       if arrange {
         let request = Tsugumi_Host_LayoutArrangeRequestT(); request.scene = scene
-        result = try await CoreAgentClient.shared.layoutCall(.layoutarrangerequest, request)
+        result = try await CoreHostClient.shared.layoutCall(.layoutarrangerequest, request)
       } else {
         let request = Tsugumi_Host_LayoutUntangleRequestT(); request.scene = scene; request.around = around.map(Optional.some)
-        result = try await CoreAgentClient.shared.layoutCall(.layoutuntanglerequest, request)
+        result = try await CoreHostClient.shared.layoutCall(.layoutuntanglerequest, request)
       }
       // Undo, another edit, reconnect or changed measurements invalidate the proposal.
       guard rpc === client, docState() == before, undoStack.last === step,

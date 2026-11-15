@@ -15,31 +15,31 @@ If a server is running with the same data folder, the command asks it to open a 
 
 Register a Linux worker under **Settings → Execution service** to run individual Code Cards remotely. [Remote execution](RemoteExecution.md)
 
-**On a Mac**, the Web host and native app ask host-side `tsugumi-agentd` to manage project environments. Only agentd connects to the signed `tsugumi-vmhost` helper, through `protocol/vm_host.fbs`. [Environment ownership](features.md#1-architecture)
+**On a Mac**, the Web host and native app ask host-side `tsugumi-hostd` to manage project environments. Only hostd connects to the signed `tsugumi-vmhost` helper, through `protocol/vm_host.fbs`. [Environment ownership](features.md#1-architecture)
 
 ```text
 Browser ── WebSocket /rpc ── loopback relay ── vsock ── tsugumid (one per project in the VM)
-   └─ HTTP /api ── Web host ── Host / Agent RPC ── tsugumi-agentd
+   └─ HTTP /api ── Web host ── Host / Agent RPC ── tsugumi-hostd
                                                    └─ private VM RPC ── tsugumi-vmhost
 ```
 
-The Web host supplies its page origins in `EnvironmentRequest`; agentd applies them when starting the project daemon. The browser authenticates to that daemon with its project token. Agent requests run in agentd on the host. [RPC authentication](security.md#6-rpc-authentication)
+The Web host supplies its page origins in `EnvironmentRequest`; hostd applies them when starting the project daemon. The browser authenticates to that daemon with its project token. Agent requests run in hostd on the host. [RPC authentication](security.md#6-rpc-authentication)
 
 The installed Mac command uses the release app's support directory by default:
 
 | Data | Location and sharing |
 | --- | --- |
-| API keys | The same login Keychain items as the app; agentd keeps provisioned keys in memory. Web Keychain-save failures use agentd's private store. [Credential handling](security.md#7-the-models-api-keys-agent) |
+| API keys | The same login Keychain items as the app; hostd keeps provisioned keys in memory. Web Keychain-save failures use hostd's private store. [Credential handling](security.md#7-the-models-api-keys-agent) |
 | VM, store, project control folders | `~/Library/Application Support/Tsugumi/`; override with `TSUGUMI_SUPPORT_DIR` |
-| Recent projects | `recent-projects.json` under agentd's state directory; shared by clients of that service |
+| Recent projects | `recent-projects.json` under hostd's state directory; shared by clients of that service |
 | Default project destination | `~/Documents/Tsugumi` |
-| Language, provider, model, effort, Fast, web search, permission preferences, version note mode | agentd's `desktop` settings profile, shared with the app |
-| Skill folders and ChatGPT accounts | Separate `web:<Web data folder>` profile in agentd |
-| Scripted guide progress | Separate desktop and Web sessions in agentd; shared across that client's windows or tabs |
+| Language, provider, model, effort, Fast, web search, permission preferences, version note mode | hostd's `desktop` settings profile, shared with the app |
+| Skill folders and ChatGPT accounts | Separate `web:<Web data folder>` profile in hostd |
+| Scripted guide progress | Separate desktop and Web sessions in hostd; shared across that client's windows or tabs |
 
 The helper holds `vm/vm.lock`. The VM remains resident when the Web host or app disconnects. Explicit Host runtime shutdown stops it. Use matching app and CLI versions with a shared support directory.
 
-**On Linux**, agentd starts a native `tsugumid` per project; Cards use bubblewrap (`nix/cli.nix`). Web data defaults to `~/.local/share/tsugumi-web`; settings and saved provider keys are in agentd's owner-only store. The terminal uses a host shell through agentd's HostTerminal RPC; agentd owns its PTY and forwards input, resize and output.
+**On Linux**, hostd starts a native `tsugumid` per project; Cards use bubblewrap (`nix/cli.nix`). Web data defaults to `~/.local/share/tsugumi-web`; settings and saved provider keys are in hostd's owner-only store. The terminal uses a host shell through hostd's HostTerminal RPC; hostd owns its PTY and forwards input, resize and output.
 
 **On Windows**, `tsugumi.cmd` runs the Linux distribution inside WSL2 (`cli/install.ps1`). The server detects `WSL_DISTRO_NAME` and opens the Windows browser. WSL localhost forwarding exposes the Web host and project ports to that browser.
 
@@ -55,12 +55,12 @@ ssh -L 8780:127.0.0.1:8780 -L <port shown>:127.0.0.1:<port shown> <machine>
 
 ## Building and starting
 
-How to run it from the repository (using agentd and this host's `tsugumid`).
+How to run it from the repository (using hostd and this host's `tsugumid`).
 
 Prerequisites: Nix (with flakes enabled), Node.js 22 or later, and a browser with WebGPU (Chrome / Edge / Safari 26 or later).
 
 ```bash
-nix develop --command bash -c 'cmake -S . -B build -G Ninja && ninja -C build tsugumid tsugumi-worker tsugumi-agentd'
+nix develop --command bash -c 'cmake -S . -B build -G Ninja && ninja -C build tsugumid tsugumi-worker tsugumi-hostd'
 ```
 
 ```bash
@@ -84,11 +84,11 @@ The command and the [Claude Code plugin](claude-code.md) discover the host throu
 | Environment variable | Meaning |
 | --- | --- |
 | `TSUGUMID` / `TSUGUMI_WORKER` / `TSUGUMI_SDK_DIR` | Project daemon, worker and SDK locations (defaults under `build/` and `sdk/`) |
-| `TSUGUMI_AGENTD` / `TSUGUMI_AGENT_STATE` / `TSUGUMI_AGENT_SCHEMA` | Agent service binary, state directory and generated `agent.bfbs` schema; defaults are selected by `web/server/coreAgent.ts` |
+| `TSUGUMI_HOSTD` / `TSUGUMI_HOST_STATE` / `TSUGUMI_AGENT_SCHEMA` | Host service binary, state directory and generated `agent.bfbs` schema; defaults are selected by `web/server/coreHost.ts` |
 | `TSUGUMI_VM_X86=qemu` | The Mac's shared VM runs x86_64-linux Cards with qemu instead of Rosetta (by default Rosetta when it is installed; [Another system](features.md#another-system-x86_64-linux)). Also read by the desktop app |
 | `TSUGUMI_VMHOST` / `TSUGUMI_VM_IMAGE` / `TSUGUMI_VM_SOURCE` / `TSUGUMI_SUPPORT_DIR` | `tsugumi-vmhost`, the boot disk, the source and the support folder when using the Mac's shared VM (set by `cli/tsugumi-macos`) |
 | `TSUGUMI_WEB_DATA` | Web host data folder and profile identity (default on macOS: `~/Library/Application Support/Tsugumi/web`) |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Web-process API keys provisioned to agentd in memory; take precedence over saved keys |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Web-process API keys provisioned to hostd in memory; take precedence over saved keys |
 | `TSUGUMI_CHATGPT_ISSUER` / `TSUGUMI_CHATGPT_API` | Where ChatGPT sign-in and plan requests go (for tests; by default `https://auth.openai.com` and `https://api.openai.com`) |
 
 The TypeScript bindings and `tsugumi.bfbs` are generated into `web/src/gen` by `npm run gen` (using `flatc` from the development shell) and are not in Git.
@@ -99,9 +99,9 @@ Starting the repository's daemon directly on a Mac uses Seatbelt. Review its [we
 
 ## Several projects
 
-Each browser tab can open a different project (how this corresponds to the app's windows: [Several projects](Usage.md#several-projects)). ⌘O, demos and duplicates from a project's tab open in a new tab, and "Open Home in a New Tab" on the Canvas adds a Home tab. A browser cannot bring another tab to the front, though, so the same project can be open in two tabs (equal clients of the same `tsugumid`; a save in one shows in the other). Going back Home closes that project's windows, such as Card settings. If no other tab shows the project, its terminal tabs and chat observation close; agentd, the project daemon and active core conversations continue. Reopening the project reconnects to them.
+Each browser tab can open a different project (how this corresponds to the app's windows: [Several projects](Usage.md#several-projects)). ⌘O, demos and duplicates from a project's tab open in a new tab, and "Open Home in a New Tab" on the Canvas adds a Home tab. A browser cannot bring another tab to the front, though, so the same project can be open in two tabs (equal clients of the same `tsugumid`; a save in one shows in the other). Going back Home closes that project's windows, such as Card settings. If no other tab shows the project, its terminal tabs and chat observation close; hostd, the project daemon and active core conversations continue. Reopening the project reconnects to them.
 
-agentd manages one `tsugumid` per project. The Web host knows which tab shows which project (`POST /api/page`), so a project Claude Code opened is shown in a tab showing it or in a Home tab, and a tab showing another project is not switched.
+hostd manages one `tsugumid` per project. The Web host knows which tab shows which project (`POST /api/page`), so a project Claude Code opened is shown in a tab showing it or in a Home tab, and a tab showing another project is not switched.
 
 ## Shortcuts
 

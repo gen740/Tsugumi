@@ -274,19 +274,19 @@ struct DisplaySnapshot {
 final class ProjectSession {
   /// Replaceable RPC boundary for embedded sessions and tests.
   var prepareSubgraph: (String, [String], String) async throws -> (project: String, external: String, link: String) = {
-    try await CoreAgentClient.shared.makeSubgraph(project: $0, cards: $1, id: $2)
+    try await CoreHostClient.shared.makeSubgraph(project: $0, cards: $1, id: $2)
   }
   var prepareTemplate: (String, String) async throws -> (definition: String, files: [(path: String, text: String)]) = {
-    try await CoreAgentClient.shared.writeTemplate(name: $0, id: $1)
+    try await CoreHostClient.shared.writeTemplate(name: $0, id: $1)
   }
   var prepareConnect: (String, (String, String), (String, String), String?) async throws -> (state: String, insertedId: String, needsFork: Bool) = {
-    try await CoreAgentClient.shared.connectDocuments(state: $0, from: $1, to: $2, forkId: $3)
+    try await CoreHostClient.shared.connectDocuments(state: $0, from: $1, to: $2, forkId: $3)
   }
   var prepareCopy: (String, [String], String, String, String?) async throws -> (edits: String, files: [(from: String, to: String)]) = {
-    try await CoreAgentClient.shared.copyDocuments(state: $0, paths: $1, from: $2, to: $3, name: $4)
+    try await CoreHostClient.shared.copyDocuments(state: $0, paths: $1, from: $2, to: $3, name: $4)
   }
   var prepareMerge: (String, String, String) async throws -> (merged: String, conflicts: [String]) = {
-    try await CoreAgentClient.shared.mergeDocuments(base: $0, ours: $1, theirs: $2)
+    try await CoreHostClient.shared.mergeDocuments(base: $0, ours: $1, theirs: $2)
   }
   var cardIdProvider: ((String, String) async throws -> String)?
   let identity: ProjectIdentity
@@ -1573,15 +1573,15 @@ final class ProjectSession {
       let removed = ids(confirmedProject).subtracting(ids(next))
       if !removed.isEmpty {
         let original = layoutChange?.json ?? confirmedLayout.serialized()
-        let cleaned = try await CoreAgentClient.shared.validateLayout(original, removedCards: removed.sorted())
+        let cleaned = try await CoreHostClient.shared.validateLayout(original, removedCards: removed.sorted())
         if let layoutChange { layoutChange.json = cleaned } else { changes.append(Change.setLayout(cleaned)) }
       }
     }
     for change in changes {
       if let value = change.value?.value as? Tsugumi_RPC_SetLayoutT {
-        _ = try await CoreAgentClient.shared.validateLayout(value.json)
+        _ = try await CoreHostClient.shared.validateLayout(value.json)
       } else if let value = change.value?.value as? Tsugumi_RPC_PutSourceT, value.path.range(of: #"^(?:externals/[^/]+/)+layout\.json$"#, options: .regularExpression) != nil {
-        _ = try await CoreAgentClient.shared.validateLayout(String(decoding: value.bytes, as: UTF8.self))
+        _ = try await CoreHostClient.shared.validateLayout(String(decoding: value.bytes, as: UTF8.self))
       }
     }
     let result = try await client.save(baseRev: baseRev, opId: op, origin: "ui:\(viewId.uuidString.lowercased())",

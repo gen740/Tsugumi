@@ -76,7 +76,7 @@ TEST_F(AgentFixture, HostFramesAreRejectedByTheAgentListener) {
                  .Union();
            }),
       std::runtime_error);
-  EXPECT_TRUE(agent.Alive());
+  EXPECT_TRUE(service.Alive());
 }
 // Host lifecycle scenarios need no project daemon and no conversation.
 class HostProjectsFixture : public AgentFixture {
@@ -238,8 +238,8 @@ TEST_F(HostProjectsFixture,
   const auto before = Recents().View();
   external.reset();
   human.reset();
-  agent.Stop();
-  StartAgent();
+  service.Stop();
+  StartHost();
   EXPECT_EQ(Recents().View(), before);
   std::filesystem::remove_all(directory.path / "recent-31");
   EXPECT_EQ(JsonString(Recents().View(), "/0/name"), "recent-30");

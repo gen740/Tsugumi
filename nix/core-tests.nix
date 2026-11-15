@@ -101,7 +101,7 @@ clangStdenv.mkDerivation {
       export TSUGUMI_SUPPORT_DIR
       status=0
       "$@" || status=$?
-      pkill -TERM -f "tsugumi-agentd --state-dir $TSUGUMI_SUPPORT_DIR" 2>/dev/null || true
+      pkill -TERM -f "tsugumi-hostd --state-dir $TSUGUMI_SUPPORT_DIR" 2>/dev/null || true
       rm -rf "$TSUGUMI_SUPPORT_DIR"
       exit "$status"
     fi
@@ -134,7 +134,7 @@ clangStdenv.mkDerivation {
         ]
       } \
       --set TSUGUMID ${core}/bin/tsugumid \
-      --set TSUGUMI_AGENTD ${core}/bin/tsugumi-agentd \
+      --set TSUGUMI_HOSTD ${core}/bin/tsugumi-hostd \
       ${lib.optionalString clangStdenv.hostPlatform.isLinux "--set TSUGUMI_REMOTE_TEST_RAW_WORKER ${core}/bin/tsugumi-remote-worker"} \
       --set TSUGUMI_WORKER ${core}/bin/tsugumi-worker \
       --set TSUGUMI_RPC_CLIENT ${core}/bin/tsugumi-rpc \

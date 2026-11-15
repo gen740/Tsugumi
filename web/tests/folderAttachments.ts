@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { ChatController } from '../src/model/chat'
 import { chatRoutes } from '../server/chat'
-import { CoreAgentHost } from '../server/coreAgent'
+import { CoreHost } from '../server/coreHost'
 
 // One server request shares all selected folders before registering them. Equal
 // names in different parent folders must keep separate resource identities.
@@ -14,9 +14,9 @@ const folders = ['first/data', 'second/data'].map(p => path.join(root, p))
 for (const folder of folders) fs.mkdirSync(folder, { recursive: true })
 const shares: string[][] = []
 const registered: any[] = []
-const originalProject = CoreAgentHost.prototype.project
+const originalProject = CoreHost.prototype.project
 let projects = 0
-CoreAgentHost.prototype.project = async function () {
+CoreHost.prototype.project = async function () {
   projects++
   this.user.call = async (method: string, value: any) => {
     assert.equal(method, 'RegisterFolderRequest')
@@ -69,7 +69,7 @@ try {
   } finally { globalThis.fetch = originalFetch }
 } finally {
   restoreSettings()
-  CoreAgentHost.prototype.project = originalProject
+  CoreHost.prototype.project = originalProject
   fs.rmSync(root, { recursive: true, force: true })
 }
 console.log('multiple folder attachments: passed')

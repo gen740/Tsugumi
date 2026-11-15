@@ -144,7 +144,7 @@ auto ObjectSchema(const reflection::Object &object, int depth, bool top)
     if (field->required())
       required.push_back(json::Quote(name));
   }
-  // Agent save conveniences belong to agentd, not the project protocol.
+  // Agent save conveniences belong to hostd, not the project protocol.
   if (object.name()->str() == "Tsugumi.RPC.PutDefinition") {
     properties["fill_description"] = R"({"type":"string","description":"Fill an empty description, preserving existing text."})";
     properties["fill_context"] = R"({"type":"string","description":"Fill an empty context, preserving existing text."})";

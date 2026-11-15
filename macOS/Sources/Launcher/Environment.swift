@@ -56,7 +56,7 @@ public enum EnvironmentState: Sendable, Equatable {
 public struct ProjectIdentity: Sendable, Hashable {
   public let id: String  // 16 hex chars derived from device + inode
   public let url: URL    // canonical path
-  // Presentation hint; agentd independently authorizes the filesystem identity.
+  // Presentation hint; hostd independently authorizes the filesystem identity.
   public let supportsExternalExecution: Bool
 
   public init(url: URL) throws {

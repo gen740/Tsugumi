@@ -1,12 +1,12 @@
 // Reading an interrupted conversation never starts work, in either adapter.
 import assert from 'node:assert/strict'
-import { RemoteAgent, type CoreAgentHost } from '../server/coreAgent'
+import { RemoteAgent, type CoreHost } from '../server/coreHost'
 
 const operation = { kind: 'tool', id: 'call-7', name: 'project_save', arguments: '{"changes":[]}' }
 const conversation = { id: 's', messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }], archive: [], tools: [], usage: { inputTokens: 0, outputTokens: 0 }, updatedAt: 0 }
 const snapshot = { conversation, busy: false, resumable: true, continuable: true, interruptedOperation: operation, event_seq: 7n }
 const calls: { method: string; fields: any }[] = []
-const host = { user: { async call(method: string, fields: any) { calls.push({ method, fields }); return snapshot } } } as unknown as CoreAgentHost
+const host = { user: { async call(method: string, fields: any) { calls.push({ method, fields }); return snapshot } } } as unknown as CoreHost
 const remote = await new RemoteAgent(host, 's').open()
 await remote.refresh()
 await remote.refresh()

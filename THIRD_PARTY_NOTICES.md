@@ -181,14 +181,14 @@ applicable when distributing results or datasets.
 
 ## Host-side remote-worker TLS
 
-The macOS app bundles OpenSSL 3 (`libssl` and `libcrypto`) with `tsugumi-agentd`
+The macOS app bundles OpenSSL 3 (`libssl` and `libcrypto`) with `tsugumi-hostd`
 for TLS 1.3 and Ed25519 public-key authentication. OpenSSL is licensed under
 Apache-2.0; its full license is included in `licenses/openssl/LICENSE.txt`.
 Linux packages retain the same OpenSSL dependency through Nix.
 
 ## Host-side reading of project versions
 
-`tsugumi-agentd` in the macOS app contains libgit2 1.9.7 as a static library
+`tsugumi-hostd` in the macOS app contains libgit2 1.9.7 as a static library
 ([nix/libgit2-local.nix](nix/libgit2-local.nix)), built without network
 transports. libgit2 is licensed under GPL-2.0-only with its linking exception,
 which permits linking it into a program under another license. The build also

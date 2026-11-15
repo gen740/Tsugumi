@@ -1,4 +1,4 @@
-// Signed Virtualization.framework adapter driven exclusively by agentd.
+// Signed Virtualization.framework adapter driven exclusively by hostd.
 import Darwin
 import FlatBuffers
 import Foundation

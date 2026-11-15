@@ -1,4 +1,4 @@
-// Browser adapter: OAuth, token storage and rotation belong to agentd.
+// Browser adapter: OAuth, token storage and rotation belong to hostd.
 export interface ChatGPTEndpoints {
   issuer: string
   /** The resource the tokens are for (the Responses API). */

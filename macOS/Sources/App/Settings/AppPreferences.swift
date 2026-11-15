@@ -123,7 +123,7 @@ struct SkillFolder: Codable, Hashable, Identifiable {
 }
 
 /// Presentation preferences remain in UserDefaults. Host settings are revisioned
-/// snapshots of agentd; project settings live in the project documents.
+/// snapshots of hostd; project settings live in the project documents.
 @MainActor
 @Observable
 final class AppPreferences {

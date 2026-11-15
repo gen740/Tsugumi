@@ -206,7 +206,7 @@ import TsugumiAgentClient
     var left = try JSONValue.parse(again.projectJson)
     let kept = (left["canvas"]?["cards"]?.array ?? []).filter { $0["id"]?.string != "b" }
     left["canvas"]?["cards"] = .array(kept)
-    let cleaned = try await CoreAgentClient.shared.validateLayout(again.layoutJson, removedCards: ["b"])
+    let cleaned = try await CoreHostClient.shared.validateLayout(again.layoutJson, removedCards: ["b"])
     _ = try await s.rpc!.save(baseRev: again.rev ?? 0, opId: UUID(), origin: "agent",
                               changes: [Change.setProject(left.serialized()), Change.removeDefinition(id: "b"), Change.setLayout(cleaned)])
     for _ in 0..<200 where s.resolution[renamed] != nil { try await Task.sleep(for: .milliseconds(25)) }

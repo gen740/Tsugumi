@@ -48,7 +48,7 @@ import TsugumiRPC
   @Test func providerInputReturnsOnlyStatus() async throws {
     let fixture = try AuthenticationFixture()
     defer { fixture.stop() }
-    let client = CoreAgentClient()
+    let client = CoreHostClient()
     let p = Tsugumi_Host_ProviderInputT()
     p.apiKey = "NATIVE_SECRET_SENTINEL"
     let reply = try await client.call("ProviderSetRequest", ["profile": "native-test", "id": "anthropic",
@@ -70,7 +70,7 @@ private final class AuthenticationFixture {
   private let previousState: String?
 
   init() throws {
-    previousState = ProcessInfo.processInfo.environment["TSUGUMI_AGENT_STATE"]
+    previousState = ProcessInfo.processInfo.environment["TSUGUMI_HOST_STATE"]
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
       .appendingPathComponent("../../../..").standardizedFileURL
     let build = ProcessInfo.processInfo.environment["TSUGUMI_BUILD_DIR"].map { URL(fileURLWithPath: $0) }
@@ -78,9 +78,9 @@ private final class AuthenticationFixture {
     port = Self.freePort()
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let state = directory.appendingPathComponent("state")
-    setenv("TSUGUMI_AGENT_STATE", state.path, 1)
-    daemon.executableURL = ProcessInfo.processInfo.environment["TSUGUMI_AGENTD"].map { URL(fileURLWithPath: $0) }
-      ?? build.appendingPathComponent("core/tsugumi-agentd")
+    setenv("TSUGUMI_HOST_STATE", state.path, 1)
+    daemon.executableURL = ProcessInfo.processInfo.environment["TSUGUMI_HOSTD"].map { URL(fileURLWithPath: $0) }
+      ?? build.appendingPathComponent("core/tsugumi-hostd")
     daemon.arguments = ["--state-dir", state.path, "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--demos-dir", root.appendingPathComponent("demos").path]
     daemon.standardOutput = FileHandle.nullDevice
@@ -94,7 +94,7 @@ private final class AuthenticationFixture {
       try provider.run()
       let deadline = Date().addingTimeInterval(15)
       while Date() < deadline {
-        if FileManager.default.fileExists(atPath: state.appendingPathComponent("agent.ready").path),
+        if FileManager.default.fileExists(atPath: state.appendingPathComponent("host.ready").path),
            Self.accepts(port), provider.isRunning, daemon.isRunning { return }
         usleep(20_000)
       }
@@ -109,8 +109,8 @@ private final class AuthenticationFixture {
       while process.isRunning && Date() < deadline { usleep(20_000) }
       if process.isRunning { kill(process.processIdentifier, SIGKILL) }
     }
-    if let previousState { setenv("TSUGUMI_AGENT_STATE", previousState, 1) }
-    else { unsetenv("TSUGUMI_AGENT_STATE") }
+    if let previousState { setenv("TSUGUMI_HOST_STATE", previousState, 1) }
+    else { unsetenv("TSUGUMI_HOST_STATE") }
     try? FileManager.default.removeItem(at: directory)
   }
 

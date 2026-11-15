@@ -30,7 +30,7 @@ TEST_F(AgentFixture, ConversationSnapshotReportsTheAcceptedModelAcrossHostEditsA
         selected.HostValue()->value_as_Settings()->revision(), b.CreateVector(std::vector{item})).Union();
   }).Code().empty());
   check();
-  human.reset(); external.reset(); host.reset(); agent.Stop(); StartAgent();
+  human.reset(); external.reset(); host.reset(); service.Stop(); StartHost();
   check();
 }
 namespace R = Tsugumi::RPC;
@@ -79,7 +79,7 @@ TEST_F(AgentFixture, ProjectProtocolCannotBeUsedOnTheAgentSocket) {
               2s)
           .get();
   EXPECT_TRUE(result.error);
-  EXPECT_TRUE(agent.Alive());
+  EXPECT_TRUE(service.Alive());
   EXPECT_TRUE(
       Call(*external, A::RequestPayload::ToolCatalogRequest,
            [](Builder& b) { return A::CreateToolCatalogRequest(b).Union(); })
@@ -255,8 +255,8 @@ TEST_F(AgentFixture, RestartAndObservationLeaveTheTurnInterruptedUntilResume) {
   host.reset();
   external.reset();
   human.reset();
-  agent.Stop(true);
-  StartAgent();
+  service.Stop(true);
+  StartHost();
   model.Release();
   EXPECT_FALSE(model.WaitForRequests(2, 150ms));
   // Create is also the public operation used when opening an existing chat.
@@ -309,8 +309,8 @@ TEST_F(AgentProjectFixture,
   host.reset();
   external.reset();
   human.reset();
-  agent.Stop(true);
-  StartAgent();
+  service.Stop(true);
+  StartHost();
   const auto snapshot = Get(conversation).View();
   EXPECT_TRUE(JsonBool(snapshot, "/resumable"));
   EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/kind"), "tool");
@@ -642,8 +642,8 @@ TEST_F(AgentFixture,
   model.Release();
   external.reset();
   human.reset();
-  agent.Stop();
-  StartAgent();
+  service.Stop();
+  StartHost();
   EXPECT_EQ(
       JsonString(Get(conversation).View(), "/conversation/helpers/0/state"),
       "interrupted");
@@ -718,7 +718,7 @@ TEST_F(AgentFixture, HelpersShareTheParallelLimitAcrossDelegateCalls) {
       // A timed-out client does not cancel an external delegate call. Kill
       // this fixture's service before destroying the provider, so outstanding
       // helpers cannot retry against a dead provider during teardown.
-      if (!completed) agent.Stop(true);
+      if (!completed) service.Stop(true);
     };
     std::unique_ptr<void, decltype(cleanup)> guard(this, cleanup);
     auto delegate = [&](const std::string& operation) {
@@ -790,12 +790,12 @@ TEST_F(AgentFixture, HelpersShareTheParallelLimitAcrossDelegateCalls) {
         throw std::runtime_error(
             std::string(batch) +
             " did not finish after releasing the provider\n" +
-            Read(directory.path / "agent.log"));
+            Read(directory.path / "host.log"));
       auto result = pending.get();
       if (result.error)
         throw std::runtime_error(std::string(batch) + ": " +
                                  result.error.message + "\n" +
-                                 Read(directory.path / "agent.log"));
+                                 Read(directory.path / "host.log"));
       return {std::move(result.bytes)};
     };
     ASSERT_TRUE(finish(first, "batch-one").Code().empty());

@@ -62,14 +62,14 @@ target_compile_options(tsugumi_agent_rpc_tests PRIVATE -Wall -Wextra -Werror -Wf
 target_compile_definitions(tsugumi_agent_rpc_tests PRIVATE
   TSUGUMI_GUIDE_TEST_ROOT="${_test_guide_root}"
   TSUGUMI_ENVIRONMENT_DAEMON="${_test_environment_daemon}"
-  TSUGUMI_AGENT_BINARY="$<TARGET_FILE:tsugumi-agentd>"
+  TSUGUMI_HOST_BINARY="$<TARGET_FILE:tsugumi-hostd>"
   TSUGUMI_PROJECT_BINARY="${_test_mock}"
   TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
   TSUGUMI_TEST_SDK="${_test_sdk}")
 add_executable(tsugumi-environment-daemon-double doubles/environment_daemon.cc)
-target_link_libraries(tsugumi-environment-daemon-double PRIVATE tsugumi_agent_core)
+target_link_libraries(tsugumi-environment-daemon-double PRIVATE tsugumi_host_core)
 target_compile_options(tsugumi-environment-daemon-double PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
-add_dependencies(tsugumi_agent_rpc_tests tsugumi-agentd tsugumid-mock tsugumi-environment-daemon-double)
+add_dependencies(tsugumi_agent_rpc_tests tsugumi-hostd tsugumid-mock tsugumi-environment-daemon-double)
 include(GoogleTest)
 gtest_discover_tests(tsugumi_agent_rpc_tests TEST_PREFIX "core_agent." DISCOVERY_MODE PRE_TEST
   TEST_FILTER "-RealEnvironmentFixture.AuthenticatesTheRealProjectServiceBeforeReady"
@@ -131,7 +131,7 @@ if(TSUGUMI_INSTALLED_CORE)
 endif()
 
 # Storage, Skill reads, environment adapters and thought timing need no sockets.
-add_executable(tsugumi_host_settings_tests agent/store_test.cc host/components_test.cc host/service_contract_test.cc agent/document_edits_test.cc agent/version_text_test.cc agent/format_test.cc agent/catalog_test.cc agent/attached_folder_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc host/layout_test.cc host/layout_service_test.cc agent_fixture_server.cc agent/helper_scope_test.cc agent/native_terminal_test.cc agent/native_environment_test.cc agent/project_files_test.cc)
+add_executable(tsugumi_host_settings_tests agent/store_test.cc host/components_test.cc host/state_format_test.cc host/service_contract_test.cc agent/document_edits_test.cc agent/version_text_test.cc agent/format_test.cc agent/catalog_test.cc agent/attached_folder_test.cc agent/save_policy_test.cc agent/settings_store_test.cc agent/skills_read_test.cc agent/environment_adapter_test.cc agent/thought_schedule_test.cc host/layout_test.cc host/layout_service_test.cc agent_fixture_server.cc agent/helper_scope_test.cc agent/native_terminal_test.cc agent/native_environment_test.cc agent/project_files_test.cc)
 target_include_directories(tsugumi_host_settings_tests PRIVATE ${_core_headers})
 target_compile_definitions(tsugumi_host_settings_tests PRIVATE
   TSUGUMI_SERVICE_FIXTURES="${_test_guide_root}/tests/fixtures/service-contract.json"
@@ -142,7 +142,7 @@ if(TSUGUMI_INSTALLED_CORE)
     DESTINATION share/tsugumi/guide-tests/tests/fixtures)
 endif()
 target_compile_definitions(tsugumi_host_settings_tests PRIVATE TSUGUMI_LAYOUT_FIXTURES="tests/fixtures")
-target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_agent_core tsugumi_core PkgConfig::LIBGIT2 GTest::gtest_main)
+target_link_libraries(tsugumi_host_settings_tests PRIVATE tsugumi_host_core tsugumi_core PkgConfig::LIBGIT2 GTest::gtest_main)
 target_compile_options(tsugumi_host_settings_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 gtest_discover_tests(tsugumi_host_settings_tests TEST_PREFIX "core_host_settings." DISCOVERY_MODE PRE_TEST
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../..")
@@ -152,7 +152,7 @@ endif()
 
 # Lets native client fixtures exercise the real pure host edit without sockets.
 add_executable(tsugumi_document_edit_driver agent/document_edit_driver.cc)
-target_link_libraries(tsugumi_document_edit_driver PRIVATE tsugumi_agent_core)
+target_link_libraries(tsugumi_document_edit_driver PRIVATE tsugumi_host_core)
 target_compile_options(tsugumi_document_edit_driver PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough -Wmissing-designated-field-initializers)
 if(TSUGUMI_INSTALLED_CORE)
   install(TARGETS tsugumi_document_edit_driver RUNTIME DESTINATION libexec/tsugumi-tests)

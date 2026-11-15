@@ -59,7 +59,7 @@ public struct VMResources: Sendable, Equatable {
 }
 
 
-/// Installation details passed to agentd; this never launches a helper or VM.
+/// Installation details passed to hostd; this never launches a helper or VM.
 public enum HostRuntimeConfiguration {
   public static func arguments(support: URL, image: VMImage? = VMImage.find(), resources: VMResources = .default) -> [String] {
     let environment = ProcessInfo.processInfo.environment

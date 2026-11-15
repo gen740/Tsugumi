@@ -18,7 +18,7 @@ public struct AgentProject: Sendable {
   }
 }
 
-public struct CoreAgentFailure: LocalizedError, CustomStringConvertible, Sendable {
+public struct CoreHostFailure: LocalizedError, CustomStringConvertible, Sendable {
   public let code: String
   public let message: String
   public let requestID: String?
@@ -26,8 +26,8 @@ public struct CoreAgentFailure: LocalizedError, CustomStringConvertible, Sendabl
   public var errorDescription: String? { message }
 }
 
-/// A presentation snapshot of agentd's catalogs. Persistence and refresh policy
-/// belong to agentd; this lets an open native menu draw without an actor hop.
+/// A presentation snapshot of hostd's catalogs. Persistence and refresh policy
+/// belong to hostd; this lets an open native menu draw without an actor hop.
 public final class ModelCatalogSnapshot: @unchecked Sendable {
   public static let shared = ModelCatalogSnapshot()
   private let lock = NSLock()
@@ -52,8 +52,8 @@ public final class ModelCatalogSnapshot: @unchecked Sendable {
 
 /// Binary Agent and Host connections share the project's C ABI byte transport.
 /// Framing, verification, deadlines and pending requests belong to client/.
-public actor CoreAgentClient {
-  public static let shared = CoreAgentClient()
+public actor CoreHostClient {
+  public static let shared = CoreHostClient()
   private let supportOverride: URL?
   private let keyProfile = "macos:keychain:" + UUID().uuidString
 
@@ -74,12 +74,12 @@ public actor CoreAgentClient {
   }
 
   private var stateDirectory: URL {
-    if let path = ProcessInfo.processInfo.environment["TSUGUMI_AGENT_STATE"] { return URL(fileURLWithPath: path) }
-    if let supportOverride { return supportOverride.appendingPathComponent("agent-core") }
+    if let path = ProcessInfo.processInfo.environment["TSUGUMI_HOST_STATE"] { return URL(fileURLWithPath: path) }
+    if let supportOverride { return supportOverride.appendingPathComponent("host-core") }
     let folder = Bundle.main.object(forInfoDictionaryKey: "TsugumiChannel") as? String == "release" ? "Tsugumi" : "Tsugumi-dev"
     let support = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"].map { URL(fileURLWithPath: $0) }
       ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/" + folder)
-    return support.appendingPathComponent("agent-core")
+    return support.appendingPathComponent("host-core")
   }
 
   private static var repository: URL {
@@ -97,14 +97,14 @@ public actor CoreAgentClient {
       ?? Self.repository.appendingPathComponent("build")
     let built = build.appendingPathComponent(component).appendingPathComponent(name)
     guard FileManager.default.isExecutableFile(atPath: built.path) else {
-      throw CoreAgentFailure(code: "unavailable", message: "The core Agent executable is missing: \(name)", requestID: nil)
+      throw CoreHostFailure(code: "unavailable", message: "The host service executable is missing: \(name)", requestID: nil)
     }
     return built
   }
 
   private func ready() async throws -> [String: Any] {
     let state = stateDirectory
-    let file = state.appendingPathComponent("agent.ready")
+    let file = state.appendingPathComponent("host.ready")
     func read() -> [String: Any]? {
       guard let bytes = try? Data(contentsOf: file),
             let object = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
@@ -113,16 +113,20 @@ public actor CoreAgentClient {
       return object
     }
     if let existing = read() { return existing }
-    try FileManager.default.createDirectory(at: state, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-    let directory = URL(fileURLWithPath: "/private/tmp", isDirectory: true).appendingPathComponent("tsugumi-agent-\(UUID().uuidString)")
+    let directory = URL(fileURLWithPath: "/private/tmp", isDirectory: true).appendingPathComponent("tsugumi-host-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     let daemon = Process()
-    daemon.executableURL = try executable("tsugumi-agentd", environment: "TSUGUMI_AGENTD", component: "core")
+    daemon.executableURL = try executable("tsugumi-hostd", environment: "TSUGUMI_HOSTD", component: "core")
     let demos = Bundle.main.url(forResource: "demos", withExtension: nil) ?? Self.repository.appendingPathComponent("demos")
     daemon.arguments = ["--state-dir", state.path, "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--demos-dir", demos.path]
     daemon.arguments! += runtimeArguments ?? HostRuntimeConfiguration.arguments(support: state.deletingLastPathComponent())
-    let log = state.appendingPathComponent("agent.log")
+    // The service creates and numbers its state folder. Until then, its usual
+    // stderr log lives beside state (on the same filesystem) until startup succeeds.
+    let stateLog = state.appendingPathComponent("host.log")
+    let parent = state.deletingLastPathComponent()
+    try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    let log = FileManager.default.fileExists(atPath: state.path) ? stateLog : parent.appendingPathComponent(".host-startup-\(UUID().uuidString).log")
     if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil, attributes: [.posixPermissions: 0o600]) }
     let handle = try FileHandle(forWritingTo: log)
     try handle.seekToEnd()
@@ -131,9 +135,15 @@ public actor CoreAgentClient {
     daemon.standardInput = FileHandle.nullDevice
     try daemon.run()
     try handle.close()
-    return try await AgentReadiness.wait(read: read, exitStatus: {
+    let value = try await HostReadiness.wait(read: read, exitStatus: {
       daemon.isRunning ? nil : daemon.terminationStatus
-    }, log: log)
+    }, log: log, state: state)
+    if log != stateLog, value["pid"] as? Int32 == daemon.processIdentifier {
+      if rename(log.path, stateLog.path) != 0 {
+        throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+      }
+    }
+    return value
   }
 
   private func connect() async throws {
@@ -149,7 +159,7 @@ public actor CoreAgentClient {
     let ready = try await ready()
     guard let agentSocket = ready["unix_socket"] as? String, let hostSocket = ready["host_socket"] as? String,
           let token = ready["user_token"] as? String else {
-      throw CoreAgentFailure(code: "protocol", message: "Invalid service endpoints", requestID: nil)
+      throw CoreHostFailure(code: "protocol", message: "Invalid service endpoints", requestID: nil)
     }
     let identity = UUID()
     connectionID = identity
@@ -187,7 +197,7 @@ public actor CoreAgentClient {
 
   private func exchange(_ method: String, _ fields: [String: Any], host: Bool) async throws -> [String: Any] {
     guard let transport = transports[host], nextID < UInt64.max else {
-      throw CoreAgentFailure(code: "disconnected", message: "The service connection is closed", requestID: nil)
+      throw CoreHostFailure(code: "disconnected", message: "The service connection is closed", requestID: nil)
     }
     nextID += 1
     let frame = try ServiceWire.encode(method, fields: fields, id: nextID, host: host)
@@ -232,9 +242,9 @@ public actor CoreAgentClient {
     let root: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
     let result = (Tsugumi_Host_MessageT(root).payload?.value as? Tsugumi_Host_ReplyT)?.value?.value
     if let failure = result as? Tsugumi_Service_FailureT {
-      throw CoreAgentFailure(code: failure.code, message: failure.message, requestID: failure.requestId)
+      throw CoreHostFailure(code: failure.code, message: failure.message, requestID: failure.requestId)
     }
-    guard let result = result as? T else { throw CoreAgentFailure(code: "protocol", message: "Invalid layout reply", requestID: nil) }
+    guard let result = result as? T else { throw CoreHostFailure(code: "protocol", message: "Invalid layout reply", requestID: nil) }
     return result
   }
 
@@ -267,13 +277,13 @@ public actor CoreAgentClient {
 
   public func format(path: String, text: String) async throws -> Tsugumi_Host_FileFormatResultT {
     let reply = try await call("FileFormatRequest", ["path": path, "text": text])
-    guard let result = reply["result"] as? Tsugumi_Host_FileFormatResultT else { throw CoreAgentFailure(code: "protocol", message: "Missing format result", requestID: nil) }
+    guard let result = reply["result"] as? Tsugumi_Host_FileFormatResultT else { throw CoreHostFailure(code: "protocol", message: "Missing format result", requestID: nil) }
     return result
   }
 
   public func versionGraph(project: String, language: String) async throws -> Tsugumi_RPC_VersionGraphT {
     let reply = try await call("HostVersionGraphRequest", ["project": project, "language": language])
-    guard let result = reply["result"] as? Tsugumi_RPC_VersionGraphT else { throw CoreAgentFailure(code: "protocol", message: "Missing version graph", requestID: nil) }
+    guard let result = reply["result"] as? Tsugumi_RPC_VersionGraphT else { throw CoreHostFailure(code: "protocol", message: "Missing version graph", requestID: nil) }
     return result
   }
 
@@ -281,7 +291,7 @@ public actor CoreAgentClient {
     var fields: [String: Any] = ["project": project, "commit": commit]
     if let from { fields["from_commit"] = from }
     let reply = try await call("HostVersionDiffRequest", fields)
-    guard let result = reply["result"] as? Tsugumi_Host_VersionDiffT else { throw CoreAgentFailure(code: "protocol", message: "Missing version diff", requestID: nil) }
+    guard let result = reply["result"] as? Tsugumi_Host_VersionDiffT else { throw CoreHostFailure(code: "protocol", message: "Missing version diff", requestID: nil) }
     return result
   }
 
@@ -293,7 +303,7 @@ public actor CoreAgentClient {
   public func writeTemplate(name: String, id: String) async throws -> (definition: String, files: [(path: String, text: String)]) {
     let result = try await call("DocumentTemplateRequest", ["name": name, "id": id])
     guard let definition = result["definitionJson"] as? String else {
-      throw CoreAgentFailure(code: "invalid_reply", message: "Missing Card template", requestID: nil)
+      throw CoreHostFailure(code: "invalid_reply", message: "Missing Card template", requestID: nil)
     }
     return (definition, (result["files"] as? [Tsugumi_Host_DocumentTemplateFileT] ?? []).map { ($0.path, $0.text) })
   }
@@ -303,7 +313,7 @@ public actor CoreAgentClient {
     fields["fork_id"] = forkId
     let result = try await call("DocumentConnectRequest", fields)
     guard let state = result["stateJson"] as? String else {
-      throw CoreAgentFailure(code: "invalid_reply", message: "Missing connection edit", requestID: nil)
+      throw CoreHostFailure(code: "invalid_reply", message: "Missing connection edit", requestID: nil)
     }
     return (state, result["insertedId"] as? String ?? "", result["needsFork"] as? Bool ?? false)
   }
@@ -313,7 +323,7 @@ public actor CoreAgentClient {
     fields["name"] = name
     let result = try await call("DocumentCopyRequest", fields)
     guard let edits = result["editsJson"] as? String else {
-      throw CoreAgentFailure(code: "invalid_reply", message: "Missing copy edits", requestID: nil)
+      throw CoreHostFailure(code: "invalid_reply", message: "Missing copy edits", requestID: nil)
     }
     return (edits, (result["files"] as? [Tsugumi_Host_DocumentFileCopyT] ?? []).map { ($0.from, $0.to) })
   }
@@ -321,7 +331,7 @@ public actor CoreAgentClient {
   public func mergeDocuments(base: String, ours: String, theirs: String) async throws -> (merged: String, conflicts: [String]) {
     let result = try await call("DocumentMergeRequest", ["base_json": base, "ours_json": ours, "theirs_json": theirs])
     guard let merged = result["mergedJson"] as? String else {
-      throw CoreAgentFailure(code: "invalid_reply", message: "Missing merged documents", requestID: nil)
+      throw CoreHostFailure(code: "invalid_reply", message: "Missing merged documents", requestID: nil)
     }
     return (merged, result["conflicts"] as? [String] ?? [])
   }
@@ -329,7 +339,7 @@ public actor CoreAgentClient {
   public func makeSubgraph(project: String, cards: [String], id: String) async throws -> (project: String, external: String, link: String) {
     let result = try await call("DocumentSubgraphRequest", ["project_json": project, "cards": cards, "id": id])
     guard let project = result["projectJson"] as? String, let external = result["externalJson"] as? String, let link = result["linkJson"] as? String else {
-      throw CoreAgentFailure(code: "invalid_reply", message: "Missing subgraph documents", requestID: nil)
+      throw CoreHostFailure(code: "invalid_reply", message: "Missing subgraph documents", requestID: nil)
     }
     return (project, external, link)
   }
@@ -337,7 +347,7 @@ public actor CoreAgentClient {
   public func modelSelection(_ purpose: String) async throws -> Tsugumi_Service_ProviderSelectionT {
     let reply = try await call("ModelSelectionRequest", ["profile": "desktop", "purpose": purpose])
     guard let selected = reply["provider"] as? Tsugumi_Service_ProviderSelectionT else {
-      throw CoreAgentFailure(code: "protocol", message: "Invalid host model selection", requestID: nil)
+      throw CoreHostFailure(code: "protocol", message: "Invalid host model selection", requestID: nil)
     }
     return selected
   }
@@ -356,7 +366,7 @@ public actor CoreAgentClient {
     return result["comments"] as? [Tsugumi_Host_VersionCommentT] ?? []
   }
 
-  /// Platform credential transport only; agentd chooses the note mode and model.
+  /// Platform credential transport only; hostd chooses the note mode and model.
   public func versionNote(project: String, commit: String, language: String) async throws -> String {
     for (id, account) in [("anthropic", "Anthropic"), ("openai", "OpenAI")] {
       try await provisionKey(Keychain.loadWithoutAsking(account: account), id: id)
@@ -395,20 +405,25 @@ public actor CoreAgentClient {
   }
 }
 
-/// An agentd that loses the state-directory lock exits with status 4. Another
+/// A hostd that loses the state-directory lock exits with status 4. Another
 /// client (Home, environment setup, or another process) is publishing readiness.
 /// Its exit does not mean that the shared service failed to start.
-enum AgentReadiness {
-  static func wait(read: () -> [String: Any]?, exitStatus: () -> Int32?, log: URL,
+enum HostReadiness {
+  static func wait(read: () -> [String: Any]?, exitStatus: () -> Int32?, log: URL, state: URL? = nil,
                    deadline: Date = Date().addingTimeInterval(15),
                    pause: () async throws -> Void = { try await Task.sleep(for: .milliseconds(50)) }) async throws -> [String: Any] {
     while Date() < deadline {
       if let value = read() { return value }
       if let status = exitStatus(), status != 4 {
-        throw CoreAgentFailure(code: "unavailable", message: "The core Agent exited during startup; see \(log.path)", requestID: nil)
+        if status == 5 {
+          let folder = (state ?? log.deletingLastPathComponent()).standardizedFileURL.path
+          let message = String(format: String(localized: "ホストの状態フォルダ「%@」は別のバージョンの Tsugumi で作成されました。このフォルダを移動または改名して退避し、Tsugumi を起動し直してください。", bundle: .main), folder)
+          throw CoreHostFailure(code: "state_format", message: message, requestID: nil)
+        }
+        throw CoreHostFailure(code: "unavailable", message: "The host service exited during startup; see \(log.path)", requestID: nil)
       }
       try await pause()
     }
-    throw CoreAgentFailure(code: "timeout", message: "The core Agent did not become ready; see \(log.path)", requestID: nil)
+    throw CoreHostFailure(code: "timeout", message: "The host service did not become ready; see \(log.path)", requestID: nil)
   }
 }

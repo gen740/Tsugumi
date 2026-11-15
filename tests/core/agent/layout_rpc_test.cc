@@ -1,4 +1,4 @@
-// Layout tools are hosted by agentd; only the final edit reaches the project.
+// Layout tools are hosted by hostd; only the final edit reaches the project.
 #include "project_fixture.hh"
 
 namespace tsugumi::test {

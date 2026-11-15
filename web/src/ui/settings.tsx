@@ -24,11 +24,11 @@ import { ExecutionServicesSettings } from './executionServices'
 type Category = 'general' | 'appearance' | 'editor' | 'shortcuts' | 'skills' | 'api' | 'connections' | 'executionServices'
 const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
   { id: 'general', title: L('一般'), icon: 'gearshape', storage: L('このブラウザ（localStorage）') },
-  { id: 'appearance', title: L('外観'), icon: 'paintpalette', storage: L('このブラウザの外観設定と、このホストの agentd の Agent 表示設定') },
+  { id: 'appearance', title: L('外観'), icon: 'paintpalette', storage: L('このブラウザの外観設定と、このホストの hostd の Agent 表示設定') },
   { id: 'editor', title: L('エディター'), icon: 'text.cursor', storage: L('このブラウザ（localStorage）') },
   { id: 'shortcuts', title: L('ショートカット'), icon: 'keyboard', storage: L('このブラウザ（localStorage）') },
   { id: 'skills', title: 'Skills', icon: 'wand.and.stars', storage: L('このホスト（Tsugumi web サーバーの設定）') },
-  { id: 'api', title: 'API', icon: 'key', storage: L('このホスト（API キーは macOS Keychain または agentd が保管）') },
+  { id: 'api', title: 'API', icon: 'key', storage: L('このホスト（API キーは macOS Keychain または hostd が保管）') },
   { id: 'connections', title: L('外部接続'), icon: 'network', storage: L('表示のみ（開いているプロジェクトの接続先）') },
   { id: 'executionServices', title: L('実行サービス'), icon: 'network', storage: L('このホスト（Tsugumi web サーバーの設定）') },
 ]
@@ -199,7 +199,7 @@ function AppearanceSettings() {
             <input type="range" min={10} max={60} step={5} value={prefs.gridSize} onChange={(e) => prefs.set('gridSize', Number(e.target.value))} aria-label={L('グリッド間隔')} />
           </Row>
           <Row label={L('実行中の接続線を動かす')}><Toggle checked={prefs.animateLines} onChange={(v) => prefs.set('animateLines', v)} /></Row>
-          <Row label={L('Agent の作業をアニメーションで表示')} help={L('オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの agentd に保存します。')}>
+          <Row label={L('Agent の作業をアニメーションで表示')} help={L('オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの hostd に保存します。')}>
             <Toggle checked={agentAppearance.animateWork} onChange={(v) => void agentAppearance.setAnimateWork(v)} />
           </Row>
           {agentAppearance.error && <div className="error">{agentAppearance.error}</div>}
@@ -454,7 +454,7 @@ function SkillSettings() {
 }
 
 type ProviderId = 'anthropic' | 'openai' | 'chatgpt' | 'fixture'
-type KeySource = 'env' | 'keychain' | 'agentd' | null
+type KeySource = 'env' | 'keychain' | 'hostd' | null
 interface APIState {
   provider: ProviderId
   model: string
@@ -710,7 +710,7 @@ function KeySection({ id, s, reload, update }: { id: 'anthropic' | 'openai'; s: 
   const source = s.keys[name]
   const model = id === 'openai' ? s.openAIModel : s.model
   const setModel = (m: string) => update(id === 'openai' ? { openAIModel: m } : { model: m })
-  const sourceLabel = source === 'keychain' ? L('macOS Keychain（このデバイスのみ・ロック解除中に使用）') : source === 'agentd' ? L('agentd（このホストの所有者だけが読み書きできます）') : source === 'env' ? L('環境変数 {0}', s.keyEnv[name]) : L('未設定')
+  const sourceLabel = source === 'keychain' ? L('macOS Keychain（このデバイスのみ・ロック解除中に使用）') : source === 'hostd' ? L('hostd（このホストの所有者だけが読み書きできます）') : source === 'env' ? L('環境変数 {0}', s.keyEnv[name]) : L('未設定')
   const run = async (f: () => Promise<string>) => {
     try {
       setMessage(await f())
@@ -733,7 +733,7 @@ function KeySection({ id, s, reload, update }: { id: 'anthropic' | 'openai'; s: 
             refreshChats(true)
             return r.message
           })}>{L('キーを保存')}</Button>
-          <Button kind="destructive" disabled={source !== 'agentd' && source !== 'keychain'} onClick={() => void run(async () => {
+          <Button kind="destructive" disabled={source !== 'hostd' && source !== 'keychain'} onClick={() => void run(async () => {
             const r = await api<{ message: string }>('/api/settings/key/delete', { provider: id })
             await reload()
             refreshChats()

@@ -71,8 +71,8 @@ TEST_F(ModelsFixture,
   host.reset();
   external.reset();
   human.reset();
-  agent.Stop();
-  StartAgent();
+  service.Stop();
+  StartHost();
   EXPECT_EQ(Models("anthropic", nullptr, true).View(), saved);
 }
 TEST_F(ModelsFixture, ConcurrentRefreshesKeepSeparateProviderCatalogs) {

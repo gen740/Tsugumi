@@ -1,6 +1,6 @@
 # Host presentation services
 
-`tsugumi-agentd` owns editor formatting and language-dependent version text for the Mac app, Web UI and Agent. The per-project `tsugumid` only records neutral version facts; see [Versions](Versions.md).
+`tsugumi-hostd` owns editor formatting and language-dependent version text for the Mac app, Web UI and Agent. The per-project `tsugumid` only records neutral version facts; see [Versions](Versions.md).
 
 ## Editor formatting
 

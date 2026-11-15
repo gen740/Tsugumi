@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { Thoughts, type ThoughtReply } from '../src/model/thoughts'
 import { chatRoutes } from '../server/chat'
-import { CoreAgentHost, RemoteAgent } from '../server/coreAgent'
+import { CoreHost, RemoteAgent } from '../server/coreHost'
 import EN from '../src/i18n/en.json'
 
 const page = globalThis as Record<string, unknown>
@@ -135,7 +135,7 @@ try {
 
 // The adapter sends the existing FlatBuffers request, including refreshed
 // provider references. No provider calls or sockets are opened in these tests.
-const host = new CoreAgentHost('/nonexistent', '/nonexistent', {} as never, 'ja')
+const host = new CoreHost('/nonexistent', '/nonexistent', {} as never, 'ja')
 let forwarded: any
 host.user.call = async (method, fields) => {
   assert.equal(method, 'ConversationSummarizeRequest')

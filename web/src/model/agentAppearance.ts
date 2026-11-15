@@ -1,4 +1,4 @@
-// A presentation snapshot; agentd stores and validates the shared setting.
+// A presentation snapshot; hostd stores and validates the shared setting.
 import { api } from '../api'
 import { Observable } from './observable'
 

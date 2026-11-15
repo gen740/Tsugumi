@@ -111,7 +111,7 @@ auto ChildProcess::Stop(bool crash) -> void {
 
 TemporaryDirectory::TemporaryDirectory() {
   // Keep Unix socket names below sockaddr_un.sun_path on macOS.
-  std::string pattern = "/tmp/tsugumi-agent-XXXXXX";
+  std::string pattern = "/tmp/tsugumi-host-XXXXXX";
   if (!::mkdtemp(pattern.data()))
     throw std::runtime_error("cannot create temporary project");
   path = pattern;

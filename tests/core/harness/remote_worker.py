@@ -73,13 +73,13 @@ def request(body_type, body, **routing):
 
 
 def broker_request(capability, body_type, body, **routing):
-    """The local core-to-agentd envelope; worker requests carry no capability."""
+    """The local core-to-hostd envelope; worker requests carry no capability."""
     return MessageT(payloadType=Payload.BrokerRequest, payload=BrokerRequestT(
         capability=capability, request=RequestT(bodyType=body_type, body=body, **routing)))
 
 
 def read_broker_request(stream, capability):
-    """Test doubles sit at agentd's private endpoint, after project authorization."""
+    """Test doubles sit at hostd's private endpoint, after project authorization."""
     message = read(stream)
     assert message.payloadType == Payload.BrokerRequest, "expected a local broker envelope"
     assert string(message.payload.capability) == capability, "wrong project capability"

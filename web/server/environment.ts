@@ -46,7 +46,7 @@ export type EnvState =
 export interface Environments {
   observe(fn: (key: string, s: EnvState) => void): () => boolean
   controlDir(key: string): string
-  readonly agentArguments?: string[]
+  readonly hostArguments?: string[]
   state(dir: string): Promise<EnvState>
   start(dir: string, archiveIncompatibleHistory?: boolean): Promise<EnvState>
   stop(dir: string): Promise<void>
@@ -74,11 +74,11 @@ export class EnvironmentManager implements Environments {
   private observing = false
   private terminals = new Map<number, { data: (value: string) => void; exit: (value: { exitCode: number }) => void; decoder: TextDecoder }>()
   private terminalOutput = new Map<number, { data: number[]; closed: boolean }>()
-  readonly agentArguments: string[]
+  readonly hostArguments: string[]
 
   constructor(readonly bins: Binaries, readonly support: string, private origins: () => string[],
     private request: Request, private observeHost: Observe, readonly vm?: VMHostOptions) {
-    this.agentArguments = vm
+    this.hostArguments = vm
       ? ['--vmhost', vm.host, '--vm-support', vm.support, '--vm-image', vm.image, '--vm-source', vm.source]
       : ['--tsugumid', bins.tsugumid, '--worker', bins.worker, '--sdk-dir', bins.sdkDir,
          '--environment-dir', path.join(support, 'env')]

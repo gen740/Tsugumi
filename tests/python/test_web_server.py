@@ -164,7 +164,7 @@ def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp
     assert (after["endpoint"], after["projectId"], after["token"]) == (before["endpoint"], before["projectId"], before["token"])
 
 
-def test_environment_stop_is_owned_by_agentd_and_a_later_start_reuses_the_host(web, tmp_path):
+def test_environment_stop_is_owned_by_hostd_and_a_later_start_reuses_the_host(web, tmp_path):
     from conftest import write_project
 
     _, port, key = web
@@ -173,7 +173,7 @@ def test_environment_stop_is_owned_by_agentd_and_a_later_start_reuses_the_host(w
     write_project(project)
     first = post(port, cookie, "/api/env/start", {"path": str(project)})
     assert first["state"] == "ready", first
-    agent = json.loads((tmp_path / "agent-core/agent.ready").read_text())
+    agent = json.loads((tmp_path / "host-core/host.ready").read_text())
     assert post(port, cookie, "/api/env/stop", {"path": str(project)}) == {"ok": True}
     response, data = request(port, "GET", "/api/env/list", {"Cookie": cookie})
     assert response.status == 200
@@ -182,7 +182,7 @@ def test_environment_stop_is_owned_by_agentd_and_a_later_start_reuses_the_host(w
     assert restarted["state"] == "ready", restarted
     assert restarted["projectId"] == first["projectId"]
     assert restarted["token"] != first["token"]
-    assert json.loads((tmp_path / "agent-core/agent.ready").read_text())["pid"] == agent["pid"]
+    assert json.loads((tmp_path / "host-core/host.ready").read_text())["pid"] == agent["pid"]
 
 
 def test_a_project_taken_in_keeps_its_binary_files(web, tmp_path):

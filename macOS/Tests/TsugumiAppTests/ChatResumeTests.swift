@@ -32,8 +32,8 @@ import TsugumiRPC
       await environment.install(state: state, support: directory.appendingPathComponent("support"))
       let build = ProcessInfo.processInfo.environment["TSUGUMI_BUILD_DIR"].map { URL(fileURLWithPath: $0) }
         ?? SyncTests.root.appendingPathComponent("build")
-      core.executableURL = ProcessInfo.processInfo.environment["TSUGUMI_AGENTD"].map { URL(fileURLWithPath: $0) }
-        ?? build.appendingPathComponent("core/tsugumi-agentd")
+      core.executableURL = ProcessInfo.processInfo.environment["TSUGUMI_HOSTD"].map { URL(fileURLWithPath: $0) }
+        ?? build.appendingPathComponent("core/tsugumi-hostd")
       core.arguments = ["--state-dir", state.path, "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--demos-dir", SyncTests.root.appendingPathComponent("demos").path]
       core.standardOutput = FileHandle.nullDevice
@@ -57,17 +57,17 @@ import TsugumiRPC
       _ = try makeSession()
       let endpoint = daemon.endpoint
       // Match the host folder registered by EnvironmentManager's Ready state.
-      _ = try await CoreAgentClient.shared.call("RegisterProjectRequest", ["project_id": endpoint.projectId,
+      _ = try await CoreHostClient.shared.call("RegisterProjectRequest", ["project_id": endpoint.projectId,
         "endpoint": endpoint.url.absoluteString, "token": endpoint.token, "title": "Chat UI fixture",
         "path": project.standardizedFileURL.path])
-      _ = try await CoreAgentClient.shared.call("ConversationCreateRequest", ["conversation_id": conversationID,
+      _ = try await CoreHostClient.shared.call("ConversationCreateRequest", ["conversation_id": conversationID,
         "project_id": endpoint.projectId, "role": "worker"])
       let provider = Tsugumi_Host_ProviderInputT()
       provider.endpoint = "http://127.0.0.1:\(port)"
       provider.model = "fixture"
       provider.contextLimit = 6000
-      _ = try await CoreAgentClient.shared.call("ProviderSetRequest", ["profile": "desktop", "id": "fixture", "provider": provider])
-      try await CoreAgentClient.shared.configure(.fixture, conversationID: conversationID)
+      _ = try await CoreHostClient.shared.call("ProviderSetRequest", ["profile": "desktop", "id": "fixture", "provider": provider])
+      try await CoreHostClient.shared.configure(.fixture, conversationID: conversationID)
     }
 
     func restartAgent() async throws {
@@ -94,11 +94,11 @@ import TsugumiRPC
     }
 
     private func waitForAgent(replacing oldPID: Int32? = nil) async throws {
-      let ready = directory.appendingPathComponent("state/agent.ready")
+      let ready = directory.appendingPathComponent("state/host.ready")
       // An observing client can win the startup lock. Status 4 means wait for
       // that service, not that the replacement service failed to start.
       let replacement = core
-      let value = try await AgentReadiness.wait(read: {
+      let value = try await HostReadiness.wait(read: {
         guard let bytes = try? Data(contentsOf: ready),
               let value = try? JSONSerialization.jsonObject(with: bytes) as? [String: Any],
               let pid = value["pid"] as? Int32, pid != oldPID, kill(pid, 0) == 0,
@@ -106,7 +106,7 @@ import TsugumiRPC
               value["host_socket"] is String, value["user_token"] is String else { return nil }
         return value
       }, exitStatus: { replacement.isRunning ? nil : replacement.terminationStatus },
-      log: directory.appendingPathComponent("state/agent.log"))
+      log: directory.appendingPathComponent("state/host.log"))
       servicePID = try #require(value["pid"] as? Int32)
     }
 
@@ -140,12 +140,12 @@ import TsugumiRPC
     func send(_ text: String = "hello", holdingModel: Bool = false) async throws {
       // Keep the response pending until restart, regardless of CI scheduling.
       if holdingModel { try #require(kill(model.processIdentifier, SIGSTOP) == 0) }
-      _ = try await CoreAgentClient.shared.call("ConversationSendRequest", ["conversation_id": conversationID,
+      _ = try await CoreHostClient.shared.call("ConversationSendRequest", ["conversation_id": conversationID,
         "turn_id": UUID().uuidString, "text": text])
     }
 
     func snapshot() async throws -> [String: Any] {
-      try await CoreAgentClient.shared.call("ConversationGetRequest", ["conversation_id": conversationID])
+      try await CoreHostClient.shared.call("ConversationGetRequest", ["conversation_id": conversationID])
     }
 
     func finished() async throws -> [String: Any] {
@@ -301,15 +301,15 @@ import TsugumiRPC
         "folder:\(project):" + SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined()
       }
       func grant(_ resource: String) async throws -> String {
-        let request = try await CoreAgentClient.shared.call("AccessRequest", ["project_id": resource,
+        let request = try await CoreHostClient.shared.call("AccessRequest", ["project_id": resource,
           "conversation_id": t.conversationID, "access": "Read", "scope": "Conversation", "reason": "Fixture-selected folder"])
         let id = try #require(request["id"] as? String)
-        _ = try await CoreAgentClient.shared.call("AccessResolveRequest", ["request_id": id, "allow": true])
+        _ = try await CoreHostClient.shared.call("AccessResolveRequest", ["request_id": id, "allow": true])
         return id
       }
       func read(_ folder: String, _ path: String) async throws -> String {
         let args = try JSONSerialization.data(withJSONObject: ["folder": folder, "path": path])
-        let result = try await CoreAgentClient.shared.call("ToolCallRequest", ["conversation_id": t.conversationID,
+        let result = try await CoreHostClient.shared.call("ToolCallRequest", ["conversation_id": t.conversationID,
           "project_id": project, "name": "attached_folder_read", "arguments_json": String(decoding: args, as: UTF8.self), "op_id": UUID().uuidString])
         #expect(result["isError"] as? Bool == false)
         let text = try #require(result["text"] as? String)
@@ -322,7 +322,7 @@ import TsugumiRPC
       do {
         _ = try await read(paths[1], "nested/note.txt")
         Issue.record("A folder needs its own grant")
-      } catch let failure as CoreAgentFailure { #expect(failure.code == "grant_required") }
+      } catch let failure as CoreHostFailure { #expect(failure.code == "grant_required") }
       _ = try await grant(resources[1])
       chat.send("hello from both attached folders")
       try await until("the message with both attachments ended") { !chat.busy && reply(chat, after: 0) }
@@ -338,11 +338,11 @@ import TsugumiRPC
       #expect(try await read(paths[0], "") == "nested/\n")
       #expect(try await read(paths[0], "nested/note.txt") == "first folder")
       #expect(try await read(paths[1], "nested/note.txt") == "second folder")
-      _ = try await CoreAgentClient.shared.call("AccessRevokeRequest", ["grant_id": firstGrant])
+      _ = try await CoreHostClient.shared.call("AccessRevokeRequest", ["grant_id": firstGrant])
       do {
         _ = try await read(paths[0], "nested/note.txt")
         Issue.record("Revoked folder access must not remain readable")
-      } catch let failure as CoreAgentFailure { #expect(failure.code == "grant_required") }
+      } catch let failure as CoreHostFailure { #expect(failure.code == "grant_required") }
       #expect(try await read(paths[1], "nested/note.txt") == "second folder")
     }
   }
@@ -414,7 +414,7 @@ import TsugumiRPC
       chat.compact()
       #expect(chat.busy && chat.status == String(localized: "会話を圧縮しています…"))
       try await until("compaction ended") { !chat.busy }
-      let trace = try await CoreAgentClient.shared.call("EventsRequest", ["conversation_id": t.conversationID, "after_seq": 0])
+      let trace = try await CoreHostClient.shared.call("EventsRequest", ["conversation_id": t.conversationID, "after_seq": 0])
       let errors = (trace["events"] as? [[String: Any]] ?? []).compactMap { $0["event"] as? [String: Any] }
         .filter { $0["kind"] as? String == "error" }.compactMap { $0["message"] as? String }
       #expect(chat.status == nil && !chat.failed && !chat.contextFull, "\(chat.status ?? "-"); core errors: \(errors)")
@@ -447,7 +447,7 @@ import TsugumiRPC
       try await until("copy A is open") { original.currentId == t.conversationID }
       try await t.send("Only copy A")
       let project = try #require(t.session.endpointOverride)
-      _ = try await CoreAgentClient.shared.call("AccessRequest", ["project_id": project.projectId,
+      _ = try await CoreHostClient.shared.call("AccessRequest", ["project_id": project.projectId,
         "conversation_id": t.conversationID, "access": "Read", "scope": "Conversation", "reason": "Read project content"])
       let copied = t.directory.appendingPathComponent("copy-b")
       // A distinct project copies definitions, without the original project's conversation store.
@@ -461,7 +461,7 @@ import TsugumiRPC
       let second = ProjectSession(identity: identity, environments: t.session.environments)
       let projectID = UUID().uuidString.lowercased()
       second.endpointOverride = Endpoint(url: project.url, token: project.token, projectId: projectID, serverInstanceId: project.serverInstanceId)
-      _ = try await CoreAgentClient.shared.call("RegisterProjectRequest", ["project_id": projectID,
+      _ = try await CoreHostClient.shared.call("RegisterProjectRequest", ["project_id": projectID,
         "endpoint": project.url.absoluteString, "token": project.token, "title": "copy-b", "path": copied.path])
       let chat = ChatController(session: second, connection: { .fixture })
       t.keep(chat)
@@ -481,8 +481,8 @@ import TsugumiRPC
     try await withFixture(slow: 0) { t in
       let chat = ChatController(session: t.session)
       t.keep(chat)
-      let settings = try await CoreAgentClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
-      _ = try await CoreAgentClient.shared.call("SettingsUpdateRequest", ["profile": "desktop", "revision": settings["revision"]!,
+      let settings = try await CoreHostClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
+      _ = try await CoreHostClient.shared.call("SettingsUpdateRequest", ["profile": "desktop", "revision": settings["revision"]!,
         "changes": [["key": "agent.provider", "value_json": "\"chatgpt\""],
                     ["key": "agent.model.chatgpt", "value_json": "\"gpt-6.1-terra\""]]])
       // Opening the panel/menu or activating its window reads once, with no timer.

@@ -4,7 +4,7 @@ import Testing
 @testable import TsugumiAgentClient
 @testable import TsugumiApp
 
-/// The environment and CoreAgentClient.shared select one host for this process.
+/// The environment and CoreHostClient.shared select one host for this process.
 /// Every test that reaches it (including through a session save) must hold this
 /// scope until its sessions and fixture services have stopped.
 struct HostServiceTrait: SuiteTrait, TestTrait, TestScoping {
@@ -50,20 +50,20 @@ private actor HostServiceLock {
 /// Used only while holding .hostService. Invalidate both sockets on each swap
 /// so the next call connects to the service selected by the new environment.
 @MainActor final class HostServiceEnvironment {
-  private let previousState = ProcessInfo.processInfo.environment["TSUGUMI_AGENT_STATE"]
+  private let previousState = ProcessInfo.processInfo.environment["TSUGUMI_HOST_STATE"]
   private let previousSupport = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"]
 
   func install(state: URL, support: URL) async {
     await AppModel.shared.initialRefresh?.value
-    await CoreAgentClient.shared.disconnect()
-    setenv("TSUGUMI_AGENT_STATE", state.path, 1)
+    await CoreHostClient.shared.disconnect()
+    setenv("TSUGUMI_HOST_STATE", state.path, 1)
     setenv("TSUGUMI_SUPPORT_DIR", support.path, 1)
   }
 
   func restore() async {
-    await CoreAgentClient.shared.disconnect()
-    if let previousState { setenv("TSUGUMI_AGENT_STATE", previousState, 1) }
-    else { unsetenv("TSUGUMI_AGENT_STATE") }
+    await CoreHostClient.shared.disconnect()
+    if let previousState { setenv("TSUGUMI_HOST_STATE", previousState, 1) }
+    else { unsetenv("TSUGUMI_HOST_STATE") }
     if let previousSupport { setenv("TSUGUMI_SUPPORT_DIR", previousSupport, 1) }
     else { unsetenv("TSUGUMI_SUPPORT_DIR") }
   }

@@ -3,9 +3,10 @@
 import { spawn } from 'node:child_process'
 import { ProviderKeys } from './providerKeys'
 import net from 'node:net'
-import { CoreAgentError, encodeRequest, decodeReply, hostMethod } from './serviceWire'
-export { CoreAgentError } from './serviceWire'
+import { CoreHostError, encodeRequest, decodeReply, hostMethod } from './serviceWire'
+export { CoreHostError } from './serviceWire'
 import fs from 'node:fs'
+import { L } from './i18n'
 import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -32,7 +33,7 @@ class Connection {
   // A plugin retry after the page answers must resume the approved call ID.
   private approvals = new Map<string, string>()
 
-  constructor(private host: CoreAgentHost, private external: boolean, private hostContract = false) {}
+  constructor(private host: CoreHost, private external: boolean, private hostContract = false) {}
 
   private open() {
     return this.opening ??= this.start().catch((e) => { this.opening = undefined; throw e })
@@ -111,15 +112,15 @@ class Connection {
       this.approvals.delete(key)
       return result
     } catch (error) {
-      if (error instanceof CoreAgentError && error.code === 'grant_required' && error.message.includes('operation_approval\n'))
+      if (error instanceof CoreHostError && error.code === 'grant_required' && error.message.includes('operation_approval\n'))
         this.approvals.set(key, String(call.op_id))
-      else if (error instanceof CoreAgentError && (error.code === 'permission_denied' || error.code === 'conflict')) this.approvals.delete(key)
+      else if (error instanceof CoreHostError && (error.code === 'permission_denied' || error.code === 'conflict')) this.approvals.delete(key)
       throw error
     }
   }
 }
 
-export class CoreAgentHost {
+export class CoreHost {
   readonly keyProfile = `web:keys:${randomUUID()}`
   readonly keys = new ProviderKeys((method, fields) => this.user.call(method, fields), this.keyProfile)
   private environment?: Promise<void>
@@ -148,16 +149,16 @@ export class CoreAgentHost {
     const repo = path.resolve(here, '..', '..')
     const build = process.env.TSUGUMI_BUILD_DIR ?? path.join(repo, 'build')
     const choose = (override: string | undefined, candidates: string[]) => override ?? candidates.find((p) => fs.existsSync(p)) ?? candidates[0]
-    this.binary = choose(process.env.TSUGUMI_AGENTD, [path.join(repo, 'bin', 'tsugumi-agentd'), path.join(build, 'core', 'tsugumi-agentd')])
+    this.binary = choose(process.env.TSUGUMI_HOSTD, [path.join(repo, 'bin', 'tsugumi-hostd'), path.join(build, 'core', 'tsugumi-hostd')])
     this.schema = choose(process.env.TSUGUMI_AGENT_SCHEMA, [path.join(here, 'agent.bfbs'), path.join(build, 'generated', 'bfbs', 'agent.bfbs')])
-    this.state = process.env.TSUGUMI_AGENT_STATE ?? (process.platform === 'darwin'
-      ? path.join(process.env.TSUGUMI_SUPPORT_DIR ?? path.join(os.homedir(), 'Library', 'Application Support', 'Tsugumi'), 'agent-core')
-      : path.join(support, 'agent-core'))
+    this.state = path.resolve(process.env.TSUGUMI_HOST_STATE ?? (process.platform === 'darwin'
+      ? path.join(process.env.TSUGUMI_SUPPORT_DIR ?? path.join(os.homedir(), 'Library', 'Application Support', 'Tsugumi'), 'host-core')
+      : path.join(support, 'host-core')))
     this.demoRoot = path.join(repo, 'demos')
   }
 
   async ready(): Promise<Ready> {
-    const file = path.join(this.state, 'agent.ready')
+    const file = path.join(this.state, 'host.ready')
     const read = (): Ready | undefined => {
       try {
         const r = JSON.parse(fs.readFileSync(file, 'utf8')) as Ready
@@ -169,12 +170,17 @@ export class CoreAgentHost {
     const existing = read()
     if (existing) return existing
     return this.starting ??= (async () => {
-      fs.mkdirSync(this.state, { recursive: true, mode: 0o700 })
-      const log = fs.openSync(path.join(this.state, 'agent.log'), 'a', 0o600)
-      const socketDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-agent-'))
+      const socketDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-host-'))
+      // Only the service creates and numbers state. Move its startup log into
+      // the new folder once this process has published readiness.
+      const stateLog = path.join(this.state, 'host.log')
+      const parent = path.dirname(this.state)
+      fs.mkdirSync(parent, { recursive: true, mode: 0o700 })
+      const logPath = fs.existsSync(this.state) ? stateLog : path.join(parent, `.host-startup-${randomUUID()}.log`)
+      const log = fs.openSync(logPath, 'a', 0o600)
       fs.chmodSync(socketDir, 0o700)
       const child = spawn(this.binary, ['--state-dir', this.state, '--unix', path.join(socketDir, 'agent.sock'),
-        '--listen', '127.0.0.1:0', '--demos-dir', this.demoRoot, ...(this.envs.agentArguments ?? [])], { detached: true, stdio: ['ignore', log, log] })
+        '--listen', '127.0.0.1:0', '--demos-dir', this.demoRoot, ...(this.envs.hostArguments ?? [])], { detached: true, stdio: ['ignore', log, log] })
       fs.closeSync(log)
       child.unref()
       let error: Error | undefined
@@ -183,11 +189,17 @@ export class CoreAgentHost {
       while (Date.now() < end) {
         if (error) throw error
         const next = read()
-        if (next) return next
-        if (child.exitCode !== null) throw new Error(`Core Agent exited during startup; see ${path.join(this.state, 'agent.log')}`)
+        if (next) {
+          if (logPath !== stateLog && next.pid === child.pid) fs.renameSync(logPath, stateLog)
+          return next
+        }
+        if (child.exitCode !== null) {
+          if (child.exitCode === 5) throw new Error(L('ホストの状態フォルダ「{0}」は別のバージョンの Tsugumi で作成されました。このフォルダを移動または改名して退避し、Tsugumi を起動し直してください。', this.state))
+          throw new Error(`Host service exited during startup; see ${logPath}`)
+        }
         await new Promise((resolve) => setTimeout(resolve, 50))
       }
-      throw new Error(`Core Agent did not become ready; see ${path.join(this.state, 'agent.log')}`)
+      throw new Error(`Host service did not become ready; see ${logPath}`)
     })().finally(() => { this.starting = undefined })
   }
 
@@ -282,7 +294,7 @@ export class RemoteAgent {
   private transition: Promise<void> = Promise.resolve()
   private changing = 0
 
-  constructor(readonly host: CoreAgentHost, readonly id: string, readonly project?: string, readonly role = 'worker') {
+  constructor(readonly host: CoreHost, readonly id: string, readonly project?: string, readonly role = 'worker') {
     this.conversation = { id, messages: [], archive: [], tools: [], usage: { inputTokens: 0, outputTokens: 0 }, updatedAt: Date.now() }
   }
 
