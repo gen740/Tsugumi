@@ -152,8 +152,35 @@ function GeneralSettings() {
           <Select<Motion> value={prefs.tsugumiMotion} onChange={(v) => prefs.set('tsugumiMotion', v)} options={options(MOTION_LABELS)} />
         </Row>
       </Section>
+      <RuntimeResetSettings />
     </Form>
   )
+}
+
+/** The host supplies the confirmation from the policy it sends to the helper. */
+function RuntimeResetSettings() {
+  const [working, setWorking] = useState(false)
+  const [message, setMessage] = useState('')
+  const reset = async () => {
+    setWorking(true)
+    setMessage('')
+    try {
+      const state = await api<{ vmState: string; resetConfirmationJa: string; resetConfirmationEn: string }>('/api/runtime')
+      if (state.vmState === 'unavailable') return
+      const confirmation = language() === 'en' ? state.resetConfirmationEn : state.resetConfirmationJa
+      if (!confirmation || !window.confirm(confirmation)) return
+      await api('/api/runtime/reset', {})
+      setMessage(L('初期化しました。次に開くときに実行環境を作り直します。'))
+    } catch (error) { setMessage(errorText(error)) }
+    finally { setWorking(false) }
+  }
+  const [available, setAvailable] = useState(false)
+  useEffect(() => { void api<{ vmState: string }>('/api/runtime').then((s) => setAvailable(s.vmState !== 'unavailable')).catch(() => {}) }, [])
+  if (!available) return null
+  return <Section title={L('実行環境のデータ')}>
+    <Row><Button disabled={working} onClick={() => void reset()}>{L('すべての実行環境を初期化…')}</Button></Row>
+    {message && <Row><span className="caption selectable">{message}</span></Row>}
+  </Section>
 }
 
 function AppearanceSettings() {

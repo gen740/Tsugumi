@@ -1396,7 +1396,6 @@
 "閉じる（ツグミは元の場所に戻ります）" = "Close (Tsugumi goes back to its place)";
 "閉じる（下部のアイコンでも開閉できます）" = "Close (the icon below also opens and closes it)";
 "開いているプロジェクトの tsugumid への接続先です。127.0.0.1 にだけ公開しています。外部クライアント（別の UI・Agent）は同じ RPC 契約で接続でき、認証 token は control フォルダの server.ready（0600）にだけ置かれます。" = "Endpoints of tsugumid for the open projects, published on 127.0.0.1 only. Other clients (another UI or Agent) connect with the same RPC contract; the auth token is kept only in server.ready (0600) in the control folder.";
-"開いているプロジェクトの実行を止めて VM を停止し、共通の Nix store・VM イメージの展開先・各プロジェクトの control フォルダを削除します（以前の版が Apple container に作った環境も削除します）。VM 内の実行履歴（別のディスク）、プロジェクトの文書・成果物、ホストの /nix/store は削除しません。次に開いたときに作り直します。VM 内の実行履歴は下の「VM 内の実行履歴」で削除できます。" = "Stops the open projects' runs and the VM, then deletes the shared Nix store, the unpacked VM image and every project's control folder (and environments an earlier version made with Apple container). The run history in the VM (its own disk), projects' documents and artifacts, and the host's /nix/store are kept. Everything is made again on the next open. The run history in the VM can be deleted under “Run history in the VM” below.";
 "開いているプロジェクトはありません" = "No open projects";
 "開いているプロジェクトは削除できません" = "An open project cannot be deleted";
 "開き直し" = "Reopened";

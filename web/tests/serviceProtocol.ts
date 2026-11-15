@@ -248,3 +248,24 @@ console.log('Host formatting and version presentation adapters: passed')
   assert.equal(template.value.name, 'python')
   assert.equal(template.value.id, 'new-card')
 }
+
+// Reset confirmations and the helper's actual file report survive the host adapter.
+{
+  const { HostRuntimeT } = await import('../src/gen/tsugumi/host/host-runtime')
+  const runtime = new HostRuntimeT()
+  runtime.vmState = 'stopped'
+  runtime.resetConfirmationJa = '履歴を保持'
+  runtime.resetConfirmationEn = 'Keep history'
+  runtime.resetKeptFiles = ['history.img']
+  runtime.resetDiscardedFiles = ['store.img', '.lock']
+  const b = new fb.Builder()
+  const offset = runtime.pack(b)
+  const reply = HostReply.createReply(b, HostReplyPayload.HostRuntime, offset)
+  HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
+  const decoded = decodeReply(b.asUint8Array(), true).value
+  assert.equal(decoded.vmState, 'stopped')
+  assert.equal(decoded.resetConfirmationJa, '履歴を保持')
+  assert.equal(decoded.resetConfirmationEn, 'Keep history')
+  assert.deepEqual(decoded.resetKeptFiles, ['history.img'])
+  assert.deepEqual(decoded.resetDiscardedFiles, ['store.img', '.lock'])
+}

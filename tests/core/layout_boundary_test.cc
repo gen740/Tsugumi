@@ -55,8 +55,7 @@ TEST(LayoutBoundary, DeletingACardDoesNotInterpretOrRewriteLayout) {
   store.open();
   ChangeIn change{};
   change.kind = ChangeIn::Kind::SetProject;
-  change.json =
-      R"({"name":"test","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
+  change.json = initial_project_json("test");
   const auto staged = store.stage({change}, crypto::uuid4(), "test");
   EXPECT_EQ(staged.doc->layout_json, layout);
   EXPECT_FALSE(staged.delta.layout_changed);

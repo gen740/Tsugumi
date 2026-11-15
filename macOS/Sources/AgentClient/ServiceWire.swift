@@ -525,7 +525,9 @@ enum ServiceWire {
       return ["vm_state": v.vmState, "store_path": v.storePath ?? "", "store_exists": v.storeExists,
         "virtualization_supported": v.virtualizationSupported, "image_available": v.imageAvailable, "image_version": v.imageVersion ?? "",
         "stage": v.stage ?? "", "message": v.message ?? "", "console": v.console.compactMap { $0 }, "bytes": v.bytes, "paths": v.paths,
-        "histories": try v.histories.compactMap { try $0.map(view) }, "environments": v.environments, "vm_removed": v.vmRemoved] as [String: Any]
+        "histories": try v.histories.compactMap { try $0.map(view) }, "environments": v.environments, "vm_removed": v.vmRemoved,
+        "reset_confirmation_ja": v.resetConfirmationJa ?? "", "reset_confirmation_en": v.resetConfirmationEn ?? "",
+        "reset_kept_files": v.resetKeptFiles.compactMap { $0 }, "reset_discarded_files": v.resetDiscardedFiles.compactMap { $0 }] as [String: Any]
     case let v as Tsugumi_Host_RuntimeHistoryT:
       return ["id": v.id, "bytes": v.bytes, "last_start_ms": v.lastStartMs, "running": v.running] as [String: Any]
     case let v as Tsugumi_Host_HostTerminalT: return ["session": v.session]

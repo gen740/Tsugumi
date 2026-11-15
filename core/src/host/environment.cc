@@ -12,6 +12,7 @@
 #include <thread>
 
 #include "agent/json.hh"
+#include "host/vm_process.hh"
 #include "host_requirements.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
@@ -553,6 +554,7 @@ auto Environments::Runtime(const H::HostRuntimeRequestT& request)
     }
   }
   auto result = impl_->options.process->Runtime(input);
+  DescribeVMReset(result);
   if (input.action == H::RuntimeAction::Reset) {
     for (const auto& entry :
          std::filesystem::directory_iterator(impl_->options.directory)) {

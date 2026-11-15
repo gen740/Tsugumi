@@ -162,6 +162,10 @@ public actor EnvironmentManager {
   public func deleteVMData(id: String) async throws { _ = try await runtime(.deletehistory, key: id) }
   public func deleteData(_ project: ProjectIdentity) async throws { _ = try await runtime(.deleteenvironment, project: project.url.path) }
   public func shutdown() async { _ = try? await runtime(.shutdown) }
+  public func resetConfirmation(english: Bool) async throws -> String {
+    let reply = try await runtime()
+    return reply[english ? "reset_confirmation_en" : "reset_confirmation_ja"] as? String ?? ""
+  }
   public struct ResetReport: Sendable { public var environments = 0; public var vmRemoved = false; public init() {} }
   public func resetAll() async throws -> ResetReport {
     let reply = try await runtime(.reset)

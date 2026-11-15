@@ -167,6 +167,22 @@ auto check_version_paths(const schema::Project& p) -> void {
 
 }  // namespace
 
+auto initial_project_json(const std::string &name) -> std::string {
+  const std::string rev = TSUGUMI_CARD_NIXPKGS_REV;
+  const std::string hash = TSUGUMI_CARD_NIXPKGS_NARHASH;
+  if (rev.empty() || hash.empty())
+    throw DocumentError("project_defaults_unavailable",
+                        "This build has no default Card Nixpkgs pin");
+  const auto display_name = schema::string_value(name);
+  const auto pin = schema::string_value(
+      "https://github.com/NixOS/nixpkgs/archive/" + rev + ".tar.gz#" + hash);
+  const auto canvas = schema::capture(R"({"cards":[],"connections":[]})");
+  return schema::object_text({{"name", &display_name},
+                              {"pkgsPath", &pin},
+                              {"canvas", &canvas}}) +
+         '\n';
+}
+
 schema::Project parse_project_json(const std::string& text) {
   auto p = decode_doc<schema::Project>("tsugumi.json", text);
   if (!p.pkgs_path->has_value()) invalid("tsugumi.json: \"pkgsPath\" is required");

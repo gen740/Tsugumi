@@ -266,7 +266,6 @@ EN = {
 "登録されていないビルド結果を共有 store から削除します。登録を外したプロジェクトの Card は、次の実行でビルドし直します。": "Deletes build results nothing registers from the shared store. Cards of projects whose registration was removed build again on their next run.",
 "すべての実行環境を初期化しますか？": "Reset all environments?",
 "初期化": "Reset",
-"開いているプロジェクトの実行を止めて VM を停止し、共通の Nix store・VM イメージの展開先・各プロジェクトの control フォルダを削除します（以前の版が Apple container に作った環境も削除します）。VM 内の実行履歴（別のディスク）、プロジェクトの文書・成果物、ホストの /nix/store は削除しません。次に開いたときに作り直します。VM 内の実行履歴は下の「VM 内の実行履歴」で削除できます。": "Stops the open projects' runs and the VM, then deletes the shared Nix store, the unpacked VM image and every project's control folder (and environments an earlier version made with Apple container). The run history in the VM (its own disk), projects' documents and artifacts, and the host's /nix/store are kept. Everything is made again on the next open. The run history in the VM can be deleted under “Run history in the VM” below.",
 "%lld 件を削除し、%@ を解放しました。": "Deleted %lld and freed %@.",
 "掃除できませんでした: ": "Could not clean: ",
 "プロジェクトの環境 %lld 件を削除しました": "Deleted %lld project environments",

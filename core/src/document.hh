@@ -89,6 +89,9 @@ class DocumentError : public std::runtime_error {
   std::map<std::string, std::string> args;
 };
 
+// The initial tsugumi.json, available before a project daemon exists.
+auto initial_project_json(const std::string &name) -> std::string;
+
 // Strictly decodes and shape-checks one document part. Throws
 // DocumentError(invalid_document) with the byte offset on errors.
 schema::Project parse_project_json(const std::string& text);
