@@ -64,7 +64,7 @@ namespace D = Tsugumi::Data;
 
 namespace {
 
-constexpr uint32_t kMaxFrame = 16u << 20;
+constexpr uint32_t kMaxFrame = tsugumi::workerd::kMaxWorkerFrameBytes;
 constexpr int kData = 3;
 constexpr int kControl = 4;
 

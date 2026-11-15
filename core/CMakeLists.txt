@@ -46,8 +46,6 @@ add_library(tsugumi_core STATIC
   src/nix.cc
   src/run_scratch.cc
   src/cache_usage.cc
-  src/worker_proc.cc
-  src/worker_pool.cc
   src/worker_condition.cc
   src/collect_value.cc
   src/execution_service.cc
@@ -69,6 +67,9 @@ target_include_directories(tsugumi_core
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${PROJECT_SOURCE_DIR}/sdk/include)
 target_link_libraries(tsugumi_core PUBLIC tsugumi_document tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
   PkgConfig::SQLITE3 PkgConfig::LIBGIT2 Threads::Threads tsugumi_workerd_support)
+# Embed the shared worker engine once in the installed core archive. It uses
+# neutral value/wire helpers supplied by its caller, never scheduler/service APIs.
+target_link_libraries(tsugumi_core PRIVATE tsugumi_worker_runtime)
 set_source_files_properties(src/worker_condition.cc PROPERTIES
   COMPILE_OPTIONS "-Wall;-Wextra;-Werror;-Wformat=2;-Wimplicit-fallthrough")
 if(NOT APPLE)
@@ -78,7 +79,6 @@ endif()
 # Values fixed at build time (Nix supplies them for the container image).
 set(TSUGUMI_CARD_NIXPKGS_REV "$ENV{TSUGUMI_CARD_NIXPKGS_REV}" CACHE STRING "nixpkgs revision for Cards")
 set(TSUGUMI_CARD_NIXPKGS_NARHASH "$ENV{TSUGUMI_CARD_NIXPKGS_NARHASH}" CACHE STRING "nixpkgs NAR hash for Cards")
-set(TSUGUMI_BWRAP "" CACHE FILEPATH "bubblewrap used for sandbox: true Cards")
 # Not a Card's shell: that one, and its PATH, come from the Card's own manifest.
 set(TSUGUMI_BASH "/bin/bash" CACHE FILEPATH "bash of the project shell commands (the Shell RPC)")
 target_compile_definitions(tsugumi_document PRIVATE
