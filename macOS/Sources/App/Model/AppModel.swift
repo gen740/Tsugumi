@@ -87,8 +87,9 @@ final class AppModel {
     let id = s.identity.id
     let current = sessions[id] ?? s
     if let c = chats[id], c.session === current { return c }
-    chats[id]?.detach()
-    let c = ChatController(session: current)
+    let previous = chats[id]
+    previous?.detach()
+    let c = ChatController(session: current, restoring: previous)
     chats[id] = c
     return c
   }

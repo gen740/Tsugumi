@@ -1,8 +1,11 @@
 #include "agent/store.hh"
 
 #include <gtest/gtest.h>
+#include <algorithm>
 
 #include "../agent_fixture_server.hh"
+#include "agent/wire.hh"
+#include "agent/presentation.hh"
 #include "host/failure.hh"
 #include "host/store.hh"
 
@@ -214,5 +217,202 @@ TEST_F(ConversationStoreTest,
   EXPECT_NO_THROW(store->Delete("conversation"));
   EXPECT_THROW(store->GetConversation("conversation"), host::Failure);
 }
+TEST(AgentPresentation, GroupsRetriesAndKeepsTasksAndApprovalsAtTheirCall) {
+  const auto conversation =
+      agent::wire::Conversation(R"({"id":"s","archive":[],"messages":[
+    {"role":"user","content":[{"type":"text","text":"Copy the pipelines"}]},
+    {"role":"assistant","content":[{"type":"tool_use","id":"bad","name":"project_file_read","input":"{\"path\":\"a\"}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"bad","is_error":true,"content":"missing"}]},
+    {"role":"assistant","content":[{"type":"tool_use","id":"retry","name":"project_file_read","input":"{\"path\":\"a\"}"},{"type":"tool_use","id":"delegate","name":"delegate","input":"{}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"retry","is_error":false,"content":"found"}]},
+    {"role":"assistant","content":[{"type":"text","text":"Later answer"}]}],
+    "tools":[{"id":"approval:retry","name":"operation_approval","state":"completed","result":"Approved","isError":false}],
+    "helpers":[{"call_id":"delegate","task":0,"spec":{"name":"Copy pipeline","instruction":"Internal instructions","read_cards":["a","b"],"write_cards":["a","b"],"run_cards":[]},"state":"completed","messages":[{"role":"user","content":[{"type":"text","text":"Private prompt and scope"}]},{"role":"assistant","content":[{"type":"tool_use","id":"h","name":"project_file_read","input":"{}"}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"h","content":"read"}]},{"role":"assistant","content":[{"type":"text","text":"Copied both"}]}]}]})");
+  ASSERT_EQ(conversation.rows.size(), 3u);
+  const auto& step = *conversation.rows[1];
+  EXPECT_EQ(step.kind, "step");
+  EXPECT_EQ(step.recovered, 1u);
+  EXPECT_EQ(step.failed, 0u);
+  ASSERT_EQ(step.children.size(), 5u);
+  EXPECT_EQ(step.children[0]->state, "recovered");
+  EXPECT_EQ(step.children[2]->name, "operation_approval");
+  const auto& helper = *step.children[4];
+  EXPECT_EQ(helper.kind, "helper");
+  EXPECT_EQ(helper.name, "Copy pipeline");
+  EXPECT_EQ(helper.instruction, "Internal instructions");
+  EXPECT_EQ(helper.text, "Copied both");
+  EXPECT_NE(helper.scope_en.find("Read: a, b"), std::string::npos);
+  EXPECT_NE(helper.scope_ja.find("実行: なし"), std::string::npos);
+  ASSERT_EQ(helper.children.size(), 2u);
+  EXPECT_EQ(helper.children[0]->kind, "step");
+  EXPECT_EQ(conversation.rows[2]->text, "Later answer");
+  conversation.helpers.front()->result_json = R"({"error":"Provider unavailable"})";
+  const auto failed = agent::Presentation(conversation);
+  EXPECT_EQ(failed[1]->failed, 1u);
+  EXPECT_EQ(failed[1]->children[4]->state, "failed");
+
+}
+TEST(AgentPresentation, SaveRetryMatchesChangedTargetsAcrossNewRevisions) {
+  const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
+    {"role":"assistant","content":[{"type":"tool_use","id":"a","name":"project_save","input":"{\"base_rev\":1,\"changes\":[{\"value_type\":\"WriteFile\",\"value\":{\"path\":\"definitions/a/src/main.py\",\"bytes\":\"bad\"}}]}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"a","is_error":true,"content":"save failed"}]},
+    {"role":"assistant","content":[{"type":"tool_use","id":"b","name":"project_save","input":"{\"base_rev\":2,\"changes\":[{\"value_type\":\"WriteFile\",\"value\":{\"path\":\"definitions/a/src/main.py\",\"bytes\":\"fixed\"}}]}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"b","content":"saved"}]}]})");
+  ASSERT_EQ(conversation.rows.size(), 1u);
+  EXPECT_EQ(conversation.rows[0]->recovered, 1u);
+  EXPECT_EQ(conversation.rows[0]->failed, 0u);
+  ASSERT_FALSE(conversation.rows[0]->children[1]->links.empty());
+  EXPECT_EQ(conversation.rows[0]->children[1]->links[0]->url, "card:a");
+}
+TEST(AgentPresentation, DirectSkillTasksStayUnderTheirRequestAndQueuedTasksHaveNames) {
+  const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
+    {"role":"user","display":"$review","content":[{"type":"text","text":"internal"}]},
+    {"role":"assistant","content":[{"type":"text","text":"later"}]}],
+    "helpers":[{"call_id":"turn","task":0,"anchor":1,"spec":{"name":"review","instruction":"Full instructions","read_cards":["a"],"write_cards":[],"run_cards":[]},"state":"completed","messages":[{"role":"user","content":[{"type":"text","text":"internal prompt"}]},{"role":"assistant","content":[{"type":"text","text":"findings"}]}]}]})");
+  ASSERT_EQ(conversation.rows.size(), 3u);
+  EXPECT_EQ(conversation.rows[0]->text, "$review");
+  EXPECT_EQ(conversation.rows[1]->name, "review");
+  EXPECT_EQ(conversation.rows[1]->text, "findings");
+  EXPECT_EQ(conversation.rows[2]->text, "later");
+  const auto queued = agent::wire::Conversation(R"({"id":"s","messages":[{"role":"assistant","content":[{"type":"tool_use","id":"delegation","name":"delegate","input":"{\"tasks\":[{\"name\":\"Queued review\",\"instruction\":\"Read a\",\"read_cards\":[\"a\"],\"write_cards\":[],\"run_cards\":[]}]}"}]}]})");
+  ASSERT_EQ(queued.rows.size(), 1u);
+  ASSERT_EQ(queued.rows[0]->children.size(), 2u);
+  EXPECT_EQ(queued.rows[0]->children[1]->name, "Queued review");
+  EXPECT_EQ(queued.rows[0]->children[1]->state, "queued");
+}
+TEST(AgentPresentation, AnotherTargetOrNewUserTurnDoesNotHideFailure) {
+  const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
+    {"role":"assistant","content":[{"type":"tool_use","id":"a","name":"project_file_read","input":"{\"path\":\"a\"}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"a","is_error":true,"content":"failed a"}]},
+    {"role":"assistant","content":[{"type":"tool_use","id":"b","name":"project_file_read","input":"{\"path\":\"b\"}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"b","content":"ok b"}]},
+    {"role":"user","content":[{"type":"text","text":"New request"}]},
+    {"role":"assistant","content":[{"type":"tool_use","id":"c","name":"project_file_read","input":"{\"path\":\"a\"}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"c","content":"ok a"}]}]})");
+  ASSERT_EQ(conversation.rows.size(), 3u);
+  EXPECT_EQ(conversation.rows[0]->failed, 1u);
+  EXPECT_EQ(conversation.rows[0]->recovered, 0u);
+  EXPECT_EQ(conversation.rows[0]->children[0]->result, "failed a");
+}
+TEST(AgentPresentation, AReadRetryAfterAnExplanationRecoversTheOriginalStep) {
+  const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
+    {"role":"assistant","content":[{"type":"tool_use","id":"a","name":"project_file_read","input":"{\"path\":\"a\"}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"a","is_error":true,"content":"failed"}]},
+    {"role":"assistant","content":[{"type":"text","text":"Retrying"},{"type":"tool_use","id":"b","name":"project_file_read","input":"{\"path\":\"a\"}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"b","content":"read"}]}]})");
+  ASSERT_EQ(conversation.rows.size(), 3u);
+  EXPECT_EQ(conversation.rows[0]->failed, 0u);
+  EXPECT_EQ(conversation.rows[0]->recovered, 1u);
+}
+TEST(AgentPresentation, ExternalTasksApprovalsAndReceiptsDoNotRestoreAsAnEmptyPanel) {
+  const auto task = agent::wire::Conversation(R"({"id":"s","helpers":[{"call_id":"external","task":0,"anchor":0,"spec":{"name":"External review","instruction":"Review","read_cards":[],"write_cards":[],"run_cards":[]},"messages":[],"state":"running"}],"tools":[{"id":"approval:external","name":"operation_approval","state":"pending","result":"Awaiting approval"}]})");
+  ASSERT_EQ(task.rows.size(), 2u);
+  EXPECT_EQ(task.rows[0]->name, "External review");
+  EXPECT_EQ(task.rows[1]->name, "operation_approval");
+  const auto receipt = agent::wire::Conversation(R"({"id":"s","tools":[{"id":"external","name":"core","state":"completed","result":"saved"}]})");
+  ASSERT_EQ(receipt.rows.size(), 1u);
+  ASSERT_EQ(receipt.rows[0]->children.size(), 1u);
+  EXPECT_EQ(receipt.rows[0]->children[0]->result, "saved");
+}
+TEST(AgentPresentation, ResultsKeepTheirCallIdsAcrossTheArchiveBoundary) {
+  const auto conversation = agent::wire::Conversation(R"({"id":"s","archive":[{"role":"assistant","content":[
+    {"type":"tool_use","id":"a","name":"project_file_read","input":"{\"path\":\"a\"}"},
+    {"type":"tool_use","id":"b","name":"project_file_read","input":"{\"path\":\"b\"}"}]}],
+    "messages":[{"role":"user","content":[{"type":"tool_result","tool_use_id":"missing","content":"ignore"},
+    {"type":"tool_result","tool_use_id":"a","content":"A rejected","is_error":true},
+    {"type":"tool_result","tool_use_id":"b","content":"B read"}]}]})");
+  ASSERT_EQ(conversation.rows.size(), 1u);
+  EXPECT_TRUE(conversation.rows[0]->archived);
+  ASSERT_EQ(conversation.rows[0]->children.size(), 2u);
+  EXPECT_EQ(conversation.rows[0]->children[0]->result, "A rejected");
+  EXPECT_EQ(conversation.rows[0]->children[0]->state, "failed");
+  EXPECT_EQ(conversation.rows[0]->children[1]->result, "B read");
+  EXPECT_EQ(conversation.rows[0]->children[1]->state, "completed");
+}
+TEST(AgentPresentation, LinksUseTypedCardPathsRunReceiptsAndTheRequestedLogInvocation) {
+  const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
+    {"role":"assistant","content":[{"type":"tool_use","id":"run","name":"run","input":"{\"card\":{\"segments\":[\"outer\",\"a\"]}}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"run","content":"{\"reply\":\"RunAccepted\",\"value\":{\"run\":{\"run_id\":\"11111111-1111-4111-8111-111111111111\"}}}"}]},
+    {"role":"assistant","content":[{"type":"tool_use","id":"log","name":"log_range","input":"{\"run_id\":\"11111111-1111-4111-8111-111111111111\",\"card\":{\"segments\":[\"outer\",\"a\"]},\"invocation\":\"2\",\"stream\":\"standard_error\",\"offset\":\"16\"}"}]}]})");
+  ASSERT_EQ(conversation.rows.size(), 1u);
+  const auto& calls = conversation.rows[0]->children;
+  ASSERT_EQ(calls.size(), 2u);
+  std::vector<std::string> run_links, log_links;
+  for (const auto& link : calls[0]->links) run_links.push_back(link->url);
+  for (const auto& link : calls[1]->links) log_links.push_back(link->url);
+  EXPECT_NE(std::find(run_links.begin(), run_links.end(), "card:outer/a"), run_links.end());
+  EXPECT_NE(std::find(run_links.begin(), run_links.end(), "run:11111111-1111-4111-8111-111111111111"), run_links.end());
+  EXPECT_NE(std::find(log_links.begin(), log_links.end(), "log:11111111-1111-4111-8111-111111111111/outer/a?invocation=2&stream=stderr&offset=16"), log_links.end());
+}
+TEST(AgentPresentation, InvalidToolArgumentsRemainVisibleInsteadOfBreakingTheSnapshot) {
+  const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[
+    {"role":"assistant","content":[{"type":"tool_use","id":"run","name":"run","input":"{\"card\":{\"segments\":null}}"},{"type":"tool_use","id":"save","name":"project_save","input":"{\"changes\":{}}"}]},
+    {"role":"user","content":[{"type":"tool_result","tool_use_id":"run","content":"Invalid Card path","is_error":true},{"type":"tool_result","tool_use_id":"save","content":"Invalid changes","is_error":true}]}]})");
+  ASSERT_EQ(conversation.rows.size(), 1u);
+  EXPECT_EQ(conversation.rows[0]->failed, 2u);
+  ASSERT_EQ(conversation.rows[0]->children.size(), 2u);
+  EXPECT_EQ(conversation.rows[0]->children[0]->result, "Invalid Card path");
+  EXPECT_EQ(conversation.rows[0]->children[1]->result, "Invalid changes");
+}
+TEST(AgentPresentation, ProviderSearchSourcesStayReadableAndKeepTheirExactUrls) {
+  const auto conversation = agent::wire::Conversation(R"({"id":"s","messages":[{"role":"assistant","content":[{"type":"web_search","id":"search","query":"science","sources":[{"title":"Paper","url":"https://example.test/paper"}]}]}]})");
+  ASSERT_EQ(conversation.rows.size(), 1u);
+  ASSERT_EQ(conversation.rows[0]->children.size(), 1u);
+  EXPECT_EQ(conversation.rows[0]->children[0]->result, "Paper — https://example.test/paper");
+}
+TEST(AgentPresentation, AccessGroupsKeepRawChoicesAndDifferentDurations) {
+  const std::vector<std::string> asked{
+      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Read","scope":"Conversation","needed_now":true})",
+      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Write","scope":"Conversation","needed_now":false})",
+      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Run","scope":"Conversation","needed_now":false})"};
+  auto groups = agent::AccessGroups(asked);
+  ASSERT_EQ(groups.size(), 1u);
+  EXPECT_EQ(groups[0]->scope, "Conversation");
+  ASSERT_EQ(groups[0]->lines.size(), 3u);
+  EXPECT_EQ(groups[0]->lines[0]->request, asked[0]);
+  EXPECT_TRUE(groups[0]->lines[0]->needed_now);
+  EXPECT_FALSE(groups[0]->lines[1]->needed_now);
+  EXPECT_FALSE(groups[0]->lines[2]->needed_now);
+  auto mixed = asked;
+  mixed.push_back(
+      R"(project_access {"title":"RCW86","path":"/work/RCW86","access":"Shell","scope":"Server"})");
+  groups = agent::AccessGroups(mixed);
+  ASSERT_EQ(groups.size(), 1u);
+  EXPECT_TRUE(groups[0]->scope.empty());
+  EXPECT_EQ(groups[0]->lines[3]->scope, "Server");
+}
+TEST_F(ConversationStoreTest,
+       LiveProjectionKeepsStreamingTextAcrossCheckpointsAndRestore) {
+  std::lock_guard lock(gate.mutex);
+  Create("live");
+  agent::ContentBlock question;
+  question.text = "hello";
+  store->SaveMessages(
+      "live",
+      {{"user", {question}, {}, {}, agent::ProviderAPI::AnthropicMessages}});
+  store->RecordEvent("live", R"({"kind":"checkpoint"})");
+  store->RecordEvent("live", R"({"kind":"text","text":"First "})");
+  store->RecordEvent("live", R"({"kind":"text","text":"answer"})");
+  auto snapshot = [&] {
+    return agent::wire::Conversation(
+        store->ConversationJson(store->GetConversation("live")));
+  };
+  ASSERT_EQ(snapshot().rows.size(), 2u);
+  EXPECT_EQ(snapshot().rows[1]->text, "First answer");
+  agent::ContentBlock reply;
+  reply.text = "First answer";
+  store->SaveMessages(
+      "live",
+      {{"user", {question}, {}, {}, agent::ProviderAPI::AnthropicMessages},
+       {"assistant", {reply}, {}, {}, agent::ProviderAPI::AnthropicMessages}});
+  store->RecordEvent("live", R"({"kind":"checkpoint"})");
+  store->RecordEvent("live", R"({"kind":"finished"})");
+  ASSERT_EQ(snapshot().rows.size(), 2u);
+  EXPECT_EQ(snapshot().rows[1]->text, "First answer");
+  Open();
+  ASSERT_EQ(snapshot().rows.size(), 2u);
+  EXPECT_EQ(snapshot().rows[1]->text, "First answer");
+}
+
 }  // namespace
 }  // namespace tsugumi::test

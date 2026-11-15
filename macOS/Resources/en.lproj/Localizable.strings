@@ -3,9 +3,7 @@
 " · 成果物 " = " · artifact ";
 " · 未配置" = " · not placed";
 " ほか %lld" = " and %lld more";
-" 実行 %@ の結果はまだ確かめていません。" = " The result of run %@ has not been checked yet.";
 "#%llu · %@ · %lld 件" = "#%llu · %@ · %lld items";
-"%@\n%@\n許可する操作: %@\n有効期間: %@" = "%@\n%@\nAllowed action: %@\nDuration: %@";
 "%@ · %@ · %lld 枚" = "%@ · %@ · %lld Cards";
 "%@ · %lld 件" = "%@ · %lld messages";
 "%@ · コメントを%@: %@" = "%@ · comment %@: %@";
@@ -40,7 +38,6 @@
 "%lld 件のモデルを取得しました。" = "Fetched %lld models.";
 "%lld 件を削除し、%@ を解放しました。" = "Deleted %lld and freed %@.";
 "%lld 分前" = "%lld min ago";
-"%lld 手の上限で中断しました。「続ける」で続きから再開できます。" = "Stopped at the limit of %lld steps. “Continue” goes on from there.";
 "%lld 日前" = "%lld days ago";
 "%lld 時間前" = "%lld h ago";
 "%lld 枚が実行中" = "%lld running";
@@ -703,6 +700,7 @@
 "会話を圧縮" = "Compact Conversation";
 "会話を圧縮しています…" = "Compacting the conversation…";
 "会話を表示中" = "Conversation open";
+"会話を読み込んでいます…" = "Loading conversation…";
 "会話を閉じます" = "Closes the conversation";
 "位置" = "Position";
 "何が起きたか" = "What happened";
@@ -710,6 +708,7 @@
 "作成" = "Create";
 "作成先は空ではありません。空のフォルダか新しい名前を選んでください。" = "The destination is not empty. Choose an empty folder or a new name.";
 "作成場所を選ぶ…" = "Choose Location…";
+"作業中" = "Working";
 "作業中の Agent" = "The Agent at work";
 "使い方の質問に答えます" = "Answers your questions about the app";
 "使うモデル" = "Model provider";
@@ -800,6 +799,7 @@
 "再確認" = "Check Again";
 "再試行" = "Retry";
 "再試行してください。" = "Please try again.";
+"再試行で成功" = "Succeeded on retry";
 "再試行中: %@" = "Retrying: %@";
 "再読込" = "Reload";
 "再起動して %@ に更新" = "Restart to Update to %@";
@@ -1091,7 +1091,6 @@
 "所要時間" = "Duration";
 "手分けして進めています" = "Splitting the work among helpers";
 "手分けして進めました" = "Split the work among helpers";
-"手数の上限で止まりました" = "Stopped at the step limit";
 "折りたたみを切り替える" = "Toggle Collapse";
 "折りたたむ" = "Collapse";
 "折りたたむ（実行には影響しません）" = "Collapse (does not affect runs)";
@@ -1100,6 +1099,7 @@
 "拡大して表示" = "Show Enlarged";
 "指定した日時より前に終わった実行" = "Runs that ended before a date";
 "指摘をコメントに残す" = "Keep finding as comment";
+"指示の全文" = "Full instructions";
 "掃除" = "Clean";
 "掃除できませんでした: " = "Could not clean: ";
 "探す" = "Search";
@@ -1268,7 +1268,6 @@
 "種類" = "Kind";
 "稼働中" = "Running";
 "空の実行リスト" = "Empty execution list";
-"答えをまとめきれませんでした。聞き方を変えてもう一度どうぞ。" = "Could not put an answer together. Please try asking another way.";
 "範囲を指定しないヘルパーを許可する" = "Allow unscoped helpers";
 "終える" = "End";
 "終わりました" = "Finished";
@@ -1340,6 +1339,7 @@
 "詳細を閉じる" = "Close details";
 "認証情報はこの Mac のアプリ用ファイル（0600）に保存し、VM の Nix daemon だけに渡します。プロジェクトや実行記録には含めません。" = "Credentials are stored in a private application file on this Mac (0600) and provided only to the VM’s Nix daemon. They are excluded from project files and run history.";
 "認証（非公開キャッシュ）" = "Authentication (Private Caches)";
+"読み取った内容は接続先のモデルに送信される場合があります。" = "Read content may be sent to the connected model.";
 "読み取り専用" = "Read only";
 "読み取り専用で共有しています。Agent だけが読みます。" = "Shared read-only. Only the Agent reads it.";
 "読み直す" = "Reload";
@@ -1361,7 +1361,6 @@
 "送信" = "Send";
 "送信（Return）" = "Send (Return)";
 "送信（⌘Return）" = "Send (⌘Return)";
-"途中で止まっています" = "Stopped partway";
 "途中の Card を直したら、保存された入力でそこから試し直せるよ" = "Changed a Card midway? Run again from there with the saved inputs.";
 "進行中" = "In progress";
 "進行中の実行を表示" = "Show Active Run";

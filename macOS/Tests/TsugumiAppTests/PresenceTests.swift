@@ -45,7 +45,7 @@ import Testing
 @MainActor @Test func theLastWordsSayHowTheTurnEnded() {
   let t0 = Date(timeIntervalSinceReferenceDate: 1000)
   for (outcome, words) in [(AgentPresence.Outcome.done, "できました"), (.failed, "うまくいきませんでした"),
-                           (.stopped, "止めました"), (.limit, "途中で止まっています")] {
+                           (.stopped, "止めました")] {
     let p = AgentPresence(animateWork: { true })
     p.turnStarted(now: t0)
     p.enqueue(.visit("load"), now: t0)

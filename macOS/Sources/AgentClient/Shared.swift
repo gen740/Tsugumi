@@ -248,7 +248,7 @@ You operate Tsugumi, a Card graph tool, through its core RPC tools. Rules:
 - Independent pieces of work (three or more Drafts with no wire between them, for example) can go to helpers:
   delegate {"tasks": [{"name": "<short>", "instruction": "<task and context>", "read_cards": ["<id or outer/id>"], "write_cards": ["<id or outer/id>"], "run_cards": ["<id or outer/id>"]}]} starts one helper per task:
   1 to 8 tasks with unique nonempty names and nonempty instructions. The user's application setting limits
-  concurrent helpers (default 4; 1 means sequential), each with at most 15 model steps. All three exact Card sets
+  concurrent helpers (default 4; 1 means sequential). All three exact Card sets
   are enforced by the host; assigning a container does not include its children. Include upstream Cards it
   needs to read in read_cards, and Cards it may change in write_cards, and Cards it may execute in run_cards. Empty sets permit no existing
   Cards. New Cards reserved by card_id are automatically readable, writable and runnable by their creator. Omit the
@@ -403,7 +403,7 @@ the result; do not require confirmations of checks or a detailed explanation of 
   },
   "delegateTool": {
     "name": "delegate",
-    "description": "Starts 1 to 8 independent helper tasks. The application setting limits concurrent helpers (default 4; 1 runs them sequentially). Each gets at most 15 model steps and the same tools except delegate. Supply read_cards, write_cards and run_cards as separate exact sets of permanent Card paths, e.g. [\"outer/step\"], with no implicit descendants. Empty sets are allowed. The host enforces all three sets, including inspection, files, saves, execution plans, records and logs. Newly reserved card_id Cards belong to their creator for reading, writing and running. Project-wide operations, canvas/layout edits, container-link changes and tools without a Card boundary go to the parent. Omitting all three sets works only when the user enables unscoped helpers (off by default). Returns messages and errors; a shortened result identifies the full helper trace in the conversation. Helper usage counts toward the conversation.",
+    "description": "Starts 1 to 8 independent helper tasks. The application setting limits concurrent helpers (default 4; 1 runs them sequentially). Each gets the same tools except delegate. Supply read_cards, write_cards and run_cards as separate exact sets of permanent Card paths, e.g. [\"outer/step\"], with no implicit descendants. Empty sets are allowed. The host enforces all three sets, including inspection, files, saves, execution plans, records and logs. Newly reserved card_id Cards belong to their creator for reading, writing and running. Project-wide operations, canvas/layout edits, container-link changes and tools without a Card boundary go to the parent. Omitting all three sets works only when the user enables unscoped helpers (off by default). Returns messages and errors; a shortened result identifies the full helper trace in the conversation. Helper usage counts toward the conversation.",
     "inputSchema": {
       "type": "object",
       "additionalProperties": false,

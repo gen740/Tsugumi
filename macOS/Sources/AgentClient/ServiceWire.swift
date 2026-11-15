@@ -454,6 +454,15 @@ enum ServiceWire {
     }
   }
 
+  static func chatRow(_ v: Tsugumi_Agent_ChatRowT) -> ChatRow {
+    ChatRow(id: v.id ?? "", kind: v.kind ?? "", role: v.role ?? "", text: v.text ?? "",
+      name: v.name ?? "", arguments: v.arguments ?? "", result: v.result ?? "", state: v.state ?? "",
+      archived: v.archived, summaryJa: v.summaryJa ?? "", summaryEn: v.summaryEn ?? "",
+      scopeJa: v.scopeJa ?? "", scopeEn: v.scopeEn ?? "", instruction: v.instruction ?? "",
+      failed: v.failed, recovered: v.recovered, links: v.links.compactMap { $0.map { .init(title: $0.title ?? "", url: $0.url ?? "") } },
+      children: v.children.compactMap { $0.map(chatRow) })
+  }
+
   static func conversation(_ v: Tsugumi_Agent_ConversationT) throws -> Conversation {
     func messages(_ values: [Tsugumi_Agent_ModelMessageT?]) throws -> [ChatMessage] {
       try values.compactMap { v in
@@ -463,6 +472,7 @@ enum ServiceWire {
       }
     }
     var result = Conversation()
+    result.rows = v.rows.compactMap { $0.map(chatRow) }
     result.id = v.id
     result.title = v.title ?? ""
     result.updatedAt = Date(timeIntervalSince1970: Double(v.updatedAt) / 1000)
@@ -608,6 +618,7 @@ enum ServiceWire {
       out["name"] = v.name
       out["ok"] = v.ok
       out["index"] = Int(v.index)
+      out["groups"] = v.groups.compactMap { $0 }
       out["asked"] = v.asked
       out["event"] = try v.event.map { try view($0) }
       return out
@@ -619,6 +630,7 @@ enum ServiceWire {
     case let v as Tsugumi_Agent_EventsPageT:
       var out: [String: Any] = [:]
       out["events"] = try v.events.compactMap { try $0.map { try view($0) } }
+      if v.hasRows { out["rows"] = v.rows.compactMap { $0.map(chatRow) } }
       out["next_seq"] = v.nextSeq
       out["busy"] = v.busy
       return out
@@ -647,6 +659,7 @@ enum ServiceWire {
       return out
     case let v as Tsugumi_Agent_AccessEntryT:
       var out: [String: Any] = [:]
+      out["groups"] = v.groups.compactMap { $0 }
       out["asked"] = v.asked
       out["id"] = v.id
       out["project_id"] = v.projectId

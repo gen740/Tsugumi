@@ -45,7 +45,7 @@ try {
   // The client submits one batch, preserves both identities in the next message,
   // and leaves its attachment state unchanged after a failed operation.
   const c = Object.create(ChatController.prototype) as any
-  Object.assign(c, { session: { dir: root }, currentId: 'conversation', folders: [], folderResources: new Map(),
+  Object.assign(c, { session: { dir: root }, currentId: 'conversation', displayedId: 'conversation', contentRevision: 0, folders: [], folderResources: new Map(),
     references: [], skills: [], items: [], available: true, busy: true, changed() {}, begin() {} })
   const originalFetch = globalThis.fetch
   const requests: { endpoint: string; body: any }[] = []

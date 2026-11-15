@@ -225,7 +225,7 @@ import TsugumiRPC
       #expect(["preparing", "model"].contains(operation.kind))
       let chat = t.makeChat()
       try await until("the interruption is visible") { chat.interrupted }
-      #expect(!chat.busy && !chat.stoppedAtLimit)
+      #expect(!chat.busy && !chat.canContinue)
       #expect(chat.status?.contains(String(localized: "会話は中断しています。中断時の処理: %@。再開するか、新しいメッセージを送れます。").components(separatedBy: "%@")[0]) == true)
       let agent = Agent(id: t.conversationID, transport: RPCToolTransport(session: t.session), provider: .fixture)
       try await agent.open()
@@ -499,8 +499,50 @@ import TsugumiRPC
     }
   }
 
+  @Test func compactionDoesNotReplaceStreamedRowsWithTheAgentsOlderCache() async throws {
+    try await withFixture(slow: 0) { t in
+      try await t.send("Initial request")
+      _ = try await t.finished()
+      let chat = t.makeChat()
+      try await until("the older snapshot is loaded") { chat.ready }
+      let host = try await t.snapshot()
+      let conversation = try #require(host["conversation"] as? Tsugumi_Agent_ConversationT)
+      let row = try #require(conversation.rows.compactMap { $0 }.last)
+      row.text = "New streamed progress"
+      let snapshot = Tsugumi_Agent_ConversationT(); snapshot.id = t.conversationID; snapshot.rows = [row]
+      let projected = try ServiceWire.conversation(snapshot)
+      chat.handle(.presentation(projected.rows), of: chat.answer)
+      chat.handle(.compacted, of: chat.answer)
+      await Task.yield()
+      await Task.yield()
+      #expect(chat.items.last?.text == "New streamed progress")
+    }
+  }
+
+  @Test func failedAndCancelledSelectionsKeepTheVisibleConversation() async throws {
+    try await withFixture(slow: 0) { t in
+      try await t.send("Keep this conversation")
+      _ = try await t.finished()
+      let chat = t.makeChat()
+      try await until("the conversation is visible") { chat.items.count == 2 }
+      let text = chat.items.map(\.text)
+      chat.select(String(repeating: "x", count: 257))
+      #expect(chat.items.map(\.text) == text, "A pending selection keeps the previous panel")
+      try await until("the failed load reports its error") { !chat.loading && chat.status != nil }
+      #expect(chat.items.map(\.text) == text)
+      #expect(!chat.ready, "Old rows cannot receive a message for the failed selection")
+      chat.select(String(repeating: "x", count: 257))
+      chat.select(t.conversationID)
+      try await until("the cancelled selection is replaced") { chat.ready }
+      #expect(chat.items.map(\.text) == text)
+      #expect(chat.status == nil)
+    }
+  }
+
   @Test func theChatFollowsTheOpenSession() async throws {
     try await withFixture(slow: 0) { t in
+      try await t.send("Keep the selected conversation")
+      _ = try await t.finished()
       let back = try t.makeSession()
       let model = AppModel()
       // Its home refresh talks to this fixture's core; it must not outlive the
@@ -509,9 +551,15 @@ import TsugumiRPC
       let first = model.chat(for: t.session)
       t.keep(first)
       try await until("the first UI is attached") { first.currentId == t.conversationID }
+      try await until("the selected transcript is visible") { first.ready && first.items.count == 2 }
+      let visible = first.items.map(\.text)
+      let project = try #require(t.session.endpointOverride)
+      _ = try await CoreHostClient.shared.call("ConversationCreateRequest", ["conversation_id": UUID().uuidString.lowercased(), "project_id": project.projectId])
       #expect(model.chat(for: t.session) === first)
       let replacement = model.chat(for: back)
       t.keep(replacement)
+      #expect(replacement.currentId == t.conversationID, "Replacing a project session keeps the selected conversation, even when a newer one exists")
+      #expect(replacement.items.map(\.text) == visible, "The panel keeps its content while reconnecting")
       try await until("the replacement UI is attached") { replacement.currentId == t.conversationID }
       #expect(replacement.session === back)
       #expect(replacement !== first)
@@ -532,7 +580,7 @@ import TsugumiRPC
       try await SyncTests.connected(t.session)
       try await Task.sleep(for: .milliseconds(250))
       #expect(!chat.busy && !reply(chat, after: 1))
-      #expect(chat.stoppedAtLimit && !chat.failed)
+      #expect(chat.canContinue && !chat.failed)
     }
   }
 }
