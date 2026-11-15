@@ -5,6 +5,150 @@
 
 namespace tsugumi::test {
 namespace {
+// Match ChatResumeTests: the desktop configures a fixture without an API key
+// or a custom output limit, then selects it on a human-owned conversation.
+class DesktopChatFixture : public AgentProjectFixture {
+protected:
+  auto ConfigureDesktop(const ModelServer &model, uint32_t input_limit = 0)
+      -> void {
+    StartProject();
+    const auto reply =
+        Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder &b) {
+          H::ProviderInputT config;
+          config.endpoint = model.URL();
+          config.model = "fixture";
+          config.context_limit = input_limit;
+          return H::CreateProviderSetRequest(b, b.CreateString("desktop"),
+                                             b.CreateString("fixture"),
+                                             H::ProviderInput::Pack(b, &config))
+              .Union();
+        });
+    ASSERT_TRUE(reply.Code().empty());
+  }
+
+  auto DesktopConversation(const std::string &id) -> std::string {
+    const auto conversation = Conversation(id, true);
+    const auto reply =
+        Call(*human, A::RequestPayload::ConfigureRequest, [&](Builder &b) {
+          Tsugumi::Service::ProviderSelectionT selection;
+          selection.profile = "desktop";
+          selection.provider_id = "fixture";
+          selection.model = "fixture";
+          selection.account_profile = "desktop";
+          return A::CreateConfigureRequest(
+                     b,
+                     Tsugumi::Service::ProviderSelection::Pack(b, &selection),
+                     b.CreateString(conversation))
+              .Union();
+        });
+    EXPECT_TRUE(reply.Code().empty());
+    return conversation;
+  }
+
+  auto DesktopSend(const std::string &id, const std::string &text,
+                   const std::string &turn) -> Reply {
+    return Call(*human, A::RequestPayload::ConversationSendRequest,
+                [&](Builder &b) {
+                  return A::CreateConversationSendRequest(b, b.CreateString(id),
+                                                          b.CreateString(turn),
+                                                          b.CreateString(text))
+                      .Union();
+                });
+  }
+};
+
+TEST_F(DesktopChatFixture, DefaultFixtureBudgetAllowsSendingAndCompacting) {
+  ModelServer model;
+  ConfigureDesktop(model);
+  const auto conversation = DesktopConversation("desktop-chat");
+  for (int turn = 1; turn <= 4; ++turn) {
+    model.Queue(AnthropicText("Desktop answer " + std::to_string(turn)));
+    ASSERT_TRUE(DesktopSend(conversation, "hello " + std::to_string(turn),
+                            "turn-" + std::to_string(turn))
+                    .Code()
+                    .empty());
+    const auto state = WaitUntilIdle(conversation);
+    ASSERT_NE(state.find("Desktop answer " + std::to_string(turn)),
+              std::string::npos)
+        << Events(conversation, true).View();
+  }
+  model.Queue(AnthropicText("Earlier desktop messages were answered."));
+  ASSERT_TRUE(Call(*human, A::RequestPayload::ConversationActionRequest,
+                   [&](Builder &b) {
+                     return A::CreateConversationActionRequest(
+                                b, b.CreateString(conversation),
+                                A::Action::Compact)
+                         .Union();
+                   })
+                  .Code()
+                  .empty());
+  const auto state = WaitUntilIdle(conversation);
+  EXPECT_NE(state.find("Earlier desktop messages were answered."),
+            std::string::npos);
+  EXPECT_EQ(JsonString(state, "/conversation/archive/0/content/0/text"),
+            "hello 1");
+  const auto snapshot = Get(conversation, true);
+  const auto *history =
+      snapshot.Value()->value_as_ConversationResult()->conversation();
+  size_t visible = 0;
+  for (const auto *messages : {history->archive(), history->messages()})
+    if (messages)
+      for (const auto *message : *messages)
+        if (!message->context_summary())
+          ++visible;
+  EXPECT_EQ(visible, 8u);
+  const auto events = Events(conversation, true).View();
+  EXPECT_NE(events.find("compacted"), std::string::npos);
+  EXPECT_EQ(events.find("\"kind\":\"error\""), std::string::npos) << events;
+  EXPECT_EQ(model.Requests().size(), 5u);
+}
+
+TEST_F(DesktopChatFixture,
+       OversizedRequestReportsContextFullAndANewChatCanSend) {
+  ModelServer model;
+  ConfigureDesktop(model);
+  const auto conversation = DesktopConversation("desktop-oversized");
+  ASSERT_TRUE(DesktopSend(conversation, std::string(100000, 'y'), "too-large")
+                  .Code()
+                  .empty());
+  const auto state = WaitUntilIdle(conversation);
+  const auto trace = Events(conversation, true);
+  const auto *events = trace.Value()->value_as_EventsPage()->events();
+  ASSERT_NE(events, nullptr);
+  size_t errors = 0;
+  for (const auto *item : *events)
+    if (item->event()->kind()->str() == "error") {
+      ++errors;
+      ASSERT_NE(item->event()->message(), nullptr);
+      EXPECT_EQ(item->event()->message()->str(),
+                "the conversation no longer fits the model's context");
+    }
+  EXPECT_EQ(errors, 1u) << trace.View();
+  EXPECT_TRUE(model.Requests().empty());
+  EXPECT_EQ(JsonString(state, "/conversation/messages/0/content/0/text"),
+            std::string(100000, 'y'));
+  const auto fresh = DesktopConversation("desktop-fresh");
+  model.Queue(AnthropicText("A fresh conversation can answer."));
+  ASSERT_TRUE(DesktopSend(fresh, "hello", "fresh-turn").Code().empty());
+  EXPECT_NE(WaitUntilIdle(fresh).find("A fresh conversation can answer."),
+            std::string::npos)
+      << Events(fresh, true).View();
+  EXPECT_EQ(model.Requests().size(), 1u);
+}
+
+TEST_F(DesktopChatFixture, TooSmallExplicitBudgetRejectsEvenAShortMessage) {
+  ModelServer model;
+  ConfigureDesktop(model, 6000);
+  const auto conversation = DesktopConversation("desktop-small-budget");
+  ASSERT_TRUE(
+      DesktopSend(conversation, "hello", "small-budget").Code().empty());
+  WaitUntilIdle(conversation);
+  EXPECT_EQ(
+      JsonString(Events(conversation, true).View(), "/events/0/event/message"),
+      "the conversation no longer fits the model's context");
+  EXPECT_TRUE(model.Requests().empty());
+}
+
 TEST_F(AgentFixture, ConversationSnapshotReportsTheAcceptedModelAcrossHostEditsAndRestart) {
   ModelServer model;
   model.Queue(AnthropicText("done"));

@@ -68,7 +68,7 @@ import TsugumiRPC
       let provider = Tsugumi_Host_ProviderInputT()
       provider.endpoint = "http://127.0.0.1:\(port)"
       provider.model = "fixture"
-      provider.contextLimit = 6000
+      // Use the model budget: 6K cannot hold the real system prompt and tools.
       _ = try await CoreHostClient.shared.call("ProviderSetRequest", ["profile": "desktop", "id": "fixture", "provider": provider])
       try await CoreHostClient.shared.configure(.fixture, conversationID: conversationID)
     }

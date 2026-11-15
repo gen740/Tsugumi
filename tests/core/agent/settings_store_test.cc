@@ -834,9 +834,7 @@ TEST_F(ContextBudget, OneOversizedMessageFailsClearlyWithoutSendingOrRetrying) {
   const auto result =
       agent::Runtime().Run(config, "system", messages, {}, {}, hooks, &context);
   EXPECT_EQ(result.outcome, agent::RunOutcome::Failed);
-  EXPECT_NE(result.error.find("cannot fit the model's context"),
-            std::string::npos);
-  EXPECT_NE(result.error.find("Shorten the request"), std::string::npos);
+  EXPECT_EQ(result.error, "the conversation no longer fits the model's context");
   EXPECT_TRUE(model.Requests().empty());
   EXPECT_EQ(agent::SerializeMessages(messages), original);
 }
@@ -858,7 +856,7 @@ TEST_F(ContextBudget, OversizedToolExchangeFailsAfterCappingWithoutRetrying) {
       config, "system", messages, {{"inspect", "Inspect", "{}"}}, {}, hooks,
       &context);
   EXPECT_EQ(result.outcome, agent::RunOutcome::Failed);
-  EXPECT_NE(result.error.find("after tool-result capping"), std::string::npos);
+  EXPECT_EQ(result.error, "the conversation no longer fits the model's context");
   EXPECT_TRUE(model.Requests().empty());
   EXPECT_EQ(agent::SerializeMessages(messages), original);
 }
@@ -920,7 +918,7 @@ TEST(HostContextWindow, CatalogWinsAndEveryDefaultHasAModelWindow) {
             100000u - 32768u - 5000u);
   const auto config = settings.Resolve(
       {{"provider_id", Quote("fixture")}, {"model", Quote("fixture-model")}});
-  EXPECT_EQ(config.context_limit_tokens, 6000u);  // Fixture's explicit budget.
+  EXPECT_EQ(config.context_limit_tokens, 100000u - 32768u - 5000u);
   EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "fixture",
                                               "fixture-model"),
             100000u);

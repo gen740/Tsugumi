@@ -142,10 +142,10 @@ auto ContextOverflow(std::string reason) -> bool {
 auto IsResults(const Message& message) -> bool;
 
 auto CannotFit() -> std::runtime_error {
+  // Local fitting and a provider context refusal have the same terminal
+  // error. Clients recognize it to offer starting a new conversation.
   return std::runtime_error(
-      "A message or complete tool exchange cannot fit the model's context "
-      "after tool-result capping. Shorten the request or choose a model with "
-      "a larger context window.");
+      "the conversation no longer fits the model's context");
 }
 
 // Never split a tool exchange, or the provider-only thinking/signature blocks
@@ -436,8 +436,7 @@ auto Runtime::Run(const ProviderConfig& config, std::string_view system,
       } catch (const ProviderError& error) {
         if (!ContextOverflow(error.what())) throw;
         if (!options_.compact || ++context_refusals > 3)
-          throw std::runtime_error(
-              "the conversation no longer fits the model's context");
+          throw CannotFit();
         context->input_tokens = 0;
         context->result_limit =
             std::max(size_t{1024}, context->result_limit / 2);

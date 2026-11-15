@@ -1052,7 +1052,6 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
         "http://127.0.0.1:" +
         std::to_string(j::UInt(j::Get(values, "agent.fixturePort"), 8765));
     c.model = "fixture";
-    input_limit_tokens = 6000;
   }
   auto q = s.db.prepare("SELECT json FROM providers WHERE profile=? AND id=?");
   q.bind(1, profile).bind(2, id);
