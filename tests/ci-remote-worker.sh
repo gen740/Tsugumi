@@ -8,12 +8,12 @@ fi
 
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
-nix build .#remote-worker --out-link "$scratch/package"
+nix build .#workerd --out-link "$scratch/package"
 nix build .#tsugumid --out-link "$scratch/core"
 # Fixtures generate Ed25519 identities and authorize hostd by its public key.
 TSUGUMI_HOSTD="$scratch/core/bin/tsugumi-hostd" \
-  TSUGUMI_REMOTE_TEST_DAEMON="$scratch/package/bin/tsugumi-remote-worker" \
+  TSUGUMI_REMOTE_TEST_DAEMON="$scratch/package/bin/tsugumi-workerd" \
   "$CORE_TEST_ENV" python3 -m pytest -q -m environment tests/core/integration/test_remote_execution.py
 
-TSUGUMI_REMOTE_TEST_DAEMON="$scratch/package/bin/tsugumi-remote-worker" \
+TSUGUMI_REMOTE_TEST_DAEMON="$scratch/package/bin/tsugumi-workerd" \
   "$CORE_TEST_ENV" python3 -m pytest -q tests/remote

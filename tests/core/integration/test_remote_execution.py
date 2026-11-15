@@ -1,6 +1,6 @@
-"""Opt-in execution against a disposable Linux daemon.
+"""Opt-in execution against a disposable Linux tsugumi-workerd.
 
-Set TSUGUMI_REMOTE_TEST_DAEMON to start a packaged daemon on loopback.
+Set TSUGUMI_REMOTE_TEST_DAEMON to start packaged tsugumi-workerd on loopback.
 For a daemon already running, set TSUGUMI_REMOTE_TEST_ENDPOINT and
 TSUGUMI_REMOTE_TEST_PUBLIC_KEY_FILE, plus TSUGUMI_REMOTE_TEST_AUTHORIZED_KEYS
 pointing to that worker's dedicated writable authorized-keys file.
@@ -52,7 +52,7 @@ def remote_daemon(tmp_path, request):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
     if not binary:
         if getattr(request, "param", None):
-            pytest.skip("worker settings tests require a disposable packaged daemon")
+            pytest.skip("worker settings tests require a disposable packaged tsugumi-workerd")
         endpoint = os.environ.get("TSUGUMI_REMOTE_TEST_ENDPOINT")
         key_file = os.environ.get("TSUGUMI_REMOTE_TEST_PUBLIC_KEY_FILE")
         if not endpoint or not key_file:

@@ -104,6 +104,8 @@ nix develop
 cmake -S . -B build -G Ninja && ninja -C build
 ```
 
+On Linux, the same CMake build also produces the remote listener `build/workerd/tsugumi-workerd`. The packaged listener is available as `nix build .#workerd`; see [Remote execution](RemoteExecution.md) for installation and registration.
+
 The shared VM's boot disk (a kernel and a small rootfs with Nix, written to `dist/tsugumi-vm/`). If there is a published one at [gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm), it is downloaded; otherwise it is built with Nix inside a container (no separate Linux host or remote builder is needed). It changes only when the pinned nixpkgs or `macOS/Container/vm-boot.nix` changes; after changing them, publish it with `macOS/tools/publish-vm.sh`. Tsugumi itself (tsugumid and the rest) is built by Nix inside the VM on its first boot, from the shared source (`macOS/Container/vm-system.nix`; rebuilt only when the source changes):
 
 ```bash

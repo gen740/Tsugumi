@@ -16,7 +16,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 | [protocol/](protocol/) | FlatBuffers contracts: project (`tsugumi.fbs`), Agent (`agent.fbs`), host operations (`host.fbs`, shared types in `service_common.fbs`), private VM helper (`vm_host.fbs`), workers (`worker.fbs`, `remote_worker.fbs`), data and enums |
 | [core/](core/) | Project core `tsugumid`, host-side `tsugumi-hostd` (`src/host/`, `src/agent/`), worker pools, scheduling, Nix, history and versions |
 | [client/](client/) | Shared C++ RPC client, C interface and WebAssembly bindings |
-| [workerd/](workerd/) | Native Card host, C++ remote listener/supervisor/Nix runner, framing and job support |
+| [workerd/](workerd/) | Native Card host `tsugumi-worker`, remote listener/supervisor/Nix runner `tsugumi-workerd`, framing and job support |
 | [sdk/](sdk/) | Card ABI and runtime, language SDKs and code generation, views, [Nix SDK](sdk/nix/default.nix) |
 | [macOS/](macOS/) | SwiftUI app, RPC/Agent adapters, shared Linux VM, image definitions and app tests |
 | [ui/](ui/) | Shared isolated web-module host (`modules/`) and Card scaffolds (`templates/`) |

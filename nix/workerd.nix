@@ -7,10 +7,10 @@
   runCommand,
   util-linux,
 }:
-runCommand "tsugumi-remote-worker" { nativeBuildInputs = [ makeWrapper ]; } ''
+runCommand "tsugumi-workerd" { nativeBuildInputs = [ makeWrapper ]; } ''
   mkdir -p "$out/bin"
   # Nix's build hook and the namespace launcher are the only external tools.
-  makeWrapper ${core}/bin/tsugumi-remote-worker "$out/bin/tsugumi-remote-worker" \
+  makeWrapper ${core}/bin/tsugumi-workerd "$out/bin/tsugumi-workerd" \
     --prefix PATH : ${
       lib.makeBinPath [
         nix

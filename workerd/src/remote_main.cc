@@ -56,7 +56,7 @@ struct Fd {
   }
 };
 auto log(const std::string& line) -> void {
-  std::cerr << "tsugumi-remote-worker: " << line << '\n';
+  std::cerr << "tsugumi-workerd: " << line << '\n';
 }
 auto boot() -> std::string {
   return fs::read_file_or_throw("/proc/sys/kernel/random/boot_id");

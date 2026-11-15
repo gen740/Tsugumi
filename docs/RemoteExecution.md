@@ -6,11 +6,11 @@ The [worker contract](../protocol/remote_worker.fbs) defines framed FlatBuffers 
 
 ## Install and register
 
-The execution host needs Linux, Nix, and unprivileged user, mount and PID namespaces. From the repository root:
+The remote listener `tsugumi-workerd` starts `tsugumi-worker` processes for Card invocations. The execution host needs Linux, Nix, and unprivileged user, mount and PID namespaces. From the repository root:
 
 ```sh
-nix build .#remote-worker --out-link "$HOME/.tsugumi-remote-worker"
-"$HOME/.tsugumi-remote-worker/bin/tsugumi-remote-worker" --host 0.0.0.0
+nix build .#workerd --out-link "$HOME/.tsugumi-workerd"
+"$HOME/.tsugumi-workerd/bin/tsugumi-workerd" --host 0.0.0.0
 ```
 
 1. Start the worker. Its startup line prints `public key: ed25519:...`. It creates `STATE/identity.pem` on first use, with owner-only permissions. `--public-key` prints that same public key before starting a listener (stop a running worker first if using this command).

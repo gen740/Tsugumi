@@ -47,6 +47,7 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **rev** | The document's revision. A save is based on it, and a save based on an old one is refused as a conflict |
 | **Shared VM** | The one Linux VM that the Mac app and the Mac's `tsugumi` command share. The signed helper holds `vm.lock` and hostd manages its resident project environments ([Architecture](features.md#1-architecture)) |
 | **`tsugumi-vmd`** | The managing process inside the VM. Starts each project's `tsugumid` with its own uid, namespaces and cgroup |
+| **`tsugumi-workerd`** | The persistent listener on a remote worker machine; starts `tsugumi-worker` processes to run Cards ([Remote execution](RemoteExecution.md)) |
 | **Worker** | The process that runs a Card's code. Can stay resident across runs ([Worker state](CardGuide.md#worker-state)) |
 | **bubblewrap / Seatbelt** | How Cards are isolated: bubblewrap inside the VM and on Linux, Seatbelt in a Web UI run directly on a Mac from the repository |
 | **pkgsPath** | The nixpkgs that Cards use, pinned (`tsugumi.json`) |

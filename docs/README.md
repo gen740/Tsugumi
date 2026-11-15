@@ -13,7 +13,7 @@ Start from the document that fits what you want to read. To read with moving fig
 | [Demos.md](Demos.md) | Choose a demo, try changes and interpret its results |
 | [CardGuide.md](CardGuide.md) | Build a Card that takes an input and computes, with examples in Python, Bash, C++, R, Julia, Ruby, Go, Rust and C# |
 | [RunHistory.md](RunHistory.md) | Inspect and compare runs, check runtime packages and open saved artifacts |
-| [RemoteExecution.md](RemoteExecution.md) | Register a C++ remote worker and run a Code Card on its Linux host |
+| [RemoteExecution.md](RemoteExecution.md) | Start `tsugumi-workerd` on a remote worker machine and run a Code Card on its Linux host |
 | [CSharp.md](CSharp.md) | C# typed ports, Tasks, NuGet dependencies and the .NET worker lifetime |
 | [Visualization.md](Visualization.md) | Editable library/shape scaffolds, data parameters, saved figures and reports |
 | [Marimo.md](Marimo.md) | Committed notebook runs, typed inputs/outputs, saved cell results and the interactive-session boundary |

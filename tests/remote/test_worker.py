@@ -1,4 +1,4 @@
-"""Black-box admission, scoping and recovery against the C++ remote worker.
+"""Black-box admission, scoping and recovery against tsugumi-workerd.
 
 The socket-free C++ suite covers journal races and protocol verification. This
 suite runs on the Linux CI runner, outside the build sandbox.
@@ -111,7 +111,7 @@ class Worker:
 def worker(tmp_path):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_DAEMON")
     if not binary:
-        pytest.skip("set TSUGUMI_REMOTE_TEST_DAEMON to the packaged C++ worker")
+        pytest.skip("set TSUGUMI_REMOTE_TEST_DAEMON to the packaged tsugumi-workerd")
     instance = Worker(tmp_path, binary)
     try:
         yield instance
