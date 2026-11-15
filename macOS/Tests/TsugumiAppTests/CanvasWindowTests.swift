@@ -85,7 +85,10 @@ import Testing
             let port = g.port(p.name, output: output)
             let fromPort = CGPoint(x: c.position.x + port.x * zoom, y: c.position.y + port.y * zoom)
             try await send(.leftMouseDown, at: fromPort, to: window)
-            try await send(.leftMouseDragged, at: CGPoint(x: fromPort.x + 20, y: fromPort.y + 20), to: window)
+            // Several steps, as a real drag arrives: one event alone can be consumed deciding between gestures.
+            for step in 1...4 {
+              try await send(.leftMouseDragged, at: CGPoint(x: fromPort.x + Double(step) * 5, y: fromPort.y + Double(step) * 5), to: window)
+            }
             try await send(.leftMouseUp, at: CGPoint(x: fromPort.x + 20, y: fromPort.y + 20), to: window)
             #expect(c.wires > 0 && c.moved == .zero, "\(kind), \(flow), \(zoom), output=\(output)")
           }
