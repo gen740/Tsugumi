@@ -36,15 +36,10 @@ auto SkillsService::Handle(const RequestIn& request, bool human,
     if (trust->decision() > H::ProjectTrustDecision::MAX)
       throw Failure("invalid_request", "Unknown project trust decision");
     if (trust->decision() != H::ProjectTrustDecision::Unknown) {
-      auto save =
-          db.prepare("INSERT OR REPLACE INTO project_trust VALUES(?,?)");
-      save.bind(1, path).bind(2, static_cast<int>(trust->decision())).run();
+      SetProjectTrust(db, path, trust->decision());
     }
     H::ProjectTrustT result;
-    auto query = db.prepare("SELECT decision FROM project_trust WHERE path=?");
-    query.bind(1, path);
-    if (query.step())
-      result.decision = static_cast<H::ProjectTrustDecision>(query.i64(0));
+    result.decision = ProjectTrust(db, path);
     return wire::HostReply(request.request_id, std::move(result));
   }
   const auto* p = r->value_as_SkillsListRequest();

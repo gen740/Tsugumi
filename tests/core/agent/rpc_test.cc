@@ -1031,6 +1031,47 @@ TEST_F(AgentFixture, HelpersRequireScopeUnlessThePersonAllowsUnscopedWork) {
   EXPECT_EQ(model.Requests().size(), 1u);
 }
 
+TEST_F(AgentFixture, RevokingUnscopedPermissionAlsoBlocksScopedChildren) {
+  ModelServer model;
+  Configure(model);
+  const auto conversation = Conversation("revoke-unscoped-parent");
+  ASSERT_TRUE(
+      SettingsPatch(*host, "desktop", {{"agent.allowUnscopedHelpers", "true"}})
+          .Code()
+          .empty());
+  model.Queue(
+      AnthropicTool(
+          "scoped-child", "delegate",
+          R"({"tasks":[{"name":"child","instruction":"Read any Card.","read_cards":["arbitrary"],"write_cards":[],"run_cards":[]}]})"),
+      true);
+  model.Queue(AnthropicText("Parent saw the permission refusal."));
+  auto pending = std::async(std::launch::async, [&] {
+    return Tool(
+        conversation, "delegate",
+        R"({"tasks":[{"name":"parent","instruction":"Delegate.","depth":1,"count":1}]})",
+        "unscoped-parent");
+  });
+  const bool started = model.WaitForRequests(1);
+  if (!started)
+    model.Release();
+  ASSERT_TRUE(started);
+  const auto revoked = SettingsPatch(*host, "desktop",
+                                     {{"agent.allowUnscopedHelpers", "false"}});
+  model.Release();
+  ASSERT_TRUE(revoked.Code().empty());
+  ASSERT_TRUE(pending.get().Code().empty());
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 2u);
+  EXPECT_NE(requests.back().find("Unscoped helpers are disabled"),
+            std::string::npos);
+  EXPECT_EQ(ListSize(Get(conversation)
+                         .Value()
+                         ->value_as_ConversationResult()
+                         ->conversation()
+                         ->helpers()),
+            1u);
+}
+
 TEST_F(AgentFixture, MainAgentStartsAllTasksAcrossDelegateCalls) {
   // One watchdog for both cases, including held requests and their cleanup.
   const auto deadline = std::chrono::steady_clock::now() + 20s;

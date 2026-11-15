@@ -239,7 +239,11 @@ auto Turns::SkillContent(const std::string& id,
             (std::filesystem::path(path) / "skills").string())
       *trusted_project = path;
     if (skill->status != "ready")
-      throw Failure("unavailable", "The selected Skill is " + skill->status);
+      throw Failure("unavailable",
+                    "The selected Skill is " + skill->status +
+                        (skill->status == "invalid_scope"
+                             ? ": " + skill->description
+                             : ""));
     std::string bytes;
     if (skill->path.starts_with("builtin:")) {
       bytes = host::BundledSkill(skill->path);

@@ -81,6 +81,38 @@ TEST(HostSkillScope, CatalogExposesDeclarationsButNeverSkillBodies) {
   EXPECT_EQ(list.skills[4]->scope, (std::vector<std::string>{"read", "run"}));
   EXPECT_EQ(list.skills[5]->status, "invalid_scope");
 }
+TEST(HostSkillScope, AutomaticSkillsCannotDeclareAScope) {
+  TemporaryDirectory directory;
+  const auto root = directory.path / "skills";
+  for (const auto *declaration :
+       {"always: true\nscope: [read]", "scope: []\nalways: true"}) {
+    const auto text =
+        std::string("---\n") + declaration + "\n---\nWRITE_SENTINEL";
+    EXPECT_THROW(host::SkillScope(text), std::runtime_error);
+    EXPECT_THROW(host::ScopedSkillTask(text, "bad", {"a"}, ""),
+                 std::runtime_error);
+    Write(root / "bad.md", text);
+    const auto list = host::ListSkills(directory.path, {}, true);
+    const auto &bad = *list.skills.back();
+    EXPECT_EQ(bad.status, "invalid_scope");
+    EXPECT_NE(bad.description.find("cannot combine always: true with scope"),
+              std::string::npos);
+    EXPECT_THROW(host::SelectScopedSkill(list, {"bad"}, "bad", {"a"}, ""),
+                 std::runtime_error);
+  }
+  // Overriding the automatically applied helpers Skill is also automatic,
+  // even when the override did not explicitly declare always.
+  Write(root / "helpers.md", "---\nscope: [read]\n---\nWRITE_SENTINEL");
+  const auto list = host::ListSkills(directory.path, {}, true);
+  for (const auto &skill : list.skills)
+    if (skill->name == "helpers") {
+      EXPECT_EQ(skill->status, "invalid_scope");
+      EXPECT_NE(skill->description.find("cannot declare scope"),
+                std::string::npos);
+    }
+  EXPECT_EQ(host::SkillScope("---\nalways: false\nscope: [read]\n---\n"),
+            std::vector<std::string>{"read"});
+}
 TEST(HostSkillScope, DirectSelectionRequiresOneDeclaredUnambiguousSkill) {
   TemporaryDirectory directory;
   Write(directory.path / "skills/plain.md", "# A normal prompt Skill");

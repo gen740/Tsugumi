@@ -2,12 +2,19 @@
 
 #include <gtest/gtest.h>
 #include <algorithm>
+#include <utility>
 
 #include "../agent_fixture_server.hh"
 #include "agent/helpers.hh"
-#include "agent/wire.hh"
 #include "agent/presentation.hh"
+#include "agent/providers.hh"
+#include "agent/tools.hh"
+#include "agent/turns.hh"
+#include "agent/wire.hh"
+#include "host/access.hh"
+#include "host/demo_references.hh"
 #include "host/failure.hh"
+#include "host/settings.hh"
 #include "host/store.hh"
 
 namespace tsugumi::test {
@@ -60,6 +67,130 @@ struct ConversationStoreTest : testing::Test {
     });
   }
 };
+TEST_F(ConversationStoreTest,
+       NestedDelegateRecoversChildCompletedBeforeParentCheckpoint) {
+  namespace H = Tsugumi::Host;
+  Create("nested");
+  ModelServer model;
+  host::Settings settings(
+      directory.path, [](const auto &, const auto &) {},
+      [](const auto &, auto) { return ""; }, [](const auto &) { return true; },
+      nullptr, host::Settings::KeyStorage::Host);
+  H::ProviderSetRequestT provider;
+  provider.profile = "desktop";
+  provider.id = "fixture";
+  provider.provider = std::make_unique<H::ProviderInputT>();
+  provider.provider->endpoint = model.URL();
+  provider.provider->model = "fixture";
+  H::RequestT request;
+  request.value.Set(std::move(provider));
+  WithRequest(request, [&](const auto &value) { settings.Handle(value, 1); });
+  agent::Providers providers(gate, home.db, settings);
+  providers.Configure(
+      "nested",
+      R"({"profile":"desktop","provider_id":"fixture","model":"fixture"})");
+  bool stopping = false;
+  std::stop_source shutdown;
+  std::condition_variable_any changed;
+  host::Access access(
+      gate, home.db, registry, *store, stopping,
+      {[](const auto &, const auto &) {}, [](const auto &, const auto &) {}});
+  agent::Turns::Dependencies turn_dependencies;
+  turn_dependencies.scrub = [](std::string text) { return text; };
+  turn_dependencies.event = [](const auto &, const auto &) {};
+  agent::Turns turns(gate, home.db, *store, providers, settings, shutdown,
+                     stopping, changed, access, std::move(turn_dependencies));
+  host::DemoReferences demos(directory.path / "demos");
+  std::unique_ptr<agent::Helpers> helpers;
+  bool interrupt = true;
+  size_t children_started = 0;
+  agent::Tools::Dependencies dependencies;
+  dependencies.scrub = [](std::string text) { return text; };
+  dependencies.event = [](const auto &, const auto &) {};
+  dependencies.helper_result = agent::Helpers::HelperResult;
+  dependencies.run_helper = [&](const auto &conversation, const auto &call,
+                                size_t task, const auto &spec,
+                                std::stop_token stop,
+                                const auto &authorization) {
+    ++children_started;
+    const auto result =
+        helpers->RunHelper(conversation, call, task, spec, stop, authorization);
+    // Inject the interruption at the exact durability boundary: the real
+    // child's result is committed, but ExecuteTool has not returned it to the
+    // parent's Runtime, so no tool_result can have been checkpointed there.
+    if (std::exchange(interrupt, false))
+      throw agent::Cancelled();
+    return result;
+  };
+  agent::Tools tools(gate, home.db, *store, providers, settings, demos, turns,
+                     shutdown, access, std::move(dependencies));
+  helpers = std::make_unique<agent::Helpers>(
+      gate, *store, providers, settings, tools, turns, access,
+      agent::Helpers::Dependencies{[](std::string text) { return text; },
+                                   [](const auto &, const auto &) {}});
+  const auto parent = agent::json::Object(
+      R"({"read_cards":[],"write_cards":[],"run_cards":[],"depth":1,"count":1})");
+  const auto boundary = [&] {
+    auto result = std::make_shared<agent::HelperScope>(parent);
+    result->identity = "parent-scope:";
+    return result;
+  };
+  const std::string task =
+      R"({"tasks":[{"name":"child","instruction":"Return the evidence.","read_cards":[],"write_cards":[],"run_cards":[]}]})";
+  model.Queue(AnthropicTool("nested-child", "delegate", task));
+  model.Queue(AnthropicText("RECOVERED_CHILD_EVIDENCE"));
+  auto messages = agent::ParseMessages(
+      R"([{"role":"user","content":[{"type":"text","text":"Delegate and return the evidence."}]}])");
+  auto config = providers.ForConversation("nested");
+  const auto first =
+      agent::Runtime().Run(config, "system", messages, tools.Specs(), {},
+                           tools.Hooks("nested", true, boundary()));
+  EXPECT_EQ(first.outcome, agent::RunOutcome::Cancelled);
+  EXPECT_EQ(children_started, 1u);
+  const auto saved = store->GetConversation("nested").messages;
+  EXPECT_EQ(saved.find("tool_result"), std::string::npos);
+  auto child = home.db.prepare(
+      "SELECT state,result FROM helpers WHERE conversation='nested'");
+  ASSERT_TRUE(child.step());
+  EXPECT_EQ(child.text(0), "completed");
+  EXPECT_NE(child.text(1).find("RECOVERED_CHILD_EVIDENCE"), std::string::npos);
+  // Reopen the store and reconstruct the boundary as on a host restart.
+  helpers.reset();
+  Open();
+  tools.conversations = store.get();
+  access.conversations = store.get();
+  turns.conversations = store.get();
+  helpers = std::make_unique<agent::Helpers>(
+      gate, *store, providers, settings, tools, turns, access,
+      agent::Helpers::Dependencies{[](std::string text) { return text; },
+                                    [](const auto&, const auto&) {}});
+  messages = agent::ParseMessages(store->GetConversation("nested").messages);
+  model.Queue(AnthropicTool("over-budget", "delegate", task));
+  model.Queue(AnthropicText("Parent recovered and retained its count."));
+  const auto retried =
+      agent::Runtime().Run(config, "system", messages, tools.Specs(), {},
+                           tools.Hooks("nested", true, boundary()));
+  EXPECT_EQ(retried.outcome, agent::RunOutcome::Finished);
+  EXPECT_EQ(children_started, 1u);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 4u);
+  EXPECT_NE(requests[2].find("RECOVERED_CHILD_EVIDENCE"), std::string::npos);
+  EXPECT_NE(requests[3].find("lifetime child count exhausted"),
+            std::string::npos);
+  auto count = home.db.prepare(
+      "SELECT SUM(count) FROM helper_delegations WHERE conversation='nested'");
+  ASSERT_TRUE(count.step());
+  EXPECT_EQ(count.u64(0), 1u);
+  const auto reconciler =
+      tools.Hooks("nested", true, boundary()).reconcile_tool;
+  const auto conflict = reconciler(
+      {"nested-child", "delegate",
+       R"({"tasks":[{"name":"different","instruction":"Changed.","read_cards":[],"write_cards":[],"run_cards":[]}]})"});
+  ASSERT_TRUE(conflict);
+  EXPECT_TRUE(conflict->is_error);
+  EXPECT_NE(conflict->text.find("different tasks"), std::string::npos);
+}
+
 TEST_F(ConversationStoreTest,
        ProjectDatabasesKeepTheirLocksAndRecoverySeparateFromHome) {
   std::lock_guard lock(gate.mutex);

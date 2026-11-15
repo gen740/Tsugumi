@@ -7,6 +7,7 @@
 #include "agent/json.hh"
 #include "agent/wire.hh"
 #include "document.hh"
+#include "host/skills.hh"
 #include "util/fs.hh"
 
 namespace tsugumi::host {
@@ -256,9 +257,8 @@ auto Projects::Handle(const A::Request &request, uint64_t id) -> std::string {
   if (db_ &&
       (request.value_type() == A::RequestPayload::HostProjectCreateRequest ||
        request.value_type() == A::RequestPayload::HostDemoCopyRequest)) {
-    auto trust =
-        db_->prepare("INSERT OR REPLACE INTO project_trust VALUES(?,1)");
-    trust.bind(1, json::Text(json::Object(raw), "path")).run();
+    SetProjectTrust(*db_, json::Text(json::Object(raw), "path"),
+                    A::ProjectTrustDecision::Trusted);
   }
   auto reply = [id](auto value) {
     return agent::wire::HostReply(id, std::move(value));

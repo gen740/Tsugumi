@@ -61,6 +61,46 @@ TEST_F(SkillsFixture, TrustIsUnknownUntilAnsweredAndPersistsAcrossHostRestart) {
             H::ProjectTrustDecision::Trusted);
 }
 
+TEST_F(SkillsFixture, TrustFollowsTheFolderIdentityAndSurvivesOrdinarySaves) {
+  const auto path = directory.path / "project";
+  Write(path / "tsugumi.json", "{}");
+  const auto trust = [&](H::ProjectTrustDecision decision =
+                             H::ProjectTrustDecision::Unknown) {
+    const auto reply =
+        Call(*host, H::RequestPayload::ProjectTrustRequest, [&](Builder &b) {
+          return H::CreateProjectTrustRequest(b, b.CreateString(path.string()),
+                                              decision)
+              .Union();
+        });
+    if (!reply.Code().empty())
+      throw std::runtime_error(reply.Code());
+    return reply.HostValue()->value_as_ProjectTrust()->decision();
+  };
+  const auto trusted = H::ProjectTrustDecision::Trusted;
+  const auto unknown = H::ProjectTrustDecision::Unknown;
+  EXPECT_EQ(trust(trusted), trusted);
+  Write(path / "tsugumi.json", R"({"name":"ordinary save"})");
+  EXPECT_EQ(trust(), trusted);
+  Write(path / "saved.json", R"({"name":"atomic save"})");
+  std::filesystem::rename(path / "saved.json", path / "tsugumi.json");
+  Write(path / "skills/helpers.md", "updated skill");
+  EXPECT_EQ(trust(), trusted);
+  const auto moved = directory.path / "moved";
+  std::filesystem::rename(path, moved);
+  std::filesystem::copy(moved, path, std::filesystem::copy_options::recursive);
+  EXPECT_EQ(trust(), unknown);
+  EXPECT_EQ(trust(), unknown);
+  EXPECT_EQ(trust(trusted), trusted);
+  std::filesystem::rename(path, directory.path / "copy");
+  Write(path / "tsugumi.json", R"({"name":"another checkout"})");
+  EXPECT_EQ(trust(), unknown);
+  EXPECT_EQ(trust(H::ProjectTrustDecision::Untrusted),
+            H::ProjectTrustDecision::Untrusted);
+  std::filesystem::rename(path, directory.path / "checkout");
+  std::filesystem::rename(moved, path);
+  EXPECT_EQ(trust(), unknown);
+}
+
 TEST_F(SkillsFixture, AutomaticSkillsReachTheModelOnlyFromTrustedProjects) {
   ModelServer model;
   Configure(model);
@@ -123,6 +163,40 @@ TEST_F(SkillsFixture, AutomaticSkillsReachTheModelOnlyFromTrustedProjects) {
             std::string::npos);
 }
 
+TEST_F(SkillsFixture, AutomaticScopedSkillsAreRefusedBeforeAnyModelRequest) {
+  ModelServer model;
+  Configure(model);
+  Write(directory.path / "project/skills/automatic.md",
+        "---\nalways: true\nscope: [read]\n---\nWRITE_SENTINEL");
+  StartProject();
+  ASSERT_TRUE(Call(*host, H::RequestPayload::ProjectTrustRequest,
+                   [&](Builder& b) {
+                     return H::CreateProjectTrustRequest(
+                                b, b.CreateString((directory.path / "project").string()),
+                                H::ProjectTrustDecision::Trusted).Union();
+                   }).Code().empty());
+  const auto list = List();
+  const auto* skills = list.HostValue()->value_as_SkillsList()->skills();
+  bool found = false;
+  for (const auto* skill : *skills)
+    if (skill->name()->str() == "automatic") {
+      found = true;
+      EXPECT_EQ(skill->status()->str(), "invalid_scope");
+      EXPECT_NE(skill->description()->str().find("cannot combine always: true with scope"),
+                std::string::npos);
+    }
+  ASSERT_TRUE(found);
+  const auto conversation = Conversation("invalid-automatic-scope");
+  Grant(conversation);
+  const auto sent = Send(conversation, "Read this project.");
+  ASSERT_TRUE(sent.Code().empty());
+  const auto state = WaitUntilIdle(conversation);
+  const auto events = Events(conversation).View();
+  EXPECT_NE(events.find("cannot combine always: true with scope"),
+            std::string::npos) << state;
+  EXPECT_TRUE(model.Requests().empty());
+}
+
 TEST_F(SkillsFixture, RevokingTrustStopsFurtherAutomaticProjectSkillRequests) {
   ModelServer model;
   Configure(model);
@@ -179,7 +253,8 @@ TEST_F(SkillsFixture, FrontMatterFallbackNamesAndSwiftSortOrder) {
   EXPECT_EQ(list->Get(5)->name()->str(), "Card-review-");
   EXPECT_EQ(list->Get(5)->description()->str(), "Review outputs");
   EXPECT_EQ(list->Get(6)->name()->str(), "c");
-  EXPECT_EQ(list->Get(6)->description()->str(), "---");
+  EXPECT_EQ(list->Get(6)->status()->str(), "invalid_scope");
+  EXPECT_EQ(list->Get(6)->description()->str(), "Unclosed Skill front matter");
   EXPECT_EQ(
       std::string(reply.bytes.begin(), reply.bytes.end()).find("BODY_SENTINEL"),
       std::string::npos);

@@ -646,6 +646,15 @@ auto Tools::ScopedResult(HelperScope& scope, const ToolCall& call,
   return result;
 }
 
+auto Tools::RequireHelperPermission(const std::string &conversation,
+                                    const HelperScope &boundary) -> void {
+  if (!boundary.scoped() &&
+      !host_settings->AllowUnscopedHelpers(providers->Profile(conversation)))
+    throw Failure("permission_denied",
+                  "Unscoped helpers are disabled; ask the parent for "
+                  "explicit read_cards, write_cards and run_cards");
+}
+
 auto Tools::ExecuteTool(const std::string& conversation,
                         const std::string& requested_project,
                         const ToolCall& call, bool wait, std::stop_token stop,
@@ -828,7 +837,10 @@ auto Tools::ExecuteTool(const std::string& conversation,
     return {"Guidance sent to connected interfaces", false, {}, {}};
   }
   if (call.name == "delegate") {
-    if (c.role == "guide") return {"Guide cannot delegate", true, {}, {}};
+    if (c.role == "guide")
+      return {"Guide cannot delegate", true, {}, {}};
+    if (boundary)
+      RequireHelperPermission(conversation, *boundary);
     auto tasks = json::Array(json::Get(args, "tasks", "[]"));
     if (tasks.empty()) return {"Provide at least one task", true, {}, {}};
     const auto policy =
@@ -917,11 +929,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   access_service.Require(project, conversation, Tsugumi::Service::Access::Read,
                          wait, stop, "Read project content", authorization);
   if (boundary) {
-    if (!boundary->scoped() &&
-        !host_settings->AllowUnscopedHelpers(providers->Profile(conversation)))
-      throw Failure("permission_denied",
-                    "Unscoped helpers are disabled; ask the parent for "
-                    "explicit read_cards, write_cards and run_cards");
+    RequireHelperPermission(conversation, *boundary);
     std::string revision = json::Get(args, "base_rev", "");
     if (boundary->scoped() &&
         (call.name == "project_file_list" || call.name == "project_file_read" ||
@@ -1344,6 +1352,28 @@ auto Tools::Hooks(const std::string& id, bool helper,
         [this, id, boundary,
          reconcile](const ToolCall& call) -> std::optional<ToolResult> {
       try {
+        RequireHelperPermission(id, *boundary);
+        if (call.name == "delegate") {
+          // Delegate has no core receipt and is not a project tool. Match its
+          // lifetime reservation before returning saved children; do not charge
+          // the capability again or launch work during reconciliation.
+          const auto tasks = json::Array(
+              json::Get(json::Object(call.arguments), "tasks", "[]"));
+          for (const auto &task : tasks)
+            boundary->CheckChild(json::Object(task));
+          std::lock_guard lock(mutex);
+          auto reserved = conversations->ConversationDatabase(id).prepare(
+              "SELECT digest,count FROM helper_delegations WHERE "
+              "conversation=? AND parent=? AND call=?");
+          reserved.bind(1, id).bind(2, boundary->identity).bind(3, call.id);
+          if (!reserved.step())
+            return std::nullopt;
+          if (reserved.text(0) != crypto::sha256_hex(call.arguments) ||
+              reserved.u64(1) != tasks.size())
+            throw Failure("conflict",
+                          "Delegation ID reused with different tasks");
+          return reconcile(call);
+        }
         const auto read = HelperReader(id, shutdown.get_token(), {},
                                        boundary->authorization());
         boundary->Check(call.name, json::Object(call.arguments), read);
