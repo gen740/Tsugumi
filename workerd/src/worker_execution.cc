@@ -1,5 +1,8 @@
 #include "tsugumi/workerd/worker_execution.hh"
 
+#include <cerrno>
+#include <cstring>
+#include <stdexcept>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -147,7 +150,8 @@ auto run_invocation(WorkerPool& pool, WorkerPool::Lease& lease,
     if (local && needs_out) {
       stdfs::create_directories(invocation.output_directory);
       if (invocation.output_owner)
-        ::chown(invocation.output_directory.c_str(), invocation.output_owner->first, invocation.output_owner->second);
+        if (::chown(invocation.output_directory.c_str(), invocation.output_owner->first, invocation.output_owner->second) != 0)
+          throw std::runtime_error("cannot give the worker its output folder " + invocation.output_directory.string() + ": " + std::strerror(errno));
       result.out_alias = std::make_pair(worker.out_dir(), invocation.output_directory.string());
     }
     // Borrow unchanged inputs; only the local storage adapter makes a staged

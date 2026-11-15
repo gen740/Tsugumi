@@ -10,6 +10,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <stdexcept>
 #include <fstream>
 #include <system_error>
 #ifdef __APPLE__
@@ -216,7 +217,11 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
 #endif
   for (const char* d : {"work", "tmp", "out", "scripts", "home", "inputs"}) std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
   if (::geteuid() == 0 && sp.uid && worker_uid_on_host())
-    for (const char* d : {"work", "tmp", "out", "home"}) ::chown((scratch_ + "/" + d).c_str(), *sp.uid, sp.gid.value_or(*sp.uid));
+    for (const char* d : {"work", "tmp", "out", "home"}) {
+      const auto folder = scratch_ + "/" + d;
+      if (::chown(folder.c_str(), *sp.uid, sp.gid.value_or(*sp.uid)) != 0)
+        throw std::runtime_error("cannot give the worker its folder " + folder + ": " + std::strerror(errno));
+    }
   std::vector<std::string> args;
   auto script = [&](const char* flag, const std::string& text, const char* name) {
     if (text.empty()) return;
