@@ -34,7 +34,7 @@ def host(tmp_path):
     (source / ".tsugumi/history").write_text("private")
     (demos / "ja/index.json").write_text(json.dumps({"demos": [
         {"id": "sample", "title": "Sample", "path": "sample", "field": ""}]}))
-    with tempfile.TemporaryDirectory(prefix="tsg-host-") as short:
+    with tempfile.TemporaryDirectory(prefix="tsugumi-host-") as short:
         state = tmp_path / "state"
         with (tmp_path / "host.log").open("w") as log:
             proc = subprocess.Popen([str(HOST), "--state-dir", str(state), "--unix", short + "/s",

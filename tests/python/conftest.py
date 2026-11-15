@@ -43,7 +43,7 @@ class Daemon:
         self.project = project
         self.args = list(args or [])
         # Unix socket paths are short-limited; keep them under /tmp-like dirs.
-        self.sock_dir = Path(tempfile.mkdtemp(prefix="tsg-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))).resolve()
+        self.sock_dir = Path(tempfile.mkdtemp(prefix="tsugumi-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))).resolve()
         self.unix = str(self.sock_dir / "s")
         self.control = self.sock_dir / "control"
         self.env = env or {}

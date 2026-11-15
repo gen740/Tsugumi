@@ -20,7 +20,7 @@ import TsugumiAgentClient
     var ready: [String: Any] = [:]
 
     init(project: URL, mockedBuilds: Bool = false) throws {
-      dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/tmp").appendingPathComponent("tsg-\(UUID().uuidString.prefix(8))")
+      dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/tmp").appendingPathComponent("tsugumi-\(UUID().uuidString.prefix(8))")
       try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
       let env = ProcessInfo.processInfo.environment
       let build = env["TSUGUMI_BUILD_DIR"].map { URL(fileURLWithPath: $0) }

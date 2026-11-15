@@ -37,7 +37,7 @@ def isolated_environment(root: Path, **values) -> dict:
     """Keep resident services and credentials inside this test's own folder."""
     if root not in _socket_directories:
         _socket_directories[root] = tempfile.TemporaryDirectory(
-            prefix="tsg-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
+            prefix="tsugumi-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
     env = dict(os.environ)
     for key in ("TSUGUMI_VMHOST", "TSUGUMI_VM_IMAGE", "TSUGUMI_VM_SOURCE"):
         env.pop(key, None)

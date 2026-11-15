@@ -133,7 +133,7 @@ def run(arguments):
     before = shared_entries()
     # /var/tmp is disk-backed on Linux; /tmp can be tmpfs. Resolve macOS aliases
     # because invocation scratch rejects symbolic links in every parent.
-    root = Path(tempfile.mkdtemp(prefix='tsg-', dir=Path('/tmp' if sys.platform == 'darwin' else '/var/tmp').resolve()))
+    root = Path(tempfile.mkdtemp(prefix='tsugumi-', dir=Path('/tmp' if sys.platform == 'darwin' else '/var/tmp').resolve()))
     env = dict(os.environ)
     # Keep explicit per-client support directories usable; the default service
     # is isolated by SUPPORT_DIR, without forcing all clients onto one state.
