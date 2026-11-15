@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Cuts a release: sets VERSION, commits it onto origin/main, tags
-# v<version> and pushes both. The release workflow
-# (.github/workflows/release.yml) then builds the app and publishes it, and
+# Cuts a release. When VERSION is not the version yet, opens the pull request
+# that sets it; once main carries it, tags v<version> and pushes the tag. The
+# release workflow (.github/workflows/release.yml) then builds the app and publishes it, and
 # installed release builds update themselves to it.
 #
 #   macOS/tools/release.sh 0.2.0
@@ -41,10 +41,20 @@ if [ -n "$candidate" ]; then
     exit 1
   fi
 fi
+# main takes changes only through pull requests, so VERSION goes in that way
+# first; the tag is pushed once main carries the version.
 if [ "$(cat VERSION)" != "$version" ]; then
+  branch="release/$version"
+  git checkout -q -b "$branch"
   echo "$version" > VERSION
-  git commit -qm "Release $release" VERSION
+  git commit -qm "Release $version" VERSION
+  git push -q -u origin "$branch"
+  gh pr create --head "$branch" --title "Release $version" \
+    --body "Sets \`VERSION\` to $version. After this merges, run \`macOS/tools/release.sh $release\` again from origin/main to push the tag \`$tag\`."
+  git checkout -q --detach origin/main
+  echo "VERSION is not $version yet: merge the pull request above when its checks pass, then run this again." >&2
+  exit 0
 fi
 git tag -a "$tag" -m "Tsugumi $release"
-git push --atomic origin HEAD:refs/heads/main "refs/tags/$tag"
+git push origin "refs/tags/$tag"
 echo "$tag pushed: https://github.com/gen740/Tsugumi/actions/workflows/release.yml"
