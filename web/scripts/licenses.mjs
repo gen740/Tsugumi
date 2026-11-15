@@ -9,6 +9,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const web = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+// Where node_modules is: the web folder after `npm ci`, or the folder the
+// build names (the app's build takes the packages from Nix, not from npm).
+const installed = process.env.TSUGUMI_WEB_MODULES ? path.resolve(process.env.TSUGUMI_WEB_MODULES) : web
 const lock = JSON.parse(fs.readFileSync(path.join(web, 'package-lock.json'), 'utf8')).packages
 
 const VIEWER_PACKAGES = ['plotly.js-dist-min', 'vega', 'vega-lite', 'vega-embed']
@@ -38,7 +41,7 @@ const writeLicenses = (keys, folder) => {
   const rows = []
   for (const key of [...keys].sort()) {
     const name = key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length)
-    const from = path.join(web, key)
+    const from = path.join(installed, key)
     const files = fs.readdirSync(from).filter((f) => /^(licen[cs]e|copying|notice)/i.test(f) && fs.statSync(path.join(from, f)).isFile())
     if (!files.length) throw new Error(`${name} has no license file`)
     const to = path.join(folder, key.replace(/node_modules\//g, ''))
