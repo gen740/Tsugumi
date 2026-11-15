@@ -45,14 +45,14 @@ struct CanvasWorkspace: View {
       .padding(.top, 11)
       .ignoresSafeArea(.container, edges: .top)
     }
-    // Zoom and layout controls, and the run and save state with counts and
-    // the panels: floating like the controls at the top, in one row so they
-    // never overlap (the state takes a shorter form when room is short).
+    // At narrow widths the status moves above the left controls.
     .overlay(alignment: .bottom) {
-      HStack(alignment: .bottom, spacing: 8) {
-        viewControls.fixedSize()
-        NixReferenceControls(session: session, tab: tab).fixedSize()
-        Spacer(minLength: 0)
+      CanvasBottomControls {
+        HStack(spacing: 8) {
+          viewControls.fixedSize()
+          NixReferenceControls(session: session, tab: tab).fixedSize()
+        }
+      } status: {
         StatusBar(workspace: workspace, session: session, tab: tab)
       }
       .padding(10)
@@ -345,5 +345,25 @@ struct WindowDragBand: View {
         }
       }
       .accessibilityHidden(true)
+  }
+}
+
+/// Give the status the whole row when it no longer fits beside the view controls.
+struct CanvasBottomControls<Controls: View, Status: View>: View {
+  @ViewBuilder var controls: () -> Controls
+  @ViewBuilder var status: () -> Status
+
+  var body: some View {
+    ViewThatFits(in: .horizontal) {
+      HStack(alignment: .bottom, spacing: 8) {
+        controls().fixedSize()
+        Spacer(minLength: 0)
+        status()
+      }
+      VStack(alignment: .leading, spacing: 8) {
+        status().frame(maxWidth: .infinity, alignment: .trailing)
+        controls().fixedSize()
+      }
+    }
   }
 }

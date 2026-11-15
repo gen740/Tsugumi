@@ -59,3 +59,29 @@ assert.equal(get(session.cardDefinition(card), 'params'), undefined)
 assert.equal(session.inlineParams(card)[0].value, 'false')
 
 console.log('Switch Card: template, save/undo, typed ports and accessible rendering passed')
+
+// Routing ports shrink with the body. At 20%, the old 16px target covered the
+// start's title and the branch's centre, stealing a body drag to start a wire.
+for (const flow of ['topToBottom', 'leftToRight'] as const) {
+  for (const zoom of [1, 0.2]) {
+    for (const kind of ['trigger', 'branch', 'fork', 'merge', 'collect', 'switch'] as const) {
+      const data = { ...session.nodeData(card), kind,
+        inputs: kind === 'trigger' || kind === 'switch' ? [] : [{ name: 'value' }, { name: 'condition' }],
+        outputs: [{ name: 'a' }, { name: 'b' }] }
+      const g = new CardGeometry(data, flow)
+      const body = kind === 'trigger' ? { x: 55, y: 17 } : g.iconCenter(g.outlineRect)
+      const hit = g.portHitSize(zoom)
+      for (const output of [false, true]) {
+        for (const port of output ? data.outputs : data.inputs) {
+          const p = g.port(port.name, output)
+          assert.ok(Math.abs(p.x - body.x) * zoom > hit / 2 || Math.abs(p.y - body.y) * zoom > hit / 2,
+            `${kind} body is free of port targets at ${zoom}, ${flow}`)
+        }
+      }
+      const html = renderToStaticMarkup(<CardNodeView data={data} flow={flow} zoom={zoom} />)
+      assert.ok(html.includes(`width:${hit}px;height:${hit}px`), 'rendering uses the routing target size')
+    }
+  }
+}
+
+console.log('Routing Card body and port targets at full and small zoom: passed')
