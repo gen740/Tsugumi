@@ -905,9 +905,9 @@ The next Card reads it as a path: `inputs.input("events", EventsFile).Value().de
 
 ### Code Card settings
 
-Set `language` to `python`, `cpp`, `go`, `rust`, `csharp`, `bash`, `r`, `julia` or `ruby`; remove `template` for a Code Card. Declare input port names in `inputs`; connected outputs determine their types. Add `filesystem: true` for File/Directory outputs. Parameters are entries such as `{"name": "low", "type": "double", "data": 600}`. Their types are `bool`, `int64`, `uint64`, `double`, `string` and arrays of those types; they are part of `inputs.params` at runtime. A parameter with `nix: true` is also a build-time value in `default.nix`.
+Set `language` to `python`, `cpp`, `go`, `rust`, `csharp`, `bash`, `r`, `julia` or `ruby`; remove `template` for a Code Card. Declare input port names in `inputs`; connected outputs determine their types. Parameters are entries such as `{"name": "low", "type": "double", "data": 600}`. Their types are `bool`, `int64`, `uint64`, `double`, `string` and arrays of those types; they are part of `inputs.params` at runtime. A parameter with `nix: true` is also a build-time value in `default.nix`.
 
-Network access is disabled unless `_card.json` explicitly sets `network: true` (Experimental). TLS uses `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
+With `sandbox: true`, network access is disabled unless `_card.json` explicitly sets `network: true` (Experimental). With the sandbox off, network restrictions depend on the execution environment. TLS uses `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
 
 Omit `executionService` for local execution, or select a host-registered service ID. `executionResources: {"cpuMillis": 1000, "memoryBytes": 4294967296}` caps CPU and memory when the service advertises limits, including its build. Connection details and credentials belong to the host; see [Remote execution](RemoteExecution.md). Worker state and run hooks follow the [worker state rules](#worker-state).
 
@@ -972,7 +972,7 @@ step (a simulation) is fixed the same way with `pkgs.runCommand` or `stdenv.mkDe
 
 `demos/en/report/definitions/generate` (File) and `demos/en/report/definitions/render` (Directory):
 `attribute "tsugumi";`, the port marked `(required, tsugumi: "file")` or `(required, tsugumi:
-"directory")`, a table with `value:string`, `"filesystem": true`, and the files written under
+"directory")`, a table with `value:string`, and the files written under
 `run.output_directory` (Python) / `$TSUGUMI_OUTPUT_DIR` (bash).
 
 ### Reading a merge output

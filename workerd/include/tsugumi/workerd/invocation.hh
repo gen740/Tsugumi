@@ -20,7 +20,6 @@ struct InvocationJson {
   schema::t::Array<"files", schema::Obj<FileJson>> files;
   schema::t::Array<"directories", schema::v::String> directories;
   schema::t::Bool<"network"> network;
-  schema::t::Bool<"filesystem"> filesystem;
   schema::t::Uint64<"implementation_index"> implementation_index;
 };
 

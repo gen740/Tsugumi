@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def files():
-    card = {'language': 'python', 'inputs': [{'name': 'data'}], 'filesystem': True, 'recordIO': True,
+    card = {'language': 'python', 'inputs': [{'name': 'data'}], 'recordIO': True,
             'retainArtifact': True, 'artifactOutput': 'report', 'reuseWorker': False,
             'params': [{'name': name, 'type': kind, 'data': data} for name, kind, data in [
                 ('notebook', 'string', 'notebook.py'),

@@ -6,6 +6,5 @@
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "trials",
-  "filesystem": true
+  "artifactOutput": "trials"
 }

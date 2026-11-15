@@ -5,7 +5,6 @@
       "name": "section"
     }
   ],
-  "filesystem": true,
   "params": [
     {
       "name": "mc",

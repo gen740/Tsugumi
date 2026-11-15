@@ -85,3 +85,13 @@ def test_draft_demos_use_only_empty_draft_ends_in_both_languages():
                 for side in ["from", "to"]:
                     if wire[side]["card"] in drafts:
                         assert wire[side]["port"] == "", (project, wire)
+
+
+def test_file_output_instructions_do_not_require_a_card_permission():
+    """Published instructions use declared File/Directory ports and an output path."""
+    for name in ("agent/Shared/system-prompt.md", "docs/CardGuide.md"):
+        source = " ".join((ROOT / name).read_text().split())
+        assert "filesystem" not in source, name
+        assert 'tsugumi: "file"' in source, name
+        assert 'tsugumi: "directory"' in source, name
+        assert "run.output_directory" in source, name

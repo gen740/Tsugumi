@@ -5,7 +5,6 @@
       "name": "input"
     }
   ],
-  "filesystem": true,
   "params": [
     {
       "name": "min_ev",

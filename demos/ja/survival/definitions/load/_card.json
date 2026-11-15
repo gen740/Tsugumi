@@ -6,6 +6,5 @@
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "lung",
-  "filesystem": true
+  "artifactOutput": "lung"
 }

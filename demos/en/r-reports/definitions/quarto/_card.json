@@ -5,7 +5,6 @@
       "name": "data"
     }
   ],
-  "filesystem": true,
   "recordIO": true,
   "retainArtifact": true,
   "artifactOutput": "report",

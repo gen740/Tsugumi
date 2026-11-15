@@ -43,8 +43,8 @@ struct WorkerSpawn {
   std::string bash;
   std::string store_path = "/nix/store";
   WorkerProgram program;
-  // The worker's own folder: work/ and tmp/ for Cards without filesystem:
-  // true, scripts/ for preRun / a bash run / postRun. Created with the worker
+  // The worker's own folder: work/, tmp/, out/, home/, inputs/, and
+  // scripts/ for preRun / a bash run / postRun. Created with the worker
   // and removed when it ends, so it lives as long as the worker.
   std::string scratch;
   bool sandbox = true;

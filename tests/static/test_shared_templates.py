@@ -29,6 +29,7 @@ def test_shared_templates_are_current():
         files = templates[f'visualization_{library}']
         assert set(files) == {'_card.json', '_meta.json', '_outputs.fbs', 'default.nix', 'src/main.py'}
         card = json.loads(files['_card.json'])
+        assert 'filesystem' not in card
         assert card['params'] == defaults and card['retainArtifact'] and card['artifactOutput'] == 'figure'
         source = files['src/main.py']
         assert '# @select@' not in source and '# @insert@' not in source
@@ -51,6 +52,7 @@ def test_shared_marimo_template_is_current():
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     for path,value in module.outputs().items():assert path.read_text()==value
     definition=json.loads(module.files()['_card.json'])
+    assert 'filesystem' not in definition
     assert definition['reuseWorker'] is False and definition['retainArtifact'] is True
     for language in ('en', 'ja'):
         main = ROOT / f'demos/{language}/marimo/definitions/notebook/src/main.py'

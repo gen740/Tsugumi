@@ -7,7 +7,6 @@
   ],
   "retainArtifact": true,
   "artifactOutput": "counts",
-  "filesystem": true,
   "params": [
     {
       "name": "min_total",
