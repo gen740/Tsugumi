@@ -51,10 +51,13 @@ import TsugumiRPC
     let client = CoreAgentClient()
     let p = Tsugumi_Service_ProviderInputT()
     p.apiKey = "NATIVE_SECRET_SENTINEL"
-    let reply = try await client.call("ProviderSetRequest", ["profile": "native-test", "id": "anthropic", "provider": p])
+    let reply = try await client.call("ProviderSetRequest", ["profile": "native-test", "id": "anthropic",
+      "provider": p, "ephemeral": true, "source": "keychain"])
     #expect(reply["configured"] as? Bool == true)
+    #expect(reply["source"] as? String == "keychain")
     #expect(!String(describing: reply).contains(p.apiKey!))
-    let removed = try await client.call("ProviderSetRequest", ["profile": "native-test", "id": "anthropic", "remove": true])
+    let removed = try await client.call("ProviderSetRequest", ["profile": "native-test", "id": "anthropic",
+      "remove": true, "ephemeral": true, "source": "keychain"])
     #expect(removed["configured"] as? Bool == false)
   }
 }

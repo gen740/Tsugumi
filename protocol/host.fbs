@@ -11,9 +11,18 @@ table Setting { key:string (required); value_json:string (required); }
 table SettingsGetRequest { profile:string (required); }
 table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; client:string; }
 table Settings { revision:ulong; values:[Setting]; }
-table ProviderSetRequest { profile:string (required); id:string (required); provider:Tsugumi.Service.ProviderInput; remove:bool; ephemeral:bool; }
-table ProviderStatusRequest { profile:string (required); id:string (required); }
-table ProviderStatus { id:string (required); configured:bool; endpoint:string; source:string; }
+// ephemeral source: env, keychain, or memory (omitted). The host selects env
+// before keychain before memory, then a stored key on Linux only. On macOS
+// persistent API-key writes are refused; clients save through the login Keychain.
+table ProviderSetRequest { profile:string (required); id:string (required); provider:Tsugumi.Service.ProviderInput; remove:bool; ephemeral:bool; source:string; }
+// Availability uses exactly the same key policy as model requests.
+table ProviderStatusRequest { profile:string (required); id:string (required); key_profile:string; }
+// Model choices for guide/summary are read from host settings and catalogs.
+// purpose is guide or summary. The reply contains no credentials.
+table ModelSelectionRequest { profile:string (required); purpose:string (required); }
+table ModelSelection { provider:Tsugumi.Service.ProviderSelection (required); }
+// storage tells the platform adapter where an explicit Save must go.
+table ProviderStatus { id:string (required); configured:bool; endpoint:string; source:string; storage:string; message:string; }
 table SignInBeginRequest { profile:string (required); client_id:string; consent:bool; issuer:string; resource:string; }
 table SignInBegin { attempt_id:string (required); url:string (required); }
 table SignInActionRequest { profile:string (required); attempt_id:string; action:string (required); client_id:string; }
@@ -21,8 +30,8 @@ table SignInStatusRequest { profile:string (required); attempt_id:string; }
 table Account { client_id:string (required); email:string; signed_in:bool; plan_enabled:bool; active:bool; }
 table SignInStatus { attempt_id:string; state:string (required); message:string; accounts:[Account]; welcome:string; revoked:bool; }
 // Environments outlive clients and agentd restarts. Stop is explicit. Start
-// replaces origins/folders; State and Stop do not change either list.
-enum EnvironmentAction:ubyte { State, Start, Stop, Folders }
+// updates origins only; folders change through explicit add/remove operations.
+enum EnvironmentAction:ubyte { State, Start, Stop, AddFolders, RemoveFolders }
 enum EnvironmentPhase:ubyte { Stopped, Starting, Ready, Failed }
 table EnvironmentRequest {
   project:string (required);
@@ -49,6 +58,7 @@ table EnvironmentState {
   // The daemon's structured history mismatch diagnostic, for explicit recovery.
   startup_error_json:string;
   execution_scope_unavailable:bool;
+  folders:[string];
 }
 table EnvironmentProgress { project:string (required); key:string (required); stage:string (required); fraction:double = null; preparing:bool; }
 table EnvironmentStopped { state:EnvironmentState (required); }
@@ -368,7 +378,8 @@ union RequestPayload {
   RegisterProjectRequest, RegisterFolderRequest, SkillsListRequest, ModelsListRequest, HostProjectDefaultsRequest, HostProjectReadRequest, HostProjectInfoRequest, HostProjectCreateRequest, HostProjectDuplicateRequest, HostDemoListRequest, HostDemoCopyRequest, HostRecentListRequest, HostRecentRememberRequest, HostRecentForgetRequest,
   LayoutArrangeRequest, LayoutUntangleRequest, LayoutValidateRequest, VersionCanvasRequest,
   FileFormatRequest, HostVersionGraphRequest, HostVersionDiffRequest,
-  DocumentSubgraphRequest, DocumentMergeRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest
+  DocumentSubgraphRequest, DocumentMergeRequest, DocumentCopyRequest, DocumentConnectRequest, DocumentTemplateRequest, PermissionKindsRequest,
+  ModelSelectionRequest
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -378,7 +389,8 @@ union ReplyPayload {
   RecentList, DemoList, SkillsList, ModelList, Failure:Tsugumi.Service.Failure,
   LayoutProposal, LayoutValidated, VersionCanvas,
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
-  DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds
+  DocumentSubgraph, DocumentMerge, DocumentCopy, DocumentConnect, DocumentTemplate, PermissionKinds,
+  ModelSelection
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

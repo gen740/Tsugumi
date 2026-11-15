@@ -29,11 +29,15 @@ try {
     }, (handler) => { receive = handler; return () => true })
   assert.equal((await manager.start(root)).state, 'ready')
   assert.deepEqual(calls[0], { method: 'EnvironmentRequest', fields: { project: fs.realpathSync(root), action: 'Start',
-    origins: ['http://localhost:8780'], folders: [], archive_incompatible_history: false } })
-  await manager.attachFolders(root, manager.list()[0].key, [])
+    origins: ['http://localhost:8780'], archive_incompatible_history: false } })
+  await manager.attachFolders(root, manager.list()[0].key, ['/one'])
+  assert.deepEqual(calls.at(-1)!.fields, { project: fs.realpathSync(root), action: 'AddFolders', folders: ['/one'] })
+  await manager.removeFolders(root, ['/one'])
+  assert.equal(calls.at(-1)!.fields.action, 'RemoveFolders')
+  assert.deepEqual(await manager.attachedFolders(root), [])
   await manager.start(root, true)
   assert.equal(calls.at(-1)!.fields.archive_incompatible_history, true)
-  assert.deepEqual(calls.map((call) => call.method), ['EnvironmentRequest', 'EnvironmentRequest', 'EnvironmentRequest'])
+  assert.deepEqual(calls.map((call) => call.method), Array(5).fill('EnvironmentRequest'))
   receive({ type: 'EnvironmentStopped', value: { state: { key: manager.list()[0].key, phase: EnvironmentPhase.Stopped } } })
   assert.equal(manager.list()[0].state.state, 'stopped')
   failure = true

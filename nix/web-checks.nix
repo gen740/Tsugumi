@@ -37,6 +37,8 @@ runCommand "tsugumi-web-checks"
         ../core/src/util/crypto.hh
         ../tests/core/agent/document_edit_driver.cc
         ../tests/fixtures
+        ../agent/Shared/system-prompt.md
+        ../agent/Shared/mcp-transport.md
       ];
     };
   }

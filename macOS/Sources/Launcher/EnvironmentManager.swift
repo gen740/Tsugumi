@@ -41,7 +41,6 @@ public actor EnvironmentManager {
   private var observers: [String: [UUID: @Sendable (EnvironmentState) -> Void]] = [:]
   private var pipes: [UInt64: TerminalPipe] = [:]
   private var pendingOutput: [UInt64: [String: Any]] = [:]
-  public private(set) var extraFolders: [String: [String]] = [:]
   public private(set) var allowedOrigins: [String] = []
 
   public init(support: URL? = nil, image: VMImage? = VMImage.find(), resources: VMResources = .default) {
@@ -113,7 +112,7 @@ public actor EnvironmentManager {
   private func environment(_ project: ProjectIdentity, _ action: Tsugumi_Host_EnvironmentAction, archive: Bool = false) async throws -> EnvironmentState {
     await prepare()
     let reply = try await client.call("EnvironmentRequest", ["project": project.url.path, "action": action,
-      "origins": allowedOrigins, "folders": extraFolders[project.id] ?? [], "archive_incompatible_history": archive])
+      "origins": allowedOrigins, "archive_incompatible_history": archive])
     return adopt(reply)
   }
   @discardableResult public func start(_ project: ProjectIdentity, archiveIncompatibleHistory: Bool = false) async throws -> Endpoint {
@@ -125,9 +124,18 @@ public actor EnvironmentManager {
     }
   }
   public func stop(_ project: ProjectIdentity) async throws { _ = try await environment(project, .stop) }
-  public func setExtraFolders(_ project: ProjectIdentity, _ paths: [String]) async throws {
-    extraFolders[project.id] = paths
-    _ = try await environment(project, .folders)
+  public func attachedFolders(_ project: ProjectIdentity) async throws -> [String] {
+    await prepare()
+    let value = try await client.call("EnvironmentRequest", ["project": project.url.path, "action": Tsugumi_Host_EnvironmentAction.state])
+    return value["folders"] as? [String] ?? []
+  }
+  public func addFolders(_ project: ProjectIdentity, _ paths: [String]) async throws {
+    await prepare()
+    _ = try await client.call("EnvironmentRequest", ["project": project.url.path, "action": Tsugumi_Host_EnvironmentAction.addfolders, "folders": paths])
+  }
+  public func removeFolders(_ project: ProjectIdentity, _ paths: [String]) async throws {
+    await prepare()
+    _ = try await client.call("EnvironmentRequest", ["project": project.url.path, "action": Tsugumi_Host_EnvironmentAction.removefolders, "folders": paths])
   }
   private func runtime(_ action: Tsugumi_Host_RuntimeAction = .state, project: String? = nil, key: String? = nil, command: String? = nil) async throws -> [String: Any] {
     await prepare()

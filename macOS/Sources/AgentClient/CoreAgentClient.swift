@@ -31,6 +31,14 @@ public struct CoreAgentFailure: LocalizedError, CustomStringConvertible, Sendabl
 public final class ModelCatalogSnapshot: @unchecked Sendable {
   public static let shared = ModelCatalogSnapshot()
   private let lock = NSLock()
+  private var availability: [String: Bool] = [:]
+  public func usable(_ id: String) -> Bool {
+    lock.lock(); defer { lock.unlock() }
+    return availability[id] ?? false
+  }
+  fileprivate func showAvailability(_ id: String, _ usable: Bool) {
+    lock.lock(); defer { lock.unlock() }; availability[id] = usable
+  }
   private var catalogs: [String: [(id: String, name: String)]] = [:]
   public func models(_ id: String) -> [(id: String, name: String)] {
     lock.lock(); defer { lock.unlock() }
@@ -244,14 +252,13 @@ public actor CoreAgentClient {
   public func provider(_ config: ProviderConfig, asking: Bool = true) async throws -> Tsugumi_Service_ProviderSelectionT {
     let value = Tsugumi_Service_ProviderSelectionT()
     value.model = config.model
+    value.purpose = config.purpose
     value.useChoices = config.usesChoices
     value.profile = "desktop"
     value.providerId = config.connection
     value.accountProfile = "desktop"
     if config.auth == .apiKey {
-      guard let key = asking ? Keychain.load(account: config.name) : Keychain.loadWithoutAsking(account: config.name) else {
-        throw CoreAgentFailure(code: "credentials", message: "No API key for \(config.name)", requestID: nil)
-      }
+      let key = asking ? Keychain.load(account: config.name) : Keychain.loadWithoutAsking(account: config.name)
       try await provisionKey(key, id: config.connection)
       value.keyProfile = keyProfile
     }
@@ -327,6 +334,23 @@ public actor CoreAgentClient {
     return (project, external, link)
   }
 
+  public func modelSelection(_ purpose: String) async throws -> Tsugumi_Service_ProviderSelectionT {
+    let reply = try await call("ModelSelectionRequest", ["profile": "desktop", "purpose": purpose])
+    guard let selected = reply["provider"] as? Tsugumi_Service_ProviderSelectionT else {
+      throw CoreAgentFailure(code: "protocol", message: "Invalid host model selection", requestID: nil)
+    }
+    return selected
+  }
+
+  public func usable(_ config: ProviderConfig) async throws -> Bool {
+    let selected = try await provider(config, asking: false)
+    let reply = try await call("ProviderStatusRequest", ["profile": "desktop", "id": config.connection,
+      "key_profile": selected.keyProfile ?? ""])
+    let usable = reply["configured"] as? Bool ?? false
+    ModelCatalogSnapshot.shared.showAvailability(config.connection, usable)
+    return usable
+  }
+
   public func versionComments(project: String, commit: String) async throws -> [Tsugumi_Host_VersionCommentT] {
     let result = try await call("VersionCommentsRequest", ["project": project, "commit": commit])
     return result["comments"] as? [Tsugumi_Host_VersionCommentT] ?? []
@@ -344,7 +368,7 @@ public actor CoreAgentClient {
   }
 
   public func provisionKey(_ key: String?, id: String) async throws {
-    var fields: [String: Any] = ["profile": keyProfile, "id": id, "ephemeral": true, "remove": key == nil]
+    var fields: [String: Any] = ["profile": keyProfile, "id": id, "ephemeral": true, "source": "keychain", "remove": key == nil]
     if let key { let input = Tsugumi_Service_ProviderInputT(); input.apiKey = key; fields["provider"] = input }
     _ = try await call("ProviderSetRequest", fields)
   }

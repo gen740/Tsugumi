@@ -76,7 +76,9 @@ class EnvironmentProcess {
       -> bool = 0;
 };
 
-auto NativeEnvironmentProcess() -> std::shared_ptr<EnvironmentProcess>;
+auto NativeEnvironmentProcess(
+    std::function<void(const Tsugumi::Host::HostTerminalDataT&)> terminal = {})
+    -> std::shared_ptr<EnvironmentProcess>;
 
 struct EnvironmentOptions {
   std::filesystem::path directory;

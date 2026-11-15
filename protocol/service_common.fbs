@@ -7,4 +7,6 @@ table Acknowledgement { accepted:bool; revoked:bool; }
 // Secret input is accepted only by the human-only Host ProviderSet request.
 table ProviderInput { endpoint:string; api_key:string; model:string; max_tokens:uint = 16384; context_limit:uint = 600000; }
 // Ordinary calls identify a stored provider and a conversation's model choice.
-table ProviderSelection { profile:string (required); provider_id:string; account_profile:string; key_profile:string; model:string; use_choices:bool; }
+// purpose: guide/summary asks the host to choose provider/model from settings;
+// model and use_choices are then ignored. key_profile names platform memory keys.
+table ProviderSelection { profile:string (required); provider_id:string; account_profile:string; key_profile:string; model:string; use_choices:bool; purpose:string; }

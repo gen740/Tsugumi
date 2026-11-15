@@ -263,6 +263,8 @@ def test_open_starts_the_host_and_runs_core_tools_seen_by_the_page(plugin):
     text, error = mcp.call("tsugumi_open", {"folder": "proj", "browser": False})
     assert not error, text
     assert "Opened" in text and "project_inspect" in text  # the rules come with the first open
+    rules = (ROOT / "agent/Shared/system-prompt.md").read_text().split("- Making a Draft (", 1)[0]
+    assert text.endswith(rules)  # initialize's size limit must not truncate the rules
     # The host it started is found through server.json, readable by this user alone.
     info_file = data / "server.json"
     assert stat.S_IMODE(info_file.stat().st_mode) == 0o600

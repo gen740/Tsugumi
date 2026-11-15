@@ -605,6 +605,9 @@ struct ChatPanel: View {
       for id in ["anthropic", "openai", "chatgpt"] {
         _ = try? await CoreAgentClient.shared.storedModels(id)
       }
+      for config in [ProviderConfig.anthropic, .openAI, .chatGPT] {
+        _ = try? await CoreAgentClient.shared.usable(config)
+      }
       let accounts = await ChatGPTAuth.shared().accountsWithoutAsking()
       // A record that cannot be read without asking says nothing: the connection stays as it was.
       let chatGPT = accounts.map { $0.contains { $0.active && $0.signedIn && $0.planEnabled } } ?? wasOn

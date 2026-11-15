@@ -8,6 +8,7 @@ const root = process.argv[2]
 // protocol/agent.fbs in tests/core/agent_rpc_test.cc. These are UI behaviors.
 
 await import("./clientViewState")
+await import("./hostRules")
 await import("./serviceProtocol")
 await import('./chatModelRefresh')
 await import('./scopedSkills')
@@ -104,7 +105,6 @@ await import("./invalidDisplays")
 
 await import('./binarySources')
 
-await import('./terminalEnvironment')
 await import('./projectImport')
 
 await import("./cardFileEdits")

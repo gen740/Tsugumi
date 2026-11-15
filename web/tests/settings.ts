@@ -18,6 +18,7 @@ try {
     CoreAgentHost.prototype.provisionEnvironment = async () => {}
     CoreAgentHost.prototype.getSettings = async function (profile: string) {
       this.user.call = async <T = any>(method: string, fields: any = {}): Promise<T> => {
+        if (method === 'ModelSelectionRequest') return { provider: { providerId: 'anthropic', model: 'host-summary-model' } } as T
         if (method === 'ModelsListRequest') return [] as T
         assert.equal(method, 'SettingsUpdateRequest')
         const current = state(fields.profile)

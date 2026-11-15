@@ -227,15 +227,7 @@ final class GuideController {
   /// first start changed it). One already there answers the first start's question.
   func refreshAvailability() {
     let config = AgentSettings.current()
-    switch config.auth {
-    case .none: apply(true)
-    case .apiKey: Task { apply(ProviderCredentials.exists(account: config.name)) }
-    case .chatGPT:
-      Task {
-        let accounts = await ChatGPTAuth.shared().accounts()
-        apply(accounts.contains { $0.active && $0.signedIn && $0.planEnabled })
-      }
-    }
+    Task { apply((try? await CoreAgentClient.shared.usable(config)) ?? false) }
   }
 
   private func apply(_ usable: Bool) {

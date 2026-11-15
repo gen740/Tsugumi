@@ -292,7 +292,7 @@ import TsugumiRPC
       await chat.attach(folders: [first, second, first])
       let paths = [first, second].map { $0.standardizedFileURL.path }
       #expect(chat.folders == paths && chat.status == nil && !chat.attaching)
-      #expect(await t.session.environments.extraFolders[t.session.identity.id] == paths)
+      #expect(try await t.session.environments.attachedFolders(t.session.identity) == paths)
       await chat.attach(folders: [first, second])
       #expect(chat.folders == paths, "Repeated attachment does not duplicate either folder")
       try t.shareFolders([first, second])
