@@ -5,7 +5,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { Thoughts, type ThoughtReply } from '../src/model/thoughts'
 import { chatRoutes } from '../server/chat'
-import { CoreAgentHost, RemoteAgent } from '../server/coreAgent'
+import { CoreHost, RemoteAgent } from '../server/coreHost'
+import { ProviderKeys } from '../server/providerKeys'
 import EN from '../src/i18n/en.json'
 
 const page = globalThis as Record<string, unknown>
@@ -135,7 +136,7 @@ try {
 
 // The adapter sends the existing FlatBuffers request, including refreshed
 // provider references. No provider calls or sockets are opened in these tests.
-const host = new CoreAgentHost('/nonexistent', '/nonexistent', {} as never, 'ja')
+const host = new CoreHost('/nonexistent', '/nonexistent', {} as never, 'ja')
 let forwarded: any
 host.user.call = async (method, fields) => {
   assert.equal(method, 'ConversationSummarizeRequest')
@@ -154,10 +155,15 @@ assert.equal(forwarded.provider.credential_id, undefined)
 // connection already used by the guide and never returns provider credentials.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-thoughts-'))
 const original = { open: RemoteAgent.prototype.open, observe: RemoteAgent.prototype.observe, refresh: RemoteAgent.prototype.refresh }
-const key = process.env.ANTHROPIC_API_KEY
-process.env.ANTHROPIC_API_KEY = 'test-key'
 try {
   RemoteAgent.prototype.open = async function () {
+    // Keep this adapter test independent of the operator's environment and Keychain.
+    Object.assign(this.host, { keys: new ProviderKeys((method, fields) => this.host.user.call(method, fields),
+      this.host.keyProfile, 'darwin', async (command, args) => {
+        assert.equal(command, '/usr/bin/security')
+        assert.equal(args[0], 'find-generic-password')
+        return { code: 1, out: '' }
+      }, { ANTHROPIC_API_KEY: 'test-key' }) })
     this.host.user.call = async (method, fields) => {
       if (method === 'AccessListRequest') return { requests: [] } as any
       if (method === 'ProviderSetRequest') {
@@ -186,8 +192,6 @@ try {
   assert.equal(JSON.stringify(result).includes('test-key'), false)
 } finally {
   Object.assign(RemoteAgent.prototype, original)
-  if (key === undefined) delete process.env.ANTHROPIC_API_KEY
-  else process.env.ANTHROPIC_API_KEY = key
   fs.rmSync(root, { recursive: true, force: true })
 }
 

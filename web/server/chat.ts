@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { modelChoices } from '../src/shared/agentShared'
 import { type AgentEvent, type ProviderConfig } from './agent'
-import { CoreAgentHost, CoreAgentError, RemoteAgent } from './coreAgent'
+import { CoreHost, CoreHostError, RemoteAgent } from './coreHost'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
 import { Environments, projectKey } from './environment'
 import { L, setLanguage, type Language } from './i18n'
@@ -30,7 +30,7 @@ export interface ChatContext {
 type Handler = (b: any, url: URL) => unknown | Promise<unknown>
 
 let ctx: ChatContext
-let core: CoreAgentHost
+let core: CoreHost
 
 export function chatStatus() {
   return { chatAvailable: true, chatError: null }
@@ -56,7 +56,7 @@ interface Settings {
   /** The chat's Agent may search the web through the provider (its queries
    *  leave for the provider's search service). Off until the user turns it on. */
   webSearch: boolean
-  /** Agentd chooses how to produce version notes. */
+  /** Hostd chooses how to produce version notes. */
   versionNoteMode: 'mechanical' | 'agent'
   helperParallelism: number
   allowUnscopedHelpers: boolean
@@ -115,14 +115,14 @@ async function saveKey(p: KeyedProvider, key: string) {
   const source = await core.keys.save(p, key, settingsProfile())
   return source === 'keychain'
     ? L('Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。')
-    : L('agentd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。')
+    : L('hostd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。')
 }
 async function deleteKey(p: KeyedProvider) {
   await core.keys.delete(p, settingsProfile())
   return L('{0} のキーを削除しました。', PROVIDERS[p].name)
 }
 
-// Browser sign-in and account status are scoped to this Web host in agentd.
+// Browser sign-in and account status are scoped to this Web host in hostd.
 // Test overrides point the issuer and resource at the local OAuth fixture.
 let chatGPTAuth: ChatGPTAuth | undefined
 const chatgpt = () => (chatGPTAuth ??= new ChatGPTAuth(localProfile(),
@@ -304,7 +304,7 @@ const waitingFor = (project: string, session: string) =>
 async function withAccess<T>(project: string, session: string, run: () => Promise<T>, from?: string): Promise<T> {
   for (;;) {
     try { return await run() } catch (error) {
-      if (!(error instanceof CoreAgentError) || error.code !== 'grant_required' || !error.requestId) throw error
+      if (!(error instanceof CoreHostError) || error.code !== 'grant_required' || !error.requestId) throw error
       const id = error.requestId
       const access = await core.user.call<{ requests: { id: string; asked: string[] }[] }>('AccessListRequest')
       const request = access.requests.find(r => r.id === id)
@@ -314,7 +314,7 @@ async function withAccess<T>(project: string, session: string, run: () => Promis
         permissionWaits.set(id, { project, session, asked, resolve })
         ctx.broadcast({ type: 'chat', project, session, event: { kind: 'permission', id, asked, from } })
       })
-      if (!await allowed) throw new CoreAgentError('permission_denied', L('プロジェクトへのアクセスは許可されませんでした。'))
+      if (!await allowed) throw new CoreHostError('permission_denied', L('プロジェクトへのアクセスは許可されませんでした。'))
     }
   }
 }
@@ -387,17 +387,17 @@ class ChatHost {
   async externalCall(name: string, args: unknown) {
     const project = await core.project(this.project)
     const id = `external-${project}`
-    // A moved transcript needs fresh grants. The tool request asks agentd for
+    // A moved transcript needs fresh grants. The tool request asks hostd for
     // its own access without reading that transcript.
     await core.external.call('ConversationCreateRequest', { conversation_id: id, project_id: project, role: 'external' }).catch(error => {
-      if (!(error instanceof CoreAgentError) || error.code !== 'permission_denied') throw error
+      if (!(error instanceof CoreHostError) || error.code !== 'permission_denied') throw error
     })
     const op = randomUUID()
     try {
       return await core.external.call('ToolCallRequest', { conversation_id: id, project_id: project, name,
         arguments_json: typeof args === 'string' ? args : JSON.stringify(args ?? {}), op_id: op })
     } catch (error) {
-      if (error instanceof CoreAgentError && error.code === 'grant_required' && error.requestId) {
+      if (error instanceof CoreHostError && error.code === 'grant_required' && error.requestId) {
         await showExternalAccess(error.requestId, this.project)
         return { text: JSON.stringify({ code: error.code, message: error.message, request_id: error.requestId }), isError: true }
       }
@@ -438,7 +438,7 @@ async function externalAPI(name: string, args: unknown, project?: string) {
     }
     return result
   } catch (error) {
-    if (!(error instanceof CoreAgentError)) throw error
+    if (!(error instanceof CoreHostError)) throw error
     if (error.code === 'grant_required' && error.requestId) await showExternalAccess(error.requestId, project)
     return { text: JSON.stringify({ code: error.code, message: error.message, request_id: error.requestId }), isError: true }
   }
@@ -465,7 +465,7 @@ export function hostRequest<T = any>(method: string, fields: unknown = {}): Prom
 export function chatRoutes(c: ChatContext): Record<string, Handler> {
   ctx = c
   // The language for the server's own messages, from the start (the app's, once read).
-  core = new CoreAgentHost(c.support, c.here, c.envs)
+  core = new CoreHost(c.support, c.here, c.envs)
   core.observeHost((event) => {
     if (event.type === 'SettingsChanged' && event.value.profile === settingsProfile()) c.broadcast({ type: 'settingsChanged' })
   })

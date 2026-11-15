@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import TsugumiApp
 
-/// The menu asks agentd for each connection without blocking other menus.
+/// The menu asks hostd for each connection without blocking other menus.
 /// Stored-versus-refreshed catalog behavior is covered by models_rpc_test.cc.
 @MainActor
 struct ModelMenuTests {

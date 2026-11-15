@@ -11,7 +11,7 @@ import TsugumiRPC
   func load() async {
     guard !loaded else { return }
     do {
-      entries = try await CoreAgentClient.shared.permissionKinds(language: AppPreferences.Language.running.rawValue)
+      entries = try await CoreHostClient.shared.permissionKinds(language: AppPreferences.Language.running.rawValue)
       loaded = true
     } catch { /* Requests still show their ids and require explicit selection. */ }
   }

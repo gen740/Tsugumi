@@ -16,7 +16,7 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
   TemporaryDirectory directory;
   host::HostStore store(directory.path);
   struct stat mode{};
-  ASSERT_EQ(::stat((directory.path / "agent.sqlite").c_str(), &mode), 0);
+  ASSERT_EQ(::stat((directory.path / "host.sqlite").c_str(), &mode), 0);
   EXPECT_EQ(mode.st_mode & 0777, 0600);
   auto journal = store.db.prepare("PRAGMA journal_mode");
   ASSERT_TRUE(journal.step());

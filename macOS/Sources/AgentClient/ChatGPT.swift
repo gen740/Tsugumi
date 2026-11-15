@@ -34,7 +34,7 @@ public enum ChatGPTError: Error, CustomStringConvertible, Equatable {
   public static let usageLimitText = "ChatGPT usage limit reached: review your plan or this app's limit in ChatGPT settings"
 }
 
-/// Browser opening and status polling; all OAuth and credential state is in agentd.
+/// Browser opening and status polling; all OAuth and credential state is in hostd.
 public actor ChatGPTAuth {
   public static let usageURL = URL(string: "https://chatgpt.com/settings/usage")!
   private let endpoints: ChatGPTEndpoints
@@ -48,7 +48,7 @@ public actor ChatGPTAuth {
     if let action { fields["action"] = action }
     if let client { fields["client_id"] = client }
     if let attempt { fields["attempt_id"] = attempt }
-    let reply = try await CoreAgentClient.shared.call(action == nil ? "SignInStatusRequest" : "SignInActionRequest", fields)
+    let reply = try await CoreHostClient.shared.call(action == nil ? "SignInStatusRequest" : "SignInActionRequest", fields)
     return reply
   }
   private func infos(_ value: [String: Any]) -> [ChatGPTAccountInfo] {
@@ -66,7 +66,7 @@ public actor ChatGPTAuth {
   public func signIn(clientId: String? = nil, consent: Bool = false, open: @Sendable (URL) async throws -> Void) async throws -> SignInResult {
     var fields: [String: Any] = ["profile": profile, "issuer": endpoints.issuer, "resource": endpoints.resource, "consent": consent]
     if let clientId { fields["client_id"] = clientId }
-    let reply = try await CoreAgentClient.shared.call("SignInBeginRequest", fields)
+    let reply = try await CoreHostClient.shared.call("SignInBeginRequest", fields)
     guard let attempt = reply["attempt_id"] as? String,
           let text = reply["url"] as? String, let url = URL(string: text) else { throw ChatGPTError.failed("Invalid sign-in reply") }
     do {

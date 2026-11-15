@@ -357,7 +357,7 @@ struct Settings::State {
       -> H::ProviderStatusT {
     H::ProviderStatusT out;
     out.id = id;
-    out.storage = storage == KeyStorage::Keychain ? "keychain" : "agentd";
+    out.storage = storage == KeyStorage::Keychain ? "keychain" : "hostd";
     if (id == "chatgpt") {
       auto q = db.prepare("SELECT json FROM accounts WHERE profile=?");
       q.bind(1, profile);
@@ -378,7 +378,7 @@ struct Settings::State {
       out.source = source;
     } else if (storage == KeyStorage::Host) {
       out.configured = !secrets->Get(profile + ":" + id).empty();
-      if (out.configured) out.source = "agentd";
+      if (out.configured) out.source = "hostd";
     }
     if (id == "fixture") out.configured = true;
     if (!out.configured)

@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { chatRoutes, cancelChats, type ChatContext } from '../server/chat'
-import { CoreAgentHost } from '../server/coreAgent'
+import { CoreHost } from '../server/coreHost'
 import { toolStep, PermissionRequests } from '../src/ui/chat'
 import { AGENT, projectAccessLabel, projectAccessNeededNow } from '../src/shared/agentShared'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
@@ -12,14 +12,14 @@ import EN from '../src/i18n/en.json'
 
 // The HTTP adapter must scope lists/search and adopt host edits and the
 // accepted turn's model. No socket, model or environment is used here.
-const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-agent-copies-')))
+const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-host-copies-')))
 const folders = ['a', 'b'].map(n => path.join(dir, n))
 for (const folder of folders) {
   fs.mkdirSync(folder)
   fs.writeFileSync(path.join(folder, 'tsugumi.json'), '{"name":"Collatz"}')
 }
-const original = { settings: CoreAgentHost.prototype.getSettings, environment: CoreAgentHost.prototype.provisionEnvironment,
-  project: CoreAgentHost.prototype.project, folder: CoreAgentHost.prototype.projectFolder }
+const original = { settings: CoreHost.prototype.getSettings, environment: CoreHost.prototype.provisionEnvironment,
+  project: CoreHost.prototype.project, folder: CoreHost.prototype.projectFolder }
 let model = 'gpt-6.1-sol'
 let busy = false
 const asked = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Read', scope: 'Conversation', reason: 'Read project content', needed_now: true })
@@ -28,15 +28,15 @@ const run = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders
 let pendingAsked = [asked, write, run]
 const calls: { method: string; fields: any }[] = []
 const events: any[] = []
-let host: CoreAgentHost | undefined
+let host: CoreHost | undefined
 const conversations = new Map<string, string>()
 const snapshots = (id: string) => ({ conversation: { id, messages: [], archive: [], tools: [], usage: { inputTokens: 0, outputTokens: 0 } },
   busy, modelBinding: { providerId: 'chatgpt', model: 'gpt-6.1-terra', effort: 'high', fast: false }, event_seq: 0n })
 try {
-  CoreAgentHost.prototype.provisionEnvironment = async () => {}
-  CoreAgentHost.prototype.project = async function(folder) { return folder === folders[0] ? 'project-a' : 'project-b' }
-  CoreAgentHost.prototype.projectFolder = () => undefined
-  CoreAgentHost.prototype.getSettings = async function() {
+  CoreHost.prototype.provisionEnvironment = async () => {}
+  CoreHost.prototype.project = async function(folder) { return folder === folders[0] ? 'project-a' : 'project-b' }
+  CoreHost.prototype.projectFolder = () => undefined
+  CoreHost.prototype.getSettings = async function() {
     host = this
     this.user.call = async <T>(method: string, fields: any = {}): Promise<T> => {
       calls.push({ method, fields })
@@ -94,10 +94,10 @@ try {
   await assert.rejects(call('conversation', { path: folders[1], session: 'a' }), /conflict/)
 } finally {
   for (const folder of folders) cancelChats(folder)
-  CoreAgentHost.prototype.getSettings = original.settings
-  CoreAgentHost.prototype.provisionEnvironment = original.environment
-  CoreAgentHost.prototype.project = original.project
-  CoreAgentHost.prototype.projectFolder = original.folder
+  CoreHost.prototype.getSettings = original.settings
+  CoreHost.prototype.provisionEnvironment = original.environment
+  CoreHost.prototype.project = original.project
+  CoreHost.prototype.projectFolder = original.folder
   fs.rmSync(dir, { recursive: true, force: true })
 }
 

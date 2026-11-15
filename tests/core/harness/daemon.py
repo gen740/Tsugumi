@@ -51,7 +51,7 @@ class Daemon:
         self.args = list(args or [])
         if history_dir is not None:
             self.args += ["--history-dir", str(history_dir)]
-        self.directory = Path(tempfile.mkdtemp(prefix="tsg-rpc-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))).resolve()
+        self.directory = Path(tempfile.mkdtemp(prefix="tsugumi-rpc-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))).resolve()
         self.unix = str(self.directory / "rpc")
         self.control = self.directory / "control"
         self.gates = self.directory / "gates"

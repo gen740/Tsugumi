@@ -549,12 +549,12 @@ struct ChatPanel: View {
   }
 
   /// The connections set up, each with the models saved for it. Opening the
-  /// panel reads account status from agentd and Keychain attributes only.
+  /// panel reads account status from hostd and Keychain attributes only.
   private func loadModels() async {
     await CorePreferences.shared.reload()
     let accounts = await ChatGPTAuth.shared().accounts()
     for id in ["anthropic", "openai", "chatgpt"] {
-      _ = try? await CoreAgentClient.shared.storedModels(id)
+      _ = try? await CoreHostClient.shared.storedModels(id)
     }
     showConnections(chatGPT: accounts.contains { $0.active && $0.signedIn && $0.planEnabled })
   }
@@ -603,10 +603,10 @@ struct ChatPanel: View {
     let show = showConnections
     Task.detached {
       for id in ["anthropic", "openai", "chatgpt"] {
-        _ = try? await CoreAgentClient.shared.storedModels(id)
+        _ = try? await CoreHostClient.shared.storedModels(id)
       }
       for config in [ProviderConfig.anthropic, .openAI, .chatGPT] {
-        _ = try? await CoreAgentClient.shared.usable(config)
+        _ = try? await CoreHostClient.shared.usable(config)
       }
       let accounts = await ChatGPTAuth.shared().accountsWithoutAsking()
       // A record that cannot be read without asking says nothing: the connection stays as it was.

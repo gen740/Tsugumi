@@ -1,4 +1,4 @@
-// Stateless presentation operations implemented by tsugumi-agentd.
+// Stateless presentation operations implemented by tsugumi-hostd.
 import * as H from '../gen/tsugumi/host'
 import type { LayoutBar, LayoutBox, LayoutPort, LayoutProposal, LayoutScene } from '../model/layoutScene'
 import { api } from '../api'

@@ -1,6 +1,6 @@
 """Private FlatBuffers VM adapter double; its child is a real native tsugumid.
 
-No VM is booted. It exercises agentd's adapter protocol, readiness and broker
+No VM is booted. It exercises hostd's adapter protocol, readiness and broker
 wiring rather than duplicating environment decisions in the Web host.
 """
 import fcntl
@@ -107,7 +107,7 @@ def serve(peer):
                     else:
                         mounts = {text(m.name): Path(text(m.path)) for m in request.mounts or []}
                         controls[key] = mounts["control"]
-                        # Match vmd: native clients (including agentd's readiness
+                        # Match vmd: native clients (including hostd's readiness
                         # check) have no Origin; browsers still need an allowed one.
                         arguments = [os.environ["TSUGUMID"], "--scratch-dir", str(mounts["control"] / "scratch"),
                                      "--run-scratch-dir", str(mounts["control"].resolve() / "run-scratch"), "--project", str(mounts["project"]), "--control-dir", str(mounts["control"]),

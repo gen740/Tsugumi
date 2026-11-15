@@ -1,4 +1,4 @@
-"""A real agentd process and its public, user-authenticated Host socket."""
+"""A real hostd process and its public, user-authenticated Host socket."""
 import importlib
 import json
 import os
@@ -23,16 +23,16 @@ from Tsugumi.Host.RequestPayload import RequestPayload
 class Host:
     def __init__(self, directory):
         self.directory = Path(directory).resolve()
-        self.directory.mkdir(mode=0o700)
-        self.log = (self.directory / "agent.log").open("wb")
         self.socket_directory = tempfile.TemporaryDirectory(prefix="th-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
+        self.log_path = Path(self.socket_directory.name) / "host.log"
+        self.log = self.log_path.open("wb")
         self.process = None
         self.socket = None
         self.stream = None
         self.request_id = 0
         try:
             self.process = subprocess.Popen([
-                os.environ.get("TSUGUMI_AGENTD", str(BUILD / "core/tsugumi-agentd")),
+                os.environ.get("TSUGUMI_HOSTD", str(BUILD / "core/tsugumi-hostd")),
                 "--state-dir", str(self.directory), "--no-websocket",
                 "--socket-dir", str(Path(self.socket_directory.name) / "b"),
                 "--usage-scratch-dir", str(self.directory / "run-scratch"),
@@ -41,14 +41,14 @@ class Host:
             until = time.monotonic() + 15
             while time.monotonic() < until:
                 if self.process.poll() is not None:
-                    raise RuntimeError((self.directory / "agent.log").read_text())
+                    raise RuntimeError(self.log_path.read_text())
                 try:
-                    self.ready = json.loads((self.directory / "agent.ready").read_text())
+                    self.ready = json.loads((self.directory / "host.ready").read_text())
                     break
                 except FileNotFoundError:
                     time.sleep(0.05)
             else:
-                raise TimeoutError("agentd did not start")
+                raise TimeoutError("hostd did not start")
             self.socket = socket.socket(socket.AF_UNIX)
             self.socket.settimeout(30)
             self.socket.connect(self.ready["host_socket"])

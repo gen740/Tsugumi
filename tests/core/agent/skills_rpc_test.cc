@@ -212,8 +212,8 @@ TEST_F(AgentProjectFixture,
   ASSERT_NE(Events(conversation).View().find("permission"), std::string::npos);
   external.reset();
   human.reset();
-  agent.Stop(true);
-  StartAgent();
+  service.Stop(true);
+  StartHost();
   const auto interrupted = Get(conversation).View();
   EXPECT_TRUE(JsonBool(interrupted, "/resumable"));
   EXPECT_TRUE(JsonBool(interrupted, "/continuable"));

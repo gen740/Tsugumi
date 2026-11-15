@@ -40,8 +40,8 @@ app="$dist/Tsugumi.app"
 vm="$dist/tsugumi-vm"
 [ -f "$vm/vmlinux" ] && [ -f "$vm/rootfs.erofs" ] || "$repo/macOS/Container/build-image.sh" --vm
 
-# Native core Agent and RPC client are shared by both UI frontends.
-"$repo/macOS/tools/build-agent.sh"
+# The native host service and RPC client are shared by both UI frontends.
+"$repo/macOS/tools/build-host.sh"
 
 # Swift uses the Apple toolchain with a clean environment; only flatc comes from Nix.
 flatc_bin="$("$repo/macOS/tools/flatc-bin.sh")"
@@ -59,7 +59,7 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
 cp "$repo/build-host/Frameworks/"*.dylib "$app/Contents/Frameworks/"
 cp "$bin/Tsugumi" "$app/Contents/MacOS/Tsugumi"
-cp "$bin/tsugumi-vmhost" "$repo/build-host/core/tsugumi-agentd" "$app/Contents/MacOS/"
+cp "$bin/tsugumi-vmhost" "$repo/build-host/core/tsugumi-hostd" "$app/Contents/MacOS/"
 cp "$repo/build-host/generated/bfbs/"{agent,host}.bfbs "$app/Contents/Resources/"
 
 # Nothing may look for files where this machine built them (that only works here).
@@ -154,7 +154,7 @@ done
 for tool in "$app/Contents/Resources/formatters/"*; do
   codesign --force --sign "$identity" "$tool" >/dev/null
 done
-codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-agentd" >/dev/null
+codesign --force --sign "$identity" "$app/Contents/MacOS/tsugumi-hostd" >/dev/null
 codesign --force --sign "$identity" --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app/Contents/MacOS/tsugumi-vmhost" >/dev/null
 codesign --force --sign "$identity" --entitlements "$repo/macOS/Resources/Tsugumi.entitlements" "$app" >/dev/null
 # The bundle was made anew: Finder and the Dock read its icon again.

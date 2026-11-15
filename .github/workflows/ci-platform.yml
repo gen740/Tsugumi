@@ -171,7 +171,7 @@ jobs:
           out-link: build-ci
       - name: Allow user namespaces for sandboxed jobs
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Build and run Cards through the loopback remote worker
+      - name: Build and run Cards through loopback tsugumi-workerd
         run: bash tests/ci-remote-worker.sh
 
   web-contracts:

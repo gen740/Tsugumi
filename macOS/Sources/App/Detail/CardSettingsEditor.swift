@@ -1586,7 +1586,7 @@ private struct SourceCategory: View {
     formatting = true
     Task {
       do {
-        let r = try await CoreAgentClient.shared.format(path: p, text: source)
+        let r = try await CoreHostClient.shared.format(path: p, text: source)
         let errors = r.diagnostics.compactMap { $0 }
         if errors.isEmpty {
           model.texts[p] = r.text

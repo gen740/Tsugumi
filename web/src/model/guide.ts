@@ -1,6 +1,6 @@
 // The guide bird in the bottom-right corner: one conversation for the whole
 // app, run by the host server with the same model connection as the Agent
-// (without one agentd answers from its fixed script). It explains what is on the screen and leads demo
+// (without one hostd answers from its fixed script). It explains what is on the screen and leads demo
 // tours; it only reads, and what it offers to do (guide_show) is done by the
 // user's own press of a button. The macOS app's GuideController does the same.
 import { api, onServerEvent } from '../api'
@@ -149,7 +149,7 @@ export class GuideController extends Observable {
   available = false
   /** A model connection the guide can use (a key for the chosen provider). */
   connected = false
-  /** No connection: Tsugumi answers from agentd and calls no model. */
+  /** No connection: Tsugumi answers from hostd and calls no model. */
   get scripted() {
     return this.available && !this.connected
   }

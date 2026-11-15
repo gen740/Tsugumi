@@ -1,6 +1,6 @@
 // What a canvas draws in one scope, as the core is asked to arrange or untangle
 // it (LayoutArrange / LayoutUntangle of protocol/host.fbs), and what it
-// proposes. The layout itself is worked out in tsugumi-agentd (core/src/host/layout.cc),
+// proposes. The layout itself is worked out in tsugumi-hostd (core/src/host/layout.cc),
 // once for every client; here are only the measurements and the answer
 // (`layoutHost.layoutArrange` and `layoutUntangle` send them).
 import type { FlowDirection } from './prefs'

@@ -1,4 +1,4 @@
-// Browser HTTP/SSE host. agentd owns project environments and Agent execution;
+// Browser HTTP/SSE host. hostd owns project environments and Agent execution;
 // this process serves the page and adapts authenticated Host requests.
 import { spawn, spawnSync } from 'node:child_process'
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
@@ -14,7 +14,7 @@ import { cancelChats, chatRoutes, chatStatus, hostRequest, observeHost } from '.
 import { EnvironmentManager, EnvState, projectKey } from './environment'
 import type { VMHostOptions, VMTerminal } from './environment'
 import { L, language } from './i18n'
-import { CoreAgentError } from './coreAgent'
+import { CoreHostError } from './coreHost'
 import { hostProjectErrorText } from './hostProjects'
 import { uninstall } from './uninstall'
 import { importProject } from './projectImport'
@@ -474,8 +474,8 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
     try {
       send(res, 200, await h(req.method === 'GET' ? {} : await body(req), url))
     } catch (e) {
-      send(res, e instanceof HttpError ? e.status : e instanceof CoreAgentError ? 400 : 500,
-        e instanceof CoreAgentError ? { code: e.code, error: hostProjectErrorText(e.code) } : { error: (e as Error).message ?? String(e) })
+      send(res, e instanceof HttpError ? e.status : e instanceof CoreHostError ? 400 : 500,
+        e instanceof CoreHostError ? { code: e.code, error: hostProjectErrorText(e.code) } : { error: (e as Error).message ?? String(e) })
     }
     return
   }

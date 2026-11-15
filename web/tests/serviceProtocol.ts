@@ -12,7 +12,7 @@ import { ExecutionServices } from '../src/gen/tsugumi/host/execution-services'
 // correlation/cursors and conversion to the existing HTTP/SSE presentation DTOs.
 import assert from 'node:assert/strict'
 import * as fb from 'flatbuffers'
-import { decodeReply, encodeRequest, hostMethod, CoreAgentError } from '../server/serviceWire'
+import { decodeReply, encodeRequest, hostMethod, CoreHostError } from '../server/serviceWire'
 import { Message, MessageT } from '../src/gen/tsugumi/agent/message'
 import { Payload } from '../src/gen/tsugumi/agent/payload'
 import { ReplyT } from '../src/gen/tsugumi/agent/reply'
@@ -59,7 +59,7 @@ assert.equal(decoded.value.next_seq, high)
 assert.equal(decoded.value.events[0].seq, high)
 assert.equal(decoded.value.events[0].event.input, '{"x":1}')
 const failure = decodeReply(reply(ReplyPayload.Failure, new FailureT('grant_required', 'Ask first', 'permission-1')), false)
-assert.ok(failure.error instanceof CoreAgentError)
+assert.ok(failure.error instanceof CoreHostError)
 assert.equal(failure.error.requestId, 'permission-1')
 console.log('Agent/Host binary protocol: exact uint64, separation, typed events and failures passed')
 

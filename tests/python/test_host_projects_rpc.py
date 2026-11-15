@@ -17,11 +17,11 @@ import pytest
 
 from conftest import BUILD
 
-AGENT = Path(os.environ.get("TSUGUMI_AGENTD", BUILD / "core/tsugumi-agentd"))
+HOST = Path(os.environ.get("TSUGUMI_HOSTD", BUILD / "core/tsugumi-hostd"))
 BINDINGS = Path(os.environ.get("TSUGUMI_PY_BINDINGS", BUILD / "generated/python"))
 sys.path.insert(0, str(BINDINGS))
-pytestmark = pytest.mark.skipif(not AGENT.exists() or not (BINDINGS / "Tsugumi/Host").exists(),
-                                reason="needs built agentd and generated Host bindings")
+pytestmark = pytest.mark.skipif(not HOST.exists() or not (BINDINGS / "Tsugumi/Host").exists(),
+                                reason="needs built hostd and generated Host bindings")
 
 
 @pytest.fixture
@@ -34,19 +34,19 @@ def host(tmp_path):
     (source / ".tsugumi/history").write_text("private")
     (demos / "ja/index.json").write_text(json.dumps({"demos": [
         {"id": "sample", "title": "Sample", "path": "sample", "field": ""}]}))
-    with tempfile.TemporaryDirectory(prefix="tsg-host-") as short:
+    with tempfile.TemporaryDirectory(prefix="tsugumi-host-") as short:
         state = tmp_path / "state"
-        with (tmp_path / "agent.log").open("w") as log:
-            proc = subprocess.Popen([str(AGENT), "--state-dir", str(state), "--unix", short + "/s",
+        with (tmp_path / "host.log").open("w") as log:
+            proc = subprocess.Popen([str(HOST), "--state-dir", str(state), "--unix", short + "/s",
                                      "--socket-dir", short + "/b", "--usage-scratch-dir", str(tmp_path.resolve() / "scratch"),
                                      "--demos-dir", str(demos), "--no-websocket"], stdout=log, stderr=log)
         try:
             deadline = time.monotonic() + 10
-            while not (state / "agent.ready").exists():
-                assert proc.poll() is None, (tmp_path / "agent.log").read_text()
-                assert time.monotonic() < deadline, "agentd startup timed out"
+            while not (state / "host.ready").exists():
+                assert proc.poll() is None, (tmp_path / "host.log").read_text()
+                assert time.monotonic() < deadline, "hostd startup timed out"
                 time.sleep(0.02)
-            ready = json.loads((state / "agent.ready").read_text())
+            ready = json.loads((state / "host.ready").read_text())
 
             import flatbuffers
             from Tsugumi.Host.Message import Message, MessageT

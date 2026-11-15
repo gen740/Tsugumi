@@ -29,7 +29,7 @@ class EnvironmentFixture : public AgentFixture {
   }
   auto SetUp() -> void override {
     Write(project / "tsugumi.json", R"({"name":"Environment"})");
-    extra_agent_arguments = {
+    extra_host_arguments = {
         "--tsugumid",        DaemonBinary(),
         "--worker",          TSUGUMI_WORKER_BINARY,
         "--sdk-dir",         TSUGUMI_TEST_SDK,
@@ -88,8 +88,8 @@ class EnvironmentFixture : public AgentFixture {
     host.reset();
     human.reset();
     external.reset();
-    agent.Stop();
-    StartAgent();
+    service.Stop();
+    StartHost();
     Observe();
   }
   auto HasEvent(H::EventPayload type) -> bool {
@@ -216,7 +216,7 @@ TEST_F(RealEnvironmentFixture, AuthenticatesTheRealProjectServiceBeforeReady) {
   ASSERT_TRUE(startup->changed.wait_until(
       lock, deadline, [&] { return terminal() || startup->reply.has_value(); }))
       << "Environment start stalled at: " << startup->stage << "\n"
-      << Read(directory.path / "agent.log") << "\n"
+      << Read(directory.path / "host.log") << "\n"
       << (startup->states.empty()
               ? "No environment state received"
               : Read(std::filesystem::path(startup->states.back().control_dir) /
@@ -321,7 +321,7 @@ TEST_F(EnvironmentFixture, DeathIsReportedAndAnotherStartCreatesOneNewProcess) {
 }
 
 TEST_F(EnvironmentFixture,
-       LeftoverDaemonIsReauthenticatedAndReusedAfterAgentRestart) {
+       LeftoverDaemonIsReauthenticatedAndReusedAfterHostRestart) {
   const auto first = Environment(H::EnvironmentAction::Start);
   ASSERT_EQ(first.phase, H::EnvironmentPhase::Ready);
   Restart();

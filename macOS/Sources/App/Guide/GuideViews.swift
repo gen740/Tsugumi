@@ -1106,7 +1106,7 @@ struct GuideInviteView: View {
 
 /// The first start: choose Anthropic or OpenAI and enter that provider's API
 /// key (one is enough), checked by connecting, or start without a guide.
-/// The key is saved in the login Keychain and provisioned to agentd in memory,
+/// The key is saved in the login Keychain and provisioned to hostd in memory,
 /// as in Settings > API.
 struct GuideSetupView: View {
   let onDone: () -> Void

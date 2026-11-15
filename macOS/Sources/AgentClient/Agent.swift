@@ -124,13 +124,13 @@ public actor Agent {
   public private(set) var interruptedOperation: Tsugumi_Agent_InterruptedOperationT?
   public private(set) var modelBinding: Tsugumi_Agent_ModelBindingT?
   private var answeredAccess: [String: Bool] = [:]
-  private let client = CoreAgentClient.shared
+  private let client = CoreHostClient.shared
   private let request: (String, [String: Any]) async throws -> [String: Any]
 
   public static let contextFullText = "the conversation no longer fits the model's context"
 
   public init(id: String, transport: ToolTransport, provider: ProviderConfig, role: Role = .worker) {
-    self.request = { try await CoreAgentClient.shared.call($0, $1) }
+    self.request = { try await CoreHostClient.shared.call($0, $1) }
     self.id = id
     self.transport = transport
     self.provider = provider
@@ -330,7 +330,7 @@ public actor Agent {
     }
     do {
       _ = try await self.request("AccessResolveRequest", ["request_id": request, "allow": allowed, "also_allow": additional])
-    } catch let error as CoreAgentFailure where error.code == "conflict" {
+    } catch let error as CoreHostFailure where error.code == "conflict" {
       // A human in another UI already answered; read the authoritative outcome.
       return try await answerAccess(request, asked: asked)
     }
@@ -380,7 +380,7 @@ enum AgentObservation {
       do { return try await read() }
       catch RPCError.disconnected { try await pause() }
       catch RPCError.timeout { try await pause() }
-      catch let error as CoreAgentFailure where error.code == "disconnected" { try await pause() }
+      catch let error as CoreHostFailure where error.code == "disconnected" { try await pause() }
     }
   }
 }

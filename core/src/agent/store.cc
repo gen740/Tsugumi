@@ -98,7 +98,7 @@ ConversationStore::ProjectStore::ProjectStore(std::filesystem::path p,
       lock(std::move(l)),
       db((path / "agent.sqlite").string()) {
   ::chmod((path / "agent.sqlite").c_str(), 0600);
-  // agentd writes the original host folder, never the VM's virtiofs mount.
+  // hostd writes the original host folder, never the VM's virtiofs mount.
   // DELETE keeps a quiescent project copy self-contained (no WAL sidecar).
   db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;");
   CreateConversationTables(db);

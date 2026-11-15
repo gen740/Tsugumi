@@ -63,7 +63,7 @@ TEST_F(AgentProjectFixture, VersionNotesDefaultToFactsAndShareOneSavedAgentSumma
   EXPECT_EQ(note(*host).HostValue()->value_as_TextResult()->text()->str(), "The workflow settings changed.");
   EXPECT_EQ(model.Requests().size(), 2u);
   human.reset(); other.reset(); external.reset(); host.reset();
-  agent.Stop(); StartAgent();
+  service.Stop(); StartHost();
   EXPECT_EQ(note(*host).HostValue()->value_as_TextResult()->text()->str(), "The workflow settings changed.");
   EXPECT_EQ(model.Requests().size(), 2u);
 }

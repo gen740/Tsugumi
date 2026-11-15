@@ -93,7 +93,7 @@ import { GuideGetRequestT } from '../src/gen/tsugumi/host/guide-get-request'
 import { GuideAdvanceRequestT } from '../src/gen/tsugumi/host/guide-advance-request'
 import { GuideInputT } from '../src/gen/tsugumi/host/guide-input'
 
-export class CoreAgentError extends Error {
+export class CoreHostError extends Error {
   constructor(readonly code: string, message: string, readonly requestId?: string) { super(message) }
 }
 
@@ -241,7 +241,7 @@ function view(value: any): any {
   }
   return out
 }
-export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; value: any; error?: CoreAgentError; event?: { type: string; value: any } } {
+export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; value: any; error?: CoreHostError; event?: { type: string; value: any } } {
   if (bytes.length < 12) throw new Error('Truncated service reply')
   const buffer = new fb.ByteBuffer(bytes)
   const identifier = host ? 'TSH1' : 'TSA1'
@@ -257,7 +257,7 @@ export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; val
   const value = view(reply.value)
   if (!value) throw new Error('Missing service reply value')
   if (value.code !== undefined) return { id: message.requestId, value: undefined,
-    error: new CoreAgentError(value.code, value.message, reply.value.requestId ?? undefined) }
+    error: new CoreHostError(value.code, value.message, reply.value.requestId ?? undefined) }
   let result = value
   // Vector result tables keep the public API's array shape.
   for (const key of ['conversations', 'matches', 'paths', 'demos', 'models', 'projects', 'tools', 'services']) {

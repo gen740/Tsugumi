@@ -1,4 +1,4 @@
-"""The project RPC carries presentation bytes; policy lives in agentd."""
+"""The project RPC carries presentation bytes; policy lives in hostd."""
 import json
 
 import pytest

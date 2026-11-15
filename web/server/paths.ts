@@ -32,7 +32,7 @@ export function serverBuild(script: string): string {
   // Nix can reuse the Web output while changing the native runtime injected
   // by the command's wrapper. The plugin and its child inherit the same paths.
   for (const [name, fallback] of [
-    ['TSUGUMID', 'core/tsugumid'], ['TSUGUMI_AGENTD', 'core/tsugumi-agentd'],
+    ['TSUGUMID', 'core/tsugumid'], ['TSUGUMI_HOSTD', 'core/tsugumi-hostd'],
     ['TSUGUMI_WORKER', 'workerd/tsugumi-worker'], ['TSUGUMI_VMHOST', ''],
   ]) {
     const binary = process.env[name] ?? (fallback ? path.join(process.env.TSUGUMI_BUILD_DIR ?? path.join(repo, 'build'), fallback) : '')

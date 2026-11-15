@@ -1,4 +1,4 @@
-// Private same-user adapter channel: agentd alone drives the signed VM helper.
+// Private same-user adapter channel: hostd alone drives the signed VM helper.
 // uint32 LE length and one FlatBuffer; independent request connections and a
 // Watch connection for progress, runtime snapshots and terminal bytes.
 include "host.fbs";

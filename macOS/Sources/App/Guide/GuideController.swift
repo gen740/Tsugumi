@@ -85,7 +85,7 @@ private struct GuideTransport: ToolTransport {
 /// The guide bird in the bottom-right corner of every main window: one
 /// conversation for the whole app with a model of the user's own (the same
 /// connection and key as the Agent). Without a connection it answers from a
-/// fixed script in agentd: one demo's tour, and a pointer to Settings.
+/// fixed script in hostd: one demo's tour, and a pointer to Settings.
 /// It explains what is on the screen and leads demo tours; it only reads,
 /// and what it offers to do is done by the user's own press of a button.
 /// What it points at and says stays in the windows it is about: Home for the
@@ -121,7 +121,7 @@ final class GuideController {
   private(set) var available = false
   /// A model connection the guide can use (a key for the chosen provider).
   private(set) var connected = false
-  /// No connection: Tsugumi answers from agentd and calls no model.
+  /// No connection: Tsugumi answers from hostd and calls no model.
   var scripted: Bool { available && !connected }
   private(set) var items: [Item] = []
   private(set) var busy = false
@@ -227,7 +227,7 @@ final class GuideController {
   /// first start changed it). One already there answers the first start's question.
   func refreshAvailability() {
     let config = AgentSettings.current()
-    Task { apply((try? await CoreAgentClient.shared.usable(config)) ?? false) }
+    Task { apply((try? await CoreHostClient.shared.usable(config)) ?? false) }
   }
 
   private func apply(_ usable: Bool) {
@@ -664,7 +664,7 @@ final class GuideController {
     pendingGuide = Task {
       await previous?.value
       do {
-        let r = try await CoreAgentClient.shared.call("GuideAdvanceRequest", [
+        let r = try await CoreHostClient.shared.call("GuideAdvanceRequest", [
           "session_id": "desktop", "language": AppPreferences.Language.running == .en ? "en" : "ja", "event": event])
         setupDone = r["setupDone"] as? Bool ?? false
         demoAnswered = r["demoAnswered"] as? Bool ?? false
@@ -795,7 +795,7 @@ final class GuideController {
 
   @ObservationIgnored private var resumeAsked = false
 
-  /// Report screen facts once per change; agentd decides whether to speak.
+  /// Report screen facts once per change; hostd decides whether to speak.
   func observe(_ s: ProjectSession, tab: WorkflowTab?) {
     guard available, let t = tour, Self.same(t.path, s.identity.url) else { return }
     tourTab = tab

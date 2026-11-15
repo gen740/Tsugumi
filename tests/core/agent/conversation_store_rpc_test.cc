@@ -47,7 +47,7 @@ class ConversationStoreFixture : public AgentProjectFixture {
     host.reset();
     external.reset();
     human.reset();
-    agent.Stop();
+    service.Stop();
   }
   auto List(const std::string& project = {}) -> Reply {
     return Call(
@@ -99,7 +99,7 @@ TEST_F(ConversationStoreFixture,
   const auto state = WaitUntilIdle(conversation);
   EXPECT_NE(state.find("[redacted]"), state.npos);
   const auto local = directory.path / "project/.tsugumi/agent.sqlite";
-  const auto host_db = directory.path / "state/agent.sqlite";
+  const auto host_db = directory.path / "state/host.sqlite";
   for (const auto* table : {"conversations", "turns", "receipts", "events",
                             "model_bindings", "usage", "conversation_resources"}) {
     const auto key =
@@ -191,7 +191,7 @@ TEST_F(ConversationStoreFixture,
   std::filesystem::copy(directory.path / "project", copy,
                         std::filesystem::copy_options::recursive);
   std::filesystem::remove_all(directory.path / "state");
-  StartAgent();
+  StartHost();
   EXPECT_EQ(List().View(), "[]");
   ASSERT_TRUE(Register(copy, *host).Code().empty());
   EXPECT_EQ(Get(conversation, true).View(), before);
@@ -239,7 +239,7 @@ TEST_F(ConversationStoreFixture,
   const auto conversation = Conversation("project-reset", true);
   StopAgent();
   std::filesystem::remove_all(directory.path / "state");
-  StartAgent();
+  StartHost();
   ASSERT_TRUE(Register(directory.path / "project", *host).Code().empty());
   EXPECT_EQ(JsonString(Get(conversation, true).View(), "/conversation/id"),
             conversation);
@@ -258,12 +258,12 @@ TEST_F(ConversationStoreFixture,
             conversation);
   ChildProcess other;
   other.Start(
-      {TSUGUMI_AGENT_BINARY, "--state-dir",
+      {TSUGUMI_HOST_BINARY, "--state-dir",
        (directory.path / "other-state").string(), "--unix",
        (directory.path / "other.sock").string(), "--listen", "127.0.0.1:0"},
       directory.path / "other.log");
   const auto original_ready = ready;
-  ready = Readiness(other, directory.path / "other-state/agent.ready",
+  ready = Readiness(other, directory.path / "other-state/host.ready",
                     directory.path / "other.log");
   auto other_human = Connect(true);
   auto other_host = ConnectHost();
@@ -324,7 +324,7 @@ TEST_F(ConversationStoreFixture,
                    "SELECT count(*) FROM pending_sends WHERE "
                    "conversation='pending-portable'"),
             1);
-  EXPECT_EQ(Scalar(directory.path / "state/agent.sqlite",
+  EXPECT_EQ(Scalar(directory.path / "state/host.sqlite",
                    "SELECT count(*) FROM pending_sends"),
             0);
   EXPECT_EQ(Read(local).find("FIXTURE_API_KEY"), std::string::npos);
@@ -332,7 +332,7 @@ TEST_F(ConversationStoreFixture,
   std::filesystem::copy(directory.path / "project", copy,
                         std::filesystem::copy_options::recursive);
   std::filesystem::remove_all(directory.path / "state");
-  StartAgent();
+  StartHost();
   ASSERT_TRUE(Register(copy, *host).Code().empty());
   const auto snapshot = Get(conversation, true).View();
   EXPECT_TRUE(JsonBool(snapshot, "/resumable"));

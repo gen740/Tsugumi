@@ -37,15 +37,15 @@ def isolated_environment(root: Path, **values) -> dict:
     """Keep resident services and credentials inside this test's own folder."""
     if root not in _socket_directories:
         _socket_directories[root] = tempfile.TemporaryDirectory(
-            prefix="tsg-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
+            prefix="tsugumi-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
     env = dict(os.environ)
     for key in ("TSUGUMI_VMHOST", "TSUGUMI_VM_IMAGE", "TSUGUMI_VM_SOURCE"):
         env.pop(key, None)
-    env.update(TSUGUMI_AGENT_STATE=str(root / "agent-core"),
+    env.update(TSUGUMI_HOST_STATE=str(root / "host-core"),
                TSUGUMI_SUPPORT_DIR=str(root / "support"),
                TSUGUMI_RUN_SCRATCH_DIR=str(root.resolve() / "run-scratch"),
                TSUGUMI_SOCKET_DIR=_socket_directories[root].name,
-               TSUGUMI_AGENTD=os.environ.get("TSUGUMI_AGENTD", str(BUILD / "core" / "tsugumi-agentd")),
+               TSUGUMI_HOSTD=os.environ.get("TSUGUMI_HOSTD", str(BUILD / "core" / "tsugumi-hostd")),
                TSUGUMI_RPC_CLIENT=os.environ.get("TSUGUMI_RPC_CLIENT", str(BUILD / "client" / "tsugumi-rpc")),
                TSUGUMID=str(TSUGUMID),
                ANTHROPIC_API_KEY="fixture-no-network", OPENAI_API_KEY="fixture-no-network")
@@ -56,7 +56,7 @@ def isolated_environment(root: Path, **values) -> dict:
 def stop_resident_services(root: Path):
     """A UI close intentionally leaves core alive; fixture teardown owns it."""
     pids = set()
-    for name in ("agent.ready", "server.ready", "server.json"):
+    for name in ("host.ready", "server.ready", "server.json"):
         for ready in root.rglob(name):
             if ready.is_symlink():
                 continue

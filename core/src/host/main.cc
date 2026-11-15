@@ -1,45 +1,38 @@
-#include "agent/host.hh"
-
-#include <chrono>
-#include <csignal>
-#include <cerrno>
 #include <pthread.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cerrno>
+#include <chrono>
+#include <csignal>
+
 #include "agent/json.hh"
 #include "host/service.hh"
+#include "host/state_format.hh"
 #include "util/crypto.hh"
 #include "util/fs.hh"
 #include "util/log.hh"
 
-namespace tsugumi::agent {
-Host::Host(HostOptions options)
-    : state_(std::make_unique<host::Service>(std::move(options))) {}
-Host::~Host() { Shutdown(); }
-auto Host::Attach(Server* server, Server* host_server) -> void { state_->Attach(server, host_server); }
-auto Host::Shutdown() -> void { state_->Shutdown(); }
-auto Host::hello(const RequestIn& request) -> std::pair<std::string, bool> { return state_->hello(request); }
-auto Host::dispatch(RequestIn request) -> void { state_->dispatch(std::move(request)); }
-auto Host::disconnected(ConnId connection) -> void { state_->disconnected(connection); }
-auto Host::host_disconnected(ConnId connection) -> void { state_->host_disconnected(connection); }
-
+namespace tsugumi::host {
+namespace json = agent::json;
 namespace {
 class HostContract final : public RequestSink {
-public:
-  explicit HostContract(Host &host) : host_(host) {}
-  auto hello(const RequestIn &r) -> std::pair<std::string, bool> override {
+ public:
+  explicit HostContract(Service& host) : host_(host) {}
+  auto hello(const RequestIn& r) -> std::pair<std::string, bool> override {
     return host_.hello(r);
   }
   auto dispatch(RequestIn r) -> void override { host_.dispatch(std::move(r)); }
-  auto disconnected(ConnId connection) -> void override { host_.host_disconnected(connection); }
+  auto disconnected(ConnId connection) -> void override {
+    host_.host_disconnected(connection);
+  }
 
-private:
-  Host &host_;
+ private:
+  Service& host_;
 };
-} // namespace
+}  // namespace
 
-auto RunHost(int argc, char **argv) -> int {
+auto RunHost(int argc, char** argv) -> int {
   try {
     HostOptions options;
     ServerOptions listener;
@@ -51,22 +44,29 @@ auto RunHost(int argc, char **argv) -> int {
     for (int i = 1; i < argc; ++i) {
       const std::string arg = argv[i];
       auto next = [&]() -> std::string {
-        if (++i == argc)
-          throw std::runtime_error(arg + " requires a value");
+        if (++i == argc) throw std::runtime_error(arg + " requires a value");
         return argv[i];
       };
       if (arg == "--state-dir")
         options.state_dir = next();
       else if (arg == "--unix")
         listener.unix_path = next();
-      else if (arg == "--vmhost") options.vm.binary = next();
-      else if (arg == "--vm-support") options.vm.support = next();
-      else if (arg == "--vm-image") options.vm.image = next();
-      else if (arg == "--vm-source") options.vm.source = next();
-      else if (arg == "--vm-source-entry") options.vm.source_entries.push_back(next());
-      else if (arg == "--vm-cpus") options.vm.cpus = std::stoul(next());
-      else if (arg == "--vm-memory") options.vm.memory = std::stoul(next());
-      else if (arg == "--vm-store") options.vm.store = std::stoul(next());
+      else if (arg == "--vmhost")
+        options.vm.binary = next();
+      else if (arg == "--vm-support")
+        options.vm.support = next();
+      else if (arg == "--vm-image")
+        options.vm.image = next();
+      else if (arg == "--vm-source")
+        options.vm.source = next();
+      else if (arg == "--vm-source-entry")
+        options.vm.source_entries.push_back(next());
+      else if (arg == "--vm-cpus")
+        options.vm.cpus = std::stoul(next());
+      else if (arg == "--vm-memory")
+        options.vm.memory = std::stoul(next());
+      else if (arg == "--vm-store")
+        options.vm.store = std::stoul(next());
       else if (arg == "--tsugumid")
         options.environment.tsugumid = next();
       else if (arg == "--worker")
@@ -97,11 +97,9 @@ auto RunHost(int argc, char **argv) -> int {
     }
     if (options.state_dir.empty())
       throw std::runtime_error("--state-dir is required");
-    std::filesystem::create_directories(options.state_dir);
-    ::chmod(options.state_dir.c_str(), 0700);
-    auto lock = fs::FileLock::try_acquire(options.state_dir / "agent.lock");
-    if (!lock)
-      return 4;
+    PrepareStateDirectory(options.state_dir);
+    auto lock = fs::FileLock::try_acquire(options.state_dir / "host.lock");
+    if (!lock) return 4;
     if (listener.unix_path.empty())
       listener.unix_path = (options.state_dir / "agent.sock").string();
     options.user_token = crypto::random_token(32);
@@ -113,13 +111,18 @@ auto RunHost(int argc, char **argv) -> int {
     sigaddset(&signals, SIGTERM);
     sigaddset(&signals, SIGINT);
     ::pthread_sigmask(SIG_BLOCK, &signals, nullptr);
-    // Detached project daemons must reconnect to the same broker after an
-    // agentd restart, even when its UI RPC sockets get a new temp directory.
+    // Detached project daemons must reconnect to the same broker after a
+    // hostd restart, even when its UI RPC sockets get a new temp directory.
     if (broker_dir.empty()) {
       const auto* root = std::getenv("TSUGUMI_SOCKET_DIR");
-      const auto key = crypto::sha256_hex(std::filesystem::canonical(options.state_dir).string()).substr(0, 16);
-      broker_dir = std::filesystem::path(root ? root : "/tmp") /
-          ((root ? "e-" : "tsugumi-exec-" + std::to_string(::getuid()) + "-") + key);
+      const auto key =
+          crypto::sha256_hex(
+              std::filesystem::canonical(options.state_dir).string())
+              .substr(0, 16);
+      broker_dir =
+          std::filesystem::path(root ? root : "/tmp") /
+          ((root ? "e-" : "tsugumi-exec-" + std::to_string(::getuid()) + "-") +
+           key);
     }
     if (::mkdir(broker_dir.c_str(), 0700) != 0 && errno != EEXIST)
       throw std::runtime_error("Cannot create execution broker directory");
@@ -129,24 +132,30 @@ auto RunHost(int argc, char **argv) -> int {
         (broker_stat.st_mode & 0077))
       throw std::runtime_error("Execution broker directory must be private");
     const auto binary_dir = std::filesystem::absolute(argv[0]).parent_path();
-    if (options.environment.tsugumid.empty()) options.environment.tsugumid = binary_dir / "tsugumid";
-    if (options.environment.worker.empty()) options.environment.worker = binary_dir / "tsugumi-worker";
-    if (options.environment.sdk.empty()) options.environment.sdk = binary_dir.parent_path() / "share/tsugumi/sdk";
-    if (options.environment.directory.empty()) options.environment.directory = options.state_dir / "environments";
+    if (options.environment.tsugumid.empty())
+      options.environment.tsugumid = binary_dir / "tsugumid";
+    if (options.environment.worker.empty())
+      options.environment.worker = binary_dir / "tsugumi-worker";
+    if (options.environment.sdk.empty())
+      options.environment.sdk = binary_dir.parent_path() / "share/tsugumi/sdk";
+    if (options.environment.directory.empty())
+      options.environment.directory = options.state_dir / "environments";
     options.environment.socket_directory = broker_dir / "env";
     if (!options.vm.binary.empty()) {
-      if (options.vm.support.empty() || options.vm.image.empty() || options.vm.source.empty()) throw std::runtime_error("VM helper support, image and source paths are required");
+      if (options.vm.support.empty() || options.vm.image.empty() ||
+          options.vm.source.empty())
+        throw std::runtime_error(
+            "VM helper support, image and source paths are required");
       options.environment.directory = options.vm.support / "environments";
       options.environment.start_timeout = std::chrono::seconds(90);
     }
     options.broker_socket = (broker_dir / "s").string();
-    Host host(options);
+    Service host(options);
     Server server(listener, &host);
     auto host_listener = listener;
     host_listener.protocol = ServerOptions::Protocol::Host;
     host_listener.unix_path += ".host";
-    if (host_listener.tcp_port >= 0)
-      host_listener.tcp_port = 0;
+    if (host_listener.tcp_port >= 0) host_listener.tcp_port = 0;
     HostContract host_contract(host);
     Server host_server(host_listener, &host_contract);
     host.Attach(&server, &host_server);
@@ -158,7 +167,7 @@ auto RunHost(int argc, char **argv) -> int {
                                     std::to_string(server.bound_tcp_port()) +
                                     "/rpc";
     fs::write_atomic(
-        options.state_dir / "agent.ready",
+        options.state_dir / "host.ready",
         json::Encode(json::Members{
             {"endpoint", json::Quote(endpoint)},
             {"unix_socket", json::Quote(listener.unix_path)},
@@ -179,15 +188,22 @@ auto RunHost(int argc, char **argv) -> int {
         0600);
     int signal = 0;
     sigwait(&signals, &signal);
-    fs::remove_file_durable(options.state_dir / "agent.ready");
+    fs::remove_file_durable(options.state_dir / "host.ready");
     host.Shutdown();
     server.stop();
     host_server.stop();
     return 0;
-  } catch (const std::exception &error) {
-    log::error(std::string("Agent core: ") + error.what());
+  } catch (const StateFormatError& error) {
+    log::error(error.what());
+    return 5;
+  } catch (const std::exception& error) {
+    log::error(std::string("Host service: ") + error.what());
     return 1;
   }
 }
 
-} // namespace tsugumi::agent
+}  // namespace tsugumi::host
+
+auto main(int argc, char** argv) -> int {
+  return tsugumi::host::RunHost(argc, argv);
+}

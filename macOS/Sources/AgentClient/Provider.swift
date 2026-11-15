@@ -117,7 +117,7 @@ public struct Usage: Codable, Equatable, Sendable {
 public struct ProviderConfig: Codable, Equatable, Sendable {
   /// Wire protocol of the endpoint.
   public enum API: String, Codable, Sendable { case anthropicMessages, openAIResponses }
-  /// How requests are authorized: none (the local fixture), an API key held by agentd, or the user's ChatGPT plan (Sign in with ChatGPT).
+  /// How requests are authorized: none (the local fixture), an API key held by hostd, or the user's ChatGPT plan (Sign in with ChatGPT).
   public enum Auth: String, Codable, Sendable { case none, apiKey, chatGPT }
 
   public var name: String
@@ -233,25 +233,25 @@ public enum Keychain {
 }
 
 /// Platform secret storage and explicit, memory-only provisioning. Settings,
-/// provider interpretation and OAuth remain in agentd.
+/// provider interpretation and OAuth remain in hostd.
 public enum ProviderCredentials {
   public static func exists(account: String) -> Bool { ModelCatalogSnapshot.shared.usable(account == "OpenAI" ? "openai" : "anthropic") }
   public static func save(_ secret: String, account: String) async throws {
     try Keychain.save(secret, account: account)
-    try await CoreAgentClient.shared.provisionKey(secret, id: account == "OpenAI" ? "openai" : "anthropic")
+    try await CoreHostClient.shared.provisionKey(secret, id: account == "OpenAI" ? "openai" : "anthropic")
   }
   public static func delete(account: String) async throws {
     Keychain.delete(account: account)
-    try await CoreAgentClient.shared.provisionKey(nil, id: account == "OpenAI" ? "openai" : "anthropic")
+    try await CoreHostClient.shared.provisionKey(nil, id: account == "OpenAI" ? "openai" : "anthropic")
   }
 }
 
-/// Model discovery belongs to agentd; the platform controls Keychain access.
+/// Model discovery belongs to hostd; the platform controls Keychain access.
 public struct MessagesProvider: Sendable {
   public let config: ProviderConfig
   public init(config: ProviderConfig) { self.config = config }
   public func models() async throws -> [String] { try await modelChoices().map(\.id) }
   public func modelChoices(asking: Bool = true) async throws -> [(id: String, name: String)] {
-    try await CoreAgentClient.shared.models(config, asking: asking)
+    try await CoreHostClient.shared.models(config, asking: asking)
   }
 }

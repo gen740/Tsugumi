@@ -274,8 +274,8 @@ class BrokerFixture : public AgentFixture {
     host.reset();
     human.reset();
     external.reset();
-    agent.Stop();
-    StartAgent();
+    service.Stop();
+    StartHost();
   }
   std::unique_ptr<WorkerPeer> worker;
 };

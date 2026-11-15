@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Native Agent/client use Apple's compiler, SDK, provider HTTPS trust and SQLite.
+# Native host/client use Apple's compiler, SDK, provider HTTPS trust and SQLite.
 # Remote-worker TLS uses the OpenSSL already supplied by the development shell.
 # Nix supplies pinned build tools, FlatBuffers and source-only dependencies,
 # and a static libgit2 that only reads local repositories (nix/libgit2-local.nix),
 # found before the core's shared one.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
-if [ "${TSUGUMI_AGENT_BUILD_ENV:-}" != 1 ]; then
-  exec nix develop "$repo" -c env TSUGUMI_AGENT_BUILD_ENV=1 "$0"
+if [ "${TSUGUMI_HOST_BUILD_ENV:-}" != 1 ]; then
+  exec nix develop "$repo" -c env TSUGUMI_HOST_BUILD_ENV=1 "$0"
 fi
 sdk_path=$(env -i PATH=/usr/bin:/bin /usr/bin/xcrun --sdk macosx --show-sdk-path)
 flatbuffers_root=$(cd "$(dirname "$(command -v flatc)")/.." && pwd)
@@ -31,8 +31,8 @@ run "$cmake_path" --fresh -S "$repo" -B "$repo/build-host" -G Ninja \
   -DTSUGUMI_CLIENT_CURL_LIBRARY="$sdk_path/usr/lib/libcurl.tbd" \
   -DCURL_LIBRARY="$sdk_path/usr/lib/libcurl.tbd" -DCURL_LIBRARY_RELEASE="$sdk_path/usr/lib/libcurl.tbd" \
   -DCURL_LIBRARY_DEBUG="$sdk_path/usr/lib/libcurl.tbd" -DCURL_INCLUDE_DIR="$sdk_path/usr/include" \
-  -DTSUGUMI_AGENT_SQLITE_LIBRARY="$sdk_path/usr/lib/libsqlite3.tbd"
-run "$cmake_path" --build "$repo/build-host" --target tsugumi-agentd
+  -DTSUGUMI_HOST_SQLITE_LIBRARY="$sdk_path/usr/lib/libsqlite3.tbd"
+run "$cmake_path" --build "$repo/build-host" --target tsugumi-hostd
 
 # Copy pinned native formatter binaries and their dylibs, with no Nix paths at runtime.
 python3 "$repo/macOS/tools/bundle-formatters.py" "$repo/build-host/Resources/formatters" \
@@ -52,14 +52,14 @@ chmod u+w "$frameworks/"*.dylib
 /usr/bin/install_name_tool -id @rpath/libssl.3.dylib -change "$crypto_id" @loader_path/libcrypto.3.dylib "$frameworks/libssl.3.dylib"
 /usr/bin/install_name_tool -id @rpath/libcrypto.3.dylib "$frameworks/libcrypto.3.dylib"
 /usr/bin/install_name_tool -change "$ssl_id" @executable_path/../Frameworks/libssl.3.dylib \
-  -change "$crypto_id" @executable_path/../Frameworks/libcrypto.3.dylib "$repo/build-host/core/tsugumi-agentd"
+  -change "$crypto_id" @executable_path/../Frameworks/libcrypto.3.dylib "$repo/build-host/core/tsugumi-hostd"
 # install_name_tool invalidates the linker-created ad-hoc signature. The app
 # build signs these again with the selected development identity.
-for binary in "$frameworks/"*.dylib "$repo/build-host/core/tsugumi-agentd"; do
+for binary in "$frameworks/"*.dylib "$repo/build-host/core/tsugumi-hostd"; do
   /usr/bin/codesign --force --sign - "$binary"
 done
 
-for binary in "$repo/build-host/core/tsugumi-agentd" "$frameworks/"*.dylib; do
+for binary in "$repo/build-host/core/tsugumi-hostd" "$frameworks/"*.dylib; do
   if /usr/bin/otool -L "$binary" | /usr/bin/grep -q '/nix/store/'; then
     echo "The distributable binary still depends on the Nix store: $binary" >&2
     exit 1

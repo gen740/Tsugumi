@@ -113,9 +113,12 @@ final class AppModel {
   private func hostRequest(_ method: String, _ fields: [String: Any] = [:]) async throws -> [String: Any] {
     do {
       if let requestHome { return try await requestHome(method, fields) }
-      return try await CoreAgentClient.shared.call(method, fields)
+      return try await CoreHostClient.shared.call(method, fields)
     }
-    catch let failure as CoreAgentFailure { throw HostProjectError(code: failure.code) }
+    catch let failure as CoreHostFailure {
+      if failure.code == "state_format" { throw failure }
+      throw HostProjectError(code: failure.code)
+    }
   }
 
   /// Home's first appearance joins the initial read instead of requesting it twice.

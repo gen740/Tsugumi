@@ -14,7 +14,7 @@ enum ServiceWire {
     guard let raw = fields[key] else { return fallback }
     guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
           let value = UInt32(exactly: number.doubleValue), value >= minimum else {
-      throw CoreAgentFailure(code: "invalid_request", message: "Invalid heartbeat setting: \(key)", requestID: nil)
+      throw CoreHostFailure(code: "invalid_request", message: "Invalid heartbeat setting: \(key)", requestID: nil)
     }
     return value
   }
@@ -290,7 +290,7 @@ enum ServiceWire {
         let v = Tsugumi_Host_HostRecentForgetRequestT()
         v.paths = fields["paths"] as? [String] ?? []
         return (Tsugumi_Host_RequestPayload.hostrecentforgetrequest.rawValue, v)
-      default: throw CoreAgentFailure(code: "protocol", message: "Unknown Host request: \(method)", requestID: nil)
+      default: throw CoreHostFailure(code: "protocol", message: "Unknown Host request: \(method)", requestID: nil)
       }
     } else {
       switch method {
@@ -304,7 +304,7 @@ enum ServiceWire {
       case "ConfigureRequest":
         let v = Tsugumi_Agent_ConfigureRequestT()
         guard let provider = fields["provider"] as? Tsugumi_Service_ProviderSelectionT else {
-          throw CoreAgentFailure(code: "invalid_request", message: "A provider configuration is required", requestID: nil)
+          throw CoreHostFailure(code: "invalid_request", message: "A provider configuration is required", requestID: nil)
         }
         v.provider = provider
         v.conversationId = fields["conversation_id"] as? String ?? ""
@@ -396,11 +396,11 @@ enum ServiceWire {
         let v = Tsugumi_Agent_ConversationSummarizeRequestT()
         v.conversationId = fields["conversation_id"] as? String ?? ""
         guard let provider = fields["provider"] as? Tsugumi_Service_ProviderSelectionT else {
-          throw CoreAgentFailure(code: "invalid_request", message: "A provider configuration is required", requestID: nil)
+          throw CoreHostFailure(code: "invalid_request", message: "A provider configuration is required", requestID: nil)
         }
         v.provider = provider
         return (Tsugumi_Agent_RequestPayload.conversationsummarizerequest.rawValue, v)
-      default: throw CoreAgentFailure(code: "protocol", message: "Unknown Agent request: \(method)", requestID: nil)
+      default: throw CoreHostFailure(code: "protocol", message: "Unknown Agent request: \(method)", requestID: nil)
       }
     }
   }
@@ -440,9 +440,9 @@ enum ServiceWire {
       let root: Tsugumi_Agent_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSA1")
       value = (Tsugumi_Agent_MessageT(root).payload?.value as? Tsugumi_Agent_ReplyT)?.value?.value
     }
-    guard let value else { throw CoreAgentFailure(code: "protocol", message: "Missing service reply", requestID: nil) }
+    guard let value else { throw CoreHostFailure(code: "protocol", message: "Missing service reply", requestID: nil) }
     if let failure = value as? Tsugumi_Service_FailureT {
-      throw CoreAgentFailure(code: failure.code, message: failure.message, requestID: failure.requestId)
+      throw CoreHostFailure(code: failure.code, message: failure.message, requestID: failure.requestId)
     }
     // Generated native objects normalize omitted Host vectors to empty arrays.
     let result = try view(value)
@@ -780,7 +780,7 @@ enum ServiceWire {
       return out
     case let v as Tsugumi_Host_ModelListT:
       return try v.models.compactMap { item in try item.map { try view($0) } }
-    default: throw CoreAgentFailure(code: "protocol", message: "Unexpected service reply type", requestID: nil)
+    default: throw CoreHostFailure(code: "protocol", message: "Unexpected service reply type", requestID: nil)
     }
   }
 }

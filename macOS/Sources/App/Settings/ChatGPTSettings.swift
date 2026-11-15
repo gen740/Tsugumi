@@ -3,7 +3,7 @@ import SwiftUI
 import TsugumiAgentClient
 
 /// Sign in with ChatGPT: the Agent uses the user's ChatGPT plan. Accounts
-/// (registrations) and their tokens stay in agentd, with a separate Web host
+/// (registrations) and their tokens stay in hostd, with a separate Web host
 /// account profile. Tokens never reach tsugumid, Cards, project files, settings
 /// or logs.
 struct ChatGPTSettings: View {
@@ -50,10 +50,10 @@ struct ChatGPTSettings: View {
         if provider == "chatgpt" { Text("使用中").font(.caption).foregroundStyle(.green) }
       }
     } footer: {
-      Text("サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は agentd が行います。トークンは Card やプロジェクト・設定・ログには残りません。")
+      Text("サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は hostd が行います。トークンは Card やプロジェクト・設定・ログには残りません。")
         .font(.caption).foregroundStyle(.secondary)
     }
-    .onAppear { Task { await refresh(); models = (try? await CoreAgentClient.shared.storedModels("chatgpt")) ?? [] } }
+    .onAppear { Task { await refresh(); models = (try? await CoreHostClient.shared.storedModels("chatgpt")) ?? [] } }
     .alert(Text("ChatGPT プランを使っています"), isPresented: Binding(get: { welcome != nil }, set: { if !$0 { welcome = nil } })) {
       Button("Got it") {
         if let id = welcome { Task { try? await auth.markWelcomed(clientId: id) } }

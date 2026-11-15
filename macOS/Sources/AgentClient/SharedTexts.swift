@@ -1,7 +1,7 @@
 import Foundation
 
 extension Shared {
-  /// App notes from agent/Shared/agent.json, shared with the guide in agentd.
+  /// App notes from agent/Shared/agent.json, shared with the guide in hostd.
   static let guideTexts: [String: String] = {
     let data = try! JSONSerialization.jsonObject(with: Data(agentJSON.utf8)) as! [String: Any]
     let guide = data["guide"] as! [String: Any]

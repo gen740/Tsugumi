@@ -100,7 +100,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc
     -P ${PROJECT_SOURCE_DIR}/cmake/embed.cmake
   DEPENDS ${TSUGUMI_GEN_DIR}/bfbs/host.bfbs VERBATIM)
 
-# Agent state and model execution live in the core, independently of project
+# Host state and Agent execution live in the host service, independently of project
 # lifetimes. Frontends use the separate agent.fbs and host.fbs contracts.
 set(_agent_prompts "")
 foreach(prompt system-prompt guide-prompt demo-skill review-skill rerun-compare-skill)
@@ -143,7 +143,7 @@ add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/host_templates.cc
     -P ${PROJECT_SOURCE_DIR}/cmake/embed_templates.cmake
   DEPENDS ${_template_files} ${PROJECT_SOURCE_DIR}/cmake/embed_templates.cmake
     ${PROJECT_SOURCE_DIR}/cmake/embed.cmake VERBATIM)
-add_library(tsugumi_agent_core STATIC
+add_library(tsugumi_host_core STATIC
   ${CMAKE_CURRENT_BINARY_DIR}/host_bfbs.cc
   ${CMAKE_CURRENT_BINARY_DIR}/agent_settings.cc
   ${_agent_prompts}
@@ -166,8 +166,8 @@ add_library(tsugumi_agent_core STATIC
   src/agent/approvals.cc
   src/agent/tools.cc
   src/agent/turns.cc
-  src/agent/host.cc
   src/host/access.cc
+  src/host/state_format.cc
   src/host/state_gate.cc
   src/host/store.cc
   src/host/credentials.cc
@@ -206,30 +206,30 @@ add_library(tsugumi_agent_core STATIC
 # Absolute paths to the pinned host tools. Empty means unavailable; never search PATH.
 foreach(tool CLANG RUFF NIX SH)
   set(TSUGUMI_FORMAT_${tool} "" CACHE STRING "Host formatter ${tool}: absolute path or @bundle/name on macOS")
-  target_compile_definitions(tsugumi_agent_core PRIVATE TSUGUMI_FORMAT_${tool}="${TSUGUMI_FORMAT_${tool}}")
+  target_compile_definitions(tsugumi_host_core PRIVATE TSUGUMI_FORMAT_${tool}="${TSUGUMI_FORMAT_${tool}}")
 endforeach()
 if(APPLE)
-  target_link_libraries(tsugumi_agent_core PRIVATE "-framework CoreFoundation")
+  target_link_libraries(tsugumi_host_core PRIVATE "-framework CoreFoundation")
 else()
   find_package(ICU REQUIRED COMPONENTS uc i18n)
-  target_link_libraries(tsugumi_agent_core PRIVATE ICU::uc ICU::i18n)
+  target_link_libraries(tsugumi_host_core PRIVATE ICU::uc ICU::i18n)
 endif()
-target_include_directories(tsugumi_agent_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_compile_options(tsugumi_agent_core PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
-set(TSUGUMI_AGENT_SQLITE_LIBRARY "" CACHE FILEPATH "SQLite library used by the native Agent service")
-target_link_libraries(tsugumi_agent_core PUBLIC tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
+target_include_directories(tsugumi_host_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_compile_options(tsugumi_host_core PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
+set(TSUGUMI_HOST_SQLITE_LIBRARY "" CACHE FILEPATH "SQLite library used by the native host service")
+target_link_libraries(tsugumi_host_core PUBLIC tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
   Threads::Threads tsugumi_document tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls)
-if(TSUGUMI_AGENT_SQLITE_LIBRARY)
-  target_link_libraries(tsugumi_agent_core PRIVATE ${TSUGUMI_AGENT_SQLITE_LIBRARY})
+if(TSUGUMI_HOST_SQLITE_LIBRARY)
+  target_link_libraries(tsugumi_host_core PRIVATE ${TSUGUMI_HOST_SQLITE_LIBRARY})
 else()
-  target_link_libraries(tsugumi_agent_core PRIVATE PkgConfig::SQLITE3)
+  target_link_libraries(tsugumi_host_core PRIVATE PkgConfig::SQLITE3)
 endif()
 if(NOT APPLE)
-  target_link_libraries(tsugumi_agent_core PRIVATE PkgConfig::CRYPTO)
+  target_link_libraries(tsugumi_host_core PRIVATE PkgConfig::CRYPTO)
 endif()
-add_executable(tsugumi-agentd src/agent/main.cc)
-target_link_libraries(tsugumi-agentd PRIVATE tsugumi_agent_core)
-install(TARGETS tsugumi-agentd RUNTIME DESTINATION bin)
+add_executable(tsugumi-hostd src/host/main.cc)
+target_link_libraries(tsugumi-hostd PRIVATE tsugumi_host_core)
+install(TARGETS tsugumi-hostd RUNTIME DESTINATION bin)
 install(FILES ${TSUGUMI_GEN_DIR}/bfbs/agent.bfbs ${TSUGUMI_GEN_DIR}/bfbs/host.bfbs ${TSUGUMI_GEN_DIR}/bfbs/tsugumi.bfbs
   DESTINATION share/tsugumi/protocol)
 
@@ -237,7 +237,7 @@ install(FILES ${TSUGUMI_GEN_DIR}/bfbs/agent.bfbs ${TSUGUMI_GEN_DIR}/bfbs/host.bf
 # against these existing archives. The normal runtime contains no test code.
 set(TSUGUMI_TEST_SUPPORT_DIR "" CACHE PATH "Install reusable core test build inputs")
 if(TSUGUMI_TEST_SUPPORT_DIR)
-  install(TARGETS tsugumi_core tsugumi_document tsugumi_nix_eval tsugumi_agent_core tsugumi_json tsugumi_workerd_support tsugumi_worker_protocol tsugumi_peer_tls
+  install(TARGETS tsugumi_core tsugumi_document tsugumi_nix_eval tsugumi_host_core tsugumi_json tsugumi_workerd_support tsugumi_worker_protocol tsugumi_peer_tls
     ARCHIVE DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/lib)
   install(DIRECTORY include/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
   install(DIRECTORY ${PROJECT_SOURCE_DIR}/workerd/include/ DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include)
@@ -258,5 +258,5 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  target_link_libraries(tsugumi_agent_core PUBLIC util)
+  target_link_libraries(tsugumi_host_core PUBLIC util)
 endif()

@@ -1,4 +1,4 @@
-// These policies moved from the project's comment/Draft RPC suites to agentd.
+// These policies moved from the project's comment/Draft RPC suites to hostd.
 #include "../agent_fixture_server.hh"
 #include "agent/catalog.hh"
 #include "host/save.hh"

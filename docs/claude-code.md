@@ -6,14 +6,14 @@ The work shows in the [Web UI](WebUI.md) as it happens: Cards Claude Code saves 
 ## How it works
 
 ```text
-Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* ── Web UI server ── tsugumi-agentd ── tsugumid
+Claude Code ── MCP (stdio) ── web/dist/mcp.js ── HTTP /api/agent/* ── Web UI server ── tsugumi-hostd ── tsugumid
                                                                        └─ events ── browser (Canvas, thrush, approvals)
 ```
 
-- The MCP server (`web/server/mcp.ts`) asks the Web host, which forwards calls to `tsugumi-agentd` as an external-agent principal. The service validates tool arguments, checks access grants, applies saves with `origin: agent` and follows runs through the project RPC.
+- The MCP server (`web/server/mcp.ts`) asks the Web host, which forwards calls to `tsugumi-hostd` as an external-agent principal. The service validates tool arguments, checks access grants, applies saves with `origin: agent` and follows runs through the project RPC.
 - Agent events and project notifications let the Web UI show the work and run progress. A model key in Tsugumi is not required for Claude Code to use the tools.
 - Read, Write and Run access and permission-widening saves can require a user decision. Keep a Web UI page open to answer pending access requests. A disconnected page does not cancel a core conversation. [Agent permission boundary](security.md#the-agents-permission-boundary)
-- The MCP server exposes agentd's tool catalog and Agent API operations prefixed with `agent_`. Use the Agent API to request project access before inspecting it. Claude Code can also use its own file tools and subagents; their permissions belong to Claude Code.
+- The MCP server exposes hostd's tool catalog and Agent API operations prefixed with `agent_`. Use the Agent API to request project access before inspecting it. Claude Code can also use its own file tools and subagents; their permissions belong to Claude Code.
 
 ## Setup
 
