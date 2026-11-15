@@ -1,0 +1,54 @@
+#include "host/skills_service.hh"
+
+#include <filesystem>
+
+#include "agent/json.hh"
+#include "agent/wire.hh"
+#include "host/failure.hh"
+#include "host/skills.hh"
+
+namespace tsugumi::host {
+namespace H = Tsugumi::Host;
+namespace json = agent::json;
+namespace wire = agent::wire;
+namespace {
+auto Text(const flatbuffers::String* value) -> std::string {
+  return value ? value->str() : "";
+}
+auto Human(bool human) -> void {
+  if (!human)
+    throw Failure("permission_denied",
+                  "This operation requires the authenticated user");
+}
+}  // namespace
+SkillsService::SkillsService(sql::Db& db) : db(db) {}
+
+auto SkillsService::Handle(const RequestIn& request, bool human,
+                           std::unique_lock<std::recursive_mutex>& lock)
+    -> std::string {
+  const auto* r = H::GetMessage(request.frame->data())->payload_as_Request();
+  Human(human);
+  const auto* p = r->value_as_SkillsListRequest();
+  std::vector<std::string> folders;
+  if (p->folders())
+    for (const auto* folder : *p->folders())
+      folders.push_back(
+          std::filesystem::path(folder->str()).lexically_normal().string());
+  const auto path = Text(p->project_path()).empty()
+                        ? ""
+                        : std::filesystem::path(p->project_path()->str())
+                              .lexically_normal()
+                              .string();
+  if (!Text(p->conversation_id()).empty() && !path.empty()) {
+    std::vector<std::string> encoded;
+    for (const auto& folder : folders) encoded.push_back(json::Quote(folder));
+    auto q = db.prepare("INSERT OR REPLACE INTO skill_catalogs VALUES(?,?,?)");
+    q.bind(1, p->conversation_id()->str())
+        .bind(2, path)
+        .bind(3, json::Encode(encoded))
+        .run();
+  }
+  lock.unlock();
+  return wire::HostReply(request.request_id, host::ListSkills(path, folders));
+}
+}  // namespace tsugumi::host

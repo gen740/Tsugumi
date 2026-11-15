@@ -2,11 +2,15 @@
 #include "../agent_fixture_server.hh"
 #include "agent/catalog.hh"
 #include "host/save.hh"
+#include "agent/save_policy.hh"
 #include "util/crypto.hh"
 #include <git2.h>
 #include <gtest/gtest.h>
 
 namespace tsugumi::host {
+using agent::AgentSave;
+using agent::PrepareAgentSave;
+using agent::SaveRevisionConflict;
 namespace {
 namespace json = agent::json;
 class AgentSavePolicy : public ::testing::Test {
@@ -298,6 +302,9 @@ TEST(AgentPresentation, StemDerivationIsOwnedByTheCaller) {
 #include <git2.h>
 
 namespace tsugumi::host {
+using agent::AgentSave;
+using agent::PrepareAgentSave;
+using agent::SaveRevisionConflict;
 namespace {
 TEST(HostVersionComments,
      RecordsFirstParentChangesAndUsesCardIdsAcrossExternalDirectoryAliases) {

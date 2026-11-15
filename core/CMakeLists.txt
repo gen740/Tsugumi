@@ -158,7 +158,13 @@ add_library(tsugumi_agent_core STATIC
   src/agent/runtime.cc
   src/agent/tool_images.cc
   src/agent/wire.cc
+  src/agent/save_policy.cc
+  src/agent/helpers.cc
+  src/agent/approvals.cc
+  src/agent/tools.cc
+  src/agent/turns.cc
   src/agent/host.cc
+  src/host/access.cc
   src/host/state_gate.cc
   src/host/store.cc
   src/host/credentials.cc
@@ -177,6 +183,11 @@ add_library(tsugumi_agent_core STATIC
   src/agent/helper_scope.cc
   src/host/guide.cc
   src/host/settings.cc
+  src/host/service.cc
+  src/host/events.cc
+  src/host/versions.cc
+  src/host/models.cc
+  src/host/skills_service.cc
   src/host/skills.cc
   src/host/layout.cc
   src/host/layout_place.cc
