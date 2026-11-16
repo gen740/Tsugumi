@@ -53,6 +53,23 @@ auto Name(std::string name) -> std::string {
   return out;
 }
 
+// Shared JSON keeps readable indentation on disk. Provider request builders
+// embed schemas verbatim, so remove formatting outside JSON strings once here.
+auto CompactSchema(std::string_view raw) -> std::string {
+  std::string out;
+  bool quoted = false, escaped = false;
+  for (const char c : raw) {
+    if (quoted || !std::isspace(static_cast<unsigned char>(c))) out += c;
+    if (escaped)
+      escaped = false;
+    else if (quoted && c == '\\')
+      escaped = true;
+    else if (c == '"')
+      quoted = !quoted;
+  }
+  return out;
+}
+
 auto Docs(
     const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>> *docs)
     -> std::string {
@@ -102,7 +119,7 @@ auto TypeSchema(reflection::BaseType type, reflection::BaseType element,
     return ObjectSchema(*Schema().objects()->Get(index), depth + 1, false);
   if (type == Vector) {
     if (element == UByte || element == Byte)
-      return R"({"type":"string","description":"UTF-8 text; binary data may be supplied as an object with a base64 field"})";
+      return R"({"oneOf":[{"type":"string"},{"type":"object","properties":{"base64":{"type":"string"}},"required":["base64"],"additionalProperties":false}]})";
     return json::Encode(
         json::Members{{"type", json::Quote("array")},
                       {"items", TypeSchema(element, None, index, depth)}});
@@ -403,8 +420,8 @@ auto Catalog::shared() const -> json::Members {
 Catalog::Catalog() {
   tools_.push_back(
       {{"project_file_format",
-        "Format editor text without changing files. The host supplies fixed "
-        "formatters.",
+        "Return formatted text for path and language using the host's "
+        "formatter.",
         R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"language":{"type":"string","enum":["json","cpp","python","nix","bash","fbs"]}},"required":["path","text"],"additionalProperties":false})"},
        "FileFormatRequest",
        false,
@@ -434,25 +451,34 @@ Catalog::Catalog() {
                        name,
                        false};
       tool.host = host_schema;
+      // Client-only RPC fields are not model arguments.
+      const auto hidden =
+          json::Object(json::Get(settings, "notForModels", "{}"));
+      if (hidden.contains(name)) {
+        auto schema = json::Object(tool.spec.input_schema);
+        auto properties = json::Object(json::Get(schema, "properties"));
+        for (const auto& field : json::Array(hidden.at(name)))
+          properties.erase(json::String(field));
+        schema["properties"] = json::Encode(properties);
+        tool.spec.input_schema = json::Encode(schema);
+      }
       if (tool.spec.name == "card_id")
         tool.spec.description =
-            "Reserve a permanent Card id from its human name. The host derives "
-            "a readable stem; core reserves a unique id. Use the id in paths "
-            "and wires and keep the name in _meta.json.name. project_path "
-            "selects a nested project.";
+            "Reserve a permanent Card id from name; returns id. project_path "
+            "selects an external project; omitted means root.";
       if (tool.spec.name == "run_value_read" ||
           tool.spec.name == "artifact_read" || tool.spec.name == "log_range" ||
           tool.spec.name == "module_read")
         tool.spec.description +=
-            " Agent default limit_bytes is 2048; continue with offset. Saved "
-            "clipped results can be read with tool_result_read by call_id.";
+            " Agent pages default to 2048 bytes; continue with next_offset.";
       if (tool.spec.name == "run_history" ||
           tool.spec.name == "run_invocations" ||
           tool.spec.name == "artifact_list" ||
           tool.spec.name == "run_environments" ||
           tool.spec.name == "run_environment_paths")
-        tool.spec.description += " Agent default limit is 8; continue with the "
-                                 "returned cursor or next_offset.";
+        tool.spec.description +=
+            " Agent pages default to 8; continue with the "
+            "returned cursor or next_offset.";
       if (tool.spec.name == "project_save")
         tool.spec.description += " " + json::Text(settings, "saveNote");
       if (tool.spec.name == "run" || tool.spec.name == "run_status") {
@@ -465,10 +491,6 @@ Catalog::Catalog() {
         tool.spec.description += " " + json::Text(wait, "description");
       }
       tool.approval_required = std::string_view(list) == "approvalRequests";
-      if (tool.approval_required)
-        tool.spec.description +=
-            " Requires the person's approval for this call and its exact "
-            "targets; a declined call changes nothing.";
       tool.mutating = OwnOperationId(object);
       tool.has_origin = object.fields()->LookupByKey("origin") != nullptr;
       tools_.push_back(std::move(tool));
@@ -480,12 +502,14 @@ Catalog::Catalog() {
     if (Find(name))
       throw std::runtime_error("duplicate host tool: " + name);
     tools_.push_back({{name, json::Text(tool, "description"),
-                       json::Get(tool, "inputSchema")},
+                       CompactSchema(json::Get(tool, "inputSchema"))},
                       name,
                       false,
                       json::Bool(json::Get(tool, "mutating", "false")),
                       false});
   }
+  for (auto& tool : tools_)
+    tool.spec.input_schema = CompactSchema(tool.spec.input_schema);
   const std::vector<std::string> editing{
       "project_edit",   "project_connect", "project_make_subgraph",
       "project_layout", "project_copy",    "project_save"};
@@ -502,6 +526,146 @@ Catalog::Catalog() {
                        return false;
                      return ar < br;
                    });
+}
+
+auto Catalog::AllSpecs() const -> std::vector<ToolSpec> {
+  std::vector<ToolSpec> specs;
+  for (const auto& tool : tools()) specs.push_back(tool.spec);
+  specs.push_back(
+      {"document_template",
+       "Read a Card template by name and reserved id. Returns definition_json "
+       "and source files for one project_edit under definitions/<id>/.",
+       R"({"type":"object","properties":{"name":{"type":"string"},"id":{"type":"string"}},"required":["name","id"],"additionalProperties":false})"});
+  specs.push_back(
+      {"demo_list",
+       "List bundled demos with paths, names and one-line descriptions.",
+       R"({"type":"object","properties":{},"additionalProperties":false})"});
+  specs.push_back(
+      {"demo_read",
+       "Read a bundled demo or reference file; path is relative to demos/.",
+       R"({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})"});
+  {
+    const auto definition = json::Object(
+        json::Get(json::Object(json::Get(shared(), "guide")), "showTool"));
+    specs.push_back({json::Text(definition, "name"),
+                     json::Text(definition, "description"),
+                     json::Get(definition, "inputSchema")});
+  }
+  {
+    const auto definition =
+        json::Object(json::Get(shared(), "delegateTool", "{}"));
+    specs.push_back({"delegate", json::Text(definition, "description"),
+                     json::Get(definition, "inputSchema", "{}")});
+  }
+  for (auto& spec : specs) spec.input_schema = CompactSchema(spec.input_schema);
+  return specs;
+}
+
+namespace {
+auto ContainsName(const std::string& raw, std::string_view name) -> bool {
+  for (const auto& value : json::Array(raw))
+    if (json::String(value) == name) return true;
+  return false;
+}
+}  // namespace
+
+auto Catalog::Allows(std::string_view name, ModelRole role) const -> bool {
+  if (role == ModelRole::Guide) {
+    const auto guide = json::Object(json::Get(shared(), "guide"));
+    return name == "guide_show" || name == "demo_list" || name == "demo_read" ||
+           name == "tool_result_read" ||
+           ContainsName(json::Get(guide, "tools"), name);
+  }
+  if (name == "guide_show") return false;
+  if (role == ModelRole::ScopedHelper)
+    return ContainsName(
+        json::Get(json::Object(json::Get(shared(), "modelTools")), "scoped"),
+        name);
+  return true;
+}
+
+auto Catalog::FamilySpecs(std::string_view family, ModelRole role) const
+    -> std::vector<ToolSpec> {
+  const auto settings = json::Object(json::Get(shared(), "modelTools"));
+  const auto families = json::Object(json::Get(settings, "families"));
+  const auto found = families.find(std::string(family));
+  if (found == families.end())
+    throw host::Failure("invalid_request", "Unknown tool family");
+  const auto all = AllSpecs();
+  std::vector<ToolSpec> result;
+  for (const auto& [action, raw] : json::Object(found->second)) {
+    const auto name = json::String(raw);
+    if (!Allows(name, role)) continue;
+    const auto spec =
+        std::find_if(all.begin(), all.end(),
+                     [&](const auto& tool) { return tool.name == name; });
+    if (spec == all.end())
+      throw std::runtime_error("Unknown family tool: " + name);
+    result.push_back({action, spec->description, spec->input_schema});
+  }
+  return result;
+}
+
+auto Catalog::FamilyTool(std::string_view family, std::string_view action,
+                         ModelRole role) const -> std::string {
+  const auto settings = json::Object(json::Get(shared(), "modelTools"));
+  const auto families = json::Object(json::Get(settings, "families"));
+  const auto actions = json::Object(json::Get(families, family, "{}"));
+  const auto name = json::Text(actions, action);
+  if (name.empty() || !Allows(name, role))
+    throw host::Failure("permission_denied",
+                        "Tool action unavailable for this role");
+  return name;
+}
+
+auto Catalog::ModelSpecs(ModelRole role, bool can_delegate) const
+    -> std::vector<ToolSpec> {
+  const auto settings = json::Object(json::Get(shared(), "modelTools"));
+  const auto all = AllSpecs();
+  std::vector<ToolSpec> result;
+  for (const auto& raw : json::Array(json::Get(settings, "core"))) {
+    const auto name = json::String(raw);
+    if (!Allows(name, role) || (name == "delegate" && !can_delegate)) continue;
+    const auto found =
+        std::find_if(all.begin(), all.end(),
+                     [&](const auto& tool) { return tool.name == name; });
+    if (found == all.end())
+      throw std::runtime_error("Unknown core tool: " + name);
+    result.push_back(*found);
+  }
+  std::vector<std::string> families;
+  for (const auto& [family, actions] :
+       json::Object(json::Get(settings, "families"))) {
+    (void)actions;
+    if (!FamilySpecs(family, role).empty())
+      families.push_back(json::Quote(family));
+  }
+  const auto schema = json::Encode(json::Members{
+      {"type", json::Quote("object")},
+      {"additionalProperties", "false"},
+      {"required", R"(["family"])"},
+      {"properties",
+       json::Encode(json::Members{
+           {"family",
+            json::Encode(json::Members{{"type", json::Quote("string")},
+                                       {"enum", json::Encode(families)}})},
+           {"action", R"({"type":"string"})"},
+           {"arguments",
+            R"({"type":"object","additionalProperties":true})"}})}});
+  const ToolSpec index{
+      "tools",
+      "Fetch a family's actions and argument schemas (omit action), "
+      "or call action with arguments; returns that action's result.",
+      schema};
+  // Keep narrow edit tools first and whole-document save last.
+  const auto save = std::find_if(
+      result.begin(), result.end(),
+      [](const auto& tool) { return tool.name == "project_save"; });
+  result.insert(save, index);
+  if (role == ModelRole::Guide)
+    for (const auto& tool : all)
+      if (tool.name == "guide_show") result.push_back(tool);
+  return result;
 }
 
 auto Catalog::Find(std::string_view name) const -> const CatalogTool * {
@@ -525,11 +689,18 @@ auto Catalog::Json() const -> std::string {
 auto Catalog::ValidateArguments(std::string_view name,
                                 std::string_view arguments) const -> void {
   const auto *tool = Find(name);
-  if (!tool)
+  std::string input_schema;
+  if (name == "tools") {
+    for (const auto& spec : ModelSpecs())
+      if (spec.name == name) input_schema = spec.input_schema;
+  } else if (tool) {
+    input_schema = tool->spec.input_schema;
+  } else {
     return;
-  if (const auto unknown = UnknownField(tool->spec.input_schema,
-                                        json::Encode(json::Object(arguments)),
-                                        std::string(name)))
+  }
+  if (const auto unknown =
+          UnknownField(input_schema, json::Encode(json::Object(arguments)),
+                       std::string(name)))
     throw host::Failure("invalid_request",
                         ArgumentDiagnostic(*this, name, *unknown));
 }

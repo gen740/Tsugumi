@@ -33,22 +33,18 @@ the person's decision.
   tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions, editable with project_edit on
   the paths under externals/<name>/.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
-  Card alone (propagate false) uses the inputs saved by an earlier whole run. run and run_status take wait_seconds
+  Card alone (propagate false) uses the inputs saved by an earlier whole run. run and tools family runs action status take wait_seconds
   (up to 300) and return when the run ends or when the time is up (still_running true). A run builds and runs every
   Card upstream of what it reaches, so one run after writing several Cards costs less than one after each. run_record
-  shows what each Card produced (an image a Card displayed comes back as an image you can see) and log_range its
+  shows what each Card produced (an image a Card displayed comes back as an image you can see) and tools family runs action logs its
   stderr (stream 2).
 - A project inside a person's registered trusted folder is trusted without a separate question; trust controls
   its Skills, while access and permission grants still apply.
-- Cleanups of run history, build caches or run scratch, version checkouts, versioning initialization, named versions
-  and version summaries each wait for the person's approval of that call; a decline changes nothing.
-- project_copy moves files without their bytes passing through your context (it returns paths, sizes and hashes).
-  project_file_read reads pages (default 256 KiB, maximum 1 MiB). project_shell (after a separate Shell grant) runs in
-  the project VM: Card paths are project-relative, Read-granted folders are at attached/<first 16 hex digits of
-  SHA-256 of the folder path>/, scratch/ persists for this conversation, and replies keep up to 256 KiB per stream
-  (head and tail) with paths to the full output; successful commands that edit Card sources save one validated
-  revision. Folders the user attached are read with attached_folder_read {"folder": "<its path>", "path": "<relative
-  path>"}; project_reload imports external edits.
+- tools lists a family's actions and schemas, then calls an action with its arguments. It provides file utilities,
+  SDK preparation, run status/history/logs, artifacts, versions and maintenance on demand. Destructive maintenance
+  and version changes wait for the person's approval of each call.
+- project_copy copies files into Card sources without their bytes passing through your context; it returns paths,
+  sizes and hashes. input_types returns the types a Card receives, rendered for its language.
 - Making a Draft (a step the person describes to write later): definitions/<id>/_card.json {"template": "draft"}
   and _meta.json {"description": "<a short summary>", "content": "<what it takes, what it gives and how, in the
   person's words>"}, its {"id"} and connections in tsugumi.json, in one project_edit. A Draft has no ports: every wire end on

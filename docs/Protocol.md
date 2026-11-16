@@ -37,16 +37,16 @@ There are 47 requests.
 | --- | --- | --- |
 | [`ProjectOpen`](#projectopen) | OpenResult | Creates (or replaces) the connection's subscription. |
 | [`ProjectClose`](#projectclose) | Ack | Ends only the given subscription. Unknown ids are acknowledged. |
-| [`ProjectInspect`](#projectinspect) | ProjectSnapshot | No subscription, build or reload. |
+| [`ProjectInspect`](#projectinspect) | ProjectSnapshot | Read current documents, definitions, sources and revision. |
 | [`ProjectHostRequirements`](#projecthostrequirements) | ProjectHostRequirements | Reads the accepted document, never the disk. |
-| [`CardId`](#cardid) | CardIdResult | Reserves a permanent identifier for a new Card without changing the document revision. Supply a caller-derived stem (1..123 ASCII identifier characters); use the returned id in the canvas, paths and wires. Uses the lowercase stem itself, then -2, -3, etc. when occupied, with no random suffix. Each call reserves a fresh id; save the definition and canvas with project_save. |
-| [`ProjectSave`](#projectsave) | SaveResult | Apply all changes in one transaction at base_rev. Drafts have no ports: use {"card":"<id>","port":""} for each Draft wire end, with any number in or out. Implementing one requires SetProject in this same save rebinding every incoming end to a real input and every outgoing end to a real output (and boundary endpoints in its project's tsugumi.json). Even a single possible port must be stated. Ends on remaining Drafts stay empty. A non-existent port on a non-Draft Card is validation_failed, naming the wire. |
-| [`ProjectReload`](#projectreload) | SaveResult | Takes external edits of the allowed area into the document. Permission comparison is selected explicitly, independently of origin. |
+| [`CardId`](#cardid) | CardIdResult | Reserve a permanent unique Card id from stem; repeated calls reserve fresh ids. |
+| [`ProjectSave`](#projectsave) | SaveResult | Apply document changes atomically at base_rev. |
+| [`ProjectReload`](#projectreload) | SaveResult | Import external edits into the accepted document at base_rev. |
 | [`ProjectValidate`](#projectvalidate) | ProjectValidateResult | targets = [] means everything; mode = executable. |
-| [`ProjectShell`](#projectshell) | ProjectShellResult | Runs as the project user in a staged Card source view. Host selects readable/writable Cards; successful edits use a validated Agent save. Read-granted folders are read-only at attached/<SHA-256(path)[0:16]>; scratch/ persists. Structural documents, contract schemas and .tsugumi are not shell-editable. Available only when the isolated project launcher enables it. timeout_ms defaults to 10000 and must be between 1 and 30000. Each output stream returns at most 262144 bytes (head and tail), with total sizes and saved full output. Disconnecting cancels the process group. An operation ID is never executed twice, even after an interrupted daemon. Isolation is selected explicitly and applied independently of origin. A requested isolation mechanism that is unavailable fails closed. |
-| [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Only while no run or SDK job is active. |
-| [`ProjectCacheUsage`](#projectcacheusage) |  | Cached shared-store measurement; never triggers a store traversal on the RPC lane. |
-| [`RunScratchDelete`](#runscratchdelete) | RunScratchDeleteResult | Deletes only the listed scratch folders from the usage report. Refuses active runs, pending remote results and the latest run. |
+| [`ProjectShell`](#projectshell) | ProjectShellResult | Run a command in a staged Card source workspace; successful source edits save atomically. Attached folders are at attached/<SHA-256(path)[0:16]>; scratch/ persists. timeout_ms defaults to 10000 (1..30000). Returns exit status, bounded stdout/stderr and full-output paths. |
+| [`ProjectCacheClear`](#projectcacheclear) | ProjectCacheClearResult | Clear this project's build cache. |
+| [`ProjectCacheUsage`](#projectcacheusage) | ProjectCacheUsageResult | Read cached build and scratch usage measurements. |
+| [`RunScratchDelete`](#runscratchdelete) | RunScratchDeleteResult | Delete paths selected from the scratch usage report. |
 | [`OperationGet`](#operationget) | OperationResult |  |
 
 ### ProjectOpen
@@ -155,7 +155,7 @@ No fields.
 | --- | --- | --- |
 | [`ProjectFileList`](#projectfilelist) | SourcePage | depth = 0 (0..8), include_directories = false, limit = 100. |
 | [`ProjectFileStat`](#projectfilestat) | SourceInfo |  |
-| [`ProjectFileRead`](#projectfileread) | FileContent | offset = 0, limit_bytes = 262144 (1..1 MiB). Use project_copy to move bytes, or project_shell to examine large files. |
+| [`ProjectFileRead`](#projectfileread) | FileContent | Read a file page; offset defaults to 0, limit_bytes to 262144 (max 1 MiB). |
 
 ### ProjectFileList
 
@@ -191,9 +191,9 @@ No fields.
 | --- | --- | --- |
 | [`CardSDKPrepare`](#cardsdkprepare) | CardSDKPrepareResult | Accepted asynchronously. |
 | [`CardSDKStatus`](#cardsdkstatus) | CardSDKPrepareResult or Failure |  |
-| [`InputTypes`](#inputtypes) | InputTypesResult | Read incoming sources, port kinds and complete types. May help when writing a Card; routing types are resolved automatically. The host renders one SDK definition per input in language (default: the Card implementation; pass it for a Draft, or "schema" for plain tables). output_port selects an upstream output instead. No result size limit. |
-| [`OutputTypes`](#outputtypes) | OutputTypesResult | Compiles an _outputs.fbs text (nothing is saved): its reflection schema (bfbs), from which a client lists the types. With port and type_name, also the text with that port's type and kind set (File / Directory: the tsugumi attribute). For connected input definitions, input_types can read the resolved types directly. |
-| [`NixSourceResolve`](#nixsourceresolve) | NixSourceResolved | Looks a flake up for nixSources (nothing is saved): its current commit and hash, and the packages it has for this system. To customize an approved package, save nixSources[].overrides = {"packageName":{"override":{"argument":"value"},"overrideAttrs":{"pname":"custom"}}}. Both maps contain JSON values, not Nix functions. A value {"fetchurl":{"url":"https://...","sha256":"..."}} fetches a hash-pinned source or patch in the external evaluator. Modifying these overrides needs user approval. Cards consume inputs.sources.<name>.packages.<packageName>, with the system already selected. Unsupported override/overrideAttrs functions return an actionable evaluation error. Slow the first time: it evaluates them, fetching what they need. |
+| [`InputTypes`](#inputtypes) | InputTypesResult | Read resolved incoming sources, port kinds and full types. The host renders SDK definitions in language (default: Card language; use language for a Draft or "schema" for tables). output_port selects an upstream output instead. |
+| [`OutputTypes`](#outputtypes) | OutputTypesResult | Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type and kind in returned text. |
+| [`NixSourceResolve`](#nixsourceresolve) | NixSourceResolved | Resolve a flake to its commit, hash and packages for this system. May fetch and evaluate on first use. |
 
 ### CardSDKPrepare
 
@@ -216,7 +216,7 @@ No fields.
 | `card` | `CardPath` | yes |  |
 | `output_port` | `string` |  |  |
 | `at_rev` | `uint64` |  |  |
-| `language` | `string` |  | Carried for host presentation, never interpreted by the project core. |
+| `language` | `string` |  | SDK language for host rendering; opaque to the project core. |
 
 ### OutputTypes
 
@@ -237,10 +237,10 @@ No fields.
 
 | Request | Response | Description |
 | --- | --- | --- |
-| [`RunPlan`](#runplan) | RunPlanResult | propagate = true. |
-| [`Run`](#run) | RunAccepted | propagate = true, max_concurrency = 4 (1..64), nix_jobs = 1, nix_cores = 1. |
-| [`RunCancel`](#runcancel) | RunStatus | Idempotent. Unknown id is not_found. |
-| [`RunStatus`](#runstatus) | RunStatus | Omitted run_id: the active run, else the latest locally started run, else idle. partial_run marks debugging with saved inputs; uses_partial_result marks values derived from a partial run, within this run or through saved inputs. Both flags persist in RunSummary.status in history/comparison replies and run events, including runs with recorded values and retained artifacts. |
+| [`RunPlan`](#runplan) | RunPlanResult | Preview the Cards a run reaches; propagate defaults to true. |
+| [`Run`](#run) | RunAccepted | Start a run at base_rev. propagate defaults to true, max_concurrency to 4 (1..64), nix_jobs and nix_cores to 1. |
+| [`RunCancel`](#runcancel) | RunStatus | Cancel run_id. |
+| [`RunStatus`](#runstatus) | RunStatus | Read run_id; omitted selects the active run, then the latest locally started run, then idle. |
 
 ### RunPlan
 
@@ -281,15 +281,15 @@ No fields.
 | --- | --- | --- |
 | [`RunHistory`](#runhistory) | RunPage, newest accepted first |  |
 | [`RunInvocations`](#runinvocations) | InvocationPage, ascending invocation number |  |
-| [`RunLatestInvocations`](#runlatestinvocations) | InvocationPage | Each Card's latest invocation of a run, for a client that opens the project after the run: it did not get RunCardChanged for them. |
-| [`RunRecord`](#runrecord) | RecordResult | invocation and follow_latest = true are exclusive. |
-| [`RunValueRead`](#runvalueread) | FileContent | offset = 0, limit_bytes = 1048576. |
-| [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Deletes finished runs (all, or those that ended before ended_before, Unix ms) with their records, values, logs and files, here and in the project's copy. Only while no run is active. Approvals must set restrict_to_run_ids and pass the exact run_ids shown to the person (an empty set deletes nothing). Without that flag, run_ids must be empty and the UI's all-runs or date scope applies. The separate flag distinguishes an empty selection from object APIs' default empty vectors. |
-| [`ArtifactList`](#artifactlist) | ArtifactPage | invocation requires card. |
-| [`ArtifactRead`](#artifactread) | FileContent | member only for Directory artifacts. |
-| [`LogRange`](#logrange) | LogSlice | limit_bytes = 65536 (4..256 KiB). tail with offset != 0 is rejected. invocation requires card. |
-| [`RunEnvironments`](#runenvironments) | BuildEnvironmentPage | Recorded environments, in first-use order; no Nix evaluation. offset defaults to 0; limit defaults to 100 (maximum 500). |
-| [`RunEnvironmentPaths`](#runenvironmentpaths) | EnvironmentPathPage | Runtime closure, including the manifest, in store-path order. These are runtime references, not the full set of build-time dependencies. |
+| [`RunLatestInvocations`](#runlatestinvocations) | InvocationPage | Read each Card's latest invocation in a run. |
+| [`RunRecord`](#runrecord) | RecordResult | Read a Card's invocation record; choose invocation or follow_latest=true. |
+| [`RunValueRead`](#runvalueread) | FileContent | Read a recorded port value page; offset defaults to 0. |
+| [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Delete finished runs and their records, values, logs and files. ended_before is a Unix-millisecond cutoff; omitted means all finished runs. |
+| [`ArtifactList`](#artifactlist) | ArtifactPage | List run artifacts; invocation requires card. |
+| [`ArtifactRead`](#artifactread) | FileContent | Read artifact bytes; member selects a file within a Directory artifact. |
+| [`LogRange`](#logrange) | LogSlice | Read run logs; invocation requires card. tail=true reads the end with offset=0. |
+| [`RunEnvironments`](#runenvironments) | BuildEnvironmentPage | Read recorded environments in first-use order; no evaluation. |
+| [`RunEnvironmentPaths`](#runenvironmentpaths) | EnvironmentPathPage | Read a recorded runtime closure in store-path order, including its manifest. |
 | [`RunEnvironmentUses`](#runenvironmentuses) | EnvironmentUsePage | Recorded users of a shared environment, ordered by Card and invocation. |
 
 ### RunHistory
@@ -393,8 +393,8 @@ No fields.
 | `environment_id` | `string` | yes |  |
 | `offset` | `uint64` |  |  |
 | `limit` | `uint32` |  |  |
-| `query` | `string` |  | Case-insensitive literal substring search. Offset and total refer to matching paths. |
-| `excluding_run_id` | `string` |  | If both are present, return paths absent from this other recorded environment. Difference and search run in the history database, with bounded result pages. |
+| `query` | `string` |  | Case-insensitive substring filter; offset and total count matches. |
+| `excluding_run_id` | `string` |  | Together with excluding_environment_id, exclude paths in that recorded environment. |
 | `excluding_environment_id` | `string` |  |  |
 
 ### RunEnvironmentUses
@@ -412,7 +412,7 @@ No fields.
 | --- | --- | --- |
 | [`ViewSetVisible`](#viewsetvisible) | Ack | Replaces the subscription's Display targets. enabled = true. |
 | [`ViewSave`](#viewsave) | ViewSaveResult | CAS on view_rev only. |
-| [`ModuleRead`](#moduleread) | FileContent | Reads immutable module source in bounded pages. For a Wasm view, the core assembles the shared index.js template and local view.wasm. Only canonical /nix/store/<hash>-<name> directories with index.js qualify. |
+| [`ModuleRead`](#moduleread) | FileContent | Read immutable display-module source in pages. |
 
 ### ViewSetVisible
 
@@ -442,11 +442,11 @@ No fields.
 
 | Request | Response | Description |
 | --- | --- | --- |
-| [`VersionInit`](#versioninit) | VersionResult | Makes the project a git repository: a first commit of what is saved (a demo's history file becomes its versions). Nothing happens when it already is one. |
-| [`VersionMark`](#versionmark) | VersionResult | Names the current version: what is saved is committed (when it changed) and gets an annotated tag `name` with `message`. |
-| [`VersionCheckout`](#versioncheckout) | SaveResult | Starts from a version: what is saved now is committed, then the project's files become those of `commit` and the document is read again (like ProjectReload). Only while no run is active. |
+| [`VersionInit`](#versioninit) | VersionResult | Initialize git version history with the saved project. |
+| [`VersionMark`](#versionmark) | VersionResult | Commit saved changes and tag the version with name and message. |
+| [`VersionCheckout`](#versioncheckout) | SaveResult | Commit current changes and restore the project from commit. |
 | [`VersionGraph`](#versiongraph) | VersionGraph, newest first |  |
-| [`VersionCanvas`](#versioncanvas) | VersionCanvas: raw layout, definition kinds and connections of a version | The host service interprets these for a minimap. |
+| [`VersionCanvas`](#versioncanvas) | VersionCanvas | Read a version's layout, definition kinds and connections. |
 | [`VersionNote`](#versionnote) | VersionNote | Neutral facts, cached in refs/notes/tsugumi-record. |
 
 ### VersionInit

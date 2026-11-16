@@ -68,6 +68,7 @@ struct Tools {
                       const Tsugumi::Host::ProjectOperateRequestT& operation,
                       const host::OperationContext& context,
                       std::stop_token stop) -> host::OperationReply;
+  auto ResolveCall(const ToolCall& call, ModelRole role) -> ToolCall;
   auto Specs(bool guide = false) -> std::vector<ToolSpec>;
   auto PrepareLayoutSave(const std::string& project, const std::string& args,
                          std::stop_token stop,

@@ -260,10 +260,9 @@ auto Helpers::RunHelper(const std::string& conversation,
                                    {"index", std::to_string(index)},
                                    {"event", R"({"kind":"checkpoint"})"}}));
   };
-  auto tools = this->tools->Specs();
-  if (!boundary->depth())
-    std::erase_if(tools,
-                  [](const auto& tool) { return tool.name == "delegate"; });
+  auto tools = this->tools->catalog.ModelSpecs(
+      boundary->scoped() ? ModelRole::ScopedHelper : ModelRole::Helper,
+      boundary->depth() > 0 && boundary->count() > 0);
   std::string trusted_project;
   const auto automatic =
       turns->SkillContent(conversation, {}, true, stop, &trusted_project);
