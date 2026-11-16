@@ -224,8 +224,9 @@ auto Turns::SkillContent(const std::string& id,
   if (sources.step())
     for (const auto& item : json::Array(sources.text(0)))
       folders.push_back(json::String(item));
-  const auto catalog =
-      host::ListSkills(path, folders, host::ProjectTrusted(db, path));
+  const auto catalog = host::ListSkills(
+      path, folders,
+      host::ProjectTrusted(db, path, host_settings->TrustedFolders()));
   std::set<std::string> names;
   for (const auto& name : requested) names.insert(host::SkillNameKey(name));
   const auto selected = names;
@@ -283,7 +284,7 @@ auto Turns::SkillContent(const std::string& id,
 auto Turns::RequireSkillTrust(const std::string& path) -> void {
   if (path.empty()) return;
   std::lock_guard lock(mutex);
-  if (!host::ProjectTrusted(db, path))
+  if (!host::ProjectTrusted(db, path, host_settings->TrustedFolders()))
     throw Failure("permission_denied",
                   "Project Skill trust was revoked; start a new turn");
 }
@@ -314,8 +315,10 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
     if (sources.step())
       for (const auto& item : json::Array(sources.text(0)))
         folders.push_back(json::String(item));
-    const auto skills = host::ListSkills(
-        project_path, folders, host::ProjectTrusted(db, project_path));
+    const auto skills =
+        host::ListSkills(project_path, folders,
+                         host::ProjectTrusted(db, project_path,
+                                              host_settings->TrustedFolders()));
     std::vector<std::string> names, cards;
     if (p->skill_names())
       for (const auto* name : *p->skill_names()) names.push_back(name->str());

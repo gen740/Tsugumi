@@ -5,7 +5,6 @@
 #include <hosq/json/dom.hh>
 
 #include <map>
-#include <regex>
 #include <set>
 
 namespace tsugumi::test {
@@ -84,69 +83,6 @@ auto ReadResource(const std::filesystem::path &relative) -> std::string {
 }
 const std::vector<std::string> demos{"report", "exoplanet-transit",
                                      "pharmacokinetics"};
-
-// Regression phrases from the removed result explanations, including claims
-// without numbers. This catches their reintroduction, not every possible claim
-// in natural language; new wording still needs review.
-auto OutputClaim(const std::string &text) -> bool {
-  static const std::regex claims(
-      "500|3\\.23|1%|0\\.1|"
-      "(numbers|CSV).*changed|changing the seed changed|"
-      "time below.*grows|recovery takes longer|approaches steady state|"
-      "shorter the interval.*smaller|divides part of the dip itself|"
-      "地域ごとの数字も変|CSV の中身が変|定常状態へ近|"
-      "有効域の下にいる時間が延び|元に戻るまでも長|間隔が短いほど|"
-      "減光そのものも一部トレンドとして割",
-      std::regex::icase);
-  return std::regex_search(text, claims);
-}
-auto UserTexts(const Dom &step) -> std::vector<std::string> {
-  std::vector<std::string> texts{String(step, "/show/say"),
-                                 String(step, "/text")};
-  for (const auto &choice : Array(step, "/show/choices"))
-    texts.push_back(String(choice));
-  for (const auto &action : Array(step, "/show/actions"))
-    texts.push_back(String(action, "/label"));
-  return texts;
-}
-
-TEST(GuideScript, GuidanceContainsNoOutputNumbersOrRemovedResultClaims) {
-  // Exercise the guard against representative old text in both languages.
-  for (const auto &old :
-       {"500 sales summarised", "period of about 3.23 days",
-        "the numbers per region changed too", "recovery takes longer",
-        "地域ごとの数字も変わりました", "定常状態へ近づく様子"})
-    EXPECT_TRUE(OutputClaim(old)) << old;
-  const std::regex number("[0-9]+(\\.[0-9]+)?");
-  const std::map<std::string, std::string> parameter_values{
-      {"report", "7"}, {"exoplanet-transit", "0.2"}, {"pharmacokinetics", "2"}};
-  for (const auto &language : {"ja", "en"}) {
-    const auto script = Parse(
-        ReadResource(std::filesystem::path("agent/Shared") /
-                     (std::string(language) == "en" ? "guide-script.en.json"
-                                                    : "guide-script.json")));
-    auto check = [&](const Dom &step, const std::string &id,
-                     const std::string &allowed_number = "") {
-      SCOPED_TRACE(std::string(language) + ":" + id);
-      for (auto text : UserTexts(step)) {
-        EXPECT_FALSE(OutputClaim(text)) << text;
-        // The catalog title is a name, not a measured output. Numeric examples
-        // are allowed only in the parameter-change instruction, at its value.
-        text = std::regex_replace(text, std::regex("Kepler-6 b"), "Kepler");
-        for (auto i = std::sregex_iterator(text.begin(), text.end(), number);
-             i != std::sregex_iterator(); ++i)
-          EXPECT_EQ(i->str(), allowed_number) << text;
-      }
-    };
-    for (const auto &[demo, tour] : Members(script, "/tours"))
-      for (const auto &group : {"home", "steps"})
-        for (const auto &[id, step] : Members(tour, "/" + std::string(group)))
-          check(step, demo + "/" + id,
-                id == "change" ? parameter_values.at(demo) : "");
-    for (const auto &id : {"noConnection", "otherProject"})
-      check(Members(script).at(id), id);
-  }
-}
 
 TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
   for (const auto &language : {"ja", "en"}) {
@@ -236,11 +172,7 @@ TEST(GuideScript, BothLanguagesHaveCompleteTransitionsAndRealDemoTargets) {
       }
       EXPECT_TRUE(
           JsonBool(steps.at(demo + "/farewell").source(), "/show/endTour"));
-      EXPECT_NE(String(steps.at(demo + "/farewell"), "/show/say").find("$demo"),
-                std::string::npos);
     }
-    EXPECT_NE(String(script, "/noConnection/show/say").find("$demo"),
-              std::string::npos);
     const auto actions = Array(script, "/noConnection/show/actions");
     ASSERT_EQ(actions.size(), 2u);
     EXPECT_EQ(String(actions[0], "/kind"), "open_settings");

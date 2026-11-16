@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import SwiftUI
 import TsugumiRPC
+import TsugumiAgentClient
 
 /// Scripted UI checks: with TSUGUMI_UI_SCRIPT=<file> the app performs the
 /// listed steps on its real windows and writes `capture <name> <window>` lines
@@ -66,6 +67,21 @@ final class UIScript {
   @ObservationIgnored var editors: [CardKey: CardEditorModel] = [:]
   @ObservationIgnored private var log: FileHandle?
 
+  @ObservationIgnored private var trustRegistration: Task<Void, Error>?
+  func registerTrustedFolderIfRequested() async throws {
+    let env = ProcessInfo.processInfo.environment
+    guard let script = env["TSUGUMI_UI_SCRIPT"], FileManager.default.isReadableFile(atPath: script),
+      let folder = ScriptTrust.folder(environment: env) else { return }
+    if trustRegistration == nil {
+      trustRegistration = Task {
+        try await ScriptTrust.register(folder) { method, fields in
+          try await CoreHostClient.shared.call(method, fields)
+        }
+      }
+    }
+    try await trustRegistration?.value
+  }
+
   static func runIfRequested() {
     let env = ProcessInfo.processInfo.environment
     guard let script = env["TSUGUMI_UI_SCRIPT"], let text = try? String(contentsOfFile: script, encoding: .utf8) else { return }
@@ -89,6 +105,13 @@ final class UIScript {
   }
 
   private func run(_ lines: [String]) async {
+    do {
+      try await registerTrustedFolderIfRequested()
+    } catch {
+      say("trust-error \(error)")
+      say("done")
+      return
+    }
     // Wait until the project is connected (a first line "nowait" starts at
     // once, e.g. to capture the loading screen).
     let waitForProject = lines.first?.trimmingCharacters(in: .whitespaces) != "nowait"

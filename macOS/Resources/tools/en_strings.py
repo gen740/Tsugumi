@@ -1490,6 +1490,8 @@ EN = {
 '範囲を指定しないヘルパーを許可する': 'Allow unscoped helpers',
 'オフにすると、各ヘルパーが読める Card と変更・実行できる Card を Agent が指定します。': 'When off, the Agent specifies which Cards each helper may read and which it may change or run.',
 
+    '信頼するフォルダ': 'Trusted folders',
+    'このフォルダ内のプロジェクトを、下の階層も含めて信頼します。シンボリックリンクの参照先が外にあるプロジェクトは含みません。': 'Trust projects in these folders at every depth. Projects reached through symbolic links that point outside them are excluded.',
 }
 
 

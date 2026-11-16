@@ -20,6 +20,7 @@ import { ProjectSettingsContent } from './projectViews'
 import { FolderPicker } from './sidebar'
 import { adoptLanguage, L, language, type Language } from '../i18n'
 import { ChatGPTSettings } from './chatgpt'
+import { TrustedFoldersSettings } from './trustedFolders'
 import { ExecutionServicesSettings } from './executionServices'
 
 type Category = 'general' | 'appearance' | 'editor' | 'shortcuts' | 'skills' | 'api' | 'connections' | 'executionServices'
@@ -153,6 +154,7 @@ function GeneralSettings() {
           <Select<Motion> value={prefs.tsugumiMotion} onChange={(v) => prefs.set('tsugumiMotion', v)} options={options(MOTION_LABELS)} />
         </Row>
       </Section>
+      <TrustedFoldersSettings />
       <RuntimeResetSettings />
     </Form>
   )

@@ -459,14 +459,35 @@ auto SkillNameKey(std::string_view name) -> std::string {
   return Normalize(RepairUTF8(name));
 }
 
-auto ProjectTrusted(sql::Db& db, const fs::path& path) -> bool {
-  return ProjectTrust(db, path) == H::ProjectTrustDecision::Trusted;
+auto ProjectTrusted(sql::Db& db, const fs::path& path,
+                    const std::vector<std::string>& folders) -> bool {
+  return ProjectTrust(db, path, folders) == H::ProjectTrustDecision::Trusted;
 }
 
-auto ProjectTrust(sql::Db &db, const fs::path &path)
+auto TrustedParent(const fs::path& path,
+                   const std::vector<std::string>& folders) -> std::string {
+  if (path.empty()) return {};
+  std::error_code error;
+  const auto project = fs::canonical(path, error);
+  if (error) return {};
+  for (const auto& folder : folders) {
+    const auto root = fs::canonical(folder, error);
+    if (error || root != fs::path(folder) || !fs::is_directory(root, error))
+      continue;
+    const auto match =
+        std::mismatch(root.begin(), root.end(), project.begin(), project.end());
+    if (match.first == root.end()) return folder;
+  }
+  return {};
+}
+
+auto ProjectTrust(sql::Db& db, const fs::path& path,
+                  const std::vector<std::string>& folders)
     -> H::ProjectTrustDecision {
   if (path.empty())
     return H::ProjectTrustDecision::Unknown;
+  if (!TrustedParent(path, folders).empty())
+    return H::ProjectTrustDecision::Trusted;
   const auto canonical = fs::weakly_canonical(path);
   struct stat folder{};
   auto query = db.prepare(

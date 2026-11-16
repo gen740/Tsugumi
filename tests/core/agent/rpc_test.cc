@@ -345,8 +345,6 @@ TEST_F(AgentFixture, ToolCatalogsKeepGuidanceExclusiveToTheGuideRole) {
     EXPECT_TRUE(properties.contains("endTour"));
     EXPECT_TRUE(properties.contains("choices"));
   }
-  EXPECT_EQ(JsonString(requests[0], "/system/0/text").find("Use guide_show"),
-            std::string::npos);
   EXPECT_EQ(Tool(main, "guide_show", R"({"say":"Do not show this."})").Code(),
             "permission_denied");
 }

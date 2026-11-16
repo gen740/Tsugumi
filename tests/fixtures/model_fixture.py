@@ -31,7 +31,7 @@ project_inspect -> one project_save that changes each Card and marks its
 comments resolved, adding an input Card for a comment saying "add a Card
 <id>" and a comment of its own for one saying "leave a comment" -> run -> report.
 
-The guide (its system prompt begins "You are Tsugumi, the guide bird"): a
+The guide (its role offers guide_show): a
 question gets project_inspect -> an attempt at project_save (the guide only
 reads: it is refused) -> guide_show pointing at the run button with a run
 button -> a line saying how many Cards it read, whether the save was refused
@@ -582,7 +582,6 @@ def decide_stale_read(messages, start):
     return ("text", f"Refused: {value.get('kind')}." if is_error else f"Checked at revision {value.get('rev')}.")
 
 
-GUIDE = "You are Tsugumi, the guide bird"
 EVENT = re.compile(r"\[Event\] The run (\S+) ended: (\w+)")
 
 
@@ -632,7 +631,7 @@ def decide(messages, system="", tools=()):
     broken, broken_start = last_broken_task(messages)
     if broken:
         return decide_broken(messages, broken, broken_start)
-    if system.startswith(GUIDE):
+    if "guide_show" in tools:
         return decide_guide(messages, tools)
     if h := HELPER.search(system):
         return decide_helper(messages, h.group(1), [c.strip() for c in h.group(2).split(",")])

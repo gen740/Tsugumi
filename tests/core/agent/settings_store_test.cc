@@ -972,3 +972,60 @@ TEST(HostContextWindow, ReportedWindowsBelongToTheSelectedConnection) {
 
 }  // namespace
 }  // namespace tsugumi::test
+
+namespace tsugumi::test {
+TEST(HostSettingsStore,
+     TrustedFoldersAreCanonicalAndRejectInvalidRegistrationAtomically) {
+  TemporaryDirectory directory;
+  const auto folder = directory.path / "trusted";
+  std::filesystem::create_directory(folder);
+  std::filesystem::create_directory_symlink(folder, directory.path / "link");
+  host::Settings service(
+      directory.path, [](const auto&, const auto&) {},
+      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      std::make_unique<MemorySecrets>());
+  uint64_t revision = 0;
+  auto update = [&](const std::string& raw,
+                    const std::string& profile = "desktop") {
+    H::RequestT request;
+    H::SettingsUpdateRequestT value;
+    value.profile = profile;
+    value.revision = revision;
+    auto item = std::make_unique<H::SettingT>();
+    item->key = "agent.trustedFolders";
+    item->value_json = raw;
+    value.changes.push_back(std::move(item));
+    request.value.Set(std::move(value));
+    flatbuffers::FlatBufferBuilder builder;
+    H::MessageT message;
+    message.request_id = 1;
+    message.payload.Set(std::move(request));
+    H::FinishMessageBuffer(builder, H::Message::Pack(builder, &message));
+    const auto reply = service.Handle(
+        *H::GetMessage(builder.GetBufferPointer())->payload_as_Request(), 1);
+    const auto* result = H::GetMessage(reply.data())->payload_as_Reply();
+    if (const auto* settings = result->value_as_Settings()) {
+      revision = settings->revision();
+      return true;
+    }
+    return false;
+  };
+  EXPECT_TRUE(service.TrustedFolders().empty());
+  EXPECT_TRUE(update("[" + Quote((directory.path / "link").string()) + "," +
+                     Quote(folder.string()) + "]"));
+  const std::vector<std::string> expected{
+      std::filesystem::canonical(folder).string()};
+  EXPECT_EQ(service.TrustedFolders(), expected);
+  EXPECT_FALSE(update(R"(["relative"])"));
+  EXPECT_FALSE(update("[" + Quote((directory.path / "absent").string()) + "]"));
+  EXPECT_FALSE(update(R"([42])"));
+  EXPECT_FALSE(update("[]", "web:test"));
+  EXPECT_EQ(service.TrustedFolders(), expected);
+  std::filesystem::rename(folder, directory.path / "moved");
+  EXPECT_TRUE(update("[" + Quote(expected.front()) + "," +
+                     Quote((directory.path / "moved").string()) + "]"));
+  EXPECT_EQ(service.TrustedFolders().front(), expected.front());
+  EXPECT_TRUE(update("[]"));
+  EXPECT_TRUE(service.TrustedFolders().empty());
+}
+}  // namespace tsugumi::test

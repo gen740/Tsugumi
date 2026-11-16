@@ -1,3 +1,4 @@
+import { ProjectTrust } from '../src/gen/tsugumi/host/project-trust'
 import { PermissionKinds } from '../src/gen/tsugumi/host/permission-kinds'
 import { Settings } from '../src/gen/tsugumi/host/settings'
 import { SignInStatus } from '../src/gen/tsugumi/host/sign-in-status'
@@ -331,4 +332,14 @@ const { ExecutionServicesT } = await import('../src/gen/tsugumi/host/execution-s
   const state = decodeReply(b.asUint8Array(), true).value
   assert.equal(state.services[0].heartbeatIntervalSeconds, 2)
   assert.equal(state.services[0].missedHeartbeats, 3)
+}
+
+// Match the native adapter: inherited trust identifies the host registration.
+{
+  const b = new fb.Builder()
+  const folder = b.createString('/trials')
+  const value = ProjectTrust.createProjectTrust(b, 1, folder)
+  const reply = HostReply.createReply(b, HostReplyPayload.ProjectTrust, value)
+  HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
+  assert.deepEqual(decodeReply(b.asUint8Array(), true).value, { decision: 1, trusted_folder: '/trials' })
 }

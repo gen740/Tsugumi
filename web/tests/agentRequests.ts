@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict'
-import { cardRequest } from '../src/shared/agentShared'
+import { AGENT, cardRequest } from '../src/shared/agentShared'
 
 for (const kind of ['draftRequest', 'commentRequest'] as const) {
-  const text = cardRequest(kind, ['outer'], ['outer/work', 'outer/render'])
-  assert.ok(text.includes('the child workflow outer'))
-  assert.ok(text.includes('- outer/work\n- outer/render'))
-  assert.ok(text.includes('project_validate') && text.includes('run_record'))
-  assert.ok(!text.includes('{where}') && !text.includes('{list}') && !text.includes('delegate'))
+  for (const scope of [[], ['outer'], ['outer', 'inner']]) {
+    const where = scope.length ? AGENT.draftRequest.child.replace('{scope}', scope.join('/')) : AGENT.draftRequest.root
+    const expected = AGENT[kind].text.replace('{where}', where).replace('{list}', '- outer/work\n- outer/render')
+    assert.equal(cardRequest(kind, scope, ['outer/work', 'outer/render']), expected)
+  }
 }
-assert.ok(cardRequest('draftRequest', [], ['work']).includes('the root workflow'))
-console.log('shared generation requests: passed')
+console.log('shared request substitution: passed')

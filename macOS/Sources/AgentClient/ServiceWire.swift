@@ -793,7 +793,7 @@ enum ServiceWire {
       out["accounts"] = try v.accounts.compactMap { try $0.map { try view($0) } }
       return out
     case let v as Tsugumi_Host_ProjectTrustT:
-      return ["decision": Int(v.decision.rawValue)]
+      return ["decision": Int(v.decision.rawValue), "trusted_folder": v.trustedFolder ?? ""]
     case let v as Tsugumi_Host_SkillT:
       return ["name": v.name, "description": v.description ?? "", "path": v.path,
               "source_folder": v.sourceFolder ?? "", "attachment_folder": v.attachmentFolder ?? "", "status": v.status, "scoped": v.scoped, "scope": v.scope, "always": v.always]

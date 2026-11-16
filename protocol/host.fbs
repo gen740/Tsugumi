@@ -104,7 +104,7 @@ table RegisterFolderRequest { project_id:string (required); resource_id:string (
 // conversation_id records ordered sources for that send; omission only previews.
 enum ProjectTrustDecision:ubyte { Unknown, Trusted, Untrusted }
 table ProjectTrustRequest { path:string (required); decision:ProjectTrustDecision; }
-table ProjectTrust { decision:ProjectTrustDecision; }
+table ProjectTrust { decision:ProjectTrustDecision; trusted_folder:string; }
 table SkillsListRequest { project_path:string; folders:[string]; conversation_id:string; }
 table Skill { name:string (required); description:string; path:string (required); source_folder:string; attachment_folder:string; status:string (required); scope:[string]; scoped:bool; always:bool; }
 table SkillFolder { path:string (required); status:string (required); }
