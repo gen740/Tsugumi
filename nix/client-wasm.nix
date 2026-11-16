@@ -30,6 +30,7 @@ stdenvNoCC.mkDerivation {
       ../protocol/data.fbs
       ../protocol/worker.fbs
       ../protocol/remote_worker.fbs
+      ../protocol/local_worker.fbs
       ../web/scripts/build-client.sh
     ];
   };
