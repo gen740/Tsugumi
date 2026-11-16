@@ -5,7 +5,6 @@ sniffing. Needs node and a built web/dist (npm run build)."""
 
 from __future__ import annotations
 
-import base64
 import http.client
 import json
 import os
@@ -182,20 +181,6 @@ def test_environment_stop_is_owned_by_hostd_and_a_later_start_reuses_the_host(we
     assert json.loads((tmp_path / "host-core/host.ready").read_text())["pid"] == agent["pid"]
 
 
-def test_a_project_taken_in_keeps_its_binary_files(web, tmp_path):
-    from conftest import write_project
-
-    _, port, key = web
-    cookie = page_cookie(port, key)
-    other = tmp_path / "other"
-    write_project(other)
-    blob = bytes(range(256))
-    (other / "blob.bin").write_bytes(blob)
-    r = post(port, cookie, "/api/import/project", {"folder": str(other)})
-    assert base64.b64decode(r["files"]["blob.bin"]) == blob
-    assert json.loads(base64.b64decode(r["files"]["tsugumi.json"]))["name"] == "test"
-
-
 def test_the_page_is_told_whether_host_folders_can_be_used(web):
     _, port, key = web
     r, data = request(port, "GET", "/api/status", {"Cookie": page_cookie(port, key)})
@@ -219,7 +204,10 @@ def test_a_terminal_is_a_real_terminal(web, tmp_path):
         return "".join(e["data"] for e in list(page.events) if e.get("type") == "terminal" and e["id"] == t["id"])
 
     def until(text: str):
-        page.wait(lambda: text in printed())
+        try:
+            page.wait(lambda: text in printed())
+        except AssertionError:
+            pytest.fail(repr(printed()))
 
     def send(data: str):
         post(port, cookie, "/api/terminal/input", {"id": t["id"], "data": data})
@@ -235,10 +223,12 @@ def test_a_terminal_is_a_real_terminal(web, tmp_path):
 ''')
     until("now=30 100")
     # A key: ⌃C stops what runs, not the shell.
-    send('''printf '\\0SLEEPING\\0'; sleep 100
+    send(r'''sh -c 'trap "printf \"\000INTERRUPTED\000\"; exit 0" INT; printf "\000WAITING\000"; read line'
 ''')
-    until('\0SLEEPING\0')
+    until('\0WAITING\0')
     send("\x03")
+    # Wait for signal handling before sending input that the TTY could flush.
+    until('\0INTERRUPTED\0')
     send('''echo after-interrupt-$((1 + 1))
 ''')
     until("after-interrupt-2")

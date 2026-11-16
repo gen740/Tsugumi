@@ -159,10 +159,6 @@ class Gateway(socketserver.UnixStreamServer):
             self.specs[job] = spec
             assert {R.string(d) for d in spec.inputBlobs} <= self.blobs
             assert R.string(spec.system) == self.system
-            if self.resource_limits:
-                assert spec.cpuMillis == 500 and spec.memoryBytes == 256 << 20
-            else:
-                assert spec.cpuMillis == 0 and spec.memoryBytes == 0
             self.receipts[job] = {"state": "running", "fingerprint": hashlib.sha256(bytes(body.spec)).hexdigest()}
             return None  # the receipt exists, but its reply was lost
         if kind == R.RequestBody.CancelRequest:
@@ -249,6 +245,8 @@ def running_job(project, remote_gateway, core_factory, tmp_path):
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     job_id = text(live.executionJobId)
     assert remote_gateway.submit_count == 1
+    spec = remote_gateway.specs[job_id]
+    assert spec.cpuMillis == 500 and spec.memoryBytes == 256 << 20
     try:
         yield remote_gateway, daemon, client, run_id, job_id
     finally:
@@ -438,6 +436,8 @@ def test_remote_job_without_resource_limits(project, remote_gateway, core_factor
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     assert live.executionResources is None
+    spec = remote_gateway.specs[text(live.executionJobId)]
+    assert spec.cpuMillis == spec.memoryBytes == 0
     remote_gateway.finish(text(live.executionJobId))
     assert wait_run(client, run_id, timeout=10).state == RunState.succeeded
 
