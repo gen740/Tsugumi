@@ -7,7 +7,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 class CardPromptContractTests(unittest.TestCase):
     def test_object_api_and_recovery_are_explicit(self):
-        prompt = (ROOT / 'agent/Shared/system-prompt.md').read_text()
+        # The always-sent rules plus the Card reference read on demand (demo_read reference/cards.md).
+        prompt = " ".join(((ROOT / 'agent/Shared/system-prompt.md').read_text()
+                           + (ROOT / 'demos/reference/cards.md').read_text()).split())
         for text in ('"inputs": [{"name": "config"}]', 'lowerCamelCase',
                      'inputs.events.value.decode()',
                      'return {"images": {"value": run.output_directory}}',

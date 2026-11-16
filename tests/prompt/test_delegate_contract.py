@@ -92,7 +92,7 @@ class DelegateContractTests(unittest.TestCase):
         self.assertIn('"read_cards"', helpers)
         self.assertIn('"write_cards"', helpers)
         self.assertIn("The host merges disjoint concurrent saves", helpers)
-        self.assertIn("The host places every Card without a saved place", prompt)
+        self.assertIn("it places a Card that has no saved place", " ".join(prompt.split()))
         self.assertIn("all incident endpoints are in scope", helpers)
         self.assertIn("Cards a helper reserves with card_id are its own", helpers)
         self.assertNotIn("and its place in SetLayout", prompt)

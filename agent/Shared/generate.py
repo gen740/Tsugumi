@@ -2,7 +2,7 @@
 folder, which the web Agent imports as they are: the system prompts (the Agent's and the guide's), the RPC
 requests offered as tools, the Agent's own texts and the guide's script without a
 model connection. It also writes the list of
-the Python SDK's methods into the system prompt, so that the model need not read
+the Python SDK's methods into demos/reference/cards.md, so that the model need not read
 the SDK. Run it after changing them or the SDK
 (tests/static/test_agent_contract.py checks that it was)."""
 
@@ -15,16 +15,18 @@ HERE = pathlib.Path(__file__).resolve().parent
 OUT = HERE.parents[1] / "macOS" / "Sources" / "AgentClient" / "Shared.swift"
 SDK = HERE.parents[1] / "sdk" / "python" / "tsugumi" / "__init__.py"
 PROMPT = HERE / "system-prompt.md"
-# The list stands in the system prompt between these two lines.
-SDK_BEGIN = "    The whole SDK (Inputs, Report and Run; generated from their source):\n"
-SDK_END = "    raise tsugumi.Failure("
+# The Card reference the Agent reads on demand (demo_read reference/cards.md).
+REFERENCE = HERE.parents[1] / "demos" / "reference" / "cards.md"
+# The SDK list stands in the reference between these two lines.
+SDK_BEGIN = "  The whole SDK (Inputs, Report and Run; generated from their source):\n"
+SDK_END = "  raise tsugumi.Failure("
 
 
 def sdk_list() -> str:
     """Public role methods and pure result constructors from the Python SDK."""
     tree = ast.parse(SDK.read_text())
-    lines = ["      inputs.<port>, inputs.params.<field> (read-only generated objects)\n",
-             "      return {port: generated_object_or_bytes}; yield mappings for streaming\n"]
+    lines = ["    inputs.<port>, inputs.params.<field> (read-only generated objects)\n",
+             "    return {port: generated_object_or_bytes}; yield mappings for streaming\n"]
     for role in ("Inputs", "Report", "Run"):
         cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == role)
         receiver = role.lower()
@@ -32,18 +34,22 @@ def sdk_list() -> str:
             if not isinstance(method, ast.FunctionDef) or method.name.startswith("_"):
                 continue
             if any(isinstance(d, ast.Name) and d.id == "property" for d in method.decorator_list):
-                lines.append(f"      {receiver}.{method.name}\n")
+                lines.append(f"    {receiver}.{method.name}\n")
             else:
                 args = ast.unparse(method.args).removeprefix("self").removeprefix(", ")
-                lines.append(f"      {receiver}.{method.name}({args})\n")
+                lines.append(f"    {receiver}.{method.name}({args})\n")
     for name in ("builder", "message"):
         function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
-        lines.append(f"      tsugumi.{name}({ast.unparse(function.args)})\n")
+        lines.append(f"    tsugumi.{name}({ast.unparse(function.args)})\n")
     return "".join(lines)
 
 
 def prompt() -> str:
-    text = PROMPT.read_text()
+    return PROMPT.read_text()
+
+
+def reference() -> str:
+    text = REFERENCE.read_text()
     begin = text.index(SDK_BEGIN) + len(SDK_BEGIN)
     return text[:begin] + sdk_list() + text[text.index(SDK_END, begin):]
 
@@ -81,8 +87,8 @@ MCP_OUT = HERE.parents[1] / "web" / "server" / "mcpInstructions.ts"
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--check"]:
-        sys.exit(0 if OUT.read_text() == swift() and PROMPT.read_text() == prompt() and MCP_OUT.read_text() == mcp() else 1)
-    PROMPT.write_text(prompt())
+        sys.exit(0 if OUT.read_text() == swift() and REFERENCE.read_text() == reference() and MCP_OUT.read_text() == mcp() else 1)
+    REFERENCE.write_text(reference())
     OUT.write_text(swift())
     MCP_OUT.write_text(mcp())
     print(f"wrote {OUT}")

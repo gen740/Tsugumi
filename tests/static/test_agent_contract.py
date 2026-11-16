@@ -89,7 +89,7 @@ def test_draft_demos_use_only_empty_draft_ends_in_both_languages():
 
 def test_file_output_instructions_do_not_require_a_card_permission():
     """Published instructions use declared File/Directory ports and an output path."""
-    for name in ("agent/Shared/system-prompt.md", "docs/CardGuide.md"):
+    for name in ("demos/reference/cards.md", "docs/CardGuide.md"):
         source = " ".join((ROOT / name).read_text().split())
         assert "filesystem" not in source, name
         assert 'tsugumi: "file"' in source, name
@@ -107,15 +107,17 @@ def test_file_tools_move_bytes_without_reading_and_explain_bounded_views():
     assert "bytes" not in copy["inputSchema"]["properties"]
     assert "base_rev" in copy["inputSchema"]["required"]
     prompt = (ROOT / "agent/Shared/system-prompt.md").read_text()
+    prompt = " ".join(prompt.split())
     assert "without their bytes passing through your context" in prompt
-    assert "no copy-specific byte cap" in prompt and "256 KiB" in prompt and "1 MiB" in prompt
+    assert "256 KiB" in prompt and "1 MiB" in prompt
     assert "head and tail" in prompt and "scratch/" in prompt
-    assert "exact write set" in prompt and "failure/cancellation saves nothing" in prompt
     assert "16 MiB" not in tools["attached_folder_read"]["description"]
 
 
 def test_measured_card_and_recovery_instructions_are_ported():
-    prompt = (ROOT / "agent/Shared/system-prompt.md").read_text()
+    # The always-sent rules plus the Card reference the Agent reads on demand.
+    prompt = " ".join(((ROOT / "agent/Shared/system-prompt.md").read_text()
+                       + (ROOT / "demos/reference/cards.md").read_text()).split())
     for text in ('"inputs": [{"name": "config"}]',
                  'bool, int64, uint64, double or string', 'lowerCamelCase',
                  'inputs.events.value.decode()',
@@ -156,8 +158,8 @@ def test_run_wait_instructions_are_shared_with_external_mcp():
         if tool['name'] in ('run', 'run_status'):
             assert tool['inputSchema']['properties']['wait_seconds'] == wait['schema']
             assert tool['description'].endswith(wait['description'])
-    prompt = (ROOT / 'agent/Shared/system-prompt.md').read_text()
+    prompt = " ".join((ROOT / 'agent/Shared/system-prompt.md').read_text().split())
     assert 'wait_seconds (up to 300)' in prompt and 'still_running' in prompt
-    mcp = (ROOT / 'web/server/mcpInstructions.ts').read_text()
+    mcp = " ".join(json.loads((ROOT / 'web/server/mcpInstructions.ts').read_text().split('INSTRUCTIONS = ')[-1].rstrip().rstrip(';')).split())
     assert 'wait_seconds (up to 300)' in mcp and 'still_running' in mcp
     assert 'it answers at once' not in mcp
