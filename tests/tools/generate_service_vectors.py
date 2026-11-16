@@ -40,7 +40,7 @@ def main():
     members = re.search(r"union RequestPayload \{(.*?)\}", schema, re.S).group(1)
     fixture["agentRequests"] = [
         member.strip().split(":")[0] for member in members.split(",")
-        if member.strip() and not member.strip().startswith("HelloRequest")
+        if member.strip() and member.strip() not in ("HelloRequest", "ToolCallCancelRequest")
     ]
     FIXTURE.write_text(json.dumps(fixture, indent=2) + "\n")
 
