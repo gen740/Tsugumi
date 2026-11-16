@@ -211,7 +211,9 @@ auto EditProjectField(const std::string& document,
                         ": selector requires exactly one field or keyed match");
     json::Members keys;
     if (!step->match_json.empty()) {
-      keys = json::Object(step->match_json);
+      keys = json::Object(step->match_json, edit.file_path + ".selector[" +
+                                                std::to_string(step_index) +
+                                                "].match");
       if (keys.empty() || target->kind != '[')
         throw Failure("invalid_request",
                       target_name +
@@ -754,8 +756,12 @@ auto PrepareProjectEdits(
     if (missing
             ? (!hash.empty() || value.has_value())
             : (hash.empty() || !value || crypto::sha256_hex(*value) != hash))
-      throw Failure("source_changed",
-                    path + ": expected file hash/presence differs");
+      throw Failure(
+          "source_changed",
+          path + (!value ? ": file is missing; resend put with "
+                           "expect_missing:true and no expected_hash"
+                         : (hash.empty() ? ": file already exists; read it and send its expected_hash"
+                                         : ": file exists with other content; read it and send its expected_hash")));
   };
   for (const auto& entry : edits.edits) {
     if (!entry)
@@ -853,7 +859,8 @@ auto PrepareProjectEdits(
       }
     } else if (const auto* put = entry->value.AsProjectFilePut()) {
       auto& text = file(put->file_path);
-      guard(put->file_path, text, put->expected_hash, put->expect_missing);
+      if (text || !put->expected_hash.empty() || put->expect_missing)
+        guard(put->file_path, text, put->expected_hash, put->expect_missing);
       text = SourceBytes(put->bytes);
     } else if (const auto* remove = entry->value.AsProjectFileRemove()) {
       auto& text = file(remove->file_path);
@@ -882,17 +889,20 @@ auto PrepareProjectEdits(
         Document::is_card_meta_file(path.substr(0, path.size() - 10) +
                                     "_meta.json") &&
         content && originals.at(path) &&
-        json::Text(json::Object(*originals.at(path)), "template") == "draft")
+        json::Text(json::Object(*originals.at(path), path), "template") ==
+            "draft")
       implemented.push_back(path);
   for (const auto &path : implemented) {
-    const auto definition = json::Object(*files.at(path));
+    const auto definition = json::Object(*files.at(path), path);
     const auto kind = json::Text(definition, "template");
     if (!kind.empty() && kind != "none")
       continue;
-    const auto inputs = json::Array(json::Get(definition, "inputs", "[]"));
+    const auto inputs =
+        json::Array(json::Get(definition, "inputs", "[]"), path + ".inputs");
     if (inputs.size() != 1)
       continue;
-    const auto port = json::Text(json::Object(inputs.front()), "name");
+    const auto port =
+        json::Text(json::Object(inputs.front(), path + ".inputs[0]"), "name");
     if (!valid_id(port))
       continue;
     const auto at = path.rfind("definitions/");
@@ -908,9 +918,11 @@ auto PrepareProjectEdits(
     auto &project = file(project_path);
     if (!project || file(path.substr(0, path.size() - 10) + "_link.json"))
       continue;
-    auto root = json::Object(*project);
-    auto canvas = json::Object(json::Get(root, "canvas", "{}"));
-    auto wires = json::Array(json::Get(canvas, "connections", "[]"));
+    auto root = json::Object(*project, project_path);
+    auto canvas =
+        json::Object(json::Get(root, "canvas", "{}"), project_path + ".canvas");
+    auto wires = json::Array(json::Get(canvas, "connections", "[]"),
+                             project_path + ".canvas.connections");
     size_t count = 0, candidate = 0;
     for (size_t i = 0; i < wires.size(); ++i) {
       const auto to =

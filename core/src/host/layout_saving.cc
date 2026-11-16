@@ -62,12 +62,17 @@ auto Patched(const LayoutFile& file, const json::Members& value)
   out.append(file.text, cursor, std::string::npos);
   return out;
 }
-auto CardIds(const std::string& text) -> std::set<std::string> {
+auto CardIds(const std::string& text, const std::string& path)
+    -> std::set<std::string> {
   std::set<std::string> out;
-  const auto graph =
-      json::Object(json::Get(json::Object(text), "canvas", "{}"));
-  for (const auto& card : json::Array(json::Get(graph, "cards", "[]")))
-    out.insert(json::Text(json::Object(card), "id"));
+  const auto graph = json::Object(
+      json::Get(json::Object(text, path), "canvas", "{}"), path + ".canvas");
+  size_t index = 0;
+  for (const auto& card :
+       json::Array(json::Get(graph, "cards", "[]"), path + ".canvas.cards"))
+    out.insert(json::Text(json::Object(card, path + ".canvas.cards[" +
+                                                 std::to_string(index++) + "]"),
+                          "id"));
   return out;
 }
 }  // namespace
@@ -113,9 +118,14 @@ static auto TransformLayout(
     size_t params = 0, ports = 0;
     if (read)
       if (const auto file = read("definitions/" + id + "/_card.json")) {
-        const auto definition = json::Object(file->text);
-        params = json::Array(json::Get(definition, "params", "[]")).size();
-        ports = json::Array(json::Get(definition, "inputs", "[]")).size();
+        const auto definition =
+            json::Object(file->text, "definitions/" + id + "/_card.json");
+        params = json::Array(json::Get(definition, "params", "[]"),
+                             "definitions/" + id + "/_card.json.params")
+                     .size();
+        ports = json::Array(json::Get(definition, "inputs", "[]"),
+                            "definitions/" + id + "/_card.json.inputs")
+                    .size();
       }
     std::set<std::string> incoming, outgoing;
     for (const auto& raw_wire :
@@ -519,9 +529,10 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
     if (may_write && !may_write(layout_path, ""))
       continue;
     const auto previous = read(prefix + "tsugumi.json");
-    const auto before =
-        previous ? CardIds(previous->text) : std::set<std::string>{};
-    const auto after = CardIds(project.text);
+    const auto before = previous
+                            ? CardIds(previous->text, prefix + "tsugumi.json")
+                            : std::set<std::string>{};
+    const auto after = CardIds(project.text, prefix + "tsugumi.json");
     std::set<std::string> removed;
     for (const auto& id : before)
       if (!after.contains(id))

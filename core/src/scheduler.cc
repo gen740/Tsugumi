@@ -436,8 +436,26 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   auto missing_saved_inputs(const Node& node) -> Failed {
     const auto card = path_key(node.path);
-    return Failed(FailureKind::input_missing, "no saved inputs for " + card +
-                  "; run the workflow from its trigger Card once first (it saves every Card's inputs)", {{"card", card}});
+    const auto& res = *doc_->resolution;
+    std::set<std::string> triggers;
+    // A trigger starts the whole resolved workflow, including unwired sources
+    // and nested projects (the same scope used by plan()).
+    for (const auto& candidate : res.nodes)
+      if (!candidate.is_virtual && candidate.kind == Template::Trigger)
+        triggers.insert(path_key(candidate.path));
+    std::string next;
+    for (const auto& trigger : triggers) {
+      if (!next.empty()) next += ", ";
+      next += '`' + trigger + '`';
+    }
+    const auto fix =
+        next.empty() ? "run the workflow from its trigger Card once first (it "
+                       "saves every Card's inputs)"
+                     : "run " + next +
+                           " (workflow trigger; choose one) first, then run `" +
+                           card + "` again";
+    return Failed(FailureKind::input_missing,
+                  "no saved inputs for " + card + ": " + fix, {{"card", card}});
   }
 
   auto reject_start(NodeRt& node, const FailureData& failure) -> void {

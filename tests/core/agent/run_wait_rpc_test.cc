@@ -2,6 +2,53 @@
 
 namespace tsugumi::test {
 namespace {
+TEST_F(AgentProjectFixture,
+       MissingSavedInputsNamesTheWorkflowTriggerAndKeepsSingleCardRuns) {
+  const auto root = directory.path / "project";
+  Write(root / "definitions/load/_card.json", R"({"template":"trigger"})");
+  Write(
+      root / "definitions/source/_card.json",
+      R"({"template":"input","params":[{"name":"value","type":"double","data":1}]})");
+  Write(root / "definitions/source/_outputs.fbs",
+        "table Value { value:double; } table Outputs { out:Value (required); } "
+        "root_type Outputs;");
+  Write(root / "definitions/knn/_card.json", R"({"template":"fork"})");
+  Write(root / "definitions/nested/_link.json", R"({"external":"nested"})");
+  Write(root / "externals/nested/tsugumi.json",
+        R"({"canvas":{"cards":[{"id":"inner_load"}],"connections":[]}})");
+  Write(root / "externals/nested/definitions/inner_load/_card.json",
+        R"({"template":"trigger"})");
+  StartProject(
+      false,
+      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"load"},{"id":"source"},{"id":"knn"},{"id":"nested"}],"connections":[{"from":{"card":"source","port":"out"},"to":{"card":"knn","port":"in"}}]}})");
+  const auto conversation = Conversation("missing-inputs");
+  for (const auto access :
+       {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Run})
+    Grant(conversation, Tsugumi::Service::GrantScope::Conversation, access);
+  const auto revision = JsonString(
+      JsonString(Inspect(conversation).View(), "/text"), "/value/rev");
+  auto run = [&](const std::string& card, const std::string& id) {
+    const auto reply =
+        Tool(conversation, "run",
+             "{\"base_rev\":" + Quote(revision) + ",\"card\":{\"segments\":[" +
+                 Quote(card) + "]},\"propagate\":" +
+                 (card == "load" ? "true" : "false") + ",\"wait_seconds\":10}",
+             id);
+    EXPECT_TRUE(reply.Code().empty());
+    return JsonString(reply.View(), "/text");
+  };
+  const auto refused = run("knn", "without-inputs");
+  EXPECT_EQ(JsonString(refused, "/value/run/state"), "failed") << refused;
+  EXPECT_EQ(JsonString(refused, "/value/run/failure/kind"), "input_missing")
+      << refused;
+  EXPECT_NE(refused.find("load"), std::string::npos) << refused;
+  EXPECT_NE(refused.find("nested/inner_load"), std::string::npos) << refused;
+  const auto whole = run("load", "trigger");
+  EXPECT_EQ(JsonString(whole, "/value/run/state"), "succeeded") << whole;
+  const auto single = run("knn", "saved-inputs");
+  EXPECT_EQ(JsonString(single, "/value/run/state"), "succeeded") << single;
+}
+
 class AgentRunWaitFixture : public AgentProjectFixture {
 protected:
   auto Prepare() -> std::string {
@@ -224,7 +271,8 @@ TEST_F(AgentRunWaitFixture, DisconnectingStopsAndUnregistersTheExternalWait) {
   ASSERT_EQ(pending.wait_for(2s), std::future_status::ready);
   EXPECT_TRUE(pending.get().error);
   const auto deadline = std::chrono::steady_clock::now() + 2s;
-  while (Events(conversation, true).View().find("cancelled") == std::string::npos) {
+  while (Events(conversation, true).View().find("cancelled") ==
+         std::string::npos) {
     ASSERT_LT(std::chrono::steady_clock::now(), deadline);
     std::this_thread::sleep_for(10ms);
   }

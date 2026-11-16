@@ -164,9 +164,12 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
                    bool automatic = false) {
     if (!valid_id(id))
       throw Failure("invalid_request", "invalid Card id: " + id);
-    auto root = json::Object(required(prefix + "tsugumi.json"));
-    auto graph = json::Object(json::Get(root, "canvas", "{}"));
-    auto cards = json::Array(json::Get(graph, "cards", "[]"));
+    auto root = json::Object(required(prefix + "tsugumi.json"),
+                             prefix + "tsugumi.json");
+    auto graph = json::Object(json::Get(root, "canvas", "{}"),
+                              prefix + "tsugumi.json.canvas");
+    auto cards = json::Array(json::Get(graph, "cards", "[]"),
+                             prefix + "tsugumi.json.canvas.cards");
     for (const auto &raw : cards)
       if (json::Text(json::Object(raw), "id") == id)
         throw Failure("value_conflict", "Card already exists: " + id);
@@ -175,10 +178,12 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
     root["canvas"] = json::Encode(graph);
     put(prefix + "tsugumi.json", json::Encode(root));
     for (const auto &field : {"displays", "boundaries"}) {
-      auto layout = json::Object(get(prefix + "layout.json").value_or("{}"));
+      auto layout = json::Object(get(prefix + "layout.json").value_or("{}"),
+                                 prefix + "layout.json");
       if (!layout.contains(field))
         continue;
-      auto entries = json::Object(layout.at(field));
+      auto entries =
+          json::Object(layout.at(field), prefix + "layout.json." + field);
       std::erase_if(entries, [&](const auto &entry) {
         return entry.first == id || entry.first.starts_with(id + '/');
       });
@@ -186,8 +191,10 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
       put(prefix + "layout.json", json::Encode(layout));
     }
     if (!automatic) {
-      auto layout = json::Object(get(prefix + "layout.json").value_or("{}"));
-      auto positions = json::Object(json::Get(layout, "cards", "{}"));
+      auto layout = json::Object(get(prefix + "layout.json").value_or("{}"),
+                                 prefix + "layout.json");
+      auto positions = json::Object(json::Get(layout, "cards", "{}"),
+                                    prefix + "layout.json.cards");
       positions[id] = json::Encode(
           json::Members{{"x", std::to_string(x)}, {"y", std::to_string(y)}});
       layout["cards"] = json::Encode(positions);
@@ -272,9 +279,11 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
       for (const auto &id : ids)
         if (!valid_id(id))
           throw Failure("invalid_request", "invalid Card id: " + id);
-      auto root = json::Object(project);
-      auto graph = json::Object(json::Get(root, "canvas", "{}"));
-      auto cards = json::Array(json::Get(graph, "cards", "[]"));
+      auto root = json::Object(project, prefix + "tsugumi.json");
+      auto graph = json::Object(json::Get(root, "canvas", "{}"),
+                                prefix + "tsugumi.json.canvas");
+      auto cards = json::Array(json::Get(graph, "cards", "[]"),
+                               prefix + "tsugumi.json.canvas.cards");
       const bool deleting =
           selection->action == H::ProjectSelectionAction::Delete;
       const bool definitions =
@@ -291,8 +300,8 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
           std::vector<std::string> roots{dir};
           const auto link_bytes = get(dir + "_link.json");
           if (link_bytes) {
-            const auto external_id =
-                json::Text(json::Object(*link_bytes), "external");
+            const auto external_id = json::Text(
+                json::Object(*link_bytes, dir + "_link.json"), "external");
             if (!valid_id(external_id))
               throw Failure("invalid_path", external_id);
             roots.push_back(prefix + "externals/" + external_id + '/');
@@ -310,10 +319,12 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
           });
           graph["cards"] = json::Encode(cards);
         }
-        auto wires = json::Array(json::Get(graph, "connections", "[]"));
+        auto wires = json::Array(json::Get(graph, "connections", "[]"),
+                                 prefix + "tsugumi.json.canvas.connections");
         const auto selected_wires = json::Array(
             selection->connections_json.empty() ? "[]"
-                                                : selection->connections_json);
+                                                : selection->connections_json,
+            "connections_json");
         std::erase_if(wires, [&](const auto &raw) {
           const auto wire = json::Object(raw);
           const auto from =
@@ -334,11 +345,13 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
         graph["connections"] = json::Encode(wires);
         root["canvas"] = json::Encode(graph);
         if (deleting) {
-          auto boundary = json::Object(json::Get(root, "boundary", "{}"));
+          auto boundary = json::Object(json::Get(root, "boundary", "{}"),
+                                       prefix + "tsugumi.json.boundary");
           for (const auto &side : {"inputs", "outputs"}) {
             if (!boundary.contains(side))
               continue;
-            auto ends = json::Object(boundary.at(side));
+            auto ends = json::Object(boundary.at(side),
+                                     prefix + "tsugumi.json.boundary." + side);
             std::erase_if(ends, [&](const auto &item) {
               return ids.contains(
                   json::Text(json::Object(item.second), "card"));
@@ -347,12 +360,13 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
           }
           if (root.contains("boundary"))
             root["boundary"] = json::Encode(boundary);
-          auto layout =
-              json::Object(get(prefix + "layout.json").value_or("{}"));
+          auto layout = json::Object(get(prefix + "layout.json").value_or("{}"),
+                                     prefix + "layout.json");
           for (const auto &field : {"cards", "displays", "boundaries"}) {
             if (!layout.contains(field))
               continue;
-            auto values = json::Object(layout.at(field));
+            auto values =
+                json::Object(layout.at(field), prefix + "layout.json." + field);
             std::erase_if(values, [&](const auto &item) {
               return std::any_of(ids.begin(), ids.end(), [&](const auto &id) {
                 return item.first == id || item.first.starts_with(id + '/');
@@ -361,19 +375,26 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
             layout[field] = json::Encode(values);
           }
           if (layout.contains("notes")) {
-            auto notes = json::Array(layout.at("notes"));
+            auto notes =
+                json::Array(layout.at("notes"), prefix + "layout.json.notes");
+            size_t note_index = 0;
             std::erase_if(notes, [&](const auto &raw) {
-              const auto id = json::Text(json::Object(raw), "id");
+              const auto id = json::Text(
+                  json::Object(raw, prefix + "layout.json.notes[" +
+                                        std::to_string(note_index++) + "]"),
+                  "id");
               return std::find(selection->notes.begin(), selection->notes.end(),
                                id) != selection->notes.end();
             });
             layout["notes"] = json::Encode(notes);
           }
-          auto displays = json::Object(json::Get(layout, "displays", "{}"));
+          auto displays = json::Object(json::Get(layout, "displays", "{}"),
+                                       prefix + "layout.json.displays");
           for (const auto &id : selection->frames) {
             if (ids.contains(id))
               continue;
-            auto frame = json::Object(json::Get(displays, id, "{}"));
+            auto frame = json::Object(json::Get(displays, id, "{}"),
+                                      prefix + "layout.json.displays." + id);
             if (selection->scene) {
               for (const auto &box : selection->scene->frames) {
                 if (!box || box->id != id)
@@ -392,18 +413,28 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
           if (!selection->frames.empty())
             layout["displays"] = json::Encode(displays);
           if (layout.contains("groups")) {
-            auto groups = json::Array(layout.at("groups"));
+            auto groups =
+                json::Array(layout.at("groups"), prefix + "layout.json.groups");
+            size_t group_index = 0;
             for (auto &raw : groups) {
-              auto group = json::Object(raw);
+              const auto at = prefix + "layout.json.groups[" +
+                              std::to_string(group_index++) + "]";
+              auto group = json::Object(raw, at);
               for (const auto &field : {"cards", "outputs"}) {
                 if (!group.contains(field))
                   continue;
-                auto members = json::Array(group.at(field));
+                auto members = json::Array(group.at(field), at + "." + field);
+                size_t member_index = 0;
                 std::erase_if(members, [&](const auto &member) {
                   return ids.contains(
                       std::string(field) == "cards"
                           ? json::String(member)
-                          : json::Text(json::Object(member), "card"));
+                          : json::Text(
+                                json::Object(
+                                    member, at + ".outputs[" +
+                                                std::to_string(member_index++) +
+                                                "]"),
+                                "card"));
                 });
                 group[field] = json::Encode(members);
               }
@@ -418,9 +449,11 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
     }
   } else if (const auto *connect = body.AsProjectConnect()) {
     json::Members definitions;
-    for (const auto& raw : json::Array(json::Get(
-             json::Object(json::Get(json::Object(project), "canvas", "{}")),
-             "cards", "[]"))) {
+    for (const auto& raw : json::Array(
+             json::Get(json::Object(json::Get(
+                           json::Object(project, prefix + "tsugumi.json"),
+                           "canvas", "{}")),
+                       "cards", "[]"))) {
       const auto id = json::Text(json::Object(raw), "id");
       json::Members parts;
       for (const auto& [part, name] : {std::pair{"card", "_card.json"},
@@ -515,18 +548,23 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
             prefix.size() + 12, item->from.size() - prefix.size() - 13);
         copied_ids[old] = item->id;
         const auto positions = json::Object(
-            json::Get(json::Object(get(prefix + "layout.json").value_or("{}")),
+            json::Get(json::Object(get(prefix + "layout.json").value_or("{}"),
+                                   prefix + "layout.json"),
                       "cards", "{}"));
-        const auto position = json::Object(json::Get(positions, old, "{}"));
+        const auto position = json::Object(json::Get(positions, old, "{}"),
+                                           prefix + "layout.json.cards." + old);
         x = std::stod(json::Get(position, "x", "0")) + 30;
         y = std::stod(json::Get(position, "y", "0")) + 30;
       }
       place(item->id, x, y);
     }
     if (copy->copy_connections) {
-      auto root = json::Object(required(prefix + "tsugumi.json"));
-      auto graph = json::Object(json::Get(root, "canvas", "{}"));
-      auto wires = json::Array(json::Get(graph, "connections", "[]"));
+      auto root = json::Object(required(prefix + "tsugumi.json"),
+                               prefix + "tsugumi.json");
+      auto graph = json::Object(json::Get(root, "canvas", "{}"),
+                                prefix + "tsugumi.json.canvas");
+      auto wires = json::Array(json::Get(graph, "connections", "[]"),
+                               prefix + "tsugumi.json.canvas.connections");
       const auto previous = wires;
       for (const auto &raw : previous) {
         auto wire = json::Object(raw);
@@ -558,7 +596,8 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
     put(prefix + "definitions/" + subgraph->id + "/_link.json",
         nested.link_json);
     auto positions = json::Object(json::Get(
-        json::Object(required(prefix + "layout.json")), "cards", "{}"));
+        json::Object(required(prefix + "layout.json"), prefix + "layout.json"),
+        "cards", "{}"));
     json::Members inner_positions;
     std::set<std::string> copied;
     for (const auto& id : subgraph->cards) {
@@ -566,7 +605,9 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
       const auto link = get(definition + "_link.json");
       const auto external =
           link ? prefix + "externals/" +
-                     json::Text(json::Object(*link), "external") + '/'
+                     json::Text(json::Object(*link, definition + "_link.json"),
+                                "external") +
+                     '/'
                : std::string{};
       bool shared_external = false;
       if (!external.empty()) {
@@ -579,7 +620,7 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
           if (std::find(subgraph->cards.begin(), subgraph->cards.end(),
                         other) == subgraph->cards.end() &&
               prefix + "externals/" +
-                      json::Text(json::Object(bytes), "external") + '/' ==
+                      json::Text(json::Object(bytes, path), "external") + '/' ==
                   external)
             shared_external = true;
         }
@@ -601,28 +642,30 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
     }
     double cx = 0, cy = 0;
     for (const auto &id : subgraph->cards) {
-      const auto pos = json::Object(json::Get(positions, id, "{}"));
+      const auto pos = json::Object(json::Get(positions, id, "{}"),
+                                    prefix + "layout.json.cards." + id);
       cx += std::stod(json::Get(pos, "x", "0"));
       cy += std::stod(json::Get(pos, "y", "0"));
     }
     cx /= subgraph->cards.size();
     cy /= subgraph->cards.size();
     for (auto &[id, raw] : inner_positions) {
-      (void)id;
-      auto pos = json::Object(raw);
+      auto pos = json::Object(raw, prefix + "layout.json.cards." + id);
       pos["x"] = std::to_string(std::stod(json::Get(pos, "x", "0")) - cx);
       pos["y"] = std::to_string(std::stod(json::Get(pos, "y", "0")) - cy);
       raw = json::Encode(pos);
     }
     put(destination + "layout.json",
         json::Encode(json::Members{{"cards", json::Encode(inner_positions)}}));
-    auto outer_layout = json::Object(required(prefix + "layout.json"));
+    auto outer_layout =
+        json::Object(required(prefix + "layout.json"), prefix + "layout.json");
     auto selected = [&](const std::string &id) {
       return std::find(subgraph->cards.begin(), subgraph->cards.end(), id) !=
              subgraph->cards.end();
     };
     for (const auto &field : {"cards", "displays", "boundaries"}) {
-      auto entries = json::Object(json::Get(outer_layout, field, "{}"));
+      auto entries = json::Object(json::Get(outer_layout, field, "{}"),
+                                  prefix + "layout.json." + field);
       std::erase_if(entries, [&](const auto &entry) {
         const auto slash = entry.first.find('/');
         return selected(entry.first.substr(0, slash));
@@ -633,17 +676,26 @@ auto Prepare(const H::ProjectOperationBodyUnion& body, const SaveBase& base,
       if (outer_layout.contains(field) || !entries.empty())
         outer_layout[field] = json::Encode(entries);
     }
-    auto groups = json::Array(json::Get(outer_layout, "groups", "[]"));
+    auto groups = json::Array(json::Get(outer_layout, "groups", "[]"),
+                              prefix + "layout.json.groups");
+    size_t group_index = 0;
     for (auto &raw : groups) {
-      auto group = json::Object(raw);
-      auto members = json::Array(json::Get(group, "cards", "[]"));
+      const auto at =
+          prefix + "layout.json.groups[" + std::to_string(group_index++) + "]";
+      auto group = json::Object(raw, at);
+      auto members =
+          json::Array(json::Get(group, "cards", "[]"), at + ".cards");
       std::erase_if(members,
                     [&](const auto &id) { return selected(json::String(id)); });
       group["cards"] = json::Encode(members);
       if (group.contains("outputs")) {
-        auto outputs = json::Array(group.at("outputs"));
+        auto outputs = json::Array(group.at("outputs"), at + ".outputs");
+        size_t output_index = 0;
         std::erase_if(outputs, [&](const auto &output) {
-          return selected(json::Text(json::Object(output), "card"));
+          return selected(json::Text(
+              json::Object(output, at + ".outputs[" +
+                                       std::to_string(output_index++) + "]"),
+              "card"));
         });
         group["outputs"] = json::Encode(outputs);
       }
