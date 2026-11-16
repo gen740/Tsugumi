@@ -168,8 +168,8 @@ is a declaration, not a file-by-file audit. The sources listed here add up to
 {size / 2**20:.0f} MiB.
 
 **The corresponding source** of this boot disk is
-[sources.tar.gz](https://github.com/gen740/tsugumi-vm/releases/download/{inventory['vm_version'].split('-')[0]}/sources.tar.gz)
-in the disk's release of gen740/tsugumi-vm, with its recipes and build
+[sources.tar.gz](https://github.com/gen740/Tsugumi/releases/download/vm-{inventory['vm_version'].split('-')[0]}/sources.tar.gz)
+in the disk's release of gen740/Tsugumi, with its recipes and build
 instructions. See Tsugumi's `docs/LicenseAudit.md`.
 
 | Package | Version | License (nixpkgs) | Source | Patches |

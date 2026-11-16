@@ -108,7 +108,7 @@ done
 # (publish-vm.sh, with its source). A release needs them; a disk not published
 # yet can still be tried in a dev build.
 "$repo/macOS/tools/bundle-licenses.sh" "$app/Contents/Resources/licenses"
-vm_licenses="https://github.com/${TSUGUMI_VM_RELEASES:-gen740/tsugumi-vm}/releases/download/$(cut -d- -f1 "$vm/vm-version")/licenses.tar.gz"
+vm_licenses="https://github.com/${TSUGUMI_VM_RELEASES:-gen740/Tsugumi}/releases/download/vm-$(cut -d- -f1 "$vm/vm-version")/licenses.tar.gz"
 if ! curl -fsSL "$vm_licenses" | tar -xz -C "$app/Contents/Resources/licenses"; then
   [ "$channel" != release ] || { echo "no licenses at $vm_licenses: run macOS/tools/publish-vm.sh" >&2; exit 1; }
   echo "warning: no licenses of the boot disk at $vm_licenses" >&2

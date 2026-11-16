@@ -78,7 +78,7 @@ An app built from source is the **development version** (Tsugumi Dev). It is a s
 
 - Nix (with flakes enabled)
 - Xcode or the Command Line Tools
-- Only to build the VM's boot disk (when there is no [published one](https://github.com/gen740/tsugumi-vm)): Apple container (the version is `TSUGUMI_CONTAINER_VERSION` in [macOS/Container/versions.env](../macOS/Container/versions.env); after `container system start`)
+- Only to build the VM's boot disk (when there is no [published one](https://github.com/gen740/Tsugumi/releases) (tag `vm-<hash>`)): Apple container (the version is `TSUGUMI_CONTAINER_VERSION` in [macOS/Container/versions.env](../macOS/Container/versions.env); after `container system start`)
 
 Dependency pins are defined in [flake.lock](../flake.lock), [Package.swift](../macOS/Package.swift) and the relevant package lock files.
 
@@ -106,7 +106,7 @@ cmake -S . -B build -G Ninja && ninja -C build
 
 On Linux, the same CMake build also produces the remote listener `build/workerd/tsugumi-workerd`. The packaged listener is available as `nix build .#workerd`; see [Remote execution](RemoteExecution.md) for installation and registration.
 
-The shared VM's boot disk (a kernel and a small rootfs with Nix, written to `dist/tsugumi-vm/`). If there is a published one at [gen740/tsugumi-vm](https://github.com/gen740/tsugumi-vm), it is downloaded; otherwise it is built with Nix inside a container (no separate Linux host or remote builder is needed). It changes only when the pinned nixpkgs or `macOS/Container/vm-boot.nix` changes; after changing them, publish it with `macOS/tools/publish-vm.sh`. Tsugumi itself (tsugumid and the rest) is built by Nix inside the VM on its first boot, from the shared source (`macOS/Container/vm-system.nix`; rebuilt only when the source changes):
+The shared VM's boot disk (a kernel and a small rootfs with Nix, written to `dist/tsugumi-vm/`). If there is a published one at [gen740/Tsugumi](https://github.com/gen740/Tsugumi/releases) (tag `vm-<hash>`), it is downloaded; otherwise it is built with Nix inside a container (no separate Linux host or remote builder is needed). It changes only when the pinned nixpkgs or `macOS/Container/vm-boot.nix` changes; after changing them, publish it with `macOS/tools/publish-vm.sh`. Tsugumi itself (tsugumid and the rest) is built by Nix inside the VM on its first boot, from the shared source (`macOS/Container/vm-system.nix`; rebuilt only when the source changes):
 
 ```bash
 macOS/Container/build-image.sh --vm

@@ -59,7 +59,7 @@ jobs:
       - uses: ./.github/actions/setup-nix
         with:
           cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      # The VM boot disk is downloaded from gen740/tsugumi-vm.
+      # The VM boot disk is downloaded from its vm-<hash> release of this repository.
       - name: Build the app
         run: macOS/build-app.sh --release
       - name: Check and package the app
