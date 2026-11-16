@@ -46,7 +46,7 @@ TEST(DocumentMerge, FormerClientMergeFixtures) {
     EXPECT_EQ(edit.conflicts, conflicts);
   }
 }
-TEST(DocumentMerge, RunConditionsAndDeletionNeedAChoiceButLayoutDoesNot) {
+TEST(DocumentMerge, RunConditionsLayoutAndDeletionNeedAChoice) {
   for (const auto *field :
        {"settings", "permissions", "hostFolders", "nixSources"}) {
     const auto state = [&](int value) {
@@ -55,7 +55,7 @@ TEST(DocumentMerge, RunConditionsAndDeletionNeedAChoiceButLayoutDoesNot) {
     EXPECT_FALSE(MergeDocuments(state(1), state(2), state(3)).conflicts.empty())
         << field;
   }
-  EXPECT_TRUE(MergeDocuments(R"({"layout":{"x":1}})", R"({"layout":{"x":2}})",
+  EXPECT_FALSE(MergeDocuments(R"({"layout":{"x":1}})", R"({"layout":{"x":2}})",
                              R"({"layout":{"x":3}})")
                   .conflicts.empty());
   EXPECT_FALSE(MergeDocuments(R"({"params":[{"name":"layout","data":1}]})",

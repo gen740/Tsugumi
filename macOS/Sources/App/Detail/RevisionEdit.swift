@@ -39,7 +39,7 @@ final class RevisionEdit {
       return true
     } catch let failure as RPCFailure where failure.kind == .revisionConflict || failure.kind == .hashConflict {
       conflictRev = session.rev
-      error = nil
+      error = failure.description
     } catch {
       self.error = String(describing: error)
     }

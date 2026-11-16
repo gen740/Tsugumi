@@ -194,8 +194,13 @@ auto Tools::PrepareLayoutSave(const std::string& project,
                                      {"offset", std::to_string(offset)},
                                      {"limit_bytes", "1048576"}}),
           stop));
-      if (json::Text(response, "reply") == "Failure")
-        throw Failure("conflict", "Layout source changed while preparing save");
+      if (json::Text(response, "reply") == "Failure") {
+        const auto failure = json::Object(json::Get(response, "value", "{}"));
+        if (json::Text(failure, "kind") == "revision_conflict")
+          throw StaleRevision{};
+        throw Failure(json::Text(failure, "kind"),
+                      json::Text(failure, "diagnostic"));
+      }
       const auto chunk = json::Object(json::Get(response, "value", "{}"));
       const auto bytes = json::Get(chunk, "bytes");
       if (!bytes.empty() && bytes.front() == '"')

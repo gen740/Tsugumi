@@ -391,6 +391,9 @@ const snapEq = (a: Snapshot, b: Snapshot) =>
   setEq(a.removals, b.removals) && mapEq(a.definitions, b.definitions, defEq) && mapEq(a.externals, b.externals, extEq)
 
 interface DraftBase {
+  externals: Map<string, ExternalProject>
+  externalHashes: Map<string, string>
+  saveJSON: string
   rev: bigint
   hashes: Map<string, string>
   project: J
@@ -450,6 +453,7 @@ export class ProjectSession extends Observable {
   /** Externals by folder ("externals/<name>/", nested "…/externals/<name>/"). */
   externals = new Map<string, ExternalProject>()
   private externalsKey = ''
+  private externalLoadTask?: Promise<void>
   sources = new Map<string, { hash: string; size: bigint }>()
   resolution = new Map<CardKey, ResolvedCard>()
   diagnostics: Diagnostic[] = []
@@ -464,6 +468,7 @@ export class ProjectSession extends Observable {
   /** The Draft being written on the canvas (geometry opens its Card up). */
   inlineDraft?: InlineDraft
   private draftFinishTask?: Promise<CardKey | undefined>
+  private draftCanvasAcknowledgement?: { edit: RevisionEdit; rev: bigint }
   private canvasSaveOp?: string
   get hasUnsavedEdits() {
     const e = this.inlineDraft
@@ -485,6 +490,9 @@ export class ProjectSession extends Observable {
   private cacheNoticeShown = false
   notice?: string
 
+  // Confirmed documents open editors could have read, including revisions
+  // whose notices arrived before Apply. Never execution/run data.
+  private editBases = new Map<bigint, DraftBase>()
   private draftBase?: DraftBase
   /** Confirmed externals when each external's edit started. */
   private externalBases = new Map<string, ExternalProject | null>()
@@ -492,7 +500,6 @@ export class ProjectSession extends Observable {
   private externalHashes = new Map<string, string>()
   private saveTask?: Promise<void>
   private saveAgain = false
-  private conflictRetries = 0
   private unfilled: UndoEntry[] = []
 
   // View state saved with ViewSave: the active tab's scope and selection.
@@ -833,6 +840,8 @@ export class ProjectSession extends Observable {
   /** The project was left: no more connections, whatever is under way. */
   close() {
     this.closed = true
+    this.editBases.clear()
+    this.draftCanvasAcknowledgement = undefined
     clearTimeout(this.cacheUsageTimer)
     this.offEvents?.()
     clearTimeout(this.viewSaveTimer)
@@ -976,6 +985,7 @@ export class ProjectSession extends Observable {
   }
 
   private apply(snap: R.ProjectSnapshotT, resetDraft: boolean) {
+    if (this.connected) this.editBases.set(this.rev, this.makeBase())
     this.executionServices = snap.executionServices
     this.rev = snap.rev ?? 0n
     this.executionRev = snap.executionRev ?? 0n
@@ -1011,6 +1021,7 @@ export class ProjectSession extends Observable {
       // Edits kept over a reconnect: merged onto what is there now, then saved.
       this.scheduleSave()
     }
+    this.followDraftAfterCanvasSave()
   }
 
   private applyResolution(res: R.ResolvedCardT[], diags: D.DiagnosticT[]) {
@@ -1039,6 +1050,7 @@ export class ProjectSession extends Observable {
       this.reconnect()
       return
     }
+    this.editBases.set(this.rev, this.makeBase())
     const wasClean = !this.dirty
     // The Cards that send displays, before this change (definitions and
     // resolution are replaced below).
@@ -1079,6 +1091,7 @@ export class ProjectSession extends Observable {
       // their way: shown at once, the edits merged on top.
       this.scheduleSave()
     }
+    this.followDraftAfterCanvasSave()
   }
 
   private applyRunEvent(e: R.RunEventT) {
@@ -1219,8 +1232,21 @@ export class ProjectSession extends Observable {
   }
 
   private makeBase(): DraftBase {
+    const files: Record<string, J> = { 'tsugumi.json': this.confirmedProject, 'layout.json': this.confirmedLayout }
+    for (const [id, d] of this.confirmedDefinitionDrafts) {
+      const dir = `definitions/${id}/`
+      files[dir + (d.link ? '_link.json' : '_card.json')] = d.link ?? d.card
+      if (d.meta !== undefined) files[dir + '_meta.json'] = d.meta
+    }
+    const hashes = new Map([...this.sources].map(([p, v]) => [p, v.hash]))
+    for (const [prefix, ext] of this.externals) for (const [rel, text] of externalFiles(ext)) {
+      const hash = this.externalHashes.get(prefix + rel)
+      if (hash !== undefined) { files[prefix + rel] = parse(text); hashes.set(prefix + rel, hash) }
+    }
+    const saveJSON = serialize(obj([['snapshot', obj([['rev', String(this.rev)], ['sources', [...hashes].map(([path, hash]) => obj([['path', path], ['hash', hash]]))]])], ['files', new JObj(Object.entries(files))]]))
     return {
-      rev: this.rev, hashes: new Map([...this.sources].map(([p, v]) => [p, v.hash])),
+      externals: new Map([...this.externals].map(([p, e]) => [p, cloneExternal(e)])), externalHashes: new Map(this.externalHashes),
+      saveJSON, rev: this.rev, hashes: new Map([...this.sources].map(([p, v]) => [p, v.hash])),
       project: this.confirmedProject, layout: this.confirmedLayout, definitions: this.confirmedDefinitionDrafts,
     }
   }
@@ -1387,7 +1413,7 @@ export class ProjectSession extends Observable {
         if (inverse) (undo ? this.redoStack : this.undoStack).push(inverse)
       } }
       this.mergeEdit.conflict(revision)
-      this.saveError = L('他の変更と重なり保存できませんでした。変更は保持しています。')
+      this.saveError = L('他の変更と重なり保存できませんでした。変更は保持しています。') + ' ' + reply.conflicts.join(', ')
       this.changed()
       return
     }
@@ -1486,14 +1512,14 @@ export class ProjectSession extends Observable {
         const h = b.hashes.get(p)
         if (h === undefined) hashes.delete(p); else hashes.set(p, h)
       }
-      this.draftBase = { rev: revision, hashes, project: theirs.project, layout: theirs.layout, definitions: theirs.definitions }
+      this.draftBase = { externals: theirs.externals, externalHashes: new Map(this.externalHashes), saveJSON: this.makeBase().saveJSON, rev: revision, hashes, project: theirs.project, layout: theirs.layout, definitions: theirs.definitions }
       this.normalizeExternalEdits()
       this.settleDraftBase()
     }
     if (reply.conflicts.length) {
       this.mergeConflict = { rev: revision, snapshot: sent, state: ours, apply }
       this.mergeEdit.conflict(revision)
-      this.saveError = L('他の変更と重なり保存できませんでした。変更は保持しています。')
+      this.saveError = L('他の変更と重なり保存できませんでした。変更は保持しています。') + ' ' + reply.conflicts.join(', ')
       this.changed()
       return false
     }
@@ -1523,7 +1549,6 @@ export class ProjectSession extends Observable {
     this.draftBase = undefined
     this.externalBases = new Map()
     this.saveAgain = false
-    this.conflictRetries = 0
     this.saveError = undefined
     this.mergeConflict = undefined
     this.mergeEdit.reload(this.rev)
@@ -1598,9 +1623,8 @@ export class ProjectSession extends Observable {
     while (this.saveTask) await this.saveTask
   }
 
-  /** Sends the draft as one ProjectSave transaction. Changes that arrived
-   *  meanwhile are merged in first; a conflict means newer changes are on
-   *  their way, so the save is tried again once they arrived. */
+  /** Rebases the visible draft, then sends its actual original read base
+   *  through the Host. Races merge there; real collisions stay refused. */
   private async saveOnce(): Promise<void> {
     const client = this.client
     if (!client) return
@@ -1611,6 +1635,7 @@ export class ProjectSession extends Observable {
     }
     await this.fillUndoSources()
     if (this.mergeConflict) return
+    const saveBase = this.draftBase ?? this.makeBase()
     try {
       if (!(await this.rebase())) return
     } catch (error) { this.saveError = errorText(error); this.changed(); return }
@@ -1631,11 +1656,17 @@ export class ProjectSession extends Observable {
       }
       const op = uuid()
       try {
-        await this.commitChanges(base.rev, op, changes)
+        const result = await this.commitChanges(saveBase, op, changes)
         this.saveError = undefined
-        this.conflictRetries = 0
         this.forgetSaved(sent, layoutOnly, merged)
+        if (!layoutOnly && this.inlineDraft) {
+          this.draftCanvasAcknowledgement = { edit: this.inlineDraft.revision, rev: result.rev ?? this.rev }
+          this.followDraftAfterCanvasSave()
+        }
       } catch (e) {
+        // Keep the original authority after a semantic collision refused by
+        // the Host, even if the presentation merge had already advanced.
+        this.draftBase = saveBase
         if (e instanceof RPCFailure) {
           switch (e.kind) {
             case D.FailureKind.revision_conflict:
@@ -1646,17 +1677,7 @@ export class ProjectSession extends Observable {
                 this.saveError = L('{0} は別の場所でも変更されたため保存していません。変更は保持しています。', p)
                 return
               }
-              if (this.conflictRetries >= 8) {
-                this.conflictRetries = 0
-                this.saveError = L('他の変更と重なり保存できませんでした。変更は保持しています。')
-                return
-              }
-              // Newer changes are on their way (DocPatched): merge them in and try again.
-              this.conflictRetries++
-              const want = e.currentRev ?? this.rev + 1n
-              for (let i = 0; i < 40 && this.rev < want; i++) await sleep(50)
-              await sleep(30 * this.conflictRetries)
-              this.saveAgain = true
+              this.saveError = errorText(e)
               break
             }
             case D.FailureKind.busy:
@@ -1669,20 +1690,37 @@ export class ProjectSession extends Observable {
               this.saveError = errorText(e)
           }
         } else {
-          // The reply may have been lost after the save committed: ask the core.
-          const r = await client.operation(op).catch(() => undefined)
-          if (r && r.state === D.OperationState.completed) {
-            this.saveError = undefined
-            this.forgetSaved(sent, layoutOnly, merged)
-          } else {
-            this.saveError = L('保存できませんでした: {0}。変更は保持しています。', errorText(e))
-          }
+          this.saveError = L('保存できませんでした: {0}。変更は保持しています。', errorText(e))
         }
       }
     } finally {
       this.saving = false
       this.changed()
     }
+  }
+
+  /** Host retries have their own operation ids. Follow only Draft fields
+   *  actually confirmed by our canvas save, never another editor's value. */
+  private followDraftAfterCanvasSave() {
+    const pending = this.draftCanvasAcknowledgement, draft = this.inlineDraft
+    if (!pending) return
+    if (!draft || draft.revision !== pending.edit || draft.revision.conflictRev !== undefined) { this.draftCanvasAcknowledgement = undefined; return }
+    if (this.rev < pending.rev) return
+    const parts = path(draft.card), prefix = this.projectPrefix(parts.slice(0, -1))
+    if (prefix === undefined) return
+    if (prefix && !this.sources.has(`${prefix}definitions/${parts.at(-1)}/_card.json`)) return
+    if (prefix) for (const file of ['_card.json', '_meta.json']) {
+      const p = `${prefix}definitions/${parts.at(-1)}/${file}`, hash = this.sources.get(p)?.hash
+      if (this.externalHashes.get(p) !== hash) return
+    }
+    const id = parts.at(-1)!
+    const definition = prefix ? this.externals.get(prefix)?.definitions.get(id)?.card : this.confirmedDefinitions.get(id)
+    const meta = prefix ? this.externals.get(prefix)?.definitions.get(id)?.meta : this.confirmedDefinitionMeta.get(id)
+    if (!definition) return
+    const label = str(get(meta, 'name')) || id
+    const name = str(get(definition, 'template')) === 'draft' && label === 'draft' ? '' : label
+    if (name === draft.initialName && (str(get(meta, 'content')) ?? '') === draft.initialContent) draft.revision.baseRev = this.rev
+    this.draftCanvasAcknowledgement = undefined
   }
 
   /** The common transaction encoder for canvas drafts and editor copies. */
@@ -1744,23 +1782,13 @@ export class ProjectSession extends Observable {
   }
 
   /** The shared settings/canvas entry to ProjectSave; keeps the caller's revision. */
-  private async commitChanges(baseRev: bigint, op: string, changes: R.DocumentChangeT[], editor = false) {
+  private async commitChanges(base: DraftBase, op: string, changes: R.DocumentChangeT[], editor = false) {
     const client = this.client
     if (!client) throw new RPCError('disconnected', L('接続していません'))
     if (!editor) this.canvasSaveOp = op
     try {
-      const projectChange = changes.find(c => c.valueType === R.DocumentChangeValue.SetProject)?.value as R.SetProjectT | undefined
-      const layoutChange = changes.find(c => c.valueType === R.DocumentChangeValue.SetLayout)?.value as R.SetLayoutT | undefined
-      const ids = (project: J) => new Set((arr(get(project, 'canvas', 'cards')) ?? []).map(c => str(get(c, 'id'))))
-      const next = projectChange ? tryParse(s(projectChange.json)) : undefined
-      const nextIds = next ? ids(next) : undefined
-      const removed = nextIds ? [...ids(this.confirmedProject)].filter((id): id is string => !!id && !nextIds.has(id)) : []
-      if (removed.length) {
-        const original = layoutChange ? s(layoutChange.json) : serialize(this.confirmedLayout)
-        const cleaned = await this.layoutHost.validate(original, removed)
-        if (layoutChange) layoutChange.json = cleaned
-        else changes = [...changes, Change.setLayout(cleaned)]
-      }
+      // The Host cleans deleted references and places Cards after merging,
+      // against the revision it will actually save.
       for (const change of changes) {
         if (change.valueType === R.DocumentChangeValue.SetLayout) {
           const value = change.value as R.SetLayoutT
@@ -1771,43 +1799,93 @@ export class ProjectSession extends Observable {
         }
       }
       if (this.client !== client) throw new RPCError('disconnected', L('接続していません'))
-      const result = await client.save(baseRev, op, this.origin, changes)
-      if (result.delta) {
+      // Rebased presentation bytes still use the original document hash
+      // paired with the base supplied to the Host's three-way merge.
+      const encodedBase = parse(base.saveJSON)
+      const hashes = new Map((arr(get(encodedBase, 'snapshot', 'sources')) ?? []).map(entry => [str(get(entry, 'path')), str(get(entry, 'hash'))]))
+      for (const change of changes) if (change.valueType === R.DocumentChangeValue.PutSource) {
+        const value = change.value as R.PutSourceT
+        if (get(encodedBase, 'files', s(value.path)) !== undefined) value.baseHash = hashes.get(s(value.path)) ?? null
+      }
+      const result: R.SaveResultT & { snapshot?: R.ProjectSnapshotT } = await client.save(base.rev, op, this.origin, changes, false, [], { project: this.projectId ?? '', json: base.saveJSON })
+      if (result.snapshot && (result.snapshot.rev ?? 0n) > this.rev) {
+        // Catch up documents without resetting this window's view revision,
+        // cameras or live run stream from a non-window inspection snapshot.
+        const snap = result.snapshot
+        const ids = new Set(snap.definitions.map(d => s(d.id)))
+        const paths = new Set(snap.sources.map(src => s(src.path)))
+        const d = Object.assign(new R.DocumentDeltaT(), {
+          baseRev: this.rev, rev: snap.rev, executionRev: snap.executionRev,
+          opId: result.delta?.opId ?? op, origin: this.origin,
+          projectJson: snap.projectJson, layoutJson: snap.layoutJson,
+          definitionsUpsert: snap.definitions,
+          definitionsRemoved: [...new Set([...this.confirmedDefinitions.keys(), ...this.confirmedLinks.keys()])].filter(id => !ids.has(id)),
+          sourcesUpsert: snap.sources, sourcesRemoved: [...this.sources.keys()].filter(path => !paths.has(path)),
+          resolution: snap.resolution, diagnostics: snap.diagnostics,
+        })
+        if (editor) this.applyDelta(d)
+        else this.applyDeltaFromSave(d)
+      } else if (result.delta) {
         if (editor) this.applyDelta(result.delta)
         else this.applyDeltaFromSave(result.delta)
       }
+      // Hashes arrive before external bodies. Retain the submitted draft
+      // until guarded reads confirm them together, rather than merging an
+      // unread cache entry as a concurrent deletion.
+      let loadedKey: string
+      do {
+        loadedKey = this.externalsKey
+        await this.externalLoadTask
+      } while (loadedKey !== this.externalsKey)
       return result
     } finally {
       if (!editor) this.canvasSaveOp = undefined
     }
   }
 
+  /** Synchronous encoding context. Evaluate the mutation against its read
+   *  state, then restore confirmed data before any await or RPC. */
+  private installEditorBase(base: DraftBase) {
+    this.confirmedProject = base.project; this.confirmedLayout = base.layout
+    this.confirmedDefinitions = new Map([...base.definitions].filter(([, d]) => !d.link).map(([id, d]) => [id, clone(d.card)]))
+    this.confirmedLinks = new Map([...base.definitions].filter(([, d]) => d.link).map(([id, d]) => [id, clone(d.link!)]))
+    this.confirmedDefinitionMeta = new Map([...base.definitions].filter(([, d]) => d.meta !== undefined).map(([id, d]) => [id, clone(d.meta!)]))
+    this.sources = new Map([...base.hashes].map(([p, hash]) => [p, { hash, size: 0n }]))
+    this.externals = new Map([...base.externals].map(([p, e]) => [p, cloneExternal(e)])); this.externalHashes = new Map(base.externalHashes)
+    this.project = clone(base.project); this.layout = clone(base.layout)
+  }
+
   /** A rejected editor copy stays in its editor, outside the autosaved draft. */
   async applyEdit(baseRev: bigint, change: (s: this) => void): Promise<bigint> {
     if (this.dirty || this.saveTask) await this.save()
     if (!this.connected || !this.client) throw new RPCError('disconnected', L('接続していません'))
-    if (baseRev !== this.rev) throw new RPCFailure({ kind: D.FailureKind.revision_conflict, diagnostic: 'Editor revision changed' })
+    const base = baseRev === this.rev ? this.makeBase() : this.editBases.get(baseRev)
+    if (!base) throw new RPCFailure({ kind: D.FailureKind.revision_conflict, diagnostic: 'Editor base is unavailable; reload while keeping your edit' })
     if (this.dirty) throw new RPCFailure({ kind: D.FailureKind.busy, diagnostic: L('変更を保存できませんでした。') })
-    const before = this.docState(), beforeSnap = this.snapshot(), base = this.makeBase()
-    change(this)
-    this.normalizeExternalEdits()
-    const prepared = this.prepareSave(false, base)
-    const after = this.docState()
-    this.dropDraft()
-    if (!prepared.changes.length) return baseRev
-    const step = this.record(before, beforeSnap, after, prepared.sent)
+    const current = this.makeBase(), currentSources = this.sources
+    let prepared: ReturnType<ProjectSession['prepareSave']>, step: UndoEntry
+    this.installEditorBase(base)
+    const before = this.docState(), beforeSnap = this.snapshot()
+    try {
+      change(this)
+      this.normalizeExternalEdits()
+      prepared = this.prepareSave(false, base)
+      // Both sides, including source presence, belong to the editor's base.
+      step = this.record(before, beforeSnap, this.docState(), prepared.sent)
+    } finally {
+      this.dropDraft()
+      this.installEditorBase(current)
+      this.sources = currentSources
+    }
+    if (!prepared.changes.length) {
+      if (baseRev !== this.rev) throw new RPCFailure({ kind: D.FailureKind.revision_conflict, diagnostic: "The edit target is absent from the editor's base; changes are retained" })
+      return baseRev
+    }
     await this.fillUndoSources()
     // Reading undo sources may yield to another client. Keep baseRev fixed.
-    const result = await this.commitChanges(baseRev, uuid(), prepared.changes, true)
-    if (this.rev === result.rev) {
-      for (const [prefix, ext] of prepared.merged) {
-        this.externals.set(prefix, ext)
-        for (const rel of externalFiles(ext).keys()) {
-          const hash = this.sources.get(prefix + rel)?.hash
-          if (hash) this.externalHashes.set(prefix + rel, hash)
-        }
-      }
-    }
+    const result = await this.commitChanges(base, uuid(), prepared.changes, true)
+    // The Host can merge documents and complete external layouts. Guarded
+    // reads in refreshExternals confirm their bytes and hashes together.
     this.undoStack.push(step)
     if (this.undoStack.length > 500) this.undoStack.shift()
     this.redoStack = []
@@ -1840,12 +1918,8 @@ export class ProjectSession extends Observable {
         }
       }
       for (const [prefix, m] of merged) {
-        // What was written is now the external's confirmed content.
-        this.externals.set(prefix, m)
-        for (const rel of externalFiles(m).keys()) {
-          const h = this.sources.get(prefix + rel)?.hash
-          if (h) this.externalHashes.set(prefix + rel, h)
-        }
+        // Submitted bytes can differ from the Host's merged/placed result.
+        // refreshExternals confirms actual bytes with their source hashes.
         if (extEq(this.externalEdits.get(prefix), sent.externals.get(prefix))) {
           this.externalEdits.delete(prefix)
           this.externalBases.delete(prefix)
@@ -2273,16 +2347,15 @@ export class ProjectSession extends Observable {
       setTimeout(() => this.client && this.refreshExternals(), 0)
       return
     }
-    const atRev = this.rev
     const hashes = new Map([...this.sources].map(([p, v]) => [p, v.hash]))
-    void (async () => {
+    this.externalLoadTask = (async () => {
       const found = new Map<string, ExternalProject>()
       const read = new Map<string, string>()
       const doc = async (rel: string): Promise<J | undefined> => {
         const h = hashes.get(rel)
         if (!h) return undefined
         try {
-          const d = await client.readFile(rel, atRev)
+          const d = await client.readFile(rel, null, h)
           read.set(rel, h)
           return tryParse(new TextDecoder().decode(d))
         } catch {
@@ -2322,6 +2395,7 @@ export class ProjectSession extends Observable {
       this.externalHashes = read
       this.normalizeExternalEdits()
       this.settleDraftBase()
+      this.followDraftAfterCanvasSave()
       this.changed()
       // Cards inside Cards in Card are known now: their displays are wanted too.
       await this.refreshVisibleDisplays()
@@ -3231,12 +3305,13 @@ export class ProjectSession extends Observable {
   private async proposed(scope: string[], scene: LayoutScene, ask: (c: typeof layoutHost) => Promise<LayoutProposal>): Promise<LayoutProposal | undefined> {
     const client = this.client
     if (!client) return undefined
-    const before = this.snapshot(), measured = JSON.stringify(scene), step = this.undoStack.at(-1)
+    const measured = JSON.stringify(scene), step = this.undoStack.at(-1)
     try {
       const host = this.layoutHost
       const proposal = await ask(host)
-      // Undo, another edit, reconnect or changed measurements invalidate it.
-      return this.client === client && this.layoutHost === host && snapEq(before, this.snapshot()) && this.undoStack.at(-1) === step &&
+      // Saving can normalize JSON or acknowledge drafts without changing the
+      // proposal's inputs. Guard its measured scene and the person's edit step.
+      return this.client === client && this.layoutHost === host && this.undoStack.at(-1) === step &&
         JSON.stringify(this.layoutScene(scope)) === measured ? proposal : undefined
     } catch (err) {
       this.notice = err instanceof RPCFailure ? err.diagnostic ?? errorText(err) : errorText(err)
